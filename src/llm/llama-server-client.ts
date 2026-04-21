@@ -203,7 +203,7 @@ export class LlamaServerClient {
       temperature: request.temperature ?? 0.2,
       top_p: request.topP ?? 0.95,
       top_k: request.topK ?? 40,
-      n_predict: request.maxTokens ?? 512,
+      n_predict: request.maxTokens ?? config.llama.completionMaxTokens,
     };
     if (request.grammar) payload.grammar = request.grammar;
     if (request.stop) payload.stop = request.stop;

@@ -29,7 +29,7 @@ export function AssistantBubble({
           toolSteps === 1 ? "" : "s"
         }`;
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Box flexDirection="column" marginBottom={1} marginLeft={1}>
       <Text color={theme.colors.assistant} bold>
         {theme.glyphs.assistantMarker} assistant
         {counter ? <Text color={theme.colors.muted}>{counter}</Text> : null}
@@ -37,7 +37,7 @@ export function AssistantBubble({
           <Text color={theme.colors.muted}> {theme.glyphs.ellipsis}</Text>
         ) : null}
       </Text>
-      <Box marginLeft={2} flexDirection="column">
+      <Box flexDirection="column" marginTop={1} marginLeft={2}>
         <MarkdownRenderer text={text} />
       </Box>
     </Box>

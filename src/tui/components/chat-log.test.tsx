@@ -21,10 +21,12 @@ function strip(value: string): string {
 }
 
 describe("ChatLog", () => {
-  it("renders the empty placeholder when no messages and no streaming", () => {
+  it("renders the splash banner when no messages and no streaming", () => {
     const state = createInitialTuiState(BASE_SESSION);
     const { lastFrame } = render(<ChatLog state={state} />);
-    expect(strip(lastFrame() ?? "")).toContain("no messages yet");
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("local operator agent");
+    expect(text).toContain("/help");
   });
 
   it("renders a user and assistant bubble", () => {

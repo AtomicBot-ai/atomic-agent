@@ -25,19 +25,27 @@
     "bundle:fetch-assets": "tsx scripts/fetch-assets.ts",
     "bundle:build-binary": "tsx scripts/build-binary.ts",
     "bundle:package": "tsx scripts/package-bundle.ts",
-    "bundle:matrix": "tsx scripts/print-matrix.ts"
+    "bundle:matrix": "tsx scripts/print-matrix.ts",
+    "fixtures:generate": "tsx scripts/generate-fixtures.ts"
   },
   "dependencies": {
     "@types/marked": "^5.0.2",
     "better-sqlite3": "^11.5.0",
     "cli-highlight": "^2.1.11",
     "clipboardy": "^5.3.1",
+    "exceljs": "^4.4.0",
+    "fast-xml-parser": "^5.7.1",
     "fuzzysort": "^3.1.0",
     "ink": "^7.0.1",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.12.0",
     "marked": "^18.0.2",
     "node-notifier": "^10.0.1",
+    "pdfjs-dist": "^5.6.205",
     "playwright-core": "^1.59.1",
     "react": "^19.2.5",
+    "tar-stream": "^3.1.8",
+    "word-extractor": "^1.0.4",
     "yaml": "^2.8.3"
   },
   "devDependencies": {
@@ -45,7 +53,10 @@
     "@types/node": "^24.12.2",
     "@types/node-notifier": "^8.0.5",
     "@types/react": "^19.2.14",
+    "@types/tar-stream": "^3.1.4",
+    "docx": "^9.6.1",
     "ink-testing-library": "^4.0.0",
+    "pdfkit": "^0.18.0",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "vitest": "^2.1.5"

@@ -230,6 +230,96 @@ Then point the sidecar at it via `llama.url` in `<stateDir>/config.json` (or `at
 - On macOS, grant Accessibility + Screen Recording permissions to your terminal / the Tauri app binary if you plan to use `os.window.focus`.
 - On Linux, install `wmctrl` for window management; everything else degrades gracefully.
 
+## OS tools
+
+The `os.*` tool surface exposed to the agent:
+
+| Tool              | Description                                                                                                              | Approval |
+|-------------------|--------------------------------------------------------------------------------------------------------------------------|----------|
+| `os.shell.run`    | Run a command in the working directory (timeout + output cap + abort signal).                                            | yes      |
+| `os.fs.read`      | Read a UTF-8 text file. Supports `offset`/`limit` for line-range reads and `lineNumbers` to prepend `LINE_NUMBER` prefix.| no       |
+| `os.fs.write`     | Write content to a file (replace or append).                                                                             | yes      |
+| `os.fs.list`      | Non-recursive directory listing.                                                                                         | no       |
+| `os.fs.glob`      | Recursive file search with `*`, `**`, `?`, `{a,b}`. Pure-Node, zero dependencies.                                         | no       |
+| `os.fs.grep`      | Fast regex search via bundled `ripgrep`. Three output modes (`content`, `files_with_matches`, `count`), glob/type/context support. | no       |
+| `os.fs.edit`      | Surgical string replacement (atomic write + uniqueness check + unified-diff preview).                                    | yes      |
+| `os.fs.read_document` | Extract plain text (with light markdown structure) from PDF, DOCX, DOC (legacy), XLSX, RTF, ODT, PPTX, and text files. | no |
+| `os.fs.archive.list`  | Enumerate entries inside a zip/tar/tar.gz/gz archive without extracting.                                                 | no |
+| `os.fs.archive.read_entry` | Read a single entry out of an archive as UTF-8 or base64 (no disk writes).                                         | no |
+| `os.fs.archive.extract`   | Extract an archive into destDir with zip-slip, symlink-escape, and decompression-bomb protections.                   | yes |
+| `os.http.request` | HTTP GET/POST via the system `curl` binary. Host allowlist + approval policy via `config.http`.                          | configurable |
+| `os.clipboard.read` / `os.clipboard.write` | System clipboard I/O.                                                                          | no / no  |
+| `os.window.list` / `os.window.focus`       | List and focus OS windows.                                                                      | no / no  |
+| `os.notify`       | Show a system notification (title + message).                                                                            | no       |
+
+`os.fs.grep` uses a pinned `ripgrep` binary shipped inside the bundle at
+`vendor/rg[.exe]`. In dev the resolver falls back to an installed
+`@vscode/ripgrep` or the system `rg` on `$PATH`. Override with
+`ATOMIC_AGENT_RG_PATH=/path/to/rg`.
+
+`os.fs.read_document` extracts plain text from binary document formats
+via pure-JS libraries (no system binaries required). Output is optimised
+for local LLMs: flat text with lightweight markers —  headings as
+`# / ##`, PDF/PPTX pages as `--- page N ---` / `--- slide N ---`, XLSX
+sheets as `## Sheet: <name>` with rows rendered `cell | cell | cell`.
+Structural metadata (`pageCount`, `sheetCount`, `slideCount`,
+`pagesExtracted`, `warnings`) lives in `details`. Supported formats:
+
+| Extension | Backend | Notes |
+|---|---|---|
+| `.pdf` | `pdfjs-dist` (text layer only) | `pagesFrom`/`pagesTo`/`maxPages` supported |
+| `.docx` | `mammoth` (to markdown) | `includeTables=false` → `extractRawText` |
+| `.doc` (legacy) | `word-extractor` | writes a temp file internally |
+| `.xlsx` | `exceljs` | `sheets: ["Name", 2]` selects by name or 1-indexed position |
+| `.rtf` | custom pure-JS parser | handles `\uNNNN`, `\'hh`, ignorable groups |
+| `.odt` | `jszip` + `fast-xml-parser` | parses `content.xml` |
+| `.pptx` | `jszip` + `fast-xml-parser` | per-slide `--- slide N ---` |
+| `.txt` / `.md` / `.log` / `.csv` / `.json` / `.html` / `.xml` / `.yaml` | pass-through | UTF-8, falls back to latin1 on decode errors |
+
+Use `format: "plain"` (or other canonical name) to override auto-detection
+when the file has no recognised extension. Defaults: `maxBytes = 5 MB`,
+`maxPages = 50`.
+
+`os.fs.archive.*` handles four formats via pure-JS backends (no system
+binaries required):
+
+| Extension | Backend | Notes |
+|---|---|---|
+| `.zip` | `jszip` (already bundled) | Unix-mode symlinks recognised; opt in via `followSymlinks=true` |
+| `.tar` | `tar-stream` | streaming walk; hard-links recognised |
+| `.tar.gz` / `.tgz` | `tar-stream` + `zlib` | transparently gunzipped |
+| `.gz` | built-in `zlib` | single-file container; synthetic entry name is the filename without `.gz` |
+
+Every extraction is filtered through `sanitizeEntryPath` which rejects
+absolute paths, backslashes, NUL bytes, and any relative path that
+resolves outside `destDir` (classic zip-slip guard). `ExtractBudget`
+enforces configurable caps that default to **100 MB total / 10 MB per
+entry / 10 000 entries** and skip-with-reason instead of crashing, so a
+malicious archive yields a partial result with an audit trail in
+`details.skippedEntries`.
+
+`os.http.request` shells out to the pre-installed system `curl` (no bundling).
+Policy lives under `config.http`:
+
+```json
+{
+  "http": {
+    "enabled": true,
+    "approvalMode": "writes",
+    "hostAllowlist": null,
+    "maxResponseBytes": 1048576,
+    "defaultTimeoutMs": 30000
+  }
+}
+```
+
+- `enabled`: hard switch. `false` disables the tool entirely.
+- `approvalMode`: `never` (no approval), `writes` (POST asks, GET is free), `always` (every call asks).
+- `hostAllowlist`: `null` means "any host". An array restricts traffic to
+  exact hostnames and `*.domain.tld` wildcards.
+- `maxResponseBytes`: body cap for compression + truncation flag.
+- `defaultTimeoutMs`: fallback when the LLM doesn't pass `timeoutMs`.
+
 ## License
 
 TBD.

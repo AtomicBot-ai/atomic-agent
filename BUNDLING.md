@@ -29,9 +29,12 @@ Actions matrix strategy.
    ```bash
    npm run build
    ```
-3. Fetch runtime assets (currently a no-op; hook kept for future browser/profile seeds):
+3. Fetch runtime assets (downloads the pinned `ripgrep` binary for the
+   current host; pass `--all` to prefetch every target):
    ```bash
    npm run bundle:fetch-assets
+   # or, to prefetch the full matrix:
+   npx tsx scripts/fetch-assets.ts --all
    ```
 4. Produce the SEA binary:
    ```bash
@@ -55,8 +58,62 @@ will refuse to spawn an unsigned sidecar on notarised builds.
 ```
 atomic-agent-sidecar[.exe]    # SEA binary, entry point
 grammars/tool-call.gbnf       # GBNF for structured tool-call decoding
+vendor/rg[.exe]               # pinned ripgrep for os.fs.grep (sidecar file)
 README.txt                    # short runtime note
 ```
+
+## Bundled ripgrep
+
+`os.fs.grep` relies on a pinned ripgrep build so the agent works zero-setup
+once the archive is extracted.
+
+- **Version:** pinned in `scripts/fetch-assets.ts` via `RIPGREP_VERSION`.
+  Bump that constant (and re-run `npm run bundle:fetch-assets --all`) to
+  refresh.
+- **Location:** copied by `scripts/package-bundle.ts` to
+  `<bundle>/vendor/rg[.exe]` next to the SEA binary. The runtime resolver
+  (`src/runtime/ripgrep-resolver.ts`) discovers it via
+  `<dirname(process.execPath)>/vendor/rg[.exe]`.
+- **Override:** set `ATOMIC_AGENT_RG_PATH=/path/to/rg` to point the agent
+  at a different binary without repackaging.
+- **Size impact:** roughly +5 MB per target. The binary is stripped and
+  stored alongside the SEA rather than embedded inside it, because Node
+  SEA asset extraction + `chmod +x` out of a temp dir is fragile across
+  platforms.
+- **Not committed:** downloaded binaries land under `assets/ripgrep/`,
+  which is git-ignored.
+
+## Bundled document extractors
+
+`os.fs.read_document` bundles several pure-JS libraries for PDF/DOCX/XLSX/
+RTF/ODT/PPTX/DOC extraction. These are regular `dependencies` resolved by
+Node SEA's builtin module resolution, not sidecar binaries:
+
+| Library | Purpose | Approx. size |
+|---|---|---|
+| `pdfjs-dist` (legacy build) | PDF text layer | ~1.8 MB |
+| `mammoth` | DOCX → markdown | ~250 KB |
+| `exceljs` | XLSX parsing | ~850 KB |
+| `jszip` | ODT/PPTX unzip | ~100 KB |
+| `fast-xml-parser` | ODT/PPTX XML parsing | ~200 KB |
+| `word-extractor` | Legacy .doc (OLE2) | ~100 KB |
+
+Net cost to the SEA: roughly +3 MB. RTF is handled by a custom pure-JS
+parser in-tree (no dep). Test fixtures live under
+`src/tools/os/test-fixtures/` and are regenerated via
+`npm run fixtures:generate` (uses devDeps `pdfkit`, `docx`).
+
+## Bundled archive tools
+
+`os.fs.archive.*` shares `jszip` with `read_document` and adds one
+dependency:
+
+| Library | Purpose | Approx. size |
+|---|---|---|
+| `tar-stream` | Streaming tar / tar.gz read + write | ~50 KB |
+
+`gz` is handled by the built-in `zlib`. Net incremental cost of the
+archive tools: **~50 KB** (plus the already-bundled jszip).
 
 ## Runtime requirements (documented in README.txt)
 

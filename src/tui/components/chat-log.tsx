@@ -1,9 +1,9 @@
-import { Box, Static, Text } from "ink";
+import { Box, Static } from "ink";
 import type { ReactElement } from "react";
-import { theme } from "../theme/theme.js";
 import type { ChatMessage, TuiState } from "../tui-state.js";
 import { AssistantBubble } from "./assistant-bubble.js";
 import { ReasoningBubble } from "./reasoning-bubble.js";
+import { SplashBanner } from "./splash-banner.js";
 import { SystemBubble } from "./system-bubble.js";
 import { ToolCard } from "./tool-card.js";
 import { UserBubble } from "./user-bubble.js";
@@ -21,8 +21,10 @@ interface ChatLogProps {
  */
 export function ChatLog({ state }: ChatLogProps): ReactElement {
   const finalised = state.messages;
+  const isEmpty = finalised.length === 0 && !state.streamingAssistantText;
   return (
     <Box flexDirection="column" flexGrow={1}>
+      {isEmpty ? <SplashBanner /> : null}
       <Static items={finalised}>
         {(message) => (
           <FinalisedMessage
@@ -33,11 +35,6 @@ export function ChatLog({ state }: ChatLogProps): ReactElement {
         )}
       </Static>
       <StreamingTail state={state} />
-      {finalised.length === 0 && !state.streamingAssistantText ? (
-        <Text color={theme.colors.muted}>
-          (no messages yet — type below and press Enter to start chatting)
-        </Text>
-      ) : null}
     </Box>
   );
 }

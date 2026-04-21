@@ -43,7 +43,7 @@ This is the source-of-truth for automated contributors (LLM agents, codegen, etc
 | `src/prompt/` | Prompt builder, stable prefix, token budget |
 | `src/session/` | Session state + sqlite persistence |
 | `src/agent/` | Agent loop + plan generator + step executor |
-| `src/tools/` | Tool registry + individual tools |
+| `src/tools/` | Tool registry + individual tools. OS tools: `shell.run`, `fs.read` (w/ `offset`/`limit`/`lineNumbers`), `fs.write`, `fs.list`, `fs.glob`, `fs.grep` (bundled ripgrep), `fs.edit` (atomic string replace), `fs.read_document` (PDF/DOCX/XLSX/RTF/ODT/PPTX/legacy .doc → plain text via pure-JS), `fs.archive.list` / `fs.archive.read_entry` / `fs.archive.extract` (zip/tar/tar.gz/gz via pure-JS; zip-slip + bomb guards), `http.request` (curl + host allowlist + `config.http.approvalMode`), `clipboard.*`, `window.*`, `notify`. |
 | `src/repo-index/` | tree-sitter parsing, symbol graph, manifest |
 | `src/retrieval/` | BM25 + semantic search + relevance slice |
 | `src/embeddings/` | bge-small embedder + sqlite-vec store |

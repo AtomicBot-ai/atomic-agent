@@ -17,7 +17,7 @@
  *   npx tsx scripts/package-bundle.ts darwin-arm64
  */
 import { spawn } from "node:child_process";
-import { cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { createReadStream, createWriteStream } from "node:fs";
 import { createGzip } from "node:zlib";
 import { join, resolve, dirname } from "node:path";
@@ -117,6 +117,25 @@ async function main(): Promise<number> {
   // Grammars are required at runtime.
   await copyOptional(join(ROOT, "grammars"), join(stageDir, "grammars"));
 
+  // Bundled ripgrep for os.fs.grep. ripgrep-resolver picks it up via
+  // `<dirname(process.execPath)>/vendor/rg[.exe]` at runtime. The binary
+  // is fetched by `scripts/fetch-assets.ts` into assets/ripgrep/<slug>/.
+  const ripgrepBinaryName = target.platform === "win32" ? "rg.exe" : "rg";
+  const ripgrepSrc = join(ROOT, "assets", "ripgrep", target.slug, ripgrepBinaryName);
+  const ripgrepDest = join(stageDir, "vendor", ripgrepBinaryName);
+  if (await pathExists(ripgrepSrc)) {
+    await mkdir(dirname(ripgrepDest), { recursive: true });
+    await cp(ripgrepSrc, ripgrepDest);
+    if (target.platform !== "win32") {
+      await chmod(ripgrepDest, 0o755);
+    }
+    stdout.write(`bundled ripgrep → ${ripgrepDest}\n`);
+  } else {
+    stderr.write(
+      `warning: ripgrep binary missing at ${ripgrepSrc}. Run \`npx tsx scripts/fetch-assets.ts --all\` before packaging if os.fs.grep zero-setup is required.\n`,
+    );
+  }
+
   // better-sqlite3 is the only native module we depend on now.
   const nativeModules = ["better-sqlite3"];
   for (const mod of nativeModules) {
@@ -157,6 +176,10 @@ async function main(): Promise<number> {
     "Skills live under $ATOMIC_AGENT_STATE_DIR/skills/ and",
     "./.atomic-agent/skills/. They are runtime artefacts authored by the",
     "user and are never bundled. See SKILLS.md in the source repo.",
+    "",
+    "The bundle ships a pinned ripgrep binary at ./vendor/rg[.exe] which",
+    "powers the os.fs.grep tool. Override it by setting",
+    "ATOMIC_AGENT_RG_PATH to the path of a different rg binary.",
     "",
     "Run the sidecar:",
     `  ./${target.executableName}`,

@@ -1,6 +1,7 @@
 export type {
   AtomicAgentConfig,
   BrowserChannel,
+  HttpApprovalMode,
   LogLevel,
   UserConfigFile,
 } from "./config-schema.js";

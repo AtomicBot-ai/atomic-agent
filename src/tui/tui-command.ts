@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import { render } from "ink";
 import React from "react";
 import { getConfig } from "../config/index.js";
@@ -6,50 +5,12 @@ import { createAgentRuntime, type AgentRuntime } from "../runtime/bootstrap.js";
 import type { LogRecord, LogSink } from "../telemetry/structured-logger.js";
 import type { MetricSample, MetricSink } from "../telemetry/metrics-collector.js";
 import type { SessionState } from "../session/session-state.js";
+import { clearTtyScreen } from "./clear-tty-screen.js";
+import { enterAltScreen } from "./alt-screen.js";
+import { parseTuiArgs } from "./tui-args.js";
 import { makeTuiEventBus, TuiApp, type TuiEventBus } from "./tui-app.js";
 import { turnsToMessages } from "./turns-to-messages.js";
 import type { SessionPickerEntry, TuiSessionInfo } from "./tui-state.js";
-
-interface TuiArgs {
-  workingDir: string;
-  maxSteps: number | null;
-  noApproval: boolean;
-}
-
-function parseArgs(args: string[]): TuiArgs | { error: string } {
-  let workingDir: string | null = null;
-  let maxSteps: number | null = null;
-  let noApproval = false;
-  for (let i = 0; i < args.length; i += 1) {
-    const flag = args[i];
-    switch (flag) {
-      case "--cwd":
-      case "--working-dir": {
-        const value = args[++i];
-        if (!value) return { error: `${flag} requires a value` };
-        workingDir = resolve(value);
-        break;
-      }
-      case "--max-steps": {
-        const value = args[++i];
-        const parsed = value ? Number.parseInt(value, 10) : NaN;
-        if (!Number.isFinite(parsed)) return { error: "--max-steps expects an integer" };
-        maxSteps = parsed;
-        break;
-      }
-      case "--no-approval":
-        noApproval = true;
-        break;
-      default:
-        return { error: `unknown flag: ${flag}` };
-    }
-  }
-  return {
-    workingDir: workingDir ?? process.cwd(),
-    maxSteps,
-    noApproval,
-  };
-}
 
 /**
  * CLI entry for `atomic-agent tui`. Boots the full runtime once and stays
@@ -59,7 +20,7 @@ function parseArgs(args: string[]): TuiArgs | { error: string } {
  * between runs — that is the whole point of the chat-like mode.
  */
 export async function tuiCommand(args: string[]): Promise<number> {
-  const parsed = parseArgs(args);
+  const parsed = parseTuiArgs(args);
   if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n`);
     return 2;
@@ -102,6 +63,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
 
+  // Switch to the alternate screen buffer so the TUI gets its own
+  // scrollback and the host terminal is restored verbatim on exit.
+  const altScreen = enterAltScreen({ stdout: process.stdout });
+
   const ink = render(
     React.createElement(TuiApp, {
       session: sessionInfo,
@@ -137,6 +102,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
   } finally {
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
+    // `ink.clear()` wipes the final Ink frame so nothing leaks when we
+    // flip back to the real terminal buffer below.
+    ink.clear();
+    altScreen.restore();
     await orchestrator.shutdown();
   }
   return orchestrator.exitCode;
@@ -222,6 +191,7 @@ class ChatOrchestrator {
     }
     this.session = this.runtime.createSession();
     this.queue.length = 0;
+    clearTtyScreen(process.stdout);
     this.bus.emit({
       type: "session_switched",
       sessionId: this.session.id,

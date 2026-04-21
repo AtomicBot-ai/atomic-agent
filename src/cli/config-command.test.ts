@@ -54,6 +54,13 @@ describe("configCommand", () => {
         toolTimeoutMs: 12_000,
         approvalRequired: false,
       },
+      http: {
+        enabled: true,
+        approvalMode: "writes" as const,
+        hostAllowlist: null,
+        maxResponseBytes: 1_048_576,
+        defaultTimeoutMs: 30_000,
+      },
     };
     const code = await configCommand(["set", JSON.stringify(payload)]);
     expect(code).toBe(0);

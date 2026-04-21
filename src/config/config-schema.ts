@@ -14,6 +14,8 @@ export interface AtomicAgentConfig {
     apiKey: string | null;
     healthPath: string;
     completionPath: string;
+    /** Upper bound on `n_predict` for each completion when the caller omits `maxTokens`. */
+    completionMaxTokens: number;
     healthTimeoutMs: number;
     requestTimeoutMs: number;
     healthRetries: number;
@@ -47,10 +49,25 @@ export interface AtomicAgentConfig {
   skills: {
     catalogTokenBudget: number;
   };
+  http: {
+    enabled: boolean;
+    approvalMode: HttpApprovalMode;
+    hostAllowlist: string[] | null;
+    maxResponseBytes: number;
+    defaultTimeoutMs: number;
+  };
   log: {
     level: LogLevel;
   };
 }
+
+/**
+ * When to require approval for outbound HTTP calls via `os.http.request`.
+ *  - `never`:   trust the LLM blindly (not recommended outside sandboxes).
+ *  - `writes`:  GET + HEAD bypass approval; anything with a body (POST…) needs it.
+ *  - `always`:  every call goes through the approval gate.
+ */
+export type HttpApprovalMode = "never" | "writes" | "always";
 
 /**
  * The 6 user-facing keys that live in `<stateDir>/config.json`. The file
@@ -67,6 +84,13 @@ export interface UserConfigFile {
     toolTimeoutMs: number;
     approvalRequired: boolean;
   };
+  http: {
+    enabled: boolean;
+    approvalMode: HttpApprovalMode;
+    hostAllowlist: string[] | null;
+    maxResponseBytes: number;
+    defaultTimeoutMs: number;
+  };
 }
 
 export const USER_CONFIG_VERSION = 1 as const;
@@ -81,6 +105,13 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     toolTimeoutMs: 60_000,
     approvalRequired: true,
   },
+  http: {
+    enabled: true,
+    approvalMode: "writes",
+    hostAllowlist: null,
+    maxResponseBytes: 1_048_576,
+    defaultTimeoutMs: 30_000,
+  },
 };
 
 /** Non-user env-based defaults (not part of the user config file). */
@@ -91,6 +122,8 @@ export const ENV_DEFAULTS = {
   HEALTH_RETRIES: 5,
   HEALTH_BACKOFF_MS: 500,
   DEFAULT_SLOT_ID: 0,
+  /** Default `n_predict` for grammar-constrained tool JSON (512 truncates long `reply.text`). */
+  LLAMA_COMPLETION_MAX_TOKENS: 4096,
   STABLE_PREFIX_SALT: "atomic-agent-v1",
   BROWSER_CHANNEL: "chrome" as BrowserChannel,
   BROWSER_HEADLESS: false,
@@ -166,6 +199,42 @@ export function parseNonEmptyString(raw: unknown, field: string): string {
   );
 }
 
+export function parseHttpApprovalMode(
+  raw: unknown,
+  field: string,
+): HttpApprovalMode {
+  if (raw === "never" || raw === "writes" || raw === "always") return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected one of never|writes|always, got ${JSON.stringify(raw)}`,
+  );
+}
+
+export function parseStringArrayOrNull(
+  raw: unknown,
+  field: string,
+): string[] | null {
+  if (raw === null || raw === undefined) return null;
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      field,
+      `expected string[] or null, got ${JSON.stringify(raw)}`,
+    );
+  }
+  const result: string[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    if (typeof entry !== "string" || entry.length === 0) {
+      throw new ConfigValidationError(
+        `${field}[${i}]`,
+        `expected non-empty string, got ${JSON.stringify(entry)}`,
+      );
+    }
+    result.push(entry);
+  }
+  return result;
+}
+
 export function parseUrl(raw: unknown, field: string): string {
   const str = parseNonEmptyString(raw, field);
   try {
@@ -198,6 +267,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const llama = (obj.llama as Record<string, unknown> | undefined) ?? {};
   const log = (obj.log as Record<string, unknown> | undefined) ?? {};
   const agent = (obj.agent as Record<string, unknown> | undefined) ?? {};
+  const http = (obj.http as Record<string, unknown> | undefined) ?? {};
 
   return {
     version: USER_CONFIG_VERSION,
@@ -223,6 +293,28 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       approvalRequired: parseBool(
         agent.approvalRequired ?? USER_CONFIG_DEFAULTS.agent.approvalRequired,
         "agent.approvalRequired",
+      ),
+    },
+    http: {
+      enabled: parseBool(
+        http.enabled ?? USER_CONFIG_DEFAULTS.http.enabled,
+        "http.enabled",
+      ),
+      approvalMode: parseHttpApprovalMode(
+        http.approvalMode ?? USER_CONFIG_DEFAULTS.http.approvalMode,
+        "http.approvalMode",
+      ),
+      hostAllowlist: parseStringArrayOrNull(
+        http.hostAllowlist ?? USER_CONFIG_DEFAULTS.http.hostAllowlist,
+        "http.hostAllowlist",
+      ),
+      maxResponseBytes: parsePositiveInt(
+        http.maxResponseBytes ?? USER_CONFIG_DEFAULTS.http.maxResponseBytes,
+        "http.maxResponseBytes",
+      ),
+      defaultTimeoutMs: parsePositiveInt(
+        http.defaultTimeoutMs ?? USER_CONFIG_DEFAULTS.http.defaultTimeoutMs,
+        "http.defaultTimeoutMs",
       ),
     },
   };

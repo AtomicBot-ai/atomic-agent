@@ -55,8 +55,10 @@ export const DEFAULT_TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
   },
   {
     name: "os.fs.read",
-    summary: "Read a UTF-8 text file.",
-    argsSchema: '{"path": "string", "maxBytes": "number (optional)"}',
+    summary:
+      "Read a UTF-8 text file. Use `offset`/`limit` for line-range reads and `lineNumbers` to prepend 'LINE_NUMBER|' prefixes.",
+    argsSchema:
+      '{"path": "string", "maxBytes": "number (optional)", "offset": "number (optional, 1-indexed; negative counts from end)", "limit": "number (optional)", "lineNumbers": "bool (optional)"}',
   },
   {
     name: "os.fs.write",
@@ -66,8 +68,64 @@ export const DEFAULT_TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
   },
   {
     name: "os.fs.list",
-    summary: "List entries in a directory.",
+    summary: "List entries in a directory (non-recursive).",
     argsSchema: '{"path": "string", "maxEntries": "number (optional)"}',
+  },
+  {
+    name: "os.fs.glob",
+    summary:
+      "Recursively find files matching glob patterns (`*`, `**`, `?`, `{a,b}`). Read-only.",
+    argsSchema:
+      '{"pattern": "string | string[]", "cwd": "string (optional)", "ignore": "string[] (optional)", "absolute": "bool (optional)", "limit": "number (optional)", "sortByMtime": "bool (optional)"}',
+  },
+  {
+    name: "os.fs.grep",
+    summary:
+      "Fast regex search via bundled ripgrep. Output modes: content, files_with_matches, count. Read-only.",
+    argsSchema:
+      '{"pattern": "string", "path": "string (optional)", "glob": "string | string[] (optional)", "type": "string (optional)", "caseInsensitive": "bool (optional)", "multiline": "bool (optional)", "outputMode": "content|files_with_matches|count (optional)", "contextBefore": "number (optional)", "contextAfter": "number (optional)", "contextAround": "number (optional)", "headLimit": "number (optional)", "offset": "number (optional)", "showLineNumbers": "bool (optional)"}',
+  },
+  {
+    name: "os.fs.edit",
+    summary:
+      "Surgical string replacement in a file. `oldString` must be unique unless `replaceAll=true` (requires approval).",
+    argsSchema:
+      '{"path": "string", "oldString": "string", "newString": "string", "replaceAll": "bool (optional)"}',
+  },
+  {
+    name: "os.fs.read_document",
+    summary:
+      "Extract plain text (with light structure markers) from PDF, DOCX, DOC (legacy), XLSX, RTF, ODT, PPTX, and text files. Auto-detects format from extension. Output uses `--- page N ---` / `## Sheet: <name>` markers; details carry pageCount, sheetCount, warnings. Read-only.",
+    argsSchema:
+      '{"path": "string", "format": "string (optional)", "maxBytes": "number (optional, default 5MB)", "maxPages": "number (optional, default 50)", "pagesFrom": "number (optional)", "pagesTo": "number (optional)", "sheets": "(string|number)[] (optional, xlsx only)", "pageSeparators": "bool (optional, default true)", "includeTables": "bool (optional, default true)"}',
+  },
+  {
+    name: "os.fs.archive.list",
+    summary:
+      "List entries inside an archive (zip, tar, tar.gz/tgz, gz) without extracting. Returns a compact listing plus a structured `entries` array. Read-only.",
+    argsSchema:
+      '{"path": "string", "format": "zip|tar|tar.gz|gz (optional override)"}',
+  },
+  {
+    name: "os.fs.archive.read_entry",
+    summary:
+      "Read a single entry from an archive without writing to disk. Default encoding is UTF-8 with automatic base64 fallback when NUL bytes are detected.",
+    argsSchema:
+      '{"path": "string", "entry": "string", "as": "utf8|base64 (optional)", "maxBytes": "number (optional)", "format": "zip|tar|tar.gz|gz (optional)"}',
+  },
+  {
+    name: "os.fs.archive.extract",
+    summary:
+      "Extract an archive into destDir (requires approval). Zip-slip, symlink-escape, and decompression-bomb protections are always on. `include` filters entries by path prefix; `limits` overrides the default 100MB / 10MB per entry / 10k entry caps.",
+    argsSchema:
+      '{"path": "string", "destDir": "string", "overwrite": "bool (optional)", "followSymlinks": "bool (optional)", "include": "string[] (optional prefixes)", "limits": "{maxTotalBytes?, maxEntryBytes?, maxEntries?} (optional)", "format": "zip|tar|tar.gz|gz (optional)"}',
+  },
+  {
+    name: "os.http.request",
+    summary:
+      "Make an HTTP GET or POST via the system `curl` binary. Host allowlist and approval policy are enforced via `config.http`. Body can be a string or a JSON-serialisable object (auto Content-Type).",
+    argsSchema:
+      '{"url": "string", "method": "GET|POST (optional)", "headers": "Record<string,string> (optional)", "body": "string | object (optional, POST only)", "timeoutMs": "number (optional)", "followRedirects": "bool (optional)"}',
   },
   {
     name: "os.clipboard.read",
@@ -111,7 +169,7 @@ export const DEFAULT_TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
   {
     name: "reply",
     summary:
-      "Send the FINAL natural-language answer to the user. Ends the current turn — the session stays open for the next user message. NEVER use `reply` to announce an action you are about to take (e.g. do NOT write 'I will now click X'); emit that action's tool call directly instead. Call only when the task is fully done, it is small-talk, or you need a clarifying question from the user.",
+      "Send the FINAL natural-language answer to the user. Ends the current turn — the session stays open for the next user message. NEVER use `reply` to announce an action you are about to take (e.g. do NOT write 'I will now click X'); emit that action's tool call directly instead. Call only when the task is fully done, it is small-talk, or you need a clarifying question from the user. Keep `text` short: do not paste large file lists or raw tool dumps — summarize counts, show at most a handful of examples, and point to paths or prior tool output instead (long `text` can exceed the completion token budget and break JSON).",
     argsSchema: '{"text": "string"}',
   },
   {

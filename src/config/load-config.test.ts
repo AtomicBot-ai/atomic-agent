@@ -22,6 +22,7 @@ describe("loadConfig", () => {
     rmSync(stateDir, { recursive: true, force: true });
     delete process.env.ATOMIC_AGENT_STATE_DIR;
     delete process.env.ATOMIC_AGENT_LLAMA_API_KEY;
+    delete process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS;
     delete process.env.ATOMIC_AGENT_BROWSER_CHANNEL;
     resetConfigCache();
     vi.restoreAllMocks();
@@ -34,8 +35,21 @@ describe("loadConfig", () => {
     const written = JSON.parse(readFileSync(path, "utf8"));
     expect(written.version).toBe(USER_CONFIG_VERSION);
     expect(config.llama.url).toBe("http://127.0.0.1:8080");
+    expect(config.llama.completionMaxTokens).toBe(4096);
     expect(config.log.level).toBe("info");
     expect(config.agent.approvalRequired).toBe(true);
+  });
+
+  it("maps ATOMIC_AGENT_LLAMA_MAX_TOKENS to completionMaxTokens with bounds", () => {
+    process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = "8192";
+    resetConfigCache();
+    expect(loadConfig().llama.completionMaxTokens).toBe(8192);
+    process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = "10";
+    resetConfigCache();
+    expect(loadConfig().llama.completionMaxTokens).toBe(64);
+    process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = "999999999";
+    resetConfigCache();
+    expect(loadConfig().llama.completionMaxTokens).toBe(131_072);
   });
 
   it("reads values from an existing user config file", () => {

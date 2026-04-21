@@ -24,6 +24,19 @@ function readInt(key: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function readBoundedPositiveInt(
+  key: string,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const raw = readEnv(key);
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
 function readBool(key: string, fallback: boolean): boolean {
   const raw = readEnv(key);
   if (!raw) return fallback;
@@ -80,6 +93,12 @@ export function loadConfig(): AtomicAgentConfig {
       apiKey: readEnv("ATOMIC_AGENT_LLAMA_API_KEY") ?? null,
       healthPath: "/health",
       completionPath: "/completion",
+      completionMaxTokens: readBoundedPositiveInt(
+        "ATOMIC_AGENT_LLAMA_MAX_TOKENS",
+        ENV_DEFAULTS.LLAMA_COMPLETION_MAX_TOKENS,
+        64,
+        131_072,
+      ),
       healthTimeoutMs: readInt(
         "ATOMIC_AGENT_LLAMA_HEALTH_TIMEOUT_MS",
         ENV_DEFAULTS.HEALTH_TIMEOUT_MS,
@@ -141,6 +160,13 @@ export function loadConfig(): AtomicAgentConfig {
         "ATOMIC_AGENT_SKILLS_CATALOG_BUDGET",
         ENV_DEFAULTS.SKILLS_CATALOG_BUDGET,
       ),
+    },
+    http: {
+      enabled: user.http.enabled,
+      approvalMode: user.http.approvalMode,
+      hostAllowlist: user.http.hostAllowlist,
+      maxResponseBytes: user.http.maxResponseBytes,
+      defaultTimeoutMs: user.http.defaultTimeoutMs,
     },
     log: { level: logLevel },
   };

@@ -2,6 +2,7 @@ node_modules/
 dist/
 bundle/
 prebuilds/
+assets/ripgrep/
 *.log
 .DS_Store
 .env

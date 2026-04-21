@@ -1,0 +1,354 @@
+import { describe, it, expect } from "vitest";
+import { ApprovalGate } from "../../approval/approval-gate.js";
+import type {
+  CommandOptions,
+  CommandResult,
+} from "../../sandbox/command-runner.js";
+import type { AtomicAgentConfig } from "../../config/index.js";
+import type { ToolContext } from "../tool-registry.js";
+import {
+  buildOsHttpRequestTool,
+  hostAllowed,
+  parseCurlOutput,
+} from "./http-request.js";
+
+function makeCtx(): ToolContext {
+  return {
+    workingDir: "/tmp/fixture",
+    sessionId: "test",
+    stepIndex: 0,
+    signal: new AbortController().signal,
+  };
+}
+
+function makeCommandResult(
+  overrides: Partial<CommandResult>,
+): CommandResult {
+  return {
+    command: "curl",
+    args: [],
+    exitCode: 0,
+    signal: null,
+    stdout: "",
+    stderr: "",
+    durationMs: 1,
+    timedOut: false,
+    truncated: false,
+    ...overrides,
+  };
+}
+
+function makeHttpConfig(
+  overrides: Partial<AtomicAgentConfig["http"]> = {},
+): Pick<AtomicAgentConfig, "http"> {
+  return {
+    http: {
+      enabled: true,
+      approvalMode: "writes",
+      hostAllowlist: null,
+      maxResponseBytes: 1_048_576,
+      defaultTimeoutMs: 30_000,
+      ...overrides,
+    },
+  };
+}
+
+function approveAll(): ApprovalGate {
+  const gate = new ApprovalGate({
+    emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+  });
+  return gate;
+}
+
+function denyAll(): ApprovalGate {
+  const gate = new ApprovalGate({
+    emit: (req) => gate.reject(req.approvalId, "denied"),
+  });
+  return gate;
+}
+
+function fakeRun(
+  capture: { cmd?: string; args?: string[]; opts?: CommandOptions },
+  result: Partial<CommandResult> = {},
+) {
+  return async (
+    cmd: string,
+    args: string[],
+    opts: CommandOptions,
+  ): Promise<CommandResult> => {
+    capture.cmd = cmd;
+    capture.args = args;
+    capture.opts = opts;
+    return makeCommandResult(result);
+  };
+}
+
+describe("hostAllowed", () => {
+  it("returns true when allowlist is null", () => {
+    expect(hostAllowed("api.github.com", null)).toBe(true);
+  });
+
+  it("matches exact hostnames case-insensitively", () => {
+    expect(hostAllowed("API.github.com", ["api.github.com"])).toBe(true);
+    expect(hostAllowed("evil.example", ["api.github.com"])).toBe(false);
+  });
+
+  it("matches *.domain wildcards on sub-domains and the bare domain", () => {
+    const list = ["*.example.com"];
+    expect(hostAllowed("a.example.com", list)).toBe(true);
+    expect(hostAllowed("a.b.example.com", list)).toBe(true);
+    expect(hostAllowed("example.com", list)).toBe(true);
+    expect(hostAllowed("evil.com", list)).toBe(false);
+  });
+});
+
+describe("parseCurlOutput", () => {
+  it("splits body from meta marker", () => {
+    const stdout =
+      'hello world\n__ATOMIC_CURL_META__200|application/json; charset=utf-8|11|0.123';
+    const parsed = parseCurlOutput(stdout);
+    expect(parsed.body).toBe("hello world");
+    expect(parsed.status).toBe(200);
+    expect(parsed.contentType).toBe("application/json; charset=utf-8");
+    expect(parsed.sizeDownload).toBe(11);
+    expect(parsed.timeTotal).toBeCloseTo(0.123);
+  });
+
+  it("falls back to raw output if marker is missing", () => {
+    const parsed = parseCurlOutput("raw body");
+    expect(parsed.body).toBe("raw body");
+    expect(parsed.status).toBe(0);
+  });
+});
+
+describe("os.http.request", () => {
+  it("rejects when config.http.enabled is false", async () => {
+    const tool = buildOsHttpRequestTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ enabled: false }),
+      runCommand: fakeRun({}),
+    });
+    await expect(
+      tool.run({ url: "https://example.com" }, makeCtx()),
+    ).rejects.toThrow(/disabled by config/);
+  });
+
+  it("rejects non-http(s) URLs", async () => {
+    const tool = buildOsHttpRequestTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig(),
+      runCommand: fakeRun({}),
+    });
+    await expect(
+      tool.run({ url: "ftp://example.com" }, makeCtx()),
+    ).rejects.toThrow(/only http\/https/);
+  });
+
+  it("rejects hostnames not on the allowlist", async () => {
+    const tool = buildOsHttpRequestTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ hostAllowlist: ["api.github.com"] }),
+      runCommand: fakeRun({}),
+    });
+    await expect(
+      tool.run({ url: "https://evil.example" }, makeCtx()),
+    ).rejects.toThrow(/not in config.http.hostAllowlist/);
+  });
+
+  it("performs GET without approval when approvalMode=writes", async () => {
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
+    const tool = buildOsHttpRequestTool({
+      approvals: denyAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "writes" }),
+      runCommand: fakeRun(capture, {
+        stdout: 'ok\n__ATOMIC_CURL_META__200|text/plain|2|0.01',
+      }),
+    });
+    const result = await tool.run(
+      { url: "https://example.com" },
+      makeCtx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.details.status).toBe(200);
+    expect(capture.args).toContain("https://example.com");
+    expect(capture.args).not.toContain("-X");
+  });
+
+  it("requires approval for POST when approvalMode=writes", async () => {
+    const tool = buildOsHttpRequestTool({
+      approvals: denyAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "writes" }),
+      runCommand: fakeRun({}),
+    });
+    await expect(
+      tool.run(
+        { url: "https://example.com", method: "POST", body: "{}" },
+        makeCtx(),
+      ),
+    ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+  });
+
+  it("requires approval for GET when approvalMode=always", async () => {
+    const tool = buildOsHttpRequestTool({
+      approvals: denyAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "always" }),
+      runCommand: fakeRun({}),
+    });
+    await expect(
+      tool.run({ url: "https://example.com" }, makeCtx()),
+    ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+  });
+
+  it("bypasses approval entirely when approvalMode=never", async () => {
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
+    const tool = buildOsHttpRequestTool({
+      approvals: denyAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun(capture, {
+        stdout: 'ok\n__ATOMIC_CURL_META__201|text/plain|2|0.01',
+      }),
+    });
+    const result = await tool.run(
+      { url: "https://example.com", method: "POST", body: "{}" },
+      makeCtx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.details.status).toBe(201);
+  });
+
+  it("serialises object body to JSON and auto-sets Content-Type", async () => {
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
+    const tool = buildOsHttpRequestTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun(capture, {
+        stdout: 'ok\n__ATOMIC_CURL_META__200|application/json|2|0.01',
+      }),
+    });
+    await tool.run(
+      {
+        url: "https://api.example.com/echo",
+        method: "POST",
+        body: { hello: "world" },
+      },
+      makeCtx(),
+    );
+    expect(capture.args).toContain("-X");
+    expect(capture.args).toContain("POST");
+    expect(capture.args).toContain("--data-binary");
+    expect(capture.args).toContain("@-");
+    const contentTypeFlagIndex = capture.args!.findIndex(
+      (arg, idx) =>
+        arg === "-H" &&
+        capture.args![idx + 1]?.toLowerCase().startsWith("content-type"),
+    );
+    expect(contentTypeFlagIndex).toBeGreaterThan(-1);
+    expect(capture.opts?.input).toBe(JSON.stringify({ hello: "world" }));
+  });
+
+  it("passes custom headers through to curl and does not override them", async () => {
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
+    const tool = buildOsHttpRequestTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun(capture, {
+        stdout: 'ok\n__ATOMIC_CURL_META__200|text/plain|2|0.01',
+      }),
+    });
+    await tool.run(
+      {
+        url: "https://api.example.com",
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain",
+          Authorization: "Bearer XYZ",
+        },
+        body: "raw",
+      },
+      makeCtx(),
+    );
+    expect(capture.args).toContain("Content-Type: text/plain");
+    expect(capture.args).toContain("Authorization: Bearer XYZ");
+    const ctOccurrences = capture.args!.filter((a) =>
+      a.toLowerCase().startsWith("content-type:"),
+    );
+    expect(ctOccurrences).toHaveLength(1);
+  });
+
+  it("rejects headers containing CR/LF to prevent injection", async () => {
+    const tool = buildOsHttpRequestTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun({}),
+    });
+    await expect(
+      tool.run(
+        {
+          url: "https://example.com",
+          headers: { Evil: "value\r\nInjected: yes" },
+        },
+        makeCtx(),
+      ),
+    ).rejects.toThrow(/CR\/LF/);
+  });
+
+  it("rejects body on GET requests", async () => {
+    const tool = buildOsHttpRequestTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun({}),
+    });
+    await expect(
+      tool.run(
+        { url: "https://example.com", method: "GET", body: "x" },
+        makeCtx(),
+      ),
+    ).rejects.toThrow(/body.*GET/);
+  });
+
+  it("returns structured error when curl fails", async () => {
+    const tool = buildOsHttpRequestTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun({}, {
+        exitCode: 6,
+        stderr: "curl: (6) Could not resolve host: does.not.exist",
+      }),
+    });
+    const result = await tool.run(
+      { url: "https://does.not.exist" },
+      makeCtx(),
+    );
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("Could not resolve host");
+    expect(result.details.exitCode).toBe(6);
+  });
+
+  it("uses config.http.defaultTimeoutMs when timeoutMs is not provided", async () => {
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
+    const tool = buildOsHttpRequestTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ defaultTimeoutMs: 7_000, approvalMode: "never" }),
+      runCommand: fakeRun(capture, {
+        stdout: 'ok\n__ATOMIC_CURL_META__200|text/plain|2|0.01',
+      }),
+    });
+    await tool.run({ url: "https://example.com" }, makeCtx());
+    const maxTimeIdx = capture.args!.indexOf("--max-time");
+    expect(maxTimeIdx).toBeGreaterThan(-1);
+    expect(capture.args![maxTimeIdx + 1]).toBe("7");
+  });
+});

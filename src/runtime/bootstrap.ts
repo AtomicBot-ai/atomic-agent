@@ -189,7 +189,7 @@ export async function createAgentRuntime(
   for (const tool of buildBrowserTools(browserBackend, dangerous)) {
     toolRegistry.register(tool);
   }
-  registerOsTools(toolRegistry, dangerous);
+  registerOsTools(toolRegistry, { ...dangerous, config: { http: config.http } });
   registerSkillTools(toolRegistry, skillRegistry, dangerous);
 
   let skillCatalog: readonly SkillCatalogEntry[] = buildSkillCatalog(

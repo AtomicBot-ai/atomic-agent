@@ -3,11 +3,12 @@ import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ApprovalGate } from "../../approval/approval-gate.js";
-import type { ToolContext } from "../tool-registry.js";
+import { ToolRegistry, type ToolContext } from "../tool-registry.js";
 import { osFsReadTool } from "./fs-read.js";
 import { osFsListTool } from "./fs-list.js";
 import { buildOsFsWriteTool } from "./fs-write.js";
 import { buildOsShellTool } from "./shell.js";
+import { registerOsTools } from "./index.js";
 
 function makeCtx(workingDir: string): ToolContext {
   return {
@@ -34,6 +35,59 @@ describe("os.fs tools", () => {
     const result = await osFsReadTool.run({ path: "hello.txt" }, makeCtx(dir));
     expect(result.status).toBe("ok");
     expect(result.summary).toContain("привет, магос");
+  });
+
+  it("os.fs.read supports offset and limit for line-range reads", async () => {
+    await writeFile(
+      join(dir, "multiline.txt"),
+      "alpha\nbeta\ngamma\ndelta\nepsilon\n",
+      "utf8",
+    );
+    const result = await osFsReadTool.run(
+      { path: "multiline.txt", offset: 2, limit: 2 },
+      makeCtx(dir),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.summary).toBe("beta\ngamma");
+    expect(result.details.startLine).toBe(2);
+    expect(result.details.endLine).toBe(3);
+    expect(result.details.totalLines).toBe(5);
+    expect(result.details.returnedLines).toBe(2);
+  });
+
+  it("os.fs.read prefixes LINE_NUMBER| when lineNumbers=true", async () => {
+    await writeFile(join(dir, "three.txt"), "one\ntwo\nthree\n", "utf8");
+    const result = await osFsReadTool.run(
+      { path: "three.txt", lineNumbers: true, offset: 2, limit: 2 },
+      makeCtx(dir),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.summary).toBe(`${"2".padStart(6, " ")}|two\n${"3".padStart(6, " ")}|three`);
+  });
+
+  it("os.fs.read treats negative offset as counting from the end", async () => {
+    await writeFile(
+      join(dir, "tail.txt"),
+      "l1\nl2\nl3\nl4\nl5\n",
+      "utf8",
+    );
+    const result = await osFsReadTool.run(
+      { path: "tail.txt", offset: -2 },
+      makeCtx(dir),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.summary).toBe("l4\nl5");
+    expect(result.details.startLine).toBe(4);
+    expect(result.details.endLine).toBe(5);
+  });
+
+  it("os.fs.read keeps byte-mode behaviour unchanged when no range specified", async () => {
+    await writeFile(join(dir, "plain.txt"), "one\ntwo\n", "utf8");
+    const result = await osFsReadTool.run({ path: "plain.txt" }, makeCtx(dir));
+    expect(result.status).toBe("ok");
+    expect(result.details.totalLines).toBeUndefined();
+    expect(result.summary).toContain("one");
+    expect(result.summary).toContain("two");
   });
 
   it("os.fs.list enumerates directory entries", async () => {
@@ -108,5 +162,47 @@ describe("os.shell.run", () => {
     expect(result.status).toBe("ok");
     expect(result.summary).toContain("hi");
     expect(result.details.exitCode).toBe(0);
+  });
+});
+
+describe("registerOsTools", () => {
+  it("registers the full OS tool surface", () => {
+    const registry = new ToolRegistry();
+    const gate = new ApprovalGate({ emit: () => undefined });
+    registerOsTools(registry, {
+      approvals: gate,
+      approvalRequired: false,
+      config: {
+        http: {
+          enabled: true,
+          approvalMode: "writes",
+          hostAllowlist: null,
+          maxResponseBytes: 1_048_576,
+          defaultTimeoutMs: 30_000,
+        },
+      },
+    });
+    const names = registry.list().map((t) => t.name).sort();
+    expect(names).toEqual(
+      [
+        "os.clipboard.read",
+        "os.clipboard.write",
+        "os.fs.archive.extract",
+        "os.fs.archive.list",
+        "os.fs.archive.read_entry",
+        "os.fs.edit",
+        "os.fs.glob",
+        "os.fs.grep",
+        "os.fs.list",
+        "os.fs.read",
+        "os.fs.read_document",
+        "os.fs.write",
+        "os.http.request",
+        "os.notify",
+        "os.shell.run",
+        "os.window.focus",
+        "os.window.list",
+      ].sort(),
+    );
   });
 });

@@ -42,7 +42,7 @@ describe("TuiApp (smoke)", () => {
     const text = strip(lastFrame() ?? "");
     expect(text).toContain("atomic-agent");
     expect(text).toContain("cwd");
-    expect(text).toContain("no messages yet");
+    expect(text).toContain("local operator agent");
     expect(text).toContain("commands");
     unmount();
   });

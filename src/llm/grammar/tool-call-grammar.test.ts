@@ -111,6 +111,89 @@ I'm thinking but got cut off mid-thought by n_predict limit`;
     expect(out.args).toEqual({ text: "hello there, friend" });
   });
 
+  it("parses an os.fs.grep tool-call with nested args", () => {
+    const out = parseToolCall(
+      '{"tool":"os.fs.grep","args":{"pattern":"foo","glob":["*.ts"],"outputMode":"files_with_matches"}}',
+    );
+    expect(out.tool).toBe("os.fs.grep");
+    expect(out.args).toEqual({
+      pattern: "foo",
+      glob: ["*.ts"],
+      outputMode: "files_with_matches",
+    });
+  });
+
+  it("parses an os.fs.glob tool-call", () => {
+    const out = parseToolCall(
+      '{"tool":"os.fs.glob","args":{"pattern":"**/*.ts","limit":50}}',
+    );
+    expect(out.tool).toBe("os.fs.glob");
+    expect(out.args).toEqual({ pattern: "**/*.ts", limit: 50 });
+  });
+
+  it("parses an os.fs.edit tool-call", () => {
+    const out = parseToolCall(
+      '{"tool":"os.fs.edit","args":{"path":"a.ts","oldString":"foo","newString":"bar"}}',
+    );
+    expect(out.tool).toBe("os.fs.edit");
+    expect(out.args).toEqual({ path: "a.ts", oldString: "foo", newString: "bar" });
+  });
+
+  it("parses an os.fs.read_document tool-call with pagination args", () => {
+    const out = parseToolCall(
+      '{"tool":"os.fs.read_document","args":{"path":"/tmp/a.pdf","pagesFrom":2,"pagesTo":5,"maxPages":4}}',
+    );
+    expect(out.tool).toBe("os.fs.read_document");
+    expect(out.args).toEqual({
+      path: "/tmp/a.pdf",
+      pagesFrom: 2,
+      pagesTo: 5,
+      maxPages: 4,
+    });
+  });
+
+  it("parses an os.fs.archive.list tool-call", () => {
+    const out = parseToolCall(
+      '{"tool":"os.fs.archive.list","args":{"path":"pkg.zip"}}',
+    );
+    expect(out.tool).toBe("os.fs.archive.list");
+    expect(out.args).toEqual({ path: "pkg.zip" });
+  });
+
+  it("parses an os.fs.archive.read_entry tool-call", () => {
+    const out = parseToolCall(
+      '{"tool":"os.fs.archive.read_entry","args":{"path":"pkg.zip","entry":"README.md"}}',
+    );
+    expect(out.tool).toBe("os.fs.archive.read_entry");
+    expect(out.args).toEqual({ path: "pkg.zip", entry: "README.md" });
+  });
+
+  it("parses an os.fs.archive.extract tool-call with limits", () => {
+    const out = parseToolCall(
+      '{"tool":"os.fs.archive.extract","args":{"path":"pkg.zip","destDir":"./out","overwrite":true,"limits":{"maxEntries":5}}}',
+    );
+    expect(out.tool).toBe("os.fs.archive.extract");
+    expect(out.args).toEqual({
+      path: "pkg.zip",
+      destDir: "./out",
+      overwrite: true,
+      limits: { maxEntries: 5 },
+    });
+  });
+
+  it("parses an os.http.request tool-call with nested headers and body", () => {
+    const out = parseToolCall(
+      '{"tool":"os.http.request","args":{"url":"https://api.example.com","method":"POST","headers":{"Authorization":"Bearer X"},"body":{"a":1}}}',
+    );
+    expect(out.tool).toBe("os.http.request");
+    expect(out.args).toEqual({
+      url: "https://api.example.com",
+      method: "POST",
+      headers: { Authorization: "Bearer X" },
+      body: { a: 1 },
+    });
+  });
+
   it("extractReasoning passthrough when no think tags present", () => {
     const raw = '{"tool":"finish","args":{}}';
     const extracted = extractReasoning(raw);
