@@ -13,3 +13,9 @@ export type {
   StepEvent,
   StepOutcome,
 } from "./step-executor.js";
+export { LoopDetector, formatRepeatNotice } from "./loop-detector.js";
+export type {
+  LoopDetectorOptions,
+  LoopObservation,
+  LoopVerdict,
+} from "./loop-detector.js";

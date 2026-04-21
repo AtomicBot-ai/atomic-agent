@@ -1,56 +1,62 @@
-import { Box, Text, useApp, useInput } from "ink";
-import { useEffect, useReducer, type ReactElement } from "react";
-import type { AgentLoopEvent } from "../agent/agent-loop.js";
-import type { ApprovalRequest } from "../approval/approval-gate.js";
-import type { MetricSample } from "../telemetry/metrics-collector.js";
-import type { LogRecord } from "../telemetry/structured-logger.js";
-import { reduceTuiState, type TuiAction } from "./agent-event-reducer.js";
+import { Box, useApp, useInput } from "ink";
+import {
+  useCallback,
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+  type ReactElement,
+} from "react";
+import { reduceTuiState } from "./agent-event-reducer.js";
+import type { TuiAction } from "./tui-action.js";
+import { handleAppKey } from "./app-key-bindings.js";
 import { ApprovalModal } from "./approval-modal.js";
-import { ChatTab } from "./chat-tab.js";
-import { EventFeed } from "./event-feed.js";
-import { GoalInput } from "./goal-input.js";
-import { APPROVAL_HOTKEYS, IDLE_HOTKEYS, RUNNING_HOTKEYS, cycleTab } from "./hotkeys.js";
-import { LogsTab } from "./logs-tab.js";
-import { MetricsFooter } from "./metrics-footer.js";
-import { ReasoningTab } from "./reasoning-tab.js";
-import { SessionHeader } from "./session-header.js";
+import { ChatLog } from "./components/chat-log.js";
+import { DebugPane } from "./components/debug-pane.js";
+import { FooterLine } from "./components/footer-line.js";
+import { HeaderLine } from "./components/header-line.js";
+import { HotkeyHint } from "./components/hotkey-hint.js";
+import { MultiLineEditor } from "./components/multi-line-editor.js";
+import { SessionPicker } from "./components/session-picker.js";
+import { SlashPalette } from "./components/slash-palette.js";
+import { StatusLine } from "./components/status-line.js";
+import { filterSlashCommands } from "./commands/slash-commands.js";
+import { slashPrefix } from "./commands/slash-command-parser.js";
+import { handleEditorSubmit } from "./submit-handler.js";
 import {
   canAcceptMessage,
   createInitialTuiState,
   type TuiSessionInfo,
-  type TuiState,
 } from "./tui-state.js";
-import { WorldPanel } from "./world-panel.js";
 
-/**
- * Event bus bridging the agent runtime (imperative, callback-driven) with
- * the reducer (pure). The CLI entry pushes actions into the bus; the
- * `TuiApp` effect subscribes and dispatches them into the reducer on the
- * next React tick.
- */
+export { makeTuiEventBus } from "./make-event-bus.js";
+
 export interface TuiEventBus {
   subscribe(listener: (action: TuiAction) => void): () => void;
 }
 
 export interface TuiAppCallbacks {
   onApprovalDecision(approvalId: string, approved: boolean): void;
-  /** Abort the currently running loop (stays in TUI). */
   onAbort(): void;
-  /** Fully quit the TUI and shut down the runtime. */
   onQuit(): void;
-  /** Submit a new chat message — the orchestrator drives a new turn. */
   onMessageSubmitted(message: string): void;
+  /** Ask the orchestrator to emit the recent-sessions list to the bus. */
+  onSessionPickerRequested?(): void;
+  /** Ask the orchestrator to swap to an existing persisted session. */
+  onSessionSwitchRequested?(sessionId: string): void;
+  /** Ask the orchestrator to start a fresh session. */
+  onSessionNewRequested?(): void;
 }
 
 export interface TuiAppProps {
   session: TuiSessionInfo;
   bus: TuiEventBus;
   callbacks: TuiAppCallbacks;
-  /** Allow the CLI entry to cap memory / terminal height. */
   maxVisibleRows?: number;
 }
 
 const DEFAULT_MAX_VISIBLE_ROWS = 14;
+const CTRL_C_WINDOW_MS = 1500;
 
 export function TuiApp({
   session,
@@ -60,10 +66,10 @@ export function TuiApp({
 }: TuiAppProps): ReactElement {
   const [state, dispatch] = useReducer(reduceTuiState, session, createInitialTuiState);
   const app = useApp();
+  const [ctrlCArmed, setCtrlCArmed] = useState(false);
+  const ctrlCTimer = useRef<NodeJS.Timeout | null>(null);
 
-  useEffect(() => {
-    return bus.subscribe((action) => dispatch(action));
-  }, [bus]);
+  useEffect(() => bus.subscribe(dispatch), [bus]);
 
   useEffect(() => {
     if (state.status === "quitting") {
@@ -72,169 +78,136 @@ export function TuiApp({
     }
   }, [state.status, callbacks, app]);
 
+  useEffect(() => {
+    if (!ctrlCArmed) return;
+    ctrlCTimer.current = setTimeout(() => setCtrlCArmed(false), CTRL_C_WINDOW_MS);
+    return () => {
+      if (ctrlCTimer.current) clearTimeout(ctrlCTimer.current);
+    };
+  }, [ctrlCArmed]);
+
+  const editorFocus = !state.pendingApproval;
+
   useInput((input, key) => {
-    if (state.pendingApproval) {
-      handleApprovalInput(input, key, state.pendingApproval, callbacks, dispatch);
+    handleAppKey(input, key, {
+      state,
+      dispatch,
+      callbacks,
+      ctrlCArmed,
+      setCtrlCArmed,
+    });
+  });
+
+  const submit = useCallback(
+    (buffer: string) => handleEditorSubmit(buffer, state, dispatch, callbacks),
+    [state, callbacks],
+  );
+
+  const onEditorChange = useCallback(
+    (next: string) => {
+      dispatch({ type: "input_changed", value: next });
+      const prefix = slashPrefix(next);
+      if (prefix !== null) {
+        dispatch({ type: "slash_palette_opened", query: prefix });
+      } else if (state.slashPaletteOpen) {
+        dispatch({ type: "slash_palette_closed" });
+      }
+    },
+    [state.slashPaletteOpen],
+  );
+
+  const onEscape = useCallback(() => {
+    if (state.sessionPickerOpen) {
+      dispatch({ type: "session_picker_closed" });
       return;
     }
-    if (key.ctrl && input === "c") {
-      callbacks.onAbort();
+    if (state.slashPaletteOpen) {
+      dispatch({ type: "slash_palette_closed" });
+      return;
+    }
+    if (state.pendingApproval) return;
+    if (canAcceptMessage(state)) {
       callbacks.onQuit();
       dispatch({ type: "quit_requested" });
+    } else {
+      callbacks.onAbort();
+      dispatch({ type: "abort_requested" });
+    }
+  }, [state, callbacks]);
+
+  const onTab = useCallback(() => {
+    if (!state.slashPaletteOpen) return;
+    const completions = filterSlashCommands(state.slashQuery);
+    const chosen = completions[state.slashPaletteCursor];
+    if (!chosen) return;
+    dispatch({ type: "input_changed", value: `/${chosen.name} ` });
+    dispatch({ type: "slash_palette_closed" });
+  }, [state.slashPaletteOpen, state.slashQuery, state.slashPaletteCursor]);
+
+  const onHistoryPrev = useCallback(() => {
+    if (state.sessionPickerOpen) {
+      dispatch({ type: "session_picker_cursor_moved", delta: -1 });
       return;
     }
-    if (key.escape) {
-      if (canAcceptMessage(state)) {
-        callbacks.onQuit();
-        dispatch({ type: "quit_requested" });
-      } else {
-        callbacks.onAbort();
-        dispatch({ type: "abort_requested" });
-      }
+    if (state.slashPaletteOpen) {
+      dispatch({ type: "slash_palette_cursor_moved", delta: -1 });
       return;
     }
-    if (key.tab) {
-      dispatch({ type: "tab_changed", tab: cycleTab(state.activeTab) });
+    dispatch({ type: "input_history_navigated", delta: -1 });
+  }, [state.slashPaletteOpen, state.sessionPickerOpen]);
+
+  const onHistoryNext = useCallback(() => {
+    if (state.sessionPickerOpen) {
+      dispatch({ type: "session_picker_cursor_moved", delta: 1 });
       return;
     }
-  });
+    if (state.slashPaletteOpen) {
+      dispatch({ type: "slash_palette_cursor_moved", delta: 1 });
+      return;
+    }
+    dispatch({ type: "input_history_navigated", delta: 1 });
+  }, [state.slashPaletteOpen, state.sessionPickerOpen]);
 
   return (
     <Box flexDirection="column">
-      <SessionHeader state={state} />
-      {state.pendingApproval ? <ApprovalModal request={state.pendingApproval} /> : null}
-      <TabBar state={state} />
-      <ActiveTab state={state} maxVisible={maxVisibleRows} />
-      <MetricsFooter state={state} />
-      <GoalInput
-        state={state}
-        onChange={(value) => dispatch({ type: "input_changed", value })}
-        onSubmit={(value) => {
-          dispatch({ type: "message_submitted", message: value });
-          callbacks.onMessageSubmitted(value);
-        }}
+      <HeaderLine state={state} />
+      {state.uiMode === "chat" ? (
+        <ChatLog state={state} />
+      ) : (
+        <DebugPane state={state} maxVisible={maxVisibleRows} />
+      )}
+      {state.pendingApproval ? (
+        <ApprovalModal request={state.pendingApproval} />
+      ) : null}
+      <StatusLine state={state} />
+      <FooterLine state={state} />
+      {state.sessionPickerOpen ? (
+        <SessionPicker
+          sessions={state.sessionPickerList}
+          cursor={state.sessionPickerCursor}
+          currentSessionId={state.session.sessionId}
+        />
+      ) : null}
+      {state.slashPaletteOpen ? (
+        <SlashPalette
+          query={state.slashQuery}
+          cursor={state.slashPaletteCursor}
+        />
+      ) : null}
+      <MultiLineEditor
+        value={state.inputValue}
+        placeholder="Type a message or `/` for commands…"
+        focus={editorFocus}
+        disabled={!canAcceptMessage(state)}
+        onChange={onEditorChange}
+        onSubmit={submit}
+        onEscape={onEscape}
+        onTab={onTab}
+        onHistoryPrev={onHistoryPrev}
+        onHistoryNext={onHistoryNext}
       />
-      <HotkeyFooter state={state} />
+      <HotkeyHint state={state} ctrlCArmed={ctrlCArmed} />
     </Box>
   );
 }
 
-function handleApprovalInput(
-  input: string,
-  key: { escape?: boolean; ctrl?: boolean },
-  request: ApprovalRequest,
-  callbacks: TuiAppCallbacks,
-  dispatch: (action: TuiAction) => void,
-): void {
-  const lower = input.toLowerCase();
-  if (lower === "y") {
-    callbacks.onApprovalDecision(request.approvalId, true);
-    dispatch({ type: "approval_resolved", approvalId: request.approvalId, approved: true });
-    return;
-  }
-  if (lower === "n") {
-    callbacks.onApprovalDecision(request.approvalId, false);
-    dispatch({ type: "approval_resolved", approvalId: request.approvalId, approved: false });
-    return;
-  }
-  if (key.escape || (key.ctrl && input === "c")) {
-    callbacks.onApprovalDecision(request.approvalId, false);
-    callbacks.onAbort();
-    dispatch({ type: "approval_resolved", approvalId: request.approvalId, approved: false });
-    dispatch({ type: "abort_requested" });
-  }
-}
-
-function TabBar({ state }: { state: TuiState }): ReactElement {
-  const tabs: Array<{ id: typeof state.activeTab; label: string }> = [
-    { id: "chat", label: `Chat${state.messages.length > 0 ? ` (${state.messages.length})` : ""}` },
-    { id: "feed", label: "Feed" },
-    { id: "world", label: "World" },
-    { id: "reasoning", label: `Reasoning${state.reasoning.length > 0 ? ` (${state.reasoning.length})` : ""}` },
-    { id: "logs", label: "Logs" },
-  ];
-  return (
-    <Box>
-      {tabs.map((tab, idx) => {
-        const active = tab.id === state.activeTab;
-        return (
-          <Text key={tab.id}>
-            <Text color={active ? "cyan" : "gray"} bold={active}>
-              {active ? "▶ " : "  "}
-              {tab.label}
-            </Text>
-            {idx < tabs.length - 1 ? <Text color="gray">  </Text> : null}
-          </Text>
-        );
-      })}
-    </Box>
-  );
-}
-
-function ActiveTab({ state, maxVisible }: { state: TuiState; maxVisible: number }): ReactElement {
-  switch (state.activeTab) {
-    case "chat":
-      return <ChatTab state={state} maxVisible={maxVisible} />;
-    case "feed":
-      return <EventFeed state={state} maxVisible={maxVisible} />;
-    case "world":
-      return <WorldPanel state={state} />;
-    case "reasoning":
-      return <ReasoningTab state={state} maxVisible={maxVisible} />;
-    case "logs":
-      return <LogsTab state={state} maxVisible={maxVisible} />;
-    default:
-      return <ChatTab state={state} maxVisible={maxVisible} />;
-  }
-}
-
-function HotkeyFooter({ state }: { state: TuiState }): ReactElement {
-  const hotkeys = state.pendingApproval
-    ? APPROVAL_HOTKEYS
-    : canAcceptMessage(state)
-      ? IDLE_HOTKEYS
-      : RUNNING_HOTKEYS;
-  return (
-    <Box>
-      <Text color="gray">
-        {hotkeys.map((h) => `[${h.key}] ${h.label}`).join("  ")}
-      </Text>
-      {state.lastRunStatus ? <Text color="gray">   last: {state.lastRunStatus}</Text> : null}
-    </Box>
-  );
-}
-
-/**
- * Narrow-typed facade the CLI entry uses to feed events into the bus.
- * Kept public so tests can drive the app without mocking ink internals.
- */
-export function makeTuiEventBus(): TuiEventBus & {
-  emit(action: TuiAction): void;
-  emitAgentEvent(event: AgentLoopEvent): void;
-  emitApproval(request: ApprovalRequest): void;
-  emitMetric(sample: MetricSample): void;
-  emitLog(record: LogRecord): void;
-} {
-  const listeners = new Set<(action: TuiAction) => void>();
-  return {
-    subscribe(listener) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    emit(action) {
-      for (const listener of listeners) listener(action);
-    },
-    emitAgentEvent(event) {
-      for (const listener of listeners) listener({ type: "agent_event", event });
-    },
-    emitApproval(request) {
-      for (const listener of listeners) listener({ type: "approval_requested", request });
-    },
-    emitMetric(sample) {
-      for (const listener of listeners) listener({ type: "metric", sample });
-    },
-    emitLog(record) {
-      for (const listener of listeners) listener({ type: "log", record });
-    },
-  };
-}

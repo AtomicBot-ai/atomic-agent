@@ -10,7 +10,14 @@ export type SessionStatus =
   | "awaiting_llm"
   | "completed"
   | "failed"
-  | "cancelled";
+  | "cancelled"
+  /**
+   * Turn hit `agent.maxSteps` without producing `reply` or `finish`. The
+   * session is otherwise healthy — the next user message can still drive
+   * a new turn — but operators see `stalled` so the condition is
+   * distinguishable from a clean `pending` idle.
+   */
+  | "stalled";
 
 export interface KnownFact {
   text: string;

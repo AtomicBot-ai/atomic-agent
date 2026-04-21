@@ -54,6 +54,13 @@ export interface StepContext {
   skillCatalog: readonly SkillCatalogEntry[];
   stepIndex: number;
   signal: AbortSignal;
+  /**
+   * Optional one-shot notice to render in the prompt's `### notice`
+   * section for this step only. The agent loop uses this to warn the
+   * model about detected no-progress loops. Lives in the variable tail,
+   * never in the stable prefix.
+   */
+  transientNotice?: string;
 }
 
 export type StepEvent =
@@ -103,6 +110,9 @@ export async function executeStep(
     toolDescriptors: ctx.toolDescriptors,
     capabilities: ctx.capabilities,
     skillCatalog: ctx.skillCatalog,
+    ...(ctx.transientNotice !== undefined
+      ? { transientNotice: ctx.transientNotice }
+      : {}),
   });
   const slot = deps.slotManager.acquire(ctx.session.id, prompt.stablePrefix);
   deps.onEvent?.({ type: "prompt_built", prompt, slotId: slot.slotId });

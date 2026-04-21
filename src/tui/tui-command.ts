@@ -5,8 +5,10 @@ import { getConfig } from "../config/index.js";
 import { createAgentRuntime, type AgentRuntime } from "../runtime/bootstrap.js";
 import type { LogRecord, LogSink } from "../telemetry/structured-logger.js";
 import type { MetricSample, MetricSink } from "../telemetry/metrics-collector.js";
+import type { SessionState } from "../session/session-state.js";
 import { makeTuiEventBus, TuiApp, type TuiEventBus } from "./tui-app.js";
-import type { TuiSessionInfo } from "./tui-state.js";
+import { turnsToMessages } from "./turns-to-messages.js";
+import type { SessionPickerEntry, TuiSessionInfo } from "./tui-state.js";
 
 interface TuiArgs {
   workingDir: string;
@@ -115,6 +117,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
           });
         },
         onMessageSubmitted: (text) => orchestrator.sendMessage(text),
+        onSessionPickerRequested: () => orchestrator.openSessionPicker(),
+        onSessionSwitchRequested: (id) => orchestrator.switchSession(id),
+        onSessionNewRequested: () => orchestrator.newSession(),
       },
     }),
     { stdout: process.stdout, stderr: process.stderr, exitOnCtrlC: false },
@@ -168,6 +173,67 @@ class ChatOrchestrator {
     this.bus.emit({ type: "session_created", sessionId: this.session.id });
   }
 
+  openSessionPicker(): void {
+    const sessions = this.runtime.sessionStore
+      .listRecent(25)
+      .map((s) => toPickerEntry(s));
+    this.bus.emit({ type: "session_picker_opened", sessions });
+  }
+
+  switchSession(sessionId: string): void {
+    if (this.quitting) return;
+    if (this.currentController) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: "cannot switch sessions while a turn is running — press Ctrl+C first",
+      });
+      return;
+    }
+    const loaded = this.runtime.sessionStore.load(sessionId);
+    if (!loaded) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: `session ${sessionId} not found`,
+      });
+      return;
+    }
+    this.session = loaded;
+    this.queue.length = 0;
+    this.bus.emit({
+      type: "session_switched",
+      sessionId: loaded.id,
+      workingDir: loaded.workingDir,
+      messages: turnsToMessages(loaded.turns),
+    });
+    this.bus.emit({
+      type: "runtime_info",
+      line: `switched to session ${loaded.id} (${loaded.turnCount} turn${loaded.turnCount === 1 ? "" : "s"})`,
+    });
+  }
+
+  newSession(): void {
+    if (this.quitting) return;
+    if (this.currentController) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: "cannot create a new session while a turn is running — press Ctrl+C first",
+      });
+      return;
+    }
+    this.session = this.runtime.createSession();
+    this.queue.length = 0;
+    this.bus.emit({
+      type: "session_switched",
+      sessionId: this.session.id,
+      workingDir: this.session.workingDir,
+      messages: [],
+    });
+    this.bus.emit({
+      type: "runtime_info",
+      line: `new session ${this.session.id} created`,
+    });
+  }
+
   sendMessage(text: string): void {
     if (this.quitting) return;
     if (!this.session) this.start();
@@ -217,4 +283,17 @@ class ChatOrchestrator {
     this.abortCurrentTurn();
     await this.runtime.shutdown();
   }
+}
+
+function toPickerEntry(state: SessionState): SessionPickerEntry {
+  const firstUser = state.turns.find((t) => t.kind === "user");
+  const preview = firstUser && firstUser.kind === "user" ? firstUser.text : "";
+  return {
+    sessionId: state.id,
+    workingDir: state.workingDir,
+    turnCount: state.turnCount,
+    stepCount: state.stepCount,
+    updatedAt: state.updatedAt,
+    preview: preview.length > 0 ? preview : "(empty)",
+  };
 }

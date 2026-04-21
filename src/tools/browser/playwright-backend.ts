@@ -21,6 +21,8 @@ import type {
   BrowserBackend,
   ClickInput,
   NavigateInput,
+  ScrollInput,
+  ScrollResult,
   SearchInput,
   TabInfo,
   TabsInput,
@@ -169,6 +171,51 @@ export class PlaywrightBackend implements BrowserBackend {
     const url = `${base}${encodeURIComponent(input.query)}`;
     await this.navigate({ url });
     return { url };
+  }
+
+  async scroll(input: ScrollInput): Promise<ScrollResult> {
+    const page = await this.requireActivePage();
+    // The body runs in the page, not in Node — we cast `globalThis` to
+    // `any` so tsc (which targets Node libs here) does not demand
+    // `dom` in its lib list just for this closure.
+    const result = await page.evaluate(
+      ({ direction, amount }) => {
+        const w = globalThis as unknown as {
+          innerHeight: number;
+          scrollY: number;
+          scrollTo: (opts: { top: number }) => void;
+          scrollBy: (opts: { top: number }) => void;
+          document: { documentElement: { scrollHeight: number } };
+        };
+        const vh = w.innerHeight || 800;
+        let delta = 0;
+        if (direction === "top") {
+          w.scrollTo({ top: 0 });
+        } else if (direction === "bottom") {
+          w.scrollTo({ top: w.document.documentElement.scrollHeight });
+        } else {
+          if (typeof amount === "number") {
+            delta = amount;
+          } else if (amount === "half") {
+            delta = Math.floor(vh / 2);
+          } else {
+            delta = vh;
+          }
+          if (direction === "up") delta = -delta;
+          w.scrollBy({ top: delta });
+        }
+        return {
+          scrollY: Math.round(w.scrollY),
+          scrollHeight: Math.round(w.document.documentElement.scrollHeight),
+          viewportHeight: vh,
+        };
+      },
+      {
+        direction: input.direction,
+        amount: input.amount ?? "page",
+      },
+    );
+    return result;
   }
 
   async tabs(input: TabsInput): Promise<{ tabs: TabInfo[] }> {

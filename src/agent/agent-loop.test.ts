@@ -199,6 +199,118 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       kind: "assistant_reply",
       text: expect.stringContaining("max_steps"),
     });
+    expect(result.session.status).toBe("stalled");
+    expect(result.session.lastError).toMatch(/max_steps_reached: 2 steps/);
+  });
+
+  it("injects a transient notice into the next prompt when a no-progress loop is detected", async () => {
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: "noop",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    const prompts: string[] = [];
+    const events: Array<{ type: string; tool?: string; count?: number }> = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async ({ prompt }) => {
+        prompts.push(prompt);
+        // Always emit the same tool with the same args → guaranteed loop.
+        return makeCompletion(JSON.stringify({ tool: "noop", args: {} }));
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "loop_detected") {
+          events.push({
+            type: event.type,
+            tool: event.tool,
+            count: event.count,
+          });
+        }
+      },
+    });
+    const session = createEmptySessionState({
+      id: "s-loop",
+      workingDir,
+    });
+    await loop.runTurn(session, {
+      userMessage: "stuck",
+      maxSteps: 5,
+      signal: new AbortController().signal,
+    });
+    // The phrase "### notice" appears in the system persona regardless,
+    // so we detect the notice by its body text which is only present
+    // when the detector fired.
+    const NOTICE_MARK = /same arguments \d+ times in a row/;
+    expect(NOTICE_MARK.test(prompts[0]!)).toBe(false);
+    expect(NOTICE_MARK.test(prompts[1]!)).toBe(false);
+    expect(prompts.some((p) => NOTICE_MARK.test(p))).toBe(true);
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    expect(events[0]?.tool).toBe("noop");
+    expect(events[0]?.count).toBeGreaterThanOrEqual(3);
+  });
+
+  it("does not inject a notice when consecutive steps differ", async () => {
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run(args) {
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: `noop:${(args as { n?: number })?.n ?? 0}`,
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    const prompts: string[] = [];
+    let n = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async ({ prompt }) => {
+        prompts.push(prompt);
+        n += 1;
+        if (n >= 4) {
+          return makeCompletion(
+            JSON.stringify({ tool: "reply", args: { text: "done" } }),
+          );
+        }
+        return makeCompletion(JSON.stringify({ tool: "noop", args: { n } }));
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const session = createEmptySessionState({
+      id: "s-nodiff",
+      workingDir,
+    });
+    await loop.runTurn(session, {
+      userMessage: "varied",
+      maxSteps: 8,
+      signal: new AbortController().signal,
+    });
+    const NOTICE_MARK = /same arguments \d+ times in a row/;
+    expect(prompts.every((p) => !NOTICE_MARK.test(p))).toBe(true);
   });
 
   it("continues the turn when a tool throws and records the error as a tool result", async () => {

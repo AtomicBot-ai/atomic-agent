@@ -17,6 +17,7 @@ import type {
 } from "../prompt/stable-prefix.js";
 import { executeStep } from "./step-executor.js";
 import type { StepEvent } from "./step-executor.js";
+import { LoopDetector, formatRepeatNotice } from "./loop-detector.js";
 import type { AgentMetrics } from "../telemetry/agent-metrics.js";
 import type { StructuredLogger } from "../telemetry/structured-logger.js";
 
@@ -75,6 +76,18 @@ export type AgentLoopEvent =
     }
   | { type: "llm_event"; event: StepEvent }
   | {
+      /**
+       * Fired once per detected no-progress run. Carries the tool name and
+       * the length of the identical-step streak. The runtime will inject a
+       * one-shot notice into the next prompt; UIs can use this event to
+       * flag the turn visually.
+       */
+      type: "loop_detected";
+      tool: string;
+      count: number;
+      stepIndex: number;
+    }
+  | {
       type: "loop_completed";
       reason: AgentLoopReason;
     }
@@ -120,6 +133,11 @@ export class AgentLoop {
     let reason: AgentLoopReason = "max_steps";
     let stepsTaken = 0;
     let runError: Error | null = null;
+    const loopDetector = new LoopDetector();
+    // One-shot notice injected into the NEXT step's prompt only. Cleared
+    // as soon as it is consumed so the stable tail does not carry stale
+    // nudges across steps.
+    let pendingNotice: string | undefined;
 
     state = { ...state, status: "running" };
 
@@ -130,6 +148,8 @@ export class AgentLoop {
       }
       this.deps.onEvent?.({ type: "step_started", stepIndex: i });
       const started = Date.now();
+      const noticeForThisStep = pendingNotice;
+      pendingNotice = undefined;
       try {
         const outcome = await executeStep(
           {
@@ -139,6 +159,9 @@ export class AgentLoop {
             skillCatalog: this.deps.skillCatalog,
             stepIndex: i,
             signal: options.signal,
+            ...(noticeForThisStep !== undefined
+              ? { transientNotice: noticeForThisStep }
+              : {}),
           },
           {
             registry: this.deps.registry,
@@ -179,6 +202,30 @@ export class AgentLoop {
           reason = "reply";
           break;
         }
+        // Feed the detector AFTER terminal checks so `reply`/`finish` never
+        // trigger a hint (those steps legitimately look identical to the
+        // previous tool output).
+        const verdict = loopDetector.observe({
+          tool: outcome.toolCall.tool,
+          args: outcome.toolCall.args,
+          resultSummary: outcome.toolResult.summary,
+          worldDigest: state.worldSnapshot?.digest ?? null,
+        });
+        if (verdict.kind === "repeat") {
+          pendingNotice = formatRepeatNotice(verdict);
+          this.deps.logger?.warn("no-progress loop detected", {
+            sessionId: state.id,
+            stepIndex: i,
+            tool: verdict.tool,
+            count: verdict.count,
+          });
+          this.deps.onEvent?.({
+            type: "loop_detected",
+            tool: verdict.tool,
+            count: verdict.count,
+            stepIndex: i,
+          });
+        }
       } catch (err) {
         runError = err instanceof Error ? err : new Error(String(err));
         this.deps.logger?.error("agent loop failed", {
@@ -209,7 +256,15 @@ export class AgentLoop {
       this.deps.onEvent?.({ type: "llm_event", event: { type: "assistant_reply", text: synthetic } });
       this.deps.onEvent?.({ type: "loop_completed", reason });
       if (state.status !== "completed") {
-        state = { ...state, status: "pending" };
+        // `stalled` (not `pending`) signals to operators that the turn
+        // hit the step budget without a natural close. `lastError`
+        // carries the machine-readable reason plus the observed step
+        // count so post-mortem tooling does not need to replay events.
+        state = {
+          ...state,
+          status: "stalled",
+          lastError: `max_steps_reached: ${stepsTaken} steps without reply`,
+        };
       }
     } else if (reason === "reply") {
       state = { ...state, status: "pending" };

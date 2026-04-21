@@ -261,6 +261,40 @@ describe("buildPrompt", () => {
     );
   });
 
+  it("renders transientNotice in a ### notice section before ### response", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      transientNotice: "you are looping on ref=e175",
+    });
+    expect(prompt.tail).toContain("### notice");
+    expect(prompt.tail).toContain("you are looping on ref=e175");
+    const noticeIdx = prompt.tail.indexOf("### notice");
+    const responseIdx = prompt.tail.indexOf("### response");
+    expect(noticeIdx).toBeGreaterThan(-1);
+    expect(noticeIdx).toBeLessThan(responseIdx);
+  });
+
+  it("does not include transientNotice in the stable prefix", () => {
+    const withNotice = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      transientNotice: "one-shot hint",
+    });
+    const withoutNotice = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(withNotice.stablePrefix).toBe(withoutNotice.stablePrefix);
+    expect(withoutNotice.tail).not.toContain("### notice");
+  });
+
   it("still truncates the session section when facts+skills overflow", () => {
     const bigSkill = "a".repeat(20_000);
     const prompt = buildPrompt({

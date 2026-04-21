@@ -63,6 +63,30 @@ describe("SessionStore", () => {
     expect(list.map((s) => s.id)).toEqual(["b", "a"]);
   });
 
+  it("lists recent sessions across working dirs ordered by updated_at", () => {
+    const a = createEmptySessionState({ id: "a", workingDir: "/w1" });
+    const b = createEmptySessionState({ id: "b", workingDir: "/w2" });
+    const c = createEmptySessionState({ id: "c", workingDir: "/w3" });
+    store.save({ ...a, updatedAt: 1000 });
+    store.save({ ...b, updatedAt: 3000 });
+    store.save({ ...c, updatedAt: 2000 });
+    const recent = store.listRecent(10);
+    expect(recent.map((s) => s.id)).toEqual(["b", "c", "a"]);
+  });
+
+  it("listRecent honours the limit", () => {
+    for (let i = 0; i < 5; i += 1) {
+      store.save({
+        ...createEmptySessionState({ id: `s${i}`, workingDir: "/w" }),
+        updatedAt: 1000 + i,
+      });
+    }
+    const limited = store.listRecent(2);
+    expect(limited).toHaveLength(2);
+    expect(limited[0]?.id).toBe("s4");
+    expect(limited[1]?.id).toBe("s3");
+  });
+
   it("delete removes a session", () => {
     const state = createEmptySessionState({ id: "x", workingDir: "/w" });
     store.save(state);

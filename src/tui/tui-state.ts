@@ -11,8 +11,7 @@ import type { LogRecord } from "../telemetry/structured-logger.js";
  * but stays independent: we cannot rely on the session store fine-grained
  * enough to drive the UI frame-by-frame, the reducer derives these states
  * from the `AgentLoopEvent` stream instead.
- */
-/**
+ *
  * In chat-like mode the loop returns to `idle` after every run so a new
  * goal can be submitted without restarting the process. `completed`,
  * `failed` and `cancelled` describe the **last finished run** that is
@@ -37,7 +36,16 @@ export interface RunHistoryEntry {
   finishedAt: number;
 }
 
-export type TuiTab = "chat" | "feed" | "world" | "reasoning" | "logs";
+/** Debug-pane inner tabs. In chat mode the debug pane is hidden entirely. */
+export type TuiTab = "feed" | "world" | "reasoning" | "logs" | "metrics";
+
+/**
+ * Top-level UI mode: `chat` is the default single-scroll openclaw-style
+ * surface; `debug` swaps the middle pane for a tabbed view of the
+ * historical telemetry panels. Header/status/footer/editor are identical
+ * in both modes so context never jumps.
+ */
+export type TuiUiMode = "chat" | "debug";
 
 export interface ChatMessage {
   id: string;
@@ -45,7 +53,42 @@ export interface ChatMessage {
   text: string;
   /** Number of tool steps the assistant ran inside this turn. */
   toolSteps?: number;
+  /** Tool cards (call + result) attached to this assistant turn. */
+  toolCards?: readonly ToolCardEntry[];
+  /** Reasoning blocks captured during this assistant turn. */
+  reasoningBlocks?: readonly string[];
   timestamp: number;
+}
+
+/**
+ * A finalised tool-call bubble attached to an assistant message. The
+ * reducer assembles these from the paired `tool_call_parsed` +
+ * `tool_call_executed` events as they arrive inside a single run.
+ */
+export interface ToolCardEntry {
+  id: string;
+  stepIndex: number;
+  tool: string;
+  args: Record<string, unknown>;
+  status: "pending" | "ok" | "error";
+  summary: string;
+  truncated: boolean;
+  details?: Record<string, unknown>;
+  startedAt: number;
+  finishedAt: number | null;
+}
+
+/**
+ * Tool call still in flight inside the current running turn. Upgraded to
+ * a `ToolCardEntry` on `tool_call_executed` and then attached to the
+ * finalised assistant `ChatMessage`.
+ */
+export interface StreamingToolCall {
+  id: string;
+  stepIndex: number;
+  tool: string;
+  args: Record<string, unknown>;
+  startedAt: number;
 }
 
 /**
@@ -103,6 +146,22 @@ export interface TuiSessionInfo {
   skillCount: number;
 }
 
+/**
+ * Summary row for the session picker overlay. The TUI does not need the
+ * full `SessionState` — it only displays id, cwd, counters and a short
+ * preview of the first user message so operators can pick the thread
+ * they want to resume.
+ */
+export interface SessionPickerEntry {
+  sessionId: string;
+  workingDir: string;
+  turnCount: number;
+  stepCount: number;
+  updatedAt: number;
+  /** First user message snippet (trimmed) or "(empty)" for blank sessions. */
+  preview: string;
+}
+
 export interface TuiState {
   session: TuiSessionInfo;
   status: TuiStatus;
@@ -115,6 +174,18 @@ export interface TuiState {
   messages: ChatMessage[];
   /** Counts tool steps inside the currently running turn. */
   currentTurnToolSteps: number;
+  /**
+   * Live assistant text for the turn in flight. When the LLM client emits
+   * token deltas we accumulate them here; when none are available the
+   * field stays `null` and the final message appears only on
+   * `assistant_reply`. On turn finalisation the value is moved into
+   * `messages` and reset back to `null`.
+   */
+  streamingAssistantText: string | null;
+  /** Live tool calls for the current assistant turn. */
+  streamingToolCalls: StreamingToolCall[];
+  /** Finalised tool cards collected during the in-flight turn. */
+  streamingToolCards: ToolCardEntry[];
   /** Per-run list of `<think>` blocks. Cleared on `goal_submitted`. */
   reasoning: ReasoningEntry[];
   pendingApproval: ApprovalRequest | null;
@@ -123,13 +194,41 @@ export interface TuiState {
   latestResult: LatestResult | null;
   metrics: RollingMetrics;
   logs: LogRecord[];
+  /** Top-level UI mode (chat vs debug). */
+  uiMode: TuiUiMode;
+  /** Inner tab of the debug pane; ignored in chat mode. */
   activeTab: TuiTab;
   /** Status line text for the last finished run, e.g. "completed: finish". */
   lastRunStatus: string | null;
   /** History of finished runs in chat-mode; newest last. */
   runHistory: RunHistoryEntry[];
-  /** Current value of the goal input field. */
+  /** Current value of the editor buffer (may span multiple lines with `\n`). */
   inputValue: string;
+  /**
+   * Submitted messages in chronological order; used by Up/Down to recall
+   * previous inputs. Capped by `ringBufferSize`.
+   */
+  inputHistory: string[];
+  /**
+   * Cursor into `inputHistory` when navigating. `null` means the editor
+   * shows the live buffer; numbers are indices into `inputHistory` with
+   * the newest entry at the end.
+   */
+  inputHistoryCursor: number | null;
+  /** Is the slash-command overlay currently visible below the editor? */
+  slashPaletteOpen: boolean;
+  /** Current slash prefix (characters typed after the leading `/`). */
+  slashQuery: string;
+  /** Highlighted row in the slash palette. */
+  slashPaletteCursor: number;
+  /** Which tool cards are shown expanded by the user. */
+  toolsExpandedById: Readonly<Record<string, boolean>>;
+  /** Is the session picker overlay visible? */
+  sessionPickerOpen: boolean;
+  /** Entries shown in the picker, newest first. */
+  sessionPickerList: readonly SessionPickerEntry[];
+  /** Highlighted row in the picker. */
+  sessionPickerCursor: number;
   /** User-initiated abort in flight. */
   aborting: boolean;
   /** Max feed/log/history ring-buffer size — protects against runaway memory. */
@@ -160,6 +259,9 @@ export function createInitialTuiState(
     feed: [],
     messages: [],
     currentTurnToolSteps: 0,
+    streamingAssistantText: null,
+    streamingToolCalls: [],
+    streamingToolCards: [],
     reasoning: [],
     pendingApproval: null,
     loadedSkills: [],
@@ -177,10 +279,20 @@ export function createInitialTuiState(
       toolsError: 0,
     },
     logs: [],
-    activeTab: "chat",
+    uiMode: "chat",
+    activeTab: "feed",
     lastRunStatus: null,
     runHistory: [],
     inputValue: "",
+    inputHistory: [],
+    inputHistoryCursor: null,
+    slashPaletteOpen: false,
+    slashQuery: "",
+    slashPaletteCursor: 0,
+    toolsExpandedById: {},
+    sessionPickerOpen: false,
+    sessionPickerList: [],
+    sessionPickerCursor: 0,
     aborting: false,
     ringBufferSize,
   };

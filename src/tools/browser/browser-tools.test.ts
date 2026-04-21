@@ -4,6 +4,8 @@ import type {
   BrowserBackend,
   ClickInput,
   NavigateInput,
+  ScrollInput,
+  ScrollResult,
   SearchInput,
   TabInfo,
   TabsInput,
@@ -14,6 +16,7 @@ import {
   buildBrowserClickTool,
   buildBrowserNavigateTool,
   buildBrowserReadAriaTool,
+  buildBrowserScrollTool,
   buildBrowserSearchTool,
   buildBrowserTabsTool,
   buildBrowserTools,
@@ -39,6 +42,12 @@ class FakeBackend implements BrowserBackend {
   public lastType: TypeInput | null = null;
   public lastSearch: SearchInput | null = null;
   public lastTabs: TabsInput | null = null;
+  public lastScroll: ScrollInput | null = null;
+  public scrollState: ScrollResult = {
+    scrollY: 0,
+    scrollHeight: 2400,
+    viewportHeight: 800,
+  };
   /** Override to simulate a stale DOM (ref no longer present). */
   public liveRefs: Set<string> = new Set(["e1", "e2"]);
 
@@ -108,6 +117,40 @@ class FakeBackend implements BrowserBackend {
         },
       ],
     };
+  }
+
+  async scroll(input: ScrollInput): Promise<ScrollResult> {
+    this.lastScroll = input;
+    const vh = this.scrollState.viewportHeight;
+    let delta = 0;
+    if (input.direction === "top") {
+      this.scrollState = { ...this.scrollState, scrollY: 0 };
+      return this.scrollState;
+    }
+    if (input.direction === "bottom") {
+      this.scrollState = {
+        ...this.scrollState,
+        scrollY: this.scrollState.scrollHeight - vh,
+      };
+      return this.scrollState;
+    }
+    if (typeof input.amount === "number") {
+      delta = input.amount;
+    } else if (input.amount === "half") {
+      delta = Math.floor(vh / 2);
+    } else {
+      delta = vh;
+    }
+    if (input.direction === "up") delta = -delta;
+    const nextY = Math.max(
+      0,
+      Math.min(
+        this.scrollState.scrollHeight - vh,
+        this.scrollState.scrollY + delta,
+      ),
+    );
+    this.scrollState = { ...this.scrollState, scrollY: nextY };
+    return this.scrollState;
   }
 }
 
@@ -289,7 +332,7 @@ describe("browser tools on a fake backend", () => {
     expect(result.summary).toContain("*[0] Example");
   });
 
-  it("buildBrowserTools registers all six tools", () => {
+  it("buildBrowserTools registers all browser tools", () => {
     const registry = new ToolRegistry();
     for (const tool of buildBrowserTools(backend, autoApprove())) {
       registry.register(tool);
@@ -298,10 +341,64 @@ describe("browser tools on a fake backend", () => {
       "browser.click",
       "browser.navigate",
       "browser.read_aria",
+      "browser.scroll",
       "browser.search",
       "browser.tabs",
       "browser.type",
     ]);
+  });
+
+  it("scroll forwards the direction and default amount=page", async () => {
+    const tool = buildBrowserScrollTool(backend);
+    const result = await tool.run({ direction: "down" }, CTX);
+    expect(result.status).toBe("ok");
+    expect(backend.lastScroll?.direction).toBe("down");
+    expect(result.summary).toContain("scrolled down");
+    expect(result.details.direction).toBe("down");
+    expect(result.details.scrollY).toBe(800);
+  });
+
+  it("scroll accepts `half` and numeric amounts", async () => {
+    const tool = buildBrowserScrollTool(backend);
+    const halfResult = await tool.run(
+      { direction: "down", amount: "half" },
+      CTX,
+    );
+    expect(halfResult.details.amount).toBe("half");
+    const pxResult = await tool.run({ direction: "down", amount: 200 }, CTX);
+    expect(pxResult.details.amount).toBe(200);
+  });
+
+  it("scroll to top resets position", async () => {
+    backend.scrollState = { scrollY: 1500, scrollHeight: 3000, viewportHeight: 800 };
+    const tool = buildBrowserScrollTool(backend);
+    const result = await tool.run({ direction: "top" }, CTX);
+    expect(result.details.scrollY).toBe(0);
+  });
+
+  it("scroll rejects invalid direction", async () => {
+    const tool = buildBrowserScrollTool(backend);
+    await expect(tool.run({ direction: "sideways" }, CTX)).rejects.toThrow(
+      /direction/,
+    );
+  });
+
+  it("scroll rejects invalid amount type", async () => {
+    const tool = buildBrowserScrollTool(backend);
+    await expect(
+      tool.run({ direction: "down", amount: "lots" }, CTX),
+    ).rejects.toThrow(/amount/);
+  });
+
+  it("scroll summary reports remaining content below", async () => {
+    backend.scrollState = {
+      scrollY: 0,
+      scrollHeight: 3000,
+      viewportHeight: 800,
+    };
+    const tool = buildBrowserScrollTool(backend);
+    const result = await tool.run({ direction: "down" }, CTX);
+    expect(result.summary).toContain("remaining below");
   });
 });
 

@@ -1,7 +1,7 @@
 root ::= tool-call
 tool-call ::= "{" ws "\"tool\"" ws ":" ws tool-name ws "," ws "\"args\"" ws ":" ws object ws "}"
 tool-name ::= browser-tool | os-tool | skill-tool | "\"reply\"" | "\"finish\""
-browser-tool ::= "\"browser." ( "navigate" | "click" | "type" | "read_aria" | "search" | "tabs" ) "\""
+browser-tool ::= "\"browser." ( "navigate" | "click" | "type" | "read_aria" | "search" | "tabs" | "scroll" ) "\""
 os-tool ::= "\"os." ( "shell.run" | "fs.read" | "fs.write" | "fs.list" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" ) "\""
 skill-tool ::= "\"skill." ( "view" | "run_script" ) "\""
 

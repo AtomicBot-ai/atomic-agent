@@ -32,6 +32,7 @@ export class SessionStore {
   private readonly updateStmt: Database.Statement;
   private readonly selectStmt: Database.Statement;
   private readonly listByWorkingDirStmt: Database.Statement;
+  private readonly listRecentStmt: Database.Statement;
   private readonly deleteStmt: Database.Statement;
 
   constructor(options: SessionStoreOptions = {}) {
@@ -58,6 +59,9 @@ export class SessionStore {
     this.listByWorkingDirStmt = this.db.prepare(
       `SELECT payload FROM sessions WHERE working_dir = ? ORDER BY updated_at DESC LIMIT ?`,
     );
+    this.listRecentStmt = this.db.prepare(
+      `SELECT payload FROM sessions ORDER BY updated_at DESC LIMIT ?`,
+    );
     this.deleteStmt = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
   }
 
@@ -81,6 +85,16 @@ export class SessionStore {
     const rows = this.listByWorkingDirStmt.all(workingDir, limit) as Array<{
       payload: string;
     }>;
+    return rows.map((row) => JSON.parse(row.payload) as SessionState);
+  }
+
+  /**
+   * Return the most recently updated sessions across all working dirs.
+   * Used by the TUI session picker so the operator can jump between
+   * ongoing threads from any project root.
+   */
+  listRecent(limit = 25): SessionState[] {
+    const rows = this.listRecentStmt.all(limit) as Array<{ payload: string }>;
     return rows.map((row) => JSON.parse(row.payload) as SessionState);
   }
 

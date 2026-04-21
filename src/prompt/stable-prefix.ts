@@ -53,6 +53,13 @@ export const DEFAULT_SYSTEM_PERSONA = [
   "- Prefer high-level browser actions over low-level clicks.",
   "- When a skill catalog entry matches the user's intent, call `skill.view` first, then follow the skill playbook.",
   "- Do not invent facts: if unsure, ask the user through `reply` or read the world with a tool.",
+  "",
+  "Browser hygiene:",
+  "- Before clicking, READ `### world` in full. Many pages already contain the answer inline (READMEs, articles, search results) — no click needed.",
+  "- An element tagged `[expanded]` in the ARIA snapshot is ALREADY open. Clicking it again toggles it closed. Do not click the same `ref` twice unless the world `digest` changed between reads.",
+  "- When you need the raw text of a file on a known host (GitHub, GitLab, raw docs), prefer `browser.navigate` to the raw URL (e.g. `https://raw.githubusercontent.com/<owner>/<repo>/<branch>/README.md`) over clicking through the UI.",
+  "- If the content you need is below the fold, use `browser.scroll`. `browser.read_aria` captures the full DOM but the rendered snapshot may be truncated for budget.",
+  "- If a `### notice` section appears in the prompt, treat it as a hard instruction — the runtime detected a problem with your last steps and you must change strategy before calling any tool again.",
 ].join("\n");
 
 export function buildStablePrefix(input: StablePrefixInput): string {

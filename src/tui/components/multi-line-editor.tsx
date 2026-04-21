@@ -1,0 +1,249 @@
+import { Box, useInput, type Key } from "ink";
+import { useCallback, useEffect, useMemo, useRef, type ReactElement } from "react";
+import { theme } from "../theme/theme.js";
+import { EditorBody } from "./multi-line-editor-body.js";
+import {
+  cursorToRowCol,
+  findWordStart,
+  isOnFirstLine,
+  isOnLastLine,
+  lineEnd,
+  lineStart,
+  rowColToCursor,
+} from "./multi-line-editor-cursor.js";
+
+export interface MultiLineEditorProps {
+  value: string;
+  placeholder?: string;
+  focus: boolean;
+  /** Disable interaction (reject keys silently) — keeps focus state intact. */
+  disabled?: boolean;
+  onChange: (value: string) => void;
+  onSubmit: (value: string) => void;
+  /** Esc pressed while editor has focus. */
+  onEscape?: () => void;
+  /** Up arrow pressed while the cursor is on the first line. */
+  onHistoryPrev?: () => void;
+  /** Down arrow pressed while the cursor is on the last line. */
+  onHistoryNext?: () => void;
+  /** Tab pressed — parent may use this to accept a slash completion. */
+  onTab?: () => void;
+}
+
+/**
+ * Buffer-backed multi-line text editor for Ink. The external `value`
+ * drives the buffer and a local cursor offset tracks where edits happen;
+ * the parent owns history/slash state and is notified via `onChange`.
+ *
+ * Key handling:
+ *   - Enter submits the trimmed buffer (and emits empty-submit as no-op)
+ *   - Alt/Meta+Enter or Ctrl+J insert a newline
+ *   - Backslash at end-of-line before Enter also forces a newline
+ *   - Up/Down trigger `onHistoryPrev` / `onHistoryNext` when the cursor
+ *     is at the top/bottom of the buffer
+ *   - Large pastes (any input burst with an embedded newline) insert
+ *     verbatim — bracketed paste is already unwrapped by the terminal
+ */
+export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
+  const {
+    value,
+    placeholder,
+    focus,
+    disabled = false,
+    onChange,
+    onSubmit,
+    onEscape,
+    onHistoryPrev,
+    onHistoryNext,
+    onTab,
+  } = props;
+  const cursorRef = useRef<number>(value.length);
+  const lastValueRef = useRef<string>(value);
+  if (lastValueRef.current !== value) {
+    cursorRef.current = Math.min(cursorRef.current, value.length);
+    lastValueRef.current = value;
+  }
+  useEffect(() => {
+    cursorRef.current = Math.min(cursorRef.current, value.length);
+  }, [value]);
+
+  const setBuffer = useCallback(
+    (next: string, cursor: number) => {
+      cursorRef.current = Math.max(0, Math.min(cursor, next.length));
+      lastValueRef.current = next;
+      onChange(next);
+    },
+    [onChange],
+  );
+
+  useInput(
+    (input, key) => {
+      if (disabled) return;
+      handleKey({
+        input,
+        key,
+        value,
+        cursor: cursorRef.current,
+        setBuffer,
+        onSubmit,
+        onEscape,
+        onTab,
+        onHistoryPrev,
+        onHistoryNext,
+      });
+    },
+    { isActive: focus && !disabled },
+  );
+
+  const cursor = useMemo(
+    () => cursorToRowCol(value, cursorRef.current),
+    [value],
+  );
+  return (
+    <Box
+      borderStyle="round"
+      borderColor={focus && !disabled ? theme.colors.accent : theme.colors.border}
+      paddingX={1}
+      flexDirection="column"
+    >
+      <EditorBody value={value} cursor={cursor} placeholder={placeholder ?? ""} focus={focus && !disabled} />
+    </Box>
+  );
+}
+
+interface KeyContext {
+  input: string;
+  key: Key;
+  value: string;
+  cursor: number;
+  setBuffer: (next: string, cursor: number) => void;
+  onSubmit: (value: string) => void;
+  onEscape?: () => void;
+  onTab?: () => void;
+  onHistoryPrev?: () => void;
+  onHistoryNext?: () => void;
+}
+
+function handleKey(ctx: KeyContext): void {
+  const { input, key, value, cursor, setBuffer } = ctx;
+  // Ignore keys owned by the global app-level handler so the editor
+  // never inserts Ctrl+C as "c" or swallows F-key escape sequences.
+  if (isGlobalHotkey(input, key)) return;
+  if (key.escape) {
+    ctx.onEscape?.();
+    return;
+  }
+  if (key.tab && !key.shift) {
+    ctx.onTab?.();
+    return;
+  }
+  if (key.return) {
+    const newline = key.meta || key.shift || key.ctrl;
+    const trailingBackslash = value.endsWith("\\") && cursor === value.length;
+    if (newline) {
+      insertText(ctx, "\n");
+      return;
+    }
+    if (trailingBackslash) {
+      const withoutSlash = value.slice(0, -1);
+      setBuffer(`${withoutSlash}\n`, withoutSlash.length + 1);
+      return;
+    }
+    ctx.onSubmit(value);
+    return;
+  }
+  if (key.upArrow) {
+    if (isOnFirstLine(value, cursor)) {
+      ctx.onHistoryPrev?.();
+      return;
+    }
+    moveCursorVertically(ctx, -1);
+    return;
+  }
+  if (key.downArrow) {
+    if (isOnLastLine(value, cursor)) {
+      ctx.onHistoryNext?.();
+      return;
+    }
+    moveCursorVertically(ctx, 1);
+    return;
+  }
+  if (key.leftArrow) {
+    setBuffer(value, Math.max(0, cursor - 1));
+    return;
+  }
+  if (key.rightArrow) {
+    setBuffer(value, Math.min(value.length, cursor + 1));
+    return;
+  }
+  if (key.backspace || key.delete) {
+    if (key.delete && !key.backspace) {
+      // Forward delete
+      if (cursor < value.length) {
+        const next = value.slice(0, cursor) + value.slice(cursor + 1);
+        setBuffer(next, cursor);
+      }
+      return;
+    }
+    if (cursor > 0) {
+      const next = value.slice(0, cursor - 1) + value.slice(cursor);
+      setBuffer(next, cursor - 1);
+    }
+    return;
+  }
+  if (key.ctrl && input === "a") {
+    setBuffer(value, lineStart(value, cursor));
+    return;
+  }
+  if (key.ctrl && input === "e") {
+    setBuffer(value, lineEnd(value, cursor));
+    return;
+  }
+  if (key.ctrl && input === "u") {
+    const start = lineStart(value, cursor);
+    setBuffer(value.slice(0, start) + value.slice(cursor), start);
+    return;
+  }
+  if (key.ctrl && input === "k") {
+    const end = lineEnd(value, cursor);
+    setBuffer(value.slice(0, cursor) + value.slice(end), cursor);
+    return;
+  }
+  if (key.ctrl && input === "w") {
+    const wordStart = findWordStart(value, cursor);
+    setBuffer(value.slice(0, wordStart) + value.slice(cursor), wordStart);
+    return;
+  }
+  // Drop any other modifier chord (Ctrl+<letter>, Meta+<letter>) so the
+  // editor does not insert it as literal text.
+  if (key.ctrl || key.meta) return;
+  if (input.length === 0) return;
+  if (input.charCodeAt(0) < 0x20 && input !== "\n" && input !== "\t") return;
+  insertText(ctx, input);
+}
+
+function isGlobalHotkey(input: string, key: Key): boolean {
+  if (key.ctrl && (input === "c" || input === "o")) return true;
+  // F-keys and other multi-byte escape sequences we don't handle locally.
+  if (input.startsWith("\u001b") && input.length > 1) return true;
+  return false;
+}
+
+function insertText(ctx: KeyContext, text: string): void {
+  const { value, cursor, setBuffer } = ctx;
+  const next = value.slice(0, cursor) + text + value.slice(cursor);
+  setBuffer(next, cursor + text.length);
+}
+
+function moveCursorVertically(ctx: KeyContext, direction: -1 | 1): void {
+  const { value, cursor, setBuffer } = ctx;
+  const { row, col } = cursorToRowCol(value, cursor);
+  const lines = value.split("\n");
+  const nextRow = row + direction;
+  if (nextRow < 0 || nextRow >= lines.length) return;
+  const nextLine = lines[nextRow] ?? "";
+  const nextCol = Math.min(col, nextLine.length);
+  const nextOffset = rowColToCursor(lines, nextRow, nextCol);
+  setBuffer(value, nextOffset);
+}
+

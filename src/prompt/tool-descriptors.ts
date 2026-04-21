@@ -41,6 +41,13 @@ export const DEFAULT_TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
       '{"action": "list|switch|close|new", "index": "number (optional)", "url": "string (optional)"}',
   },
   {
+    name: "browser.scroll",
+    summary:
+      "Scroll the active page up/down/top/bottom. Does not refresh ARIA; call browser.read_aria after to observe new content.",
+    argsSchema:
+      '{"direction": "up|down|top|bottom", "amount": "page|half|number (optional)"}',
+  },
+  {
     name: "os.shell.run",
     summary: "Run an OS command in the working directory (requires approval).",
     argsSchema:

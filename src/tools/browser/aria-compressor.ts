@@ -8,9 +8,13 @@ export interface AriaSnapshotSummary {
 
 export interface AriaCompressionOptions {
   /**
-   * Hard cap applied AFTER noise removal. Default 300 keeps the typical
-   * DDG/GitHub/Amazon page fully readable while still bounding a
-   * pathological tree.
+   * Hard cap applied AFTER noise removal. Default 800 gives modern
+   * content-heavy pages (GitHub repo view with a long README, Amazon
+   * product pages, docs sites) enough room to retain the actual body
+   * text after noise removal, while still bounding a pathological tree.
+   * The previous 300-line cap was measured to truncate GitHub READMEs
+   * before the model ever saw them, which drove "click Code again"
+   * failure modes.
    */
   maxLines?: number;
   /**
@@ -96,7 +100,7 @@ export function summariseAriaSnapshot(
   meta: { url: string; title: string },
   options: AriaCompressionOptions = {},
 ): AriaSnapshotSummary {
-  const maxLines = options.maxLines ?? 300;
+  const maxLines = options.maxLines ?? 800;
   const dropNoise = options.dropNoise ?? true;
 
   const rawLines = rawText.split(/\r?\n/);
@@ -116,6 +120,9 @@ export function summariseAriaSnapshot(
   const truncatedByLimit = kept.length > maxLines;
   const finalLines = truncatedByLimit ? kept.slice(0, maxLines) : kept;
   const omittedByLimit = kept.length - finalLines.length;
+  const omittedChars = truncatedByLimit
+    ? kept.slice(maxLines).reduce((sum, line) => sum + line.length + 1, 0)
+    : 0;
 
   const body = finalLines.join("\n");
   const footerParts: string[] = [];
@@ -126,7 +133,7 @@ export function summariseAriaSnapshot(
   }
   if (truncatedByLimit) {
     footerParts.push(
-      `… [truncated ARIA tree; ${omittedByLimit} lines omitted]`,
+      `… [truncated ARIA tree; ${omittedByLimit} lines / ~${omittedChars} chars omitted — scroll or navigate to see more]`,
     );
   }
   const footer = footerParts.length > 0 ? `\n${footerParts.join("\n")}` : "";

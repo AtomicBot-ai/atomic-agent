@@ -21,6 +21,12 @@ export interface BuildPromptInput {
   skillCatalog: readonly SkillCatalogEntry[];
   systemPersona?: string;
   tokenBudget?: number;
+  /**
+   * One-shot message injected into the variable tail as a `### notice`
+   * section. Used by the loop detector to nudge the model out of
+   * no-progress loops without invalidating the stable prefix.
+   */
+  transientNotice?: string;
 }
 
 export interface BuiltPrompt {
@@ -74,7 +80,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
 
   const session = truncateToTokens(sessionSection, limits.session);
 
-  const tail = [
+  const tailParts: string[] = [
     `### session`,
     session,
     ``,
@@ -84,9 +90,15 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     `### conversation`,
     conversation,
     ``,
+  ];
+  if (input.transientNotice && input.transientNotice.length > 0) {
+    tailParts.push(`### notice`, input.transientNotice, ``);
+  }
+  tailParts.push(
     `### response`,
     `Emit one JSON tool call now. Use \`reply\` for natural-language answers to the user.`,
-  ].join("\n");
+  );
+  const tail = tailParts.join("\n");
 
   const text = `${stablePrefix}\n${tail}`;
 

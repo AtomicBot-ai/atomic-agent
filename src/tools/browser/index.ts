@@ -7,12 +7,16 @@ import { buildBrowserTypeTool } from "./type.js";
 import { buildBrowserReadAriaTool } from "./read-aria.js";
 import { buildBrowserSearchTool } from "./search.js";
 import { buildBrowserTabsTool } from "./tabs.js";
+import { buildBrowserScrollTool } from "./scroll.js";
 
 export type {
   AriaSnapshot,
   BrowserBackend,
   ClickInput,
   NavigateInput,
+  ScrollDirection,
+  ScrollInput,
+  ScrollResult,
   SearchInput,
   TabInfo,
   TabsInput,
@@ -49,6 +53,7 @@ export { buildBrowserTypeTool } from "./type.js";
 export { buildBrowserReadAriaTool } from "./read-aria.js";
 export { buildBrowserSearchTool } from "./search.js";
 export { buildBrowserTabsTool } from "./tabs.js";
+export { buildBrowserScrollTool } from "./scroll.js";
 
 /**
  * Build the complete set of browser tools for the registry. The caller is
@@ -66,5 +71,6 @@ export function buildBrowserTools(
     buildBrowserReadAriaTool(backend),
     buildBrowserSearchTool(backend),
     buildBrowserTabsTool(backend),
+    buildBrowserScrollTool(backend),
   ];
 }

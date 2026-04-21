@@ -11,6 +11,8 @@ import type {
   BrowserBackend,
   ClickInput,
   NavigateInput,
+  ScrollInput,
+  ScrollResult,
   SearchInput,
   TabInfo,
   TabsInput,
@@ -59,6 +61,9 @@ export class FakeBrowserBackend implements BrowserBackend {
   }
   async tabs(_input: TabsInput): Promise<{ tabs: TabInfo[] }> {
     return { tabs: [] };
+  }
+  async scroll(_input: ScrollInput): Promise<ScrollResult> {
+    return { scrollY: 0, scrollHeight: 0, viewportHeight: 800 };
   }
 }
 

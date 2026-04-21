@@ -56,6 +56,27 @@ export interface SearchInput {
   engine?: "google" | "duckduckgo" | "bing";
 }
 
+export type ScrollDirection = "up" | "down" | "top" | "bottom";
+
+export interface ScrollInput {
+  direction: ScrollDirection;
+  /**
+   * `"page"` (default) scrolls by a full viewport, `"half"` by half of
+   * one. A numeric value is interpreted as raw pixels, positive = down,
+   * ignored for `"top"`/`"bottom"`.
+   */
+  amount?: "page" | "half" | number;
+}
+
+export interface ScrollResult {
+  /** Scroll position after the action, in CSS pixels from the top. */
+  scrollY: number;
+  /** Document scroll height for context (how much more is below). */
+  scrollHeight: number;
+  /** Viewport inner height used for page/half amounts. */
+  viewportHeight: number;
+}
+
 export interface BrowserBackend {
   /** Lazy init; must be safe to call multiple times. */
   ensureReady(): Promise<void>;
@@ -78,4 +99,10 @@ export interface BrowserBackend {
   type(input: TypeInput): Promise<{ typedLength: number }>;
   search(input: SearchInput): Promise<{ url: string }>;
   tabs(input: TabsInput): Promise<{ tabs: TabInfo[] }>;
+  /**
+   * Scroll the active page. Does NOT automatically take a new ARIA
+   * snapshot — the caller decides whether the next action requires a
+   * fresh world read. This keeps the "one step, one effect" invariant.
+   */
+  scroll(input: ScrollInput): Promise<ScrollResult>;
 }
