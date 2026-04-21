@@ -126,6 +126,11 @@ export function loadConfig(): AtomicAgentConfig {
         ENV_DEFAULTS.BROWSER_HEADLESS,
       ),
       cdpUrl: readEnv("ATOMIC_AGENT_BROWSER_CDP_URL") ?? null,
+      executablePath: readEnv("ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH") ?? null,
+      noSandbox: readBool(
+        "ATOMIC_AGENT_BROWSER_NO_SANDBOX",
+        ENV_DEFAULTS.BROWSER_NO_SANDBOX,
+      ),
       launchTimeoutMs: readInt(
         "ATOMIC_AGENT_BROWSER_LAUNCH_TIMEOUT_MS",
         ENV_DEFAULTS.BROWSER_LAUNCH_TIMEOUT_MS,

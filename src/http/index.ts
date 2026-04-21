@@ -26,6 +26,7 @@ export { deriveChatSessionId } from "./openai-session-id.js";
 export {
   SESSION_ID_HEADER,
   COMPLETION_ID_HEADER,
+  EXTENSIONS_HEADER,
   createChatCompletionsHandler,
 } from "./openai-chat-completions.js";
 

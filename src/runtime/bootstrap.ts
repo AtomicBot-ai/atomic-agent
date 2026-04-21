@@ -165,7 +165,9 @@ export async function createAgentRuntime(
     new PlaywrightBackend({
       userDataDir: config.paths.browserProfileDir,
       channel: config.browser.channel,
+      executablePath: config.browser.executablePath,
       headless: config.browser.headless,
+      noSandbox: config.browser.noSandbox,
       launchTimeoutMs: config.browser.launchTimeoutMs,
       cdpUrl: config.browser.cdpUrl,
     });

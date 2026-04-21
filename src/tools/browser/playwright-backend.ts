@@ -1,9 +1,21 @@
-import { mkdir } from "node:fs/promises";
+import type { ChildProcess } from "node:child_process";
 import type {
   BrowserContext as PwBrowserContext,
   Page,
 } from "playwright-core";
+import type { BrowserChannel } from "../../config/index.js";
 import { summariseAriaSnapshot } from "./aria-compressor.js";
+import { buildChromeLaunchArgs } from "./build-chrome-launch-args.js";
+import {
+  decorateChromeProfile,
+  markChromeProfileCleanExit,
+} from "./decorate-chrome-profile.js";
+import { findChromeExecutable } from "./find-chrome-executable.js";
+import {
+  pickAvailableLoopbackPort,
+  spawnChrome,
+  stopChrome,
+} from "./spawn-chrome.js";
 import type {
   AriaSnapshot,
   BrowserBackend,
@@ -18,12 +30,17 @@ import type {
 export interface PlaywrightBackendOptions {
   /** Profile directory to persist cookies/logins across runs. */
   userDataDir: string;
-  /** `chrome`, `msedge`, or `chromium`. */
-  channel: "chrome" | "msedge" | "chromium";
+  /** Preferred browser family when auto-detecting the executable. */
+  channel: BrowserChannel;
+  /** Explicit path to a Chromium-family binary; overrides auto-detection. */
+  executablePath?: string | null;
   headless: boolean;
+  /** Overall budget for "spawn + CDP becomes reachable". */
   launchTimeoutMs: number;
   /** When set, attach to a running browser via CDP instead of launching. */
   cdpUrl?: string | null;
+  /** Pass `--no-sandbox`; required in some containerised environments. */
+  noSandbox?: boolean;
 }
 
 const SEARCH_URLS: Record<NonNullable<SearchInput["engine"]>, string> = {
@@ -33,13 +50,20 @@ const SEARCH_URLS: Record<NonNullable<SearchInput["engine"]>, string> = {
 };
 
 /**
- * Playwright-backed implementation. We keep it lazy: the first tool call
- * triggers `ensureReady()`, which either connects to a running browser via
- * CDP or launches a persistent context over the user's installed
- * Chrome/Edge. We deliberately avoid downloading any browser binaries.
+ * Playwright-backed implementation with "openclaw-style" stealth: we
+ * spawn the system Chrome ourselves with a minimal flag set (no
+ * `--enable-automation`, no Playwright launcher tweaks) and then attach
+ * via `connectOverCDP`. This keeps all high-level Playwright APIs
+ * (aria snapshots, locators, etc.) while hiding the automation
+ * signature that sites like Cloudflare and DataDome key off of.
+ *
+ * When the caller provides `cdpUrl`, we simply attach — we never touch
+ * a user-managed browser process.
  */
 export class PlaywrightBackend implements BrowserBackend {
   private context: PwBrowserContext | null = null;
+  private spawnedProc: ChildProcess | null = null;
+  private spawnedUserDataDir: string | null = null;
   private ready: Promise<void> | null = null;
 
   constructor(private readonly options: PlaywrightBackendOptions) {}
@@ -53,8 +77,26 @@ export class PlaywrightBackend implements BrowserBackend {
 
   async shutdown(): Promise<void> {
     if (this.context) {
+      const browser = this.context.browser();
       await this.context.close().catch(() => undefined);
+      // `connectOverCDP` produces a `Browser` handle separate from the
+      // context; close it too so Playwright tears down its CDP session.
+      if (browser) {
+        await browser.close().catch(() => undefined);
+      }
       this.context = null;
+    }
+    if (this.spawnedProc) {
+      if (this.spawnedUserDataDir) {
+        try {
+          markChromeProfileCleanExit(this.spawnedUserDataDir);
+        } catch {
+          // non-fatal: next launch will just show a crash bubble once
+        }
+      }
+      await stopChrome(this.spawnedProc).catch(() => undefined);
+      this.spawnedProc = null;
+      this.spawnedUserDataDir = null;
     }
     this.ready = null;
   }
@@ -179,24 +221,49 @@ export class PlaywrightBackend implements BrowserBackend {
 
   private async initialise(): Promise<void> {
     const playwright = await import("playwright-core");
-    if (this.options.cdpUrl) {
-      const browser = await playwright.chromium.connectOverCDP(
-        this.options.cdpUrl,
-        { timeout: this.options.launchTimeoutMs },
+    const cdpUrl = this.options.cdpUrl ?? (await this.launchOwnChrome());
+    const browser = await playwright.chromium.connectOverCDP(cdpUrl, {
+      timeout: this.options.launchTimeoutMs,
+    });
+    const contexts = browser.contexts();
+    this.context = contexts[0] ?? (await browser.newContext());
+  }
+
+  /**
+   * Spawn a bare-metal Chrome process with clean flags and wait until
+   * its CDP endpoint is reachable. Does NOT connect Playwright — the
+   * caller does that step so the same code path serves both
+   * "spawn + attach" and "attach to user's browser" modes.
+   */
+  private async launchOwnChrome(): Promise<string> {
+    const executable = findChromeExecutable({
+      executablePath: this.options.executablePath ?? null,
+      channel: this.options.channel,
+    });
+    if (!executable) {
+      throw new Error(
+        "Could not find a Chromium-family browser (Chrome, Edge, Brave, or Chromium). " +
+          "Install one, or set ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH to the binary path.",
       );
-      const contexts = browser.contexts();
-      this.context = contexts[0] ?? (await browser.newContext());
-      return;
     }
-    await mkdir(this.options.userDataDir, { recursive: true });
-    this.context = await playwright.chromium.launchPersistentContext(
-      this.options.userDataDir,
-      {
-        channel: this.options.channel,
-        headless: this.options.headless,
-        timeout: this.options.launchTimeoutMs,
-      },
-    );
+    decorateChromeProfile(this.options.userDataDir);
+    const cdpPort = await pickAvailableLoopbackPort();
+    const args = buildChromeLaunchArgs({
+      cdpPort,
+      userDataDir: this.options.userDataDir,
+      headless: this.options.headless,
+      noSandbox: this.options.noSandbox ?? false,
+    });
+    const running = await spawnChrome({
+      executablePath: executable.path,
+      args,
+      cdpPort,
+      userDataDir: this.options.userDataDir,
+      readinessTimeoutMs: this.options.launchTimeoutMs,
+    });
+    this.spawnedProc = running.proc;
+    this.spawnedUserDataDir = this.options.userDataDir;
+    return running.cdpUrl;
   }
 
   private async requireContext(): Promise<PwBrowserContext> {

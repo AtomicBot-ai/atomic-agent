@@ -4,6 +4,7 @@ import type { CompletionResult } from "../llm/llama-server-client.js";
 
 import { deriveChatSessionId } from "./openai-session-id.js";
 import {
+  EXTENSIONS_HEADER,
   SESSION_ID_HEADER,
 } from "./openai-chat-completions.js";
 import { startTestHarness, type Harness } from "./test-harness.js";
@@ -151,27 +152,59 @@ describe("POST /v1/chat/completions auth", () => {
 });
 
 describe("POST /v1/chat/completions (streaming)", () => {
-  it("emits tool_progress events then a content chunk then [DONE]", async () => {
+  function scriptedToolThenReply() {
     const content = [
       JSON.stringify({ tool: "browser.read_aria", args: {} }),
       JSON.stringify({ tool: "reply", args: { text: "after one tool" } }),
     ];
     const queue = [...content];
+    return async () => ({
+      content: queue.shift() ?? "{}",
+      stop: true,
+      truncated: false,
+      timing: {
+        promptMs: 0,
+        predictedMs: 0,
+        promptTokens: 1,
+        predictedTokens: 1,
+      },
+      cacheHitTokens: 0,
+      slotId: 0,
+      modelId: null,
+    });
+  }
+
+  it("emits tool_progress events then a content chunk then [DONE] when extensions opt-in", async () => {
     const harness = await startTestHarness({
-      llamaComplete: async () => ({
-        content: queue.shift() ?? "{}",
-        stop: true,
-        truncated: false,
-        timing: {
-          promptMs: 0,
-          predictedMs: 0,
-          promptTokens: 1,
-          predictedTokens: 1,
+      llamaComplete: scriptedToolThenReply(),
+    });
+    try {
+      const response = await postChat(
+        harness.baseUrl,
+        {
+          model: "atomic-agent",
+          stream: true,
+          messages: [{ role: "user", content: "inspect the page" }],
         },
-        cacheHitTokens: 0,
-        slotId: 0,
-        modelId: null,
-      }),
+        { [EXTENSIONS_HEADER]: "1" },
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toMatch(/event-stream/);
+      const text = await readAllText(response);
+      expect(text).toMatch(/event: session_id\n/);
+      expect(text).toMatch(/event: tool_progress\n/);
+      expect(text).toMatch(/"tool":"browser\.read_aria"/);
+      expect(text).toMatch(/"content":"after one tool"/);
+      expect(text).toMatch(/event: usage\n/);
+      expect(text).toMatch(/data: \[DONE\]/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("omits atomic-agent SSE extensions by default so OpenAI clients validate cleanly", async () => {
+    const harness = await startTestHarness({
+      llamaComplete: scriptedToolThenReply(),
     });
     try {
       const response = await postChat(harness.baseUrl, {
@@ -180,12 +213,63 @@ describe("POST /v1/chat/completions (streaming)", () => {
         messages: [{ role: "user", content: "inspect the page" }],
       });
       expect(response.status).toBe(200);
-      expect(response.headers.get("content-type")).toMatch(/event-stream/);
       const text = await readAllText(response);
-      expect(text).toMatch(/event: tool_progress\n/);
-      expect(text).toMatch(/"tool":"browser\.read_aria"/);
+      expect(text).not.toMatch(/event: session_id\n/);
+      expect(text).not.toMatch(/event: tool_progress\n/);
+      expect(text).not.toMatch(/event: usage\n/);
+      expect(text).not.toMatch(/chat\.completion\.session/);
       expect(text).toMatch(/"content":"after one tool"/);
-      expect(text).toMatch(/event: usage\n/);
+      expect(text).toMatch(/data: \[DONE\]/);
+      expect(response.headers.get(SESSION_ID_HEADER.toLowerCase())).toMatch(/^api-/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("emits errors as a canonical OpenAI envelope when extensions are off", async () => {
+    const harness = await startTestHarness({
+      llamaComplete: async () => {
+        throw new Error("llama backend exploded");
+      },
+    });
+    try {
+      const response = await postChat(harness.baseUrl, {
+        model: "atomic-agent",
+        stream: true,
+        messages: [{ role: "user", content: "hi" }],
+      });
+      expect(response.status).toBe(200);
+      const text = await readAllText(response);
+      expect(text).not.toMatch(/event: error\n/);
+      expect(text).toMatch(/data: \{"error":\{/);
+      expect(text).toMatch(/"message":"[^"]*llama backend exploded/);
+      expect(text).toMatch(/"type":"server_error"/);
+      expect(text).toMatch(/data: \[DONE\]/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("keeps the legacy named error event when extensions are opted in", async () => {
+    const harness = await startTestHarness({
+      llamaComplete: async () => {
+        throw new Error("llama backend exploded");
+      },
+    });
+    try {
+      const response = await postChat(
+        harness.baseUrl,
+        {
+          model: "atomic-agent",
+          stream: true,
+          messages: [{ role: "user", content: "hi" }],
+        },
+        { [EXTENSIONS_HEADER]: "1" },
+      );
+      expect(response.status).toBe(200);
+      const text = await readAllText(response);
+      expect(text).toMatch(/event: error\n/);
+      expect(text).toMatch(/"error":"[^"]*llama backend exploded/);
       expect(text).toMatch(/data: \[DONE\]/);
     } finally {
       await harness.cleanup();

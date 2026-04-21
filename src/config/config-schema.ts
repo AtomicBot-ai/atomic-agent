@@ -40,6 +40,8 @@ export interface AtomicAgentConfig {
     channel: BrowserChannel;
     headless: boolean;
     cdpUrl: string | null;
+    executablePath: string | null;
+    noSandbox: boolean;
     launchTimeoutMs: number;
   };
   skills: {
@@ -92,6 +94,7 @@ export const ENV_DEFAULTS = {
   STABLE_PREFIX_SALT: "atomic-agent-v1",
   BROWSER_CHANNEL: "chrome" as BrowserChannel,
   BROWSER_HEADLESS: false,
+  BROWSER_NO_SANDBOX: false,
   BROWSER_LAUNCH_TIMEOUT_MS: 30_000,
   SKILLS_CATALOG_BUDGET: 512,
   PROJECT_SKILLS_DIR: ".atomic-agent/skills",

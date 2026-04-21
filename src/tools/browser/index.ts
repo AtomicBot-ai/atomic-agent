@@ -20,6 +20,24 @@ export type {
 } from "./browser-backend.js";
 export { PlaywrightBackend } from "./playwright-backend.js";
 export type { PlaywrightBackendOptions } from "./playwright-backend.js";
+export { buildChromeLaunchArgs } from "./build-chrome-launch-args.js";
+export type { BuildChromeLaunchArgsInput } from "./build-chrome-launch-args.js";
+export {
+  decorateChromeProfile,
+  markChromeProfileCleanExit,
+} from "./decorate-chrome-profile.js";
+export type { DecorateChromeProfileOptions } from "./decorate-chrome-profile.js";
+export { findChromeExecutable } from "./find-chrome-executable.js";
+export type {
+  BrowserExecutable,
+  FindChromeOptions,
+} from "./find-chrome-executable.js";
+export {
+  pickAvailableLoopbackPort,
+  spawnChrome,
+  stopChrome,
+} from "./spawn-chrome.js";
+export type { RunningChrome, SpawnChromeInput } from "./spawn-chrome.js";
 export { summariseAriaSnapshot } from "./aria-compressor.js";
 export type {
   AriaCompressionOptions,

@@ -62,9 +62,11 @@ function printHelp(): void {
     "Bootstrap env:",
     "  ATOMIC_AGENT_STATE_DIR         Directory for persistent state + config.json (default ~/.atomic-agent)",
     "  ATOMIC_AGENT_LLAMA_API_KEY     Optional bearer token for the llama-server",
-    "  ATOMIC_AGENT_BROWSER_CHANNEL   Playwright channel: chrome | msedge | chromium (default chrome)",
-    "  ATOMIC_AGENT_BROWSER_HEADLESS  1 to run headless (default 0)",
-    "  ATOMIC_AGENT_BROWSER_CDP_URL   Attach to an already-running browser via CDP instead of launching",
+    "  ATOMIC_AGENT_BROWSER_CHANNEL           Preferred browser family: chrome | msedge | chromium (default chrome)",
+    "  ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH   Explicit path to a Chromium-family binary (overrides auto-detect)",
+    "  ATOMIC_AGENT_BROWSER_HEADLESS          1 to run headless (default 0)",
+    "  ATOMIC_AGENT_BROWSER_NO_SANDBOX        1 to pass --no-sandbox (containers / CI only)",
+    "  ATOMIC_AGENT_BROWSER_CDP_URL           Attach to an already-running browser via CDP instead of launching",
   ];
   process.stdout.write(`${lines.join("\n")}\n`);
 }

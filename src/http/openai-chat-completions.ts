@@ -27,6 +27,15 @@ import {
 
 export const SESSION_ID_HEADER = "X-Atomic-Session-Id";
 export const COMPLETION_ID_HEADER = "X-Atomic-Completion-Id";
+/**
+ * Opt-in toggle for atomic-agent-specific SSE extensions on the streaming
+ * chat-completions endpoint. When absent, the stream is a strict subset of
+ * OpenAI's `chat.completion.chunk` protocol so off-the-shelf clients (e.g.
+ * Vercel AI SDK) can validate every `data:` frame against their zod schemas
+ * without tripping on our named events (`session_id`, `tool_progress`,
+ * `usage`). Atomic-native consumers opt in to keep the richer stream.
+ */
+export const EXTENSIONS_HEADER = "X-Atomic-Extensions";
 const MODEL_DEFAULT = "atomic-agent";
 
 /**
@@ -49,6 +58,7 @@ interface ParsedRequest {
   userMessage: string;
   firstUserMessage: string;
   sessionIdOverride: string | null;
+  extensionsEnabled: boolean;
 }
 
 /**
@@ -180,13 +190,15 @@ async function handleStream(
       delta: { role: "assistant" },
     }),
   );
-  sse.writeEvent("session_id", {
-    id: env.completionId,
-    object: "chat.completion.session",
-    created: env.created,
-    model: env.request.model,
-    session_id: env.session.id,
-  });
+  if (env.request.extensionsEnabled) {
+    sse.writeEvent("session_id", {
+      id: env.completionId,
+      object: "chat.completion.session",
+      created: env.created,
+      model: env.request.model,
+      session_id: env.session.id,
+    });
+  }
 
   const hook = buildStreamEventHook(sse, env);
 
@@ -205,7 +217,7 @@ async function handleStream(
   }
 
   if (error) {
-    sse.writeEvent("error", { error: error.message });
+    emitStreamError(sse, env, error.message);
     sse.writeEvent(
       null,
       buildStreamChunk({
@@ -222,14 +234,16 @@ async function handleStream(
 
   const usage = buildUsagePayload(result!);
   const final = buildFinalAssistantPayload(result!);
-  sse.writeEvent("usage", {
-    id: env.completionId,
-    object: "chat.completion.usage",
-    created: env.created,
-    model: env.request.model,
-    session_id: result!.session.id,
-    usage,
-  });
+  if (env.request.extensionsEnabled) {
+    sse.writeEvent("usage", {
+      id: env.completionId,
+      object: "chat.completion.usage",
+      created: env.created,
+      model: env.request.model,
+      session_id: result!.session.id,
+      usage,
+    });
+  }
   sse.writeEvent(
     null,
     buildStreamChunk({
@@ -246,9 +260,10 @@ async function handleStream(
 /**
  * Translate `AgentLoopEvent`s into SSE frames. Only the events that a
  * chat client can reasonably render are forwarded:
- *  - `tool_call_parsed` → `event: tool_progress`
+ *  - `tool_call_parsed` → `event: tool_progress` (extensions opt-in only)
  *  - `assistant_reply`  → OpenAI content delta chunk
- *  - `step_error` / `loop_failed` → `event: error`
+ *  - `step_error` / `loop_failed` → `emitStreamError` (shape depends on
+ *    whether extensions are opted in)
  *
  * Internal step/turn lifecycle events are intentionally suppressed to
  * keep the public stream OpenAI-clean.
@@ -262,6 +277,7 @@ function buildStreamEventHook(
     if (event.type === "llm_event") {
       const inner = event.event;
       if (inner.type === "tool_call_parsed") {
+        if (!env.request.extensionsEnabled) return;
         const args = inner.call.args ?? {};
         const label = safeStringify(args).slice(0, 120);
         sse.writeEvent("tool_progress", {
@@ -284,14 +300,30 @@ function buildStreamEventHook(
           }),
         );
       } else if (inner.type === "step_error") {
-        sse.writeEvent("error", { error: inner.error.message });
+        emitStreamError(sse, env, inner.error.message);
       }
       return;
     }
     if (event.type === "loop_failed") {
-      sse.writeEvent("error", { error: event.error.message });
+      emitStreamError(sse, env, event.error.message);
     }
   };
+}
+
+/**
+ * Shape-switching error emitter. Atomic-native clients (extensions opt-in)
+ * receive a named `event: error` frame carrying the bare message — same as
+ * before, preserved for backwards compatibility. OpenAI-compatible clients
+ * receive an unnamed `data:` frame with the canonical OpenAI error envelope
+ * (`{ error: { message, type, param, code } }`) so strict schema validators
+ * (Vercel AI SDK, OpenAI Node SDK) don't blow up on mid-stream failures.
+ */
+function emitStreamError(sse: SseWriter, env: TurnEnv, message: string): void {
+  if (env.request.extensionsEnabled) {
+    sse.writeEvent("error", { error: message });
+    return;
+  }
+  sse.writeEvent(null, openaiError(message, "server_error"));
 }
 
 function safeStringify(value: unknown): string {
@@ -359,7 +391,20 @@ async function parseRequestBody(
     userMessage: lastUser.content,
     firstUserMessage: firstUser?.content ?? lastUser.content,
     sessionIdOverride,
+    extensionsEnabled: isExtensionsHeaderTruthy(getHeader(req, EXTENSIONS_HEADER)),
   };
+}
+
+/**
+ * Accept the usual set of "on" spellings for the opt-in header so callers
+ * don't have to memorise an exact literal. Anything else — including the
+ * header being absent — disables extensions and keeps the stream vanilla
+ * OpenAI.
+ */
+function isExtensionsHeaderTruthy(value: string | null): boolean {
+  if (value === null) return false;
+  const normalised = value.trim().toLowerCase();
+  return normalised === "1" || normalised === "true" || normalised === "on" || normalised === "yes";
 }
 
 /**
