@@ -1,0 +1,386 @@
+import { describe, it, expect, beforeEach } from "vitest";
+import type {
+  AriaSnapshot,
+  BrowserBackend,
+  ClickInput,
+  NavigateInput,
+  SearchInput,
+  TabInfo,
+  TabsInput,
+  TypeInput,
+} from "./browser-backend.js";
+import { summariseAriaSnapshot } from "./aria-compressor.js";
+import {
+  buildBrowserClickTool,
+  buildBrowserNavigateTool,
+  buildBrowserReadAriaTool,
+  buildBrowserSearchTool,
+  buildBrowserTabsTool,
+  buildBrowserTools,
+  buildBrowserTypeTool,
+  isSafeUrl,
+} from "./index.js";
+import { ToolRegistry } from "../tool-registry.js";
+import { ApprovalGate } from "../../approval/approval-gate.js";
+import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
+
+function autoApprove(): DangerousToolOptions {
+  const gate = new ApprovalGate({
+    emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+  });
+  return { approvals: gate, approvalRequired: false };
+}
+
+class FakeBackend implements BrowserBackend {
+  public readyCalls = 0;
+  public shutdowns = 0;
+  public lastNavigate: NavigateInput | null = null;
+  public lastClick: ClickInput | null = null;
+  public lastType: TypeInput | null = null;
+  public lastSearch: SearchInput | null = null;
+  public lastTabs: TabsInput | null = null;
+  /** Override to simulate a stale DOM (ref no longer present). */
+  public liveRefs: Set<string> = new Set(["e1", "e2"]);
+
+  private readonly snap: AriaSnapshot = {
+    url: "https://example.com/",
+    title: "Example",
+    digest: "deadbeef",
+    refs: ["e1", "e2"],
+    text: [
+      "url: https://example.com/",
+      "title: Example",
+      "",
+      "- link [ref=e1]: Learn more",
+      "- textbox [ref=e2]: search",
+    ].join("\n"),
+  };
+
+  async ensureReady(): Promise<void> {
+    this.readyCalls += 1;
+  }
+
+  async shutdown(): Promise<void> {
+    this.shutdowns += 1;
+  }
+
+  async snapshot(): Promise<AriaSnapshot> {
+    return this.snap;
+  }
+
+  async hasRef(ref: string): Promise<boolean> {
+    return this.liveRefs.has(ref);
+  }
+
+  async navigate(
+    input: NavigateInput,
+  ): Promise<{ url: string; title: string }> {
+    this.lastNavigate = input;
+    return { url: input.url, title: "Example" };
+  }
+
+  async click(input: ClickInput): Promise<{ clickedRef: string }> {
+    this.lastClick = input;
+    return { clickedRef: input.ref };
+  }
+
+  async type(input: TypeInput): Promise<{ typedLength: number }> {
+    this.lastType = input;
+    return { typedLength: input.text.length };
+  }
+
+  async search(input: SearchInput): Promise<{ url: string }> {
+    this.lastSearch = input;
+    return {
+      url: `https://search.example/?q=${encodeURIComponent(input.query)}`,
+    };
+  }
+
+  async tabs(input: TabsInput): Promise<{ tabs: TabInfo[] }> {
+    this.lastTabs = input;
+    return {
+      tabs: [
+        {
+          index: 0,
+          url: "https://example.com/",
+          title: "Example",
+          active: true,
+        },
+      ],
+    };
+  }
+}
+
+const CTX = {
+  workingDir: "/tmp",
+  sessionId: "s",
+  stepIndex: 0,
+  signal: new AbortController().signal,
+};
+
+describe("browser tools on a fake backend", () => {
+  let backend: FakeBackend;
+
+  beforeEach(() => {
+    backend = new FakeBackend();
+  });
+
+  it("navigate forwards the URL and waitUntil override", async () => {
+    const tool = buildBrowserNavigateTool(backend, autoApprove());
+    const result = await tool.run(
+      { url: "https://example.com/", waitUntil: "networkidle" },
+      CTX,
+    );
+    expect(result.status).toBe("ok");
+    expect(result.details.url).toBe("https://example.com/");
+    expect(backend.lastNavigate?.waitUntil).toBe("networkidle");
+    expect(backend.readyCalls).toBe(1);
+  });
+
+  it("navigate attaches a fresh worldSnapshot so applyStateEffects can fold it into session", async () => {
+    const tool = buildBrowserNavigateTool(backend, autoApprove());
+    const result = await tool.run({ url: "https://example.com/" }, CTX);
+    const snap = result.details.worldSnapshot as
+      | { kind: string; digest: string; text: string }
+      | undefined;
+    expect(snap).toBeDefined();
+    expect(snap?.kind).toBe("browser");
+    expect(snap?.digest).toBe("deadbeef");
+    expect(snap?.text).toContain("[ref=e1]");
+  });
+
+  it("navigate rejects non-string url", async () => {
+    const tool = buildBrowserNavigateTool(backend, autoApprove());
+    await expect(tool.run({}, CTX)).rejects.toThrow(/url/);
+  });
+
+  it("navigate requires approval for non-http(s) schemes", async () => {
+    const gate = new ApprovalGate({
+      emit: (req) => gate.reject(req.approvalId, "denied file scheme"),
+    });
+    const tool = buildBrowserNavigateTool(backend, {
+      approvals: gate,
+      approvalRequired: true,
+    });
+    await expect(
+      tool.run({ url: "file:///etc/passwd" }, CTX),
+    ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+  });
+
+  it("isSafeUrl accepts http/https only", () => {
+    expect(isSafeUrl("https://example.com")).toBe(true);
+    expect(isSafeUrl("http://example.com")).toBe(true);
+    expect(isSafeUrl("file:///tmp/x")).toBe(false);
+    expect(isSafeUrl("javascript:alert(1)")).toBe(false);
+    expect(isSafeUrl("not-a-url")).toBe(false);
+  });
+
+  it("click forwards the ref", async () => {
+    const tool = buildBrowserClickTool(backend);
+    const result = await tool.run({ ref: "e1" }, CTX);
+    expect(result.status).toBe("ok");
+    expect(backend.lastClick?.ref).toBe("e1");
+  });
+
+  it("click rejects non-alphanumeric ref", async () => {
+    const tool = buildBrowserClickTool(backend);
+    await expect(tool.run({ ref: "e 1" }, CTX)).rejects.toThrow(/ref/);
+    await expect(tool.run({ ref: 1 }, CTX)).rejects.toThrow(/ref/);
+  });
+
+  it("click fails fast with a helpful message when the ref is stale", async () => {
+    backend.liveRefs = new Set(["e1"]);
+    const tool = buildBrowserClickTool(backend);
+    const result = await tool.run({ ref: "e337" }, CTX);
+    expect(result.status).toBe("error");
+    expect(result.summary).toMatch(/ref 'e337' is not present/);
+    expect(result.summary).toMatch(/browser\.read_aria/);
+    expect(result.details.reason).toBe("stale_ref");
+    expect(backend.lastClick).toBeNull();
+  });
+
+  it("type records text length and pressEnter flag", async () => {
+    const tool = buildBrowserTypeTool(backend);
+    const result = await tool.run(
+      { ref: "e2", text: "hello", pressEnter: true },
+      CTX,
+    );
+    expect(result.status).toBe("ok");
+    expect(backend.lastType?.text).toBe("hello");
+    expect(backend.lastType?.pressEnter).toBe(true);
+  });
+
+  it("type fails fast with a helpful message when the ref is stale", async () => {
+    backend.liveRefs = new Set(["e1"]);
+    const tool = buildBrowserTypeTool(backend);
+    const result = await tool.run({ ref: "e2", text: "x" }, CTX);
+    expect(result.status).toBe("error");
+    expect(result.summary).toMatch(/ref 'e2' is not present/);
+    expect(result.details.reason).toBe("stale_ref");
+    expect(backend.lastType).toBeNull();
+  });
+
+  it("read_aria returns a compact status and leaves the tree in worldSnapshot", async () => {
+    const tool = buildBrowserReadAriaTool(backend);
+    const result = await tool.run({}, CTX);
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("captured ARIA snapshot");
+    expect(result.summary).toContain("refs: 2");
+    expect(result.summary).toContain("see ### world");
+    // The tree itself does NOT leak into the conversation summary — we
+    // rely on session.worldSnapshot + `### world` as the single source.
+    expect(result.summary).not.toContain("[ref=e1]");
+    expect(result.details.refCount).toBe(2);
+    const snap = result.details.worldSnapshot as
+      | { text: string }
+      | undefined;
+    expect(snap?.text).toContain("[ref=e1]");
+  });
+
+  it("read_aria exposes a worldSnapshot so session.worldSnapshot can refresh", async () => {
+    const tool = buildBrowserReadAriaTool(backend);
+    const result = await tool.run({}, CTX);
+    const snap = result.details.worldSnapshot as
+      | { kind: string; digest: string; text: string }
+      | undefined;
+    expect(snap?.kind).toBe("browser");
+    expect(snap?.digest).toBe("deadbeef");
+    expect(snap?.text).toContain("[ref=e1]");
+  });
+
+  it("search builds a search URL via the backend", async () => {
+    const tool = buildBrowserSearchTool(backend);
+    const result = await tool.run({ query: "atomic agent", engine: "bing" }, CTX);
+    expect(result.status).toBe("ok");
+    expect(backend.lastSearch?.engine).toBe("bing");
+    expect(result.details.url).toContain("atomic%20agent");
+  });
+
+  it("search attaches a worldSnapshot for the results page", async () => {
+    const tool = buildBrowserSearchTool(backend);
+    const result = await tool.run({ query: "hermes" }, CTX);
+    const snap = result.details.worldSnapshot as
+      | { kind: string; digest: string; text: string }
+      | undefined;
+    expect(snap?.kind).toBe("browser");
+    expect(snap?.digest).toBe("deadbeef");
+  });
+
+  it("navigate and search survive snapshot failures without flipping status", async () => {
+    const flaky = new FakeBackend();
+    flaky.snapshot = async () => {
+      throw new Error("snapshot timeout");
+    };
+    const nav = buildBrowserNavigateTool(flaky, autoApprove());
+    const navResult = await nav.run({ url: "https://example.com/" }, CTX);
+    expect(navResult.status).toBe("ok");
+    expect(navResult.details.worldSnapshot).toBeUndefined();
+
+    const search = buildBrowserSearchTool(flaky);
+    const searchResult = await search.run({ query: "q" }, CTX);
+    expect(searchResult.status).toBe("ok");
+    expect(searchResult.details.worldSnapshot).toBeUndefined();
+  });
+
+  it("tabs list rendering includes the active marker", async () => {
+    const tool = buildBrowserTabsTool(backend);
+    const result = await tool.run({ action: "list" }, CTX);
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("*[0] Example");
+  });
+
+  it("buildBrowserTools registers all six tools", () => {
+    const registry = new ToolRegistry();
+    for (const tool of buildBrowserTools(backend, autoApprove())) {
+      registry.register(tool);
+    }
+    expect(registry.list().map((t) => t.name).sort()).toEqual([
+      "browser.click",
+      "browser.navigate",
+      "browser.read_aria",
+      "browser.search",
+      "browser.tabs",
+      "browser.type",
+    ]);
+  });
+});
+
+describe("summariseAriaSnapshot", () => {
+  it("extracts refs and emits a header", () => {
+    const raw = [
+      "- banner",
+      '  - link [ref=e5]: Home',
+      '  - textbox [ref=e7]: Search',
+    ].join("\n");
+    const out = summariseAriaSnapshot(raw, {
+      url: "https://u/",
+      title: "T",
+    });
+    expect(out.refs.sort()).toEqual(["e5", "e7"]);
+    expect(out.text).toMatch(/^url: https:\/\/u\//);
+    expect(out.text).toContain("[ref=e5]");
+    expect(out.digest).toMatch(/^[a-f0-9]+$/);
+  });
+
+  it("truncates past maxLines", () => {
+    const lines = Array.from({ length: 50 }, (_, i) => `- link [ref=e${i}]`);
+    const out = summariseAriaSnapshot(
+      lines.join("\n"),
+      { url: "u", title: "t" },
+      { maxLines: 10 },
+    );
+    expect(out.text).toContain("[truncated ARIA tree");
+  });
+
+  it("collapses chains of empty generic containers so interactive nodes survive", () => {
+    const raw = [
+      "- generic [ref=e2]:",
+      "  - generic [ref=e4]:",
+      "    - generic [ref=e5]:",
+      "      - generic [ref=e6]:",
+      '        - link "DuckDuckGo home" [ref=e7]: /url',
+      "        - generic [ref=e8]:",
+      '          - heading "Results" [ref=e9]: Results',
+      '          - link "Hermes - Wikipedia" [ref=e10]: /url',
+    ].join("\n");
+    const out = summariseAriaSnapshot(raw, {
+      url: "https://duckduckgo.com/?q=hermes",
+      title: "hermes at DuckDuckGo",
+    });
+    expect(out.text).toContain('link "DuckDuckGo home"');
+    expect(out.text).toContain('heading "Results"');
+    expect(out.text).toContain('link "Hermes - Wikipedia"');
+    expect(out.text).toContain("[collapsed 5 empty container lines]");
+    // Noise refs are NOT in the ref list because the model can't
+    // usefully act on empty generics.
+    expect(out.refs.sort()).toEqual(["e10", "e7", "e9"]);
+  });
+
+  it("keeps container lines that carry a quoted name or inline text", () => {
+    const raw = [
+      '- generic "search-results" [ref=e1]:',
+      "- generic [ref=e2]: some inline text",
+      "- generic [ref=e3]:",
+    ].join("\n");
+    const out = summariseAriaSnapshot(raw, { url: "u", title: "t" });
+    expect(out.text).toContain('generic "search-results"');
+    expect(out.text).toContain("some inline text");
+    expect(out.text).toContain("[collapsed 1 empty container lines]");
+  });
+
+  it("dropNoise=false preserves the raw tree verbatim", () => {
+    const raw = [
+      "- generic [ref=e1]:",
+      "  - generic [ref=e2]:",
+      '    - link [ref=e3]: /url',
+    ].join("\n");
+    const out = summariseAriaSnapshot(
+      raw,
+      { url: "u", title: "t" },
+      { dropNoise: false },
+    );
+    expect(out.text).toContain("generic [ref=e1]");
+    expect(out.text).toContain("generic [ref=e2]");
+    expect(out.text).not.toContain("[collapsed");
+  });
+});

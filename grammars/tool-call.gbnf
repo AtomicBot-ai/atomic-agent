@@ -1,0 +1,29 @@
+root ::= tool-call
+tool-call ::= "{" ws "\"tool\"" ws ":" ws tool-name ws "," ws "\"args\"" ws ":" ws object ws "}"
+tool-name ::= browser-tool | os-tool | skill-tool | "\"reply\"" | "\"finish\""
+browser-tool ::= "\"browser." ( "navigate" | "click" | "type" | "read_aria" | "search" | "tabs" ) "\""
+os-tool ::= "\"os." ( "shell.run" | "fs.read" | "fs.write" | "fs.list" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" ) "\""
+skill-tool ::= "\"skill." ( "view" | "run_script" ) "\""
+
+value ::= object | array | string | number | boolean | null-lit
+
+object ::= "{" ws ( pair ( ws "," ws pair )* )? ws "}"
+pair ::= string ws ":" ws value
+
+array ::= "[" ws ( value ( ws "," ws value )* )? ws "]"
+
+string ::= "\"" chars "\""
+chars ::= char*
+char ::= [^"\\\x00-\x1f] | "\\" escape
+escape ::= "\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | "u" hex hex hex hex
+hex ::= [0-9a-fA-F]
+
+number ::= integer fraction? exponent?
+integer ::= "-"? ( "0" | [1-9] [0-9]* )
+fraction ::= "." [0-9]+
+exponent ::= ("e" | "E") ("+" | "-")? [0-9]+
+
+boolean ::= "true" | "false"
+null-lit ::= "null"
+
+ws ::= [ \t\n\r]*

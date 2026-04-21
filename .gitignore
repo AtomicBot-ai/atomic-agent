@@ -1,0 +1,12 @@
+node_modules/
+dist/
+bundle/
+prebuilds/
+*.log
+.DS_Store
+.env
+.env.local
+coverage/
+.atomic-agent/
+.history/
+ARCHITECTURE.md
