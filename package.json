@@ -31,8 +31,10 @@
   "dependencies": {
     "@types/marked": "^5.0.2",
     "better-sqlite3": "^11.5.0",
+    "chokidar": "^5.0.0",
     "cli-highlight": "^2.1.11",
     "clipboardy": "^5.3.1",
+    "diff": "^9.0.0",
     "exceljs": "^4.4.0",
     "fast-xml-parser": "^5.7.1",
     "fuzzysort": "^3.1.0",

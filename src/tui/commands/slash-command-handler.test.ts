@@ -53,4 +53,16 @@ describe("dispatchSlashCommand", () => {
     expect(result.triggerSessionNew).toBe(true);
     expect(result.triggerSessionPicker).toBe(false);
   });
+
+  it("requests persistLlamaUrl for /llama with a valid URL", () => {
+    const result = dispatchSlashCommand("/llama http://127.0.0.1:19999");
+    expect(result.persistLlamaUrl).toBe("http://127.0.0.1:19999");
+    expect(result.clearBuffer).toBe(true);
+  });
+
+  it("rejects invalid /llama URL with a system message", () => {
+    const result = dispatchSlashCommand("/llama http://[unclosed");
+    expect(result.persistLlamaUrl).toBeUndefined();
+    expect(result.systemMessage).toContain("invalid");
+  });
 });

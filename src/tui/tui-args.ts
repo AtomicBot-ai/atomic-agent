@@ -9,6 +9,8 @@ export interface TuiArgs {
   workingDir: string;
   maxSteps: number | null;
   noApproval: boolean;
+  /** Skip the first-run llama-server setup wizard when /health fails. */
+  skipLlamaSetup: boolean;
 }
 
 export type TuiArgsResult = TuiArgs | { error: string };
@@ -22,11 +24,13 @@ export type TuiArgsResult = TuiArgs | { error: string };
  *   --cwd / --working-dir <path>   switch the session working directory
  *   --max-steps <n>                override the loop safety cap
  *   --no-approval                  skip the approval gate for this run
+ *   --skip-llama-setup             skip the startup llama URL wizard
  */
 export function parseTuiArgs(args: string[]): TuiArgsResult {
   let workingDir: string | null = null;
   let maxSteps: number | null = null;
   let noApproval = false;
+  let skipLlamaSetup = false;
   for (let i = 0; i < args.length; i += 1) {
     const flag = args[i];
     switch (flag) {
@@ -47,6 +51,9 @@ export function parseTuiArgs(args: string[]): TuiArgsResult {
       case "--no-approval":
         noApproval = true;
         break;
+      case "--skip-llama-setup":
+        skipLlamaSetup = true;
+        break;
       default:
         return { error: `unknown flag: ${flag}` };
     }
@@ -55,5 +62,6 @@ export function parseTuiArgs(args: string[]): TuiArgsResult {
     workingDir: workingDir ?? process.cwd(),
     maxSteps,
     noApproval,
+    skipLlamaSetup,
   };
 }

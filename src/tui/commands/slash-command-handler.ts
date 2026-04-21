@@ -1,4 +1,5 @@
 import type { TuiAction } from "../tui-action.js";
+import { normalizeLlamaBaseUrl } from "../persist-user-llama-url.js";
 import { parseSlashCommand } from "./slash-command-parser.js";
 import { resolveSlashCommand } from "./slash-commands.js";
 
@@ -27,6 +28,8 @@ export interface SlashDispatchResult {
   readonly triggerSessionNew: boolean;
   /** When true the caller should forward the raw buffer as a normal message. */
   readonly forwardAsMessage: boolean;
+  /** When set, caller should probe this URL, persist on success, then refresh UI. */
+  readonly persistLlamaUrl?: string;
 }
 
 /**
@@ -46,6 +49,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       triggerSessionPicker: false,
       triggerSessionNew: false,
       forwardAsMessage: true,
+      persistLlamaUrl: undefined,
     };
   }
   const resolved = resolveSlashCommand(parsed.name);
@@ -59,13 +63,14 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       triggerSessionPicker: false,
       triggerSessionNew: false,
       forwardAsMessage: false,
+      persistLlamaUrl: undefined,
     };
   }
   switch (resolved.name) {
     case "help":
       return pureActions([], {
         systemMessage:
-          "available commands: /clear /abort /quit /debug /chat /feed /logs /reasoning /world /metrics /expand /collapse /session /sessions /new /skills",
+          "available commands: /clear /abort /quit /debug /chat /feed /logs /reasoning /world /metrics /expand /collapse /session /sessions /new /skills /llama",
       });
     case "clear":
       return pureActions([{ type: "chat_cleared" }], {
@@ -126,6 +131,30 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return pureActions([], {
         systemMessage: "loaded skills are shown in /debug → World tab",
       });
+    case "llama": {
+      const argPart = parsed.args.trim();
+      if (argPart.length === 0) {
+        return pureActions([], {
+          systemMessage:
+            "usage: /llama <base-url> — probes GET /health then saves to config.json (API key: ATOMIC_AGENT_LLAMA_API_KEY)",
+        });
+      }
+      try {
+        const url = normalizeLlamaBaseUrl(argPart);
+        return {
+          actions: [],
+          clearBuffer: true,
+          triggerAbort: false,
+          triggerQuit: false,
+          triggerSessionPicker: false,
+          triggerSessionNew: false,
+          forwardAsMessage: false,
+          persistLlamaUrl: url,
+        };
+      } catch {
+        return pureActions([], { systemMessage: "invalid URL for /llama" });
+      }
+    }
     default:
       return pureActions([], {
         systemMessage: `command /${resolved.name} not yet implemented`,
@@ -147,6 +176,7 @@ function pureActions(
     triggerSessionPicker: false,
     triggerSessionNew: false,
     forwardAsMessage: false,
+    persistLlamaUrl: undefined,
     ...overrides,
   };
 }

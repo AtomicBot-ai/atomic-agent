@@ -1,49 +1,109 @@
+<div align="center">
+
 # atomic-agent
 
-Lightweight local general-purpose operator agent. Runs as a Tauri-friendly sidecar (or standalone CLI) and drives a KV-cache-friendly agent loop against an **external** `llama.cpp` server.
+**Local operator agent runtime** — Tauri-friendly sidecar, debug CLI, and OpenAI-compatible HTTP surface. Drives a **KV-cache-aware** tool loop against an **external** [`llama.cpp`](https://github.com/ggerganov/llama.cpp) server (`llama-server`). No model weights or LLM binaries ship with this repo.
 
-`atomic-agent` is **not** a coding agent. It is an "OpenCUA-on-minimum" operator: it controls the host browser (already-installed Chrome/Edge) and a small set of OS tools (shell, fs, clipboard, window, notify), and executes user-authored *skills* — Markdown playbooks with optional shell/Node scripts.
+*Not a “coding agent” in the boxed-product sense* — think **OpenCUA-on-minimum**: control the host **browser** (Chrome/Edge), a curated **`os.*`** surface, and user **skills** (Markdown playbooks plus optional shell/Node scripts).
 
-## Key properties
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+![License](https://img.shields.io/badge/license-TBD-lightgrey)
 
-- Connects to an existing `llama-server` by URL — no LLM binaries are bundled.
-- **Multi-turn chat.** A session is a persistent conversation: `user message → 0..N tool steps → reply` is one macro-turn, the whole history lives in `SessionState.turns[]`. The agent picks between chatting (`reply` tool) and acting (browser/OS/skill tools) on every step. `finish` ends the whole session.
-- KV-cache-friendly stable prompt prefix (`system + tool catalog + capabilities + skill catalog`) with per-session `slot_id`. Multiple turns inside one session share the same slot.
-- GBNF grammar-constrained tool calls for reliable JSON even on 7–9B models.
-- Browser automation via `playwright-core` over system Chrome/Edge with a persistent profile. LLM sees a compact ARIA snapshot and references elements by `aria-ref=eN`.
-- OS tools: shell, filesystem, clipboard, window management (`osascript`/`wmctrl`/PowerShell), native notifications.
-- Skill system (Hermes-style): progressive loading via `skill.view`, vetted scripts via `skill.run_script` (always approved), local-only install (`skill install <path>`).
-- Dangerous-only approval gate (shell, fs-write, non-http(s) navigation, skill scripts).
-- NDJSON sidecar protocol shared between the Tauri host and the sidecar — chat-only, with `send_message` / `assistant_reply` / `turn_started` / `turn_finished` events.
-- Per-platform Node SEA binaries (darwin-arm64/x64, linux-x64, win-x64).
+</div>
 
-## Install & build
+---
+
+## At a glance
+
+| | |
+| --- | --- |
+| **Role** | General-purpose **host operator**: browser (Chrome/Edge), OS tools (shell, fs, clipboard, windows, notify), and user **skills** (Markdown playbooks + scripts). |
+| **Not** | A bundled coding IDE or an all-in-one LLM stack — connect your own `llama-server` by URL. |
+| **Embeds as** | NDJSON **sidecar** (stdin/stdout) or standalone **`atomic-agent`** CLI. |
+| **Session model** | Multi-turn chat: `user → 0…N tool steps → reply` is one macro-turn; history in `SessionState.turns[]`. |
+
+---
+
+## Table of contents
+
+- [Features](#features)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+  - [Environment](#environment)
+  - [Config file](#config-file)
+  - [Migration from env-only settings](#migration-from-env-only-settings)
+- [CLI](#cli)
+- [HTTP API](#http-api)
+  - [OpenAI-compatible routes](#openai-compatible-routes)
+  - [Admin routes](#admin-routes)
+- [Sidecar protocol](#sidecar-protocol)
+- [External llama-server](#external-llama-server)
+- [Browser prerequisites](#browser-prerequisites)
+- [OS tools](#os-tools)
+  - [Document and archive formats](#document-and-archive-formats)
+  - [HTTP tool policy](#http-tool-policy)
+  - [Diff and patch](#diff-and-patch)
+  - [Git tools](#git-tools)
+  - [Process tools](#process-tools)
+  - [Filesystem watch](#filesystem-watch)
+- [Development](#development)
+- [License](#license)
+
+---
+
+## Features
+
+- **External LLM only** — points at an existing `llama-server`; no bundled inference.
+- **Multi-turn chat** — persistent session; agent chooses `reply` vs. tools each step; `finish` ends the session.
+- **Stable prompt prefix** + per-session `slot_id` for KV-cache reuse (`system` + tool catalog + capabilities + skill catalog).
+- **GBNF grammar-constrained** tool calls for reliable JSON on smaller models (7–9B class).
+- **Browser** — `playwright-core` over system Chrome/Edge, persistent profile; compact ARIA snapshot, `aria-ref=eN` targeting.
+- **OS surface** — shell, filesystem, clipboard, window management (`osascript` / `wmctrl` / PowerShell), notifications.
+- **Skills** (Hermes-style) — `skill.view`, `skill.run_script` (always approved), `skill install <path>`.
+- **Approval gate** — dangerous paths only (shell, fs writes, non-http(s) nav, skill scripts, etc.).
+- **NDJSON sidecar** — `send_message`, `assistant_reply`, `turn_started`, `turn_finished`, …
+- **Ship shape** — per-platform Node SEA binaries (darwin arm64/x64, linux x64, win x64).
+
+---
+
+## Quick start
 
 ```bash
 npm install
 npm run build
 ```
 
+Point `llama.url` in `<stateDir>/config.json` at your running `llama-server`, then:
+
+```bash
+npx atomic-agent tui --cwd /path/to/work
+# or after global link / install:
+atomic-agent run --cwd /path/to/work
+```
+
+See [External llama-server](#external-llama-server) for a minimal `llama-server` example.
+
+---
+
 ## Configuration
 
-User-facing knobs live in a JSON config file at `<stateDir>/config.json`. It is
-generated with safe defaults the first time the runtime starts. Manage it with
-`atomic-agent config …` or edit the file by hand — see [Config file](#config-file)
-below. Bootstrap and optional env variables stay in environment (see
-[`.env.example`](.env.example)):
+User-facing settings live in **`<stateDir>/config.json`** (created with safe defaults on first run). Manage with `atomic-agent config …` or edit manually. Bootstrap paths and a few toggles use **environment** variables; see [`.env.example`](.env.example).
+
+### Environment
 
 | Variable | Default | Purpose |
-|---|---|---|
-| `ATOMIC_AGENT_STATE_DIR` | `~/.atomic-agent` | State, config, profile, skills |
-| `ATOMIC_AGENT_LLAMA_API_KEY` | *unset* | Optional bearer token |
+| --- | --- | --- |
+| `ATOMIC_AGENT_STATE_DIR` | `~/.atomic-agent` | State, config, browser profile, skills |
+| `ATOMIC_AGENT_LLAMA_API_KEY` | *unset* | Optional bearer token for `llama-server` |
 | `ATOMIC_AGENT_BROWSER_CHANNEL` | `chrome` | `chrome` / `msedge` / `chromium` |
-| `ATOMIC_AGENT_BROWSER_HEADLESS` | `false` | Headless mode |
+| `ATOMIC_AGENT_BROWSER_HEADLESS` | `false` | Headless browser |
 | `ATOMIC_AGENT_BROWSER_CDP_URL` | *unset* | Attach over CDP instead of launching |
-| `ATOMIC_AGENT_SKILLS_CATALOG_BUDGET` | `512` | Token budget for skill catalog in the stable prefix |
+| `ATOMIC_AGENT_SKILLS_CATALOG_BUDGET` | `512` | Token budget for skill catalog in stable prefix |
 
 ### Config file
 
-`<stateDir>/config.json` with the following shape and defaults:
+Shape and defaults:
 
 ```json
 {
@@ -60,21 +120,19 @@ below. Bootstrap and optional env variables stay in environment (see
 ```
 
 | Key | Purpose |
-|---|---|
+| --- | --- |
 | `llama.url` | External llama-server URL |
 | `log.level` | `debug` / `info` / `warn` / `error` |
-| `agent.tokenBudget` | Hard cap for the stable prefix + world snapshot + session facts (tokens). The conversation transcript is not counted — full chat history is always sent as-is. |
+| `agent.tokenBudget` | Cap for stable prefix + world snapshot + session facts (tokens). Full chat history is always sent; transcript is not counted against this cap. |
 | `agent.maxSteps` | Max steps per agent loop |
 | `agent.toolTimeoutMs` | Default tool timeout (ms) |
-| `agent.approvalRequired` | Approval gate on dangerous tools |
+| `agent.approvalRequired` | Enable approval gate for dangerous tools |
 
-Manage via CLI (two commands, whole-file semantics — no dotted keys):
+**CLI (whole-file semantics — no dotted keys):**
 
 ```bash
-# Print the whole file (after auto-creating it with defaults on first run)
 atomic-agent config get
 
-# Replace the whole file with a validated JSON payload
 atomic-agent config set '{
   "version": 1,
   "llama": { "url": "http://127.0.0.1:18991" },
@@ -87,123 +145,99 @@ atomic-agent config set '{
   }
 }'
 
-# Edit-and-apply loop:
 atomic-agent config get > /tmp/agent.json
 $EDITOR /tmp/agent.json
 atomic-agent config set "$(cat /tmp/agent.json)"
 ```
 
-> **Migration note:** Earlier versions read these keys from environment
-> variables (`ATOMIC_AGENT_LLAMA_URL`, `ATOMIC_AGENT_LOG_LEVEL`,
-> `ATOMIC_AGENT_TOKEN_BUDGET`, `ATOMIC_AGENT_MAX_STEPS`,
-> `ATOMIC_AGENT_TOOL_TIMEOUT_MS`, `ATOMIC_AGENT_APPROVAL_REQUIRED`). Those
-> env vars are no longer read — copy their values into `config.json` or
-> apply via `atomic-agent config set '<json>'`.
+### Migration from env-only settings
+
+> Earlier versions read `ATOMIC_AGENT_LLAMA_URL`, `ATOMIC_AGENT_LOG_LEVEL`, `ATOMIC_AGENT_TOKEN_BUDGET`, `ATOMIC_AGENT_MAX_STEPS`, `ATOMIC_AGENT_TOOL_TIMEOUT_MS`, `ATOMIC_AGENT_APPROVAL_REQUIRED` from the environment. **Those env vars are no longer read** — copy values into `config.json` or apply via `atomic-agent config set '<json>'`.
+
+---
 
 ## CLI
 
 ```bash
-# Interactive chat. readline reads stdin, every line is sent as a user
-# message into runtime.runTurn; assistant replies go to stdout, tool
-# events to stderr. /quit exits, /abort cancels the current turn.
+# Line-at-a-time chat: user lines → runTurn; replies on stdout, tool noise on stderr.
+# /quit exits; /abort cancels the current turn.
 atomic-agent run --cwd /path/to/work
 
-# Chat-like TUI: one long-lived SessionState, ink-based chat transcript,
-# re-uses the browser profile and llama-server slot across turns. Hotkeys:
-# enter = send message, tab = chat/feed/world/logs, esc = abort current
-# turn (quit if idle), ctrl+c = quit, y/n = approval decisions.
+# Ink TUI: long-lived session, shared browser profile + llama slot.
+# Enter = send, Tab = panes, Esc = abort turn (quit if idle), Ctrl+C = quit, y/n = approvals.
 atomic-agent tui --cwd /path/to/work
 
-# Manage skills (markdown playbooks + scripts)
 atomic-agent skill install ./my-skill
 atomic-agent skill list
 atomic-agent skill show check-gmail-inbox
 atomic-agent skill uninstall check-gmail-inbox
 
-# Manage user config (see "Config file" above)
 atomic-agent config get
 atomic-agent config set '{"version":1, ...}'
 
-# Start the OpenAI-compatible HTTP server (see "HTTP API" below)
 atomic-agent serve --host 127.0.0.1 --port 8787 --cwd /path/to/work
 ```
 
-See [SKILLS.md](SKILLS.md) for the skill format.
+Skill format: **[SKILLS.md](SKILLS.md)**.
 
-## HTTP API (`atomic-agent serve`)
+---
 
-`atomic-agent serve` exposes a small HTTP surface backed by the exact
-same `createAgentRuntime()` that powers `run` / `tui`. One turn on the
-wire = one macro-turn in the loop (`user → 0..N tool steps → reply`).
-The server is loopback-only by default and uses the built-in Node
-`http` module — no extra dependencies, no dent on the sidecar SEA
-bundle size.
+## HTTP API
+
+`atomic-agent serve` exposes a small HTTP surface on the same `createAgentRuntime()` as `run` / `tui`. **One HTTP request = one macro-turn** (`user → 0…N tool steps → reply`). Loopback-first; uses Node’s built-in `http` — no extra server deps.
 
 ```bash
 atomic-agent serve \
   --host 127.0.0.1 \
   --port 8787 \
   --cwd /path/to/work \
-  --api-key "$ATOMIC_AGENT_API_KEY"   # or set the env var directly
+  --api-key "$ATOMIC_AGENT_API_KEY"
 ```
 
-Authentication is optional. When `--api-key` (or env
-`ATOMIC_AGENT_API_KEY`) is set, all routes require a
-`Authorization: Bearer <key>` header; `/health` and `/v1/models` stay
-public so OpenAI SDKs can probe before auth.
+Auth is optional. With `--api-key` / `ATOMIC_AGENT_API_KEY`, routes expect `Authorization: Bearer <key>`; **`/health`** and **`/v1/models`** stay public for SDK probes.
 
 ### OpenAI-compatible routes
 
-- `POST /v1/chat/completions` — the OpenAI Chat Completions API.
-  `stream: true` opens SSE; each tool step emits an `event:
-  tool_progress` frame, the final assistant reply comes as a standard
-  content-delta chunk, followed by `event: usage`, a `finish_reason`
-  chunk, and the canonical `data: [DONE]`.
-- `POST /v1/chat/completions/{id}/cancel` — abort a streaming
-  completion by its id.
-- `GET /v1/models` — single synthetic `atomic-agent` model entry.
+- **`POST /v1/chat/completions`** — Chat Completions. With `stream: true`, SSE includes `tool_progress` per tool step, then normal content deltas, `usage`, `finish_reason`, and `data: [DONE]`.
+- **`POST /v1/chat/completions/{id}/cancel`** — Abort a streaming completion by id.
+- **`GET /v1/models`** — Single synthetic `atomic-agent` model entry.
 
-Session continuation follows the hermes-style `Option A`: if
-`X-Atomic-Session-Id` (or body `session_id`) is present the request
-resumes that session; otherwise a stable id of shape
-`api-<sha256:16>` is derived from `(system, firstUserMessage)`. Only
-the **last** user message of the request body drives the new turn —
-history lives in `SessionState.turns[]`, not the request.
+**Sessions (Hermes-style “Option A”):** `X-Atomic-Session-Id` or body `session_id` resumes; otherwise id `api-<sha256:16>` from `(system, firstUserMessage)`. Only the **last** user message in the body starts the new turn — history lives in `SessionState.turns[]`.
 
-### atomic-agent admin routes
+### Admin routes
 
-All require auth when `--api-key` is configured.
+When `--api-key` is set, these require auth (except as noted for health/models above).
 
 | Route | Purpose |
-|---|---|
-| `GET /health` | Runtime liveness + llama-server reachability |
-| `GET /api/capabilities` | Host caps + tool/skill catalogs + paths + llama config |
-| `GET \| PATCH /api/config` | Read or merge-write the user config file |
+| --- | --- |
+| `GET /health` | Liveness + llama reachability |
+| `GET /api/capabilities` | Host caps, catalogs, paths, llama config |
+| `GET /api/config` | Read user config |
+| `PATCH /api/config` | Merge-write user config |
 | `GET /api/skills` | List installed skills |
-| `GET /api/skills/{name}` | Manifest + SKILL.md body |
+| `GET /api/skills/{name}` | Manifest + `SKILL.md` body |
 | `POST /api/skills/install` | `{ sourcePath, source?: "global"\|"project", force? }` |
 | `POST /api/skills/uninstall` | `{ name, source?: "global"\|"project" }` |
-| `GET /api/sessions` | Recent sessions for the working dir (`?limit=` up to 200) |
+| `GET /api/sessions` | Recent sessions (`?limit=` ≤ 200) |
 | `GET /api/sessions/{id}` | Full `SessionState` |
 | `DELETE /api/sessions/{id}` | Purge (idempotent) |
 | `POST /api/approval/resolve` | `{ approvalId, decision: "allow-once"\|"deny", reason? }` |
-| `GET /api/events` | SSE stream of pending approval requests |
+| `GET /api/events` | SSE: pending approvals |
+
+---
 
 ## Sidecar protocol
 
-The sidecar reads newline-delimited JSON from stdin and writes it to stdout. Schemas live in `src/sidecar/sidecar-events.ts` and are re-exported from the package root.
+Newline-delimited JSON on **stdin** → **stdout**. Schemas: `src/sidecar/sidecar-events.ts` (re-exported from package root).
 
-Chat flow:
+**Requests:**
 
 ```json
-// Create an empty session.
 {"kind":"request","id":"r-1","type":"start_session","payload":{"workingDir":"/home/me"}}
-
-// Send a user message; drives one macro-turn.
 {"kind":"request","id":"r-2","type":"send_message","payload":{"sessionId":"s-1","text":"hi, can you check Gmail?"}}
 ```
 
-Example sidecar events for one turn:
+**Example events (one turn):**
 
 ```json
 {"kind":"event","id":"e-1","type":"user_message","correlationId":"r-2","payload":{"sessionId":"s-1","text":"hi, can you check Gmail?"}}
@@ -213,93 +247,89 @@ Example sidecar events for one turn:
 {"kind":"event","id":"e-5","type":"turn_finished","correlationId":"r-2","payload":{"sessionId":"s-1","turnIndex":0,"reason":"reply"}}
 ```
 
+---
+
 ## External llama-server
 
-This package does **not** start or ship `llama.cpp`. Launch your own server, e.g.:
+This package **does not** start or ship `llama.cpp`. Run your own server, e.g.:
 
 ```bash
 ./llama-server -m Qwen2.5-9B-Instruct-Q4_K_M.gguf \
   --slots 4 --parallel 4 --port 8080 --cache-reuse 256
 ```
 
-Then point the sidecar at it via `llama.url` in `<stateDir>/config.json` (or `atomic-agent config set …`).
+Set `llama.url` in `<stateDir>/config.json` (or `atomic-agent config set …`).
+
+---
 
 ## Browser prerequisites
 
-- Install Google Chrome or Microsoft Edge (stable channel is enough). `playwright-core` attaches; browser binaries are not bundled.
-- On macOS, grant Accessibility + Screen Recording permissions to your terminal / the Tauri app binary if you plan to use `os.window.focus`.
-- On Linux, install `wmctrl` for window management; everything else degrades gracefully.
+- Install **Google Chrome** or **Microsoft Edge** (stable). `playwright-core` attaches; browser binaries are not bundled.
+- **macOS:** Accessibility + Screen Recording for the terminal or Tauri host if you use `os.window.focus`.
+- **Linux:** `wmctrl` for window management; other features degrade gracefully without it.
+
+---
 
 ## OS tools
 
-The `os.*` tool surface exposed to the agent:
+| Tool | Description | Approval |
+| --- | --- | --- |
+| `os.shell.run` | Shell in cwd, timeout + output cap + abort | yes |
+| `os.fs.read` | UTF-8 read; `offset`/`limit`, optional `lineNumbers` | no |
+| `os.fs.write` | Write / append | yes |
+| `os.fs.list` | Non-recursive listing | no |
+| `os.fs.glob` | `*`, `**`, `?`, `{a,b}` — pure Node | no |
+| `os.fs.grep` | Bundled `ripgrep`; `content` / `files_with_matches` / `count` | no |
+| `os.fs.edit` | Atomic string replace + diff preview | yes |
+| `os.fs.read_document` | PDF, DOCX, legacy DOC, XLSX, RTF, ODT, PPTX, text | no |
+| `os.fs.archive.list` | Zip/tar/tgz/gz listing | no |
+| `os.fs.archive.read_entry` | Single entry as UTF-8 or base64 | no |
+| `os.fs.archive.extract` | Extract with zip-slip / bomb guards | yes |
+| `os.fs.hash` | md5 / sha1 / sha256 / sha512 (streaming) | no |
+| `os.fs.diff` | Unified diff (paths or strings) | no |
+| `os.fs.patch` | Apply unified diff; dry-run default; live needs approval | configurable |
+| `os.fs.watch` | `chokidar` one-shot watch (≤ 60 s) | no |
+| `os.git.*` | `status`, `log`, `diff`, `show`, `blame`, `branch` (read-only) | no |
+| `os.proc.list` | Process snapshot (`ps` / `tasklist`) | no |
+| `os.proc.kill` | Signal by PID | yes |
+| `os.http.request` | System `curl`; allowlist + `config.http` | configurable |
+| `os.clipboard.read` / `write` | Clipboard I/O | no |
+| `os.window.list` / `focus` | List / focus windows | no |
+| `os.notify` | Native notification | no |
 
-| Tool              | Description                                                                                                              | Approval |
-|-------------------|--------------------------------------------------------------------------------------------------------------------------|----------|
-| `os.shell.run`    | Run a command in the working directory (timeout + output cap + abort signal).                                            | yes      |
-| `os.fs.read`      | Read a UTF-8 text file. Supports `offset`/`limit` for line-range reads and `lineNumbers` to prepend `LINE_NUMBER` prefix.| no       |
-| `os.fs.write`     | Write content to a file (replace or append).                                                                             | yes      |
-| `os.fs.list`      | Non-recursive directory listing.                                                                                         | no       |
-| `os.fs.glob`      | Recursive file search with `*`, `**`, `?`, `{a,b}`. Pure-Node, zero dependencies.                                         | no       |
-| `os.fs.grep`      | Fast regex search via bundled `ripgrep`. Three output modes (`content`, `files_with_matches`, `count`), glob/type/context support. | no       |
-| `os.fs.edit`      | Surgical string replacement (atomic write + uniqueness check + unified-diff preview).                                    | yes      |
-| `os.fs.read_document` | Extract plain text (with light markdown structure) from PDF, DOCX, DOC (legacy), XLSX, RTF, ODT, PPTX, and text files. | no |
-| `os.fs.archive.list`  | Enumerate entries inside a zip/tar/tar.gz/gz archive without extracting.                                                 | no |
-| `os.fs.archive.read_entry` | Read a single entry out of an archive as UTF-8 or base64 (no disk writes).                                         | no |
-| `os.fs.archive.extract`   | Extract an archive into destDir with zip-slip, symlink-escape, and decompression-bomb protections.                   | yes |
-| `os.http.request` | HTTP GET/POST via the system `curl` binary. Host allowlist + approval policy via `config.http`.                          | configurable |
-| `os.clipboard.read` / `os.clipboard.write` | System clipboard I/O.                                                                          | no / no  |
-| `os.window.list` / `os.window.focus`       | List and focus OS windows.                                                                      | no / no  |
-| `os.notify`       | Show a system notification (title + message).                                                                            | no       |
+**Ripgrep:** bundle ships `vendor/rg[.exe]`; dev may use `@vscode/ripgrep` or `rg` on `PATH`. Override: `ATOMIC_AGENT_RG_PATH=/path/to/rg`.
 
-`os.fs.grep` uses a pinned `ripgrep` binary shipped inside the bundle at
-`vendor/rg[.exe]`. In dev the resolver falls back to an installed
-`@vscode/ripgrep` or the system `rg` on `$PATH`. Override with
-`ATOMIC_AGENT_RG_PATH=/path/to/rg`.
+### Document and archive formats
 
-`os.fs.read_document` extracts plain text from binary document formats
-via pure-JS libraries (no system binaries required). Output is optimised
-for local LLMs: flat text with lightweight markers —  headings as
-`# / ##`, PDF/PPTX pages as `--- page N ---` / `--- slide N ---`, XLSX
-sheets as `## Sheet: <name>` with rows rendered `cell | cell | cell`.
-Structural metadata (`pageCount`, `sheetCount`, `slideCount`,
-`pagesExtracted`, `warnings`) lives in `details`. Supported formats:
+`os.fs.read_document` uses pure-JS backends — tuned for local LLMs (`#` / `##`, `--- page N ---`, `## Sheet: …`, etc.). Metadata in `details` (`pageCount`, `sheetCount`, …).
 
 | Extension | Backend | Notes |
-|---|---|---|
-| `.pdf` | `pdfjs-dist` (text layer only) | `pagesFrom`/`pagesTo`/`maxPages` supported |
-| `.docx` | `mammoth` (to markdown) | `includeTables=false` → `extractRawText` |
-| `.doc` (legacy) | `word-extractor` | writes a temp file internally |
-| `.xlsx` | `exceljs` | `sheets: ["Name", 2]` selects by name or 1-indexed position |
-| `.rtf` | custom pure-JS parser | handles `\uNNNN`, `\'hh`, ignorable groups |
-| `.odt` | `jszip` + `fast-xml-parser` | parses `content.xml` |
-| `.pptx` | `jszip` + `fast-xml-parser` | per-slide `--- slide N ---` |
-| `.txt` / `.md` / `.log` / `.csv` / `.json` / `.html` / `.xml` / `.yaml` | pass-through | UTF-8, falls back to latin1 on decode errors |
+| --- | --- | --- |
+| `.pdf` | `pdfjs-dist` | text layer; `pagesFrom` / `pagesTo` / `maxPages` |
+| `.docx` | `mammoth` | `includeTables=false` → raw text |
+| `.doc` | `word-extractor` | temp file internally |
+| `.xlsx` | `exceljs` | `sheets` by name or 1-based index |
+| `.rtf` | custom parser | `\uNNNN`, `\'hh`, ignorable groups |
+| `.odt` | `jszip` + `fast-xml-parser` | `content.xml` |
+| `.pptx` | `jszip` + `fast-xml-parser` | per-slide markers |
+| `.txt` / `.md` / `.log` / `.csv` / `.json` / `.html` / `.xml` / `.yaml` | pass-through | UTF-8, latin1 fallback |
 
-Use `format: "plain"` (or other canonical name) to override auto-detection
-when the file has no recognised extension. Defaults: `maxBytes = 5 MB`,
-`maxPages = 50`.
+`format: "plain"` overrides detection when extension is unknown. Defaults: `maxBytes = 5 MB`, `maxPages = 50`.
 
-`os.fs.archive.*` handles four formats via pure-JS backends (no system
-binaries required):
+**Archives** (`os.fs.archive.*`):
 
 | Extension | Backend | Notes |
-|---|---|---|
-| `.zip` | `jszip` (already bundled) | Unix-mode symlinks recognised; opt in via `followSymlinks=true` |
-| `.tar` | `tar-stream` | streaming walk; hard-links recognised |
-| `.tar.gz` / `.tgz` | `tar-stream` + `zlib` | transparently gunzipped |
-| `.gz` | built-in `zlib` | single-file container; synthetic entry name is the filename without `.gz` |
+| --- | --- | --- |
+| `.zip` | `jszip` | symlinks opt-in `followSymlinks` |
+| `.tar` | `tar-stream` | streaming; hard-links |
+| `.tar.gz` / `.tgz` | `tar-stream` + `zlib` | gunzip |
+| `.gz` | `zlib` | single member; synthetic name |
 
-Every extraction is filtered through `sanitizeEntryPath` which rejects
-absolute paths, backslashes, NUL bytes, and any relative path that
-resolves outside `destDir` (classic zip-slip guard). `ExtractBudget`
-enforces configurable caps that default to **100 MB total / 10 MB per
-entry / 10 000 entries** and skip-with-reason instead of crashing, so a
-malicious archive yields a partial result with an audit trail in
-`details.skippedEntries`.
+`sanitizeEntryPath` blocks zip-slip. `ExtractBudget` defaults: **100 MB total / 10 MB per file / 10 000 entries** — skips with reasons in `details.skippedEntries` instead of hard-failing.
 
-`os.http.request` shells out to the pre-installed system `curl` (no bundling).
-Policy lives under `config.http`:
+### HTTP tool policy
+
+`os.http.request` uses the system **`curl`**. Configure under `config.http`:
 
 ```json
 {
@@ -313,12 +343,44 @@ Policy lives under `config.http`:
 }
 ```
 
-- `enabled`: hard switch. `false` disables the tool entirely.
-- `approvalMode`: `never` (no approval), `writes` (POST asks, GET is free), `always` (every call asks).
-- `hostAllowlist`: `null` means "any host". An array restricts traffic to
-  exact hostnames and `*.domain.tld` wildcards.
-- `maxResponseBytes`: body cap for compression + truncation flag.
-- `defaultTimeoutMs`: fallback when the LLM doesn't pass `timeoutMs`.
+| Field | Meaning |
+| --- | --- |
+| `enabled` | `false` disables the tool |
+| `approvalMode` | `never` / `writes` (POST prompts) / `always` |
+| `hostAllowlist` | `null` = any host; else hostnames + `*.wildcards` |
+| `maxResponseBytes` | Body cap + truncation flag |
+| `defaultTimeoutMs` | Fallback if the model omits `timeoutMs` |
+
+### Diff and patch
+
+`os.fs.diff` — unified diff from two paths or two strings. `os.fs.patch`: **`apply=false`** (default) parses and previews per hunk without writes; **`apply=true`** needs approval and **refuses partial apply**. Options align with `patch(1)` (`fuzzFactor`, `stripComponents`, default strip `1`).
+
+### Git tools
+
+Read-only; `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `LC_ALL=C`. Each tool returns `output` plus structured `details` from porcelain / `for-each-ref`.
+
+### Process tools
+
+`os.proc.list` — normalised `{ pid, ppid, user, cpuPercent, memPercent, command }` from POSIX `ps` or Windows `tasklist`. `os.proc.kill` — always approved; preview includes image + user. Signals: `SIGTERM` (default), `SIGKILL`, `SIGINT`, `SIGHUP`.
+
+### Filesystem watch
+
+`chokidar`, one-shot, blocking. Default timeout **5 s**, max **60 s**. `recursive=true` for deep watch. Events `{ kind, path, timestamp }` relative to root; `stopAfterFirst`, `events: ["unlink"]`, etc. Watcher closed on abort/timeout to avoid handle leaks.
+
+---
+
+## Development
+
+```bash
+npm install
+npm run lint    # tsc --noEmit
+npm test        # vitest run
+npm run build   # compile to dist/
+```
+
+For automated contributors (invariants, module map, layout rules): **[AGENTS.md](AGENTS.md)**.
+
+---
 
 ## License
 

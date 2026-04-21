@@ -95,4 +95,6 @@ export type TuiAction =
       sessionId: string;
       workingDir: string;
       messages: readonly ChatMessage[];
-    };
+    }
+  /** Header/runtime: user saved a new llama-server base URL (e.g. via /llama). */
+  | { type: "llama_url_changed"; url: string };

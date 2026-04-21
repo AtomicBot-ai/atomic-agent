@@ -181,6 +181,97 @@ I'm thinking but got cut off mid-thought by n_predict limit`;
     });
   });
 
+  it("parses an os.fs.hash tool-call", () => {
+    const out = parseToolCall(
+      '{"tool":"os.fs.hash","args":{"path":"a.bin","algorithm":"sha256"}}',
+    );
+    expect(out.tool).toBe("os.fs.hash");
+    expect(out.args).toEqual({ path: "a.bin", algorithm: "sha256" });
+  });
+
+  it("parses an os.fs.diff tool-call", () => {
+    const out = parseToolCall(
+      '{"tool":"os.fs.diff","args":{"aPath":"a.txt","bPath":"b.txt","context":5}}',
+    );
+    expect(out.tool).toBe("os.fs.diff");
+    expect(out.args).toEqual({ aPath: "a.txt", bPath: "b.txt", context: 5 });
+  });
+
+  it("parses an os.fs.patch tool-call", () => {
+    const out = parseToolCall(
+      '{"tool":"os.fs.patch","args":{"patch":"--- a\\n+++ b\\n@@","apply":false}}',
+    );
+    expect(out.tool).toBe("os.fs.patch");
+    expect((out.args as { apply: boolean }).apply).toBe(false);
+  });
+
+  it("parses an os.fs.watch tool-call", () => {
+    const out = parseToolCall(
+      '{"tool":"os.fs.watch","args":{"path":".","timeoutMs":3000,"events":["add","change"]}}',
+    );
+    expect(out.tool).toBe("os.fs.watch");
+    expect(out.args).toEqual({
+      path: ".",
+      timeoutMs: 3000,
+      events: ["add", "change"],
+    });
+  });
+
+  it("parses an os.git.status tool-call", () => {
+    const out = parseToolCall('{"tool":"os.git.status","args":{}}');
+    expect(out.tool).toBe("os.git.status");
+  });
+
+  it("parses an os.git.log tool-call", () => {
+    const out = parseToolCall(
+      '{"tool":"os.git.log","args":{"limit":5,"path":"src/a.ts"}}',
+    );
+    expect(out.tool).toBe("os.git.log");
+    expect(out.args).toEqual({ limit: 5, path: "src/a.ts" });
+  });
+
+  it("parses an os.git.diff tool-call", () => {
+    const out = parseToolCall(
+      '{"tool":"os.git.diff","args":{"revisionRange":"HEAD~1..HEAD","staged":false}}',
+    );
+    expect(out.tool).toBe("os.git.diff");
+  });
+
+  it("parses an os.git.show tool-call", () => {
+    const out = parseToolCall(
+      '{"tool":"os.git.show","args":{"revision":"HEAD","patch":false}}',
+    );
+    expect(out.tool).toBe("os.git.show");
+  });
+
+  it("parses an os.git.blame tool-call", () => {
+    const out = parseToolCall(
+      '{"tool":"os.git.blame","args":{"path":"a.ts","startLine":10,"endLine":30}}',
+    );
+    expect(out.tool).toBe("os.git.blame");
+  });
+
+  it("parses an os.git.branch tool-call", () => {
+    const out = parseToolCall(
+      '{"tool":"os.git.branch","args":{"includeRemote":true,"pattern":"feature/*"}}',
+    );
+    expect(out.tool).toBe("os.git.branch");
+  });
+
+  it("parses an os.proc.list tool-call", () => {
+    const out = parseToolCall(
+      '{"tool":"os.proc.list","args":{"filter":"node","limit":50}}',
+    );
+    expect(out.tool).toBe("os.proc.list");
+  });
+
+  it("parses an os.proc.kill tool-call", () => {
+    const out = parseToolCall(
+      '{"tool":"os.proc.kill","args":{"pid":12345,"signal":"SIGTERM"}}',
+    );
+    expect(out.tool).toBe("os.proc.kill");
+  });
+
   it("parses an os.http.request tool-call with nested headers and body", () => {
     const out = parseToolCall(
       '{"tool":"os.http.request","args":{"url":"https://api.example.com","method":"POST","headers":{"Authorization":"Bearer X"},"body":{"a":1}}}',

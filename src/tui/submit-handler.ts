@@ -86,4 +86,7 @@ export function runSlashCommand(
   }
   if (result.triggerSessionPicker) callbacks.onSessionPickerRequested?.();
   if (result.triggerSessionNew) callbacks.onSessionNewRequested?.();
+  if (result.persistLlamaUrl) {
+    callbacks.onPersistLlamaUrl?.(result.persistLlamaUrl);
+  }
 }

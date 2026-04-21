@@ -61,14 +61,15 @@ export interface LlamaServerClientOptions {
  * and a reusable slot_id to llama.cpp for KV-cache reuse.
  */
 export class LlamaServerClient {
-  private readonly baseUrl: string;
+  /** When set, this fixed base wins; otherwise each request reads `getConfig().llama.url`. */
+  private readonly baseUrlOverride: string | undefined;
   private readonly apiKey: string | null;
   private readonly requestTimeoutMs: number;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: LlamaServerClientOptions = {}) {
     const config = getConfig();
-    this.baseUrl = options.baseUrl ?? config.llama.url;
+    this.baseUrlOverride = options.baseUrl;
     this.apiKey = options.apiKey ?? config.llama.apiKey;
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? config.llama.requestTimeoutMs;
@@ -190,7 +191,8 @@ export class LlamaServerClient {
     stream: boolean,
   ): { url: string; headers: Record<string, string>; body: string } {
     const config = getConfig();
-    const url = new URL(config.llama.completionPath, this.baseUrl).toString();
+    const base = this.baseUrlOverride ?? config.llama.url;
+    const url = new URL(config.llama.completionPath, base).toString();
     const headers: Record<string, string> = {
       "content-type": "application/json",
       accept: stream ? "text/event-stream" : "application/json",

@@ -18,6 +18,19 @@ import { buildOsHttpRequestTool } from "./http-request.js";
 import { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 import { osWindowListTool, osWindowFocusTool } from "./window.js";
 import { osNotifyTool } from "./notify.js";
+import { osFsHashTool } from "./fs-hash.js";
+import { osFsDiffTool } from "./fs-diff.js";
+import { buildOsFsPatchTool } from "./fs-patch.js";
+import { osFsWatchTool } from "./fs-watch.js";
+import {
+  osGitStatusTool,
+  osGitLogTool,
+  osGitDiffTool,
+  osGitShowTool,
+  osGitBlameTool,
+  osGitBranchTool,
+} from "./git/index.js";
+import { osProcListTool, buildOsProcKillTool } from "./proc/index.js";
 
 export { buildOsShellTool } from "./shell.js";
 export { osFsReadTool } from "./fs-read.js";
@@ -36,6 +49,19 @@ export { buildOsHttpRequestTool } from "./http-request.js";
 export { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 export { osWindowListTool, osWindowFocusTool } from "./window.js";
 export { osNotifyTool } from "./notify.js";
+export { osFsHashTool } from "./fs-hash.js";
+export { osFsDiffTool } from "./fs-diff.js";
+export { buildOsFsPatchTool } from "./fs-patch.js";
+export { osFsWatchTool } from "./fs-watch.js";
+export {
+  osGitStatusTool,
+  osGitLogTool,
+  osGitDiffTool,
+  osGitShowTool,
+  osGitBlameTool,
+  osGitBranchTool,
+} from "./git/index.js";
+export { osProcListTool, buildOsProcKillTool } from "./proc/index.js";
 
 export interface RegisterOsToolsOptions extends DangerousToolOptions {
   config: Pick<AtomicAgentConfig, "http">;
@@ -73,4 +99,26 @@ export function registerOsTools(
   registry.register(osWindowListTool);
   registry.register(osWindowFocusTool);
   registry.register(osNotifyTool);
+  registry.register(osFsHashTool);
+  registry.register(osFsDiffTool);
+  registry.register(
+    buildOsFsPatchTool({
+      approvals: options.approvals,
+      approvalRequired: options.approvalRequired,
+    }),
+  );
+  registry.register(osFsWatchTool);
+  registry.register(osGitStatusTool);
+  registry.register(osGitLogTool);
+  registry.register(osGitDiffTool);
+  registry.register(osGitShowTool);
+  registry.register(osGitBlameTool);
+  registry.register(osGitBranchTool);
+  registry.register(osProcListTool);
+  registry.register(
+    buildOsProcKillTool({
+      approvals: options.approvals,
+      approvalRequired: options.approvalRequired,
+    }),
+  );
 }

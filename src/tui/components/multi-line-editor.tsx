@@ -22,6 +22,8 @@ export interface MultiLineEditorProps {
   onSubmit: (value: string) => void;
   /** Esc pressed while editor has focus. */
   onEscape?: () => void;
+  /** Ctrl+C while editor has focus (overrides the default ignore for Ctrl+C). */
+  onInterrupt?: () => void;
   /** Up arrow pressed while the cursor is on the first line. */
   onHistoryPrev?: () => void;
   /** Down arrow pressed while the cursor is on the last line. */
@@ -53,6 +55,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     onChange,
     onSubmit,
     onEscape,
+    onInterrupt,
     onHistoryPrev,
     onHistoryNext,
     onTab,
@@ -83,6 +86,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
         setBuffer,
         onSubmit,
         onEscape,
+        onInterrupt,
         onTab,
         onHistoryPrev,
         onHistoryNext,
@@ -112,6 +116,7 @@ interface KeyContext {
   setBuffer: (next: string, cursor: number) => void;
   onSubmit: (value: string) => void;
   onEscape?: () => void;
+  onInterrupt?: () => void;
   onTab?: () => void;
   onHistoryPrev?: () => void;
   onHistoryNext?: () => void;
@@ -119,6 +124,10 @@ interface KeyContext {
 
 function handleKey(ctx: KeyContext): void {
   const { input, key, value, cursor, setBuffer } = ctx;
+  if (key.ctrl && input === "c" && ctx.onInterrupt) {
+    ctx.onInterrupt();
+    return;
+  }
   // Ignore keys owned by the global app-level handler so the editor
   // never inserts Ctrl+C as "c" or swallows F-key escape sequences.
   if (isGlobalHotkey(input, key)) return;

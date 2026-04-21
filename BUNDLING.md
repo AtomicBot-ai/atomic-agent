@@ -115,6 +115,22 @@ dependency:
 `gz` is handled by the built-in `zlib`. Net incremental cost of the
 archive tools: **~50 KB** (plus the already-bundled jszip).
 
+## Bundled diff / watch tools
+
+`os.fs.diff` / `os.fs.patch` / `os.fs.watch` add two pure-JS runtime
+dependencies:
+
+| Library | Purpose | Approx. size |
+|---|---|---|
+| `diff` (jsdiff 9.x) | Unified-diff generation + patch application, ships its own types | ~100 KB |
+| `chokidar` 5.x | Cross-platform recursive fs watcher | ~120 KB |
+
+Net incremental cost: **~220 KB**. `os.fs.hash` uses the built-in
+`crypto` module (zero cost). Git tools (`os.git.*`) shell out to the
+system `git`, so they add no bundle weight — but the host must have
+`git` on `PATH`. Process tools (`os.proc.*`) rely on `ps`/`tasklist`,
+which are standard OS utilities and need no bundling.
+
 ## Runtime requirements (documented in README.txt)
 
 - **External llama-server.** Set `ATOMIC_AGENT_LLAMA_URL=http://host:port`

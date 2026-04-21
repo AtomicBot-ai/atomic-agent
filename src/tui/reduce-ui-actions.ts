@@ -99,6 +99,11 @@ export function reduceUiAction(
       );
       return { ...state, sessionPickerCursor: next };
     }
+    case "llama_url_changed":
+      return {
+        ...state,
+        session: { ...state.session, llamaUrl: action.url },
+      };
     case "session_switched":
       return {
         ...state,

@@ -1,6 +1,7 @@
 import { render } from "ink";
 import React from "react";
 import { getConfig } from "../config/index.js";
+import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { createAgentRuntime, type AgentRuntime } from "../runtime/bootstrap.js";
 import type { LogRecord, LogSink } from "../telemetry/structured-logger.js";
 import type { MetricSample, MetricSink } from "../telemetry/metrics-collector.js";
@@ -8,6 +9,8 @@ import type { SessionState } from "../session/session-state.js";
 import { clearTtyScreen } from "./clear-tty-screen.js";
 import { enterAltScreen } from "./alt-screen.js";
 import { parseTuiArgs } from "./tui-args.js";
+import { persistUserLlamaUrl } from "./persist-user-llama-url.js";
+import { runLlamaStartupGateIfNeeded } from "./run-llama-config-wizard.js";
 import { makeTuiEventBus, TuiApp, type TuiEventBus } from "./tui-app.js";
 import { turnsToMessages } from "./turns-to-messages.js";
 import type { SessionPickerEntry, TuiSessionInfo } from "./tui-state.js";
@@ -25,6 +28,13 @@ export async function tuiCommand(args: string[]): Promise<number> {
     process.stderr.write(`${parsed.error}\n`);
     return 2;
   }
+  getConfig();
+  const skipLlamaWizard =
+    parsed.skipLlamaSetup || process.env.ATOMIC_AGENT_TUI_SKIP_LLAMA_SETUP === "1";
+  const startupGate = await runLlamaStartupGateIfNeeded({
+    skipWizard: skipLlamaWizard,
+  });
+  if (startupGate === "aborted") return 1;
   const config = getConfig();
   const approvalRequired = !parsed.noApproval && config.agent.approvalRequired;
   const maxSteps = parsed.maxSteps ?? config.agent.maxSteps;
@@ -85,6 +95,37 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSessionPickerRequested: () => orchestrator.openSessionPicker(),
         onSessionSwitchRequested: (id) => orchestrator.switchSession(id),
         onSessionNewRequested: () => orchestrator.newSession(),
+        onPersistLlamaUrl: (nextUrl) => {
+          void (async () => {
+            try {
+              const health = await checkLlamaServer({
+                url: nextUrl,
+                retries: 0,
+                backoffMs: 0,
+                timeoutMs: 8000,
+              });
+              if (!health.reachable) {
+                bus.emit({
+                  type: "runtime_info",
+                  line: `llama /health failed at ${nextUrl}: ${health.error ?? "unknown"}`,
+                });
+                return;
+              }
+              persistUserLlamaUrl(nextUrl);
+              bus.emit({ type: "llama_url_changed", url: nextUrl });
+              bus.emit({
+                type: "runtime_info",
+                line: `llama URL saved (${health.latencyMs}ms)`,
+              });
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              bus.emit({
+                type: "runtime_info",
+                line: `llama URL not saved: ${msg}`,
+              });
+            }
+          })();
+        },
       },
     }),
     { stdout: process.stdout, stderr: process.stderr, exitOnCtrlC: false },
