@@ -1,3 +1,4 @@
+import { filterSlashCommands } from "./commands/slash-commands.js";
 import type { TuiAction } from "./tui-action.js";
 import type { TuiState } from "./tui-state.js";
 
@@ -53,13 +54,18 @@ export function reduceUiAction(
         slashQuery: "",
         slashPaletteCursor: 0,
       };
-    case "slash_palette_cursor_moved":
-      return {
-        ...state,
-        slashPaletteCursor: Math.max(0, state.slashPaletteCursor + action.delta),
-      };
-    case "slash_palette_cursor_set":
-      return { ...state, slashPaletteCursor: Math.max(0, action.row) };
+    case "slash_palette_cursor_moved": {
+      const max = Math.max(0, filterSlashCommands(state.slashQuery).length - 1);
+      const next = Math.min(
+        max,
+        Math.max(0, state.slashPaletteCursor + action.delta),
+      );
+      return { ...state, slashPaletteCursor: next };
+    }
+    case "slash_palette_cursor_set": {
+      const max = Math.max(0, filterSlashCommands(state.slashQuery).length - 1);
+      return { ...state, slashPaletteCursor: Math.min(max, Math.max(0, action.row)) };
+    }
     case "input_history_navigated":
       return navigateInputHistory(state, action.delta);
     case "input_history_reset":

@@ -28,8 +28,12 @@ export function SlashPalette(props: SlashPaletteProps): ReactElement | null {
       </Box>
     );
   }
-  const visible = completions.slice(0, MAX_ROWS);
-  const cursor = Math.max(0, Math.min(props.cursor, visible.length - 1));
+  const cursor = Math.max(0, Math.min(props.cursor, completions.length - 1));
+  const windowStart = computeWindowStart(cursor, completions.length, MAX_ROWS);
+  const visible = completions.slice(windowStart, windowStart + MAX_ROWS);
+  const visibleCursor = cursor - windowStart;
+  const hiddenBefore = windowStart;
+  const hiddenAfter = Math.max(0, completions.length - windowStart - visible.length);
   return (
     <Box
       borderStyle="round"
@@ -37,20 +41,32 @@ export function SlashPalette(props: SlashPaletteProps): ReactElement | null {
       paddingX={1}
       flexDirection="column"
     >
+      {hiddenBefore > 0 ? (
+        <Text color={theme.colors.muted}>↑ {hiddenBefore} above</Text>
+      ) : null}
       {visible.map((cmd, idx) => (
         <PaletteRow
           key={cmd.name}
           command={cmd}
-          selected={idx === cursor}
+          selected={idx === visibleCursor}
         />
       ))}
-      {completions.length > visible.length ? (
-        <Text color={theme.colors.muted}>
-          …{completions.length - visible.length} more
-        </Text>
+      {hiddenAfter > 0 ? (
+        <Text color={theme.colors.muted}>↓ {hiddenAfter} below</Text>
       ) : null}
     </Box>
   );
+}
+
+/**
+ * Scroll window that keeps `cursor` in view. Mirrors openclaw's
+ * "sticky bottom" behaviour: the window only moves when the cursor would
+ * otherwise fall off the visible slice.
+ */
+function computeWindowStart(cursor: number, total: number, size: number): number {
+  if (total <= size) return 0;
+  if (cursor < size) return 0;
+  return Math.min(cursor - size + 1, total - size);
 }
 
 function PaletteRow({

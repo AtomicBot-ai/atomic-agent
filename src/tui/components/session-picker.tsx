@@ -25,8 +25,12 @@ export function SessionPicker(props: SessionPickerProps): ReactElement {
       </Box>
     );
   }
-  const visible = sessions.slice(0, MAX_ROWS);
-  const clamped = Math.max(0, Math.min(cursor, visible.length - 1));
+  const clamped = Math.max(0, Math.min(cursor, sessions.length - 1));
+  const windowStart = computeWindowStart(clamped, sessions.length, MAX_ROWS);
+  const visible = sessions.slice(windowStart, windowStart + MAX_ROWS);
+  const visibleCursor = clamped - windowStart;
+  const hiddenBefore = windowStart;
+  const hiddenAfter = Math.max(0, sessions.length - windowStart - visible.length);
   return (
     <Box
       borderStyle="round"
@@ -37,21 +41,28 @@ export function SessionPicker(props: SessionPickerProps): ReactElement {
       <Text color={theme.colors.muted}>
         sessions ({sessions.length}) — Enter to load, Esc to dismiss
       </Text>
+      {hiddenBefore > 0 ? (
+        <Text color={theme.colors.muted}>↑ {hiddenBefore} above</Text>
+      ) : null}
       {visible.map((entry, idx) => (
         <PickerRow
           key={entry.sessionId}
           entry={entry}
-          selected={idx === clamped}
+          selected={idx === visibleCursor}
           current={entry.sessionId === currentSessionId}
         />
       ))}
-      {sessions.length > visible.length ? (
-        <Text color={theme.colors.muted}>
-          …{sessions.length - visible.length} more (scroll unsupported)
-        </Text>
+      {hiddenAfter > 0 ? (
+        <Text color={theme.colors.muted}>↓ {hiddenAfter} below</Text>
       ) : null}
     </Box>
   );
+}
+
+function computeWindowStart(cursor: number, total: number, size: number): number {
+  if (total <= size) return 0;
+  if (cursor < size) return 0;
+  return Math.min(cursor - size + 1, total - size);
 }
 
 function PickerRow({

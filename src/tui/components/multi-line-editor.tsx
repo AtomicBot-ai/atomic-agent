@@ -1,5 +1,5 @@
 import { Box, useInput, type Key } from "ink";
-import { useCallback, useEffect, useMemo, useRef, type ReactElement } from "react";
+import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { theme } from "../theme/theme.js";
 import { EditorBody } from "./multi-line-editor-body.js";
 import {
@@ -57,20 +57,16 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     onHistoryNext,
     onTab,
   } = props;
-  const cursorRef = useRef<number>(value.length);
-  const lastValueRef = useRef<string>(value);
-  if (lastValueRef.current !== value) {
-    cursorRef.current = Math.min(cursorRef.current, value.length);
-    lastValueRef.current = value;
-  }
+  const [cursorPos, setCursorPos] = useState<number>(value.length);
+  // Clamp cursor whenever the controlled value shrinks (e.g. slash
+  // command cleared the buffer or history recall shortened it).
   useEffect(() => {
-    cursorRef.current = Math.min(cursorRef.current, value.length);
+    setCursorPos((c) => Math.min(c, value.length));
   }, [value]);
 
   const setBuffer = useCallback(
-    (next: string, cursor: number) => {
-      cursorRef.current = Math.max(0, Math.min(cursor, next.length));
-      lastValueRef.current = next;
+    (next: string, nextCursor: number) => {
+      setCursorPos(Math.max(0, Math.min(nextCursor, next.length)));
       onChange(next);
     },
     [onChange],
@@ -83,7 +79,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
         input,
         key,
         value,
-        cursor: cursorRef.current,
+        cursor: cursorPos,
         setBuffer,
         onSubmit,
         onEscape,
@@ -95,10 +91,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     { isActive: focus && !disabled },
   );
 
-  const cursor = useMemo(
-    () => cursorToRowCol(value, cursorRef.current),
-    [value],
-  );
+  const cursor = cursorToRowCol(value, cursorPos);
   return (
     <Box
       borderStyle="round"
