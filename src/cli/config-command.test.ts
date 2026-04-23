@@ -53,6 +53,8 @@ describe("configCommand", () => {
         maxSteps: 42,
         toolTimeoutMs: 12_000,
         approvalRequired: false,
+        conversationMaxTokens: 32_000,
+        worldSnapshotMaxTokens: 8_000,
       },
       http: {
         enabled: true,
@@ -60,6 +62,12 @@ describe("configCommand", () => {
         hostAllowlist: null,
         maxResponseBytes: 1_048_576,
         defaultTimeoutMs: 30_000,
+      },
+      telemetry: {
+        trace: {
+          enabled: null,
+          maxBytesPerSession: 10 * 1024 * 1024,
+        },
       },
     };
     const code = await configCommand(["set", JSON.stringify(payload)]);

@@ -167,6 +167,7 @@ export async function bootstrapSidecar(): Promise<{
     return createAgentRuntime({
       workingDir,
       approvalRequired: config.agent.approvalRequired,
+      traceDefault: false,
       handlers: {
         onAgentEvent: (event) => {
           // `active` is mutated after session creation — the indirection

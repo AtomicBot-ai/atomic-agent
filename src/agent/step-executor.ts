@@ -34,10 +34,12 @@ import {
   toolResultTurn,
 } from "../session/conversation-turn.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
-import type { SlotManager } from "../llm/slot-manager.js";
+import { hashPrefix, type SlotManager } from "../llm/slot-manager.js";
 import type { ModelProfile } from "../llm/model-profile.js";
 import type { AgentMetrics } from "../telemetry/agent-metrics.js";
 import type { StructuredLogger } from "../telemetry/structured-logger.js";
+import type { StepEvent } from "./step-events.js";
+export type { PromptCapturedTokens, StepEvent } from "./step-events.js";
 
 export interface LlmStreamParams {
   prompt: string;
@@ -84,36 +86,6 @@ export interface StepContext {
    */
   transientNotice?: string;
 }
-
-export type StepEvent =
-  | { type: "prompt_built"; prompt: BuiltPrompt; slotId: number }
-  | { type: "llm_completed"; completion: CompletionResult }
-  /**
-   * Non-fatal: reasoning model emitted `<think>...</think>` blocks before
-   * the tool-call JSON. Surfaced so UIs can display the model's thought
-   * process without polluting the feed. Always arrives *before*
-   * `tool_call_parsed` and *before* any `step_error` from the parser.
-   */
-  | { type: "reasoning"; stepIndex: number; text: string }
-  /**
-   * Streaming reasoning delta produced live while the model is still
-   * generating the `<think>...</think>` prelude. Only emitted when the
-   * runtime has a streaming LLM callback wired in — the final `reasoning`
-   * event still arrives once the JSON body is parsed. Consumers may either
-   * render both (the final event is authoritative) or ignore one.
-   */
-  | { type: "reasoning_delta"; stepIndex: number; text: string }
-  /**
-   * Streaming assistant text delta, emitted only for `reply.args.text`.
-   * Other tools never produce this event so non-reply arguments (shell
-   * commands, URLs, file paths, ...) are not confused with user-facing
-   * text.
-   */
-  | { type: "assistant_delta"; text: string }
-  | { type: "tool_call_parsed"; call: ToolCallPayload }
-  | { type: "tool_call_executed"; result: CompressedToolResult }
-  | { type: "assistant_reply"; text: string }
-  | { type: "step_error"; error: Error };
 
 /**
  * Why a step ended the current macro-turn or the whole session.
@@ -164,6 +136,19 @@ export async function executeStep(
     }
   }
   deps.onEvent?.({ type: "prompt_built", prompt, slotId: slot.slotId });
+  deps.onEvent?.({
+    type: "prompt_captured",
+    stepIndex: ctx.stepIndex,
+    stablePrefixHash: hashPrefix(prompt.stablePrefix),
+    tail: prompt.tail,
+    tokens: {
+      total: prompt.tokens.total,
+      stablePrefix: prompt.tokens.stablePrefix,
+      tail: Math.max(0, prompt.tokens.total - prompt.tokens.stablePrefix),
+    },
+    slotId: slot.slotId,
+    cacheReused: slot.cacheReused,
+  });
   deps.logger?.debug("prompt built", {
     sessionId: ctx.session.id,
     slotId: slot.slotId,
@@ -171,48 +156,28 @@ export async function executeStep(
     promptTokens: prompt.tokens.total,
   });
 
-  const llmStartedAt = Date.now();
   const llmParams: LlmStreamParams = {
     prompt: prompt.text,
     grammar: deps.grammar,
     slotId: slot.slotId,
     sessionId: ctx.session.id,
   };
-  const completion = deps.llmCompleteStream
-    ? await consumeStream(
-        deps.llmCompleteStream(llmParams),
-        ctx.stepIndex,
-        deps.profile,
-        deps.onEvent,
-      )
-    : await deps.llmComplete(llmParams);
-  const llmDurationMs = Date.now() - llmStartedAt;
-  deps.onEvent?.({ type: "llm_completed", completion });
-  deps.metrics?.recordLlmCall({
-    sessionId: ctx.session.id,
-    promptTokens: completion.timing?.promptTokens ?? prompt.tokens.total,
-    completionTokens: completion.timing?.predictedTokens ?? 0,
-    durationMs: llmDurationMs,
-    cacheReused: slot.cacheReused,
+
+  const firstAttempt = await runInitialCompletion({
+    ctx,
+    deps,
+    prompt,
+    slot,
+    llmParams,
   });
+  let completion = firstAttempt.completion;
 
   // Prefer the dedicated `reasoning_content` channel when the server
   // (QwQ, DeepSeek-R1 with `--reasoning-format deepseek`) supplies it —
   // the content body then no longer embeds `<think>...</think>` blocks.
   // Fall back to extracting `<think>` from `content` for classic builds
   // and models that stream CoT inline.
-  const reasoningFromChannel =
-    typeof completion.reasoningContent === "string"
-      ? completion.reasoningContent
-      : "";
-  const normalizedContent = deps.profile.requiresPromptThinkPrefix
-    ? `${getReasoningOpenTagPrefix(deps.profile)}${completion.content}`
-    : completion.content;
-  const extracted = extractReasoning(normalizedContent, getReasoningTagOptions(deps.profile));
-  const reasoning =
-    reasoningFromChannel.length > 0
-      ? reasoningFromChannel
-      : extracted.reasoning;
+  let reasoning = resolveReasoning(completion, deps.profile);
   if (reasoning.length > 0) {
     deps.onEvent?.({
       type: "reasoning",
@@ -221,28 +186,66 @@ export async function executeStep(
     });
   }
 
-  let toolCall: ToolCallPayload;
-  try {
-    toolCall = parseToolCall(normalizedContent, getReasoningTagOptions(deps.profile));
-  } catch (err) {
-    const inner = err instanceof Error ? err : new Error(String(err));
-    // Surface the raw llama-server output so operators can tell apart
-    // grammar misconfiguration (content="{}"), truncation, or an empty
-    // response from a genuine logic bug.
-    const preview = completion.content.slice(0, 240).replace(/\n/g, "\\n");
-    const error = new Error(
-      `${inner.message} (raw: "${preview}${completion.content.length > 240 ? "…" : ""}")`,
-    );
-    error.stack = inner.stack;
-    deps.logger?.warn("tool-call parse failed", {
+  let parsed = tryParseToolCall(completion, deps.profile);
+  if (!parsed.ok) {
+    // One-shot parser retry: grammar outputs can be truncated or
+    // malformed for transient reasons (stop-sequence race, model hiccup).
+    // Retry via the unary LLM path — the streaming path has already
+    // flushed partial deltas, so replaying through it would double-emit.
+    deps.onEvent?.({
+      type: "parse_retry",
+      stepIndex: ctx.stepIndex,
+      attempt: 1,
+      reason: parsed.error.message,
+    });
+    deps.logger?.warn("tool-call parse failed, retrying once", {
       sessionId: ctx.session.id,
       stepIndex: ctx.stepIndex,
-      rawLength: completion.content.length,
-      raw: completion.content,
+      reason: parsed.error.message,
     });
-    deps.onEvent?.({ type: "step_error", error });
-    throw error;
+
+    const retryStartedAt = Date.now();
+    completion = await deps.llmComplete(llmParams);
+    const retryDurationMs = Date.now() - retryStartedAt;
+    deps.onEvent?.({ type: "llm_completed", completion });
+    deps.onEvent?.({
+      type: "llm_raw_completion",
+      stepIndex: ctx.stepIndex,
+      attempt: 2,
+      completion,
+    });
+    deps.metrics?.recordLlmCall({
+      sessionId: ctx.session.id,
+      promptTokens: completion.timing?.promptTokens ?? prompt.tokens.total,
+      completionTokens: completion.timing?.predictedTokens ?? 0,
+      durationMs: retryDurationMs,
+      cacheReused: slot.cacheReused,
+    });
+
+    const retryReasoning = resolveReasoning(completion, deps.profile);
+    if (retryReasoning.length > 0) {
+      deps.onEvent?.({
+        type: "reasoning",
+        stepIndex: ctx.stepIndex,
+        text: retryReasoning,
+      });
+      reasoning = retryReasoning;
+    }
+
+    parsed = tryParseToolCall(completion, deps.profile);
+    if (!parsed.ok) {
+      const error = formatParseError(parsed.error, completion);
+      deps.logger?.warn("tool-call parse failed after retry", {
+        sessionId: ctx.session.id,
+        stepIndex: ctx.stepIndex,
+        rawLength: completion.content.length,
+        raw: completion.content,
+      });
+      deps.onEvent?.({ type: "step_error", error });
+      throw error;
+    }
   }
+  const toolCall = parsed.toolCall;
   if (!deps.registry.has(toolCall.tool)) {
     const error = new Error(`tool not registered in this agent: ${toolCall.tool}`);
     deps.onEvent?.({ type: "step_error", error });
@@ -318,6 +321,116 @@ export async function executeStep(
   });
 
   return { toolCall, toolResult, completion, prompt, nextSession, terminal };
+}
+
+interface InitialCompletionArgs {
+  ctx: StepContext;
+  deps: StepDependencies;
+  prompt: BuiltPrompt;
+  slot: { slotId: number; cacheReused: boolean };
+  llmParams: LlmStreamParams;
+}
+
+/**
+ * Run the first LLM call for a step (stream path when available, unary
+ * fallback otherwise) and emit the matching observability events.
+ */
+async function runInitialCompletion(
+  args: InitialCompletionArgs,
+): Promise<{ completion: CompletionResult }> {
+  const { ctx, deps, prompt, slot, llmParams } = args;
+  const startedAt = Date.now();
+  const completion = deps.llmCompleteStream
+    ? await consumeStream(
+        deps.llmCompleteStream(llmParams),
+        ctx.stepIndex,
+        deps.profile,
+        deps.onEvent,
+      )
+    : await deps.llmComplete(llmParams);
+  const durationMs = Date.now() - startedAt;
+  deps.onEvent?.({ type: "llm_completed", completion });
+  deps.onEvent?.({
+    type: "llm_raw_completion",
+    stepIndex: ctx.stepIndex,
+    attempt: 1,
+    completion,
+  });
+  deps.metrics?.recordLlmCall({
+    sessionId: ctx.session.id,
+    promptTokens: completion.timing?.promptTokens ?? prompt.tokens.total,
+    completionTokens: completion.timing?.predictedTokens ?? 0,
+    durationMs,
+    cacheReused: slot.cacheReused,
+  });
+  return { completion };
+}
+
+/**
+ * Resolve the reasoning text for a completion, preferring the dedicated
+ * `reasoning_content` channel when present and falling back to inline
+ * `<think>...</think>` extraction for classic llama-server builds.
+ */
+function resolveReasoning(
+  completion: CompletionResult,
+  profile: ModelProfile,
+): string {
+  const fromChannel =
+    typeof completion.reasoningContent === "string"
+      ? completion.reasoningContent
+      : "";
+  if (fromChannel.length > 0) return fromChannel;
+  const normalizedContent = normalizeContent(completion, profile);
+  const extracted = extractReasoning(
+    normalizedContent,
+    getReasoningTagOptions(profile),
+  );
+  return extracted.reasoning;
+}
+
+function normalizeContent(
+  completion: CompletionResult,
+  profile: ModelProfile,
+): string {
+  return profile.requiresPromptThinkPrefix
+    ? `${getReasoningOpenTagPrefix(profile)}${completion.content}`
+    : completion.content;
+}
+
+type ToolCallParseResult =
+  | { ok: true; toolCall: ToolCallPayload }
+  | { ok: false; error: Error };
+
+/**
+ * Non-throwing parser wrapper. The step executor uses it to distinguish
+ * a malformed first attempt (retryable) from any other error shape.
+ */
+function tryParseToolCall(
+  completion: CompletionResult,
+  profile: ModelProfile,
+): ToolCallParseResult {
+  try {
+    const toolCall = parseToolCall(
+      normalizeContent(completion, profile),
+      getReasoningTagOptions(profile),
+    );
+    return { ok: true, toolCall };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err : new Error(String(err)) };
+  }
+}
+
+/**
+ * Format a parse error with a preview of the raw LLM output so operators
+ * can tell grammar misconfiguration apart from truncation or an empty
+ * response without digging through streaming logs.
+ */
+function formatParseError(inner: Error, completion: CompletionResult): Error {
+  const preview = completion.content.slice(0, 240).replace(/\n/g, "\\n");
+  const suffix = completion.content.length > 240 ? "…" : "";
+  const error = new Error(`${inner.message} (raw: "${preview}${suffix}")`);
+  error.stack = inner.stack;
+  return error;
 }
 
 /**

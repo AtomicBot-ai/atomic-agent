@@ -68,6 +68,18 @@ export interface LlamaServerClientOptions {
   apiKey?: string | null;
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;
+  /**
+   * Overrides the retry budget for `complete()` and the initial fetch
+   * of `completeStream()`. When omitted, the client reads
+   * `config.llama.completionRetries` on each request.
+   */
+  completionRetries?: number;
+  completionRetryBackoffMs?: number;
+  /**
+   * Injectable sleep used during backoff. Tests pass a spy that returns
+   * immediately so retry logic is exercised without real time.
+   */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface LlamaServerProps {
@@ -85,6 +97,9 @@ export class LlamaServerClient {
   private readonly apiKey: string | null;
   private readonly requestTimeoutMs: number;
   private readonly fetchImpl: typeof fetch;
+  private readonly completionRetriesOverride: number | undefined;
+  private readonly completionRetryBackoffMsOverride: number | undefined;
+  private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(options: LlamaServerClientOptions = {}) {
     const config = getConfig();
@@ -93,6 +108,9 @@ export class LlamaServerClient {
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? config.llama.requestTimeoutMs;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.completionRetriesOverride = options.completionRetries;
+    this.completionRetryBackoffMsOverride = options.completionRetryBackoffMs;
+    this.sleep = options.sleep ?? defaultSleep;
   }
 
   async fetchProps(): Promise<LlamaServerProps> {
@@ -129,45 +147,85 @@ export class LlamaServerClient {
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const { url, headers, body } = this.prepareRequest(request, false);
-    const controller = new AbortController();
-    const timer = setTimeout(
-      () => controller.abort(),
-      this.requestTimeoutMs,
-    );
-    try {
-      const response = await this.fetchImpl(url, {
-        method: "POST",
-        headers,
-        body,
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        throw new LlamaServerError(
-          `llama-server returned http ${response.status}`,
-          response.status,
-          url,
-        );
+    return this.runWithRetry(url, async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(
+        () => controller.abort(),
+        this.requestTimeoutMs,
+      );
+      try {
+        const response = await this.fetchImpl(url, {
+          method: "POST",
+          headers,
+          body,
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new LlamaServerError(
+            `llama-server returned http ${response.status}`,
+            response.status,
+            url,
+          );
+        }
+        const json = (await response.json()) as Record<string, unknown>;
+        return normaliseCompletionResponse(json);
+      } catch (err) {
+        if (err instanceof LlamaServerError) throw err;
+        const message = err instanceof Error ? err.message : String(err);
+        throw new LlamaServerError(message, null, url);
+      } finally {
+        clearTimeout(timer);
       }
-      const json = (await response.json()) as Record<string, unknown>;
-      return normaliseCompletionResponse(json);
-    } catch (err) {
-      if (err instanceof LlamaServerError) throw err;
-      const message = err instanceof Error ? err.message : String(err);
-      throw new LlamaServerError(message, null, url);
-    } finally {
-      clearTimeout(timer);
-    }
+    });
   }
 
   async *completeStream(
     request: CompletionRequest,
   ): AsyncGenerator<StreamChunk, CompletionResult, void> {
     const { url, headers, body } = this.prepareRequest(request, true);
-    const controller = new AbortController();
-    const timer = setTimeout(
-      () => controller.abort(),
-      this.requestTimeoutMs,
-    );
+    // Retry only the initial fetch. Once the body starts streaming we
+    // can't safely replay — partial tokens have already been delivered
+    // to the caller and the model has been charged for them server-side.
+    let opened: {
+      response: Response;
+      controller: AbortController;
+      timer: ReturnType<typeof setTimeout>;
+    };
+    try {
+      opened = await this.runWithRetry(url, async () => {
+        const controller = new AbortController();
+        const timer = setTimeout(
+          () => controller.abort(),
+          this.requestTimeoutMs,
+        );
+        try {
+          const response = await this.fetchImpl(url, {
+            method: "POST",
+            headers,
+            body,
+            signal: controller.signal,
+          });
+          if (!response.ok || !response.body) {
+            throw new LlamaServerError(
+              `llama-server returned http ${response.status}`,
+              response.status,
+              url,
+            );
+          }
+          return { response, controller, timer };
+        } catch (err) {
+          clearTimeout(timer);
+          if (err instanceof LlamaServerError) throw err;
+          const message = err instanceof Error ? err.message : String(err);
+          throw new LlamaServerError(message, null, url);
+        }
+      });
+    } catch (err) {
+      if (err instanceof LlamaServerError) throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      throw new LlamaServerError(message, null, url);
+    }
+    const { response, timer } = opened;
     let finalResult: CompletionResult = {
       content: "",
       reasoningContent: "",
@@ -184,15 +242,9 @@ export class LlamaServerClient {
       modelId: null,
     };
     try {
-      const response = await this.fetchImpl(url, {
-        method: "POST",
-        headers,
-        body,
-        signal: controller.signal,
-      });
-      if (!response.ok || !response.body) {
+      if (!response.body) {
         throw new LlamaServerError(
-          `llama-server returned http ${response.status}`,
+          "llama-server returned no streaming body",
           response.status,
           url,
         );
@@ -284,6 +336,47 @@ export class LlamaServerClient {
     if (this.apiKey) headers.authorization = `Bearer ${this.apiKey}`;
     return headers;
   }
+
+  private resolveRetryParams(): { maxAttempts: number; backoffMs: number } {
+    const config = getConfig();
+    const maxAttempts = Math.max(
+      1,
+      this.completionRetriesOverride ?? config.llama.completionRetries,
+    );
+    const backoffMs = Math.max(
+      0,
+      this.completionRetryBackoffMsOverride ??
+        config.llama.completionRetryBackoffMs,
+    );
+    return { maxAttempts, backoffMs };
+  }
+
+  /**
+   * Run `attempt` up to `maxAttempts` times, retrying only on transport
+   * failures — network errors surface as `LlamaServerError` with
+   * `status === null`, and 5xx responses come through with `status >= 500`.
+   * Grammar/validation 4xx errors and abort signals short-circuit.
+   */
+  private async runWithRetry<T>(
+    url: string,
+    attempt: () => Promise<T>,
+  ): Promise<T> {
+    const { maxAttempts, backoffMs } = this.resolveRetryParams();
+    let lastError: unknown;
+    for (let i = 1; i <= maxAttempts; i += 1) {
+      try {
+        return await attempt();
+      } catch (err) {
+        lastError = err;
+        if (!isRetryableLlamaError(err) || i >= maxAttempts) throw err;
+        await this.sleep(computeBackoffMs(backoffMs, i));
+      }
+    }
+    // Unreachable: loop either returns or throws.
+    throw lastError instanceof Error
+      ? lastError
+      : new LlamaServerError(String(lastError), null, url);
+  }
 }
 
 function parseSseEvent(rawEvent: string): Record<string, unknown> | null {
@@ -336,4 +429,33 @@ function toNumber(value: unknown, fallback = 0): number {
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallback;
+}
+
+/**
+ * Decide whether a caught completion error is worth retrying. The
+ * policy deliberately narrow: only transport-layer failures (network
+ * hiccups, HTTP 5xx from llama-server) qualify. Grammar/validation
+ * errors (4xx) and user-triggered aborts must propagate immediately.
+ */
+function isRetryableLlamaError(err: unknown): boolean {
+  if (!(err instanceof LlamaServerError)) return false;
+  if (err.status === null) return true;
+  if (err.status >= 500 && err.status < 600) return true;
+  return false;
+}
+
+/**
+ * Exponential backoff with a ±20% jitter. Keeps the retry storm bounded
+ * so a degraded llama-server has a chance to recover between attempts.
+ */
+function computeBackoffMs(baseMs: number, attemptNumber: number): number {
+  if (baseMs <= 0) return 0;
+  const exp = baseMs * Math.pow(2, attemptNumber - 1);
+  const jitter = exp * (Math.random() * 0.4 - 0.2);
+  return Math.max(0, Math.round(exp + jitter));
+}
+
+async function defaultSleep(ms: number): Promise<void> {
+  if (ms <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }

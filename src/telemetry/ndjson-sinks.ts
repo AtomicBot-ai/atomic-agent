@@ -6,6 +6,7 @@ import type {
   LogPayload,
   MetricPayload,
 } from "../sidecar/sidecar-events.js";
+import type { TraceSink, TraceEvent } from "./trace/index.js";
 
 export type SidecarEventEmitter = (event: SidecarEvent) => void;
 
@@ -46,6 +47,26 @@ export function createMetricNdjsonSink(emit: SidecarEventEmitter): MetricSink {
         ...(sample.tags ? { tags: sample.tags } : {}),
         timestamp: sample.timestamp,
       },
+    };
+    emit(event);
+  };
+}
+
+/**
+ * Forwards trace events to a sidecar host as NDJSON `trace` events. The
+ * payload is the `TraceEvent` verbatim — hosts branch on `payload.type`
+ * to dispatch. Sinks must never throw; `emit` is expected to swallow
+ * transport errors.
+ */
+export function createTraceNdjsonSidecarSink(
+  emit: SidecarEventEmitter,
+): TraceSink {
+  return (traceEvent: TraceEvent) => {
+    const event: SidecarEvent<"trace", TraceEvent> = {
+      kind: "event",
+      id: randomUUID(),
+      type: "trace",
+      payload: traceEvent,
     };
     emit(event);
   };

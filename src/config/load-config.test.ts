@@ -87,5 +87,23 @@ describe("loadConfig", () => {
     expect(config.paths.browserProfileDir).toBe(
       join(stateDir, "browser-profile"),
     );
+    expect(config.paths.tracesDir).toBe(join(stateDir, "traces"));
+  });
+
+  it("telemetry.trace defaults expose the per-session NDJSON dir", () => {
+    const config = loadConfig();
+    expect(config.telemetry.trace.enabled).toBeNull();
+    expect(config.telemetry.trace.dir).toBe(join(stateDir, "traces"));
+    expect(config.telemetry.trace.maxBytesPerSession).toBe(10 * 1024 * 1024);
+  });
+
+  it("honours user-pinned telemetry.trace.enabled", () => {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      version: USER_CONFIG_VERSION,
+      telemetry: { trace: { enabled: false, maxBytesPerSession: 4096 } },
+    });
+    const config = loadConfig();
+    expect(config.telemetry.trace.enabled).toBe(false);
+    expect(config.telemetry.trace.maxBytesPerSession).toBe(4096);
   });
 });

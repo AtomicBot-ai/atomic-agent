@@ -38,6 +38,7 @@ export type SidecarEventType =
   | "skill_registry_updated"
   | "log"
   | "metric"
+  | "trace"
   | "pong"
   | "error";
 

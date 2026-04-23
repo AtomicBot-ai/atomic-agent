@@ -55,6 +55,14 @@ import type { LogSink } from "../telemetry/structured-logger.js";
 import { MetricsCollector } from "../telemetry/metrics-collector.js";
 import type { MetricSink } from "../telemetry/metrics-collector.js";
 import { AgentMetrics } from "../telemetry/agent-metrics.js";
+import {
+  createNdjsonTraceSink,
+  createTraceBus,
+  createTraceRecorder,
+  type TraceBus,
+  type TraceRecorder,
+  type TraceSink,
+} from "../telemetry/trace/index.js";
 
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 
@@ -64,12 +72,28 @@ export interface RuntimeEventHandlers {
   onSkillRegistryChange?: (entries: SkillCatalogEntry[]) => void;
   logSinks?: LogSink[];
   metricSinks?: MetricSink[];
+  /**
+   * Extra destinations for `TraceEvent`s produced by the recorder. Always
+   * combined with the default NDJSON sink (when tracing is active) — set
+   * to an empty array to keep only the on-disk sink, or pass custom sinks
+   * (e.g. `createTraceNdjsonSidecarSink`) to relay traces to embedding
+   * hosts.
+   */
+  traceSinks?: TraceSink[];
 }
 
 export interface CreateAgentRuntimeOptions {
   workingDir: string;
   approvalRequired: boolean;
   handlers?: RuntimeEventHandlers;
+  /**
+   * Default activation state for tracing when
+   * `config.telemetry.trace.enabled` is `null` (the default). CLI / TUI /
+   * serve entry points pass `true` so local debugging is observable by
+   * default; the sidecar passes `false` so embedded hosts opt in via
+   * config or by providing their own sinks.
+   */
+  traceDefault?: boolean;
   /** Optional overrides — used by tests to inject fakes. */
   overrides?: {
     llamaComplete?: (params: {
@@ -158,6 +182,21 @@ export async function createAgentRuntime(
     sinks: logSinks,
   });
   const metrics = new AgentMetrics(new MetricsCollector({ sinks: metricSinks }));
+
+  const traceEnabled = resolveTraceEnabled(
+    config.telemetry.trace.enabled,
+    options.traceDefault,
+  );
+  const traceBus = traceEnabled
+    ? buildTraceBus({
+        extraSinks: options.handlers?.traceSinks ?? [],
+        dir: config.telemetry.trace.dir,
+        maxBytesPerSession: config.telemetry.trace.maxBytesPerSession,
+        logger,
+      })
+    : null;
+  const recorders = new Map<string, TraceRecorder>();
+  let currentRecorder: TraceRecorder | null = null;
 
   const approvals = new ApprovalGate({
     emit: (request) => options.handlers?.onApprovalRequest?.(request),
@@ -276,7 +315,10 @@ export async function createAgentRuntime(
     toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
     capabilities,
     profile,
-    onEvent: (event: AgentLoopEvent) => options.handlers?.onAgentEvent?.(event),
+    onEvent: (event: AgentLoopEvent) => {
+      currentRecorder?.onAgentEvent(event);
+      options.handlers?.onAgentEvent?.(event);
+    },
     metrics,
     logger,
   };
@@ -312,6 +354,22 @@ export async function createAgentRuntime(
     options.handlers?.onSkillRegistryChange?.([...skillCatalog]);
   };
 
+  const ensureRecorder = (session: SessionState): TraceRecorder | null => {
+    if (!traceBus) return null;
+    const existing = recorders.get(session.id);
+    if (existing) return existing;
+    const recorder = createTraceRecorder({
+      sessionId: session.id,
+      emit: (event) => traceBus.emit(event),
+    });
+    recorder.beginSession({
+      workingDir: session.workingDir,
+      ...(session.metadata ? { metadata: session.metadata } : {}),
+    });
+    recorders.set(session.id, recorder);
+    return recorder;
+  };
+
   const createSession = (
     input: { metadata?: Record<string, unknown> } = {},
   ): SessionState => {
@@ -321,6 +379,7 @@ export async function createAgentRuntime(
       ...(input.metadata ? { metadata: input.metadata } : {}),
     });
     sessionStore.save(state);
+    ensureRecorder(state);
     return state;
   };
 
@@ -329,13 +388,18 @@ export async function createAgentRuntime(
     userMessage: string,
     runOptions: { maxSteps?: number; signal?: AbortSignal } = {},
   ): Promise<RunTurnResult> => {
-    const result = await loop.runTurn(session, {
-      userMessage,
-      maxSteps: runOptions.maxSteps ?? config.agent.maxSteps,
-      signal: runOptions.signal ?? new AbortController().signal,
-    });
-    sessionStore.save(result.session);
-    return result;
+    currentRecorder = ensureRecorder(session);
+    try {
+      const result = await loop.runTurn(session, {
+        userMessage,
+        maxSteps: runOptions.maxSteps ?? config.agent.maxSteps,
+        signal: runOptions.signal ?? new AbortController().signal,
+      });
+      sessionStore.save(result.session);
+      return result;
+    } finally {
+      currentRecorder = null;
+    }
   };
 
   const runtime = {
@@ -402,6 +466,40 @@ function logResolvedProfile(
   logger.info("model profile resolved", {
     id: resolved.id,
     alias: typeof props.model_alias === "string" ? props.model_alias : null,
+    contextWindow: resolved.contextWindow ?? null,
   });
   return resolved;
+}
+
+/**
+ * Resolve the effective trace toggle. The config value wins when explicit
+ * (`true` / `false`); otherwise the entry-point default decides (CLI is
+ * `true`, sidecar is `false`, absent defaults to `false`).
+ */
+function resolveTraceEnabled(
+  fromConfig: boolean | null,
+  fromEntryPoint: boolean | undefined,
+): boolean {
+  if (fromConfig !== null) return fromConfig;
+  return fromEntryPoint ?? false;
+}
+
+/**
+ * Wire trace sinks into a fan-out bus. Always includes the on-disk
+ * NDJSON sink so `atomic-agent trace show` can read the session back —
+ * callers append additional sinks (sidecar relay, sentry, …) via
+ * `handlers.traceSinks`.
+ */
+function buildTraceBus(args: {
+  extraSinks: TraceSink[];
+  dir: string;
+  maxBytesPerSession: number;
+  logger: StructuredLogger;
+}): TraceBus {
+  const ndjsonSink = createNdjsonTraceSink({
+    dir: args.dir,
+    maxBytesPerSession: args.maxBytesPerSession,
+    logger: args.logger,
+  });
+  return createTraceBus([ndjsonSink, ...args.extraSinks]);
 }

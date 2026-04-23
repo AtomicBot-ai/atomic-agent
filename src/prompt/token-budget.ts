@@ -33,27 +33,85 @@ export function estimateTokens(text: string): number {
 }
 
 /**
- * Section splits (share of `total`). Only `session` is enforced by
- * `buildPrompt`; `worldSnapshot` and `conversation` are rendered in full
- * and bounded only by llama-server `n_ctx`. Their fields stay here so
- * `checkBudget` still surfaces the token counts for observability and
- * for regression tests that assert relative proportions.
- *  - stablePrefix: 35% — persona + tools + capabilities + skill catalog.
- *  - session: 15% — known facts + loaded skills (enforced here).
- *  - worldSnapshot: 15% — reference only; full ARIA snapshot is emitted.
- *  - conversation: 35% — reference only; full chat history is emitted.
+ * Section splits driven by `total` (the `agent.tokenBudget` target for
+ * the upper half of the prompt) and optional independent safety-net
+ * caps for the lower half (conversation / world). Semantics per field:
+ *  - `stablePrefix`, `session`: reported/enforced from `total` share.
+ *  - `worldSnapshot`: safety-net cap, enforced by `buildPrompt`. Falls
+ *    back to a `total * 0.15` share when the caller did not supply one
+ *    (keeps existing tests stable during the transition).
+ *  - `conversation`: safety-net cap, same fallback policy.
  *
- * Expanding world/conversation does NOT invalidate the KV cache: both
- * sections live in the variable tail, after the stable prefix.
+ * Both `conversation` and `worldSnapshot` live in the variable tail and
+ * do NOT invalidate the KV cache when they grow.
  */
-export function defaultBudget(total: number): TokenBudgetLimits {
+export function defaultBudget(
+  total: number,
+  caps: { conversation?: number; worldSnapshot?: number } = {},
+): TokenBudgetLimits {
   return {
     total,
     stablePrefix: Math.floor(total * 0.35),
     session: Math.floor(total * 0.15),
-    worldSnapshot: Math.floor(total * 0.15),
-    conversation: Math.floor(total * 0.35),
+    worldSnapshot: caps.worldSnapshot ?? Math.floor(total * 0.15),
+    conversation: caps.conversation ?? Math.floor(total * 0.35),
   };
+}
+
+/**
+ * Inputs to `computeEffectiveConversationCap`. All token counts are
+ * estimates from `estimateTokens`; callers measure the actual stable
+ * prefix size and subtract the enforced session / world budgets.
+ */
+export interface EffectiveConversationCapInput {
+  configuredCap: number;
+  contextWindow: number | undefined;
+  stablePrefixTokens: number;
+  sessionTokens: number;
+  worldSnapshotTokens: number;
+  completionMaxTokens: number;
+}
+
+/**
+ * Token headroom we keep free between the prompt and the model's
+ * physical context window. Covers boundary tokens (BOS/EOS, chat-
+ * template scaffolding, stop sequences) plus our token estimator's
+ * over/under-count error margin.
+ */
+export const CONVERSATION_CAP_SAFETY_MARGIN = 512;
+
+/**
+ * Hard minimum for the effective conversation cap. Even on tiny-context
+ * models we keep at least this many tokens so the last user turn and a
+ * bit of recent history stay visible; `packConversation` is responsible
+ * for folding the rest into a summary line when this is reached.
+ */
+export const CONVERSATION_CAP_FLOOR = 512;
+
+/**
+ * Resolve the actual cap enforced on the `### conversation` section for
+ * a given prompt-build. When the runtime knows the model's physical
+ * `contextWindow` (from `llama-server /props`), clamp the user-chosen
+ * `configuredCap` to the space that remains after all fixed costs.
+ * When `contextWindow` is unknown, trust the user's config as-is.
+ */
+export function computeEffectiveConversationCap(
+  input: EffectiveConversationCapInput,
+): number {
+  if (!input.contextWindow || input.contextWindow <= 0) {
+    return Math.max(CONVERSATION_CAP_FLOOR, input.configuredCap);
+  }
+  const available =
+    input.contextWindow -
+    input.stablePrefixTokens -
+    input.sessionTokens -
+    input.worldSnapshotTokens -
+    input.completionMaxTokens -
+    CONVERSATION_CAP_SAFETY_MARGIN;
+  return Math.max(
+    CONVERSATION_CAP_FLOOR,
+    Math.min(input.configuredCap, available),
+  );
 }
 
 export function checkBudget(

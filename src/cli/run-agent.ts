@@ -216,6 +216,7 @@ export async function runAgentCommand(args: string[]): Promise<number> {
   const runtime = await createAgentRuntime({
     workingDir: parsed.workingDir,
     approvalRequired,
+    traceDefault: true,
     handlers: {
       onAgentEvent: (event) => {
         // The chat loop installs a per-turn hook to capture assistant_reply

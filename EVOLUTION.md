@@ -191,7 +191,9 @@ Main risk:
 
 - naive parallelism can break browser state, approvals, and cache reuse guarantees
 
-## Option 7: traceability and replay
+## Option 7: traceability and replay [done: 2026-04-23]
+
+Shipped as `src/telemetry/trace/` (append-only NDJSON per session at `<stateDir>/traces/<sessionId>.ndjson`) + `src/replay/` (prompt-drift replay) + `atomic-agent trace list|show|export|replay`. Secret redaction is intentionally deferred — traces are currently sensitive local artefacts.
 
 What it adds:
 
@@ -233,14 +235,16 @@ Why this order:
 - retrieval becomes much easier once prompt growth and traces are under control
 - durable tasks should exist before cron and event-driven autonomy, otherwise background behavior becomes hard to reason about
 
-## Suggested first milestone
+## Suggested first milestone [done: 2026-04-23]
 
 If only one substantial investment is possible, start with a combined milestone:
 
-- bounded conversation window
-- session summary for older turns
-- explicit tail truncation markers
-- parser retry for malformed tool-call output
-- basic LLM retry policy for transient transport failures
+- bounded conversation window [done]
+- session summary for older turns [done]
+- explicit tail truncation markers [done]
+- parser retry for malformed tool-call output [done]
+- basic LLM retry policy for transient transport failures [done]
 
 This keeps the existing runtime model intact while improving the failure modes users hit first in real work.
+
+Implementation notes (2026-04-23): prompt-time compression lives in `packConversation` (`src/session/conversation-turn.ts`); world / conversation safety-net caps (`agent.worldSnapshotMaxTokens`, `agent.conversationMaxTokens`) are enforced in `buildPrompt` and clamped by `ModelProfile.contextWindow` via `computeEffectiveConversationCap`. Parser retry lives in `src/agent/step-executor.ts` (one-shot unary retry, emits `parse_retry`); transport retry sits in `LlamaServerClient` (`complete` + pre-body of `completeStream`), bounded by `llama.completionRetries` / `llama.completionRetryBackoffMs` and limited to network errors and HTTP 5xx. See `AGENTS.md` §"Current memory model" / §"LLM reliability policy".

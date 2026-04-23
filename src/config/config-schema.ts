@@ -20,11 +20,21 @@ export interface AtomicAgentConfig {
     requestTimeoutMs: number;
     healthRetries: number;
     healthRetryBackoffMs: number;
+    /**
+     * Maximum number of attempts for `complete()` and the initial
+     * non-streaming fetch of `completeStream()`. Retries apply only to
+     * transport-level errors (network failures, HTTP 5xx) — 4xx grammar
+     * or validation errors short-circuit immediately.
+     */
+    completionRetries: number;
+    /** Base delay between completion retries; grows exponentially with jitter. */
+    completionRetryBackoffMs: number;
     defaultSlotId: number;
   };
   paths: {
     stateDir: string;
     sessionsDbFile: string;
+    tracesDir: string;
     grammarsDir: string;
     browserProfileDir: string;
     globalSkillsDir: string;
@@ -37,6 +47,18 @@ export interface AtomicAgentConfig {
     toolTimeoutMs: number;
     approvalRequired: boolean;
     stablePrefixHashSalt: string;
+    /**
+     * Safety-net ceiling for the `### conversation` section of the prompt.
+     * Typical sessions stay well under this cap — it exists to prevent
+     * pathological growth, not to be a regular truncation mechanism.
+     */
+    conversationMaxTokens: number;
+    /**
+     * Safety-net ceiling for the `### world` section. ARIA snapshots are
+     * already compressed at the browser layer; this cap guards against
+     * edge cases where compression misses (huge SVG trees, etc.).
+     */
+    worldSnapshotMaxTokens: number;
   };
   browser: {
     channel: BrowserChannel;
@@ -58,6 +80,23 @@ export interface AtomicAgentConfig {
   };
   log: {
     level: LogLevel;
+  };
+  telemetry: {
+    trace: {
+      /**
+       * Trace recording toggle.
+       * - `true`  / `false`: explicit user choice (wins over the entry-point default).
+       * - `null`: defer to the entry point. `createAgentRuntime` resolves it
+       *   via `traceDefault`: CLI / TUI / serve use `true`, sidecar uses
+       *   `false`. This keeps local debugging observable by default while
+       *   embedded hosts stay silent unless they opt in.
+       */
+      enabled: boolean | null;
+      /** Directory for per-session NDJSON trace files. */
+      dir: string;
+      /** Hard cap on a single session's trace file before writes stop. */
+      maxBytesPerSession: number;
+    };
   };
 }
 
@@ -83,6 +122,8 @@ export interface UserConfigFile {
     maxSteps: number;
     toolTimeoutMs: number;
     approvalRequired: boolean;
+    conversationMaxTokens: number;
+    worldSnapshotMaxTokens: number;
   };
   http: {
     enabled: boolean;
@@ -90,6 +131,12 @@ export interface UserConfigFile {
     hostAllowlist: string[] | null;
     maxResponseBytes: number;
     defaultTimeoutMs: number;
+  };
+  telemetry: {
+    trace: {
+      enabled: boolean | null;
+      maxBytesPerSession: number;
+    };
   };
 }
 
@@ -104,6 +151,8 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     maxSteps: 25,
     toolTimeoutMs: 60_000,
     approvalRequired: true,
+    conversationMaxTokens: 32_000,
+    worldSnapshotMaxTokens: 8_000,
   },
   http: {
     enabled: true,
@@ -111,6 +160,12 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     hostAllowlist: null,
     maxResponseBytes: 1_048_576,
     defaultTimeoutMs: 30_000,
+  },
+  telemetry: {
+    trace: {
+      enabled: null,
+      maxBytesPerSession: 10 * 1024 * 1024,
+    },
   },
 };
 
@@ -121,6 +176,8 @@ export const ENV_DEFAULTS = {
   REQUEST_TIMEOUT_MS: 120_000,
   HEALTH_RETRIES: 5,
   HEALTH_BACKOFF_MS: 500,
+  COMPLETION_RETRIES: 3,
+  COMPLETION_RETRY_BACKOFF_MS: 150,
   DEFAULT_SLOT_ID: 0,
   /** Default `n_predict` for grammar-constrained tool JSON (512 truncates long `reply.text`). */
   LLAMA_COMPLETION_MAX_TOKENS: 4096,
@@ -189,6 +246,16 @@ export function parseBool(raw: unknown, field: string): boolean {
     field,
     `expected boolean, got ${JSON.stringify(raw)}`,
   );
+}
+
+/**
+ * Parse a tri-state toggle: `null` means "defer to the caller". Used by
+ * `telemetry.trace.enabled` so users can leave the decision to the
+ * entry-point default (CLI on, sidecar off) or pin it explicitly.
+ */
+export function parseBoolOrNull(raw: unknown, field: string): boolean | null {
+  if (raw === null || raw === undefined) return null;
+  return parseBool(raw, field);
 }
 
 export function parseNonEmptyString(raw: unknown, field: string): string {
@@ -268,6 +335,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const log = (obj.log as Record<string, unknown> | undefined) ?? {};
   const agent = (obj.agent as Record<string, unknown> | undefined) ?? {};
   const http = (obj.http as Record<string, unknown> | undefined) ?? {};
+  const telemetry =
+    (obj.telemetry as Record<string, unknown> | undefined) ?? {};
+  const telemetryTrace =
+    (telemetry.trace as Record<string, unknown> | undefined) ?? {};
 
   return {
     version: USER_CONFIG_VERSION,
@@ -294,6 +365,16 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         agent.approvalRequired ?? USER_CONFIG_DEFAULTS.agent.approvalRequired,
         "agent.approvalRequired",
       ),
+      conversationMaxTokens: parsePositiveInt(
+        agent.conversationMaxTokens ??
+          USER_CONFIG_DEFAULTS.agent.conversationMaxTokens,
+        "agent.conversationMaxTokens",
+      ),
+      worldSnapshotMaxTokens: parsePositiveInt(
+        agent.worldSnapshotMaxTokens ??
+          USER_CONFIG_DEFAULTS.agent.worldSnapshotMaxTokens,
+        "agent.worldSnapshotMaxTokens",
+      ),
     },
     http: {
       enabled: parseBool(
@@ -316,6 +397,20 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         http.defaultTimeoutMs ?? USER_CONFIG_DEFAULTS.http.defaultTimeoutMs,
         "http.defaultTimeoutMs",
       ),
+    },
+    telemetry: {
+      trace: {
+        enabled: parseBoolOrNull(
+          telemetryTrace.enabled ??
+            USER_CONFIG_DEFAULTS.telemetry.trace.enabled,
+          "telemetry.trace.enabled",
+        ),
+        maxBytesPerSession: parsePositiveInt(
+          telemetryTrace.maxBytesPerSession ??
+            USER_CONFIG_DEFAULTS.telemetry.trace.maxBytesPerSession,
+          "telemetry.trace.maxBytesPerSession",
+        ),
+      },
     },
   };
 }

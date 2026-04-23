@@ -57,6 +57,62 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     rmSync(workingDir, { recursive: true, force: true });
   });
 
+  it("emits prompt_captured and llm_raw_completion alongside canonical step events", async () => {
+    const registry = buildDefaultToolRegistry();
+    const stepEventTypes: string[] = [];
+    const promptCaptured: Array<{
+      stablePrefixHash: string;
+      tail: string;
+      tokens: { total: number; stablePrefix: number; tail: number };
+      slotId: number;
+      cacheReused: boolean;
+    }> = [];
+    const llmRawCompletions: Array<{ attempt: 1 | 2; stepIndex: number }> = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () =>
+        makeCompletion(
+          JSON.stringify({ tool: "finish", args: { summary: "done" } }),
+        ),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type !== "llm_event") return;
+        stepEventTypes.push(event.event.type);
+        if (event.event.type === "prompt_captured") {
+          promptCaptured.push({
+            stablePrefixHash: event.event.stablePrefixHash,
+            tail: event.event.tail,
+            tokens: event.event.tokens,
+            slotId: event.event.slotId,
+            cacheReused: event.event.cacheReused,
+          });
+        }
+        if (event.event.type === "llm_raw_completion") {
+          llmRawCompletions.push({
+            attempt: event.event.attempt,
+            stepIndex: event.event.stepIndex,
+          });
+        }
+      },
+    });
+    const session = createEmptySessionState({ id: "s-trace", workingDir });
+    await loop.runTurn(session, {
+      userMessage: "trace me",
+      maxSteps: 2,
+      signal: new AbortController().signal,
+    });
+    expect(stepEventTypes).toContain("prompt_captured");
+    expect(stepEventTypes).toContain("llm_raw_completion");
+    expect(promptCaptured).toHaveLength(1);
+    expect(promptCaptured[0]!.stablePrefixHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(promptCaptured[0]!.tokens.total).toBeGreaterThan(0);
+    expect(llmRawCompletions).toEqual([{ attempt: 1, stepIndex: 0 }]);
+  });
+
   it("finishes session immediately when the LLM emits a finish tool call", async () => {
     const registry = buildDefaultToolRegistry();
     const loop = new AgentLoop({
@@ -102,6 +158,42 @@ describe("AgentLoop end-to-end with mock LLM", () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow(/tool-call/);
+  });
+
+  it("recovers via a one-shot parser retry when the first completion is malformed", async () => {
+    const registry = buildDefaultToolRegistry();
+    const responses = [
+      "{{garbage",
+      JSON.stringify({ tool: "finish", args: { summary: "recovered" } }),
+    ];
+    let calls = 0;
+    const stepEventTypes: string[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        const body = responses[calls] ?? responses[responses.length - 1] ?? "";
+        calls += 1;
+        return makeCompletion(body);
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "llm_event") stepEventTypes.push(event.event.type);
+      },
+    });
+    const session = createEmptySessionState({ id: "s-retry", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "please wrap up",
+      maxSteps: 3,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("finish");
+    expect(calls).toBe(2);
+    expect(stepEventTypes.filter((t) => t === "parse_retry")).toHaveLength(1);
+    expect(stepEventTypes).not.toContain("step_error");
   });
 
   it("runTurn appends user message and exits on reply", async () => {

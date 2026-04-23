@@ -24,6 +24,10 @@ export {
   assistantReplyTurn,
   renderTurnForPrompt,
   trimTurnsToTokens,
+  packConversation,
   appendTurn,
 } from "./conversation-turn.js";
-export type { ConversationTurn } from "./conversation-turn.js";
+export type {
+  ConversationTurn,
+  PackedConversation,
+} from "./conversation-turn.js";

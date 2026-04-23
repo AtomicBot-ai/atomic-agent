@@ -63,6 +63,7 @@ describe("LlamaServerClient.complete", () => {
     const client = new LlamaServerClient({
       baseUrl: "http://127.0.0.1:9999",
       fetchImpl: createMockFetch(async () => new Response("boom", { status: 503 })),
+      completionRetries: 1,
     });
     await expect(client.complete({ prompt: "x" })).rejects.toBeInstanceOf(
       LlamaServerError,
@@ -75,11 +76,96 @@ describe("LlamaServerClient.complete", () => {
       fetchImpl: createMockFetch(async () => {
         throw new Error("ECONNREFUSED");
       }),
+      completionRetries: 1,
     });
     await expect(client.complete({ prompt: "x" })).rejects.toMatchObject({
       name: "LlamaServerError",
       status: null,
     });
+  });
+
+  it("retries transient 5xx responses and eventually succeeds", async () => {
+    let calls = 0;
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async () => {
+        calls += 1;
+        if (calls < 3) return new Response("unavailable", { status: 503 });
+        return new Response(
+          JSON.stringify({
+            content: '{"tool":"finish","args":{}}',
+            stop: true,
+            truncated: false,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+      completionRetries: 3,
+      completionRetryBackoffMs: 0,
+      sleep: async () => {},
+    });
+    const result = await client.complete({ prompt: "hi" });
+    expect(calls).toBe(3);
+    expect(result.content).toBe('{"tool":"finish","args":{}}');
+  });
+
+  it("retries network errors up to the configured attempt limit", async () => {
+    let calls = 0;
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async () => {
+        calls += 1;
+        if (calls < 2) throw new Error("ECONNRESET");
+        return new Response(
+          JSON.stringify({ content: "ok", stop: true, truncated: false }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+      completionRetries: 4,
+      completionRetryBackoffMs: 0,
+      sleep: async () => {},
+    });
+    const result = await client.complete({ prompt: "hi" });
+    expect(calls).toBe(2);
+    expect(result.content).toBe("ok");
+  });
+
+  it("does not retry on 4xx grammar/validation errors", async () => {
+    let calls = 0;
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async () => {
+        calls += 1;
+        return new Response("bad grammar", { status: 400 });
+      }),
+      completionRetries: 5,
+      completionRetryBackoffMs: 0,
+      sleep: async () => {},
+    });
+    await expect(client.complete({ prompt: "hi" })).rejects.toMatchObject({
+      name: "LlamaServerError",
+      status: 400,
+    });
+    expect(calls).toBe(1);
+  });
+
+  it("exhausts the retry budget and throws when all attempts fail", async () => {
+    let calls = 0;
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async () => {
+        calls += 1;
+        return new Response("boom", { status: 502 });
+      }),
+      completionRetries: 3,
+      completionRetryBackoffMs: 0,
+      sleep: async () => {},
+    });
+    await expect(client.complete({ prompt: "hi" })).rejects.toMatchObject({
+      name: "LlamaServerError",
+      status: 502,
+    });
+    expect(calls).toBe(3);
   });
 
   it("fetches /props for model profile detection", async () => {
@@ -199,6 +285,33 @@ describe("LlamaServerClient.completeStream", () => {
     expect(final).not.toBeNull();
     expect(final!.reasoningContent).toBe("think more");
     expect(final!.content).toBe("hi");
+  });
+
+  it("retries a transient initial 5xx before the SSE body starts streaming", async () => {
+    let calls = 0;
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async () => {
+        calls += 1;
+        if (calls < 2) return new Response("unavailable", { status: 503 });
+        return sseResponse([
+          'data: {"content":"hi","stop":false}\n\n',
+          'data: {"content":"","stop":true}\n\n',
+        ]);
+      }),
+      completionRetries: 3,
+      completionRetryBackoffMs: 0,
+      sleep: async () => {},
+    });
+    const iterator = client.completeStream({ prompt: "hi" });
+    const deltas: string[] = [];
+    while (true) {
+      const next = await iterator.next();
+      if (next.done) break;
+      if (next.value.delta) deltas.push(next.value.delta);
+    }
+    expect(calls).toBe(2);
+    expect(deltas.join("")).toBe("hi");
   });
 
   it("reads reasoning_content from the unary response", async () => {

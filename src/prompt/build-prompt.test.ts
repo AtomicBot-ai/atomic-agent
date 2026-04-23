@@ -278,8 +278,8 @@ describe("buildPrompt", () => {
     expect(prompt.tail).not.toContain("[earlier messages omitted]");
   });
 
-  it("keeps the full world snapshot even when the token budget is tight", () => {
-    const huge = "x".repeat(20_000);
+  it("trims an oversized world snapshot down to the safety-net cap", () => {
+    const huge = "x".repeat(200_000);
     const prompt = buildPrompt({
       session: mkSession({
         worldSnapshot: {
@@ -293,11 +293,30 @@ describe("buildPrompt", () => {
       capabilities: CAPS,
       skillCatalog: SKILLS,
       tokenBudget: 500,
+      worldSnapshotMaxTokens: 1000,
     });
-    expect(prompt.tail).toContain(huge);
-    expect(prompt.tokens.worldSnapshot).toBeGreaterThan(
-      prompt.limits.worldSnapshot,
-    );
+    expect(prompt.tail).toContain("[truncated]");
+    expect(prompt.tokens.worldSnapshot).toBeLessThanOrEqual(1000);
+    expect(prompt.truncation.worldSnapshot).toBe(true);
+  });
+
+  it("keeps a modest world snapshot intact when well below the cap", () => {
+    const modest = "button Sign In\nlink About";
+    const prompt = buildPrompt({
+      session: mkSession({
+        worldSnapshot: {
+          kind: "browser",
+          digest: "h",
+          text: modest,
+          capturedAt: Date.now(),
+        },
+      }),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(prompt.tail).toContain(modest);
+    expect(prompt.truncation.worldSnapshot).toBe(false);
   });
 
   it("renders transientNotice in a ### notice section before ### response", () => {
@@ -353,7 +372,113 @@ describe("buildPrompt", () => {
       tokenBudget: 500,
     });
     expect(prompt.truncated).toBe(true);
+    expect(prompt.truncation.session).toBe(true);
     expect(prompt.tokens.session).toBeLessThanOrEqual(prompt.limits.session);
+  });
+
+  it("folds older turns into a deterministic summary above the visible tail", () => {
+    const base = mkSession();
+    const longTurns: SessionState["turns"] = [];
+    for (let i = 0; i < 200; i += 1) {
+      longTurns.push({
+        kind: "user",
+        text: `old noise ${i} ${"q".repeat(80)}`,
+        at: i,
+      });
+      longTurns.push({
+        kind: "assistant_reply",
+        text: `old reply ${i} ${"r".repeat(80)}`,
+        at: i,
+      });
+    }
+    const session = {
+      ...base,
+      turns: [
+        ...longTurns,
+        { kind: "user" as const, text: "the latest important question", at: 9_999 },
+      ],
+    };
+    const prompt = buildPrompt({
+      session,
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      conversationMaxTokens: 400,
+    });
+    expect(prompt.tail).toContain("the latest important question");
+    expect(prompt.tail).toMatch(/summary: \d+ older turns dropped/);
+    expect(prompt.truncation.conversation).toBe(true);
+    expect(prompt.droppedTurns).toBeGreaterThan(0);
+    expect(prompt.tokens.conversation).toBeLessThanOrEqual(
+      prompt.conversationCapEffective,
+    );
+  });
+
+  it("leaves a typical-length transcript untouched when well under the cap", () => {
+    const base = mkSession();
+    const turns: SessionState["turns"] = [];
+    for (let i = 0; i < 10; i += 1) {
+      turns.push({ kind: "user", text: `ping ${i}`, at: i });
+      turns.push({ kind: "assistant_reply", text: `pong ${i}`, at: i });
+    }
+    const prompt = buildPrompt({
+      session: { ...base, turns },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(prompt.tail).not.toContain("summary:");
+    expect(prompt.truncation.conversation).toBe(false);
+    expect(prompt.droppedTurns).toBe(0);
+  });
+
+  it("clamps the effective conversation cap on a tiny-context model", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profile: { ...PLAIN_INSTRUCT_PROFILE, contextWindow: 4096 },
+      completionMaxTokens: 512,
+      conversationMaxTokens: 32_000,
+    });
+    expect(prompt.contextWindow).toBe(4096);
+    expect(prompt.conversationCapEffective).toBeLessThan(32_000);
+    expect(prompt.conversationCapEffective).toBeLessThan(4096);
+  });
+
+  it("keeps the configured cap when the model context window is unknown", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profile: PLAIN_INSTRUCT_PROFILE,
+      conversationMaxTokens: 20_000,
+    });
+    expect(prompt.contextWindow).toBeNull();
+    expect(prompt.conversationCapEffective).toBe(20_000);
+  });
+
+  it("keeps the stable prefix byte-stable as the conversation grows", () => {
+    const emptyPrompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const longTurns: SessionState["turns"] = [];
+    for (let i = 0; i < 100; i += 1) {
+      longTurns.push({ kind: "user", text: `msg ${i}`, at: i });
+      longTurns.push({ kind: "assistant_reply", text: `ack ${i}`, at: i });
+    }
+    const grownPrompt = buildPrompt({
+      session: { ...mkSession(), turns: longTurns },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(grownPrompt.stablePrefix).toBe(emptyPrompt.stablePrefix);
   });
 });
 

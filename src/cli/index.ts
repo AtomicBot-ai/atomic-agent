@@ -5,6 +5,7 @@ import { debugReplCommand } from "./debug-repl.js";
 import { skillCommand } from "./skill.js";
 import { configCommand } from "./config-command.js";
 import { serveCommand } from "./serve-command.js";
+import { traceCommand } from "./trace-command.js";
 import { tuiCommand } from "../tui/index.js";
 
 interface CommandDescriptor {
@@ -43,6 +44,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "serve",
     summary: "Expose an OpenAI-compatible HTTP API plus atomic-agent admin routes",
     run: serveCommand,
+  },
+  {
+    name: "trace",
+    summary: "Inspect append-only session traces (list|show|export)",
+    run: traceCommand,
   },
 ];
 

@@ -186,6 +186,23 @@ atomic-agent serve --host 127.0.0.1 --port 8787 --cwd /path/to/work
 
 Skill format: **[SKILLS.md](SKILLS.md)**.
 
+### Debugging with traces
+
+Every `atomic-agent run` / `tui` / `serve` invocation writes an append-only NDJSON trace to `<stateDir>/traces/<sessionId>.ndjson`. Sidecar mode is off by default; hosts opt in via `telemetry.trace.enabled`.
+
+```bash
+atomic-agent trace list --limit 10
+atomic-agent trace show <sessionId>            # pretty chronology
+atomic-agent trace show <sessionId> --raw      # include full prompt tails / completions
+atomic-agent trace show <sessionId> --step 2   # zoom to a single step
+atomic-agent trace export <sessionId> --format json > session.json
+atomic-agent trace replay <sessionId>          # detect stable-prefix drift
+```
+
+`trace replay` rebuilds the stable prompt prefix from the current runtime (tools / capabilities / skills / persona) and compares its salted hash to the one recorded at runtime — drift means the upper prompt changed since recording, which explains lost `cache_prompt` hits.
+
+Treat trace files as sensitive: secret redaction is not applied yet. Tune retention via `telemetry.trace.maxBytesPerSession` (default 10 MiB) and `telemetry.trace.dir`.
+
 ---
 
 ## HTTP API

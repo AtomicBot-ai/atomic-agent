@@ -47,7 +47,8 @@ This is the source-of-truth for automated contributors (LLM agents, codegen, etc
 | `src/compressor/` | Result compressor, log summariser |
 | `src/sandbox/` | git worktree + sandboxed command runner |
 | `src/approval/` | Approval gate and event wiring |
-| `src/telemetry/` | Structured logger + metrics |
+| `src/telemetry/` | Structured logger + metrics + trace recorder (`src/telemetry/trace/`) |
+| `src/replay/` | Trace-based replay: drift detection + optional LLM re-inference |
 
 ## Build & test
 
@@ -73,4 +74,51 @@ Today the runtime persists session-scoped state only:
 - `loadedSkills[]` for skill bodies loaded via `skill.view`
 - `worldSnapshot` for compressed browser state
 
+`SessionState.turns[]` stores the full history in memory and in the sessions DB unchanged. Prompt-time compression happens only at the `buildPrompt` boundary via `packConversation`: older turns get folded into a single deterministic `summary: N older turns dropped (...)` line so the variable tail of the prompt stays bounded without losing traceability. The visible tail always includes the latest `user` turn.
+
+Prompt-section caps live in the config:
+
+- `agent.tokenBudget` — compact ceiling for the upper prompt (stable prefix + session facts/skills).
+- `agent.conversationMaxTokens` (default 32000) — safety-net cap for the `### conversation` section; typical sessions stay well under it.
+- `agent.worldSnapshotMaxTokens` (default 8000) — safety-net cap for the `### world` section; the snapshot is already compressed by `aria-compressor`, so this only clips pathological cases with a `[truncated]` marker.
+
+At bootstrap `LlamaServerClient.fetchProps()` reads the model's physical `n_ctx` (from `default_generation_settings.n_ctx`, with a root `n_ctx` fallback) and stores it on `ModelProfile.contextWindow`. `buildPrompt` then clamps the effective conversation cap to the actual available room so the prompt cannot overflow llama-server regardless of how large the user-configured cap is. If llama-server is restarted with a different `n_ctx`, restart the runtime.
+
 There is currently no dedicated workspace-memory, retrieval, embeddings, or resource-summary subsystem in `src/`. Do not describe those modules as implemented unless they are added to the codebase first.
+
+## LLM reliability policy
+
+Two narrow retry layers sit between the agent loop and `llama-server`. Both are deliberately bounded and never replay already-executed tool calls:
+
+1. **Parser retry (step-executor).** If the first `parseToolCall` on a completion throws, the executor calls the unary `llmComplete` exactly once more with the same prompt/slot and re-parses. A `parse_retry` event is emitted for observability. If the second attempt also fails, the original error (with a raw-output preview) is thrown. The streaming path always falls back to unary for the retry so partial SSE deltas are not double-emitted.
+2. **Transport retry (LlamaServerClient).** `complete()` and the initial pre-body fetch of `completeStream()` are wrapped in a bounded retry governed by `llama.completionRetries` (default 3) and `llama.completionRetryBackoffMs` (default 150ms, exponential with ±20% jitter). Retries fire **only** for network errors (`LlamaServerError.status === null`) and HTTP 5xx. Grammar/validation 4xx and abort signals short-circuit immediately. Once the SSE body starts streaming, no further retries happen — the conversation state on the server is considered indeterminate.
+
+## Traceability and replay
+
+Every run produces an append-only NDJSON trace at `<stateDir>/traces/<sessionId>.ndjson` — one event per line. Tracing is on by default for `atomic-agent run` / TUI / `atomic-agent serve`, and off by default in sidecar mode so the Tauri host decides whether to opt in.
+
+Emitted `TraceEvent` types (see [src/telemetry/trace/trace-event.ts](src/telemetry/trace/trace-event.ts)):
+
+- `session_started` — carries `workingDir` and optional `metadata`.
+- `turn_started` / `turn_finished` — per macro-turn, with `reason` / `stepCount` / `durationMs`.
+- `step_started` / `step_finished` — per inference step.
+- `prompt_captured` — `{ stablePrefixHash, tail, tokens: { total, stablePrefix, tail }, slotId, cacheReused }`. The stable prefix is stored only as its salted hash (via `hashPrefix` from [src/llm/slot-manager.ts](src/llm/slot-manager.ts)) so trace files stay compact across steps; the variable tail is stored verbatim.
+- `llm_completion` — full completion `content` + `reasoningContent` + `timing`, with `attempt: 1 | 2` (attempt 2 == parse retry).
+- `tool_invocation` — executed tool call with args, status, summary, and optional details.
+- `parse_retry`, `loop_detected`, `error`, `trace_truncated` — diagnostics.
+
+Invariants:
+
+- **Append-only.** Sinks never rewrite past lines. `trace_truncated` is a synthetic final marker when the per-session cap (`telemetry.trace.maxBytesPerSession`, default 10 MiB) is hit; further events are dropped silently.
+- **Per-session file.** One NDJSON per `sessionId`; no cross-session mixing.
+- **Monotonic `seq`.** Every event carries a monotonic in-session sequence starting at `0`.
+- **No redaction yet.** Secret redaction is an explicit NON-goal of this milestone; treat trace files as sensitive local artefacts.
+
+CLI:
+
+- `atomic-agent trace list [--limit N]` — most recent trace files in `<stateDir>/traces/`.
+- `atomic-agent trace show <sessionId> [--step N] [--raw]` — pretty-print the chronology. `--raw` includes the full prompt tail and completion content; otherwise they are summarised.
+- `atomic-agent trace export <sessionId> [--format ndjson|json]` — dump the file as-is (ndjson) or as a JSON array.
+- `atomic-agent trace replay <sessionId> [--step N]` — rebuild the stable prefix from the current runtime (tools / capabilities / skills / persona) and compare its hash to the recorded `stablePrefixHash`. Drift means the upper prompt changed since recording — useful for postmortem when cache hits dropped.
+
+Replay lives in [src/replay/](src/replay/). It is a **prompt-drift postmortem**, not a simulator: it does not reproduce LLM non-determinism or external world state (browser, filesystem). `replayInference` (programmatic, not wired to the CLI yet) can optionally rerun `LlamaServerClient` with the recorded prompts for regression tests across llama-server upgrades.

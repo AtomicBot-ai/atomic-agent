@@ -1,0 +1,170 @@
+import type { AgentLoopReason } from "../../agent/agent-loop.js";
+
+/**
+ * Append-only trace event emitted by the runtime for postmortem analysis
+ * and prompt replay. Every event carries a monotonic `seq` within a
+ * session, a wall-clock `ts`, and — when applicable — the `turnIndex` /
+ * `stepIndex` context.
+ *
+ * Design notes:
+ * - The union is `type`-discriminated so NDJSON consumers can branch on a
+ *   single field.
+ * - `session_started` / `trace_truncated` are the only events without a
+ *   turn context; everything else carries `turnIndex`.
+ * - Secret redaction is NOT applied here (NON-goal for this milestone).
+ *   The sink writes payloads verbatim; consumers must treat traces as
+ *   sensitive local artefacts.
+ */
+export type TraceEvent =
+  | TraceSessionStarted
+  | TraceTurnStarted
+  | TraceTurnFinished
+  | TraceStepStarted
+  | TraceStepFinished
+  | TracePromptCaptured
+  | TraceLlmCompletion
+  | TraceToolInvocation
+  | TraceParseRetry
+  | TraceLoopDetected
+  | TraceError
+  | TraceTruncated;
+
+export type TraceEventType = TraceEvent["type"];
+
+export interface TraceEventBase {
+  /** Monotonic sequence number within a session, starting at 0. */
+  seq: number;
+  sessionId: string;
+  /** Wall-clock timestamp in milliseconds. */
+  ts: number;
+}
+
+export interface TraceSessionStarted extends TraceEventBase {
+  type: "session_started";
+  workingDir: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface TraceTurnStarted extends TraceEventBase {
+  type: "turn_started";
+  turnIndex: number;
+  userMessage?: string;
+}
+
+export interface TraceTurnFinished extends TraceEventBase {
+  type: "turn_finished";
+  turnIndex: number;
+  reason: AgentLoopReason;
+  stepCount: number;
+  durationMs: number;
+}
+
+export interface TraceStepStarted extends TraceEventBase {
+  type: "step_started";
+  turnIndex: number;
+  stepIndex: number;
+}
+
+export interface TraceStepFinished extends TraceEventBase {
+  type: "step_finished";
+  turnIndex: number;
+  stepIndex: number;
+  summary: string;
+  durationMs: number;
+}
+
+export interface TracePromptTokens {
+  total: number;
+  stablePrefix: number;
+  tail: number;
+}
+
+/**
+ * Captured prompt: the stable prefix is stored as a salted hash to keep
+ * trace files compact (prefixes are reused byte-for-byte across steps),
+ * the tail is stored verbatim so replay can reconstruct the full prompt
+ * when combined with a current `stablePrefix` derived from `SessionState`.
+ */
+export interface TracePromptCaptured extends TraceEventBase {
+  type: "prompt_captured";
+  turnIndex: number;
+  stepIndex: number;
+  stablePrefixHash: string;
+  tail: string;
+  tokens: TracePromptTokens;
+  slotId: number;
+  cacheReused: boolean;
+}
+
+export interface TraceLlmTiming {
+  promptMs: number;
+  predictedMs: number;
+  promptTokens: number;
+  predictedTokens: number;
+}
+
+export interface TraceLlmCompletion extends TraceEventBase {
+  type: "llm_completion";
+  turnIndex: number;
+  stepIndex: number;
+  /** `1` for the initial call, `2` for the parse-retry attempt. */
+  attempt: 1 | 2;
+  content: string;
+  reasoningContent?: string;
+  timing?: TraceLlmTiming;
+  cacheHitTokens: number;
+  modelId: string | null;
+  stop: boolean;
+  truncated: boolean;
+}
+
+export interface TraceToolInvocation extends TraceEventBase {
+  type: "tool_invocation";
+  turnIndex: number;
+  stepIndex: number;
+  tool: string;
+  args: Record<string, unknown>;
+  status: "ok" | "error";
+  summary: string;
+  details?: Record<string, unknown>;
+  toolTruncated?: boolean;
+}
+
+export interface TraceParseRetry extends TraceEventBase {
+  type: "parse_retry";
+  turnIndex: number;
+  stepIndex: number;
+  attempt: number;
+  reason: string;
+}
+
+export interface TraceLoopDetected extends TraceEventBase {
+  type: "loop_detected";
+  turnIndex: number;
+  stepIndex: number;
+  tool: string;
+  count: number;
+}
+
+export interface TraceError extends TraceEventBase {
+  type: "error";
+  turnIndex?: number;
+  stepIndex?: number;
+  message: string;
+  stack?: string;
+}
+
+/**
+ * Synthetic terminal marker emitted by the NDJSON sink when a trace file
+ * hits `maxBytesPerSession`. Subsequent events are dropped silently — the
+ * runtime never stops because of trace overflow.
+ */
+export interface TraceTruncated extends TraceEventBase {
+  type: "trace_truncated";
+  reason: string;
+}
+
+/** Stable JSON serialization: one event per line, trailing newline. */
+export function serializeTraceEvent(event: TraceEvent): string {
+  return `${JSON.stringify(event)}\n`;
+}

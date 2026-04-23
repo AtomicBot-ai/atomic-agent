@@ -171,7 +171,7 @@ export function TuiApp({
   }, [state.slashPaletteOpen, state.sessionPickerOpen]);
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" paddingLeft={2}>
       <HeaderLine state={state} />
       {state.uiMode === "chat" ? (
         <ChatLog state={state} />

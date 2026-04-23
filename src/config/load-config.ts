@@ -115,6 +115,14 @@ export function loadConfig(): AtomicAgentConfig {
         "ATOMIC_AGENT_LLAMA_HEALTH_BACKOFF_MS",
         ENV_DEFAULTS.HEALTH_BACKOFF_MS,
       ),
+      completionRetries: readInt(
+        "ATOMIC_AGENT_LLAMA_COMPLETION_RETRIES",
+        ENV_DEFAULTS.COMPLETION_RETRIES,
+      ),
+      completionRetryBackoffMs: readInt(
+        "ATOMIC_AGENT_LLAMA_COMPLETION_RETRY_BACKOFF_MS",
+        ENV_DEFAULTS.COMPLETION_RETRY_BACKOFF_MS,
+      ),
       defaultSlotId: readInt(
         "ATOMIC_AGENT_LLAMA_DEFAULT_SLOT",
         ENV_DEFAULTS.DEFAULT_SLOT_ID,
@@ -123,6 +131,7 @@ export function loadConfig(): AtomicAgentConfig {
     paths: {
       stateDir,
       sessionsDbFile: resolve(stateDir, "sessions.sqlite"),
+      tracesDir: resolve(stateDir, "traces"),
       grammarsDir,
       browserProfileDir: resolve(stateDir, "browser-profile"),
       globalSkillsDir: resolve(stateDir, "skills"),
@@ -137,6 +146,8 @@ export function loadConfig(): AtomicAgentConfig {
       stablePrefixHashSalt:
         readEnv("ATOMIC_AGENT_STABLE_PREFIX_SALT") ??
         ENV_DEFAULTS.STABLE_PREFIX_SALT,
+      conversationMaxTokens: user.agent.conversationMaxTokens,
+      worldSnapshotMaxTokens: user.agent.worldSnapshotMaxTokens,
     },
     browser: {
       channel: browserChannel,
@@ -169,5 +180,12 @@ export function loadConfig(): AtomicAgentConfig {
       defaultTimeoutMs: user.http.defaultTimeoutMs,
     },
     log: { level: logLevel },
+    telemetry: {
+      trace: {
+        enabled: user.telemetry.trace.enabled,
+        dir: resolve(stateDir, "traces"),
+        maxBytesPerSession: user.telemetry.trace.maxBytesPerSession,
+      },
+    },
   };
 }

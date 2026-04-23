@@ -3,6 +3,7 @@ import {
   appendTurn,
   assistantReplyTurn,
   assistantToolCallTurn,
+  packConversation,
   renderTurnForPrompt,
   toolResultTurn,
   trimTurnsToTokens,
@@ -140,6 +141,99 @@ describe("conversation-turn helpers", () => {
     it("non-positive budget drops everything", () => {
       const out = trimTurnsToTokens([userTurn("hi", 1)], 0);
       expect(out).toEqual({ turns: [], truncated: true });
+    });
+  });
+
+  describe("packConversation", () => {
+    it("empty history returns a neutral pack", () => {
+      expect(packConversation([], 100)).toEqual({
+        visibleTurns: [],
+        droppedSummary: null,
+        droppedCount: 0,
+      });
+    });
+
+    it("returns every turn visible and no summary when it fits", () => {
+      const turns: ConversationTurn[] = [
+        userTurn("hi", 1),
+        assistantReplyTurn("hey", 2),
+      ];
+      const out = packConversation(turns, 1000);
+      expect(out.droppedSummary).toBeNull();
+      expect(out.droppedCount).toBe(0);
+      expect(out.visibleTurns).toEqual(turns);
+    });
+
+    it("drops the oldest turns and produces a deterministic summary", () => {
+      const base = Date.parse("2026-04-23T10:00:00Z");
+      const turns: ConversationTurn[] = [];
+      for (let i = 0; i < 10; i += 1) {
+        turns.push(userTurn(`msg${i} ${"x".repeat(50)}`, base + i * 1000));
+        turns.push(
+          assistantToolCallTurn({
+            tool: "fs.read",
+            args: { path: `/a/b/${i}` },
+            at: base + i * 1000 + 100,
+          }),
+        );
+        turns.push(
+          toolResultTurn({
+            tool: "fs.read",
+            status: "ok",
+            summary: `read ${i}`,
+            at: base + i * 1000 + 200,
+          }),
+        );
+        turns.push(
+          assistantReplyTurn(`reply${i} ${"y".repeat(50)}`, base + i * 1000 + 300),
+        );
+      }
+      const out = packConversation(turns, 120);
+      expect(out.droppedCount).toBeGreaterThan(0);
+      expect(out.droppedCount).toBeLessThan(turns.length);
+      expect(out.visibleTurns.at(-1)).toEqual(turns.at(-1));
+      expect(out.droppedSummary).toMatch(
+        /^summary: \d+ older turns dropped \(\d+ user, \d+ tool calls, \d+ replies; first at \S+, last at \S+\)$/,
+      );
+    });
+
+    it("counts turn kinds correctly in the summary", () => {
+      const turns: ConversationTurn[] = [
+        userTurn("u1", 1),
+        userTurn("u2", 2),
+        assistantToolCallTurn({ tool: "t", args: {}, at: 3 }),
+        toolResultTurn({ tool: "t", status: "ok", summary: "s", at: 4 }),
+        assistantReplyTurn("r", 5),
+        userTurn("keep", 6),
+      ];
+      const out = packConversation(turns, 1);
+      expect(out.droppedSummary).toContain("2 user");
+      expect(out.droppedSummary).toContain("1 tool calls");
+      expect(out.droppedSummary).toContain("1 replies");
+      expect(out.visibleTurns.at(-1)?.kind).toBe("user");
+    });
+
+    it("keeps the last user turn even if the budget is tiny", () => {
+      const turns: ConversationTurn[] = [
+        userTurn("old old old old", 1),
+        assistantReplyTurn("ok", 2),
+        userTurn("brand new user message with plenty of words here", 3),
+      ];
+      const out = packConversation(turns, 1);
+      expect(out.visibleTurns.at(-1)?.kind).toBe("user");
+      expect(out.droppedSummary).not.toBeNull();
+      expect(out.droppedCount).toBe(2);
+    });
+
+    it("non-positive budget moves everything into the summary", () => {
+      const turns: ConversationTurn[] = [
+        userTurn("a", 1),
+        assistantReplyTurn("b", 2),
+      ];
+      const out = packConversation(turns, 0);
+      expect(out.visibleTurns).toEqual([]);
+      expect(out.droppedCount).toBe(2);
+      expect(out.droppedSummary).toMatch(/^summary: 2 older turns dropped/);
     });
   });
 });

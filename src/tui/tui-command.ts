@@ -46,6 +46,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
   const runtime = await createAgentRuntime({
     workingDir: parsed.workingDir,
     approvalRequired,
+    traceDefault: true,
     handlers: {
       onAgentEvent: (event) => bus.emitAgentEvent(event),
       onApprovalRequest: (request) => bus.emitApproval(request),

@@ -3,6 +3,13 @@ export type ReasoningStyle = "none" | "think-tags" | "channel-tags";
 interface BaseModelProfile {
   requiresPromptThinkPrefix: boolean;
   allowThinkPrelude: boolean;
+  /**
+   * Physical context window in tokens, read from `llama-server /props`
+   * (`default_generation_settings.n_ctx`, with a root `n_ctx` fallback).
+   * Absent when the probe failed or an older llama.cpp build did not
+   * expose it — prompt-building then relies purely on configured caps.
+   */
+  contextWindow?: number;
 }
 
 export interface PlainModelProfile extends BaseModelProfile {
@@ -55,6 +62,21 @@ export function detectModelProfile(props: Record<string, unknown>): ModelProfile
   const supportsPreserveReasoning =
     readBoolean(caps.supports_preserve_reasoning) ?? false;
 
+  const base = selectBaseProfile(
+    modelAlias,
+    templateLower,
+    supportsPreserveReasoning,
+  );
+  const contextWindow = readContextWindow(props);
+  if (contextWindow === null) return base;
+  return { ...base, contextWindow };
+}
+
+function selectBaseProfile(
+  modelAlias: string,
+  templateLower: string,
+  supportsPreserveReasoning: boolean,
+): ModelProfile {
   if (looksLikeQwenThinkModel(modelAlias, templateLower, supportsPreserveReasoning)) {
     return QWEN_THINK_PROFILE;
   }
@@ -62,6 +84,30 @@ export function detectModelProfile(props: Record<string, unknown>): ModelProfile
     return GEMMA4_THINK_PROFILE;
   }
   return PLAIN_INSTRUCT_PROFILE;
+}
+
+/**
+ * Extract the physical context window from a `/props` payload. Current
+ * llama.cpp builds nest it under `default_generation_settings.n_ctx`; we
+ * also fall back to a root-level `n_ctx` for older builds and custom
+ * forks. Returns `null` when neither is a positive number.
+ */
+function readContextWindow(props: Record<string, unknown>): number | null {
+  const defaults = readObject(props.default_generation_settings);
+  const nested = toPositiveInt(defaults.n_ctx);
+  if (nested !== null) return nested;
+  return toPositiveInt(props.n_ctx);
+}
+
+function toPositiveInt(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.floor(value);
+  }
+  if (typeof value === "string" && value.length > 0) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return null;
 }
 
 function looksLikeQwenThinkModel(

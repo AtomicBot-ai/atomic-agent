@@ -15,10 +15,14 @@ export {
   defaultBudget,
   checkBudget,
   truncateToTokens,
+  computeEffectiveConversationCap,
+  CONVERSATION_CAP_SAFETY_MARGIN,
+  CONVERSATION_CAP_FLOOR,
 } from "./token-budget.js";
 export type {
   TokenBudgetLimits,
   BudgetCheckResult,
+  EffectiveConversationCapInput,
 } from "./token-budget.js";
 export { DEFAULT_TOOL_DESCRIPTORS } from "./tool-descriptors.js";
 export { buildCapabilities } from "./capabilities.js";

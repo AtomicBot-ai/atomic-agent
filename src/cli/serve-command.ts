@@ -139,6 +139,7 @@ export async function serveCommand(args: string[]): Promise<number> {
     runtime = await createAgentRuntime({
       workingDir: parsed.workingDir,
       approvalRequired: !parsed.noApproval,
+      traceDefault: true,
       handlers: {
         logSinks: [stderrSink],
         onAgentEvent: (event) => turnHub.emit(event),
