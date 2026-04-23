@@ -1,7 +1,8 @@
 import { stat } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
+import { relative } from "node:path";
 import { watch, type FSWatcher } from "chokidar";
 import { compressToolResult } from "../../compressor/result-compressor.js";
+import { resolveUserPath } from "./expand-home.js";
 import type { ToolDefinition } from "../tool-registry.js";
 
 /**
@@ -44,9 +45,7 @@ export const osFsWatchTool: ToolDefinition = {
   readonly: true,
   async run(rawArgs, ctx) {
     const args = await parseArgs(rawArgs, ctx.workingDir);
-    const absolute = isAbsolute(args.path)
-      ? args.path
-      : resolve(ctx.workingDir, args.path);
+    const absolute = resolveUserPath(args.path, ctx.workingDir);
 
     const watcher = watch(absolute, {
       persistent: false,
@@ -130,7 +129,7 @@ async function parseArgs(
   if (typeof path !== "string" || path.length === 0) {
     throw new Error("os.fs.watch: `path` must be a non-empty string");
   }
-  const absolute = isAbsolute(path) ? path : resolve(workingDir, path);
+  const absolute = resolveUserPath(path, workingDir);
   try {
     await stat(absolute);
   } catch {

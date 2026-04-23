@@ -1,6 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { join } from "node:path";
 import { compressToolResult } from "../../compressor/result-compressor.js";
+import { resolveUserPath } from "./expand-home.js";
 import type { ToolDefinition } from "../tool-registry.js";
 
 const DEFAULT_MAX_ENTRIES = 200;
@@ -20,7 +21,7 @@ export const osFsListTool: ToolDefinition = {
       Number.isFinite(rawArgs.maxEntries)
         ? Math.max(1, Math.floor(rawArgs.maxEntries))
         : DEFAULT_MAX_ENTRIES;
-    const absolute = isAbsolute(path) ? path : resolve(ctx.workingDir, path);
+    const absolute = resolveUserPath(path, ctx.workingDir);
     const entries = await readdir(absolute);
     const sliced = entries.slice(0, maxEntries);
     const rows: Array<{

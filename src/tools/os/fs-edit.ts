@@ -1,7 +1,8 @@
 import { readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { compressToolResult } from "../../compressor/result-compressor.js";
+import { resolveUserPath } from "./expand-home.js";
 import {
   requireApproval,
   type DangerousToolOptions,
@@ -28,9 +29,7 @@ export function buildOsFsEditTool(
     readonly: false,
     async run(rawArgs, ctx) {
       const args = parseArgs(rawArgs);
-      const absolute = isAbsolute(args.path)
-        ? args.path
-        : resolve(ctx.workingDir, args.path);
+      const absolute = resolveUserPath(args.path, ctx.workingDir);
       const info = await stat(absolute);
       if (!info.isFile()) {
         throw new Error(`os.fs.edit: ${absolute} is not a regular file`);

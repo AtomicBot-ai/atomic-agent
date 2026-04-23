@@ -1,7 +1,8 @@
 import { readFile, stat } from "node:fs/promises";
-import { basename, isAbsolute, resolve } from "node:path";
+import { basename } from "node:path";
 import { createPatch, structuredPatch } from "diff";
 import { compressToolResult } from "../../compressor/result-compressor.js";
+import { resolveUserPath } from "./expand-home.js";
 import type { ToolDefinition } from "../tool-registry.js";
 
 /**
@@ -156,7 +157,7 @@ async function resolveSide(
     }
     return text;
   }
-  const abs = isAbsolute(path!) ? path! : resolve(workingDir, path!);
+  const abs = resolveUserPath(path!, workingDir);
   const info = await stat(abs);
   if (!info.isFile()) {
     throw new Error(`os.fs.diff: ${abs} is not a regular file`);

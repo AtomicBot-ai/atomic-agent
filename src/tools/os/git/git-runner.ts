@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
 import { runCommand, type CommandResult } from "../../../sandbox/command-runner.js";
+import { resolveUserPath } from "../expand-home.js";
 
 /**
  * Result of running `git <subcommand> …` with a structured failure mode.
@@ -63,9 +63,7 @@ async function resolveRepoRoot(
   workingDir: string,
 ): Promise<string> {
   const candidate = explicit
-    ? isAbsolute(explicit)
-      ? explicit
-      : resolve(workingDir, explicit)
+    ? resolveUserPath(explicit, workingDir)
     : workingDir;
   try {
     const info = await stat(candidate);

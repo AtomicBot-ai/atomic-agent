@@ -1,8 +1,8 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { isAbsolute, resolve } from "node:path";
 import { compressToolResult } from "../../compressor/result-compressor.js";
+import { resolveUserPath } from "./expand-home.js";
 import type { ToolDefinition } from "../tool-registry.js";
 
 /**
@@ -29,9 +29,7 @@ export const osFsHashTool: ToolDefinition = {
   readonly: true,
   async run(rawArgs, ctx) {
     const args = parseArgs(rawArgs);
-    const absolute = isAbsolute(args.path)
-      ? args.path
-      : resolve(ctx.workingDir, args.path);
+    const absolute = resolveUserPath(args.path, ctx.workingDir);
     const info = await stat(absolute);
     if (!info.isFile()) {
       throw new Error(`os.fs.hash: ${absolute} is not a regular file`);

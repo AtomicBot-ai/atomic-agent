@@ -5,6 +5,7 @@ import {
   requireApproval,
   type DangerousToolOptions,
 } from "../../approval/dangerous-tool.js";
+import { resolveUserPath } from "./expand-home.js";
 
 export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition {
   return {
@@ -22,7 +23,7 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
         : [];
       const cwd =
         typeof rawArgs.cwd === "string" && rawArgs.cwd.length > 0
-          ? rawArgs.cwd
+          ? resolveUserPath(rawArgs.cwd, ctx.workingDir)
           : ctx.workingDir;
       const timeoutMs =
         typeof rawArgs.timeoutMs === "number" &&

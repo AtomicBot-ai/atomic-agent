@@ -1,5 +1,5 @@
-import { isAbsolute, resolve } from "node:path";
 import { compressToolResult } from "../../compressor/result-compressor.js";
+import { resolveUserPath } from "./expand-home.js";
 import {
   runCommand as defaultRunCommand,
   type CommandResult,
@@ -128,7 +128,7 @@ function parseArgs(
     typeof rawArgs.path === "string" && rawArgs.path.length > 0
       ? rawArgs.path
       : workingDir;
-  const path = isAbsolute(pathRaw) ? pathRaw : resolve(workingDir, pathRaw);
+  const path = resolveUserPath(pathRaw, workingDir);
   const globRaw = rawArgs.glob;
   const glob: string[] = [];
   if (typeof globRaw === "string" && globRaw.length > 0) {

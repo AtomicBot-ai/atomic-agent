@@ -1,7 +1,8 @@
 import { readFile, stat } from "node:fs/promises";
-import { extname, isAbsolute, resolve } from "node:path";
+import { extname } from "node:path";
 
 import { compressToolResult } from "../../../compressor/result-compressor.js";
+import { resolveUserPath } from "../expand-home.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import type {
   DocumentFormat,
@@ -95,7 +96,7 @@ async function parseArgs(
       "os.fs.read_document: `path` must be a non-empty string",
     );
   }
-  const absolute = isAbsolute(path) ? path : resolve(workingDir, path);
+  const absolute = resolveUserPath(path, workingDir);
   const info = await stat(absolute);
   if (!info.isFile()) {
     throw new Error(

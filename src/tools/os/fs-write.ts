@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname } from "node:path";
 import { compressToolResult } from "../../compressor/result-compressor.js";
+import { resolveUserPath } from "./expand-home.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import {
   requireApproval,
@@ -28,7 +29,7 @@ export function buildOsFsWriteTool(
         typeof rawArgs.mode === "string" && rawArgs.mode === "append"
           ? "append"
           : "replace";
-      const absolute = isAbsolute(path) ? path : resolve(ctx.workingDir, path);
+      const absolute = resolveUserPath(path, ctx.workingDir);
 
       const preview = content.length > 400 ? `${content.slice(0, 400)}…` : content;
       await requireApproval(

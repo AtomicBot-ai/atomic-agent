@@ -1,6 +1,6 @@
 import { open, stat } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
 import { compressToolResult } from "../../compressor/result-compressor.js";
+import { resolveUserPath } from "./expand-home.js";
 import type { ToolDefinition } from "../tool-registry.js";
 
 const DEFAULT_MAX_BYTES = 64 * 1024;
@@ -41,9 +41,7 @@ export const osFsReadTool: ToolDefinition = {
   readonly: true,
   async run(rawArgs, ctx) {
     const args = parseArgs(rawArgs);
-    const absolute = isAbsolute(args.path)
-      ? args.path
-      : resolve(ctx.workingDir, args.path);
+    const absolute = resolveUserPath(args.path, ctx.workingDir);
     const info = await stat(absolute);
     if (!info.isFile()) {
       throw new Error(`os.fs.read: ${absolute} is not a regular file`);

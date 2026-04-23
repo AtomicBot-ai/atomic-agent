@@ -1,7 +1,8 @@
 import { readdir, stat } from "node:fs/promises";
 import type { Dirent } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { compressToolResult } from "../../compressor/result-compressor.js";
+import { resolveUserPath } from "./expand-home.js";
 import type { ToolDefinition } from "../tool-registry.js";
 
 const DEFAULT_IGNORE = [
@@ -136,7 +137,7 @@ function parseArgs(
   const cwdArg = typeof rawArgs.cwd === "string" && rawArgs.cwd.length > 0
     ? rawArgs.cwd
     : workingDir;
-  const cwd = isAbsolute(cwdArg) ? cwdArg : resolve(workingDir, cwdArg);
+  const cwd = resolveUserPath(cwdArg, workingDir);
   const ignore = Array.isArray(rawArgs.ignore)
     ? rawArgs.ignore.filter((v): v is string => typeof v === "string" && v.length > 0)
     : DEFAULT_IGNORE;

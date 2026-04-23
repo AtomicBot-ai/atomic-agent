@@ -1,5 +1,5 @@
-import { isAbsolute, resolve } from "node:path";
 import { compressToolResult } from "../../../compressor/result-compressor.js";
+import { resolveUserPath } from "../expand-home.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import {
   requireApproval,
@@ -56,9 +56,7 @@ export function buildOsFsArchiveExtractTool(
       const formatOverride = parseFormatOverride(rawArgs.format);
       const limits = parseLimits(rawArgs.limits);
 
-      const destDir = isAbsolute(destRaw)
-        ? destRaw
-        : resolve(ctx.workingDir, destRaw);
+      const destDir = resolveUserPath(destRaw, ctx.workingDir);
 
       const resolved = await resolveArchive(
         path,

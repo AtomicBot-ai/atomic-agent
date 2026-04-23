@@ -1,5 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
-import { basename, isAbsolute, resolve } from "node:path";
+import { basename } from "node:path";
+import { resolveUserPath } from "../expand-home.js";
 import type { ArchiveBackend, ArchiveFormat } from "./archive-types.js";
 import { detectArchiveFormat } from "./format-detector.js";
 import { ZipBackend } from "./zip-backend.js";
@@ -40,7 +41,7 @@ export async function resolveArchive(
   if (typeof path !== "string" || path.length === 0) {
     throw new Error("archive: `path` must be a non-empty string");
   }
-  const absolute = isAbsolute(path) ? path : resolve(workingDir, path);
+  const absolute = resolveUserPath(path, workingDir);
   const info = await stat(absolute);
   if (!info.isFile()) {
     throw new Error(`archive: ${absolute} is not a regular file`);

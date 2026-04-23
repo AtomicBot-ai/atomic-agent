@@ -3,6 +3,7 @@ import { isAbsolute, resolve, dirname, basename } from "node:path";
 import { applyPatch, parsePatch } from "diff";
 import type { StructuredPatch } from "diff";
 import { compressToolResult } from "../../compressor/result-compressor.js";
+import { resolveUserPath } from "./expand-home.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import {
   requireApproval,
@@ -109,9 +110,7 @@ async function parseArgs(
   if (typeof patch === "string" && patch.length > 0) {
     patchString = patch;
   } else if (typeof patchPath === "string" && patchPath.length > 0) {
-    const abs = isAbsolute(patchPath)
-      ? patchPath
-      : resolve(workingDir, patchPath);
+    const abs = resolveUserPath(patchPath, workingDir);
     patchString = await readFile(abs, "utf8");
   } else {
     throw new Error(
@@ -123,9 +122,7 @@ async function parseArgs(
   const rootDirRaw = rawArgs.rootDir;
   const rootDir =
     typeof rootDirRaw === "string" && rootDirRaw.length > 0
-      ? isAbsolute(rootDirRaw)
-        ? rootDirRaw
-        : resolve(workingDir, rootDirRaw)
+      ? resolveUserPath(rootDirRaw, workingDir)
       : workingDir;
 
   const fuzzFactor = parseNonNegativeInt(rawArgs.fuzzFactor, 0, "fuzzFactor");
