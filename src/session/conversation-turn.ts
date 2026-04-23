@@ -24,7 +24,13 @@ export type ConversationTurn =
       truncated?: boolean;
       at: number;
     }
-  | { kind: "assistant_reply"; text: string; at: number };
+  | {
+      kind: "assistant_reply";
+      text: string;
+      /** Content of `<think>` blocks that preceded the final reply, if any. */
+      reasoning?: string;
+      at: number;
+    };
 
 export function userTurn(text: string, at = Date.now()): ConversationTurn {
   return { kind: "user", text, at };
@@ -66,8 +72,24 @@ export function toolResultTurn(params: {
   return turn;
 }
 
-export function assistantReplyTurn(text: string, at = Date.now()): ConversationTurn {
-  return { kind: "assistant_reply", text, at };
+/**
+ * Build an `assistant_reply` turn. The second argument is either the
+ * legacy positional `at` timestamp or an options object with optional
+ * `at` and `reasoning`. Keeping both shapes means existing callers (and
+ * tests) that passed a bare number stay valid.
+ */
+export function assistantReplyTurn(
+  text: string,
+  atOrOptions: number | { at?: number; reasoning?: string } = {},
+): ConversationTurn {
+  const options =
+    typeof atOrOptions === "number" ? { at: atOrOptions } : atOrOptions;
+  const at = options.at ?? Date.now();
+  const turn: ConversationTurn = { kind: "assistant_reply", text, at };
+  if (options.reasoning !== undefined && options.reasoning.length > 0) {
+    return { ...turn, reasoning: options.reasoning };
+  }
+  return turn;
 }
 
 /**

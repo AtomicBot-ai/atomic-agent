@@ -89,10 +89,17 @@ function StreamingTail({ state }: { state: TuiState }): ReactElement | null {
     state.reasoning.length > 0;
   if (!hasStreaming) return null;
   const reasoningTexts = state.reasoning.map((r) => r.text);
+  // Keep CoT fully visible while the model is still "thinking" (no reply
+  // text yet), then collapse it to a one-line summary the moment the
+  // final assistant reply starts streaming — so the user's eye follows
+  // the answer, not the stale reasoning trail.
+  const reasoningExpanded =
+    state.streamingAssistantText === null ||
+    state.streamingAssistantText.length === 0;
   return (
     <Box flexDirection="column">
       {reasoningTexts.length > 0 ? (
-        <ReasoningBubble blocks={reasoningTexts} expanded={false} />
+        <ReasoningBubble blocks={reasoningTexts} expanded={reasoningExpanded} />
       ) : null}
       <Box flexDirection="column" marginLeft={2}>
         {state.streamingToolCards.map((card) => (

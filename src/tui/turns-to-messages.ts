@@ -75,6 +75,9 @@ export function turnsToMessages(
         if (!pendingAssistant) pendingAssistant = freshAssistant(turn.at);
         pendingAssistant.text = turn.text;
         pendingAssistant.timestamp = turn.at;
+        if (turn.reasoning && turn.reasoning.length > 0) {
+          pendingAssistant.reasoningBlocks.push(turn.reasoning);
+        }
         flushAssistant();
         break;
       }

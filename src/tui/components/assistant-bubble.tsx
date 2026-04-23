@@ -12,10 +12,13 @@ interface AssistantBubbleProps {
 }
 
 /**
- * Assistant reply bubble. The message body runs through the markdown
- * renderer so fenced code, bold/italic, links and lists appear closer to
- * the openclaw look. While the turn is still streaming we omit the step
- * counter because it is not yet final.
+ * Assistant reply bubble. The finalised message body runs through the
+ * markdown renderer so fenced code, bold/italic, links and lists appear
+ * closer to the openclaw look. While the turn is still streaming we
+ * render plain text instead — partial markdown (half-opened `**`, a
+ * fenced block missing its closing ```, a dangling list marker) lexes
+ * into ugly literals that flicker and rearrange on every token. Marked
+ * output stabilises only once the whole reply is in hand.
  */
 export function AssistantBubble({
   text,
@@ -38,7 +41,7 @@ export function AssistantBubble({
         ) : null}
       </Text>
       <Box flexDirection="column" marginTop={1} marginLeft={2}>
-        <MarkdownRenderer text={text} />
+        {streaming ? <Text>{text}</Text> : <MarkdownRenderer text={text} />}
       </Box>
     </Box>
   );

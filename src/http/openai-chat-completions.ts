@@ -261,7 +261,12 @@ async function handleStream(
  * Translate `AgentLoopEvent`s into SSE frames. Only the events that a
  * chat client can reasonably render are forwarded:
  *  - `tool_call_parsed` → `event: tool_progress` (extensions opt-in only)
- *  - `assistant_reply`  → OpenAI content delta chunk
+ *  - `assistant_delta` / `assistant_reply` → OpenAI content delta chunk.
+ *    When the stream parser already emitted incremental deltas we skip the
+ *    terminal `assistant_reply` to avoid duplicating the body in the
+ *    client transcript.
+ *  - `reasoning_delta` → `event: reasoning_progress` (extensions opt-in
+ *    only)
  *  - `step_error` / `loop_failed` → `emitStreamError` (shape depends on
  *    whether extensions are opted in)
  *
@@ -272,6 +277,7 @@ function buildStreamEventHook(
   sse: SseWriter,
   env: TurnEnv,
 ): (event: AgentLoopEvent) => void {
+  let streamedAssistantDelta = false;
   return (event) => {
     if (sse.closed) return;
     if (event.type === "llm_event") {
@@ -289,7 +295,32 @@ function buildStreamEventHook(
           tool: inner.call.tool,
           label,
         });
+      } else if (inner.type === "assistant_delta") {
+        if (inner.text.length === 0) return;
+        streamedAssistantDelta = true;
+        sse.writeEvent(
+          null,
+          buildStreamChunk({
+            completionId: env.completionId,
+            created: env.created,
+            model: env.request.model,
+            delta: { content: inner.text },
+          }),
+        );
+      } else if (inner.type === "reasoning_delta") {
+        if (!env.request.extensionsEnabled) return;
+        if (inner.text.length === 0) return;
+        sse.writeEvent("reasoning_progress", {
+          id: env.completionId,
+          object: "chat.completion.reasoning_progress",
+          created: env.created,
+          model: env.request.model,
+          session_id: env.session.id,
+          step_index: inner.stepIndex,
+          text: inner.text,
+        });
       } else if (inner.type === "assistant_reply") {
+        if (streamedAssistantDelta) return;
         sse.writeEvent(
           null,
           buildStreamChunk({

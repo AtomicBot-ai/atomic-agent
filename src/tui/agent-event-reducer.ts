@@ -3,7 +3,7 @@ import { formatFeedLine } from "./format-event.js";
 import {
   appendChatMessage,
   appendFeed,
-  appendReasoning,
+  appendReasoningDelta,
   appendUserMessage,
   applyMetric,
   beginStreamingToolCall,
@@ -12,6 +12,7 @@ import {
   finishTurn,
   pushRing,
   startNewRun,
+  upsertReasoning,
 } from "./reducer-helpers.js";
 import { reduceUiAction } from "./reduce-ui-actions.js";
 import type { TuiAction } from "./tui-action.js";
@@ -161,10 +162,27 @@ function reduceStepEvent(
 ): TuiState {
   switch (event.type) {
     case "reasoning":
-      return appendReasoning(state, {
+      // #region agent log
+      fetch('http://127.0.0.1:7256/ingest/0e27a7af-968f-4d0a-b880-61f67ba8ab19',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8f8987'},body:JSON.stringify({sessionId:'8f8987',hypothesisId:'H5',runId:'repro',location:'agent-event-reducer.ts:reasoning',message:'reducer received reasoning event',data:{stepIndex:event.stepIndex,textLen:event.text.length,textHead:event.text.slice(0,120),priorReasoningCount:state.reasoning.length},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      return upsertReasoning(state, {
         stepIndex: event.stepIndex,
         text: event.text,
       });
+    case "reasoning_delta":
+      // #region agent log
+      fetch('http://127.0.0.1:7256/ingest/0e27a7af-968f-4d0a-b880-61f67ba8ab19',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8f8987'},body:JSON.stringify({sessionId:'8f8987',hypothesisId:'H5',runId:'repro',location:'agent-event-reducer.ts:reasoning_delta',message:'reducer received reasoning_delta event',data:{stepIndex:event.stepIndex,textLen:event.text.length,textHead:event.text.slice(0,80)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      return appendReasoningDelta(state, {
+        stepIndex: event.stepIndex,
+        text: event.text,
+      });
+    case "assistant_delta":
+      return {
+        ...state,
+        streamingAssistantText:
+          (state.streamingAssistantText ?? "") + event.text,
+      };
     case "tool_call_parsed": {
       const call: StreamingToolCall = {
         id: `tc-${Date.now()}-${state.streamingToolCalls.length}-${state.streamingToolCards.length}`,

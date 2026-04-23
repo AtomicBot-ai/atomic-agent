@@ -19,6 +19,7 @@ function scriptedLlama(replies: string[]) {
     const text = queue.shift() ?? "fallback";
     return {
       content: JSON.stringify({ tool: "reply", args: { text } }),
+      reasoningContent: "",
       stop: true,
       truncated: false,
       timing: {
@@ -160,6 +161,7 @@ describe("POST /v1/chat/completions (streaming)", () => {
     const queue = [...content];
     return async () => ({
       content: queue.shift() ?? "{}",
+      reasoningContent: "",
       stop: true,
       truncated: false,
       timing: {
@@ -270,6 +272,67 @@ describe("POST /v1/chat/completions (streaming)", () => {
       const text = await readAllText(response);
       expect(text).toMatch(/event: error\n/);
       expect(text).toMatch(/"error":"[^"]*llama backend exploded/);
+      expect(text).toMatch(/data: \[DONE\]/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("streams incremental content deltas and reasoning_progress events when the LLM streams", async () => {
+    const raw =
+      '<think>short plan</think>{"tool":"reply","args":{"text":"Hello world"}}';
+    const unaryResult: CompletionResult = {
+      content: raw,
+      reasoningContent: "",
+      stop: true,
+      truncated: false,
+      timing: {
+        promptMs: 0,
+        predictedMs: 0,
+        promptTokens: 1,
+        predictedTokens: 1,
+      },
+      cacheHitTokens: 0,
+      slotId: 0,
+      modelId: null,
+    };
+    async function* streamChunks(): AsyncGenerator<
+      { delta: string; reasoningDelta: string; done: boolean },
+      CompletionResult,
+      void
+    > {
+      for (const ch of raw) {
+        yield { delta: ch, reasoningDelta: "", done: false };
+      }
+      yield { delta: "", reasoningDelta: "", done: true };
+      return unaryResult;
+    }
+    const harness = await startTestHarness({
+      llamaComplete: async () => unaryResult,
+      llamaCompleteStream: () => streamChunks(),
+    });
+    try {
+      const response = await postChat(
+        harness.baseUrl,
+        {
+          model: "atomic-agent",
+          stream: true,
+          messages: [{ role: "user", content: "hi" }],
+        },
+        { [EXTENSIONS_HEADER]: "1" },
+      );
+      expect(response.status).toBe(200);
+      const text = await readAllText(response);
+      expect(text).toMatch(/event: reasoning_progress\n/);
+      // Multiple content chunks were emitted (one per streamed char, which
+      // is more than the single terminal chunk we'd see without streaming).
+      const contentChunkCount = (text.match(/"content":/g) ?? []).length;
+      expect(contentChunkCount).toBeGreaterThan(1);
+      // The last chunk's text still spells the full reply when concatenated.
+      const allContent = [...text.matchAll(/"content":"((?:[^"\\]|\\.)*)"/g)]
+        .map((m) => JSON.parse(`"${m[1]}"`) as string)
+        .join("");
+      expect(allContent).toBe("Hello world");
       expect(text).toMatch(/data: \[DONE\]/);
     } finally {
       await harness.cleanup();

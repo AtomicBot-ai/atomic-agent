@@ -1,4 +1,7 @@
-import type { CompletionResult } from "../llm/llama-server-client.js";
+import type {
+  CompletionResult,
+  StreamChunk,
+} from "../llm/llama-server-client.js";
 import type { SlotManager } from "../llm/slot-manager.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import type { SessionState } from "../session/session-state.js";
@@ -31,6 +34,17 @@ export interface AgentLoopDependencies {
     slotId: number;
     sessionId: string;
   }) => Promise<CompletionResult>;
+  /**
+   * Optional streaming sibling of `llmComplete`. When wired, live
+   * `reasoning_delta` and `assistant_delta` step events flow to
+   * `onEvent` while the model is still generating.
+   */
+  llmCompleteStream?: (params: {
+    prompt: string;
+    grammar: string;
+    slotId: number;
+    sessionId: string;
+  }) => AsyncGenerator<StreamChunk, CompletionResult, void>;
   /** Stable tool catalog used in the prompt prefix. Pass the same array on every step. */
   toolDescriptors: readonly ToolDescriptor[];
   /** Stable capabilities summary, computed once at session start. */
@@ -168,6 +182,9 @@ export class AgentLoop {
             slotManager: this.deps.slotManager,
             grammar: this.deps.grammar,
             llmComplete: this.deps.llmComplete,
+            ...(this.deps.llmCompleteStream
+              ? { llmCompleteStream: this.deps.llmCompleteStream }
+              : {}),
             onEvent: (event) =>
               this.deps.onEvent?.({ type: "llm_event", event }),
             ...(this.deps.metrics ? { metrics: this.deps.metrics } : {}),

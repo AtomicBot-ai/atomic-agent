@@ -16,6 +16,7 @@ import type {
 function makeCompletion(content: string): CompletionResult {
   return {
     content,
+    reasoningContent: "",
     stop: true,
     truncated: false,
     timing: { promptMs: 1, predictedMs: 1, promptTokens: 10, predictedTokens: 5 },
@@ -380,6 +381,63 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       tool: "flaky",
       status: "ok",
     });
+  });
+
+  it("emits assistant_delta and reasoning_delta events when a streaming LLM is wired", async () => {
+    const registry = buildDefaultToolRegistry();
+    const events: Array<{ type: string; text?: string }> = [];
+    const raw =
+      '<think>short plan</think>{"tool":"reply","args":{"text":"hello stream"}}';
+    async function* streamCompletion(): AsyncGenerator<
+      { delta: string; reasoningDelta: string; done: boolean },
+      CompletionResult,
+      void
+    > {
+      for (const ch of raw) {
+        yield { delta: ch, reasoningDelta: "", done: false };
+      }
+      yield { delta: "", reasoningDelta: "", done: true };
+      return makeCompletion(raw);
+    }
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => makeCompletion(raw),
+      llmCompleteStream: () => streamCompletion(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "llm_event") {
+          const inner = event.event;
+          if (
+            inner.type === "assistant_delta" ||
+            inner.type === "reasoning_delta" ||
+            inner.type === "assistant_reply"
+          ) {
+            events.push({
+              type: inner.type,
+              text: "text" in inner ? inner.text : undefined,
+            });
+          }
+        }
+      },
+    });
+    const session = createEmptySessionState({ id: "s-stream", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "hi",
+      maxSteps: 3,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("reply");
+    const reasoningDeltas = events.filter((e) => e.type === "reasoning_delta");
+    const assistantDeltas = events.filter((e) => e.type === "assistant_delta");
+    expect(reasoningDeltas.map((e) => e.text).join("")).toBe("short plan");
+    expect(assistantDeltas.map((e) => e.text).join("")).toBe("hello stream");
+    // Terminal assistant_reply still arrives with the full canonical body.
+    const finalReply = events.find((e) => e.type === "assistant_reply");
+    expect(finalReply?.text).toBe("hello stream");
   });
 
   it("respects an external abort signal", async () => {

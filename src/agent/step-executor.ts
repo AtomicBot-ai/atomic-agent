@@ -3,6 +3,8 @@ import {
   parseToolCall,
 } from "../llm/grammar/tool-call-grammar.js";
 import type { ToolCallPayload } from "../llm/grammar/tool-call-grammar.js";
+import { createStreamParser } from "../llm/grammar/stream-parser.js";
+import type { StreamParseEvent } from "../llm/grammar/stream-parser.js";
 import { buildPrompt } from "../prompt/build-prompt.js";
 import type { BuiltPrompt } from "../prompt/build-prompt.js";
 import type {
@@ -14,7 +16,10 @@ import {
   compressToolResult,
   type CompressedToolResult,
 } from "../compressor/result-compressor.js";
-import type { CompletionResult } from "../llm/llama-server-client.js";
+import type {
+  CompletionResult,
+  StreamChunk,
+} from "../llm/llama-server-client.js";
 import type { SessionState } from "../session/session-state.js";
 import {
   recordLatestResult,
@@ -32,15 +37,29 @@ import type { SlotManager } from "../llm/slot-manager.js";
 import type { AgentMetrics } from "../telemetry/agent-metrics.js";
 import type { StructuredLogger } from "../telemetry/structured-logger.js";
 
+export interface LlmStreamParams {
+  prompt: string;
+  grammar: string;
+  slotId: number;
+  sessionId: string;
+}
+
+export type LlmCompleteStream = (
+  params: LlmStreamParams,
+) => AsyncGenerator<StreamChunk, CompletionResult, void>;
+
 export interface StepDependencies {
   registry: ToolRegistry;
   slotManager: SlotManager;
-  llmComplete: (params: {
-    prompt: string;
-    grammar: string;
-    slotId: number;
-    sessionId: string;
-  }) => Promise<CompletionResult>;
+  llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
+  /**
+   * Optional streaming sibling of `llmComplete`. When present, the step
+   * executor consumes the SSE stream and emits `reasoning_delta` and
+   * `assistant_delta` events live. Final `reasoning` / `assistant_reply`
+   * emissions stay identical to the unary path so downstream consumers
+   * never observe behaviour drift when streaming is disabled.
+   */
+  llmCompleteStream?: LlmCompleteStream;
   grammar: string;
   onEvent?: (event: StepEvent) => void;
   metrics?: AgentMetrics;
@@ -73,6 +92,21 @@ export type StepEvent =
    * `tool_call_parsed` and *before* any `step_error` from the parser.
    */
   | { type: "reasoning"; stepIndex: number; text: string }
+  /**
+   * Streaming reasoning delta produced live while the model is still
+   * generating the `<think>...</think>` prelude. Only emitted when the
+   * runtime has a streaming LLM callback wired in — the final `reasoning`
+   * event still arrives once the JSON body is parsed. Consumers may either
+   * render both (the final event is authoritative) or ignore one.
+   */
+  | { type: "reasoning_delta"; stepIndex: number; text: string }
+  /**
+   * Streaming assistant text delta, emitted only for `reply.args.text`.
+   * Other tools never produce this event so non-reply arguments (shell
+   * commands, URLs, file paths, ...) are not confused with user-facing
+   * text.
+   */
+  | { type: "assistant_delta"; text: string }
   | { type: "tool_call_parsed"; call: ToolCallPayload }
   | { type: "tool_call_executed"; result: CompressedToolResult }
   | { type: "assistant_reply"; text: string }
@@ -124,12 +158,19 @@ export async function executeStep(
   });
 
   const llmStartedAt = Date.now();
-  const completion = await deps.llmComplete({
+  const llmParams: LlmStreamParams = {
     prompt: prompt.text,
     grammar: deps.grammar,
     slotId: slot.slotId,
     sessionId: ctx.session.id,
-  });
+  };
+  const completion = deps.llmCompleteStream
+    ? await consumeStream(
+        deps.llmCompleteStream(llmParams),
+        ctx.stepIndex,
+        deps.onEvent,
+      )
+    : await deps.llmComplete(llmParams);
   const llmDurationMs = Date.now() - llmStartedAt;
   deps.onEvent?.({ type: "llm_completed", completion });
   deps.metrics?.recordLlmCall({
@@ -140,7 +181,23 @@ export async function executeStep(
     cacheReused: slot.cacheReused,
   });
 
-  const { reasoning } = extractReasoning(completion.content);
+  // Prefer the dedicated `reasoning_content` channel when the server
+  // (QwQ, DeepSeek-R1 with `--reasoning-format deepseek`) supplies it —
+  // the content body then no longer embeds `<think>...</think>` blocks.
+  // Fall back to extracting `<think>` from `content` for classic builds
+  // and models that stream CoT inline.
+  const reasoningFromChannel =
+    typeof completion.reasoningContent === "string"
+      ? completion.reasoningContent
+      : "";
+  const extracted = extractReasoning(completion.content);
+  const reasoning =
+    reasoningFromChannel.length > 0
+      ? reasoningFromChannel
+      : extracted.reasoning;
+  // #region agent log
+  fetch('http://127.0.0.1:7256/ingest/0e27a7af-968f-4d0a-b880-61f67ba8ab19',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8f8987'},body:JSON.stringify({sessionId:'8f8987',hypothesisId:'H1,H2,H4',runId:'repro',location:'step-executor.ts:reasoning-picker',message:'reasoning resolution after completion',data:{stepIndex:ctx.stepIndex,contentLen:completion.content.length,contentHead:completion.content.slice(0,240),channelReasoningLen:reasoningFromChannel.length,channelReasoningHead:reasoningFromChannel.slice(0,200),extractedReasoningLen:extracted.reasoning.length,extractedReasoningHead:extracted.reasoning.slice(0,200),extractedBodyHead:extracted.body.slice(0,120),finalReasoningLen:reasoning.length,willEmit:reasoning.length>0},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
   if (reasoning.length > 0) {
     deps.onEvent?.({
       type: "reasoning",
@@ -249,6 +306,104 @@ export async function executeStep(
 }
 
 /**
+ * Drain the SSE generator, feeding each token delta to the grammar-aware
+ * stream parser and relaying its emissions as `StepEvent`s. The generator's
+ * terminal return value carries the final `CompletionResult` (timings,
+ * cached-tokens, model id), so callers still receive the unary contract.
+ *
+ * If the generator finishes without emitting a `done` frame (old
+ * llama-server builds, truncated network response), we fall back to a
+ * synthetic `CompletionResult` populated from the accumulated buffer so
+ * the downstream parser still has something to work with.
+ */
+async function consumeStream(
+  stream: AsyncGenerator<StreamChunk, CompletionResult, void>,
+  stepIndex: number,
+  onEvent?: (event: StepEvent) => void,
+): Promise<CompletionResult> {
+  const parser = createStreamParser();
+  let accumulated = "";
+  let accumulatedReasoning = "";
+  const emitParseEvents = (events: readonly StreamParseEvent[]): void => {
+    if (!onEvent) return;
+    for (const ev of events) {
+      if (ev.kind === "reasoning_delta") {
+        onEvent({ type: "reasoning_delta", stepIndex, text: ev.text });
+      } else if (ev.kind === "reply_text_delta") {
+        onEvent({ type: "assistant_delta", text: ev.text });
+      }
+    }
+  };
+  let finalResult: CompletionResult | null = null;
+  while (true) {
+    const next = await stream.next();
+    if (next.done) {
+      finalResult = next.value;
+      break;
+    }
+    const chunk = next.value;
+    // Channel A: dedicated `reasoning_content` deltas (QwQ, DeepSeek-R1
+    // with `--reasoning-format deepseek`). Bypass the grammar parser —
+    // these tokens never appear inside `<think>` or JSON, they come on a
+    // separate SSE field and are already decoded.
+    if (chunk.reasoningDelta && chunk.reasoningDelta.length > 0) {
+      accumulatedReasoning += chunk.reasoningDelta;
+      onEvent?.({
+        type: "reasoning_delta",
+        stepIndex,
+        text: chunk.reasoningDelta,
+      });
+    }
+    // Channel B: inline content (may contain `<think>...</think>` +
+    // grammar-constrained JSON). The stream parser splits this into
+    // reasoning / reply-text deltas for us.
+    if (chunk.delta.length > 0) {
+      accumulated += chunk.delta;
+      emitParseEvents(parser.push(chunk.delta));
+    }
+    if (chunk.done) {
+      // Some servers close the iterator right after the done frame; keep
+      // draining until `next.done` so we do not leave the response reader
+      // hanging.
+    }
+  }
+  emitParseEvents(parser.end());
+  if (finalResult === null) {
+    finalResult = {
+      content: accumulated,
+      reasoningContent: accumulatedReasoning,
+      stop: true,
+      truncated: false,
+      timing: {
+        promptMs: 0,
+        predictedMs: 0,
+        promptTokens: 0,
+        predictedTokens: 0,
+      },
+      cacheHitTokens: 0,
+      slotId: -1,
+      modelId: null,
+    };
+  } else {
+    const patch: Partial<CompletionResult> = {};
+    if (finalResult.content.length === 0 && accumulated.length > 0) {
+      patch.content = accumulated;
+    }
+    const existingReasoning =
+      typeof finalResult.reasoningContent === "string"
+        ? finalResult.reasoningContent
+        : "";
+    if (existingReasoning.length === 0 && accumulatedReasoning.length > 0) {
+      patch.reasoningContent = accumulatedReasoning;
+    }
+    if (Object.keys(patch).length > 0) {
+      finalResult = { ...finalResult, ...patch };
+    }
+  }
+  return finalResult;
+}
+
+/**
  * `reply` ends the current macro-turn but keeps the session alive.
  * `finish` ends the whole session. We also accept a legacy
  * `details.final === true` flag from custom tools that want to act as a
@@ -289,7 +444,13 @@ function appendConversationTurns(params: AppendTurnsParams): SessionState {
         ? (toolCall.args.text as string)
         : toolResult.summary;
     onEvent?.({ type: "assistant_reply", text });
-    return recordTurn(state, assistantReplyTurn(text));
+    return recordTurn(
+      state,
+      assistantReplyTurn(
+        text,
+        reasoning.length > 0 ? { reasoning } : undefined,
+      ),
+    );
   }
 
   let next = recordTurn(

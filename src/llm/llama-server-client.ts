@@ -24,6 +24,14 @@ export interface CompletionTiming {
 
 export interface CompletionResult {
   content: string;
+  /**
+   * Optional reasoning stream, populated when llama-server exposes a
+   * dedicated `reasoning_content` field (e.g. QwQ, DeepSeek-R1 with
+   * `--reasoning-format deepseek`). Empty string for legacy builds or
+   * non-reasoning models — in that case the step executor still falls
+   * back to `<think>...</think>` extraction from `content`.
+   */
+  reasoningContent: string;
   stop: boolean;
   truncated: boolean;
   timing: CompletionTiming;
@@ -34,6 +42,13 @@ export interface CompletionResult {
 
 export interface StreamChunk {
   delta: string;
+  /**
+   * Incremental reasoning text from the same SSE frame. Non-empty only
+   * when the server chose to split CoT into its own `reasoning_content`
+   * channel; otherwise reasoning still arrives inline in `delta` as a
+   * `<think>...</think>` block and is recovered by the grammar parser.
+   */
+  reasoningDelta: string;
   done: boolean;
 }
 
@@ -119,6 +134,7 @@ export class LlamaServerClient {
     );
     let finalResult: CompletionResult = {
       content: "",
+      reasoningContent: "",
       stop: false,
       truncated: false,
       timing: {
@@ -150,6 +166,7 @@ export class LlamaServerClient {
         .getReader();
       let buffer = "";
       let accumulated = "";
+      let accumulatedReasoning = "";
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -160,17 +177,32 @@ export class LlamaServerClient {
           buffer = buffer.slice(eventEnd + 2);
           const parsed = parseSseEvent(rawEvent);
           if (parsed) {
-            const delta = typeof parsed.content === "string" ? parsed.content : "";
-            if (delta.length > 0) {
+            const delta =
+              typeof parsed.content === "string" ? parsed.content : "";
+            const reasoningDelta =
+              typeof parsed.reasoning_content === "string"
+                ? parsed.reasoning_content
+                : "";
+            if (delta.length > 0 || reasoningDelta.length > 0) {
               accumulated += delta;
-              yield { delta, done: false };
+              accumulatedReasoning += reasoningDelta;
+              // #region agent log
+              fetch('http://127.0.0.1:7256/ingest/0e27a7af-968f-4d0a-b880-61f67ba8ab19',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8f8987'},body:JSON.stringify({sessionId:'8f8987',hypothesisId:'H1,H2,H3',runId:'repro',location:'llama-server-client.ts:sse-chunk',message:'sse chunk',data:{deltaLen:delta.length,deltaHead:delta.slice(0,60),reasoningLen:reasoningDelta.length,reasoningHead:reasoningDelta.slice(0,60),parsedKeys:Object.keys(parsed)},timestamp:Date.now()})}).catch(()=>{});
+              // #endregion
+              yield { delta, reasoningDelta, done: false };
             }
             if (parsed.stop) {
               finalResult = normaliseCompletionResponse(parsed);
               if (finalResult.content.length === 0) {
                 finalResult.content = accumulated;
               }
-              yield { delta: "", done: true };
+              if (finalResult.reasoningContent.length === 0) {
+                finalResult.reasoningContent = accumulatedReasoning;
+              }
+              // #region agent log
+              fetch('http://127.0.0.1:7256/ingest/0e27a7af-968f-4d0a-b880-61f67ba8ab19',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8f8987'},body:JSON.stringify({sessionId:'8f8987',hypothesisId:'H1,H2',runId:'repro',location:'llama-server-client.ts:sse-stop',message:'sse terminal frame',data:{contentLen:finalResult.content.length,contentHead:finalResult.content.slice(0,200),reasoningLen:finalResult.reasoningContent.length,reasoningHead:finalResult.reasoningContent.slice(0,200),parsedHasReasoningField:'reasoning_content' in parsed},timestamp:Date.now()})}).catch(()=>{});
+              // #endregion
+              yield { delta: "", reasoningDelta: "", done: true };
             }
           }
           eventEnd = buffer.indexOf("\n\n");
@@ -214,7 +246,11 @@ export class LlamaServerClient {
       payload.slot_id = request.slotId;
       payload.id_slot = request.slotId;
     }
-    return { url, headers, body: JSON.stringify(payload) };
+    const body = JSON.stringify(payload);
+    // #region agent log
+    fetch('http://127.0.0.1:7256/ingest/0e27a7af-968f-4d0a-b880-61f67ba8ab19',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8f8987'},body:JSON.stringify({sessionId:'8f8987',hypothesisId:'H3',runId:'repro',location:'llama-server-client.ts:prepareRequest',message:'outgoing /completion request',data:{url,stream,grammarPresent:!!request.grammar,promptLen:request.prompt.length,promptTail:request.prompt.slice(-200),promptHasThinkTag:request.prompt.includes('<think>'),payloadKeys:Object.keys(payload)},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    return { url, headers, body };
   }
 }
 
@@ -242,6 +278,10 @@ function normaliseCompletionResponse(
   const timings = (payload.timings ?? {}) as Record<string, unknown>;
   return {
     content: typeof payload.content === "string" ? payload.content : "",
+    reasoningContent:
+      typeof payload.reasoning_content === "string"
+        ? payload.reasoning_content
+        : "",
     stop: Boolean(payload.stop),
     truncated: Boolean(payload.truncated),
     timing: {

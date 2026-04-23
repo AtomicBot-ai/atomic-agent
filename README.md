@@ -12,7 +12,10 @@
 
 </div>
 
+
 ---
+
+See also: [ARCHITECTURE.md](ARCHITECTURE.md), [EVOLUTION.md](EVOLUTION.md), [SKILLS.md](SKILLS.md), [BUNDLING.md](BUNDLING.md)
 
 ## At a glance
 
@@ -56,6 +59,7 @@
 
 - **External LLM only** — points at an existing `llama-server`; no bundled inference.
 - **Multi-turn chat** — persistent session; agent chooses `reply` vs. tools each step; `finish` ends the session.
+- **Session-scoped memory** — persists conversation turns, compact known facts, loaded skill bodies, and the latest compressed browser world snapshot.
 - **Stable prompt prefix** + per-session `slot_id` for KV-cache reuse (`system` + tool catalog + capabilities + skill catalog).
 - **GBNF grammar-constrained** tool calls for reliable JSON on smaller models (7–9B class).
 - **Browser** — `playwright-core` over system Chrome/Edge, persistent profile; compact ARIA snapshot, `aria-ref=eN` targeting.
@@ -64,6 +68,8 @@
 - **Approval gate** — dangerous paths only (shell, fs writes, non-http(s) nav, skill scripts, etc.).
 - **NDJSON sidecar** — `send_message`, `assistant_reply`, `turn_started`, `turn_finished`, …
 - **Ship shape** — per-platform Node SEA binaries (darwin arm64/x64, linux x64, win x64).
+
+Current scope note: this repo does not yet ship a dedicated workspace-memory, retrieval, embeddings, or resource-summary subsystem. Memory is session-scoped, not a separate long-lived operator context layer.
 
 ---
 

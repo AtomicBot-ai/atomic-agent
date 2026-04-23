@@ -6,7 +6,10 @@ import type { AtomicAgentConfig } from "../config/index.js";
 import { getConfig } from "../config/index.js";
 
 import { LlamaServerClient } from "../llm/llama-server-client.js";
-import type { CompletionResult } from "../llm/llama-server-client.js";
+import type {
+  CompletionResult,
+  StreamChunk,
+} from "../llm/llama-server-client.js";
 import { SlotManager } from "../llm/slot-manager.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
 
@@ -70,6 +73,22 @@ export interface CreateAgentRuntimeOptions {
       slotId: number;
       sessionId: string;
     }) => Promise<CompletionResult>;
+    /**
+     * Streaming counterpart of `llamaComplete`. Tests inject a fake SSE
+     * generator here; production wiring always hands a real
+     * `LlamaServerClient.completeStream` through.
+     */
+    llamaCompleteStream?: (params: {
+      prompt: string;
+      grammar: string;
+      slotId: number;
+      sessionId: string;
+    }) => AsyncGenerator<StreamChunk, CompletionResult, void>;
+    /**
+     * When true, skip wiring the streaming client at all. Useful for the
+     * HTTP/sidecar tests that still exercise the unary path.
+     */
+    disableStreaming?: boolean;
     browserBackend?: BrowserBackend;
     skipLlamaHealthCheck?: boolean;
   };
@@ -210,6 +229,24 @@ export async function createAgentRuntime(
       });
     });
 
+  // Streaming is wired to the real llama-server by default. Tests that
+  // inject a `llamaComplete` fake opt out of streaming implicitly unless
+  // they also pass an `llamaCompleteStream` fake — otherwise the agent
+  // would try to hit a non-existent server for every step.
+  const llmCompleteStream = options.overrides?.disableStreaming
+    ? undefined
+    : options.overrides?.llamaCompleteStream ??
+      (options.overrides?.llamaComplete
+        ? undefined
+        : (params) =>
+            llama.completeStream({
+              prompt: params.prompt,
+              grammar: params.grammar,
+              slotId: params.slotId,
+              sessionId: params.sessionId,
+              cachePrompt: true,
+            }));
+
   const sessionStore = new SessionStore();
 
   // The `skillCatalog` is a getter so that `agent-loop` reads the current
@@ -220,6 +257,7 @@ export async function createAgentRuntime(
     slotManager,
     grammar,
     llmComplete,
+    ...(llmCompleteStream ? { llmCompleteStream } : {}),
     toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
     capabilities,
     onEvent: (event: AgentLoopEvent) => options.handlers?.onAgentEvent?.(event),

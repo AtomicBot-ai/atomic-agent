@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { resetConfigCache } from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
-import type { CompletionResult } from "../llm/llama-server-client.js";
+import type {
+  CompletionResult,
+  StreamChunk,
+} from "../llm/llama-server-client.js";
 import type {
   AriaSnapshot,
   BrowserBackend,
@@ -77,6 +80,18 @@ export interface HarnessOptions {
     slotId: number;
     sessionId: string;
   }) => Promise<CompletionResult>;
+  /**
+   * Optional streaming LLM stub. When supplied, the runtime exercises
+   * the streaming code path and the unary `llamaComplete` is only used
+   * as the non-stream fallback for HTTP endpoints that expect a single
+   * JSON response.
+   */
+  llamaCompleteStream?: (params: {
+    prompt: string;
+    grammar: string;
+    slotId: number;
+    sessionId: string;
+  }) => AsyncGenerator<StreamChunk, CompletionResult, void>;
   /** Approval required flag (default: false to keep tests deterministic). */
   approvalRequired?: boolean;
   /** Extra inspector for each agent event. */
@@ -116,6 +131,7 @@ export async function startTestHarness(
 
   const defaultComplete = async (): Promise<CompletionResult> => ({
     content: JSON.stringify({ tool: "reply", args: { text: "hi back" } }),
+    reasoningContent: "",
     stop: true,
     truncated: false,
     timing: {
@@ -150,6 +166,9 @@ export async function startTestHarness(
       browserBackend: new FakeBrowserBackend(),
       skipLlamaHealthCheck: true,
       llamaComplete: options.llamaComplete ?? defaultComplete,
+      ...(options.llamaCompleteStream
+        ? { llamaCompleteStream: options.llamaCompleteStream }
+        : {}),
     },
   });
 

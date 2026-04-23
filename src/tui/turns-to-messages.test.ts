@@ -86,4 +86,22 @@ describe("turnsToMessages", () => {
     expect(messages[1]?.role).toBe("assistant");
     expect(messages[1]?.toolCards).toHaveLength(1);
   });
+
+  it("restores reasoning of the final assistant_reply turn from persisted sessions", () => {
+    const turns: ConversationTurn[] = [
+      { kind: "user", text: "hi", at: 1 },
+      {
+        kind: "assistant_reply",
+        text: "Hello there",
+        reasoning: "thought process for the final reply",
+        at: 2,
+      },
+    ];
+    const messages = turnsToMessages(turns);
+    expect(messages[1]?.role).toBe("assistant");
+    expect(messages[1]?.text).toBe("Hello there");
+    expect(messages[1]?.reasoningBlocks).toContain(
+      "thought process for the final reply",
+    );
+  });
 });

@@ -196,4 +196,102 @@ describe("reduceTuiState", () => {
     const initial = createInitialTuiState(fakeSession());
     expect(initial.ringBufferSize).toBe(DEFAULT_RING_BUFFER_SIZE);
   });
+
+  it("should append reasoning_delta chunks into the matching step entry", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: { type: "reasoning_delta", stepIndex: 0, text: "hello " },
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: { type: "reasoning_delta", stepIndex: 0, text: "world" },
+        },
+      },
+    ]);
+    expect(next.reasoning).toHaveLength(1);
+    expect(next.reasoning[0]?.stepIndex).toBe(0);
+    expect(next.reasoning[0]?.text).toBe("hello world");
+  });
+
+  it("should replace reasoning text with the canonical final reasoning event", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: { type: "reasoning_delta", stepIndex: 0, text: "partial" },
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: { type: "reasoning", stepIndex: 0, text: "final canonical" },
+        },
+      },
+    ]);
+    expect(next.reasoning).toHaveLength(1);
+    expect(next.reasoning[0]?.text).toBe("final canonical");
+  });
+
+  it("should accumulate assistant_delta chunks into streamingAssistantText", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: { type: "assistant_delta", text: "Hel" },
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: { type: "assistant_delta", text: "lo!" },
+        },
+      },
+    ]);
+    expect(next.streamingAssistantText).toBe("Hello!");
+  });
+
+  it("should fold streamed reasoning into the final assistant ChatMessage", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      { type: "message_submitted", message: "hi" },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: { type: "reasoning_delta", stepIndex: 0, text: "plan " },
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: { type: "reasoning", stepIndex: 0, text: "plan v2" },
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "the answer" },
+        },
+      },
+    ]);
+    const lastMessage = next.messages.at(-1);
+    expect(lastMessage?.role).toBe("assistant");
+    expect(lastMessage?.text).toBe("the answer");
+    expect(lastMessage?.reasoningBlocks).toContain("plan v2");
+  });
 });

@@ -25,6 +25,8 @@ export type SidecarEventType =
   | "tool_call_result"
   | "user_message"
   | "assistant_reply"
+  | "assistant_delta"
+  | "reasoning_delta"
   | "turn_started"
   | "turn_finished"
   | "approval_request"
@@ -154,6 +156,29 @@ export interface UserMessagePayload {
 
 export interface AssistantReplyPayload {
   sessionId: string;
+  text: string;
+}
+
+/**
+ * Incremental slice of the assistant's reply, emitted as `reply.args.text`
+ * is streamed out of llama-server. Multiple `assistant_delta` events are
+ * followed by a single terminal `assistant_reply` with the full text.
+ * Consumers that render deltas live should ignore the final reply body or
+ * diff against their accumulated buffer.
+ */
+export interface AssistantDeltaPayload {
+  sessionId: string;
+  text: string;
+}
+
+/**
+ * Incremental `<think>` reasoning chunk. Only present when the model emits
+ * a reasoning prelude. `stepIndex` ties the chunk back to the step event
+ * stream; multiple deltas may share the same index.
+ */
+export interface ReasoningDeltaPayload {
+  sessionId: string;
+  stepIndex: number;
   text: string;
 }
 

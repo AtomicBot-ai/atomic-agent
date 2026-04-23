@@ -45,6 +45,7 @@ describe("LlamaServerClient.complete", () => {
     });
 
     expect(result.content).toBe('{"tool":"finish","args":{}}');
+    expect(result.reasoningContent).toBe("");
     expect(result.timing.promptTokens).toBe(40);
     expect(result.cacheHitTokens).toBe(30);
     expect(result.slotId).toBe(2);
@@ -147,5 +148,57 @@ describe("LlamaServerClient.completeStream", () => {
       if (next.value.delta) deltas.push(next.value.delta);
     }
     expect(deltas.join("")).toBe("hello");
+  });
+
+  it("surfaces reasoning_content both as stream deltas and on the final result", async () => {
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async () =>
+        sseResponse([
+          'data: {"content":"","reasoning_content":"think ","stop":false}\n\n',
+          'data: {"content":"hi","reasoning_content":"more","stop":false}\n\n',
+          'data: {"content":"","reasoning_content":"","stop":true}\n\n',
+        ]),
+      ),
+    });
+    const iterator = client.completeStream({ prompt: "x" });
+    const reasoningDeltas: string[] = [];
+    const contentDeltas: string[] = [];
+    let final = null;
+    while (true) {
+      const next = await iterator.next();
+      if (next.done) {
+        final = next.value;
+        break;
+      }
+      if (next.value.delta) contentDeltas.push(next.value.delta);
+      if (next.value.reasoningDelta)
+        reasoningDeltas.push(next.value.reasoningDelta);
+    }
+    expect(contentDeltas.join("")).toBe("hi");
+    expect(reasoningDeltas.join("")).toBe("think more");
+    expect(final).not.toBeNull();
+    expect(final!.reasoningContent).toBe("think more");
+    expect(final!.content).toBe("hi");
+  });
+
+  it("reads reasoning_content from the unary response", async () => {
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(
+        async () =>
+          new Response(
+            JSON.stringify({
+              content: '{"tool":"reply","args":{"text":"ok"}}',
+              reasoning_content: "the plan",
+              stop: true,
+              truncated: false,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    });
+    const result = await client.complete({ prompt: "x" });
+    expect(result.reasoningContent).toBe("the plan");
   });
 });

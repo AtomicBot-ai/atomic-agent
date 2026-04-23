@@ -65,4 +65,75 @@ describe("ChatLog", () => {
     const text = strip(lastFrame() ?? "");
     expect(text).toContain("partial reply…");
   });
+
+  it("skips markdown during streaming so partial `**` does not flicker", () => {
+    const state: TuiState = {
+      ...createInitialTuiState(BASE_SESSION),
+      streamingAssistantText: "hello **bold",
+    };
+    const { lastFrame } = render(<ChatLog state={state} />);
+    const text = strip(lastFrame() ?? "");
+    // Literal asterisks must survive while the reply is still coming in —
+    // we only lex markdown once the turn finalises.
+    expect(text).toContain("**bold");
+  });
+
+  it("applies markdown to the finalised assistant message", () => {
+    const state: TuiState = {
+      ...createInitialTuiState(BASE_SESSION),
+      messages: [
+        {
+          id: "m1",
+          role: "assistant",
+          text: "hello **bold** there",
+          toolSteps: 0,
+          timestamp: 1,
+        },
+      ],
+    };
+    const { lastFrame } = render(<ChatLog state={state} />);
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("hello");
+    expect(text).toContain("bold");
+    expect(text).toContain("there");
+    expect(text).not.toMatch(/\*\*bold/);
+  });
+
+  it("expands the live reasoning bubble before any reply text arrives", () => {
+    const state: TuiState = {
+      ...createInitialTuiState(BASE_SESSION),
+      reasoning: [
+        {
+          id: "r1",
+          stepIndex: 0,
+          text: "first I will enumerate the options",
+          timestamp: 1,
+        },
+      ],
+      streamingAssistantText: null,
+    };
+    const { lastFrame } = render(<ChatLog state={state} />);
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("first I will enumerate the options");
+  });
+
+  it("collapses the live reasoning bubble once reply text starts streaming", () => {
+    const longThink =
+      "paragraph one is quite long and detailed so the summary has to clip it with an ellipsis and still fit on one line, and then paragraph two follows with even more extra detail that must not appear verbatim in the collapsed summary";
+    const state: TuiState = {
+      ...createInitialTuiState(BASE_SESSION),
+      reasoning: [
+        { id: "r1", stepIndex: 0, text: longThink, timestamp: 1 },
+      ],
+      streamingAssistantText: "Hi",
+    };
+    const { lastFrame } = render(<ChatLog state={state} />);
+    const text = strip(lastFrame() ?? "");
+    // Collapsed summary clips at the SUMMARY_LIMIT, so a specific tail of
+    // the full reasoning text must not be present.
+    expect(text).not.toContain("appear verbatim in the collapsed summary");
+    // Reply is streaming below the collapsed reasoning.
+    expect(text).toContain("Hi");
+    expect(text).toMatch(/reasoning/);
+  });
 });

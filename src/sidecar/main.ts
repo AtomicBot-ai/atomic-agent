@@ -105,6 +105,17 @@ export async function bootstrapSidecar(): Promise<{
               sessionId,
               text: inner.text,
             });
+          } else if (inner.type === "assistant_delta") {
+            protocol.emitEvent("assistant_delta", {
+              sessionId,
+              text: inner.text,
+            });
+          } else if (inner.type === "reasoning_delta") {
+            protocol.emitEvent("reasoning_delta", {
+              sessionId,
+              stepIndex: inner.stepIndex,
+              text: inner.text,
+            });
           } else if (inner.type === "step_error") {
             protocol.emitEvent("error", {
               message: inner.error.message,

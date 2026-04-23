@@ -40,6 +40,69 @@ export function appendReasoning(
   };
 }
 
+/**
+ * Append an incremental reasoning chunk streamed from the model. When a
+ * reasoning entry for the same `stepIndex` already exists at the tail, the
+ * delta is concatenated onto its text so the TUI renders a single growing
+ * block. Otherwise a fresh entry is pushed. The authoritative
+ * `appendReasoning` (final `<think>` block) later replaces the text in-
+ * place, guaranteeing the final rendering matches the canonical value.
+ */
+export function appendReasoningDelta(
+  state: TuiState,
+  params: { stepIndex: number; text: string },
+): TuiState {
+  if (params.text.length === 0) return state;
+  const last = state.reasoning.at(-1);
+  if (last && last.stepIndex === params.stepIndex) {
+    const updated: ReasoningEntry = { ...last, text: last.text + params.text };
+    const reasoning = [...state.reasoning.slice(0, -1), updated];
+    return { ...state, reasoning };
+  }
+  const timestamp = Date.now();
+  const id = `${timestamp}-${state.reasoning.length}`;
+  const entry: ReasoningEntry = {
+    id,
+    timestamp,
+    stepIndex: params.stepIndex,
+    text: params.text,
+  };
+  return {
+    ...state,
+    reasoning: pushRing(state.reasoning, entry, state.ringBufferSize),
+  };
+}
+
+/**
+ * Replace (or append) the reasoning entry for a given step with the final
+ * authoritative text from `extractReasoning`. Used by the non-delta
+ * `reasoning` step event so streamed-in text is superseded by the
+ * canonical post-parse value — avoids rendering drift when the stream
+ * parser and the final parser disagree on exact whitespace.
+ */
+export function upsertReasoning(
+  state: TuiState,
+  params: { stepIndex: number; text: string },
+): TuiState {
+  const idx = state.reasoning.findIndex(
+    (entry) => entry.stepIndex === params.stepIndex,
+  );
+  if (idx !== -1) {
+    const existing = state.reasoning[idx]!;
+    const updated: ReasoningEntry = { ...existing, text: params.text };
+    const reasoning = [
+      ...state.reasoning.slice(0, idx),
+      updated,
+      ...state.reasoning.slice(idx + 1),
+    ];
+    return { ...state, reasoning };
+  }
+  return appendReasoning(state, {
+    stepIndex: params.stepIndex,
+    text: params.text,
+  });
+}
+
 export function appendLog(state: TuiState, record: LogRecord): TuiState {
   return { ...state, logs: pushRing(state.logs, record, state.ringBufferSize) };
 }
