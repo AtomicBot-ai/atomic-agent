@@ -67,48 +67,55 @@ Main risk:
 
 - summary quality can hide details if the compression policy is too aggressive
 
-## Option 2: memory fabric (operator-first) [done: 2026-04-23]
+## Option 2: memory fabric (operator-first) [done: 2026-04-23; revised: 2026-04-23]
 
-Reframed from the original "workspace memory and retrieval" framing: `atomic-agent` is a general-purpose local operator, not a coding-scoped assistant, so the first memory milestone targets operator durability (who the user is, what the agent has already done) rather than workspace / file-index retrieval. Workspace inventories, document summaries, and embedded retrieval are explicitly deferred.
+Reframed from the original "workspace memory and retrieval" framing: `atomic-agent` is a general-purpose local operator, not a coding-scoped assistant, so the first memory milestone targets operator durability (who the user is) rather than workspace / file-index retrieval. Workspace inventories, document summaries, and embedded retrieval are explicitly deferred.
 
-What shipped (minimum scope, Type 1 + Type 3):
+**Retracted:** the original plan bundled an **Action History** layer that searched existing `tool_invocation` events in `<stateDir>/traces/*.ndjson`. In production tracing is off by default, which left the feature dead on arrival. Action History (`memory.history.*` config, `memory.history.search` tool, `action-history-reader`/`action-history-search` modules) has been removed. Memory formation now happens through an **async end-of-turn reflection runner** that distils durable facts out of the last exchange and writes them into the same `ProfileStore`.
+
+What ships (single-layer profile + async reflection formation):
 
 - **User Profile** — durable key/value facts in a new SQLite file `<stateDir>/memory.sqlite`, rendered as `### profile` in the **variable tail** of the prompt between `### session` and `### world`. Managed by three tools: `memory.profile.set`, `memory.profile.remove`, `memory.profile.list`. Gated by `memory.profile.enabled` (default `true`), capped by `memory.profile.maxTokens` (default `512`).
-- **Action History** — a reader over existing `tool_invocation` events in `<stateDir>/traces/*.ndjson`. No new writer. One new tool: `memory.history.search { tool?, pattern?, since?, until?, limit? }`, gated by `memory.history.enabled` (default `true`) with a hard ceiling `memory.history.maxResults` (default `50`).
+- **Reflection runner** — fire-and-forget at the end of every `AgentLoop.runTurn`. Uses a dedicated llama-server slot (`slotManager.reserveReflectionSlot()`) with its own tiny stable prefix so the main agent's KV cache is never invalidated. A GBNF-constrained micro-prompt emits either `NONE` or at most `memory.reflection.maxFactsPerCall` `SET key=value` lines, which flow through `ProfileStore` validators. Gated by `memory.reflection.enabled` (default `true`), timeout `memory.reflection.timeoutMs` (default `10000`).
 
 Why this order:
 
 - gives the runtime durable cross-session memory of the user (Type 1) with near-zero prompt cost
-- gives durable recall of what the agent already did (Type 3) for free on top of the existing trace infrastructure
+- replaces the trace-dependent Action History with an autonomous formation mechanism that works regardless of whether telemetry is enabled
 - defers embeddings, semantic retrieval, summaries, and workspace indexing until after we measure real usage
 
 Shipped modules:
 
-- new feature folder `src/memory/`: `memory-schema.ts`, `profile-store.ts`, `profile-renderer.ts`, `action-history-reader.ts`, `action-history-search.ts`
-- new feature folder `src/tools/memory/`: `profile-set.ts`, `profile-remove.ts`, `profile-list.ts`, `history-search.ts`
+- `src/memory/`: `memory-schema.ts`, `profile-store.ts`, `profile-renderer.ts`, plus the `src/memory/reflection/` feature folder (`reflection-prompt.ts`, `reflection-grammar.ts`, `reflection-parser.ts`, `reflection-runner.ts`)
+- `src/tools/memory/`: `profile-set.ts`, `profile-remove.ts`, `profile-list.ts`
 - `src/prompt/build-prompt.ts` — `### profile` injection in the variable tail, profile tokens subtracted from the effective conversation cap in `src/prompt/token-budget.ts`
-- `src/prompt/tool-descriptors.ts` + `grammars/tool-call.gbnf` — four new memory tools
-- `src/config/config-schema.ts` + `src/config/load-config.ts` — `memory.*` keys and `paths.memoryDbFile`
-- `src/runtime/bootstrap.ts` — instantiates `ProfileStore`, registers memory tools, wires `profileFactsProvider` into `AgentLoop` so live profile edits show up on the next step
-- `AGENTS.md` — new §"Memory fabric" section documenting invariants
+- `src/prompt/tool-descriptors.ts` + `grammars/tool-call.gbnf` — three profile tools
+- `src/config/config-schema.ts` + `src/config/load-config.ts` — `memory.profile.*` and `memory.reflection.*` keys, `paths.memoryDbFile`
+- `src/llm/slot-manager.ts` — `reserveReflectionSlot()` for a dedicated reflection slot
+- `src/agent/agent-loop.ts` — optional `reflectionRunner` dependency; `abortPending()` at turn start, fire `reflect()` at turn end
+- `src/runtime/bootstrap.ts` — instantiates `ProfileStore`, registers memory tools, wires `profileFactsProvider` + `ReflectionRunner` into `AgentLoop`
+- `src/telemetry/agent-metrics.ts` — `agent.memory.reflection` counter + latency histogram
+- `AGENTS.md` — revised §"Memory fabric" section (single layer + reflection subsection)
 
 Invariants (locked):
 
 - the `### profile` section lives in the variable tail only — the stable prefix is byte-stable across profile edits (pinned by `build-prompt.test.ts`)
-- Action History is strictly read-only over trace files; if tracing is disabled the tool returns `ok` with an explanatory `details.note` rather than silently returning stale results
+- reflection uses its own reserved slot; main agent KV-cache is never touched by reflection (pinned by `slot-manager.test.ts`)
+- reflection is never awaited by the loop; its errors are caught by the runner and surface only via logs + metrics
 - no embeddings, no TTL, no tags, no redaction in this milestone
 
 Explicitly out of scope for this milestone (deferred to future options or later iterations of this one):
 
 - episodic memory / session summaries (Type 2)
-- long-term fact store with TTL / tags (Type 4)
+- action-history search over trace files (retracted — see above)
+- long-term fact store with TTL / tags / topics (Type 4)
 - embeddings / semantic search
 - workspace inventories and document indexing
-- secret redaction of profile / history content
+- secret redaction of profile / reflection content
 
 Main risk (as expected):
 
-- scope creep — kept contained by freezing the design at Type 1 + Type 3 and resisting the urge to add retrieval layers before real usage demands them
+- scope creep — kept contained by freezing the design at the single-profile layer with async reflection and resisting the urge to add retrieval / topic / TTL layers before real usage demands them
 
 ## Option 3: LLM reliability policy [done: 2026-04-23]
 

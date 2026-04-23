@@ -49,7 +49,7 @@ This is the source-of-truth for automated contributors (LLM agents, codegen, etc
 | `src/approval/` | Approval gate and event wiring |
 | `src/telemetry/` | Structured logger + metrics + trace recorder (`src/telemetry/trace/`) |
 | `src/replay/` | Trace-based replay: drift detection + optional LLM re-inference |
-| `src/memory/` | Memory fabric: durable user-profile store + action-history reader/search over trace files |
+| `src/memory/` | Memory fabric: durable user-profile store + async end-of-turn reflection that distils facts into it |
 
 ## Build & test
 
@@ -89,9 +89,9 @@ There is currently no dedicated workspace-memory, retrieval, embeddings, or reso
 
 ## Memory fabric
 
-A minimal two-layer cross-session memory lives in [src/memory/](src/memory/) and exposes itself to the agent via four tools in [src/tools/memory/](src/tools/memory/). The fabric is deliberately narrow — no embeddings, no summaries, no TTL, no tags, no redaction.
+A single-layer cross-session memory lives in [src/memory/](src/memory/) and exposes itself to the agent via three profile tools in [src/tools/memory/](src/tools/memory/). Memory formation happens asynchronously after every turn via the reflection layer (see below). The fabric is deliberately narrow — no embeddings, no summaries, no TTL, no tags, no redaction.
 
-### Layer 1 — User Profile (durable, always in the prompt tail)
+### User Profile (durable, always in the prompt tail)
 
 - **Storage.** New SQLite file `<stateDir>/memory.sqlite` (separate from `sessions.sqlite` — different lifecycle, global scope). Schema + migrations in [src/memory/memory-schema.ts](src/memory/memory-schema.ts); CRUD in [src/memory/profile-store.ts](src/memory/profile-store.ts).
 - **Shape.** `profile_facts (key TEXT PK, value TEXT, updated_at INTEGER)`. Keys are short free-form strings (`language`, `timezone`, `name`, `preferred_browser`, …); values are plain text.
@@ -100,12 +100,14 @@ A minimal two-layer cross-session memory lives in [src/memory/](src/memory/) and
 - **Live snapshot.** `AgentLoop` reads `profileStore.list()` via an optional `profileFactsProvider` at the start of every step and passes it into `StepContext.profileFacts` → `buildPrompt`. Profile writes from the previous step show up on the next step without process restart.
 - **Tools.** `memory.profile.set { key, value }`, `memory.profile.remove { key }`, `memory.profile.list {}`. Grammar entries are in [grammars/tool-call.gbnf](grammars/tool-call.gbnf); descriptors in [src/prompt/tool-descriptors.ts](src/prompt/tool-descriptors.ts).
 
-### Layer 2 — Action History (search over existing traces, no new writer)
+### Reflection (async end-of-turn memory formation)
 
-- **Source of truth.** Existing `tool_invocation` events in `<stateDir>/traces/*.ndjson`. No new storage, no new writer — if tracing is disabled, history is empty by design.
-- **Reader.** [src/memory/action-history-reader.ts](src/memory/action-history-reader.ts) lists trace files and parses `tool_invocation` lines tolerantly (malformed or unrelated lines are skipped).
-- **Search.** [src/memory/action-history-search.ts](src/memory/action-history-search.ts) supports filters `tool`, `pattern` (case-insensitive substring over serialised args + summary), `since` / `until` (epoch ms), `sessionId`, and a result `limit`. Results are sorted newest-first.
-- **Tool.** `memory.history.search { tool?, pattern?, since?, until?, limit? }`. When tracing is off or traces are empty the tool still returns `ok` with an explanatory `details.note`.
+- **When.** Fired at the end of every `AgentLoop.runTurn` (after the agent reply is produced) as **fire-and-forget**. Never awaited, never blocks the user-visible response. `abortPending()` is called at the start of the next `runTurn` so at most one reflection is in flight.
+- **What.** A micro-prompt with its own small stable prefix (fixed module-level string) asks the model to extract durable user facts from the last `USER`/`ASSISTANT` exchange. Output is constrained by a dedicated GBNF grammar to either `NONE` or a bounded list of `SET key=value` lines (at most `memory.reflection.maxFactsPerCall`, default 3).
+- **KV-cache invariant.** Reflection uses a **dedicated llama-server slot** reserved at bootstrap via `slotManager.reserveReflectionSlot()`. The main agent slot is never touched. When only one slot is available, reflection falls back to `slotId: -1` (no cache reuse) — main agent KV is still untouched.
+- **Writes.** Parsed facts go through the existing `ProfileStore` validators; invalid entries are logged and skipped without failing the whole call.
+- **Observability.** `agent.memory.reflection` counter tagged by `outcome` (`ok | none | failed | aborted | timeout`) plus an `agent.memory.reflection.latency_ms` histogram. Structured logs: `reflection.fired`, `reflection.ok`, `reflection.none`, `reflection.aborted`, `reflection.timeout`, `reflection.failed`.
+- **Code.** [src/memory/reflection/](src/memory/reflection/) — `reflection-prompt`, `reflection-grammar`, `reflection-parser`, `reflection-runner`.
 
 ### Configuration
 
@@ -113,16 +115,17 @@ Config keys live under `memory.*` in the user config and [src/config/config-sche
 
 - `memory.profile.enabled` (default `true`) — gate for profile injection + the three profile tools.
 - `memory.profile.maxTokens` (default `512`) — section cap in the prompt tail.
-- `memory.history.enabled` (default `true`) — gate for `memory.history.search` registration.
-- `memory.history.maxResults` (default `50`) — hard ceiling applied after the per-call `limit`.
+- `memory.reflection.enabled` (default `true`) — gate for the async reflection runner.
+- `memory.reflection.timeoutMs` (default `10000`) — hard timeout per reflection call.
+- `memory.reflection.maxFactsPerCall` (default `3`) — upper bound on facts written per reflection.
 - `paths.memoryDbFile` — resolved to `<stateDir>/memory.sqlite` by [src/config/load-config.ts](src/config/load-config.ts).
 
 ### Invariants
 
 1. **Stable prefix is untouched.** The `### profile` section is always in the variable tail. Changing profile facts never invalidates the KV-cache for the stable prefix.
-2. **Trace-dependent history.** `memory.history.search` reads what `trace-recorder` already writes. If the user turns tracing off, history stops collecting — the tool reports this in `details.note` rather than silently returning stale results.
-3. **No cross-session leakage via writers.** The only new writer is `ProfileStore`. Action History is strictly read-only over trace files.
-4. **Explicit out-of-scope.** Episodic summaries, long-term fact store with TTL/tags, embeddings / semantic search, and redaction are deliberately deferred to future milestones.
+2. **Reflection never blocks or crashes the loop.** `ReflectionRunner.reflect()` is fire-safe — any error is logged and counted via metrics. The agent-visible result is already returned before reflection starts.
+3. **No cross-session leakage via writers.** The only writer is `ProfileStore`. All memory writes flow through the same validators regardless of whether they originate from the model's explicit `memory.profile.set` call or the reflection runner.
+4. **Explicit out-of-scope.** Episodic summaries, `topic`/`expires_at` columns, embeddings / semantic search, and redaction are deliberately deferred to future milestones.
 
 ## LLM reliability policy
 

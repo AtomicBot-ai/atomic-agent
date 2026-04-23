@@ -20,6 +20,8 @@ export const METRIC_NAMES = {
   approvalRequested: "agent.approval.requested",
   approvalGranted: "agent.approval.granted",
   approvalDenied: "agent.approval.denied",
+  memoryReflection: "agent.memory.reflection",
+  memoryReflectionLatency: "agent.memory.reflection.latency_ms",
 } as const;
 
 export type MetricName = (typeof METRIC_NAMES)[keyof typeof METRIC_NAMES];
@@ -50,6 +52,24 @@ export interface ToolMetricSample {
 export interface LlmFailureMetricSample {
   sessionId: string;
   category: LlmFailureCategory;
+}
+
+/**
+ * Canonical outcome taxonomy for the async reflection runner. Kept here
+ * next to the other metric samples so dashboards can enumerate the full
+ * tag space from a single module.
+ */
+export type ReflectionOutcomeTag =
+  | "ok"
+  | "none"
+  | "aborted"
+  | "timeout"
+  | "failed";
+
+export interface ReflectionMetricSample {
+  sessionId: string;
+  outcome: ReflectionOutcomeTag;
+  durationMs: number;
 }
 
 /**
@@ -108,6 +128,23 @@ export class AgentMetrics {
       sessionId: sample.sessionId,
       category: sample.category,
     });
+  }
+
+  /**
+   * Record the outcome of a single async end-of-turn reflection call.
+   * The counter is tagged by `outcome` so dashboards can surface the
+   * `failed` / `timeout` ratio at a glance; the latency histogram is
+   * tagged identically so slow `ok` calls stay distinguishable from
+   * slow `timeout`s.
+   */
+  recordReflection(sample: ReflectionMetricSample): void {
+    const tags = { sessionId: sample.sessionId, outcome: sample.outcome };
+    this.collector.counter(METRIC_NAMES.memoryReflection, 1, tags);
+    this.collector.histogram(
+      METRIC_NAMES.memoryReflectionLatency,
+      sample.durationMs,
+      tags,
+    );
   }
 
   recordApproval(input: { sessionId: string; tool: string; approved: boolean }): void {

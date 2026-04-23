@@ -193,9 +193,10 @@ export function loadConfig(): AtomicAgentConfig {
         enabled: user.memory.profile.enabled,
         maxTokens: user.memory.profile.maxTokens,
       },
-      history: {
-        enabled: user.memory.history.enabled,
-        maxResults: user.memory.history.maxResults,
+      reflection: {
+        enabled: user.memory.reflection.enabled,
+        timeoutMs: user.memory.reflection.timeoutMs,
+        maxFactsPerCall: user.memory.reflection.maxFactsPerCall,
       },
     },
   };

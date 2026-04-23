@@ -875,3 +875,156 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(profileManager.getModelId()).toBe("gemma-4-it");
   });
 });
+
+describe("AgentLoop reflection hook", () => {
+  let workingDir: string;
+
+  beforeEach(() => {
+    workingDir = mkdtempSync(join(tmpdir(), "atomic-agent-loop-reflect-"));
+  });
+  afterEach(() => {
+    rmSync(workingDir, { recursive: true, force: true });
+  });
+
+  function makeReplyLoop(
+    reflectionRunner: {
+      reflect: (input: {
+        sessionId: string;
+        userMessage: string;
+        assistantReply: string;
+      }) => Promise<void>;
+      abortPending: () => void;
+    } | undefined,
+  ): AgentLoop {
+    const registry = buildDefaultToolRegistry();
+    return new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () =>
+        makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "hello back" } }),
+        ),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      ...(reflectionRunner ? { reflectionRunner } : {}),
+    });
+  }
+
+  it("calls abortPending() at the start of runTurn and reflect() after a reply", async () => {
+    const abortPending = vi.fn();
+    const reflect = vi.fn().mockResolvedValue(undefined);
+    const loop = makeReplyLoop({ reflect, abortPending });
+
+    const session = createEmptySessionState({ id: "s-ref-1", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "hi there",
+      maxSteps: 3,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.reason).toBe("reply");
+    expect(abortPending).toHaveBeenCalledTimes(1);
+    expect(reflect).toHaveBeenCalledTimes(1);
+    expect(reflect).toHaveBeenCalledWith({
+      sessionId: "s-ref-1",
+      userMessage: "hi there",
+      assistantReply: "hello back",
+    });
+  });
+
+  it("does not fire reflect() when runTurn is resumed without a new user message", async () => {
+    const abortPending = vi.fn();
+    const reflect = vi.fn().mockResolvedValue(undefined);
+    const loop = makeReplyLoop({ reflect, abortPending });
+
+    const session = createEmptySessionState({ id: "s-ref-2", workingDir });
+    await loop.runTurn(session, {
+      maxSteps: 3,
+      signal: new AbortController().signal,
+    });
+
+    // abortPending still runs at turn start (safe no-op), but reflection
+    // must not fire without a user message in this turn.
+    expect(abortPending).toHaveBeenCalledTimes(1);
+    expect(reflect).not.toHaveBeenCalled();
+  });
+
+  it("behaves identically when no reflectionRunner is provided", async () => {
+    const loop = makeReplyLoop(undefined);
+    const session = createEmptySessionState({ id: "s-ref-3", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "hi",
+      maxSteps: 3,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("reply");
+  });
+
+  it("never awaits reflect() — a slow runner does not block runTurn", async () => {
+    const abortPending = vi.fn();
+    let resolveReflect: (() => void) | null = null;
+    const reflect = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveReflect = () => resolve();
+        }),
+    );
+    const loop = makeReplyLoop({ reflect, abortPending });
+
+    const session = createEmptySessionState({ id: "s-ref-4", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "hi",
+      maxSteps: 3,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("reply");
+    expect(reflect).toHaveBeenCalledTimes(1);
+    // The runner promise is still outstanding — runTurn resolved anyway.
+    expect(resolveReflect).not.toBeNull();
+    resolveReflect?.();
+  });
+
+  it("swallows reflect() errors without affecting the loop result", async () => {
+    const abortPending = vi.fn();
+    const reflect = vi.fn().mockRejectedValue(new Error("boom"));
+    const loop = makeReplyLoop({ reflect, abortPending });
+
+    const session = createEmptySessionState({ id: "s-ref-5", workingDir });
+    await expect(
+      loop.runTurn(session, {
+        userMessage: "hi",
+        maxSteps: 3,
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({ reason: "reply" });
+  });
+
+  it("does not fire reflect() on a finish-only turn (no assistant reply)", async () => {
+    const abortPending = vi.fn();
+    const reflect = vi.fn().mockResolvedValue(undefined);
+    const loop = new AgentLoop({
+      registry: buildDefaultToolRegistry(),
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () =>
+        makeCompletion(
+          JSON.stringify({ tool: "finish", args: { summary: "done" } }),
+        ),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      reflectionRunner: { reflect, abortPending },
+    });
+    const session = createEmptySessionState({ id: "s-ref-6", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "wrap up",
+      maxSteps: 3,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("finish");
+    expect(reflect).not.toHaveBeenCalled();
+    expect(abortPending).toHaveBeenCalledTimes(1);
+  });
+});

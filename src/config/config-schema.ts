@@ -102,8 +102,9 @@ export interface AtomicAgentConfig {
   /**
    * Cross-session memory fabric. The profile store is a durable SQLite
    * key/value table rendered into the prompt tail on every turn. The
-   * history layer searches existing NDJSON traces for past tool
-   * invocations. Both are local and read/written only by the agent.
+   * reflection layer runs at the end of every turn (fire-and-forget) to
+   * distil durable facts out of the last exchange and write them back
+   * into the profile store.
    */
   memory: {
     profile: {
@@ -111,10 +112,12 @@ export interface AtomicAgentConfig {
       /** Safety-net ceiling for the rendered `### profile` section. */
       maxTokens: number;
     };
-    history: {
+    reflection: {
       enabled: boolean;
-      /** Hard cap on results returned by `memory.history.search`. */
-      maxResults: number;
+      /** Hard timeout per reflection call (ms). */
+      timeoutMs: number;
+      /** Upper bound on profile facts written per reflection. */
+      maxFactsPerCall: number;
     };
   };
 }
@@ -162,9 +165,10 @@ export interface UserConfigFile {
       enabled: boolean;
       maxTokens: number;
     };
-    history: {
+    reflection: {
       enabled: boolean;
-      maxResults: number;
+      timeoutMs: number;
+      maxFactsPerCall: number;
     };
   };
 }
@@ -201,9 +205,10 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       enabled: true,
       maxTokens: 512,
     },
-    history: {
+    reflection: {
       enabled: true,
-      maxResults: 50,
+      timeoutMs: 10_000,
+      maxFactsPerCall: 3,
     },
   },
 };
@@ -381,8 +386,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const memory = (obj.memory as Record<string, unknown> | undefined) ?? {};
   const memoryProfile =
     (memory.profile as Record<string, unknown> | undefined) ?? {};
-  const memoryHistory =
-    (memory.history as Record<string, unknown> | undefined) ?? {};
+  const memoryReflection =
+    (memory.reflection as Record<string, unknown> | undefined) ?? {};
 
   return {
     version: USER_CONFIG_VERSION,
@@ -468,15 +473,21 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           "memory.profile.maxTokens",
         ),
       },
-      history: {
+      reflection: {
         enabled: parseBool(
-          memoryHistory.enabled ?? USER_CONFIG_DEFAULTS.memory.history.enabled,
-          "memory.history.enabled",
+          memoryReflection.enabled ??
+            USER_CONFIG_DEFAULTS.memory.reflection.enabled,
+          "memory.reflection.enabled",
         ),
-        maxResults: parsePositiveInt(
-          memoryHistory.maxResults ??
-            USER_CONFIG_DEFAULTS.memory.history.maxResults,
-          "memory.history.maxResults",
+        timeoutMs: parsePositiveInt(
+          memoryReflection.timeoutMs ??
+            USER_CONFIG_DEFAULTS.memory.reflection.timeoutMs,
+          "memory.reflection.timeoutMs",
+        ),
+        maxFactsPerCall: parsePositiveInt(
+          memoryReflection.maxFactsPerCall ??
+            USER_CONFIG_DEFAULTS.memory.reflection.maxFactsPerCall,
+          "memory.reflection.maxFactsPerCall",
         ),
       },
     },

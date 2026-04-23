@@ -171,7 +171,18 @@ describe("createAgentRuntime", () => {
       overrides: {
         browserBackend: backend,
         skipLlamaHealthCheck: true,
-        llamaComplete: async () => {
+        llamaComplete: async (params) => {
+          // Reflection runner shares the main llmComplete; short-circuit
+          // its calls with a NONE completion so the scripted `replies`
+          // queue only serves the actual agent turns.
+          if (params.sessionId.startsWith("reflection:")) {
+            return {
+              content: "NONE\n",
+              timing: { promptTokens: 1, predictedTokens: 1 },
+              slotId: 0,
+              cacheReused: false,
+            };
+          }
           const text = replies.shift() ?? "fallback";
           return {
             content: JSON.stringify({ tool: "reply", args: { text } }),

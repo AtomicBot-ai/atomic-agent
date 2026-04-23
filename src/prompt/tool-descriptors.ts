@@ -267,13 +267,6 @@ export const DEFAULT_TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
     argsSchema: "{}",
   },
   {
-    name: "memory.history.search",
-    summary:
-      "Search past tool invocations recorded in the local trace files. Requires telemetry.trace.enabled.",
-    argsSchema:
-      '{"tool": "string (optional, exact match)", "pattern": "string (optional, case-insensitive substring in args/summary)", "since": "number (optional epoch ms)", "until": "number (optional epoch ms)", "limit": "number (optional, default 20)"}',
-  },
-  {
     name: "reply",
     summary:
       "Send the FINAL natural-language answer to the user. Ends the current turn — the session stays open for the next user message. NEVER use `reply` to announce an action you are about to take (e.g. do NOT write 'I will now click X'); emit that action's tool call directly instead. Call only when the task is fully done, it is small-talk, or you need a clarifying question from the user. Keep `text` short: do not paste large file lists or raw tool dumps — summarize counts, show at most a handful of examples, and point to paths or prior tool output instead (long `text` can exceed the completion token budget and break JSON).",

@@ -30,6 +30,7 @@ import type {
   ToolDescriptor,
 } from "../prompt/stable-prefix.js";
 import type { ProfileFact } from "../memory/profile-store.js";
+import type { ReflectionRunner } from "../memory/reflection/index.js";
 import { executeStep } from "./step-executor.js";
 import type { StepEvent } from "./step-executor.js";
 import { LoopDetector, formatRepeatNotice } from "./loop-detector.js";
@@ -82,6 +83,17 @@ export interface AgentLoopDependencies {
    * this only when the memory fabric is enabled.
    */
   profileFactsProvider?: () => readonly ProfileFact[];
+  /**
+   * Optional end-of-turn memory reflection. When present, the loop:
+   *  1. calls `abortPending()` at the start of every `runTurn` so stale
+   *     reflections from the previous turn cannot race the current one,
+   *  2. fires `reflect({ sessionId, userMessage, assistantReply })` in
+   *     the background once the reply is ready — never awaited, never
+   *     allowed to throw.
+   * The loop knows nothing about prompts, grammars, or slot IDs; all of
+   * that lives in `src/memory/reflection/`.
+   */
+  reflectionRunner?: ReflectionRunner;
   onEvent?: (event: AgentLoopEvent) => void;
   metrics?: AgentMetrics;
   logger?: StructuredLogger;
@@ -169,6 +181,11 @@ export class AgentLoop {
     options: RunTurnOptions,
   ): Promise<RunTurnResult> {
     let state = session;
+
+    // Cancel any reflection that is still in flight from the previous
+    // turn. Must run before the LLM produces its first completion so
+    // the dedicated reflection slot frees up quickly.
+    this.deps.reflectionRunner?.abortPending();
 
     if (options.userMessage !== undefined) {
       const text = options.userMessage;
@@ -401,6 +418,32 @@ export class AgentLoop {
       durationMs,
     });
 
+    // Fire async memory reflection for turns that ended with a genuine
+    // assistant reply. Never awaited — the runner swallows its own
+    // errors; the loop stays decoupled from memory-formation latency.
+    if (
+      this.deps.reflectionRunner &&
+      options.userMessage !== undefined &&
+      reason === "reply"
+    ) {
+      const assistantReply = findLastAssistantReply(state);
+      if (assistantReply !== null) {
+        void this.deps.reflectionRunner.reflect({
+          sessionId: state.id,
+          userMessage: options.userMessage,
+          assistantReply,
+        });
+      }
+    }
+
     return { session: state, reason, stepCount: stepsTaken };
   }
+}
+
+function findLastAssistantReply(state: SessionState): string | null {
+  for (let i = state.turns.length - 1; i >= 0; i -= 1) {
+    const turn = state.turns[i];
+    if (turn?.kind === "assistant_reply") return turn.text;
+  }
+  return null;
 }

@@ -23,13 +23,16 @@ export interface SlotAssignment {
  */
 export class SlotManager {
   private readonly assignments = new Map<string, SlotAssignment>();
-  private readonly slotPool: number[];
+  private readonly slotCount: number;
+  private slotPool: number[];
   private nextRoundRobin = 0;
+  private reservedReflectionSlot: number | null = null;
 
   constructor(slotCount = 4) {
     if (slotCount <= 0) {
       throw new Error("slotCount must be positive");
     }
+    this.slotCount = slotCount;
     this.slotPool = Array.from({ length: slotCount }, (_, i) => i);
   }
 
@@ -57,6 +60,32 @@ export class SlotManager {
   reset(): void {
     this.assignments.clear();
     this.nextRoundRobin = 0;
+    this.slotPool = Array.from({ length: this.slotCount }, (_, i) => i);
+    this.reservedReflectionSlot = null;
+  }
+
+  /**
+   * Carve out a slot for the async reflection runner. The reserved slot
+   * is removed from the round-robin pool used by `acquire()`, so it
+   * will never be handed to a session — guaranteeing the main agent's
+   * KV cache is never evicted by a reflection call.
+   *
+   * Returns `null` when only one slot is configured: reserving the sole
+   * slot would starve the agent loop, so the caller should fall back to
+   * `slotId: -1` (no cache affinity) for reflection in that case.
+   * Idempotent — subsequent calls return the slot reserved on the first
+   * call.
+   */
+  reserveReflectionSlot(): number | null {
+    if (this.reservedReflectionSlot !== null) {
+      return this.reservedReflectionSlot;
+    }
+    if (this.slotPool.length <= 1) {
+      return null;
+    }
+    const reserved = this.slotPool.pop()!;
+    this.reservedReflectionSlot = reserved;
+    return reserved;
   }
 
   private pickSlot(): number {

@@ -122,6 +122,49 @@ describe("MetricsCollector + AgentMetrics", () => {
     ]);
     expect(failures.every((s) => s.tags?.sessionId === "sess-1")).toBe(true);
   });
+
+  it("records reflection outcomes tagged by outcome with matching latency samples", () => {
+    const samples: Array<{ name: string; value: number; tags?: Record<string, string> }> = [];
+    const collector = new MetricsCollector({
+      sinks: [
+        (s) =>
+          samples.push({
+            name: s.name,
+            value: s.value,
+            ...(s.tags ? { tags: s.tags } : {}),
+          }),
+      ],
+    });
+    const metrics = new AgentMetrics(collector);
+
+    const outcomes: Array<"ok" | "none" | "aborted" | "timeout" | "failed"> = [
+      "ok",
+      "none",
+      "aborted",
+      "timeout",
+      "failed",
+    ];
+    for (const outcome of outcomes) {
+      metrics.recordReflection({
+        sessionId: "sess-1",
+        outcome,
+        durationMs: 42,
+      });
+    }
+
+    const counters = samples.filter(
+      (s) => s.name === METRIC_NAMES.memoryReflection,
+    );
+    expect(counters.map((s) => s.tags?.outcome)).toEqual(outcomes);
+    expect(counters.every((s) => s.tags?.sessionId === "sess-1")).toBe(true);
+
+    const latencies = samples.filter(
+      (s) => s.name === METRIC_NAMES.memoryReflectionLatency,
+    );
+    expect(latencies).toHaveLength(outcomes.length);
+    expect(latencies.every((s) => s.value === 42)).toBe(true);
+    expect(latencies.map((s) => s.tags?.outcome)).toEqual(outcomes);
+  });
 });
 
 describe("NDJSON sinks", () => {

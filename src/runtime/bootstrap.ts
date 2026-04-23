@@ -33,6 +33,11 @@ import { registerSkillTools } from "../tools/skill/index.js";
 import { registerMemoryTools } from "../tools/memory/index.js";
 
 import { ProfileStore } from "../memory/profile-store.js";
+import {
+  createReflectionRunner,
+  type ReflectionLlmComplete,
+  type ReflectionRunner,
+} from "../memory/reflection/index.js";
 
 import { SkillRegistry } from "../skills/skill-registry.js";
 import { buildSkillCatalog } from "../skills/skill-catalog.js";
@@ -277,11 +282,7 @@ export async function createAgentRuntime(
   registerSkillTools(toolRegistry, skillRegistry, dangerous);
   registerMemoryTools(toolRegistry, {
     profileStore,
-    tracesDir: config.telemetry.trace.dir,
-    historyMaxResults: config.memory.history.maxResults,
-    tracingEnabled: traceEnabled,
     profileEnabled: config.memory.profile.enabled,
-    historyEnabled: config.memory.history.enabled,
   });
 
   let skillCatalog: readonly SkillCatalogEntry[] = buildSkillCatalog(
@@ -344,6 +345,15 @@ export async function createAgentRuntime(
 
   const sessionStore = new SessionStore();
 
+  const reflectionRunner = buildReflectionRunner({
+    config,
+    slotManager,
+    llmComplete,
+    profileStore,
+    logger,
+    metrics,
+  });
+
   // The `skillCatalog` is a getter so that `agent-loop` reads the current
   // value on every step — `refreshSkills()` then does not require tearing
   // down the loop.
@@ -360,6 +370,7 @@ export async function createAgentRuntime(
     ...(config.memory.profile.enabled
       ? { profileFactsProvider: () => profileStore.list() }
       : {}),
+    ...(reflectionRunner ? { reflectionRunner } : {}),
     onEvent: (event: AgentLoopEvent) => {
       currentRecorder?.onAgentEvent(event);
       options.handlers?.onAgentEvent?.(event);
@@ -379,6 +390,14 @@ export async function createAgentRuntime(
   const shutdown = async (): Promise<void> => {
     if (shutdownCalled) return;
     shutdownCalled = true;
+    // Cancel any in-flight reflection before tearing down the profile
+    // store — otherwise a late-arriving completion could try to write
+    // into a closed SQLite connection.
+    try {
+      reflectionRunner?.abortPending();
+    } catch {
+      // runner already disposed
+    }
     try {
       await browserBackend.shutdown();
     } catch (err) {
@@ -558,6 +577,71 @@ function resolveTraceEnabled(
 ): boolean {
   if (fromConfig !== null) return fromConfig;
   return fromEntryPoint ?? false;
+}
+
+/**
+ * Instantiate the async end-of-turn reflection runner when memory +
+ * reflection are enabled in config. Reserves a dedicated slot from the
+ * shared `SlotManager` so the main agent's KV cache is never evicted by
+ * a reflection call. Falls back to `slotId: -1` (no slot affinity) when
+ * the llama-server is configured with only one slot — reflection still
+ * runs, it just doesn't get its own prefix cache reuse.
+ *
+ * Returns `undefined` (wiring skipped) when either memory layer is
+ * disabled — the AgentLoop then behaves exactly as before the
+ * reflection feature was introduced.
+ */
+function buildReflectionRunner(args: {
+  config: AtomicAgentConfig;
+  slotManager: SlotManager;
+  llmComplete: (params: {
+    prompt: string;
+    grammar: string;
+    slotId: number;
+    sessionId: string;
+  }) => Promise<CompletionResult>;
+  profileStore: ProfileStore;
+  logger: StructuredLogger;
+  metrics: AgentMetrics;
+}): ReflectionRunner | undefined {
+  const memory = args.config.memory;
+  if (!memory.profile.enabled || !memory.reflection.enabled) return undefined;
+  const reservedSlot = args.slotManager.reserveReflectionSlot();
+  const reflectionSlotId = reservedSlot ?? -1;
+  if (reservedSlot === null) {
+    args.logger.warn(
+      "reflection slot unavailable; reflection will run without slot affinity",
+      { fallbackSlotId: reflectionSlotId },
+    );
+  }
+  const reflectionLlmComplete: ReflectionLlmComplete = async (params) => {
+    if (params.signal.aborted) {
+      throw new DOMException("aborted", "AbortError");
+    }
+    const abortPromise = new Promise<never>((_, reject) => {
+      params.signal.addEventListener(
+        "abort",
+        () => reject(new DOMException("aborted", "AbortError")),
+        { once: true },
+      );
+    });
+    const completionPromise = args.llmComplete({
+      prompt: params.prompt,
+      grammar: params.grammar,
+      slotId: params.slotId,
+      sessionId: params.sessionId,
+    });
+    return Promise.race([completionPromise, abortPromise]);
+  };
+  return createReflectionRunner({
+    llmComplete: reflectionLlmComplete,
+    profileStore: args.profileStore,
+    reflectionSlotId,
+    timeoutMs: memory.reflection.timeoutMs,
+    maxFactsPerCall: memory.reflection.maxFactsPerCall,
+    logger: args.logger,
+    metrics: args.metrics,
+  });
 }
 
 /**

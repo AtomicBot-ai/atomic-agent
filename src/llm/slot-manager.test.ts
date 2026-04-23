@@ -35,6 +35,42 @@ describe("SlotManager", () => {
     const b = mgr.acquire("s", "p");
     expect(b.firstSeenAt).toBeGreaterThanOrEqual(a.firstSeenAt);
   });
+
+  describe("reserveReflectionSlot", () => {
+    it("returns null when only one slot is configured", () => {
+      const mgr = new SlotManager(1);
+      expect(mgr.reserveReflectionSlot()).toBeNull();
+    });
+
+    it("returns a slot index that will never be handed out by acquire()", () => {
+      const mgr = new SlotManager(3);
+      const reflectionSlot = mgr.reserveReflectionSlot();
+      expect(reflectionSlot).not.toBeNull();
+      // Drain several acquire() calls — none of them should return the
+      // reserved slot.
+      for (let i = 0; i < 20; i++) {
+        const assignment = mgr.acquire(`sess-${i}`, "prefix");
+        expect(assignment.slotId).not.toBe(reflectionSlot);
+      }
+    });
+
+    it("is idempotent across repeated calls", () => {
+      const mgr = new SlotManager(4);
+      const first = mgr.reserveReflectionSlot();
+      const second = mgr.reserveReflectionSlot();
+      expect(first).not.toBeNull();
+      expect(second).toBe(first);
+    });
+
+    it("reset() releases the reserved reflection slot", () => {
+      const mgr = new SlotManager(2);
+      const reserved = mgr.reserveReflectionSlot();
+      expect(reserved).not.toBeNull();
+      mgr.reset();
+      // After reset() a 2-slot manager should be able to reserve again.
+      expect(mgr.reserveReflectionSlot()).not.toBeNull();
+    });
+  });
 });
 
 describe("hashPrefix", () => {
