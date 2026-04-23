@@ -114,16 +114,13 @@ async function handleNonStream(
   });
   let result: RunTurnResult;
   try {
-    result = await ctx.turnHub.runExclusive(
-      // Non-stream mode ignores intermediate events — only the final
-      // RunTurnResult matters. We still install an empty hook so the
-      // hub's "no-hook active" state does not drop events silently
-      // (harmless, but makes the contract uniform).
-      () => undefined,
-      () => ctx.runtime.runTurn(env.session, env.request.userMessage, {
-        signal: controller.signal,
-      }),
-    );
+    // Non-stream mode ignores intermediate events — only the final
+    // RunTurnResult matters. The TurnController per-session lock is
+    // applied internally by `runtime.runTurn`.
+    result = await ctx.runtime.runTurn(env.session, env.request.userMessage, {
+      signal: controller.signal,
+      origin: "http",
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     sendError(
@@ -206,11 +203,11 @@ async function handleStream(
   let result: RunTurnResult | null = null;
   let error: Error | null = null;
   try {
-    result = await ctx.turnHub.runExclusive(hook, () =>
-      ctx.runtime.runTurn(env.session, env.request.userMessage, {
-        signal: controller.signal,
-      }),
-    );
+    result = await ctx.runtime.runTurn(env.session, env.request.userMessage, {
+      signal: controller.signal,
+      origin: "http",
+      eventHook: hook,
+    });
   } catch (err) {
     error = err instanceof Error ? err : new Error(String(err));
   } finally {

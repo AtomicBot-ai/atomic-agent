@@ -9,7 +9,6 @@ import {
   buildRouteTable,
   CompletionRegistry,
   createHttpServer,
-  TurnHub,
 } from "../http/index.js";
 import type { HttpServerHandle } from "../http/index.js";
 
@@ -114,8 +113,11 @@ function parseArgs(args: string[]): ServeArgs | { help: true } | { error: string
 
 /**
  * Entry point for `atomic-agent serve`. Boots the shared agent runtime
- * once, wires it to an HTTP-facing approval bus + turn hub, starts the
- * server, and hands control to the host process until SIGINT/SIGTERM.
+ * once, wires it to an HTTP-facing approval bus, starts the server,
+ * and hands control to the host process until SIGINT/SIGTERM. Per-turn
+ * concurrency is owned by `runtime.turnController`, so HTTP requests on
+ * different sessions run in parallel while same-session requests
+ * serialise FIFO automatically.
  */
 export async function serveCommand(args: string[]): Promise<number> {
   const parsed = parseArgs(args);
@@ -130,7 +132,6 @@ export async function serveCommand(args: string[]): Promise<number> {
   }
 
   const approvalBus = new ApprovalBus();
-  const turnHub = new TurnHub();
   const completionRegistry = new CompletionRegistry();
 
   let runtime: AgentRuntime | null = null;
@@ -142,7 +143,6 @@ export async function serveCommand(args: string[]): Promise<number> {
       traceDefault: true,
       handlers: {
         logSinks: [stderrSink],
-        onAgentEvent: (event) => turnHub.emit(event),
         onApprovalRequest: (request) => approvalBus.publish(request),
       },
     });
@@ -153,7 +153,6 @@ export async function serveCommand(args: string[]): Promise<number> {
       apiKey: parsed.apiKey,
       routes: buildRouteTable(),
       approvalBus,
-      turnHub,
       completionRegistry,
     });
     const authNote = parsed.apiKey ? "auth=bearer" : "auth=none";

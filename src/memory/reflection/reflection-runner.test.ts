@@ -283,15 +283,17 @@ describe("createReflectionRunner", () => {
     expect(counters[0]!.tags?.outcome).toBe("timeout");
   });
 
-  it("aborts the in-flight reflection when reflect() is called again", async () => {
+  it("aborts the in-flight reflection when reflect() is called again on the same session", async () => {
     const aborted: string[] = [];
+    let callIndex = 0;
     let resolveSecond: ((r: CompletionResult) => void) | null = null;
     const runner = createReflectionRunner({
       llmComplete: async (params) => {
-        if (params.sessionId === "reflection:s1") {
+        callIndex += 1;
+        if (callIndex === 1) {
           return new Promise<CompletionResult>((_, reject) => {
             params.signal.addEventListener("abort", () => {
-              aborted.push("s1");
+              aborted.push("first");
               reject(new DOMException("aborted", "AbortError"));
             });
           });
@@ -314,13 +316,13 @@ describe("createReflectionRunner", () => {
       assistantReply: "a",
     });
     const secondPromise = runner.reflect({
-      sessionId: "s2",
+      sessionId: "s1",
       userMessage: "u2",
       assistantReply: "a2",
     });
 
     await firstPromise;
-    expect(aborted).toEqual(["s1"]);
+    expect(aborted).toEqual(["first"]);
 
     resolveSecond?.(completion("NONE\n"));
     await secondPromise;
@@ -329,6 +331,104 @@ describe("createReflectionRunner", () => {
       .filter((e) => e.name === "agent.memory.reflection")
       .map((e) => e.tags?.outcome);
     expect(outcomes).toEqual(["aborted", "none"]);
+  });
+
+  it("does not abort a reflection on session A when session B fires its own reflect()", async () => {
+    let resolveA: ((r: CompletionResult) => void) | null = null;
+    let resolveB: ((r: CompletionResult) => void) | null = null;
+    const aborted: string[] = [];
+    const runner = createReflectionRunner({
+      llmComplete: async (params) => {
+        params.signal.addEventListener("abort", () => {
+          aborted.push(params.sessionId);
+        });
+        if (params.sessionId === "reflection:sA") {
+          return new Promise<CompletionResult>((resolve) => {
+            resolveA = resolve;
+          });
+        }
+        return new Promise<CompletionResult>((resolve) => {
+          resolveB = resolve;
+        });
+      },
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 60_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    const promiseA = runner.reflect({
+      sessionId: "sA",
+      userMessage: "uA",
+      assistantReply: "aA",
+    });
+    const promiseB = runner.reflect({
+      sessionId: "sB",
+      userMessage: "uB",
+      assistantReply: "aB",
+    });
+
+    expect(aborted).toEqual([]);
+
+    resolveA?.(completion("SET ka=va\n"));
+    resolveB?.(completion("SET kb=vb\n"));
+    await Promise.all([promiseA, promiseB]);
+
+    expect(aborted).toEqual([]);
+    const outcomes = h.metricEvents
+      .filter((e) => e.name === "agent.memory.reflection")
+      .map((e) => e.tags?.outcome);
+    expect(outcomes.sort()).toEqual(["ok", "ok"]);
+  });
+
+  it("abortPending({ sessionId }) aborts only the matching session", async () => {
+    let resolveB: ((r: CompletionResult) => void) | null = null;
+    const aborted: string[] = [];
+    const runner = createReflectionRunner({
+      llmComplete: async (params) => {
+        if (params.sessionId === "reflection:sA") {
+          return new Promise<CompletionResult>((_, reject) => {
+            params.signal.addEventListener("abort", () => {
+              aborted.push("sA");
+              reject(new DOMException("aborted", "AbortError"));
+            });
+          });
+        }
+        return new Promise<CompletionResult>((resolve) => {
+          params.signal.addEventListener("abort", () => {
+            aborted.push("sB");
+          });
+          resolveB = resolve;
+        });
+      },
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 60_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    const promiseA = runner.reflect({
+      sessionId: "sA",
+      userMessage: "uA",
+      assistantReply: "aA",
+    });
+    const promiseB = runner.reflect({
+      sessionId: "sB",
+      userMessage: "uB",
+      assistantReply: "aB",
+    });
+
+    runner.abortPending({ sessionId: "sA" });
+    await promiseA;
+    expect(aborted).toEqual(["sA"]);
+
+    resolveB?.(completion("NONE\n"));
+    await promiseB;
+    expect(aborted).toEqual(["sA"]);
   });
 
   it("mirrors NOTE lines into the MemoryStore with a `reflection` tag", async () => {

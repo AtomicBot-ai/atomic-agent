@@ -292,6 +292,7 @@ class ChatOrchestrator {
       const result = await this.runtime.runTurn(this.session, text, {
         maxSteps: this.options.maxSteps,
         signal: controller.signal,
+        origin: "tui",
       });
       this.session = result.session;
       if (this.session.status === "failed") this.exitCode = 1;

@@ -3,7 +3,6 @@ import { openaiError, type OpenAiErrorPayload } from "./openai-errors.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { ApprovalBus } from "./approval-bus.js";
 import type { CompletionRegistry } from "./completion-registry.js";
-import type { TurnHub } from "./turn-hub.js";
 
 /**
  * Small, dependency-free helpers that every HTTP route needs. Kept in
@@ -22,7 +21,6 @@ export interface HandlerContext {
   apiKey: string | null;
   params: Record<string, string>;
   approvalBus: ApprovalBus;
-  turnHub: TurnHub;
   completionRegistry: CompletionRegistry;
 }
 

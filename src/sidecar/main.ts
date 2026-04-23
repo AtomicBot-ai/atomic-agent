@@ -255,10 +255,30 @@ export async function bootstrapSidecar(): Promise<{
         `no active session with id ${request.payload.sessionId}`,
       );
     }
-    const { runtime, session } = active;
-    const result = await runtime.runTurn(session, request.payload.text, {
-      maxSteps: request.payload.maxSteps ?? runtime.config.agent.maxSteps,
+    const { runtime } = active;
+    const sessionId = request.payload.sessionId;
+    // Route through the per-session turn controller so two rapid
+    // `send_message` requests on the same NDJSON stream serialise
+    // FIFO. Re-reading `active.session` inside the run callback is
+    // load-bearing: when the second message starts, the first turn
+    // has already mutated `active.session`, and the queued body
+    // must pick up that updated state instead of the stale value
+    // captured at request-handler entry.
+    const result = await runtime.turnController.enqueue({
+      sessionId,
+      origin: "sidecar",
       signal: active.controller.signal,
+      run: async () => {
+        if (!active || active.session.id !== sessionId) {
+          throw new Error(
+            `active session changed during queued send_message for ${sessionId}`,
+          );
+        }
+        return runtime.executeTurn(active.session, request.payload.text, {
+          maxSteps: request.payload.maxSteps ?? runtime.config.agent.maxSteps,
+          signal: active.controller.signal,
+        });
+      },
     });
     active = { ...active, session: result.session };
     return {

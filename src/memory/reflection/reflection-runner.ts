@@ -33,8 +33,14 @@ export type ReflectionOutcome =
 export interface ReflectionRunner {
   /** Fire-safe. Never throws. Never awaited by the agent loop. */
   reflect(input: ReflectionInput): Promise<void>;
-  /** Aborts the currently in-flight reflection, if any. */
-  abortPending(): void;
+  /**
+   * Cancels in-flight reflections. When `options.sessionId` is
+   * provided, only the matching session's reflection is aborted —
+   * other sessions' reflections continue undisturbed. With no
+   * argument, every pending reflection across every session is
+   * aborted (used at runtime shutdown).
+   */
+  abortPending(options?: { sessionId?: string }): void;
 }
 
 export type ReflectionLlmComplete = (params: {
@@ -87,17 +93,32 @@ export interface ReflectionRunnerDeps {
  * Invariants:
  *  - `reflect()` is fire-safe: all errors are swallowed into logs +
  *    metrics. The caller can `void runner.reflect(input)` safely.
- *  - At most one reflection is in flight at a time. A new `reflect()`
- *    call aborts the previous one before starting.
- *  - `abortPending()` can be called from anywhere (e.g. the start of
- *    the next agent turn) to cancel the in-flight reflection.
+ *  - At most one reflection is in flight per `sessionId`. A new
+ *    `reflect({ sessionId, … })` call aborts only the previous
+ *    reflection on that *same* session — reflections on other
+ *    sessions continue undisturbed. This is the load-bearing
+ *    invariant for cross-session parallelism: under Option 6's
+ *    `TurnController`, two sessions can finish their turns at the
+ *    same time and each fire reflection without trampling the
+ *    other.
+ *  - `abortPending()` cancels every in-flight reflection (used at
+ *    runtime shutdown). `abortPending({ sessionId })` cancels only
+ *    the matching session — used by `agent-loop.runTurn` at the
+ *    start of every turn so a stale reflection from the previous
+ *    same-session turn cannot race the next one.
  */
 export function createReflectionRunner(
   deps: ReflectionRunnerDeps,
 ): ReflectionRunner {
   const now = deps.now ?? Date.now;
 
-  let pending: AbortController | null = null;
+  /**
+   * In-flight reflection per session. Keyed by `ReflectionInput.sessionId`
+   * so a `reflect()` on session B can never abort a reflection on
+   * session A. Entries are removed when the corresponding `runOne`
+   * settles.
+   */
+  const pending = new Map<string, AbortController>();
 
   const finish = (outcome: ReflectionOutcome, context: {
     sessionId: string;
@@ -143,11 +164,12 @@ export function createReflectionRunner(
   };
 
   const runOne = async (input: ReflectionInput): Promise<void> => {
-    if (pending) {
-      pending.abort();
+    const previous = pending.get(input.sessionId);
+    if (previous) {
+      previous.abort();
     }
     const controller = new AbortController();
-    pending = controller;
+    pending.set(input.sessionId, controller);
     const startedAt = now();
     deps.logger?.debug("reflection.fired", { sessionId: input.sessionId });
 
@@ -220,8 +242,8 @@ export function createReflectionRunner(
       finish("failed", { sessionId: input.sessionId, startedAt, reason });
     } finally {
       clearTimeout(timer);
-      if (pending === controller) {
-        pending = null;
+      if (pending.get(input.sessionId) === controller) {
+        pending.delete(input.sessionId);
       }
     }
   };
@@ -242,9 +264,14 @@ export function createReflectionRunner(
         });
       }
     },
-    abortPending() {
-      if (pending) {
-        pending.abort();
+    abortPending(options) {
+      if (options?.sessionId !== undefined) {
+        const target = pending.get(options.sessionId);
+        if (target) target.abort();
+        return;
+      }
+      for (const controller of pending.values()) {
+        controller.abort();
       }
     },
   };

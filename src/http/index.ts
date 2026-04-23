@@ -4,9 +4,6 @@ export type { ApprovalListener } from "./approval-bus.js";
 export { CompletionRegistry } from "./completion-registry.js";
 export type { CompletionEntry } from "./completion-registry.js";
 
-export { TurnHub } from "./turn-hub.js";
-export type { TurnEventHook } from "./turn-hub.js";
-
 export {
   createHttpServer,
 } from "./http-server.js";

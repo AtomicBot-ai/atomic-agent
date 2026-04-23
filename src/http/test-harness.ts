@@ -27,7 +27,6 @@ import type { LogSink } from "../telemetry/structured-logger.js";
 
 import { ApprovalBus } from "./approval-bus.js";
 import { CompletionRegistry } from "./completion-registry.js";
-import { TurnHub } from "./turn-hub.js";
 import { createHttpServer, type HttpServerHandle } from "./http-server.js";
 import { buildRouteTable } from "./route-table.js";
 
@@ -111,7 +110,6 @@ export interface Harness {
   baseUrl: string;
   stateDir: string;
   workingDir: string;
-  turnHub: TurnHub;
   approvalBus: ApprovalBus;
   completionRegistry: CompletionRegistry;
   cleanup: () => Promise<void>;
@@ -150,7 +148,6 @@ export async function startTestHarness(
     modelId: null,
   });
 
-  const turnHub = new TurnHub();
   const approvalBus = new ApprovalBus();
   const completionRegistry = new CompletionRegistry();
 
@@ -159,10 +156,7 @@ export async function startTestHarness(
     approvalRequired: options.approvalRequired ?? false,
     handlers: {
       logSinks: options.logSinks,
-      onAgentEvent: (event) => {
-        turnHub.emit(event);
-        options.onAgentEvent?.(event);
-      },
+      ...(options.onAgentEvent ? { onAgentEvent: options.onAgentEvent } : {}),
       onApprovalRequest: (request) => {
         approvalBus.publish(request);
         options.onApprovalRequest?.(request);
@@ -187,7 +181,6 @@ export async function startTestHarness(
     apiKey: options.apiKey ?? null,
     routes: buildRouteTable(),
     approvalBus,
-    turnHub,
     completionRegistry,
   });
 
@@ -197,7 +190,6 @@ export async function startTestHarness(
     baseUrl: `http://${handle.host}:${handle.port}`,
     stateDir,
     workingDir,
-    turnHub,
     approvalBus,
     completionRegistry,
     cleanup: async () => {

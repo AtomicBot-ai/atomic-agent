@@ -224,29 +224,57 @@ Main risk:
 
 - it introduces workflow semantics that do not exist today; start with a minimal durable queue before adding rich orchestration
 
-## Option 6: runtime isolation and concurrency contract
+## Option 6: runtime isolation and concurrency contract [done: 2026-04-23]
 
 What it adds:
 
 - a documented and enforced policy for concurrent `runTurn` calls
-- either per-session isolation or explicit queueing
-- clearer browser ownership and slot ownership rules
+- per-session isolation with explicit FIFO queueing per session
+- clearer browser ownership, slot ownership, and reflection ownership rules
 
 Why it matters:
 
 - prevents subtle races when the runtime is embedded in richer hosts
 - prepares the core for multiple sessions without hidden shared-state bugs
+- gives Option 4 (background autonomy / cron) a stable contract to attach to without breaking browser state, slot ownership, or trace recording
 
-Likely modules:
+Shipped modules:
 
-- `src/runtime/bootstrap.ts`
-- `src/http/turn-hub.ts`
-- `src/sidecar/main.ts`
-- `src/llm/slot-manager.ts`
+- new `src/runtime/turn-controller.ts` (+ `turn-controller.test.ts`) — per-session FIFO queue, per-session event hook map, `isBusy` / `busySessionIds` introspection. Single primitive that every entry point funnels through.
+- `src/runtime/bootstrap.ts` — `runtime.runTurn` is now a thin wrapper around `turnController.enqueue(executeTurn)`; `currentRecorder` lives in an `AsyncLocalStorage` keyed by `sessionId`; `runtime.executeTurn` is exposed for callers that already hold the per-session lock (sidecar).
+- `src/http/turn-hub.ts` — **deleted**. `src/http/openai-chat-completions.ts` enqueues directly via `runtime.runTurn({ origin: "http", eventHook })`.
+- `src/sidecar/main.ts` — `send_message` enqueues through `runtime.turnController.enqueue` and re-reads `active.session` inside the queued callback so two rapid NDJSON messages serialise FIFO without crossing state.
+- `src/cli/run-agent.ts`, `src/tui/tui-command.ts` — pass `origin` and (CLI) `eventHook` through the new `runtime.runTurn` API.
+- `src/llm/slot-manager.ts` — doc-comment pinning the single-active-turn-per-session invariant to `TurnController` (no internal locking added).
+- `src/memory/reflection/reflection-runner.ts` — `pending` is now a `Map<sessionId, AbortController>`; `abortPending({ sessionId })` cancels only the matching session. `src/agent/agent-loop.ts` passes `state.id` so a sibling session's reflection is never aborted by an unrelated turn.
 
-Main risk:
+Invariants (locked):
 
-- naive parallelism can break browser state, approvals, and cache reuse guarantees
+- per-session FIFO, no cross-session serialisation
+- no preemption, no priorities — scheduler enqueues like everyone else
+- event hook is per-session, set on enqueue and cleared in `finally`
+- recorder is per-session, lives behind `AsyncLocalStorage`, never leaks across turns
+- `SlotManager` / `ApprovalGate` / recorder safety relies on at most one `runTurn` per session at a time, enforced by `TurnController`
+- shared SQLite stores (`ProfileStore`, `MemoryStore`, `SessionStore`) are safe under cross-session parallel access because `better-sqlite3` is synchronous (no race window between read and write inside a single statement)
+- `ReflectionRunner` has per-session pending state; reflection on session A is never aborted by reflection on session B
+
+Explicitly out of scope:
+
+- per-session `PlaywrightBackend` / per-session browser context (cross-session browser sharing remains an accepted product constraint)
+- preemption, priorities, or fairness between origins
+- durable queue (deferred to Option 5)
+- secret redaction in per-session recorder output
+
+Tests:
+
+- `src/runtime/turn-controller.test.ts` — same-session FIFO, cross-session parallelism, hook isolation, error recovery, signal cancellation, scheduler-behind-user ordering
+- `src/http/openai-chat-completions.test.ts` — cross-session HTTP requests do not block each other; same-session HTTP serialises FIFO
+- `src/sidecar/send-message-concurrency.test.ts` — two rapid `send_message` calls on the same session serialise without crossing state
+- `src/memory/reflection/reflection-runner.test.ts` — same-session re-entry aborts the prior reflection; cross-session reflections never trample each other; `abortPending({ sessionId })` is scope-correct
+
+Documentation:
+
+- `ARCHITECTURE.md` §"Concurrency contract"; mirrored in `AGENTS.md`
 
 ## Option 7: traceability and replay [done: 2026-04-23]
 

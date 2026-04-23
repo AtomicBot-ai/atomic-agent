@@ -50,6 +50,7 @@ This is the source-of-truth for automated contributors (LLM agents, codegen, etc
 | `src/telemetry/` | Structured logger + metrics + trace recorder (`src/telemetry/trace/`) |
 | `src/replay/` | Trace-based replay: drift detection + optional LLM re-inference |
 | `src/memory/` | Memory fabric: ProfileStore (key/value facts, pinned + contextual) + MemoryStore (FTS5 freeform notes) + async end-of-turn reflection that writes into both. See [MEMORY.md](MEMORY.md). |
+| `src/runtime/` | `bootstrap.ts` (assembles `AgentRuntime`) + `turn-controller.ts` (per-session FIFO queue + per-session event hook map; the **only** path into `AgentLoop.runTurn`). See §"Concurrency contract". |
 
 ## Build & test
 
@@ -122,7 +123,7 @@ The three channels share one SQLite file `<stateDir>/memory.sqlite` (separate fr
 
 ### Reflection (async end-of-turn memory formation)
 
-- **When.** Fired at the end of every `AgentLoop.runTurn` after `assistant_reply` is emitted. **Fire-and-forget**, never awaited. `abortPending()` runs at the start of the next `runTurn` so at most one reflection is in flight per session.
+- **When.** Fired at the end of every `AgentLoop.runTurn` after `assistant_reply` is emitted. **Fire-and-forget**, never awaited. `abortPending({ sessionId: state.id })` runs at the start of the next `runTurn` so at most one reflection is in flight **per session**; reflections on other sessions are never aborted as a side effect (load-bearing for cross-session parallelism — see §"Concurrency contract").
 - **What.** A micro-prompt with its own small stable prefix asks the model to extract durable facts from the last `USER`/`ASSISTANT` exchange. Output is GBNF-constrained to either `NONE` or a bounded list of two flavours:
   - `SET key=value` (pinned fact) or `SET key=value [pinned=false; keywords=a,b,c]` (contextual fact). Caps at `memory.reflection.maxFactsPerCall` (default `3`).
   - `NOTE freeform observation [tag1, tag2]` → into `MemoryStore` with implicit `reflection` tag. Master switch `memory.reflection.autoStoreNotes` (default `true`); cap at `memory.reflection.maxNotesPerCall` (default `2`, set to `0` to disable).
@@ -154,6 +155,48 @@ All keys under `memory.*` in the user config and [src/config/config-schema.ts](s
 ### Explicit out-of-scope
 
 Episodic summaries, `topic`/`expires_at` columns, embeddings / semantic search, importance scoring, content-based deduplication of notes, and secret redaction are deliberately deferred. See [MEMORY.md §10](MEMORY.md) for the known-limitations list.
+
+## Concurrency contract
+
+Every entry point into the runtime — CLI, TUI, HTTP, sidecar, and the future Option 4 scheduler — funnels through one primitive: `TurnController` in [src/runtime/turn-controller.ts](src/runtime/turn-controller.ts). It is the **only** path into `AgentLoop.runTurn`. The defunct `src/http/turn-hub.ts` is gone; its global serialization invariants are now enforced per session.
+
+### Invariants (locked, pinned by [src/runtime/turn-controller.test.ts](src/runtime/turn-controller.test.ts))
+
+1. **Per-session FIFO.** At most one `runTurn` is in flight per `sessionId`. Two concurrent `enqueue` calls on the same session run strictly in submission order.
+2. **Cross-session parallelism.** Different `sessionId`s run concurrently — there is no global queue. This is the property Option 4 (cron / wakeups) was designed to consume.
+3. **No preemption, no priorities.** Scheduler-origin submissions queue behind in-flight user submissions on the same session, and vice versa. All `TurnOrigin`s (`cli | tui | http | sidecar | scheduler`) are equal citizens.
+4. **Per-session event hook.** `submission.eventHook` is installed before `run()` starts and cleared in `finally`. A hook on session A never sees events from session B. Routing is keyed by `sessionId` stored in an `AsyncLocalStorage` set in `bootstrap.ts` around every `executeTurn` call.
+5. **Per-session recorder.** `currentRecorder` is no longer a global pointer; recorders are lazy-created per `sessionId` and dispatched via the same `AsyncLocalStorage`.
+6. **Aborted submission rejects fast.** `submission.signal` races the queue wait — a cancelled submission rejects without ever calling `run()`.
+
+### Ownership of shared resources
+
+| Resource | Owner | Safe under cross-session parallelism? |
+|---|---|---|
+| `PlaywrightBackend` | The active turn on each session | **Yes per-session** — `TurnController` guarantees one turn touches the browser at a time within a session. **Cross-session sharing is an accepted product constraint:** there is one browser profile per process, so concurrent sessions see the same window. Cron-driven sessions must account for this. |
+| `SlotManager` | Each `runTurn` (acquire-per-step) | **Yes** — `acquire` for a single session is sequential by `TurnController` invariant; different sessions have separate slot assignments and the round-robin pointer is integer-mutating. See doc-comment in [src/llm/slot-manager.ts](src/llm/slot-manager.ts). |
+| `ApprovalGate` | Per-session pending request | **Yes** — at most one pending approval per session by design. |
+| `ProfileStore` / `MemoryStore` / `SessionStore` | Anything holding a handle | **Yes** — all three use `better-sqlite3`, which is **synchronous**: there is no race window between read and write inside a single statement, so concurrent sessions are safe. **This is a load-bearing assumption.** Replacing the driver with an async one would require a redesign. |
+| `ReflectionRunner.pending` | Per-session `Map<sessionId, AbortController>` | **Yes** — reflection on session A is never aborted by reflection on session B. `agent-loop.runTurn` calls `reflectionRunner.abortPending({ sessionId: state.id })` at the start of every turn so a stale reflection from the previous same-session turn cannot race the next one. `abortPending()` with no argument cancels every in-flight reflection (used at runtime shutdown). |
+| Trace recorder | Per-session, dispatched via `AsyncLocalStorage` | **Yes** — no global pointer to mix traces across sessions. |
+
+### What Option 4 (scheduler) may and may not assume
+
+- **May** enqueue any session via `runtime.turnController.enqueue({ origin: "scheduler", … })` or `runtime.runTurn(session, msg, { origin: "scheduler" })`.
+- **May** introspect via `turnController.isBusy(sessionId)` / `busySessionIds()` and decide between "enqueue and wait" or "skip this tick".
+- **May not** preempt user turns or claim a separate priority queue — there is none.
+- **May not** assume exclusive browser ownership across sessions; the browser is shared at process scope (see table).
+- **Must not** hold a stale `SessionState` reference between `enqueue` and `run`. `executeTurn` writes its result to `sessionStore`; the correct pattern is to **re-read the latest session inside the queued callback** (see [src/sidecar/main.ts](src/sidecar/main.ts) `send_message` for the canonical example).
+
+### Extension points
+
+- `TurnController.isBusy(sessionId)` / `busySessionIds()` — observability hook for UI and scheduler.
+- `TurnController.emit(sessionId, event)` — single dispatch path for `AgentLoopEvent` to the per-session hook.
+- `runtime.executeTurn(session, msg, opts)` — bypasses the queue. Used by sidecar from inside an already-acquired `enqueue` callback so it does not deadlock against itself. CLI / TUI / HTTP go through the public `runtime.runTurn` instead.
+
+### Risk (acknowledged)
+
+The three existing callers (CLI / HTTP / sidecar) relied on subtle hook timing through `TurnHub` / inline `onAgentEvent`. The hook contract on `TurnController` matches the defunct `TurnHub.runExclusive` byte-for-byte (hook installed before `run()`, cleared in `finally`), so single-session callers are observably identical. New surface tests cover the cross-session and same-session-FIFO behaviour: [src/http/openai-chat-completions.test.ts](src/http/openai-chat-completions.test.ts), [src/sidecar/send-message-concurrency.test.ts](src/sidecar/send-message-concurrency.test.ts), [src/memory/reflection/reflection-runner.test.ts](src/memory/reflection/reflection-runner.test.ts).
 
 ## LLM reliability policy
 

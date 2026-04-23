@@ -221,10 +221,13 @@ export class AgentLoop {
   ): Promise<RunTurnResult> {
     let state = session;
 
-    // Cancel any reflection that is still in flight from the previous
-    // turn. Must run before the LLM produces its first completion so
-    // the dedicated reflection slot frees up quickly.
-    this.deps.reflectionRunner?.abortPending();
+    // Cancel any reflection still in flight from the previous turn on
+    // *this* session. Scoped per-session so a sibling session's
+    // reflection (Option 6 cross-session parallelism) is never aborted
+    // by a turn we are running here. Must run before the LLM produces
+    // its first completion so the dedicated reflection slot frees up
+    // quickly.
+    this.deps.reflectionRunner?.abortPending({ sessionId: state.id });
 
     if (options.userMessage !== undefined) {
       const text = options.userMessage;

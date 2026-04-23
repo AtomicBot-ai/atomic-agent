@@ -1,8 +1,12 @@
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { AtomicAgentConfig } from "../config/index.js";
 import { getConfig } from "../config/index.js";
+
+import { TurnController } from "./turn-controller.js";
+import type { TurnEventHook, TurnOrigin } from "./turn-controller.js";
 
 import { LlamaServerClient } from "../llm/llama-server-client.js";
 import type {
@@ -145,6 +149,15 @@ export interface AgentRuntime {
   readonly slotManager: SlotManager;
   readonly sessionStore: SessionStore;
   /**
+   * Single per-session turn-ownership primitive shared by every
+   * caller of `runTurn` — CLI, TUI, HTTP, sidecar, and the future
+   * scheduler. Exposed for introspection (`isBusy`,
+   * `busySessionIds`) and direct enqueueing from out-of-band entry
+   * points; the canonical user-facing path is `runTurn`, which
+   * funnels through this controller internally.
+   */
+  readonly turnController: TurnController;
+  /**
    * Durable user-profile store. Present even when
    * `memory.profile.enabled` is `false`, because the store owns the
    * SQLite connection used by any future feature that reuses the same
@@ -176,8 +189,39 @@ export interface AgentRuntime {
    * Drive one chat turn: append the user message, run the agent loop
    * until the model emits `reply` (or `finish`), persist the resulting
    * state, and return the new session + reason.
+   *
+   * Always funnels through `turnController.enqueue`, so concurrent
+   * invocations on the same `session.id` serialise FIFO while
+   * different sessions run in parallel. Callers that need to observe
+   * intermediate `AgentLoopEvent`s for their turn (HTTP SSE, sidecar
+   * NDJSON, future scheduler) pass an `eventHook` — events are routed
+   * to the hook of the currently-running submission for that session
+   * only. `origin` is informational; defaults to `"cli"`.
    */
   runTurn(
+    session: SessionState,
+    userMessage: string,
+    options?: {
+      maxSteps?: number;
+      signal?: AbortSignal;
+      eventHook?: TurnEventHook;
+      origin?: TurnOrigin;
+    },
+  ): Promise<RunTurnResult>;
+  /**
+   * Inline counterpart to `runTurn` — runs the agent loop and
+   * persists the result without acquiring the per-session lock. Use
+   * this only from a `run` callback already passed to
+   * `turnController.enqueue` for the same `session.id`; calling it
+   * outside a controller-managed frame defeats the concurrency
+   * contract and may race other turns on the session.
+   *
+   * The intended use case is a frontend (sidecar, HTTP) that needs
+   * to perform extra work *under* the per-session lock — re-reading
+   * a session mirror, updating local state — without re-entering
+   * the controller and deadlocking.
+   */
+  executeTurn(
     session: SessionState,
     userMessage: string,
     options?: { maxSteps?: number; signal?: AbortSignal },
@@ -222,7 +266,23 @@ export async function createAgentRuntime(
       })
     : null;
   const recorders = new Map<string, TraceRecorder>();
-  let currentRecorder: TraceRecorder | null = null;
+  /**
+   * Per-turn context used to route `loopDeps.onEvent` calls back to
+   * the correct session. Two sessions running concurrently each have
+   * their own `AsyncLocalStorage` frame, so the `loopDeps.onEvent`
+   * closure can look up the right recorder without a process-global
+   * pointer.
+   */
+  const turnContext = new AsyncLocalStorage<{ sessionId: string }>();
+  const turnController = new TurnController({
+    onHookError: (err, ctxInfo) => {
+      logger.warn("turn event hook threw", {
+        sessionId: ctxInfo.sessionId,
+        origin: ctxInfo.origin,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    },
+  });
 
   const approvals = new ApprovalGate({
     emit: (request) => options.handlers?.onApprovalRequest?.(request),
@@ -421,7 +481,16 @@ export async function createAgentRuntime(
     ...(reflectionRunner ? { reflectionRunner } : {}),
     ...(memoryContextProvider ? { memoryContextProvider } : {}),
     onEvent: (event: AgentLoopEvent) => {
-      currentRecorder?.onAgentEvent(event);
+      // The loop has no awareness of which session it is currently
+      // driving; resolve that from the per-turn ALS frame so two
+      // concurrent sessions never cross-contaminate trace records or
+      // per-submission hooks.
+      const ctx = turnContext.getStore();
+      if (ctx) {
+        const recorder = recorders.get(ctx.sessionId);
+        recorder?.onAgentEvent(event);
+        turnController.emit(ctx.sessionId, event);
+      }
       options.handlers?.onAgentEvent?.(event);
     },
     metrics,
@@ -506,13 +575,13 @@ export async function createAgentRuntime(
     return state;
   };
 
-  const runTurn = async (
+  const executeTurn = async (
     session: SessionState,
     userMessage: string,
     runOptions: { maxSteps?: number; signal?: AbortSignal } = {},
   ): Promise<RunTurnResult> => {
-    currentRecorder = ensureRecorder(session);
-    try {
+    ensureRecorder(session);
+    return turnContext.run({ sessionId: session.id }, async () => {
       const result = await loop.runTurn(session, {
         userMessage,
         maxSteps: runOptions.maxSteps ?? config.agent.maxSteps,
@@ -520,9 +589,27 @@ export async function createAgentRuntime(
       });
       sessionStore.save(result.session);
       return result;
-    } finally {
-      currentRecorder = null;
-    }
+    });
+  };
+
+  const runTurn = async (
+    session: SessionState,
+    userMessage: string,
+    runOptions: {
+      maxSteps?: number;
+      signal?: AbortSignal;
+      eventHook?: TurnEventHook;
+      origin?: TurnOrigin;
+    } = {},
+  ): Promise<RunTurnResult> => {
+    const submission = {
+      sessionId: session.id,
+      origin: runOptions.origin ?? "cli",
+      run: () => executeTurn(session, userMessage, runOptions),
+      ...(runOptions.eventHook ? { eventHook: runOptions.eventHook } : {}),
+      ...(runOptions.signal ? { signal: runOptions.signal } : {}),
+    } as const;
+    return turnController.enqueue(submission);
   };
 
   const runtime = {
@@ -533,6 +620,7 @@ export async function createAgentRuntime(
     approvals,
     slotManager,
     sessionStore,
+    turnController,
     profileStore,
     notesStore,
     capabilities,
@@ -542,6 +630,7 @@ export async function createAgentRuntime(
     metrics,
     createSession,
     runTurn,
+    executeTurn,
     refreshSkills,
     shutdown,
   } as AgentRuntime;

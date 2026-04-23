@@ -115,6 +115,145 @@ describe("POST /v1/chat/completions (non-stream)", () => {
   });
 });
 
+describe("POST /v1/chat/completions concurrency contract", () => {
+  function instantReply(text: string): CompletionResult {
+    return {
+      content: JSON.stringify({ tool: "reply", args: { text } }),
+      reasoningContent: "",
+      stop: true,
+      truncated: false,
+      timing: {
+        promptMs: 0,
+        predictedMs: 0,
+        promptTokens: 1,
+        predictedTokens: 1,
+      },
+      cacheHitTokens: 0,
+      slotId: 0,
+      modelId: null,
+    };
+  }
+
+  it("does not block requests for different sessions on each other", async () => {
+    const userEnters: string[] = [];
+    const releases = new Map<string, () => void>();
+    const llamaComplete = async (params: {
+      sessionId: string;
+    }): Promise<CompletionResult> => {
+      // Reflection calls are background fire-and-forget; resolve them
+      // immediately so they cannot pin the mock and skew the test.
+      if (params.sessionId.startsWith("reflection:")) {
+        return instantReply("nope");
+      }
+      userEnters.push(params.sessionId);
+      await new Promise<void>((resolve) => {
+        releases.set(params.sessionId, resolve);
+      });
+      return instantReply("ok");
+    };
+    const harness = await startTestHarness({ llamaComplete });
+    try {
+      const sessionA = harness.runtime.createSession({ metadata: { source: "tA" } });
+      const sessionB = harness.runtime.createSession({ metadata: { source: "tB" } });
+      const promiseA = postChat(
+        harness.baseUrl,
+        { messages: [{ role: "user", content: "msg-A" }] },
+        { [SESSION_ID_HEADER]: sessionA.id },
+      );
+      const promiseB = postChat(
+        harness.baseUrl,
+        { messages: [{ role: "user", content: "msg-B" }] },
+        { [SESSION_ID_HEADER]: sessionB.id },
+      );
+
+      const deadline = Date.now() + 5_000;
+      while (
+        (releases.size < 2 || userEnters.length < 2) &&
+        Date.now() < deadline
+      ) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      expect(userEnters.length).toBe(2);
+      expect(new Set(userEnters)).toEqual(new Set([sessionA.id, sessionB.id]));
+
+      releases.get(sessionA.id)?.();
+      releases.get(sessionB.id)?.();
+
+      const [respA, respB] = await Promise.all([promiseA, promiseB]);
+      expect(respA.status).toBe(200);
+      expect(respB.status).toBe(200);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("serializes same-session requests strictly FIFO", async () => {
+    const userEnters: string[] = [];
+    const userLeaves: string[] = [];
+    type Releaser = (() => void) | null;
+    const releaseRef = { current: null as Releaser };
+    let userCallCount = 0;
+    const llamaComplete = async (params: {
+      sessionId: string;
+    }): Promise<CompletionResult> => {
+      if (params.sessionId.startsWith("reflection:")) {
+        return instantReply("nope");
+      }
+      userCallCount += 1;
+      const tag = `c${userCallCount}`;
+      userEnters.push(tag);
+      await new Promise<void>((resolve) => {
+        releaseRef.current = resolve;
+      });
+      userLeaves.push(tag);
+      return instantReply(tag);
+    };
+    const harness = await startTestHarness({ llamaComplete });
+    try {
+      const session = harness.runtime.createSession({ metadata: { source: "fifo" } });
+      const promise1 = postChat(
+        harness.baseUrl,
+        { messages: [{ role: "user", content: "first" }] },
+        { [SESSION_ID_HEADER]: session.id },
+      );
+      const promise2 = postChat(
+        harness.baseUrl,
+        { messages: [{ role: "user", content: "second" }] },
+        { [SESSION_ID_HEADER]: session.id },
+      );
+
+      const deadline = Date.now() + 5_000;
+      while (userEnters.length < 1 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      expect(userEnters).toEqual(["c1"]);
+
+      // Give the second request several event-loop turns to "leak" past
+      // the per-session lock — it must not.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(userEnters).toEqual(["c1"]);
+
+      const releaseFirst = releaseRef.current;
+      releaseRef.current = null;
+      releaseFirst?.();
+      const deadline2 = Date.now() + 5_000;
+      while (userEnters.length < 2 && Date.now() < deadline2) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      expect(userEnters).toEqual(["c1", "c2"]);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ((releaseRef as any).current as Releaser)?.();
+
+      const [resp1, resp2] = await Promise.all([promise1, promise2]);
+      expect(resp1.status).toBe(200);
+      expect(resp2.status).toBe(200);
+      expect(userLeaves).toEqual(["c1", "c2"]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+});
+
 describe("POST /v1/chat/completions auth", () => {
   it("returns 401 when apiKey is configured and bearer is missing", async () => {
     const harness = await startTestHarness({ apiKey: "secret" });

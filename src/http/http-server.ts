@@ -3,7 +3,6 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { ApprovalBus } from "./approval-bus.js";
 import { CompletionRegistry } from "./completion-registry.js";
-import { TurnHub } from "./turn-hub.js";
 import { openaiError } from "./openai-errors.js";
 import {
   BodyParseError,
@@ -40,7 +39,6 @@ export interface HttpServerOptions {
   apiKey: string | null;
   routes: RouteDefinition[];
   approvalBus?: ApprovalBus;
-  turnHub?: TurnHub;
   completionRegistry?: CompletionRegistry;
 }
 
@@ -49,7 +47,6 @@ export interface HttpServerHandle {
   host: string;
   port: number;
   approvalBus: ApprovalBus;
-  turnHub: TurnHub;
   completionRegistry: CompletionRegistry;
   close: () => Promise<void>;
 }
@@ -117,7 +114,6 @@ export function createHttpServer(
   options: HttpServerOptions,
 ): Promise<HttpServerHandle> {
   const approvalBus = options.approvalBus ?? new ApprovalBus();
-  const turnHub = options.turnHub ?? new TurnHub();
   const completionRegistry =
     options.completionRegistry ?? new CompletionRegistry();
   const compiled = options.routes.map(compileRoute);
@@ -128,7 +124,6 @@ export function createHttpServer(
         runtime: options.runtime,
         apiKey: options.apiKey,
         approvalBus,
-        turnHub,
         completionRegistry,
       });
     } catch (err) {
@@ -157,7 +152,6 @@ export function createHttpServer(
         host: options.host,
         port: resolvedPort,
         approvalBus,
-        turnHub,
         completionRegistry,
         close: () => closeServer(server),
       });

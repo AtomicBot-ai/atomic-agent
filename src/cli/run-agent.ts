@@ -145,22 +145,16 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
 
   const driveTurn = async (message: string): Promise<void> => {
     const collector = collectReply();
-    const runtimeWithHook = opts.runtime as {
-      __cliReplyHook?: (e: AgentLoopEvent) => void;
-    };
-    runtimeWithHook.__cliReplyHook = collector.onEvent;
-    try {
-      const result = await opts.runtime.runTurn(session, message, {
-        maxSteps: opts.maxSteps,
-        signal: opts.controller.signal,
-      });
-      session = result.session;
-      const reply = collector.getReply();
-      if (reply !== null) {
-        process.stdout.write(`${reply}\n`);
-      }
-    } finally {
-      delete runtimeWithHook.__cliReplyHook;
+    const result = await opts.runtime.runTurn(session, message, {
+      maxSteps: opts.maxSteps,
+      signal: opts.controller.signal,
+      origin: "cli",
+      eventHook: collector.onEvent,
+    });
+    session = result.session;
+    const reply = collector.getReply();
+    if (reply !== null) {
+      process.stdout.write(`${reply}\n`);
     }
   };
 
@@ -219,13 +213,10 @@ export async function runAgentCommand(args: string[]): Promise<number> {
     traceDefault: true,
     handlers: {
       onAgentEvent: (event) => {
-        // The chat loop installs a per-turn hook to capture assistant_reply
-        // and pipe it to stdout — call it first so the reply text always
-        // arrives even if the operator silenced the stderr stream.
-        const hook = (runtime as unknown as {
-          __cliReplyHook?: (e: AgentLoopEvent) => void;
-        }).__cliReplyHook;
-        hook?.(event);
+        // Per-turn assistant-reply collection is wired through the
+        // `eventHook` argument of `runTurn` (see `driveTurn`). This
+        // global handler only feeds the diagnostic stderr stream so
+        // the operator can watch the macro-turn lifecycle.
         const line = formatAgentEvent(event);
         if (line) process.stderr.write(`${line}\n`);
       },

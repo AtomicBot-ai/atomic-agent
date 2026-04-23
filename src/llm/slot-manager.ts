@@ -20,6 +20,18 @@ export interface SlotAssignment {
  * We keep the mapping purely in-process; the server itself owns the cache.
  * On restart every session simply starts cold — that is acceptable because
  * prefix recomputation is a single LLM pass at sub-second latency.
+ *
+ * **Concurrency contract (single-active-turn-per-session).** `acquire`
+ * does no internal locking; it relies on the runtime invariant that at
+ * most one `runTurn` is in flight per `sessionId`. That invariant is
+ * enforced by `TurnController` in [src/runtime/turn-controller.ts] —
+ * every entry point (CLI, TUI, HTTP, sidecar, scheduler) funnels
+ * through it. Concurrent `acquire(sessionId, …)` from different
+ * sessions is safe because each session has its own assignment slot
+ * in the map and the round-robin pointer is integer-mutating;
+ * concurrent `acquire(sessionId, …)` for the *same* session is a
+ * controller-contract violation and would race the prefix swap. Do
+ * not call `acquire` outside an `AgentLoop.runTurn` frame.
  */
 export class SlotManager {
   private readonly assignments = new Map<string, SlotAssignment>();
