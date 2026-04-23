@@ -200,29 +200,51 @@ Main risk:
 
 - this changes the product model more than the other options; it needs a durable task abstraction, not just timers
 
-## Option 5: durable task model
+## Option 5: durable task model [done: 2026-04-24]
 
 What it adds:
 
-- task records with states such as pending, scheduled, blocked, running, completed, failed
-- retries and backoff for deferred work
-- explicit linkage between tasks and sessions
+- durable `TaskRecord` with `pending | running | completed | failed | blocked | cancelled` states
+- retries with exponential capped backoff for deferred `runTurn` submissions, classified through the existing `LlmFailureCategory` taxonomy from Option 3
+- explicit `(sessionId, userMessage)` linkage between tasks and sessions, with runtime validation that the session exists (missing session → `blocked` with `session_not_found`)
+- CLI (`atomic-agent task list|show|create|cancel|run`) and HTTP admin surfaces (`POST/GET /api/tasks`, `GET/DELETE /api/tasks/:id`, `POST /api/tasks/:id/run`, `POST /api/tasks/drain`)
+- `agent.tasks.*` counters and histograms for end-to-end observability of the queue
 
 Why it matters:
 
-- gives structure to long-running autonomous behavior
-- provides a foundation for reminders, cron, follow-up delivery, and resumable work
+- gives structure to deferred work without committing to a workflow engine — one task is exactly one deferred `runTurn`, nothing more
+- unblocks Option 4 (background autonomy / cron): the scheduler now has a stable, persistent submission target with at-least-once semantics
+- formalises the "operator can re-trigger this turn" affordance that previously existed only as ad-hoc CLI scripting
 
-Likely modules:
+Shipped modules:
 
-- a new feature folder such as `src/tasks/`
-- `src/session/`
-- `src/runtime/bootstrap.ts`
-- `src/http/` admin routes
+- new feature folder `src/tasks/` — `task-types.ts`, `task-schema.ts` (`TASK_SCHEMA_VERSION = 1`, separate `<stateDir>/tasks.sqlite` file, no cross-file FKs), `task-store.ts` (synchronous `better-sqlite3` CRUD + lifecycle transitions + `recoverStale`), `task-backoff.ts` (pure `nextDelayMs`), `task-runner.ts` (`create` + `runOne` + `drainPending`), `index.ts` named exports, plus colocated `*.test.ts` for store / backoff / runner.
+- `src/runtime/bootstrap.ts` — wires `TaskStore` and `TaskRunner` into `AgentRuntime`, calls `taskStore.recoverStale(config.tasks.staleAfterMs)` once on boot, closes the SQLite handle in `shutdown()`.
+- `src/config/config-schema.ts` and `src/config/load-config.ts` — new `tasks.*` block (`enabled`, `maxAttempts`, `backoffInitialMs`, `backoffMaxMs`, `runOnCreate`, `staleAfterMs`) + `paths.tasksDbFile`, all env-overridable.
+- `src/telemetry/agent-metrics.ts` — `agent.tasks.{created,started,completed,failed,blocked,cancelled,retried}` counters and `agent.tasks.{attempts,duration_ms}` histograms, with `TaskOriginTag` reused by metric tags.
+- `src/http/route-tasks.ts` (+ `route-tasks.test.ts`) and `src/http/route-table.ts` — admin routes; all return 404 when `tasks.enabled=false`, mirroring the `memory.profile.enabled` gate from Option 2.
+- `src/cli/task-command.ts` (+ `task-command.test.ts`) and `src/cli/index.ts` — CLI subcommands; `list/show/create/cancel` open the `TaskStore` directly for fast one-shot access, `run` boots the full `createAgentRuntime` and tears it down on the way out.
+- Documentation: `ARCHITECTURE.md` §4.16 + §10 extension table, `AGENTS.md` "Durable tasks" subsection, `README.md` CLI paragraph.
 
-Main risk:
+Locked invariants (pinned by tests):
 
-- it introduces workflow semantics that do not exist today; start with a minimal durable queue before adding rich orchestration
+- task `kind` is implicit — every record is a deferred `runTurn`. The schema does **not** carry a discriminator; new kinds are not part of this milestone (and would require an additive migration).
+- task always executes through `runtime.runTurn(..., { origin: "scheduler" })` — never through `executeTurn` (which bypasses the controller). Per-session FIFO + cross-session parallelism are inherited from Option 6.
+- retries are turn-level only: `runTurn` is replayed with the same `userMessage`. Step-level retries inside a single `runTurn` remain Option 3's responsibility. **No partial-tool replay.**
+- `TaskRunner` never holds a `SessionState` reference between attempts — re-reads via `sessionStore.load(sessionId)` inside the next attempt (same pattern as `src/sidecar/main.ts`).
+- `cancel()` is idempotent on already-terminal rows; `recoverStale` is one-shot at bootstrap (no background sweeper).
+- `tasks.enabled=false` keeps `TaskStore` constructed (it owns the SQLite handle that must be closed in `shutdown`); `drainPending` becomes a no-op and HTTP routes return 404.
+
+Explicitly out of scope (deferred to Option 4 or later):
+
+- background ticker / cron / `scheduledFor` timestamps
+- agent-side `tasks.*` tools (self-scheduling)
+- task graphs / dependencies between tasks
+- workflow primitives (`kind != "runTurn"`)
+- secret redaction inside `userMessage` / `lastError`
+- per-session task priorities / fairness across origins
+
+**Option 4 unblocked by this milestone:** the scheduler now has a stable durable-queue contract (`taskRunner.create` + `taskRunner.drainPending`) to attach to without touching the agent-loop or controller invariants. Adding cron / wakeups becomes a thin module that calls `drainPending` on a timer.
 
 ## Option 6: runtime isolation and concurrency contract [done: 2026-04-23]
 
@@ -262,7 +284,7 @@ Explicitly out of scope:
 
 - per-session `PlaywrightBackend` / per-session browser context (cross-session browser sharing remains an accepted product constraint)
 - preemption, priorities, or fairness between origins
-- durable queue (deferred to Option 5)
+- durable queue (shipped as Option 5 [done: 2026-04-24])
 - secret redaction in per-session recorder output
 
 Tests:

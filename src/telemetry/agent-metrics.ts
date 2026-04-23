@@ -22,9 +22,25 @@ export const METRIC_NAMES = {
   approvalDenied: "agent.approval.denied",
   memoryReflection: "agent.memory.reflection",
   memoryReflectionLatency: "agent.memory.reflection.latency_ms",
+  tasksCreated: "agent.tasks.created",
+  tasksStarted: "agent.tasks.started",
+  tasksCompleted: "agent.tasks.completed",
+  tasksFailed: "agent.tasks.failed",
+  tasksBlocked: "agent.tasks.blocked",
+  tasksCancelled: "agent.tasks.cancelled",
+  tasksRetried: "agent.tasks.retried",
+  tasksAttempts: "agent.tasks.attempts",
+  tasksDuration: "agent.tasks.duration_ms",
 } as const;
 
 export type MetricName = (typeof METRIC_NAMES)[keyof typeof METRIC_NAMES];
+
+const TASK_STATUS_COUNTER = {
+  completed: METRIC_NAMES.tasksCompleted,
+  failed: METRIC_NAMES.tasksFailed,
+  blocked: METRIC_NAMES.tasksBlocked,
+  cancelled: METRIC_NAMES.tasksCancelled,
+} as const;
 
 export interface StepMetricSample {
   sessionId: string;
@@ -69,6 +85,50 @@ export type ReflectionOutcomeTag =
 export interface ReflectionMetricSample {
   sessionId: string;
   outcome: ReflectionOutcomeTag;
+  durationMs: number;
+}
+
+/**
+ * Terminal task statuses tracked by the durable task queue. Mirrors
+ * `TaskStatus` from `src/tasks/` minus the in-flight states (`pending`
+ * / `running`) which never reach the metrics layer.
+ */
+export type TaskTerminalStatus =
+  | "completed"
+  | "failed"
+  | "blocked"
+  | "cancelled";
+
+/** Origin tag used by every task-level metric for downstream slicing. */
+export type TaskOriginTag = "cli" | "tui" | "http" | "sidecar" | "scheduler";
+
+export interface TaskCreatedSample {
+  taskId: string;
+  sessionId: string;
+  origin: TaskOriginTag;
+}
+
+export interface TaskStartedSample {
+  taskId: string;
+  sessionId: string;
+  origin: TaskOriginTag;
+  /** 1-indexed attempt about to run (post-`markRunning` value). */
+  attempt: number;
+}
+
+export interface TaskRetrySample {
+  taskId: string;
+  sessionId: string;
+  category: LlmFailureCategory;
+  attempt: number;
+}
+
+export interface TaskTerminalSample {
+  taskId: string;
+  sessionId: string;
+  origin: TaskOriginTag;
+  status: TaskTerminalStatus;
+  attempts: number;
   durationMs: number;
 }
 
@@ -143,6 +203,67 @@ export class AgentMetrics {
     this.collector.histogram(
       METRIC_NAMES.memoryReflectionLatency,
       sample.durationMs,
+      tags,
+    );
+  }
+
+  /**
+   * Record a fresh durable task being persisted by `TaskStore.create`.
+   * Tagged by `origin` so dashboards can split CLI-driven tasks from
+   * the future scheduler. The counter is bumped exactly once per row,
+   * regardless of how many attempts the task ends up consuming.
+   */
+  recordTaskCreated(sample: TaskCreatedSample): void {
+    this.collector.counter(METRIC_NAMES.tasksCreated, 1, {
+      sessionId: sample.sessionId,
+      origin: sample.origin,
+    });
+  }
+
+  /**
+   * Record an attempt about to enter `runTurn`. Bumps once per
+   * `markRunning`, which means retried tasks emit the counter multiple
+   * times with growing `attempt`.
+   */
+  recordTaskStarted(sample: TaskStartedSample): void {
+    this.collector.counter(METRIC_NAMES.tasksStarted, 1, {
+      sessionId: sample.sessionId,
+      origin: sample.origin,
+      attempt: String(sample.attempt),
+    });
+  }
+
+  /**
+   * Record a retryable failure that scheduled a new attempt (no
+   * terminal status yet). Distinct from `recordTaskTerminal` — a task
+   * may emit several `retried` samples before resolving to one
+   * `completed` / `failed`.
+   */
+  recordTaskRetry(sample: TaskRetrySample): void {
+    this.collector.counter(METRIC_NAMES.tasksRetried, 1, {
+      sessionId: sample.sessionId,
+      category: sample.category,
+      attempt: String(sample.attempt),
+    });
+  }
+
+  /**
+   * Record a terminal task transition. Emits the per-status counter,
+   * the attempt-count histogram, and the wall-clock duration histogram
+   * in one place so dashboards never need to stitch them together.
+   */
+  recordTaskTerminal(sample: TaskTerminalSample): void {
+    const tags = {
+      sessionId: sample.sessionId,
+      origin: sample.origin,
+      status: sample.status,
+    };
+    const counterName = TASK_STATUS_COUNTER[sample.status];
+    this.collector.counter(counterName, 1, tags);
+    this.collector.histogram(METRIC_NAMES.tasksAttempts, sample.attempts, tags);
+    this.collector.histogram(
+      METRIC_NAMES.tasksDuration,
+      Math.max(0, sample.durationMs),
       tags,
     );
   }

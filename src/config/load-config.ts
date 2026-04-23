@@ -132,6 +132,7 @@ export function loadConfig(): AtomicAgentConfig {
       stateDir,
       sessionsDbFile: resolve(stateDir, "sessions.sqlite"),
       memoryDbFile: resolve(stateDir, "memory.sqlite"),
+      tasksDbFile: resolve(stateDir, "tasks.sqlite"),
       tracesDir: resolve(stateDir, "traces"),
       grammarsDir,
       browserProfileDir: resolve(stateDir, "browser-profile"),
@@ -181,6 +182,29 @@ export function loadConfig(): AtomicAgentConfig {
       defaultTimeoutMs: user.http.defaultTimeoutMs,
     },
     log: { level: logLevel },
+    tasks: {
+      enabled: readBool("ATOMIC_AGENT_TASKS_ENABLED", ENV_DEFAULTS.TASKS_ENABLED),
+      maxAttempts: readInt(
+        "ATOMIC_AGENT_TASKS_MAX_ATTEMPTS",
+        ENV_DEFAULTS.TASKS_MAX_ATTEMPTS,
+      ),
+      backoffInitialMs: readInt(
+        "ATOMIC_AGENT_TASKS_BACKOFF_INITIAL_MS",
+        ENV_DEFAULTS.TASKS_BACKOFF_INITIAL_MS,
+      ),
+      backoffMaxMs: readInt(
+        "ATOMIC_AGENT_TASKS_BACKOFF_MAX_MS",
+        ENV_DEFAULTS.TASKS_BACKOFF_MAX_MS,
+      ),
+      runOnCreate: readBool(
+        "ATOMIC_AGENT_TASKS_RUN_ON_CREATE",
+        ENV_DEFAULTS.TASKS_RUN_ON_CREATE,
+      ),
+      staleAfterMs: readInt(
+        "ATOMIC_AGENT_TASKS_STALE_AFTER_MS",
+        ENV_DEFAULTS.TASKS_STALE_AFTER_MS,
+      ),
+    },
     telemetry: {
       trace: {
         enabled: user.telemetry.trace.enabled,

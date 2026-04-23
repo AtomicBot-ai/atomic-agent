@@ -51,6 +51,7 @@ This is the source-of-truth for automated contributors (LLM agents, codegen, etc
 | `src/replay/` | Trace-based replay: drift detection + optional LLM re-inference |
 | `src/memory/` | Memory fabric: ProfileStore (key/value facts, pinned + contextual) + MemoryStore (FTS5 freeform notes) + async end-of-turn reflection that writes into both. See [MEMORY.md](MEMORY.md). |
 | `src/runtime/` | `bootstrap.ts` (assembles `AgentRuntime`) + `turn-controller.ts` (per-session FIFO queue + per-session event hook map; the **only** path into `AgentLoop.runTurn`). See §"Concurrency contract". |
+| `src/tasks/` | Durable queue of deferred `runTurn` submissions: `TaskStore` (SQLite), `TaskRunner` (drain + retry/backoff), `task-backoff`. No background ticker — drains are explicit (CLI/HTTP) or implicit on `create()` when `tasks.runOnCreate=true`. See §"Durable tasks". |
 
 ## Build & test
 
@@ -197,6 +198,81 @@ Every entry point into the runtime — CLI, TUI, HTTP, sidecar, and the future O
 ### Risk (acknowledged)
 
 The three existing callers (CLI / HTTP / sidecar) relied on subtle hook timing through `TurnHub` / inline `onAgentEvent`. The hook contract on `TurnController` matches the defunct `TurnHub.runExclusive` byte-for-byte (hook installed before `run()`, cleared in `finally`), so single-session callers are observably identical. New surface tests cover the cross-session and same-session-FIFO behaviour: [src/http/openai-chat-completions.test.ts](src/http/openai-chat-completions.test.ts), [src/sidecar/send-message-concurrency.test.ts](src/sidecar/send-message-concurrency.test.ts), [src/memory/reflection/reflection-runner.test.ts](src/memory/reflection/reflection-runner.test.ts).
+
+## Durable tasks
+
+A minimal durable queue of deferred `runTurn` submissions lives in [src/tasks/](src/tasks/). It is the **persistence layer** for any future scheduler / cron / agent-driven self-scheduling — but it ships **without** a background ticker on purpose: drains are always triggered explicitly (CLI `atomic-agent task run`, HTTP `POST /api/tasks/drain`) or implicitly right after `create()` when `tasks.runOnCreate=true` (the default).
+
+A task is exactly one record:
+
+```ts
+TaskRecord = {
+  id, sessionId, userMessage, maxSteps,
+  status: "pending" | "running" | "completed" | "failed" | "blocked" | "cancelled",
+  origin: "cli" | "tui" | "http" | "sidecar" | "scheduler",
+  attempts, maxAttempts, lastError, lastErrorCategory,
+  createdAt, updatedAt, startedAt, completedAt,
+}
+```
+
+Stored in a separate SQLite file `<stateDir>/tasks.sqlite` (no cross-file FKs to `sessions.sqlite` — `sessionId` validity is checked at runtime by `TaskRunner` and a missing session marks the task `blocked` with `session_not_found`). Schema version `1`, idempotent migrations in [src/tasks/task-schema.ts](src/tasks/task-schema.ts).
+
+### Lifecycle
+
+```
+pending --(markRunning)--> running
+running --(success)--> completed
+running --(retryable, attempts < maxAttempts)--> pending   [retry loop]
+running --(retryable, attempts == maxAttempts)--> failed
+running --(grammar | tool failure)--> blocked              [permanent — same input, same wall]
+running --(cancelled signal)--> cancelled
+pending --(cancel())--> cancelled
+```
+
+Failure classification is delegated to `classifyFailure` from [src/llm/reliability/](src/llm/reliability/) (the LLM reliability policy below) so retry semantics never drift from the rest of the runtime.
+
+### Drain semantics
+
+`TaskRunner.drainPending(opts?)` is the one-shot drain primitive:
+
+1. Pull every `pending` task (optionally `?session=`).
+2. Group by `sessionId`.
+3. For each group: drain sequentially. Each call into `runtime.runTurn(..., { origin: "scheduler" })` enters `TurnController` per-session FIFO and serialises against any user turn that lands mid-drain.
+4. Across groups: `Promise.all` — different sessions drain in parallel, inheriting cross-session parallelism from the Concurrency contract above for free.
+
+Inter-attempt sleep on retry uses `nextDelayMs(attempts, { initialMs, maxMs })` from [src/tasks/task-backoff.ts](src/tasks/task-backoff.ts) (`min(initialMs * 2^attempt, maxMs)`). Sleep happens **between attempts**, never blocking the per-session lock for longer than necessary.
+
+### Locked invariants (pinned by tests)
+
+1. **Tasks always run via `runtime.runTurn(..., { origin: "scheduler" })`.** Never via `executeTurn` (which bypasses the controller). Per-session FIFO + cross-session parallelism are inherited from §"Concurrency contract".
+2. **Retries are turn-level only.** The same `userMessage` is replayed; partial-tool replay is out of scope. Step-level retries inside a single `runTurn` remain the LLM reliability layer's responsibility.
+3. **`TaskRunner` never holds a `SessionState` reference between attempts.** It always re-reads via `sessionStore.load(sessionId)` inside the next attempt — same pattern as the sidecar `send_message` callback.
+4. **`cancel(id)` is idempotent on terminal rows** — returns the existing record unchanged, so HTTP `DELETE` and CLI `cancel` are safe to retry.
+5. **Stale recovery is one-shot.** `taskStore.recoverStale(staleAfterMs)` runs exactly once on bootstrap; there is **no background sweeper**. Process crash between `markRunning` and the terminal write leaves a `running` row that the next bootstrap flips back to `pending`.
+6. **`tasks.enabled=false` ≠ `TaskStore` is absent.** The store is always constructed (it owns a SQLite handle that must be closed in `shutdown`), but `drainPending` is a no-op and HTTP routes return 404. Mirrors `memory.profile.enabled` from Memory fabric.
+
+### Surfaces
+
+| Surface | Path | Notes |
+|---|---|---|
+| HTTP | `POST/GET /api/tasks`, `GET/DELETE /api/tasks/:id`, `POST /api/tasks/:id/run`, `POST /api/tasks/drain` | [src/http/route-tasks.ts](src/http/route-tasks.ts). Returns 404 for every route when `tasks.enabled=false`. |
+| CLI | `atomic-agent task list \| show \| create \| cancel \| run` | [src/cli/task-command.ts](src/cli/task-command.ts). All subcommands except `run` open `TaskStore` directly and exit fast; `run` boots the full `createAgentRuntime` and tears it down on the way out. |
+| Telemetry | `agent.tasks.{created,started,completed,failed,blocked,cancelled,retried}` counters + `agent.tasks.{attempts,duration_ms}` histograms | Emitted from `TaskRunner` at status transitions. |
+
+### Configuration
+
+All under `tasks.*` in [src/config/config-schema.ts](src/config/config-schema.ts) — env-only (operational tuning, not user config file material):
+
+- `tasks.enabled` (default `true`) — master switch.
+- `tasks.maxAttempts` (default `3`) — retry budget per task.
+- `tasks.backoffInitialMs` (default `1000`) / `tasks.backoffMaxMs` (default `60000`) — exponential capped backoff.
+- `tasks.runOnCreate` (default `true`) — auto-drain immediately after `create()`. Detached, fire-and-forget.
+- `tasks.staleAfterMs` (default `300000`) — `recoverStale` threshold.
+- `paths.tasksDbFile` — resolved to `<stateDir>/tasks.sqlite`.
+
+### Out of scope (deferred)
+
+Background ticker / cron, `scheduledFor` timestamps, agent-side `tasks.*` tools (self-scheduling), task graphs / dependencies, workflow primitives (`kind != "runTurn"`), secret redaction in `userMessage` / `lastError`, per-origin priorities. The first of these (background scheduler) is the next obvious step and is the use case this module was sized to consume — see ARCHITECTURE.md §10.
 
 ## LLM reliability policy
 

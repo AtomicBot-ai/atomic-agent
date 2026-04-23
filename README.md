@@ -204,6 +204,21 @@ atomic-agent trace replay <sessionId>          # detect stable-prefix drift
 
 Treat trace files as sensitive: secret redaction is not applied yet. Tune retention via `telemetry.trace.maxBytesPerSession` (default 10 MiB) and `telemetry.trace.dir`.
 
+### Durable tasks
+
+`atomic-agent task` manages a small durable queue of deferred `runTurn` submissions in `<stateDir>/tasks.sqlite`. Tasks never run on a background ticker — drains are explicit (this CLI / the HTTP `POST /api/tasks/drain`) or implicit on `create()` when `tasks.runOnCreate=true` (default). Retries with exponential backoff (`tasks.maxAttempts`, `tasks.backoffInitialMs`, `tasks.backoffMaxMs`) classify failures via the same taxonomy as the agent loop — `transport`/`model` retry, `grammar`/`tool` go straight to `blocked`.
+
+```bash
+atomic-agent task list --status pending
+atomic-agent task show <taskId>
+atomic-agent task create --session <sessionId> --message "tidy inbox" [--max-attempts 3]
+atomic-agent task cancel <taskId>
+atomic-agent task run <taskId>                  # one attempt
+atomic-agent task run --all-pending [--session <sessionId>]   # manual drain
+```
+
+The same surface is exposed over HTTP: `POST/GET /api/tasks`, `GET/DELETE /api/tasks/:id`, `POST /api/tasks/:id/run`, `POST /api/tasks/drain`. All endpoints return 404 when `tasks.enabled=false`.
+
 ---
 
 ## HTTP API

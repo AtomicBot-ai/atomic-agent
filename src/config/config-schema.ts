@@ -35,6 +35,14 @@ export interface AtomicAgentConfig {
     stateDir: string;
     sessionsDbFile: string;
     memoryDbFile: string;
+    /**
+     * SQLite file backing the durable task queue. Kept separate from
+     * `sessionsDbFile` and `memoryDbFile` because tasks have a
+     * different lifecycle than sessions and a different access pattern
+     * than the memory fabric. Cross-file FKs are not used; `session_id`
+     * validity is checked at runtime by `TaskRunner`.
+     */
+    tasksDbFile: string;
     tracesDir: string;
     grammarsDir: string;
     browserProfileDir: string;
@@ -98,6 +106,36 @@ export interface AtomicAgentConfig {
       /** Hard cap on a single session's trace file before writes stop. */
       maxBytesPerSession: number;
     };
+  };
+  /**
+   * Durable task queue. All values are env-only operational tuning —
+   * not part of the user config file because the queue is an
+   * infrastructure detail, not a user-facing knob. When `enabled` is
+   * `false`, `TaskStore` is still constructed (it owns the SQLite
+   * connection) but `TaskRunner.drainPending` becomes a no-op and
+   * the HTTP / CLI surfaces refuse to dispatch.
+   */
+  tasks: {
+    enabled: boolean;
+    /** Hard upper bound on `attempts` per task. */
+    maxAttempts: number;
+    /** Base delay between retries; doubled on each subsequent attempt. */
+    backoffInitialMs: number;
+    /** Cap for the exponential backoff curve. */
+    backoffMaxMs: number;
+    /**
+     * When `true`, `TaskStore.create` triggers an immediate `drainPending`
+     * for the new task's session. Disabling this turns the create
+     * surface into a pure persistence operation; the operator must then
+     * trigger the drain explicitly via CLI / HTTP.
+     */
+    runOnCreate: boolean;
+    /**
+     * Tasks left in `running` longer than this on bootstrap are
+     * recovered to `pending` so the next drain picks them up. Guards
+     * against orphan rows after process crashes.
+     */
+    staleAfterMs: number;
   };
   /**
    * Cross-session memory fabric. The profile store is a durable SQLite
@@ -353,6 +391,12 @@ export const ENV_DEFAULTS = {
   SKILLS_CATALOG_BUDGET: 512,
   PROJECT_SKILLS_DIR: ".atomic-agent/skills",
   USER_CONFIG_FILE_NAME: "config.json",
+  TASKS_ENABLED: true,
+  TASKS_MAX_ATTEMPTS: 3,
+  TASKS_BACKOFF_INITIAL_MS: 1_000,
+  TASKS_BACKOFF_MAX_MS: 60_000,
+  TASKS_RUN_ON_CREATE: true,
+  TASKS_STALE_AFTER_MS: 5 * 60 * 1_000,
 };
 
 export class ConfigValidationError extends Error {

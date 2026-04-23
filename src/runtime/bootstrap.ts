@@ -65,6 +65,8 @@ import {
   type SessionState,
 } from "../session/index.js";
 
+import { TaskRunner, TaskStore } from "../tasks/index.js";
+
 import { StructuredLogger } from "../telemetry/structured-logger.js";
 import type { LogSink } from "../telemetry/structured-logger.js";
 import { MetricsCollector } from "../telemetry/metrics-collector.js";
@@ -172,6 +174,15 @@ export interface AgentRuntime {
    * `shutdown()`.
    */
   readonly notesStore: MemoryStore;
+  /**
+   * Durable task queue. Always present, even when `tasks.enabled` is
+   * false, because the store owns its SQLite connection and must be
+   * disposed through `shutdown()`. Callers should respect the config
+   * flag (or the runner — `TaskRunner.drainPending` is a no-op when
+   * disabled) before submitting work.
+   */
+  readonly taskStore: TaskStore;
+  readonly taskRunner: TaskRunner;
   readonly capabilities: CapabilitiesSummary;
   readonly skillCatalog: readonly SkillCatalogEntry[];
   readonly toolDescriptors: readonly ToolDescriptor[];
@@ -432,6 +443,14 @@ export async function createAgentRuntime(
             }));
 
   const sessionStore = new SessionStore();
+  const taskStore = new TaskStore({ dbFile: config.paths.tasksDbFile });
+  const recoveredStale = taskStore.recoverStale(config.tasks.staleAfterMs);
+  if (recoveredStale > 0) {
+    logger.info("recovered stale running tasks on bootstrap", {
+      count: recoveredStale,
+      thresholdMs: config.tasks.staleAfterMs,
+    });
+  }
 
   const reflectionRunner = buildReflectionRunner({
     config,
@@ -538,6 +557,11 @@ export async function createAgentRuntime(
     } catch {
       // already closed
     }
+    try {
+      taskStore.close();
+    } catch {
+      // already closed
+    }
   };
 
   const refreshSkills = async (): Promise<void> => {
@@ -612,6 +636,21 @@ export async function createAgentRuntime(
     return turnController.enqueue(submission);
   };
 
+  const taskRunner = new TaskRunner({
+    store: taskStore,
+    runtime: { runTurn },
+    sessionLoader: sessionStore,
+    defaultMaxSteps: config.agent.maxSteps,
+    backoff: {
+      initialMs: config.tasks.backoffInitialMs,
+      maxMs: config.tasks.backoffMaxMs,
+    },
+    enabled: config.tasks.enabled,
+    runOnCreate: config.tasks.runOnCreate,
+    logger,
+    metrics,
+  });
+
   const runtime = {
     config,
     loop,
@@ -623,6 +662,8 @@ export async function createAgentRuntime(
     turnController,
     profileStore,
     notesStore,
+    taskStore,
+    taskRunner,
     capabilities,
     toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
     grammar,

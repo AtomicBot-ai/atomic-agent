@@ -24,6 +24,14 @@ import {
   createApprovalEventsHandler,
   createResolveApprovalHandler,
 } from "./route-approval.js";
+import {
+  createCancelTaskHandler,
+  createCreateTaskHandler,
+  createDrainTasksHandler,
+  createGetTaskHandler,
+  createListTasksHandler,
+  createRunTaskHandler,
+} from "./route-tasks.js";
 
 /**
  * Build the full atomic-agent HTTP route table. All handlers are
@@ -54,5 +62,11 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "DELETE", path: "/api/sessions/{id}", handler: createDeleteSessionHandler() },
     { method: "POST", path: "/api/approval/resolve", handler: createResolveApprovalHandler() },
     { method: "GET", path: "/api/events", handler: createApprovalEventsHandler() },
+    { method: "POST", path: "/api/tasks", handler: createCreateTaskHandler() },
+    { method: "GET", path: "/api/tasks", handler: createListTasksHandler() },
+    { method: "GET", path: "/api/tasks/{id}", handler: createGetTaskHandler() },
+    { method: "DELETE", path: "/api/tasks/{id}", handler: createCancelTaskHandler() },
+    { method: "POST", path: "/api/tasks/{id}/run", handler: createRunTaskHandler() },
+    { method: "POST", path: "/api/tasks/drain", handler: createDrainTasksHandler() },
   ];
 }

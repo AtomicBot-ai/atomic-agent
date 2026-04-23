@@ -6,6 +6,7 @@ import { skillCommand } from "./skill.js";
 import { configCommand } from "./config-command.js";
 import { serveCommand } from "./serve-command.js";
 import { traceCommand } from "./trace-command.js";
+import { taskCommand } from "./task-command.js";
 import { tuiCommand } from "../tui/index.js";
 
 interface CommandDescriptor {
@@ -49,6 +50,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "trace",
     summary: "Inspect append-only session traces (list|show|export)",
     run: traceCommand,
+  },
+  {
+    name: "task",
+    summary: "Manage durable tasks (list|show|create|cancel|run)",
+    run: taskCommand,
   },
 ];
 
