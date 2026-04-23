@@ -18,6 +18,11 @@ export {
   QWEN_THINK_PROFILE,
 } from "./model-profile.js";
 export type { ModelProfile, ReasoningStyle } from "./model-profile.js";
+export { ModelProfileManager } from "./model-profile-manager.js";
+export type {
+  ModelProfileManagerOptions,
+  ModelProfileRefreshResult,
+} from "./model-profile-manager.js";
 export {
   buildGrammar,
   loadToolCallGrammar,

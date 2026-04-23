@@ -12,6 +12,7 @@ import type {
 import {
   buildGrammar,
   detectModelProfile,
+  ModelProfileManager,
   PLAIN_INSTRUCT_PROFILE,
 } from "../llm/index.js";
 import { checkProfileGrammarAligned } from "../llm/profile-invariants.js";
@@ -234,7 +235,12 @@ export async function createAgentRuntime(
 
   const llama = new LlamaServerClient();
   const slotManager = new SlotManager();
-  const profile = await resolveModelProfile(options.overrides, llama, logger, config.llama.url);
+  const { profile, modelAlias } = await resolveModelProfile(
+    options.overrides,
+    llama,
+    logger,
+    config.llama.url,
+  );
 
   const browserBackend: BrowserBackend =
     options.overrides?.browserBackend ??
@@ -291,6 +297,21 @@ export async function createAgentRuntime(
     });
   }
 
+  // Install a hot-swap manager only when the runtime is bound to a real
+  // llama-server. Tests that inject `llamaComplete` or `llamaProps*`
+  // stub out the HTTP layer and must keep the static profile/grammar
+  // pair they already configured.
+  const profileManager = shouldInstallProfileManager(options.overrides)
+    ? new ModelProfileManager({
+        llama,
+        initialProfile: profile,
+        initialGrammar: grammar,
+        initialModelId: modelAlias,
+        grammarsDir: config.paths.grammarsDir,
+        logger,
+      })
+    : undefined;
+
   const llmComplete =
     options.overrides?.llamaComplete ??
     (async (params) => {
@@ -335,6 +356,7 @@ export async function createAgentRuntime(
     toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
     capabilities,
     profile,
+    ...(profileManager ? { profileManager } : {}),
     ...(config.memory.profile.enabled
       ? { profileFactsProvider: () => profileStore.list() }
       : {}),
@@ -456,24 +478,30 @@ export async function createAgentRuntime(
   return runtime;
 }
 
+interface ResolvedModelProfile {
+  profile: ReturnType<typeof detectModelProfile>;
+  /** `/props.model_alias` verbatim, or `null` on fallback / probe miss. */
+  modelAlias: string | null;
+}
+
 async function resolveModelProfile(
   overrides: CreateAgentRuntimeOptions["overrides"] | undefined,
   llama: LlamaServerClient,
   logger: StructuredLogger,
   llamaUrl: string,
-) {
+): Promise<ResolvedModelProfile> {
   if (overrides?.llamaPropsError) {
     logger.warn("model profile probe failed; using plain fallback", {
       error: overrides.llamaPropsError.message,
       url: llamaUrl,
     });
-    return PLAIN_INSTRUCT_PROFILE;
+    return { profile: PLAIN_INSTRUCT_PROFILE, modelAlias: null };
   }
   if (overrides?.llamaProps) {
     return logResolvedProfile(overrides.llamaProps, logger);
   }
   if (overrides?.llamaComplete || overrides?.skipLlamaHealthCheck) {
-    return PLAIN_INSTRUCT_PROFILE;
+    return { profile: PLAIN_INSTRUCT_PROFILE, modelAlias: null };
   }
   try {
     const props = await llama.fetchProps();
@@ -483,21 +511,40 @@ async function resolveModelProfile(
       error: error instanceof Error ? error.message : String(error),
       url: llamaUrl,
     });
-    return PLAIN_INSTRUCT_PROFILE;
+    return { profile: PLAIN_INSTRUCT_PROFILE, modelAlias: null };
   }
 }
 
 function logResolvedProfile(
   props: Record<string, unknown>,
   logger: StructuredLogger,
-) {
+): ResolvedModelProfile {
   const resolved = detectModelProfile(props);
+  const alias = typeof props.model_alias === "string" ? props.model_alias : null;
   logger.info("model profile resolved", {
     id: resolved.id,
-    alias: typeof props.model_alias === "string" ? props.model_alias : null,
+    alias,
     contextWindow: resolved.contextWindow ?? null,
   });
-  return resolved;
+  return { profile: resolved, modelAlias: alias };
+}
+
+/**
+ * Only wire the hot-swap manager when the runtime actually talks to a
+ * real llama-server. Any test override that replaces the HTTP layer
+ * (fake completions, pre-canned `/props`, or an explicit probe-failure
+ * simulation) keeps the legacy static-profile wiring so existing fakes
+ * do not need to stand up a fresh `fetchProps` stub.
+ */
+function shouldInstallProfileManager(
+  overrides: CreateAgentRuntimeOptions["overrides"] | undefined,
+): boolean {
+  if (!overrides) return true;
+  if (overrides.llamaComplete) return false;
+  if (overrides.llamaProps) return false;
+  if (overrides.llamaPropsError) return false;
+  if (overrides.skipLlamaHealthCheck) return false;
+  return true;
 }
 
 /**

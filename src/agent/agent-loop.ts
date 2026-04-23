@@ -7,6 +7,7 @@ import {
   PLAIN_INSTRUCT_PROFILE,
   type ModelProfile,
 } from "../llm/model-profile.js";
+import type { ModelProfileManager } from "../llm/model-profile-manager.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import {
   CancelledError,
@@ -62,6 +63,16 @@ export interface AgentLoopDependencies {
   capabilities: CapabilitiesSummary;
   /** Model-specific reasoning behaviour derived from llama-server /props. */
   profile?: ModelProfile;
+  /**
+   * Optional hot-swap supervisor. When provided, the loop re-probes
+   * `/props` at the start of every turn and inspects the `modelId` of
+   * each completion; if the operator swaps the model behind
+   * `llama-server`, the profile and grammar are refreshed before the
+   * next step so the prompt no longer drifts out of template. When
+   * absent, the static `profile`/`grammar` deps above are used verbatim
+   * for the lifetime of the loop (test-mode wiring).
+   */
+  profileManager?: ModelProfileManager;
   /** Skill catalog (name + description only), rebuilt on install/uninstall. */
   skillCatalog: readonly SkillCatalogEntry[];
   /**
@@ -169,6 +180,14 @@ export class AgentLoop {
     this.deps.onEvent?.({ type: "turn_started", turnIndex });
     const turnStartedAt = Date.now();
 
+    // Proactively sync with the live `llama-server` before the first
+    // step. Catches the case where the operator swapped the model
+    // between turns — without this, step 0 would still build the prompt
+    // with the previous model's template.
+    if (this.deps.profileManager) {
+      await this.deps.profileManager.refresh();
+    }
+
     let reason: AgentLoopReason = "max_steps";
     let stepsTaken = 0;
     let runError: Error | null = null;
@@ -185,12 +204,24 @@ export class AgentLoop {
         reason = "cancelled";
         break;
       }
+      // Reactive refresh between steps: if the previous completion
+      // observed a foreign `modelId`, rebuild profile + grammar so the
+      // next prompt matches what `llama-server` is actually serving.
+      if (this.deps.profileManager) {
+        await this.deps.profileManager.refreshIfStale();
+      }
       this.deps.onEvent?.({ type: "step_started", stepIndex: i });
       const started = Date.now();
       const noticeForThisStep = pendingNotice;
       pendingNotice = undefined;
       try {
         const profileFacts = this.deps.profileFactsProvider?.();
+        const activeProfile =
+          this.deps.profileManager?.getProfile() ??
+          this.deps.profile ??
+          PLAIN_INSTRUCT_PROFILE;
+        const activeGrammar =
+          this.deps.profileManager?.getGrammar() ?? this.deps.grammar;
         const outcome = await executeStep(
           {
             session: state,
@@ -207,11 +238,19 @@ export class AgentLoop {
           {
             registry: this.deps.registry,
             slotManager: this.deps.slotManager,
-            grammar: this.deps.grammar,
-            profile: this.deps.profile ?? PLAIN_INSTRUCT_PROFILE,
+            grammar: activeGrammar,
+            profile: activeProfile,
             llmComplete: this.deps.llmComplete,
             ...(this.deps.llmCompleteStream
               ? { llmCompleteStream: this.deps.llmCompleteStream }
+              : {}),
+            ...(this.deps.profileManager
+              ? {
+                  onCompletion: (completion: CompletionResult) =>
+                    this.deps.profileManager?.observeCompletionModelId(
+                      completion.modelId,
+                    ),
+                }
               : {}),
             onEvent: (event) =>
               this.deps.onEvent?.({ type: "llm_event", event }),

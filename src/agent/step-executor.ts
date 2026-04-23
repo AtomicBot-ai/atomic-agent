@@ -79,6 +79,12 @@ export interface StepDependencies {
   llmCompleteStream?: LlmCompleteStream;
   grammar: string;
   profile: ModelProfile;
+  /**
+   * Invoked after every LLM completion (initial call and one-shot parse
+   * retry alike). Used by the agent loop to feed the served `modelId`
+   * into the profile manager so mid-turn model swaps can be detected.
+   */
+  onCompletion?: (completion: CompletionResult) => void;
   onEvent?: (event: StepEvent) => void;
   metrics?: AgentMetrics;
   logger?: StructuredLogger;
@@ -269,6 +275,7 @@ async function executeStepInner(
     const retryStartedAt = Date.now();
     completion = await deps.llmComplete(llmParams);
     const retryDurationMs = Date.now() - retryStartedAt;
+    deps.onCompletion?.(completion);
     deps.onEvent?.({ type: "llm_completed", completion });
     deps.onEvent?.({
       type: "llm_raw_completion",
@@ -431,6 +438,7 @@ async function runInitialCompletion(
       )
     : await deps.llmComplete(llmParams);
   const durationMs = Date.now() - startedAt;
+  deps.onCompletion?.(completion);
   deps.onEvent?.({ type: "llm_completed", completion });
   deps.onEvent?.({
     type: "llm_raw_completion",

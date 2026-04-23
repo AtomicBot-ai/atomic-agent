@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,14 +6,30 @@ import { AgentLoop } from "./agent-loop.js";
 import { buildDefaultToolRegistry } from "../tools/index.js";
 import { SlotManager } from "../llm/slot-manager.js";
 import { createEmptySessionState } from "../session/session-state.js";
-import type { CompletionResult } from "../llm/llama-server-client.js";
+import type {
+  CompletionResult,
+  LlamaServerClient,
+} from "../llm/llama-server-client.js";
+import { ModelProfileManager } from "../llm/model-profile-manager.js";
+import {
+  GEMMA4_PROPS,
+  QWEN3_PROPS,
+} from "../llm/model-profile.fixtures.js";
+import {
+  GEMMA4_THINK_PROFILE,
+  QWEN_THINK_PROFILE,
+} from "../llm/model-profile.js";
+import { buildGrammar } from "../llm/grammar/build-grammar.js";
 import type {
   CapabilitiesSummary,
   SkillCatalogEntry,
   ToolDescriptor,
 } from "../prompt/stable-prefix.js";
 
-function makeCompletion(content: string): CompletionResult {
+function makeCompletion(
+  content: string,
+  modelId: string = "mock",
+): CompletionResult {
   return {
     content,
     reasoningContent: "",
@@ -22,7 +38,7 @@ function makeCompletion(content: string): CompletionResult {
     timing: { promptMs: 1, predictedMs: 1, promptTokens: 10, predictedTokens: 5 },
     cacheHitTokens: 0,
     slotId: 0,
-    modelId: "mock",
+    modelId,
   };
 }
 
@@ -715,5 +731,147 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     ).rejects.toThrow(/does_not_exist/);
     expect(stepErrors[0]?.category).toBe("tool");
     expect(stepErrors[0]?.message).toMatch(/does_not_exist/);
+  });
+
+  it("refreshes profile at turn start when the operator hot-swaps the llama-server model", async () => {
+    const registry = buildDefaultToolRegistry();
+    const qwenGrammar = await buildGrammar(QWEN_THINK_PROFILE);
+    const gemmaGrammar = await buildGrammar(GEMMA4_THINK_PROFILE);
+
+    // The agent starts pointed at Qwen, but by the time this turn kicks
+    // off the operator has swapped the loaded model to Gemma. The
+    // turn-start `/props` probe must pick that up before step 0 builds
+    // its prompt.
+    const fetchProps = vi.fn<[], Promise<Record<string, unknown>>>();
+    fetchProps.mockResolvedValue(GEMMA4_PROPS);
+    const fakeLlama = { fetchProps } as unknown as LlamaServerClient;
+
+    const profileManager = new ModelProfileManager({
+      llama: fakeLlama,
+      initialProfile: QWEN_THINK_PROFILE,
+      initialGrammar: qwenGrammar,
+      initialModelId: "qwen3-30b-a3b-instruct-2507",
+    });
+
+    // Pre-close both reasoning channels so the completion parses
+    // regardless of whether Qwen or Gemma tags are active when the step
+    // runs — the assertion that matters is the manager state after the
+    // turn completes.
+    const toolCall = (name: string, args: Record<string, unknown>) =>
+      `</think><channel|>${JSON.stringify({ tool: name, args })}`;
+
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: qwenGrammar,
+      profile: QWEN_THINK_PROFILE,
+      profileManager,
+      llmComplete: async () =>
+        makeCompletion(
+          toolCall("finish", { summary: "done" }),
+          "gemma-4-it",
+        ),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+
+    const session = createEmptySessionState({ id: "s-hotswap", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "go",
+      maxSteps: 2,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.reason).toBe("finish");
+    expect(fetchProps).toHaveBeenCalled();
+    expect(profileManager.getProfile().id).toBe("gemma4-think");
+    expect(profileManager.getGrammar()).toBe(gemmaGrammar);
+    expect(profileManager.getModelId()).toBe("gemma-4-it");
+  });
+
+  it("refreshes profile between steps when a completion reports a foreign modelId mid-turn", async () => {
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: "noop",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    const qwenGrammar = await buildGrammar(QWEN_THINK_PROFILE);
+    const gemmaGrammar = await buildGrammar(GEMMA4_THINK_PROFILE);
+
+    // Turn-start probe still sees the original Qwen model — the swap
+    // happens only between step 0 and step 1.
+    const fetchProps = vi.fn<[], Promise<Record<string, unknown>>>();
+    fetchProps.mockResolvedValueOnce(QWEN3_PROPS);
+    fetchProps.mockResolvedValue(GEMMA4_PROPS);
+    const fakeLlama = { fetchProps } as unknown as LlamaServerClient;
+
+    const profileManager = new ModelProfileManager({
+      llama: fakeLlama,
+      initialProfile: QWEN_THINK_PROFILE,
+      initialGrammar: qwenGrammar,
+      initialModelId: "qwen3-30b-a3b-instruct-2507",
+    });
+
+    const toolCall = (name: string, args: Record<string, unknown>) =>
+      `</think><channel|>${JSON.stringify({ tool: name, args })}`;
+
+    const completions: CompletionResult[] = [
+      // Step 0: served by Qwen still (modelId matches baseline).
+      makeCompletion(
+        toolCall("noop", {}),
+        "qwen3-30b-a3b-instruct-2507",
+      ),
+      // Step 1: server has been hot-swapped to Gemma. Reactive refresh
+      // must pick it up before step 2 starts.
+      makeCompletion(
+        toolCall("noop", {}),
+        "gemma-4-it",
+      ),
+      // Step 2: close the turn so the loop doesn't stall.
+      makeCompletion(
+        toolCall("finish", { summary: "ok" }),
+        "gemma-4-it",
+      ),
+    ];
+    let callIndex = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: qwenGrammar,
+      profile: QWEN_THINK_PROFILE,
+      profileManager,
+      llmComplete: async () => completions[callIndex++]!,
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+
+    const session = createEmptySessionState({
+      id: "s-hotswap-mid",
+      workingDir,
+    });
+    const result = await loop.runTurn(session, {
+      userMessage: "go",
+      maxSteps: 4,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.reason).toBe("finish");
+    // Turn-start probe + reactive probe after the Gemma completion.
+    expect(fetchProps).toHaveBeenCalledTimes(2);
+    expect(profileManager.getProfile().id).toBe("gemma4-think");
+    expect(profileManager.getGrammar()).toBe(gemmaGrammar);
+    expect(profileManager.getModelId()).toBe("gemma-4-it");
   });
 });
