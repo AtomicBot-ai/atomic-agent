@@ -72,6 +72,12 @@ describe("configCommand", () => {
       memory: {
         profile: { enabled: true, maxTokens: 512 },
         reflection: { enabled: true, timeoutMs: 10_000, maxFactsPerCall: 3 },
+        notes: {
+          enabled: true,
+          maxEntries: 1_000,
+          maxContentChars: 4_000,
+          recallDefaultK: 5,
+        },
       },
     };
     const code = await configCommand(["set", JSON.stringify(payload)]);

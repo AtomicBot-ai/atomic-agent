@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, test, expect } from "vitest";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { loadEvalEnvFile } from "./harness/load-env.js";
 import { EVAL_CASES } from "./cases/index.js";
 import { runCase } from "./harness/run-case.js";
 import { startMockHttp, type MockHttpHandle } from "./harness/start-mock-http.js";
@@ -31,6 +32,10 @@ let mockHttp: MockHttpHandle | null = null;
 let judge: JudgeClient | null = null;
 
 beforeAll(async () => {
+  // Loaded here (not at import time) because all env-driven code paths
+  // read `process.env` at call-time, not at module-load. Putting it in
+  // `beforeAll` keeps the side-effect explicit and testable.
+  loadEvalEnvFile();
   mockHttp = await startMockHttp();
   const judgeConfig = loadJudgeConfigFromEnv();
   judge = judgeConfig ? createJudgeClient(judgeConfig) : null;

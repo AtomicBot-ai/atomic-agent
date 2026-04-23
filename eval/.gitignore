@@ -1,2 +1,4 @@
 reports/
 !reports/.gitkeep
+.env
+!.env.example

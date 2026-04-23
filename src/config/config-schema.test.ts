@@ -40,9 +40,54 @@ describe("parseUserConfigFile", () => {
   });
 
   it("rejects unsupported version", () => {
-    expect(() => parseUserConfigFile({ version: 2 })).toThrow(
+    expect(() => parseUserConfigFile({ version: 99 })).toThrow(
       ConfigValidationError,
     );
+  });
+
+  it("accepts legacy v1 input and upgrades it to the current version", () => {
+    const parsed = parseUserConfigFile({ version: 1 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.memory.notes.enabled).toBe(
+      USER_CONFIG_DEFAULTS.memory.notes.enabled,
+    );
+    expect(parsed.memory.notes.maxEntries).toBe(
+      USER_CONFIG_DEFAULTS.memory.notes.maxEntries,
+    );
+  });
+
+  it("applies memory.notes defaults when the section is absent", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.memory.notes).toEqual(USER_CONFIG_DEFAULTS.memory.notes);
+  });
+
+  it("accepts user-supplied memory.notes overrides", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      memory: {
+        notes: {
+          enabled: false,
+          maxEntries: 50,
+          maxContentChars: 1_000,
+          recallDefaultK: 3,
+        },
+      },
+    });
+    expect(parsed.memory.notes).toEqual({
+      enabled: false,
+      maxEntries: 50,
+      maxContentChars: 1_000,
+      recallDefaultK: 3,
+    });
+  });
+
+  it("rejects non-positive memory.notes.maxEntries", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { notes: { maxEntries: 0 } },
+      }),
+    ).toThrow(/memory.notes.maxEntries/);
   });
 
   it("rejects invalid log level", () => {

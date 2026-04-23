@@ -17,6 +17,7 @@ import {
   type TempWorkspace,
 } from "./temp-workspace.js";
 import { installEvalSkills } from "./install-eval-skills.js";
+import { seedStateDirConfig } from "./seed-state-config.js";
 import type { JudgeClient } from "./judge-types.js";
 
 export interface RunCaseDependencies {
@@ -62,6 +63,7 @@ export async function runCase(
 
   const workspace: TempWorkspace = createTempWorkspace(spec.id);
   try {
+    seedStateDirConfig(workspace.stateDir);
     installEvalSkills(workspace.stateDir);
     if (spec.setup) {
       await spec.setup({

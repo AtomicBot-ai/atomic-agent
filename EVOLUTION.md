@@ -117,6 +117,18 @@ Main risk (as expected):
 
 - scope creep — kept contained by freezing the design at the single-profile layer with async reflection and resisting the urge to add retrieval / topic / TTL layers before real usage demands them
 
+### Option 2a: FTS5 notes memory [shipped]
+
+Additive layer on top of Option 2. Inspired by the ZeroClaw hybrid-memory trait, stripped to a deterministic keyword-only slice:
+
+- **`memories` table + `memories_fts` virtual table** in the same `<stateDir>/memory.sqlite` file that owns `profile_facts`. Bumps `MEMORY_SCHEMA_VERSION` from 1 to 2; migration is idempotent, downgrade-guarded.
+- **`MemoryStore`** (new) — freeform content, BM25 ranking via FTS5 (`porter unicode61` tokenizer), hard-cap eviction by `updated_at`. Shares the SQLite connection pattern and `better-sqlite3` discipline with `ProfileStore`.
+- **Three new agent tools**: `memory.notes.store`, `memory.notes.recall`, `memory.notes.forget`. Write and read are both explicit LLM actions — the notes corpus is NEVER rendered into the prompt and therefore never invalidates the KV-cached stable prefix. `scope` defaults to `"all"` (cross-project); the caller passes `scope: "project"` to narrow to the current `workingDir`.
+- **No changes** to `build-prompt.ts`, `step-executor.ts`, or the reflection runner — reflection still writes only to `profile_facts`.
+- **Config keys**: `memory.notes.{enabled,maxEntries,maxContentChars,recallDefaultK}`. `USER_CONFIG_VERSION` bumped to 2 with transparent v1→v2 migration (existing configs load with defaults injected).
+
+What M2 (Option 2b) would add on top: embeddings for semantic recall, an importance score / decay curve, and a two-stage FTS5+vector ranking pipeline. Parked until real notes usage justifies the extra operational surface (second llama-server with `--embedding`, `sqlite-vec`, reciprocal-rank fusion).
+
 ## Option 3: LLM reliability policy [done: 2026-04-23]
 
 What it adds:

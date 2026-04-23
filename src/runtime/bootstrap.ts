@@ -32,6 +32,7 @@ import { registerOsTools } from "../tools/os/index.js";
 import { registerSkillTools } from "../tools/skill/index.js";
 import { registerMemoryTools } from "../tools/memory/index.js";
 
+import { MemoryStore } from "../memory/memory-store.js";
 import { ProfileStore } from "../memory/profile-store.js";
 import {
   createReflectionRunner,
@@ -149,6 +150,14 @@ export interface AgentRuntime {
    * file. Callers should respect the config flag before writing.
    */
   readonly profileStore: ProfileStore;
+  /**
+   * FTS5-backed freeform notes store. Present even when
+   * `memory.notes.enabled` is `false`, for the same reason as
+   * `profileStore`: the class owns a SQLite connection that shares a
+   * file with other memory layers and must be disposed through
+   * `shutdown()`.
+   */
+  readonly notesStore: MemoryStore;
   readonly capabilities: CapabilitiesSummary;
   readonly skillCatalog: readonly SkillCatalogEntry[];
   readonly toolDescriptors: readonly ToolDescriptor[];
@@ -239,13 +248,23 @@ export async function createAgentRuntime(
   }
 
   const llama = new LlamaServerClient();
-  const slotManager = new SlotManager();
-  const { profile, modelAlias } = await resolveModelProfile(
+  const { profile, modelAlias, totalSlots } = await resolveModelProfile(
     options.overrides,
     llama,
     logger,
     config.llama.url,
   );
+  const slotManager = new SlotManager(totalSlots ?? undefined);
+  if (totalSlots !== null) {
+    logger.info("slot manager configured from /props", {
+      totalSlots,
+      url: config.llama.url,
+    });
+  } else {
+    logger.info("slot manager using default slot count (probe miss)", {
+      slotCount: 4,
+    });
+  }
 
   const browserBackend: BrowserBackend =
     options.overrides?.browserBackend ??
@@ -271,6 +290,10 @@ export async function createAgentRuntime(
   });
 
   const profileStore = new ProfileStore({ dbFile: config.paths.memoryDbFile });
+  const notesStore = new MemoryStore({
+    dbFile: config.paths.memoryDbFile,
+    maxEntries: config.memory.notes.maxEntries,
+  });
 
   const toolRegistry = new ToolRegistry();
   toolRegistry.register(finishTool);
@@ -283,6 +306,10 @@ export async function createAgentRuntime(
   registerMemoryTools(toolRegistry, {
     profileStore,
     profileEnabled: config.memory.profile.enabled,
+    notesStore,
+    notesEnabled: config.memory.notes.enabled,
+    notesRecallDefaultK: config.memory.notes.recallDefaultK,
+    notesMaxContentChars: config.memory.notes.maxContentChars,
   });
 
   let skillCatalog: readonly SkillCatalogEntry[] = buildSkillCatalog(
@@ -415,6 +442,11 @@ export async function createAgentRuntime(
     } catch {
       // already closed
     }
+    try {
+      notesStore.close();
+    } catch {
+      // already closed
+    }
   };
 
   const refreshSkills = async (): Promise<void> => {
@@ -480,6 +512,7 @@ export async function createAgentRuntime(
     slotManager,
     sessionStore,
     profileStore,
+    notesStore,
     capabilities,
     toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
     grammar,
@@ -501,6 +534,13 @@ interface ResolvedModelProfile {
   profile: ReturnType<typeof detectModelProfile>;
   /** `/props.model_alias` verbatim, or `null` on fallback / probe miss. */
   modelAlias: string | null;
+  /**
+   * `/props.total_slots` when the probe succeeded. `null` means the probe
+   * was skipped or failed; the caller should fall back to the SlotManager
+   * default. Used to keep the in-process slot pool in sync with the server
+   * so `slot_id` values we send always exist physically.
+   */
+  totalSlots: number | null;
 }
 
 async function resolveModelProfile(
@@ -514,13 +554,21 @@ async function resolveModelProfile(
       error: overrides.llamaPropsError.message,
       url: llamaUrl,
     });
-    return { profile: PLAIN_INSTRUCT_PROFILE, modelAlias: null };
+    return {
+      profile: PLAIN_INSTRUCT_PROFILE,
+      modelAlias: null,
+      totalSlots: null,
+    };
   }
   if (overrides?.llamaProps) {
     return logResolvedProfile(overrides.llamaProps, logger);
   }
   if (overrides?.llamaComplete || overrides?.skipLlamaHealthCheck) {
-    return { profile: PLAIN_INSTRUCT_PROFILE, modelAlias: null };
+    return {
+      profile: PLAIN_INSTRUCT_PROFILE,
+      modelAlias: null,
+      totalSlots: null,
+    };
   }
   try {
     const props = await llama.fetchProps();
@@ -530,7 +578,11 @@ async function resolveModelProfile(
       error: error instanceof Error ? error.message : String(error),
       url: llamaUrl,
     });
-    return { profile: PLAIN_INSTRUCT_PROFILE, modelAlias: null };
+    return {
+      profile: PLAIN_INSTRUCT_PROFILE,
+      modelAlias: null,
+      totalSlots: null,
+    };
   }
 }
 
@@ -540,12 +592,28 @@ function logResolvedProfile(
 ): ResolvedModelProfile {
   const resolved = detectModelProfile(props);
   const alias = typeof props.model_alias === "string" ? props.model_alias : null;
+  const totalSlots = extractTotalSlots(props);
   logger.info("model profile resolved", {
     id: resolved.id,
     alias,
     contextWindow: resolved.contextWindow ?? null,
+    totalSlots,
   });
-  return { profile: resolved, modelAlias: alias };
+  return { profile: resolved, modelAlias: alias, totalSlots };
+}
+
+/**
+ * Extract `total_slots` from a `/props` payload. `llama-server` reports
+ * the number as an integer at the top level; anything else (missing,
+ * non-finite, non-positive) collapses to `null` so the caller falls back
+ * to the SlotManager default.
+ */
+function extractTotalSlots(props: Record<string, unknown>): number | null {
+  const raw = props.total_slots;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 1) {
+    return null;
+  }
+  return Math.trunc(raw);
 }
 
 /**

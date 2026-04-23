@@ -23,6 +23,7 @@ to run a model server before every commit.
 
 ```
 eval/
+  .env.example            template for eval-local env vars (copy → .env)
   cases/                  one .case.ts per scenario, plus index.ts
   fixtures/skills/        skill bodies copied into per-case stateDir
   harness/                runner, trace parser, mock HTTP, judge client
@@ -35,12 +36,32 @@ eval/
 
 ## Running
 
+One-time setup:
+
 ```bash
-# Make sure llama-server is reachable per <stateDir>/config.json.
+cp eval/.env.example eval/.env
+# edit eval/.env: set ATOMIC_AGENT_EVAL_LLAMA_URL + OPENROUTER_API_KEY
+```
+
+The harness loads `eval/.env` via Node's built-in `process.loadEnvFile`
+at the top of every run — no `dotenv` dependency. Variables already set
+in the shell win over the file (CI-friendly).
+
+Day-to-day:
+
+```bash
 npm run eval                # full suite (inline judge for `judge` expectations)
 npm run eval:judge          # re-score the latest JSONL with the configured judge
 npm run eval:lint           # tsc --noEmit over eval/
 ```
+
+### Why `ATOMIC_AGENT_EVAL_LLAMA_URL` matters
+
+Each case spawns the agent with a fresh temp `ATOMIC_AGENT_STATE_DIR`.
+Without `ATOMIC_AGENT_EVAL_LLAMA_URL` the agent falls back to the user
+config default (`http://127.0.0.1:8080`) and every case times out on
+the llama health-check (≈16s). Set this to the URL your llama-server
+actually listens on.
 
 Three report artefacts appear per run:
 

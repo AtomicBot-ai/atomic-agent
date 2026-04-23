@@ -267,6 +267,36 @@ export const DEFAULT_TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
     argsSchema: "{}",
   },
   {
+    name: "memory.notes.store",
+    summary:
+      "Persist a durable freeform note across sessions. MUST call when: (a) the user says remember/save/note/запомни/на будущее; (b) you derive a non-obvious fact from shell/fs/grep/git output (commit SHA, file path, config value, failing test name, fixed bug summary); (c) the user states a stable preference (style, tooling, language, constraint); (d) you finish a multi-step task — store the outcome + key decisions BEFORE reply. Notes are NOT auto-rendered into the prompt — retrieve them via memory.notes.recall.",
+    argsSchema:
+      '{"content": "string (<=4000 chars, self-contained; include enough context to be useful without the surrounding conversation)", "tags": "string[] (optional, 1-4 short kebab-case tags)"}',
+    examples: [
+      '{"content":"Prefer pnpm over npm in this repo; package-lock.json is .gitignored","tags":["prefs","tooling"]}',
+      '{"content":"Fixed flaky test auth/login.test.ts by mocking Date.now — see commit 8f2a1c9","tags":["bugfix","test"]}',
+      '{"content":"User timezone is Europe/Berlin; schedule all cron examples accordingly","tags":["user-prefs"]}',
+    ],
+  },
+  {
+    name: "memory.notes.recall",
+    summary:
+      "Search durable notes by keyword (BM25 over content). Call BEFORE answering when: (a) the user references past sessions (\"last time\", \"we decided\", \"the bug you fixed\"); (b) the user asks about their own preferences / project history / previously-seen files; (c) a task spans multiple turns and you need to check prior notes. Default scope='all' (cross-project); pass scope='project' to restrict to the current working directory.",
+    argsSchema:
+      '{"query": "string (2-6 keywords, not a full sentence)", "k": "number (optional, default 5)", "scope": "project|all (optional)", "tags": "string[] (optional, AND-filter)"}',
+    examples: [
+      '{"query":"pnpm tooling","k":3}',
+      '{"query":"flaky login test","scope":"project"}',
+      '{"query":"timezone preference"}',
+    ],
+  },
+  {
+    name: "memory.notes.forget",
+    summary:
+      "Delete a stored note by id returned from memory.notes.recall. Use only when the user explicitly asks to forget/delete, or when a prior note is confirmed obsolete.",
+    argsSchema: '{"id": "number"}',
+  },
+  {
     name: "reply",
     summary:
       "Send the FINAL natural-language answer to the user. Ends the current turn — the session stays open for the next user message. NEVER use `reply` to announce an action you are about to take (e.g. do NOT write 'I will now click X'); emit that action's tool call directly instead. Call only when the task is fully done, it is small-talk, or you need a clarifying question from the user. Keep `text` short: do not paste large file lists or raw tool dumps — summarize counts, show at most a handful of examples, and point to paths or prior tool output instead (long `text` can exceed the completion token budget and break JSON).",

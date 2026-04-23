@@ -60,6 +60,7 @@ See also: [ARCHITECTURE.md](ARCHITECTURE.md), [EVOLUTION.md](EVOLUTION.md), [SKI
 - **External LLM only** — points at an existing `llama-server`; no bundled inference.
 - **Multi-turn chat** — persistent session; agent chooses `reply` vs. tools each step; `finish` ends the session.
 - **Session-scoped memory** — persists conversation turns, compact known facts, loaded skill bodies, and the latest compressed browser world snapshot.
+- **Cross-session memory fabric** — durable user profile rendered into every prompt (`memory.profile.*`), async reflection runner, and an FTS5-backed notes store (`memory.notes.store` / `memory.notes.recall` / `memory.notes.forget`) that is read and written only through explicit agent tools and never touches the prompt on its own.
 - **Stable prompt prefix** + per-session `slot_id` for KV-cache reuse (`system` + tool catalog + capabilities + skill catalog).
 - **GBNF grammar-constrained** tool calls for reliable JSON on smaller models (7–9B class).
 - **Browser** — `playwright-core` over system Chrome/Edge, persistent profile; compact ARIA snapshot, `aria-ref=eN` targeting.
@@ -69,7 +70,7 @@ See also: [ARCHITECTURE.md](ARCHITECTURE.md), [EVOLUTION.md](EVOLUTION.md), [SKI
 - **NDJSON sidecar** — `send_message`, `assistant_reply`, `turn_started`, `turn_finished`, …
 - **Ship shape** — per-platform Node SEA binaries (darwin arm64/x64, linux x64, win x64).
 
-Current scope note: this repo does not yet ship a dedicated workspace-memory, retrieval, embeddings, or resource-summary subsystem. Memory is session-scoped, not a separate long-lived operator context layer.
+Current scope note: this repo does not yet ship a workspace / file-tree index, embeddings, or document-summary subsystem. Cross-session memory covers the user profile (auto-rendered) and agent-curated freeform notes (tool-accessed only, BM25 ranked via SQLite FTS5); file-tree retrieval remains session-scoped.
 
 ---
 

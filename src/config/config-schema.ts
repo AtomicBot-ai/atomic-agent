@@ -104,7 +104,10 @@ export interface AtomicAgentConfig {
    * key/value table rendered into the prompt tail on every turn. The
    * reflection layer runs at the end of every turn (fire-and-forget) to
    * distil durable facts out of the last exchange and write them back
-   * into the profile store.
+   * into the profile store. The notes store is a separate FTS5-backed
+   * table that the agent reads/writes explicitly via dedicated tools —
+   * it never touches the prompt on its own, so growing the notes corpus
+   * does not invalidate the KV-cached stable prefix.
    */
   memory: {
     profile: {
@@ -118,6 +121,15 @@ export interface AtomicAgentConfig {
       timeoutMs: number;
       /** Upper bound on profile facts written per reflection. */
       maxFactsPerCall: number;
+    };
+    notes: {
+      enabled: boolean;
+      /** Hard cap on stored memory rows. Oldest rows are evicted on overflow. */
+      maxEntries: number;
+      /** Per-call input ceiling for `memory.notes.store.content`. */
+      maxContentChars: number;
+      /** Default `k` when `memory.notes.recall` omits it. */
+      recallDefaultK: number;
     };
   };
 }
@@ -170,10 +182,24 @@ export interface UserConfigFile {
       timeoutMs: number;
       maxFactsPerCall: number;
     };
+    notes: {
+      enabled: boolean;
+      maxEntries: number;
+      maxContentChars: number;
+      recallDefaultK: number;
+    };
   };
 }
 
-export const USER_CONFIG_VERSION = 1 as const;
+export const USER_CONFIG_VERSION = 2 as const;
+
+/**
+ * Config versions that `parseUserConfigFile` still accepts on input.
+ * v1 files are silently upgraded to `USER_CONFIG_VERSION` in-memory;
+ * missing sub-keys fall back to `USER_CONFIG_DEFAULTS`. The upgraded
+ * shape is written back to disk on the next `config set` / `ensure`.
+ */
+const SUPPORTED_INPUT_VERSIONS: readonly number[] = [1, USER_CONFIG_VERSION];
 
 export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   version: USER_CONFIG_VERSION,
@@ -209,6 +235,12 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       enabled: true,
       timeoutMs: 10_000,
       maxFactsPerCall: 3,
+    },
+    notes: {
+      enabled: true,
+      maxEntries: 1_000,
+      maxContentChars: 4_000,
+      recallDefaultK: 5,
     },
   },
 };
@@ -368,10 +400,13 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   }
   const obj = raw as Record<string, unknown>;
   const version = obj.version ?? USER_CONFIG_VERSION;
-  if (version !== USER_CONFIG_VERSION) {
+  if (
+    typeof version !== "number" ||
+    !SUPPORTED_INPUT_VERSIONS.includes(version)
+  ) {
     throw new ConfigValidationError(
       "version",
-      `unsupported config version ${JSON.stringify(version)}; expected ${USER_CONFIG_VERSION}`,
+      `unsupported config version ${JSON.stringify(version)}; expected one of ${SUPPORTED_INPUT_VERSIONS.join(", ")}`,
     );
   }
 
@@ -388,6 +423,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (memory.profile as Record<string, unknown> | undefined) ?? {};
   const memoryReflection =
     (memory.reflection as Record<string, unknown> | undefined) ?? {};
+  const memoryNotes =
+    (memory.notes as Record<string, unknown> | undefined) ?? {};
 
   return {
     version: USER_CONFIG_VERSION,
@@ -488,6 +525,27 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           memoryReflection.maxFactsPerCall ??
             USER_CONFIG_DEFAULTS.memory.reflection.maxFactsPerCall,
           "memory.reflection.maxFactsPerCall",
+        ),
+      },
+      notes: {
+        enabled: parseBool(
+          memoryNotes.enabled ?? USER_CONFIG_DEFAULTS.memory.notes.enabled,
+          "memory.notes.enabled",
+        ),
+        maxEntries: parsePositiveInt(
+          memoryNotes.maxEntries ??
+            USER_CONFIG_DEFAULTS.memory.notes.maxEntries,
+          "memory.notes.maxEntries",
+        ),
+        maxContentChars: parsePositiveInt(
+          memoryNotes.maxContentChars ??
+            USER_CONFIG_DEFAULTS.memory.notes.maxContentChars,
+          "memory.notes.maxContentChars",
+        ),
+        recallDefaultK: parsePositiveInt(
+          memoryNotes.recallDefaultK ??
+            USER_CONFIG_DEFAULTS.memory.notes.recallDefaultK,
+          "memory.notes.recallDefaultK",
         ),
       },
     },

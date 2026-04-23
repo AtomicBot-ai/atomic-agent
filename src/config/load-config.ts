@@ -198,6 +198,12 @@ export function loadConfig(): AtomicAgentConfig {
         timeoutMs: user.memory.reflection.timeoutMs,
         maxFactsPerCall: user.memory.reflection.maxFactsPerCall,
       },
+      notes: {
+        enabled: user.memory.notes.enabled,
+        maxEntries: user.memory.notes.maxEntries,
+        maxContentChars: user.memory.notes.maxContentChars,
+        recallDefaultK: user.memory.notes.recallDefaultK,
+      },
     },
   };
 }

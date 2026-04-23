@@ -15,6 +15,7 @@ import {
   createJudgeClient,
   loadJudgeConfigFromEnv,
 } from "../harness/judge-client.js";
+import { loadEvalEnvFile } from "../harness/load-env.js";
 import type { JudgeClient } from "../harness/judge-types.js";
 
 /**
@@ -68,6 +69,7 @@ const HEADER = [
 ].join(",");
 
 async function main(): Promise<number> {
+  loadEvalEnvFile();
   const opts = parseArgs(process.argv.slice(2));
   const runPath = opts.run ?? findLatestJsonl();
   if (!runPath) {

@@ -240,8 +240,6 @@ function renderSessionSection(session: SessionState): string {
           .join("\n\n")
       : "(none)";
   return [
-    `step: ${session.stepCount}`,
-    `turn: ${session.turnCount}`,
     facts.length > 0 ? `known facts:\n${facts}` : `known facts: (none)`,
     ``,
     `loaded skills:`,

@@ -2,6 +2,13 @@ export interface ToolDescriptor {
   name: string;
   summary: string;
   argsSchema: string;
+  /**
+   * Optional few-shot argument examples rendered under the tool in the
+   * stable prefix. Each entry is a pre-formatted JSON literal (as a
+   * string) so we do not stringify at prompt-build time. Keep short —
+   * they live in the stable prefix and cost tokens on every turn.
+   */
+  examples?: readonly string[];
 }
 
 export interface CapabilitiesSummary {
@@ -61,6 +68,13 @@ export const DEFAULT_SYSTEM_PERSONA = [
   "- When you need the raw text of a file on a known host (GitHub, GitLab, raw docs), prefer `browser.navigate` to the raw URL (e.g. `https://raw.githubusercontent.com/<owner>/<repo>/<branch>/README.md`) over clicking through the UI.",
   "- If the content you need is below the fold, use `browser.scroll`. `browser.read_aria` captures the full DOM but the rendered snapshot may be truncated for budget.",
   "- If a `### notice` section appears in the prompt, treat it as a hard instruction — the runtime detected a problem with your last steps and you must change strategy before calling any tool again.",
+  "",
+  "Durable memory:",
+  "- Your working memory is short. Across sessions you retain ONLY what you persist via `memory.profile.*` (key/value user facts) or `memory.notes.*` (freeform notes).",
+  "- The profile is rendered into `### profile` every turn. Notes are NOT — you must call `memory.notes.recall` to read them.",
+  "- Treat unsaved durable knowledge as lost work. Before calling `reply` on any non-trivial task, ask yourself: \"is there a fact here worth recalling next session?\" If yes, call `memory.notes.store` FIRST, then `reply`.",
+  "- When the user references past interactions (\"last time\", \"we agreed\", \"remember that…\"), call `memory.notes.recall` BEFORE answering, not after.",
+  "- Never store transient noise (raw tool dumps, full file contents, error tracebacks). Store the distilled fact: what was decided, what broke and how it was fixed, which path/commit/config matters.",
 ].join("\n");
 
 export function buildStablePrefix(input: StablePrefixInput): string {
@@ -89,7 +103,14 @@ export function buildStablePrefix(input: StablePrefixInput): string {
 }
 
 function formatTool(descriptor: ToolDescriptor): string {
-  return `- ${descriptor.name} — ${descriptor.summary}\n  args: ${descriptor.argsSchema}`;
+  const head = `- ${descriptor.name} — ${descriptor.summary}\n  args: ${descriptor.argsSchema}`;
+  if (!descriptor.examples || descriptor.examples.length === 0) {
+    return head;
+  }
+  const examples = descriptor.examples
+    .map((ex) => `    - ${ex}`)
+    .join("\n");
+  return `${head}\n  examples:\n${examples}`;
 }
 
 function formatCapabilities(caps: CapabilitiesSummary): string {

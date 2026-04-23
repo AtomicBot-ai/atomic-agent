@@ -92,6 +92,10 @@ describe("buildPrompt", () => {
           status: "ok",
           summary: "loaded https://mail.google.com",
         },
+        turns: [
+          { kind: "user", text: "Check inbox", at: 1 },
+          { kind: "user", text: "Any update?", at: 2 },
+        ],
       }),
       toolDescriptors: TOOLS,
       capabilities: CAPS,
@@ -99,6 +103,23 @@ describe("buildPrompt", () => {
     });
     expect(a.stablePrefix).toBe(b.stablePrefix);
     expect(a.text).not.toBe(b.text);
+  });
+
+  it("step and turn counters do not leak into the prompt text (KV-cache hygiene)", () => {
+    const a = buildPrompt({
+      session: mkSession({ stepCount: 0, turnCount: 0 }),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const b = buildPrompt({
+      session: mkSession({ stepCount: 99, turnCount: 42 }),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(a.text).toBe(b.text);
+    expect(a.tail).not.toMatch(/^step:|^turn:/m);
   });
 
   it("renders the last user message in the conversation section", () => {
