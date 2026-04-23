@@ -46,6 +46,8 @@ export interface TuiAppCallbacks {
   onSessionSwitchRequested?(sessionId: string): void;
   /** Ask the orchestrator to start a fresh session. */
   onSessionNewRequested?(): void;
+  /** Ask the orchestrator to dump the current user profile into the chat log. */
+  onMemoryDumpRequested?(): void;
   /** Persist a new llama-server base URL after `/llama` (async health + disk write). */
   onPersistLlamaUrl?(url: string): void;
 }

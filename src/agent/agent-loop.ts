@@ -28,6 +28,7 @@ import type {
   SkillCatalogEntry,
   ToolDescriptor,
 } from "../prompt/stable-prefix.js";
+import type { ProfileFact } from "../memory/profile-store.js";
 import { executeStep } from "./step-executor.js";
 import type { StepEvent } from "./step-executor.js";
 import { LoopDetector, formatRepeatNotice } from "./loop-detector.js";
@@ -63,6 +64,13 @@ export interface AgentLoopDependencies {
   profile?: ModelProfile;
   /** Skill catalog (name + description only), rebuilt on install/uninstall. */
   skillCatalog: readonly SkillCatalogEntry[];
+  /**
+   * Invoked once per step to produce the current user-profile snapshot.
+   * The resulting array is rendered into the `### profile` section of
+   * the prompt tail. `undefined` suppresses the section entirely — wire
+   * this only when the memory fabric is enabled.
+   */
+  profileFactsProvider?: () => readonly ProfileFact[];
   onEvent?: (event: AgentLoopEvent) => void;
   metrics?: AgentMetrics;
   logger?: StructuredLogger;
@@ -182,6 +190,7 @@ export class AgentLoop {
       const noticeForThisStep = pendingNotice;
       pendingNotice = undefined;
       try {
+        const profileFacts = this.deps.profileFactsProvider?.();
         const outcome = await executeStep(
           {
             session: state,
@@ -193,6 +202,7 @@ export class AgentLoop {
             ...(noticeForThisStep !== undefined
               ? { transientNotice: noticeForThisStep }
               : {}),
+            ...(profileFacts !== undefined ? { profileFacts } : {}),
           },
           {
             registry: this.deps.registry,

@@ -34,6 +34,7 @@ export interface AtomicAgentConfig {
   paths: {
     stateDir: string;
     sessionsDbFile: string;
+    memoryDbFile: string;
     tracesDir: string;
     grammarsDir: string;
     browserProfileDir: string;
@@ -98,6 +99,24 @@ export interface AtomicAgentConfig {
       maxBytesPerSession: number;
     };
   };
+  /**
+   * Cross-session memory fabric. The profile store is a durable SQLite
+   * key/value table rendered into the prompt tail on every turn. The
+   * history layer searches existing NDJSON traces for past tool
+   * invocations. Both are local and read/written only by the agent.
+   */
+  memory: {
+    profile: {
+      enabled: boolean;
+      /** Safety-net ceiling for the rendered `### profile` section. */
+      maxTokens: number;
+    };
+    history: {
+      enabled: boolean;
+      /** Hard cap on results returned by `memory.history.search`. */
+      maxResults: number;
+    };
+  };
 }
 
 /**
@@ -138,6 +157,16 @@ export interface UserConfigFile {
       maxBytesPerSession: number;
     };
   };
+  memory: {
+    profile: {
+      enabled: boolean;
+      maxTokens: number;
+    };
+    history: {
+      enabled: boolean;
+      maxResults: number;
+    };
+  };
 }
 
 export const USER_CONFIG_VERSION = 1 as const;
@@ -165,6 +194,16 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     trace: {
       enabled: null,
       maxBytesPerSession: 10 * 1024 * 1024,
+    },
+  },
+  memory: {
+    profile: {
+      enabled: true,
+      maxTokens: 512,
+    },
+    history: {
+      enabled: true,
+      maxResults: 50,
     },
   },
 };
@@ -339,6 +378,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (obj.telemetry as Record<string, unknown> | undefined) ?? {};
   const telemetryTrace =
     (telemetry.trace as Record<string, unknown> | undefined) ?? {};
+  const memory = (obj.memory as Record<string, unknown> | undefined) ?? {};
+  const memoryProfile =
+    (memory.profile as Record<string, unknown> | undefined) ?? {};
+  const memoryHistory =
+    (memory.history as Record<string, unknown> | undefined) ?? {};
 
   return {
     version: USER_CONFIG_VERSION,
@@ -409,6 +453,30 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           telemetryTrace.maxBytesPerSession ??
             USER_CONFIG_DEFAULTS.telemetry.trace.maxBytesPerSession,
           "telemetry.trace.maxBytesPerSession",
+        ),
+      },
+    },
+    memory: {
+      profile: {
+        enabled: parseBool(
+          memoryProfile.enabled ?? USER_CONFIG_DEFAULTS.memory.profile.enabled,
+          "memory.profile.enabled",
+        ),
+        maxTokens: parsePositiveInt(
+          memoryProfile.maxTokens ??
+            USER_CONFIG_DEFAULTS.memory.profile.maxTokens,
+          "memory.profile.maxTokens",
+        ),
+      },
+      history: {
+        enabled: parseBool(
+          memoryHistory.enabled ?? USER_CONFIG_DEFAULTS.memory.history.enabled,
+          "memory.history.enabled",
+        ),
+        maxResults: parsePositiveInt(
+          memoryHistory.maxResults ??
+            USER_CONFIG_DEFAULTS.memory.history.maxResults,
+          "memory.history.maxResults",
         ),
       },
     },

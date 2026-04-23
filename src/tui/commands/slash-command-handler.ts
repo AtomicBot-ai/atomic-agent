@@ -26,6 +26,8 @@ export interface SlashDispatchResult {
   readonly triggerSessionPicker: boolean;
   /** When true the caller should ask the orchestrator to start a fresh session. */
   readonly triggerSessionNew: boolean;
+  /** When true the caller should ask the orchestrator to dump the user profile. */
+  readonly triggerMemoryDump: boolean;
   /** When true the caller should forward the raw buffer as a normal message. */
   readonly forwardAsMessage: boolean;
   /** When set, caller should probe this URL, persist on success, then refresh UI. */
@@ -48,6 +50,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       triggerQuit: false,
       triggerSessionPicker: false,
       triggerSessionNew: false,
+      triggerMemoryDump: false,
       forwardAsMessage: true,
       persistLlamaUrl: undefined,
     };
@@ -62,6 +65,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       triggerQuit: false,
       triggerSessionPicker: false,
       triggerSessionNew: false,
+      triggerMemoryDump: false,
       forwardAsMessage: false,
       persistLlamaUrl: undefined,
     };
@@ -70,7 +74,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
     case "help":
       return pureActions([], {
         systemMessage:
-          "available commands: /clear /abort /quit /debug /chat /feed /logs /reasoning /world /metrics /expand /collapse /session /sessions /new /skills /llama",
+          "available commands: /clear /abort /quit /debug /chat /feed /logs /reasoning /world /metrics /expand /collapse /session /sessions /new /skills /memory /llama",
       });
     case "clear":
       return pureActions([{ type: "chat_cleared" }], {
@@ -131,6 +135,8 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return pureActions([], {
         systemMessage: "loaded skills are shown in /debug → World tab",
       });
+    case "memory":
+      return pureActions([], { triggerMemoryDump: true });
     case "llama": {
       const argPart = parsed.args.trim();
       if (argPart.length === 0) {
@@ -148,6 +154,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
           triggerQuit: false,
           triggerSessionPicker: false,
           triggerSessionNew: false,
+          triggerMemoryDump: false,
           forwardAsMessage: false,
           persistLlamaUrl: url,
         };
@@ -175,6 +182,7 @@ function pureActions(
     triggerQuit: false,
     triggerSessionPicker: false,
     triggerSessionNew: false,
+    triggerMemoryDump: false,
     forwardAsMessage: false,
     persistLlamaUrl: undefined,
     ...overrides,

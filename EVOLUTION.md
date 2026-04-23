@@ -67,31 +67,48 @@ Main risk:
 
 - summary quality can hide details if the compression policy is too aggressive
 
-## Option 2: workspace memory and retrieval
+## Option 2: memory fabric (operator-first) [done: 2026-04-23]
 
-What it adds:
+Reframed from the original "workspace memory and retrieval" framing: `atomic-agent` is a general-purpose local operator, not a coding-scoped assistant, so the first memory milestone targets operator durability (who the user is, what the agent has already done) rather than workspace / file-index retrieval. Workspace inventories, document summaries, and embedded retrieval are explicitly deferred.
 
-- workspace inventories and artifact indexing
-- summaries for frequently used local resources
-- retrieval slices injected into the prompt tail
-- optional embeddings later, but not required in the first iteration
+What shipped (minimum scope, Type 1 + Type 3):
 
-Why it matters:
+- **User Profile** — durable key/value facts in a new SQLite file `<stateDir>/memory.sqlite`, rendered as `### profile` in the **variable tail** of the prompt between `### session` and `### world`. Managed by three tools: `memory.profile.set`, `memory.profile.remove`, `memory.profile.list`. Gated by `memory.profile.enabled` (default `true`), capped by `memory.profile.maxTokens` (default `512`).
+- **Action History** — a reader over existing `tool_invocation` events in `<stateDir>/traces/*.ndjson`. No new writer. One new tool: `memory.history.search { tool?, pattern?, since?, until?, limit? }`, gated by `memory.history.enabled` (default `true`) with a hard ceiling `memory.history.maxResults` (default `50`).
 
-- gives the runtime durable memory of the local operating context instead of only the current chat
-- improves large-workspace behavior without expanding the stable prefix
-- reduces repeated blind exploration of files, documents, and local resources
+Why this order:
 
-Likely modules:
+- gives the runtime durable cross-session memory of the user (Type 1) with near-zero prompt cost
+- gives durable recall of what the agent already did (Type 3) for free on top of the existing trace infrastructure
+- defers embeddings, semantic retrieval, summaries, and workspace indexing until after we measure real usage
 
-- a new feature folder such as `src/retrieval/` or `src/memory/`
-- `src/prompt/build-prompt.ts`
-- `src/session/session-state.ts`
-- `src/tools/os/fs-grep.ts`, `src/tools/os/fs-list.ts`, and `src/tools/os/read-document/` for bootstrapping sources
+Shipped modules:
 
-Main risk:
+- new feature folder `src/memory/`: `memory-schema.ts`, `profile-store.ts`, `profile-renderer.ts`, `action-history-reader.ts`, `action-history-search.ts`
+- new feature folder `src/tools/memory/`: `profile-set.ts`, `profile-remove.ts`, `profile-list.ts`, `history-search.ts`
+- `src/prompt/build-prompt.ts` — `### profile` injection in the variable tail, profile tokens subtracted from the effective conversation cap in `src/prompt/token-budget.ts`
+- `src/prompt/tool-descriptors.ts` + `grammars/tool-call.gbnf` — four new memory tools
+- `src/config/config-schema.ts` + `src/config/load-config.ts` — `memory.*` keys and `paths.memoryDbFile`
+- `src/runtime/bootstrap.ts` — instantiates `ProfileStore`, registers memory tools, wires `profileFactsProvider` into `AgentLoop` so live profile edits show up on the next step
+- `AGENTS.md` — new §"Memory fabric" section documenting invariants
 
-- scope creep is easy here; start with deterministic workspace summaries and keyword retrieval before semantic layers
+Invariants (locked):
+
+- the `### profile` section lives in the variable tail only — the stable prefix is byte-stable across profile edits (pinned by `build-prompt.test.ts`)
+- Action History is strictly read-only over trace files; if tracing is disabled the tool returns `ok` with an explanatory `details.note` rather than silently returning stale results
+- no embeddings, no TTL, no tags, no redaction in this milestone
+
+Explicitly out of scope for this milestone (deferred to future options or later iterations of this one):
+
+- episodic memory / session summaries (Type 2)
+- long-term fact store with TTL / tags (Type 4)
+- embeddings / semantic search
+- workspace inventories and document indexing
+- secret redaction of profile / history content
+
+Main risk (as expected):
+
+- scope creep — kept contained by freezing the design at Type 1 + Type 3 and resisting the urge to add retrieval layers before real usage demands them
 
 ## Option 3: LLM reliability policy [done: 2026-04-23]
 
@@ -233,7 +250,7 @@ If the goal is maximum leverage with minimum architectural risk, the best order 
 1. `managed turn memory`
 2. `LLM reliability policy`
 3. `traceability and replay`
-4. `workspace memory and retrieval`
+4. `memory fabric (operator-first)`
 5. `runtime isolation and concurrency contract`
 6. `durable task model`
 7. `background autonomy`

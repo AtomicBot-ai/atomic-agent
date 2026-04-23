@@ -54,6 +54,13 @@ describe("dispatchSlashCommand", () => {
     expect(result.triggerSessionPicker).toBe(false);
   });
 
+  it("signals triggerMemoryDump for /memory", () => {
+    const result = dispatchSlashCommand("/memory");
+    expect(result.triggerMemoryDump).toBe(true);
+    expect(result.actions).toEqual([]);
+    expect(result.clearBuffer).toBe(true);
+  });
+
   it("requests persistLlamaUrl for /llama with a valid URL", () => {
     const result = dispatchSlashCommand("/llama http://127.0.0.1:19999");
     expect(result.persistLlamaUrl).toBe("http://127.0.0.1:19999");

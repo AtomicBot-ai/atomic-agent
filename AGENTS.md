@@ -49,6 +49,7 @@ This is the source-of-truth for automated contributors (LLM agents, codegen, etc
 | `src/approval/` | Approval gate and event wiring |
 | `src/telemetry/` | Structured logger + metrics + trace recorder (`src/telemetry/trace/`) |
 | `src/replay/` | Trace-based replay: drift detection + optional LLM re-inference |
+| `src/memory/` | Memory fabric: durable user-profile store + action-history reader/search over trace files |
 
 ## Build & test
 
@@ -85,6 +86,43 @@ Prompt-section caps live in the config:
 At bootstrap `LlamaServerClient.fetchProps()` reads the model's physical `n_ctx` (from `default_generation_settings.n_ctx`, with a root `n_ctx` fallback) and stores it on `ModelProfile.contextWindow`. `buildPrompt` then clamps the effective conversation cap to the actual available room so the prompt cannot overflow llama-server regardless of how large the user-configured cap is. If llama-server is restarted with a different `n_ctx`, restart the runtime.
 
 There is currently no dedicated workspace-memory, retrieval, embeddings, or resource-summary subsystem in `src/`. Do not describe those modules as implemented unless they are added to the codebase first.
+
+## Memory fabric
+
+A minimal two-layer cross-session memory lives in [src/memory/](src/memory/) and exposes itself to the agent via four tools in [src/tools/memory/](src/tools/memory/). The fabric is deliberately narrow — no embeddings, no summaries, no TTL, no tags, no redaction.
+
+### Layer 1 — User Profile (durable, always in the prompt tail)
+
+- **Storage.** New SQLite file `<stateDir>/memory.sqlite` (separate from `sessions.sqlite` — different lifecycle, global scope). Schema + migrations in [src/memory/memory-schema.ts](src/memory/memory-schema.ts); CRUD in [src/memory/profile-store.ts](src/memory/profile-store.ts).
+- **Shape.** `profile_facts (key TEXT PK, value TEXT, updated_at INTEGER)`. Keys are short free-form strings (`language`, `timezone`, `name`, `preferred_browser`, …); values are plain text.
+- **Prompt placement.** Rendered by [src/memory/profile-renderer.ts](src/memory/profile-renderer.ts) as a `### profile` section in the **variable tail**, between `### session` and `### world`. It is NOT part of the stable prefix — injecting it above `session` would invalidate the KV-cache on every profile update. `build-prompt.test.ts` pins this invariant by hashing the stable prefix across profile edits.
+- **Budgeting.** Truncated by `truncateToTokens(content, memory.profile.maxTokens)` (default `512`) with a `[truncated]` marker. The profile token count is subtracted from the effective conversation cap in [src/prompt/token-budget.ts](src/prompt/token-budget.ts).
+- **Live snapshot.** `AgentLoop` reads `profileStore.list()` via an optional `profileFactsProvider` at the start of every step and passes it into `StepContext.profileFacts` → `buildPrompt`. Profile writes from the previous step show up on the next step without process restart.
+- **Tools.** `memory.profile.set { key, value }`, `memory.profile.remove { key }`, `memory.profile.list {}`. Grammar entries are in [grammars/tool-call.gbnf](grammars/tool-call.gbnf); descriptors in [src/prompt/tool-descriptors.ts](src/prompt/tool-descriptors.ts).
+
+### Layer 2 — Action History (search over existing traces, no new writer)
+
+- **Source of truth.** Existing `tool_invocation` events in `<stateDir>/traces/*.ndjson`. No new storage, no new writer — if tracing is disabled, history is empty by design.
+- **Reader.** [src/memory/action-history-reader.ts](src/memory/action-history-reader.ts) lists trace files and parses `tool_invocation` lines tolerantly (malformed or unrelated lines are skipped).
+- **Search.** [src/memory/action-history-search.ts](src/memory/action-history-search.ts) supports filters `tool`, `pattern` (case-insensitive substring over serialised args + summary), `since` / `until` (epoch ms), `sessionId`, and a result `limit`. Results are sorted newest-first.
+- **Tool.** `memory.history.search { tool?, pattern?, since?, until?, limit? }`. When tracing is off or traces are empty the tool still returns `ok` with an explanatory `details.note`.
+
+### Configuration
+
+Config keys live under `memory.*` in the user config and [src/config/config-schema.ts](src/config/config-schema.ts):
+
+- `memory.profile.enabled` (default `true`) — gate for profile injection + the three profile tools.
+- `memory.profile.maxTokens` (default `512`) — section cap in the prompt tail.
+- `memory.history.enabled` (default `true`) — gate for `memory.history.search` registration.
+- `memory.history.maxResults` (default `50`) — hard ceiling applied after the per-call `limit`.
+- `paths.memoryDbFile` — resolved to `<stateDir>/memory.sqlite` by [src/config/load-config.ts](src/config/load-config.ts).
+
+### Invariants
+
+1. **Stable prefix is untouched.** The `### profile` section is always in the variable tail. Changing profile facts never invalidates the KV-cache for the stable prefix.
+2. **Trace-dependent history.** `memory.history.search` reads what `trace-recorder` already writes. If the user turns tracing off, history stops collecting — the tool reports this in `details.note` rather than silently returning stale results.
+3. **No cross-session leakage via writers.** The only new writer is `ProfileStore`. Action History is strictly read-only over trace files.
+4. **Explicit out-of-scope.** Episodic summaries, long-term fact store with TTL/tags, embeddings / semantic search, and redaction are deliberately deferred to future milestones.
 
 ## LLM reliability policy
 

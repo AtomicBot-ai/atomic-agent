@@ -29,6 +29,9 @@ import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { registerOsTools } from "../tools/os/index.js";
 import { registerSkillTools } from "../tools/skill/index.js";
+import { registerMemoryTools } from "../tools/memory/index.js";
+
+import { ProfileStore } from "../memory/profile-store.js";
 
 import { SkillRegistry } from "../skills/skill-registry.js";
 import { buildSkillCatalog } from "../skills/skill-catalog.js";
@@ -133,6 +136,13 @@ export interface AgentRuntime {
   readonly approvals: ApprovalGate;
   readonly slotManager: SlotManager;
   readonly sessionStore: SessionStore;
+  /**
+   * Durable user-profile store. Present even when
+   * `memory.profile.enabled` is `false`, because the store owns the
+   * SQLite connection used by any future feature that reuses the same
+   * file. Callers should respect the config flag before writing.
+   */
+  readonly profileStore: ProfileStore;
   readonly capabilities: CapabilitiesSummary;
   readonly skillCatalog: readonly SkillCatalogEntry[];
   readonly toolDescriptors: readonly ToolDescriptor[];
@@ -249,6 +259,8 @@ export async function createAgentRuntime(
     browserChannel: config.browser.channel,
   });
 
+  const profileStore = new ProfileStore({ dbFile: config.paths.memoryDbFile });
+
   const toolRegistry = new ToolRegistry();
   toolRegistry.register(finishTool);
   toolRegistry.register(replyTool);
@@ -257,6 +269,14 @@ export async function createAgentRuntime(
   }
   registerOsTools(toolRegistry, { ...dangerous, config: { http: config.http } });
   registerSkillTools(toolRegistry, skillRegistry, dangerous);
+  registerMemoryTools(toolRegistry, {
+    profileStore,
+    tracesDir: config.telemetry.trace.dir,
+    historyMaxResults: config.memory.history.maxResults,
+    tracingEnabled: traceEnabled,
+    profileEnabled: config.memory.profile.enabled,
+    historyEnabled: config.memory.history.enabled,
+  });
 
   let skillCatalog: readonly SkillCatalogEntry[] = buildSkillCatalog(
     skillRegistry.list(),
@@ -315,6 +335,9 @@ export async function createAgentRuntime(
     toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
     capabilities,
     profile,
+    ...(config.memory.profile.enabled
+      ? { profileFactsProvider: () => profileStore.list() }
+      : {}),
     onEvent: (event: AgentLoopEvent) => {
       currentRecorder?.onAgentEvent(event);
       options.handlers?.onAgentEvent?.(event);
@@ -343,6 +366,11 @@ export async function createAgentRuntime(
     }
     try {
       sessionStore.close();
+    } catch {
+      // already closed
+    }
+    try {
+      profileStore.close();
     } catch {
       // already closed
     }
@@ -410,6 +438,7 @@ export async function createAgentRuntime(
     approvals,
     slotManager,
     sessionStore,
+    profileStore,
     capabilities,
     toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
     grammar,

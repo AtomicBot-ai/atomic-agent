@@ -96,6 +96,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSessionPickerRequested: () => orchestrator.openSessionPicker(),
         onSessionSwitchRequested: (id) => orchestrator.switchSession(id),
         onSessionNewRequested: () => orchestrator.newSession(),
+        onMemoryDumpRequested: () => orchestrator.dumpProfile(),
         onPersistLlamaUrl: (nextUrl) => {
           void (async () => {
             try {
@@ -220,6 +221,33 @@ class ChatOrchestrator {
       type: "runtime_info",
       line: `switched to session ${loaded.id} (${loaded.turnCount} turn${loaded.turnCount === 1 ? "" : "s"})`,
     });
+  }
+
+  dumpProfile(): void {
+    try {
+      const facts = this.runtime.profileStore.list();
+      if (facts.length === 0) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: "profile: (empty) — use memory.profile.set to record cross-session facts",
+        });
+        return;
+      }
+      const sorted = [...facts].sort((a, b) => a.key.localeCompare(b.key));
+      this.bus.emit({
+        type: "runtime_info",
+        line: `profile (${sorted.length} fact${sorted.length === 1 ? "" : "s"}):`,
+      });
+      for (const fact of sorted) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: `  - ${fact.key}: ${fact.value}`,
+        });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.bus.emit({ type: "runtime_info", line: `profile read failed: ${msg}` });
+    }
   }
 
   newSession(): void {

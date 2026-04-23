@@ -131,6 +131,7 @@ export function loadConfig(): AtomicAgentConfig {
     paths: {
       stateDir,
       sessionsDbFile: resolve(stateDir, "sessions.sqlite"),
+      memoryDbFile: resolve(stateDir, "memory.sqlite"),
       tracesDir: resolve(stateDir, "traces"),
       grammarsDir,
       browserProfileDir: resolve(stateDir, "browser-profile"),
@@ -185,6 +186,16 @@ export function loadConfig(): AtomicAgentConfig {
         enabled: user.telemetry.trace.enabled,
         dir: resolve(stateDir, "traces"),
         maxBytesPerSession: user.telemetry.trace.maxBytesPerSession,
+      },
+    },
+    memory: {
+      profile: {
+        enabled: user.memory.profile.enabled,
+        maxTokens: user.memory.profile.maxTokens,
+      },
+      history: {
+        enabled: user.memory.history.enabled,
+        maxResults: user.memory.history.maxResults,
       },
     },
   };

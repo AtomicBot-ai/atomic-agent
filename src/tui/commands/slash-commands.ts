@@ -33,6 +33,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   { name: "sessions", description: "open session picker to switch threads" },
   { name: "new", description: "start a fresh session (keeps warm runtime)" },
   { name: "skills", description: "list loaded skills" },
+  { name: "memory", description: "dump the current user profile (cross-session facts)" },
   {
     name: "llama",
     description: "set llama-server base URL (health-check, save to config)",

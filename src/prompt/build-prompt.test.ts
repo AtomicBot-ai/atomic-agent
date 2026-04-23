@@ -482,6 +482,87 @@ describe("buildPrompt", () => {
   });
 });
 
+describe("buildPrompt profile section", () => {
+  it("omits the section entirely when profileFacts is undefined", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(prompt.tail).not.toContain("### profile");
+    expect(prompt.tokens.profile).toBe(0);
+    expect(prompt.truncation.profile).toBe(false);
+  });
+
+  it("renders (no profile) when an empty array is passed", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: [],
+    });
+    expect(prompt.tail).toContain("### profile");
+    expect(prompt.tail).toContain("(no profile)");
+  });
+
+  it("places ### profile between ### session and ### world", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: [{ key: "language", value: "ru", updatedAt: 1 }],
+    });
+    const sessionIdx = prompt.tail.indexOf("### session");
+    const profileIdx = prompt.tail.indexOf("### profile");
+    const worldIdx = prompt.tail.indexOf("### world");
+    expect(sessionIdx).toBeLessThan(profileIdx);
+    expect(profileIdx).toBeLessThan(worldIdx);
+    expect(prompt.tail).toContain("- language: ru");
+  });
+
+  it("keeps the stable prefix byte-stable across profile edits", () => {
+    const empty = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: [],
+    });
+    const filled = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: [
+        { key: "name", value: "Alex", updatedAt: 1 },
+        { key: "timezone", value: "Europe/Moscow", updatedAt: 2 },
+      ],
+    });
+    expect(empty.stablePrefix).toBe(filled.stablePrefix);
+    expect(empty.tail).not.toBe(filled.tail);
+  });
+
+  it("truncates a giant profile under profileMaxTokens", () => {
+    const giantValue = "x".repeat(20_000);
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: [{ key: "blob", value: giantValue, updatedAt: 1 }],
+      profileMaxTokens: 50,
+    });
+    expect(prompt.tail).toContain("### profile");
+    expect(prompt.tail).toContain("[truncated]");
+    expect(prompt.tokens.profile).toBeLessThanOrEqual(50);
+    expect(prompt.truncation.profile).toBe(true);
+    expect(prompt.truncated).toBe(true);
+  });
+});
+
 describe("token-budget helpers", () => {
   it("estimateTokens is monotonic in length", () => {
     expect(estimateTokens("a".repeat(10))).toBeLessThan(

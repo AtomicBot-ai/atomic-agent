@@ -69,6 +69,13 @@ export interface EffectiveConversationCapInput {
   stablePrefixTokens: number;
   sessionTokens: number;
   worldSnapshotTokens: number;
+  /**
+   * Tokens consumed by the `### profile` section. Optional — absent on
+   * legacy callers that build the prompt without the memory fabric. The
+   * cap clamp subtracts it just like session/world to keep the final
+   * conversation room accurate.
+   */
+  profileTokens?: number;
   completionMaxTokens: number;
 }
 
@@ -106,6 +113,7 @@ export function computeEffectiveConversationCap(
     input.stablePrefixTokens -
     input.sessionTokens -
     input.worldSnapshotTokens -
+    (input.profileTokens ?? 0) -
     input.completionMaxTokens -
     CONVERSATION_CAP_SAFETY_MARGIN;
   return Math.max(

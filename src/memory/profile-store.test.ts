@@ -1,0 +1,92 @@
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  ProfileStore,
+  ProfileValidationError,
+  PROFILE_KEY_MAX_LENGTH,
+  PROFILE_VALUE_MAX_LENGTH,
+} from "./profile-store.js";
+
+describe("ProfileStore", () => {
+  let tmp: string;
+  let store: ProfileStore;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "atomic-agent-profile-"));
+    store = new ProfileStore({ dbFile: join(tmp, "memory.sqlite") });
+  });
+
+  afterEach(() => {
+    store.close();
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("upserts and reads back a fact", () => {
+    store.set("language", "ru", 1_000);
+    const got = store.get("language");
+    expect(got).toEqual({ key: "language", value: "ru", updatedAt: 1_000 });
+  });
+
+  it("overwrites an existing key on set", () => {
+    store.set("timezone", "Europe/Moscow", 1_000);
+    store.set("timezone", "UTC", 2_000);
+    expect(store.get("timezone")).toEqual({
+      key: "timezone",
+      value: "UTC",
+      updatedAt: 2_000,
+    });
+  });
+
+  it("removes a fact and reports whether it existed", () => {
+    store.set("name", "Alex", 1_000);
+    expect(store.remove("name")).toBe(true);
+    expect(store.remove("name")).toBe(false);
+    expect(store.get("name")).toBeNull();
+  });
+
+  it("lists facts in alphabetical key order", () => {
+    store.set("zulu", "z", 3_000);
+    store.set("alpha", "a", 1_000);
+    store.set("mike", "m", 2_000);
+    expect(store.list().map((f) => f.key)).toEqual(["alpha", "mike", "zulu"]);
+  });
+
+  it("rejects invalid keys", () => {
+    expect(() => store.set("", "x")).toThrow(ProfileValidationError);
+    expect(() => store.set("  ", "x")).toThrow(ProfileValidationError);
+    expect(() => store.set("has space", "x")).toThrow(ProfileValidationError);
+    expect(() => store.set("_leading_underscore", "x")).toThrow(
+      ProfileValidationError,
+    );
+    expect(() => store.set("a".repeat(PROFILE_KEY_MAX_LENGTH + 1), "x")).toThrow(
+      ProfileValidationError,
+    );
+  });
+
+  it("rejects invalid values", () => {
+    expect(() => store.set("k", "")).toThrow(ProfileValidationError);
+    expect(() =>
+      store.set("k", "x".repeat(PROFILE_VALUE_MAX_LENGTH + 1)),
+    ).toThrow(ProfileValidationError);
+  });
+
+  it("trims whitespace from keys but preserves value whitespace", () => {
+    store.set("  language  ", "  ru  ", 1_000);
+    expect(store.get("language")?.value).toBe("  ru  ");
+  });
+
+  it("survives reopen — durable across store instances", () => {
+    store.set("name", "Alex", 1_000);
+    store.close();
+    const reopened = new ProfileStore({ dbFile: join(tmp, "memory.sqlite") });
+    try {
+      expect(reopened.get("name")?.value).toBe("Alex");
+    } finally {
+      reopened.close();
+    }
+    store = new ProfileStore({ dbFile: join(tmp, "memory.sqlite") });
+  });
+});

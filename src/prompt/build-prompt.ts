@@ -1,5 +1,7 @@
 import { getConfig } from "../config/index.js";
 import type { ModelProfile } from "../llm/model-profile.js";
+import type { ProfileFact } from "../memory/profile-store.js";
+import { renderProfileSection } from "../memory/profile-renderer.js";
 import type { SessionState } from "../session/session-state.js";
 import {
   packConversation,
@@ -44,10 +46,20 @@ export interface BuildPromptInput {
    */
   transientNotice?: string;
   profile?: ModelProfile;
+  /**
+   * User profile facts rendered into the `### profile` section. Lives in
+   * the variable tail (never the stable prefix) so KV-cache reuse is
+   * preserved across profile edits. Pass `undefined` to suppress the
+   * section entirely; pass `[]` to render the `(no profile)` sentinel.
+   */
+  profileFacts?: readonly ProfileFact[];
+  /** Safety-net ceiling for the `### profile` section. */
+  profileMaxTokens?: number;
 }
 
 export interface BuiltPromptTruncationFlags {
   session: boolean;
+  profile: boolean;
   worldSnapshot: boolean;
   conversation: boolean;
 }
@@ -62,6 +74,7 @@ export interface BuiltPrompt {
   tokens: {
     stablePrefix: number;
     session: number;
+    profile: number;
     worldSnapshot: number;
     conversation: number;
     total: number;
@@ -125,6 +138,16 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const sessionSection = renderSessionSection(input.session);
   const session = truncateToTokens(sessionSection, limits.session);
 
+  const profileMaxTokens =
+    input.profileMaxTokens ?? config.memory.profile.maxTokens;
+  const profileFull =
+    input.profileFacts !== undefined
+      ? renderProfileSection(input.profileFacts)
+      : null;
+  const profile =
+    profileFull !== null ? truncateToTokens(profileFull, profileMaxTokens) : null;
+  const profileTokens = profile !== null ? estimateTokens(profile) : 0;
+
   const worldSnapshotFull = renderWorldSnapshotSection(input.session);
   const worldSnapshot = truncateToTokens(
     worldSnapshotFull,
@@ -138,23 +161,25 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     stablePrefixTokens: estimateTokens(stablePrefix),
     sessionTokens: estimateTokens(session),
     worldSnapshotTokens: estimateTokens(worldSnapshot),
+    profileTokens,
     completionMaxTokens,
   });
 
   const packed = packConversation(input.session.turns, conversationCapEffective);
   const conversation = renderPackedConversation(packed);
 
-  const tailParts: string[] = [
-    `### session`,
-    session,
-    ``,
+  const tailParts: string[] = [`### session`, session, ``];
+  if (profile !== null) {
+    tailParts.push(`### profile`, profile, ``);
+  }
+  tailParts.push(
     `### world`,
     worldSnapshot,
     ``,
     `### conversation`,
     conversation,
     ``,
-  ];
+  );
   if (input.transientNotice && input.transientNotice.length > 0) {
     tailParts.push(`### notice`, input.transientNotice, ``);
   }
@@ -176,6 +201,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
 
   const truncation: BuiltPromptTruncationFlags = {
     session: session !== sessionSection,
+    profile: profileFull !== null && profile !== profileFull,
     worldSnapshot: worldSnapshot !== worldSnapshotFull,
     conversation: packed.droppedCount > 0,
   };
@@ -184,10 +210,17 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     text,
     stablePrefix,
     tail,
-    tokens: budgetResult.perSection,
+    tokens: {
+      ...budgetResult.perSection,
+      profile: profileTokens,
+      total: budgetResult.perSection.total + profileTokens,
+    },
     limits,
     truncated:
-      truncation.session || truncation.worldSnapshot || truncation.conversation,
+      truncation.session ||
+      truncation.profile ||
+      truncation.worldSnapshot ||
+      truncation.conversation,
     truncation,
     contextWindow,
     conversationCapEffective,

@@ -48,6 +48,7 @@ import {
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import { hashPrefix, type SlotManager } from "../llm/slot-manager.js";
 import type { ModelProfile } from "../llm/model-profile.js";
+import type { ProfileFact } from "../memory/profile-store.js";
 import type { AgentMetrics } from "../telemetry/agent-metrics.js";
 import type { StructuredLogger } from "../telemetry/structured-logger.js";
 import type { StepEvent } from "./step-events.js";
@@ -97,6 +98,12 @@ export interface StepContext {
    * never in the stable prefix.
    */
   transientNotice?: string;
+  /**
+   * Durable user profile facts snapshotted at step-start. Rendered into
+   * the `### profile` section of the prompt tail. `undefined` suppresses
+   * the section entirely (memory fabric not wired).
+   */
+  profileFacts?: readonly ProfileFact[];
 }
 
 /**
@@ -156,6 +163,9 @@ async function executeStepInner(
     profile: deps.profile,
     ...(ctx.transientNotice !== undefined
       ? { transientNotice: ctx.transientNotice }
+      : {}),
+    ...(ctx.profileFacts !== undefined
+      ? { profileFacts: ctx.profileFacts }
       : {}),
   });
   const slot = deps.slotManager.acquire(ctx.session.id, prompt.stablePrefix);

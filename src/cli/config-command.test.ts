@@ -69,6 +69,10 @@ describe("configCommand", () => {
           maxBytesPerSession: 10 * 1024 * 1024,
         },
       },
+      memory: {
+        profile: { enabled: true, maxTokens: 512 },
+        history: { enabled: true, maxResults: 50 },
+      },
     };
     const code = await configCommand(["set", JSON.stringify(payload)]);
     expect(code).toBe(0);
