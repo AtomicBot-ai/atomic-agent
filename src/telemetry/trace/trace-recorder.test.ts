@@ -169,11 +169,15 @@ describe("createTraceRecorder", () => {
     });
     rec.onAgentEvent({
       type: "llm_event",
-      event: { type: "step_error", error: new Error("boom") },
+      event: { type: "step_error", error: new Error("boom"), category: "grammar" },
     });
     expect(events.some((e) => e.type === "parse_retry")).toBe(true);
     const err = events.find((e) => e.type === "error");
-    expect(err).toMatchObject({ type: "error", message: "boom" });
+    expect(err).toMatchObject({
+      type: "error",
+      message: "boom",
+      category: "grammar",
+    });
   });
 
   it("maps loop_detected and loop_failed", () => {
@@ -189,9 +193,15 @@ describe("createTraceRecorder", () => {
     rec.onAgentEvent({
       type: "loop_failed",
       error: new Error("loop blew up"),
+      category: "transport",
     });
     expect(events.some((e) => e.type === "loop_detected")).toBe(true);
-    expect(events.some((e) => e.type === "error")).toBe(true);
+    const err = events.find((e) => e.type === "error");
+    expect(err).toMatchObject({
+      type: "error",
+      message: "loop blew up",
+      category: "transport",
+    });
   });
 
   it("ignores noisy events (reasoning_delta, assistant_delta, llm_completed)", () => {

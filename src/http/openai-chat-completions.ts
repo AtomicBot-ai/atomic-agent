@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-loop.js";
+import type { LlmFailureCategory } from "../llm/reliability/index.js";
 import {
   createEmptySessionState,
   type SessionState,
@@ -331,12 +332,12 @@ function buildStreamEventHook(
           }),
         );
       } else if (inner.type === "step_error") {
-        emitStreamError(sse, env, inner.error.message);
+        emitStreamError(sse, env, inner.error.message, inner.category);
       }
       return;
     }
     if (event.type === "loop_failed") {
-      emitStreamError(sse, env, event.error.message);
+      emitStreamError(sse, env, event.error.message, event.category);
     }
   };
 }
@@ -349,12 +350,27 @@ function buildStreamEventHook(
  * (`{ error: { message, type, param, code } }`) so strict schema validators
  * (Vercel AI SDK, OpenAI Node SDK) don't blow up on mid-stream failures.
  */
-function emitStreamError(sse: SseWriter, env: TurnEnv, message: string): void {
+function emitStreamError(
+  sse: SseWriter,
+  env: TurnEnv,
+  message: string,
+  category?: LlmFailureCategory,
+): void {
   if (env.request.extensionsEnabled) {
-    sse.writeEvent("error", { error: message });
+    sse.writeEvent("error", {
+      error: message,
+      ...(category ? { category } : {}),
+    });
     return;
   }
-  sse.writeEvent(null, openaiError(message, "server_error"));
+  // OpenAI-compatible clients don't know about our taxonomy, but the
+  // `type` field in their error envelope is already a loose string —
+  // surface the category there so structured clients can still branch on
+  // it without breaking schema-strict ones.
+  sse.writeEvent(
+    null,
+    openaiError(message, category ? `agent.${category}` : "server_error"),
+  );
 }
 
 function safeStringify(value: unknown): string {

@@ -153,12 +153,35 @@ describe("reduceTuiState", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
       { type: "message_submitted", message: "boom test" },
-      { type: "agent_event", event: { type: "loop_failed", error: new Error("boom") } },
+      { type: "agent_event", event: { type: "loop_failed", error: new Error("boom"), category: "tool" } },
     ]);
     expect(next.status).toBe("idle");
-    expect(next.lastRunStatus).toBe("failed: boom");
+    expect(next.lastRunStatus).toBe("failed [tool]: boom");
     expect(next.runHistory[0]?.outcome).toBe("failed");
     expect(next.runHistory[0]?.reason).toBe("boom");
+  });
+
+  it("should render step_error with the failure category tag", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      { type: "message_submitted", message: "go" },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: {
+            type: "step_error",
+            error: new Error("truncated"),
+            category: "model",
+          },
+        },
+      },
+    ]);
+    const errorEntry = next.feed.find((f) => f.kind === "step_error");
+    expect(errorEntry).toBeDefined();
+    expect(errorEntry?.line).toContain("[model]");
+    expect(errorEntry?.line).toContain("truncated");
   });
 
   it("should cap feed ring buffer to configured size", () => {

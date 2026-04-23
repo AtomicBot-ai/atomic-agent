@@ -1,11 +1,23 @@
 import {
   extractReasoning,
   parseToolCall,
+  ToolCallParseError,
 } from "../llm/grammar/tool-call-grammar.js";
 import type { ToolCallPayload } from "../llm/grammar/tool-call-grammar.js";
 import { createStreamParser } from "../llm/grammar/stream-parser.js";
 import type { StreamParseEvent } from "../llm/grammar/stream-parser.js";
 import { checkProfilePromptAligned } from "../llm/profile-invariants.js";
+import {
+  CancelledError,
+  GrammarError,
+  LlmFailure,
+  LlamaServerError,
+  ModelError,
+  ToolExecutionError,
+  TransportError,
+  classifyFailure,
+  detectModelFailure,
+} from "../llm/index.js";
 import { buildPrompt } from "../prompt/build-prompt.js";
 import type { BuiltPrompt } from "../prompt/build-prompt.js";
 import type {
@@ -109,8 +121,30 @@ export interface StepOutcome {
  * the GBNF grammar, parses the resulting tool call, runs the tool,
  * appends `assistant_tool_call` + `tool_result` (or `assistant_reply`)
  * turns to the conversation, and returns the updated session state.
+ *
+ * Any terminal failure is normalised into an `LlmFailure` subclass before
+ * the `step_error` event fires, so downstream consumers (traces, metrics,
+ * TUI) can rely on the `category` field without running their own
+ * classifier.
  */
 export async function executeStep(
+  ctx: StepContext,
+  deps: StepDependencies,
+): Promise<StepOutcome> {
+  try {
+    return await executeStepInner(ctx, deps);
+  } catch (err) {
+    const failure = toLlmFailure(err, ctx);
+    deps.onEvent?.({
+      type: "step_error",
+      error: failure,
+      category: failure.category,
+    });
+    throw failure;
+  }
+}
+
+async function executeStepInner(
   ctx: StepContext,
   deps: StepDependencies,
 ): Promise<StepOutcome> {
@@ -186,6 +220,24 @@ export async function executeStep(
     });
   }
 
+  // Detect model-side defects before the parser wastes a retry on a
+  // fundamentally broken completion (truncated / empty / no_stop). A
+  // parser retry on the same prompt would repeat the same wall, so we
+  // short-circuit into `ModelError` which the agent loop surfaces
+  // without replaying the step.
+  const initialModelFailure = detectModelFailure(completion);
+  if (initialModelFailure !== null) {
+    deps.logger?.warn("model-side completion defect", {
+      sessionId: ctx.session.id,
+      stepIndex: ctx.stepIndex,
+      reason: initialModelFailure.reason,
+    });
+    throw new ModelError(
+      initialModelFailure.reason,
+      initialModelFailure.message,
+    );
+  }
+
   let parsed = tryParseToolCall(completion, deps.profile);
   if (!parsed.ok) {
     // One-shot parser retry: grammar outputs can be truncated or
@@ -232,24 +284,44 @@ export async function executeStep(
       reasoning = retryReasoning;
     }
 
+    // Same defensive check on the retry completion. If the model produced
+    // a truncated or empty reply on the second attempt, it is a model
+    // failure, not a grammar one — no point emitting `GrammarError` for
+    // an empty body.
+    const retryModelFailure = detectModelFailure(completion);
+    if (retryModelFailure !== null) {
+      deps.logger?.warn("model-side completion defect on parse retry", {
+        sessionId: ctx.session.id,
+        stepIndex: ctx.stepIndex,
+        reason: retryModelFailure.reason,
+      });
+      throw new ModelError(
+        retryModelFailure.reason,
+        retryModelFailure.message,
+      );
+    }
+
     parsed = tryParseToolCall(completion, deps.profile);
     if (!parsed.ok) {
-      const error = formatParseError(parsed.error, completion);
       deps.logger?.warn("tool-call parse failed after retry", {
         sessionId: ctx.session.id,
         stepIndex: ctx.stepIndex,
         rawLength: completion.content.length,
         raw: completion.content,
       });
-      deps.onEvent?.({ type: "step_error", error });
-      throw error;
+      throw new GrammarError(
+        parsed.error.message,
+        rawPreview(completion.content),
+        { cause: parsed.error },
+      );
     }
   }
   const toolCall = parsed.toolCall;
   if (!deps.registry.has(toolCall.tool)) {
-    const error = new Error(`tool not registered in this agent: ${toolCall.tool}`);
-    deps.onEvent?.({ type: "step_error", error });
-    throw error;
+    throw new ToolExecutionError(
+      toolCall.tool,
+      `tool not registered in this agent: ${toolCall.tool}`,
+    );
   }
   deps.onEvent?.({ type: "tool_call_parsed", call: toolCall });
 
@@ -421,16 +493,57 @@ function tryParseToolCall(
 }
 
 /**
- * Format a parse error with a preview of the raw LLM output so operators
- * can tell grammar misconfiguration apart from truncation or an empty
- * response without digging through streaming logs.
+ * Trim a raw completion body to the short preview attached to every
+ * `GrammarError` so postmortems can tell grammar misconfiguration apart
+ * from truncation or an empty response without digging through streaming
+ * logs.
  */
-function formatParseError(inner: Error, completion: CompletionResult): Error {
-  const preview = completion.content.slice(0, 240).replace(/\n/g, "\\n");
-  const suffix = completion.content.length > 240 ? "…" : "";
-  const error = new Error(`${inner.message} (raw: "${preview}${suffix}")`);
-  error.stack = inner.stack;
-  return error;
+function rawPreview(content: string): string {
+  const slice = content.slice(0, 240).replace(/\n/g, "\\n");
+  return content.length > 240 ? `${slice}…` : slice;
+}
+
+/**
+ * Normalise any thrown value into an `LlmFailure` so the `step_error`
+ * event always carries a canonical `category`. Values that already
+ * implement the failure contract short-circuit; raw `LlamaServerError`,
+ * `ToolCallParseError`, abort signals and plain errors get wrapped.
+ */
+function toLlmFailure(err: unknown, ctx: StepContext): LlmFailure {
+  if (err instanceof LlmFailure) return err;
+  if (ctx.signal.aborted) {
+    return new CancelledError(
+      err instanceof Error ? err.message : "operation cancelled",
+      { cause: err },
+    );
+  }
+  if (err instanceof LlamaServerError) {
+    if (err.status === null || err.status >= 500) {
+      return new TransportError(err.message, err.status, err.url, { cause: err });
+    }
+    return new GrammarError(err.message, "", { cause: err });
+  }
+  if (err instanceof ToolCallParseError) {
+    return new GrammarError(err.message, "", { cause: err });
+  }
+  if (isAbortError(err)) {
+    return new CancelledError(
+      err instanceof Error ? err.message : "operation cancelled",
+      { cause: err },
+    );
+  }
+  const wrapped = err instanceof Error ? err : new Error(String(err));
+  const categorised = classifyFailure(wrapped);
+  if (categorised === "cancelled") {
+    return new CancelledError(wrapped.message, { cause: err });
+  }
+  return new ToolExecutionError("unknown", wrapped.message, { cause: err });
+}
+
+function isAbortError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const name = (err as { name?: unknown }).name;
+  return name === "AbortError";
 }
 
 /**

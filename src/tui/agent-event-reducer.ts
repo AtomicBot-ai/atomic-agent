@@ -140,7 +140,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       );
     }
     case "loop_failed": {
-      const lastRunStatus = `failed: ${event.error.message}`;
+      const lastRunStatus = `failed [${event.category}]: ${event.error.message}`;
       return finishRun(
         appendFeed(state, {
           kind: "loop_failed",
@@ -263,7 +263,7 @@ function reduceStepEvent(
       return appendFeed(state, {
         kind: "step_error",
         stepIndex: state.currentStep,
-        line: `  ! ${event.error.message}`,
+        line: `  ! [${event.category}] ${event.error.message}`,
         color: "red",
       });
     default:

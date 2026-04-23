@@ -555,4 +555,165 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.reason).toBe("cancelled");
     expect(result.session.status).toBe("cancelled");
   });
+
+  it("classifies a truncated completion as ModelError with exactly one LLM call", async () => {
+    const registry = buildDefaultToolRegistry();
+    let llmCalls = 0;
+    const stepErrors: Array<{ category: string; message: string }> = [];
+    const parseRetries: number[] = [];
+    let loopFailedCategory: string | null = null;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        llmCalls += 1;
+        return {
+          ...makeCompletion(
+            '{"tool":"finish","args":{"summary":"never finis',
+          ),
+          truncated: true,
+        };
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "llm_event" && event.event.type === "step_error") {
+          stepErrors.push({
+            category: event.event.category,
+            message: event.event.error.message,
+          });
+        } else if (
+          event.type === "llm_event" &&
+          event.event.type === "parse_retry"
+        ) {
+          parseRetries.push(event.event.attempt);
+        } else if (event.type === "loop_failed") {
+          loopFailedCategory = event.category;
+        }
+      },
+    });
+    const session = createEmptySessionState({ id: "s-truncated", workingDir });
+    await expect(
+      loop.runTurn(session, {
+        userMessage: "go",
+        maxSteps: 3,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow();
+    expect(llmCalls).toBe(1);
+    expect(parseRetries).toHaveLength(0);
+    expect(stepErrors).toHaveLength(1);
+    expect(stepErrors[0]?.category).toBe("model");
+    expect(loopFailedCategory).toBe("model");
+  });
+
+  it("classifies an empty completion as ModelError and skips parse retry", async () => {
+    const registry = buildDefaultToolRegistry();
+    let llmCalls = 0;
+    const stepErrors: Array<{ category: string }> = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        llmCalls += 1;
+        return makeCompletion("");
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "llm_event" && event.event.type === "step_error") {
+          stepErrors.push({ category: event.event.category });
+        }
+      },
+    });
+    const session = createEmptySessionState({ id: "s-empty", workingDir });
+    await expect(
+      loop.runTurn(session, {
+        userMessage: "go",
+        maxSteps: 3,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow();
+    expect(llmCalls).toBe(1);
+    expect(stepErrors[0]?.category).toBe("model");
+  });
+
+  it("classifies persistent parse failure as GrammarError after one retry", async () => {
+    const registry = buildDefaultToolRegistry();
+    let llmCalls = 0;
+    const stepErrors: Array<{ category: string }> = [];
+    const parseRetries: number[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        llmCalls += 1;
+        return makeCompletion("not valid json at all");
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "llm_event" && event.event.type === "step_error") {
+          stepErrors.push({ category: event.event.category });
+        } else if (
+          event.type === "llm_event" &&
+          event.event.type === "parse_retry"
+        ) {
+          parseRetries.push(event.event.attempt);
+        }
+      },
+    });
+    const session = createEmptySessionState({ id: "s-grammar", workingDir });
+    await expect(
+      loop.runTurn(session, {
+        userMessage: "go",
+        maxSteps: 3,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow();
+    expect(llmCalls).toBe(2);
+    expect(parseRetries).toHaveLength(1);
+    expect(stepErrors[0]?.category).toBe("grammar");
+  });
+
+  it("classifies a missing tool call as ToolExecutionError", async () => {
+    const registry = buildDefaultToolRegistry();
+    const stepErrors: Array<{ category: string; message: string }> = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () =>
+        makeCompletion(
+          JSON.stringify({ tool: "does_not_exist", args: {} }),
+        ),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "llm_event" && event.event.type === "step_error") {
+          stepErrors.push({
+            category: event.event.category,
+            message: event.event.error.message,
+          });
+        }
+      },
+    });
+    const session = createEmptySessionState({ id: "s-missing", workingDir });
+    await expect(
+      loop.runTurn(session, {
+        userMessage: "go",
+        maxSteps: 3,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(/does_not_exist/);
+    expect(stepErrors[0]?.category).toBe("tool");
+    expect(stepErrors[0]?.message).toMatch(/does_not_exist/);
+  });
 });

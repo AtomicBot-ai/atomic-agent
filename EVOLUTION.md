@@ -93,7 +93,7 @@ Main risk:
 
 - scope creep is easy here; start with deterministic workspace summaries and keyword retrieval before semantic layers
 
-## Option 3: LLM reliability policy
+## Option 3: LLM reliability policy [done: 2026-04-23]
 
 What it adds:
 
@@ -117,6 +117,15 @@ Likely modules:
 Main risk:
 
 - retries must never replay already-executed tools; they should stay on the LLM side only
+
+Implementation notes (2026-04-23):
+
+- Transport retry with bounded backoff lives in `LlamaServerClient.complete` and the unary pre-body of `completeStream` (`llama.completionRetries`, `llama.completionRetryBackoffMs`), limited to network errors and HTTP 5xx.
+- One-shot parser recovery sits in `src/agent/step-executor.ts`: on `ToolCallParseError` the executor replays through the unary LLM path, emits a `parse_retry` step event, and surfaces a typed `GrammarError` if the second attempt still fails.
+- Error taxonomy lives in a new feature folder `src/llm/reliability/` — `LlmFailureCategory`, the `LlmFailure` class hierarchy (`TransportError`, `GrammarError`, `ModelError`, `ToolExecutionError`, `CancelledError`), `classifyFailure`, and `detectModelFailure`. The executor wraps any escaping error into an `LlmFailure` before emitting `step_error`; the agent loop classifies at the outer catch and attaches `category` to `loop_failed`.
+- `detectModelFailure` short-circuits the parser retry on `truncated` / `empty` / `no_stop` completions so the runtime does not waste an LLM call reproducing the same wall.
+- `category` is propagated end-to-end: `step_error` / `loop_failed` events → `trace-recorder` → `AgentMetrics.recordLlmFailure` (`agent.llm.failure`) → TUI event feed label → sidecar protocol (`session_failed.category`, `error.code = step_error:<category>`) → OpenAI SSE (`error.category` for atomic extensions, `error.type = agent.<category>` for OpenAI-compatible clients).
+- Tests: `src/llm/reliability/*.test.ts`, new `agent-loop.test.ts` cases (`truncated`, `empty`, persistent grammar failure, missing tool), `telemetry.test.ts` `recordLlmFailure`, `trace-recorder.test.ts` category propagation, `agent-event-reducer.test.ts` feed label. See `AGENTS.md` §"LLM reliability policy" for the full invariant table.
 
 ## Option 4: background autonomy
 

@@ -155,6 +155,7 @@ export function createTraceRecorder(
           stepIndex: currentStepIndex,
           message: inner.error.message,
           ...(inner.error.stack ? { stack: inner.error.stack } : {}),
+          category: inner.category,
         });
         return;
       default:
@@ -254,6 +255,7 @@ export function createTraceRecorder(
               : {}),
             message: event.error.message,
             ...(event.error.stack ? { stack: event.error.stack } : {}),
+            category: event.category,
           });
           return;
         case "llm_event":

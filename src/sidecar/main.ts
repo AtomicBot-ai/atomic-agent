@@ -119,7 +119,7 @@ export async function bootstrapSidecar(): Promise<{
           } else if (inner.type === "step_error") {
             protocol.emitEvent("error", {
               message: inner.error.message,
-              code: "step_error",
+              code: `step_error:${inner.category}`,
               stack: inner.error.stack,
             });
           }
@@ -158,6 +158,7 @@ export async function bootstrapSidecar(): Promise<{
           protocol.emitEvent("session_failed", {
             sessionId,
             error: event.error.message,
+            category: event.category,
           });
           break;
       }

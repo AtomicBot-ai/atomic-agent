@@ -1,5 +1,6 @@
 import type { ToolCallPayload } from "../llm/grammar/tool-call-grammar.js";
 import type { CompletionResult } from "../llm/llama-server-client.js";
+import type { LlmFailureCategory } from "../llm/reliability/index.js";
 import type { BuiltPrompt } from "../prompt/build-prompt.js";
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
 
@@ -84,4 +85,10 @@ export type StepEvent =
    * postmortems can tell grammar truncation from malformed JSON.
    */
   | { type: "parse_retry"; stepIndex: number; attempt: number; reason: string }
-  | { type: "step_error"; error: Error };
+  /**
+   * Terminal error for this step. The `category` follows the canonical
+   * LLM failure taxonomy (see `src/llm/reliability/`) and is always set
+   * even when the underlying error shape is a legacy `Error` — the step
+   * executor classifies unknown errors before emitting.
+   */
+  | { type: "step_error"; error: Error; category: LlmFailureCategory };

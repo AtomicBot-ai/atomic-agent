@@ -101,6 +101,27 @@ describe("MetricsCollector + AgentMetrics", () => {
     const hitSamples = samples.filter((s) => s.name === METRIC_NAMES.kvCacheHit);
     expect(hitSamples.map((s) => s.value)).toEqual([1, 0]);
   });
+
+  it("records LLM failures tagged by category", () => {
+    const samples: Array<{ name: string; value: number; tags?: Record<string, string> }> = [];
+    const collector = new MetricsCollector({
+      sinks: [(s) => samples.push({ name: s.name, value: s.value, ...(s.tags ? { tags: s.tags } : {}) })],
+    });
+    const metrics = new AgentMetrics(collector);
+
+    metrics.recordLlmFailure({ sessionId: "sess-1", category: "transport" });
+    metrics.recordLlmFailure({ sessionId: "sess-1", category: "grammar" });
+    metrics.recordLlmFailure({ sessionId: "sess-1", category: "model" });
+
+    const failures = samples.filter((s) => s.name === METRIC_NAMES.llmFailure);
+    expect(failures).toHaveLength(3);
+    expect(failures.map((s) => s.tags?.category)).toEqual([
+      "transport",
+      "grammar",
+      "model",
+    ]);
+    expect(failures.every((s) => s.tags?.sessionId === "sess-1")).toBe(true);
+  });
 });
 
 describe("NDJSON sinks", () => {

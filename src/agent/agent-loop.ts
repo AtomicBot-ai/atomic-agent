@@ -8,6 +8,12 @@ import {
   type ModelProfile,
 } from "../llm/model-profile.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
+import {
+  CancelledError,
+  LlmFailure,
+  classifyFailure,
+} from "../llm/index.js";
+import type { LlmFailureCategory } from "../llm/index.js";
 import type { SessionState } from "../session/session-state.js";
 import {
   incrementTurnCount,
@@ -111,7 +117,12 @@ export type AgentLoopEvent =
       type: "loop_completed";
       reason: AgentLoopReason;
     }
-  | { type: "loop_failed"; error: Error };
+  /**
+   * Terminal failure for the turn. `category` follows the canonical
+   * LLM-failure taxonomy (see `src/llm/reliability/`); downstream
+   * consumers never need to classify the error themselves.
+   */
+  | { type: "loop_failed"; error: Error; category: LlmFailureCategory };
 
 export interface RunTurnResult {
   session: SessionState;
@@ -252,12 +263,43 @@ export class AgentLoop {
         }
       } catch (err) {
         runError = err instanceof Error ? err : new Error(String(err));
+        const category = classifyFailure(err);
         this.deps.logger?.error("agent loop failed", {
           sessionId: state.id,
           stepIndex: i,
           error: runError.message,
+          category,
         });
-        this.deps.onEvent?.({ type: "loop_failed", error: runError });
+        this.deps.onEvent?.({
+          type: "loop_failed",
+          error: runError,
+          category,
+        });
+        this.deps.metrics?.recordLlmFailure({
+          sessionId: state.id,
+          category,
+        });
+        // `cancelled` is user-initiated and should close the turn
+        // cleanly without marking the session as failed. Everything
+        // else keeps the existing failed-terminal contract.
+        const cancelled =
+          err instanceof CancelledError ||
+          (err instanceof LlmFailure && err.category === "cancelled") ||
+          category === "cancelled";
+        if (cancelled) {
+          state = { ...state, status: "cancelled" };
+          this.deps.onEvent?.({ type: "loop_completed", reason: "cancelled" });
+          state = incrementTurnCount(state);
+          const durationMs = Date.now() - turnStartedAt;
+          this.deps.onEvent?.({
+            type: "turn_finished",
+            turnIndex,
+            reason: "cancelled",
+            stepCount: stepsTaken,
+            durationMs,
+          });
+          return { session: state, reason: "cancelled", stepCount: stepsTaken };
+        }
         state = { ...state, status: "failed", lastError: runError.message };
         const durationMs = Date.now() - turnStartedAt;
         this.deps.onEvent?.({

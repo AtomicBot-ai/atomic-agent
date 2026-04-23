@@ -1,4 +1,5 @@
 import type { AgentLoopReason } from "../../agent/agent-loop.js";
+import type { LlmFailureCategory } from "../../llm/reliability/index.js";
 
 /**
  * Append-only trace event emitted by the runtime for postmortem analysis
@@ -152,6 +153,13 @@ export interface TraceError extends TraceEventBase {
   stepIndex?: number;
   message: string;
   stack?: string;
+  /**
+   * Canonical LLM failure taxonomy tag
+   * (`transport` / `grammar` / `model` / `tool` / `cancelled`). Missing
+   * only on legacy traces recorded before the taxonomy was introduced;
+   * new traces always carry it.
+   */
+  category?: LlmFailureCategory;
 }
 
 /**

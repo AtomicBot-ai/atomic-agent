@@ -25,3 +25,19 @@ export {
   ToolCallParseError,
 } from "./grammar/index.js";
 export type { ToolCallPayload } from "./grammar/index.js";
+export {
+  CancelledError,
+  GrammarError,
+  LlmFailure,
+  ModelError,
+  ToolExecutionError,
+  TransportError,
+  classifyFailure,
+  detectModelFailure,
+} from "./reliability/index.js";
+export type {
+  DetectedModelFailure,
+  LlmFailureCategory,
+  LlmFailureOptions,
+  ModelFailureReason,
+} from "./reliability/index.js";

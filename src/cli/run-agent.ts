@@ -98,7 +98,7 @@ function formatAgentEvent(event: AgentLoopEvent): string | null {
         return `  ← ${inner.result.tool} ${inner.result.status}: ${inner.result.summary}${inner.result.truncated ? " (truncated)" : ""}`;
       }
       if (inner.type === "step_error") {
-        return `  ! ${inner.error.message}`;
+        return `  ! [${inner.category}] ${inner.error.message}`;
       }
       // assistant_reply / reasoning are emitted to stdout from the chat loop instead.
       return null;
@@ -106,7 +106,7 @@ function formatAgentEvent(event: AgentLoopEvent): string | null {
     case "loop_completed":
       return null;
     case "loop_failed":
-      return `» loop failed: ${event.error.message}`;
+      return `» loop failed [${event.category}]: ${event.error.message}`;
     default:
       return null;
   }

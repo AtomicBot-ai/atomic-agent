@@ -1,3 +1,4 @@
+import type { LlmFailureCategory } from "../llm/reliability/index.js";
 import type { MetricsCollector } from "./metrics-collector.js";
 
 /**
@@ -12,6 +13,7 @@ export const METRIC_NAMES = {
   llmLatency: "agent.llm.latency_ms",
   llmPromptTokens: "agent.llm.prompt_tokens",
   llmCompletionTokens: "agent.llm.completion_tokens",
+  llmFailure: "agent.llm.failure",
   toolCall: "agent.tool.call",
   toolSuccess: "agent.tool.success",
   toolFailure: "agent.tool.failure",
@@ -43,6 +45,11 @@ export interface ToolMetricSample {
   tool: string;
   status: "ok" | "error";
   durationMs: number;
+}
+
+export interface LlmFailureMetricSample {
+  sessionId: string;
+  category: LlmFailureCategory;
 }
 
 /**
@@ -87,6 +94,20 @@ export class AgentMetrics {
     } else {
       this.collector.counter(METRIC_NAMES.toolFailure, 1, tags);
     }
+  }
+
+  /**
+   * Record a terminal failure on an agent turn, tagged by the canonical
+   * LLM failure category (`transport` / `grammar` / `model` / `tool` /
+   * `cancelled`). Dashboards aggregate this counter per session to spot
+   * degraded llama-server backends, grammar regressions, or sustained
+   * model-side defects.
+   */
+  recordLlmFailure(sample: LlmFailureMetricSample): void {
+    this.collector.counter(METRIC_NAMES.llmFailure, 1, {
+      sessionId: sample.sessionId,
+      category: sample.category,
+    });
   }
 
   recordApproval(input: { sessionId: string; tool: string; approved: boolean }): void {
