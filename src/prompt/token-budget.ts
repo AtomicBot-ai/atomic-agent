@@ -76,6 +76,15 @@ export interface EffectiveConversationCapInput {
    * conversation room accurate.
    */
   profileTokens?: number;
+  /**
+   * Tokens consumed by the `### recalled` section. Optional — the hybrid
+   * memory pipeline (PR-B) only populates it when the agent loop
+   * pre-fetches notes; legacy callers pass nothing and the clamp treats
+   * it as `0`.
+   */
+  recalledTokens?: number;
+  /** Tokens consumed by the `### memory-index` section. Same contract as `recalledTokens`. */
+  memoryIndexTokens?: number;
   completionMaxTokens: number;
 }
 
@@ -114,6 +123,8 @@ export function computeEffectiveConversationCap(
     input.sessionTokens -
     input.worldSnapshotTokens -
     (input.profileTokens ?? 0) -
+    (input.recalledTokens ?? 0) -
+    (input.memoryIndexTokens ?? 0) -
     input.completionMaxTokens -
     CONVERSATION_CAP_SAFETY_MARGIN;
   return Math.max(

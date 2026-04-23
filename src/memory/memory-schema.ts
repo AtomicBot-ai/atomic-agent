@@ -14,7 +14,7 @@
  * `applyMigrations` with a new step. The `schema_meta` table records the
  * version actually present on disk so upgrades are idempotent.
  */
-export const MEMORY_SCHEMA_VERSION = 2 as const;
+export const MEMORY_SCHEMA_VERSION = 3 as const;
 
 const BASE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -72,6 +72,19 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
 END;
 `;
 
+// V3 extends `profile_facts` with contextual gating: `pinned` (1 by
+// default) marks the fact as always-in-prompt, `keywords` is a JSON
+// string[] that `profile-renderer` matches against the current user
+// message to include otherwise-suppressed facts only when relevant.
+//
+// Rationale: pinning preserves back-compat (every existing row is
+// implicitly "pinned=1"), while the keyword gate unlocks a path to much
+// larger profiles without blowing up the per-turn token budget.
+const V3_MIGRATION = `
+ALTER TABLE profile_facts ADD COLUMN pinned INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE profile_facts ADD COLUMN keywords TEXT;
+`;
+
 export interface MemoryDatabaseLike {
   exec(sql: string): unknown;
   prepare(sql: string): {
@@ -93,6 +106,9 @@ export function applyMigrations(db: MemoryDatabaseLike): void {
   }
   if (current < 2) {
     db.exec(V2_SCHEMA);
+  }
+  if (current < 3) {
+    db.exec(V3_MIGRATION);
   }
   if (current === MEMORY_SCHEMA_VERSION) return;
   db.prepare(

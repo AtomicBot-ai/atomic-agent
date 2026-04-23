@@ -191,4 +191,34 @@ describe("parseUserConfigFile", () => {
       }),
     ).toThrow(/telemetry.trace.maxBytesPerSession/);
   });
+
+  it("applies memory.reflection.autoStoreNotes + maxNotesPerCall defaults", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.memory.reflection.autoStoreNotes).toBe(
+      USER_CONFIG_DEFAULTS.memory.reflection.autoStoreNotes,
+    );
+    expect(parsed.memory.reflection.maxNotesPerCall).toBe(
+      USER_CONFIG_DEFAULTS.memory.reflection.maxNotesPerCall,
+    );
+  });
+
+  it("accepts explicit memory.reflection note overrides", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      memory: {
+        reflection: { autoStoreNotes: false, maxNotesPerCall: 0 },
+      },
+    });
+    expect(parsed.memory.reflection.autoStoreNotes).toBe(false);
+    expect(parsed.memory.reflection.maxNotesPerCall).toBe(0);
+  });
+
+  it("rejects negative memory.reflection.maxNotesPerCall", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { reflection: { maxNotesPerCall: -1 } },
+      }),
+    ).toThrow(/memory.reflection.maxNotesPerCall/);
+  });
 });

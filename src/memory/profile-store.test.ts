@@ -27,7 +27,13 @@ describe("ProfileStore", () => {
   it("upserts and reads back a fact", () => {
     store.set("language", "ru", 1_000);
     const got = store.get("language");
-    expect(got).toEqual({ key: "language", value: "ru", updatedAt: 1_000 });
+    expect(got).toEqual({
+      key: "language",
+      value: "ru",
+      updatedAt: 1_000,
+      pinned: true,
+      keywords: [],
+    });
   });
 
   it("overwrites an existing key on set", () => {
@@ -37,7 +43,45 @@ describe("ProfileStore", () => {
       key: "timezone",
       value: "UTC",
       updatedAt: 2_000,
+      pinned: true,
+      keywords: [],
     });
+  });
+
+  it("persists pinned=false with keywords for contextual facts", () => {
+    store.set("deploy_cmd", "pnpm run deploy", {
+      pinned: false,
+      keywords: ["deploy", "release", "ship"],
+    });
+    const got = store.get("deploy_cmd");
+    expect(got?.pinned).toBe(false);
+    expect(got?.keywords).toEqual(["deploy", "release", "ship"]);
+  });
+
+  it("discards keywords when pinned=true", () => {
+    store.set("language", "ru", {
+      pinned: true,
+      keywords: ["lang"],
+    });
+    const got = store.get("language");
+    expect(got?.pinned).toBe(true);
+    expect(got?.keywords).toEqual([]);
+  });
+
+  it("deduplicates and lowercases keywords", () => {
+    store.set("ci_url", "https://ci.example/foo", {
+      pinned: false,
+      keywords: ["CI", "ci", "  Deploy  "],
+    });
+    const got = store.get("ci_url");
+    expect(got?.keywords).toEqual(["ci", "deploy"]);
+  });
+
+  it("defaults pinned=true for the legacy 3-arg set(key, value, now) call form", () => {
+    store.set("language", "ru", 1_000);
+    const got = store.get("language");
+    expect(got?.pinned).toBe(true);
+    expect(got?.updatedAt).toBe(1_000);
   });
 
   it("removes a fact and reports whether it existed", () => {

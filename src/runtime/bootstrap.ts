@@ -34,6 +34,7 @@ import { registerMemoryTools } from "../tools/memory/index.js";
 
 import { MemoryStore } from "../memory/memory-store.js";
 import { ProfileStore } from "../memory/profile-store.js";
+import { createDefaultMemoryContextProvider } from "../memory/memory-context-provider.js";
 import {
   createReflectionRunner,
   type ReflectionLlmComplete,
@@ -377,9 +378,29 @@ export async function createAgentRuntime(
     slotManager,
     llmComplete,
     profileStore,
+    notesStore,
     logger,
     metrics,
   });
+
+  // Read-side counterpart of reflection: pre-step recall injection and
+  // memory-index pointer rendering. Wired only when `memory.notes` is
+  // enabled — otherwise the runtime has nothing to read from and the
+  // prompt tail skips both sections.
+  const memoryContextProvider = config.memory.notes.enabled
+    ? createDefaultMemoryContextProvider({
+        store: notesStore,
+        recall: {
+          enabled: config.memory.recallInjection.enabled,
+          k: config.memory.recallInjection.k,
+        },
+        index: {
+          enabled: config.memory.index.enabled,
+          limit: config.memory.index.limit,
+          previewChars: config.memory.index.previewChars,
+        },
+      })
+    : undefined;
 
   // The `skillCatalog` is a getter so that `agent-loop` reads the current
   // value on every step — `refreshSkills()` then does not require tearing
@@ -398,6 +419,7 @@ export async function createAgentRuntime(
       ? { profileFactsProvider: () => profileStore.list() }
       : {}),
     ...(reflectionRunner ? { reflectionRunner } : {}),
+    ...(memoryContextProvider ? { memoryContextProvider } : {}),
     onEvent: (event: AgentLoopEvent) => {
       currentRecorder?.onAgentEvent(event);
       options.handlers?.onAgentEvent?.(event);
@@ -669,6 +691,13 @@ function buildReflectionRunner(args: {
     sessionId: string;
   }) => Promise<CompletionResult>;
   profileStore: ProfileStore;
+  /**
+   * Freeform notes store. Wired only when both `memory.notes.enabled`
+   * and `memory.reflection.autoStoreNotes` are true — otherwise the
+   * runner falls back to profile-only extraction and the NOTE channel
+   * is silently dropped.
+   */
+  notesStore: MemoryStore;
   logger: StructuredLogger;
   metrics: AgentMetrics;
 }): ReflectionRunner | undefined {
@@ -701,12 +730,20 @@ function buildReflectionRunner(args: {
     });
     return Promise.race([completionPromise, abortPromise]);
   };
+  const notesWriteEnabled =
+    memory.notes.enabled &&
+    memory.reflection.autoStoreNotes &&
+    memory.reflection.maxNotesPerCall > 0;
   return createReflectionRunner({
     llmComplete: reflectionLlmComplete,
     profileStore: args.profileStore,
+    ...(notesWriteEnabled ? { memoryStore: args.notesStore } : {}),
     reflectionSlotId,
     timeoutMs: memory.reflection.timeoutMs,
     maxFactsPerCall: memory.reflection.maxFactsPerCall,
+    maxNotesPerCall: notesWriteEnabled
+      ? memory.reflection.maxNotesPerCall
+      : 0,
     logger: args.logger,
     metrics: args.metrics,
   });

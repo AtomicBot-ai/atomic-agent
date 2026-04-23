@@ -252,8 +252,13 @@ export const DEFAULT_TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
   {
     name: "memory.profile.set",
     summary:
-      "Upsert a durable cross-session user profile fact (key/value). Rendered into the `### profile` section of every prompt.",
-    argsSchema: '{"key": "string", "value": "string"}',
+      "Upsert a durable cross-session user profile fact. Pinned facts (default) are rendered into `### profile` every turn; contextual facts (pinned=false with keywords) only appear when a keyword hits the current user message — use them for large/rare context (deploy commands, env snippets, per-feature prefs).",
+    argsSchema:
+      '{"key": "string", "value": "string", "pinned": "boolean (optional, default true)", "keywords": "string[] (optional, required when pinned=false, case-insensitive whole-word match against user message)"}',
+    examples: [
+      '{"key":"language","value":"ru"}',
+      '{"key":"deploy_cmd","value":"pnpm run deploy","pinned":false,"keywords":["deploy","release","ship"]}',
+    ],
   },
   {
     name: "memory.profile.remove",
@@ -263,7 +268,7 @@ export const DEFAULT_TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
   {
     name: "memory.profile.list",
     summary:
-      "List every durable user profile fact. Read-only; profile is already rendered into the prompt tail every turn.",
+      "List every durable user profile fact with pinned/keywords metadata. Read-only; pinned facts are already rendered every turn, contextual facts only when their keywords hit the user message.",
     argsSchema: "{}",
   },
   {
@@ -281,13 +286,13 @@ export const DEFAULT_TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
   {
     name: "memory.notes.recall",
     summary:
-      "Search durable notes by keyword (BM25 over content). Call BEFORE answering when: (a) the user references past sessions (\"last time\", \"we decided\", \"the bug you fixed\"); (b) the user asks about their own preferences / project history / previously-seen files; (c) a task spans multiple turns and you need to check prior notes. Default scope='all' (cross-project); pass scope='project' to restrict to the current working directory.",
+      "Search or fetch durable notes. Pass { id } to fetch one note by id (e.g. after spotting its pointer in `### memory-index`). Otherwise pass { query } for a BM25 keyword search. Call BEFORE answering when: (a) the user references past sessions (\"last time\", \"we decided\", \"the bug you fixed\"); (b) the user asks about their own preferences / project history / previously-seen files; (c) a task spans multiple turns and you need to check prior notes. Default scope='all' (cross-project); pass scope='project' to restrict to the current working directory.",
     argsSchema:
-      '{"query": "string (2-6 keywords, not a full sentence)", "k": "number (optional, default 5)", "scope": "project|all (optional)", "tags": "string[] (optional, AND-filter)"}',
+      '{"query": "string (2-6 keywords, not a full sentence — omit when using id)", "id": "number (optional, direct fetch by note id)", "k": "number (optional, default 5)", "scope": "project|all (optional)", "tags": "string[] (optional, AND-filter)"}',
     examples: [
       '{"query":"pnpm tooling","k":3}',
       '{"query":"flaky login test","scope":"project"}',
-      '{"query":"timezone preference"}',
+      '{"id":42}',
     ],
   },
   {

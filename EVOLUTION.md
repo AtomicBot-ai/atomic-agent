@@ -123,11 +123,23 @@ Additive layer on top of Option 2. Inspired by the ZeroClaw hybrid-memory trait,
 
 - **`memories` table + `memories_fts` virtual table** in the same `<stateDir>/memory.sqlite` file that owns `profile_facts`. Bumps `MEMORY_SCHEMA_VERSION` from 1 to 2; migration is idempotent, downgrade-guarded.
 - **`MemoryStore`** (new) — freeform content, BM25 ranking via FTS5 (`porter unicode61` tokenizer), hard-cap eviction by `updated_at`. Shares the SQLite connection pattern and `better-sqlite3` discipline with `ProfileStore`.
-- **Three new agent tools**: `memory.notes.store`, `memory.notes.recall`, `memory.notes.forget`. Write and read are both explicit LLM actions — the notes corpus is NEVER rendered into the prompt and therefore never invalidates the KV-cached stable prefix. `scope` defaults to `"all"` (cross-project); the caller passes `scope: "project"` to narrow to the current `workingDir`.
-- **No changes** to `build-prompt.ts`, `step-executor.ts`, or the reflection runner — reflection still writes only to `profile_facts`.
+- **Three new agent tools**: `memory.notes.store`, `memory.notes.recall`, `memory.notes.forget`. Originally write and read were both explicit LLM actions; the notes corpus was never rendered into the prompt. The hybrid-memory increments below relax this for read-only tail injection while keeping the corpus itself out of the prompt.
 - **Config keys**: `memory.notes.{enabled,maxEntries,maxContentChars,recallDefaultK}`. `USER_CONFIG_VERSION` bumped to 2 with transparent v1→v2 migration (existing configs load with defaults injected).
 
-What M2 (Option 2b) would add on top: embeddings for semantic recall, an importance score / decay curve, and a two-stage FTS5+vector ranking pipeline. Parked until real notes usage justifies the extra operational surface (second llama-server with `--embedding`, `sqlite-vec`, reciprocal-rank fusion).
+### Option 2c: hybrid memory increments (read-side recall + contextual profile + auto-NOTE) [shipped: 2026-04-23]
+
+Shipped as a three-step refinement on top of Option 2 + 2a. Full description in [MEMORY.md](MEMORY.md). Plan: `.cursor/plans/memory_compromise_three_increments_0ea627e7.plan.md`.
+
+- **Increment 0 — reflection writes freeform notes.** Reflection now emits `NOTE body [tags]` lines in addition to `SET key=value`. Capped by `memory.reflection.maxNotesPerCall` (default 2) and gated by `memory.reflection.autoStoreNotes`. Closes the "memory doesn't fill itself unless prodded" gap by making `MemoryStore` self-populating from natural conversation.
+- **Increment 1 — automatic recall + memory-index in the tail.** `agent-loop.runTurn` pre-fetches two new tail sections via [src/memory/memory-context-provider.ts](src/memory/memory-context-provider.ts):
+  - `### recalled` — top-K BM25 hits against the current `userMessage` (`memory.recallInjection.{enabled,k,previewChars,maxTokens}`).
+  - `### memory-index` — compact `#id [tags] preview` pointer rows the agent can drill into via `memory.notes.recall { id }` (`memory.index.{enabled,limit,previewChars,maxTokens}`).
+  - Both sections are deduplicated by id and live strictly in the variable tail. `SessionState` gains ephemeral `recalledNotes` / `memoryIndex` fields stripped by `stripEphemeral` before persistence. The notes corpus body is **still** never dumped wholesale — only top-K hits and pointer rows.
+- **Increment 3 — contextual profile facts.** `MEMORY_SCHEMA_VERSION` bumped to 3 with two new columns on `profile_facts`: `pinned INTEGER NOT NULL DEFAULT 1` and `keywords TEXT`. `pinned=true` facts always render; `pinned=false` facts only render when at least one keyword hits the current `userMessage` (case-insensitive substring match). Reflection learned a new SET flavour: `SET key=value [pinned=false; keywords=a,b,c]`. Master switch `memory.profile.contextualKeywordGate` (default `true`).
+
+The end result: a hybrid memory system where (a) hot bits surface automatically, (b) warm bits surface as cheap pointers, (c) cold bits are reachable via explicit tool calls, and (d) writes happen autonomously after each turn — all without invalidating the KV-cached stable prefix.
+
+What M2 (Option 2b) would add on top: embeddings for semantic recall, an importance score / decay curve, content-based deduplication of notes, and a two-stage FTS5+vector ranking pipeline. Parked until real notes usage justifies the extra operational surface (second llama-server with `--embedding`, `sqlite-vec`, reciprocal-rank fusion).
 
 ## Option 3: LLM reliability policy [done: 2026-04-23]
 

@@ -147,6 +147,28 @@ describe("MemoryStore", () => {
     expect(all.map((e) => e.content)).toEqual(["third", "second", "first"]);
   });
 
+  it("listIndex returns compact pointer rows in updated_at DESC order", () => {
+    const a = store.store({ content: "first note", tags: ["x"] }, 1_000);
+    store.store({ content: "second note body here" }, 2_000);
+    const index = store.listIndex();
+    expect(index.map((e) => e.id)).toEqual([expect.any(Number), a.id]);
+    expect(index[0]?.preview).toBe("second note body here");
+    expect(index[1]?.tags).toEqual(["x"]);
+  });
+
+  it("listIndex clips preview to previewChars with an ellipsis", () => {
+    store.store({ content: "a very long single-line note with plenty of padding text" }, 1);
+    const [entry] = store.listIndex({ previewChars: 10 });
+    expect(entry?.preview.length).toBe(10);
+    expect(entry?.preview.endsWith("…")).toBe(true);
+  });
+
+  it("listIndex picks the first non-empty line from multi-line content", () => {
+    store.store({ content: "\n\nfirst meaningful line\nsecond line" }, 1);
+    const [entry] = store.listIndex();
+    expect(entry?.preview).toBe("first meaningful line");
+  });
+
   it("rejects invalid content", () => {
     expect(() => store.store({ content: "" })).toThrow(MemoryValidationError);
     expect(() => store.store({ content: "   " })).toThrow(

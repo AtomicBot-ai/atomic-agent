@@ -49,7 +49,7 @@ This is the source-of-truth for automated contributors (LLM agents, codegen, etc
 | `src/approval/` | Approval gate and event wiring |
 | `src/telemetry/` | Structured logger + metrics + trace recorder (`src/telemetry/trace/`) |
 | `src/replay/` | Trace-based replay: drift detection + optional LLM re-inference |
-| `src/memory/` | Memory fabric: durable user-profile store + async end-of-turn reflection that distils facts into it |
+| `src/memory/` | Memory fabric: ProfileStore (key/value facts, pinned + contextual) + MemoryStore (FTS5 freeform notes) + async end-of-turn reflection that writes into both. See [MEMORY.md](MEMORY.md). |
 
 ## Build & test
 
@@ -89,43 +89,71 @@ There is currently no dedicated workspace-memory, retrieval, embeddings, or reso
 
 ## Memory fabric
 
-A single-layer cross-session memory lives in [src/memory/](src/memory/) and exposes itself to the agent via three profile tools in [src/tools/memory/](src/tools/memory/). Memory formation happens asynchronously after every turn via the reflection layer (see below). The fabric is deliberately narrow — no embeddings, no summaries, no TTL, no tags, no redaction.
+A three-channel cross-session memory subsystem lives in [src/memory/](src/memory/) and exposes itself to the agent via six tools in [src/tools/memory/](src/tools/memory/). The full description is in [MEMORY.md](MEMORY.md); this section is the engineering summary.
 
-### User Profile (durable, always in the prompt tail)
+The three channels share one SQLite file `<stateDir>/memory.sqlite` (separate from `sessions.sqlite`):
 
-- **Storage.** New SQLite file `<stateDir>/memory.sqlite` (separate from `sessions.sqlite` — different lifecycle, global scope). Schema + migrations in [src/memory/memory-schema.ts](src/memory/memory-schema.ts); CRUD in [src/memory/profile-store.ts](src/memory/profile-store.ts).
-- **Shape.** `profile_facts (key TEXT PK, value TEXT, updated_at INTEGER)`. Keys are short free-form strings (`language`, `timezone`, `name`, `preferred_browser`, …); values are plain text.
-- **Prompt placement.** Rendered by [src/memory/profile-renderer.ts](src/memory/profile-renderer.ts) as a `### profile` section in the **variable tail**, between `### session` and `### world`. It is NOT part of the stable prefix — injecting it above `session` would invalidate the KV-cache on every profile update. `build-prompt.test.ts` pins this invariant by hashing the stable prefix across profile edits.
-- **Budgeting.** Truncated by `truncateToTokens(content, memory.profile.maxTokens)` (default `512`) with a `[truncated]` marker. The profile token count is subtracted from the effective conversation cap in [src/prompt/token-budget.ts](src/prompt/token-budget.ts).
-- **Live snapshot.** `AgentLoop` reads `profileStore.list()` via an optional `profileFactsProvider` at the start of every step and passes it into `StepContext.profileFacts` → `buildPrompt`. Profile writes from the previous step show up on the next step without process restart.
-- **Tools.** `memory.profile.set { key, value }`, `memory.profile.remove { key }`, `memory.profile.list {}`. Grammar entries are in [grammars/tool-call.gbnf](grammars/tool-call.gbnf); descriptors in [src/prompt/tool-descriptors.ts](src/prompt/tool-descriptors.ts).
+| Channel        | Storage table          | Read path (auto)                 | Write path                          |
+| -------------- | ---------------------- | -------------------------------- | ----------------------------------- |
+| `ProfileStore` | `profile_facts`        | `### profile` (gated)            | `memory.profile.set` + reflection   |
+| `MemoryStore`  | `memories` + FTS5      | `### recalled` + `### memory-index` | `memory.notes.store` + reflection|
+| Reflection     | n/a — it writes to both| n/a                              | end-of-turn fire-and-forget LLM call|
+
+`MEMORY_SCHEMA_VERSION = 3`; idempotent migrations in [src/memory/memory-schema.ts](src/memory/memory-schema.ts).
+
+### ProfileStore (durable facts, in the prompt tail)
+
+- **Shape.** `profile_facts (key TEXT PK, value TEXT, pinned INTEGER, keywords TEXT, updated_at INTEGER)`. CRUD in [src/memory/profile-store.ts](src/memory/profile-store.ts).
+- **Pinned vs contextual.** `pinned=true` (default) facts are always rendered; `pinned=false` facts are rendered only when at least one of their `keywords` hits the current `userMessage` (case-insensitive substring match). Filter applied by [src/memory/profile-renderer.ts](src/memory/profile-renderer.ts), gated by `memory.profile.contextualKeywordGate` (default `true`).
+- **Prompt placement.** Rendered as `### profile` in the **variable tail** (between `### session` and `### recalled`). Never the stable prefix. `build-prompt.test.ts` pins the invariant by hashing the stable prefix across profile edits.
+- **Budgeting.** `truncateToTokens(content, memory.profile.maxTokens)` (default `512`) with `[truncated]` marker; tokens subtracted from the effective conversation cap in [src/prompt/token-budget.ts](src/prompt/token-budget.ts).
+- **Live snapshot.** `AgentLoop` reads `profileStore.list()` once per step via the optional `profileFactsProvider` and threads it into `StepContext.profileFacts` → `buildPrompt`.
+- **Tools.** `memory.profile.set { key, value, pinned?, keywords? }`, `memory.profile.remove { key }`, `memory.profile.list {}`.
+
+### MemoryStore (FTS5 freeform notes)
+
+- **Shape.** `memories (id INTEGER PK, content, tags, source, scope, working_dir, created_at, updated_at)` + `memories_fts` virtual table (`porter unicode61`). CRUD in [src/memory/memory-store.ts](src/memory/memory-store.ts). Hard cap `memory.notes.maxEntries` (default `1000`); FIFO eviction by `(updated_at ASC, id ASC)` on overflow.
+- **Auto-injection.** Two new tail sections (rendered by [src/memory/notes-renderer.ts](src/memory/notes-renderer.ts)):
+  - `### recalled` — top-K BM25 hits against the current `userMessage`. Driven by `memory.recallInjection.{enabled, k, previewChars, maxTokens}` (defaults `k=3`, `previewChars=160`, `maxTokens=400`).
+  - `### memory-index` — compact `#id [tags] preview` pointer rows. Driven by `memory.index.{enabled, limit, previewChars, maxTokens}` (defaults `limit=20`, `previewChars=60`, `maxTokens=300`).
+  - The two sections are **deduplicated by id** — anything in `### recalled` is filtered out of `### memory-index`.
+- **Pre-fetch.** Done once per turn by [src/memory/memory-context-provider.ts](src/memory/memory-context-provider.ts), invoked from `agent-loop.runTurn` before the per-step loop starts. Results land in ephemeral `SessionState.recalledNotes` / `SessionState.memoryIndex`. `stripEphemeral` in [src/session/session-store.ts](src/session/session-store.ts) removes them before snapshot persistence — they are recomputed every turn.
+- **Tools.** `memory.notes.store { content, tags?, scope?, workingDir? }`, `memory.notes.recall { query? | id?, scope?, workingDir?, k? }` (`{ id }` is direct lookup for `#42` pointers from `### memory-index`), `memory.notes.forget { id }`. The bulk corpus is **never** dumped wholesale into the prompt.
 
 ### Reflection (async end-of-turn memory formation)
 
-- **When.** Fired at the end of every `AgentLoop.runTurn` (after the agent reply is produced) as **fire-and-forget**. Never awaited, never blocks the user-visible response. `abortPending()` is called at the start of the next `runTurn` so at most one reflection is in flight.
-- **What.** A micro-prompt with its own small stable prefix (fixed module-level string) asks the model to extract durable user facts from the last `USER`/`ASSISTANT` exchange. Output is constrained by a dedicated GBNF grammar to either `NONE` or a bounded list of `SET key=value` lines (at most `memory.reflection.maxFactsPerCall`, default 3).
-- **KV-cache invariant.** Reflection uses a **dedicated llama-server slot** reserved at bootstrap via `slotManager.reserveReflectionSlot()`. The main agent slot is never touched. When only one slot is available, reflection falls back to `slotId: -1` (no cache reuse) — main agent KV is still untouched.
-- **Writes.** Parsed facts go through the existing `ProfileStore` validators; invalid entries are logged and skipped without failing the whole call.
-- **Observability.** `agent.memory.reflection` counter tagged by `outcome` (`ok | none | failed | aborted | timeout`) plus an `agent.memory.reflection.latency_ms` histogram. Structured logs: `reflection.fired`, `reflection.ok`, `reflection.none`, `reflection.aborted`, `reflection.timeout`, `reflection.failed`.
+- **When.** Fired at the end of every `AgentLoop.runTurn` after `assistant_reply` is emitted. **Fire-and-forget**, never awaited. `abortPending()` runs at the start of the next `runTurn` so at most one reflection is in flight per session.
+- **What.** A micro-prompt with its own small stable prefix asks the model to extract durable facts from the last `USER`/`ASSISTANT` exchange. Output is GBNF-constrained to either `NONE` or a bounded list of two flavours:
+  - `SET key=value` (pinned fact) or `SET key=value [pinned=false; keywords=a,b,c]` (contextual fact). Caps at `memory.reflection.maxFactsPerCall` (default `3`).
+  - `NOTE freeform observation [tag1, tag2]` → into `MemoryStore` with implicit `reflection` tag. Master switch `memory.reflection.autoStoreNotes` (default `true`); cap at `memory.reflection.maxNotesPerCall` (default `2`, set to `0` to disable).
+- **KV-cache invariant.** Reflection runs on a **dedicated llama-server slot** reserved at bootstrap via `slotManager.reserveReflectionSlot()`. The main agent slot is never touched. When only one slot is available, reflection falls back to `slotId: -1` (no cache reuse).
+- **Writes.** Parsed entries flow through the same validators as the explicit tools (`ProfileStore.set`, `MemoryStore.store`); invalid entries are logged and skipped without failing the whole call.
+- **Observability.** `agent.memory.reflection` counter tagged by `outcome` (`ok | none | failed | aborted | timeout`) plus `agent.memory.reflection.latency_ms` histogram. Logs: `reflection.fired`, `reflection.ok`, `reflection.none`, `reflection.aborted`, `reflection.timeout`, `reflection.failed`.
 - **Code.** [src/memory/reflection/](src/memory/reflection/) — `reflection-prompt`, `reflection-grammar`, `reflection-parser`, `reflection-runner`.
 
 ### Configuration
 
-Config keys live under `memory.*` in the user config and [src/config/config-schema.ts](src/config/config-schema.ts):
+All keys under `memory.*` in the user config and [src/config/config-schema.ts](src/config/config-schema.ts). Full table in [MEMORY.md §8](MEMORY.md). The most relevant for tuning:
 
-- `memory.profile.enabled` (default `true`) — gate for profile injection + the three profile tools.
-- `memory.profile.maxTokens` (default `512`) — section cap in the prompt tail.
-- `memory.reflection.enabled` (default `true`) — gate for the async reflection runner.
-- `memory.reflection.timeoutMs` (default `10000`) — hard timeout per reflection call.
-- `memory.reflection.maxFactsPerCall` (default `3`) — upper bound on facts written per reflection.
-- `paths.memoryDbFile` — resolved to `<stateDir>/memory.sqlite` by [src/config/load-config.ts](src/config/load-config.ts).
+- `memory.profile.{enabled, maxTokens, contextualKeywordGate}`
+- `memory.reflection.{enabled, timeoutMs, maxFactsPerCall, autoStoreNotes, maxNotesPerCall}`
+- `memory.notes.{enabled, maxEntries, maxContentChars, recallDefaultK}`
+- `memory.recallInjection.{enabled, k, previewChars, maxTokens}`
+- `memory.index.{enabled, limit, previewChars, maxTokens}`
+- `paths.memoryDbFile` — resolved to `<stateDir>/memory.sqlite`.
 
 ### Invariants
 
-1. **Stable prefix is untouched.** The `### profile` section is always in the variable tail. Changing profile facts never invalidates the KV-cache for the stable prefix.
-2. **Reflection never blocks or crashes the loop.** `ReflectionRunner.reflect()` is fire-safe — any error is logged and counted via metrics. The agent-visible result is already returned before reflection starts.
-3. **No cross-session leakage via writers.** The only writer is `ProfileStore`. All memory writes flow through the same validators regardless of whether they originate from the model's explicit `memory.profile.set` call or the reflection runner.
-4. **Explicit out-of-scope.** Episodic summaries, `topic`/`expires_at` columns, embeddings / semantic search, and redaction are deliberately deferred to future milestones.
+1. **Stable prefix is untouched by memory writes.** All three memory-aware sections (`### profile`, `### recalled`, `### memory-index`) live strictly in the variable tail. Pinned by `build-prompt.test.ts`.
+2. **Reflection never blocks or crashes the loop.** `ReflectionRunner.reflect()` is fire-safe — errors are logged and counted; the agent-visible reply is already returned before reflection starts. Pinned by `slot-manager.test.ts` (slot isolation) and `reflection-runner.test.ts` (error swallowing).
+3. **Notes corpus is never dumped wholesale.** Only top-K (`### recalled`) and pointer-only (`### memory-index`) rows go into the prompt; full bodies require an explicit `memory.notes.recall { id }`.
+4. **Bounded growth.** Per-call write caps (`maxFactsPerCall` / `maxNotesPerCall`) + storage cap (`maxEntries` + FIFO) + tail caps (`maxTokens` per section) + contextual gating for profile facts ⇒ both the SQLite file and the rendered tail are bounded under all input distributions.
+5. **Single validator path per writer.** All `ProfileStore` writes (tool or reflection) go through `ProfileStore.set` validators; all `MemoryStore` writes go through `MemoryStore.store` validators. There is no second back door.
+6. **Ephemeral session fields are not persisted.** `SessionState.recalledNotes` / `memoryIndex` are stripped by `stripEphemeral` before `SessionStore` writes the snapshot — they are recomputed each turn against the current user message.
+
+### Explicit out-of-scope
+
+Episodic summaries, `topic`/`expires_at` columns, embeddings / semantic search, importance scoring, content-based deduplication of notes, and secret redaction are deliberately deferred. See [MEMORY.md §10](MEMORY.md) for the known-limitations list.
 
 ## LLM reliability policy
 

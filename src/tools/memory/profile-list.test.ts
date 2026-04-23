@@ -46,8 +46,36 @@ describe("memory.profile.list", () => {
     const result = await tool.run({}, makeCtx());
     expect(result.status).toBe("ok");
     expect(result.details.count).toBe(2);
-    const facts = result.details.facts as Array<{ key: string; value: string }>;
+    const facts = result.details.facts as Array<{
+      key: string;
+      value: string;
+      pinned: boolean;
+      keywords: string[];
+    }>;
     expect(facts.map((f) => f.key)).toEqual(["language", "timezone"]);
-    expect(result.summary).toContain("- language: ru");
+    expect(facts.every((f) => f.pinned)).toBe(true);
+    expect(result.summary).toContain("- * language: ru");
+  });
+
+  it("marks contextual facts with a tilde and shows their keywords", async () => {
+    store.set("deploy_cmd", "pnpm run deploy", {
+      pinned: false,
+      keywords: ["deploy", "release"],
+    });
+    store.set("language", "ru");
+    const tool = buildProfileListTool({ store });
+    const result = await tool.run({}, makeCtx());
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("- ~ deploy_cmd: pnpm run deploy");
+    expect(result.summary).toContain("[keywords: deploy, release]");
+    expect(result.summary).toContain("- * language: ru");
+    const facts = result.details.facts as Array<{
+      key: string;
+      pinned: boolean;
+      keywords: string[];
+    }>;
+    const deploy = facts.find((f) => f.key === "deploy_cmd")!;
+    expect(deploy.pinned).toBe(false);
+    expect(deploy.keywords).toEqual(["deploy", "release"]);
   });
 });

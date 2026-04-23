@@ -2,6 +2,7 @@ import type { CompletionResult } from "../../llm/llama-server-client.js";
 import type { AgentMetrics } from "../../telemetry/agent-metrics.js";
 import type { StructuredLogger } from "../../telemetry/structured-logger.js";
 
+import { MemoryStore, MemoryValidationError } from "../memory-store.js";
 import {
   ProfileStore,
   ProfileValidationError,
@@ -48,6 +49,13 @@ export interface ReflectionRunnerDeps {
   llmComplete: ReflectionLlmComplete;
   profileStore: ProfileStore;
   /**
+   * Freeform `MemoryStore`. When provided together with a non-zero
+   * `maxNotesPerCall`, reflection also mirrors extracted `NOTE` lines
+   * into durable notes. Leave undefined to keep the legacy
+   * profile-only behaviour (reflection will still honour `SET` lines).
+   */
+  memoryStore?: MemoryStore;
+  /**
    * Dedicated reflection slot. Passed straight to llama-server. `-1`
    * means "no slot affinity / no cache reuse" — still safe because the
    * main agent slot is never touched.
@@ -57,6 +65,13 @@ export interface ReflectionRunnerDeps {
   timeoutMs: number;
   /** Upper bound on facts written per reflection call. */
   maxFactsPerCall: number;
+  /**
+   * Upper bound on freeform notes written per reflection call. `0`
+   * disables note extraction even when `memoryStore` is provided. The
+   * bound is enforced after parser-side clamping so the runner never
+   * floods `MemoryStore` on a pathological completion.
+   */
+  maxNotesPerCall?: number;
   logger?: StructuredLogger;
   metrics?: AgentMetrics;
   /** Injectable clock for deterministic tests. Defaults to `Date.now`. */
@@ -88,6 +103,7 @@ export function createReflectionRunner(
     sessionId: string;
     startedAt: number;
     factsWritten?: number;
+    notesWritten?: number;
     reason?: string;
   }): void => {
     const tookMs = Math.max(0, now() - context.startedAt);
@@ -101,6 +117,9 @@ export function createReflectionRunner(
       tookMs,
       ...(typeof context.factsWritten === "number"
         ? { factsWritten: context.factsWritten }
+        : {}),
+      ...(typeof context.notesWritten === "number"
+        ? { notesWritten: context.notesWritten }
         : {}),
       ...(context.reason ? { reason: context.reason } : {}),
     };
@@ -165,32 +184,29 @@ export function createReflectionRunner(
         finish("none", { sessionId: input.sessionId, startedAt });
         return;
       }
-      const clamped = parsed.facts.slice(0, deps.maxFactsPerCall);
-      let written = 0;
-      for (const fact of clamped) {
-        try {
-          deps.profileStore.set(fact.key, fact.value);
-          written += 1;
-        } catch (err) {
-          if (err instanceof ProfileValidationError) {
-            deps.logger?.debug("reflection.invalid_fact", {
-              sessionId: input.sessionId,
-              key: fact.key,
-              reason: err.message,
-            });
-            continue;
-          }
-          throw err;
-        }
-      }
-      if (written === 0) {
+      const factsWritten = writeFacts(
+        parsed.facts,
+        deps.profileStore,
+        deps.maxFactsPerCall,
+        input.sessionId,
+        deps.logger,
+      );
+      const notesWritten = writeNotes(
+        parsed.notes,
+        deps.memoryStore,
+        deps.maxNotesPerCall ?? 0,
+        input.sessionId,
+        deps.logger,
+      );
+      if (factsWritten === 0 && notesWritten === 0) {
         finish("none", { sessionId: input.sessionId, startedAt });
         return;
       }
       finish("ok", {
         sessionId: input.sessionId,
         startedAt,
-        factsWritten: written,
+        factsWritten,
+        notesWritten,
       });
     } catch (err) {
       if (controller.signal.aborted) {
@@ -232,4 +248,99 @@ export function createReflectionRunner(
       }
     },
   };
+}
+
+/**
+ * Upsert parsed SET facts into `ProfileStore`, skipping individual
+ * validation errors so one bad key does not invalidate the rest of the
+ * batch. Returns the number of facts successfully written.
+ */
+function writeFacts(
+  facts: readonly {
+    key: string;
+    value: string;
+    pinned: boolean;
+    keywords: readonly string[];
+  }[],
+  store: ProfileStore,
+  maxPerCall: number,
+  sessionId: string,
+  logger: StructuredLogger | undefined,
+): number {
+  const clamped = facts.slice(0, maxPerCall);
+  let written = 0;
+  for (const fact of clamped) {
+    try {
+      store.set(fact.key, fact.value, {
+        pinned: fact.pinned,
+        keywords: [...fact.keywords],
+      });
+      written += 1;
+    } catch (err) {
+      if (err instanceof ProfileValidationError) {
+        logger?.debug("reflection.invalid_fact", {
+          sessionId,
+          key: fact.key,
+          reason: err.message,
+        });
+        continue;
+      }
+      throw err;
+    }
+  }
+  return written;
+}
+
+/**
+ * Persist parsed NOTE bodies as freeform memories. No-op when the
+ * runner was constructed without a `memoryStore` or when
+ * `maxNotesPerCall` is 0. Reflection-sourced notes carry a synthetic
+ * `reflection` tag in addition to any tags the parser extracted, so
+ * downstream recall can tell them apart from agent-initiated
+ * `memory.notes.store` calls. Validation errors (content too long /
+ * empty after trim) are logged and skipped, matching fact-side
+ * semantics.
+ */
+function writeNotes(
+  notes: readonly { body: string; tags: string[] }[],
+  store: MemoryStore | undefined,
+  maxPerCall: number,
+  sessionId: string,
+  logger: StructuredLogger | undefined,
+): number {
+  if (!store || maxPerCall <= 0 || notes.length === 0) return 0;
+  const clamped = notes.slice(0, maxPerCall);
+  let written = 0;
+  for (const note of clamped) {
+    try {
+      const tags = dedupeTags(["reflection", ...note.tags]);
+      store.store({
+        content: note.body,
+        tags,
+        sessionId,
+        source: "agent",
+      });
+      written += 1;
+    } catch (err) {
+      if (err instanceof MemoryValidationError) {
+        logger?.debug("reflection.invalid_note", {
+          sessionId,
+          field: err.field,
+          reason: err.message,
+        });
+        continue;
+      }
+      throw err;
+    }
+  }
+  return written;
+}
+
+function dedupeTags(tags: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const tag of tags) {
+    if (tag.length === 0) continue;
+    if (!out.includes(tag)) out.push(tag);
+  }
+  return out;
 }

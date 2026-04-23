@@ -9,6 +9,7 @@ import { MetricsCollector } from "../../telemetry/metrics-collector.js";
 import { AgentMetrics } from "../../telemetry/agent-metrics.js";
 import { StructuredLogger } from "../../telemetry/structured-logger.js";
 
+import { MemoryStore } from "../memory-store.js";
 import { ProfileStore } from "../profile-store.js";
 
 import { REFLECTION_GRAMMAR } from "./reflection-grammar.js";
@@ -48,6 +49,7 @@ interface LogEntry {
 interface Harness {
   dir: string;
   store: ProfileStore;
+  notesStore: MemoryStore;
   metricEvents: MetricEntry[];
   logEvents: LogEntry[];
   metrics: AgentMetrics;
@@ -57,7 +59,9 @@ interface Harness {
 
 function makeHarness(): Harness {
   const dir = mkdtempSync(join(tmpdir(), "reflect-runner-"));
-  const store = new ProfileStore({ dbFile: join(dir, "memory.sqlite") });
+  const dbFile = join(dir, "memory.sqlite");
+  const store = new ProfileStore({ dbFile });
+  const notesStore = new MemoryStore({ dbFile, maxEntries: 100 });
   const metricEvents: MetricEntry[] = [];
   const collector = new MetricsCollector({
     sinks: [
@@ -85,11 +89,13 @@ function makeHarness(): Harness {
   return {
     dir,
     store,
+    notesStore,
     metricEvents,
     logEvents,
     metrics,
     logger,
     dispose() {
+      notesStore.close();
       store.close();
       rmSync(dir, { recursive: true, force: true });
     },
@@ -323,6 +329,153 @@ describe("createReflectionRunner", () => {
       .filter((e) => e.name === "agent.memory.reflection")
       .map((e) => e.tags?.outcome);
     expect(outcomes).toEqual(["aborted", "none"]);
+  });
+
+  it("mirrors NOTE lines into the MemoryStore with a `reflection` tag", async () => {
+    const runner = createReflectionRunner({
+      llmComplete: async () =>
+        completion(
+          [
+            "SET name=Alex",
+            "NOTE project uses pnpm [tags=tooling]",
+            "NOTE prefer terse replies",
+          ].join("\n") + "\n",
+        ),
+      profileStore: h.store,
+      memoryStore: h.notesStore,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      maxNotesPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "remember this",
+      assistantReply: "ok",
+    });
+
+    expect(h.store.list().map((f) => f.key)).toEqual(["name"]);
+    const notes = h.notesStore.list();
+    expect(notes).toHaveLength(2);
+    expect(notes.map((n) => n.content).sort()).toEqual([
+      "prefer terse replies",
+      "project uses pnpm",
+    ]);
+    for (const note of notes) {
+      expect(note.tags).toContain("reflection");
+      expect(note.sessionId).toBe("s1");
+    }
+    const withTool = notes.find((n) => n.content === "project uses pnpm");
+    expect(withTool?.tags).toContain("tooling");
+
+    const counters = h.metricEvents.filter(
+      (e) => e.name === "agent.memory.reflection",
+    );
+    expect(counters[0]!.tags?.outcome).toBe("ok");
+  });
+
+  it("records `ok` when only NOTE lines land and no SET facts are present", async () => {
+    const runner = createReflectionRunner({
+      llmComplete: async () => completion("NOTE lone observation worth keeping\n"),
+      profileStore: h.store,
+      memoryStore: h.notesStore,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      maxNotesPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "u",
+      assistantReply: "a",
+    });
+
+    expect(h.store.list()).toHaveLength(0);
+    expect(h.notesStore.list()).toHaveLength(1);
+    const counters = h.metricEvents.filter(
+      (e) => e.name === "agent.memory.reflection",
+    );
+    expect(counters[0]!.tags?.outcome).toBe("ok");
+  });
+
+  it("clamps NOTE writes to `maxNotesPerCall`", async () => {
+    const runner = createReflectionRunner({
+      llmComplete: async () =>
+        completion(
+          ["NOTE a", "NOTE b", "NOTE c", "NOTE d"].join("\n") + "\n",
+        ),
+      profileStore: h.store,
+      memoryStore: h.notesStore,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      maxNotesPerCall: 2,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "u",
+      assistantReply: "a",
+    });
+
+    expect(h.notesStore.list()).toHaveLength(2);
+  });
+
+  it("skips NOTE extraction entirely when memoryStore is not wired", async () => {
+    const runner = createReflectionRunner({
+      llmComplete: async () =>
+        completion("SET name=Alex\nNOTE ignored since store missing\n"),
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      maxNotesPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "u",
+      assistantReply: "a",
+    });
+
+    expect(h.store.list().map((f) => f.key)).toEqual(["name"]);
+    expect(h.notesStore.list()).toHaveLength(0);
+  });
+
+  it("records `none` when NOTE is the only channel but maxNotesPerCall=0", async () => {
+    const runner = createReflectionRunner({
+      llmComplete: async () => completion("NOTE would be dropped\n"),
+      profileStore: h.store,
+      memoryStore: h.notesStore,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      maxNotesPerCall: 0,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "u",
+      assistantReply: "a",
+    });
+
+    expect(h.notesStore.list()).toHaveLength(0);
+    const counters = h.metricEvents.filter(
+      (e) => e.name === "agent.memory.reflection",
+    );
+    expect(counters[0]!.tags?.outcome).toBe("none");
   });
 
   it("abortPending() aborts the in-flight reflection", async () => {

@@ -29,6 +29,10 @@ import type {
   SkillCatalogEntry,
   ToolDescriptor,
 } from "../prompt/stable-prefix.js";
+import type {
+  MemoryEntry,
+  MemoryIndexEntry,
+} from "../memory/memory-store.js";
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { ReflectionRunner } from "../memory/reflection/index.js";
 import { executeStep } from "./step-executor.js";
@@ -84,6 +88,24 @@ export interface AgentLoopDependencies {
    */
   profileFactsProvider?: () => readonly ProfileFact[];
   /**
+   * Optional pre-step memory hook. Invoked once per `runTurn`, right
+   * after the user message is recorded, to populate the ephemeral
+   * `recalledNotes` / `memoryIndex` fields on the session state. Those
+   * are rendered into the `### recalled` and `### memory-index`
+   * sections of every step's prompt without touching the stable prefix.
+   *
+   * The provider is expected to:
+   *  - Run BM25 recall for the top-K notes against `userMessage`.
+   *  - List the compact memory index (most recent pointers).
+   *  - Deduplicate: entries returned in `recalled` must not reappear in
+   *    `index`, and vice versa — the renderer does no dedup itself.
+   *
+   * Errors and timeouts are the provider's responsibility; the loop
+   * never awaits longer than a few hundred ms in practice and will
+   * silently skip injection if the provider throws.
+   */
+  memoryContextProvider?: MemoryContextProvider;
+  /**
    * Optional end-of-turn memory reflection. When present, the loop:
    *  1. calls `abortPending()` at the start of every `runTurn` so stale
    *     reflections from the previous turn cannot race the current one,
@@ -97,6 +119,23 @@ export interface AgentLoopDependencies {
   onEvent?: (event: AgentLoopEvent) => void;
   metrics?: AgentMetrics;
   logger?: StructuredLogger;
+}
+
+export interface MemoryContextProviderInput {
+  sessionId: string;
+  userMessage: string | null;
+  signal: AbortSignal;
+}
+
+export interface MemoryContext {
+  recalled: readonly MemoryEntry[];
+  index: readonly MemoryIndexEntry[];
+}
+
+export interface MemoryContextProvider {
+  buildMemoryContext(
+    input: MemoryContextProviderInput,
+  ): Promise<MemoryContext> | MemoryContext;
 }
 
 export interface RunTurnOptions {
@@ -197,6 +236,29 @@ export class AgentLoop {
     this.deps.onEvent?.({ type: "turn_started", turnIndex });
     const turnStartedAt = Date.now();
 
+    // Pre-step memory hook: pre-fetch the `### recalled` and
+    // `### memory-index` sections once per turn. Failures are swallowed
+    // so a flaky memory layer can never block the agent loop.
+    if (this.deps.memoryContextProvider) {
+      try {
+        const ctx = await this.deps.memoryContextProvider.buildMemoryContext({
+          sessionId: state.id,
+          userMessage: options.userMessage ?? null,
+          signal: options.signal,
+        });
+        state = {
+          ...state,
+          recalledNotes: ctx.recalled,
+          memoryIndex: ctx.index,
+        };
+      } catch (err) {
+        this.deps.logger?.warn("memory context provider failed", {
+          sessionId: state.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     // Proactively sync with the live `llama-server` before the first
     // step. Catches the case where the operator swapped the model
     // between turns — without this, step 0 would still build the prompt
@@ -251,6 +313,9 @@ export class AgentLoop {
               ? { transientNotice: noticeForThisStep }
               : {}),
             ...(profileFacts !== undefined ? { profileFacts } : {}),
+            ...(options.userMessage !== undefined
+              ? { userMessage: options.userMessage }
+              : {}),
           },
           {
             registry: this.deps.registry,

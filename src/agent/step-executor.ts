@@ -110,6 +110,13 @@ export interface StepContext {
    * the section entirely (memory fabric not wired).
    */
   profileFacts?: readonly ProfileFact[];
+  /**
+   * Current user message for the turn. Threaded through `buildPrompt`
+   * so the profile renderer can gate contextual (pinned=false) facts by
+   * keyword match. `null` means the turn has no user text (tool-only
+   * continuation) — contextual facts stay suppressed.
+   */
+  userMessage?: string | null;
 }
 
 /**
@@ -172,6 +179,9 @@ async function executeStepInner(
       : {}),
     ...(ctx.profileFacts !== undefined
       ? { profileFacts: ctx.profileFacts }
+      : {}),
+    ...(ctx.userMessage !== undefined
+      ? { userMessage: ctx.userMessage }
       : {}),
   });
   const slot = deps.slotManager.acquire(ctx.session.id, prompt.stablePrefix);

@@ -87,6 +87,45 @@ describe("applyMigrations", () => {
     ]);
   });
 
+  it("adds pinned and keywords columns to profile_facts (v3)", () => {
+    applyMigrations(db);
+    const columns = db
+      .prepare(`PRAGMA table_info(profile_facts)`)
+      .all() as Array<{ name: string }>;
+    const names = columns.map((c) => c.name);
+    expect(names).toContain("pinned");
+    expect(names).toContain("keywords");
+  });
+
+  it("migrates a v2 database to v3 and defaults existing rows to pinned=1", () => {
+    db.exec(`
+      CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE profile_facts (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL);
+      CREATE TABLE memories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        session_id TEXT,
+        working_dir TEXT,
+        tags TEXT
+      );
+      INSERT INTO schema_meta (key, value) VALUES ('version', '2');
+      INSERT INTO profile_facts (key, value, updated_at)
+      VALUES ('language', 'ru', 1000);
+    `);
+    applyMigrations(db);
+    const row = db
+      .prepare(
+        `SELECT value, pinned, keywords FROM profile_facts WHERE key='language'`,
+      )
+      .get() as { value: string; pinned: number; keywords: string | null };
+    expect(row.value).toBe("ru");
+    expect(row.pinned).toBe(1);
+    expect(row.keywords).toBeNull();
+  });
+
   it("refuses to downgrade from a newer version", () => {
     applyMigrations(db);
     db.prepare(

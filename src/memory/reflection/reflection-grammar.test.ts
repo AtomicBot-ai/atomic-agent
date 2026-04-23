@@ -14,16 +14,26 @@ describe("REFLECTION_GRAMMAR", () => {
     expect(first).toBe(second);
   });
 
-  it("defines the NONE alternative and the SET production", () => {
+  it("defines the NONE alternative and both SET and NOTE productions", () => {
     expect(REFLECTION_GRAMMAR).toContain("root");
     expect(REFLECTION_GRAMMAR).toContain('"NONE"');
     expect(REFLECTION_GRAMMAR).toContain('"SET "');
+    expect(REFLECTION_GRAMMAR).toContain('"NOTE "');
     expect(REFLECTION_GRAMMAR).toContain("key");
     expect(REFLECTION_GRAMMAR).toContain("value");
+    expect(REFLECTION_GRAMMAR).toContain("body");
   });
 
-  it("caps values at 200 characters", () => {
+  it("routes the top level through entry = set | note", () => {
+    expect(REFLECTION_GRAMMAR).toMatch(/entry\s*::=\s*set\s*\|\s*note/);
+  });
+
+  it("caps SET values at 200 characters", () => {
     expect(REFLECTION_GRAMMAR).toMatch(/value\s*::=\s*\[\^\\n\]\{1,200\}/);
+  });
+
+  it("caps NOTE body at 500 characters", () => {
+    expect(REFLECTION_GRAMMAR).toMatch(/body\s*::=\s*\[\^\\n\]\{1,500\}/);
   });
 
   it("caps keys at snake_case 32 characters", () => {

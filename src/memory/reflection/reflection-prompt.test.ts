@@ -42,6 +42,45 @@ describe("buildReflectionPrompt", () => {
     expect(prompt).toContain("ASSISTANT: tab reply here");
   });
 
+  it("advertises both SET and NOTE channels in the stable preamble", () => {
+    expect(REFLECTION_STABLE_PREFIX).toContain("SET key=value");
+    expect(REFLECTION_STABLE_PREFIX).toContain("NOTE body");
+    expect(REFLECTION_STABLE_PREFIX).toMatch(/\[tags=a,b,c\]/);
+    expect(REFLECTION_STABLE_PREFIX).toContain("output exactly: NONE");
+  });
+
+  it("documents the pinned=false contextual SET marker", () => {
+    expect(REFLECTION_STABLE_PREFIX).toContain("pinned=false");
+    expect(REFLECTION_STABLE_PREFIX).toContain("keywords=a,b,c");
+    expect(REFLECTION_STABLE_PREFIX).toContain("Contextual");
+  });
+
+  it("freezes the reflection preamble as a snapshot (KV-cache hygiene)", () => {
+    expect(REFLECTION_STABLE_PREFIX).toMatchInlineSnapshot(`
+      "You are a memory extractor for a personal assistant.
+      Given the last USER and ASSISTANT messages, output durable things worth remembering across sessions.
+
+      Two output channels:
+      - SET key=value    atomic key/value facts about the user (name, timezone, language, preferences, stated goals). Rendered into every future prompt, so keep them small and canonical.
+      - NOTE body        freeform episodic observations worth recalling later (decisions taken, project conventions discovered, debugging findings, commitments). Stored but NOT auto-rendered; the agent looks them up on demand.
+
+      SET has two flavours:
+      - Default (pinned) — the fact is always rendered into \`### profile\`. Use for truly identity-level facts that apply to most turns (name, primary language, timezone).
+      - Contextual — the fact is ONLY rendered when a keyword hits the current user message. Use for rare/large context (deploy commands, per-feature preferences, per-project env snippets). Emit as: SET key=value [pinned=false; keywords=a,b,c]. The [...] marker MUST be on the same line, keywords comma-separated, lowercase, 1–8 entries.
+
+      Rules:
+      - Only durable content explicitly stated by the user or that the user asked to remember.
+      - Skip trivia, chit-chat, weather, transient moods, facts about the AI itself.
+      - Use SET for anything that looks like a stable attribute of the user. Prefer short snake_case keys (e.g. name, timezone, trip_lisbon_plan). Keep each SET value under 200 characters.
+      - Prefer contextual SET when the fact is valuable only in a specific topic. If unsure, default to pinned SET.
+      - Use NOTE for anything episodic or narrative that does not fit a single key. Keep each NOTE body under 500 characters. A NOTE may end with an optional tag marker " [tags=a,b,c]" (lowercase, snake or hyphen, up to 8 tags).
+      - If a SET already captures the fact, do not also emit a NOTE repeating it.
+      - If there is nothing worth remembering, output exactly: NONE
+      - Otherwise output up to six lines total; each line is either "SET key=value" (optionally followed by a pinned/keywords marker) or "NOTE body".
+      "
+    `);
+  });
+
   it("clamps oversized messages to the character cap", () => {
     const huge = "x".repeat(REFLECTION_MESSAGE_CHAR_CAP + 500);
     const prompt = buildReflectionPrompt({

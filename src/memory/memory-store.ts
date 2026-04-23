@@ -44,6 +44,28 @@ export interface MemoryListOptions {
   limit?: number;
 }
 
+/**
+ * Compact pointer row returned by `listIndex`. Carries just enough
+ * information for the prompt's `### memory-index` section (id + first
+ * line / preview + tags) so the agent can decide whether to fetch the
+ * full entry via `memory.notes.recall { id }`. The preview is the
+ * first non-empty line trimmed to `previewChars`; callers never see
+ * the full content through this method.
+ */
+export interface MemoryIndexEntry {
+  id: number;
+  preview: string;
+  tags: string[];
+  updatedAt: number;
+  workingDir: string | null;
+  sessionId: string | null;
+}
+
+export interface MemoryIndexOptions extends MemoryListOptions {
+  /** Max preview length (first non-empty line, clipped). */
+  previewChars?: number;
+}
+
 /** Hard ceiling on a single stored content value to keep the FTS index sane. */
 export const MEMORY_CONTENT_MAX_LENGTH = 4_000;
 /** Hard ceiling on a single tag string. */
@@ -58,6 +80,10 @@ export const MEMORY_RECALL_DEFAULT_K = 5;
 export const MEMORY_RECALL_MAX_K = 50;
 /** Cap on `list.limit` to protect the prompt budget. */
 export const MEMORY_LIST_MAX_LIMIT = 200;
+/** Default preview length for `listIndex` rows. */
+export const MEMORY_INDEX_PREVIEW_CHARS_DEFAULT = 80;
+/** Hard ceiling on preview length, irrespective of caller request. */
+export const MEMORY_INDEX_PREVIEW_CHARS_MAX = 400;
 
 interface MemoryRow {
   id: number;
@@ -251,6 +277,29 @@ export class MemoryStore {
     return rows.map(rowToEntry);
   }
 
+  /**
+   * Compact pointer view over recent notes. Returns one row per entry
+   * in `updated_at DESC` order, stripped down to the minimum fields
+   * needed for the prompt's `### memory-index` section. Kept cheap
+   * enough to call on every turn — no FTS round-trip, just a sorted
+   * scan over `memories`.
+   *
+   * The preview is derived from `renderNotePreview` so tests share the
+   * same trimming rules with the prompt renderer.
+   */
+  listIndex(opts: MemoryIndexOptions = {}): MemoryIndexEntry[] {
+    const entries = this.list(opts);
+    const previewChars = clampPreviewChars(opts.previewChars);
+    return entries.map((e) => ({
+      id: e.id,
+      preview: renderNotePreview(e.content, previewChars),
+      tags: e.tags,
+      updatedAt: e.updatedAt,
+      workingDir: e.workingDir,
+      sessionId: e.sessionId,
+    }));
+  }
+
   /** Total number of stored entries. Useful for tests and diagnostics. */
   count(): number {
     const row = this.countStmt.get() as { count: number };
@@ -416,6 +465,30 @@ function rowToEntry(row: MemoryRow): MemoryEntry {
     workingDir: row.working_dir,
     tags: parseTags(row.tags),
   };
+}
+
+/**
+ * Reduce a freeform note to a single-line preview suitable for the
+ * `### memory-index` section. The first non-empty line wins; anything
+ * past `maxChars` is replaced with a single "…" so the prompt budget
+ * does not blow up on long notes.
+ */
+export function renderNotePreview(content: string, maxChars: number): string {
+  const firstLine = content
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .find((l) => l.length > 0) ?? "";
+  if (firstLine.length <= maxChars) return firstLine;
+  if (maxChars <= 1) return firstLine.slice(0, maxChars);
+  return `${firstLine.slice(0, maxChars - 1)}…`;
+}
+
+function clampPreviewChars(raw: unknown): number {
+  if (raw === undefined || raw === null) return MEMORY_INDEX_PREVIEW_CHARS_DEFAULT;
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1) {
+    return MEMORY_INDEX_PREVIEW_CHARS_DEFAULT;
+  }
+  return Math.min(raw, MEMORY_INDEX_PREVIEW_CHARS_MAX);
 }
 
 function parseTags(raw: string | null): string[] {

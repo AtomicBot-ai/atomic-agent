@@ -62,4 +62,53 @@ describe("memory.profile.set", () => {
     expect(result.status).toBe("error");
     expect(result.details.field).toBe("value");
   });
+
+  it("defaults pinned=true when the flag is omitted", async () => {
+    const tool = buildProfileSetTool({ store });
+    const result = await tool.run(
+      { key: "language", value: "ru" },
+      makeCtx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.details.pinned).toBe(true);
+    expect(result.details.keywords).toEqual([]);
+    expect(store.get("language")?.pinned).toBe(true);
+  });
+
+  it("persists pinned=false contextual facts with keywords", async () => {
+    const tool = buildProfileSetTool({ store });
+    const result = await tool.run(
+      {
+        key: "deploy_cmd",
+        value: "pnpm run deploy",
+        pinned: false,
+        keywords: ["deploy", "release"],
+      },
+      makeCtx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.details.pinned).toBe(false);
+    expect(result.details.keywords).toEqual(["deploy", "release"]);
+    const saved = store.get("deploy_cmd");
+    expect(saved?.pinned).toBe(false);
+    expect(saved?.keywords).toEqual(["deploy", "release"]);
+  });
+
+  it("rejects non-boolean pinned", async () => {
+    const tool = buildProfileSetTool({ store });
+    const result = await tool.run(
+      { key: "x", value: "y", pinned: "true" },
+      makeCtx(),
+    );
+    expect(result.status).toBe("error");
+  });
+
+  it("rejects non-array keywords", async () => {
+    const tool = buildProfileSetTool({ store });
+    const result = await tool.run(
+      { key: "x", value: "y", pinned: false, keywords: "deploy" },
+      makeCtx(),
+    );
+    expect(result.status).toBe("error");
+  });
 });

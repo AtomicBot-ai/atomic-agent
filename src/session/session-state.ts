@@ -1,3 +1,7 @@
+import type {
+  MemoryEntry,
+  MemoryIndexEntry,
+} from "../memory/memory-store.js";
 import {
   appendTurn,
   type ConversationTurn,
@@ -73,6 +77,22 @@ export interface SessionState {
   updatedAt: number;
   lastError: string | null;
   metadata: Record<string, unknown>;
+  /**
+   * Ephemeral: top-K durable notes pre-fetched for the current turn.
+   * Populated by the agent-loop pre-step hook, rendered by
+   * `build-prompt` into the `### recalled` section. Never persisted —
+   * `stripEphemeral` strips it before `SessionStore` serialisation so
+   * reloaded sessions always start with a fresh recall. Undefined when
+   * the recall-injection feature is disabled.
+   */
+  recalledNotes?: readonly MemoryEntry[];
+  /**
+   * Ephemeral: compact memory pointer list for the current turn.
+   * Populated by the agent-loop pre-step hook, rendered by
+   * `build-prompt` into the `### memory-index` section. Same
+   * persistence rules as `recalledNotes`.
+   */
+  memoryIndex?: readonly MemoryIndexEntry[];
 }
 
 export function createEmptySessionState(params: {
@@ -151,4 +171,19 @@ export function recordTurn(
 
 export function incrementTurnCount(state: SessionState): SessionState {
   return { ...state, turnCount: state.turnCount + 1, updatedAt: Date.now() };
+}
+
+/**
+ * Strip ephemeral, turn-local fields before the session is persisted.
+ * Callers that write to `SessionStore` go through this so reloaded
+ * sessions never inherit a stale `### recalled` or `### memory-index`
+ * snapshot — those are always recomputed by the pre-step hook when the
+ * next turn begins.
+ */
+export function stripEphemeral(state: SessionState): SessionState {
+  if (state.recalledNotes === undefined && state.memoryIndex === undefined) {
+    return state;
+  }
+  const { recalledNotes: _r, memoryIndex: _m, ...rest } = state;
+  return rest;
 }

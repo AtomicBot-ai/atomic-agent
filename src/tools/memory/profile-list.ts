@@ -9,7 +9,8 @@ export interface ProfileListToolOptions {
 /**
  * `memory.profile.list {}` — return the full profile as key/value
  * entries. Read-only. The section is already rendered into every prompt
- * tail, so this tool is mainly useful when the LLM needs to iterate or
+ * tail (subject to the contextual keyword gate), so this tool is mainly
+ * useful when the LLM needs to inspect contextual/pinned metadata or
  * reason over specific fields explicitly.
  */
 export function buildProfileListTool(
@@ -17,14 +18,15 @@ export function buildProfileListTool(
 ): ToolDefinition {
   return {
     name: "memory.profile.list",
-    description: "List every durable user profile fact (sorted by key).",
+    description:
+      "List every durable user profile fact (sorted by key) including pinned/keywords metadata.",
     readonly: true,
     async run() {
       const facts = options.store.list();
       const output =
         facts.length === 0
           ? "(empty profile)"
-          : facts.map((f) => `- ${f.key}: ${f.value}`).join("\n");
+          : facts.map(renderFactLine).join("\n");
       return compressToolResult(
         {
           tool: "memory.profile.list",
@@ -36,6 +38,8 @@ export function buildProfileListTool(
               key: f.key,
               value: f.value,
               updatedAt: f.updatedAt,
+              pinned: f.pinned,
+              keywords: f.keywords,
             })),
           },
         },
@@ -43,4 +47,18 @@ export function buildProfileListTool(
       );
     },
   };
+}
+
+function renderFactLine(fact: {
+  key: string;
+  value: string;
+  pinned: boolean;
+  keywords: readonly string[];
+}): string {
+  const marker = fact.pinned ? "*" : "~";
+  const tail =
+    !fact.pinned && fact.keywords.length > 0
+      ? ` [keywords: ${fact.keywords.join(", ")}]`
+      : "";
+  return `- ${marker} ${fact.key}: ${fact.value}${tail}`;
 }

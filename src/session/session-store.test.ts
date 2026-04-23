@@ -95,6 +95,29 @@ describe("SessionStore", () => {
     expect(store.load("x")).toBeNull();
   });
 
+  it("does not persist ephemeral recalledNotes and memoryIndex fields", () => {
+    const state = createEmptySessionState({ id: "eph", workingDir: "/w" });
+    store.save({
+      ...state,
+      recalledNotes: [
+        {
+          id: 1,
+          content: "note",
+          tags: ["x"],
+          metadata: null,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      memoryIndex: [
+        { id: 1, preview: "note", tags: ["x"], updatedAt: 1 },
+      ],
+    });
+    const loaded = store.load("eph")!;
+    expect(loaded.recalledNotes).toBeUndefined();
+    expect(loaded.memoryIndex).toBeUndefined();
+  });
+
   it("creates an empty session with no turns by default", () => {
     const state = createEmptySessionState({
       id: "chat",

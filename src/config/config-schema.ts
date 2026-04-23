@@ -114,6 +114,16 @@ export interface AtomicAgentConfig {
       enabled: boolean;
       /** Safety-net ceiling for the rendered `### profile` section. */
       maxTokens: number;
+      /**
+       * Master switch for the contextual-keyword gate applied by
+       * `profile-renderer`. When `true` (default), facts stored with
+       * `pinned=false` render into `### profile` only when one of
+       * their `keywords` hits the current user message. Flip to
+       * `false` to force every fact to render regardless of gating
+       * (pre-v3 behaviour) — useful for debugging and for callers
+       * that have no user message to key off.
+       */
+      contextualKeywordGate: boolean;
     };
     reflection: {
       enabled: boolean;
@@ -121,6 +131,20 @@ export interface AtomicAgentConfig {
       timeoutMs: number;
       /** Upper bound on profile facts written per reflection. */
       maxFactsPerCall: number;
+      /**
+       * Master switch for the NOTE extraction channel. When `false`,
+       * the reflection runner still honours SET facts but drops every
+       * NOTE line even if `memoryStore` is wired — useful for rolling
+       * out the new behaviour gradually or disabling it if MemoryStore
+       * growth becomes a concern.
+       */
+      autoStoreNotes: boolean;
+      /**
+       * Upper bound on freeform notes written per reflection call.
+       * Mirrors `maxFactsPerCall` for the MemoryStore channel. `0`
+       * disables note extraction even when `autoStoreNotes` is true.
+       */
+      maxNotesPerCall: number;
     };
     notes: {
       enabled: boolean;
@@ -130,6 +154,40 @@ export interface AtomicAgentConfig {
       maxContentChars: number;
       /** Default `k` when `memory.notes.recall` omits it. */
       recallDefaultK: number;
+    };
+    /**
+     * Pre-step recall injection: each turn, the agent-loop can pre-fetch
+     * the top-K notes most relevant to the user message and render them
+     * as `### recalled` in the prompt tail. `k=0` or `enabled=false`
+     * disables the section entirely.
+     *
+     * Kept strictly in the variable tail (never the stable prefix) so
+     * the KV cache of the persona/tools/skills slab stays intact across
+     * turns with different recalled sets.
+     */
+    recallInjection: {
+      enabled: boolean;
+      /** Top-K notes to include. Applied after BM25 ranking. */
+      k: number;
+      /** Per-line preview clip length (chars) in the `### recalled` block. */
+      previewChars: number;
+      /** Safety-net ceiling for the rendered `### recalled` section. */
+      maxTokens: number;
+    };
+    /**
+     * Memory index: compact `#id tags preview` pointers rendered as the
+     * `### memory-index` section. Lets the agent know *what notes exist*
+     * without paying the full body cost — drilling in is via
+     * `memory.notes.recall { id }`.
+     */
+    index: {
+      enabled: boolean;
+      /** How many most-recent note pointers to advertise. */
+      limit: number;
+      /** Per-line preview clip length (chars). */
+      previewChars: number;
+      /** Safety-net ceiling for the rendered `### memory-index` section. */
+      maxTokens: number;
     };
   };
 }
@@ -176,17 +234,32 @@ export interface UserConfigFile {
     profile: {
       enabled: boolean;
       maxTokens: number;
+      contextualKeywordGate: boolean;
     };
     reflection: {
       enabled: boolean;
       timeoutMs: number;
       maxFactsPerCall: number;
+      autoStoreNotes: boolean;
+      maxNotesPerCall: number;
     };
     notes: {
       enabled: boolean;
       maxEntries: number;
       maxContentChars: number;
       recallDefaultK: number;
+    };
+    recallInjection: {
+      enabled: boolean;
+      k: number;
+      previewChars: number;
+      maxTokens: number;
+    };
+    index: {
+      enabled: boolean;
+      limit: number;
+      previewChars: number;
+      maxTokens: number;
     };
   };
 }
@@ -230,17 +303,32 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     profile: {
       enabled: true,
       maxTokens: 512,
+      contextualKeywordGate: true,
     },
     reflection: {
       enabled: true,
       timeoutMs: 10_000,
       maxFactsPerCall: 3,
+      autoStoreNotes: true,
+      maxNotesPerCall: 2,
     },
     notes: {
       enabled: true,
       maxEntries: 1_000,
       maxContentChars: 4_000,
       recallDefaultK: 5,
+    },
+    recallInjection: {
+      enabled: true,
+      k: 3,
+      previewChars: 160,
+      maxTokens: 400,
+    },
+    index: {
+      enabled: true,
+      limit: 20,
+      previewChars: 60,
+      maxTokens: 300,
     },
   },
 };
@@ -306,6 +394,26 @@ export function parsePositiveInt(raw: unknown, field: string): number {
     throw new ConfigValidationError(
       field,
       `expected positive integer, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Parse a non-negative integer (includes `0`). Used for caps that
+ * accept `0` as "feature disabled", e.g. `memory.reflection.maxNotesPerCall`.
+ */
+export function parseNonNegativeInt(raw: unknown, field: string): number {
+  const value =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string"
+        ? Number.parseInt(raw, 10)
+        : NaN;
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
+    throw new ConfigValidationError(
+      field,
+      `expected non-negative integer, got ${JSON.stringify(raw)}`,
     );
   }
   return value;
@@ -425,6 +533,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (memory.reflection as Record<string, unknown> | undefined) ?? {};
   const memoryNotes =
     (memory.notes as Record<string, unknown> | undefined) ?? {};
+  const memoryRecallInjection =
+    (memory.recallInjection as Record<string, unknown> | undefined) ?? {};
+  const memoryIndex =
+    (memory.index as Record<string, unknown> | undefined) ?? {};
 
   return {
     version: USER_CONFIG_VERSION,
@@ -509,6 +621,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             USER_CONFIG_DEFAULTS.memory.profile.maxTokens,
           "memory.profile.maxTokens",
         ),
+        contextualKeywordGate: parseBool(
+          memoryProfile.contextualKeywordGate ??
+            USER_CONFIG_DEFAULTS.memory.profile.contextualKeywordGate,
+          "memory.profile.contextualKeywordGate",
+        ),
       },
       reflection: {
         enabled: parseBool(
@@ -525,6 +642,16 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           memoryReflection.maxFactsPerCall ??
             USER_CONFIG_DEFAULTS.memory.reflection.maxFactsPerCall,
           "memory.reflection.maxFactsPerCall",
+        ),
+        autoStoreNotes: parseBool(
+          memoryReflection.autoStoreNotes ??
+            USER_CONFIG_DEFAULTS.memory.reflection.autoStoreNotes,
+          "memory.reflection.autoStoreNotes",
+        ),
+        maxNotesPerCall: parseNonNegativeInt(
+          memoryReflection.maxNotesPerCall ??
+            USER_CONFIG_DEFAULTS.memory.reflection.maxNotesPerCall,
+          "memory.reflection.maxNotesPerCall",
         ),
       },
       notes: {
@@ -546,6 +673,47 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           memoryNotes.recallDefaultK ??
             USER_CONFIG_DEFAULTS.memory.notes.recallDefaultK,
           "memory.notes.recallDefaultK",
+        ),
+      },
+      recallInjection: {
+        enabled: parseBool(
+          memoryRecallInjection.enabled ??
+            USER_CONFIG_DEFAULTS.memory.recallInjection.enabled,
+          "memory.recallInjection.enabled",
+        ),
+        k: parseNonNegativeInt(
+          memoryRecallInjection.k ??
+            USER_CONFIG_DEFAULTS.memory.recallInjection.k,
+          "memory.recallInjection.k",
+        ),
+        previewChars: parsePositiveInt(
+          memoryRecallInjection.previewChars ??
+            USER_CONFIG_DEFAULTS.memory.recallInjection.previewChars,
+          "memory.recallInjection.previewChars",
+        ),
+        maxTokens: parsePositiveInt(
+          memoryRecallInjection.maxTokens ??
+            USER_CONFIG_DEFAULTS.memory.recallInjection.maxTokens,
+          "memory.recallInjection.maxTokens",
+        ),
+      },
+      index: {
+        enabled: parseBool(
+          memoryIndex.enabled ?? USER_CONFIG_DEFAULTS.memory.index.enabled,
+          "memory.index.enabled",
+        ),
+        limit: parseNonNegativeInt(
+          memoryIndex.limit ?? USER_CONFIG_DEFAULTS.memory.index.limit,
+          "memory.index.limit",
+        ),
+        previewChars: parsePositiveInt(
+          memoryIndex.previewChars ??
+            USER_CONFIG_DEFAULTS.memory.index.previewChars,
+          "memory.index.previewChars",
+        ),
+        maxTokens: parsePositiveInt(
+          memoryIndex.maxTokens ?? USER_CONFIG_DEFAULTS.memory.index.maxTokens,
+          "memory.index.maxTokens",
         ),
       },
     },

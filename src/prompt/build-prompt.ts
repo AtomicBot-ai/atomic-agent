@@ -2,6 +2,10 @@ import { getConfig } from "../config/index.js";
 import type { ModelProfile } from "../llm/model-profile.js";
 import type { ProfileFact } from "../memory/profile-store.js";
 import { renderProfileSection } from "../memory/profile-renderer.js";
+import {
+  renderMemoryIndexSection,
+  renderRecalledSection,
+} from "../memory/notes-renderer.js";
 import type { SessionState } from "../session/session-state.js";
 import {
   packConversation,
@@ -55,6 +59,31 @@ export interface BuildPromptInput {
   profileFacts?: readonly ProfileFact[];
   /** Safety-net ceiling for the `### profile` section. */
   profileMaxTokens?: number;
+  /**
+   * Current user message, used by `### profile` to gate contextual
+   * (pinned=false) facts by keyword match. Pass `null` / omit on turns
+   * that carry no user input — contextual facts stay hidden, pinned
+   * facts continue to render. Kept in the variable tail (per user
+   * message) to avoid invalidating the stable prefix.
+   */
+  userMessage?: string | null;
+  /**
+   * Master switch for the contextual-keyword gate in the profile
+   * renderer. Defaults to `memory.profile.contextualKeywordGate`. When
+   * `false`, every fact is rendered regardless of pinned/keywords —
+   * useful for debugging and for back-compat with schema-v2 callers.
+   */
+  contextualKeywordGate?: boolean;
+  /**
+   * Per-line preview clip (chars) for `### recalled`. Defaults to
+   * `memory.recallInjection.previewChars`. Rendering is a no-op when
+   * `session.recalledNotes` is undefined or empty.
+   */
+  recallPreviewChars?: number;
+  /** Safety-net ceiling for the `### recalled` section. */
+  recallMaxTokens?: number;
+  /** Safety-net ceiling for the `### memory-index` section. */
+  memoryIndexMaxTokens?: number;
 }
 
 export interface BuiltPromptTruncationFlags {
@@ -62,6 +91,8 @@ export interface BuiltPromptTruncationFlags {
   profile: boolean;
   worldSnapshot: boolean;
   conversation: boolean;
+  recalled: boolean;
+  memoryIndex: boolean;
 }
 
 export interface BuiltPrompt {
@@ -77,6 +108,8 @@ export interface BuiltPrompt {
     profile: number;
     worldSnapshot: number;
     conversation: number;
+    recalled: number;
+    memoryIndex: number;
     total: number;
   };
   limits: TokenBudgetLimits;
@@ -140,13 +173,50 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
 
   const profileMaxTokens =
     input.profileMaxTokens ?? config.memory.profile.maxTokens;
+  const contextualKeywordGate =
+    input.contextualKeywordGate ??
+    config.memory.profile.contextualKeywordGate;
   const profileFull =
     input.profileFacts !== undefined
-      ? renderProfileSection(input.profileFacts)
+      ? renderProfileSection(input.profileFacts, {
+          userMessage: input.userMessage ?? null,
+          contextualKeywordGate,
+        })
       : null;
   const profile =
     profileFull !== null ? truncateToTokens(profileFull, profileMaxTokens) : null;
   const profileTokens = profile !== null ? estimateTokens(profile) : 0;
+
+  const recallPreviewChars =
+    input.recallPreviewChars ?? config.memory.recallInjection.previewChars;
+  const recallMaxTokens =
+    input.recallMaxTokens ?? config.memory.recallInjection.maxTokens;
+  const recalledNotes = input.session.recalledNotes;
+  const recalledFull =
+    recalledNotes !== undefined && recalledNotes.length > 0
+      ? renderRecalledSection(recalledNotes, {
+          previewChars: recallPreviewChars,
+        })
+      : null;
+  const recalled =
+    recalledFull !== null
+      ? truncateToTokens(recalledFull, recallMaxTokens)
+      : null;
+  const recalledTokens = recalled !== null ? estimateTokens(recalled) : 0;
+
+  const memoryIndexMaxTokens =
+    input.memoryIndexMaxTokens ?? config.memory.index.maxTokens;
+  const memoryIndexEntries = input.session.memoryIndex;
+  const memoryIndexFull =
+    memoryIndexEntries !== undefined && memoryIndexEntries.length > 0
+      ? renderMemoryIndexSection(memoryIndexEntries)
+      : null;
+  const memoryIndex =
+    memoryIndexFull !== null
+      ? truncateToTokens(memoryIndexFull, memoryIndexMaxTokens)
+      : null;
+  const memoryIndexTokens =
+    memoryIndex !== null ? estimateTokens(memoryIndex) : 0;
 
   const worldSnapshotFull = renderWorldSnapshotSection(input.session);
   const worldSnapshot = truncateToTokens(
@@ -162,6 +232,8 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     sessionTokens: estimateTokens(session),
     worldSnapshotTokens: estimateTokens(worldSnapshot),
     profileTokens,
+    recalledTokens,
+    memoryIndexTokens,
     completionMaxTokens,
   });
 
@@ -171,6 +243,12 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const tailParts: string[] = [`### session`, session, ``];
   if (profile !== null) {
     tailParts.push(`### profile`, profile, ``);
+  }
+  if (recalled !== null) {
+    tailParts.push(`### recalled`, recalled, ``);
+  }
+  if (memoryIndex !== null) {
+    tailParts.push(`### memory-index`, memoryIndex, ``);
   }
   tailParts.push(
     `### world`,
@@ -207,6 +285,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     profile: profileFull !== null && profile !== profileFull,
     worldSnapshot: worldSnapshot !== worldSnapshotFull,
     conversation: packed.droppedCount > 0,
+    recalled: recalledFull !== null && recalled !== recalledFull,
+    memoryIndex:
+      memoryIndexFull !== null && memoryIndex !== memoryIndexFull,
   };
 
   return {
@@ -216,14 +297,22 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     tokens: {
       ...budgetResult.perSection,
       profile: profileTokens,
-      total: budgetResult.perSection.total + profileTokens,
+      recalled: recalledTokens,
+      memoryIndex: memoryIndexTokens,
+      total:
+        budgetResult.perSection.total +
+        profileTokens +
+        recalledTokens +
+        memoryIndexTokens,
     },
     limits,
     truncated:
       truncation.session ||
       truncation.profile ||
       truncation.worldSnapshot ||
-      truncation.conversation,
+      truncation.conversation ||
+      truncation.recalled ||
+      truncation.memoryIndex,
     truncation,
     contextWindow,
     conversationCapEffective,

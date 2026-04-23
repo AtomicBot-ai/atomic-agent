@@ -79,4 +79,33 @@ describe("memory.notes.recall", () => {
     expect(result.status).toBe("error");
     expect(result.details.field).toBe("query");
   });
+
+  it("fetches a single note when called with { id }", async () => {
+    const entry = store.store({ content: "drill-in body" }, 1);
+    const tool = buildNotesRecallTool({ store, defaultK: 5 });
+    const result = await tool.run({ id: entry.id }, makeCtx());
+    expect(result.status).toBe("ok");
+    const entries = result.details.entries as Array<{
+      id: number;
+      content: string;
+    }>;
+    expect(result.details.count).toBe(1);
+    expect(entries[0]?.id).toBe(entry.id);
+    expect(entries[0]?.content).toBe("drill-in body");
+    expect(result.details.scope).toBe("id");
+  });
+
+  it("returns zero-count ok when the id is not found", async () => {
+    const tool = buildNotesRecallTool({ store, defaultK: 5 });
+    const result = await tool.run({ id: 9999 }, makeCtx());
+    expect(result.status).toBe("ok");
+    expect(result.details.count).toBe(0);
+  });
+
+  it("rejects non-positive-integer ids", async () => {
+    const tool = buildNotesRecallTool({ store, defaultK: 5 });
+    const result = await tool.run({ id: "abc" }, makeCtx());
+    expect(result.status).toBe("error");
+    expect(result.details.field).toBe("id");
+  });
 });

@@ -12,10 +12,13 @@ export interface NotesRecallToolOptions {
 }
 
 /**
- * `memory.notes.recall { query, k?, scope?, tags? }` — BM25 keyword
- * search over stored notes. `scope` defaults to `"all"` (cross-project);
- * pass `"project"` to restrict to the current working directory.
- * Returns at most `k` entries ranked by BM25.
+ * `memory.notes.recall { query?, id?, k?, scope?, tags? }` — two modes:
+ *   - keyword search (default): BM25-ranked over the FTS5 index, driven
+ *     by `query`. `scope` defaults to `"all"`; pass `"project"` to
+ *     restrict to the current working directory.
+ *   - direct fetch (when `id` is supplied): return the full note for
+ *     that id, ignoring `query` / `k` / `scope`. Used by the agent when
+ *     drilling into a pointer shown in `### memory-index`.
  */
 export function buildNotesRecallTool(
   options: NotesRecallToolOptions,
@@ -23,15 +26,18 @@ export function buildNotesRecallTool(
   return {
     name: "memory.notes.recall",
     description:
-      "Search durable notes by keyword (BM25). Call before answering questions that reference past sessions, user preferences, or project history. Default scope is 'all' (cross-project); pass scope='project' to restrict to the current working directory.",
+      "Search or fetch durable notes. Pass { id } to fetch a single note by id (e.g. after spotting it in `### memory-index`). Otherwise pass { query } for a BM25 keyword search. Default scope is 'all' (cross-project); pass scope='project' to restrict to the current working directory.",
     readonly: true,
     async run(rawArgs, ctx) {
+      if (rawArgs.id !== undefined) {
+        return fetchById(rawArgs.id, options.store);
+      }
       const query = rawArgs.query;
       if (typeof query !== "string") {
         return compressToolResult({
           tool: "memory.notes.recall",
           status: "error",
-          output: `validation: query: expected string, got ${typeof query}`,
+          output: `validation: query: expected string (or pass { id } for direct fetch), got ${typeof query}`,
           details: { field: "query", reason: "expected string" },
         });
       }
@@ -94,4 +100,63 @@ function truncatePreview(value: string, max: number): string {
   const collapsed = value.replace(/\s+/g, " ").trim();
   if (collapsed.length <= max) return collapsed;
   return `${collapsed.slice(0, max)}…`;
+}
+
+/**
+ * Direct-fetch path for `memory.notes.recall { id }`. Returns the full
+ * note (not a preview) so the agent has the exact body to act on. An
+ * unknown id maps to a deterministic `(not found)` output rather than
+ * an error, matching the "zero results" shape of the BM25 path.
+ */
+function fetchById(rawId: unknown, store: MemoryStore) {
+  if (typeof rawId !== "number" || !Number.isInteger(rawId) || rawId <= 0) {
+    return compressToolResult({
+      tool: "memory.notes.recall",
+      status: "error",
+      output: `validation: id: expected positive integer, got ${JSON.stringify(rawId)}`,
+      details: { field: "id", reason: "expected positive integer" },
+    });
+  }
+  try {
+    const entry = store.get(rawId);
+    if (entry === null) {
+      return compressToolResult({
+        tool: "memory.notes.recall",
+        status: "ok",
+        output: `(no note with id ${rawId})`,
+        details: { count: 0, scope: "id" as const, entries: [] },
+      });
+    }
+    return compressToolResult(
+      {
+        tool: "memory.notes.recall",
+        status: "ok",
+        output: `- #${entry.id} ${entry.content}`,
+        details: {
+          count: 1,
+          scope: "id" as const,
+          entries: [
+            {
+              id: entry.id,
+              content: entry.content,
+              tags: entry.tags,
+              workingDir: entry.workingDir,
+              updatedAt: entry.updatedAt,
+            },
+          ],
+        },
+      },
+      { maxSummaryLength: 4000, maxTailLines: 200 },
+    );
+  } catch (error) {
+    if (error instanceof MemoryValidationError) {
+      return compressToolResult({
+        tool: "memory.notes.recall",
+        status: "error",
+        output: `validation: ${error.field}: ${error.message}`,
+        details: { field: error.field, reason: error.message },
+      });
+    }
+    throw error;
+  }
 }

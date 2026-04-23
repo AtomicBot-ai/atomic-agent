@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { getConfig } from "../config/index.js";
-import type { SessionState } from "./session-state.js";
+import { stripEphemeral, type SessionState } from "./session-state.js";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -107,13 +107,14 @@ export class SessionStore {
   }
 
   private serialize(state: SessionState): Record<string, unknown> {
+    const persistable = stripEphemeral(state);
     return {
-      id: state.id,
-      working_dir: state.workingDir,
-      status: state.status,
-      payload: JSON.stringify(state),
-      created_at: state.createdAt,
-      updated_at: state.updatedAt,
+      id: persistable.id,
+      working_dir: persistable.workingDir,
+      status: persistable.status,
+      payload: JSON.stringify(persistable),
+      created_at: persistable.createdAt,
+      updated_at: persistable.updatedAt,
     };
   }
 }

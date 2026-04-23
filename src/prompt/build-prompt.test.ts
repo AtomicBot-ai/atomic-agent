@@ -580,7 +580,9 @@ describe("buildPrompt profile section", () => {
       toolDescriptors: TOOLS,
       capabilities: CAPS,
       skillCatalog: SKILLS,
-      profileFacts: [{ key: "language", value: "ru", updatedAt: 1 }],
+      profileFacts: [
+        { key: "language", value: "ru", updatedAt: 1, pinned: true, keywords: [] },
+      ],
     });
     const sessionIdx = prompt.tail.indexOf("### session");
     const profileIdx = prompt.tail.indexOf("### profile");
@@ -604,12 +606,82 @@ describe("buildPrompt profile section", () => {
       capabilities: CAPS,
       skillCatalog: SKILLS,
       profileFacts: [
-        { key: "name", value: "Alex", updatedAt: 1 },
-        { key: "timezone", value: "Europe/Moscow", updatedAt: 2 },
+        { key: "name", value: "Alex", updatedAt: 1, pinned: true, keywords: [] },
+        {
+          key: "timezone",
+          value: "Europe/Moscow",
+          updatedAt: 2,
+          pinned: true,
+          keywords: [],
+        },
       ],
     });
     expect(empty.stablePrefix).toBe(filled.stablePrefix);
     expect(empty.tail).not.toBe(filled.tail);
+  });
+
+  it("threads userMessage through the profile gate to reveal contextual facts", () => {
+    const facts = [
+      { key: "language", value: "ru", updatedAt: 1, pinned: true, keywords: [] },
+      {
+        key: "deploy_cmd",
+        value: "pnpm run deploy",
+        updatedAt: 2,
+        pinned: false,
+        keywords: ["deploy", "release"],
+      },
+    ];
+    const hidden = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: facts,
+      userMessage: "hello",
+    });
+    expect(hidden.tail).toContain("- language: ru");
+    expect(hidden.tail).not.toContain("deploy_cmd");
+
+    const revealed = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: facts,
+      userMessage: "how do I deploy this branch?",
+    });
+    expect(revealed.tail).toContain("- deploy_cmd: pnpm run deploy");
+    expect(revealed.tail).toContain("- language: ru");
+  });
+
+  it("keeps the stable prefix byte-stable across userMessage changes that flip the gate", () => {
+    const facts = [
+      {
+        key: "deploy_cmd",
+        value: "pnpm run deploy",
+        updatedAt: 1,
+        pinned: false,
+        keywords: ["deploy"],
+      },
+    ];
+    const a = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: facts,
+      userMessage: "hello",
+    });
+    const b = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: facts,
+      userMessage: "deploy this please",
+    });
+    expect(a.stablePrefix).toBe(b.stablePrefix);
+    expect(a.tail).not.toBe(b.tail);
   });
 
   it("truncates a giant profile under profileMaxTokens", () => {
@@ -619,7 +691,9 @@ describe("buildPrompt profile section", () => {
       toolDescriptors: TOOLS,
       capabilities: CAPS,
       skillCatalog: SKILLS,
-      profileFacts: [{ key: "blob", value: giantValue, updatedAt: 1 }],
+      profileFacts: [
+        { key: "blob", value: giantValue, updatedAt: 1, pinned: true, keywords: [] },
+      ],
       profileMaxTokens: 50,
     });
     expect(prompt.tail).toContain("### profile");
@@ -627,6 +701,134 @@ describe("buildPrompt profile section", () => {
     expect(prompt.tokens.profile).toBeLessThanOrEqual(50);
     expect(prompt.truncation.profile).toBe(true);
     expect(prompt.truncated).toBe(true);
+  });
+});
+
+describe("buildPrompt recalled and memory-index sections", () => {
+  it("omits both sections when session has no recalledNotes / memoryIndex", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(prompt.tail).not.toContain("### recalled");
+    expect(prompt.tail).not.toContain("### memory-index");
+    expect(prompt.tokens.recalled).toBe(0);
+    expect(prompt.tokens.memoryIndex).toBe(0);
+  });
+
+  it("renders recalled notes before ### world when present", () => {
+    const prompt = buildPrompt({
+      session: mkSession({
+        recalledNotes: [
+          {
+            id: 42,
+            content: "user prefers Lisbon in October",
+            tags: ["trip"],
+            metadata: null,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      }),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(prompt.tail).toContain("### recalled");
+    expect(prompt.tail).toContain("#42");
+    expect(prompt.tail).toContain("user prefers Lisbon");
+    const recalledIdx = prompt.tail.indexOf("### recalled");
+    const worldIdx = prompt.tail.indexOf("### world");
+    expect(recalledIdx).toBeLessThan(worldIdx);
+    expect(recalledIdx).toBeGreaterThan(-1);
+  });
+
+  it("renders memory-index after recalled and before world", () => {
+    const prompt = buildPrompt({
+      session: mkSession({
+        recalledNotes: [
+          {
+            id: 1,
+            content: "top note",
+            tags: [],
+            metadata: null,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+        memoryIndex: [
+          { id: 7, preview: "older convention", tags: ["conv"], updatedAt: 2 },
+        ],
+      }),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const recalledIdx = prompt.tail.indexOf("### recalled");
+    const indexIdx = prompt.tail.indexOf("### memory-index");
+    const worldIdx = prompt.tail.indexOf("### world");
+    expect(recalledIdx).toBeGreaterThan(-1);
+    expect(indexIdx).toBeGreaterThan(recalledIdx);
+    expect(worldIdx).toBeGreaterThan(indexIdx);
+    expect(prompt.tail).toContain("#7");
+    expect(prompt.tail).toContain("older convention");
+  });
+
+  it("keeps the stable prefix byte-stable across recalled/index changes", () => {
+    const base = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const filled = buildPrompt({
+      session: mkSession({
+        recalledNotes: [
+          {
+            id: 1,
+            content: "fresh note",
+            tags: [],
+            metadata: null,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+        memoryIndex: [{ id: 2, preview: "pointer", tags: [], updatedAt: 2 }],
+      }),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(filled.stablePrefix).toBe(base.stablePrefix);
+    expect(filled.tail).not.toBe(base.tail);
+  });
+
+  it("truncates a giant recalled note under recallMaxTokens", () => {
+    const giant = "x".repeat(20_000);
+    const prompt = buildPrompt({
+      session: mkSession({
+        recalledNotes: [
+          {
+            id: 1,
+            content: giant,
+            tags: [],
+            metadata: null,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      }),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      recallMaxTokens: 40,
+      recallPreviewChars: 20_000,
+    });
+    expect(prompt.tail).toContain("### recalled");
+    expect(prompt.tokens.recalled).toBeLessThanOrEqual(40);
+    expect(prompt.truncation.recalled).toBe(true);
   });
 });
 

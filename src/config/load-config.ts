@@ -192,17 +192,32 @@ export function loadConfig(): AtomicAgentConfig {
       profile: {
         enabled: user.memory.profile.enabled,
         maxTokens: user.memory.profile.maxTokens,
+        contextualKeywordGate: user.memory.profile.contextualKeywordGate,
       },
       reflection: {
         enabled: user.memory.reflection.enabled,
         timeoutMs: user.memory.reflection.timeoutMs,
         maxFactsPerCall: user.memory.reflection.maxFactsPerCall,
+        autoStoreNotes: user.memory.reflection.autoStoreNotes,
+        maxNotesPerCall: user.memory.reflection.maxNotesPerCall,
       },
       notes: {
         enabled: user.memory.notes.enabled,
         maxEntries: user.memory.notes.maxEntries,
         maxContentChars: user.memory.notes.maxContentChars,
         recallDefaultK: user.memory.notes.recallDefaultK,
+      },
+      recallInjection: {
+        enabled: user.memory.recallInjection.enabled,
+        k: user.memory.recallInjection.k,
+        previewChars: user.memory.recallInjection.previewChars,
+        maxTokens: user.memory.recallInjection.maxTokens,
+      },
+      index: {
+        enabled: user.memory.index.enabled,
+        limit: user.memory.index.limit,
+        previewChars: user.memory.index.previewChars,
+        maxTokens: user.memory.index.maxTokens,
       },
     },
   };

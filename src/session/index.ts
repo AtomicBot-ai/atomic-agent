@@ -8,6 +8,7 @@ export {
   recordWorldSnapshot,
   recordTurn,
   incrementTurnCount,
+  stripEphemeral,
 } from "./session-state.js";
 export type {
   SessionState,
