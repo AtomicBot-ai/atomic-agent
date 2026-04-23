@@ -7,7 +7,6 @@ import type { LogRecord, LogSink } from "../telemetry/structured-logger.js";
 import type { MetricSample, MetricSink } from "../telemetry/metrics-collector.js";
 import type { SessionState } from "../session/session-state.js";
 import { clearTtyScreen } from "./clear-tty-screen.js";
-import { enterAltScreen } from "./alt-screen.js";
 import { parseTuiArgs } from "./tui-args.js";
 import { persistUserLlamaUrl } from "./persist-user-llama-url.js";
 import { runLlamaStartupGateIfNeeded } from "./run-llama-config-wizard.js";
@@ -74,10 +73,11 @@ export async function tuiCommand(args: string[]): Promise<number> {
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
 
-  // Switch to the alternate screen buffer so the TUI gets its own
-  // scrollback and the host terminal is restored verbatim on exit.
-  const altScreen = enterAltScreen({ stdout: process.stdout });
-
+  // Render into the primary terminal buffer (no alternate screen) so the
+  // chat transcript lands in the host terminal's native scrollback and
+  // the user can scroll the history with the wheel / scrollbar. The trade-
+  // off is that the final frame stays in the terminal after exit — that
+  // is acceptable for a conversational agent.
   const ink = render(
     React.createElement(TuiApp, {
       session: sessionInfo,
@@ -144,10 +144,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
   } finally {
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
-    // `ink.clear()` wipes the final Ink frame so nothing leaks when we
-    // flip back to the real terminal buffer below.
+    // `ink.clear()` wipes the live region of the final Ink frame; the
+    // finalised chat messages printed by `<Static>` remain in the
+    // terminal's scrollback so the user keeps their conversation log.
     ink.clear();
-    altScreen.restore();
     await orchestrator.shutdown();
   }
   return orchestrator.exitCode;

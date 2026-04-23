@@ -247,11 +247,16 @@ function reduceStepEvent(
         ...(toolCardsForTurn.length > 0 ? { toolCards: toolCardsForTurn } : {}),
         ...(reasoningForTurn.length > 0 ? { reasoningBlocks: reasoningForTurn } : {}),
       });
+      // Clear live reasoning along with the other streaming state so the
+      // StreamingTail does not re-expand reasoning the instant the turn
+      // finalises — the reasoning now lives inside the finalised message
+      // and is rendered collapsed next to it.
       return {
         ...withMessage,
         streamingAssistantText: null,
         streamingToolCalls: [],
         streamingToolCards: [],
+        reasoning: [],
       };
     }
     case "step_error":

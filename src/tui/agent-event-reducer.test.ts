@@ -294,4 +294,39 @@ describe("reduceTuiState", () => {
     expect(lastMessage?.text).toBe("the answer");
     expect(lastMessage?.reasoningBlocks).toContain("plan v2");
   });
+
+  it("should clear live reasoning on assistant_reply so the tail does not re-expand it", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      { type: "message_submitted", message: "hi" },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: { type: "reasoning", stepIndex: 0, text: "some chain of thought" },
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: { type: "assistant_delta", text: "Par" },
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "Partial answer" },
+        },
+      },
+    ]);
+    // Live reasoning/streaming state must be wiped so StreamingTail renders
+    // nothing; the finalised message carries reasoningBlocks instead.
+    expect(next.reasoning).toEqual([]);
+    expect(next.streamingAssistantText).toBeNull();
+    expect(next.streamingToolCalls).toEqual([]);
+    expect(next.streamingToolCards).toEqual([]);
+    expect(next.messages.at(-1)?.reasoningBlocks).toContain("some chain of thought");
+  });
 });
