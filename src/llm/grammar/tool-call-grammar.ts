@@ -2,11 +2,10 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const THINK_PAIR_RE = /<think\b[^>]*>([\s\S]*?)<\/think\s*>/gi;
-const THINK_OPEN_RE = /<think\b[^>]*>/i;
-
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TOOL_CALL_GRAMMAR_PATH = resolve(HERE, "../../../grammars/tool-call.gbnf");
+const DEFAULT_REASONING_OPEN_TAG = "<think>";
+const DEFAULT_REASONING_CLOSE_TAG = "</think>";
 
 export interface ExtractedReasoning {
   /** Concatenated text from every `<think>` block, trimmed. */
@@ -21,6 +20,11 @@ export interface ToolCallPayload {
   reasoning?: string;
 }
 
+export interface ReasoningTagOptions {
+  openTag?: string;
+  closeTag?: string;
+}
+
 export class ToolCallParseError extends Error {
   constructor(message: string) {
     super(message);
@@ -32,15 +36,25 @@ export function loadToolCallGrammar(): string {
   return readFileSync(TOOL_CALL_GRAMMAR_PATH, "utf8");
 }
 
-export function extractReasoning(raw: string): ExtractedReasoning {
+export function extractReasoning(
+  raw: string,
+  options: ReasoningTagOptions = {},
+): ExtractedReasoning {
+  const openTag = options.openTag ?? DEFAULT_REASONING_OPEN_TAG;
+  const closeTag = options.closeTag ?? DEFAULT_REASONING_CLOSE_TAG;
+  const pairRe = new RegExp(
+    `${escapeRegex(openTag)}([\\s\\S]*?)${escapeRegex(closeTag)}`,
+    "g",
+  );
+  const openRe = new RegExp(escapeRegex(openTag));
   const collected: string[] = [];
-  let body = raw.replace(THINK_PAIR_RE, (_match, inner: string) => {
+  let body = raw.replace(pairRe, (_match, inner: string) => {
     const text = inner.trim();
     if (text.length > 0) collected.push(text);
     return "";
   });
-  if (THINK_OPEN_RE.test(body)) {
-    const match = body.match(THINK_OPEN_RE);
+  if (openRe.test(body)) {
+    const match = body.match(openRe);
     const reasoning = body.slice((match?.index ?? 0) + (match?.[0].length ?? 0)).trim();
     return {
       reasoning,
@@ -54,8 +68,11 @@ export function extractReasoning(raw: string): ExtractedReasoning {
   };
 }
 
-export function parseToolCall(raw: string): ToolCallPayload {
-  const extracted = extractReasoning(raw);
+export function parseToolCall(
+  raw: string,
+  options: ReasoningTagOptions = {},
+): ToolCallPayload {
+  const extracted = extractReasoning(raw, options);
   const jsonText = extractJsonObject(extracted.body);
 
   let parsed: unknown;
@@ -183,4 +200,8 @@ function extractJsonObject(raw: string): string {
     throw new ToolCallParseError("tool-call JSON object not found");
   }
   throw new ToolCallParseError("tool-call JSON object is incomplete");
+}
+
+function escapeRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

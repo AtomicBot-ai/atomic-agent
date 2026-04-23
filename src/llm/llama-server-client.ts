@@ -70,6 +70,10 @@ export interface LlamaServerClientOptions {
   fetchImpl?: typeof fetch;
 }
 
+export interface LlamaServerProps {
+  [key: string]: unknown;
+}
+
 /**
  * HTTP client for an external llama-server. Exposes a single unary
  * `complete()` and a streaming `completeStream()` — both hand a GBNF grammar
@@ -89,6 +93,38 @@ export class LlamaServerClient {
     this.requestTimeoutMs =
       options.requestTimeoutMs ?? config.llama.requestTimeoutMs;
     this.fetchImpl = options.fetchImpl ?? fetch;
+  }
+
+  async fetchProps(): Promise<LlamaServerProps> {
+    const config = getConfig();
+    const base = this.baseUrlOverride ?? config.llama.url;
+    const url = new URL("/props", base).toString();
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(),
+      this.requestTimeoutMs,
+    );
+    try {
+      const response = await this.fetchImpl(url, {
+        method: "GET",
+        headers: this.buildHeaders(false),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new LlamaServerError(
+          `llama-server returned http ${response.status}`,
+          response.status,
+          url,
+        );
+      }
+      return (await response.json()) as LlamaServerProps;
+    } catch (err) {
+      if (err instanceof LlamaServerError) throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      throw new LlamaServerError(message, null, url);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
@@ -186,9 +222,6 @@ export class LlamaServerClient {
             if (delta.length > 0 || reasoningDelta.length > 0) {
               accumulated += delta;
               accumulatedReasoning += reasoningDelta;
-              // #region agent log
-              fetch('http://127.0.0.1:7256/ingest/0e27a7af-968f-4d0a-b880-61f67ba8ab19',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8f8987'},body:JSON.stringify({sessionId:'8f8987',hypothesisId:'H1,H2,H3',runId:'repro',location:'llama-server-client.ts:sse-chunk',message:'sse chunk',data:{deltaLen:delta.length,deltaHead:delta.slice(0,60),reasoningLen:reasoningDelta.length,reasoningHead:reasoningDelta.slice(0,60),parsedKeys:Object.keys(parsed)},timestamp:Date.now()})}).catch(()=>{});
-              // #endregion
               yield { delta, reasoningDelta, done: false };
             }
             if (parsed.stop) {
@@ -199,9 +232,6 @@ export class LlamaServerClient {
               if (finalResult.reasoningContent.length === 0) {
                 finalResult.reasoningContent = accumulatedReasoning;
               }
-              // #region agent log
-              fetch('http://127.0.0.1:7256/ingest/0e27a7af-968f-4d0a-b880-61f67ba8ab19',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8f8987'},body:JSON.stringify({sessionId:'8f8987',hypothesisId:'H1,H2',runId:'repro',location:'llama-server-client.ts:sse-stop',message:'sse terminal frame',data:{contentLen:finalResult.content.length,contentHead:finalResult.content.slice(0,200),reasoningLen:finalResult.reasoningContent.length,reasoningHead:finalResult.reasoningContent.slice(0,200),parsedHasReasoningField:'reasoning_content' in parsed},timestamp:Date.now()})}).catch(()=>{});
-              // #endregion
               yield { delta: "", reasoningDelta: "", done: true };
             }
           }
@@ -225,11 +255,7 @@ export class LlamaServerClient {
     const config = getConfig();
     const base = this.baseUrlOverride ?? config.llama.url;
     const url = new URL(config.llama.completionPath, base).toString();
-    const headers: Record<string, string> = {
-      "content-type": "application/json",
-      accept: stream ? "text/event-stream" : "application/json",
-    };
-    if (this.apiKey) headers.authorization = `Bearer ${this.apiKey}`;
+    const headers = this.buildHeaders(stream);
     const payload: Record<string, unknown> = {
       prompt: request.prompt,
       stream,
@@ -247,10 +273,16 @@ export class LlamaServerClient {
       payload.id_slot = request.slotId;
     }
     const body = JSON.stringify(payload);
-    // #region agent log
-    fetch('http://127.0.0.1:7256/ingest/0e27a7af-968f-4d0a-b880-61f67ba8ab19',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8f8987'},body:JSON.stringify({sessionId:'8f8987',hypothesisId:'H3',runId:'repro',location:'llama-server-client.ts:prepareRequest',message:'outgoing /completion request',data:{url,stream,grammarPresent:!!request.grammar,promptLen:request.prompt.length,promptTail:request.prompt.slice(-200),promptHasThinkTag:request.prompt.includes('<think>'),payloadKeys:Object.keys(payload)},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     return { url, headers, body };
+  }
+
+  private buildHeaders(stream: boolean): Record<string, string> {
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      accept: stream ? "text/event-stream" : "application/json",
+    };
+    if (this.apiKey) headers.authorization = `Bearer ${this.apiKey}`;
+    return headers;
   }
 }
 

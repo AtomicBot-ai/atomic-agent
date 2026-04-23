@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -10,6 +9,12 @@ import type {
   CompletionResult,
   StreamChunk,
 } from "../llm/llama-server-client.js";
+import {
+  buildGrammar,
+  detectModelProfile,
+  PLAIN_INSTRUCT_PROFILE,
+} from "../llm/index.js";
+import { checkProfileGrammarAligned } from "../llm/profile-invariants.js";
 import { SlotManager } from "../llm/slot-manager.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
 
@@ -91,6 +96,8 @@ export interface CreateAgentRuntimeOptions {
     disableStreaming?: boolean;
     browserBackend?: BrowserBackend;
     skipLlamaHealthCheck?: boolean;
+    llamaProps?: Record<string, unknown>;
+    llamaPropsError?: Error;
   };
 }
 
@@ -178,6 +185,7 @@ export async function createAgentRuntime(
 
   const llama = new LlamaServerClient();
   const slotManager = new SlotManager();
+  const profile = await resolveModelProfile(options.overrides, llama, logger, config.llama.url);
 
   const browserBackend: BrowserBackend =
     options.overrides?.browserBackend ??
@@ -215,7 +223,14 @@ export async function createAgentRuntime(
     skillRegistry.list(),
   );
 
-  const grammar = await loadGrammar(config.paths.grammarsDir);
+  const grammar = await buildGrammar(profile, config.paths.grammarsDir);
+  const grammarViolations = checkProfileGrammarAligned(profile, grammar);
+  if (grammarViolations.length > 0) {
+    logger.warn("profile/grammar invariant violated", {
+      profile: profile.id,
+      violations: grammarViolations,
+    });
+  }
 
   const llmComplete =
     options.overrides?.llamaComplete ??
@@ -260,6 +275,7 @@ export async function createAgentRuntime(
     ...(llmCompleteStream ? { llmCompleteStream } : {}),
     toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
     capabilities,
+    profile,
     onEvent: (event: AgentLoopEvent) => options.handlers?.onAgentEvent?.(event),
     metrics,
     logger,
@@ -347,7 +363,45 @@ export async function createAgentRuntime(
   return runtime;
 }
 
-async function loadGrammar(grammarsDir: string): Promise<string> {
-  const path = join(grammarsDir, "tool-call.gbnf");
-  return readFile(path, "utf8");
+async function resolveModelProfile(
+  overrides: CreateAgentRuntimeOptions["overrides"] | undefined,
+  llama: LlamaServerClient,
+  logger: StructuredLogger,
+  llamaUrl: string,
+) {
+  if (overrides?.llamaPropsError) {
+    logger.warn("model profile probe failed; using plain fallback", {
+      error: overrides.llamaPropsError.message,
+      url: llamaUrl,
+    });
+    return PLAIN_INSTRUCT_PROFILE;
+  }
+  if (overrides?.llamaProps) {
+    return logResolvedProfile(overrides.llamaProps, logger);
+  }
+  if (overrides?.llamaComplete || overrides?.skipLlamaHealthCheck) {
+    return PLAIN_INSTRUCT_PROFILE;
+  }
+  try {
+    const props = await llama.fetchProps();
+    return logResolvedProfile(props, logger);
+  } catch (error) {
+    logger.warn("model profile probe failed; using plain fallback", {
+      error: error instanceof Error ? error.message : String(error),
+      url: llamaUrl,
+    });
+    return PLAIN_INSTRUCT_PROFILE;
+  }
+}
+
+function logResolvedProfile(
+  props: Record<string, unknown>,
+  logger: StructuredLogger,
+) {
+  const resolved = detectModelProfile(props);
+  logger.info("model profile resolved", {
+    id: resolved.id,
+    alias: typeof props.model_alias === "string" ? props.model_alias : null,
+  });
+  return resolved;
 }

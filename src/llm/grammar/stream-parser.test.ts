@@ -4,8 +4,21 @@ import {
   type StreamParseEvent,
 } from "./stream-parser.js";
 
-function feedAll(chunks: string[]): StreamParseEvent[] {
-  const parser = createStreamParser();
+function feedAll(
+  chunks: string[],
+  options: Parameters<typeof createStreamParser>[0] = {},
+): StreamParseEvent[] {
+  const parser = createStreamParser(options);
+  const events: StreamParseEvent[] = [];
+  for (const chunk of chunks) {
+    events.push(...parser.push(chunk));
+  }
+  events.push(...parser.end());
+  return events;
+}
+
+function feedAllWithPreOpenedThink(chunks: string[]): StreamParseEvent[] {
+  const parser = createStreamParser({ preOpenedThink: true });
   const events: StreamParseEvent[] = [];
   for (const chunk of chunks) {
     events.push(...parser.push(chunk));
@@ -97,6 +110,31 @@ describe("createStreamParser", () => {
     const events = feedAll(["<think>cut off mid-thought"]);
     expect(concatReasoning(events)).toBe("cut off mid-thought");
     expect(events.at(-1)).toEqual({ kind: "reasoning_close" });
+  });
+
+  it("can start inside an already opened think block", () => {
+    const events = feedAllWithPreOpenedThink([
+      'planning</think>{"tool":"reply","args":{"text":"ok"}}',
+    ]);
+    expect(concatReasoning(events)).toBe("planning");
+    expect(concatReply(events)).toBe("ok");
+  });
+
+  it("supports custom reasoning tags split across the closing sentinel", () => {
+    const events = feedAll(
+      [
+        "alpha<chan",
+        'nel|>{"tool":"reply","args":{"text":"ok"}}',
+      ],
+      {
+        preOpenedThink: true,
+        reasoningOpenTag: "<|channel>thought\n",
+        reasoningCloseTag: "<channel|>",
+      },
+    );
+    expect(concatReasoning(events)).toBe("alpha");
+    expect(events.filter((e) => e.kind === "reasoning_close")).toHaveLength(1);
+    expect(concatReply(events)).toBe("ok");
   });
 
   it("flushes remaining reply text on stream end if closing quote missing", () => {

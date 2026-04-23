@@ -25,6 +25,7 @@ export interface StablePrefixInput {
   capabilities: CapabilitiesSummary;
   skillCatalog: readonly SkillCatalogEntry[];
   systemPersona?: string;
+  reasoningSystemToken?: string;
 }
 
 /**
@@ -72,6 +73,7 @@ export function buildStablePrefix(input: StablePrefixInput): string {
       : "(none installed)";
   return [
     `### system`,
+    ...(input.reasoningSystemToken ? [input.reasoningSystemToken.trimEnd()] : []),
     persona,
     ``,
     `### tools`,

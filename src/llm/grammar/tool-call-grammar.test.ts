@@ -103,6 +103,19 @@ I'm thinking but got cut off mid-thought by n_predict limit`;
     expect(out.reasoning).toBe("first thought\n\nsecond thought");
   });
 
+  it("supports custom reasoning tags", () => {
+    const raw = `<|channel>thought
+first thought
+<channel|>
+{"tool":"finish","args":{"summary":"done"}}`;
+    const out = parseToolCall(raw, {
+      openTag: "<|channel>thought\n",
+      closeTag: "<channel|>",
+    });
+    expect(out.tool).toBe("finish");
+    expect(out.reasoning).toBe("first thought");
+  });
+
   it("parses a reply tool-call", () => {
     const out = parseToolCall(
       '{"tool":"reply","args":{"text":"hello there, friend"}}',
@@ -290,6 +303,15 @@ I'm thinking but got cut off mid-thought by n_predict limit`;
     const extracted = extractReasoning(raw);
     expect(extracted.reasoning).toBe("");
     expect(extracted.body).toBe(raw);
+  });
+
+  it("extractReasoning handles an unclosed custom reasoning block", () => {
+    const extracted = extractReasoning("<|channel>thought\npending", {
+      openTag: "<|channel>thought\n",
+      closeTag: "<channel|>",
+    });
+    expect(extracted.body).toBe("");
+    expect(extracted.reasoning).toBe("pending");
   });
 
   it("tolerates surrounding whitespace", () => {

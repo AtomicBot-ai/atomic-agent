@@ -1,7 +1,8 @@
 /**
  * Incremental parser for the raw SSE stream emitted by llama-server under
  * our tool-call grammar. Two things are surfaced live to the caller:
- *  - `<think>...</think>` blocks → emitted as reasoning deltas.
+ *  - Reasoning-tag blocks (for example `<think>...</think>`) → emitted as
+ *    reasoning deltas.
  *  - `{"tool":"reply","args":{"text":"..."}}` → emitted as assistant deltas.
  *
  * The parser is intentionally best-effort: it only recognises the stable
@@ -10,21 +11,18 @@
  * this module never replaces final parsing — it only unlocks UI latency.
  *
  * State machine:
- *   preamble      → scanning for <think tag or JSON start `{`
- *   inside_think  → streaming reasoning until </think>
+ *   preamble      → scanning for reasoning-open tag or JSON start `{`
+ *   inside_think  → streaming reasoning until the configured close tag
  *   json_tool     → inside JSON, scanning for the outer "tool" name
  *   json_text     → tool was "reply", scanning for args.text string start
  *   reply_text    → streaming decoded args.text chars until the closing "
  *   done          → past reply text (or unsupported tool); swallow rest
  */
 
-const THINK_OPEN_RE = /<think\b[^>]*>/i;
-const THINK_CLOSE_RE = /<\/think\s*>/i;
 const TOOL_FIELD_RE = /"tool"\s*:\s*"([^"\\]+)"/;
 const TEXT_FIELD_RE = /"text"\s*:\s*"/;
-
-/** Max tail length to hold back in `inside_think` in case it's a partial `</think>`. */
-const THINK_CLOSE_MAX_LEN = 16;
+const DEFAULT_REASONING_OPEN_TAG = "<think>";
+const DEFAULT_REASONING_CLOSE_TAG = "</think>";
 
 export type StreamParseEvent =
   | { kind: "reasoning_open" }
@@ -39,6 +37,12 @@ export interface StreamParser {
   push(chunk: string): StreamParseEvent[];
   /** Flush pending state at stream end; emits close events if needed. */
   end(): StreamParseEvent[];
+}
+
+export interface StreamParserOptions {
+  preOpenedThink?: boolean;
+  reasoningOpenTag?: string;
+  reasoningCloseTag?: string;
 }
 
 type ParserState =
@@ -56,8 +60,13 @@ interface EscapeCarry {
   unicodeHex: string;
 }
 
-export function createStreamParser(): StreamParser {
-  let state: ParserState = "preamble";
+export function createStreamParser(options: StreamParserOptions = {}): StreamParser {
+  const reasoningOpenTag = options.reasoningOpenTag ?? DEFAULT_REASONING_OPEN_TAG;
+  const reasoningCloseTag = options.reasoningCloseTag ?? DEFAULT_REASONING_CLOSE_TAG;
+  const openRe = new RegExp(escapeRegex(reasoningOpenTag));
+  const closeRe = new RegExp(escapeRegex(reasoningCloseTag));
+  const closeHoldbackLen = Math.max(16, reasoningCloseTag.length);
+  let state: ParserState = options.preOpenedThink ? "inside_think" : "preamble";
   let buffer = "";
   let carry: EscapeCarry = { mode: null, unicodeHex: "" };
 
@@ -68,7 +77,7 @@ export function createStreamParser(): StreamParser {
       keepGoing = false;
 
       if (state === "preamble") {
-        const openMatch = buffer.match(THINK_OPEN_RE);
+        const openMatch = buffer.match(openRe);
         const braceIdx = buffer.indexOf("{");
         if (
           openMatch &&
@@ -87,14 +96,12 @@ export function createStreamParser(): StreamParser {
           keepGoing = true;
           continue;
         }
-        // Hold the tail if it could be the start of a `<think` tag.
-        const ltIdx = buffer.lastIndexOf("<");
-        buffer = ltIdx === -1 ? "" : buffer.slice(ltIdx);
+        buffer = holdPossibleTagStart(buffer, reasoningOpenTag);
         continue;
       }
 
       if (state === "inside_think") {
-        const closeMatch = buffer.match(THINK_CLOSE_RE);
+        const closeMatch = buffer.match(closeRe);
         if (closeMatch && closeMatch.index !== undefined) {
           const before = buffer.slice(0, closeMatch.index);
           if (before.length > 0) {
@@ -106,11 +113,7 @@ export function createStreamParser(): StreamParser {
           keepGoing = true;
           continue;
         }
-        // Emit the prefix that cannot be the start of `</think>`.
-        const holdStart = Math.max(0, buffer.length - THINK_CLOSE_MAX_LEN);
-        const heldSlice = buffer.slice(holdStart);
-        const ltInHeld = heldSlice.indexOf("<");
-        const cutAt = ltInHeld === -1 ? buffer.length : holdStart + ltInHeld;
+        const cutAt = findSafeReasoningEmitIndex(buffer, reasoningCloseTag, closeHoldbackLen);
         const emit = buffer.slice(0, cutAt);
         if (emit.length > 0) {
           out.push({ kind: "reasoning_delta", text: emit });
@@ -295,4 +298,38 @@ function decodeSimpleEscape(c: string): string {
     default:
       return c;
   }
+}
+
+function escapeRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function holdPossibleTagStart(buffer: string, tag: string): string {
+  const maxProbe = Math.min(buffer.length, Math.max(1, tag.length - 1));
+  for (let len = maxProbe; len > 0; len -= 1) {
+    if (buffer.endsWith(tag.slice(0, len))) {
+      return buffer.slice(-len);
+    }
+  }
+  return "";
+}
+
+function findSafeReasoningEmitIndex(
+  buffer: string,
+  closeTag: string,
+  holdbackLen: number,
+): number {
+  const window = buffer.slice(-Math.min(buffer.length, holdbackLen));
+  const overlap = longestTrailingPrefix(window, closeTag);
+  return buffer.length - overlap;
+}
+
+function longestTrailingPrefix(buffer: string, prefix: string): number {
+  const maxProbe = Math.min(buffer.length, prefix.length - 1);
+  for (let len = maxProbe; len > 0; len -= 1) {
+    if (buffer.endsWith(prefix.slice(0, len))) {
+      return len;
+    }
+  }
+  return 0;
 }

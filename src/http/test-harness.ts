@@ -23,6 +23,7 @@ import type {
 } from "../tools/browser/browser-backend.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import type { LogSink } from "../telemetry/structured-logger.js";
 
 import { ApprovalBus } from "./approval-bus.js";
 import { CompletionRegistry } from "./completion-registry.js";
@@ -92,12 +93,16 @@ export interface HarnessOptions {
     slotId: number;
     sessionId: string;
   }) => AsyncGenerator<StreamChunk, CompletionResult, void>;
+  llamaProps?: Record<string, unknown>;
+  llamaPropsError?: Error;
   /** Approval required flag (default: false to keep tests deterministic). */
   approvalRequired?: boolean;
   /** Extra inspector for each agent event. */
   onAgentEvent?: (event: AgentLoopEvent) => void;
   /** Extra inspector for each approval request. */
   onApprovalRequest?: (request: ApprovalRequest) => void;
+  /** Optional log sinks for runtime diagnostics assertions. */
+  logSinks?: LogSink[];
 }
 
 export interface Harness {
@@ -153,6 +158,7 @@ export async function startTestHarness(
     workingDir,
     approvalRequired: options.approvalRequired ?? false,
     handlers: {
+      logSinks: options.logSinks,
       onAgentEvent: (event) => {
         turnHub.emit(event);
         options.onAgentEvent?.(event);
@@ -166,6 +172,8 @@ export async function startTestHarness(
       browserBackend: new FakeBrowserBackend(),
       skipLlamaHealthCheck: true,
       llamaComplete: options.llamaComplete ?? defaultComplete,
+      ...(options.llamaProps ? { llamaProps: options.llamaProps } : {}),
+      ...(options.llamaPropsError ? { llamaPropsError: options.llamaPropsError } : {}),
       ...(options.llamaCompleteStream
         ? { llamaCompleteStream: options.llamaCompleteStream }
         : {}),

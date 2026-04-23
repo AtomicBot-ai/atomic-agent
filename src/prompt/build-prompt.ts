@@ -1,4 +1,5 @@
 import { getConfig } from "../config/index.js";
+import type { ModelProfile } from "../llm/model-profile.js";
 import type { SessionState } from "../session/session-state.js";
 import { renderTurnForPrompt } from "../session/conversation-turn.js";
 import { buildStablePrefix } from "./stable-prefix.js";
@@ -27,6 +28,7 @@ export interface BuildPromptInput {
    * no-progress loops without invalidating the stable prefix.
    */
   transientNotice?: string;
+  profile?: ModelProfile;
 }
 
 export interface BuiltPrompt {
@@ -69,6 +71,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     toolDescriptors: input.toolDescriptors,
     capabilities: input.capabilities,
     skillCatalog: input.skillCatalog,
+    reasoningSystemToken: input.profile?.reasoningSystemToken,
     ...(input.systemPersona !== undefined
       ? { systemPersona: input.systemPersona }
       : {}),
@@ -98,6 +101,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     `### response`,
     `Emit one JSON tool call now. Use \`reply\` for natural-language answers to the user.`,
   );
+  if (input.profile?.requiresPromptThinkPrefix && input.profile.reasoningStyle !== "none") {
+    tailParts.push(input.profile.reasoningOpenTag.trimEnd(), ``);
+  }
   const tail = tailParts.join("\n");
 
   const text = `${stablePrefix}\n${tail}`;

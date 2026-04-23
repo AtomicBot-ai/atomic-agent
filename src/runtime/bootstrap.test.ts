@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { createAgentRuntime } from "./bootstrap.js";
 import { resetConfigCache } from "../config/index.js";
+import { GEMMA4_PROPS } from "../llm/model-profile.fixtures.js";
 import type {
   AriaSnapshot,
   BrowserBackend,
@@ -15,6 +16,7 @@ import type {
   TabsInput,
   TypeInput,
 } from "../tools/browser/browser-backend.js";
+import type { LogRecord } from "../telemetry/structured-logger.js";
 
 class FakeBackend implements BrowserBackend {
   public shutdowns = 0;
@@ -260,6 +262,60 @@ describe("createAgentRuntime", () => {
       expect(runtime.skillCatalog).toHaveLength(0);
       await runtime.refreshSkills();
       expect(notified).toEqual([]);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("uses llamaProps override to resolve a gemma 4 grammar", async () => {
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalRequired: false,
+      overrides: {
+        browserBackend: backend,
+        skipLlamaHealthCheck: true,
+        llamaProps: GEMMA4_PROPS,
+      },
+    });
+    try {
+      expect(runtime.grammar).toContain("root ::= channel-prelude tool-call");
+      expect(runtime.grammar).toContain("<channel|>");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("warns once and falls back to plain profile when props probing fails", async () => {
+    const logs: LogRecord[] = [];
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalRequired: false,
+      handlers: {
+        logSinks: [(record) => logs.push(record)],
+      },
+      overrides: {
+        browserBackend: backend,
+        skipLlamaHealthCheck: true,
+        llamaPropsError: new Error("boom"),
+        llamaComplete: async () => ({
+          content: JSON.stringify({
+            tool: "reply",
+            args: { text: "hi back" },
+          }),
+          timing: { promptTokens: 5, predictedTokens: 3 },
+          slotId: 0,
+          cacheReused: false,
+        }),
+      },
+    });
+    try {
+      const result = await runtime.runTurn(runtime.createSession(), "hello", { maxSteps: 2 });
+      expect(result.reason).toBe("reply");
+      expect(runtime.grammar).toContain("root ::= tool-call");
+      const warnings = logs.filter(
+        (record) => record.level === "warn" && record.message === "model profile probe failed; using plain fallback",
+      );
+      expect(warnings).toHaveLength(1);
     } finally {
       await runtime.shutdown();
     }

@@ -1,4 +1,9 @@
 import { describe, it, expect } from "vitest";
+import {
+  GEMMA4_THINK_PROFILE,
+  PLAIN_INSTRUCT_PROFILE,
+  QWEN_THINK_PROFILE,
+} from "../llm/model-profile.js";
 import { buildPrompt } from "./build-prompt.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import type { SessionState } from "../session/session-state.js";
@@ -105,6 +110,40 @@ describe("buildPrompt", () => {
     });
     expect(prompt.tail).toContain("### conversation");
     expect(prompt.tail).toContain("user: Check inbox");
+  });
+
+  it("appends a think prelude for qwen think profiles", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profile: QWEN_THINK_PROFILE,
+    });
+    expect(prompt.tail.endsWith("<think>\n")).toBe(true);
+  });
+
+  it("injects gemma reasoning tokens into the stable prefix and tail", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profile: GEMMA4_THINK_PROFILE,
+    });
+    expect(prompt.stablePrefix.startsWith("### system\n<|think|>")).toBe(true);
+    expect(prompt.tail.endsWith("<|channel>thought\n")).toBe(true);
+  });
+
+  it("does not append a think prelude for plain profiles", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profile: PLAIN_INSTRUCT_PROFILE,
+    });
+    expect(prompt.tail.endsWith("<think>\n")).toBe(false);
   });
 
   it("shows (no messages yet) when there are no turns", () => {

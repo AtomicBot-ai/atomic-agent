@@ -81,6 +81,25 @@ describe("LlamaServerClient.complete", () => {
       status: null,
     });
   });
+
+  it("fetches /props for model profile detection", async () => {
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async (url) => {
+        expect(url).toBe("http://127.0.0.1:9999/props");
+        return new Response(
+          JSON.stringify({
+            model_alias: "qwen3-30b-a3b-instruct-2507",
+            chat_template: "<think>{{ reasoning }}</think>",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    });
+
+    const props = await client.fetchProps();
+    expect(props.model_alias).toBe("qwen3-30b-a3b-instruct-2507");
+  });
 });
 
 describe("LlamaServerClient.completeStream", () => {

@@ -162,17 +162,11 @@ function reduceStepEvent(
 ): TuiState {
   switch (event.type) {
     case "reasoning":
-      // #region agent log
-      fetch('http://127.0.0.1:7256/ingest/0e27a7af-968f-4d0a-b880-61f67ba8ab19',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8f8987'},body:JSON.stringify({sessionId:'8f8987',hypothesisId:'H5',runId:'repro',location:'agent-event-reducer.ts:reasoning',message:'reducer received reasoning event',data:{stepIndex:event.stepIndex,textLen:event.text.length,textHead:event.text.slice(0,120),priorReasoningCount:state.reasoning.length},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       return upsertReasoning(state, {
         stepIndex: event.stepIndex,
         text: event.text,
       });
     case "reasoning_delta":
-      // #region agent log
-      fetch('http://127.0.0.1:7256/ingest/0e27a7af-968f-4d0a-b880-61f67ba8ab19',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8f8987'},body:JSON.stringify({sessionId:'8f8987',hypothesisId:'H5',runId:'repro',location:'agent-event-reducer.ts:reasoning_delta',message:'reducer received reasoning_delta event',data:{stepIndex:event.stepIndex,textLen:event.text.length,textHead:event.text.slice(0,80)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       return appendReasoningDelta(state, {
         stepIndex: event.stepIndex,
         text: event.text,

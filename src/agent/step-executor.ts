@@ -5,6 +5,7 @@ import {
 import type { ToolCallPayload } from "../llm/grammar/tool-call-grammar.js";
 import { createStreamParser } from "../llm/grammar/stream-parser.js";
 import type { StreamParseEvent } from "../llm/grammar/stream-parser.js";
+import { checkProfilePromptAligned } from "../llm/profile-invariants.js";
 import { buildPrompt } from "../prompt/build-prompt.js";
 import type { BuiltPrompt } from "../prompt/build-prompt.js";
 import type {
@@ -34,6 +35,7 @@ import {
 } from "../session/conversation-turn.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import type { SlotManager } from "../llm/slot-manager.js";
+import type { ModelProfile } from "../llm/model-profile.js";
 import type { AgentMetrics } from "../telemetry/agent-metrics.js";
 import type { StructuredLogger } from "../telemetry/structured-logger.js";
 
@@ -61,6 +63,7 @@ export interface StepDependencies {
    */
   llmCompleteStream?: LlmCompleteStream;
   grammar: string;
+  profile: ModelProfile;
   onEvent?: (event: StepEvent) => void;
   metrics?: AgentMetrics;
   logger?: StructuredLogger;
@@ -144,11 +147,22 @@ export async function executeStep(
     toolDescriptors: ctx.toolDescriptors,
     capabilities: ctx.capabilities,
     skillCatalog: ctx.skillCatalog,
+    profile: deps.profile,
     ...(ctx.transientNotice !== undefined
       ? { transientNotice: ctx.transientNotice }
       : {}),
   });
   const slot = deps.slotManager.acquire(ctx.session.id, prompt.stablePrefix);
+  if (ctx.stepIndex === 0) {
+    const promptViolations = checkProfilePromptAligned(deps.profile, prompt.text);
+    if (promptViolations.length > 0) {
+      deps.logger?.warn("profile/prompt invariant violated", {
+        profile: deps.profile.id,
+        sessionId: ctx.session.id,
+        violations: promptViolations,
+      });
+    }
+  }
   deps.onEvent?.({ type: "prompt_built", prompt, slotId: slot.slotId });
   deps.logger?.debug("prompt built", {
     sessionId: ctx.session.id,
@@ -168,6 +182,7 @@ export async function executeStep(
     ? await consumeStream(
         deps.llmCompleteStream(llmParams),
         ctx.stepIndex,
+        deps.profile,
         deps.onEvent,
       )
     : await deps.llmComplete(llmParams);
@@ -190,14 +205,14 @@ export async function executeStep(
     typeof completion.reasoningContent === "string"
       ? completion.reasoningContent
       : "";
-  const extracted = extractReasoning(completion.content);
+  const normalizedContent = deps.profile.requiresPromptThinkPrefix
+    ? `${getReasoningOpenTagPrefix(deps.profile)}${completion.content}`
+    : completion.content;
+  const extracted = extractReasoning(normalizedContent, getReasoningTagOptions(deps.profile));
   const reasoning =
     reasoningFromChannel.length > 0
       ? reasoningFromChannel
       : extracted.reasoning;
-  // #region agent log
-  fetch('http://127.0.0.1:7256/ingest/0e27a7af-968f-4d0a-b880-61f67ba8ab19',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'8f8987'},body:JSON.stringify({sessionId:'8f8987',hypothesisId:'H1,H2,H4',runId:'repro',location:'step-executor.ts:reasoning-picker',message:'reasoning resolution after completion',data:{stepIndex:ctx.stepIndex,contentLen:completion.content.length,contentHead:completion.content.slice(0,240),channelReasoningLen:reasoningFromChannel.length,channelReasoningHead:reasoningFromChannel.slice(0,200),extractedReasoningLen:extracted.reasoning.length,extractedReasoningHead:extracted.reasoning.slice(0,200),extractedBodyHead:extracted.body.slice(0,120),finalReasoningLen:reasoning.length,willEmit:reasoning.length>0},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   if (reasoning.length > 0) {
     deps.onEvent?.({
       type: "reasoning",
@@ -208,7 +223,7 @@ export async function executeStep(
 
   let toolCall: ToolCallPayload;
   try {
-    toolCall = parseToolCall(completion.content);
+    toolCall = parseToolCall(normalizedContent, getReasoningTagOptions(deps.profile));
   } catch (err) {
     const inner = err instanceof Error ? err : new Error(String(err));
     // Surface the raw llama-server output so operators can tell apart
@@ -319,9 +334,18 @@ export async function executeStep(
 async function consumeStream(
   stream: AsyncGenerator<StreamChunk, CompletionResult, void>,
   stepIndex: number,
+  profile: ModelProfile,
   onEvent?: (event: StepEvent) => void,
 ): Promise<CompletionResult> {
-  const parser = createStreamParser();
+  const parser = createStreamParser({
+    preOpenedThink: profile.requiresPromptThinkPrefix,
+    ...(profile.reasoningStyle !== "none"
+      ? {
+          reasoningOpenTag: profile.reasoningOpenTag,
+          reasoningCloseTag: profile.reasoningCloseTag,
+        }
+      : {}),
+  });
   let accumulated = "";
   let accumulatedReasoning = "";
   const emitParseEvents = (events: readonly StreamParseEvent[]): void => {
@@ -401,6 +425,21 @@ async function consumeStream(
     }
   }
   return finalResult;
+}
+
+function getReasoningOpenTagPrefix(profile: ModelProfile): string {
+  return profile.reasoningStyle === "none" ? "" : profile.reasoningOpenTag;
+}
+
+function getReasoningTagOptions(profile: ModelProfile): {
+  openTag?: string;
+  closeTag?: string;
+} {
+  if (profile.reasoningStyle === "none") return {};
+  return {
+    openTag: profile.reasoningOpenTag,
+    closeTag: profile.reasoningCloseTag,
+  };
 }
 
 /**

@@ -3,6 +3,10 @@ import type {
   StreamChunk,
 } from "../llm/llama-server-client.js";
 import type { SlotManager } from "../llm/slot-manager.js";
+import {
+  PLAIN_INSTRUCT_PROFILE,
+  type ModelProfile,
+} from "../llm/model-profile.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import type { SessionState } from "../session/session-state.js";
 import {
@@ -49,6 +53,8 @@ export interface AgentLoopDependencies {
   toolDescriptors: readonly ToolDescriptor[];
   /** Stable capabilities summary, computed once at session start. */
   capabilities: CapabilitiesSummary;
+  /** Model-specific reasoning behaviour derived from llama-server /props. */
+  profile?: ModelProfile;
   /** Skill catalog (name + description only), rebuilt on install/uninstall. */
   skillCatalog: readonly SkillCatalogEntry[];
   onEvent?: (event: AgentLoopEvent) => void;
@@ -181,6 +187,7 @@ export class AgentLoop {
             registry: this.deps.registry,
             slotManager: this.deps.slotManager,
             grammar: this.deps.grammar,
+            profile: this.deps.profile ?? PLAIN_INSTRUCT_PROFILE,
             llmComplete: this.deps.llmComplete,
             ...(this.deps.llmCompleteStream
               ? { llmCompleteStream: this.deps.llmCompleteStream }
