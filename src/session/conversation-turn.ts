@@ -42,14 +42,14 @@ export function assistantToolCallTurn(params: {
   reasoning?: string;
   at?: number;
 }): ConversationTurn {
-  const turn: ConversationTurn = {
+  let turn: ConversationTurn = {
     kind: "assistant_tool_call",
     tool: params.tool,
     args: params.args,
     at: params.at ?? Date.now(),
   };
   if (params.reasoning !== undefined && params.reasoning.length > 0) {
-    return { ...turn, reasoning: params.reasoning };
+    turn = { ...turn, reasoning: params.reasoning };
   }
   return turn;
 }
@@ -85,12 +85,25 @@ export function assistantReplyTurn(
   const options =
     typeof atOrOptions === "number" ? { at: atOrOptions } : atOrOptions;
   const at = options.at ?? Date.now();
-  const turn: ConversationTurn = { kind: "assistant_reply", text, at };
+  let turn: ConversationTurn = { kind: "assistant_reply", text, at };
   if (options.reasoning !== undefined && options.reasoning.length > 0) {
-    return { ...turn, reasoning: options.reasoning };
+    turn = { ...turn, reasoning: options.reasoning };
   }
   return turn;
 }
+
+/**
+ * Upper bound on the number of characters of a `tool_result.summary` that
+ * we are willing to paste back into `### conversation`. Tools like
+ * `os.fs.read_document` and `os.fs.read` cap their own summary at the
+ * read budget (`maxBytes`, up to 5MB), which — uncapped at render — would
+ * dump the entire file into the prompt tail and keep it there on every
+ * subsequent turn. The model still sees the full `summary` on the step
+ * that produced it (up to this cap), and retains structured metadata on
+ * `details`. Concrete value: ~1000 tokens, which covers 3-4 PDF pages or
+ * a short code file and matches the `maxTailLines` budget most tools use.
+ */
+const TOOL_RESULT_RENDER_CAP_CHARS = 4000;
 
 /**
  * Render a single turn as a compact line for the prompt's `### conversation`
@@ -107,11 +120,18 @@ export function renderTurnForPrompt(turn: ConversationTurn): string {
     }
     case "tool_result": {
       const prefix = `tool_result[${turn.tool} ${turn.status}]`;
-      return `${prefix}: ${turn.summary}${turn.truncated ? " (truncated)" : ""}`;
+      const body = capToolResultSummary(turn.summary);
+      return `${prefix}: ${body}${turn.truncated ? " (truncated)" : ""}`;
     }
     case "assistant_reply":
       return `assistant: ${turn.text}`;
   }
+}
+
+function capToolResultSummary(summary: string): string {
+  if (summary.length <= TOOL_RESULT_RENDER_CAP_CHARS) return summary;
+  const keep = TOOL_RESULT_RENDER_CAP_CHARS - 40;
+  return `${summary.slice(0, keep)}\n… [rendering-truncated ${summary.length - keep} chars]`;
 }
 
 /**

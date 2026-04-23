@@ -105,6 +105,52 @@ describe("buildPrompt", () => {
     expect(a.text).not.toBe(b.text);
   });
 
+  it("pins the `Emit one JSON tool call now` instruction in the stable prefix (KV-cache hygiene)", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(prompt.stablePrefix).toContain("### instructions");
+    expect(prompt.stablePrefix).toContain(
+      "Emit one JSON tool call now. Use `reply` for natural-language answers to the user.",
+    );
+    expect(prompt.tail).not.toContain("### response");
+    expect(prompt.tail).not.toContain("Emit one JSON tool call now");
+  });
+
+  it("pins a short `### respond` anchor at the end of the tail (anti-loop)", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(prompt.tail).toContain("### respond\nRespond now.");
+    expect(prompt.stablePrefix).not.toContain("### respond");
+    // Anchor must sit after the conversation section so it is the last
+    // directive the model sees before generation.
+    const respondIdx = prompt.tail.indexOf("### respond");
+    const conversationIdx = prompt.tail.indexOf("### conversation");
+    expect(respondIdx).toBeGreaterThan(conversationIdx);
+  });
+
+  it("places the `### respond` anchor just before the `<think>` prefill for reasoning profiles", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profile: QWEN_THINK_PROFILE,
+    });
+    expect(prompt.tail.endsWith("<think>\n")).toBe(true);
+    const respondIdx = prompt.tail.lastIndexOf("### respond");
+    const thinkIdx = prompt.tail.lastIndexOf("<think>");
+    expect(respondIdx).toBeGreaterThan(-1);
+    expect(thinkIdx).toBeGreaterThan(respondIdx);
+  });
+
   it("step and turn counters do not leak into the prompt text (KV-cache hygiene)", () => {
     const a = buildPrompt({
       session: mkSession({ stepCount: 0, turnCount: 0 }),
@@ -340,7 +386,7 @@ describe("buildPrompt", () => {
     expect(prompt.truncation.worldSnapshot).toBe(false);
   });
 
-  it("renders transientNotice in a ### notice section before ### response", () => {
+  it("renders transientNotice in a ### notice section after ### conversation", () => {
     const prompt = buildPrompt({
       session: mkSession(),
       toolDescriptors: TOOLS,
@@ -351,9 +397,9 @@ describe("buildPrompt", () => {
     expect(prompt.tail).toContain("### notice");
     expect(prompt.tail).toContain("you are looping on ref=e175");
     const noticeIdx = prompt.tail.indexOf("### notice");
-    const responseIdx = prompt.tail.indexOf("### response");
+    const conversationIdx = prompt.tail.indexOf("### conversation");
     expect(noticeIdx).toBeGreaterThan(-1);
-    expect(noticeIdx).toBeLessThan(responseIdx);
+    expect(noticeIdx).toBeGreaterThan(conversationIdx);
   });
 
   it("does not include transientNotice in the stable prefix", () => {

@@ -90,6 +90,48 @@ describe("conversation-turn helpers", () => {
     ).toBe("assistant: there");
   });
 
+  it("renders assistant turns in editorialised form (no reasoning leak)", () => {
+    expect(
+      renderTurnForPrompt(
+        assistantToolCallTurn({ tool: "finish", args: { x: 1 }, at: 2 }),
+      ),
+    ).toBe('assistant_tool_call: finish {"x":1}');
+    expect(renderTurnForPrompt(assistantReplyTurn("there", 4))).toBe(
+      "assistant: there",
+    );
+  });
+
+  it("caps oversized tool_result summaries at render time", () => {
+    const big = "x".repeat(10_000);
+    const rendered = renderTurnForPrompt(
+      toolResultTurn({
+        tool: "os.fs.read_document",
+        status: "ok",
+        summary: big,
+        at: 5,
+      }),
+    );
+    // The cap is 4000 chars minus a tail for the truncation marker, so the
+    // rendered block stays below the full 10k summary.
+    expect(rendered.length).toBeLessThan(big.length);
+    expect(rendered.startsWith("tool_result[os.fs.read_document ok]: ")).toBe(
+      true,
+    );
+    expect(rendered).toContain("[rendering-truncated");
+  });
+
+  it("leaves short tool_result summaries untouched", () => {
+    const rendered = renderTurnForPrompt(
+      toolResultTurn({
+        tool: "os.fs.list",
+        status: "ok",
+        summary: "3 entries: a, b, c",
+        at: 6,
+      }),
+    );
+    expect(rendered).toBe("tool_result[os.fs.list ok]: 3 entries: a, b, c");
+  });
+
   it("appendTurn returns a new array without mutating", () => {
     const turns = [userTurn("hi", 1)];
     const next = appendTurn(turns, assistantReplyTurn("hey", 2));

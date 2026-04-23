@@ -183,10 +183,13 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   if (input.transientNotice && input.transientNotice.length > 0) {
     tailParts.push(`### notice`, input.transientNotice, ``);
   }
-  tailParts.push(
-    `### response`,
-    `Emit one JSON tool call now. Use \`reply\` for natural-language answers to the user.`,
-  );
+  // Static 2-line emit anchor right before the (optional) reasoning prefill.
+  // Kept out of the stable prefix so it sits as close as possible to the
+  // generation point, which empirically prevents reasoning-mode repetition
+  // loops (e.g. "I will write the response. I will check the response."
+  // observed when the only trailing directive lived ~13k tokens upstream).
+  // Byte-stable and short, so it does not meaningfully hurt cache reuse.
+  tailParts.push(`### respond`, `Respond now.`, ``);
   if (input.profile?.requiresPromptThinkPrefix && input.profile.reasoningStyle !== "none") {
     tailParts.push(input.profile.reasoningOpenTag.trimEnd(), ``);
   }

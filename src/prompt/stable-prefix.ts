@@ -99,6 +99,9 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     `### skills`,
     skills,
     ``,
+    `### instructions`,
+    `Emit one JSON tool call now. Use \`reply\` for natural-language answers to the user.`,
+    ``,
   ].join("\n");
 }
 

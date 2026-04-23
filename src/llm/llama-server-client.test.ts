@@ -57,6 +57,31 @@ describe("LlamaServerClient.complete", () => {
     expect(snapshot.body.slot_id).toBe(2);
     expect(snapshot.body.id_slot).toBe(2);
     expect(snapshot.body.cache_prompt).toBe(true);
+    expect(snapshot.body.repeat_penalty).toBe(1.1);
+    expect(snapshot.body.repeat_last_n).toBe(256);
+  });
+
+  it("forwards explicit repeatPenalty / repeatLastN overrides", async () => {
+    let captured: Record<string, unknown> | null = null;
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async (_url, init) => {
+        captured = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({ content: "{}", stop: true, truncated: false }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    });
+    await client.complete({
+      prompt: "hi",
+      repeatPenalty: 1,
+      repeatLastN: 64,
+    });
+    expect(captured).not.toBeNull();
+    const body = captured as unknown as Record<string, unknown>;
+    expect(body.repeat_penalty).toBe(1);
+    expect(body.repeat_last_n).toBe(64);
   });
 
   it("throws LlamaServerError on non-2xx responses", async () => {

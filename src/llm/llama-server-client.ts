@@ -11,6 +11,16 @@ export interface CompletionRequest {
   topK?: number;
   maxTokens?: number;
   seed?: number;
+  /**
+   * Anti-repetition penalty applied to tokens seen in the last
+   * `repeatLastN` positions. Defaults to 1.1 to defuse reasoning-mode
+   * repetition loops (e.g. "I will write the response. I will check
+   * the response.") without noticeably distorting JSON generation
+   * under a grammar. Pass `1` to disable.
+   */
+  repeatPenalty?: number;
+  /** How far back `repeatPenalty` looks. Defaults to 256 tokens. */
+  repeatLastN?: number;
   /** Stable key hashed with the prefix so we always reuse the same slot. */
   sessionId?: string;
 }
@@ -316,6 +326,8 @@ export class LlamaServerClient {
       top_p: request.topP ?? 0.95,
       top_k: request.topK ?? 40,
       n_predict: request.maxTokens ?? config.llama.completionMaxTokens,
+      repeat_penalty: request.repeatPenalty ?? 1.1,
+      repeat_last_n: request.repeatLastN ?? 256,
     };
     if (request.grammar) payload.grammar = request.grammar;
     if (request.stop) payload.stop = request.stop;
