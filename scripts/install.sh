@@ -2,19 +2,20 @@
 # Install a released atomic-agent CLI (Node SEA) from GitHub Releases.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/OWNER/atomic-agent/BRANCH/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/AtomicBot-ai/atomic-agent/main/scripts/install.sh | sh
 #
 # Environment:
-#   ATOMIC_AGENT_REPO=owner/atomic-agent   (default: atomicbot/atomic-agent)
+#   ATOMIC_AGENT_REPO=owner/atomic-agent   (default: AtomicBot-ai/atomic-agent)
 #   ATOMIC_AGENT_VERSION=v0.1.0            (optional: pin a tag; default: latest)
 #   ATOMIC_AGENT_INSTALL_DIR=path         (default: $HOME/.local/bin)
+#   ATOMIC_AGENT_NO_PATH=1                 (optional: skip rc-file PATH update)
 
 set -eu
 
 # shellcheck disable=SC3043
 # POSIX sh: local may not exist; we avoid local for dash compatibility.
 
-REPO_DEFAULT="atomicbot/atomic-agent"
+REPO_DEFAULT="AtomicBot-ai/atomic-agent"
 REPO="${ATOMIC_AGENT_REPO:-$REPO_DEFAULT}"
 VERSION="${ATOMIC_AGENT_VERSION:-}"
 INSTALL_DIR="${ATOMIC_AGENT_INSTALL_DIR:-$HOME/.local/bin}"
@@ -126,10 +127,74 @@ if [ -d "$STAGE/prebuilds" ]; then
   cp -R "$STAGE/prebuilds" "$INSTALL_DIR/"
 fi
 
-case ":${PATH:-}:" in
-  *":${INSTALL_DIR}:"*) ;; 
-  *) echo "add to PATH: export PATH=\"${INSTALL_DIR}:\$PATH\"" ;;
-esac
+add_to_path() {
+  _dir="$1"
+
+  case ":${PATH:-}:" in
+    *":${_dir}:"*)
+      return 0
+      ;;
+  esac
+
+  if [ "${ATOMIC_AGENT_NO_PATH:-0}" = "1" ]; then
+    echo "add to PATH: export PATH=\"${_dir}:\$PATH\""
+    return 0
+  fi
+
+  _shell_name=""
+  if [ -n "${SHELL:-}" ]; then
+    _shell_name="$(basename "$SHELL")"
+  fi
+
+  # Prefer literal $HOME in the rc line for portability when using the default dir.
+  if [ "$_dir" = "$HOME/.local/bin" ]; then
+    _path_expr='$HOME/.local/bin'
+  else
+    _path_expr="$_dir"
+  fi
+
+  case "$_shell_name" in
+    zsh)
+      _rc="$HOME/.zshrc"
+      _line="export PATH=\"${_path_expr}:\$PATH\""
+      ;;
+    bash)
+      if [ "$OS_NAME" = "Darwin" ]; then
+        _rc="$HOME/.bash_profile"
+      else
+        _rc="$HOME/.bashrc"
+      fi
+      _line="export PATH=\"${_path_expr}:\$PATH\""
+      ;;
+    fish)
+      _rc="$HOME/.config/fish/config.fish"
+      _line="set -gx PATH ${_path_expr} \$PATH"
+      ;;
+    *)
+      _rc="$HOME/.profile"
+      _line="export PATH=\"${_path_expr}:\$PATH\""
+      ;;
+  esac
+
+  _marker="# added by atomic-agent installer"
+
+  mkdir -p "$(dirname "$_rc")"
+  [ -f "$_rc" ] || : > "$_rc"
+
+  if grep -qsF "$_marker" "$_rc" 2>/dev/null; then
+    echo "PATH entry already present in $_rc"
+    return 0
+  fi
+
+  {
+    printf '\n%s\n%s\n' "$_marker" "$_line"
+  } >> "$_rc"
+
+  echo "added ${_dir} to PATH via ${_rc}"
+  echo "run: source \"${_rc}\"   (or open a new shell)"
+}
+
+add_to_path "$INSTALL_DIR"
 
 if [ "$OS_NAME" = "Darwin" ]; then
   echo

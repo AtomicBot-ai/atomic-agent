@@ -12,30 +12,7 @@ Embed it in a Tauri app, run it in the terminal, or expose it behind an OpenAI-c
 
 
 
-## Active development
-
-`**atomic-agent` is under heavy, active development.** Treat the repository and published artifacts as a moving system: the maintainers are iterating on architecture, public surfaces, configuration shape, and operational behavior. Features land frequently; behavior that worked yesterday may be refined, renamed, or re-scoped to better match local-inference and embeddable-runtime goals.
-
-**What to expect right now**
-
-- **APIs and config are not frozen.** CLI flags, `config.json` fields, HTTP routes, and sidecar NDJSON message types may change between minor releases. Prefer pinning versions in production or automation, and re-read the changelog or release notes when you upgrade.
-- **Documentation tracks intent, not a formal spec.** Files such as [ARCHITECTURE.md](ARCHITECTURE.md) and this README describe the current direction. Where implementation and docs disagree, the code wins until the docs catch up—issues and PRs to align them are welcome.
-- **Stability is improving, not guaranteed end-to-end.** Core ideas (local-first, SQLite state, tool grammar, traces) are intentional; the exact boundaries of tools, approval flows, and model integration are still being tuned for real desktop and browser workloads.
-- **You may encounter rough edges:** occasional breaking changes, incomplete polish in edge-case error messages, and features marked experimental or in flux. Report failures with traces and version info; that feedback directly steers the next development cycles.
-
-**Why the project is in this phase**
-
-The goal is a **productizable local operator runtime**—not a one-off demo. That requires real-world iteration: embedding in apps, Tauri sidecars, managed `llama.cpp` lifecycles, and operator workflows on small models. Active development is how the stack stays honest about what actually works on user machines, not only in ideal tests.
-
-**If you depend on this project**
-
-- Pin a **tagged release** or a known **commit** when building downstream tools or shipping to users; avoid `main` for immutable deployments unless you accept churn.
-- Watch **GitHub releases** and **commit history** for breaking or notable changes.
-- If something breaks after an upgrade, check whether config or CLI migration notes were added alongside the change.
-
-**Contributions**
-
-The project welcomes issues and PRs. Because the surface area is still evolving, it helps to open an issue for large design changes before investing in a full implementation—alignment with the maintainers’ roadmap saves everyone cycles.
+**Active development:** this project is still in active development. Nothing is frozen—APIs, configuration, CLI, and behavior may change at any time. Pin a release if you need something stable.
 
 `atomic-agent` is built for teams that want the power of an operator agent, but want to keep the stack local, inspectable, and shippable:
 
@@ -391,14 +368,22 @@ See [BUNDLING.md](BUNDLING.md) for the target matrix, CI signing, and packaging 
 
 ### Install CLI from a GitHub release (macOS / Linux)
 
-After a maintainer has published a draft release from CI (or promoted it), you can run:
+Install the latest signed+notarized build straight from GitHub Releases:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/OWNER/atomic-agent/BRANCH/scripts/install.sh" | sh
-export PATH="$HOME/.local/bin:$PATH"   # if shown by the script
+curl -fsSL https://raw.githubusercontent.com/AtomicBot-ai/atomic-agent/main/scripts/install.sh | sh
 ```
 
-Replace `OWNER/atomic-agent` and `BRANCH` with your fork (or set `ATOMIC_AGENT_REPO=owner/atomic-agent`). On **macOS**, the first launch may trigger a **network** Gatekeeper check for a notarized-but-unstapled binary; grant **Accessibility** and **Screen Recording** for window automation. See [BUNDLING.md](BUNDLING.md) for `ATOMIC_AGENT_VERSION` and `ATOMIC_AGENT_INSTALL_DIR`.
+The installer detects your OS/arch, downloads `atomic-agent-<slug>.tar.gz`, verifies the `.sha256`, and lays out the binary plus `grammars/`, `vendor/` (ripgrep), and `prebuilds/` under `$HOME/.local/bin`. It also appends `$HOME/.local/bin` to your shell's rc file (`~/.zshrc`, `~/.bash_profile` on macOS / `~/.bashrc` on Linux, `~/.config/fish/config.fish`, or `~/.profile`) if it is not already on `PATH` — open a new shell or `source` the file afterwards.
+
+Optional environment overrides:
+
+- `ATOMIC_AGENT_VERSION=v0.1.3` — pin a specific tag instead of `latest`.
+- `ATOMIC_AGENT_INSTALL_DIR=/custom/bin` — install somewhere other than `$HOME/.local/bin`.
+- `ATOMIC_AGENT_NO_PATH=1` — skip the rc-file PATH update (print a hint instead).
+- `ATOMIC_AGENT_REPO=owner/atomic-agent` — install from a fork.
+
+On **macOS**, the first launch may trigger a **network** Gatekeeper check for a notarized-but-unstapled binary; grant **Accessibility** and **Screen Recording** for window automation. See [BUNDLING.md](BUNDLING.md) for the target matrix and packaging details.
 
 ## Explicit Non-goals
 
