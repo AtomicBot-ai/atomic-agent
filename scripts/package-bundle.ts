@@ -54,6 +54,49 @@ async function copyOptional(src: string, dest: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * Lays out a minimal `node_modules/better-sqlite3` tree next to the SEA
+ * binary so the runtime loader (see `src/native/load-better-sqlite3.ts`)
+ * can resolve it via `createRequire` anchored at the executable's dir.
+ * Only the files needed at runtime are shipped.
+ */
+async function copyBetterSqlite3Runtime(stageDir: string): Promise<void> {
+  type Spec = {
+    name: string;
+    // Relative paths within the source package to copy verbatim.
+    keep: string[];
+  };
+
+  const SOURCE_ROOT = join(ROOT, "node_modules");
+  const DEST_ROOT = join(stageDir, "node_modules");
+
+  const specs: Spec[] = [
+    {
+      name: "better-sqlite3",
+      keep: ["package.json", "lib", "build/Release/better_sqlite3.node"],
+    },
+    { name: "bindings", keep: ["package.json", "bindings.js"] },
+    { name: "file-uri-to-path", keep: ["package.json", "index.js"] },
+  ];
+
+  for (const { name, keep } of specs) {
+    const srcPkg = join(SOURCE_ROOT, name);
+    if (!(await pathExists(srcPkg))) {
+      stderr.write(`warning: ${name} not found under node_modules; skipping.\n`);
+      continue;
+    }
+    const destPkg = join(DEST_ROOT, name);
+    for (const entry of keep) {
+      const from = join(srcPkg, entry);
+      const to = join(destPkg, entry);
+      if (!(await pathExists(from))) continue;
+      await mkdir(dirname(to), { recursive: true });
+      await cp(from, to, { recursive: true });
+    }
+    stdout.write(`bundled ${name} → ${destPkg}\n`);
+  }
+}
+
 async function archiveTarGz(sourceDir: string, destFile: string): Promise<void> {
   // We shell out to `tar` because it is present on every supported host and
   // preserves file modes without us reimplementing a streaming tar writer.
@@ -152,18 +195,13 @@ async function main(): Promise<number> {
     );
   }
 
-  // better-sqlite3 is the only native module we depend on now.
-  const nativeModules = ["better-sqlite3"];
-  for (const mod of nativeModules) {
-    await copyOptional(
-      join(ROOT, "node_modules", mod, "build"),
-      join(stageDir, "prebuilds", mod, "build"),
-    );
-    await copyOptional(
-      join(ROOT, "node_modules", mod, "prebuilds"),
-      join(stageDir, "prebuilds", mod, "prebuilds"),
-    );
-  }
+  // better-sqlite3 must live in a standard `node_modules/` layout next to
+  // the SEA binary because `src/native/load-better-sqlite3.ts` uses
+  // `createRequire(<execDir>/__atomic_sea_anchor__.js)` at runtime to
+  // resolve it. Ship the runtime dep chain (bindings → file-uri-to-path)
+  // with the same layout. Devdeps / docs / sources are skipped to keep the
+  // bundle slim; tests in each package are skipped too.
+  await copyBetterSqlite3Runtime(stageDir);
 
   const readme = [
     `atomic-agent CLI (${target.slug}, Node SEA)`,

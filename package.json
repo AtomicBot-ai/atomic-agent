@@ -15,7 +15,7 @@
     "assets/ai-models/**"
   ],
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=25.7.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -82,6 +82,6 @@
     "vitest": "^2.1.5"
   },
   "volta": {
-    "node": "22.22.2"
+    "node": "25.7.0"
   }
 }

@@ -28,9 +28,12 @@ async function main(): Promise<number> {
     platform: "node",
     target: "node22",
     format: "esm",
-    sourcemap: true,
-    minify: false,
-    legalComments: "inline",
+    // Linked maps are not embedded in SEA; keep output smaller so startup parse uses less RAM.
+    sourcemap: false,
+    minify: true,
+    // Preserve some names for less cryptic error stacks; identifiers still mangle.
+    keepNames: true,
+    legalComments: "none",
     jsx: "automatic",
     jsxImportSource: "react",
     mainFields: ["module", "main"],

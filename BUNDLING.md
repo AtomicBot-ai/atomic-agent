@@ -25,6 +25,25 @@ browser.
 Run `npm run bundle:matrix -- --json` to get the JSON input for a GitHub
 Actions matrix strategy.
 
+## Build-time Node requirement
+
+SEA embeds the build-time Node binary, so its feature set is decided at
+build time, not on the end user's machine. `"mainFormat": "module"` (the
+flag that makes SEA treat `dist-sea/cli.mjs` as ESM) landed in
+**Node 25.7.0** ([#61813](https://github.com/nodejs/node/pull/61813)).
+Earlier Nodes (including 24.x LTS until the backport lands) run the ESM
+bundle as CommonJS and crash with `SyntaxError: Cannot use import
+statement outside a module`.
+
+- `npm ci`, `npm run build`, `npm test` — work on **Node ≥ 22.x**.
+- `npm run bundle:build-binary` — requires **Node ≥ 25.7**. The script
+  verifies `process.versions.node` and exits fast with a clear message.
+- CI pins `node-version: "25.x"` in
+  [`release.yml`](../.github/workflows/release.yml).
+
+Local setup: `nvm install 25 && nvm use 25` before `npm run
+bundle:build-binary`.
+
 ## Per-target build (runs on the target host)
 
 1. Install deps for the target platform:
@@ -58,6 +77,29 @@ Actions matrix strategy.
 
 The output lands at `bundle/atomic-agent-<slug>.<ext>` and
 `bundle/atomic-agent-<slug>.<ext>.sha256` (for `shasum -a 256 -c`).
+
+## Troubleshooting: `killed` in zsh (macOS)
+
+- **#1 cause on Apple Silicon:** `postject` rewrites the Mach-O, which
+  invalidates the ad-hoc code signature Node ships with. The kernel then
+  kills the process at launch with SIGKILL and an empty `killed` line.
+  [`scripts/build-binary.ts`](../scripts/build-binary.ts) runs
+  `codesign --sign - --force` after injection to restore launchability;
+  CI later replaces that ad-hoc signature with the Developer ID one. If
+  you hit `killed`, first verify the binary is signed:
+  ```bash
+  codesign -dv ./bundle/darwin-arm64/atomic-agent
+  # Format=Mach-O thin (arm64)  Signature=adhoc  ← expected
+  ```
+- `xattr -l` showing **`com.apple.provenance` only** is **not** quarantine.
+  Blocking downloads use **`com.apple.quarantine`**. `provenance` alone does
+  not explain a silent `killed`.
+- Compare: if **`node dist-sea/cli.mjs --help`** works but
+  **`./bundle/.../atomic-agent`** is killed, the problem is the SEA binary
+  path (signing, Node version, SEA config), not the JS sources. If both
+  fail, debug the bundle first.
+- For jetsam / real OOM, check **Console** (or `log show --predicate
+  'eventMessage contains "Jetsam"'`) around the run time.
 
 ## Release (CI)
 

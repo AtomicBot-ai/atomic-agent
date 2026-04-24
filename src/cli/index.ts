@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { isSea } from "node:sea";
 import { argv, exit } from "node:process";
 import { runAgentCommand } from "./run-agent.js";
 import { debugReplCommand } from "./debug-repl.js";
@@ -91,8 +92,25 @@ function printHelp(): void {
   process.stdout.write(`${lines.join("\n")}\n`);
 }
 
+function userArgsFromArgv(): string[] {
+  if (process.env.ATOMIC_AGENT_DEBUG_ARGV === "1") {
+    process.stderr.write(
+      `argv=${JSON.stringify(argv)}\nexecPath=${process.execPath}\nisSea=${isSea()}\n`,
+    );
+  }
+  // Node SEA (both CJS and ESM entrypoints) sets argv to
+  // `[execPath, execPath-or-invoke-path, ...userArgs]`. The second slot is
+  // whatever path the shell used to invoke the binary (e.g. `./atomic-agent`);
+  // in CJS SEA this often duplicates `execPath`, in ESM SEA it mirrors
+  // the invocation, but either way the real user args start at index 2.
+  if (isSea()) {
+    return argv.slice(2);
+  }
+  return argv.slice(2);
+}
+
 async function main(): Promise<number> {
-  const [, , command, ...rest] = argv;
+  const [command, ...rest] = userArgsFromArgv();
   if (command === "-h" || command === "--help") {
     printHelp();
     return 0;

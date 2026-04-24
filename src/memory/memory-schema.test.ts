@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
+import { Database as DatabaseCtor } from "../native/load-better-sqlite3.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +13,7 @@ describe("applyMigrations", () => {
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "atomic-agent-mem-"));
-    db = new Database(join(tmp, "memory.sqlite"));
+    db = new DatabaseCtor(join(tmp, "memory.sqlite"));
   });
 
   afterEach(() => {

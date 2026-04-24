@@ -129,6 +129,12 @@ fi
 if [ -d "$STAGE/prebuilds" ]; then
   cp -R "$STAGE/prebuilds" "$INSTALL_DIR/"
 fi
+# better-sqlite3 (+ bindings + file-uri-to-path) runtime tree. The SEA
+# binary's `createRequire` resolver (see src/native/load-better-sqlite3.ts)
+# looks these up under `node_modules/` next to the binary.
+if [ -d "$STAGE/node_modules" ]; then
+  cp -R "$STAGE/node_modules" "$INSTALL_DIR/"
+fi
 
 add_to_path() {
   _dir="$1"

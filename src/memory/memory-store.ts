@@ -1,4 +1,5 @@
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
+import { Database as DatabaseCtor } from "../native/load-better-sqlite3.js";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -123,7 +124,7 @@ export class MemoryStore {
       );
     }
     mkdirSync(dirname(options.dbFile), { recursive: true });
-    this.db = new Database(options.dbFile);
+    this.db = new DatabaseCtor(options.dbFile);
     this.db.pragma("journal_mode = WAL");
     applyMigrations(this.db);
     this.maxEntries = options.maxEntries;

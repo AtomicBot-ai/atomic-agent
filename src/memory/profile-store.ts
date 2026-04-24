@@ -1,4 +1,5 @@
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
+import { Database as DatabaseCtor } from "../native/load-better-sqlite3.js";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -72,7 +73,7 @@ export class ProfileStore {
 
   constructor(options: ProfileStoreOptions) {
     mkdirSync(dirname(options.dbFile), { recursive: true });
-    this.db = new Database(options.dbFile);
+    this.db = new DatabaseCtor(options.dbFile);
     this.db.pragma("journal_mode = WAL");
     applyMigrations(this.db);
     this.upsertStmt = this.db.prepare(

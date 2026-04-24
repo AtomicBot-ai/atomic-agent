@@ -1,4 +1,5 @@
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
+import { Database as DatabaseCtor } from "../native/load-better-sqlite3.js";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { getConfig } from "../config/index.js";
@@ -39,7 +40,7 @@ export class SessionStore {
     const config = getConfig();
     const file = options.dbFile ?? config.paths.sessionsDbFile;
     mkdirSync(dirname(file), { recursive: true });
-    this.db = new Database(file);
+    this.db = new DatabaseCtor(file);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     this.db.exec(SCHEMA);
