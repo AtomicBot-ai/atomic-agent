@@ -1,4 +1,4 @@
-<div align="center">
+
 
 # atomic-agent
 
@@ -6,11 +6,36 @@
 
 Embed it in a Tauri app, run it in the terminal, or expose it behind an OpenAI-compatible API. `atomic-agent` gives local models a disciplined runtime for **browser control**, **OS actions**, **skills**, **durable memory**, **scheduled work**, and **auditable execution** without turning your product into a giant hosted stack.
 
-[![Node.js](https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[Node.js](https://nodejs.org/)
+[TypeScript](https://www.typescriptlang.org/)
+[License: MIT](LICENSE)
 
-</div>
+
+
+## Active development
+
+`**atomic-agent` is under heavy, active development.** Treat the repository and published artifacts as a moving system: the maintainers are iterating on architecture, public surfaces, configuration shape, and operational behavior. Features land frequently; behavior that worked yesterday may be refined, renamed, or re-scoped to better match local-inference and embeddable-runtime goals.
+
+**What to expect right now**
+
+- **APIs and config are not frozen.** CLI flags, `config.json` fields, HTTP routes, and sidecar NDJSON message types may change between minor releases. Prefer pinning versions in production or automation, and re-read the changelog or release notes when you upgrade.
+- **Documentation tracks intent, not a formal spec.** Files such as [ARCHITECTURE.md](ARCHITECTURE.md) and this README describe the current direction. Where implementation and docs disagree, the code wins until the docs catch up—issues and PRs to align them are welcome.
+- **Stability is improving, not guaranteed end-to-end.** Core ideas (local-first, SQLite state, tool grammar, traces) are intentional; the exact boundaries of tools, approval flows, and model integration are still being tuned for real desktop and browser workloads.
+- **You may encounter rough edges:** occasional breaking changes, incomplete polish in edge-case error messages, and features marked experimental or in flux. Report failures with traces and version info; that feedback directly steers the next development cycles.
+
+**Why the project is in this phase**
+
+The goal is a **productizable local operator runtime**—not a one-off demo. That requires real-world iteration: embedding in apps, Tauri sidecars, managed `llama.cpp` lifecycles, and operator workflows on small models. Active development is how the stack stays honest about what actually works on user machines, not only in ideal tests.
+
+**If you depend on this project**
+
+- Pin a **tagged release** or a known **commit** when building downstream tools or shipping to users; avoid `main` for immutable deployments unless you accept churn.
+- Watch **GitHub releases** and **commit history** for breaking or notable changes.
+- If something breaks after an upgrade, check whether config or CLI migration notes were added alongside the change.
+
+**Contributions**
+
+The project welcomes issues and PRs. Because the surface area is still evolving, it helps to open an issue for large design changes before investing in a full implementation—alignment with the maintainers’ roadmap saves everyone cycles.
 
 `atomic-agent` is built for teams that want the power of an operator agent, but want to keep the stack local, inspectable, and shippable:
 
@@ -329,16 +354,18 @@ User-facing configuration lives in:
 
 Important environment variables:
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `ATOMIC_AGENT_STATE_DIR` | `~/.atomic-agent` | State, config, browser profile, skills, traces |
-| `ATOMIC_AGENT_LLAMA_API_KEY` | unset | Optional bearer token for `llama-server` |
-| `ATOMIC_AGENT_LLAMA_MAX_TOKENS` | `4096` | Completion cap (`n_predict`) |
-| `ATOMIC_AGENT_BROWSER_CHANNEL` | `chrome` | `chrome`, `msedge`, or `chromium` |
-| `ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH` | unset | Explicit Chromium-family executable |
-| `ATOMIC_AGENT_BROWSER_HEADLESS` | `0` | Headless browser mode |
-| `ATOMIC_AGENT_BROWSER_NO_SANDBOX` | `0` | Pass `--no-sandbox` when needed |
-| `ATOMIC_AGENT_BROWSER_CDP_URL` | unset | Attach to an already-running browser via CDP |
+
+| Variable                               | Default           | Purpose                                        |
+| -------------------------------------- | ----------------- | ---------------------------------------------- |
+| `ATOMIC_AGENT_STATE_DIR`               | `~/.atomic-agent` | State, config, browser profile, skills, traces |
+| `ATOMIC_AGENT_LLAMA_API_KEY`           | unset             | Optional bearer token for `llama-server`       |
+| `ATOMIC_AGENT_LLAMA_MAX_TOKENS`        | `4096`            | Completion cap (`n_predict`)                   |
+| `ATOMIC_AGENT_BROWSER_CHANNEL`         | `chrome`          | `chrome`, `msedge`, or `chromium`              |
+| `ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH` | unset             | Explicit Chromium-family executable            |
+| `ATOMIC_AGENT_BROWSER_HEADLESS`        | `0`               | Headless browser mode                          |
+| `ATOMIC_AGENT_BROWSER_NO_SANDBOX`      | `0`               | Pass `--no-sandbox` when needed                |
+| `ATOMIC_AGENT_BROWSER_CDP_URL`         | unset             | Attach to an already-running browser via CDP   |
+
 
 The config CLI uses **whole-file semantics**. Pass a full JSON document, not dotted patches.
 
@@ -401,4 +428,4 @@ Repository docs:
 
 ## License
 
-[MIT](LICENSE) © 2026 Biogenic Ooze
+[MIT](LICENSE) © 2026 Atomic Bot
