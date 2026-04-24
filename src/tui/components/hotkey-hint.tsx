@@ -61,7 +61,6 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
   if (state.status === "running") {
     return [
       { key: "esc", label: "abort" },
-      { key: "f2", label: state.uiMode === "chat" ? "debug" : "chat" },
       {
         key: "ctrl+c",
         label: ctrlCArmed ? "press again to quit" : "abort",
@@ -73,7 +72,6 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
     { key: "alt+enter", label: "newline" },
     { key: "↑↓", label: "history" },
     { key: "/", label: "commands" },
-    { key: "f2", label: state.uiMode === "chat" ? "debug" : "chat" },
     {
       key: "ctrl+c",
       label: ctrlCArmed ? "press again to quit" : "quit",

@@ -50,15 +50,12 @@ export function handleAppKey(
     return true;
   }
   setCtrlCArmed(false);
-  if (isF2(input)) {
-    dispatch({ type: "ui_mode_toggled" });
-    return true;
-  }
   const tasksTabBusy =
     state.uiMode === "debug" &&
     state.activeTab === "tasks" &&
     (state.tasksPanel.mode === "create" ||
-      state.tasksPanel.cancelConfirm !== null);
+      state.tasksPanel.cancelConfirm !== null ||
+      state.tasksPanel.searchOpen);
   if (!tasksTabBusy && state.uiMode === "debug" && key.tab && !key.shift) {
     dispatch({
       type: "tab_changed",
@@ -113,10 +110,4 @@ function handleApprovalKey(
     return true;
   }
   return false;
-}
-
-// Ink's `Key` type does not include function keys, so we match the raw
-// escape sequences emitted for F2 by xterm, iTerm2 and Windows Terminal.
-function isF2(input: string): boolean {
-  return input === "\u001bOQ" || input === "\u001b[12~";
 }

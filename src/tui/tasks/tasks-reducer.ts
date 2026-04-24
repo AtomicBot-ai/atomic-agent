@@ -1,5 +1,5 @@
 import type { TuiState } from "../tui-state.js";
-import { cycleTasksFilter } from "./tasks-filter.js";
+import { cycleTasksFilter, selectVisibleTaskRows } from "./tasks-filter.js";
 import {
   TASK_FIRINGS_RING_SIZE,
   createEmptyCreateForm,
@@ -39,25 +39,27 @@ function reducePanel(
   switch (action.type) {
     case "tasks_refresh_started":
       return { ...panel, loading: true };
-    case "tasks_refreshed":
+    case "tasks_refreshed": {
+      const nextPanel: TasksPanelState = { ...panel, rows: action.rows };
       return {
-        ...panel,
-        rows: action.rows,
-        cursor: clampCursor(panel.cursor, action.rows.length),
+        ...nextPanel,
+        cursor: clampCursor(panel.cursor, visibleLength(nextPanel)),
         lastRefreshedAt: action.at,
         loading: false,
       };
+    }
     case "tasks_refresh_failed":
       return { ...panel, loading: false };
     case "tasks_cursor_moved": {
+      const total = visibleLength(panel);
       const nextCursor = Math.max(
         0,
-        Math.min(panel.rows.length - 1, panel.cursor + action.delta),
+        Math.min(total - 1, panel.cursor + action.delta),
       );
       return { ...panel, cursor: nextCursor };
     }
     case "tasks_cursor_set":
-      return { ...panel, cursor: clampCursor(action.row, panel.rows.length) };
+      return { ...panel, cursor: clampCursor(action.row, visibleLength(panel)) };
     case "tasks_filter_cycled":
       return {
         ...panel,
@@ -69,11 +71,15 @@ function reducePanel(
     case "tasks_auto_refresh_toggled":
       return { ...panel, autoRefresh: !panel.autoRefresh };
     case "tasks_search_opened":
-      return { ...panel, searchOpen: true };
+      return { ...panel, searchOpen: true, cursor: 0 };
     case "tasks_search_query_changed":
       return { ...panel, searchQuery: action.query, cursor: 0 };
     case "tasks_search_closed":
-      return { ...panel, searchOpen: false, searchQuery: "" };
+      return {
+        ...panel,
+        searchOpen: false,
+        ...(action.clearQuery ? { searchQuery: "", cursor: 0 } : {}),
+      };
     case "tasks_mode_set":
       return { ...panel, mode: action.mode };
     case "tasks_detail_opened":
@@ -161,4 +167,8 @@ function reducePanel(
 function clampCursor(cursor: number, rowCount: number): number {
   if (rowCount <= 0) return 0;
   return Math.max(0, Math.min(rowCount - 1, cursor));
+}
+
+function visibleLength(panel: TasksPanelState): number {
+  return selectVisibleTaskRows(panel).length;
 }

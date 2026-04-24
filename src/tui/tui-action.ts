@@ -30,9 +30,10 @@ export type TuiAction =
    * Orchestrator acknowledges a chat message submission: we wipe step/feed
    * state for the new turn, keep history and metrics cumulative, and flip
    * to running. The orchestrator is responsible for actually starting the
-   * agent turn outside the reducer.
+   * agent turn outside the reducer; the user-bubble is appended by the
+   * `user_message` agent event, so the action carries no payload.
    */
-  | { type: "message_submitted"; message: string }
+  | { type: "message_submitted" }
   | { type: "quit_requested" }
   | {
       type: "loaded_skill";

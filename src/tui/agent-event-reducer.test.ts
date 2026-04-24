@@ -128,7 +128,7 @@ describe("reduceTuiState", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
       { type: "agent_event", event: { type: "user_message", text: "check email" } },
-      { type: "message_submitted", message: "check email" },
+      { type: "message_submitted" },
       { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
       { type: "agent_event", event: { type: "loop_completed", reason: "finish" } },
     ]);
@@ -142,7 +142,7 @@ describe("reduceTuiState", () => {
   it("should return to idle and archive run as cancelled on abort", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
-      { type: "message_submitted", message: "whatever" },
+      { type: "message_submitted" },
       { type: "agent_event", event: { type: "loop_completed", reason: "cancelled" } },
     ]);
     expect(next.status).toBe("idle");
@@ -152,7 +152,7 @@ describe("reduceTuiState", () => {
   it("should return to idle and archive run as failed on loop_failed", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
-      { type: "message_submitted", message: "boom test" },
+      { type: "message_submitted" },
       { type: "agent_event", event: { type: "loop_failed", error: new Error("boom"), category: "tool" } },
     ]);
     expect(next.status).toBe("idle");
@@ -164,7 +164,7 @@ describe("reduceTuiState", () => {
   it("should render step_error with the failure category tag", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
-      { type: "message_submitted", message: "go" },
+      { type: "message_submitted" },
       { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
       {
         type: "agent_event",
@@ -289,7 +289,7 @@ describe("reduceTuiState", () => {
   it("should fold streamed reasoning into the final assistant ChatMessage", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
-      { type: "message_submitted", message: "hi" },
+      { type: "message_submitted" },
       {
         type: "agent_event",
         event: {
@@ -321,7 +321,7 @@ describe("reduceTuiState", () => {
   it("should clear live reasoning on assistant_reply so the tail does not re-expand it", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
-      { type: "message_submitted", message: "hi" },
+      { type: "message_submitted" },
       {
         type: "agent_event",
         event: {

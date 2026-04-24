@@ -49,7 +49,7 @@ export function handleEditorSubmit(
     }
   }
   if (!canAcceptMessage(state)) return;
-  dispatch({ type: "message_submitted", message: trimmed });
+  dispatch({ type: "message_submitted" });
   callbacks.onMessageSubmitted(trimmed);
 }
 

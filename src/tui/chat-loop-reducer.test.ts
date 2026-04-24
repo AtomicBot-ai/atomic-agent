@@ -24,7 +24,6 @@ describe("chat loop", () => {
     expect(canAcceptMessage(initial)).toBe(true);
     const running = reduceTuiState(initial, {
       type: "message_submitted",
-      message: "g1",
     });
     expect(canAcceptMessage(running)).toBe(false);
   });
@@ -42,7 +41,7 @@ describe("chat loop", () => {
         type: "agent_event",
         event: { type: "loop_completed", reason: "finish" },
       },
-      { type: "message_submitted", message: "another message" },
+      { type: "message_submitted" },
     ]);
     expect(after.status).toBe("running");
     expect(after.feed).toHaveLength(0);
@@ -57,14 +56,14 @@ describe("chat loop", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
       { type: "agent_event", event: { type: "user_message", text: "first" } },
-      { type: "message_submitted", message: "first" },
+      { type: "message_submitted" },
       { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
       {
         type: "agent_event",
         event: { type: "loop_completed", reason: "finish" },
       },
       { type: "agent_event", event: { type: "user_message", text: "second" } },
-      { type: "message_submitted", message: "second" },
+      { type: "message_submitted" },
       { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
       {
         type: "agent_event",
@@ -89,7 +88,7 @@ describe("chat loop", () => {
   it("accumulates reasoning entries from llm_event", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
-      { type: "message_submitted", message: "think hard" },
+      { type: "message_submitted" },
       {
         type: "agent_event",
         event: {
@@ -114,7 +113,7 @@ describe("chat loop", () => {
   it("clears reasoning on new message_submitted but keeps prior run history", () => {
     const initial = createInitialTuiState(fakeSession());
     const afterFirstRun = apply(initial, [
-      { type: "message_submitted", message: "g1" },
+      { type: "message_submitted" },
       {
         type: "agent_event",
         event: {
@@ -131,7 +130,6 @@ describe("chat loop", () => {
 
     const afterSecondSubmit = reduceTuiState(afterFirstRun, {
       type: "message_submitted",
-      message: "g2",
     });
     expect(afterSecondSubmit.reasoning).toHaveLength(0);
     expect(afterSecondSubmit.runHistory).toHaveLength(1);
@@ -239,7 +237,6 @@ describe("chat loop", () => {
     const initial = createInitialTuiState(fakeSession());
     const afterSubmit = reduceTuiState(initial, {
       type: "message_submitted",
-      message: "x",
     });
     await new Promise((r) => setTimeout(r, 5));
     const next = reduceTuiState(afterSubmit, {

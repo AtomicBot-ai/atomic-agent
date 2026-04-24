@@ -76,7 +76,7 @@ function HintsRow(): ReactElement {
     <Box marginTop={1}>
       <Text color={theme.colors.muted}>
         j/k move · Enter detail · n new · c cancel · R run-now · r refresh
-        · a auto · f filter · / search · Esc back
+        · a auto · f filter · / search · Esc clear search
       </Text>
     </Box>
   );

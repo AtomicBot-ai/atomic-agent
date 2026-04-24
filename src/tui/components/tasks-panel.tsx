@@ -2,10 +2,7 @@ import { Box } from "ink";
 import { useMemo } from "react";
 import type { ReactElement } from "react";
 import type { TasksPanelState } from "../tasks/tasks-panel-state.js";
-import {
-  filterAndSortTaskRows,
-  type TasksFilter,
-} from "../tasks/tasks-filter.js";
+import { selectVisibleTaskRows } from "../tasks/tasks-filter.js";
 import { TasksFilterBar } from "./tasks-filter-bar.js";
 import { TasksList } from "./tasks-list.js";
 import { TasksDetail } from "./tasks-detail.js";
@@ -25,13 +22,9 @@ export interface TasksPanelProps {
  */
 export function TasksPanel(props: TasksPanelProps): ReactElement {
   const { panel, now, maxRows = 14 } = props;
-  const filter = useMemo<TasksFilter>(
-    () => ({ status: panel.filterStatus, search: panel.searchQuery }),
-    [panel.filterStatus, panel.searchQuery],
-  );
   const visibleRows = useMemo(
-    () => filterAndSortTaskRows(panel.rows, filter),
-    [panel.rows, filter],
+    () => selectVisibleTaskRows(panel),
+    [panel.rows, panel.filterStatus, panel.searchQuery],
   );
   return (
     <Box flexDirection="column">

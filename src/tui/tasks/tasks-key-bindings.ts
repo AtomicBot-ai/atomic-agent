@@ -7,9 +7,12 @@ import {
   TASK_CREATE_KIND_ORDER,
   type TaskCreateFocus,
   type TaskCreateFormState,
+  type TasksPanelState,
+  type TaskSummaryRow,
 } from "./tasks-panel-state.js";
 import { focusAfter } from "../components/tasks-create-form.js";
 import { validateCreateForm } from "./tasks-form-validator.js";
+import { selectVisibleTaskRows } from "./tasks-filter.js";
 
 export interface TasksTabKeyContext {
   state: TuiState;
@@ -55,6 +58,10 @@ function handleCancelConfirmKey(
   const confirm = state.tasksPanel.cancelConfirm!;
   const lower = input.toLowerCase();
   if (lower === "y") {
+    // Close the modal locally before firing the callback so the UI does
+    // not depend on the orchestrator's emit to unblock. The orchestrator
+    // still emits the close in `finally`; the reducer is idempotent.
+    dispatch({ type: "tasks_cancel_confirm_closed" });
     callbacks.onTaskCancelConfirmed?.(confirm.taskId);
     return true;
   }
@@ -72,6 +79,18 @@ function handleListKey(
 ): boolean {
   const { state, dispatch, callbacks } = ctx;
   const panel = state.tasksPanel;
+  if (panel.searchOpen) return handleSearchInputKey(input, key, panel, dispatch);
+  if (key.escape) {
+    if (panel.searchQuery.length > 0) {
+      dispatch({ type: "tasks_search_closed", clearQuery: true });
+      return true;
+    }
+    return false;
+  }
+  if (input === "/") {
+    dispatch({ type: "tasks_search_opened" });
+    return true;
+  }
   if (key.downArrow || input === "j") {
     dispatch({ type: "tasks_cursor_moved", delta: 1 });
     return true;
@@ -80,11 +99,9 @@ function handleListKey(
     dispatch({ type: "tasks_cursor_moved", delta: -1 });
     return true;
   }
+  const selected = selectedVisibleRow(panel);
   if (key.return) {
-    const row = panel.rows[panel.cursor];
-    if (row) {
-      callbacks.onTaskDetailRequested?.(row.id);
-    }
+    if (selected) callbacks.onTaskDetailRequested?.(selected.id);
     return true;
   }
   if (input === "n") {
@@ -92,21 +109,19 @@ function handleListKey(
     return true;
   }
   if (input === "c") {
-    const row = panel.rows[panel.cursor];
-    if (!row) return true;
-    if (row.recurring) {
+    if (!selected) return true;
+    if (selected.recurring) {
       dispatch({
         type: "tasks_cancel_confirm_opened",
-        confirm: { taskId: row.id, isRecurring: true },
+        confirm: { taskId: selected.id, isRecurring: true },
       });
     } else {
-      callbacks.onTaskCancelConfirmed?.(row.id);
+      callbacks.onTaskCancelConfirmed?.(selected.id);
     }
     return true;
   }
   if (input === "R") {
-    const row = panel.rows[panel.cursor];
-    if (row) callbacks.onTaskRunNowRequested?.(row.id);
+    if (selected) callbacks.onTaskRunNowRequested?.(selected.id);
     return true;
   }
   if (input === "r") {
@@ -124,6 +139,55 @@ function handleListKey(
   return false;
 }
 
+/**
+ * Resolve the currently selected row by projecting `panel.cursor` onto
+ * the filtered+sorted visible slice. Keeps Enter/c/R aligned with the
+ * chevron the user actually sees.
+ */
+function selectedVisibleRow(panel: TasksPanelState): TaskSummaryRow | null {
+  const visible = selectVisibleTaskRows(panel);
+  if (visible.length === 0) return null;
+  const clamped = Math.max(0, Math.min(panel.cursor, visible.length - 1));
+  return visible[clamped] ?? null;
+}
+
+/**
+ * Live search input handler. Swallows every keypress so stray letters
+ * never leak into list hotkeys while the query field is focused.
+ * Enter commits (keeps the query, closes the caret); Esc cancels and
+ * wipes the query.
+ */
+function handleSearchInputKey(
+  input: string,
+  key: Key,
+  panel: TasksPanelState,
+  dispatch: (action: TuiAction) => void,
+): boolean {
+  if (key.escape) {
+    dispatch({ type: "tasks_search_closed", clearQuery: true });
+    return true;
+  }
+  if (key.return) {
+    dispatch({ type: "tasks_search_closed" });
+    return true;
+  }
+  if (key.backspace || key.delete) {
+    dispatch({
+      type: "tasks_search_query_changed",
+      query: panel.searchQuery.slice(0, -1),
+    });
+    return true;
+  }
+  if (input && input.length > 0 && !key.ctrl && !key.meta) {
+    dispatch({
+      type: "tasks_search_query_changed",
+      query: panel.searchQuery + input,
+    });
+    return true;
+  }
+  return true;
+}
+
 function handleDetailKey(
   input: string,
   key: Key,
@@ -135,7 +199,7 @@ function handleDetailKey(
     dispatch({ type: "tasks_detail_closed" });
     return true;
   }
-  if (!detailId) return key.escape ? true : false;
+  if (!detailId) return false;
   if (input === "o") {
     callbacks.onTaskOpenSessionRequested?.(detailId);
     return true;

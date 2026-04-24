@@ -31,10 +31,10 @@ export function TasksFilterBar(props: TasksFilterBarProps): ReactElement {
         {"  "}filter: {filterLabel}
         {"  "}·{"  "}
         {visibleCount}/{totalCount}
-        {panel.searchQuery.length > 0
-          ? `  ·  /${panel.searchQuery}`
-          : panel.searchOpen
-            ? "  ·  /_"
+        {panel.searchOpen
+          ? `  ·  /${panel.searchQuery}_`
+          : panel.searchQuery.length > 0
+            ? `  ·  /${panel.searchQuery}`
             : ""}
         {"  "}·{"  "}refresh: {refreshLabel}
         {panel.loading ? "  ·  loading…" : ""}

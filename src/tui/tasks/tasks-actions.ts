@@ -30,7 +30,12 @@ export type TasksAction =
   | { type: "tasks_auto_refresh_toggled" }
   | { type: "tasks_search_opened" }
   | { type: "tasks_search_query_changed"; query: string }
-  | { type: "tasks_search_closed" }
+  /**
+   * Close the search overlay. When `clearQuery` is true (the Esc path)
+   * the active query is also wiped; on Enter-commit the query is kept
+   * so the list stays filtered after the caret disappears.
+   */
+  | { type: "tasks_search_closed"; clearQuery?: boolean }
   | { type: "tasks_mode_set"; mode: TasksPanelMode }
   | { type: "tasks_detail_opened"; taskId: string }
   | { type: "tasks_detail_closed" }

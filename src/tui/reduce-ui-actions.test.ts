@@ -100,7 +100,7 @@ describe("UI-mode and streaming reducers", () => {
   it("converts streaming tool calls into tool cards on assistant_reply", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
-      { type: "message_submitted", message: "hi" },
+      { type: "message_submitted" },
       { type: "agent_event", event: { type: "turn_started", turnIndex: 0 } },
       { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
       {

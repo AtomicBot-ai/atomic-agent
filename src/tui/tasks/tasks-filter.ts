@@ -1,6 +1,7 @@
 import type {
   TaskSummaryRow,
   TasksFilterStatus,
+  TasksPanelState,
 } from "./tasks-panel-state.js";
 
 /**
@@ -85,4 +86,19 @@ export function cycleTasksFilter(
 
 export function listTasksFilterOrder(): readonly TasksFilterStatus[] {
   return FILTER_ORDER;
+}
+
+/**
+ * Single source of truth for the filtered+sorted row slice used by the
+ * list component, the keyboard layer and the reducer. Centralising the
+ * selector ensures cursor clamping, Enter/c/R resolution and visual
+ * chevron position all operate on the exact same row order.
+ */
+export function selectVisibleTaskRows(
+  panel: Pick<TasksPanelState, "rows" | "filterStatus" | "searchQuery">,
+): TaskSummaryRow[] {
+  return filterAndSortTaskRows(panel.rows, {
+    status: panel.filterStatus,
+    search: panel.searchQuery,
+  });
 }
