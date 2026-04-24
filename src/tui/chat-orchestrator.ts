@@ -1,12 +1,19 @@
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { SkillCatalogEntry } from "../prompt/stable-prefix.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { SessionState } from "../session/session-state.js";
 import { clearTtyScreen } from "./clear-tty-screen.js";
+import { captureAndWriteDebugBundle } from "./debug-bundle/index.js";
 import { TasksOrchestrator } from "./tasks/tasks-orchestrator.js";
 import type { TuiEventBus } from "./tui-app.js";
 import { turnsToMessages } from "./turns-to-messages.js";
-import type { SessionPickerEntry } from "./tui-state.js";
+import type { SessionPickerEntry, TuiState } from "./tui-state.js";
+
+const DEBUG_BUNDLE_TRACE_LIMIT = 10;
+const DEBUG_BUNDLE_DIR_NAME = "atomic-agent-debug";
 
 export interface ChatOrchestratorOptions {
   maxSteps: number;
@@ -234,6 +241,71 @@ export class ChatOrchestrator {
     }
   }
 
+  /**
+   * Dump a zipped snapshot of the TUI state plus NDJSON traces for the
+   * most recent sessions into `~/Documents/atomic-agent-debug/`. The
+   * heavy work (readFile + zip compression) is off-thread via
+   * `Promise`, but we stash the snapshot synchronously so the archive
+   * reflects the exact UI state at the moment `/dump` was submitted.
+   */
+  exportDebugBundle(state: TuiState): void {
+    const traceDir = this.runtime.config.tracing.trace.dir;
+    const traceEnabled = this.runtime.config.tracing.trace.enabled === true;
+    const outDir = join(homedir(), "Documents", DEBUG_BUNDLE_DIR_NAME);
+    const sessionIds = this.collectDebugSessionIds();
+    this.bus.emit({
+      type: "runtime_info",
+      line: `debug bundle: collecting ${sessionIds.length} trace${
+        sessionIds.length === 1 ? "" : "s"
+      } into ${outDir}`,
+    });
+    void (async () => {
+      try {
+        const result = await captureAndWriteDebugBundle({
+          state,
+          traceDir,
+          traceEnabled,
+          sessionIds,
+          outDir,
+        });
+        this.bus.emit({
+          type: "runtime_info",
+          line: `debug bundle written: ${result.path} (${formatBytes(result.bytes)}, ${result.includedTraces} trace${
+            result.includedTraces === 1 ? "" : "s"
+          }, ${result.skippedTraces} skipped)`,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.bus.emit({
+          type: "runtime_info",
+          line: `debug bundle failed: ${msg}`,
+        });
+      }
+    })();
+  }
+
+  private collectDebugSessionIds(): string[] {
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    if (this.session?.id) {
+      ids.push(this.session.id);
+      seen.add(this.session.id);
+    }
+    try {
+      for (const s of this.runtime.sessionStore.listRecent(
+        DEBUG_BUNDLE_TRACE_LIMIT,
+      )) {
+        if (seen.has(s.id)) continue;
+        ids.push(s.id);
+        seen.add(s.id);
+      }
+    } catch {
+      // session store read failure is non-fatal — we still export the
+      // snapshot plus whatever traces we already collected.
+    }
+    return ids.slice(0, DEBUG_BUNDLE_TRACE_LIMIT);
+  }
+
   abortCurrentTurn(): void {
     this.currentController?.abort();
   }
@@ -250,6 +322,12 @@ export class ChatOrchestrator {
     this.tasks.shutdown();
     await this.runtime.shutdown();
   }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
 function toPickerEntry(state: SessionState): SessionPickerEntry {

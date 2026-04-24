@@ -6,6 +6,7 @@ describe("dispatchSlashCommand", () => {
     const result = dispatchSlashCommand("/help");
     expect(result.systemMessage).toBeDefined();
     expect(result.systemMessage).toContain("slash commands:");
+    expect(result.systemMessage).toContain("/dump");
     expect(result.systemMessage).toContain("/clear");
     expect(result.systemMessage).toContain("clear chat transcript");
     expect(result.systemMessage).toContain("/quit");
@@ -76,6 +77,14 @@ describe("dispatchSlashCommand", () => {
     expect(result.triggerSkillCatalogDump).toBe(true);
     expect(result.actions).toEqual([]);
     expect(result.clearBuffer).toBe(true);
+  });
+
+  it("signals triggerDebugBundleDump for /dump", () => {
+    const result = dispatchSlashCommand("/dump");
+    expect(result.triggerDebugBundleDump).toBe(true);
+    expect(result.actions).toEqual([]);
+    expect(result.clearBuffer).toBe(true);
+    expect(result.systemMessage).toContain("debug bundle");
   });
 
   it("requests persistLlamaUrl for /llama with a valid URL", () => {

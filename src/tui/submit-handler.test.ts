@@ -21,12 +21,15 @@ function fakeSession(overrides: Partial<TuiSessionInfo> = {}): TuiSessionInfo {
   };
 }
 
-function stubCallbacks(): TuiAppCallbacks {
+function stubCallbacks(
+  overrides: Partial<TuiAppCallbacks> = {},
+): TuiAppCallbacks {
   return {
     onApprovalDecision: vi.fn(),
     onAbort: vi.fn(),
     onQuit: vi.fn(),
     onMessageSubmitted: vi.fn(),
+    ...overrides,
   };
 }
 
@@ -59,5 +62,19 @@ describe("handleEditorSubmit", () => {
     expect(systemMessages.some((t) => t.includes("slash commands:"))).toBe(
       false,
     );
+  });
+
+  it("invokes onDebugBundleExportRequested for /dump", () => {
+    const state = createInitialTuiState(fakeSession());
+    const onDebugBundleExportRequested = vi.fn();
+    const dispatch = vi.fn();
+    handleEditorSubmit(
+      "/dump",
+      state,
+      dispatch,
+      stubCallbacks({ onDebugBundleExportRequested }),
+    );
+    expect(onDebugBundleExportRequested).toHaveBeenCalledTimes(1);
+    expect(onDebugBundleExportRequested).toHaveBeenCalledWith(state);
   });
 });

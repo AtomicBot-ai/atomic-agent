@@ -47,11 +47,11 @@ export function handleEditorSubmit(
     if (parsed !== null) {
       const resolved = resolveSlashCommand(parsed.name);
       if (resolved !== null) {
-        runSlashCommand(trimmed, dispatch, callbacks);
+        runSlashCommand(trimmed, state, dispatch, callbacks);
         return;
       }
       if (parsed.name.length > 0) {
-        runSlashCommand(trimmed, dispatch, callbacks);
+        runSlashCommand(trimmed, state, dispatch, callbacks);
         return;
       }
     }
@@ -64,7 +64,7 @@ export function handleEditorSubmit(
     const safeCursor = Math.min(state.slashPaletteCursor, maxRow);
     const chosen = completions[safeCursor];
     if (chosen) {
-      runSlashCommand(`/${chosen.name}`, dispatch, callbacks);
+      runSlashCommand(`/${chosen.name}`, state, dispatch, callbacks);
       return;
     }
   }
@@ -94,10 +94,14 @@ function handleSessionPickerSubmit(
 
 export function runSlashCommand(
   raw: string,
+  state: TuiState,
   dispatch: Dispatch,
   callbacks: TuiAppCallbacks,
 ): void {
   const result: SlashDispatchResult = dispatchSlashCommand(raw);
+  if (result.triggerDebugBundleDump) {
+    callbacks.onDebugBundleExportRequested?.(state);
+  }
   for (const action of result.actions) dispatch(action);
   if (result.systemMessage) {
     dispatch({ type: "runtime_info", line: result.systemMessage });

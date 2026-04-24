@@ -30,6 +30,7 @@ import {
   canAcceptMessage,
   createInitialTuiState,
   type TuiSessionInfo,
+  type TuiState,
 } from "./tui-state.js";
 import { handleTasksTabKey } from "./tasks/tasks-key-bindings.js";
 
@@ -74,6 +75,13 @@ export interface TuiAppCallbacks {
     message: string;
     kind: TaskCreateKind;
   }): void;
+  /**
+   * Fired by `/dump`: asks the orchestrator to collect the current TUI
+   * state + recent session traces into a zip under `~/Documents`. The
+   * orchestrator owns the async work and reports progress through the
+   * event bus.
+   */
+  onDebugBundleExportRequested?(state: TuiState): void;
 }
 
 export interface TuiAppProps {

@@ -16,6 +16,11 @@ export interface SlashCommandDef {
  * in sync by construction.
  */
 export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
+  {
+    name: "dump",
+    description:
+      "write debug zip (TUI snapshot + recent trace NDJSON) to ~/Documents/atomic-agent-debug",
+  },
   { name: "help", description: "list available slash commands" },
   { name: "clear", description: "clear chat transcript (keeps session)" },
   { name: "abort", description: "abort the running turn" },
