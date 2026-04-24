@@ -10,7 +10,7 @@ interface FooterLineProps {
 
 /**
  * Single-row metadata footer: llama-server health indicator, session id,
- * tokens in/out, tool counters and any flags in effect. Rendered in muted
+ * tool counters and any flags in effect. Rendered in muted
  * colour to stay behind the main chat content while remaining scannable.
  *
  * The `llm` segment is always first so the daemon status is visible in
@@ -80,9 +80,6 @@ function resolveBadge(health: LlmHealthState): BadgeLook {
 
 function buildParts(state: TuiState): string[] {
   const { session, metrics } = state;
-  const tokens = `${formatNumber(metrics.promptTokensLast)}p/${formatNumber(
-    metrics.completionTokensLast,
-  )}c · total ${metrics.totalTokens}`;
   const tools = `tools ${metrics.toolsOk}ok/${metrics.toolsError}err`;
   const kvTotal = metrics.kvCacheHits + metrics.kvCacheMisses;
   const kv =
@@ -93,18 +90,11 @@ function buildParts(state: TuiState): string[] {
   return [
     `session ${session.sessionId ? shortId(session.sessionId) : "(pending)"}`,
     `model ${shortUrl(session.llamaUrl)}`,
-    tokens,
     latency,
     kv,
     tools,
     session.approvalRequired ? "approval on" : "approval off",
   ];
-}
-
-function formatNumber(value: number | null): string {
-  if (value === null) return "—";
-  if (value < 1000) return String(value);
-  return `${(value / 1000).toFixed(1)}k`;
 }
 
 function formatLatency(llmMs: number | null, stepMs: number | null): string {
