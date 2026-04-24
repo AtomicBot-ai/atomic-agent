@@ -21,9 +21,9 @@ export function createCapabilitiesHandler(): HttpHandler {
         userConfigFile: runtime.config.paths.userConfigFile,
       },
       llama: {
-        url: runtime.config.llama.url,
-        healthPath: runtime.config.llama.healthPath,
-        completionPath: runtime.config.llama.completionPath,
+        url: runtime.config.localModels.url,
+        healthPath: runtime.config.localModels.healthPath,
+        completionPath: runtime.config.localModels.completionPath,
       },
       browser: {
         channel: runtime.config.browser.channel,

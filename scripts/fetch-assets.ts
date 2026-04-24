@@ -1,5 +1,5 @@
 /**
- * Fetch runtime assets required by the bundled sidecar.
+ * Fetch runtime assets required by the release bundle (Node SEA CLI / ripgrep).
  *
  * Currently the only external asset we pre-download is `ripgrep`, which
  * powers `os.fs.grep`. We bundle one binary per supported target under

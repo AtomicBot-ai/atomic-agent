@@ -2,299 +2,174 @@
 
 # atomic-agent
 
-**Local operator agent runtime** — Tauri-friendly sidecar, debug CLI, and OpenAI-compatible HTTP surface. Drives a **KV-cache-aware** tool loop against an **external** [`llama.cpp`](https://github.com/ggerganov/llama.cpp) server (`llama-server`). No model weights or LLM binaries ship with this repo.
+**Local operator agent runtime for real desktop automation.**
 
-*Not a “coding agent” in the boxed-product sense* — think **OpenCUA-on-minimum**: control the host **browser** (Chrome/Edge), a curated **`os.*`** surface, and user **skills** (Markdown playbooks plus optional shell/Node scripts).
+Embed it in a Tauri app, run it in the terminal, or expose it behind an OpenAI-compatible API. `atomic-agent` gives local models a disciplined runtime for **browser control**, **OS actions**, **skills**, **durable memory**, **scheduled work**, and **auditable execution** without turning your product into a giant hosted stack.
 
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-![License](https://img.shields.io/badge/license-TBD-lightgrey)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 </div>
 
+`atomic-agent` is built for teams that want the power of an operator agent, but want to keep the stack local, inspectable, and shippable:
 
----
+- **Local-first by design**: your browser, your files, your machine, your `llama.cpp` server.
+- **Small-model friendly**: stable prompt prefix, KV-cache reuse, grammar-constrained tool calls, bounded prompt growth.
+- **More than chat**: browser automation, OS tools, user-authored skills, background tasks, webhooks, and traces.
+- **Easy to embed**: Tauri sidecar over NDJSON, standalone CLI/TUI, or OpenAI-compatible HTTP surface.
+- **Safer to ship**: dangerous actions go through approvals, state lives in SQLite, traces stay local, and runtime behavior is explicit.
 
-See also: [ARCHITECTURE.md](ARCHITECTURE.md), [EVOLUTION.md](EVOLUTION.md), [SKILLS.md](SKILLS.md), [BUNDLING.md](BUNDLING.md)
+See also: [ARCHITECTURE.md](ARCHITECTURE.md), [MEMORY.md](MEMORY.md), [SKILLS.md](SKILLS.md), [EVOLUTION.md](EVOLUTION.md), [BUNDLING.md](BUNDLING.md)
 
-## At a glance
+## Why `atomic-agent`
 
-| | |
-| --- | --- |
-| **Role** | General-purpose **host operator**: browser (Chrome/Edge), OS tools (shell, fs, clipboard, windows, notify), and user **skills** (Markdown playbooks + scripts). |
-| **Not** | A bundled coding IDE or an all-in-one LLM stack — connect your own `llama-server` by URL. |
-| **Embeds as** | NDJSON **sidecar** (stdin/stdout) or standalone **`atomic-agent`** CLI. |
-| **Session model** | Multi-turn chat: `user → 0…N tool steps → reply` is one macro-turn; history in `SessionState.turns[]`. |
+Most agent stacks optimize for "big cloud model, giant prompt, vague tools". `atomic-agent` goes the other direction:
 
----
+- It keeps **state outside the model** and sends only a compact, structured slice each step.
+- It treats the model as a **tool-choosing operator**, not a magic black box.
+- It makes local inference practical with **KV-cache-aware prompt design** and **GBNF-constrained tool decoding**.
+- It gives you a runtime you can actually productize: **sidecar protocol, HTTP API, approvals, tasks, memory, and traces**.
 
-## Table of contents
+If you want a local operator agent that can be embedded into a desktop app, automate the browser and host OS, and keep working later through scheduled turns, this is the shape.
 
-- [Features](#features)
-- [Quick start](#quick-start)
-- [Configuration](#configuration)
-  - [Environment](#environment)
-  - [Config file](#config-file)
-  - [Migration from env-only settings](#migration-from-env-only-settings)
-- [CLI](#cli)
-- [HTTP API](#http-api)
-  - [OpenAI-compatible routes](#openai-compatible-routes)
-  - [Admin routes](#admin-routes)
-- [Sidecar protocol](#sidecar-protocol)
-- [External llama-server](#external-llama-server)
-- [Browser prerequisites](#browser-prerequisites)
-- [OS tools](#os-tools)
-  - [Document and archive formats](#document-and-archive-formats)
-  - [HTTP tool policy](#http-tool-policy)
-  - [Diff and patch](#diff-and-patch)
-  - [Git tools](#git-tools)
-  - [Process tools](#process-tools)
-  - [Filesystem watch](#filesystem-watch)
-- [Development](#development)
-- [License](#license)
+## What You Get
 
----
+- **Browser operator surface** via `playwright-core` over installed Chrome or Edge, using compact ARIA snapshots that are cheap for local models.
+- **OS tools** for shell, filesystem, grep, document extraction, archives, clipboard, windows, notifications, HTTP, git inspection, process listing, and more.
+- **User skills**: Markdown playbooks plus optional scripts that can be installed globally or per project.
+- **Durable session memory** in SQLite, plus cross-session memory with profile facts, notes, and async reflection.
+- **Background autonomy** through durable tasks, cron/interval scheduling, webhook ingress, and agent self-scheduling.
+- **Multiple product surfaces**: CLI, TUI, Tauri-friendly sidecar, and OpenAI-compatible HTTP.
+- **Operational visibility** through append-only traces, metrics, explicit failure categories, and replay tooling.
+- **Portable ship shape** with Node SEA bundles and pinned runtime assets such as `ripgrep`.
 
-## Features
+## Great Fit For
 
-- **External LLM only** — points at an existing `llama-server`; no bundled inference.
-- **Multi-turn chat** — persistent session; agent chooses `reply` vs. tools each step; `finish` ends the session.
-- **Session-scoped memory** — persists conversation turns, compact known facts, loaded skill bodies, and the latest compressed browser world snapshot.
-- **Cross-session memory fabric** — durable user profile rendered into every prompt (`memory.profile.*`), async reflection runner, and an FTS5-backed notes store (`memory.notes.store` / `memory.notes.recall` / `memory.notes.forget`) that is read and written only through explicit agent tools and never touches the prompt on its own.
-- **Stable prompt prefix** + per-session `slot_id` for KV-cache reuse (`system` + tool catalog + capabilities + skill catalog).
-- **GBNF grammar-constrained** tool calls for reliable JSON on smaller models (7–9B class).
-- **Browser** — `playwright-core` over system Chrome/Edge, persistent profile; compact ARIA snapshot, `aria-ref=eN` targeting.
-- **OS surface** — shell, filesystem, clipboard, window management (`osascript` / `wmctrl` / PowerShell), notifications.
-- **Skills** (Hermes-style) — `skill.view`, `skill.run_script` (always approved), `skill install <path>`.
-- **Approval gate** — dangerous paths only (shell, fs writes, non-http(s) nav, skill scripts, etc.).
-- **NDJSON sidecar** — `send_message`, `assistant_reply`, `turn_started`, `turn_finished`, …
-- **Ship shape** — per-platform Node SEA binaries (darwin arm64/x64, linux x64, win x64).
+- A **Tauri desktop app** that needs a reliable local sidecar.
+- A **local operations assistant** that can drive browser + shell + files.
+- A **workflow helper** that resumes work from schedules or webhooks.
+- A **developer or operator console** exposed through an OpenAI-compatible `/v1/chat/completions` endpoint.
 
-Current scope note: this repo does not yet ship a workspace / file-tree index, embeddings, or document-summary subsystem. Cross-session memory covers the user profile (auto-rendered) and agent-curated freeform notes (tool-accessed only, BM25 ranked via SQLite FTS5); file-tree retrieval remains session-scoped.
+## Quick Start
 
----
+### Fastest path: managed local models
 
-## Quick start
+If you want `atomic-agent` to manage the local `llama.cpp` backend and GGUF models for you:
 
 ```bash
 npm install
 npm run build
+
+atomic-agent models update
+atomic-agent models list
+atomic-agent models pull qwen-3.5-4b
+atomic-agent models use qwen-3.5-4b
+atomic-agent models start
+
+atomic-agent tui --cwd /path/to/work
 ```
 
-Point `llama.url` in `<stateDir>/config.json` at your running `llama-server`, then:
+The `models` command manages:
+
+- backend download/update
+- local GGUF model download/remove
+- active model selection
+- detached `llama-server` daemon lifecycle
+
+Current model catalog focuses on **Qwen** and **Gemma** families.
+
+### External `llama-server`
+
+If you already run your own `llama.cpp` server, point the config at it and keep `atomic-agent` in external mode.
+
+Example server:
 
 ```bash
-npx atomic-agent tui --cwd /path/to/work
-# or after global link / install:
-atomic-agent run --cwd /path/to/work
+./llama-server -m Qwen2.5-9B-Instruct-Q4_K_M.gguf \
+  --slots 4 \
+  --parallel 4 \
+  --port 8080 \
+  --cache-reuse 256
 ```
 
-See [External llama-server](#external-llama-server) for a minimal `llama-server` example.
-
----
-
-## Configuration
-
-User-facing settings live in **`<stateDir>/config.json`** (created with safe defaults on first run). Manage with `atomic-agent config …` or edit manually. Bootstrap paths and a few toggles use **environment** variables; see [`.env.example`](.env.example).
-
-### Environment
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `ATOMIC_AGENT_STATE_DIR` | `~/.atomic-agent` | State, config, browser profile, skills |
-| `ATOMIC_AGENT_LLAMA_API_KEY` | *unset* | Optional bearer token for `llama-server` |
-| `ATOMIC_AGENT_BROWSER_CHANNEL` | `chrome` | `chrome` / `msedge` / `chromium` |
-| `ATOMIC_AGENT_BROWSER_HEADLESS` | `false` | Headless browser |
-| `ATOMIC_AGENT_BROWSER_CDP_URL` | *unset* | Attach over CDP instead of launching |
-| `ATOMIC_AGENT_SKILLS_CATALOG_BUDGET` | `512` | Token budget for skill catalog in stable prefix |
-
-### Config file
-
-Shape and defaults:
+Then configure:
 
 ```json
 {
-  "version": 1,
-  "llama": { "url": "http://127.0.0.1:8080" },
-  "log":   { "level": "info" },
+  "version": 5,
+  "localModels": {
+    "url": "http://127.0.0.1:8080",
+    "mode": "external",
+    "managed": {
+      "modelId": "qwen-3.5-4b",
+      "port": 19091,
+      "dataDirOverride": null,
+      "autoUpdate": false
+    }
+  },
+  "log": {
+    "level": "info"
+  },
   "agent": {
     "tokenBudget": 3000,
     "maxSteps": 25,
     "toolTimeoutMs": 60000,
-    "approvalRequired": true
+    "approvalRequired": true,
+    "conversationMaxTokens": 32000,
+    "worldSnapshotMaxTokens": 8000
   }
 }
 ```
 
-| Key | Purpose |
-| --- | --- |
-| `llama.url` | External llama-server URL |
-| `log.level` | `debug` / `info` / `warn` / `error` |
-| `agent.tokenBudget` | Cap for stable prefix + world snapshot + session facts (tokens). Full chat history is always sent; transcript is not counted against this cap. |
-| `agent.maxSteps` | Max steps per agent loop |
-| `agent.toolTimeoutMs` | Default tool timeout (ms) |
-| `agent.approvalRequired` | Enable approval gate for dangerous tools |
-
-**CLI (whole-file semantics — no dotted keys):**
+Manage config with:
 
 ```bash
 atomic-agent config get
-
-atomic-agent config set '{
-  "version": 1,
-  "llama": { "url": "http://127.0.0.1:18991" },
-  "log":   { "level": "info" },
-  "agent": {
-    "tokenBudget": 3000,
-    "maxSteps": 40,
-    "toolTimeoutMs": 60000,
-    "approvalRequired": true
-  }
-}'
-
-atomic-agent config get > /tmp/agent.json
-$EDITOR /tmp/agent.json
-atomic-agent config set "$(cat /tmp/agent.json)"
+atomic-agent config set '<full-json>'
 ```
 
-### Migration from env-only settings
+## Why It Works Well With Local Models
 
-> Earlier versions read `ATOMIC_AGENT_LLAMA_URL`, `ATOMIC_AGENT_LOG_LEVEL`, `ATOMIC_AGENT_TOKEN_BUDGET`, `ATOMIC_AGENT_MAX_STEPS`, `ATOMIC_AGENT_TOOL_TIMEOUT_MS`, `ATOMIC_AGENT_APPROVAL_REQUIRED` from the environment. **Those env vars are no longer read** — copy values into `config.json` or apply via `atomic-agent config set '<json>'`.
+`atomic-agent` is intentionally engineered around the failure modes of 7B-14B local models:
 
----
+- **Stable prompt prefix** keeps the expensive part of the prompt byte-stable inside a session.
+- **Per-session slot reuse** lets `llama-server` hit KV cache instead of rebuilding context every step.
+- **Grammar-constrained tool calls** keep structured JSON reliable on smaller models.
+- **Bounded prompt tail** prevents world state, conversation, and memory from growing without limit.
+- **Externalized state** means sessions, world snapshots, loaded skills, notes, and tasks live outside the model.
+- **Narrow retry policy** improves resilience without replaying already-executed tools.
 
-## CLI
+This is not "just prompt engineering". It is a runtime architecture tuned for local inference.
+
+## Surfaces
+
+### CLI and TUI
 
 ```bash
-# Line-at-a-time chat: user lines → runTurn; replies on stdout, tool noise on stderr.
-# /quit exits; /abort cancels the current turn.
 atomic-agent run --cwd /path/to/work
-
-# Ink TUI: long-lived session, shared browser profile + llama slot.
-# Enter = send, Tab = panes, Esc = abort turn (quit if idle), Ctrl+C = quit, y/n = approvals.
-# `/tasks` (or Tab to the "tasks" debug pane) opens the task manager — see below.
 atomic-agent tui --cwd /path/to/work
 
 atomic-agent skill install ./my-skill
 atomic-agent skill list
 atomic-agent skill show check-gmail-inbox
-atomic-agent skill uninstall check-gmail-inbox
 
-atomic-agent config get
-atomic-agent config set '{"version":1, ...}'
+atomic-agent task list
+atomic-agent task create --message "hourly triage" --cron "0 * * * *"
 
-atomic-agent serve --host 127.0.0.1 --port 8787 --cwd /path/to/work
-```
-
-Skill format: **[SKILLS.md](SKILLS.md)**.
-
-### TUI Tasks tab
-
-`atomic-agent tui` exposes a dedicated **Tasks** tab in the debug pane that lists every row in `<stateDir>/tasks.sqlite`, with a detail view, a multi-step create form, and a firings feed. Reach it by typing `/tasks` or by cycling debug tabs with `Tab`. Auto-refresh kicks in at 5s intervals on first entry — toggle with `a`, refresh manually with `r`.
-
-List-mode hotkeys:
-
-- `j` / `k` (or arrows) — move cursor through the filtered list.
-- `Enter` — open task detail.
-- `n` or `/task new` — open the create form (blocks editor input until dismissed).
-- `c` — cancel highlighted task. Recurring tasks prompt `y/n`; pending one-shots skip the modal.
-- `R` — run one attempt now (`TaskRunner.runOne`).
-- `f` — cycle status filter (`all → pending → running → terminal`).
-- `a` — toggle auto-refresh.
-
-Detail view shows the full `TaskRecord` plus the last ~20 observed firings (`timestamp | reason | stepCount | durationMs`). Press `o` to jump to the task's session in the main chat pane, `R` to run now, `c` to cancel, `Esc` to go back.
-
-Create form walks through `kind` (`at` / `cron` / `interval`), a schedule expression with live validation (including the next 5 firings for cron/interval), optional IANA tz, and the user message. Tab/Shift+Tab cycles focus; Left/Right cycles the kind; Ctrl+Enter submits from any field.
-
-Slash shortcuts also work without the tab open: `/task cancel <id>`, `/task run <id>`. All state mutations route through the same `TaskStore` / `TaskRunner` as the CLI and HTTP surfaces — there is no TUI-local task cache.
-
-### Debugging with traces
-
-Every `atomic-agent run` / `tui` / `serve` invocation writes an append-only NDJSON trace to `<stateDir>/traces/<sessionId>.ndjson`. Sidecar mode is off by default; hosts opt in via `tracing.trace.enabled`.
-
-```bash
 atomic-agent trace list --limit 10
-atomic-agent trace show <sessionId>            # pretty chronology
-atomic-agent trace show <sessionId> --raw      # include full prompt tails / completions
-atomic-agent trace show <sessionId> --step 2   # zoom to a single step
-atomic-agent trace export <sessionId> --format json > session.json
-atomic-agent trace replay <sessionId>          # detect stable-prefix drift
+atomic-agent trace show <sessionId>
 ```
 
-`trace replay` rebuilds the stable prompt prefix from the current runtime (tools / capabilities / skills / persona) and compares its salted hash to the one recorded at runtime — drift means the upper prompt changed since recording, which explains lost `cache_prompt` hits.
+Highlights:
 
-Treat trace files as sensitive: secret redaction is not applied yet. Tune retention via `tracing.trace.maxBytesPerSession` (default 10 MiB) and `tracing.trace.dir`.
+- `run` is a simple line-at-a-time chat loop.
+- `tui` is a long-lived terminal UI with approvals, debug panes, and a dedicated Tasks tab.
+- `task` manages durable queued turns.
+- `trace` lets you inspect and replay prompt-state drift.
+- `models` manages the local backend and downloaded GGUF models.
 
-### Durable tasks
-
-`atomic-agent task` manages a small durable queue of deferred `runTurn` submissions in `<stateDir>/tasks.sqlite`. Drains are driven either by the background **scheduler** (see below) or explicitly (CLI / HTTP `POST /api/tasks/drain`) / implicitly on `create()` when `tasks.runOnCreate=true` (default). Retries with exponential backoff (`tasks.maxAttempts`, `tasks.backoffInitialMs`, `tasks.backoffMaxMs`) classify failures via the same taxonomy as the agent loop — `transport`/`model` retry, `grammar`/`tool` go straight to `blocked`.
-
-```bash
-atomic-agent task list --status pending
-atomic-agent task show <taskId>
-atomic-agent task create [--session <id>] --message "tidy inbox" [--max-attempts 3]
-
-# One-shot at an absolute time (Unix ms)
-atomic-agent task create --message "send morning brief" --at 1776124800000
-
-# Recurring — cron (ephemeral session allocated eagerly, reused on every firing)
-atomic-agent task create --message "hourly triage" --cron "0 * * * *" --tz "Europe/Berlin"
-
-# Recurring — fixed interval (seconds)
-atomic-agent task create --message "heartbeat" --every 300
-
-atomic-agent task cancel <taskId>
-atomic-agent task run <taskId>                  # one attempt
-atomic-agent task run --all-pending [--session <sessionId>]   # manual drain
-atomic-agent task tick                          # one scheduler pump for ops debugging
-```
-
-The same surface is exposed over HTTP: `POST/GET /api/tasks`, `GET/DELETE /api/tasks/:id`, `POST /api/tasks/:id/run`, `POST /api/tasks/drain`. All endpoints return 404 when `tasks.enabled=false`.
-
-### Background autonomy
-
-The runtime runs a single in-process `Scheduler` (one `setInterval`) that polls due tasks via a partial SQLite index and executes them through the same per-session FIFO contract as user turns. Three extension points open up on top of this primitive:
-
-**1. Schedule any task.** Besides the CLI above, recurring tasks own **one persistent session for their full lifetime** — all firings accumulate into the same `SessionState.turns[]`. One-shot scheduled tasks get a fresh ephemeral session on first attempt. Session auto-recreates (with a warning + `agent.tasks.session_recreated` metric) if deleted between firings.
-
-**2. Webhook ingress.** Declare a webhook in `<stateDir>/config.json` — `POST /api/webhooks/<name>` then materialises each hit as a task:
-
-```json
-{
-  "webhooks": {
-    "github-push": {
-      "userMessageTemplate": "GitHub pushed {{body.commits.length}} commits to {{body.ref}} — summarise them.",
-      "secret": "optional-x-webhook-secret-value",
-      "sessionMode": "persistent"
-    }
-  }
-}
-```
-
-Then:
-
-```bash
-curl -X POST http://127.0.0.1:8787/api/webhooks/github-push \
-  -H "Authorization: Bearer $ATOMIC_AGENT_API_KEY" \
-  -H "x-webhook-secret: optional-x-webhook-secret-value" \
-  -H "Content-Type: application/json" \
-  --data '{"ref":"refs/heads/main","commits":[{"id":"abc"},{"id":"def"}]}'
-# => 202 Accepted { "taskId": "…" }
-```
-
-`sessionMode` options: `ephemeral` (fresh session per hit — default for one-shot), `persistent` (one session reused across every hit of this webhook — default when `schedule` is set, id stored in `<stateDir>/webhook-sessions.json`), `named` (requires explicit `sessionId`).
-
-**3. Agent self-scheduling.** When `tasks.agentToolsEnabled=true` (default), the model can call five tools from inside a turn: `tasks.schedule` (one-shot, inherits the current session by default), `tasks.cron` (recurring, always a fresh persistent session), `tasks.list`, `tasks.cancel`, `tasks.show`.
-
-Flip `tasks.schedulerEnabled=false` to disable the background pump while keeping manual drains working; flip `tasks.enabled=false` to disable everything (scheduler + webhook routes + agent tools all respect it).
-
-See [ARCHITECTURE.md §4.17](ARCHITECTURE.md) and [AGENTS.md §Background autonomy](AGENTS.md) for the full contract.
-
----
-
-## HTTP API
-
-`atomic-agent serve` exposes a small HTTP surface on the same `createAgentRuntime()` as `run` / `tui`. **One HTTP request = one macro-turn** (`user → 0…N tool steps → reply`). Loopback-first; uses Node’s built-in `http` — no extra server deps.
+### OpenAI-compatible HTTP API
 
 ```bash
 atomic-agent serve \
@@ -304,194 +179,226 @@ atomic-agent serve \
   --api-key "$ATOMIC_AGENT_API_KEY"
 ```
 
-Auth is optional. With `--api-key` / `ATOMIC_AGENT_API_KEY`, routes expect `Authorization: Bearer <key>`; **`/health`** and **`/v1/models`** stay public for SDK probes.
+Main routes:
 
-### OpenAI-compatible routes
+- `POST /v1/chat/completions`
+- `POST /v1/chat/completions/{id}/cancel`
+- `GET /v1/models`
+- `GET /health`
+- `GET /api/capabilities`
+- `GET /api/config`
+- `PATCH /api/config`
+- `GET /api/skills`
+- `GET /api/sessions`
+- `POST /api/approval/resolve`
+- `GET /api/events`
 
-- **`POST /v1/chat/completions`** — Chat Completions. With `stream: true`, SSE includes `tool_progress` per tool step, then normal content deltas, `usage`, `finish_reason`, and `data: [DONE]`.
-- **`POST /v1/chat/completions/{id}/cancel`** — Abort a streaming completion by id.
-- **`GET /v1/models`** — Single synthetic `atomic-agent` model entry.
+One HTTP request maps to one full macro-turn: `user -> 0..N tool steps -> reply`.
 
-**Sessions (Hermes-style “Option A”):** `X-Atomic-Session-Id` or body `session_id` resumes; otherwise id `api-<sha256:16>` from `(system, firstUserMessage)`. Only the **last** user message in the body starts the new turn — history lives in `SessionState.turns[]`.
+### Tauri-friendly sidecar
 
-### Admin routes
+The sidecar speaks newline-delimited JSON over stdio, which keeps integration simple and easy to debug.
 
-When `--api-key` is set, these require auth (except as noted for health/models above).
-
-| Route | Purpose |
-| --- | --- |
-| `GET /health` | Liveness + llama reachability |
-| `GET /api/capabilities` | Host caps, catalogs, paths, llama config |
-| `GET /api/config` | Read user config |
-| `PATCH /api/config` | Merge-write user config |
-| `GET /api/skills` | List installed skills |
-| `GET /api/skills/{name}` | Manifest + `SKILL.md` body |
-| `POST /api/skills/install` | `{ sourcePath, source?: "global"\|"project", force? }` |
-| `POST /api/skills/uninstall` | `{ name, source?: "global"\|"project" }` |
-| `GET /api/sessions` | Recent sessions (`?limit=` ≤ 200) |
-| `GET /api/sessions/{id}` | Full `SessionState` |
-| `DELETE /api/sessions/{id}` | Purge (idempotent) |
-| `POST /api/approval/resolve` | `{ approvalId, decision: "allow-once"\|"deny", reason? }` |
-| `GET /api/events` | SSE: pending approvals |
-
----
-
-## Sidecar protocol
-
-Newline-delimited JSON on **stdin** → **stdout**. Schemas: `src/sidecar/sidecar-events.ts` (re-exported from package root).
-
-**Requests:**
+Request example:
 
 ```json
 {"kind":"request","id":"r-1","type":"start_session","payload":{"workingDir":"/home/me"}}
-{"kind":"request","id":"r-2","type":"send_message","payload":{"sessionId":"s-1","text":"hi, can you check Gmail?"}}
+{"kind":"request","id":"r-2","type":"send_message","payload":{"sessionId":"s-1","text":"Check the inbox and summarise urgent mail."}}
 ```
 
-**Example events (one turn):**
+Event example:
 
 ```json
-{"kind":"event","id":"e-1","type":"user_message","correlationId":"r-2","payload":{"sessionId":"s-1","text":"hi, can you check Gmail?"}}
-{"kind":"event","id":"e-2","type":"turn_started","correlationId":"r-2","payload":{"sessionId":"s-1","turnIndex":0}}
-{"kind":"event","id":"e-3","type":"tool_call_result","correlationId":"r-2","payload":{"sessionId":"s-1","stepIndex":0,"tool":"browser.read_aria","status":"ok","summary":"url: https://mail.google.com/ …"}}
-{"kind":"event","id":"e-4","type":"assistant_reply","correlationId":"r-2","payload":{"sessionId":"s-1","text":"You have 3 unread threads …"}}
-{"kind":"event","id":"e-5","type":"turn_finished","correlationId":"r-2","payload":{"sessionId":"s-1","turnIndex":0,"reason":"reply"}}
+{"kind":"event","id":"e-1","type":"turn_started","correlationId":"r-2","payload":{"sessionId":"s-1","turnIndex":0}}
+{"kind":"event","id":"e-2","type":"tool_call_result","correlationId":"r-2","payload":{"sessionId":"s-1","stepIndex":0,"tool":"browser.read_aria","status":"ok","summary":"url: https://mail.google.com/ ..."}}
+{"kind":"event","id":"e-3","type":"assistant_reply","correlationId":"r-2","payload":{"sessionId":"s-1","text":"You have 3 urgent threads."}}
 ```
 
----
+## Capabilities
 
-## External llama-server
+### Browser
 
-This package **does not** start or ship `llama.cpp`. Run your own server, e.g.:
+- Uses `playwright-core` with the **system browser**, not a bundled Chromium.
+- Works with **Chrome**, **Edge**, and Chromium-family executables.
+- Reads compact **ARIA snapshots** so local models can navigate pages without vision-heavy prompts.
+- Keeps a **persistent browser profile**, which is exactly what operator workflows need.
+
+### OS tools
+
+Selected built-in tools:
+
+- `os.shell.run`
+- `os.fs.read`, `write`, `list`, `glob`, `grep`, `edit`, `diff`, `patch`, `watch`
+- `os.fs.read_document` for PDF, DOCX, DOC, XLSX, RTF, ODT, PPTX, and plain text
+- `os.fs.archive.list`, `read_entry`, `extract`
+- `os.git.status`, `log`, `diff`, `show`, `blame`, `branch`
+- `os.proc.list`, `os.proc.kill`
+- `os.http.request`
+- `os.clipboard.read`, `os.clipboard.write`
+- `os.window.list`, `os.window.focus`
+- `os.notify`
+
+Dangerous actions are gated behind approval. Read-heavy and inspection-heavy actions are available without friction.
+
+### Skills
+
+Skills are local playbooks made of:
+
+- a required `SKILL.md`
+- optional scripts under `scripts/`
+- optional static references under `references/`
+
+Why skills matter:
+
+- they let humans encode reliable procedures once
+- they keep prompts small by loading only what is needed
+- they make the runtime more productizable than free-form prompting alone
+
+See [SKILLS.md](SKILLS.md) for the full format.
+
+## Memory, Tasks, And Autonomy
+
+### Cross-session memory
+
+`atomic-agent` has a memory fabric built for practical local use:
+
+- **Profile facts** for durable user/operator preferences
+- **FTS5 notes memory** for searchable freeform observations
+- **Async reflection** that writes useful memories after a turn
+- **Prompt injection only where it helps**: hot facts and top recalled notes enter the tail, the full corpus does not
+
+This keeps memory useful without blowing up the stable prompt prefix. Details live in [MEMORY.md](MEMORY.md).
+
+### Durable tasks
+
+Tasks turn the agent from a purely reactive chat loop into something that can resume work later:
 
 ```bash
-./llama-server -m Qwen2.5-9B-Instruct-Q4_K_M.gguf \
-  --slots 4 --parallel 4 --port 8080 --cache-reuse 256
+atomic-agent task create --message "send morning brief" --at 1776124800000
+atomic-agent task create --message "hourly triage" --cron "0 * * * *" --tz "Europe/Berlin"
+atomic-agent task create --message "heartbeat" --every 300
+
+atomic-agent task list
+atomic-agent task show <taskId>
+atomic-agent task run <taskId>
+atomic-agent task cancel <taskId>
 ```
 
-Set `llama.url` in `<stateDir>/config.json` (or `atomic-agent config set …`).
+Each task is a durable deferred `runTurn`, backed by SQLite, retries, and explicit status transitions.
 
----
+### Webhooks and self-scheduling
 
-## Browser prerequisites
+You can turn external events into agent work with `POST /api/webhooks/:name`, and the agent itself can schedule follow-up work through `tasks.schedule` and `tasks.cron`.
 
-- Install **Google Chrome** or **Microsoft Edge** (stable). `playwright-core` attaches; browser binaries are not bundled.
-- **macOS:** Accessibility + Screen Recording for the terminal or Tauri host if you use `os.window.focus`.
-- **Linux:** `wmctrl` for window management; other features degrade gracefully without it.
+This makes it easy to build:
 
----
+- reminders
+- periodic triage
+- inbox or dashboard sweeps
+- webhook-triggered summaries
+- recurring operator routines
 
-## OS tools
+## Tracing And Debugging
 
-| Tool | Description | Approval |
-| --- | --- | --- |
-| `os.shell.run` | Shell in cwd, timeout + output cap + abort | yes |
-| `os.fs.read` | UTF-8 read; `offset`/`limit`, optional `lineNumbers` | no |
-| `os.fs.write` | Write / append | yes |
-| `os.fs.list` | Non-recursive listing | no |
-| `os.fs.glob` | `*`, `**`, `?`, `{a,b}` — pure Node | no |
-| `os.fs.grep` | Bundled `ripgrep`; `content` / `files_with_matches` / `count` | no |
-| `os.fs.edit` | Atomic string replace + diff preview | yes |
-| `os.fs.read_document` | PDF, DOCX, legacy DOC, XLSX, RTF, ODT, PPTX, text | no |
-| `os.fs.archive.list` | Zip/tar/tgz/gz listing | no |
-| `os.fs.archive.read_entry` | Single entry as UTF-8 or base64 | no |
-| `os.fs.archive.extract` | Extract with zip-slip / bomb guards | yes |
-| `os.fs.hash` | md5 / sha1 / sha256 / sha512 (streaming) | no |
-| `os.fs.diff` | Unified diff (paths or strings) | no |
-| `os.fs.patch` | Apply unified diff; dry-run default; live needs approval | configurable |
-| `os.fs.watch` | `chokidar` one-shot watch (≤ 60 s) | no |
-| `os.git.*` | `status`, `log`, `diff`, `show`, `blame`, `branch` (read-only) | no |
-| `os.proc.list` | Process snapshot (`ps` / `tasklist`) | no |
-| `os.proc.kill` | Signal by PID | yes |
-| `os.http.request` | System `curl`; allowlist + `config.http` | configurable |
-| `os.clipboard.read` / `write` | Clipboard I/O | no |
-| `os.window.list` / `focus` | List / focus windows | no |
-| `os.notify` | Native notification | no |
+Every `run`, `tui`, and `serve` session can emit append-only NDJSON traces:
 
-**Ripgrep:** bundle ships `vendor/rg[.exe]`; dev may use `@vscode/ripgrep` or `rg` on `PATH`. Override: `ATOMIC_AGENT_RG_PATH=/path/to/rg`.
-
-### Document and archive formats
-
-`os.fs.read_document` uses pure-JS backends — tuned for local LLMs (`#` / `##`, `--- page N ---`, `## Sheet: …`, etc.). Metadata in `details` (`pageCount`, `sheetCount`, …).
-
-| Extension | Backend | Notes |
-| --- | --- | --- |
-| `.pdf` | `pdfjs-dist` | text layer; `pagesFrom` / `pagesTo` / `maxPages` |
-| `.docx` | `mammoth` | `includeTables=false` → raw text |
-| `.doc` | `word-extractor` | temp file internally |
-| `.xlsx` | `exceljs` | `sheets` by name or 1-based index |
-| `.rtf` | custom parser | `\uNNNN`, `\'hh`, ignorable groups |
-| `.odt` | `jszip` + `fast-xml-parser` | `content.xml` |
-| `.pptx` | `jszip` + `fast-xml-parser` | per-slide markers |
-| `.txt` / `.md` / `.log` / `.csv` / `.json` / `.html` / `.xml` / `.yaml` | pass-through | UTF-8, latin1 fallback |
-
-`format: "plain"` overrides detection when extension is unknown. Defaults: `maxBytes = 5 MB`, `maxPages = 50`.
-
-**Archives** (`os.fs.archive.*`):
-
-| Extension | Backend | Notes |
-| --- | --- | --- |
-| `.zip` | `jszip` | symlinks opt-in `followSymlinks` |
-| `.tar` | `tar-stream` | streaming; hard-links |
-| `.tar.gz` / `.tgz` | `tar-stream` + `zlib` | gunzip |
-| `.gz` | `zlib` | single member; synthetic name |
-
-`sanitizeEntryPath` blocks zip-slip. `ExtractBudget` defaults: **100 MB total / 10 MB per file / 10 000 entries** — skips with reasons in `details.skippedEntries` instead of hard-failing.
-
-### HTTP tool policy
-
-`os.http.request` uses the system **`curl`**. Configure under `config.http`:
-
-```json
-{
-  "http": {
-    "enabled": true,
-    "approvalMode": "writes",
-    "hostAllowlist": null,
-    "maxResponseBytes": 1048576,
-    "defaultTimeoutMs": 30000
-  }
-}
+```bash
+atomic-agent trace list --limit 10
+atomic-agent trace show <sessionId>
+atomic-agent trace show <sessionId> --raw
+atomic-agent trace replay <sessionId>
 ```
 
-| Field | Meaning |
-| --- | --- |
-| `enabled` | `false` disables the tool |
-| `approvalMode` | `never` / `writes` (POST prompts) / `always` |
-| `hostAllowlist` | `null` = any host; else hostnames + `*.wildcards` |
-| `maxResponseBytes` | Body cap + truncation flag |
-| `defaultTimeoutMs` | Fallback if the model omits `timeoutMs` |
+Traces capture:
 
-### Diff and patch
+- turns and steps
+- prompt hashes and prompt tails
+- completion content
+- tool invocations and outcomes
+- failure categories
 
-`os.fs.diff` — unified diff from two paths or two strings. `os.fs.patch`: **`apply=false`** (default) parses and previews per hunk without writes; **`apply=true`** needs approval and **refuses partial apply**. Options align with `patch(1)` (`fuzzFactor`, `stripComponents`, default strip `1`).
+`trace replay` helps explain lost KV-cache wins by detecting drift in the stable prompt prefix.
 
-### Git tools
+Treat traces as sensitive local artifacts: secret redaction is not applied yet.
 
-Read-only; `GIT_PAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `LC_ALL=C`. Each tool returns `output` plus structured `details` from porcelain / `for-each-ref`.
+## Configuration
 
-### Process tools
+User-facing configuration lives in:
 
-`os.proc.list` — normalised `{ pid, ppid, user, cpuPercent, memPercent, command }` from POSIX `ps` or Windows `tasklist`. `os.proc.kill` — always approved; preview includes image + user. Signals: `SIGTERM` (default), `SIGKILL`, `SIGINT`, `SIGHUP`.
+- `<stateDir>/config.json`
 
-### Filesystem watch
+Important environment variables:
 
-`chokidar`, one-shot, blocking. Default timeout **5 s**, max **60 s**. `recursive=true` for deep watch. Events `{ kind, path, timestamp }` relative to root; `stopAfterFirst`, `events: ["unlink"]`, etc. Watcher closed on abort/timeout to avoid handle leaks.
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ATOMIC_AGENT_STATE_DIR` | `~/.atomic-agent` | State, config, browser profile, skills, traces |
+| `ATOMIC_AGENT_LLAMA_API_KEY` | unset | Optional bearer token for `llama-server` |
+| `ATOMIC_AGENT_LLAMA_MAX_TOKENS` | `4096` | Completion cap (`n_predict`) |
+| `ATOMIC_AGENT_BROWSER_CHANNEL` | `chrome` | `chrome`, `msedge`, or `chromium` |
+| `ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH` | unset | Explicit Chromium-family executable |
+| `ATOMIC_AGENT_BROWSER_HEADLESS` | `0` | Headless browser mode |
+| `ATOMIC_AGENT_BROWSER_NO_SANDBOX` | `0` | Pass `--no-sandbox` when needed |
+| `ATOMIC_AGENT_BROWSER_CDP_URL` | unset | Attach to an already-running browser via CDP |
 
----
+The config CLI uses **whole-file semantics**. Pass a full JSON document, not dotted patches.
+
+## Browser And Host Requirements
+
+- Install **Google Chrome** or **Microsoft Edge**. Browser binaries are not bundled.
+- `atomic-agent` uses `playwright-core` and attaches to the installed system browser.
+- On **macOS**, window-management workflows may need Accessibility and Screen Recording permissions.
+- On **Linux**, `wmctrl` improves window-control features.
+- The bundle ships a pinned `ripgrep` for `os.fs.grep`, but external `git` is still expected on the host.
+
+## Shipping Model
+
+`atomic-agent` is designed to ship as a compact runtime, not a monolith:
+
+- Node SEA **CLI** single-file executables per target
+- local runtime assets such as `grammars/tool-call.gbnf` and pinned `ripgrep`
+- no bundled browser
+- no bundled starter skills
+- no forced hosted control plane
+
+See [BUNDLING.md](BUNDLING.md) for the target matrix, CI signing, and packaging details.
+
+### Install CLI from a GitHub release (macOS / Linux)
+
+After a maintainer has published a draft release from CI (or promoted it), you can run:
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/OWNER/atomic-agent/BRANCH/scripts/install.sh" | sh
+export PATH="$HOME/.local/bin:$PATH"   # if shown by the script
+```
+
+Replace `OWNER/atomic-agent` and `BRANCH` with your fork (or set `ATOMIC_AGENT_REPO=owner/atomic-agent`). On **macOS**, the first launch may trigger a **network** Gatekeeper check for a notarized-but-unstapled binary; grant **Accessibility** and **Screen Recording** for window automation. See [BUNDLING.md](BUNDLING.md) for `ATOMIC_AGENT_VERSION` and `ATOMIC_AGENT_INSTALL_DIR`.
+
+## Explicit Non-goals
+
+- It is **not** a bundled cloud agent platform.
+- It is **not** a full IDE-style coding agent product.
+- It does **not** rely on giant prompts or hidden planner loops.
+- It does **not** bundle Chrome, Playwright browser binaries, or remote SaaS orchestration.
+
+That restraint is deliberate. The runtime stays small, explicit, and embeddable.
 
 ## Development
 
 ```bash
 npm install
-npm run lint    # tsc --noEmit
-npm test        # vitest run
-npm run build   # compile to dist/
+npm run lint
+npm test
+npm run build
 ```
 
-For automated contributors (invariants, module map, layout rules): **[AGENTS.md](AGENTS.md)**.
+Repository docs:
 
----
+- [ARCHITECTURE.md](ARCHITECTURE.md) for the full system design
+- [MEMORY.md](MEMORY.md) for cross-session memory
+- [SKILLS.md](SKILLS.md) for the skill format
+- [EVOLUTION.md](EVOLUTION.md) for design evolution
+- [AGENTS.md](AGENTS.md) for contributor rules and invariants
 
 ## License
 
-TBD.
+[MIT](LICENSE) © 2026 Biogenic Ooze

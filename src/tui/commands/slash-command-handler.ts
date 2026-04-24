@@ -1,5 +1,5 @@
 import type { TuiAction } from "../tui-action.js";
-import { normalizeLlamaBaseUrl } from "../persist-user-llama-url.js";
+import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";
 import { parseSlashCommand } from "./slash-command-parser.js";
 import { resolveSlashCommand, SLASH_COMMANDS } from "./slash-commands.js";
 
@@ -40,6 +40,9 @@ export interface SlashDispatchResult {
   readonly taskCancelId?: string;
   /** Task id to run immediately via `TaskRunner.runOne` (`/task run <id>`). */
   readonly taskRunId?: string;
+  readonly localModelsPullModelId?: string;
+  readonly localModelsUseModelId?: string;
+  readonly triggerLocalModelsStatus?: boolean;
 }
 
 /**
@@ -147,6 +150,8 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return pureActions([], { triggerSkillCatalogDump: true });
     case "memory":
       return pureActions([], { triggerMemoryDump: true });
+    case "models":
+      return dispatchModelsSub(parsed.args);
     case "tasks":
       return pureActions([
         { type: "ui_mode_set", mode: "debug" },
@@ -154,33 +159,6 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       ]);
     case "task":
       return dispatchTaskSub(parsed.args);
-    case "llama": {
-      const argPart = parsed.args.trim();
-      if (argPart.length === 0) {
-        return pureActions([], {
-          systemMessage:
-            "usage: /llama <base-url> — probes GET /health then saves to config.json (API key: ATOMIC_AGENT_LLAMA_API_KEY)",
-        });
-      }
-      try {
-        const url = normalizeLlamaBaseUrl(argPart);
-        return {
-          actions: [],
-          clearBuffer: true,
-          triggerAbort: false,
-          triggerQuit: false,
-          triggerSessionPicker: false,
-          triggerSessionNew: false,
-          triggerMemoryDump: false,
-          triggerSkillCatalogDump: false,
-          triggerDebugBundleDump: false,
-          forwardAsMessage: false,
-          persistLlamaUrl: url,
-        };
-      } catch {
-        return pureActions([], { systemMessage: "invalid URL for /llama" });
-      }
-    }
     default:
       return pureActions([], {
         systemMessage: `command /${resolved.name} not yet implemented`,
@@ -218,8 +196,62 @@ function pureActions(
     triggerDebugBundleDump: false,
     forwardAsMessage: false,
     persistLlamaUrl: undefined,
+    taskCancelId: undefined,
+    taskRunId: undefined,
+    localModelsPullModelId: undefined,
+    localModelsUseModelId: undefined,
+    triggerLocalModelsStatus: false,
     ...overrides,
   };
+}
+
+/**
+ * Sub-dispatcher for `/models [verb] [args]`. Accepted shapes:
+ *   - (bare)        — open the Models tab.
+ *   - `pull <id>`   — open the tab and kick off a pull for the given id.
+ *   - `use <id>`    — open the tab and set the given id as active.
+ *   - `status`      — emit the managed-runtime status line in the feed.
+ *   - `<base-url>`  — persist the base URL for external mode (back-compat).
+ */
+function dispatchModelsSub(rawArgs: string): SlashDispatchResult {
+  const argPart = rawArgs.trim();
+  const bits = argPart.split(/\s+/).filter(Boolean);
+  if (argPart.length === 0) {
+    return pureActions([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "models" },
+    ]);
+  }
+  if (bits[0] === "pull" && bits[1]) {
+    return {
+      ...pureActions([
+        { type: "ui_mode_set", mode: "debug" },
+        { type: "tab_changed", tab: "models" },
+      ]),
+      localModelsPullModelId: bits[1],
+    };
+  }
+  if (bits[0] === "use" && bits[1]) {
+    return {
+      ...pureActions([
+        { type: "ui_mode_set", mode: "debug" },
+        { type: "tab_changed", tab: "models" },
+      ]),
+      localModelsUseModelId: bits[1],
+    };
+  }
+  if (bits[0] === "status") {
+    return pureActions([], { triggerLocalModelsStatus: true });
+  }
+  try {
+    const url = normalizeLocalLlmBaseUrl(argPart);
+    return { ...pureActions([]), persistLlamaUrl: url };
+  } catch {
+    return pureActions([], {
+      systemMessage:
+        "usage: /models | /models pull <id> | /models use <id> | /models status | /models <base-url>",
+    });
+  }
 }
 
 /**

@@ -34,8 +34,8 @@ describe("loadConfig", () => {
     expect(existsSync(path)).toBe(true);
     const written = JSON.parse(readFileSync(path, "utf8"));
     expect(written.version).toBe(USER_CONFIG_VERSION);
-    expect(config.llama.url).toBe("http://127.0.0.1:8080");
-    expect(config.llama.completionMaxTokens).toBe(4096);
+    expect(config.localModels.url).toBe("http://127.0.0.1:8080");
+    expect(config.localModels.completionMaxTokens).toBe(4096);
     expect(config.log.level).toBe("info");
     expect(config.agent.approvalRequired).toBe(true);
   });
@@ -43,21 +43,25 @@ describe("loadConfig", () => {
   it("maps ATOMIC_AGENT_LLAMA_MAX_TOKENS to completionMaxTokens with bounds", () => {
     process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = "8192";
     resetConfigCache();
-    expect(loadConfig().llama.completionMaxTokens).toBe(8192);
+    expect(loadConfig().localModels.completionMaxTokens).toBe(8192);
     process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = "10";
     resetConfigCache();
-    expect(loadConfig().llama.completionMaxTokens).toBe(64);
+    expect(loadConfig().localModels.completionMaxTokens).toBe(64);
     process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = "999999999";
     resetConfigCache();
-    expect(loadConfig().llama.completionMaxTokens).toBe(131_072);
+    expect(loadConfig().localModels.completionMaxTokens).toBe(131_072);
   });
 
   it("reads values from an existing user config file", () => {
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
-      version: USER_CONFIG_VERSION,
-      llama: { url: "http://llama.internal:4444" },
+      ...USER_CONFIG_DEFAULTS,
+      localModels: {
+        ...USER_CONFIG_DEFAULTS.localModels,
+        url: "http://llama.internal:4444",
+      },
       log: { level: "debug" },
       agent: {
+        ...USER_CONFIG_DEFAULTS.agent,
         tokenBudget: 3000,
         maxSteps: 42,
         toolTimeoutMs: 12_000,
@@ -65,7 +69,7 @@ describe("loadConfig", () => {
       },
     });
     const config = loadConfig();
-    expect(config.llama.url).toBe("http://llama.internal:4444");
+    expect(config.localModels.url).toBe("http://llama.internal:4444");
     expect(config.log.level).toBe("debug");
     expect(config.agent.maxSteps).toBe(42);
     expect(config.agent.toolTimeoutMs).toBe(12_000);
@@ -76,7 +80,7 @@ describe("loadConfig", () => {
     process.env.ATOMIC_AGENT_LLAMA_API_KEY = "secret";
     process.env.ATOMIC_AGENT_BROWSER_CHANNEL = "msedge";
     const config = loadConfig();
-    expect(config.llama.apiKey).toBe("secret");
+    expect(config.localModels.apiKey).toBe("secret");
     expect(config.browser.channel).toBe("msedge");
   });
 
@@ -105,5 +109,41 @@ describe("loadConfig", () => {
     const config = loadConfig();
     expect(config.tracing.trace.enabled).toBe(false);
     expect(config.tracing.trace.maxBytesPerSession).toBe(4096);
+  });
+
+  it("overrides localModels.url to localhost when mode is managed", () => {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      localModels: {
+        ...USER_CONFIG_DEFAULTS.localModels,
+        url: "http://127.0.0.1:8080",
+        mode: "managed",
+        managed: {
+          ...USER_CONFIG_DEFAULTS.localModels.managed,
+          port: 19_000,
+        },
+      },
+    });
+    resetConfigCache();
+    const config = loadConfig();
+    expect(config.localModels.mode).toBe("managed");
+    expect(config.localModels.url).toBe("http://127.0.0.1:19000");
+    expect(config.paths.localModelsDataDir).toBe(join(stateDir, "models"));
+  });
+
+  it("uses localModelsDataDir override when set", () => {
+    const override = join(stateDir, "custom-local-llm");
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      localModels: {
+        ...USER_CONFIG_DEFAULTS.localModels,
+        managed: {
+          ...USER_CONFIG_DEFAULTS.localModels.managed,
+          dataDirOverride: override,
+        },
+      },
+    });
+    resetConfigCache();
+    expect(loadConfig().paths.localModelsDataDir).toBe(override);
   });
 });

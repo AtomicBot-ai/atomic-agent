@@ -20,7 +20,7 @@ const HELP =
     "",
     "Example:",
     "  atomic-agent config get",
-    "  atomic-agent config set '{\"version\":1,\"llama\":{\"url\":\"http://127.0.0.1:18991\"},",
+    "  atomic-agent config set '{\"version\":1,\"llama\":{\"url\":\"http://127.0.0.1:19091\"},",
     "                            \"log\":{\"level\":\"info\"},",
     "                            \"agent\":{\"tokenBudget\":3000,\"maxSteps\":25,",
     "                                     \"toolTimeoutMs\":60000,\"approvalRequired\":true}}'",

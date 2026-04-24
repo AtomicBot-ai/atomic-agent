@@ -7,6 +7,8 @@ import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { SessionState } from "../session/session-state.js";
 import { clearTtyScreen } from "./clear-tty-screen.js";
 import { captureAndWriteDebugBundle } from "./debug-bundle/index.js";
+import { LlmHealthPoller } from "./llm-health/llm-health-poller.js";
+import { LocalModelsOrchestrator } from "./local-models/local-models-orchestrator.js";
 import { TasksOrchestrator } from "./tasks/tasks-orchestrator.js";
 import type { TuiEventBus } from "./tui-app.js";
 import { turnsToMessages } from "./turns-to-messages.js";
@@ -17,6 +19,8 @@ const DEBUG_BUNDLE_DIR_NAME = "atomic-agent-debug";
 
 export interface ChatOrchestratorOptions {
   maxSteps: number;
+  /** Initial llama-server base URL for the footer health poller. */
+  llamaUrl: string;
 }
 
 /** Multiline text for the chat transcript (`/memory`); feed still gets `runtime_info` lines. */
@@ -63,6 +67,8 @@ export class ChatOrchestrator {
   private readonly queue: string[] = [];
   public exitCode = 0;
   public readonly tasks: TasksOrchestrator;
+  public readonly localModels: LocalModelsOrchestrator;
+  public readonly llmHealth: LlmHealthPoller;
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -73,12 +79,20 @@ export class ChatOrchestrator {
       getCurrentSessionId: () => this.session?.id ?? null,
       switchSession: (id) => this.switchSession(id),
     });
+    this.localModels = new LocalModelsOrchestrator(bus);
+    this.llmHealth = new LlmHealthPoller(bus, options.llamaUrl);
   }
 
   start(): void {
     if (this.session) return;
     this.session = this.runtime.createSession();
     this.bus.emit({ type: "session_created", sessionId: this.session.id });
+    this.llmHealth.start();
+  }
+
+  /** Update the llama-server URL tracked by the footer health poller. */
+  updateLlamaUrl(nextUrl: string): void {
+    this.llmHealth.updateUrl(nextUrl);
   }
 
   openSessionPicker(): void {
@@ -320,6 +334,8 @@ export class ChatOrchestrator {
   async shutdown(): Promise<void> {
     this.abortCurrentTurn();
     this.tasks.shutdown();
+    this.localModels.shutdown();
+    this.llmHealth.stop();
     await this.runtime.shutdown();
   }
 }

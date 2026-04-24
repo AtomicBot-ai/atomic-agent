@@ -8,6 +8,7 @@ import {
   resolveSlashCommand,
 } from "./commands/slash-commands.js";
 import type { TuiAction } from "./tui-action.js";
+import { isKnownLocalModelId } from "../local-llm/index.js";
 import type { TuiAppCallbacks } from "./tui-app.js";
 import { canAcceptMessage, type TuiState } from "./tui-state.js";
 
@@ -123,4 +124,17 @@ export function runSlashCommand(
   }
   if (result.taskCancelId) callbacks.onTaskCancelConfirmed?.(result.taskCancelId);
   if (result.taskRunId) callbacks.onTaskRunNowRequested?.(result.taskRunId);
+  if (
+    result.localModelsPullModelId &&
+    isKnownLocalModelId(result.localModelsPullModelId)
+  ) {
+    callbacks.onLocalModelsPullRequested?.(result.localModelsPullModelId);
+  }
+  if (
+    result.localModelsUseModelId &&
+    isKnownLocalModelId(result.localModelsUseModelId)
+  ) {
+    callbacks.onLocalModelsSetActiveRequested?.(result.localModelsUseModelId);
+  }
+  if (result.triggerLocalModelsStatus) void callbacks.onLocalModelsStatusRequested?.();
 }

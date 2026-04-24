@@ -6,6 +6,8 @@ import { ReasoningTab } from "../reasoning-tab.js";
 import { WorldPanel } from "../world-panel.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState, TuiTab } from "../tui-state.js";
+import { LocalLlmLogsPanel } from "./local-llm-logs-panel.js";
+import { LocalModelsPanel } from "./local-models-panel.js";
 import { TasksPanel } from "./tasks-panel.js";
 
 interface DebugPaneProps {
@@ -39,6 +41,8 @@ function DebugTabBar({ state }: { state: TuiState }): ReactElement {
     },
     { id: "logs", label: `Logs${suffix(state.logs.length)}` },
     { id: "tasks", label: `Tasks${suffix(state.tasksPanel.rows.length)}` },
+    { id: "models", label: "Local LLM" },
+    { id: "llm-logs", label: "LLM logs" },
   ];
   return (
     <Box>
@@ -85,6 +89,10 @@ function ActiveDebugTab({
       return <LogsTab state={state} maxVisible={maxVisible} />;
     case "tasks":
       return <TasksPanel panel={state.tasksPanel} now={Date.now()} />;
+    case "models":
+      return <LocalModelsPanel panel={state.localModelsPanel} />;
+    case "llm-logs":
+      return <LocalLlmLogsPanel logs={state.localLlmLogs} maxLines={maxVisible} />;
     default:
       return <EventFeed state={state} maxVisible={maxVisible} />;
   }
@@ -101,6 +109,8 @@ const DEBUG_TAB_ORDER: readonly TuiTab[] = [
   "reasoning",
   "logs",
   "tasks",
+  "models",
+  "llm-logs",
 ];
 
 /**

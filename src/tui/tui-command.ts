@@ -7,8 +7,8 @@ import type { LogRecord, LogSink } from "../tracing/structured-logger.js";
 import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { parseTuiArgs } from "./tui-args.js";
-import { persistUserLlamaUrl } from "./persist-user-llama-url.js";
-import { runLlamaStartupGateIfNeeded } from "./run-llama-config-wizard.js";
+import { persistUserLocalLlmUrl } from "./persist-user-local-models-config.js";
+import { runLocalModelsStartupGateIfNeeded } from "./run-local-models-config-wizard.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
 import type { TuiSessionInfo } from "./tui-state.js";
 
@@ -28,10 +28,18 @@ export async function tuiCommand(args: string[]): Promise<number> {
   getConfig();
   const skipLlamaWizard =
     parsed.skipLlamaSetup || process.env.ATOMIC_AGENT_TUI_SKIP_LLAMA_SETUP === "1";
-  const startupGate = await runLlamaStartupGateIfNeeded({
+  const startupGate = await runLocalModelsStartupGateIfNeeded({
     skipWizard: skipLlamaWizard,
   });
   if (startupGate === "aborted") return 1;
+  // When the startup gate fired, llama-server was JUST confirmed
+  // unreachable — a fresh health probe + /props fetch during runtime
+  // bootstrap would just rerun the same failure with retries, making
+  // the wizard feel like it hangs for several seconds. Fall back to the
+  // plain profile immediately and let the footer indicator + background
+  // poller drive recovery. The TUI always lands in chat mode so the
+  // user sees the splash banner on a fresh session.
+  const skipRuntimeHealthProbe = startupGate === "saved_managed";
   const config = getConfig();
   const approvalRequired = !parsed.noApproval && config.agent.approvalRequired;
   const maxSteps = parsed.maxSteps ?? config.agent.maxSteps;
@@ -52,12 +60,15 @@ export async function tuiCommand(args: string[]): Promise<number> {
       logSinks: [logSink],
       metricSinks: [metricSink],
     },
+    ...(skipRuntimeHealthProbe
+      ? { overrides: { skipLlamaHealthCheck: true } }
+      : {}),
   });
 
   const sessionInfo: TuiSessionInfo = {
     sessionId: null,
     workingDir: parsed.workingDir,
-    llamaUrl: config.llama.url,
+    llamaUrl: config.localModels.url,
     browserChannel: config.browser.channel,
     browserHeadless: config.browser.headless,
     approvalRequired,
@@ -65,7 +76,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
     skillCount: runtime.skillCatalog.length,
   };
 
-  const orchestrator = new ChatOrchestrator(runtime, bus, { maxSteps });
+  const orchestrator = new ChatOrchestrator(runtime, bus, {
+    maxSteps,
+    llamaUrl: config.localModels.url,
+  });
 
   const onSignal = (): void => orchestrator.quit();
   process.once("SIGINT", onSignal);
@@ -96,7 +110,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSessionNewRequested: () => orchestrator.newSession(),
         onMemoryDumpRequested: () => orchestrator.dumpProfile(),
         onSkillCatalogRequested: () => orchestrator.dumpSkillCatalog(),
-        onPersistLlamaUrl: (nextUrl) => persistLlamaUrl(nextUrl, bus),
+        onPersistLlamaUrl: (nextUrl) => persistLlamaUrl(nextUrl, bus, orchestrator),
         onTasksAutoRefreshStart: () => orchestrator.tasks.startAutoRefresh(),
         onTasksRefreshRequested: () => orchestrator.tasks.refresh(),
         onTaskDetailRequested: (taskId) => orchestrator.tasks.openDetail(taskId),
@@ -107,6 +121,23 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onTaskCreateSubmitted: (input) => orchestrator.tasks.createTask(input),
         onDebugBundleExportRequested: (state) =>
           orchestrator.exportDebugBundle(state),
+        onLocalModelsAutoRefreshStart: () => orchestrator.localModels.startAutoRefresh(),
+        onLocalModelsPullRequested: (id) => void orchestrator.localModels.pullModel(id),
+        onLocalModelsSetActiveRequested: (id) =>
+          void orchestrator.localModels.setActive(id),
+        onLocalModelsBackendPullRequested: () =>
+          void orchestrator.localModels.pullBackend(),
+        onLocalModelsRefreshRequested: () => void orchestrator.localModels.refresh(),
+        onLocalModelsRemoveConfirmed: (id) => orchestrator.localModels.removeLocalModel(id),
+        onLocalModelsStatusRequested: () => orchestrator.localModels.emitStatusLine(),
+        onLocalModelsDaemonStartRequested: () =>
+          void orchestrator.localModels.startDaemon(),
+        onLocalModelsDaemonStopRequested: () =>
+          void orchestrator.localModels.stopDaemon(),
+        onLocalLlmLogsAutoRefreshStart: () =>
+          orchestrator.localModels.startLogsAutoRefresh(),
+        onLocalLlmLogsAutoRefreshStop: () =>
+          orchestrator.localModels.stopLogsAutoRefresh(),
       },
     }),
     { stdout: process.stdout, stderr: process.stderr, exitOnCtrlC: false },
@@ -116,8 +147,14 @@ export async function tuiCommand(args: string[]): Promise<number> {
 
   bus.emit({
     type: "runtime_info",
-    line: `runtime ready — llama ${config.llama.url}, browser ${config.browser.channel}`,
+    line: `runtime ready — local-llm ${config.localModels.url}, browser ${config.browser.channel}`,
   });
+
+  // If the user is in managed mode and the backend + model are ready
+  // on disk, start the daemon immediately so there is no extra
+  // "run this command in another terminal" step. No-op in external
+  // mode or when the prerequisites are missing.
+  void orchestrator.localModels.autoStartIfReady();
 
   try {
     await ink.waitUntilExit();
@@ -136,6 +173,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
 function persistLlamaUrl(
   nextUrl: string,
   bus: ReturnType<typeof makeTuiEventBus>,
+  orchestrator: ChatOrchestrator,
 ): void {
   void (async () => {
     try {
@@ -148,19 +186,20 @@ function persistLlamaUrl(
       if (!health.reachable) {
         bus.emit({
           type: "runtime_info",
-          line: `llama /health failed at ${nextUrl}: ${health.error ?? "unknown"}`,
+          line: `local-llm /health failed at ${nextUrl}: ${health.error ?? "unknown"}`,
         });
         return;
       }
-      persistUserLlamaUrl(nextUrl);
+      persistUserLocalLlmUrl(nextUrl);
       bus.emit({ type: "llama_url_changed", url: nextUrl });
+      orchestrator.updateLlamaUrl(nextUrl);
       bus.emit({
         type: "runtime_info",
-        line: `llama URL saved (${health.latencyMs}ms)`,
+        line: `local-llm URL saved (${health.latencyMs}ms)`,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      bus.emit({ type: "runtime_info", line: `llama URL not saved: ${msg}` });
+      bus.emit({ type: "runtime_info", line: `local-llm URL not saved: ${msg}` });
     }
   })();
 }

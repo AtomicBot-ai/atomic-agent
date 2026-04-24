@@ -53,7 +53,7 @@ describe("user config file IO", () => {
     const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const first = ensureUserConfigFileSync(path);
     expect(first).toEqual(USER_CONFIG_DEFAULTS);
-    expect(readFileSync(path, "utf8")).toContain("\"llama\"");
+    expect(readFileSync(path, "utf8")).toContain("\"localModels\"");
     expect(warn).toHaveBeenCalledOnce();
 
     const second = ensureUserConfigFileSync(path);

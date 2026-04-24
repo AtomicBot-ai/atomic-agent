@@ -1,10 +1,14 @@
 # Bundling
 
-The sidecar ships as a single-file executable per target, produced via
-Node SEA. llama-server is **not** bundled — operators run it separately
-and the sidecar connects over HTTP (`ATOMIC_AGENT_LLAMA_URL`).
-Neither Chrome/Edge nor Playwright browser binaries are bundled;
-`playwright-core` attaches to the already-installed system browser.
+The **CLI** (`tui`, `run`, `serve`, `models`, …) ships as a single-file
+executable per target, produced via Node SEA (`dist/cli/index.js` in
+`sea-config.json`). The separate **Tauri sidecar** entry is still
+`atomic-agent-sidecar` when installed from npm; it is not the SEA
+release described here. llama-server is **not** bundled — connect over
+HTTP (`ATOMIC_AGENT_LLAMA_URL`) or use `atomic-agent models` for managed
+local runtimes. Neither Chrome/Edge nor Playwright browser binaries are
+bundled; `playwright-core` attaches to the already-installed system
+browser.
 
 ## Target matrix
 
@@ -13,7 +17,7 @@ Neither Chrome/Edge nor Playwright browser binaries are bundled;
 | `darwin-arm64` | darwin   | arm64  | `macos-14`         | `tar.gz` |
 | `darwin-x64`   | darwin   | x64    | `macos-13`         | `tar.gz` |
 | `linux-x64`    | linux    | x64    | `ubuntu-22.04`     | `tar.gz` |
-| `linux-arm64`  | linux    | arm64  | `ubuntu-22.04-arm` | `tar.gz` |
+| `linux-arm64`  | linux    | arm64  | `ubuntu-24.04-arm` | `tar.gz` |
 | `win32-x64`    | win32    | x64    | `windows-2022`     | `zip`    |
 
 Run `npm run bundle:matrix -- --json` to get the JSON input for a GitHub
@@ -45,21 +49,53 @@ Actions matrix strategy.
    npm run bundle:package
    ```
 
-The output lands at `bundle/atomic-agent-<slug>.<ext>`.
+The output lands at `bundle/atomic-agent-<slug>.<ext>` and
+`bundle/atomic-agent-<slug>.<ext>.sha256` (for `shasum -a 256 -c`).
 
-## Signing / notarisation
+## Release (CI)
 
-These scripts stop at the unsigned artefact. Wire `codesign` + `notarytool`
-on macOS and `signtool` on Windows in CI before distribution — Tauri
-will refuse to spawn an unsigned sidecar on notarised builds.
+The workflow [`.github/workflows/release.yml`](../.github/workflows/release.yml)
+builds the matrix on tag `v*` or on `workflow_dispatch` (optionally
+publishing a **draft** GitHub Release with all artifacts). macOS jobs
+run [scripts/sign-mac-binary.sh](../scripts/sign-mac-binary.sh) and
+[scripts/notarize-mac-binary.sh](../scripts/notarize-mac-binary.sh) (same
+notary key pattern as openclaw / `electron-desktop`). Linux and Windows
+archives are unsigned in this milestone; Windows `signtool` signing is
+deferred. Tauri hosts that embed a sidecar should use a **signed** binary
+on notarised macOS app builds.
+
+**GitHub secrets (match openclaw):** `MACOS_CSC_LINK` (base64 .p12),
+`MACOS_CSC_KEY_PASSWORD`, `NOTARYTOOL_KEY` (App Store Connect API key
+`.p8` **contents**), `NOTARYTOOL_KEY_ID`, `NOTARYTOOL_ISSUER`. Raw
+Mach-O binaries are not stapled; Gatekeeper uses an online ticket on
+first launch.
+
+## Install (macOS / Linux, curl)
+
+From a published release (or `latest`):
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/OWNER/atomic-agent/BRANCH/scripts/install.sh" | sh
+```
+
+Set `ATOMIC_AGENT_REPO=owner/atomic-agent` if the default in
+[scripts/install.sh](../scripts/install.sh) does not match your fork.
+Optional: `ATOMIC_AGENT_VERSION`, `ATOMIC_AGENT_INSTALL_DIR`.
+
+## Signing / notarisation (local / manual)
+
+On macOS you can run the same shell scripts the workflow uses, or produce
+an unsigned binary with `npm run bundle:build-binary` and
+`npm run bundle:package` only. Windows code signing is not automated here.
 
 ## What the bundle contains
 
 ```
-atomic-agent-sidecar[.exe]    # SEA binary, entry point
-grammars/tool-call.gbnf       # GBNF for structured tool-call decoding
-vendor/rg[.exe]               # pinned ripgrep for os.fs.grep (sidecar file)
-README.txt                    # short runtime note
+atomic-agent[.exe]            # SEA binary (CLI entry)
+grammars/tool-call.gbnf      # GBNF for structured tool-call decoding
+vendor/rg[.exe]              # pinned ripgrep for os.fs.grep (sibling of binary)
+prebuilds/…                  # better-sqlite3 native prebuilds for the target
+README.txt                   # short runtime note
 ```
 
 ## Bundled ripgrep
@@ -133,12 +169,12 @@ which are standard OS utilities and need no bundling.
 
 ## Runtime requirements (documented in README.txt)
 
-- **External llama-server.** Set `ATOMIC_AGENT_LLAMA_URL=http://host:port`
-  before launching the sidecar.
+- **External llama-server (or managed mode).** Set
+  `ATOMIC_AGENT_LLAMA_URL=http://host:port` as needed.
 - **Google Chrome or Microsoft Edge installed** on the host. We use the
   system browser via `playwright-core` (`channel: chrome|msedge`).
 - **macOS:** Accessibility + Screen Recording permissions must be granted
-  to the sidecar binary for window-management and reliable keyboard
+  to the `atomic-agent` binary for window-management and reliable keyboard
   automation. Users grant this the first time the tool is used.
 - **Linux:** `wmctrl` needed for `os.window.*`; `xdg-open`/`pbpaste`
   equivalents are consumed by `clipboardy` where applicable.

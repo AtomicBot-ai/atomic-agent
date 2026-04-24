@@ -1,4 +1,5 @@
 import type { TaskSchedule } from "../tasks/task-types.js";
+import { isKnownLocalModelId } from "../local-llm/models-catalog.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -34,12 +35,12 @@ export interface WebhookConfig {
 
 /**
  * Full runtime config assembled from the user config file (6 user-facing
- * keys) plus environment variables (bootstrap paths, browser, llama
+ * keys) plus environment variables (bootstrap paths, browser, local-LLM
  * timeouts, etc.). All consumers outside `src/config/` depend only on
  * this shape.
  */
 export interface AtomicAgentConfig {
-  llama: {
+  localModels: {
     url: string;
     apiKey: string | null;
     healthPath: string;
@@ -60,6 +61,9 @@ export interface AtomicAgentConfig {
     /** Base delay between completion retries; grows exponentially with jitter. */
     completionRetryBackoffMs: number;
     defaultSlotId: number;
+    /** `external` uses `url`; `managed` overrides runtime `url` to localhost + `managed.port`. */
+    mode: LocalLlmMode;
+    managed: UserManagedLocalLlmConfig;
   };
   paths: {
     stateDir: string;
@@ -79,6 +83,8 @@ export interface AtomicAgentConfig {
     globalSkillsDir: string;
     projectSkillsDirName: string;
     userConfigFile: string;
+    /** Resolved root for managed llama.cpp data (`backend/`, `models/`). */
+    localModelsDataDir: string;
   };
   agent: {
     tokenBudget: number;
@@ -305,14 +311,27 @@ export interface AtomicAgentConfig {
  */
 export type HttpApprovalMode = "never" | "writes" | "always";
 
+export type LocalLlmMode = "external" | "managed";
+
+export interface UserManagedLocalLlmConfig {
+  modelId: string | null;
+  port: number;
+  dataDirOverride: string | null;
+  autoUpdate: boolean;
+}
+
 /**
- * The 6 user-facing keys that live in `<stateDir>/config.json`. The file
+ * User-facing keys that live in `<stateDir>/config.json`. The file
  * format is versioned; bump `USER_CONFIG_VERSION` on breaking schema
  * changes and add a migration step in `parseUserConfigFile`.
  */
 export interface UserConfigFile {
   version: typeof USER_CONFIG_VERSION;
-  llama: { url: string };
+  localModels: {
+    url: string;
+    mode: LocalLlmMode;
+    managed: UserManagedLocalLlmConfig;
+  };
   log: { level: LogLevel };
   agent: {
     tokenBudget: number;
@@ -375,20 +394,29 @@ export interface UserConfigFile {
   webhooks: Record<string, WebhookConfig>;
 }
 
-export const USER_CONFIG_VERSION = 3 as const;
+export const USER_CONFIG_VERSION = 5 as const;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
- * v1 and v2 files are silently upgraded to `USER_CONFIG_VERSION`
- * in-memory; missing sub-keys fall back to `USER_CONFIG_DEFAULTS`.
- * The upgraded shape is written back to disk on the next
- * `config set` / `ensure`.
+ * v5 renamed the `llama` block to `localModels` to remove the Meta
+ * "Llama" conflation — the runtime never ran Llama family models
+ * specifically. Older config files are not migrated: this is active
+ * development, callers delete their `config.json` and start over.
  */
-const SUPPORTED_INPUT_VERSIONS: readonly number[] = [1, 2, USER_CONFIG_VERSION];
+const SUPPORTED_INPUT_VERSIONS: readonly number[] = [USER_CONFIG_VERSION];
 
 export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   version: USER_CONFIG_VERSION,
-  llama: { url: "http://127.0.0.1:8080" },
+  localModels: {
+    url: "http://127.0.0.1:8080",
+    mode: "external",
+    managed: {
+      modelId: null,
+      port: 19091,
+      dataDirOverride: null,
+      autoUpdate: false,
+    },
+  },
   log: { level: "info" },
   agent: {
     tokenBudget: 3000,
@@ -497,6 +525,26 @@ export function parseLogLevel(raw: unknown, field: string): LogLevel {
     field,
     `expected one of debug|info|warn|error, got ${JSON.stringify(raw)}`,
   );
+}
+
+export function parseLocalLlmMode(raw: unknown, field: string): LocalLlmMode {
+  if (raw === "external" || raw === "managed") return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected external|managed, got ${JSON.stringify(raw)}`,
+  );
+}
+
+function parseOptionalManagedModelId(raw: unknown, field: string): string | null {
+  if (raw === null || raw === undefined) return null;
+  const s = parseNonEmptyString(raw, field);
+  if (!isKnownLocalModelId(s)) {
+    throw new ConfigValidationError(
+      field,
+      `unknown managed local model id: ${JSON.stringify(s)}`,
+    );
+  }
+  return s;
 }
 
 export function parseBrowserChannel(raw: unknown, field: string): BrowserChannel {
@@ -752,7 +800,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     );
   }
 
-  const llama = (obj.llama as Record<string, unknown> | undefined) ?? {};
+  const localModels =
+    (obj.localModels as Record<string, unknown> | undefined) ?? {};
   const log = (obj.log as Record<string, unknown> | undefined) ?? {};
   const agent = (obj.agent as Record<string, unknown> | undefined) ?? {};
   const http = (obj.http as Record<string, unknown> | undefined) ?? {};
@@ -780,10 +829,42 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (memory.index as Record<string, unknown> | undefined) ?? {};
   const webhooks = parseWebhookMap(obj.webhooks ?? {}, "webhooks");
 
+  const rawManaged =
+    (localModels.managed as Record<string, unknown> | undefined) ?? {};
+  const managed: UserManagedLocalLlmConfig = {
+    modelId: parseOptionalManagedModelId(
+      rawManaged.modelId,
+      "localModels.managed.modelId",
+    ),
+    port: parsePositiveInt(
+      rawManaged.port ?? USER_CONFIG_DEFAULTS.localModels.managed.port,
+      "localModels.managed.port",
+    ),
+    dataDirOverride:
+      rawManaged.dataDirOverride === null || rawManaged.dataDirOverride === undefined
+        ? null
+        : parseNonEmptyString(
+            rawManaged.dataDirOverride,
+            "localModels.managed.dataDirOverride",
+          ),
+    autoUpdate: parseBool(
+      rawManaged.autoUpdate ?? USER_CONFIG_DEFAULTS.localModels.managed.autoUpdate,
+      "localModels.managed.autoUpdate",
+    ),
+  };
+
   return {
     version: USER_CONFIG_VERSION,
-    llama: {
-      url: parseUrl(llama.url ?? USER_CONFIG_DEFAULTS.llama.url, "llama.url"),
+    localModels: {
+      url: parseUrl(
+        localModels.url ?? USER_CONFIG_DEFAULTS.localModels.url,
+        "localModels.url",
+      ),
+      mode: parseLocalLlmMode(
+        localModels.mode ?? USER_CONFIG_DEFAULTS.localModels.mode,
+        "localModels.mode",
+      ),
+      managed,
     },
     log: {
       level: parseLogLevel(log.level ?? USER_CONFIG_DEFAULTS.log.level, "log.level"),

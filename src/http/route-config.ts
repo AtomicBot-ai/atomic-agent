@@ -70,7 +70,7 @@ function mergeUserConfig(
 ): Record<string, unknown> {
   return {
     version: current.version,
-    llama: { ...current.llama, ...(patch.llama ?? {}) },
+    localModels: { ...current.localModels, ...(patch.localModels ?? {}) },
     log: { ...current.log, ...(patch.log ?? {}) },
     agent: { ...current.agent, ...(patch.agent ?? {}) },
   };

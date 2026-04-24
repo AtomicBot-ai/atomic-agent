@@ -42,8 +42,10 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   },
   { name: "memory", description: "dump the current user profile (cross-session facts)" },
   {
-    name: "llama",
-    description: "set llama-server base URL (health-check, save to config)",
+    name: "models",
+    description:
+      "local-models tab · subcommands: pull <id> | use <id> | status | <base-url>",
+    aliases: ["local"],
   },
   { name: "tasks", description: "jump to the Tasks tab (Option 4 cron + ingress UI)" },
   {

@@ -66,12 +66,12 @@ export async function checkLlamaServer(
   options: HealthCheckOptions = {},
 ): Promise<HealthResult> {
   const config = getConfig();
-  const base = options.url ?? config.llama.url;
-  const url = new URL(config.llama.healthPath, base).toString();
-  const timeoutMs = options.timeoutMs ?? config.llama.healthTimeoutMs;
-  const retries = options.retries ?? config.llama.healthRetries;
-  const backoffMs = options.backoffMs ?? config.llama.healthRetryBackoffMs;
-  const apiKey = options.apiKey ?? config.llama.apiKey;
+  const base = options.url ?? config.localModels.url;
+  const url = new URL(config.localModels.healthPath, base).toString();
+  const timeoutMs = options.timeoutMs ?? config.localModels.healthTimeoutMs;
+  const retries = options.retries ?? config.localModels.healthRetries;
+  const backoffMs = options.backoffMs ?? config.localModels.healthRetryBackoffMs;
+  const apiKey = options.apiKey ?? config.localModels.apiKey;
 
   let last: HealthResult | null = null;
   for (let attempt = 0; attempt <= retries; attempt += 1) {

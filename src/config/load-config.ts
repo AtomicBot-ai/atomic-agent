@@ -87,9 +87,19 @@ export function loadConfig(): AtomicAgentConfig {
   );
   const logLevel: LogLevel = user.log.level;
 
+  const localModelsDataDir = resolvePath(
+    user.localModels.managed.dataDirOverride ?? undefined,
+    resolve(stateDir, "models"),
+  );
+
+  const resolvedLocalLlmUrl =
+    user.localModels.mode === "managed"
+      ? `http://127.0.0.1:${user.localModels.managed.port}`
+      : user.localModels.url;
+
   return {
-    llama: {
-      url: user.llama.url,
+    localModels: {
+      url: resolvedLocalLlmUrl,
       apiKey: readEnv("ATOMIC_AGENT_LLAMA_API_KEY") ?? null,
       healthPath: "/health",
       completionPath: "/completion",
@@ -127,6 +137,8 @@ export function loadConfig(): AtomicAgentConfig {
         "ATOMIC_AGENT_LLAMA_DEFAULT_SLOT",
         ENV_DEFAULTS.DEFAULT_SLOT_ID,
       ),
+      mode: user.localModels.mode,
+      managed: { ...user.localModels.managed },
     },
     paths: {
       stateDir,
@@ -139,6 +151,7 @@ export function loadConfig(): AtomicAgentConfig {
       globalSkillsDir: resolve(stateDir, "skills"),
       projectSkillsDirName: ENV_DEFAULTS.PROJECT_SKILLS_DIR,
       userConfigFile,
+      localModelsDataDir,
     },
     agent: {
       tokenBudget: user.agent.tokenBudget,

@@ -81,7 +81,7 @@ export interface LlamaServerClientOptions {
   /**
    * Overrides the retry budget for `complete()` and the initial fetch
    * of `completeStream()`. When omitted, the client reads
-   * `config.llama.completionRetries` on each request.
+   * `config.localModels.completionRetries` on each request.
    */
   completionRetries?: number;
   completionRetryBackoffMs?: number;
@@ -114,9 +114,9 @@ export class LlamaServerClient {
   constructor(options: LlamaServerClientOptions = {}) {
     const config = getConfig();
     this.baseUrlOverride = options.baseUrl;
-    this.apiKey = options.apiKey ?? config.llama.apiKey;
+    this.apiKey = options.apiKey ?? config.localModels.apiKey;
     this.requestTimeoutMs =
-      options.requestTimeoutMs ?? config.llama.requestTimeoutMs;
+      options.requestTimeoutMs ?? config.localModels.requestTimeoutMs;
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.completionRetriesOverride = options.completionRetries;
     this.completionRetryBackoffMsOverride = options.completionRetryBackoffMs;
@@ -125,7 +125,7 @@ export class LlamaServerClient {
 
   async fetchProps(): Promise<LlamaServerProps> {
     const config = getConfig();
-    const base = this.baseUrlOverride ?? config.llama.url;
+    const base = this.baseUrlOverride ?? config.localModels.url;
     const url = new URL("/props", base).toString();
     const controller = new AbortController();
     const timer = setTimeout(
@@ -315,8 +315,8 @@ export class LlamaServerClient {
     stream: boolean,
   ): { url: string; headers: Record<string, string>; body: string } {
     const config = getConfig();
-    const base = this.baseUrlOverride ?? config.llama.url;
-    const url = new URL(config.llama.completionPath, base).toString();
+    const base = this.baseUrlOverride ?? config.localModels.url;
+    const url = new URL(config.localModels.completionPath, base).toString();
     const headers = this.buildHeaders(stream);
     const payload: Record<string, unknown> = {
       prompt: request.prompt,
@@ -325,7 +325,7 @@ export class LlamaServerClient {
       temperature: request.temperature ?? 0.2,
       top_p: request.topP ?? 0.95,
       top_k: request.topK ?? 40,
-      n_predict: request.maxTokens ?? config.llama.completionMaxTokens,
+      n_predict: request.maxTokens ?? config.localModels.completionMaxTokens,
       repeat_penalty: request.repeatPenalty ?? 1.1,
       repeat_last_n: request.repeatLastN ?? 256,
     };
@@ -353,12 +353,12 @@ export class LlamaServerClient {
     const config = getConfig();
     const maxAttempts = Math.max(
       1,
-      this.completionRetriesOverride ?? config.llama.completionRetries,
+      this.completionRetriesOverride ?? config.localModels.completionRetries,
     );
     const backoffMs = Math.max(
       0,
       this.completionRetryBackoffMsOverride ??
-        config.llama.completionRetryBackoffMs,
+        config.localModels.completionRetryBackoffMs,
     );
     return { maxAttempts, backoffMs };
   }

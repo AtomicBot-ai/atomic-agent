@@ -151,7 +151,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const worldSnapshotMaxTokens =
     input.worldSnapshotMaxTokens ?? config.agent.worldSnapshotMaxTokens;
   const completionMaxTokens =
-    input.completionMaxTokens ?? config.llama.completionMaxTokens;
+    input.completionMaxTokens ?? config.localModels.completionMaxTokens;
 
   const limits = defaultBudget(budgetTotal, {
     conversation: conversationMaxTokens,

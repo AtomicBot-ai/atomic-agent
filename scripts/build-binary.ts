@@ -3,7 +3,7 @@
  * current host platform. Cross-compilation is not supported by SEA —
  * CI runs this on each target runner (darwin-arm64, darwin-x64,
  * linux-x64, linux-arm64, win32-x64) and we stitch the results in
- * `package-bundle.ts`.
+ * `package-bundle.ts`. The embedded entry is the CLI (`dist/cli/index.js`).
  *
  * Usage:
  *   npx tsx scripts/build-binary.ts
@@ -48,9 +48,9 @@ async function main(): Promise<number> {
   const binaryPath = join(outDir, target.executableName);
   const blobPath = join(BUNDLE_ROOT, "sea-prep.blob");
 
-  if (!(await exists(join(ROOT, "dist", "sidecar", "main.js")))) {
+  if (!(await exists(join(ROOT, "dist", "cli", "index.js")))) {
     stderr.write(
-      "dist/sidecar/main.js not found — run `npm run build` first.\n",
+      "dist/cli/index.js not found — run `npm run build` first.\n",
     );
     return 2;
   }

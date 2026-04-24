@@ -1,5 +1,5 @@
 {
-  "main": "dist/sidecar/main.js",
+  "main": "dist/cli/index.js",
   "output": "bundle/sea-prep.blob",
   "disableExperimentalSEAWarning": true,
   "useSnapshot": false,

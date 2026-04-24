@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
+import type { LlmHealthState } from "../llm-health/llm-health-state.js";
 import type { TuiState } from "../tui-state.js";
 
 interface FooterLineProps {
@@ -8,19 +9,75 @@ interface FooterLineProps {
 }
 
 /**
- * Single-row metadata footer: session id, tokens in/out, tool counters
- * and any flags in effect. Rendered in muted colour to stay behind the
- * main chat content while remaining scannable.
+ * Single-row metadata footer: llama-server health indicator, session id,
+ * tokens in/out, tool counters and any flags in effect. Rendered in muted
+ * colour to stay behind the main chat content while remaining scannable.
+ *
+ * The `llm` segment is always first so the daemon status is visible in
+ * every mode (chat, debug, logs) without depending on the Models tab
+ * refresh cadence — see `LlmHealthPoller` for the probe loop.
  */
 export function FooterLine({ state }: FooterLineProps): ReactElement {
-  const parts = buildParts(state);
+  const textParts = buildParts(state);
+  const separator = ` ${theme.glyphs.pipeSeparator} `;
   return (
     <Box>
+      <LlmHealthBadge health={state.llmHealth} />
       <Text color={theme.colors.muted}>
-        {parts.join(` ${theme.glyphs.pipeSeparator} `)}
+        {separator}
+        {textParts.join(separator)}
       </Text>
     </Box>
   );
+}
+
+interface LlmHealthBadgeProps {
+  health: LlmHealthState;
+}
+
+/**
+ * Colour + glyph + short label for the always-on llama-server probe:
+ * - ● healthy (green) — last probe returned 2xx; latency appended
+ * - ◐ probing (yellow) — probe in flight, no confirmed state yet
+ * - ○ down (gray) — last probe could not reach the server
+ * - ✕ error (red) — unexpected failure in the probe path
+ * - · unknown (gray) — no probe has completed yet
+ */
+function LlmHealthBadge({ health }: LlmHealthBadgeProps): ReactElement {
+  const { color, glyph, label } = resolveBadge(health);
+  return (
+    <Text>
+      <Text color={color} bold>
+        {glyph}
+      </Text>
+      <Text color={theme.colors.muted}> llm </Text>
+      <Text color={color}>{label}</Text>
+    </Text>
+  );
+}
+
+interface BadgeLook {
+  color: string;
+  glyph: string;
+  label: string;
+}
+
+function resolveBadge(health: LlmHealthState): BadgeLook {
+  switch (health.status) {
+    case "healthy": {
+      const latency = health.latencyMs !== null ? `${health.latencyMs}ms` : "ok";
+      return { color: theme.colors.success, glyph: "●", label: latency };
+    }
+    case "probing":
+      return { color: theme.colors.warn, glyph: "◐", label: "probing" };
+    case "unreachable":
+      return { color: theme.colors.muted, glyph: "○", label: "down" };
+    case "error":
+      return { color: theme.colors.error, glyph: "✕", label: "error" };
+    case "unknown":
+    default:
+      return { color: theme.colors.muted, glyph: "·", label: "unknown" };
+  }
 }
 
 function buildParts(state: TuiState): string[] {

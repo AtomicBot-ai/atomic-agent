@@ -56,14 +56,20 @@ export function handleAppKey(
     (state.tasksPanel.mode === "create" ||
       state.tasksPanel.cancelConfirm !== null ||
       state.tasksPanel.searchOpen);
-  if (!tasksTabBusy && state.uiMode === "debug" && key.tab && !key.shift) {
+  const localModelsTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "models" &&
+    (state.localModelsPanel.mode === "backendUpdate" ||
+      state.localModelsPanel.removeConfirmId !== null);
+  const debugTabBusy = tasksTabBusy || localModelsTabBusy;
+  if (!debugTabBusy && state.uiMode === "debug" && key.tab && !key.shift) {
     dispatch({
       type: "tab_changed",
       tab: cycleDebugTab(state.activeTab, 1),
     });
     return true;
   }
-  if (!tasksTabBusy && state.uiMode === "debug" && key.tab && key.shift) {
+  if (!debugTabBusy && state.uiMode === "debug" && key.tab && key.shift) {
     dispatch({
       type: "tab_changed",
       tab: cycleDebugTab(state.activeTab, -1),

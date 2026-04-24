@@ -29,9 +29,12 @@ import type { TaskSchedule } from "../tasks/task-types.js";
 import {
   canAcceptMessage,
   createInitialTuiState,
+  DEFAULT_RING_BUFFER_SIZE,
+  type InitialTuiLayoutOptions,
   type TuiSessionInfo,
   type TuiState,
 } from "./tui-state.js";
+import { handleLocalModelsTabKey } from "./local-models/local-models-key-bindings.js";
 import { handleTasksTabKey } from "./tasks/tasks-key-bindings.js";
 
 export { makeTuiEventBus } from "./make-event-bus.js";
@@ -69,6 +72,22 @@ export interface TuiAppCallbacks {
   onTaskCancelConfirmed?(taskId: string): void;
   /** Execute one attempt of the task via `TaskRunner.runOne`. */
   onTaskRunNowRequested?(taskId: string): void;
+  /** Managed llama.cpp panel: start 5s polling when the tab is active. */
+  onLocalModelsAutoRefreshStart?(): void;
+  onLocalModelsPullRequested?(modelId: import("../local-llm/index.js").LocalModelId): void;
+  onLocalModelsSetActiveRequested?(modelId: import("../local-llm/index.js").LocalModelId): void;
+  onLocalModelsBackendPullRequested?(): void;
+  onLocalModelsRefreshRequested?(): void;
+  onLocalModelsRemoveConfirmed?(modelId: import("../local-llm/index.js").LocalModelId): void;
+  onLocalModelsStatusRequested?(): void | Promise<void>;
+  /** Ask the orchestrator to (re)start the llama-server daemon. */
+  onLocalModelsDaemonStartRequested?(): void | Promise<void>;
+  /** Ask the orchestrator to stop the llama-server daemon. */
+  onLocalModelsDaemonStopRequested?(): void | Promise<void>;
+  /** Begin 1s tail polling of the llama-server log while the LLM logs tab is open. */
+  onLocalLlmLogsAutoRefreshStart?(): void;
+  /** Stop log-tail polling when the user navigates away from the logs tab. */
+  onLocalLlmLogsAutoRefreshStop?(): void;
   /** Submit a new task from the create-form. */
   onTaskCreateSubmitted?(input: {
     schedule: TaskSchedule;
@@ -89,6 +108,8 @@ export interface TuiAppProps {
   bus: TuiEventBus;
   callbacks: TuiAppCallbacks;
   maxVisibleRows?: number;
+  /** Optional initial debug tab / mode (e.g. after managed-mode wizard). */
+  initialLayout?: InitialTuiLayoutOptions;
 }
 
 const DEFAULT_MAX_VISIBLE_ROWS = 14;
@@ -99,8 +120,11 @@ export function TuiApp({
   bus,
   callbacks,
   maxVisibleRows = DEFAULT_MAX_VISIBLE_ROWS,
+  initialLayout,
 }: TuiAppProps): ReactElement {
-  const [state, dispatch] = useReducer(reduceTuiState, session, createInitialTuiState);
+  const [state, dispatch] = useReducer(reduceTuiState, { session, initialLayout }, (init) =>
+    createInitialTuiState(init.session, DEFAULT_RING_BUFFER_SIZE, init.initialLayout),
+  );
   const app = useApp();
   const [ctrlCArmed, setCtrlCArmed] = useState(false);
   const ctrlCTimer = useRef<NodeJS.Timeout | null>(null);
@@ -121,6 +145,22 @@ export function TuiApp({
   }, [state.uiMode, state.activeTab, callbacks]);
 
   useEffect(() => {
+    if (state.uiMode === "debug" && state.activeTab === "models") {
+      callbacks.onLocalModelsAutoRefreshStart?.();
+    }
+  }, [state.uiMode, state.activeTab, callbacks]);
+
+  useEffect(() => {
+    const onLogsTab =
+      state.uiMode === "debug" && state.activeTab === "llm-logs";
+    if (onLogsTab) {
+      callbacks.onLocalLlmLogsAutoRefreshStart?.();
+      return () => callbacks.onLocalLlmLogsAutoRefreshStop?.();
+    }
+    return;
+  }, [state.uiMode, state.activeTab, callbacks]);
+
+  useEffect(() => {
     if (!ctrlCArmed) return;
     ctrlCTimer.current = setTimeout(() => setCtrlCArmed(false), CTRL_C_WINDOW_MS);
     return () => {
@@ -130,7 +170,17 @@ export function TuiApp({
 
   const tasksTabActive =
     state.uiMode === "debug" && state.activeTab === "tasks";
-  const editorFocus = !state.pendingApproval && !tasksTabActive;
+  const localModelsTabActive =
+    state.uiMode === "debug" && state.activeTab === "models";
+  const editorFocus =
+    !state.pendingApproval &&
+    !tasksTabActive &&
+    !(
+      localModelsTabActive &&
+      (state.localModelsPanel.pull !== null ||
+        state.localModelsPanel.mode === "backendUpdate" ||
+        state.localModelsPanel.removeConfirmId !== null)
+    );
 
   useInput((input, key) => {
     const appHandled = handleAppKey(input, key, {
@@ -143,6 +193,11 @@ export function TuiApp({
     if (appHandled) return;
     if (tasksTabActive) {
       handleTasksTabKey(input, key, { state, dispatch, callbacks });
+      return;
+    }
+    if (localModelsTabActive) {
+      handleLocalModelsTabKey(input, key, { state, dispatch, callbacks });
+      return;
     }
   });
 

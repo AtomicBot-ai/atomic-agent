@@ -67,9 +67,16 @@ npm run build   # compile to dist/
 
 The CLI entry is `src/cli/index.ts`; the sidecar entry is `src/sidecar/main.ts`.
 
-## External llama-server
+## llama-server modes
 
-`atomic-agent` never starts a `llama-server`. It assumes the server is reachable at `ATOMIC_AGENT_LLAMA_URL` (default `http://127.0.0.1:8080`). When the server is unreachable, the sidecar emits an `llm_unavailable` event and the runtime remains available for session management, skills, and non-LLM host operations.
+`atomic-agent` supports two modes for the llama-server backend (`config.llama.mode`):
+
+- `external` (default) — user runs `llama-server` out-of-band; runtime reads the URL from `config.llama.url` (env fallback `ATOMIC_AGENT_LLAMA_URL`).
+- `managed` — `atomic-agent` downloads the llama.cpp binary from `AtomicBot-ai/atomic-llama-cpp-turboquant` GitHub Releases into `<stateDir>/llamacpp/backend/` and GGUF models into `<stateDir>/llamacpp/models/<id>/`. The server is **not** spawned by the runtime; operators control lifecycle via `atomic-agent llama start|stop|status|update`.
+
+**Invariant (preserved):** the agent runtime never starts a `llama-server` process. It only connects. Managed-mode lifecycle lives entirely in the `atomic-agent llama` CLI so runtime code paths stay single-mode.
+
+When the server is unreachable, the sidecar emits an `llm_unavailable` event with the current mode and a hint. In managed mode the hint points at `atomic-agent llama start`; in external mode it points at checking `llama.url` / `ATOMIC_AGENT_LLAMA_URL`.
 
 ## Current memory model
 

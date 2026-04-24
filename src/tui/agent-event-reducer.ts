@@ -15,6 +15,7 @@ import {
   upsertReasoning,
 } from "./reducer-helpers.js";
 import { reduceUiAction } from "./reduce-ui-actions.js";
+import { reduceLocalModelsAction } from "./local-models/local-models-reducer.js";
 import { reduceTasksAction } from "./tasks/tasks-reducer.js";
 import type { TuiAction } from "./tui-action.js";
 import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
@@ -22,6 +23,8 @@ import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
 export type { TuiAction } from "./tui-action.js";
 
 export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
+  const localModelsHandled = reduceLocalModelsAction(state, action);
+  if (localModelsHandled !== null) return localModelsHandled;
   const tasksHandled = reduceTasksAction(state, action);
   if (tasksHandled !== null) return tasksHandled;
   const uiHandled = reduceUiAction(state, action);
@@ -82,6 +85,16 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         ...state,
         streamingAssistantText:
           (state.streamingAssistantText ?? "") + action.text,
+      };
+    case "llm_health_updated":
+      return {
+        ...state,
+        llmHealth: {
+          status: action.status,
+          lastCheckedAt: action.checkedAt,
+          latencyMs: action.latencyMs,
+          error: action.error,
+        },
       };
     default:
       return state;

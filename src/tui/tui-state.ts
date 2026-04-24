@@ -6,6 +6,18 @@ import type {
 } from "../session/session-state.js";
 import type { LogRecord } from "../tracing/structured-logger.js";
 import {
+  createInitialLlmHealthState,
+  type LlmHealthState,
+} from "./llm-health/llm-health-state.js";
+import {
+  createInitialLocalLlmLogsState,
+  type LocalLlmLogsState,
+} from "./local-models/local-llm-logs-state.js";
+import {
+  createInitialLocalModelsPanelState,
+  type LocalModelsPanelState,
+} from "./local-models/local-models-panel-state.js";
+import {
   createInitialTasksPanelState,
   type TasksPanelState,
 } from "./tasks/tasks-panel-state.js";
@@ -46,7 +58,9 @@ export type TuiTab =
   | "world"
   | "reasoning"
   | "logs"
-  | "tasks";
+  | "tasks"
+  | "models"
+  | "llm-logs";
 
 /**
  * Top-level UI mode: `chat` is the default single-scroll openclaw-style
@@ -244,6 +258,12 @@ export interface TuiState {
   ringBufferSize: number;
   /** State slice driving the Tasks tab (Option 4 background autonomy UI). */
   tasksPanel: TasksPanelState;
+  /** Managed llama.cpp catalog + download UI (daemon lifecycle stays CLI-only). */
+  localModelsPanel: LocalModelsPanelState;
+  /** Tail of `<dataDir>/llama-server.log` driving the "LLM logs" tab. */
+  localLlmLogs: LocalLlmLogsState;
+  /** Always-on llama-server `/health` probe result driving the footer indicator. */
+  llmHealth: LlmHealthState;
 }
 
 /**
@@ -257,9 +277,15 @@ export function canAcceptMessage(state: TuiState): boolean {
 
 export const DEFAULT_RING_BUFFER_SIZE = 500;
 
+export interface InitialTuiLayoutOptions {
+  uiMode?: TuiUiMode;
+  activeTab?: TuiTab;
+}
+
 export function createInitialTuiState(
   session: TuiSessionInfo,
   ringBufferSize: number = DEFAULT_RING_BUFFER_SIZE,
+  layout?: InitialTuiLayoutOptions,
 ): TuiState {
   return {
     session,
@@ -290,8 +316,8 @@ export function createInitialTuiState(
       toolsError: 0,
     },
     logs: [],
-    uiMode: "chat",
-    activeTab: "feed",
+    uiMode: layout?.uiMode ?? "chat",
+    activeTab: layout?.activeTab ?? "feed",
     lastRunStatus: null,
     runHistory: [],
     inputValue: "",
@@ -307,5 +333,8 @@ export function createInitialTuiState(
     aborting: false,
     ringBufferSize,
     tasksPanel: createInitialTasksPanelState(),
+    localModelsPanel: createInitialLocalModelsPanelState(),
+    localLlmLogs: createInitialLocalLlmLogsState(),
+    llmHealth: createInitialLlmHealthState(),
   };
 }

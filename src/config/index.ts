@@ -2,8 +2,10 @@ export type {
   AtomicAgentConfig,
   BrowserChannel,
   HttpApprovalMode,
+  LocalLlmMode,
   LogLevel,
   UserConfigFile,
+  UserManagedLocalLlmConfig,
   WebhookConfig,
 } from "./config-schema.js";
 export {

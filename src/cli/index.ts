@@ -7,6 +7,7 @@ import { configCommand } from "./config-command.js";
 import { serveCommand } from "./serve-command.js";
 import { traceCommand } from "./trace-command.js";
 import { taskCommand } from "./task-command.js";
+import { modelsCommand } from "./models-command.js";
 import { tuiCommand } from "../tui/index.js";
 
 interface CommandDescriptor {
@@ -56,6 +57,12 @@ const COMMANDS: CommandDescriptor[] = [
     summary: "Manage durable tasks (list|show|create|cancel|run)",
     run: taskCommand,
   },
+  {
+    name: "models",
+    summary:
+      "Manage the local-LLM runtime + GGUF models (list|pull|use|status|start|stop|update|remove)",
+    run: modelsCommand,
+  },
 ];
 
 function printHelp(): void {
@@ -69,7 +76,7 @@ function printHelp(): void {
     ...COMMANDS.map((c) => `  ${c.name.padEnd(8)} ${c.summary}`),
     "",
     "User config (edit via `atomic-agent config`):",
-    "  <stateDir>/config.json         llama.url, log.level, agent.{tokenBudget,maxSteps,toolTimeoutMs,approvalRequired}",
+    "  <stateDir>/config.json         localModels.url, localModels.mode, log.level, agent.{tokenBudget,maxSteps,toolTimeoutMs,approvalRequired}",
     "",
     "Bootstrap env:",
     "  ATOMIC_AGENT_STATE_DIR         Directory for persistent state + config.json (default ~/.atomic-agent)",
@@ -86,9 +93,12 @@ function printHelp(): void {
 
 async function main(): Promise<number> {
   const [, , command, ...rest] = argv;
-  if (!command || command === "-h" || command === "--help") {
+  if (command === "-h" || command === "--help") {
     printHelp();
     return 0;
+  }
+  if (!command) {
+    return tuiCommand([]);
   }
   const descriptor = COMMANDS.find((c) => c.name === command);
   if (!descriptor) {

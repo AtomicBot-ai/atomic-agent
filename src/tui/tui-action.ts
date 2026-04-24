@@ -2,6 +2,7 @@ import type { AgentLoopEvent } from "../agent/agent-loop.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { MetricSample } from "../tracing/metrics-collector.js";
 import type { LogRecord } from "../tracing/structured-logger.js";
+import type { LocalModelsAction } from "./local-models/local-models-actions.js";
 import type { TasksAction } from "./tasks/tasks-actions.js";
 import type { ChatMessage, SessionPickerEntry, TuiTab, TuiUiMode } from "./tui-state.js";
 
@@ -102,4 +103,17 @@ export type TuiAction =
     }
   /** Header/runtime: user saved a new llama-server base URL (e.g. via /llama). */
   | { type: "llama_url_changed"; url: string }
+  /**
+   * Result of a single background llama-server `/health` probe. The footer
+   * consumes this to render an always-on indicator independent of the
+   * Models tab refresh cadence.
+   */
+  | {
+      type: "llm_health_updated";
+      status: "probing" | "healthy" | "unreachable" | "error";
+      latencyMs: number | null;
+      error: string | null;
+      checkedAt: number;
+    }
+  | LocalModelsAction
   | TasksAction;

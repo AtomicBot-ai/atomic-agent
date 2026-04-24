@@ -43,14 +43,14 @@ describe("configCommand", () => {
     expect(code).toBe(0);
     const parsed = JSON.parse(stdout);
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
-    expect(parsed.llama.url).toBe("http://127.0.0.1:8080");
+    expect(parsed.localModels.url).toBe("http://127.0.0.1:8080");
     expect(parsed.agent.maxSteps).toBe(25);
   });
 
   it("set replaces the whole file with a validated JSON payload", async () => {
     const payload = {
       version: USER_CONFIG_VERSION,
-      llama: { url: "http://10.0.0.5:18991" },
+      localModels: { url: "http://10.0.0.5:18991" },
       log: { level: "debug" },
       agent: {
         tokenBudget: 3000,
@@ -108,7 +108,7 @@ describe("configCommand", () => {
       "set",
       JSON.stringify({
         version: USER_CONFIG_VERSION,
-        llama: { url: "nope" },
+        localModels: { url: "nope" },
         log: { level: "info" },
         agent: {
           tokenBudget: 3000,
@@ -119,16 +119,22 @@ describe("configCommand", () => {
       }),
     ]);
     expect(code).toBe(1);
-    expect(stderr).toContain("llama.url");
+    expect(stderr).toContain("localModels.url");
     const after = readFileSync(join(stateDir, "config.json"), "utf8");
     expect(after).toBe(before);
   });
 
   it("set accepts a JSON argument split by the shell across multiple args", async () => {
-    const code = await configCommand(["set", "{", '"version":1,', '"llama":{"url":"http://x:1"}', "}"]);
+    const code = await configCommand([
+      "set",
+      "{",
+      `"version":${USER_CONFIG_VERSION},`,
+      '"localModels":{"url":"http://x:1"}',
+      "}",
+    ]);
     expect(code).toBe(0);
     const onDisk = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
-    expect(onDisk.llama.url).toBe("http://x:1");
+    expect(onDisk.localModels.url).toBe("http://x:1");
   });
 
   it("set without a payload prints usage and returns non-zero", async () => {

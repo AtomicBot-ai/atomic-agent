@@ -1,0 +1,169 @@
+# SEA release: build per-target Node SEA CLI, sign+notarize macOS, upload draft GitHub Release.
+# Secrets (match openclaw / electron-desktop): MACOS_CSC_LINK, MACOS_CSC_KEY_PASSWORD,
+# NOTARYTOOL_KEY, NOTARYTOOL_KEY_ID, NOTARYTOOL_ISSUER
+
+name: Release (SEA)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Create draft GitHub Release and upload artifacts"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (${{ matrix.slug }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { slug: darwin-arm64, os: macos-14 }
+          - { slug: darwin-x64, os: macos-13 }
+          - { slug: linux-x64, os: ubuntu-22.04 }
+          - { slug: linux-arm64, os: ubuntu-24.04-arm }
+          - { slug: win32-x64, os: windows-2022 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
+          check-latest: true
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck and build
+        run: npm run build
+
+      - name: Fetch runtime assets (ripgrep for host)
+        run: npm run bundle:fetch-assets
+
+      - name: Build Node SEA binary
+        run: npm run bundle:build-binary
+
+      - name: Raise file descriptor limit (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          echo "Before: soft=$(ulimit -Sn) hard=$(ulimit -Hn)"
+          sudo launchctl limit maxfiles 524288 524288 2>/dev/null || true
+          ulimit -n 524288
+          echo "After: soft=$(ulimit -Sn) hard=$(ulimit -Hn)"
+
+      - name: Write notary API key to file (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          if [[ -n "${NOTARYTOOL_KEY_CONTENT}" ]]; then
+            KEY_PATH="${RUNNER_TEMP}/notary-key.p8"
+            echo "$NOTARYTOOL_KEY_CONTENT" > "$KEY_PATH"
+            chmod 600 "$KEY_PATH"
+            echo "NOTARYTOOL_KEY=$KEY_PATH" >> "$GITHUB_ENV"
+          fi
+        env:
+          NOTARYTOOL_KEY_CONTENT: ${{ secrets.NOTARYTOOL_KEY }}
+
+      - name: Sign (macOS)
+        if: runner.os == 'macOS'
+        env:
+          MACOS_CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+          MACOS_CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+        run: |
+          chmod +x scripts/sign-mac-binary.sh
+          ulimit -n 524288 2>/dev/null || true
+          "./scripts/sign-mac-binary.sh" "bundle/${{ matrix.slug }}/atomic-agent"
+
+      - name: Notarize (macOS)
+        if: runner.os == 'macOS'
+        env:
+          # NOTARYTOOL_KEY path (file) is appended to GITHUB_ENV in the write step
+          NOTARIZE: ${{ secrets.NOTARYTOOL_KEY != '' && secrets.MACOS_CSC_LINK != '' && '1' || '0' }}
+          NOTARYTOOL_KEY_ID: ${{ secrets.NOTARYTOOL_KEY_ID }}
+          NOTARYTOOL_ISSUER: ${{ secrets.NOTARYTOOL_ISSUER }}
+        run: |
+          chmod +x scripts/notarize-mac-binary.sh
+          if [[ "${NOTARIZE}" != "1" ]]; then
+            echo "Skipping notarization (missing notary and/or Apple signing secrets)"
+            exit 0
+          fi
+          if [[ -z "${NOTARYTOOL_KEY:-}" ]]; then
+            echo "NOTARYTOOL_KEY not set; skipping notarization"
+            exit 0
+          fi
+          "./scripts/notarize-mac-binary.sh" "bundle/${{ matrix.slug }}/atomic-agent"
+
+      - name: Package bundle
+        run: npx tsx scripts/package-bundle.ts "${{ matrix.slug }}"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.slug }}
+          path: bundle/atomic-agent-${{ matrix.slug }}*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: publish draft release
+    needs: build
+    if: success() && (github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish == true))
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create draft release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.tag }}"
+          cd release-assets
+          ls -la
+          gh release create "$TAG" --draft --title "$TAG" --generate-notes 2>/dev/null || true
+          for f in *; do
+            if [[ -f "$f" ]]; then
+              echo "Uploading: $f"
+              gh release upload "$TAG" "$f" --clobber
+            fi
+          done
+          echo "Draft release: $TAG (review and publish on GitHub)"

@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { MessageRouter } from "./message-router.js";
 import { StdioProtocol } from "./stdio-protocol.js";
 import { getConfig } from "../config/index.js";
+import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
@@ -215,7 +216,7 @@ export async function bootstrapSidecar(): Promise<{
 
   router.register("ping", () => ({
     ok: true,
-    llamaUrl: config.llama.url,
+    llamaUrl: config.localModels.url,
     stateDir: config.paths.stateDir,
     version: "0.1.0",
   }));
@@ -226,6 +227,19 @@ export async function bootstrapSidecar(): Promise<{
       await disposeActive();
       const workingDir = resolve(request.payload.workingDir);
       const runtime = await buildRuntime(workingDir);
+      const health = await checkLlamaServer();
+      if (!health.reachable) {
+        const hint =
+          config.localModels.mode === "managed"
+            ? "run atomic-agent models start"
+            : "check localModels.url or ATOMIC_AGENT_LLAMA_URL";
+        protocol.emitEvent("llm_unavailable", {
+          url: config.localModels.url,
+          error: health.error,
+          mode: config.localModels.mode,
+          hint,
+        });
+      }
       const session = runtime.createSession({
         ...(request.payload.metadata
           ? { metadata: request.payload.metadata }
@@ -373,7 +387,7 @@ export async function bootstrapSidecar(): Promise<{
   protocol.emitEvent("log", {
     level: "info",
     message: "atomic-agent sidecar booted",
-    context: { llamaUrl: config.llama.url, stateDir: config.paths.stateDir },
+    context: { llamaUrl: config.localModels.url, stateDir: config.paths.stateDir },
   });
 
   return {

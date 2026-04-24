@@ -261,6 +261,19 @@ export interface AgentRuntime {
 }
 
 /**
+ * Log hint when managed mode llama-server is down.
+ * Invariant: the agent runtime never spawns llama-server — use
+ * `atomic-agent models start`. Exported for unit tests.
+ */
+export function managedLocalLlmHealthFailureHint(port: number): string {
+  const url = `http://127.0.0.1:${port}`;
+  return (
+    `managed llama-server not reachable at ${url} → run \`atomic-agent models start\` or, if backend/model missing, ` +
+    `\`atomic-agent models update\` + \`atomic-agent models pull <id>\``
+  );
+}
+
+/**
  * One-stop factory that wires the whole agent runtime. Both the CLI
  * (`atomic-agent run`) and the sidecar (`atomic-agent-sidecar`) go
  * through this function — there is no other way to construct a live
@@ -326,11 +339,16 @@ export async function createAgentRuntime(
     if (!health.reachable) {
       logger.warn("llama-server health check failed", {
         error: health.error,
-        url: config.llama.url,
+        url: config.localModels.url,
       });
+      if (config.localModels.mode === "managed") {
+        logger.warn(managedLocalLlmHealthFailureHint(config.localModels.managed.port), {
+          mode: "managed",
+        });
+      }
     } else {
       logger.info("llama-server reachable", {
-        url: config.llama.url,
+        url: config.localModels.url,
         latencyMs: health.latencyMs,
       });
     }
@@ -341,13 +359,13 @@ export async function createAgentRuntime(
     options.overrides,
     llama,
     logger,
-    config.llama.url,
+    config.localModels.url,
   );
   const slotManager = new SlotManager(totalSlots ?? undefined);
   if (totalSlots !== null) {
     logger.info("slot manager configured from /props", {
       totalSlots,
-      url: config.llama.url,
+      url: config.localModels.url,
     });
   } else {
     logger.info("slot manager using default slot count (probe miss)", {

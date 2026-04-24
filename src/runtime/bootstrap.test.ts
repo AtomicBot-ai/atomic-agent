@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createAgentRuntime } from "./bootstrap.js";
+import { createAgentRuntime, managedLocalLlmHealthFailureHint } from "./bootstrap.js";
 import { resetConfigCache } from "../config/index.js";
 import { GEMMA4_PROPS } from "../llm/model-profile.fixtures.js";
 import type {
@@ -348,6 +348,11 @@ describe("createAgentRuntime", () => {
       delete process.env.ATOMIC_AGENT_TASKS_ENABLED;
       resetConfigCache();
     }
+  });
+
+  it("managedLocalLlmHealthFailureHint documents CLI daemon control", () => {
+    expect(managedLocalLlmHealthFailureHint(18991)).toContain("atomic-agent models start");
+    expect(managedLocalLlmHealthFailureHint(18991)).toContain("127.0.0.1:18991");
   });
 
   it("warns once and falls back to plain profile when props probing fails", async () => {

@@ -1,13 +1,11 @@
 /**
- * Packages a platform-specific redistributable for the sidecar binary
- * produced by `build-binary.ts`. A bundle contains:
+ * Packages a platform-specific redistributable for the CLI (Node SEA) built by
+ * `build-binary.ts`. A bundle contains:
  *
- *   atomic-agent-sidecar[.exe]   SEA binary (main entry point)
- *   grammars/                    GBNF grammars the agent needs at runtime
- *   assets/tree-sitter/          tree-sitter WASMs (fetched separately)
- *   prebuilds/                   Native prebuilds copied from node_modules
- *                                (better-sqlite3, sqlite-vec) for the target
- *   README.txt                   short usage note + llama-server pointer
+ *   atomic-agent[.exe]             SEA binary (CLI: tui, run, serve, …)
+ *   grammars/                      GBNF grammars the agent needs at runtime
+ *   prebuilds/                     Native prebuilds (better-sqlite3) for the target
+ *   README.txt                     short usage note + requirements
  *
  * The bundle does NOT include llama-server: operators run it on their
  * own machine and point the agent at it via ATOMIC_AGENT_LLAMA_URL.
@@ -16,11 +14,12 @@
  *   npx tsx scripts/package-bundle.ts           # package for current host
  *   npx tsx scripts/package-bundle.ts darwin-arm64
  */
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { chmod, cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, rm, stat, writeFile, readFile } from "node:fs/promises";
 import { createReadStream, createWriteStream } from "node:fs";
 import { createGzip } from "node:zlib";
-import { join, resolve, dirname } from "node:path";
+import { join, resolve, dirname, basename } from "node:path";
 import { argv, exit, stdout, stderr } from "node:process";
 import { pipeline } from "node:stream/promises";
 import { BUNDLE_TARGETS, currentTarget, BundleTarget } from "./bundle-targets.js";
@@ -79,6 +78,17 @@ async function archiveTarGz(sourceDir: string, destFile: string): Promise<void> 
   await rm(intermediate, { force: true });
 }
 
+/** Writes `shasum -a 256`-compatible checksum for the installer. */
+async function writeSha256Digest(archivePath: string): Promise<string> {
+  const buf = await readFile(archivePath);
+  const hash = createHash("sha256").update(buf).digest("hex");
+  const name = basename(archivePath);
+  const line = `${hash}  ${name}\n`;
+  const digestPath = `${archivePath}.sha256`;
+  await writeFile(digestPath, line, "utf8");
+  return digestPath;
+}
+
 async function archiveZip(sourceDir: string, destFile: string): Promise<void> {
   await mkdir(dirname(destFile), { recursive: true });
   // On Windows we rely on powershell Compress-Archive; on other hosts we use `zip`.
@@ -107,7 +117,7 @@ async function main(): Promise<number> {
   const binaryPath = join(stageDir, target.executableName);
   if (!(await pathExists(binaryPath))) {
     stderr.write(
-      `sidecar binary not found at ${binaryPath}. Run build-binary.ts first.\n`,
+      `SEA binary not found at ${binaryPath}. Run build-binary.ts first.\n`,
     );
     return 2;
   }
@@ -150,21 +160,22 @@ async function main(): Promise<number> {
   }
 
   const readme = [
-    `atomic-agent sidecar (${target.slug})`,
+    `atomic-agent CLI (${target.slug}, Node SEA)`,
     "",
     "Requirements:",
-    "  - External llama.cpp server reachable via HTTP. Start it separately:",
-    "      llama-server -m <model.gguf> --port 8080 --slots 4 --cache-prompt",
-    "  - Point the sidecar at the server:",
+    "  - External llama.cpp server reachable via HTTP, or use `atomic-agent models`",
+    "    for managed local models. Set ATOMIC_AGENT_LLAMA_URL if using external",
+    "    server only.",
+    "  - Point the runtime at the server (if external), e.g.",
     "      ATOMIC_AGENT_LLAMA_URL=http://127.0.0.1:8080",
     "  - Install Google Chrome or Microsoft Edge (stable channel). Playwright",
     "    browsers are NOT bundled; playwright-core attaches to the system",
     "    browser via --channel=chrome|msedge.",
     target.platform === "darwin"
-      ? "  - macOS: grant Accessibility + Screen Recording permissions to the"
+      ? "  - macOS: grant Accessibility + Screen Recording permissions to this"
       : "",
     target.platform === "darwin"
-      ? "    sidecar binary for window-focus and reliable keyboard input."
+      ? "    binary for window-focus and reliable keyboard input."
       : "",
     target.platform === "linux"
       ? "  - Linux: install `wmctrl` for os.window.*; other OS tools degrade"
@@ -181,11 +192,10 @@ async function main(): Promise<number> {
     "powers the os.fs.grep tool. Override it by setting",
     "ATOMIC_AGENT_RG_PATH to the path of a different rg binary.",
     "",
-    "Run the sidecar:",
-    `  ./${target.executableName}`,
-    "",
-    "The sidecar speaks the NDJSON protocol over stdin/stdout; the Tauri",
-    "host owns lifetime and routing.",
+    "Run the CLI, for example:",
+    `  ./${target.executableName} tui --cwd /path/to/work`,
+    "  # or use the Tauri/stdio sidecar: install the npm package and",
+    "  # run the separate `atomic-agent-sidecar` entry, not this SEA bundle.",
     "",
   ]
     .filter((line) => line !== "")
@@ -203,7 +213,9 @@ async function main(): Promise<number> {
   } else {
     await archiveZip(stageDir, archivePath);
   }
+  const digestPath = await writeSha256Digest(archivePath);
   stdout.write(`bundle ready: ${archivePath}\n`);
+  stdout.write(`sha256: ${digestPath}\n`);
   return 0;
 }
 

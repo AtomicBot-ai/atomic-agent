@@ -16,7 +16,7 @@ describe("parseUserConfigFile", () => {
   it("accepts a fully specified config and normalises it", () => {
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,
-      llama: { url: "http://localhost:18991" },
+      localModels: { url: "http://localhost:18991" },
       log: { level: "debug" },
       agent: {
         tokenBudget: 3000,
@@ -25,7 +25,7 @@ describe("parseUserConfigFile", () => {
         approvalRequired: false,
       },
     });
-    expect(parsed.llama.url).toBe("http://localhost:18991");
+    expect(parsed.localModels.url).toBe("http://localhost:18991");
     expect(parsed.log.level).toBe("debug");
     expect(parsed.agent.tokenBudget).toBe(3000);
     expect(parsed.agent.approvalRequired).toBe(false);
@@ -45,14 +45,12 @@ describe("parseUserConfigFile", () => {
     );
   });
 
-  it("accepts legacy v1 input and upgrades it to the current version", () => {
-    const parsed = parseUserConfigFile({ version: 1 });
-    expect(parsed.version).toBe(USER_CONFIG_VERSION);
-    expect(parsed.memory.notes.enabled).toBe(
-      USER_CONFIG_DEFAULTS.memory.notes.enabled,
+  it("rejects legacy v1/v2/v3/v4 input — migration is not supported", () => {
+    expect(() => parseUserConfigFile({ version: 1 })).toThrow(
+      ConfigValidationError,
     );
-    expect(parsed.memory.notes.maxEntries).toBe(
-      USER_CONFIG_DEFAULTS.memory.notes.maxEntries,
+    expect(() => parseUserConfigFile({ version: 4 })).toThrow(
+      ConfigValidationError,
     );
   });
 
@@ -103,9 +101,9 @@ describe("parseUserConfigFile", () => {
     expect(() =>
       parseUserConfigFile({
         version: USER_CONFIG_VERSION,
-        llama: { url: "not a url" },
+        localModels: { url: "not a url" },
       }),
-    ).toThrow(/llama.url/);
+    ).toThrow(/localModels.url/);
   });
 
   it("rejects non-positive tokenBudget", () => {
@@ -236,5 +234,35 @@ describe("parseUserConfigFile", () => {
         memory: { reflection: { maxNotesPerCall: -1 } },
       }),
     ).toThrow(/memory.reflection.maxNotesPerCall/);
+  });
+
+  it("fills in localModels defaults when only url is provided", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { url: "http://custom:9000" },
+    });
+    expect(parsed.localModels.mode).toBe("external");
+    expect(parsed.localModels.url).toBe("http://custom:9000");
+    expect(parsed.localModels.managed).toEqual(
+      USER_CONFIG_DEFAULTS.localModels.managed,
+    );
+  });
+
+  it("rejects invalid localModels.mode", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { mode: "bogus" },
+      }),
+    ).toThrow(/localModels.mode/);
+  });
+
+  it("rejects unknown localModels.managed.modelId", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        localModels: { managed: { modelId: "glm-4.7-flash-30b" } },
+      }),
+    ).toThrow(/localModels.managed.modelId/);
   });
 });

@@ -209,6 +209,14 @@ export interface LlmResponsePayload {
   durationMs: number;
 }
 
+/** Emitted when llama-server is unreachable at session start (sidecar). */
+export interface LlmUnavailablePayload {
+  url: string;
+  error: string | null;
+  mode: "external" | "managed";
+  hint: string;
+}
+
 export interface SkillRegistryUpdatedPayload {
   installed: Array<{ name: string; source: "global" | "project" }>;
 }

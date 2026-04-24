@@ -237,7 +237,7 @@ export async function runAgentCommand(args: string[]): Promise<number> {
   process.stderr.write(
     `atomic-agent run (chat)\n` +
       `  cwd:     ${parsed.workingDir}\n` +
-      `  llama:   ${config.llama.url}\n` +
+      `  llama:   ${config.localModels.url}\n` +
       `  browser: ${config.browser.channel}${config.browser.headless ? " (headless)" : ""}\n` +
       `  skills:  ${runtime.skillCatalog.length} installed\n` +
       `  approval:${approvalRequired ? " interactive" : " disabled"}\n` +

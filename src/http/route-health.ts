@@ -16,7 +16,7 @@ export function createHealthHandler(): HttpHandler {
       runtime: "atomic-agent",
       workingDir: ctx.runtime.capabilities.workingDir,
       llama: {
-        url: ctx.runtime.config.llama.url,
+        url: ctx.runtime.config.localModels.url,
         reachable: llama.reachable,
         latencyMs: llama.latencyMs,
         error: llama.error,

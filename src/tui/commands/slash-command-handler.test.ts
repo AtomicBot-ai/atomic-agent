@@ -87,16 +87,51 @@ describe("dispatchSlashCommand", () => {
     expect(result.systemMessage).toContain("debug bundle");
   });
 
-  it("requests persistLlamaUrl for /llama with a valid URL", () => {
-    const result = dispatchSlashCommand("/llama http://127.0.0.1:19999");
+  it("opens the models tab for /models with no argument", () => {
+    const result = dispatchSlashCommand("/models");
+    expect(result.actions).toEqual([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "models" },
+    ]);
+  });
+
+  it("supports /local as an alias for /models", () => {
+    const result = dispatchSlashCommand("/local");
+    expect(result.actions).toEqual([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "models" },
+    ]);
+  });
+
+  it("requests persistLlamaUrl for /models with a valid URL", () => {
+    const result = dispatchSlashCommand("/models http://127.0.0.1:19999");
     expect(result.persistLlamaUrl).toBe("http://127.0.0.1:19999");
     expect(result.clearBuffer).toBe(true);
   });
 
-  it("rejects invalid /llama URL with a system message", () => {
-    const result = dispatchSlashCommand("/llama http://[unclosed");
+  it("returns a usage system message for /models with an invalid URL", () => {
+    const result = dispatchSlashCommand("/models http://[unclosed");
     expect(result.persistLlamaUrl).toBeUndefined();
-    expect(result.systemMessage).toContain("invalid");
+    expect(result.systemMessage).toContain("usage");
+  });
+
+  it("captures /models pull <id> for orchestrator dispatch", () => {
+    const result = dispatchSlashCommand("/models pull qwen-3.5-4b");
+    expect(result.localModelsPullModelId).toBe("qwen-3.5-4b");
+    expect(result.actions).toEqual([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "models" },
+    ]);
+  });
+
+  it("captures /models use <id> for orchestrator dispatch", () => {
+    const result = dispatchSlashCommand("/models use qwen-3.5-4b");
+    expect(result.localModelsUseModelId).toBe("qwen-3.5-4b");
+  });
+
+  it("signals triggerLocalModelsStatus for /models status", () => {
+    const result = dispatchSlashCommand("/models status");
+    expect(result.triggerLocalModelsStatus).toBe(true);
   });
 
   it("jumps to the Tasks tab for /tasks", () => {
