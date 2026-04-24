@@ -50,8 +50,8 @@ function LlmHealthBadge({ health }: LlmHealthBadgeProps): ReactElement {
       <Text color={color} bold>
         {glyph}
       </Text>
-      <Text color={theme.colors.muted}> llm </Text>
-      <Text color={color}>{label}</Text>
+      <Text color={theme.colors.muted}> llm</Text>
+      {label ? <Text color={color}> {label}</Text> : null}
     </Text>
   );
 }
@@ -64,10 +64,8 @@ interface BadgeLook {
 
 function resolveBadge(health: LlmHealthState): BadgeLook {
   switch (health.status) {
-    case "healthy": {
-      const latency = health.latencyMs !== null ? `${health.latencyMs}ms` : "ok";
-      return { color: theme.colors.success, glyph: "●", label: latency };
-    }
+    case "healthy":
+      return { color: theme.colors.success, glyph: "●", label: "" };
     case "probing":
       return { color: theme.colors.warn, glyph: "◐", label: "probing" };
     case "unreachable":

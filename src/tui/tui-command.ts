@@ -8,9 +8,12 @@ import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { parseTuiArgs } from "./tui-args.js";
 import { persistUserLocalLlmUrl } from "./persist-user-local-models-config.js";
-import { runLocalModelsStartupGateIfNeeded } from "./run-local-models-config-wizard.js";
+import {
+  isManagedModeReadyOnDisk,
+  runLocalModelsStartupGateIfNeeded,
+} from "./run-local-models-config-wizard.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
-import type { TuiSessionInfo } from "./tui-state.js";
+import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
 
 /**
  * CLI entry for `atomic-agent tui`. Boots the full runtime once and stays
@@ -32,14 +35,22 @@ export async function tuiCommand(args: string[]): Promise<number> {
     skipWizard: skipLlamaWizard,
   });
   if (startupGate === "aborted") return 1;
-  // When the startup gate fired, llama-server was JUST confirmed
-  // unreachable — a fresh health probe + /props fetch during runtime
-  // bootstrap would just rerun the same failure with retries, making
-  // the wizard feel like it hangs for several seconds. Fall back to the
-  // plain profile immediately and let the footer indicator + background
-  // poller drive recovery. The TUI always lands in chat mode so the
-  // user sees the splash banner on a fresh session.
-  const skipRuntimeHealthProbe = startupGate === "saved_managed";
+  // TUI owns its own llama-server health UX (footer indicator +
+  // LlmHealthPoller). Blocking `createAgentRuntime` on a startup probe
+  // / `/props` fetch just freezes the terminal before the first frame
+  // renders — especially painful in managed mode when the daemon is
+  // still booting. Defer both: the runtime wires the real client +
+  // `ModelProfileManager` and the manager hot-swaps to the correct
+  // profile on the first turn refresh.
+  const deferRuntimeHealthProbe = true;
+  // After the wizard, land the user on the Models tab when managed
+  // mode is selected but nothing is ready on disk yet — they still
+  // need to pick + pull a model before chat is useful. Fully-ready
+  // managed setups and external-URL setups land in chat as usual.
+  const initialLayout: InitialTuiLayoutOptions | undefined =
+    startupGate === "saved_managed" && !isManagedModeReadyOnDisk()
+      ? { uiMode: "debug", activeTab: "models" }
+      : undefined;
   const config = getConfig();
   const approvalRequired = !parsed.noApproval && config.agent.approvalRequired;
   const maxSteps = parsed.maxSteps ?? config.agent.maxSteps;
@@ -60,8 +71,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
       logSinks: [logSink],
       metricSinks: [metricSink],
     },
-    ...(skipRuntimeHealthProbe
-      ? { overrides: { skipLlamaHealthCheck: true } }
+    ...(deferRuntimeHealthProbe
+      ? { overrides: { deferLlamaHealthCheck: true } }
       : {}),
   });
 
@@ -94,6 +105,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
     React.createElement(TuiApp, {
       session: sessionInfo,
       bus,
+      ...(initialLayout ? { initialLayout } : {}),
       callbacks: {
         onAbort: () => orchestrator.abortCurrentTurn(),
         onQuit: () => orchestrator.quit(),

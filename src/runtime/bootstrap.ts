@@ -140,6 +140,18 @@ export interface CreateAgentRuntimeOptions {
     disableStreaming?: boolean;
     browserBackend?: BrowserBackend;
     skipLlamaHealthCheck?: boolean;
+    /**
+     * Skip the blocking startup health probe and `/props` fetch but keep
+     * the real `LlamaServerClient` + `ModelProfileManager` wired. The TUI
+     * uses this so the chat UI renders instantly even when the managed
+     * daemon has not finished starting yet; the profile manager will
+     * hot-swap to the real profile on the first turn refresh once
+     * `/props` starts answering.
+     *
+     * Mutually exclusive with `skipLlamaHealthCheck` (which also stubs
+     * out the HTTP path for tests).
+     */
+    deferLlamaHealthCheck?: boolean;
     llamaProps?: Record<string, unknown>;
     llamaPropsError?: Error;
   };
@@ -334,7 +346,11 @@ export async function createAgentRuntime(
     approvalRequired: options.approvalRequired,
   };
 
-  if (!options.overrides?.skipLlamaHealthCheck && !options.overrides?.llamaComplete) {
+  if (
+    !options.overrides?.skipLlamaHealthCheck &&
+    !options.overrides?.deferLlamaHealthCheck &&
+    !options.overrides?.llamaComplete
+  ) {
     const health = await checkLlamaServer();
     if (!health.reachable) {
       logger.warn("llama-server health check failed", {
@@ -352,6 +368,10 @@ export async function createAgentRuntime(
         latencyMs: health.latencyMs,
       });
     }
+  } else if (options.overrides?.deferLlamaHealthCheck) {
+    logger.info("llama-server health check deferred; runtime will refresh on first turn", {
+      url: config.localModels.url,
+    });
   }
 
   const llama = new LlamaServerClient();
@@ -790,7 +810,11 @@ async function resolveModelProfile(
   if (overrides?.llamaProps) {
     return logResolvedProfile(overrides.llamaProps, logger);
   }
-  if (overrides?.llamaComplete || overrides?.skipLlamaHealthCheck) {
+  if (
+    overrides?.llamaComplete ||
+    overrides?.skipLlamaHealthCheck ||
+    overrides?.deferLlamaHealthCheck
+  ) {
     return {
       profile: PLAIN_INSTRUCT_PROFILE,
       modelAlias: null,
