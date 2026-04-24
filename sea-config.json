@@ -3,7 +3,7 @@
   "output": "bundle/sea-prep.blob",
   "disableExperimentalSEAWarning": true,
   "useSnapshot": false,
-  "useCodeCache": true,
+  "useCodeCache": false,
   "assets": {
     "tool-call.gbnf": "grammars/tool-call.gbnf"
   }
