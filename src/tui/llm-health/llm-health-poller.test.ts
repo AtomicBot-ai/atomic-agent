@@ -20,6 +20,10 @@ function makeCapture(): Capture {
   };
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * `LlmHealthPoller` drives the always-on footer health indicator. These
  * tests lock in observable behaviours the reducer depends on: first-probe
@@ -73,12 +77,8 @@ describe("LlmHealthPoller", () => {
     // second healthy emission).
     const poller = new LlmHealthPoller(capture, "http://127.0.0.1:19091", 250);
     poller.start();
-    await vi.waitFor(
-      () =>
-        capture.actions.filter((a) => a.type === "llm_health_updated" && a.status === "healthy")
-          .length >= 2,
-      { timeout: 5000, interval: 20 },
-    );
+    // First tick (immediate) + one interval tick → two healthy emissions.
+    await sleep(450);
     poller.stop();
 
     const health = capture.actions.filter((a) => a.type === "llm_health_updated");
@@ -105,20 +105,14 @@ describe("LlmHealthPoller", () => {
     const capture = makeCapture();
     const poller = new LlmHealthPoller(capture, "http://first:9000", 60_000);
     poller.start();
-    await vi.waitFor(
-      () =>
-        capture.actions.filter((a) => a.type === "llm_health_updated" && a.status === "healthy")
-          .length >= 1,
-      { timeout: 3000, interval: 10 },
-    );
+    await sleep(30);
     poller.updateUrl("http://second:9000");
-    await vi.waitFor(
-      () =>
-        capture.actions.filter((a) => a.type === "llm_health_updated" && a.status === "probing")
-          .length >= 2,
-      { timeout: 3000, interval: 10 },
-    );
+    await sleep(30);
     poller.stop();
+
+    const health = capture.actions.filter((a) => a.type === "llm_health_updated");
+    expect(health.filter((a) => a.status === "probing")).toHaveLength(2);
+    expect(spy).toHaveBeenCalledTimes(2);
   });
 
   it("should emit unreachable on probe failure", async () => {

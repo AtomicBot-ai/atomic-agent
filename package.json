@@ -35,7 +35,11 @@
     "bundle:build-binary": "tsx scripts/build-binary.ts",
     "bundle:package": "tsx scripts/package-bundle.ts",
     "bundle:matrix": "tsx scripts/print-matrix.ts",
-    "fixtures:generate": "tsx scripts/generate-fixtures.ts"
+    "fixtures:generate": "tsx scripts/generate-fixtures.ts",
+    "release": "bash scripts/release.sh",
+    "release:patch": "bash scripts/release.sh patch",
+    "release:minor": "bash scripts/release.sh minor",
+    "release:major": "bash scripts/release.sh major"
   },
   "dependencies": {
     "@types/marked": "^5.0.2",
