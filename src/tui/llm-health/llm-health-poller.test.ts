@@ -22,9 +22,9 @@ function makeCapture(): Capture {
 
 /**
  * `LlmHealthPoller` drives the always-on footer health indicator. These
- * tests lock in the three observable behaviours the reducer depends on:
- * probe-in-flight debounce, URL hot-swap via `updateUrl`, and clean
- * shutdown via `stop`.
+ * tests lock in observable behaviours the reducer depends on: first-probe
+ * probing state, steady-healthy polls without probing flicker, in-flight
+ * debounce, URL hot-swap via `updateUrl`, and clean shutdown via `stop`.
  */
 describe("LlmHealthPoller", () => {
   let spy: ReturnType<typeof vi.spyOn>;
@@ -58,6 +58,67 @@ describe("LlmHealthPoller", () => {
       latencyMs: 42,
       error: null,
     });
+  });
+
+  it("should not emit probing on later ticks while the server stays healthy", async () => {
+    spy.mockResolvedValue({
+      reachable: true,
+      status: 200,
+      error: null,
+      latencyMs: 1,
+    } satisfies HealthResult);
+    const capture = makeCapture();
+    // Interval must exceed a single probe so the timer does not fire while
+    // `probing` is still true (that tick is skipped and we would never get a
+    // second healthy emission).
+    const poller = new LlmHealthPoller(capture, "http://127.0.0.1:19091", 250);
+    poller.start();
+    await vi.waitFor(
+      () =>
+        capture.actions.filter((a) => a.type === "llm_health_updated" && a.status === "healthy")
+          .length >= 2,
+      { timeout: 5000, interval: 20 },
+    );
+    poller.stop();
+
+    const health = capture.actions.filter((a) => a.type === "llm_health_updated");
+    const probings = health.filter((a) => a.status === "probing");
+    const healthies = health.filter((a) => a.status === "healthy");
+    expect(probings).toHaveLength(1);
+    expect(healthies.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("should emit probing again after updateUrl even when previously steady-healthy", async () => {
+    spy
+      .mockResolvedValueOnce({
+        reachable: true,
+        status: 200,
+        error: null,
+        latencyMs: 1,
+      } satisfies HealthResult)
+      .mockResolvedValueOnce({
+        reachable: true,
+        status: 200,
+        error: null,
+        latencyMs: 2,
+      } satisfies HealthResult);
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(capture, "http://first:9000", 60_000);
+    poller.start();
+    await vi.waitFor(
+      () =>
+        capture.actions.filter((a) => a.type === "llm_health_updated" && a.status === "healthy")
+          .length >= 1,
+      { timeout: 3000, interval: 10 },
+    );
+    poller.updateUrl("http://second:9000");
+    await vi.waitFor(
+      () =>
+        capture.actions.filter((a) => a.type === "llm_health_updated" && a.status === "probing")
+          .length >= 2,
+      { timeout: 3000, interval: 10 },
+    );
+    poller.stop();
   });
 
   it("should emit unreachable on probe failure", async () => {

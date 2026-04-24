@@ -21,6 +21,8 @@ export interface LlmHealthEmitter {
  * footer indicator. Runs exactly one probe in flight at a time and
  * survives URL changes via `updateUrl` — the orchestrator calls it from
  * the `llama_url_changed` handler so the indicator follows `/llama`.
+ * While the last result was healthy, repeat polls omit the transient
+ * `probing` emit so the badge does not flicker between glyphs every interval.
  *
  * Lifecycle is explicit: the owner calls `start()` on boot and `stop()`
  * on shutdown. This keeps side effects out of the reducer and avoids the
@@ -30,6 +32,12 @@ export class LlmHealthPoller {
   private timer: NodeJS.Timeout | null = null;
   private probing = false;
   private stopped = false;
+  /**
+   * After a successful `/health`, follow-up polls skip the transient
+   * `probing` emit so the footer glyph does not flicker ●→◐→● every
+   * interval. Cleared on URL change or any non-healthy outcome.
+   */
+  private steadyHealthy = false;
 
   constructor(
     private readonly emitter: LlmHealthEmitter,
@@ -54,19 +62,22 @@ export class LlmHealthPoller {
   updateUrl(nextUrl: string): void {
     if (nextUrl === this.url) return;
     this.url = nextUrl;
+    this.steadyHealthy = false;
     if (!this.stopped) void this.tick();
   }
 
   private async tick(): Promise<void> {
     if (this.probing || this.stopped) return;
     this.probing = true;
-    this.emitter.emit({
-      type: "llm_health_updated",
-      status: "probing",
-      latencyMs: null,
-      error: null,
-      checkedAt: Date.now(),
-    });
+    if (!this.steadyHealthy) {
+      this.emitter.emit({
+        type: "llm_health_updated",
+        status: "probing",
+        latencyMs: null,
+        error: null,
+        checkedAt: Date.now(),
+      });
+    }
     try {
       const result = await checkLlamaServer({
         url: this.url,
@@ -76,6 +87,7 @@ export class LlmHealthPoller {
       });
       if (this.stopped) return;
       if (result.reachable) {
+        this.steadyHealthy = true;
         this.emitter.emit({
           type: "llm_health_updated",
           status: "healthy",
@@ -84,6 +96,7 @@ export class LlmHealthPoller {
           checkedAt: Date.now(),
         });
       } else {
+        this.steadyHealthy = false;
         this.emitter.emit({
           type: "llm_health_updated",
           status: "unreachable",
@@ -94,6 +107,7 @@ export class LlmHealthPoller {
       }
     } catch (err) {
       if (this.stopped) return;
+      this.steadyHealthy = false;
       const message = err instanceof Error ? err.message : String(err);
       this.emitter.emit({
         type: "llm_health_updated",

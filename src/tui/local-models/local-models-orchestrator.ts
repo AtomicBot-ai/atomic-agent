@@ -206,7 +206,9 @@ export class LocalModelsOrchestrator {
         type: "runtime_info",
         line: `local-llm: ${m.name} installed → starting daemon…`,
       });
-      await this.startDaemon();
+      if (await this.startDaemon()) {
+        this.bus.emit({ type: "ui_mode_set", mode: "chat" });
+      }
     } catch (e) {
       if (isAbortError(e)) return;
       const msg = e instanceof Error ? e.message : String(e);
@@ -279,7 +281,9 @@ export class LocalModelsOrchestrator {
       });
       await this.stopDaemon({ silent: true });
     }
-    await this.startDaemon();
+    if (await this.startDaemon()) {
+      this.bus.emit({ type: "ui_mode_set", mode: "chat" });
+    }
   }
 
   removeLocalModel(id: LocalModelId): void {
@@ -294,15 +298,17 @@ export class LocalModelsOrchestrator {
    * transition even before the health probe catches up. Safe to call
    * when the daemon is already running — the underlying `startDaemon`
    * throws and we surface the message.
+   *
+   * @returns Whether the managed daemon was started successfully (pid acquired).
    */
-  async startDaemon(): Promise<void> {
+  async startDaemon(): Promise<boolean> {
     const cfg = getConfig();
     if (cfg.localModels.mode !== "managed") {
       this.bus.emit({
         type: "runtime_info",
         line: "local-llm: external mode — nothing to start",
       });
-      return;
+      return false;
     }
     const mid = cfg.localModels.managed.modelId;
     if (!mid || !isKnownLocalModelId(mid)) {
@@ -310,7 +316,7 @@ export class LocalModelsOrchestrator {
         type: "runtime_info",
         line: "local-llm: pick a model first",
       });
-      return;
+      return false;
     }
     const dataDir = cfg.paths.localModelsDataDir;
     const def = getLocalModelDef(mid);
@@ -320,14 +326,14 @@ export class LocalModelsOrchestrator {
         line: "local-llm: backend missing — downloading…",
       });
       await this.pullBackend();
-      if (!isBackendDownloaded(dataDir)) return;
+      if (!isBackendDownloaded(dataDir)) return false;
     }
     if (!isModelDownloaded(dataDir, def)) {
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: model ${def.name} not downloaded — cannot start`,
       });
-      return;
+      return false;
     }
     this.bus.emit({ type: "local_models_daemon_phase_set", phase: "starting" });
     this.bus.emit({
@@ -348,10 +354,12 @@ export class LocalModelsOrchestrator {
         type: "runtime_info",
         line: `local-llm: ready — pid ${pid} on http://127.0.0.1:${cfg.localModels.managed.port}`,
       });
+      return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.bus.emit({ type: "local_models_daemon_error_set", message: msg });
       this.bus.emit({ type: "runtime_info", line: `local-llm: start failed — ${msg}` });
+      return false;
     } finally {
       this.endActiveRefresh();
       await this.refresh();
