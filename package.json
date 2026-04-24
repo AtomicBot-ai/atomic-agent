@@ -44,7 +44,7 @@
   },
   "dependencies": {
     "@types/marked": "^5.0.2",
-    "better-sqlite3": "^11.5.0",
+    "better-sqlite3": "^12.9.0",
     "chokidar": "^5.0.0",
     "chromium-bidi": "^15.0.0",
     "cli-highlight": "^2.1.11",
@@ -68,7 +68,7 @@
     "yaml": "^2.8.3"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.12.2",
     "@types/node-notifier": "^8.0.5",
     "@types/react": "^19.2.14",
