@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 
 import { createAgentRuntime } from "../runtime/bootstrap.js";
-import { stderrSink } from "../telemetry/structured-logger.js";
+import { stderrSink } from "../tracing/structured-logger.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 
 import {

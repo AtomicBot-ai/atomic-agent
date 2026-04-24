@@ -49,8 +49,8 @@ import type { ToolRegistry } from "../tools/tool-registry.js";
 import { hashPrefix, type SlotManager } from "../llm/slot-manager.js";
 import type { ModelProfile } from "../llm/model-profile.js";
 import type { ProfileFact } from "../memory/profile-store.js";
-import type { AgentMetrics } from "../telemetry/agent-metrics.js";
-import type { StructuredLogger } from "../telemetry/structured-logger.js";
+import type { AgentMetrics } from "../tracing/agent-metrics.js";
+import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { StepEvent } from "./step-events.js";
 export type { PromptCapturedTokens, StepEvent } from "./step-events.js";
 

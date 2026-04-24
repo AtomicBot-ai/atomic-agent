@@ -3,8 +3,8 @@ import React from "react";
 import { getConfig } from "../config/index.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
-import type { LogRecord, LogSink } from "../telemetry/structured-logger.js";
-import type { MetricSample, MetricSink } from "../telemetry/metrics-collector.js";
+import type { LogRecord, LogSink } from "../tracing/structured-logger.js";
+import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { parseTuiArgs } from "./tui-args.js";
 import { persistUserLlamaUrl } from "./persist-user-llama-url.js";
@@ -95,6 +95,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSessionSwitchRequested: (id) => orchestrator.switchSession(id),
         onSessionNewRequested: () => orchestrator.newSession(),
         onMemoryDumpRequested: () => orchestrator.dumpProfile(),
+        onSkillCatalogRequested: () => orchestrator.dumpSkillCatalog(),
         onPersistLlamaUrl: (nextUrl) => persistLlamaUrl(nextUrl, bus),
         onTasksAutoRefreshStart: () => orchestrator.tasks.startAutoRefresh(),
         onTasksRefreshRequested: () => orchestrator.tasks.refresh(),

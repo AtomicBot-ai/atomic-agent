@@ -7,7 +7,7 @@ import { buildStablePrefix } from "../prompt/stable-prefix.js";
 import type { ModelProfile } from "../llm/model-profile.js";
 import { hashPrefix } from "../llm/slot-manager.js";
 
-import type { TraceEvent } from "../telemetry/index.js";
+import type { TraceEvent } from "../tracing/index.js";
 import { iterateTraceFile } from "../cli/trace-file-io.js";
 
 export interface ReplayContext {

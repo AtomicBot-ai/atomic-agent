@@ -16,7 +16,7 @@ import type {
   TabsInput,
   TypeInput,
 } from "../tools/browser/browser-backend.js";
-import type { LogRecord } from "../telemetry/structured-logger.js";
+import type { LogRecord } from "../tracing/structured-logger.js";
 
 class FakeBackend implements BrowserBackend {
   public shutdowns = 0;

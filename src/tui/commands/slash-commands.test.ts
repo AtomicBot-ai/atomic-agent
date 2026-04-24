@@ -19,7 +19,6 @@ describe("SLASH_COMMANDS registry", () => {
       "logs",
       "reasoning",
       "world",
-      "metrics",
     ]) {
       expect(names).toContain(expected);
     }

@@ -1,3 +1,5 @@
+import type { ProfileFact } from "../memory/profile-store.js";
+import type { SkillCatalogEntry } from "../prompt/stable-prefix.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { SessionState } from "../session/session-state.js";
 import { clearTtyScreen } from "./clear-tty-screen.js";
@@ -8,6 +10,31 @@ import type { SessionPickerEntry } from "./tui-state.js";
 
 export interface ChatOrchestratorOptions {
   maxSteps: number;
+}
+
+/** Multiline text for the chat transcript (`/memory`); feed still gets `runtime_info` lines. */
+function formatProfileSystemMessage(facts: readonly ProfileFact[]): string {
+  if (facts.length === 0) {
+    return "user profile: (empty) — use memory.profile.set to record cross-session facts";
+  }
+  const sorted = [...facts].sort((a, b) => a.key.localeCompare(b.key));
+  const header = `user profile (${sorted.length} fact${sorted.length === 1 ? "" : "s"})`;
+  const lines = sorted.map((f) => `  - ${f.key}: ${f.value}`);
+  return [header, ...lines].join("\n");
+}
+
+/** Multiline text for the chat transcript (`/skills`); feed still gets `runtime_info` lines. */
+function formatSkillCatalogSystemMessage(
+  catalog: readonly SkillCatalogEntry[],
+): string {
+  if (catalog.length === 0) {
+    return "skill catalog: (none installed)";
+  }
+  const header = `skill catalog (${catalog.length} entr${catalog.length === 1 ? "y" : "ies"})`;
+  const lines = catalog.map(
+    (e) => `  - ${e.name} (${e.source}): ${e.description}`,
+  );
+  return [header, ...lines].join("\n");
 }
 
 /**
@@ -88,6 +115,10 @@ export class ChatOrchestrator {
   dumpProfile(): void {
     try {
       const facts = this.runtime.profileStore.list();
+      this.bus.emit({
+        type: "system_message",
+        text: formatProfileSystemMessage(facts),
+      });
       if (facts.length === 0) {
         this.bus.emit({
           type: "runtime_info",
@@ -108,7 +139,39 @@ export class ChatOrchestrator {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.bus.emit({ type: "runtime_info", line: `profile read failed: ${msg}` });
+      const line = `profile read failed: ${msg}`;
+      this.bus.emit({ type: "runtime_info", line });
+      this.bus.emit({ type: "system_message", text: line });
+    }
+  }
+
+  /** Emit the installed skill catalog into chat + event feed (`/skills`). */
+  dumpSkillCatalog(): void {
+    try {
+      const catalog = this.runtime.skillCatalog;
+      this.bus.emit({
+        type: "system_message",
+        text: formatSkillCatalogSystemMessage(catalog),
+      });
+      if (catalog.length === 0) {
+        this.bus.emit({ type: "runtime_info", line: "skills: (none installed)" });
+        return;
+      }
+      this.bus.emit({
+        type: "runtime_info",
+        line: `skill catalog (${catalog.length}):`,
+      });
+      for (const e of catalog) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: `  - ${e.name} (${e.source}): ${e.description}`,
+        });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const line = `skill catalog read failed: ${msg}`;
+      this.bus.emit({ type: "runtime_info", line });
+      this.bus.emit({ type: "system_message", text: line });
     }
   }
 

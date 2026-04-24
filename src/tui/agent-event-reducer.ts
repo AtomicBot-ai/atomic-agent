@@ -34,6 +34,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         line: action.line,
         color: "cyan",
       });
+    case "system_message":
+      return appendChatMessage(state, { role: "system", text: action.text });
     case "session_created":
       return { ...state, session: { ...state.session, sessionId: action.sessionId } };
     case "skill_count_changed":

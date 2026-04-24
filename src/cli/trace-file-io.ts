@@ -2,7 +2,7 @@ import { createReadStream, existsSync, readdirSync, statSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { join } from "node:path";
 
-import type { TraceEvent } from "../telemetry/index.js";
+import type { TraceEvent } from "../tracing/index.js";
 
 /**
  * Stream a session NDJSON trace file, yielding one `TraceEvent` per

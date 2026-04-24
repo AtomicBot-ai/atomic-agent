@@ -4,7 +4,7 @@ import type {
   LoadedSkillBody,
   WorldSnapshot,
 } from "../session/session-state.js";
-import type { LogRecord } from "../telemetry/structured-logger.js";
+import type { LogRecord } from "../tracing/structured-logger.js";
 import {
   createInitialTasksPanelState,
   type TasksPanelState,
@@ -46,13 +46,12 @@ export type TuiTab =
   | "world"
   | "reasoning"
   | "logs"
-  | "metrics"
   | "tasks";
 
 /**
  * Top-level UI mode: `chat` is the default single-scroll openclaw-style
  * surface; `debug` swaps the middle pane for a tabbed view of the
- * historical telemetry panels. Header/status/footer/editor are identical
+ * historical debug panels (logs, metrics, trace). Header/status/footer/editor are identical
  * in both modes so context never jumps.
  */
 export type TuiUiMode = "chat" | "debug";

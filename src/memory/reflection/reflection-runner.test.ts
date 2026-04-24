@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { CompletionResult } from "../../llm/llama-server-client.js";
-import { MetricsCollector } from "../../telemetry/metrics-collector.js";
-import { AgentMetrics } from "../../telemetry/agent-metrics.js";
-import { StructuredLogger } from "../../telemetry/structured-logger.js";
+import { MetricsCollector } from "../../tracing/metrics-collector.js";
+import { AgentMetrics } from "../../tracing/agent-metrics.js";
+import { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import { MemoryStore } from "../memory-store.js";
 import { ProfileStore } from "../profile-store.js";

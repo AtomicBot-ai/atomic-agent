@@ -154,42 +154,58 @@ describe("parseUserConfigFile", () => {
     expect(() => parseUserConfigFile("oops")).toThrow(ConfigValidationError);
   });
 
-  it("applies telemetry.trace defaults when unspecified", () => {
+  it("applies tracing.trace defaults when unspecified", () => {
     const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
-    expect(parsed.telemetry.trace.enabled).toBeNull();
-    expect(parsed.telemetry.trace.maxBytesPerSession).toBe(
-      USER_CONFIG_DEFAULTS.telemetry.trace.maxBytesPerSession,
+    expect(parsed.tracing.trace.enabled).toBeNull();
+    expect(parsed.tracing.trace.maxBytesPerSession).toBe(
+      USER_CONFIG_DEFAULTS.tracing.trace.maxBytesPerSession,
     );
   });
 
-  it("accepts explicit telemetry.trace.enabled values", () => {
+  it("accepts explicit tracing.trace.enabled values", () => {
     const on = parseUserConfigFile({
       version: USER_CONFIG_VERSION,
-      telemetry: { trace: { enabled: true } },
+      tracing: { trace: { enabled: true } },
     });
-    expect(on.telemetry.trace.enabled).toBe(true);
+    expect(on.tracing.trace.enabled).toBe(true);
     const off = parseUserConfigFile({
       version: USER_CONFIG_VERSION,
-      telemetry: { trace: { enabled: false } },
+      tracing: { trace: { enabled: false } },
     });
-    expect(off.telemetry.trace.enabled).toBe(false);
+    expect(off.tracing.trace.enabled).toBe(false);
   });
 
-  it("accepts custom telemetry.trace.maxBytesPerSession", () => {
+  it("accepts custom tracing.trace.maxBytesPerSession", () => {
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,
-      telemetry: { trace: { maxBytesPerSession: 2_097_152 } },
+      tracing: { trace: { maxBytesPerSession: 2_097_152 } },
     });
-    expect(parsed.telemetry.trace.maxBytesPerSession).toBe(2_097_152);
+    expect(parsed.tracing.trace.maxBytesPerSession).toBe(2_097_152);
   });
 
-  it("rejects non-positive telemetry.trace.maxBytesPerSession", () => {
+  it("rejects non-positive tracing.trace.maxBytesPerSession", () => {
     expect(() =>
       parseUserConfigFile({
         version: USER_CONFIG_VERSION,
-        telemetry: { trace: { maxBytesPerSession: 0 } },
+        tracing: { trace: { maxBytesPerSession: 0 } },
       }),
-    ).toThrow(/telemetry.trace.maxBytesPerSession/);
+    ).toThrow(/tracing.trace.maxBytesPerSession/);
+  });
+
+  it("reads legacy telemetry.* as an alias of tracing.* (tracing wins on overlap)", () => {
+    const fromLegacy = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      telemetry: { trace: { enabled: false, maxBytesPerSession: 4096 } },
+    });
+    expect(fromLegacy.tracing.trace.enabled).toBe(false);
+    expect(fromLegacy.tracing.trace.maxBytesPerSession).toBe(4096);
+    const tracingWins = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      telemetry: { trace: { enabled: false, maxBytesPerSession: 1 } },
+      tracing: { trace: { enabled: true, maxBytesPerSession: 2_097_152 } },
+    });
+    expect(tracingWins.tracing.trace.enabled).toBe(true);
+    expect(tracingWins.tracing.trace.maxBytesPerSession).toBe(2_097_152);
   });
 
   it("applies memory.reflection.autoStoreNotes + maxNotesPerCall defaults", () => {

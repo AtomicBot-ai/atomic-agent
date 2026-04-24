@@ -27,7 +27,7 @@ import type {
 } from "../tools/browser/browser-backend.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
-import type { LogSink } from "../telemetry/structured-logger.js";
+import type { LogSink } from "../tracing/structured-logger.js";
 
 import { ApprovalBus } from "./approval-bus.js";
 import { CompletionRegistry } from "./completion-registry.js";

@@ -225,11 +225,11 @@ export function loadConfig(): AtomicAgentConfig {
         ENV_DEFAULTS.TASKS_MIN_INTERVAL_MS,
       ),
     },
-    telemetry: {
+    tracing: {
       trace: {
-        enabled: user.telemetry.trace.enabled,
+        enabled: user.tracing.trace.enabled,
         dir: resolve(stateDir, "traces"),
-        maxBytesPerSession: user.telemetry.trace.maxBytesPerSession,
+        maxBytesPerSession: user.tracing.trace.maxBytesPerSession,
       },
     },
     memory: {

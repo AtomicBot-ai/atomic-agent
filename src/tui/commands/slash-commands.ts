@@ -26,13 +26,15 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   { name: "logs", description: "jump to the debug Logs tab" },
   { name: "reasoning", description: "jump to the debug Reasoning tab" },
   { name: "world", description: "jump to the debug World tab" },
-  { name: "metrics", description: "jump to the debug Metrics tab" },
   { name: "expand", description: "expand every tool card in the chat log" },
   { name: "collapse", description: "collapse every tool card in the chat log" },
   { name: "session", description: "show current session id" },
   { name: "sessions", description: "open session picker to switch threads" },
   { name: "new", description: "start a fresh session (keeps warm runtime)" },
-  { name: "skills", description: "list loaded skills" },
+  {
+    name: "skills",
+    description: "list installed skill catalog (name, source, description) in chat",
+  },
   { name: "memory", description: "dump the current user profile (cross-session facts)" },
   {
     name: "llama",

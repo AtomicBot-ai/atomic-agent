@@ -1,7 +1,7 @@
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
-import type { MetricSample } from "../telemetry/metrics-collector.js";
-import type { LogRecord } from "../telemetry/structured-logger.js";
+import type { MetricSample } from "../tracing/metrics-collector.js";
+import type { LogRecord } from "../tracing/structured-logger.js";
 import type { TasksAction } from "./tasks/tasks-actions.js";
 import type { ChatMessage, SessionPickerEntry, TuiTab, TuiUiMode } from "./tui-state.js";
 
@@ -14,6 +14,8 @@ import type { ChatMessage, SessionPickerEntry, TuiTab, TuiUiMode } from "./tui-s
  */
 export type TuiAction =
   | { type: "runtime_info"; line: string }
+  /** Append a local system message directly into the chat transcript. */
+  | { type: "system_message"; text: string }
   | { type: "agent_event"; event: AgentLoopEvent }
   | { type: "approval_requested"; request: ApprovalRequest }
   | { type: "approval_resolved"; approvalId: string; approved: boolean }

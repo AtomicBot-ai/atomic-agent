@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 import { dispatchSlashCommand } from "./slash-command-handler.js";
 
 describe("dispatchSlashCommand", () => {
+  it("lists slash commands with descriptions for /help", () => {
+    const result = dispatchSlashCommand("/help");
+    expect(result.systemMessage).toBeDefined();
+    expect(result.systemMessage).toContain("slash commands:");
+    expect(result.systemMessage).toContain("/clear");
+    expect(result.systemMessage).toContain("clear chat transcript");
+    expect(result.systemMessage).toContain("/quit");
+    expect(result.systemMessage).toContain("aliases: /exit");
+  });
+
   it("forwards non-slash input as a regular message", () => {
     const result = dispatchSlashCommand("hello world");
     expect(result.forwardAsMessage).toBe(true);
@@ -57,6 +67,13 @@ describe("dispatchSlashCommand", () => {
   it("signals triggerMemoryDump for /memory", () => {
     const result = dispatchSlashCommand("/memory");
     expect(result.triggerMemoryDump).toBe(true);
+    expect(result.actions).toEqual([]);
+    expect(result.clearBuffer).toBe(true);
+  });
+
+  it("signals triggerSkillCatalogDump for /skills", () => {
+    const result = dispatchSlashCommand("/skills");
+    expect(result.triggerSkillCatalogDump).toBe(true);
     expect(result.actions).toEqual([]);
     expect(result.clearBuffer).toBe(true);
   });

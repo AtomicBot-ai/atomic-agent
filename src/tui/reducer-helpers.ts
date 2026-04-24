@@ -1,5 +1,5 @@
-import type { MetricSample } from "../telemetry/metrics-collector.js";
-import type { LogRecord } from "../telemetry/structured-logger.js";
+import type { MetricSample } from "../tracing/metrics-collector.js";
+import type { LogRecord } from "../tracing/structured-logger.js";
 import type {
   ChatMessage,
   FeedEntry,

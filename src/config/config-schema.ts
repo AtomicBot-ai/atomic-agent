@@ -120,7 +120,7 @@ export interface AtomicAgentConfig {
   log: {
     level: LogLevel;
   };
-  telemetry: {
+  tracing: {
     trace: {
       /**
        * Trace recording toggle.
@@ -329,7 +329,7 @@ export interface UserConfigFile {
     maxResponseBytes: number;
     defaultTimeoutMs: number;
   };
-  telemetry: {
+  tracing: {
     trace: {
       enabled: boolean | null;
       maxBytesPerSession: number;
@@ -405,7 +405,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     maxResponseBytes: 1_048_576,
     defaultTimeoutMs: 30_000,
   },
-  telemetry: {
+  tracing: {
     trace: {
       enabled: null,
       maxBytesPerSession: 10 * 1024 * 1024,
@@ -558,7 +558,7 @@ export function parseBool(raw: unknown, field: string): boolean {
 
 /**
  * Parse a tri-state toggle: `null` means "defer to the caller". Used by
- * `telemetry.trace.enabled` so users can leave the decision to the
+ * `tracing.trace.enabled` so users can leave the decision to the
  * entry-point default (CLI on, sidecar off) or pin it explicitly.
  */
 export function parseBoolOrNull(raw: unknown, field: string): boolean | null {
@@ -756,10 +756,17 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const log = (obj.log as Record<string, unknown> | undefined) ?? {};
   const agent = (obj.agent as Record<string, unknown> | undefined) ?? {};
   const http = (obj.http as Record<string, unknown> | undefined) ?? {};
-  const telemetry =
+  const legacyTelemetry =
     (obj.telemetry as Record<string, unknown> | undefined) ?? {};
-  const telemetryTrace =
-    (telemetry.trace as Record<string, unknown> | undefined) ?? {};
+  const tracing = (obj.tracing as Record<string, unknown> | undefined) ?? {};
+  const traceFromLegacy =
+    (legacyTelemetry.trace as Record<string, unknown> | undefined) ?? {};
+  const traceFromTracing =
+    (tracing.trace as Record<string, unknown> | undefined) ?? {};
+  const mergedTrace: Record<string, unknown> = {
+    ...traceFromLegacy,
+    ...traceFromTracing,
+  };
   const memory = (obj.memory as Record<string, unknown> | undefined) ?? {};
   const memoryProfile =
     (memory.profile as Record<string, unknown> | undefined) ?? {};
@@ -831,17 +838,16 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         "http.defaultTimeoutMs",
       ),
     },
-    telemetry: {
+    tracing: {
       trace: {
         enabled: parseBoolOrNull(
-          telemetryTrace.enabled ??
-            USER_CONFIG_DEFAULTS.telemetry.trace.enabled,
-          "telemetry.trace.enabled",
+          mergedTrace.enabled ?? USER_CONFIG_DEFAULTS.tracing.trace.enabled,
+          "tracing.trace.enabled",
         ),
         maxBytesPerSession: parsePositiveInt(
-          telemetryTrace.maxBytesPerSession ??
-            USER_CONFIG_DEFAULTS.telemetry.trace.maxBytesPerSession,
-          "telemetry.trace.maxBytesPerSession",
+          mergedTrace.maxBytesPerSession ??
+            USER_CONFIG_DEFAULTS.tracing.trace.maxBytesPerSession,
+          "tracing.trace.maxBytesPerSession",
         ),
       },
     },

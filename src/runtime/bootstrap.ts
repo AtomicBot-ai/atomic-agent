@@ -70,11 +70,11 @@ import { TaskRunner, TaskStore } from "../tasks/index.js";
 import { Scheduler } from "../scheduler/index.js";
 import { WebhookSessionStore } from "../http/webhook-session-store.js";
 
-import { StructuredLogger } from "../telemetry/structured-logger.js";
-import type { LogSink } from "../telemetry/structured-logger.js";
-import { MetricsCollector } from "../telemetry/metrics-collector.js";
-import type { MetricSink } from "../telemetry/metrics-collector.js";
-import { AgentMetrics } from "../telemetry/agent-metrics.js";
+import { StructuredLogger } from "../tracing/structured-logger.js";
+import type { LogSink } from "../tracing/structured-logger.js";
+import { MetricsCollector } from "../tracing/metrics-collector.js";
+import type { MetricSink } from "../tracing/metrics-collector.js";
+import { AgentMetrics } from "../tracing/agent-metrics.js";
 import {
   createNdjsonTraceSink,
   createTraceBus,
@@ -82,7 +82,7 @@ import {
   type TraceBus,
   type TraceRecorder,
   type TraceSink,
-} from "../telemetry/trace/index.js";
+} from "../tracing/trace/index.js";
 
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 
@@ -108,7 +108,7 @@ export interface CreateAgentRuntimeOptions {
   handlers?: RuntimeEventHandlers;
   /**
    * Default activation state for tracing when
-   * `config.telemetry.trace.enabled` is `null` (the default). CLI / TUI /
+   * `config.tracing.trace.enabled` is `null` (the default). CLI / TUI /
    * serve entry points pass `true` so local debugging is observable by
    * default; the sidecar passes `false` so embedded hosts opt in via
    * config or by providing their own sinks.
@@ -282,14 +282,14 @@ export async function createAgentRuntime(
   const metrics = new AgentMetrics(new MetricsCollector({ sinks: metricSinks }));
 
   const traceEnabled = resolveTraceEnabled(
-    config.telemetry.trace.enabled,
+    config.tracing.trace.enabled,
     options.traceDefault,
   );
   const traceBus = traceEnabled
     ? buildTraceBus({
         extraSinks: options.handlers?.traceSinks ?? [],
-        dir: config.telemetry.trace.dir,
-        maxBytesPerSession: config.telemetry.trace.maxBytesPerSession,
+        dir: config.tracing.trace.dir,
+        maxBytesPerSession: config.tracing.trace.maxBytesPerSession,
         logger,
       })
     : null;

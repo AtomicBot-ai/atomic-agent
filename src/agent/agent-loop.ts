@@ -38,8 +38,8 @@ import type { ReflectionRunner } from "../memory/reflection/index.js";
 import { executeStep } from "./step-executor.js";
 import type { StepEvent } from "./step-executor.js";
 import { LoopDetector, formatRepeatNotice } from "./loop-detector.js";
-import type { AgentMetrics } from "../telemetry/agent-metrics.js";
-import type { StructuredLogger } from "../telemetry/structured-logger.js";
+import type { AgentMetrics } from "../tracing/agent-metrics.js";
+import type { StructuredLogger } from "../tracing/structured-logger.js";
 
 export interface AgentLoopDependencies {
   registry: ToolRegistry;

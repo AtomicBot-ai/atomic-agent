@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { loadConfig } from "./load-config.js";
 import { resetConfigCache } from "./config-cache.js";
 import { getUserConfigPath, writeUserConfigFileSync } from "./config-file.js";
-import { USER_CONFIG_VERSION } from "./config-schema.js";
+import { USER_CONFIG_DEFAULTS, USER_CONFIG_VERSION } from "./config-schema.js";
 
 describe("loadConfig", () => {
   let stateDir: string;
@@ -90,20 +90,20 @@ describe("loadConfig", () => {
     expect(config.paths.tracesDir).toBe(join(stateDir, "traces"));
   });
 
-  it("telemetry.trace defaults expose the per-session NDJSON dir", () => {
+  it("tracing.trace defaults expose the per-session NDJSON dir", () => {
     const config = loadConfig();
-    expect(config.telemetry.trace.enabled).toBeNull();
-    expect(config.telemetry.trace.dir).toBe(join(stateDir, "traces"));
-    expect(config.telemetry.trace.maxBytesPerSession).toBe(10 * 1024 * 1024);
+    expect(config.tracing.trace.enabled).toBeNull();
+    expect(config.tracing.trace.dir).toBe(join(stateDir, "traces"));
+    expect(config.tracing.trace.maxBytesPerSession).toBe(10 * 1024 * 1024);
   });
 
-  it("honours user-pinned telemetry.trace.enabled", () => {
+  it("honours user-pinned tracing.trace.enabled", () => {
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
-      version: USER_CONFIG_VERSION,
-      telemetry: { trace: { enabled: false, maxBytesPerSession: 4096 } },
+      ...USER_CONFIG_DEFAULTS,
+      tracing: { trace: { enabled: false, maxBytesPerSession: 4096 } },
     });
     const config = loadConfig();
-    expect(config.telemetry.trace.enabled).toBe(false);
-    expect(config.telemetry.trace.maxBytesPerSession).toBe(4096);
+    expect(config.tracing.trace.enabled).toBe(false);
+    expect(config.tracing.trace.maxBytesPerSession).toBe(4096);
   });
 });

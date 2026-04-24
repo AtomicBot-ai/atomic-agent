@@ -1,7 +1,7 @@
 import type { LlamaServerClient } from "../llm/llama-server-client.js";
 import type { CompletionResult } from "../llm/llama-server-client.js";
 
-import type { TraceEvent } from "../telemetry/index.js";
+import type { TraceEvent } from "../tracing/index.js";
 import { iterateTraceFile } from "../cli/trace-file-io.js";
 
 export interface ReplayInferenceOptions {

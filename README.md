@@ -210,7 +210,7 @@ Slash shortcuts also work without the tab open: `/task cancel <id>`, `/task run 
 
 ### Debugging with traces
 
-Every `atomic-agent run` / `tui` / `serve` invocation writes an append-only NDJSON trace to `<stateDir>/traces/<sessionId>.ndjson`. Sidecar mode is off by default; hosts opt in via `telemetry.trace.enabled`.
+Every `atomic-agent run` / `tui` / `serve` invocation writes an append-only NDJSON trace to `<stateDir>/traces/<sessionId>.ndjson`. Sidecar mode is off by default; hosts opt in via `tracing.trace.enabled`.
 
 ```bash
 atomic-agent trace list --limit 10
@@ -223,7 +223,7 @@ atomic-agent trace replay <sessionId>          # detect stable-prefix drift
 
 `trace replay` rebuilds the stable prompt prefix from the current runtime (tools / capabilities / skills / persona) and compares its salted hash to the one recorded at runtime — drift means the upper prompt changed since recording, which explains lost `cache_prompt` hits.
 
-Treat trace files as sensitive: secret redaction is not applied yet. Tune retention via `telemetry.trace.maxBytesPerSession` (default 10 MiB) and `telemetry.trace.dir`.
+Treat trace files as sensitive: secret redaction is not applied yet. Tune retention via `tracing.trace.maxBytesPerSession` (default 10 MiB) and `tracing.trace.dir`.
 
 ### Durable tasks
 

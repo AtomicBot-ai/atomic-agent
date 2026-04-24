@@ -1,7 +1,7 @@
 import type { TuiAction } from "../tui-action.js";
 import { normalizeLlamaBaseUrl } from "../persist-user-llama-url.js";
 import { parseSlashCommand } from "./slash-command-parser.js";
-import { resolveSlashCommand } from "./slash-commands.js";
+import { resolveSlashCommand, SLASH_COMMANDS } from "./slash-commands.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -28,6 +28,8 @@ export interface SlashDispatchResult {
   readonly triggerSessionNew: boolean;
   /** When true the caller should ask the orchestrator to dump the user profile. */
   readonly triggerMemoryDump: boolean;
+  /** When true the caller should ask the orchestrator to list the skill catalog in chat. */
+  readonly triggerSkillCatalogDump: boolean;
   /** When true the caller should forward the raw buffer as a normal message. */
   readonly forwardAsMessage: boolean;
   /** When set, caller should probe this URL, persist on success, then refresh UI. */
@@ -55,6 +57,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       triggerSessionPicker: false,
       triggerSessionNew: false,
       triggerMemoryDump: false,
+      triggerSkillCatalogDump: false,
       forwardAsMessage: true,
       persistLlamaUrl: undefined,
     };
@@ -70,6 +73,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       triggerSessionPicker: false,
       triggerSessionNew: false,
       triggerMemoryDump: false,
+      triggerSkillCatalogDump: false,
       forwardAsMessage: false,
       persistLlamaUrl: undefined,
     };
@@ -77,8 +81,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
   switch (resolved.name) {
     case "help":
       return pureActions([], {
-        systemMessage:
-          "available commands: /clear /abort /quit /debug /chat /feed /logs /reasoning /world /metrics /tasks /task /expand /collapse /session /sessions /new /skills /memory /llama",
+        systemMessage: formatSlashCommandHelp(),
       });
     case "clear":
       return pureActions([{ type: "chat_cleared" }], {
@@ -118,11 +121,6 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
         { type: "ui_mode_set", mode: "debug" },
         { type: "tab_changed", tab: "world" },
       ]);
-    case "metrics":
-      return pureActions([
-        { type: "ui_mode_set", mode: "debug" },
-        { type: "tab_changed", tab: "metrics" },
-      ]);
     case "expand":
       return pureActions([{ type: "tool_expand_all_set", expanded: true }]);
     case "collapse":
@@ -136,9 +134,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
     case "new":
       return pureActions([], { triggerSessionNew: true });
     case "skills":
-      return pureActions([], {
-        systemMessage: "loaded skills are shown in /debug → World tab",
-      });
+      return pureActions([], { triggerSkillCatalogDump: true });
     case "memory":
       return pureActions([], { triggerMemoryDump: true });
     case "tasks":
@@ -166,6 +162,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
           triggerSessionPicker: false,
           triggerSessionNew: false,
           triggerMemoryDump: false,
+          triggerSkillCatalogDump: false,
           forwardAsMessage: false,
           persistLlamaUrl: url,
         };
@@ -178,6 +175,18 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
         systemMessage: `command /${resolved.name} not yet implemented`,
       });
   }
+}
+
+/** One block of text for `/help`, built from the canonical command registry. */
+function formatSlashCommandHelp(): string {
+  const lines = SLASH_COMMANDS.map((cmd) => {
+    const aliasPart =
+      cmd.aliases && cmd.aliases.length > 0
+        ? ` (aliases: ${cmd.aliases.map((a) => `/${a}`).join(", ")})`
+        : "";
+    return `  /${cmd.name}${aliasPart} — ${cmd.description}`;
+  });
+  return ["slash commands:", ...lines].join("\n");
 }
 
 function pureActions(
@@ -194,6 +203,7 @@ function pureActions(
     triggerSessionPicker: false,
     triggerSessionNew: false,
     triggerMemoryDump: false,
+    triggerSkillCatalogDump: false,
     forwardAsMessage: false,
     persistLlamaUrl: undefined,
     ...overrides,

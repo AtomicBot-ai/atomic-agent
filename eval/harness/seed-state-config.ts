@@ -39,7 +39,7 @@ export function seedStateDirConfig(stateDir: string): void {
       maxResponseBytes: 1_048_576,
       defaultTimeoutMs: 30_000,
     },
-    telemetry: {
+    tracing: {
       trace: { enabled: true, maxBytesPerSession: 10 * 1024 * 1024 },
     },
   };

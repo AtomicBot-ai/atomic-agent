@@ -9,7 +9,7 @@ import {
   QWEN3_PROPS,
 } from "../llm/model-profile.fixtures.js";
 import { startTestHarness } from "../http/test-harness.js";
-import type { LogRecord } from "../telemetry/structured-logger.js";
+import type { LogRecord } from "../tracing/structured-logger.js";
 
 const FINAL_COMPLETION = {
   content: "",

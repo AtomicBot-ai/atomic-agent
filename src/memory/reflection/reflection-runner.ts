@@ -1,6 +1,6 @@
 import type { CompletionResult } from "../../llm/llama-server-client.js";
-import type { AgentMetrics } from "../../telemetry/agent-metrics.js";
-import type { StructuredLogger } from "../../telemetry/structured-logger.js";
+import type { AgentMetrics } from "../../tracing/agent-metrics.js";
+import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import { MemoryStore, MemoryValidationError } from "../memory-store.js";
 import {

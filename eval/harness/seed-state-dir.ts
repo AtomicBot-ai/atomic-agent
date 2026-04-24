@@ -8,7 +8,7 @@ import { join } from "node:path";
  *   - `llama.url`      so the agent hits the real llama-server instead
  *                      of the 127.0.0.1:8080 USER_CONFIG_DEFAULT.
  *   - `agent.approvalRequired: false` matches `--no-approval` on the CLI.
- *   - `telemetry.trace.enabled: true` so `collectTraceMetrics` has input.
+ *   - `tracing.trace.enabled: true` so `collectTraceMetrics` has input.
  *
  * Everything else (memory, http, agent budgets) falls back to
  * `USER_CONFIG_DEFAULTS` inside `parseUserConfigFile`, which we rely on
@@ -24,7 +24,7 @@ export function seedStateDir({ stateDir, llamaUrl }: SeedOptions): void {
     version: 2,
     llama: { url: llamaUrl },
     agent: { approvalRequired: false },
-    telemetry: { trace: { enabled: true } },
+    tracing: { trace: { enabled: true } },
   };
   writeFileSync(
     join(stateDir, "config.json"),

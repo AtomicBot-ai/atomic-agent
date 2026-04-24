@@ -2,7 +2,6 @@ import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { EventFeed } from "../event-feed.js";
 import { LogsTab } from "../logs-tab.js";
-import { MetricsFooter } from "../metrics-footer.js";
 import { ReasoningTab } from "../reasoning-tab.js";
 import { WorldPanel } from "../world-panel.js";
 import { theme } from "../theme/theme.js";
@@ -15,10 +14,11 @@ interface DebugPaneProps {
 }
 
 /**
- * Debug pane: wraps the existing telemetry views behind a compact tab
+ * Debug pane: wraps the existing logs / metrics / trace views behind a compact tab
  * bar. Rendered in place of the chat log whenever `uiMode === "debug"`
- * so the user can inspect feed/world/reasoning/logs/metrics without
- * leaving the session.
+ * so the user can inspect feed/world/reasoning/logs/tasks without
+ * leaving the session. Rolling metrics are always visible in the
+ * `FooterLine` below the chat, so they do not need a dedicated tab.
  */
 export function DebugPane({ state, maxVisible }: DebugPaneProps): ReactElement {
   return (
@@ -38,7 +38,6 @@ function DebugTabBar({ state }: { state: TuiState }): ReactElement {
       label: `Reasoning${suffix(state.reasoning.length)}`,
     },
     { id: "logs", label: `Logs${suffix(state.logs.length)}` },
-    { id: "metrics", label: "Metrics" },
     { id: "tasks", label: `Tasks${suffix(state.tasksPanel.rows.length)}` },
   ];
   return (
@@ -84,8 +83,6 @@ function ActiveDebugTab({
       return <ReasoningTab state={state} maxVisible={maxVisible} />;
     case "logs":
       return <LogsTab state={state} maxVisible={maxVisible} />;
-    case "metrics":
-      return <MetricsFooter state={state} />;
     case "tasks":
       return <TasksPanel panel={state.tasksPanel} now={Date.now()} />;
     default:
@@ -103,7 +100,6 @@ const DEBUG_TAB_ORDER: readonly TuiTab[] = [
   "world",
   "reasoning",
   "logs",
-  "metrics",
   "tasks",
 ];
 

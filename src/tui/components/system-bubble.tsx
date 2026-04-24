@@ -9,17 +9,28 @@ interface SystemBubbleProps {
 }
 
 /**
- * Low-key system / runtime-info line. Rendered inline between chat
- * bubbles so ambient telemetry (`runtime ready — llama …`, `/clear`
- * confirmation, etc.) does not compete visually with the dialogue.
+ * System / slash-command notices: framed so they read as machine output,
+ * not part of the user↔agent dialogue. Multiline text is split so `/help`
+ * and similar stay readable.
  */
 export function SystemBubble({ text, warn }: SystemBubbleProps): ReactElement {
   const color = warn ? theme.colors.warn : theme.colors.system;
+  const borderColor = warn ? theme.colors.warn : theme.colors.accentSoft;
+  const lines = text.split("\n");
   return (
-    <Box>
-      <Text color={color}>
-        {theme.glyphs.systemMarker} {text}
-      </Text>
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={borderColor}
+      paddingX={1}
+      marginLeft={2}
+      marginBottom={1}
+    >
+      {lines.map((line, i) => (
+        <Text key={i} color={color}>
+          {theme.glyphs.systemMarker} {line}
+        </Text>
+      ))}
     </Box>
   );
 }

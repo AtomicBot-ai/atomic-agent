@@ -1,6 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import type { LogRecord } from "../telemetry/structured-logger.js";
+import type { LogRecord } from "../tracing/structured-logger.js";
 import type { TuiState } from "./tui-state.js";
 
 interface LogsTabProps {

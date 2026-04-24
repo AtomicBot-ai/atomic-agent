@@ -52,6 +52,8 @@ export interface TuiAppCallbacks {
   onSessionNewRequested?(): void;
   /** Ask the orchestrator to dump the current user profile into the chat log. */
   onMemoryDumpRequested?(): void;
+  /** Ask the orchestrator to print the skill catalog into the chat log (`/skills`). */
+  onSkillCatalogRequested?(): void;
   /** Persist a new llama-server base URL after `/llama` (async health + disk write). */
   onPersistLlamaUrl?(url: string): void;
   /** Start the Tasks-tab auto-refresh loop (first entry only). */

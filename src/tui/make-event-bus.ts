@@ -1,7 +1,7 @@
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
-import type { MetricSample } from "../telemetry/metrics-collector.js";
-import type { LogRecord } from "../telemetry/structured-logger.js";
+import type { MetricSample } from "../tracing/metrics-collector.js";
+import type { LogRecord } from "../tracing/structured-logger.js";
 import type { TuiAction } from "./tui-action.js";
 import type { TuiEventBus } from "./tui-app.js";
 

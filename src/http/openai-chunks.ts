@@ -70,7 +70,7 @@ export function buildStreamChunk(input: StreamChunkInput): StreamChunk {
 
 /**
  * Derive a usage payload from the final turn outcome. Atomic-agent does
- * not track per-turn aggregated token counts yet — telemetry emits the
+ * not track per-turn aggregated token counts yet — the metrics layer emits the
  * figures per-step via metrics, but does not fold them into
  * `RunTurnResult`. Until that plumbing lands we surface zeros so the
  * response is still schema-valid.

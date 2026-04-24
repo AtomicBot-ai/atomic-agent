@@ -2,6 +2,7 @@ import {
   dispatchSlashCommand,
   type SlashDispatchResult,
 } from "./commands/slash-command-handler.js";
+import { parseSlashCommand, slashPrefix } from "./commands/slash-command-parser.js";
 import {
   filterSlashCommands,
   resolveSlashCommand,
@@ -29,25 +30,49 @@ export function handleEditorSubmit(
     handleSessionPickerSubmit(state, dispatch, callbacks);
     return;
   }
+
+  const trimmed = buffer.trim();
+  if (trimmed.length === 0) return;
+
+  /**
+   * 1) `/name` or `/name args` for a **registered** command: run from the
+   *    live buffer first, independent of palette state (avoids stale
+   *    `slashQuery` / wrong highlight on Enter).
+   * 2) Unknown `/token`: show an error, never treat as a user message.
+   * 3) Palette: partial input (`/h`, or `/` only) uses the highlight.
+   * 4) A lone `/` with no palette is a no-op (never send to the model).
+   */
+  if (trimmed.startsWith("/")) {
+    const parsed = parseSlashCommand(trimmed);
+    if (parsed !== null) {
+      const resolved = resolveSlashCommand(parsed.name);
+      if (resolved !== null) {
+        runSlashCommand(trimmed, dispatch, callbacks);
+        return;
+      }
+      if (parsed.name.length > 0) {
+        runSlashCommand(trimmed, dispatch, callbacks);
+        return;
+      }
+    }
+  }
+
   if (state.slashPaletteOpen) {
-    const completions = filterSlashCommands(state.slashQuery);
-    const chosen = completions[state.slashPaletteCursor];
+    const query = slashPrefix(trimmed) ?? "";
+    const completions = filterSlashCommands(query);
+    const maxRow = Math.max(0, completions.length - 1);
+    const safeCursor = Math.min(state.slashPaletteCursor, maxRow);
+    const chosen = completions[safeCursor];
     if (chosen) {
       runSlashCommand(`/${chosen.name}`, dispatch, callbacks);
       return;
     }
   }
-  const trimmed = buffer.trim();
-  if (trimmed.length === 0) return;
+
   if (trimmed.startsWith("/")) {
-    const resolved = resolveSlashCommand(
-      trimmed.slice(1).split(/\s/)[0] ?? "",
-    );
-    if (resolved !== null || !canAcceptMessage(state)) {
-      runSlashCommand(trimmed, dispatch, callbacks);
-      return;
-    }
+    return;
   }
+
   if (!canAcceptMessage(state)) return;
   dispatch({ type: "message_submitted" });
   callbacks.onMessageSubmitted(trimmed);
@@ -76,6 +101,7 @@ export function runSlashCommand(
   for (const action of result.actions) dispatch(action);
   if (result.systemMessage) {
     dispatch({ type: "runtime_info", line: result.systemMessage });
+    dispatch({ type: "system_message", text: result.systemMessage });
   }
   if (result.clearBuffer) dispatch({ type: "input_changed", value: "" });
   dispatch({ type: "slash_palette_closed" });
@@ -87,6 +113,7 @@ export function runSlashCommand(
   if (result.triggerSessionPicker) callbacks.onSessionPickerRequested?.();
   if (result.triggerSessionNew) callbacks.onSessionNewRequested?.();
   if (result.triggerMemoryDump) callbacks.onMemoryDumpRequested?.();
+  if (result.triggerSkillCatalogDump) callbacks.onSkillCatalogRequested?.();
   if (result.persistLlamaUrl) {
     callbacks.onPersistLlamaUrl?.(result.persistLlamaUrl);
   }

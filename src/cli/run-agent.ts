@@ -7,7 +7,7 @@ import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
-import { stderrSink } from "../telemetry/structured-logger.js";
+import { stderrSink } from "../tracing/structured-logger.js";
 import type { SessionState } from "../session/session-state.js";
 
 interface RunArgs {

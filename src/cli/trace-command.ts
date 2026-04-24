@@ -8,7 +8,7 @@ import { SkillRegistry } from "../skills/skill-registry.js";
 import { buildSkillCatalog } from "../skills/skill-catalog.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../llm/index.js";
 import { replaySession } from "../replay/index.js";
-import { traceFilePath } from "../telemetry/index.js";
+import { traceFilePath } from "../tracing/index.js";
 import { join as joinPath } from "node:path";
 
 import {

@@ -2,8 +2,8 @@ import { classifyFailure } from "../llm/reliability/index.js";
 import type { LlmFailureCategory } from "../llm/reliability/index.js";
 import type { RunTurnResult } from "../agent/agent-loop.js";
 import type { SessionState } from "../session/index.js";
-import type { StructuredLogger } from "../telemetry/structured-logger.js";
-import type { AgentMetrics } from "../telemetry/agent-metrics.js";
+import type { StructuredLogger } from "../tracing/structured-logger.js";
+import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { TurnEventHook, TurnOrigin } from "../runtime/turn-controller.js";
 
 import { nextDelayMs, type BackoffOptions } from "./task-backoff.js";

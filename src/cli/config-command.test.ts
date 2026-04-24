@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { configCommand } from "./config-command.js";
-import { resetConfigCache, USER_CONFIG_VERSION } from "../config/index.js";
+import {
+  parseUserConfigFile,
+  resetConfigCache,
+  USER_CONFIG_VERSION,
+} from "../config/index.js";
 
 describe("configCommand", () => {
   let stateDir: string;
@@ -63,7 +67,7 @@ describe("configCommand", () => {
         maxResponseBytes: 1_048_576,
         defaultTimeoutMs: 30_000,
       },
-      telemetry: {
+      tracing: {
         trace: {
           enabled: null,
           maxBytesPerSession: 10 * 1024 * 1024,
@@ -83,7 +87,7 @@ describe("configCommand", () => {
     const code = await configCommand(["set", JSON.stringify(payload)]);
     expect(code).toBe(0);
     const onDisk = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
-    expect(onDisk).toEqual(payload);
+    expect(onDisk).toEqual(parseUserConfigFile(payload));
     expect(stdout).toContain("wrote ");
   });
 

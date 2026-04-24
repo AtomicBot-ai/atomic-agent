@@ -1,4 +1,4 @@
-import type { StructuredLogger } from "../telemetry/structured-logger.js";
+import type { StructuredLogger } from "../tracing/structured-logger.js";
 import { buildGrammar } from "./grammar/build-grammar.js";
 import type { LlamaServerClient } from "./llama-server-client.js";
 import {

@@ -1,4 +1,4 @@
-import type { TraceEvent } from "../telemetry/index.js";
+import type { TraceEvent } from "../tracing/index.js";
 
 export interface FormatShowOptions {
   step?: number;

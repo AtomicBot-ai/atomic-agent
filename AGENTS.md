@@ -47,7 +47,7 @@ This is the source-of-truth for automated contributors (LLM agents, codegen, etc
 | `src/compressor/` | Result compressor, log summariser |
 | `src/sandbox/` | git worktree + sandboxed command runner |
 | `src/approval/` | Approval gate and event wiring |
-| `src/telemetry/` | Structured logger + metrics + trace recorder (`src/telemetry/trace/`) |
+| `src/tracing/` | Structured logger + metrics + trace recorder (`src/tracing/trace/`) |
 | `src/replay/` | Trace-based replay: drift detection + optional LLM re-inference |
 | `src/memory/` | Memory fabric: ProfileStore (key/value facts, pinned + contextual) + MemoryStore (FTS5 freeform notes) + async end-of-turn reflection that writes into both. See [MEMORY.md](MEMORY.md). |
 | `src/runtime/` | `bootstrap.ts` (assembles `AgentRuntime`) + `turn-controller.ts` (per-session FIFO queue + per-session event hook map; the **only** path into `AgentLoop.runTurn`). See §"Concurrency contract". |
@@ -260,7 +260,7 @@ Inter-attempt sleep on retry uses `nextDelayMs(attempts, { initialMs, maxMs })` 
 |---|---|---|
 | HTTP | `POST/GET /api/tasks`, `GET/DELETE /api/tasks/:id`, `POST /api/tasks/:id/run`, `POST /api/tasks/drain` | [src/http/route-tasks.ts](src/http/route-tasks.ts). Returns 404 for every route when `tasks.enabled=false`. |
 | CLI | `atomic-agent task list \| show \| create \| cancel \| run` | [src/cli/task-command.ts](src/cli/task-command.ts). All subcommands except `run` open `TaskStore` directly and exit fast; `run` boots the full `createAgentRuntime` and tears it down on the way out. |
-| Telemetry | `agent.tasks.{created,started,completed,failed,blocked,cancelled,retried}` counters + `agent.tasks.{attempts,duration_ms}` histograms | Emitted from `TaskRunner` at status transitions. |
+| Metrics | `agent.tasks.{created,started,completed,failed,blocked,cancelled,retried}` counters + `agent.tasks.{attempts,duration_ms}` histograms | Emitted from `TaskRunner` at status transitions. |
 
 ### Configuration
 
@@ -369,9 +369,9 @@ Extending §"Durable tasks" config:
 
 Webhook config lives under `webhooks.*` in the user config file, not env.
 
-### Telemetry
+### Metrics (tasks)
 
-Added to [src/telemetry/agent-metrics.ts](src/telemetry/agent-metrics.ts):
+Added to [src/tracing/agent-metrics.ts](src/tracing/agent-metrics.ts):
 
 - Counters: `agent.tasks.scheduled`, `agent.tasks.recurring_requeued`, `agent.tasks.session_recreated`, `agent.tasks.session_auto_created`, `agent.scheduler.ticks`, `agent.scheduler.tick_errors`, `agent.webhooks.received`.
 - Histograms: `agent.scheduler.batch_size`, `agent.scheduler.tick_duration_ms`.
@@ -469,7 +469,7 @@ Every terminal failure the agent loop surfaces is normalised into a canonical `L
 `category` is plumbed through every observability surface:
 
 - **Events.** `step_error.category` and `loop_failed.category` are mandatory fields on the `AgentLoopEvent` union.
-- **Traces.** `TraceError.category` on the append-only NDJSON stream (see [src/telemetry/trace/trace-event.ts](src/telemetry/trace/trace-event.ts)).
+- **Traces.** `TraceError.category` on the append-only NDJSON stream (see [src/tracing/trace/trace-event.ts](src/tracing/trace/trace-event.ts)).
 - **Metrics.** `AgentMetrics.recordLlmFailure({ sessionId, category })` increments `agent.llm.failure` tagged by category — fired exactly once per failed turn from the agent-loop outer catch.
 - **TUI.** `agent-event-reducer` renders `! [${category}] ${message}` in the step feed and `failed [${category}]: ${message}` in the run-status line.
 - **Sidecar protocol.** `session_failed.category` and `error.code = step_error:<category>` for the Tauri host.
@@ -479,7 +479,7 @@ Every terminal failure the agent loop surfaces is normalised into a canonical `L
 
 Every run produces an append-only NDJSON trace at `<stateDir>/traces/<sessionId>.ndjson` — one event per line. Tracing is on by default for `atomic-agent run` / TUI / `atomic-agent serve`, and off by default in sidecar mode so the Tauri host decides whether to opt in.
 
-Emitted `TraceEvent` types (see [src/telemetry/trace/trace-event.ts](src/telemetry/trace/trace-event.ts)):
+Emitted `TraceEvent` types (see [src/tracing/trace/trace-event.ts](src/tracing/trace/trace-event.ts)):
 
 - `session_started` — carries `workingDir` and optional `metadata`.
 - `turn_started` / `turn_finished` — per macro-turn, with `reason` / `stepCount` / `durationMs`.
@@ -491,7 +491,7 @@ Emitted `TraceEvent` types (see [src/telemetry/trace/trace-event.ts](src/telemet
 
 Invariants:
 
-- **Append-only.** Sinks never rewrite past lines. `trace_truncated` is a synthetic final marker when the per-session cap (`telemetry.trace.maxBytesPerSession`, default 10 MiB) is hit; further events are dropped silently.
+- **Append-only.** Sinks never rewrite past lines. `trace_truncated` is a synthetic final marker when the per-session cap (`tracing.trace.maxBytesPerSession`, default 10 MiB) is hit; further events are dropped silently.
 - **Per-session file.** One NDJSON per `sessionId`; no cross-session mixing.
 - **Monotonic `seq`.** Every event carries a monotonic in-session sequence starting at `0`.
 - **No redaction yet.** Secret redaction is an explicit NON-goal of this milestone; treat trace files as sensitive local artefacts.

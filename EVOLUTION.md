@@ -81,7 +81,7 @@ What ships (single-layer profile + async reflection formation):
 Why this order:
 
 - gives the runtime durable cross-session memory of the user (Type 1) with near-zero prompt cost
-- replaces the trace-dependent Action History with an autonomous formation mechanism that works regardless of whether telemetry is enabled
+- replaces the trace-dependent Action History with an autonomous formation mechanism that works regardless of whether tracing is enabled
 - defers embeddings, semantic retrieval, summaries, and workspace indexing until after we measure real usage
 
 Shipped modules:
@@ -94,7 +94,7 @@ Shipped modules:
 - `src/llm/slot-manager.ts` — `reserveReflectionSlot()` for a dedicated reflection slot
 - `src/agent/agent-loop.ts` — optional `reflectionRunner` dependency; `abortPending()` at turn start, fire `reflect()` at turn end
 - `src/runtime/bootstrap.ts` — instantiates `ProfileStore`, registers memory tools, wires `profileFactsProvider` + `ReflectionRunner` into `AgentLoop`
-- `src/telemetry/agent-metrics.ts` — `agent.memory.reflection` counter + latency histogram
+- `src/tracing/agent-metrics.ts` — `agent.memory.reflection` counter + latency histogram
 - `AGENTS.md` — revised §"Memory fabric" section (single layer + reflection subsection)
 
 Invariants (locked):
@@ -173,7 +173,7 @@ Implementation notes (2026-04-23):
 - Error taxonomy lives in a new feature folder `src/llm/reliability/` — `LlmFailureCategory`, the `LlmFailure` class hierarchy (`TransportError`, `GrammarError`, `ModelError`, `ToolExecutionError`, `CancelledError`), `classifyFailure`, and `detectModelFailure`. The executor wraps any escaping error into an `LlmFailure` before emitting `step_error`; the agent loop classifies at the outer catch and attaches `category` to `loop_failed`.
 - `detectModelFailure` short-circuits the parser retry on `truncated` / `empty` / `no_stop` completions so the runtime does not waste an LLM call reproducing the same wall.
 - `category` is propagated end-to-end: `step_error` / `loop_failed` events → `trace-recorder` → `AgentMetrics.recordLlmFailure` (`agent.llm.failure`) → TUI event feed label → sidecar protocol (`session_failed.category`, `error.code = step_error:<category>`) → OpenAI SSE (`error.category` for atomic extensions, `error.type = agent.<category>` for OpenAI-compatible clients).
-- Tests: `src/llm/reliability/*.test.ts`, new `agent-loop.test.ts` cases (`truncated`, `empty`, persistent grammar failure, missing tool), `telemetry.test.ts` `recordLlmFailure`, `trace-recorder.test.ts` category propagation, `agent-event-reducer.test.ts` feed label. See `AGENTS.md` §"LLM reliability policy" for the full invariant table.
+- Tests: `src/llm/reliability/*.test.ts`, new `agent-loop.test.ts` cases (`truncated`, `empty`, persistent grammar failure, missing tool), `tracing.test.ts` `recordLlmFailure`, `trace-recorder.test.ts` category propagation, `agent-event-reducer.test.ts` feed label. See `AGENTS.md` §"LLM reliability policy" for the full invariant table.
 
 ## Option 4: background autonomy [done: 2026-04-24]
 
@@ -200,7 +200,7 @@ Shipped modules:
 - `src/runtime/bootstrap.ts` — wires `Scheduler` (start after `recoverStale`, stop before `taskStore.close`), `WebhookSessionStore`, and the `registerTaskTools` call. `AgentRuntime` now exposes `scheduler: Scheduler | null` and `webhookSessionStore`.
 - `src/config/config-schema.ts` + `load-config.ts` — env-only `tasks.schedulerEnabled`, `tasks.schedulerTickMs`, `tasks.schedulerBatch`, `tasks.agentToolsEnabled`, `tasks.minIntervalMs`; `USER_CONFIG_VERSION` bumped 2 → 3 with a transparent migration that defaults `webhooks: {}`.
 - `src/cli/task-command.ts` — `task create` gained `--at` / `--cron` / `--every` / `--tz`; `task list` prints `schedule` + `next-run`; new `task tick` subcommand for one-shot scheduler pumps.
-- `src/telemetry/agent-metrics.ts` — new counters `agent.tasks.{scheduled,recurring_requeued,session_recreated,session_auto_created}`, `agent.scheduler.{ticks,tick_errors}`, `agent.webhooks.received`, and histograms `agent.scheduler.{batch_size,tick_duration_ms}`.
+- `src/tracing/agent-metrics.ts` — new counters `agent.tasks.{scheduled,recurring_requeued,session_recreated,session_auto_created}`, `agent.scheduler.{ticks,tick_errors}`, `agent.webhooks.received`, and histograms `agent.scheduler.{batch_size,tick_duration_ms}`.
 - `grammars/tool-call.gbnf` + `src/prompt/tool-descriptors.ts` — grammar alternative list and descriptors extended with `tasks.*`.
 - `src/session/session-state.ts` — documented reserved `metadata.wakeReason` key.
 
@@ -243,7 +243,7 @@ Shipped modules:
 - new feature folder `src/tasks/` — `task-types.ts`, `task-schema.ts` (`TASK_SCHEMA_VERSION = 1`, separate `<stateDir>/tasks.sqlite` file, no cross-file FKs), `task-store.ts` (synchronous `better-sqlite3` CRUD + lifecycle transitions + `recoverStale`), `task-backoff.ts` (pure `nextDelayMs`), `task-runner.ts` (`create` + `runOne` + `drainPending`), `index.ts` named exports, plus colocated `*.test.ts` for store / backoff / runner.
 - `src/runtime/bootstrap.ts` — wires `TaskStore` and `TaskRunner` into `AgentRuntime`, calls `taskStore.recoverStale(config.tasks.staleAfterMs)` once on boot, closes the SQLite handle in `shutdown()`.
 - `src/config/config-schema.ts` and `src/config/load-config.ts` — new `tasks.*` block (`enabled`, `maxAttempts`, `backoffInitialMs`, `backoffMaxMs`, `runOnCreate`, `staleAfterMs`) + `paths.tasksDbFile`, all env-overridable.
-- `src/telemetry/agent-metrics.ts` — `agent.tasks.{created,started,completed,failed,blocked,cancelled,retried}` counters and `agent.tasks.{attempts,duration_ms}` histograms, with `TaskOriginTag` reused by metric tags.
+- `src/tracing/agent-metrics.ts` — `agent.tasks.{created,started,completed,failed,blocked,cancelled,retried}` counters and `agent.tasks.{attempts,duration_ms}` histograms, with `TaskOriginTag` reused by metric tags.
 - `src/http/route-tasks.ts` (+ `route-tasks.test.ts`) and `src/http/route-table.ts` — admin routes; all return 404 when `tasks.enabled=false`, mirroring the `memory.profile.enabled` gate from Option 2.
 - `src/cli/task-command.ts` (+ `task-command.test.ts`) and `src/cli/index.ts` — CLI subcommands; `list/show/create/cancel` open the `TaskStore` directly for fast one-shot access, `run` boots the full `createAgentRuntime` and tears it down on the way out.
 - Documentation: `ARCHITECTURE.md` §4.16 + §10 extension table, `AGENTS.md` "Durable tasks" subsection, `README.md` CLI paragraph.
@@ -322,7 +322,7 @@ Documentation:
 
 ## Option 7: traceability and replay [done: 2026-04-23]
 
-Shipped as `src/telemetry/trace/` (append-only NDJSON per session at `<stateDir>/traces/<sessionId>.ndjson`) + `src/replay/` (prompt-drift replay) + `atomic-agent trace list|show|export|replay`. Secret redaction is intentionally deferred — traces are currently sensitive local artefacts.
+Shipped as `src/tracing/trace/` (append-only NDJSON per session at `<stateDir>/traces/<sessionId>.ndjson`) + `src/replay/` (prompt-drift replay) + `atomic-agent trace list|show|export|replay`. Secret redaction is intentionally deferred — traces are currently sensitive local artefacts.
 
 What it adds:
 
@@ -338,7 +338,7 @@ Why it matters:
 
 Likely modules:
 
-- `src/telemetry/`
+- `src/tracing/`
 - `src/session/`
 - `src/runtime/bootstrap.ts`
 

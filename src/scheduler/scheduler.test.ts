@@ -120,7 +120,7 @@ describe("Scheduler", () => {
         info: () => {},
         warn,
         error: () => {},
-      } as unknown as import("../telemetry/structured-logger.js").StructuredLogger,
+      } as unknown as import("../tracing/structured-logger.js").StructuredLogger,
     });
 
     scheduler.start();
