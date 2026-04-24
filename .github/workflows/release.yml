@@ -55,7 +55,7 @@ jobs:
           # and other deps, so SEA must run it as an ES module. Node 22/24
           # LTS would crash at boot with `SyntaxError: Cannot use import
           # statement outside a module`.
-          node-version: "25.x"
+          node-version: "25.7"
           check-latest: true
 
       - name: Install dependencies
