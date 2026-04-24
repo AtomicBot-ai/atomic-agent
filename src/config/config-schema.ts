@@ -1,6 +1,36 @@
+import type { TaskSchedule } from "../tasks/task-types.js";
+
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export type BrowserChannel = "chrome" | "msedge" | "chromium";
+
+/**
+ * Declarative binding between an inbound webhook URL path and the task
+ * it materialises. Per-webhook config lets operators point external
+ * systems (e.g. a GitHub hook, a cron-like SaaS) at atomic-agent
+ * without writing code — the HTTP layer turns each hit into a task.
+ *
+ * `sessionMode` drives session continuity across repeated hits:
+ *  - `ephemeral`   — fresh ephemeral session per hit (default when no
+ *    schedule is set; matches CLI one-shot behaviour)
+ *  - `persistent`  — a single session created on the first hit and
+ *    reused forever; sessionId persisted in
+ *    `<stateDir>/webhook-sessions.json` keyed by webhook name
+ *  - `named`       — explicit `sessionId` supplied by the operator; no
+ *    persistence file, no auto-creation
+ *
+ * `userMessageTemplate` supports `{{body.<json.path>}}` placeholders
+ * against the parsed JSON request body. `secret`, when set, is
+ * matched against the `x-webhook-secret` request header in addition
+ * to the global API-key check.
+ */
+export interface WebhookConfig {
+  userMessageTemplate: string;
+  secret?: string;
+  schedule?: TaskSchedule;
+  sessionMode?: "ephemeral" | "persistent" | "named";
+  sessionId?: string;
+}
 
 /**
  * Full runtime config assembled from the user config file (6 user-facing
@@ -136,6 +166,36 @@ export interface AtomicAgentConfig {
      * against orphan rows after process crashes.
      */
     staleAfterMs: number;
+    /**
+     * Background-autonomy kill switch. When `false` the scheduler is
+     * never constructed, `runDue` becomes a no-op, and the CLI `task
+     * tick` subcommand short-circuits. Independent of `tasks.enabled`
+     * so operators can keep the durable queue alive while disabling
+     * the periodic wakeup loop.
+     */
+    schedulerEnabled: boolean;
+    /** Scheduler polling interval. Default 5 000 ms. */
+    schedulerTickMs: number;
+    /**
+     * Upper bound on the number of due tasks consumed per tick. The
+     * runner still enforces per-session FIFO, so larger batches let
+     * more independent sessions fire in parallel within one tick.
+     */
+    schedulerBatch: number;
+    /**
+     * Agent-side `tasks.*` tools kill switch. When `false`, the five
+     * tools (`tasks.schedule|cron|list|cancel|show`) are not
+     * registered and the agent cannot self-schedule. Independent of
+     * `tasks.enabled` so operators can keep the CLI / HTTP surfaces
+     * alive while denying the agent write access.
+     */
+    agentToolsEnabled: boolean;
+    /**
+     * Lower bound on `interval` schedule `everyMs`. Cannot go below
+     * `SCHEDULE_INTERVAL_MIN_MS` (1 000 ms) in `task-schedule.ts`;
+     * this knob lets operators enforce a larger floor.
+     */
+    minIntervalMs: number;
   };
   /**
    * Cross-session memory fabric. The profile store is a durable SQLite
@@ -228,6 +288,13 @@ export interface AtomicAgentConfig {
       maxTokens: number;
     };
   };
+  /**
+   * Webhook ingress bindings. Mirrors `UserConfigFile.webhooks` —
+   * loaded from disk on startup and handed to the HTTP layer so the
+   * `POST /api/webhooks/:name` route can resolve bindings without
+   * reaching back into the user config file.
+   */
+  webhooks: Record<string, WebhookConfig>;
 }
 
 /**
@@ -300,17 +367,24 @@ export interface UserConfigFile {
       maxTokens: number;
     };
   };
+  /**
+   * Keyed map of webhook ingress bindings. Each entry is mounted at
+   * `POST /api/webhooks/<name>`. Added in config v3; older files are
+   * transparently upgraded with `webhooks: {}`.
+   */
+  webhooks: Record<string, WebhookConfig>;
 }
 
-export const USER_CONFIG_VERSION = 2 as const;
+export const USER_CONFIG_VERSION = 3 as const;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
- * v1 files are silently upgraded to `USER_CONFIG_VERSION` in-memory;
- * missing sub-keys fall back to `USER_CONFIG_DEFAULTS`. The upgraded
- * shape is written back to disk on the next `config set` / `ensure`.
+ * v1 and v2 files are silently upgraded to `USER_CONFIG_VERSION`
+ * in-memory; missing sub-keys fall back to `USER_CONFIG_DEFAULTS`.
+ * The upgraded shape is written back to disk on the next
+ * `config set` / `ensure`.
  */
-const SUPPORTED_INPUT_VERSIONS: readonly number[] = [1, USER_CONFIG_VERSION];
+const SUPPORTED_INPUT_VERSIONS: readonly number[] = [1, 2, USER_CONFIG_VERSION];
 
 export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   version: USER_CONFIG_VERSION,
@@ -369,6 +443,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       maxTokens: 300,
     },
   },
+  webhooks: {},
 };
 
 /** Non-user env-based defaults (not part of the user config file). */
@@ -397,6 +472,11 @@ export const ENV_DEFAULTS = {
   TASKS_BACKOFF_MAX_MS: 60_000,
   TASKS_RUN_ON_CREATE: true,
   TASKS_STALE_AFTER_MS: 5 * 60 * 1_000,
+  TASKS_SCHEDULER_ENABLED: true,
+  TASKS_SCHEDULER_TICK_MS: 5_000,
+  TASKS_SCHEDULER_BATCH: 10,
+  TASKS_AGENT_TOOLS_ENABLED: true,
+  TASKS_MIN_INTERVAL_MS: 1_000,
 };
 
 export class ConfigValidationError extends Error {
@@ -530,6 +610,116 @@ export function parseStringArrayOrNull(
   return result;
 }
 
+/**
+ * Validate and normalise the keyed `webhooks` block. The schedule,
+ * when supplied, is left as raw JSON here (cron/interval/at) — it's
+ * passed to `TaskRunner.create` at dispatch time where
+ * `validateSchedule` runs canonically. This keeps config parsing
+ * decoupled from cron-parser, which lives behind `task-schedule.ts`.
+ */
+export function parseWebhookMap(
+  raw: unknown,
+  field: string,
+): Record<string, WebhookConfig> {
+  if (raw === null || raw === undefined) return {};
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      field,
+      `expected object, got ${JSON.stringify(raw)}`,
+    );
+  }
+  const out: Record<string, WebhookConfig> = {};
+  for (const [name, rawCfg] of Object.entries(raw as Record<string, unknown>)) {
+    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+      throw new ConfigValidationError(
+        `${field}.${name}`,
+        "webhook name must match [a-zA-Z0-9_-]+",
+      );
+    }
+    if (rawCfg === null || typeof rawCfg !== "object" || Array.isArray(rawCfg)) {
+      throw new ConfigValidationError(
+        `${field}.${name}`,
+        `expected object, got ${JSON.stringify(rawCfg)}`,
+      );
+    }
+    const cfg = rawCfg as Record<string, unknown>;
+    const userMessageTemplate = parseNonEmptyString(
+      cfg.userMessageTemplate,
+      `${field}.${name}.userMessageTemplate`,
+    );
+    const sessionMode = cfg.sessionMode ?? "ephemeral";
+    if (
+      sessionMode !== "ephemeral" &&
+      sessionMode !== "persistent" &&
+      sessionMode !== "named"
+    ) {
+      throw new ConfigValidationError(
+        `${field}.${name}.sessionMode`,
+        `expected ephemeral|persistent|named, got ${JSON.stringify(sessionMode)}`,
+      );
+    }
+    let sessionId: string | undefined;
+    if (cfg.sessionId !== undefined && cfg.sessionId !== null) {
+      sessionId = parseNonEmptyString(cfg.sessionId, `${field}.${name}.sessionId`);
+    }
+    if (sessionMode === "named" && !sessionId) {
+      throw new ConfigValidationError(
+        `${field}.${name}.sessionId`,
+        "sessionMode=named requires a non-empty sessionId",
+      );
+    }
+    let secret: string | undefined;
+    if (cfg.secret !== undefined && cfg.secret !== null) {
+      secret = parseNonEmptyString(cfg.secret, `${field}.${name}.secret`);
+    }
+    let schedule: TaskSchedule | undefined;
+    if (cfg.schedule !== undefined && cfg.schedule !== null) {
+      schedule = parseWebhookSchedule(cfg.schedule, `${field}.${name}.schedule`);
+    }
+    out[name] = {
+      userMessageTemplate,
+      sessionMode,
+      ...(sessionId ? { sessionId } : {}),
+      ...(secret ? { secret } : {}),
+      ...(schedule ? { schedule } : {}),
+    };
+  }
+  return out;
+}
+
+function parseWebhookSchedule(raw: unknown, field: string): TaskSchedule {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected schedule object");
+  }
+  const obj = raw as Record<string, unknown>;
+  if (obj.kind === "at") {
+    const at = obj.at;
+    if (typeof at !== "number" || !Number.isFinite(at)) {
+      throw new ConfigValidationError(`${field}.at`, "expected finite number (Unix ms)");
+    }
+    return { kind: "at", at };
+  }
+  if (obj.kind === "interval") {
+    const everyMs = obj.everyMs;
+    if (typeof everyMs !== "number" || !Number.isInteger(everyMs) || everyMs <= 0) {
+      throw new ConfigValidationError(
+        `${field}.everyMs`,
+        "expected positive integer",
+      );
+    }
+    return { kind: "interval", everyMs };
+  }
+  if (obj.kind === "cron") {
+    const expression = parseNonEmptyString(obj.expression, `${field}.expression`);
+    const tz = typeof obj.tz === "string" ? obj.tz : undefined;
+    return { kind: "cron", expression, ...(tz ? { tz } : {}) };
+  }
+  throw new ConfigValidationError(
+    `${field}.kind`,
+    `expected at|cron|interval, got ${JSON.stringify(obj.kind)}`,
+  );
+}
+
 export function parseUrl(raw: unknown, field: string): string {
   const str = parseNonEmptyString(raw, field);
   try {
@@ -581,6 +771,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (memory.recallInjection as Record<string, unknown> | undefined) ?? {};
   const memoryIndex =
     (memory.index as Record<string, unknown> | undefined) ?? {};
+  const webhooks = parseWebhookMap(obj.webhooks ?? {}, "webhooks");
 
   return {
     version: USER_CONFIG_VERSION,
@@ -761,5 +952,6 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         ),
       },
     },
+    webhooks,
   };
 }

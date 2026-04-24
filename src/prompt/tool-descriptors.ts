@@ -302,6 +302,46 @@ export const DEFAULT_TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
     argsSchema: '{"id": "number"}',
   },
   {
+    name: "tasks.schedule",
+    summary:
+      "Schedule a one-shot task for the agent to run later. Defaults to the current session (continuity); set newSession=true for an independent thread. Provide either `at` (Unix ms) or `inSeconds` — not both; omit both to enqueue immediately.",
+    argsSchema:
+      '{"userMessage": "string", "at": "number (optional, Unix ms)", "inSeconds": "number (optional)", "newSession": "bool (optional, default false)"}',
+    examples: [
+      '{"userMessage":"check build status","inSeconds":300}',
+      '{"userMessage":"follow up with user about PR review","at":1735689600000,"newSession":true}',
+    ],
+  },
+  {
+    name: "tasks.cron",
+    summary:
+      "Schedule a recurring task via a 5- or 6-field cron expression. Each firing runs in its own persistent session (not the caller's) for continuity across runs.",
+    argsSchema:
+      '{"userMessage": "string", "expression": "string (5 or 6 cron fields)", "tz": "string (optional IANA timezone)"}',
+    examples: [
+      '{"userMessage":"morning digest","expression":"0 9 * * *","tz":"Europe/Berlin"}',
+    ],
+  },
+  {
+    name: "tasks.list",
+    summary:
+      "List tasks in the durable queue. Defaults to the current session; filter by status (single value or comma-separated list of pending|running|completed|failed|blocked|cancelled). Read-only.",
+    argsSchema:
+      '{"status": "string (optional)", "sessionId": "string (optional)", "limit": "number (optional, default 20, max 200)"}',
+  },
+  {
+    name: "tasks.cancel",
+    summary:
+      "Cancel a queued or running task by id. Idempotent on already-terminal rows.",
+    argsSchema: '{"id": "string"}',
+  },
+  {
+    name: "tasks.show",
+    summary:
+      "Show full details for one task by id (status, schedule, timestamps, last error). Read-only.",
+    argsSchema: '{"id": "string"}',
+  },
+  {
     name: "reply",
     summary:
       "Send the FINAL natural-language answer to the user. Ends the current turn — the session stays open for the next user message. NEVER use `reply` to announce an action you are about to take (e.g. do NOT write 'I will now click X'); emit that action's tool call directly instead. Call only when the task is fully done, it is small-talk, or you need a clarifying question from the user. Keep `text` short: do not paste large file lists or raw tool dumps — summarize counts, show at most a handful of examples, and point to paths or prior tool output instead (long `text` can exceed the completion token budget and break JSON).",

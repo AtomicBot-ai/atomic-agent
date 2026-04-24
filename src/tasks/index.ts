@@ -12,6 +12,7 @@ export type {
   TaskRunnerOptions,
   TaskRunnerRuntime,
   TaskRunnerSessionLoader,
+  TaskRunnerSessionFactory,
 } from "./task-runner.js";
 export { nextDelayMs } from "./task-backoff.js";
 export type { BackoffOptions } from "./task-backoff.js";
@@ -21,5 +22,21 @@ export {
   TaskStateError,
   TaskValidationError,
 } from "./task-types.js";
-export type { TaskOrigin, TaskRecord, TaskStatus } from "./task-types.js";
+export type {
+  TaskOrigin,
+  TaskRecord,
+  TaskSchedule,
+  TaskStatus,
+  TriggerSource,
+} from "./task-types.js";
 export { TASK_SCHEMA_VERSION, applyMigrations } from "./task-schema.js";
+export {
+  SCHEDULE_AT_MAX_AHEAD_MS,
+  SCHEDULE_CRON_MAX_LENGTH,
+  SCHEDULE_INTERVAL_MIN_MS,
+  isRecurring,
+  parseScheduleRow,
+  resolveScheduledFor,
+  serializeScheduleValue,
+  validateSchedule,
+} from "./task-schedule.js";

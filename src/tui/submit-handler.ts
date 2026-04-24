@@ -90,4 +90,6 @@ export function runSlashCommand(
   if (result.persistLlamaUrl) {
     callbacks.onPersistLlamaUrl?.(result.persistLlamaUrl);
   }
+  if (result.taskCancelId) callbacks.onTaskCancelConfirmed?.(result.taskCancelId);
+  if (result.taskRunId) callbacks.onTaskRunNowRequested?.(result.taskRunId);
 }

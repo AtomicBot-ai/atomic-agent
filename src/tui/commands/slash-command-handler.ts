@@ -32,6 +32,10 @@ export interface SlashDispatchResult {
   readonly forwardAsMessage: boolean;
   /** When set, caller should probe this URL, persist on success, then refresh UI. */
   readonly persistLlamaUrl?: string;
+  /** Task id to cancel via the orchestrator (`/task cancel <id>`). */
+  readonly taskCancelId?: string;
+  /** Task id to run immediately via `TaskRunner.runOne` (`/task run <id>`). */
+  readonly taskRunId?: string;
 }
 
 /**
@@ -74,7 +78,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
     case "help":
       return pureActions([], {
         systemMessage:
-          "available commands: /clear /abort /quit /debug /chat /feed /logs /reasoning /world /metrics /expand /collapse /session /sessions /new /skills /memory /llama",
+          "available commands: /clear /abort /quit /debug /chat /feed /logs /reasoning /world /metrics /tasks /task /expand /collapse /session /sessions /new /skills /memory /llama",
       });
     case "clear":
       return pureActions([{ type: "chat_cleared" }], {
@@ -137,6 +141,13 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       });
     case "memory":
       return pureActions([], { triggerMemoryDump: true });
+    case "tasks":
+      return pureActions([
+        { type: "ui_mode_set", mode: "debug" },
+        { type: "tab_changed", tab: "tasks" },
+      ]);
+    case "task":
+      return dispatchTaskSub(parsed.args);
     case "llama": {
       const argPart = parsed.args.trim();
       if (argPart.length === 0) {
@@ -187,4 +198,39 @@ function pureActions(
     persistLlamaUrl: undefined,
     ...overrides,
   };
+}
+
+/**
+ * Sub-dispatcher for `/task <verb> [args]`. Accepted verbs:
+ *   - `new`         — open the create form in the Tasks tab.
+ *   - `cancel <id>` — enqueue a cancellation side-effect.
+ *   - `run <id>`    — enqueue a run-now side-effect.
+ */
+function dispatchTaskSub(rawArgs: string): SlashDispatchResult {
+  const [verb, ...rest] = rawArgs.trim().split(/\s+/);
+  const verbLower = (verb ?? "").toLowerCase();
+  if (verbLower === "new" || verbLower === "create") {
+    return pureActions([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "tasks" },
+      { type: "tasks_create_form_opened" },
+    ]);
+  }
+  if (verbLower === "cancel") {
+    const id = rest.join(" ").trim();
+    if (id.length === 0) {
+      return pureActions([], { systemMessage: "usage: /task cancel <id>" });
+    }
+    return pureActions([], { taskCancelId: id });
+  }
+  if (verbLower === "run") {
+    const id = rest.join(" ").trim();
+    if (id.length === 0) {
+      return pureActions([], { systemMessage: "usage: /task run <id>" });
+    }
+    return pureActions([], { taskRunId: id });
+  }
+  return pureActions([], {
+    systemMessage: "usage: /task new | /task cancel <id> | /task run <id>",
+  });
 }

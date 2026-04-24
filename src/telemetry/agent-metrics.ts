@@ -31,6 +31,15 @@ export const METRIC_NAMES = {
   tasksRetried: "agent.tasks.retried",
   tasksAttempts: "agent.tasks.attempts",
   tasksDuration: "agent.tasks.duration_ms",
+  tasksScheduled: "agent.tasks.scheduled",
+  tasksRecurringRequeued: "agent.tasks.recurring_requeued",
+  tasksSessionRecreated: "agent.tasks.session_recreated",
+  tasksSessionAutoCreated: "agent.tasks.session_auto_created",
+  schedulerTicks: "agent.scheduler.ticks",
+  schedulerTickErrors: "agent.scheduler.tick_errors",
+  schedulerBatchSize: "agent.scheduler.batch_size",
+  schedulerTickDuration: "agent.scheduler.tick_duration_ms",
+  webhooksReceived: "agent.webhooks.received",
 } as const;
 
 export type MetricName = (typeof METRIC_NAMES)[keyof typeof METRIC_NAMES];
@@ -100,7 +109,13 @@ export type TaskTerminalStatus =
   | "cancelled";
 
 /** Origin tag used by every task-level metric for downstream slicing. */
-export type TaskOriginTag = "cli" | "tui" | "http" | "sidecar" | "scheduler";
+export type TaskOriginTag =
+  | "cli"
+  | "tui"
+  | "http"
+  | "sidecar"
+  | "scheduler"
+  | "agent";
 
 export interface TaskCreatedSample {
   taskId: string;
@@ -130,6 +145,41 @@ export interface TaskTerminalSample {
   status: TaskTerminalStatus;
   attempts: number;
   durationMs: number;
+}
+
+export interface TaskScheduledSample {
+  taskId: string;
+  kind: "at" | "cron" | "interval";
+  scheduledFor: number;
+  recurring: boolean;
+}
+
+export interface TaskRecurringRequeuedSample {
+  taskId: string;
+  sessionId: string;
+  nextScheduledFor: number;
+}
+
+export interface TaskSessionRecreatedSample {
+  taskId: string;
+  previousSessionId: string;
+  newSessionId: string;
+}
+
+export interface TaskSessionAutoCreatedSample {
+  sessionId: string;
+  reason: "one_shot_lazy" | "recurring_create" | "webhook_persistent";
+}
+
+export interface SchedulerTickSample {
+  batchSize: number;
+  durationMs: number;
+  outcome: "ok" | "error";
+}
+
+export interface WebhookReceivedSample {
+  webhookName: string;
+  status: "accepted" | "rejected";
 }
 
 /**
@@ -266,6 +316,94 @@ export class AgentMetrics {
       Math.max(0, sample.durationMs),
       tags,
     );
+  }
+
+  /**
+   * Record a task being persisted with a non-trivial schedule. Fires
+   * exactly once per `TaskStore.create` when `schedule` is set, so
+   * dashboards can distinguish eager one-shot tasks from deferred /
+   * recurring work without scanning every row.
+   */
+  recordTaskScheduled(sample: TaskScheduledSample): void {
+    this.collector.counter(METRIC_NAMES.tasksScheduled, 1, {
+      taskId: sample.taskId,
+      kind: sample.kind,
+      recurring: sample.recurring ? "true" : "false",
+    });
+  }
+
+  /**
+   * Record a recurring task being requeued after a completed firing.
+   * The counter increments exactly once per requeue — not once per
+   * firing — so "ticks consumed" vs "tasks requeued" can both be
+   * monitored from the scheduler and runner sides.
+   */
+  recordTaskRecurringRequeued(sample: TaskRecurringRequeuedSample): void {
+    this.collector.counter(METRIC_NAMES.tasksRecurringRequeued, 1, {
+      taskId: sample.taskId,
+      sessionId: sample.sessionId,
+    });
+  }
+
+  /**
+   * Record a recurring task whose persistent session was missing and
+   * had to be auto-recreated. Emitted at warn-level by the logger as
+   * well; the counter exists for alerting on unexpected session churn.
+   */
+  recordTaskSessionRecreated(sample: TaskSessionRecreatedSample): void {
+    this.collector.counter(METRIC_NAMES.tasksSessionRecreated, 1, {
+      taskId: sample.taskId,
+      previousSessionId: sample.previousSessionId,
+      newSessionId: sample.newSessionId,
+    });
+  }
+
+  /**
+   * Record a session auto-created by the runner — lazy for one-shot
+   * tasks, eager for recurring tasks at `create()` time, or persistent
+   * for webhooks configured as such.
+   */
+  recordTaskSessionAutoCreated(sample: TaskSessionAutoCreatedSample): void {
+    this.collector.counter(METRIC_NAMES.tasksSessionAutoCreated, 1, {
+      sessionId: sample.sessionId,
+      reason: sample.reason,
+    });
+  }
+
+  /**
+   * Record one scheduler tick. Tagged by `outcome` so dashboards can
+   * spot failing ticks at a glance; the histogram carries the batch
+   * size and wall-clock duration for the same tick.
+   */
+  recordSchedulerTick(sample: SchedulerTickSample): void {
+    const tags = { outcome: sample.outcome };
+    this.collector.counter(METRIC_NAMES.schedulerTicks, 1, tags);
+    if (sample.outcome === "error") {
+      this.collector.counter(METRIC_NAMES.schedulerTickErrors, 1, tags);
+    }
+    this.collector.histogram(
+      METRIC_NAMES.schedulerBatchSize,
+      sample.batchSize,
+      tags,
+    );
+    this.collector.histogram(
+      METRIC_NAMES.schedulerTickDuration,
+      sample.durationMs,
+      tags,
+    );
+  }
+
+  /**
+   * Record an inbound webhook hit. Tagged by `webhook_name` so each
+   * configured webhook can be alerted on independently; `status`
+   * distinguishes accepted (task materialised) from rejected (auth,
+   * disabled, template, etc.) requests.
+   */
+  recordWebhookReceived(sample: WebhookReceivedSample): void {
+    this.collector.counter(METRIC_NAMES.webhooksReceived, 1, {
+      webhook_name: sample.webhookName,
+      status: sample.status,
+    });
   }
 
   recordApproval(input: { sessionId: string; tool: string; approved: boolean }): void {

@@ -35,6 +35,7 @@ import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { registerOsTools } from "../tools/os/index.js";
 import { registerSkillTools } from "../tools/skill/index.js";
 import { registerMemoryTools } from "../tools/memory/index.js";
+import { registerTaskTools } from "../tools/tasks/index.js";
 
 import { MemoryStore } from "../memory/memory-store.js";
 import { ProfileStore } from "../memory/profile-store.js";
@@ -66,6 +67,8 @@ import {
 } from "../session/index.js";
 
 import { TaskRunner, TaskStore } from "../tasks/index.js";
+import { Scheduler } from "../scheduler/index.js";
+import { WebhookSessionStore } from "../http/webhook-session-store.js";
 
 import { StructuredLogger } from "../telemetry/structured-logger.js";
 import type { LogSink } from "../telemetry/structured-logger.js";
@@ -183,6 +186,20 @@ export interface AgentRuntime {
    */
   readonly taskStore: TaskStore;
   readonly taskRunner: TaskRunner;
+  /**
+   * Periodic scheduler that drains due tasks off the `scheduled_for`
+   * index. `null` when `tasks.enabled` or `tasks.schedulerEnabled` is
+   * false — tests and ops tooling can still call `taskRunner.runDue`
+   * directly for a one-shot tick.
+   */
+  readonly scheduler: Scheduler | null;
+  /**
+   * Persistent mapping of webhook name -> session id, used by the
+   * `POST /api/webhooks/:name` route when `sessionMode=persistent`.
+   * Always present — the store is a tiny on-disk JSON file whose
+   * cost is negligible even when no webhooks are configured.
+   */
+  readonly webhookSessionStore: WebhookSessionStore;
   readonly capabilities: CapabilitiesSummary;
   readonly skillCatalog: readonly SkillCatalogEntry[];
   readonly toolDescriptors: readonly ToolDescriptor[];
@@ -444,6 +461,9 @@ export async function createAgentRuntime(
 
   const sessionStore = new SessionStore();
   const taskStore = new TaskStore({ dbFile: config.paths.tasksDbFile });
+  const webhookSessionStore = new WebhookSessionStore(
+    resolve(config.paths.stateDir, "webhook-sessions.json"),
+  );
   const recoveredStale = taskStore.recoverStale(config.tasks.staleAfterMs);
   if (recoveredStale > 0) {
     logger.info("recovered stale running tasks on bootstrap", {
@@ -557,6 +577,15 @@ export async function createAgentRuntime(
     } catch {
       // already closed
     }
+    if (scheduler) {
+      try {
+        await scheduler.stop();
+      } catch (err) {
+        logger.warn("scheduler stop failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
     try {
       taskStore.close();
     } catch {
@@ -640,6 +669,10 @@ export async function createAgentRuntime(
     store: taskStore,
     runtime: { runTurn },
     sessionLoader: sessionStore,
+    sessionFactory: {
+      create: (input) => createSession(input ?? {}),
+      save: (state) => sessionStore.save(state),
+    },
     defaultMaxSteps: config.agent.maxSteps,
     backoff: {
       initialMs: config.tasks.backoffInitialMs,
@@ -650,6 +683,28 @@ export async function createAgentRuntime(
     logger,
     metrics,
   });
+
+  registerTaskTools(toolRegistry, {
+    taskStore,
+    taskRunner,
+    createSession,
+    agentToolsEnabled:
+      config.tasks.enabled && config.tasks.agentToolsEnabled,
+    defaultMaxAttempts: config.tasks.maxAttempts,
+    defaultListLimit: 20,
+  });
+
+  const scheduler =
+    config.tasks.enabled && config.tasks.schedulerEnabled
+      ? new Scheduler({
+          taskRunner,
+          tickMs: config.tasks.schedulerTickMs,
+          batch: config.tasks.schedulerBatch,
+          logger,
+          metrics,
+        })
+      : null;
+  scheduler?.start();
 
   const runtime = {
     config,
@@ -664,6 +719,8 @@ export async function createAgentRuntime(
     notesStore,
     taskStore,
     taskRunner,
+    scheduler,
+    webhookSessionStore,
     capabilities,
     toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
     grammar,

@@ -2,6 +2,7 @@ import type { AgentLoopEvent } from "../agent/agent-loop.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { MetricSample } from "../telemetry/metrics-collector.js";
 import type { LogRecord } from "../telemetry/structured-logger.js";
+import type { TasksAction } from "./tasks/tasks-actions.js";
 import type { ChatMessage, SessionPickerEntry, TuiTab, TuiUiMode } from "./tui-state.js";
 
 /**
@@ -97,4 +98,5 @@ export type TuiAction =
       messages: readonly ChatMessage[];
     }
   /** Header/runtime: user saved a new llama-server base URL (e.g. via /llama). */
-  | { type: "llama_url_changed"; url: string };
+  | { type: "llama_url_changed"; url: string }
+  | TasksAction;

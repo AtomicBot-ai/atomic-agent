@@ -38,6 +38,12 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     name: "llama",
     description: "set llama-server base URL (health-check, save to config)",
   },
+  { name: "tasks", description: "jump to the Tasks tab (Option 4 cron + ingress UI)" },
+  {
+    name: "task",
+    description:
+      "task subcommand: `/task new` | `/task cancel <id>` | `/task run <id>`",
+  },
 ];
 
 /**

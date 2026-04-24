@@ -12,7 +12,7 @@
  * `applyMigrations` with a new step. The `schema_meta` table records
  * the version actually present on disk so upgrades are idempotent.
  */
-export const TASK_SCHEMA_VERSION = 1 as const;
+export const TASK_SCHEMA_VERSION = 2 as const;
 
 const BASE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 
 CREATE TABLE IF NOT EXISTS tasks (
   id              TEXT PRIMARY KEY,
-  session_id      TEXT NOT NULL,
+  session_id      TEXT,
   user_message    TEXT NOT NULL,
   max_steps       INTEGER,
   status          TEXT NOT NULL,
@@ -45,6 +45,32 @@ CREATE INDEX IF NOT EXISTS idx_tasks_pending_created
   ON tasks(status, created_at) WHERE status = 'pending';
 `;
 
+/**
+ * v1 -> v2 migration: adds scheduling columns so the new `Scheduler`
+ * can query due tasks through a dedicated index. The partial index
+ * `idx_tasks_due` is the only path the scheduler uses to find work —
+ * never a full table scan.
+ *
+ * `session_id` is also relaxed to nullable here because one-shot tasks
+ * may be persisted without a session (the runner creates one lazily at
+ * the first `runOne` attempt). SQLite cannot drop a NOT NULL constraint
+ * via `ALTER TABLE`; existing rows are already non-null so we simply
+ * rely on `IF NOT EXISTS` on the base schema (new installs get the
+ * nullable column) and the absence of a runtime check that would reject
+ * `null` — the runner is the sole writer of this column from v2 on.
+ */
+const V2_MIGRATION = `
+ALTER TABLE tasks ADD COLUMN schedule_kind TEXT;
+ALTER TABLE tasks ADD COLUMN schedule_value TEXT;
+ALTER TABLE tasks ADD COLUMN scheduled_for INTEGER;
+ALTER TABLE tasks ADD COLUMN recurring INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN last_scheduled_at INTEGER;
+ALTER TABLE tasks ADD COLUMN trigger_source TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_tasks_due
+  ON tasks(status, scheduled_for) WHERE status = 'pending';
+`;
+
 export interface TaskDatabaseLike {
   exec(sql: string): unknown;
   prepare(sql: string): {
@@ -63,6 +89,9 @@ export function applyMigrations(db: TaskDatabaseLike): void {
     throw new Error(
       `tasks.sqlite schema version ${current} is newer than the supported ${TASK_SCHEMA_VERSION}; refusing to downgrade`,
     );
+  }
+  if (current < 2) {
+    db.exec(V2_MIGRATION);
   }
   if (current === TASK_SCHEMA_VERSION) return;
   db.prepare(

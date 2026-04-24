@@ -15,12 +15,15 @@ import {
   upsertReasoning,
 } from "./reducer-helpers.js";
 import { reduceUiAction } from "./reduce-ui-actions.js";
+import { reduceTasksAction } from "./tasks/tasks-reducer.js";
 import type { TuiAction } from "./tui-action.js";
 import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
 
 export type { TuiAction } from "./tui-action.js";
 
 export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
+  const tasksHandled = reduceTasksAction(state, action);
+  if (tasksHandled !== null) return tasksHandled;
   const uiHandled = reduceUiAction(state, action);
   if (uiHandled !== null) return uiHandled;
   switch (action.type) {

@@ -391,6 +391,80 @@ describe("TaskRunner", () => {
     expect(store.get(created.id)?.status).toBe("completed");
   });
 
+  it("stamps wakeReason on session.metadata before runTurn", async () => {
+    let observed: unknown = undefined;
+    const runtime: TaskRunnerRuntime = {
+      runTurn: async (session, _msg, _opts) => {
+        observed = session.metadata?.wakeReason;
+        return defaultReply(session);
+      },
+    };
+    const saved: SessionState[] = [];
+    const runner = new TaskRunner({
+      store,
+      runtime,
+      sessionLoader: fakeSessionLoader(session),
+      sessionFactory: {
+        create: () => session,
+        save: (state) => {
+          saved.push({ ...state });
+        },
+      },
+      defaultMaxSteps: 5,
+      backoff: { initialMs: 1, maxMs: 10 },
+      enabled: true,
+      runOnCreate: false,
+      sleep: async () => undefined,
+    });
+    const t = store.create({
+      sessionId: session.id,
+      userMessage: "hi",
+      origin: "http",
+      triggerSource: "webhook",
+      maxAttempts: 1,
+    });
+    await runner.runOne(t.id);
+    expect(observed).toMatchObject({ source: "webhook", taskId: t.id });
+    expect(saved.length).toBeGreaterThan(0);
+  });
+
+  it("carries webhookName from session metadata into wakeReason", async () => {
+    session.metadata = { ...session.metadata, webhookName: "slack-ping" };
+    let observed: unknown = undefined;
+    const runtime: TaskRunnerRuntime = {
+      runTurn: async (session, _msg, _opts) => {
+        observed = session.metadata?.wakeReason;
+        return defaultReply(session);
+      },
+    };
+    const runner = new TaskRunner({
+      store,
+      runtime,
+      sessionLoader: fakeSessionLoader(session),
+      sessionFactory: {
+        create: () => session,
+        save: () => undefined,
+      },
+      defaultMaxSteps: 5,
+      backoff: { initialMs: 1, maxMs: 10 },
+      enabled: true,
+      runOnCreate: false,
+      sleep: async () => undefined,
+    });
+    const t = store.create({
+      sessionId: session.id,
+      userMessage: "hi",
+      origin: "http",
+      triggerSource: "webhook",
+      maxAttempts: 1,
+    });
+    await runner.runOne(t.id);
+    expect(observed).toMatchObject({
+      source: "webhook",
+      webhookName: "slack-ping",
+    });
+  });
+
   it("treats a runTurn result of reason=failed as a retryable transport class", async () => {
     let calls = 0;
     const runtime: TaskRunnerRuntime = {

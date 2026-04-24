@@ -4,6 +4,7 @@ export type {
   HttpApprovalMode,
   LogLevel,
   UserConfigFile,
+  WebhookConfig,
 } from "./config-schema.js";
 export {
   ConfigValidationError,

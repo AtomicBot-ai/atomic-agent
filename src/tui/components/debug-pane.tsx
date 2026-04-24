@@ -7,6 +7,7 @@ import { ReasoningTab } from "../reasoning-tab.js";
 import { WorldPanel } from "../world-panel.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState, TuiTab } from "../tui-state.js";
+import { TasksPanel } from "./tasks-panel.js";
 
 interface DebugPaneProps {
   state: TuiState;
@@ -38,6 +39,7 @@ function DebugTabBar({ state }: { state: TuiState }): ReactElement {
     },
     { id: "logs", label: `Logs${suffix(state.logs.length)}` },
     { id: "metrics", label: "Metrics" },
+    { id: "tasks", label: `Tasks${suffix(state.tasksPanel.rows.length)}` },
   ];
   return (
     <Box>
@@ -84,6 +86,8 @@ function ActiveDebugTab({
       return <LogsTab state={state} maxVisible={maxVisible} />;
     case "metrics":
       return <MetricsFooter state={state} />;
+    case "tasks":
+      return <TasksPanel panel={state.tasksPanel} now={Date.now()} />;
     default:
       return <EventFeed state={state} maxVisible={maxVisible} />;
   }
@@ -100,6 +104,7 @@ const DEBUG_TAB_ORDER: readonly TuiTab[] = [
   "reasoning",
   "logs",
   "metrics",
+  "tasks",
 ];
 
 /**

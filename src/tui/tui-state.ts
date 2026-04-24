@@ -5,6 +5,10 @@ import type {
   WorldSnapshot,
 } from "../session/session-state.js";
 import type { LogRecord } from "../telemetry/structured-logger.js";
+import {
+  createInitialTasksPanelState,
+  type TasksPanelState,
+} from "./tasks/tasks-panel-state.js";
 
 /**
  * High-level lifecycle of the TUI. Mirrors the underlying `SessionState`
@@ -37,7 +41,13 @@ export interface RunHistoryEntry {
 }
 
 /** Debug-pane inner tabs. In chat mode the debug pane is hidden entirely. */
-export type TuiTab = "feed" | "world" | "reasoning" | "logs" | "metrics";
+export type TuiTab =
+  | "feed"
+  | "world"
+  | "reasoning"
+  | "logs"
+  | "metrics"
+  | "tasks";
 
 /**
  * Top-level UI mode: `chat` is the default single-scroll openclaw-style
@@ -233,6 +243,8 @@ export interface TuiState {
   aborting: boolean;
   /** Max feed/log/history ring-buffer size — protects against runaway memory. */
   ringBufferSize: number;
+  /** State slice driving the Tasks tab (Option 4 background autonomy UI). */
+  tasksPanel: TasksPanelState;
 }
 
 /**
@@ -295,5 +307,6 @@ export function createInitialTuiState(
     sessionPickerCursor: 0,
     aborting: false,
     ringBufferSize,
+    tasksPanel: createInitialTasksPanelState(),
   };
 }

@@ -76,6 +76,23 @@ export interface SessionState {
   createdAt: number;
   updatedAt: number;
   lastError: string | null;
+  /**
+   * Free-form session metadata. Reserved keys (set by the runtime, not
+   * the agent — agents may read but must not overwrite them):
+   *
+   *   - `wakeReason: { source: "user" | "scheduler" | "webhook" | "agent",
+   *                    taskId?: string, webhookName?: string, at: number }`
+   *     Stamped by `TaskRunner.runOne` right before `runTurn` and
+   *     survives restarts. Audit-only in this milestone — not rendered
+   *     into the prompt, but available to observability plumbing.
+   *   - `recurringTask: boolean` + `scheduleKind: "cron" | "interval"`
+   *     Stamped on persistent sessions created for recurring tasks.
+   *   - `webhookName: string` + `webhookPersistent: true` — stamped on
+   *     the persistent session that backs a `sessionMode="persistent"`
+   *     webhook.
+   *   - `ephemeralTask: true` + `scheduledBy: <sessionId>` — stamped on
+   *     fresh sessions created by `tasks.schedule` with `newSession=true`.
+   */
   metadata: Record<string, unknown>;
   /**
    * Ephemeral: top-K durable notes pre-fetched for the current turn.

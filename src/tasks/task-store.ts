@@ -7,13 +7,19 @@ import type { LlmFailureCategory } from "../llm/reliability/index.js";
 
 import { applyMigrations } from "./task-schema.js";
 import {
+  parseScheduleRow,
+  serializeScheduleValue,
+} from "./task-schedule.js";
+import {
   TASK_LAST_ERROR_MAX_LENGTH,
   TASK_USER_MESSAGE_MAX_LENGTH,
   TaskStateError,
   TaskValidationError,
   type TaskOrigin,
   type TaskRecord,
+  type TaskSchedule,
   type TaskStatus,
+  type TriggerSource,
 } from "./task-types.js";
 
 export interface TaskStoreOptions {
@@ -21,11 +27,26 @@ export interface TaskStoreOptions {
 }
 
 export interface TaskCreateInput {
-  sessionId: string;
+  /**
+   * Session the task will run in. `null` (or omitted) persists the row
+   * with `session_id = NULL` and lets `TaskRunner.runOne` create a
+   * fresh ephemeral session lazily at the first attempt.
+   */
+  sessionId?: string | null;
   userMessage: string;
   origin: TaskOrigin;
   maxAttempts: number;
   maxSteps?: number | null;
+  /** Scheduling primitive; omit for an eager one-shot task (immediate drain). */
+  schedule?: TaskSchedule | null;
+  /**
+   * Initial `scheduled_for` timestamp. The runner derives this from
+   * `schedule` via `resolveScheduledFor`; tests may pass it directly
+   * to skip the computation.
+   */
+  scheduledFor?: number | null;
+  /** Informational trigger tag — surfaced on `session.metadata.wakeReason`. */
+  triggerSource?: TriggerSource | null;
   /**
    * Optional explicit id. Used by tests to make assertions; production
    * callers always let the store generate one.
@@ -46,7 +67,7 @@ export interface TaskFailureInput {
 
 interface TaskRow {
   id: string;
-  session_id: string;
+  session_id: string | null;
   user_message: string;
   max_steps: number | null;
   status: TaskStatus;
@@ -59,6 +80,12 @@ interface TaskRow {
   updated_at: number;
   started_at: number | null;
   completed_at: number | null;
+  schedule_kind: string | null;
+  schedule_value: string | null;
+  scheduled_for: number | null;
+  recurring: number;
+  last_scheduled_at: number | null;
+  trigger_source: string | null;
 }
 
 const TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set([
@@ -86,6 +113,7 @@ export class TaskStore {
   private readonly listBySessionStmt: Database.Statement;
   private readonly listPendingStmt: Database.Statement;
   private readonly listPendingBySessionStmt: Database.Statement;
+  private readonly listDueStmt: Database.Statement;
   private readonly markRunningStmt: Database.Statement;
   private readonly markCompletedStmt: Database.Statement;
   private readonly markFailedStmt: Database.Statement;
@@ -93,6 +121,8 @@ export class TaskStore {
   private readonly markBlockedStmt: Database.Statement;
   private readonly markCancelledStmt: Database.Statement;
   private readonly recoverStaleStmt: Database.Statement;
+  private readonly requeueRecurringStmt: Database.Statement;
+  private readonly assignSessionStmt: Database.Statement;
 
   constructor(options: TaskStoreOptions) {
     mkdirSync(dirname(options.dbFile), { recursive: true });
@@ -104,11 +134,15 @@ export class TaskStore {
       `INSERT INTO tasks (
          id, session_id, user_message, max_steps, status, origin,
          attempts, max_attempts, last_error, last_error_cat,
-         created_at, updated_at, started_at, completed_at
+         created_at, updated_at, started_at, completed_at,
+         schedule_kind, schedule_value, scheduled_for, recurring,
+         last_scheduled_at, trigger_source
        ) VALUES (
          @id, @session_id, @user_message, @max_steps, @status, @origin,
          @attempts, @max_attempts, @last_error, @last_error_cat,
-         @created_at, @updated_at, @started_at, @completed_at
+         @created_at, @updated_at, @started_at, @completed_at,
+         @schedule_kind, @schedule_value, @scheduled_for, @recurring,
+         @last_scheduled_at, @trigger_source
        )`,
     );
     this.selectStmt = this.db.prepare(
@@ -127,6 +161,13 @@ export class TaskStore {
       `SELECT * FROM tasks
          WHERE status = 'pending' AND session_id = ?
          ORDER BY created_at ASC LIMIT ?`,
+    );
+    this.listDueStmt = this.db.prepare(
+      `SELECT * FROM tasks
+         WHERE status = 'pending'
+           AND (scheduled_for IS NULL OR scheduled_for <= ?)
+         ORDER BY scheduled_for ASC, created_at ASC
+         LIMIT ?`,
     );
     this.markRunningStmt = this.db.prepare(
       `UPDATE tasks
@@ -190,14 +231,38 @@ export class TaskStore {
               last_error_cat = COALESCE(last_error_cat, 'transport')
         WHERE status = 'running' AND started_at IS NOT NULL AND started_at < @threshold`,
     );
+    this.requeueRecurringStmt = this.db.prepare(
+      `UPDATE tasks
+          SET status = 'pending',
+              attempts = 0,
+              last_error = NULL,
+              last_error_cat = NULL,
+              started_at = NULL,
+              completed_at = NULL,
+              scheduled_for = @scheduled_for,
+              last_scheduled_at = @now,
+              updated_at = @now
+        WHERE id = @id AND recurring = 1`,
+    );
+    this.assignSessionStmt = this.db.prepare(
+      `UPDATE tasks
+          SET session_id = @session_id,
+              updated_at = @now
+        WHERE id = @id`,
+    );
   }
 
   create(input: TaskCreateInput, now: number = Date.now()): TaskRecord {
-    const sessionId = validateSessionId(input.sessionId);
+    const sessionId = validateSessionId(input.sessionId ?? null);
     const userMessage = validateUserMessage(input.userMessage);
     const maxAttempts = validateMaxAttempts(input.maxAttempts);
     const maxSteps = validateMaxSteps(input.maxSteps);
     const id = input.id ?? `t-${randomUUID()}`;
+    const schedule = input.schedule ?? null;
+    const recurring =
+      schedule && (schedule.kind === "cron" || schedule.kind === "interval")
+        ? 1
+        : 0;
     const row: TaskRow = {
       id,
       session_id: sessionId,
@@ -213,6 +278,15 @@ export class TaskStore {
       updated_at: now,
       started_at: null,
       completed_at: null,
+      schedule_kind: schedule?.kind ?? null,
+      schedule_value: schedule ? serializeScheduleValue(schedule) : null,
+      scheduled_for: input.scheduledFor ?? null,
+      recurring,
+      last_scheduled_at:
+        input.scheduledFor !== undefined && input.scheduledFor !== null
+          ? now
+          : null,
+      trigger_source: input.triggerSource ?? null,
     };
     this.insertStmt.run(row);
     return rowToRecord(row);
@@ -247,6 +321,19 @@ export class TaskStore {
     const rows = options.sessionId
       ? (this.listPendingBySessionStmt.all(options.sessionId, limit) as TaskRow[])
       : (this.listPendingStmt.all(limit) as TaskRow[]);
+    return rows.map(rowToRecord);
+  }
+
+  /**
+   * Pull every `pending` task that is due at `now` — either unscheduled
+   * (null `scheduled_for`) or explicitly scheduled for the past.
+   * Ordered by `scheduled_for ASC, created_at ASC` so the scheduler
+   * drains overdue tasks in wall-clock order and ties break
+   * deterministically. Uses the dedicated `idx_tasks_due` partial index;
+   * this is the only query path the scheduler takes to find work.
+   */
+  listDue(now: number, limit = 100): TaskRecord[] {
+    const rows = this.listDueStmt.all(now, limit) as TaskRow[];
     return rows.map(rowToRecord);
   }
 
@@ -356,6 +443,57 @@ export class TaskStore {
     return result.changes;
   }
 
+  /**
+   * Requeue a recurring task that just completed, resetting the
+   * per-attempt bookkeeping so the next firing starts clean. Only
+   * operates on rows flagged `recurring = 1`; one-shot tasks are
+   * rejected at the SQL level so a caller bug cannot silently revive
+   * a completed `at` task.
+   *
+   * Atomic: `attempts`, `last_error`, `started_at`, and `completed_at`
+   * reset together. `session_id` is deliberately never touched — a
+   * recurring task owns one persistent session for its full lifetime.
+   */
+  requeueRecurring(
+    id: string,
+    nextScheduledFor: number,
+    now: number = Date.now(),
+  ): TaskRecord {
+    const result = this.requeueRecurringStmt.run({
+      id,
+      scheduled_for: nextScheduledFor,
+      now,
+    }) as { changes: number };
+    if (result.changes === 0) {
+      throw new Error(
+        `task ${id}: cannot requeueRecurring — row missing or not recurring`,
+      );
+    }
+    return this.requireRecord(id);
+  }
+
+  /**
+   * Write a freshly-minted session id onto a task that was persisted
+   * with `session_id = NULL`. Used by `TaskRunner.runOne` in the
+   * lazy one-shot path; also used to overwrite a missing session id
+   * for recurring tasks that auto-recreate their session.
+   */
+  assignSession(
+    id: string,
+    sessionId: string,
+    now: number = Date.now(),
+  ): TaskRecord {
+    const result = this.assignSessionStmt.run({
+      id,
+      session_id: sessionId,
+      now,
+    }) as { changes: number };
+    if (result.changes === 0) {
+      throw new Error(`task ${id}: cannot assignSession — row missing`);
+    }
+    return this.requireRecord(id);
+  }
+
   close(): void {
     this.db.close();
   }
@@ -390,16 +528,25 @@ function rowToRecord(row: TaskRow): TaskRecord {
     updatedAt: row.updated_at,
     startedAt: row.started_at,
     completedAt: row.completed_at,
+    schedule: parseScheduleRow(row.schedule_kind, row.schedule_value),
+    scheduledFor: row.scheduled_for,
+    recurring: row.recurring === 1,
+    lastScheduledAt: row.last_scheduled_at,
+    triggerSource: row.trigger_source as TriggerSource | null,
   };
 }
 
-function validateSessionId(raw: unknown): string {
+function validateSessionId(raw: string | null): string | null {
+  if (raw === null || raw === undefined) return null;
   if (typeof raw !== "string") {
-    throw new TaskValidationError("sessionId", "sessionId must be a string");
+    throw new TaskValidationError("sessionId", "sessionId must be a string or null");
   }
   const trimmed = raw.trim();
   if (trimmed.length === 0) {
-    throw new TaskValidationError("sessionId", "sessionId must be non-empty");
+    throw new TaskValidationError(
+      "sessionId",
+      "sessionId must be non-empty when provided",
+    );
   }
   return trimmed;
 }

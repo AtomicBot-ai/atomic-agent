@@ -72,4 +72,43 @@ describe("dispatchSlashCommand", () => {
     expect(result.persistLlamaUrl).toBeUndefined();
     expect(result.systemMessage).toContain("invalid");
   });
+
+  it("jumps to the Tasks tab for /tasks", () => {
+    const result = dispatchSlashCommand("/tasks");
+    expect(result.actions).toEqual([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "tasks" },
+    ]);
+  });
+
+  it("opens the create form for /task new", () => {
+    const result = dispatchSlashCommand("/task new");
+    expect(result.actions).toEqual([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "tasks" },
+      { type: "tasks_create_form_opened" },
+    ]);
+  });
+
+  it("returns taskCancelId for /task cancel <id>", () => {
+    const result = dispatchSlashCommand("/task cancel abc123");
+    expect(result.taskCancelId).toBe("abc123");
+    expect(result.actions).toEqual([]);
+  });
+
+  it("returns taskRunId for /task run <id>", () => {
+    const result = dispatchSlashCommand("/task run abc123");
+    expect(result.taskRunId).toBe("abc123");
+    expect(result.actions).toEqual([]);
+  });
+
+  it("prints usage when /task is called without a verb", () => {
+    const result = dispatchSlashCommand("/task");
+    expect(result.systemMessage).toContain("usage");
+  });
+
+  it("prints usage when /task cancel is called without an id", () => {
+    const result = dispatchSlashCommand("/task cancel");
+    expect(result.systemMessage).toContain("usage: /task cancel");
+  });
 });

@@ -32,6 +32,7 @@ import {
   createListTasksHandler,
   createRunTaskHandler,
 } from "./route-tasks.js";
+import { createWebhookHandler } from "./route-webhooks.js";
 
 /**
  * Build the full atomic-agent HTTP route table. All handlers are
@@ -68,5 +69,6 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "DELETE", path: "/api/tasks/{id}", handler: createCancelTaskHandler() },
     { method: "POST", path: "/api/tasks/{id}/run", handler: createRunTaskHandler() },
     { method: "POST", path: "/api/tasks/drain", handler: createDrainTasksHandler() },
+    { method: "POST", path: "/api/webhooks/{name}", handler: createWebhookHandler() },
   ];
 }

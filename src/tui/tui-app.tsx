@@ -20,14 +20,18 @@ import { MultiLineEditor } from "./components/multi-line-editor.js";
 import { SessionPicker } from "./components/session-picker.js";
 import { SlashPalette } from "./components/slash-palette.js";
 import { StatusLine } from "./components/status-line.js";
+import { TasksCancelModal } from "./components/tasks-cancel-modal.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { slashPrefix } from "./commands/slash-command-parser.js";
 import { handleEditorSubmit } from "./submit-handler.js";
+import type { TaskCreateKind } from "./tasks/tasks-panel-state.js";
+import type { TaskSchedule } from "../tasks/task-types.js";
 import {
   canAcceptMessage,
   createInitialTuiState,
   type TuiSessionInfo,
 } from "./tui-state.js";
+import { handleTasksTabKey } from "./tasks/tasks-key-bindings.js";
 
 export { makeTuiEventBus } from "./make-event-bus.js";
 
@@ -50,6 +54,24 @@ export interface TuiAppCallbacks {
   onMemoryDumpRequested?(): void;
   /** Persist a new llama-server base URL after `/llama` (async health + disk write). */
   onPersistLlamaUrl?(url: string): void;
+  /** Start the Tasks-tab auto-refresh loop (first entry only). */
+  onTasksAutoRefreshStart?(): void;
+  /** Perform a one-shot refresh of the tasks list. */
+  onTasksRefreshRequested?(): void;
+  /** Open the detail view for a task (re-seeds firings ring). */
+  onTaskDetailRequested?(taskId: string): void;
+  /** Switch the chat transcript to the task's session. */
+  onTaskOpenSessionRequested?(taskId: string): void;
+  /** Proceed with a task cancellation — the caller owns any confirm modal. */
+  onTaskCancelConfirmed?(taskId: string): void;
+  /** Execute one attempt of the task via `TaskRunner.runOne`. */
+  onTaskRunNowRequested?(taskId: string): void;
+  /** Submit a new task from the create-form. */
+  onTaskCreateSubmitted?(input: {
+    schedule: TaskSchedule;
+    message: string;
+    kind: TaskCreateKind;
+  }): void;
 }
 
 export interface TuiAppProps {
@@ -83,6 +105,12 @@ export function TuiApp({
   }, [state.status, callbacks, app]);
 
   useEffect(() => {
+    if (state.uiMode === "debug" && state.activeTab === "tasks") {
+      callbacks.onTasksAutoRefreshStart?.();
+    }
+  }, [state.uiMode, state.activeTab, callbacks]);
+
+  useEffect(() => {
     if (!ctrlCArmed) return;
     ctrlCTimer.current = setTimeout(() => setCtrlCArmed(false), CTRL_C_WINDOW_MS);
     return () => {
@@ -90,16 +118,22 @@ export function TuiApp({
     };
   }, [ctrlCArmed]);
 
-  const editorFocus = !state.pendingApproval;
+  const tasksTabActive =
+    state.uiMode === "debug" && state.activeTab === "tasks";
+  const editorFocus = !state.pendingApproval && !tasksTabActive;
 
   useInput((input, key) => {
-    handleAppKey(input, key, {
+    const appHandled = handleAppKey(input, key, {
       state,
       dispatch,
       callbacks,
       ctrlCArmed,
       setCtrlCArmed,
     });
+    if (appHandled) return;
+    if (tasksTabActive) {
+      handleTasksTabKey(input, key, { state, dispatch, callbacks });
+    }
   });
 
   const submit = useCallback(
@@ -197,6 +231,9 @@ export function TuiApp({
           query={state.slashQuery}
           cursor={state.slashPaletteCursor}
         />
+      ) : null}
+      {state.tasksPanel.cancelConfirm ? (
+        <TasksCancelModal confirm={state.tasksPanel.cancelConfirm} />
       ) : null}
       <MultiLineEditor
         value={state.inputValue}

@@ -1,8 +1,12 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { resetConfigCache } from "../config/index.js";
+import {
+  USER_CONFIG_DEFAULTS,
+  resetConfigCache,
+  type WebhookConfig,
+} from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type {
@@ -102,6 +106,13 @@ export interface HarnessOptions {
   onApprovalRequest?: (request: ApprovalRequest) => void;
   /** Optional log sinks for runtime diagnostics assertions. */
   logSinks?: LogSink[];
+  /**
+   * Optional webhook config bindings persisted into
+   * `<stateDir>/config.json` before the runtime boots. Lets webhook
+   * tests exercise the full config -> runtime -> route path without
+   * reaching into the config cache directly.
+   */
+  webhooks?: Record<string, WebhookConfig>;
 }
 
 export interface Harness {
@@ -130,6 +141,17 @@ export async function startTestHarness(
   mkdirSync(join(workingDir, ".atomic-agent", "skills"), { recursive: true });
   process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
   process.env.ATOMIC_AGENT_GRAMMARS_DIR = join(process.cwd(), "grammars");
+  if (options.webhooks) {
+    writeFileSync(
+      join(stateDir, "config.json"),
+      JSON.stringify(
+        { ...USER_CONFIG_DEFAULTS, webhooks: options.webhooks },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+  }
   resetConfigCache();
 
   const defaultComplete = async (): Promise<CompletionResult> => ({

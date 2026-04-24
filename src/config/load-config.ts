@@ -204,6 +204,26 @@ export function loadConfig(): AtomicAgentConfig {
         "ATOMIC_AGENT_TASKS_STALE_AFTER_MS",
         ENV_DEFAULTS.TASKS_STALE_AFTER_MS,
       ),
+      schedulerEnabled: readBool(
+        "ATOMIC_AGENT_TASKS_SCHEDULER_ENABLED",
+        ENV_DEFAULTS.TASKS_SCHEDULER_ENABLED,
+      ),
+      schedulerTickMs: readInt(
+        "ATOMIC_AGENT_TASKS_SCHEDULER_TICK_MS",
+        ENV_DEFAULTS.TASKS_SCHEDULER_TICK_MS,
+      ),
+      schedulerBatch: readInt(
+        "ATOMIC_AGENT_TASKS_SCHEDULER_BATCH",
+        ENV_DEFAULTS.TASKS_SCHEDULER_BATCH,
+      ),
+      agentToolsEnabled: readBool(
+        "ATOMIC_AGENT_TASKS_AGENT_TOOLS_ENABLED",
+        ENV_DEFAULTS.TASKS_AGENT_TOOLS_ENABLED,
+      ),
+      minIntervalMs: readInt(
+        "ATOMIC_AGENT_TASKS_MIN_INTERVAL_MS",
+        ENV_DEFAULTS.TASKS_MIN_INTERVAL_MS,
+      ),
     },
     telemetry: {
       trace: {
@@ -244,5 +264,6 @@ export function loadConfig(): AtomicAgentConfig {
         maxTokens: user.memory.index.maxTokens,
       },
     },
+    webhooks: user.webhooks,
   };
 }

@@ -1,0 +1,203 @@
+import type { AgentRuntime } from "../runtime/bootstrap.js";
+import type { SessionState } from "../session/session-state.js";
+import { clearTtyScreen } from "./clear-tty-screen.js";
+import { TasksOrchestrator } from "./tasks/tasks-orchestrator.js";
+import type { TuiEventBus } from "./tui-app.js";
+import { turnsToMessages } from "./turns-to-messages.js";
+import type { SessionPickerEntry } from "./tui-state.js";
+
+export interface ChatOrchestratorOptions {
+  maxSteps: number;
+}
+
+/**
+ * Owns the single live chat session. Each call to `sendMessage` queues a
+ * macro-turn through `runtime.runTurn`; only one turn is in flight at any
+ * time so the user can keep typing without racing the agent loop. Abort
+ * cancels the current turn but keeps the session alive — that is what
+ * sets chat mode apart from the legacy goal-runner.
+ *
+ * The Tasks tab surface (list/detail/create/cancel/run-now) is delegated
+ * to `TasksOrchestrator`, which is constructed here and exposed via
+ * `tasks` so `tui-command.ts` can wire its callbacks without reaching
+ * into runtime internals.
+ */
+export class ChatOrchestrator {
+  private session: SessionState | null = null;
+  private currentController: AbortController | null = null;
+  private quitting = false;
+  private readonly queue: string[] = [];
+  public exitCode = 0;
+  public readonly tasks: TasksOrchestrator;
+
+  constructor(
+    private readonly runtime: AgentRuntime,
+    private readonly bus: TuiEventBus & { emit(action: unknown): void },
+    private readonly options: ChatOrchestratorOptions,
+  ) {
+    this.tasks = new TasksOrchestrator(runtime, bus, {
+      getCurrentSessionId: () => this.session?.id ?? null,
+      switchSession: (id) => this.switchSession(id),
+    });
+  }
+
+  start(): void {
+    if (this.session) return;
+    this.session = this.runtime.createSession();
+    this.bus.emit({ type: "session_created", sessionId: this.session.id });
+  }
+
+  openSessionPicker(): void {
+    const sessions = this.runtime.sessionStore
+      .listRecent(25)
+      .map((s) => toPickerEntry(s));
+    this.bus.emit({ type: "session_picker_opened", sessions });
+  }
+
+  switchSession(sessionId: string): void {
+    if (this.quitting) return;
+    if (this.currentController) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: "cannot switch sessions while a turn is running — press Ctrl+C first",
+      });
+      return;
+    }
+    const loaded = this.runtime.sessionStore.load(sessionId);
+    if (!loaded) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: `session ${sessionId} not found`,
+      });
+      return;
+    }
+    this.session = loaded;
+    this.queue.length = 0;
+    this.bus.emit({
+      type: "session_switched",
+      sessionId: loaded.id,
+      workingDir: loaded.workingDir,
+      messages: turnsToMessages(loaded.turns),
+    });
+    this.bus.emit({
+      type: "runtime_info",
+      line: `switched to session ${loaded.id} (${loaded.turnCount} turn${loaded.turnCount === 1 ? "" : "s"})`,
+    });
+  }
+
+  dumpProfile(): void {
+    try {
+      const facts = this.runtime.profileStore.list();
+      if (facts.length === 0) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: "profile: (empty) — use memory.profile.set to record cross-session facts",
+        });
+        return;
+      }
+      const sorted = [...facts].sort((a, b) => a.key.localeCompare(b.key));
+      this.bus.emit({
+        type: "runtime_info",
+        line: `profile (${sorted.length} fact${sorted.length === 1 ? "" : "s"}):`,
+      });
+      for (const fact of sorted) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: `  - ${fact.key}: ${fact.value}`,
+        });
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.bus.emit({ type: "runtime_info", line: `profile read failed: ${msg}` });
+    }
+  }
+
+  newSession(): void {
+    if (this.quitting) return;
+    if (this.currentController) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: "cannot create a new session while a turn is running — press Ctrl+C first",
+      });
+      return;
+    }
+    this.session = this.runtime.createSession();
+    this.queue.length = 0;
+    clearTtyScreen(process.stdout);
+    this.bus.emit({
+      type: "session_switched",
+      sessionId: this.session.id,
+      workingDir: this.session.workingDir,
+      messages: [],
+    });
+    this.bus.emit({
+      type: "runtime_info",
+      line: `new session ${this.session.id} created`,
+    });
+  }
+
+  sendMessage(text: string): void {
+    if (this.quitting) return;
+    if (!this.session) this.start();
+    if (this.currentController) {
+      this.queue.push(text);
+      return;
+    }
+    void this.runOneTurn(text);
+  }
+
+  private async runOneTurn(text: string): Promise<void> {
+    if (!this.session) return;
+    const controller = new AbortController();
+    this.currentController = controller;
+    try {
+      const result = await this.runtime.runTurn(this.session, text, {
+        maxSteps: this.options.maxSteps,
+        signal: controller.signal,
+        origin: "tui",
+      });
+      this.session = result.session;
+      if (this.session.status === "failed") this.exitCode = 1;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.bus.emit({ type: "runtime_info", line: `turn error: ${msg}` });
+      this.exitCode = 1;
+    } finally {
+      if (this.currentController === controller) this.currentController = null;
+    }
+    const next = this.queue.shift();
+    if (next !== undefined && !this.quitting) {
+      void this.runOneTurn(next);
+    }
+  }
+
+  abortCurrentTurn(): void {
+    this.currentController?.abort();
+  }
+
+  quit(): void {
+    if (this.quitting) return;
+    this.quitting = true;
+    this.queue.length = 0;
+    this.currentController?.abort();
+  }
+
+  async shutdown(): Promise<void> {
+    this.abortCurrentTurn();
+    this.tasks.shutdown();
+    await this.runtime.shutdown();
+  }
+}
+
+function toPickerEntry(state: SessionState): SessionPickerEntry {
+  const firstUser = state.turns.find((t) => t.kind === "user");
+  const preview = firstUser && firstUser.kind === "user" ? firstUser.text : "";
+  return {
+    sessionId: state.id,
+    workingDir: state.workingDir,
+    turnCount: state.turnCount,
+    stepCount: state.stepCount,
+    updatedAt: state.updatedAt,
+    preview: preview.length > 0 ? preview : "(empty)",
+  };
+}

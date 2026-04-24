@@ -54,14 +54,19 @@ export function handleAppKey(
     dispatch({ type: "ui_mode_toggled" });
     return true;
   }
-  if (state.uiMode === "debug" && key.tab && !key.shift) {
+  const tasksTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "tasks" &&
+    (state.tasksPanel.mode === "create" ||
+      state.tasksPanel.cancelConfirm !== null);
+  if (!tasksTabBusy && state.uiMode === "debug" && key.tab && !key.shift) {
     dispatch({
       type: "tab_changed",
       tab: cycleDebugTab(state.activeTab, 1),
     });
     return true;
   }
-  if (state.uiMode === "debug" && key.tab && key.shift) {
+  if (!tasksTabBusy && state.uiMode === "debug" && key.tab && key.shift) {
     dispatch({
       type: "tab_changed",
       tab: cycleDebugTab(state.activeTab, -1),

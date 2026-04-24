@@ -296,6 +296,60 @@ describe("createAgentRuntime", () => {
     }
   });
 
+  it("starts the scheduler by default and stops it before taskStore closes", async () => {
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalRequired: false,
+      overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
+    });
+    try {
+      expect(runtime.scheduler).not.toBeNull();
+    } finally {
+      await runtime.shutdown();
+    }
+    // A double shutdown after the scheduler has stopped must not
+    // re-throw — ordering invariant: scheduler.stop before taskStore.close.
+    await runtime.shutdown();
+  });
+
+  it("registers the five tasks.* agent tools when enabled", async () => {
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalRequired: false,
+      overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
+    });
+    try {
+      const names = runtime.toolRegistry.list().map((t) => t.name);
+      expect(names).toContain("tasks.schedule");
+      expect(names).toContain("tasks.cron");
+      expect(names).toContain("tasks.list");
+      expect(names).toContain("tasks.cancel");
+      expect(names).toContain("tasks.show");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("disables scheduler and tasks.* tools when tasks.enabled=false", async () => {
+    process.env.ATOMIC_AGENT_TASKS_ENABLED = "false";
+    resetConfigCache();
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalRequired: false,
+      overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
+    });
+    try {
+      expect(runtime.scheduler).toBeNull();
+      const names = runtime.toolRegistry.list().map((t) => t.name);
+      expect(names).not.toContain("tasks.schedule");
+      expect(names).not.toContain("tasks.cron");
+    } finally {
+      await runtime.shutdown();
+      delete process.env.ATOMIC_AGENT_TASKS_ENABLED;
+      resetConfigCache();
+    }
+  });
+
   it("warns once and falls back to plain profile when props probing fails", async () => {
     const logs: LogRecord[] = [];
     const runtime = await createAgentRuntime({

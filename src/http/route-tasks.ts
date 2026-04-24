@@ -256,5 +256,10 @@ function recordToJson(record: TaskRecord): Record<string, unknown> {
     updatedAt: record.updatedAt,
     startedAt: record.startedAt,
     completedAt: record.completedAt,
+    schedule: record.schedule,
+    scheduledFor: record.scheduledFor,
+    recurring: record.recurring,
+    lastScheduledAt: record.lastScheduledAt,
+    triggerSource: record.triggerSource,
   };
 }

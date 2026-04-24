@@ -175,30 +175,52 @@ Implementation notes (2026-04-23):
 - `category` is propagated end-to-end: `step_error` / `loop_failed` events → `trace-recorder` → `AgentMetrics.recordLlmFailure` (`agent.llm.failure`) → TUI event feed label → sidecar protocol (`session_failed.category`, `error.code = step_error:<category>`) → OpenAI SSE (`error.category` for atomic extensions, `error.type = agent.<category>` for OpenAI-compatible clients).
 - Tests: `src/llm/reliability/*.test.ts`, new `agent-loop.test.ts` cases (`truncated`, `empty`, persistent grammar failure, missing tool), `telemetry.test.ts` `recordLlmFailure`, `trace-recorder.test.ts` category propagation, `agent-event-reducer.test.ts` feed label. See `AGENTS.md` §"LLM reliability policy" for the full invariant table.
 
-## Option 4: background autonomy
+## Option 4: background autonomy [done: 2026-04-24]
 
 What it adds:
 
-- cron-style wakeups
-- scheduled follow-ups
-- webhook or event-driven ingress
-- explicit wake reasons in session metadata
+- time-based scheduling (`at` / `cron` / `interval`) on top of the Option 5 task queue
+- a single in-process `Scheduler` that drains due tasks through the existing `TaskRunner.runDue`
+- generic webhook ingress (`POST /api/webhooks/:name`) that materialises as a task — never a direct `runTurn`
+- agent-side self-scheduling via `tasks.schedule`, `tasks.cron`, `tasks.list`, `tasks.cancel`, `tasks.show`
+- explicit `session.metadata.wakeReason` stamped just before `runTurn` so audit plumbing can distinguish user / scheduler / webhook / agent turns
 
 Why it matters:
 
 - turns the runtime from purely reactive chat into an assistant that can resume work later
-- opens reminders, periodic sync, watchdog, and trigger-based workflows
+- unlocks reminders, periodic sync, watchdog, and trigger-based workflows on top of the durable queue from Option 5
+- keeps the concurrency story intact: every background firing still enters the same per-session FIFO via `TurnController`
 
-Likely modules:
+Shipped modules:
 
-- new feature folders such as `src/scheduler/` and `src/events/`
-- `src/runtime/bootstrap.ts`
-- `src/session/session-state.ts`
-- `src/http/` and `src/sidecar/` for ingress surfaces
+- `src/tasks/` — extended `TaskRecord` with `schedule`, `scheduledFor`, `recurring`, `lastScheduledAt`, `triggerSource`; new `task-schedule.ts` (pure `resolveScheduledFor` / `isRecurring`, backed by `cron-parser`); `TaskStore.listDue` / `requeueRecurring` plus `idx_tasks_due` partial index; `TaskRunner` now supports schedule-aware `create()` (recurring tasks get a persistent session at create time; one-shot tasks stay `session_id = NULL` until the first attempt), wake-reason stamping, recurring requeue at completion, and a scheduler-facing `runDue(now, limit)` drain. Schema migrated to v2 idempotently.
+- `src/scheduler/` — new feature folder. Single `Scheduler` class (`start()` / `stop()` / `tickOnce()`) holding the only periodic timer in the runtime; re-entry guarded, errors swallowed + logged + metered.
+- `src/http/route-webhooks.ts` + `src/http/webhook-template.ts` + `src/http/webhook-session-store.ts` — generic webhook route keyed off `config.webhooks[name]`, `{{body.<jsonpath>}}` substitution, optional `x-webhook-secret` gate, three `sessionMode`s (`ephemeral` / `persistent` / `named`). Persistent mode stores its `webhookName → sessionId` map in `<stateDir>/webhook-sessions.json`.
+- `src/tools/tasks/` — five agent tools, gated by `config.tasks.agentToolsEnabled`. `tasks.schedule` inherits the caller session by default (`newSession: true` opts out); `tasks.cron` always allocates a fresh persistent session so recurring autonomy never contaminates the caller's thread.
+- `src/runtime/bootstrap.ts` — wires `Scheduler` (start after `recoverStale`, stop before `taskStore.close`), `WebhookSessionStore`, and the `registerTaskTools` call. `AgentRuntime` now exposes `scheduler: Scheduler | null` and `webhookSessionStore`.
+- `src/config/config-schema.ts` + `load-config.ts` — env-only `tasks.schedulerEnabled`, `tasks.schedulerTickMs`, `tasks.schedulerBatch`, `tasks.agentToolsEnabled`, `tasks.minIntervalMs`; `USER_CONFIG_VERSION` bumped 2 → 3 with a transparent migration that defaults `webhooks: {}`.
+- `src/cli/task-command.ts` — `task create` gained `--at` / `--cron` / `--every` / `--tz`; `task list` prints `schedule` + `next-run`; new `task tick` subcommand for one-shot scheduler pumps.
+- `src/telemetry/agent-metrics.ts` — new counters `agent.tasks.{scheduled,recurring_requeued,session_recreated,session_auto_created}`, `agent.scheduler.{ticks,tick_errors}`, `agent.webhooks.received`, and histograms `agent.scheduler.{batch_size,tick_duration_ms}`.
+- `grammars/tool-call.gbnf` + `src/prompt/tool-descriptors.ts` — grammar alternative list and descriptors extended with `tasks.*`.
+- `src/session/session-state.ts` — documented reserved `metadata.wakeReason` key.
 
-Main risk:
+Locked invariants (pinned by tests):
 
-- this changes the product model more than the other options; it needs a durable task abstraction, not just timers
+- `Scheduler` is **the only** new periodic timer in the runtime; `TaskRunner` and every ingress path stay event-driven.
+- Webhooks never call `runTurn` directly — they always create a task through `TaskRunner.create`.
+- Recurring requeue is atomic: attempts/lastError/startedAt/completedAt reset, `scheduled_for` rearms, **`session_id` never changes** (only auto-recreation on missing session may overwrite it).
+- A recurring task owns exactly one persistent session for its full lifetime; no row-per-firing duplication.
+- One-shot tasks may carry `session_id = NULL` until the first `runOne` attempt; once written it is stable for that row's lifetime.
+- The `scheduled_for` partial index is the only path the scheduler uses — no full-table scans.
+- `tasks.enabled=false` disables the entire subsystem: scheduler not started, `POST /api/webhooks/:name` returns 404, agent `tasks.*` tools not registered.
+- `cron-parser` is encapsulated behind `task-schedule.ts` — no other module imports it.
+
+Deferred to later milestones:
+
+- distributed scheduler / leader election across processes
+- task graphs & dependencies
+- per-trigger fairness
+- rendering `wakeReason` into the prompt (today it is audit-only metadata)
 
 ## Option 5: durable task model [done: 2026-04-24]
 

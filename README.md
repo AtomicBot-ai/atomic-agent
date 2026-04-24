@@ -172,6 +172,7 @@ atomic-agent run --cwd /path/to/work
 
 # Ink TUI: long-lived session, shared browser profile + llama slot.
 # Enter = send, Tab = panes, Esc = abort turn (quit if idle), Ctrl+C = quit, y/n = approvals.
+# `/tasks` (or Tab to the "tasks" debug pane) opens the task manager — see below.
 atomic-agent tui --cwd /path/to/work
 
 atomic-agent skill install ./my-skill
@@ -186,6 +187,26 @@ atomic-agent serve --host 127.0.0.1 --port 8787 --cwd /path/to/work
 ```
 
 Skill format: **[SKILLS.md](SKILLS.md)**.
+
+### TUI Tasks tab
+
+`atomic-agent tui` exposes a dedicated **Tasks** tab in the debug pane that lists every row in `<stateDir>/tasks.sqlite`, with a detail view, a multi-step create form, and a firings feed. Reach it by typing `/tasks` or by cycling debug tabs with `Tab`. Auto-refresh kicks in at 5s intervals on first entry — toggle with `a`, refresh manually with `r`.
+
+List-mode hotkeys:
+
+- `j` / `k` (or arrows) — move cursor through the filtered list.
+- `Enter` — open task detail.
+- `n` or `/task new` — open the create form (blocks editor input until dismissed).
+- `c` — cancel highlighted task. Recurring tasks prompt `y/n`; pending one-shots skip the modal.
+- `R` — run one attempt now (`TaskRunner.runOne`).
+- `f` — cycle status filter (`all → pending → running → terminal`).
+- `a` — toggle auto-refresh.
+
+Detail view shows the full `TaskRecord` plus the last ~20 observed firings (`timestamp | reason | stepCount | durationMs`). Press `o` to jump to the task's session in the main chat pane, `R` to run now, `c` to cancel, `Esc` to go back.
+
+Create form walks through `kind` (`at` / `cron` / `interval`), a schedule expression with live validation (including the next 5 firings for cron/interval), optional IANA tz, and the user message. Tab/Shift+Tab cycles focus; Left/Right cycles the kind; Ctrl+Enter submits from any field.
+
+Slash shortcuts also work without the tab open: `/task cancel <id>`, `/task run <id>`. All state mutations route through the same `TaskStore` / `TaskRunner` as the CLI and HTTP surfaces — there is no TUI-local task cache.
 
 ### Debugging with traces
 
@@ -206,18 +227,68 @@ Treat trace files as sensitive: secret redaction is not applied yet. Tune retent
 
 ### Durable tasks
 
-`atomic-agent task` manages a small durable queue of deferred `runTurn` submissions in `<stateDir>/tasks.sqlite`. Tasks never run on a background ticker — drains are explicit (this CLI / the HTTP `POST /api/tasks/drain`) or implicit on `create()` when `tasks.runOnCreate=true` (default). Retries with exponential backoff (`tasks.maxAttempts`, `tasks.backoffInitialMs`, `tasks.backoffMaxMs`) classify failures via the same taxonomy as the agent loop — `transport`/`model` retry, `grammar`/`tool` go straight to `blocked`.
+`atomic-agent task` manages a small durable queue of deferred `runTurn` submissions in `<stateDir>/tasks.sqlite`. Drains are driven either by the background **scheduler** (see below) or explicitly (CLI / HTTP `POST /api/tasks/drain`) / implicitly on `create()` when `tasks.runOnCreate=true` (default). Retries with exponential backoff (`tasks.maxAttempts`, `tasks.backoffInitialMs`, `tasks.backoffMaxMs`) classify failures via the same taxonomy as the agent loop — `transport`/`model` retry, `grammar`/`tool` go straight to `blocked`.
 
 ```bash
 atomic-agent task list --status pending
 atomic-agent task show <taskId>
-atomic-agent task create --session <sessionId> --message "tidy inbox" [--max-attempts 3]
+atomic-agent task create [--session <id>] --message "tidy inbox" [--max-attempts 3]
+
+# One-shot at an absolute time (Unix ms)
+atomic-agent task create --message "send morning brief" --at 1776124800000
+
+# Recurring — cron (ephemeral session allocated eagerly, reused on every firing)
+atomic-agent task create --message "hourly triage" --cron "0 * * * *" --tz "Europe/Berlin"
+
+# Recurring — fixed interval (seconds)
+atomic-agent task create --message "heartbeat" --every 300
+
 atomic-agent task cancel <taskId>
 atomic-agent task run <taskId>                  # one attempt
 atomic-agent task run --all-pending [--session <sessionId>]   # manual drain
+atomic-agent task tick                          # one scheduler pump for ops debugging
 ```
 
 The same surface is exposed over HTTP: `POST/GET /api/tasks`, `GET/DELETE /api/tasks/:id`, `POST /api/tasks/:id/run`, `POST /api/tasks/drain`. All endpoints return 404 when `tasks.enabled=false`.
+
+### Background autonomy
+
+The runtime runs a single in-process `Scheduler` (one `setInterval`) that polls due tasks via a partial SQLite index and executes them through the same per-session FIFO contract as user turns. Three extension points open up on top of this primitive:
+
+**1. Schedule any task.** Besides the CLI above, recurring tasks own **one persistent session for their full lifetime** — all firings accumulate into the same `SessionState.turns[]`. One-shot scheduled tasks get a fresh ephemeral session on first attempt. Session auto-recreates (with a warning + `agent.tasks.session_recreated` metric) if deleted between firings.
+
+**2. Webhook ingress.** Declare a webhook in `<stateDir>/config.json` — `POST /api/webhooks/<name>` then materialises each hit as a task:
+
+```json
+{
+  "webhooks": {
+    "github-push": {
+      "userMessageTemplate": "GitHub pushed {{body.commits.length}} commits to {{body.ref}} — summarise them.",
+      "secret": "optional-x-webhook-secret-value",
+      "sessionMode": "persistent"
+    }
+  }
+}
+```
+
+Then:
+
+```bash
+curl -X POST http://127.0.0.1:8787/api/webhooks/github-push \
+  -H "Authorization: Bearer $ATOMIC_AGENT_API_KEY" \
+  -H "x-webhook-secret: optional-x-webhook-secret-value" \
+  -H "Content-Type: application/json" \
+  --data '{"ref":"refs/heads/main","commits":[{"id":"abc"},{"id":"def"}]}'
+# => 202 Accepted { "taskId": "…" }
+```
+
+`sessionMode` options: `ephemeral` (fresh session per hit — default for one-shot), `persistent` (one session reused across every hit of this webhook — default when `schedule` is set, id stored in `<stateDir>/webhook-sessions.json`), `named` (requires explicit `sessionId`).
+
+**3. Agent self-scheduling.** When `tasks.agentToolsEnabled=true` (default), the model can call five tools from inside a turn: `tasks.schedule` (one-shot, inherits the current session by default), `tasks.cron` (recurring, always a fresh persistent session), `tasks.list`, `tasks.cancel`, `tasks.show`.
+
+Flip `tasks.schedulerEnabled=false` to disable the background pump while keeping manual drains working; flip `tasks.enabled=false` to disable everything (scheduler + webhook routes + agent tools all respect it).
+
+See [ARCHITECTURE.md §4.17](ARCHITECTURE.md) and [AGENTS.md §Background autonomy](AGENTS.md) for the full contract.
 
 ---
 

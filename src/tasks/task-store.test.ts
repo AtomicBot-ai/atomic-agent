@@ -239,6 +239,65 @@ describe("TaskStore", () => {
     expect(store.list({ status: ["pending", "cancelled"] }).length).toBe(2);
   });
 
+  it("listDue returns only rows whose scheduled_for is <= now, ordered", () => {
+    const immediate = store.create(
+      { sessionId: "s-1", userMessage: "now", origin: "cli", maxAttempts: 1 },
+      1_000,
+    );
+    const past = store.create(
+      {
+        sessionId: "s-1",
+        userMessage: "past",
+        origin: "scheduler",
+        maxAttempts: 1,
+        schedule: { kind: "at", at: 500 },
+        scheduledFor: 500,
+      },
+      1_000,
+    );
+    const future = store.create(
+      {
+        sessionId: "s-1",
+        userMessage: "future",
+        origin: "scheduler",
+        maxAttempts: 1,
+        schedule: { kind: "at", at: 10_000 },
+        scheduledFor: 10_000,
+      },
+      1_000,
+    );
+    const due = store.listDue(2_000);
+    const ids = due.map((t) => t.id);
+    expect(ids).toContain(immediate.id);
+    expect(ids).toContain(past.id);
+    expect(ids).not.toContain(future.id);
+  });
+
+  it("requeueRecurring atomically resets attempts + rearms scheduled_for without touching sessionId", () => {
+    const created = store.create(
+      {
+        sessionId: "s-persistent",
+        userMessage: "tick",
+        origin: "scheduler",
+        maxAttempts: 3,
+        schedule: { kind: "interval", everyMs: 1_000 },
+        scheduledFor: 1_000,
+      },
+      1_000,
+    );
+    store.markRunning(created.id, 1_500);
+    store.markCompleted(created.id, 2_000);
+    const requeued = store.requeueRecurring(created.id, 3_000, 2_500);
+    expect(requeued.status).toBe("pending");
+    expect(requeued.attempts).toBe(0);
+    expect(requeued.lastError).toBeNull();
+    expect(requeued.scheduledFor).toBe(3_000);
+    expect(requeued.sessionId).toBe("s-persistent");
+    expect(requeued.startedAt).toBeNull();
+    expect(requeued.completedAt).toBeNull();
+    expect(requeued.lastScheduledAt).toBe(2_500);
+  });
+
   it("schema migration is idempotent across re-opens", () => {
     const t = store.create(
       { sessionId: "s-1", userMessage: "hi", origin: "cli", maxAttempts: 1 },
