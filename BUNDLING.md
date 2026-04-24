@@ -1,8 +1,10 @@
 # Bundling
 
 The **CLI** (`tui`, `run`, `serve`, `models`, …) ships as a single-file
-executable per target, produced via Node SEA (`dist/cli/index.js` in
-`sea-config.json`). The separate **Tauri sidecar** entry is still
+executable per target, produced via Node SEA. The embedded entry is
+`dist-sea/cli.mjs` (esbuild bundle of `src/cli/index.ts` and dependencies,
+see `npm run bundle:sea`) with `mainFormat: "module"` in
+`sea-config.json`. The separate **Tauri sidecar** entry is still
 `atomic-agent-sidecar` when installed from npm; it is not the SEA
 release described here. llama-server is **not** bundled — connect over
 HTTP (`ATOMIC_AGENT_LLAMA_URL`) or use `atomic-agent models` for managed
@@ -33,18 +35,23 @@ Actions matrix strategy.
    ```bash
    npm run build
    ```
-3. Fetch runtime assets (downloads the pinned `ripgrep` binary for the
+3. Bundle the CLI for SEA (single ESM file with `createRequire` banner for
+   mixed CJS dependencies; `better-sqlite3` stays external):
+   ```bash
+   npm run bundle:sea
+   ```
+4. Fetch runtime assets (downloads the pinned `ripgrep` binary for the
    current host; pass `--all` to prefetch every target):
    ```bash
    npm run bundle:fetch-assets
    # or, to prefetch the full matrix:
    npx tsx scripts/fetch-assets.ts --all
    ```
-4. Produce the SEA binary:
+5. Produce the SEA binary:
    ```bash
    npm run bundle:build-binary
    ```
-5. Package the bundle:
+6. Package the bundle:
    ```bash
    npm run bundle:package
    ```

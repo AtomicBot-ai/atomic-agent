@@ -59,6 +59,9 @@ jobs:
       - name: Typecheck and build
         run: npm run build
 
+      - name: Bundle CLI for SEA
+        run: npm run bundle:sea
+
       - name: Fetch runtime assets (ripgrep for host)
         run: npm run bundle:fetch-assets
 

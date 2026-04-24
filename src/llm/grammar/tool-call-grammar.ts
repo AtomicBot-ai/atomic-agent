@@ -1,9 +1,30 @@
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { readFileSync, existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const TOOL_CALL_GRAMMAR_PATH = resolve(HERE, "../../../grammars/tool-call.gbnf");
+const DEV_TOOL_CALL_GRAMMAR_PATH = resolve(HERE, "../../../grammars/tool-call.gbnf");
+
+const require = createRequire(import.meta.url);
+
+function readToolCallGrammarFromSea(): string | null {
+  try {
+    const sea: typeof import("node:sea") = require("node:sea");
+    if (sea.isSea()) {
+      const data = sea.getAsset("tool-call.gbnf");
+      if (data) {
+        if (typeof data === "string") {
+          return data;
+        }
+        return Buffer.from(data).toString("utf8");
+      }
+    }
+  } catch {
+    // `node:sea` unavailable or asset missing
+  }
+  return null;
+}
 const DEFAULT_REASONING_OPEN_TAG = "<think>";
 const DEFAULT_REASONING_CLOSE_TAG = "</think>";
 
@@ -33,7 +54,24 @@ export class ToolCallParseError extends Error {
 }
 
 export function loadToolCallGrammar(): string {
-  return readFileSync(TOOL_CALL_GRAMMAR_PATH, "utf8");
+  const override = process.env.ATOMIC_AGENT_TOOL_CALL_GRAMMAR;
+  if (typeof override === "string" && override.length > 0) {
+    return readFileSync(override, "utf8");
+  }
+  const nextToBinary = join(dirname(process.execPath), "grammars", "tool-call.gbnf");
+  if (existsSync(nextToBinary)) {
+    return readFileSync(nextToBinary, "utf8");
+  }
+  if (existsSync(DEV_TOOL_CALL_GRAMMAR_PATH)) {
+    return readFileSync(DEV_TOOL_CALL_GRAMMAR_PATH, "utf8");
+  }
+  const fromSea = readToolCallGrammarFromSea();
+  if (fromSea !== null) {
+    return fromSea;
+  }
+  throw new Error(
+    "tool-call.gbnf not found (set ATOMIC_AGENT_TOOL_CALL_GRAMMAR, install grammars next to the binary, or run from a dev tree)",
+  );
 }
 
 export function extractReasoning(

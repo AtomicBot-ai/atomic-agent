@@ -1,15 +1,22 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { ModelProfile } from "../model-profile.js";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const DEFAULT_GRAMMARS_DIR = resolve(HERE, "../../../grammars");
+function resolveDefaultGrammarsDir(): string {
+  const nextToBinary = join(dirname(process.execPath), "grammars");
+  if (existsSync(nextToBinary)) {
+    return nextToBinary;
+  }
+  const here = dirname(fileURLToPath(import.meta.url));
+  return resolve(here, "../../../grammars");
+}
 
 export async function buildGrammar(
   profile: ModelProfile,
-  grammarsDir = DEFAULT_GRAMMARS_DIR,
+  grammarsDir = resolveDefaultGrammarsDir(),
 ): Promise<string> {
   const baseGrammar = await readFile(join(grammarsDir, "tool-call.gbnf"), "utf8");
   if (!profile.allowThinkPrelude || profile.reasoningStyle === "none") return baseGrammar;

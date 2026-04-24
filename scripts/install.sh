@@ -120,6 +120,9 @@ fi
 if [ -d "$STAGE/grammars" ]; then
   cp -R "$STAGE/grammars" "$INSTALL_DIR/"
 fi
+if [ -d "$STAGE/assets" ]; then
+  cp -R "$STAGE/assets" "$INSTALL_DIR/"
+fi
 if [ -d "$STAGE/vendor" ]; then
   cp -R "$STAGE/vendor" "$INSTALL_DIR/"
 fi

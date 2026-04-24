@@ -3,23 +3,25 @@
  * current host platform. Cross-compilation is not supported by SEA —
  * CI runs this on each target runner (darwin-arm64, darwin-x64,
  * linux-x64, linux-arm64, win32-x64) and we stitch the results in
- * `package-bundle.ts`. The embedded entry is the CLI (`dist/cli/index.js`).
+ * `package-bundle.ts`. The embedded entry is the bundled CLI (`dist-sea/cli.mjs`).
  *
  * Usage:
  *   npx tsx scripts/build-binary.ts
  *
  * Prerequisites:
  *   - Node >= 20.x (SEA requires it)
- *   - `npm run build` has produced `dist/`
+ *   - `npm run build` has produced `dist/`, and `npm run bundle:sea` has produced
+ *     `dist-sea/cli.mjs` (or this script will run `bundle:sea` for you)
  *   - `sea-config.json` at the repo root is the SEA manifest
  */
 import { copyFile, mkdir, chmod, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { exit, execPath, stdout, stderr, platform } from "node:process";
 import { currentTarget } from "./bundle-targets.js";
 
-const ROOT = resolve(new URL("..", import.meta.url).pathname);
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const BUNDLE_ROOT = join(ROOT, "bundle");
 
 async function run(command: string, args: string[], cwd: string): Promise<void> {
@@ -52,6 +54,16 @@ async function main(): Promise<number> {
     stderr.write(
       "dist/cli/index.js not found — run `npm run build` first.\n",
     );
+    return 2;
+  }
+
+  const seaEntry = join(ROOT, "dist-sea", "cli.mjs");
+  if (!(await exists(seaEntry))) {
+    stdout.write("dist-sea/cli.mjs not found — running `npm run bundle:sea` …\n");
+    await run("npm", ["run", "bundle:sea"], ROOT);
+  }
+  if (!(await exists(seaEntry))) {
+    stderr.write("dist-sea/cli.mjs still missing after bundle:sea.\n");
     return 2;
   }
 

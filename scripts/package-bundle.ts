@@ -127,6 +127,12 @@ async function main(): Promise<number> {
   // Grammars are required at runtime.
   await copyOptional(join(ROOT, "grammars"), join(stageDir, "grammars"));
 
+  // Jinja chat templates for managed local models (e.g. Qwen).
+  await copyOptional(
+    join(ROOT, "assets", "ai-models"),
+    join(stageDir, "assets", "ai-models"),
+  );
+
   // Bundled ripgrep for os.fs.grep. ripgrep-resolver picks it up via
   // `<dirname(process.execPath)>/vendor/rg[.exe]` at runtime. The binary
   // is fetched by `scripts/fetch-assets.ts` into assets/ripgrep/<slug>/.

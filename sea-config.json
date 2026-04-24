@@ -1,6 +1,7 @@
 {
-  "main": "dist/cli/index.js",
+  "main": "dist-sea/cli.mjs",
   "output": "bundle/sea-prep.blob",
+  "mainFormat": "module",
   "disableExperimentalSEAWarning": true,
   "useSnapshot": false,
   "useCodeCache": false,
