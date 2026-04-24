@@ -1,5 +1,6 @@
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 
 import {
   ENV_DEFAULTS,
@@ -58,10 +59,18 @@ function resolvePath(raw: string | undefined, fallback: string): string {
   return resolve(process.cwd(), value);
 }
 
+// Asset directories (e.g. `grammars/`) ship next to the Node SEA binary in
+// installed layouts but live under the project root during dev. Env overrides
+// win first; otherwise prefer the binary-adjacent copy and fall back to
+// `<cwd>/<relativeDefault>` so `npm run`-style dev invocations still work.
 function resolveAssetDir(envKey: string, relativeDefault: string): string {
   const raw = readEnv(envKey);
   if (raw) {
     return isAbsolute(raw) ? raw : resolve(process.cwd(), raw);
+  }
+  const nextToBinary = resolve(dirname(process.execPath), relativeDefault);
+  if (existsSync(nextToBinary)) {
+    return nextToBinary;
   }
   return resolve(process.cwd(), relativeDefault);
 }
