@@ -28,4 +28,23 @@ describe("models-catalog", () => {
       getLocalModelDef("not-a-model" as import("./models-catalog.js").LocalModelId),
     ).toThrow(/unknown local model id/);
   });
+
+  it("marks every catalog entry as vision-capable with mmproj URL", () => {
+    expect(LOCAL_MODELS_CATALOG.length).toBeGreaterThan(0);
+    for (const def of LOCAL_MODELS_CATALOG) {
+      expect(def.supportsVision).toBe(true);
+      expect(def.mmprojUrl).toMatch(/^https:\/\//);
+      expect(def.mmprojFilename).toMatch(/\.gguf$/);
+      expect(typeof def.mmprojFileSizeGb).toBe("number");
+    }
+  });
+
+  it("ensures mmproj URL points at the same HF repo as the GGUF weights", () => {
+    for (const def of LOCAL_MODELS_CATALOG) {
+      if (!def.mmprojUrl) continue;
+      const repo = (url: string) =>
+        url.replace(/^https:\/\/huggingface\.co\//, "").split("/resolve/")[0];
+      expect(repo(def.mmprojUrl)).toBe(repo(def.huggingFaceUrl));
+    }
+  });
 });

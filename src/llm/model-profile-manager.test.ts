@@ -169,7 +169,7 @@ describe("ModelProfileManager", () => {
     const result = await manager.refreshIfStale();
     expect(result.profileChanged).toBe(true);
     expect(result.profileId).toBe("plain-instruct");
-    expect(manager.getProfile()).toBe(PLAIN_INSTRUCT_PROFILE);
+    expect(manager.getProfile()).toStrictEqual(PLAIN_INSTRUCT_PROFILE);
     expect(manager.getGrammar()).not.toContain("think-prelude");
   });
 });

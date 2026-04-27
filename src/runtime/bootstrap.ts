@@ -37,6 +37,9 @@ import { registerSkillTools } from "../tools/skill/index.js";
 import { buildToolViewTool } from "../tools/tool-view/index.js";
 import { registerMemoryTools } from "../tools/memory/index.js";
 import { registerTaskTools } from "../tools/tasks/index.js";
+import { registerVisionTools } from "../tools/vision/index.js";
+import { LlamaServerProvider } from "../llm/provider/index.js";
+import type { LlmProvider } from "../llm/provider/index.js";
 
 import { MemoryStore } from "../memory/memory-store.js";
 import { ProfileStore } from "../memory/profile-store.js";
@@ -441,6 +444,12 @@ export async function createAgentRuntime(
     notesMaxContentChars: config.memory.notes.maxContentChars,
   });
 
+  // Vision provider wiring is deferred until after `profileManager` is
+  // built so the provider can read the **current** model profile
+  // through a getter instead of capturing a (potentially stale)
+  // `plain-instruct` fallback at construction time. See
+  // `LlamaServerProvider.capabilities` for the rationale.
+
   let skillCatalog: readonly SkillCatalogEntry[] = buildSkillCatalog(
     skillRegistry.list(),
   );
@@ -468,6 +477,44 @@ export async function createAgentRuntime(
         logger,
       })
     : undefined;
+
+  // Vision provider reads the live profile through a getter so its
+  // `capabilities.vision` flag tracks `ModelProfileManager` hot-swaps.
+  // Vision calls always use `slotId: -1` so the main agent + reflection
+  // slots are never touched.
+  const visionProvider: LlmProvider | undefined = config.vision.enabled
+    ? new LlamaServerProvider(llama, {
+        getProfile: () => profileManager?.getProfile() ?? profile,
+        visionEnabledByConfig: config.vision.enabled,
+        visionAutoDetect: config.vision.autoDetect,
+        maxImageBytes: config.vision.maxImageBytes,
+        maxImagesPerCall: config.vision.maxImagesPerCall,
+      })
+    : undefined;
+  registerVisionTools(toolRegistry, {
+    provider: visionProvider,
+    enabled: config.vision.enabled,
+    maxImagesPerCall: config.vision.maxImagesPerCall,
+    maxImageBytes: config.vision.maxImageBytes,
+  });
+  // The descriptor stays in the prompt whenever the operator wired a
+  // vision provider — even before the profile probe lands. The
+  // descriptor blurb already says "Only available when the active
+  // model + provider support multimodal input"; if the user asks for
+  // image work before mmproj is loaded, the tool surfaces a clear
+  // `VisionUnsupportedError` instead of silently disappearing from
+  // the toolset.
+  const effectiveToolDescriptors =
+    config.vision.enabled && visionProvider !== undefined
+      ? DEFAULT_TOOL_DESCRIPTORS
+      : DEFAULT_TOOL_DESCRIPTORS.filter((d) => d.name !== "vision.describe");
+  if (config.vision.enabled) {
+    logger.info("vision provider configured", {
+      provider: visionProvider?.name ?? "(none)",
+      autoDetect: config.vision.autoDetect,
+      registeredAtBootstrap: visionProvider !== undefined,
+    });
+  }
 
   const llmComplete =
     options.overrides?.llamaComplete ??
@@ -550,7 +597,7 @@ export async function createAgentRuntime(
     grammar,
     llmComplete,
     ...(llmCompleteStream ? { llmCompleteStream } : {}),
-    toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+    toolDescriptors: effectiveToolDescriptors,
     capabilities,
     profile,
     ...(profileManager ? { profileManager } : {}),
@@ -762,7 +809,7 @@ export async function createAgentRuntime(
     scheduler,
     webhookSessionStore,
     capabilities,
-    toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+    toolDescriptors: effectiveToolDescriptors,
     grammar,
     logger,
     metrics,

@@ -39,7 +39,8 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   },
   {
     name: "os.shell.run",
-    summary: "Run a shell command in the working directory (may require approval).",
+    summary:
+      "Run a shell command in the working directory (may require approval). Not for deleting user files — use os.fs.trash when the user wants paths removed.",
     argsSchema: "{ cmd: string, args: string[], cwd?: string, timeoutMs?: number }",
   },
   {
@@ -54,15 +55,22 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     argsSchema: `{ path: string, content: string, mode?: "replace" | "append" }`,
   },
   {
+    name: "os.fs.trash",
+    summary:
+      "When the user asks to delete, remove, erase, or trash files or directories: move them to the system Trash / Recycle Bin via absolute paths in paths (may require approval). Prefer this over os.shell.run rm.",
+    argsSchema: "{ paths: string[] }",
+  },
+  {
     name: "os.fs.list",
     summary: "List a directory (non-recursive).",
     argsSchema: "{ path: string, maxEntries?: number }",
   },
   {
     name: "os.fs.glob",
-    summary: "Recursively find paths matching glob patterns. Read-only.",
+    summary:
+      "Recursively find paths matching glob patterns. Read-only. Search root is `cwd` or `path` (same meaning; prefer `cwd`; default: session working directory).",
     argsSchema:
-      "{ pattern: string | string[], cwd?: string, ignore?: string[], absolute?: boolean, limit?: number, sortByMtime?: boolean }",
+      "{ pattern: string | string[], cwd?: string, path?: string, ignore?: string[], absolute?: boolean, limit?: number, sortByMtime?: boolean }",
   },
   {
     name: "os.fs.grep",

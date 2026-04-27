@@ -303,5 +303,11 @@ export function loadConfig(): AtomicAgentConfig {
       },
     },
     webhooks: user.webhooks,
+    vision: {
+      enabled: user.vision.enabled,
+      autoDetect: user.vision.autoDetect,
+      maxImageBytes: user.vision.maxImageBytes,
+      maxImagesPerCall: user.vision.maxImagesPerCall,
+    },
   };
 }

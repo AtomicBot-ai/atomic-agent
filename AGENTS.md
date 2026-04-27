@@ -14,11 +14,19 @@ This is the source-of-truth for automated contributors (LLM agents, codegen, etc
 ## Architectural invariants
 
 1. **Project ≠ Prompt.** Session state, compressed tool results, and world snapshots live outside the model; the prompt is always a small slice.
-2. **Stable prefix.** The prompt is `buildStablePrefix` (persona + `### tools` + `### capabilities` + skill catalog) followed by a **variable tail** in mutability order: `### loaded-skills` (optional) → `### profile` (optional) → `### memory-index` (optional) → `### session-facts` (optional) → `### recalled` (optional) → `### world` → `### conversation` → optional `### notice` → `### respond` (+ optional reasoning prefill). Only the stable-prefix bytes must stay stable within a session for KV-cache — this is what `cache_prompt + slot_id` on `llama-server` relies on.
+2. **Stable prefix.** The prompt is `buildStablePrefix` (persona + `### tools` + `### capabilities` + skill catalog) followed by a **variable tail** in mutability order: `### loaded-skills` (optional) → `### loaded-tools` (optional) → `### profile` (optional) → `### memory-index` (optional) → `### session-facts` (optional) → `### recalled` (optional) → `### world` → `### conversation` → optional `### notice` → `### respond` (+ optional reasoning prefill). Only the stable-prefix bytes must stay stable within a session for KV-cache — this is what `cache_prompt + slot_id` on `llama-server` relies on.
 3. **One step per inference.** No reasoning loops inside a single LLM call. The runtime drives the loop.
 4. **Grammar-constrained tool calls.** The sidecar sends a GBNF grammar with every completion request that must produce a tool call.
 5. **No global singletons.** Dependencies are passed explicitly. `getConfig()` is the only exception.
 6. **Session is multi-turn chat only.** A session is a long-lived chat: `user message → 0..N tool steps → reply` is a macro-turn, multiple turns share one `SessionState.turns[]`. Two terminals exist — `reply` ends the turn, `finish` ends the whole session. All three frontends (CLI `run`, TUI, sidecar) go through `runtime.runTurn` only; there is no one-shot goal mode.
+
+## Rare tools: `tool.view` and `### loaded-tools`
+
+The stable-prefix `### tools` block lists **frequent** tools with full `args` schemas in `# common (full)` and **rare** tools as one-line entries under `# extras` (tier `rare`), keeping the cache-hot prefix small. The model does not see full `args` for a rare tool until that tool is **loaded** into the session and rendered in the **variable** tail as `### loaded-tools` (not part of the stable prefix, so it does not pollute KV-cache for steps that do not use rare tools).
+
+- **Discovery tool.** `tool.view { name }` (see `src/tools/tool-view/`) appends the full descriptor for `name` to `SessionState.loadedTools` (LRU-evicted, cap `config.agent.loadedToolsCap`). The next step’s `buildPrompt` includes `### loaded-tools` with capped token budget `config.agent.loadedToolsMaxTokens`; the effective conversation cap subtracts that budget (see `src/prompt/token-budget.ts`). Optional `config.agent.autoExpandRareOnError` re-invokes a rare tool with autoloaded schema after an invalid-args failure (`src/agent/step-executor.ts`).
+
+- **Contract.** Follow the same idea as `skill.view`: do not call a rare tool with precise arguments until its schema is present under `### loaded-tools` (call `tool.view` first, or rely on autoload on error if enabled). GBNF allows `tool.view` alongside other tools (`grammars/tool-call.gbnf`).
 
 ## Layout rules (enforced)
 
@@ -55,6 +63,8 @@ This is the source-of-truth for automated contributors (LLM agents, codegen, etc
 | `src/scheduler/` | One-process `Scheduler` (single `setInterval`) that polls `TaskStore.listDue` via `TaskRunner.runDue`. The **only** periodic timer in the runtime. See §"Background autonomy". |
 | `src/http/route-webhooks.ts` + `webhook-template.ts` + `webhook-session-store.ts` | Generic `POST /api/webhooks/:name` ingress. Always materialises into a `TaskRecord`, never calls `runTurn` directly. See §"Background autonomy". |
 | `src/tools/tasks/` | Agent-facing self-scheduling tools (`tasks.schedule`, `tasks.cron`, `tasks.list`, `tasks.cancel`, `tasks.show`), gated by `tasks.agentToolsEnabled`. |
+| `src/llm/provider/` | Provider abstraction layer (`LlmProvider` interface) + `LlamaServerProvider` adapter. Text completion stays on `LlamaServerClient.complete` / `completeStream` (legacy `/completion` extension with GBNF + slot ids); vision routes through `LlamaServerProvider.describeImage` against `/v1/chat/completions` with OpenAI-shape `image_url` content blocks. See §"Vision (multimodal input)". |
+| `src/tools/vision/` | `vision.describe` tool + `loadImageFile` helper. Registered whenever `config.vision.enabled` is true and a provider is constructed; the actual capability gate (`capabilities.vision`) is a dynamic getter that re-reads `ModelProfile` on every check, so vision availability tracks `ModelProfileManager` hot-swaps without a restart. See §"Vision (multimodal input)". |
 
 ## Build & test
 
@@ -85,6 +95,7 @@ Today the runtime persists session-scoped state only:
 - `SessionState.turns[]` for the full multi-turn transcript
 - `knownFacts[]` for compact session facts
 - `loadedSkills[]` for skill bodies loaded via `skill.view`
+- `loadedTools[]` for full rare-tool descriptors loaded via `tool.view` (see §"Rare tools: tool.view and loaded-tools")
 - `worldSnapshot` for compressed browser state
 
 `SessionState.turns[]` stores the full history in memory and in the sessions DB unchanged. Prompt-time compression happens only at the `buildPrompt` boundary via `packConversation`: older turns get folded into a single deterministic `summary: N older turns dropped (...)` line so the variable tail of the prompt stays bounded without losing traceability. The visible tail always includes the latest `user` turn.
@@ -449,6 +460,47 @@ Pinned by [src/scheduler/scheduler.test.ts](src/scheduler/scheduler.test.ts), [s
 7. **`cron-parser` is isolated behind `task-schedule.ts`.** Future replacement touches one file.
 8. **`session.metadata.wakeReason` is audit-only.** Survives restart, never rendered into the prompt.
 9. **Agent tool validation errors are structured, not thrown.** Including nested errors from schedule parsing.
+
+## Vision (multimodal input)
+
+Image recognition is an opt-in feature wired exclusively through the new provider abstraction in [src/llm/provider/](src/llm/provider/). The text agent loop is unchanged — vision lives outside the conversation transcript, exposed only via the `vision.describe` tool.
+
+### Surfaces
+
+| Layer | Module | Responsibility |
+|---|---|---|
+| Detection | [src/llm/model-profile.ts](src/llm/model-profile.ts) `detectVisionSupport` | Inspects `/props` and stamps `ModelProfile.vision = { supported, source }`. Source priority: `modalities.vision` (current llama.cpp surface) → `has_multimodal` → `multimodal` → `mmproj` (legacy fallbacks). The first source that reports support wins; the resolved tag is surfaced through `ProviderCapabilities.visionSource` for diagnostics. |
+| Provider | [src/llm/provider/llm-provider.ts](src/llm/provider/llm-provider.ts) | `LlmProvider` interface — `name`, `capabilities`, `describeImage(request)`. Future non-llamacpp adapters implement this surface. |
+| Adapter | [src/llm/provider/llama-server-provider.ts](src/llm/provider/llama-server-provider.ts) | Speaks the OpenAI-compatible `/v1/chat/completions` endpoint with `messages: [{role:"user", content:[{type:"image_url", image_url:{url:"data:<mime>;base64,…"}}, {type:"text", text:prompt}]}]`. Sends `chat_template_kwargs: {enable_thinking: false}` + `reasoning_format: "none"` so Gemma-4 / other thinking-capable models do not park the answer in a separate `thinking` channel. Sniffs JPEG/PNG/WebP/GIF magic bytes for the `data:` MIME. **Does not pass `slot_id`** — chat-completions manages its own slots; the main agent slot and the reflection slot are not touched. `capabilities` is a getter (not a frozen field) that reads the live profile through `getProfile()`, so vision turns on the moment `ModelProfileManager` swaps to a multimodal profile (load-bearing for the TUI's `deferLlamaHealthCheck=true` cold start). |
+| Tool | [src/tools/vision/describe.ts](src/tools/vision/describe.ts) + [load-image.ts](src/tools/vision/load-image.ts) | `vision.describe { prompt, path? \| paths? }`. Loads images from disk (`png`/`jpg`/`jpeg`/`webp`/`gif`), enforces per-call and per-image caps, calls the provider, returns a `CompressedToolResult` like any other tool. |
+| Wiring | [src/runtime/bootstrap.ts](src/runtime/bootstrap.ts) | Constructs the `LlamaServerProvider` only when `config.vision.enabled === true`, threading a `getProfile` closure that resolves through `ModelProfileManager` (with the cold-start `profile` as fallback). When the provider is present, `vision.describe` stays in `effectiveToolDescriptors` for the entire session — capability is checked dynamically at call time, not at bootstrap. The descriptor is filtered out only when `config.vision.enabled === false`, so the prompt never advertises a tool the runtime cannot actually invoke. |
+| Catalog | [src/local-llm/models-catalog.ts](src/local-llm/models-catalog.ts) | `LocalModelDef.supportsVision` + `mmprojUrl` / `mmprojFilename` / `mmprojFileSizeGb` for downloads. |
+| Installer | [src/local-llm/model-installer.ts](src/local-llm/model-installer.ts) | `downloadMmproj` / `isMmprojDownloaded` for projector files alongside GGUF weights. |
+| Daemon launch | [src/local-llm/daemon-lifecycle.ts](src/local-llm/daemon-lifecycle.ts) `buildLlamaServerArgs` | Pure builder for the `llama-server` argv. When `mmprojFile` is set, the builder emits `--mmproj <path>` **and** a fixed image-token / batch budget: `--image-min-tokens 560 --image-max-tokens 560 --ubatch-size 1024 --batch-size 2048`. The 560-token budget is the lowest tier in Unsloth's published Gemma-4 grid (70 / 140 / 280 / 560 / 1120) that produces stable general-purpose multimodal chat — at the default ~70 image tokens the clip embedding is too noisy and the model hallucinates instead of describing. The ubatch/batch bumps cover Gemma-4's non-causal vision attention which assumes the entire image-token batch fits in a single ubatch. Both managed-mode start paths (CLI `atomic-agent models start` and TUI `LocalModelsOrchestrator.startDaemon`) auto-resolve the projector via `isMmprojDownloaded` + `resolveMmprojFilePath` when `config.vision.enabled && model.supportsVision`. When the projector is missing or vision is disabled the server boots text-only and the vision flags are not emitted. |
+| TUI | [src/tui/local-models/](src/tui/local-models/) | Pull modes `with-mmproj` (default), `gguf-only` (`g` hotkey), `mmproj-only` (Enter on a model whose GGUF is already present but mmproj is missing). |
+
+### Locked invariants
+
+1. **Vision calls never touch the main agent or reflection slots.** `LlamaServerProvider.describeImage` posts to `/v1/chat/completions` without a `slot_id` — chat-completions manages its own slots and never reuses the main agent slot or the reflection slot. The legacy `/completion` + `image_data` + `[img-N]` placeholder path is gone; sending a plain prompt without a chat template was load-bearing for the previous Gemma-4 hallucination bug. Pinned by [src/llm/provider/llama-server-provider.test.ts](src/llm/provider/llama-server-provider.test.ts) (asserts URL ends in `/v1/chat/completions`, body uses `image_url` content blocks, `chat_template_kwargs.enable_thinking === false`).
+2. **Vision lives outside the conversation transcript.** `vision.describe` returns a `CompressedToolResult`; no changes to `ConversationTurn` or the variable tail. The model receives the description as a normal `### latest-result` block.
+3. **Text completion bypasses the provider.** Only the vision verb goes through `LlmProvider`. The agent loop continues to call `LlamaServerClient.complete` / `completeStream` directly so llama.cpp-specific knobs (`slot_id`, `cache_prompt`, GBNF) stay first-class.
+4. **Vision tool registration is config-only; capability is dynamic.** `registerVisionTools` short-circuits on `config.vision.enabled === false` or on a missing provider, but **does not** check `capabilities.vision` at registration time — that check would freeze the wrong answer when the runtime starts before the first `/props` probe lands (the TUI's `deferLlamaHealthCheck=true` cold start). `LlamaServerProvider.describeImage` re-checks `this.capabilities.vision` on every call against the live profile and throws `VisionUnsupportedError` when the active model is text-only. The bootstrap filters the descriptor out of `DEFAULT_TOOL_DESCRIPTORS` only when no provider was constructed — so disabling vision via config still produces a clean prompt.
+5. **Grammar always allows `vision.describe`.** [grammars/tool-call.gbnf](grammars/tool-call.gbnf) keeps `vision-tool` as a sibling alternative regardless of registration. When the descriptor is absent the model never selects this branch in practice; if it ever did, the registry would reject the call cleanly.
+6. **Vision daemon flags are tied to `--mmproj`.** `buildLlamaServerArgs` emits `--image-min-tokens 560 --image-max-tokens 560 --ubatch-size 1024 --batch-size 2048` together with `--mmproj <path>` — never independently. Removing the bundle will silently regress to the ~70-image-token default that the Gemma-4 / Qwen-VL families confabulate on. Pinned by [src/local-llm/daemon-lifecycle.test.ts](src/local-llm/daemon-lifecycle.test.ts).
+7. **`vision.describe` is `tier: "frequent"` in the descriptor catalog.** The full `argsSchema` and `examples` are always rendered into the stable prefix, not the variable `### loaded-tools` tail. Demoting the tier would cause the agent to emit malformed first-shot calls (e.g. missing `prompt`) until the rare-tool auto-expansion kicks in on error. Pinned by [src/prompt/default-tool-descriptors-b.ts](src/prompt/default-tool-descriptors-b.ts).
+
+### Configuration (`vision.*`)
+
+User-config block (`config.json` v6; `ensureUserConfigFileSync` actively migrates older files on bootstrap — when the on-disk `version` is below `USER_CONFIG_VERSION`, the parsed contents are atomically rewritten with the bumped version and any newly-added blocks filled from `USER_CONFIG_DEFAULTS`. Existing user values are preserved verbatim and a single `migrated config vN → vM` line is emitted to stderr for audit. Read-only call sites (`readUserConfigFileSync`) stay non-mutating):
+
+- `vision.enabled` (default `true`) — master switch. Set to `false` to skip provider construction and tool registration entirely.
+- `vision.autoDetect` (default `true`) — when `true`, the provider's capabilities follow `ModelProfile.vision.supported`. When `false`, the provider trusts the operator and reports `vision: true` regardless of `/props`; useful when running a custom backend that does not expose multimodal flags.
+- `vision.maxImagesPerCall` (default `4`) — per-call ceiling enforced both in the tool and in the provider (`describeImage` throws if exceeded).
+- `vision.maxImageBytes` (default `10485760`) — per-image byte cap enforced after `loadImageFile` reads from disk.
+
+### Out of scope (deferred)
+
+Image inputs as first-class `ConversationTurn` payloads (the user pasting an image directly into the chat instead of going through the `vision.describe` tool), paste-from-clipboard / drag-and-drop ingestion in TUI, mmproj checksum verification, per-projector tuning of the image-token budget (today the 560-token tier is uniform across vision models), and an OpenAI-API provider adapter are all out of scope for this milestone. The provider abstraction is intentionally narrow — only `describeImage` — and will grow when a second adapter actually lands.
 
 ## LLM reliability policy
 

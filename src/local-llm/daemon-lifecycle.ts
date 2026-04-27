@@ -17,6 +17,79 @@ export interface DaemonStartOptions {
   modelId: LocalModelId;
   port: number;
   chatTemplateFile?: string;
+  /**
+   * Absolute path to the model's mmproj projector GGUF. When set,
+   * `--mmproj <path>` is appended to the llama-server invocation so
+   * the server boots with multimodal support. The caller is
+   * responsible for verifying the projector file exists on disk —
+   * `startDaemon` does not re-check, only forwards the flag. Leave
+   * undefined for text-only operation.
+   */
+  mmprojFile?: string;
+}
+
+/**
+ * Build the full llama-server CLI argv for a managed-mode launch.
+ * Pure function — no IO, no spawn, no path validation. Extracted from
+ * `startDaemon` so the flag set is unit-testable without touching
+ * `child_process`. Order is load-bearing for grep-ability of historical
+ * log lines: do not reshuffle existing flags when adding new ones.
+ */
+export function buildLlamaServerArgs(
+  opts: DaemonStartOptions,
+  modelPath: string,
+  modelAlias: string,
+): string[] {
+  const args = [
+    "--no-webui",
+    "--jinja",
+    "-m",
+    modelPath,
+    "--port",
+    String(opts.port),
+    "--host",
+    "127.0.0.1",
+    "-ngl",
+    "-1",
+    "--flash-attn",
+    "auto",
+    "--cache-type-k",
+    "turbo3",
+    "--cache-type-v",
+    "turbo3",
+    "--parallel",
+    "2",
+    "-kvu",
+    "-a",
+    modelAlias,
+  ];
+  if (opts.chatTemplateFile) {
+    args.push("--chat-template-file", opts.chatTemplateFile);
+  }
+  if (opts.mmprojFile) {
+    args.push("--mmproj", opts.mmprojFile);
+    // Vision-capable models (notably Gemma-4 with `gemma4v` projector and
+    // Qwen3-VL with `qwen3vl_merger`) hallucinate image content when the
+    // image-token budget defaults to ~70 tokens — clip produces a near-noise
+    // embedding and the LLM confabulates. The minimum useful budget for
+    // general-purpose multimodal chat is 560 tokens (Unsloth's published
+    // Gemma-4 budget tiers: 70/140/280/560/1120). Gemma-4's vision encoder
+    // also uses non-causal attention, which requires every image_tokens
+    // batch to fit in a single ubatch — bumping `--ubatch-size` to 1024
+    // and `--batch-size` to 2048 keeps that constraint satisfied without
+    // crashing on the GGML_ASSERT in llama-context.cpp.
+    args.push(
+      "--image-min-tokens",
+      "560",
+      "--image-max-tokens",
+      "560",
+      "--ubatch-size",
+      "1024",
+      "--batch-size",
+      "2048",
+    );
+  }
+  return args;
 }
 
 export interface DaemonStatus {
@@ -115,32 +188,7 @@ export async function startDaemon(opts: DaemonStartOptions): Promise<{ pid: numb
     );
   }
 
-  const args = [
-    "--no-webui",
-    "--jinja",
-    "-m",
-    modelPath,
-    "--port",
-    String(opts.port),
-    "--host",
-    "127.0.0.1",
-    "-ngl",
-    "-1",
-    "--flash-attn",
-    "auto",
-    "--cache-type-k",
-    "turbo3",
-    "--cache-type-v",
-    "turbo3",
-    "--parallel",
-    "2",
-    "-kvu",
-    "-a",
-    model.id,
-  ];
-  if (opts.chatTemplateFile) {
-    args.push("--chat-template-file", opts.chatTemplateFile);
-  }
+  const args = buildLlamaServerArgs(opts, modelPath, model.id);
 
   const logFd = openSync(resolveLogFilePath(opts.dataDir), "a");
   try {

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +9,8 @@ import { osFsReadTool } from "./fs-read.js";
 import { osFsListTool } from "./fs-list.js";
 import { buildOsFsWriteTool } from "./fs-write.js";
 import { buildOsShellTool } from "./shell.js";
+import { buildOsFsTrashTool } from "./fs-trash.js";
+import { runCommand } from "../../sandbox/command-runner.js";
 import { registerOsTools } from "./index.js";
 
 function makeCtx(workingDir: string): ToolContext {
@@ -163,6 +166,78 @@ describe("os.shell.run", () => {
     expect(result.summary).toContain("hi");
     expect(result.details.exitCode).toBe(0);
   });
+
+  it.skipIf(
+    process.platform === "win32",
+    "expands *.png for rm and removes matched files",
+    async () => {
+      await writeFile(join(dir, "x.png"), "1", "utf8");
+      await writeFile(join(dir, "y.png"), "2", "utf8");
+      const gate = new ApprovalGate({
+        emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+      });
+      const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+      const result = await tool.run(
+        { cmd: "rm", args: ["-f", "*.png"] },
+        makeCtx(dir),
+      );
+      expect(result.status).toBe("ok");
+      expect(existsSync(join(dir, "x.png"))).toBe(false);
+      expect(existsSync(join(dir, "y.png"))).toBe(false);
+    },
+  );
+});
+
+describe("os.fs.trash", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "atomic-trash-"));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("requires approval", async () => {
+    await writeFile(join(dir, "t.txt"), "x", "utf8");
+    const gate = new ApprovalGate({
+      emit: (req) => gate.reject(req.approvalId, "no"),
+    });
+    const tool = buildOsFsTrashTool({ approvals: gate, approvalRequired: true });
+    await expect(
+      tool.run({ paths: ["t.txt"] }, makeCtx(dir)),
+    ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+  });
+
+  it("returns error when path is missing", async () => {
+    const gate = new ApprovalGate({
+      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+    });
+    const tool = buildOsFsTrashTool({ approvals: gate, approvalRequired: true });
+    const result = await tool.run({ paths: ["nope.txt"] }, makeCtx(dir));
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("not found");
+  });
+
+  it("moves a file via gio trash on Linux when available", async () => {
+    if (process.platform !== "linux") return;
+    const which = await runCommand("sh", ["-c", "command -v gio"], {
+      cwd: "/",
+      timeoutMs: 5000,
+    });
+    if (which.exitCode !== 0) return;
+
+    const target = join(dir, "trash-me.txt");
+    await writeFile(target, "bye", "utf8");
+    const gate = new ApprovalGate({
+      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+    });
+    const tool = buildOsFsTrashTool({ approvals: gate, approvalRequired: true });
+    const result = await tool.run({ paths: ["trash-me.txt"] }, makeCtx(dir));
+    expect(result.status).toBe("ok");
+    expect(existsSync(target)).toBe(false);
+  });
 });
 
 describe("registerOsTools", () => {
@@ -199,6 +274,7 @@ describe("registerOsTools", () => {
         "os.fs.patch",
         "os.fs.read",
         "os.fs.read_document",
+        "os.fs.trash",
         "os.fs.watch",
         "os.fs.write",
         "os.git.blame",

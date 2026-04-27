@@ -54,6 +54,44 @@ describe("parseUserConfigFile", () => {
     );
   });
 
+  it("accepts a v5 file and fills in vision.* defaults transparently", () => {
+    const parsed = parseUserConfigFile({ version: 5 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.vision).toEqual(USER_CONFIG_DEFAULTS.vision);
+  });
+
+  it("applies vision defaults when the section is absent", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.vision).toEqual(USER_CONFIG_DEFAULTS.vision);
+  });
+
+  it("accepts user-supplied vision overrides", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      vision: {
+        enabled: false,
+        autoDetect: false,
+        maxImageBytes: 2_097_152,
+        maxImagesPerCall: 1,
+      },
+    });
+    expect(parsed.vision).toEqual({
+      enabled: false,
+      autoDetect: false,
+      maxImageBytes: 2_097_152,
+      maxImagesPerCall: 1,
+    });
+  });
+
+  it("rejects vision.maxImageBytes <= 0", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        vision: { maxImageBytes: 0 },
+      }),
+    ).toThrow(ConfigValidationError);
+  });
+
   it("applies memory.notes defaults when the section is absent", () => {
     const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
     expect(parsed.memory.notes).toEqual(USER_CONFIG_DEFAULTS.memory.notes);

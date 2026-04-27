@@ -28,6 +28,19 @@ export interface LocalModelDef {
   family: "qwen" | "gemma";
   chatTemplateAsset?: string;
   tag?: string;
+  /**
+   * Vision capability flag. When `true`, the model has an associated
+   * mmproj projector file that llama-server needs (via `--mmproj <path>`)
+   * to enable multimodal input. The runtime uses this to gate the
+   * `vision.describe` tool registration. Required when `mmprojUrl` is set.
+   */
+  supportsVision: boolean;
+  /** HTTP URL of the mmproj GGUF projector file. Set iff `supportsVision`. */
+  mmprojUrl?: string;
+  /** On-disk filename for the projector. Set iff `supportsVision`. */
+  mmprojFilename?: string;
+  /** Approximate projector size in GB, surfaced in the TUI for download UX. */
+  mmprojFileSizeGb?: number;
 }
 
 export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
@@ -45,6 +58,11 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 8,
     recommendedRamGb: 10,
     family: "gemma",
+    supportsVision: true,
+    mmprojUrl:
+      "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/mmproj-F16.gguf",
+    mmprojFilename: "mmproj-F16.gguf",
+    mmprojFileSizeGb: 0.99,
   },
   {
     id: "gemma-4-26b-a4b",
@@ -61,6 +79,11 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     recommendedRamGb: 24,
     family: "gemma",
     tag: "High Performance",
+    supportsVision: true,
+    mmprojUrl:
+      "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/mmproj-F16.gguf",
+    mmprojFilename: "mmproj-F16.gguf",
+    mmprojFileSizeGb: 1.19,
   },
   {
     id: "gemma-4-31b",
@@ -77,6 +100,11 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     recommendedRamGb: 32,
     family: "gemma",
     tag: "High Performance",
+    supportsVision: true,
+    mmprojUrl:
+      "https://huggingface.co/unsloth/gemma-4-31B-it-GGUF/resolve/main/mmproj-F16.gguf",
+    mmprojFilename: "mmproj-F16.gguf",
+    mmprojFileSizeGb: 1.20,
   },
   {
     id: "qwen-3.6-27b",
@@ -93,6 +121,11 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     recommendedRamGb: 28,
     family: "qwen",
     tag: "New",
+    supportsVision: true,
+    mmprojUrl:
+      "https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/main/mmproj-F16.gguf",
+    mmprojFilename: "mmproj-F16.gguf",
+    mmprojFileSizeGb: 0.93,
   },
   {
     id: "qwen-3.6-35b-a3b",
@@ -109,6 +142,11 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     recommendedRamGb: 36,
     family: "qwen",
     tag: "New",
+    supportsVision: true,
+    mmprojUrl:
+      "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf",
+    mmprojFilename: "mmproj-F16.gguf",
+    mmprojFileSizeGb: 0.90,
   },
   {
     id: "qwen-3.5-4b",
@@ -125,6 +163,11 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     recommendedRamGb: 8,
     family: "qwen",
     chatTemplateAsset: "qwen3.5-chat-template.jinja",
+    supportsVision: true,
+    mmprojUrl:
+      "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/mmproj-F16.gguf",
+    mmprojFilename: "mmproj-F16.gguf",
+    mmprojFileSizeGb: 0.67,
   },
   {
     id: "qwen-3.5-9b",
@@ -141,6 +184,11 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     recommendedRamGb: 16,
     family: "qwen",
     tag: "Recommended",
+    supportsVision: true,
+    mmprojUrl:
+      "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/mmproj-F16.gguf",
+    mmprojFilename: "mmproj-F16.gguf",
+    mmprojFileSizeGb: 0.92,
   },
   {
     id: "qwen-3.5-35b",
@@ -158,6 +206,11 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     family: "qwen",
     chatTemplateAsset: "qwen3.5-chat-template.jinja",
     tag: "High Performance",
+    supportsVision: true,
+    mmprojUrl:
+      "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf",
+    mmprojFilename: "mmproj-F16.gguf",
+    mmprojFileSizeGb: 0.90,
   },
 ];
 

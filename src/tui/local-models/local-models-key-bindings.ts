@@ -65,6 +65,10 @@ export function handleLocalModelsTabKey(
     triggerPrimaryAction(row, callbacks);
     return true;
   }
+  if (input === "g" && row) {
+    triggerGgufOnlyPull(row, callbacks);
+    return true;
+  }
   if (input === "i" && row) {
     dispatch({ type: "local_models_mode_set", mode: "detail" });
     return true;
@@ -98,20 +102,44 @@ export function handleLocalModelsTabKey(
 }
 
 /**
- * Enter picks the next obvious action for the row:
- * - not downloaded → pull GGUF + mmproj
- * - downloaded but not active → set as active model
- * - already downloaded + active → no-op (user should run `llama start`)
+ * Enter picks the next obvious action for the row, taking mmproj
+ * status into account so vision-capable models land in a usable state:
+ * - GGUF missing → pull GGUF (+ mmproj for vision-capable rows).
+ * - GGUF present, mmproj missing on a vision-capable row → pull
+ *   mmproj only. The operator must restart the daemon with `--mmproj`
+ *   afterwards; the orchestrator emits a hint.
+ * - GGUF present (text-only OR mmproj also present) but row not active
+ *   → set the row as the active managed model.
+ * - Already downloaded + active → no-op (operator should run
+ *   `llama start` if the daemon is not yet up).
  */
 function triggerPrimaryAction(
   row: LocalModelRow,
   callbacks: TuiAppCallbacks,
 ): void {
   if (!row.downloaded) {
-    callbacks.onLocalModelsPullRequested?.(row.id);
+    callbacks.onLocalModelsPullRequested?.(row.id, "with-mmproj");
+    return;
+  }
+  if (row.mmprojStatus === "missing") {
+    callbacks.onLocalModelsPullRequested?.(row.id, "mmproj-only");
     return;
   }
   if (!row.active) {
     callbacks.onLocalModelsSetActiveRequested?.(row.id);
   }
+}
+
+/**
+ * `g` hotkey: GGUF-only pull, even for vision-capable rows. Used when
+ * the operator wants a fast text smoke test before paying for the
+ * mmproj download. No-op on rows whose GGUF is already present —
+ * Enter is the right key for "fill in what's missing".
+ */
+function triggerGgufOnlyPull(
+  row: LocalModelRow,
+  callbacks: TuiAppCallbacks,
+): void {
+  if (row.downloaded) return;
+  callbacks.onLocalModelsPullRequested?.(row.id, "gguf-only");
 }

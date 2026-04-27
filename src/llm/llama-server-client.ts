@@ -23,6 +23,15 @@ export interface CompletionRequest {
   repeatLastN?: number;
   /** Stable key hashed with the prefix so we always reuse the same slot. */
   sessionId?: string;
+  /**
+   * Multimodal images attached to this completion. Each entry's `data`
+   * is the base64-encoded image body (no `data:` URI prefix); the
+   * prompt must reference each image by `[img-<id>]` for llama-server
+   * to splice it into the input embeddings. Used only by the vision
+   * provider — the main agent loop never sets this field, so the
+   * stable prefix and KV cache for text completions are unaffected.
+   */
+  imageData?: ReadonlyArray<{ id: number; data: string }>;
 }
 
 export interface CompletionTiming {
@@ -335,6 +344,12 @@ export class LlamaServerClient {
     if (typeof request.slotId === "number") {
       payload.slot_id = request.slotId;
       payload.id_slot = request.slotId;
+    }
+    if (request.imageData && request.imageData.length > 0) {
+      payload.image_data = request.imageData.map((img) => ({
+        id: img.id,
+        data: img.data,
+      }));
     }
     const body = JSON.stringify(payload);
     return { url, headers, body };

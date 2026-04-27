@@ -39,6 +39,7 @@ If you want a local operator agent that can be embedded into a desktop app, auto
 
 - **Browser operator surface** via `playwright-core` over installed Chrome or Edge, using compact ARIA snapshots that are cheap for local models.
 - **OS tools** for shell, filesystem, grep, document extraction, archives, clipboard, windows, notifications, HTTP, git inspection, process listing, and more.
+- **Optional image understanding** through a `vision.describe` tool that delegates to a multimodal `llama.cpp` model with a loaded `mmproj` projector — opt-in, disabled cleanly when the active model is text-only.
 - **User skills**: Markdown playbooks plus optional scripts that can be installed globally or per project.
 - **Durable session memory** in SQLite, plus cross-session memory with profile facts, notes, and async reflection.
 - **Background autonomy** through durable tasks, cron/interval scheduling, webhook ingress, and agent self-scheduling.
@@ -99,7 +100,7 @@ Then configure:
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "localModels": {
     "url": "http://127.0.0.1:8080",
     "mode": "external",
@@ -120,9 +121,17 @@ Then configure:
     "approvalRequired": true,
     "conversationMaxTokens": 32000,
     "worldSnapshotMaxTokens": 8000
+  },
+  "vision": {
+    "enabled": true,
+    "autoDetect": true,
+    "maxImageBytes": 8388608,
+    "maxImagesPerCall": 4
   }
 }
 ```
+
+> Older `config.json` files (`version: 5` and earlier) are migrated transparently on the next bootstrap — the runtime preserves your existing values and fills in newly-added blocks (such as `vision`) from defaults.
 
 Manage config with:
 
@@ -224,6 +233,19 @@ Event example:
 - Works with **Chrome**, **Edge**, and Chromium-family executables.
 - Reads compact **ARIA snapshots** so local models can navigate pages without vision-heavy prompts.
 - Keeps a **persistent browser profile**, which is exactly what operator workflows need.
+
+### Vision (multimodal)
+
+Optional image understanding for local multimodal models such as **Gemma-4** (`gemma4v` projector) and **Qwen3-VL** (`qwen3vl_merger` projector). Vision is wired through a single tool — `vision.describe` — and stays out of the conversation transcript.
+
+- **Single tool surface**: `vision.describe { prompt, path? | paths? }` reads images from disk (`png`, `jpg`, `jpeg`, `webp`, `gif`) and returns a description as a normal tool result. The model's chat history never carries image bytes.
+- **Provider-based**: speaks the OpenAI-compatible `/v1/chat/completions` endpoint with `image_url` content blocks, so it works against any `llama.cpp` build that loads an `mmproj` projector. Future non-llama.cpp adapters can plug into the same `LlmProvider` interface.
+- **Auto-detection**: capability follows the live `/props` from `llama-server`. When the active model is text-only, the tool surfaces a clean error and the descriptor stays in the prompt only when a provider is wired.
+- **Managed-mode pull**: when `config.vision.enabled && model.supportsVision`, the TUI and CLI pull both the GGUF and the `mmproj` projector by default (toggle with the `g` hotkey for GGUF-only, or pull `mmproj` separately later).
+- **Safe daemon launch**: the managed `llama-server` start path automatically appends `--mmproj` and a tuned image-token / batch budget (`--image-min-tokens 560 --image-max-tokens 560 --ubatch-size 1024 --batch-size 2048`) — without those flags Gemma-4 and Qwen-VL hallucinate at the default ~70-image-token budget.
+- **Bounded by config**: `vision.maxImagesPerCall` (default `4`) and `vision.maxImageBytes` (default `8 MiB`) cap each call.
+
+Vision is opt-in. Set `vision.enabled = false` to skip provider construction and tool registration entirely.
 
 ### OS tools
 

@@ -5,12 +5,14 @@ import {
   checkForBackendUpdate,
   DEFAULT_LLAMACPP_MODEL_ID,
   downloadBackend,
+  downloadMmproj,
   downloadModel,
   getDaemonStatus,
   getLocalModelDef,
   GithubRateLimitedError,
   isBackendDownloaded,
   isKnownLocalModelId,
+  isMmprojDownloaded,
   isModelDownloaded,
   LOCAL_MODELS_CATALOG,
   readBackendVersion,
@@ -18,10 +20,13 @@ import {
   removeModel,
   resolveChatTemplatePath,
   resolveLogFilePath,
+  resolveMmprojFilePath,
   startDaemon,
   stopDaemon,
+  type LocalModelDef,
   type LocalModelId,
 } from "../../local-llm/index.js";
+import type { MmprojStatus } from "./local-models-panel-state.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
 import type { TuiEventBus } from "../tui-app.js";
 
@@ -97,7 +102,10 @@ export class LocalModelsOrchestrator {
         id: def.id,
         def,
         downloaded: isModelDownloaded(dataDir, def),
-        active: cfg.localModels.mode === "managed" && cfg.localModels.managed.modelId === def.id,
+        mmprojStatus: resolveMmprojStatus(dataDir, def),
+        active:
+          cfg.localModels.mode === "managed" &&
+          cfg.localModels.managed.modelId === def.id,
       }));
       const ver = readBackendVersion(dataDir);
       let updateAvailable: boolean | null = null;
@@ -143,68 +151,88 @@ export class LocalModelsOrchestrator {
   }
 
   /**
-   * Download a GGUF model. If the llama.cpp backend is not yet on disk,
-   * it is fetched first — users shouldn't need to press a separate key
-   * for the backend prerequisite. On success the model is set as the
-   * active managed model and the daemon is (re)started so the user
-   * lands in a ready-to-chat state.
+   * Download a GGUF model and (when applicable) its mmproj projector.
+   * If the llama.cpp backend is not yet on disk it is fetched first —
+   * users shouldn't need to press a separate key for the backend
+   * prerequisite. On success the model is set as the active managed
+   * model and the daemon is (re)started so the user lands in a
+   * ready-to-chat state.
+   *
+   * Modes:
+   * - `"with-mmproj"` (default for vision-capable rows): pull GGUF then
+   *   mmproj sequentially under one download banner. The banner label
+   *   updates between phases. If the GGUF is already on disk we skip
+   *   straight to the projector phase.
+   * - `"gguf-only"` (`g` hotkey): pull the GGUF only, even for
+   *   vision-capable models — used when the operator wants a fast
+   *   text-only smoke test.
+   * - `"mmproj-only"` (Enter on a row whose GGUF is downloaded but
+   *   projector is missing): pull the projector only, do not restart
+   *   the daemon (operator must restart with `--mmproj` themselves).
    */
-  async pullModel(id: LocalModelId): Promise<void> {
+  async pullModel(
+    id: LocalModelId,
+    mode: "with-mmproj" | "gguf-only" | "mmproj-only" = "with-mmproj",
+  ): Promise<void> {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
-    if (!isBackendDownloaded(dataDir)) {
+
+    const def = getLocalModelDef(id);
+    if (mode === "mmproj-only" && !def.supportsVision) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: ${def.name} is not vision-capable — nothing to pull`,
+      });
+      return;
+    }
+
+    if (mode !== "mmproj-only" && !isBackendDownloaded(dataDir)) {
       this.bus.emit({
         type: "runtime_info",
         line: "local-llm: backend missing — downloading llama.cpp first…",
       });
       await this.pullBackend();
-      // pullBackend() emits its own terminal events; bail if still missing.
       if (!isBackendDownloaded(dataDir)) return;
     }
-    // Cancel any currently-running pull so the user can switch models
-    // without waiting for the first download to finish.
+
     if (this.activePullAbort) {
       this.activePullAbort.abort();
     }
     const controller = new AbortController();
     this.activePullAbort = controller;
 
-    const m = getLocalModelDef(id);
-    const est = Math.round(m.fileSizeGb * (1024 * 1024 * 1024));
-    this.bus.emit({
-      type: "local_models_pull_started",
-      pull: {
-        modelId: id,
-        label: m.name,
-        percent: 0,
-        transferredBytes: 0,
-        totalBytes: est,
-        error: null,
-      },
-    });
     try {
-      await downloadModel(dataDir, m, {
-        signal: controller.signal,
-        onProgress: (percent, transferred, total) => {
-          this.bus.emit({
-            type: "local_models_pull_progress",
-            percent,
-            transferredBytes: transferred,
-            totalBytes: total > 0 ? total : est,
-          });
-        },
-      });
-      // Superseded by a later pullModel() call — don't finalise or start
-      // the daemon, the new call will.
-      if (controller.signal.aborted) return;
+      const wantGguf = mode !== "mmproj-only";
+      const wantMmproj =
+        def.supportsVision && (mode === "with-mmproj" || mode === "mmproj-only");
+
+      if (wantGguf && !isModelDownloaded(dataDir, def)) {
+        await this.pullGgufPhase(def, controller.signal);
+        if (controller.signal.aborted) return;
+      }
+      if (wantMmproj && !isMmprojDownloaded(dataDir, def)) {
+        await this.pullMmprojPhase(def, controller.signal);
+        if (controller.signal.aborted) return;
+      }
+
       this.activePullAbort = null;
       this.bus.emit({ type: "local_models_pull_finished" });
+
+      if (mode === "mmproj-only") {
+        await this.refresh();
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: ${def.name} mmproj installed — restart the daemon to enable vision`,
+        });
+        return;
+      }
+
       persistUserLocalModelsConfig({ mode: "managed", managed: { modelId: id } });
       resetConfigCache();
       await this.refresh();
       this.bus.emit({
         type: "runtime_info",
-        line: `local-llm: ${m.name} installed → starting daemon…`,
+        line: `local-llm: ${def.name} installed → starting daemon…`,
       });
       if (await this.startDaemon()) {
         this.bus.emit({ type: "ui_mode_set", mode: "chat" });
@@ -215,6 +243,79 @@ export class LocalModelsOrchestrator {
       if (this.activePullAbort === controller) this.activePullAbort = null;
       this.bus.emit({ type: "local_models_pull_failed", error: msg });
     }
+  }
+
+  /**
+   * Phase 1 of a download: pull the GGUF weights. Emits a fresh
+   * `pull_started` so the banner shows the GGUF label, then progress
+   * events for the GGUF body. The estimated size comes from the
+   * catalog so the bar moves even before HTTP `content-length` arrives.
+   */
+  private async pullGgufPhase(
+    def: LocalModelDef,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const dataDir = getConfig().paths.localModelsDataDir;
+    const est = Math.round(def.fileSizeGb * (1024 * 1024 * 1024));
+    this.bus.emit({
+      type: "local_models_pull_started",
+      pull: {
+        modelId: def.id,
+        label: `${def.name} (gguf)`,
+        percent: 0,
+        transferredBytes: 0,
+        totalBytes: est,
+        error: null,
+      },
+    });
+    await downloadModel(dataDir, def, {
+      signal,
+      onProgress: (percent, transferred, total) => {
+        this.bus.emit({
+          type: "local_models_pull_progress",
+          percent,
+          transferredBytes: transferred,
+          totalBytes: total > 0 ? total : est,
+        });
+      },
+    });
+  }
+
+  /**
+   * Phase 2 of a download: pull the mmproj projector. Re-emits
+   * `pull_started` so the banner label/progress reset to the mmproj
+   * file — keeps the UI honest about which file the bar represents.
+   */
+  private async pullMmprojPhase(
+    def: LocalModelDef,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const dataDir = getConfig().paths.localModelsDataDir;
+    const est = Math.round(
+      (def.mmprojFileSizeGb ?? 1) * (1024 * 1024 * 1024),
+    );
+    this.bus.emit({
+      type: "local_models_pull_started",
+      pull: {
+        modelId: def.id,
+        label: `${def.name} (mmproj)`,
+        percent: 0,
+        transferredBytes: 0,
+        totalBytes: est,
+        error: null,
+      },
+    });
+    await downloadMmproj(dataDir, def, {
+      signal,
+      onProgress: (percent, transferred, total) => {
+        this.bus.emit({
+          type: "local_models_pull_progress",
+          percent,
+          transferredBytes: transferred,
+          totalBytes: total > 0 ? total : est,
+        });
+      },
+    });
   }
 
   async pullBackend(): Promise<void> {
@@ -343,17 +444,33 @@ export class LocalModelsOrchestrator {
     this.beginActiveRefresh();
     try {
       const tpl = resolveChatTemplatePath(def) ?? undefined;
+      const mmprojFile =
+        cfg.vision.enabled &&
+        def.supportsVision &&
+        def.mmprojFilename &&
+        isMmprojDownloaded(dataDir, def)
+          ? resolveMmprojFilePath(dataDir, def.id, def.mmprojFilename)
+          : undefined;
       const { pid } = await startDaemon({
         dataDir,
         modelId: mid,
         port: cfg.localModels.managed.port,
         chatTemplateFile: tpl,
+        mmprojFile,
       });
       this.daemonSupervised = true;
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: ready — pid ${pid} on http://127.0.0.1:${cfg.localModels.managed.port}`,
       });
+      if (def.supportsVision) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: mmprojFile
+            ? `local-llm: vision enabled (${def.mmprojFilename})`
+            : `local-llm: vision disabled — mmproj not downloaded for ${def.id}`,
+        });
+      }
       return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -527,6 +644,20 @@ function dataDirOf(cfg: ReturnType<typeof getConfig>): string {
  */
 function detectHostRamGb(): number {
   return Math.max(1, Math.floor(totalmem() / 1_000_000_000));
+}
+
+/**
+ * Map a model definition + on-disk state to an `MmprojStatus`. Text-only
+ * models always return `"n/a"` — keeping the three states distinct in
+ * the UI (vs. boolean `mmprojDownloaded`) is what lets the panel render
+ * a different glyph for "not applicable" vs "missing".
+ */
+function resolveMmprojStatus(
+  dataDir: string,
+  def: LocalModelDef,
+): MmprojStatus {
+  if (!def.supportsVision) return "n/a";
+  return isMmprojDownloaded(dataDir, def) ? "downloaded" : "missing";
 }
 
 function isAbortError(e: unknown): boolean {

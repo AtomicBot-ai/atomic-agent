@@ -9,11 +9,13 @@ import {
   getLocalModelDef,
   isBackendDownloaded,
   isKnownLocalModelId,
+  isMmprojDownloaded,
   isModelDownloaded,
   LOCAL_MODELS_CATALOG,
   readBackendVersion,
   removeModel,
   resolveChatTemplatePath,
+  resolveMmprojFilePath,
   startDaemon,
   stopDaemon,
 } from "../local-llm/index.js";
@@ -183,15 +185,25 @@ export async function runLocalModelsStart(): Promise<number> {
   const dataDir = cfg.paths.localModelsDataDir;
   const m = getLocalModelDef(mid);
   const tpl = resolveChatTemplatePath(m) ?? undefined;
+  const mmprojFile =
+    cfg.vision.enabled && m.supportsVision && m.mmprojFilename && isMmprojDownloaded(dataDir, m)
+      ? resolveMmprojFilePath(dataDir, m.id, m.mmprojFilename)
+      : undefined;
   try {
     const { pid } = await startDaemon({
       dataDir,
       modelId: mid,
       port: cfg.localModels.managed.port,
       chatTemplateFile: tpl,
+      mmprojFile,
     });
+    const visionLine = mmprojFile
+      ? `, vision enabled (${m.mmprojFilename})`
+      : m.supportsVision
+        ? `, vision disabled (mmproj missing — download via TUI 'Local Models' panel)`
+        : "";
     process.stdout.write(
-      `started pid ${pid}, healthy on port ${cfg.localModels.managed.port}\n`,
+      `started pid ${pid}, healthy on port ${cfg.localModels.managed.port}${visionLine}\n`,
     );
     return 0;
   } catch (e) {

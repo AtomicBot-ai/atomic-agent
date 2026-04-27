@@ -74,7 +74,17 @@ export interface TuiAppCallbacks {
   onTaskRunNowRequested?(taskId: string): void;
   /** Managed llama.cpp panel: start 5s polling when the tab is active. */
   onLocalModelsAutoRefreshStart?(): void;
-  onLocalModelsPullRequested?(modelId: import("../local-llm/index.js").LocalModelId): void;
+  /**
+   * Pull weights for a model. `mode` selects the file set:
+   * - `"with-mmproj"` (default for vision-capable rows) — GGUF + mmproj.
+   * - `"gguf-only"` — GGUF only, even if vision-capable (`g` hotkey).
+   * - `"mmproj-only"` — projector only, used when GGUF is already on
+   *   disk and the operator wants to upgrade to vision support.
+   */
+  onLocalModelsPullRequested?(
+    modelId: import("../local-llm/index.js").LocalModelId,
+    mode?: "with-mmproj" | "gguf-only" | "mmproj-only",
+  ): void;
   onLocalModelsSetActiveRequested?(modelId: import("../local-llm/index.js").LocalModelId): void;
   onLocalModelsBackendPullRequested?(): void;
   onLocalModelsRefreshRequested?(): void;

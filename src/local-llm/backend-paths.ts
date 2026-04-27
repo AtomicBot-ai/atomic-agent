@@ -24,6 +24,19 @@ export function resolveModelFilePath(
   return join(resolveModelDir(dataDir, modelId), filename);
 }
 
+/**
+ * Resolve the on-disk path for a model's mmproj projector file. The
+ * projector lives in the same per-model directory as the GGUF weights so
+ * removal of a model also removes its projector.
+ */
+export function resolveMmprojFilePath(
+  dataDir: string,
+  modelId: string,
+  mmprojFilename: string,
+): string {
+  return join(resolveModelDir(dataDir, modelId), mmprojFilename);
+}
+
 export function resolveVersionFilePath(dataDir: string): string {
   return join(resolveBackendDir(dataDir), "backend-version.json");
 }

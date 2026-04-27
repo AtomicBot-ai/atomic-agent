@@ -77,6 +77,17 @@ describe("buildPrompt", () => {
     expect(a.text.startsWith(a.stablePrefix)).toBe(true);
   });
 
+  it("persona steers user file deletion to os.fs.trash instead of shell rm", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(prompt.stablePrefix).toContain("os.fs.trash");
+    expect(prompt.stablePrefix).toContain("Do not use `os.shell.run`");
+  });
+
   it("stable prefix does not depend on session or latest result", () => {
     const a = buildPrompt({
       session: mkSession(),

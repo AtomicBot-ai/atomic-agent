@@ -2,11 +2,28 @@ import type { LocalModelDef, LocalModelId } from "../../local-llm/index.js";
 
 export type LocalModelsPanelMode = "list" | "detail" | "backendUpdate" | "pullProgress";
 
+/**
+ * mmproj projector status — surfaced as a separate dimension from the
+ * GGUF download flag because vision-capable models require both files
+ * to be on disk before `vision.describe` can run.
+ *
+ * - `n/a`        — model is not vision-capable (`def.supportsVision === false`).
+ * - `missing`    — vision-capable model whose projector is not yet on disk.
+ * - `downloaded` — projector is present.
+ */
+export type MmprojStatus = "n/a" | "missing" | "downloaded";
+
 export interface LocalModelRow {
   id: LocalModelId;
   def: LocalModelDef;
   downloaded: boolean;
   active: boolean;
+  /**
+   * Independent of `downloaded` — a vision-capable model can have its
+   * GGUF on disk while the mmproj projector is still missing (and vice
+   * versa, although less common).
+   */
+  mmprojStatus: MmprojStatus;
 }
 
 export interface LocalModelsPullState {

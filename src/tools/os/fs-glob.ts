@@ -29,7 +29,7 @@ interface GlobEntry {
 export const osFsGlobTool: ToolDefinition = {
   name: "os.fs.glob",
   description:
-    "Recursively find files matching one or more glob patterns. Supports `*` (any chars except `/`), `**` (any path segments), `?` (single char), and `{a,b}` brace expansion. Returns POSIX-style paths relative to `cwd` by default.",
+    "Recursively find files matching one or more glob patterns. Supports `*` (any chars except `/`), `**` (any path segments), `?` (single char), and `{a,b}` brace expansion. Search root is `cwd` or `path` (same meaning; if both are set, `cwd` wins). Returns POSIX-style paths relative to that root by default.",
   readonly: true,
   async run(rawArgs, ctx) {
     const args = parseArgs(rawArgs, ctx.workingDir);
@@ -134,9 +134,15 @@ function parseArgs(
   } else {
     throw new Error("os.fs.glob: `pattern` is required (string or string[])");
   }
-  const cwdArg = typeof rawArgs.cwd === "string" && rawArgs.cwd.length > 0
-    ? rawArgs.cwd
-    : workingDir;
+  const cwdExplicit =
+    typeof rawArgs.cwd === "string" && rawArgs.cwd.length > 0
+      ? rawArgs.cwd
+      : null;
+  const pathAsRoot =
+    typeof rawArgs.path === "string" && rawArgs.path.length > 0
+      ? rawArgs.path
+      : null;
+  const cwdArg = cwdExplicit ?? pathAsRoot ?? workingDir;
   const cwd = resolveUserPath(cwdArg, workingDir);
   const ignore = Array.isArray(rawArgs.ignore)
     ? rawArgs.ignore.filter((v): v is string => typeof v === "string" && v.length > 0)

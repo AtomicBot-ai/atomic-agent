@@ -13,3 +13,4 @@ coverage/
 .history/
 ARCHITECTURE.md
 CLAW-LOOT.md
+/logs/*

@@ -19,6 +19,7 @@ export {
   resolveServerBinPath,
   resolveModelDir,
   resolveModelFilePath,
+  resolveMmprojFilePath,
   resolveVersionFilePath,
   resolvePidFilePath,
   resolveLogFilePath,
@@ -39,7 +40,13 @@ export {
   GithubRateLimitedError,
   type LatestReleaseInfo,
 } from "./backend-installer.js";
-export { isModelDownloaded, downloadModel, removeModel } from "./model-installer.js";
+export {
+  isModelDownloaded,
+  isMmprojDownloaded,
+  downloadModel,
+  downloadMmproj,
+  removeModel,
+} from "./model-installer.js";
 export { resolveChatTemplatePath } from "./chat-templates.js";
 export {
   startDaemon,
@@ -47,6 +54,7 @@ export {
   getDaemonStatus,
   readRunningPid,
   probeLlamaHealth,
+  buildLlamaServerArgs,
   type DaemonStartOptions,
   type DaemonStatus,
 } from "./daemon-lifecycle.js";

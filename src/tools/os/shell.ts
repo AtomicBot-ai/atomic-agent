@@ -6,19 +6,20 @@ import {
   type DangerousToolOptions,
 } from "../../approval/dangerous-tool.js";
 import { resolveUserPath } from "./expand-home.js";
+import { expandShellGlobArgs } from "./expand-shell-glob-args.js";
 
 export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition {
   return {
     name: "os.shell.run",
     description:
-      "Run an OS command in the session working directory. Dangerous — always requires approval.",
+      "Run an OS command in the session working directory (argv globs `*`/`?` are expanded like a shell; no implicit subshell). Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Dangerous — always requires approval.",
     readonly: false,
     async run(rawArgs, ctx) {
       const cmd = rawArgs.cmd;
       if (typeof cmd !== "string" || cmd.length === 0) {
         throw new Error("os.shell.run: `cmd` must be a non-empty string");
       }
-      const args = Array.isArray(rawArgs.args)
+      const rawArgList = Array.isArray(rawArgs.args)
         ? rawArgs.args.map((v) => String(v))
         : [];
       const cwd =
@@ -31,6 +32,7 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
           ? rawArgs.timeoutMs
           : 30_000;
 
+      const args = expandShellGlobArgs(cmd, rawArgList, cwd);
       const commandLine = [cmd, ...args].join(" ");
       await requireApproval(
         options,
@@ -61,6 +63,7 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
         details: {
           cmd,
           args,
+          rawArgs: rawArgList,
           cwd,
           exitCode: result.exitCode,
           signal: result.signal,

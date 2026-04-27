@@ -115,7 +115,15 @@ describe("LocalModelsOrchestrator", () => {
 
     await Promise.allSettled([firstPull, secondPull]);
 
-    expect(startedPulls(actions)).toEqual(["qwen-3.5-4b", "qwen-3.5-9b"]);
+    // qwen-3.5-9b is vision-capable in the current catalog, so its
+    // pull emits a second `pull_started` for the mmproj phase after
+    // the GGUF phase completes. The cancelled qwen-3.5-4b never
+    // reaches its mmproj phase.
+    expect(startedPulls(actions)).toEqual([
+      "qwen-3.5-4b",
+      "qwen-3.5-9b",
+      "qwen-3.5-9b",
+    ]);
     expect(actions.filter((action) => action.type === "local_models_pull_failed")).toHaveLength(0);
     expect(actions.filter((action) => action.type === "local_models_pull_finished")).toHaveLength(1);
 

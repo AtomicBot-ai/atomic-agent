@@ -134,7 +134,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onDebugBundleExportRequested: (state) =>
           orchestrator.exportDebugBundle(state),
         onLocalModelsAutoRefreshStart: () => orchestrator.localModels.startAutoRefresh(),
-        onLocalModelsPullRequested: (id) => void orchestrator.localModels.pullModel(id),
+        onLocalModelsPullRequested: (id, mode) =>
+          void orchestrator.localModels.pullModel(id, mode),
         onLocalModelsSetActiveRequested: (id) =>
           void orchestrator.localModels.setActive(id),
         onLocalModelsBackendPullRequested: () =>

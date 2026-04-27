@@ -317,6 +317,26 @@ export interface AtomicAgentConfig {
    * reaching back into the user config file.
    */
   webhooks: Record<string, WebhookConfig>;
+  /**
+   * Multimodal (vision) input configuration. The runtime registers the
+   * `vision.describe` tool only when (a) `vision.enabled` is true AND
+   * (b) the connected llama-server reports `mmproj`/clip support via
+   * `/props` (probed at bootstrap by `detectModelProfile`). When
+   * `autoDetect` is `false` the capability check is skipped and the
+   * tool is registered unconditionally — useful for headless test
+   * runs where `/props` is mocked. Limits guard the `image_data`
+   * transport against accidentally embedding a 100 MB screenshot.
+   */
+  vision: {
+    /** Master kill switch. Disables the tool, skips capability detection. */
+    enabled: boolean;
+    /** When `false`, treat any vision-capable model as supported regardless of `/props`. */
+    autoDetect: boolean;
+    /** Hard upper bound on a single image's decoded byte length. */
+    maxImageBytes: number;
+    /** Hard upper bound on the number of images per `vision.describe` call. */
+    maxImagesPerCall: number;
+  };
 }
 
 /**
@@ -408,18 +428,31 @@ export interface UserConfigFile {
    * transparently upgraded with `webhooks: {}`.
    */
   webhooks: Record<string, WebhookConfig>;
+  /**
+   * Multimodal (vision) input. Added in config v6; older files are
+   * transparently upgraded with the `USER_CONFIG_DEFAULTS.vision`
+   * defaults.
+   */
+  vision: {
+    enabled: boolean;
+    autoDetect: boolean;
+    maxImageBytes: number;
+    maxImagesPerCall: number;
+  };
 }
 
-export const USER_CONFIG_VERSION = 5 as const;
+export const USER_CONFIG_VERSION = 6 as const;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
  * v5 renamed the `llama` block to `localModels` to remove the Meta
  * "Llama" conflation — the runtime never ran Llama family models
- * specifically. Older config files are not migrated: this is active
- * development, callers delete their `config.json` and start over.
+ * specifically. v6 added the optional `vision.*` block; v5 files are
+ * transparently upgraded by filling in `USER_CONFIG_DEFAULTS.vision`.
+ * Anything older than v5 is not migrated: this is active development,
+ * callers delete their `config.json` and start over.
  */
-const SUPPORTED_INPUT_VERSIONS: readonly number[] = [USER_CONFIG_VERSION];
+const SUPPORTED_INPUT_VERSIONS: readonly number[] = [5, USER_CONFIG_VERSION];
 
 export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   version: USER_CONFIG_VERSION,
@@ -488,6 +521,12 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     },
   },
   webhooks: {},
+  vision: {
+    enabled: true,
+    autoDetect: true,
+    maxImageBytes: 8 * 1024 * 1024,
+    maxImagesPerCall: 4,
+  },
 };
 
 /** Non-user env-based defaults (not part of the user config file). */
@@ -850,6 +889,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const memoryIndex =
     (memory.index as Record<string, unknown> | undefined) ?? {};
   const webhooks = parseWebhookMap(obj.webhooks ?? {}, "webhooks");
+  const vision = (obj.vision as Record<string, unknown> | undefined) ?? {};
 
   const rawManaged =
     (localModels.managed as Record<string, unknown> | undefined) ?? {};
@@ -1062,5 +1102,23 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       },
     },
     webhooks,
+    vision: {
+      enabled: parseBool(
+        vision.enabled ?? USER_CONFIG_DEFAULTS.vision.enabled,
+        "vision.enabled",
+      ),
+      autoDetect: parseBool(
+        vision.autoDetect ?? USER_CONFIG_DEFAULTS.vision.autoDetect,
+        "vision.autoDetect",
+      ),
+      maxImageBytes: parsePositiveInt(
+        vision.maxImageBytes ?? USER_CONFIG_DEFAULTS.vision.maxImageBytes,
+        "vision.maxImageBytes",
+      ),
+      maxImagesPerCall: parsePositiveInt(
+        vision.maxImagesPerCall ?? USER_CONFIG_DEFAULTS.vision.maxImagesPerCall,
+        "vision.maxImagesPerCall",
+      ),
+    },
   };
 }

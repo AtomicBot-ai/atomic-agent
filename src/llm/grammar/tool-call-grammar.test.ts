@@ -230,6 +230,14 @@ first thought
     });
   });
 
+  it("parses an os.fs.trash tool-call", () => {
+    const out = parseToolCall(
+      '{"tool":"os.fs.trash","args":{"paths":["/tmp/a.png","/tmp/b.png"]}}',
+    );
+    expect(out.tool).toBe("os.fs.trash");
+    expect(out.args).toEqual({ paths: ["/tmp/a.png", "/tmp/b.png"] });
+  });
+
   it("parses an os.git.status tool-call", () => {
     const out = parseToolCall('{"tool":"os.git.status","args":{}}');
     expect(out.tool).toBe("os.git.status");

@@ -46,3 +46,14 @@ export type {
   LlmFailureOptions,
   ModelFailureReason,
 } from "./reliability/index.js";
+export {
+  LlamaServerProvider,
+  VisionUnsupportedError,
+} from "./provider/index.js";
+export type {
+  LlmProvider,
+  ProviderCapabilities,
+  VisionImage,
+  VisionRequest,
+  VisionResult,
+} from "./provider/index.js";

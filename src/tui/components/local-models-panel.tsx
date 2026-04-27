@@ -3,10 +3,36 @@ import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
 import {
   classifyRamFit,
+  type LocalModelRow,
   type LocalModelsPanelState,
   type RamFit,
 } from "../local-models/local-models-panel-state.js";
 import type { LocalModelDef } from "../../local-llm/index.js";
+
+/**
+ * Render the per-row availability badge that combines GGUF + mmproj
+ * state into a single short label:
+ * - `gguf+mm`  — vision-capable, both files on disk (ready for vision).
+ * - `gguf, mm?`— vision-capable, GGUF on disk, projector missing.
+ * - `gguf`     — text-only model, GGUF on disk; or vision row whose
+ *                projector is somehow expected but not yet checked.
+ * - `mm only`  — vision-capable, projector on disk but GGUF missing
+ *                (rare; happens when the operator pulls projector
+ *                before the weights).
+ * - `remote`   — nothing on disk yet.
+ *
+ * Keeping the label short matters: the panel renders inside a single
+ * Ink line, and longer text wraps awkwardly on narrow terminals.
+ */
+function renderRowAvailability(r: LocalModelRow): string {
+  if (!r.def.supportsVision) {
+    return r.downloaded ? "gguf" : "remote";
+  }
+  if (r.downloaded && r.mmprojStatus === "downloaded") return "gguf+mm";
+  if (r.downloaded && r.mmprojStatus === "missing") return "gguf, mm?";
+  if (!r.downloaded && r.mmprojStatus === "downloaded") return "mm only";
+  return "remote";
+}
 
 interface DaemonStatusRender {
   glyph: string;
@@ -132,10 +158,14 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
     if (!row) return <Text color={theme.colors.muted}>(no row)</Text>;
     const m = row.def;
     const enterHint = !row.downloaded
-      ? "Enter — download"
-      : !row.active
-        ? "Enter — set active"
-        : "Enter — already active";
+      ? row.def.supportsVision
+        ? "Enter — download (gguf + mmproj)"
+        : "Enter — download"
+      : row.mmprojStatus === "missing"
+        ? "Enter — download mmproj"
+        : !row.active
+          ? "Enter — set active"
+          : "Enter — already active";
     const fit = classifyRamFit(m, panel.totalRamGb);
     return (
       <Box flexDirection="column">
@@ -149,6 +179,19 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
           status: {row.downloaded ? "downloaded" : "not downloaded"}
           {row.active ? " · active" : ""}
         </Text>
+        {row.def.supportsVision ? (
+          <Text
+            color={
+              row.mmprojStatus === "downloaded"
+                ? "green"
+                : row.mmprojStatus === "missing"
+                  ? "yellow"
+                  : theme.colors.muted
+            }
+          >
+            mmproj: {row.mmprojStatus}
+          </Text>
+        ) : null}
         <Text color={theme.colors.muted}>
           RAM {m.minRamGb}–{m.recommendedRamGb} GB · ctx {m.contextLabel} ·{" "}
           {m.sizeLabel}
@@ -188,7 +231,7 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
         </Text>
       ) : null}
       <Text color={theme.colors.muted}>
-        j/k move · Enter download/activate · s start/stop daemon · i info · d remove · B backend · r refresh · L view logs
+        j/k move · Enter download/activate (incl. mmproj) · g gguf only · s start/stop · i info · d remove · B backend · r refresh · L logs
       </Text>
       <Box marginTop={1} flexDirection="column">
         {panel.rows.map((r, i) => {
@@ -219,7 +262,7 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
               </Text>
               <Text color={r.downloaded ? "green" : theme.colors.muted}>
                 {" "}
-                [{r.downloaded ? "downloaded" : "remote"}]
+                [{renderRowAvailability(r)}]
               </Text>
               {r.def.tag ? (
                 <Text color={theme.colors.accent}> [{r.def.tag}]</Text>

@@ -10,6 +10,34 @@ interface BaseModelProfile {
    * expose it — prompt-building then relies purely on configured caps.
    */
   contextWindow?: number;
+  /**
+   * Multimodal (vision) capability snapshot derived from `/props`.
+   *
+   * `supported = true` iff llama-server reports an mmproj projector
+   * is loaded (one of `has_multimodal`, `multimodal`, or a non-null
+   * `mmproj` object at root or under `default_generation_settings`).
+   * Older llama.cpp builds that pre-date the multimodal-in-`/props`
+   * surface report `supported = false` and `source = "absent"` —
+   * callers can fall back to `LocalModelDef.supportsVision` when the
+   * server is text-only or the field is missing.
+   */
+  vision: VisionCapability;
+}
+
+export interface VisionCapability {
+  supported: boolean;
+  /**
+   * Which `/props` field signalled the capability. Recorded for
+   * observability — the runtime never branches on the source, but
+   * trace dumps and the bootstrap log line surface it for debugging.
+   */
+  source:
+    | "modalities.vision"
+    | "has_multimodal"
+    | "multimodal"
+    | "mmproj"
+    | "default_generation_settings.has_multimodal"
+    | "absent";
 }
 
 export interface PlainModelProfile extends BaseModelProfile {
@@ -28,11 +56,15 @@ export interface TaggedReasoningModelProfile extends BaseModelProfile {
 
 export type ModelProfile = PlainModelProfile | TaggedReasoningModelProfile;
 
+/** Default vision snapshot for hand-built profile constants — overwritten by `detectModelProfile`. */
+const VISION_ABSENT: VisionCapability = { supported: false, source: "absent" };
+
 export const PLAIN_INSTRUCT_PROFILE: PlainModelProfile = {
   id: "plain-instruct",
   reasoningStyle: "none",
   requiresPromptThinkPrefix: false,
   allowThinkPrelude: false,
+  vision: VISION_ABSENT,
 };
 
 export const QWEN_THINK_PROFILE: TaggedReasoningModelProfile = {
@@ -42,6 +74,7 @@ export const QWEN_THINK_PROFILE: TaggedReasoningModelProfile = {
   reasoningCloseTag: "</think>",
   requiresPromptThinkPrefix: true,
   allowThinkPrelude: true,
+  vision: VISION_ABSENT,
 };
 
 export const GEMMA4_THINK_PROFILE: TaggedReasoningModelProfile = {
@@ -52,6 +85,7 @@ export const GEMMA4_THINK_PROFILE: TaggedReasoningModelProfile = {
   reasoningSystemToken: "<|think|>\n",
   requiresPromptThinkPrefix: true,
   allowThinkPrelude: true,
+  vision: VISION_ABSENT,
 };
 
 export function detectModelProfile(props: Record<string, unknown>): ModelProfile {
@@ -68,8 +102,57 @@ export function detectModelProfile(props: Record<string, unknown>): ModelProfile
     supportsPreserveReasoning,
   );
   const contextWindow = readContextWindow(props);
-  if (contextWindow === null) return base;
-  return { ...base, contextWindow };
+  const vision = detectVisionSupport(props);
+  const enriched = { ...base, vision } as ModelProfile;
+  if (contextWindow === null) return enriched;
+  return { ...enriched, contextWindow };
+}
+
+/**
+ * Detect mmproj/multimodal support from a `/props` payload. We check
+ * signals in priority order, newest llama.cpp surface first:
+ *
+ * 1. `modalities.vision: true` — current canonical surface (build
+ *    `b1-*` and later). The companion `modalities.audio` flag is
+ *    ignored here; vision is the only modality the runtime exposes
+ *    via `vision.describe` today.
+ * 2. Top-level `has_multimodal: true` — older `mtmd` surface.
+ * 3. Top-level `multimodal: true` — fork variant.
+ * 4. Non-null `mmproj` object (path / n_embd / etc.) at root or
+ *    under `default_generation_settings` — present on builds that
+ *    expose the projector blob directly.
+ * 5. `default_generation_settings.has_multimodal: true` — legacy
+ *    placement of the same flag.
+ *
+ * Anything else means `supported: false`. The caller (bootstrap)
+ * combines this with `config.vision.autoDetect` to decide whether to
+ * register the `vision.describe` tool.
+ */
+export function detectVisionSupport(
+  props: Record<string, unknown>,
+): VisionCapability {
+  const modalities = readObject(props.modalities);
+  if (readBoolean(modalities.vision) === true) {
+    return { supported: true, source: "modalities.vision" };
+  }
+  if (readBoolean(props.has_multimodal) === true) {
+    return { supported: true, source: "has_multimodal" };
+  }
+  if (readBoolean(props.multimodal) === true) {
+    return { supported: true, source: "multimodal" };
+  }
+  const mmproj = props.mmproj;
+  if (mmproj && typeof mmproj === "object" && !Array.isArray(mmproj)) {
+    return { supported: true, source: "mmproj" };
+  }
+  const defaults = readObject(props.default_generation_settings);
+  if (readBoolean(defaults.has_multimodal) === true) {
+    return {
+      supported: true,
+      source: "default_generation_settings.has_multimodal",
+    };
+  }
+  return { supported: false, source: "absent" };
 }
 
 function selectBaseProfile(

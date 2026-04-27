@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   detectModelProfile,
+  detectVisionSupport,
   GEMMA4_THINK_PROFILE,
   PLAIN_INSTRUCT_PROFILE,
   QWEN_THINK_PROFILE,
@@ -60,5 +61,93 @@ describe("detectModelProfile", () => {
       n_ctx: -10,
     });
     expect(profile.contextWindow).toBeUndefined();
+  });
+
+  it("defaults vision to absent for text-only props payloads", () => {
+    expect(detectModelProfile(QWEN3_PROPS).vision).toEqual({
+      supported: false,
+      source: "absent",
+    });
+  });
+
+  it("detects vision via modalities.vision flag (current llama.cpp surface)", () => {
+    const profile = detectModelProfile({
+      ...GEMMA4_PROPS,
+      modalities: { vision: true, audio: false },
+    });
+    expect(profile.vision).toEqual({
+      supported: true,
+      source: "modalities.vision",
+    });
+  });
+
+  it("ignores modalities.audio when vision is false", () => {
+    expect(
+      detectVisionSupport({ modalities: { vision: false, audio: true } }),
+    ).toEqual({
+      supported: false,
+      source: "absent",
+    });
+  });
+
+  it("prefers modalities.vision over legacy has_multimodal", () => {
+    expect(
+      detectVisionSupport({
+        modalities: { vision: true },
+        has_multimodal: true,
+      }),
+    ).toEqual({
+      supported: true,
+      source: "modalities.vision",
+    });
+  });
+
+  it("detects vision via top-level has_multimodal flag", () => {
+    const profile = detectModelProfile({
+      ...GEMMA4_PROPS,
+      has_multimodal: true,
+    });
+    expect(profile.vision).toEqual({
+      supported: true,
+      source: "has_multimodal",
+    });
+  });
+
+  it("detects vision via legacy `multimodal: true` flag", () => {
+    expect(detectVisionSupport({ multimodal: true })).toEqual({
+      supported: true,
+      source: "multimodal",
+    });
+  });
+
+  it("detects vision when `mmproj` is a non-null object", () => {
+    expect(
+      detectVisionSupport({ mmproj: { path: "/tmp/mmproj-F16.gguf" } }),
+    ).toEqual({
+      supported: true,
+      source: "mmproj",
+    });
+  });
+
+  it("detects vision via default_generation_settings.has_multimodal", () => {
+    expect(
+      detectVisionSupport({
+        default_generation_settings: { has_multimodal: true },
+      }),
+    ).toEqual({
+      supported: true,
+      source: "default_generation_settings.has_multimodal",
+    });
+  });
+
+  it("returns absent for non-object mmproj values", () => {
+    expect(detectVisionSupport({ mmproj: null })).toEqual({
+      supported: false,
+      source: "absent",
+    });
+    expect(detectVisionSupport({ mmproj: "ignored-string" })).toEqual({
+      supported: false,
+      source: "absent",
+    });
   });
 });

@@ -160,4 +160,34 @@ describe("os.fs.glob", () => {
     );
     expect((result.details.files as string[]).sort()).toEqual(["a.ts", "b.md"]);
   });
+
+  it("treats path as search root when cwd is omitted (alias for os.fs.list ergonomics)", async () => {
+    const target = join(dir, "target");
+    const other = join(dir, "other");
+    await mkdir(target);
+    await mkdir(other);
+    await writeFile(join(target, "found.txt"), "", "utf8");
+    await writeFile(join(other, "noise.txt"), "", "utf8");
+    const result = await osFsGlobTool.run(
+      { pattern: "*.txt", path: target },
+      makeCtx(other),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.details.files).toEqual(["found.txt"]);
+    expect(result.details.cwd).toBe(target);
+  });
+
+  it("prefers cwd over path when both are set", async () => {
+    const a = join(dir, "a");
+    const b = join(dir, "b");
+    await mkdir(a);
+    await mkdir(b);
+    await writeFile(join(a, "x.txt"), "", "utf8");
+    await writeFile(join(b, "y.txt"), "", "utf8");
+    const result = await osFsGlobTool.run(
+      { pattern: "*.txt", cwd: a, path: b },
+      makeCtx(dir),
+    );
+    expect(result.details.files).toEqual(["x.txt"]);
+  });
 });

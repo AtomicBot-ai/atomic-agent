@@ -130,6 +130,21 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    // `frequent` tier: vision.describe needs the full args schema +
+    // examples in the stable prefix so the model first-shots a valid
+    // call. `rare` (single-line manifest) led to the model guessing
+    // `{paths: [...]}` without `prompt` and burning a step on the
+    // schema error before retrying with the right shape.
+    name: "vision.describe",
+    summary: "Describe one or more images via the configured vision LLM. Only available when the active model + provider support multimodal input.",
+    argsSchema:
+      "{ prompt: string, path?: string, paths?: string[] /* png|jpg|jpeg|webp|gif */ }",
+    examples: [
+      '{"path":"./screenshot.png","prompt":"What error is shown?"}',
+      '{"paths":["a.png","b.png"],"prompt":"Compare these two diagrams"}',
+    ],
+  },
+  {
     name: "reply",
     summary: "Final natural-language answer; ends the macro-turn. Never use to announce a pending action; keep text short (no huge dumps).",
     argsSchema: "{ text: string }",

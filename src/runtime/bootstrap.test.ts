@@ -93,6 +93,7 @@ describe("createAgentRuntime", () => {
       expect(names).toContain("os.shell.run");
       expect(names).toContain("os.fs.read");
       expect(names).toContain("os.fs.write");
+      expect(names).toContain("os.fs.trash");
       expect(names).toContain("os.clipboard.read");
       expect(names).toContain("skill.view");
       expect(names).toContain("skill.run_script");
