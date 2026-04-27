@@ -287,6 +287,7 @@ describe("buildPrompt", () => {
       capabilities: CAPS,
       skillCatalog: SKILLS,
     });
+    expect(prompt.tail).toContain("### loaded-skills");
     expect(prompt.tail).toContain("--- skill:check-gmail-inbox v0.1.0 ---");
     expect(prompt.tail).toContain("Open gmail.com");
   });
@@ -439,8 +440,10 @@ describe("buildPrompt", () => {
       tokenBudget: 500,
     });
     expect(prompt.truncated).toBe(true);
-    expect(prompt.truncation.session).toBe(true);
-    expect(prompt.tokens.session).toBeLessThanOrEqual(prompt.limits.session);
+    expect(prompt.truncation.loadedSkills).toBe(true);
+    const sessionTok =
+      prompt.tokens.loadedSkills + prompt.tokens.sessionFacts;
+    expect(sessionTok).toBeLessThanOrEqual(prompt.limits.session);
   });
 
   it("folds older turns into a deterministic summary above the visible tail", () => {
@@ -547,6 +550,116 @@ describe("buildPrompt", () => {
     });
     expect(grownPrompt.stablePrefix).toBe(emptyPrompt.stablePrefix);
   });
+
+  it("orders tail from stable to hot: loaded-skills, profile, memory-index, session-facts, recalled, world, conversation", () => {
+    const session = mkSession({
+      knownFacts: [{ text: "pinned context" }],
+      loadedSkills: [
+        {
+          name: "s",
+          version: "1",
+          body: "body",
+          loadedAt: 1,
+        },
+      ],
+      recalledNotes: [
+        {
+          id: 1,
+          content: "n",
+          tags: [],
+          metadata: null,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      memoryIndex: [{ id: 2, preview: "p", tags: [], updatedAt: 1 }],
+    });
+    const prompt = buildPrompt({
+      session,
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: [
+        { key: "k", value: "v", updatedAt: 1, pinned: true, keywords: [] },
+      ],
+    });
+    const idx = (h: string) => prompt.tail.indexOf(h);
+    expect(idx("### loaded-skills")).toBeLessThan(idx("### profile"));
+    expect(idx("### profile")).toBeLessThan(idx("### memory-index"));
+    expect(idx("### memory-index")).toBeLessThan(idx("### session-facts"));
+    expect(idx("### session-facts")).toBeLessThan(idx("### recalled"));
+    expect(idx("### recalled")).toBeLessThan(idx("### world"));
+    expect(idx("### world")).toBeLessThan(idx("### conversation"));
+  });
+
+  it("leaves loaded-skills and profile blocks byte-identical when only knownFacts change", () => {
+    const skills = [
+      {
+        name: "check-gmail-inbox",
+        version: "0.1.0",
+        body: "Step 1. Open gmail.com",
+        loadedAt: Date.now(),
+      },
+    ];
+    const prof = [
+      { key: "language", value: "ru", updatedAt: 1, pinned: true, keywords: [] },
+    ];
+    const a = buildPrompt({
+      session: mkSession({ loadedSkills: skills, knownFacts: [] }),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: prof,
+    });
+    const b = buildPrompt({
+      session: mkSession({
+        loadedSkills: skills,
+        knownFacts: [{ text: "new ephemeral fact" }],
+      }),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: prof,
+    });
+    const slice = (s: string, h: string) => {
+      const from = s.indexOf(h);
+      if (from < 0) return "";
+      const next = s.indexOf("###", from + h.length);
+      return next < 0 ? s.slice(from) : s.slice(from, next);
+    };
+    expect(slice(a.tail, "### loaded-skills")).toBe(
+      slice(b.tail, "### loaded-skills"),
+    );
+    expect(slice(a.tail, "### profile")).toBe(slice(b.tail, "### profile"));
+    expect(b.tail).toContain("new ephemeral fact");
+  });
+
+  it("produces an identical ### profile block on repeated builds with the same profileFacts", () => {
+    const facts = [
+      { key: "a", value: "b", updatedAt: 1, pinned: true, keywords: [] },
+    ];
+    const p1 = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: facts,
+    });
+    const p2 = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      profileFacts: facts,
+    });
+    const extract = (t: string) => {
+      const a = t.indexOf("### profile");
+      if (a < 0) return "";
+      const b = t.indexOf("###", a + 4);
+      return b < 0 ? t.slice(a) : t.slice(a, b);
+    };
+    expect(extract(p1.tail)).toBe(extract(p2.tail));
+  });
 });
 
 describe("buildPrompt profile section", () => {
@@ -574,7 +687,7 @@ describe("buildPrompt profile section", () => {
     expect(prompt.tail).toContain("(no profile)");
   });
 
-  it("places ### profile between ### session and ### world", () => {
+  it("places ### profile after optional loaded-skills and before ### world", () => {
     const prompt = buildPrompt({
       session: mkSession(),
       toolDescriptors: TOOLS,
@@ -584,10 +697,12 @@ describe("buildPrompt profile section", () => {
         { key: "language", value: "ru", updatedAt: 1, pinned: true, keywords: [] },
       ],
     });
-    const sessionIdx = prompt.tail.indexOf("### session");
+    const loadedIdx = prompt.tail.indexOf("### loaded-skills");
     const profileIdx = prompt.tail.indexOf("### profile");
     const worldIdx = prompt.tail.indexOf("### world");
-    expect(sessionIdx).toBeLessThan(profileIdx);
+    if (loadedIdx >= 0) {
+      expect(loadedIdx).toBeLessThan(profileIdx);
+    }
     expect(profileIdx).toBeLessThan(worldIdx);
     expect(prompt.tail).toContain("- language: ru");
   });
@@ -745,9 +860,10 @@ describe("buildPrompt recalled and memory-index sections", () => {
     expect(recalledIdx).toBeGreaterThan(-1);
   });
 
-  it("renders memory-index after recalled and before world", () => {
+  it("renders memory-index before session-facts, recalled, and world", () => {
     const prompt = buildPrompt({
       session: mkSession({
+        knownFacts: [{ text: "one fact" }],
         recalledNotes: [
           {
             id: 1,
@@ -766,12 +882,16 @@ describe("buildPrompt recalled and memory-index sections", () => {
       capabilities: CAPS,
       skillCatalog: SKILLS,
     });
-    const recalledIdx = prompt.tail.indexOf("### recalled");
     const indexIdx = prompt.tail.indexOf("### memory-index");
+    const factsIdx = prompt.tail.indexOf("### session-facts");
+    const recalledIdx = prompt.tail.indexOf("### recalled");
     const worldIdx = prompt.tail.indexOf("### world");
+    expect(indexIdx).toBeGreaterThan(-1);
+    expect(factsIdx).toBeGreaterThan(-1);
     expect(recalledIdx).toBeGreaterThan(-1);
-    expect(indexIdx).toBeGreaterThan(recalledIdx);
-    expect(worldIdx).toBeGreaterThan(indexIdx);
+    expect(factsIdx).toBeGreaterThan(indexIdx);
+    expect(recalledIdx).toBeGreaterThan(factsIdx);
+    expect(worldIdx).toBeGreaterThan(recalledIdx);
     expect(prompt.tail).toContain("#7");
     expect(prompt.tail).toContain("older convention");
   });

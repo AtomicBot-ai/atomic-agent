@@ -88,4 +88,17 @@ describe("renderMemoryIndexSection", () => {
       "- #100 [tooling] project uses pnpm\n- #101 prefer terse replies",
     );
   });
+
+  it("sorts by id ascending so order is deterministic regardless of input order", () => {
+    const a = renderMemoryIndexSection([
+      mkIndexEntry({ id: 101, preview: "second" }),
+      mkIndexEntry({ id: 100, preview: "first" }),
+    ]);
+    const b = renderMemoryIndexSection([
+      mkIndexEntry({ id: 100, preview: "first" }),
+      mkIndexEntry({ id: 101, preview: "second" }),
+    ]);
+    expect(a).toBe(b);
+    expect(a).toBe("- #100 first\n- #101 second");
+  });
 });

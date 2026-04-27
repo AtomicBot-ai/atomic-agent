@@ -14,7 +14,7 @@ This is the source-of-truth for automated contributors (LLM agents, codegen, etc
 ## Architectural invariants
 
 1. **Project ≠ Prompt.** Session state, compressed tool results, and world snapshots live outside the model; the prompt is always a small slice.
-2. **Stable prefix.** The prompt template has the shape `[system] [tools] [capabilities] [skills] [session] [world] [conversation]`. Everything above `session` must stay byte-stable within a session — this is what `cache_prompt + slot_id` on `llama-server` relies on.
+2. **Stable prefix.** The prompt is `buildStablePrefix` (persona + `### tools` + `### capabilities` + skill catalog) followed by a **variable tail** in mutability order: `### loaded-skills` (optional) → `### profile` (optional) → `### memory-index` (optional) → `### session-facts` (optional) → `### recalled` (optional) → `### world` → `### conversation` → optional `### notice` → `### respond` (+ optional reasoning prefill). Only the stable-prefix bytes must stay stable within a session for KV-cache — this is what `cache_prompt + slot_id` on `llama-server` relies on.
 3. **One step per inference.** No reasoning loops inside a single LLM call. The runtime drives the loop.
 4. **Grammar-constrained tool calls.** The sidecar sends a GBNF grammar with every completion request that must produce a tool call.
 5. **No global singletons.** Dependencies are passed explicitly. `getConfig()` is the only exception.
@@ -40,7 +40,7 @@ This is the source-of-truth for automated contributors (LLM agents, codegen, etc
 | `src/cli/` | `run`, `index`, `repl`, `tui`, `serve` commands |
 | `src/http/` | OpenAI-compatible HTTP API + atomic admin routes for `atomic-agent serve` |
 | `src/llm/` | HTTP client for external llama-server + GBNF grammar |
-| `src/prompt/` | Prompt builder, stable prefix, token budget |
+| `src/prompt/` | Prompt builder, stable prefix, token budget. See [PROMPT.md](PROMPT.md) for full anatomy of the stable prefix and variable tail. |
 | `src/session/` | Session state + sqlite persistence |
 | `src/agent/` | Agent loop + plan generator + step executor |
 | `src/tools/` | Tool registry + individual tools. OS tools: `shell.run`, `fs.read` (w/ `offset`/`limit`/`lineNumbers`), `fs.write`, `fs.list`, `fs.glob`, `fs.grep` (bundled ripgrep), `fs.edit` (atomic string replace), `fs.read_document` (PDF/DOCX/XLSX/RTF/ODT/PPTX/legacy .doc → plain text via pure-JS), `fs.archive.list` / `fs.archive.read_entry` / `fs.archive.extract` (zip/tar/tar.gz/gz via pure-JS; zip-slip + bomb guards), `fs.hash` (md5/sha1/sha256/sha512 streaming), `fs.diff` (unified diff, jsdiff), `fs.patch` (dry-run default, all-or-nothing apply), `fs.watch` (chokidar one-shot, timeout-capped), `git.status` / `git.log` / `git.diff` / `git.show` / `git.blame` / `git.branch` (read-only shell-out with structured parse), `proc.list` / `proc.kill` (ps/tasklist + approval), `http.request` (curl + host allowlist + `config.http.approvalMode`), `clipboard.*`, `window.*`, `notify`. |
@@ -91,7 +91,7 @@ Today the runtime persists session-scoped state only:
 
 Prompt-section caps live in the config:
 
-- `agent.tokenBudget` — compact ceiling for the upper prompt (stable prefix + session facts/skills).
+- `agent.tokenBudget` — compact ceiling for the upper prompt: stable prefix plus a shared budget for `### loaded-skills` + `### session-facts` (known facts and loaded skill bodies).
 - `agent.conversationMaxTokens` (default 32000) — safety-net cap for the `### conversation` section; typical sessions stay well under it.
 - `agent.worldSnapshotMaxTokens` (default 8000) — safety-net cap for the `### world` section; the snapshot is already compressed by `aria-compressor`, so this only clips pathological cases with a `[truncated]` marker.
 
@@ -117,7 +117,7 @@ The three channels share one SQLite file `<stateDir>/memory.sqlite` (separate fr
 
 - **Shape.** `profile_facts (key TEXT PK, value TEXT, pinned INTEGER, keywords TEXT, updated_at INTEGER)`. CRUD in [src/memory/profile-store.ts](src/memory/profile-store.ts).
 - **Pinned vs contextual.** `pinned=true` (default) facts are always rendered; `pinned=false` facts are rendered only when at least one of their `keywords` hits the current `userMessage` (case-insensitive substring match). Filter applied by [src/memory/profile-renderer.ts](src/memory/profile-renderer.ts), gated by `memory.profile.contextualKeywordGate` (default `true`).
-- **Prompt placement.** Rendered as `### profile` in the **variable tail** (between `### session` and `### recalled`). Never the stable prefix. `build-prompt.test.ts` pins the invariant by hashing the stable prefix across profile edits.
+- **Prompt placement.** Rendered as `### profile` in the **variable tail** (after optional `### loaded-skills`, before `### memory-index` / `### session-facts` / `### recalled`). Never the stable prefix. `build-prompt.test.ts` pins the invariant by hashing the stable prefix across profile edits.
 - **Budgeting.** `truncateToTokens(content, memory.profile.maxTokens)` (default `512`) with `[truncated]` marker; tokens subtracted from the effective conversation cap in [src/prompt/token-budget.ts](src/prompt/token-budget.ts).
 - **Live snapshot.** `AgentLoop` reads `profileStore.list()` once per step via the optional `profileFactsProvider` and threads it into `StepContext.profileFacts` → `buildPrompt`.
 - **Tools.** `memory.profile.set { key, value, pinned?, keywords? }`, `memory.profile.remove { key }`, `memory.profile.list {}`.

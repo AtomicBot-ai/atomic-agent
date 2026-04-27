@@ -4,6 +4,7 @@ This document is the source-of-truth for how cross-session memory works in `atom
 
 - `ARCHITECTURE.md` — overall runtime topology and invariants.
 - `AGENTS.md` — short engineering summary for automated contributors.
+- `PROMPT.md` — full anatomy of the stable prefix and variable tail, including where the memory channels render in the prompt.
 - `EVOLUTION.md` — historical evolution notes (Option 2 / 2a, etc.).
 
 ## 1. Goals and non-goals
@@ -60,7 +61,7 @@ A `ProfileFact` is:
 
 ### 3.2 Prompt placement
 
-Rendered by [src/memory/profile-renderer.ts](src/memory/profile-renderer.ts) into the `### profile` section of the variable tail, between `### session` and `### recalled`. The block is bounded by `memory.profile.maxTokens` (default `512`) with a `[truncated]` marker.
+Rendered by [src/memory/profile-renderer.ts](src/memory/profile-renderer.ts) into the `### profile` section of the variable tail (after optional `### loaded-skills`, before `### memory-index` / `### session-facts` / `### recalled`). The block is bounded by `memory.profile.maxTokens` (default `512`) with a `[truncated]` marker.
 
 The contextual gate is controlled by `memory.profile.contextualKeywordGate` (default `true`). When `false`, **all** facts render regardless of `pinned` — useful for debugging.
 
@@ -206,14 +207,16 @@ runTurn(userMessage):
 [capabilities]
 [skill catalog]
 
-# variable tail (memory-aware sections)
-### session
+# variable tail (memory-aware sections, slow → hot)
+### loaded-skills  ← optional; skill bodies from SessionState.loadedSkills
 ### profile        ← ProfileStore.list() filtered by pinned + keywords
+### memory-index   ← MemoryStore.listIndex(limit), dedup against recalled; rows sorted by id
+### session-facts  ← optional; SessionState.knownFacts (last 8)
 ### recalled       ← MemoryStore.recall(userMessage, k)
-### memory-index   ← MemoryStore.listIndex(limit), dedup against recalled
 ### world
 ### conversation
 ### notice         ← (optional, loop-detector)
+### respond
 ```
 
 Hard rules enforced by tests:

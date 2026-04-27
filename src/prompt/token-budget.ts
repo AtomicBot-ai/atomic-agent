@@ -11,7 +11,8 @@ export interface BudgetCheckResult {
   exceededBy: number;
   perSection: {
     stablePrefix: number;
-    session: number;
+    loadedSkills: number;
+    sessionFacts: number;
     worldSnapshot: number;
     conversation: number;
     total: number;
@@ -136,23 +137,27 @@ export function computeEffectiveConversationCap(
 export function checkBudget(
   sections: {
     stablePrefix: string;
-    session: string;
+    loadedSkills: string;
+    sessionFacts: string;
     worldSnapshot: string;
     conversation: string;
   },
   limits: TokenBudgetLimits,
 ): BudgetCheckResult {
   const stablePrefix = estimateTokens(sections.stablePrefix);
-  const session = estimateTokens(sections.session);
+  const loadedSkills = estimateTokens(sections.loadedSkills);
+  const sessionFacts = estimateTokens(sections.sessionFacts);
   const worldSnapshot = estimateTokens(sections.worldSnapshot);
   const conversation = estimateTokens(sections.conversation);
-  const total = stablePrefix + session + worldSnapshot + conversation;
+  const sessionForLimit = loadedSkills + sessionFacts;
+  const total = stablePrefix + sessionForLimit + worldSnapshot + conversation;
   return {
     ok: total <= limits.total,
     exceededBy: Math.max(0, total - limits.total),
     perSection: {
       stablePrefix,
-      session,
+      loadedSkills,
+      sessionFacts,
       worldSnapshot,
       conversation,
       total,

@@ -32,7 +32,8 @@ export function renderMemoryIndexSection(
   entries: readonly MemoryIndexEntry[],
 ): string {
   if (entries.length === 0) return "(no memory index)";
-  return entries
+  const sorted = [...entries].sort((a, b) => a.id - b.id);
+  return sorted
     .map((e) => {
       const tags = e.tags.length > 0 ? ` [${e.tags.join(", ")}]` : "";
       return `- #${e.id}${tags} ${e.preview}`;
