@@ -48,6 +48,19 @@ export interface LoadedSkillBody {
 }
 
 /**
+ * Full `args` schema for a rare tool, materialised into `### loaded-tools`
+ * via `tool.view` or auto-expand after an execution error.
+ */
+export interface LoadedToolDescriptor {
+  name: string;
+  summary: string;
+  argsSchema: string;
+  examples?: readonly string[];
+  loadedAt: number;
+  source: "explicit" | "auto";
+}
+
+/**
  * Compact snapshot of the current world observable to the agent (e.g. the
  * browser ARIA tree). Kept small and deterministic so it can live in the
  * prompt tail without exploding the token budget.
@@ -67,6 +80,11 @@ export interface SessionState {
   knownFacts: KnownFact[];
   latestResult: LatestResult | null;
   loadedSkills: LoadedSkillBody[];
+  /**
+   * Full schemas for rare tools (progressive disclosure). Persisted with
+   * the session JSON blob; capped by `agent.loadedToolsCap` (LRU).
+   */
+  loadedTools: LoadedToolDescriptor[];
   worldSnapshot: WorldSnapshot | null;
   stepCount: number;
   /** Number of completed macro-turns (user → 0..N tools → reply). */
@@ -125,6 +143,7 @@ export function createEmptySessionState(params: {
     knownFacts: [],
     latestResult: null,
     loadedSkills: [],
+    loadedTools: [],
     worldSnapshot: null,
     stepCount: 0,
     turnCount: 0,
@@ -161,6 +180,37 @@ export function recordLoadedSkill(
     loadedSkills: [...others, entry],
     updatedAt: Date.now(),
   };
+}
+
+/**
+ * Upsert a loaded rare-tool schema and evict the oldest entry when over
+ * `cap` (by `loadedAt` ascending).
+ */
+export function recordLoadedTool(
+  state: SessionState,
+  entry: Omit<LoadedToolDescriptor, "loadedAt"> & { loadedAt?: number },
+  cap: number,
+): SessionState {
+  const loadedAt = entry.loadedAt ?? Date.now();
+  const normalized: LoadedToolDescriptor = {
+    name: entry.name,
+    summary: entry.summary,
+    argsSchema: entry.argsSchema,
+    ...(entry.examples !== undefined && entry.examples.length > 0
+      ? { examples: entry.examples }
+      : {}),
+    source: entry.source,
+    loadedAt,
+  };
+  const without = state.loadedTools.filter((t) => t.name !== normalized.name);
+  let next: LoadedToolDescriptor[] = [...without, normalized];
+  const safeCap = Math.max(1, cap);
+  while (next.length > safeCap) {
+    const sorted = next.slice().sort((a, b) => a.loadedAt - b.loadedAt);
+    const [, ...rest] = sorted;
+    next = rest;
+  }
+  return { ...state, loadedTools: next, updatedAt: Date.now() };
 }
 
 export function recordWorldSnapshot(

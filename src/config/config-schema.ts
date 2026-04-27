@@ -104,6 +104,22 @@ export interface AtomicAgentConfig {
      * edge cases where compression misses (huge SVG trees, etc.).
      */
     worldSnapshotMaxTokens: number;
+    /**
+     * Max `### loaded-tools` rare-schema entries kept per session (LRU
+     * by `loadedAt`). Env-only: `ATOMIC_AGENT_LOADED_TOOLS_CAP`.
+     */
+    loadedToolsCap: number;
+    /**
+     * Safety cap for the `### loaded-tools` section in the variable tail.
+     * Env-only: `ATOMIC_AGENT_LOADED_TOOLS_MAX_TOKENS`.
+     */
+    loadedToolsMaxTokens: number;
+    /**
+     * On rare-tool execution error, auto-inject the full schema into
+     * `### loaded-tools` for the next step. Env-only:
+     * `ATOMIC_AGENT_AUTO_EXPAND_RARE_ON_ERROR`.
+     */
+    autoExpandRareOnError: boolean;
   };
   browser: {
     channel: BrowserChannel;
@@ -505,6 +521,12 @@ export const ENV_DEFAULTS = {
   TASKS_SCHEDULER_BATCH: 10,
   TASKS_AGENT_TOOLS_ENABLED: true,
   TASKS_MIN_INTERVAL_MS: 1_000,
+  /** Max rare-tool schema entries kept in `session.loadedTools` (LRU). */
+  LOADED_TOOLS_CAP: 8,
+  /** Safety cap (estimated tokens) for the `### loaded-tools` section. */
+  LOADED_TOOLS_MAX_TOKENS: 600,
+  /** Auto-attach full rare-tool schema after a tool execution error. */
+  AUTO_EXPAND_RARE_ON_ERROR: true,
 };
 
 export class ConfigValidationError extends Error {

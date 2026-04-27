@@ -34,6 +34,7 @@ import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { registerOsTools } from "../tools/os/index.js";
 import { registerSkillTools } from "../tools/skill/index.js";
+import { buildToolViewTool } from "../tools/tool-view/index.js";
 import { registerMemoryTools } from "../tools/memory/index.js";
 import { registerTaskTools } from "../tools/tasks/index.js";
 
@@ -430,6 +431,7 @@ export async function createAgentRuntime(
   }
   registerOsTools(toolRegistry, { ...dangerous, config: { http: config.http } });
   registerSkillTools(toolRegistry, skillRegistry, dangerous);
+  toolRegistry.register(buildToolViewTool());
   registerMemoryTools(toolRegistry, {
     profileStore,
     profileEnabled: config.memory.profile.enabled,

@@ -18,6 +18,11 @@ import {
   classifyFailure,
   detectModelFailure,
 } from "../llm/index.js";
+import { getConfig } from "../config/index.js";
+import {
+  getToolDescriptorByName,
+  isRareToolName,
+} from "../prompt/tool-descriptors.js";
 import { buildPrompt } from "../prompt/build-prompt.js";
 import type { BuiltPrompt } from "../prompt/build-prompt.js";
 import type {
@@ -37,6 +42,7 @@ import type { SessionState } from "../session/session-state.js";
 import {
   recordLatestResult,
   recordLoadedSkill,
+  recordLoadedTool,
   recordTurn,
   recordWorldSnapshot,
 } from "../session/session-state.js";
@@ -354,6 +360,7 @@ async function executeStepInner(
 
   const toolStartedAt = Date.now();
   let toolResult: CompressedToolResult;
+  let workSession = ctx.session;
   try {
     toolResult = await deps.registry.invoke(toolCall.tool, toolCall.args, {
       workingDir: ctx.session.workingDir,
@@ -379,6 +386,35 @@ async function executeStepInner(
       details: { errorName: cause.name },
     });
   }
+  if (
+    toolResult.status === "error" &&
+    getConfig().agent.autoExpandRareOnError &&
+    isRareToolName(toolCall.tool) &&
+    !workSession.loadedTools.some((t) => t.name === toolCall.tool)
+  ) {
+    const d = getToolDescriptorByName(toolCall.tool);
+    if (d && d.tier === "rare") {
+      workSession = recordLoadedTool(
+        workSession,
+        {
+          name: d.name,
+          summary: d.summary,
+          argsSchema: d.argsSchema,
+          ...(d.examples && d.examples.length > 0
+            ? { examples: d.examples }
+            : {}),
+          source: "auto",
+        },
+        getConfig().agent.loadedToolsCap,
+      );
+      deps.onEvent?.({
+        type: "rare_tool_autoloaded",
+        tool: toolCall.tool,
+        source: "auto",
+        stepIndex: ctx.stepIndex,
+      });
+    }
+  }
   const toolDurationMs = Date.now() - toolStartedAt;
   deps.onEvent?.({ type: "tool_call_executed", result: toolResult });
   deps.metrics?.recordTool({
@@ -399,8 +435,8 @@ async function executeStepInner(
 
   let nextSession = recordLatestResult(
     {
-      ...ctx.session,
-      stepCount: ctx.session.stepCount + 1,
+      ...workSession,
+      stepCount: workSession.stepCount + 1,
     },
     {
       tool: toolResult.tool,
@@ -769,8 +805,9 @@ function appendConversationTurns(params: AppendTurnsParams): SessionState {
 /**
  * Inspect well-known tool-result fields and fold them into the session
  * state. Tools communicate state updates through `details.skillLoaded`
- * (for `skill.view`) and `details.worldSnapshot` (for browser actions)
- * so the step executor stays generic and tools remain pure.
+ * (`skill.view`), `details.toolLoaded` (`tool.view`), and
+ * `details.worldSnapshot` (for browser actions) so the step executor
+ * stays generic and tools remain pure.
  */
 function applyStateEffects(
   session: SessionState,
@@ -779,6 +816,38 @@ function applyStateEffects(
   let next = session;
   const details = result.details;
   if (details && typeof details === "object") {
+    const toolLoaded = (details as Record<string, unknown>).toolLoaded;
+    if (
+      toolLoaded &&
+      typeof toolLoaded === "object" &&
+      typeof (toolLoaded as { name?: unknown }).name === "string" &&
+      typeof (toolLoaded as { summary?: unknown }).summary === "string" &&
+      typeof (toolLoaded as { argsSchema?: unknown }).argsSchema ===
+        "string" &&
+      ((toolLoaded as { source?: unknown }).source === "explicit" ||
+        (toolLoaded as { source?: unknown }).source === "auto")
+    ) {
+      const t = toolLoaded as {
+        name: string;
+        summary: string;
+        argsSchema: string;
+        examples?: string[];
+        source: "explicit" | "auto";
+      };
+      next = recordLoadedTool(
+        next,
+        {
+          name: t.name,
+          summary: t.summary,
+          argsSchema: t.argsSchema,
+          ...(t.examples !== undefined && t.examples.length > 0
+            ? { examples: t.examples }
+            : {}),
+          source: t.source,
+        },
+        getConfig().agent.loadedToolsCap,
+      );
+    }
     const loaded = (details as Record<string, unknown>).skillLoaded;
     if (
       loaded &&

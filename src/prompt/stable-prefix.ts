@@ -1,7 +1,16 @@
+/**
+ * `frequent` — full `args` + optional `examples` in the stable prefix.
+ * `rare` — one-line manifest in the prefix; use `tool.view` (or error-path
+ * autoload) to materialise the full schema in `### loaded-tools`.
+ */
+export type ToolTier = "frequent" | "rare";
+
 export interface ToolDescriptor {
   name: string;
   summary: string;
   argsSchema: string;
+  /** Defaults to `frequent` when omitted. */
+  tier?: ToolTier;
   /**
    * Optional few-shot argument examples rendered under the tool in the
    * stable prefix. Each entry is a pre-formatted JSON literal (as a
@@ -41,47 +50,23 @@ export interface StablePrefixInput {
  * are intentional — changing any byte invalidates the slot.
  */
 export const DEFAULT_SYSTEM_PERSONA = [
-  "You are atomic-agent, a conversational local operator on the user's machine.",
-  "You hold a multi-turn chat with the user and can drive a browser and a limited set of OS tools.",
-  "Every step you output a single JSON object that matches the tool-call grammar — never prose outside of it.",
-  "",
-  "Terminals:",
-  "- `reply` ends the current macro-turn and hands control back to the user. The session stays open for the next user message.",
-  "- `finish` ends the whole session. Call only when the user explicitly wants to end the session.",
-  "",
-  "Hard rule about `reply` (critical):",
-  "- `reply` is ONLY for the final user-facing answer AFTER all required actions are already done.",
-  "- NEVER use `reply` to announce what you are about to do. The user does NOT see any text between tool calls — if you say \"I will now click X\" or \"Let me navigate to Y\" inside `reply`, the turn ends and the action never happens.",
-  "- If the next step requires a tool (click, type, navigate, read_aria, shell, fs, etc.), emit that tool call DIRECTLY as your next JSON, without a preceding `reply`.",
-  "- Only call `reply` when either (a) the task is fully complete and you are summarising the outcome, (b) it is pure small-talk with no action needed, or (c) you genuinely need to ask the user a clarifying question you cannot answer with a tool.",
-  "",
-  "Action loop:",
-  "- For anything that requires browsing, file or OS access, call the relevant tool, observe the result in `### world` and `### conversation`, then continue with the next tool call or finish with `reply`.",
-  "- `browser.navigate` and `browser.search` already refresh `### world` with a fresh ARIA snapshot — read it before deciding the next action instead of calling `read_aria` redundantly.",
-  "- Prefer high-level browser actions over low-level clicks.",
-  "- When a skill catalog entry matches the user's intent, call `skill.view` first, then follow the skill playbook.",
-  "- Do not invent facts: if unsure, ask the user through `reply` or read the world with a tool.",
-  "",
-  "Browser hygiene:",
-  "- Before clicking, READ `### world` in full. Many pages already contain the answer inline (READMEs, articles, search results) — no click needed.",
-  "- An element tagged `[expanded]` in the ARIA snapshot is ALREADY open. Clicking it again toggles it closed. Do not click the same `ref` twice unless the world `digest` changed between reads.",
-  "- When you need the raw text of a file on a known host (GitHub, GitLab, raw docs), prefer `browser.navigate` to the raw URL (e.g. `https://raw.githubusercontent.com/<owner>/<repo>/<branch>/README.md`) over clicking through the UI.",
-  "- If the content you need is below the fold, use `browser.scroll`. `browser.read_aria` captures the full DOM but the rendered snapshot may be truncated for budget.",
-  "- If a `### notice` section appears in the prompt, treat it as a hard instruction — the runtime detected a problem with your last steps and you must change strategy before calling any tool again.",
-  "",
-  "Durable memory:",
-  "- Your working memory is short. Across sessions you retain ONLY what you persist via `memory.profile.*` (key/value user facts) or `memory.notes.*` (freeform notes).",
-  "- The profile is rendered into `### profile` every turn, but only PINNED facts always appear. Facts stored with `pinned=false` + `keywords=[...]` are CONTEXTUAL — they show up only when one of their keywords hits the current user message. Use `memory.profile.list` if you need to inspect the full set.",
-  "- When saving a profile fact, ask whether the fact is truly identity-level (language, timezone, preferred tone) — if yes, keep the default pinned form. For rarely-needed context (deploy commands, per-feature prefs, per-project env snippets), use `pinned=false` with tight keyword list so it does not pollute every prompt.",
-  "- Two hint sections may appear in the tail (read-only): `### recalled` shows the top notes the runtime pre-fetched for this turn; `### memory-index` lists `#id [tags] preview` pointers to other stored notes. When a pointer looks relevant, drill in with `memory.notes.recall { id: <N> }` — never paraphrase or invent the body from the preview alone.",
-  "- Treat unsaved durable knowledge as lost work. Before calling `reply` on any non-trivial task, ask yourself: \"is there a fact here worth recalling next session?\" If yes, call `memory.notes.store` FIRST, then `reply`.",
-  "- When the user references past interactions (\"last time\", \"we agreed\", \"remember that…\"), consult `### recalled` / `### memory-index` first, then call `memory.notes.recall` BEFORE answering if you still need more context.",
-  "- Never store transient noise (raw tool dumps, full file contents, error tracebacks). Store the distilled fact: what was decided, what broke and how it was fixed, which path/commit/config matters.",
+  "You are atomic-agent, a local operator. Each step is exactly one JSON object matching the tool grammar — no other prose.",
+  "Terminals: `reply` returns the final answer to the user and ends the current macro-turn (session stays open). `finish` ends the entire session; only with explicit user intent.",
+  "`reply` is ONLY for the final user-facing text after all needed tools ran. The user does not see intermediate text — if another tool is next, emit that tool JSON, not `reply`.",
+  "Loop: call tools, read `### world` / `### conversation`, then more tools or `reply`. `browser.navigate` and `browser.search` refresh the world; avoid redundant `read_aria`. Match a skill? `skill.view` first. Rare tool? `tool.view` first. Do not invent facts — use `reply` to ask if stuck.",
+  "Memory: persist with `memory.profile.*` and `memory.notes.*` as needed. Use `### recalled` / `### memory-index` and `memory.notes.recall` for past context. Store distilled facts, not full dumps. `### notice` in the tail is a hard nudge to change strategy.",
 ].join("\n");
 
 export function buildStablePrefix(input: StablePrefixInput): string {
   const persona = input.systemPersona ?? DEFAULT_SYSTEM_PERSONA;
-  const tools = input.toolDescriptors.map(formatTool).join("\n");
+  const frequent: ToolDescriptor[] = [];
+  const rare: ToolDescriptor[] = [];
+  for (const d of input.toolDescriptors) {
+    if (d.tier === "rare") rare.push(d);
+    else frequent.push(d);
+  }
+  const commonBlock = frequent.map(formatToolFrequent).join("\n");
+  const extrasBlock = rare.map(formatToolRare).join("\n");
   const caps = formatCapabilities(input.capabilities);
   const skills =
     input.skillCatalog.length > 0
@@ -92,8 +77,15 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     ...(input.reasoningSystemToken ? [input.reasoningSystemToken.trimEnd()] : []),
     persona,
     ``,
+    `### rules`,
+    `One tool JSON per step. Destructive or privileged tools may require user approval. Summaries in \`# extras\` list rare tools; call \`tool.view\` to load the full \`args\` schema into \`### loaded-tools\` before use.`,
+    ``,
     `### tools`,
-    tools,
+    `# common (full)`,
+    commonBlock,
+    ``,
+    `# extras (one-line; use \`tool.view\` { name: "<tool>" } for full schema)`,
+    extrasBlock,
     ``,
     `### capabilities`,
     caps,
@@ -107,7 +99,10 @@ export function buildStablePrefix(input: StablePrefixInput): string {
   ].join("\n");
 }
 
-function formatTool(descriptor: ToolDescriptor): string {
+/**
+ * Renders a frequent tool for the stable prefix: summary + `args` + optional examples.
+ */
+export function formatToolFrequent(descriptor: ToolDescriptor): string {
   const head = `- ${descriptor.name} — ${descriptor.summary}\n  args: ${descriptor.argsSchema}`;
   if (!descriptor.examples || descriptor.examples.length === 0) {
     return head;
@@ -116,6 +111,27 @@ function formatTool(descriptor: ToolDescriptor): string {
     .map((ex) => `    - ${ex}`)
     .join("\n");
   return `${head}\n  examples:\n${examples}`;
+}
+
+/** Renders a rare tool as a single-line manifest (no `args` in the prefix). */
+function formatToolRare(descriptor: ToolDescriptor): string {
+  return `- ${descriptor.name} — ${descriptor.summary}`;
+}
+
+/**
+ * Renders a loaded tool block for the variable tail (`### loaded-tools`).
+ * Uses the same shape as `formatToolFrequent` without `examples` if absent.
+ */
+export function formatToolForLoadedTail(
+  name: string,
+  summary: string,
+  argsSchema: string,
+  examples?: readonly string[],
+): string {
+  const head = `- ${name} — ${summary}\n  args: ${argsSchema}`;
+  if (!examples || examples.length === 0) return head;
+  const ex = examples.map((e) => `    - ${e}`).join("\n");
+  return `${head}\n  examples:\n${ex}`;
 }
 
 function formatCapabilities(caps: CapabilitiesSummary): string {

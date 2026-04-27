@@ -172,6 +172,22 @@ export function loadConfig(): AtomicAgentConfig {
         ENV_DEFAULTS.STABLE_PREFIX_SALT,
       conversationMaxTokens: user.agent.conversationMaxTokens,
       worldSnapshotMaxTokens: user.agent.worldSnapshotMaxTokens,
+      loadedToolsCap: readBoundedPositiveInt(
+        "ATOMIC_AGENT_LOADED_TOOLS_CAP",
+        ENV_DEFAULTS.LOADED_TOOLS_CAP,
+        1,
+        64,
+      ),
+      loadedToolsMaxTokens: readBoundedPositiveInt(
+        "ATOMIC_AGENT_LOADED_TOOLS_MAX_TOKENS",
+        ENV_DEFAULTS.LOADED_TOOLS_MAX_TOKENS,
+        0,
+        8000,
+      ),
+      autoExpandRareOnError: readBool(
+        "ATOMIC_AGENT_AUTO_EXPAND_RARE_ON_ERROR",
+        ENV_DEFAULTS.AUTO_EXPAND_RARE_ON_ERROR,
+      ),
     },
     browser: {
       channel: browserChannel,

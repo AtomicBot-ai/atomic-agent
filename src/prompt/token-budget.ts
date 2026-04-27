@@ -86,6 +86,10 @@ export interface EffectiveConversationCapInput {
   recalledTokens?: number;
   /** Tokens consumed by the `### memory-index` section. Same contract as `recalledTokens`. */
   memoryIndexTokens?: number;
+  /**
+   * Tokens consumed by the `### loaded-tools` section (rare tool schemas).
+   */
+  loadedToolsTokens?: number;
   completionMaxTokens: number;
 }
 
@@ -126,6 +130,7 @@ export function computeEffectiveConversationCap(
     (input.profileTokens ?? 0) -
     (input.recalledTokens ?? 0) -
     (input.memoryIndexTokens ?? 0) -
+    (input.loadedToolsTokens ?? 0) -
     input.completionMaxTokens -
     CONVERSATION_CAP_SAFETY_MARGIN;
   return Math.max(

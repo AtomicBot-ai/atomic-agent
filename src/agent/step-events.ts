@@ -78,6 +78,16 @@ export type StepEvent =
   | { type: "assistant_delta"; text: string }
   | { type: "tool_call_parsed"; call: ToolCallPayload }
   | { type: "tool_call_executed"; result: CompressedToolResult }
+  /**
+   * Rare-tool execution failed; the runtime injected the full schema into
+   * `session.loadedTools` so the next step can retry with valid args.
+   */
+  | {
+      type: "rare_tool_autoloaded";
+      tool: string;
+      source: "auto";
+      stepIndex: number;
+    }
   | { type: "assistant_reply"; text: string }
   /**
    * Emitted once when the first `parseToolCall` threw and the executor

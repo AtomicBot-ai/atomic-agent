@@ -5,6 +5,15 @@ import { dirname } from "node:path";
 import { getConfig } from "../config/index.js";
 import { stripEphemeral, type SessionState } from "./session-state.js";
 
+function normalizeSessionState(raw: unknown): SessionState {
+  const s = raw as SessionState;
+  return {
+    ...s,
+    loadedTools: s.loadedTools ?? [],
+    loadedSkills: s.loadedSkills ?? [],
+  };
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sessions (
   id           TEXT PRIMARY KEY,
@@ -79,14 +88,14 @@ export class SessionStore {
   load(id: string): SessionState | null {
     const row = this.selectStmt.get(id) as { payload: string } | undefined;
     if (!row) return null;
-    return JSON.parse(row.payload) as SessionState;
+    return normalizeSessionState(JSON.parse(row.payload));
   }
 
   listByWorkingDir(workingDir: string, limit = 25): SessionState[] {
     const rows = this.listByWorkingDirStmt.all(workingDir, limit) as Array<{
       payload: string;
     }>;
-    return rows.map((row) => JSON.parse(row.payload) as SessionState);
+    return rows.map((row) => normalizeSessionState(JSON.parse(row.payload)));
   }
 
   /**
@@ -96,7 +105,7 @@ export class SessionStore {
    */
   listRecent(limit = 25): SessionState[] {
     const rows = this.listRecentStmt.all(limit) as Array<{ payload: string }>;
-    return rows.map((row) => JSON.parse(row.payload) as SessionState);
+    return rows.map((row) => normalizeSessionState(JSON.parse(row.payload)));
   }
 
   delete(id: string): void {
@@ -106,6 +115,7 @@ export class SessionStore {
   close(): void {
     this.db.close();
   }
+
 
   private serialize(state: SessionState): Record<string, unknown> {
     const persistable = stripEphemeral(state);

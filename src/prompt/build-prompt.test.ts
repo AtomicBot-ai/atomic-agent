@@ -32,12 +32,12 @@ const TOOLS: ToolDescriptor[] = [
   {
     name: "browser.navigate",
     summary: "Navigate the current tab to a URL.",
-    argsSchema: '{"url": string}',
+    argsSchema: "{ url: string }",
   },
   {
     name: "finish",
     summary: "Signal goal completion.",
-    argsSchema: '{"summary": string}',
+    argsSchema: "{ summary: string }",
   },
 ];
 
@@ -234,9 +234,33 @@ describe("buildPrompt", () => {
       capabilities: CAPS,
       skillCatalog: SKILLS,
     });
+    expect(prompt.stablePrefix).toContain("# common (full)");
     expect(prompt.stablePrefix).toContain("- browser.navigate");
+    expect(prompt.stablePrefix).toContain("args:");
     expect(prompt.stablePrefix).toContain("browser: chrome");
     expect(prompt.stablePrefix).toContain("check-gmail-inbox");
+  });
+
+  it("renders ### loaded-tools when session.loadedTools is non-empty", () => {
+    const prompt = buildPrompt({
+      session: mkSession({
+        loadedTools: [
+          {
+            name: "os.git.show",
+            summary: "Show a commit.",
+            argsSchema: "{ repo?: string, revision?: string }",
+            loadedAt: 1,
+            source: "explicit",
+          },
+        ],
+      }),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(prompt.tail).toContain("### loaded-tools");
+    expect(prompt.tail).toContain("os.git.show");
+    expect(prompt.tokens.loadedTools).toBeGreaterThan(0);
   });
 
   it("renders recorded turns (tool-call + tool-result) in the conversation section", () => {

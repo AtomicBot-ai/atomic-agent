@@ -4,11 +4,11 @@ import {
   renderMemoryIndexSection,
   renderRecalledSection,
 } from "../memory/notes-renderer.js";
-import type { SessionState } from "../session/session-state.js";
+import { packConversation } from "../session/conversation-turn.js";
 import {
-  packConversation,
-  renderTurnForPrompt,
-} from "../session/conversation-turn.js";
+  renderPackedConversation,
+  renderWorldSnapshotSection,
+} from "./build-prompt-world-conversation.js";
 import type {
   BuildPromptInput,
   BuiltPrompt,
@@ -16,6 +16,7 @@ import type {
 } from "./build-prompt-types.js";
 import { buildStablePrefix } from "./stable-prefix.js";
 import { buildSessionSectionParts } from "./session-tail-sections.js";
+import { renderLoadedToolsSection } from "./render-loaded-tools.js";
 import {
   checkBudget,
   computeEffectiveConversationCap,
@@ -87,6 +88,14 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     .filter(Boolean)
     .join("\n\n");
 
+  const loadedToolsMaxTokens =
+    input.loadedToolsMaxTokens ?? config.agent.loadedToolsMaxTokens;
+  const loadedToolsRendered = renderLoadedToolsSection(
+    input.session,
+    loadedToolsMaxTokens,
+  );
+  const loadedToolsTokens = loadedToolsRendered.tokens;
+
   const profileMaxTokens =
     input.profileMaxTokens ?? config.memory.profile.maxTokens;
   const contextualKeywordGate =
@@ -143,7 +152,8 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   );
 
   const contextWindow = input.profile?.contextWindow ?? null;
-  const sessionTokenEstimate = estimateTokens(sessionPartsForBudget);
+  const sessionTokenEstimate =
+    estimateTokens(sessionPartsForBudget) + loadedToolsTokens;
   const conversationCapEffective = computeEffectiveConversationCap({
     configuredCap: limits.conversation,
     contextWindow: contextWindow ?? undefined,
@@ -153,6 +163,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     profileTokens,
     recalledTokens,
     memoryIndexTokens,
+    loadedToolsTokens,
     completionMaxTokens,
   });
 
@@ -162,6 +173,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const tailParts: string[] = [];
   if (loadedForTail !== null) {
     tailParts.push("### loaded-skills", loadedForTail, ``);
+  }
+  if (loadedToolsRendered.body !== null) {
+    tailParts.push("### loaded-tools", loadedToolsRendered.body, ``);
   }
   if (profile !== null) {
     tailParts.push("### profile", profile, ``);
@@ -217,6 +231,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const truncation: BuiltPromptTruncationFlags = {
     loadedSkills: sessionParts.truncationLoaded,
     sessionFacts: sessionParts.truncationFacts,
+    loadedTools: loadedToolsRendered.truncated,
     profile: profileFull !== null && profile !== profileFull,
     worldSnapshot: worldSnapshot !== worldSnapshotFull,
     conversation: packed.droppedCount > 0,
@@ -233,6 +248,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       stablePrefix: budgetResult.perSection.stablePrefix,
       loadedSkills: budgetResult.perSection.loadedSkills,
       sessionFacts: budgetResult.perSection.sessionFacts,
+      loadedTools: loadedToolsTokens,
       worldSnapshot: budgetResult.perSection.worldSnapshot,
       conversation: budgetResult.perSection.conversation,
       profile: profileTokens,
@@ -240,6 +256,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       memoryIndex: memoryIndexTokens,
       total:
         budgetResult.perSection.total +
+        loadedToolsTokens +
         profileTokens +
         recalledTokens +
         memoryIndexTokens,
@@ -248,6 +265,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     truncated:
       truncation.loadedSkills ||
       truncation.sessionFacts ||
+      truncation.loadedTools ||
       truncation.profile ||
       truncation.worldSnapshot ||
       truncation.conversation ||
@@ -258,32 +276,4 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     conversationCapEffective,
     droppedTurns: packed.droppedCount,
   };
-}
-
-function renderWorldSnapshotSection(session: SessionState): string {
-  const snap = session.worldSnapshot;
-  if (!snap || snap.kind === "none") return "(no world snapshot available)";
-  return [`kind: ${snap.kind}`, `digest: ${snap.digest}`, ``, snap.text].join(
-    "\n",
-  );
-}
-
-/**
- * Render the packed conversation section. When `packConversation` folded
- * older turns into a summary, that summary is emitted as the first line
- * so the model can tell the transcript was compressed.
- */
-function renderPackedConversation(packed: {
-  visibleTurns: readonly import("../session/conversation-turn.js").ConversationTurn[];
-  droppedSummary: string | null;
-}): string {
-  if (packed.visibleTurns.length === 0 && packed.droppedSummary === null) {
-    return "(no messages yet)";
-  }
-  const lines: string[] = [];
-  if (packed.droppedSummary) lines.push(packed.droppedSummary);
-  for (const turn of packed.visibleTurns) {
-    lines.push(renderTurnForPrompt(turn));
-  }
-  return lines.join("\n");
 }

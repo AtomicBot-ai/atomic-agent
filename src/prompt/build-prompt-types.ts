@@ -27,11 +27,14 @@ export interface BuildPromptInput {
   recallPreviewChars?: number;
   recallMaxTokens?: number;
   memoryIndexMaxTokens?: number;
+  /** Safety cap for `### loaded-tools` (defaults to `agent.loadedToolsMaxTokens`). */
+  loadedToolsMaxTokens?: number;
 }
 
 export interface BuiltPromptTruncationFlags {
   loadedSkills: boolean;
   sessionFacts: boolean;
+  loadedTools: boolean;
   profile: boolean;
   worldSnapshot: boolean;
   conversation: boolean;
@@ -47,6 +50,7 @@ export interface BuiltPrompt {
     stablePrefix: number;
     loadedSkills: number;
     sessionFacts: number;
+    loadedTools: number;
     profile: number;
     worldSnapshot: number;
     conversation: number;

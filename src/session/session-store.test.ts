@@ -32,7 +32,31 @@ describe("SessionStore", () => {
     expect(loaded!.turns).toEqual([]);
     expect(loaded!.turnCount).toBe(0);
     expect(loaded!.loadedSkills).toEqual([]);
+    expect(loaded!.loadedTools).toEqual([]);
     expect(loaded!.worldSnapshot).toBeNull();
+  });
+
+  it("round-trips loadedTools on the session payload", () => {
+    const initial = createEmptySessionState({
+      id: "s-tools",
+      workingDir: "/w",
+    });
+    const withTools = {
+      ...initial,
+      loadedTools: [
+        {
+          name: "os.git.show",
+          summary: "Show commit",
+          argsSchema: "{ revision?: string }",
+          loadedAt: 99,
+          source: "explicit" as const,
+        },
+      ],
+    };
+    store.save(withTools);
+    const loaded = store.load("s-tools");
+    expect(loaded?.loadedTools).toHaveLength(1);
+    expect(loaded?.loadedTools[0]?.name).toBe("os.git.show");
   });
 
   it("updates an existing session in place", () => {

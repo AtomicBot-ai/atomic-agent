@@ -5,6 +5,7 @@ export {
   appendFact,
   recordLatestResult,
   recordLoadedSkill,
+  recordLoadedTool,
   recordWorldSnapshot,
   recordTurn,
   incrementTurnCount,
@@ -16,6 +17,7 @@ export type {
   KnownFact,
   LatestResult,
   LoadedSkillBody,
+  LoadedToolDescriptor,
   WorldSnapshot,
 } from "./session-state.js";
 export {
