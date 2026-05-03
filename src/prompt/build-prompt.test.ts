@@ -88,6 +88,18 @@ describe("buildPrompt", () => {
     expect(prompt.stablePrefix).toContain("Do not use `os.shell.run`");
   });
 
+  it("persona and rules nudge large-dir PDF workflows toward narrow list/glob then read_document", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(prompt.stablePrefix).toContain("Large directories:");
+    expect(prompt.stablePrefix).toContain("Large trees:");
+    expect(prompt.stablePrefix).toContain("os.fs.read_document");
+  });
+
   it("stable prefix does not depend on session or latest result", () => {
     const a = buildPrompt({
       session: mkSession(),
