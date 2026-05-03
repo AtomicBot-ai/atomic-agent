@@ -15,7 +15,10 @@ export type {
 export { SkillRegistry, SkillNotFoundError } from "./skill-registry.js";
 export type { SkillChangeListener } from "./skill-registry.js";
 
-export { buildSkillCatalog } from "./skill-catalog.js";
+export {
+  buildSkillCatalog,
+  formatSkillCatalogLine,
+} from "./skill-catalog.js";
 export type { BuildCatalogOptions } from "./skill-catalog.js";
 
 export { runSkillScript, SkillScriptError } from "./skill-script-runner.js";
@@ -23,6 +26,16 @@ export type {
   RunSkillScriptParams,
   SkillScriptOutcome,
 } from "./skill-script-runner.js";
+
+export {
+  seedStarterSkillsIfMissing,
+  resolveStarterSkillsSourceDir,
+} from "./seed-starter-skills.js";
+export type {
+  SeedStarterSkillsLogger,
+  SeedStarterSkillsOptions,
+  SeedStarterSkillsResult,
+} from "./seed-starter-skills.js";
 
 export {
   installSkill,

@@ -271,9 +271,14 @@ describe("createAgentRuntime", () => {
       overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
     });
     try {
-      expect(runtime.skillCatalog).toHaveLength(0);
+      const names = runtime.skillCatalog.map((e) => e.name).sort();
+      expect(names).toEqual([
+        "duckduckgo-search",
+        "skill-creator",
+        "wttr-weather",
+      ]);
       await runtime.refreshSkills();
-      expect(notified).toEqual([]);
+      expect(notified.map((e) => e.name).sort()).toEqual(names);
     } finally {
       await runtime.shutdown();
     }

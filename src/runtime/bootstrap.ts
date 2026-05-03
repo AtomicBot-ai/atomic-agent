@@ -52,6 +52,7 @@ import {
 
 import { SkillRegistry } from "../skills/skill-registry.js";
 import { buildSkillCatalog } from "../skills/skill-catalog.js";
+import { seedStarterSkillsIfMissing } from "../skills/seed-starter-skills.js";
 
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { buildCapabilities } from "../prompt/capabilities.js";
@@ -409,11 +410,22 @@ export async function createAgentRuntime(
       cdpUrl: config.browser.cdpUrl,
     });
 
+  await seedStarterSkillsIfMissing({
+    globalSkillsDir: config.paths.globalSkillsDir,
+    logger,
+  });
+
   const skillRegistry = new SkillRegistry({
     globalDir: config.paths.globalSkillsDir,
     projectDir: join(workingDir, config.paths.projectSkillsDirName),
   });
   await skillRegistry.refresh();
+  for (const e of skillRegistry.errors()) {
+    logger.warn("skill registry: skipped skill directory", {
+      path: e.path,
+      error: e.error,
+    });
+  }
 
   const capabilities = await buildCapabilities({
     workingDir,
@@ -682,6 +694,12 @@ export async function createAgentRuntime(
 
   const refreshSkills = async (): Promise<void> => {
     await skillRegistry.refresh();
+    for (const e of skillRegistry.errors()) {
+      logger.warn("skill registry: skipped skill directory", {
+        path: e.path,
+        error: e.error,
+      });
+    }
     skillCatalog = buildSkillCatalog(skillRegistry.list());
     options.handlers?.onSkillRegistryChange?.([...skillCatalog]);
   };

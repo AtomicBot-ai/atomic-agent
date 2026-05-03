@@ -218,6 +218,10 @@ async function main(): Promise<number> {
   // Grammars are required at runtime.
   await copyOptional(join(ROOT, "grammars"), join(stageDir, "grammars"));
 
+  // Default skills copied into stateDir on first runtime boot (see
+  // seedStarterSkillsIfMissing); ship next to the SEA binary.
+  await copyOptional(join(ROOT, "starter-skills"), join(stageDir, "starter-skills"));
+
   // Jinja chat templates for managed local models (e.g. Qwen).
   await copyOptional(
     join(ROOT, "assets", "ai-models"),
@@ -284,8 +288,9 @@ async function main(): Promise<number> {
       : "",
     "",
     "Skills live under $ATOMIC_AGENT_STATE_DIR/skills/ and",
-    "./.atomic-agent/skills/. They are runtime artefacts authored by the",
-    "user and are never bundled. See SKILLS.md in the source repo.",
+    "./.atomic-agent/skills/. Built-in starter skills are copied there on",
+    "each boot from ./starter-skills/ next to this binary (override with",
+    "ATOMIC_AGENT_STARTER_SKILLS_DIR). Same-named skill dirs are replaced.",
     "",
     "The bundle ships a pinned ripgrep binary at ./vendor/rg[.exe] which",
     "powers the os.fs.grep tool. Override it by setting",

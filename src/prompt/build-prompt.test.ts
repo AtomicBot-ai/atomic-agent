@@ -136,8 +136,10 @@ describe("buildPrompt", () => {
       skillCatalog: SKILLS,
     });
     expect(prompt.stablePrefix).toContain("### instructions");
+    expect(prompt.stablePrefix).toContain("Emit one JSON tool call now");
+    expect(prompt.stablePrefix).toContain("`skill.view` counts");
     expect(prompt.stablePrefix).toContain(
-      "Emit one JSON tool call now. Use `reply` for natural-language answers to the user.",
+      "Use `reply` for natural-language answers to the user.",
     );
     expect(prompt.tail).not.toContain("### response");
     expect(prompt.tail).not.toContain("Emit one JSON tool call now");

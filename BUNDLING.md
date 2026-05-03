@@ -228,8 +228,10 @@ which are standard OS utilities and need no bundling.
 - **Linux:** `wmctrl` needed for `os.window.*`; `xdg-open`/`pbpaste`
   equivalents are consumed by `clipboardy` where applicable.
 - **Skills** live under `$ATOMIC_AGENT_STATE_DIR/skills/` and
-  `./.atomic-agent/skills/`. They are runtime artefacts authored by the
-  user and are never bundled.
+  `./.atomic-agent/skills/`. The redistributable ships a `starter-skills/`
+  tree next to the binary; each boot the runtime replaces matching names
+  under the global skills dir so starter packs stay current (project-local
+  skills are unchanged).
 
 ## Non-goals
 
@@ -239,5 +241,6 @@ which are standard OS utilities and need no bundling.
   `npx playwright install`; the user supplies the browser.
 - **No cross-compilation.** Node SEA is strictly per-host; CI fan-out
   handles the matrix.
-- **No starter skills in the bundle.** Skill format is open; see
-  `SKILLS.md`.
+- **No arbitrary user skill corpus in the bundle.** Only the small
+  built-in `starter-skills/` templates ship; operators still own
+  long-lived skill edits under stateDir.

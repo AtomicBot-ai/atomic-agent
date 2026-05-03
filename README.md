@@ -383,7 +383,7 @@ The config CLI uses **whole-file semantics**. Pass a full JSON document, not dot
 - Node SEA **CLI** single-file executables per target
 - local runtime assets such as `grammars/tool-call.gbnf` and pinned `ripgrep`
 - no bundled browser
-- no bundled starter skills
+- built-in [`starter-skills/`](starter-skills/) synced into `<stateDir>/skills/` on each runtime boot (same-named dirs are replaced)
 - no forced hosted control plane
 
 See [BUNDLING.md](BUNDLING.md) for the target matrix, CI signing, and packaging details.

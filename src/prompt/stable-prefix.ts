@@ -1,3 +1,5 @@
+import { formatSkillCatalogLine } from "../skills/skill-catalog.js";
+
 /**
  * `frequent` — full `args` + optional `examples` in the stable prefix.
  * `rare` — one-line manifest in the prefix; use `tool.view` (or error-path
@@ -51,9 +53,10 @@ export interface StablePrefixInput {
  */
 export const DEFAULT_SYSTEM_PERSONA = [
   "You are atomic-agent, a local operator. Each step is exactly one JSON object matching the tool grammar — no other prose.",
+  "Bias toward action: keep planning minimal; unless the user explicitly asked for analysis or explanation only, choose the next tool quickly instead of long deliberation. If the template forces a separate reasoning or thinking block before JSON, keep that block to a few words (or effectively empty), then emit the tool call.",
   "Terminals: `reply` returns the final answer to the user and ends the current macro-turn (session stays open). `finish` ends the entire session; only with explicit user intent.",
   "`reply` is ONLY for the final user-facing text after all needed tools ran. The user does not see intermediate text — if another tool is next, emit that tool JSON, not `reply`.",
-  "Loop: call tools, read `### world` / `### conversation`, then more tools or `reply`. `browser.navigate` and `browser.search` refresh the world; avoid redundant `read_aria`. Match a skill? `skill.view` first. Rare tool? `tool.view` first. Do not invent facts — use `reply` to ask if stuck.",
+  "When a line in `### skills` matches the user's request, emit `skill.view` before `browser.search`, `browser.navigate`, or `os.shell.run` shortcuts unless that skill body is already under `### loaded-skills`. Rare tool? `tool.view` first. Loop: tools, read `### world` / `### conversation`, then more tools or `reply`. `browser.navigate` / `browser.search` refresh the world; avoid redundant `read_aria`. Do not invent facts — use `reply` to ask if stuck.",
   "Large directories: `os.fs.list` only shows up to maxEntries matches—use extensions, pattern, sort, or `os.fs.glob` to narrow before assuming a file type is absent. For many PDFs or resumes prefer filename `os.fs.glob` patterns plus `os.fs.read_document` on a short candidate list; avoid sweeping `os.fs.grep` with `glob` over huge `*.pdf` trees.",
   "Deleting files or directories: when the user asks to delete, remove, erase, or trash paths, call `os.fs.trash` with concrete absolute paths in `paths` (use `os.fs.list` / `os.fs.glob` first if you need to discover names). Do not use `os.shell.run` with `rm`, `unlink`, or `rmdir` for that unless the user explicitly demands permanent irreversible shell deletion.",
   "Memory: persist with `memory.profile.*` and `memory.notes.*` as needed. Use `### recalled` / `### memory-index` and `memory.notes.recall` for past context. Store distilled facts, not full dumps. `### notice` in the tail is a hard nudge to change strategy.",
@@ -72,7 +75,7 @@ export function buildStablePrefix(input: StablePrefixInput): string {
   const caps = formatCapabilities(input.capabilities);
   const skills =
     input.skillCatalog.length > 0
-      ? input.skillCatalog.map(formatSkillEntry).join("\n")
+      ? input.skillCatalog.map(formatSkillCatalogLine).join("\n")
       : "(none installed)";
   return [
     `### system`,
@@ -80,7 +83,10 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     persona,
     ``,
     `### rules`,
-    `One tool JSON per step. Destructive or privileged tools may require user approval. Summaries in \`# extras\` list rare tools; call \`tool.view\` to load the full \`args\` schema into \`### loaded-tools\` before use. Large trees: narrow with \`os.fs.list\` filters or \`os.fs.glob\` before reading content; do not use \`os.fs.grep\` with broad binary globs (e.g. every \`*.pdf\`) across huge folders—use tight globs then \`os.fs.read_document\` on candidates.`,
+    `One tool JSON per step (including \`skill.view\`). Destructive or privileged tools may require user approval. If \`### skills\` lists a playbook that fits the user goal, call \`skill.view\` first unless that skill is already under \`### loaded-skills\`; do not skip straight to browser or shell when a skill covers the workflow. Summaries in \`# extras\` list rare tools; call \`tool.view\` to load the full \`args\` schema into \`### loaded-tools\` before use. Large trees: narrow with \`os.fs.list\` filters or \`os.fs.glob\` before reading content; do not use \`os.fs.grep\` with broad binary globs (e.g. every \`*.pdf\`) across huge folders—use tight globs then \`os.fs.read_document\` on candidates.`,
+    ``,
+    `### skills`,
+    skills,
     ``,
     `### tools`,
     `# common (full)`,
@@ -92,11 +98,8 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     `### capabilities`,
     caps,
     ``,
-    `### skills`,
-    skills,
-    ``,
     `### instructions`,
-    `Emit one JSON tool call now. Use \`reply\` for natural-language answers to the user.`,
+    `Emit one JSON tool call now (\`skill.view\` counts). Use \`reply\` for natural-language answers to the user.`,
     ``,
   ].join("\n");
 }
@@ -147,7 +150,3 @@ function formatCapabilities(caps: CapabilitiesSummary): string {
   ].join("\n");
 }
 
-function formatSkillEntry(entry: SkillCatalogEntry): string {
-  const tag = entry.source === "project" ? "[project]" : "[global]";
-  return `- ${tag} ${entry.name}: ${entry.description}`;
-}

@@ -49,11 +49,20 @@ are re-attended on each step.
 ## 2. The stable prefix
 
 Built once per `runStep` by `buildStablePrefix`. It is a deterministic
-concatenation of five sub-blocks:
+concatenation of these sub-blocks (order matters for KV-cache and for how
+strongly the model notices skills before the full tool wall):
 
 ```
 ### system
 <reasoningSystemToken? + persona>
+
+### rules
+<static policy line(s)>
+
+### skills
+- [global] <name>: <description>
+- [project] <name>: <description>
+...
 
 ### tools
 <one bullet per tool: name, summary, args-schema, optional examples>
@@ -66,13 +75,8 @@ clipboard: yes
 wmctrl: no
 notifications: yes
 
-### skills
-- [global] <name>: <description>
-- [project] <name>: <description>
-...
-
 ### instructions
-Emit one JSON tool call now. Use `reply` for natural-language answers to the user.
+Emit one JSON tool call now (`skill.view` counts). Use `reply` for natural-language answers to the user.
 ```
 
 ### What lives here and why
@@ -80,10 +84,11 @@ Emit one JSON tool call now. Use `reply` for natural-language answers to the use
 | Block | Content | Why stable |
 |---|---|---|
 | `### system` | Persona text from `DEFAULT_SYSTEM_PERSONA` (or override via `BuildPromptInput.systemPersona`). | Persona is fixed for the whole runtime. |
+| `### rules` | Short policy text (approval, `tool.view`, fs hygiene, **skill-first when `### skills` matches**). | Static literal. |
+| `### skills` | Catalog of available skills (name + description), not their bodies. Placed **before** `### tools` so the model sees playbooks before the full tool wall. | Catalog is read once at bootstrap. |
 | `### tools` | One bullet per tool, formatted by `formatTool`. Includes optional `examples[]`. | Tool registry is fixed at bootstrap. |
 | `### capabilities` | OS, browser channel, cwd, capability flags. | Computed once at session start. |
-| `### skills` | Catalog of available skills (name + description), not their bodies. | Catalog is read once at bootstrap. |
-| `### instructions` | One-line nudge to emit a tool call. | Static literal. |
+| `### instructions` | One-line nudge to emit a tool call (`skill.view` counts). | Static literal. |
 
 ### What does NOT live here (intentional)
 
