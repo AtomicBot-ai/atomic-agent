@@ -39,10 +39,18 @@ async function main(): Promise<number> {
     mainFields: ["module", "main"],
     external: ["better-sqlite3"],
     loader: { ".node": "file" },
-    // CJS dependencies use `require("events")` etc. The ESM output must expose `require` via createRequire.
+    // CJS dependencies use `require("events")`, `__dirname`, and `__filename`. The ESM output must
+    // polyfill all three: `createRequire(import.meta.url)` for `require`, and
+    // `fileURLToPath(import.meta.url)` + `path.dirname(...)` for the two CJS path globals. Without the
+    // dir/file polyfill bundled CJS deps (e.g. playwright-core, chromium-bidi) throw
+    // `ReferenceError: __dirname is not defined` at first use.
     banner: {
       js: `import { createRequire as __createRequireForSea } from "node:module";
+import { fileURLToPath as __fileURLToPathForSea } from "node:url";
+import { dirname as __dirnameForSea } from "node:path";
 const require = __createRequireForSea(import.meta.url);
+const __filename = __fileURLToPathForSea(import.meta.url);
+const __dirname = __dirnameForSea(__filename);
 `,
     },
     logLevel: "warning",
