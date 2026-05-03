@@ -583,7 +583,7 @@ export const ENV_DEFAULTS = {
   /** Auto-attach full rare-tool schema after a tool execution error. */
   AUTO_EXPAND_RARE_ON_ERROR: true,
   /** Soft cap on tool calls per inference step. Hard upper bound is 16 (grammar). */
-  MAX_PARALLEL_TOOL_CALLS: 4,
+  MAX_PARALLEL_TOOL_CALLS: 8,
   /** Soft cap on combined chars across all tool_result summaries in one batched step. */
   BATCH_TOOL_RESULT_CHAR_CAP: 16_000,
 };
