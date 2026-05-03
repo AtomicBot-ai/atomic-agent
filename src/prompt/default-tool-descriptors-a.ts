@@ -70,9 +70,9 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "os.fs.glob",
     summary:
-      "Recursive path match under cwd or path (prefer cwd; default: session working directory). For large trees use tight patterns (e.g. **/*CV*.pdf, **/*resume*.pdf), sensible limit, sortByMtime when freshness matters—avoid one giant unbounded pattern before narrowing.",
+      "Recursive path match under cwd or path (prefer cwd; default: session working directory). For large trees use tight patterns (e.g. **/*CV*.pdf, **/*resume*.pdf), sensible limit, sortByMtime when freshness matters; pass nocase=true to match regardless of case (covers CV/cv/Cv in one pass). Walk traverses the whole tree (minus ignore) before sorting and slicing to limit, so limit reliably gives you the best matches. Default ignore covers common caches (.cache, Library, node_modules, .cargo, __pycache__, etc.)—override with explicit ignore if you need to look there.",
     argsSchema:
-      "{ pattern: string | string[], cwd?: string, path?: string, ignore?: string[], absolute?: boolean, limit?: number, sortByMtime?: boolean }",
+      "{ pattern: string | string[], cwd?: string, path?: string, ignore?: string[], absolute?: boolean, limit?: number, sortByMtime?: boolean, nocase?: boolean }",
   },
   {
     name: "os.fs.grep",

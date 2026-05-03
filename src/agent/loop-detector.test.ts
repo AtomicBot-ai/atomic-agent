@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { LoopDetector, formatRepeatNotice } from "./loop-detector.js";
+import {
+  BATCH_LOOP_LABEL,
+  LoopDetector,
+  formatRepeatNotice,
+} from "./loop-detector.js";
 
 describe("LoopDetector", () => {
   it("returns ok when steps differ", () => {
@@ -122,6 +126,52 @@ describe("LoopDetector", () => {
     expect(d.observe(step).kind).toBe("ok");
     expect(d.observe(step).kind).toBe("ok");
     expect(d.observe(step).kind).toBe("repeat");
+  });
+
+  it("fires when an identical batch repeats threshold times", () => {
+    const d = new LoopDetector({ threshold: 3 });
+    const batch = {
+      tool: BATCH_LOOP_LABEL,
+      args: undefined,
+      resultSummary: "",
+      worldDigest: "w",
+      batchCalls: [
+        { tool: "os.fs.read", args: { path: "a" }, resultSummary: "ok-a" },
+        { tool: "os.fs.read", args: { path: "b" }, resultSummary: "ok-b" },
+      ],
+    };
+    expect(d.observe(batch).kind).toBe("ok");
+    expect(d.observe(batch).kind).toBe("ok");
+    const verdict = d.observe(batch);
+    expect(verdict.kind).toBe("repeat");
+    if (verdict.kind === "repeat") {
+      expect(verdict.tool).toBe(BATCH_LOOP_LABEL);
+      expect(verdict.count).toBe(3);
+    }
+  });
+
+  it("does not consider a permuted batch a repeat", () => {
+    const d = new LoopDetector({ threshold: 3 });
+    const a = {
+      tool: BATCH_LOOP_LABEL,
+      args: undefined,
+      resultSummary: "",
+      worldDigest: "w",
+      batchCalls: [
+        { tool: "os.fs.read", args: { path: "a" }, resultSummary: "ok-a" },
+        { tool: "os.fs.read", args: { path: "b" }, resultSummary: "ok-b" },
+      ],
+    };
+    const permuted = {
+      ...a,
+      batchCalls: [
+        { tool: "os.fs.read", args: { path: "b" }, resultSummary: "ok-b" },
+        { tool: "os.fs.read", args: { path: "a" }, resultSummary: "ok-a" },
+      ],
+    };
+    expect(d.observe(a).kind).toBe("ok");
+    expect(d.observe(permuted).kind).toBe("ok");
+    expect(d.observe(a).kind).toBe("ok");
   });
 });
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   extractReasoning,
   parseToolCall,
+  parseToolCalls,
   ToolCallParseError,
 } from "./tool-call-grammar.js";
 
@@ -332,9 +333,25 @@ first thought
     expect(() => parseToolCall("not json")).toThrow(ToolCallParseError);
   });
 
-  it("rejects non-object root", () => {
+  it("rejects non-object / non-call-array root", () => {
     expect(() => parseToolCall("[1,2,3]")).toThrow(ToolCallParseError);
     expect(() => parseToolCall('"string"')).toThrow(ToolCallParseError);
+  });
+
+  it("accepts a single-element array (array-only grammar produces [{...}])", () => {
+    const out = parseToolCall(
+      '[{"tool":"os.fs.read","args":{"path":"a.ts"}}]',
+    );
+    expect(out.tool).toBe("os.fs.read");
+    expect(out.args).toEqual({ path: "a.ts" });
+  });
+
+  it("attaches reasoning to the unwrapped solo call", () => {
+    const raw = `<think>just one read</think>
+[{"tool":"os.fs.read","args":{"path":"a.ts"}}]`;
+    const out = parseToolCall(raw);
+    expect(out.tool).toBe("os.fs.read");
+    expect(out.reasoning).toBe("just one read");
   });
 
   it("rejects missing tool name", () => {
@@ -365,5 +382,82 @@ first thought
     const out = parseToolCall(raw);
     expect(out.tool).toBe("finish");
     expect(out.args).toEqual({ summary: "literal {}" });
+  });
+});
+
+describe("parseToolCalls", () => {
+  it("returns kind=single for a plain object", () => {
+    const out = parseToolCalls(
+      '{"tool":"os.fs.read","args":{"path":"a.ts"}}',
+    );
+    expect(out.kind).toBe("single");
+    expect(out.calls).toHaveLength(1);
+    expect(out.calls[0]!.tool).toBe("os.fs.read");
+    expect(out.calls[0]!.args).toEqual({ path: "a.ts" });
+  });
+
+  it("returns kind=batch for a JSON array of calls", () => {
+    const raw =
+      '[{"tool":"os.fs.read","args":{"path":"a.ts"}},{"tool":"os.fs.read","args":{"path":"b.ts"}},{"tool":"os.fs.read","args":{"path":"c.ts"}}]';
+    const out = parseToolCalls(raw);
+    expect(out.kind).toBe("batch");
+    expect(out.calls).toHaveLength(3);
+    expect(out.calls.map((c) => c.tool)).toEqual([
+      "os.fs.read",
+      "os.fs.read",
+      "os.fs.read",
+    ]);
+    expect(out.calls.map((c) => c.args.path)).toEqual([
+      "a.ts",
+      "b.ts",
+      "c.ts",
+    ]);
+  });
+
+  it("attaches reasoning once for the whole batch", () => {
+    const raw = `<think>let me read three files in parallel</think>
+[{"tool":"os.fs.read","args":{"path":"a.ts"}},{"tool":"os.fs.read","args":{"path":"b.ts"}}]`;
+    const out = parseToolCalls(raw);
+    expect(out.kind).toBe("batch");
+    expect(out.reasoning).toBe("let me read three files in parallel");
+    for (const call of out.calls) {
+      expect(call.reasoning).toBeUndefined();
+    }
+  });
+
+  it("rejects an empty array", () => {
+    expect(() => parseToolCalls("[]")).toThrow(ToolCallParseError);
+  });
+
+  it("rejects an array entry that is not an object", () => {
+    expect(() =>
+      parseToolCalls('[{"tool":"x","args":{}},42]'),
+    ).toThrow(ToolCallParseError);
+  });
+
+  it("rejects an array of malformed entries", () => {
+    expect(() => parseToolCalls("[1,2,3]")).toThrow(ToolCallParseError);
+  });
+
+  it("legacy parseToolCall throws when given a batch", () => {
+    const raw = '[{"tool":"os.fs.read","args":{"path":"a.ts"}},{"tool":"os.fs.read","args":{"path":"b.ts"}}]';
+    expect(() => parseToolCall(raw)).toThrow(ToolCallParseError);
+  });
+
+  it("handles a heterogeneous batch (different tools)", () => {
+    const raw =
+      '[{"tool":"os.fs.read","args":{"path":"a.ts"}},{"tool":"os.fs.glob","args":{"pattern":"**/*.ts"}}]';
+    const out = parseToolCalls(raw);
+    expect(out.kind).toBe("batch");
+    expect(out.calls.map((c) => c.tool)).toEqual([
+      "os.fs.read",
+      "os.fs.glob",
+    ]);
+  });
+
+  it("handles a single-element array as a batch (kind=batch, length 1)", () => {
+    const out = parseToolCalls('[{"tool":"os.fs.read","args":{"path":"a"}}]');
+    expect(out.kind).toBe("batch");
+    expect(out.calls).toHaveLength(1);
   });
 });

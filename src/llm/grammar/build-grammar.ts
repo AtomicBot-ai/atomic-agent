@@ -21,7 +21,10 @@ export async function buildGrammar(
   const baseGrammar = await readFile(join(grammarsDir, "tool-call.gbnf"), "utf8");
   if (!profile.allowThinkPrelude || profile.reasoningStyle === "none") return baseGrammar;
   const ruleStem = profile.id === "gemma4-think" ? "channel" : "think";
-  const rootRule = `root ::= ${ruleStem}-prelude tool-call`;
+  // After thinking, the model emits the array-only form (always `[`).
+  // This avoids the GBNF first-token bias toward `{` that small models
+  // exhibit even when their `<think>` block reasoned about parallelism.
+  const rootRule = `root ::= ${ruleStem}-prelude tool-call-array`;
   const withPreludeRoot = baseGrammar.replace(/^root ::= .*$/m, rootRule);
   const preludeRules = buildUntilSentinelRules(ruleStem, profile.reasoningCloseTag);
   return `${withPreludeRoot.trimEnd()}\n${preludeRules}\n`;

@@ -349,17 +349,33 @@ export class AgentLoop {
         const tokensUsed =
           (outcome.completion.timing?.promptTokens ?? outcome.prompt.tokens.total) +
           (outcome.completion.timing?.predictedTokens ?? 0);
+        // Step-level outcome rolls up batched results: any failed call
+        // marks the step as `error` so metrics catch partial failures.
+        const stepStatus: "ok" | "error" = outcome.toolResults.some(
+          (r) => r.status === "error",
+        )
+          ? "error"
+          : "ok";
+        // Feed summary mirrors the legacy single-call shape for solo
+        // steps; for a batch we render `N tools: t1, t2, …` so the TUI
+        // and trace consumer see at a glance that this was a batch.
+        const summary =
+          outcome.toolResults.length === 1
+            ? outcome.toolResults[0]!.summary
+            : `${outcome.toolResults.length} tools: ${outcome.toolResults
+                .map((r) => `${r.tool}[${r.status}]`)
+                .join(", ")}`;
         this.deps.metrics?.recordStep({
           sessionId: state.id,
           stepIndex: i,
           tokensUsed,
           durationMs,
-          outcome: outcome.toolResult.status,
+          outcome: stepStatus,
         });
         this.deps.onEvent?.({
           type: "step_finished",
           stepIndex: i,
-          summary: outcome.toolResult.summary,
+          summary,
           durationMs,
         });
         if (outcome.terminal === "session") {
@@ -373,13 +389,28 @@ export class AgentLoop {
         }
         // Feed the detector AFTER terminal checks so `reply`/`finish` never
         // trigger a hint (those steps legitimately look identical to the
-        // previous tool output).
-        const verdict = loopDetector.observe({
-          tool: outcome.toolCall.tool,
-          args: outcome.toolCall.args,
-          resultSummary: outcome.toolResult.summary,
-          worldDigest: state.worldSnapshot?.digest ?? null,
-        });
+        // previous tool output). Batched steps feed the composite hash
+        // path so two identical batches in a row are detected, but a
+        // permuted batch is not.
+        const verdict =
+          outcome.toolCalls.length > 1
+            ? loopDetector.observe({
+                tool: "<batch>",
+                args: undefined,
+                resultSummary: "",
+                worldDigest: state.worldSnapshot?.digest ?? null,
+                batchCalls: outcome.toolCalls.map((call, idx) => ({
+                  tool: call.tool,
+                  args: call.args,
+                  resultSummary: outcome.toolResults[idx]!.summary,
+                })),
+              })
+            : loopDetector.observe({
+                tool: outcome.toolCalls[0]!.tool,
+                args: outcome.toolCalls[0]!.args,
+                resultSummary: outcome.toolResults[0]!.summary,
+                worldDigest: state.worldSnapshot?.digest ?? null,
+              });
         if (verdict.kind === "repeat") {
           pendingNotice = formatRepeatNotice(verdict);
           this.deps.logger?.warn("no-progress loop detected", {

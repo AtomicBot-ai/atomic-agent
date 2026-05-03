@@ -188,6 +188,18 @@ export function loadConfig(): AtomicAgentConfig {
         "ATOMIC_AGENT_AUTO_EXPAND_RARE_ON_ERROR",
         ENV_DEFAULTS.AUTO_EXPAND_RARE_ON_ERROR,
       ),
+      maxParallelToolCalls: readBoundedPositiveInt(
+        "ATOMIC_AGENT_MAX_PARALLEL_TOOL_CALLS",
+        ENV_DEFAULTS.MAX_PARALLEL_TOOL_CALLS,
+        1,
+        16,
+      ),
+      batchToolResultCharCap: readBoundedPositiveInt(
+        "ATOMIC_AGENT_BATCH_TOOL_RESULT_CHAR_CAP",
+        ENV_DEFAULTS.BATCH_TOOL_RESULT_CHAR_CAP,
+        1_000,
+        1_000_000,
+      ),
     },
     browser: {
       channel: browserChannel,

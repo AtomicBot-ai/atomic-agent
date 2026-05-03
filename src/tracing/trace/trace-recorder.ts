@@ -52,7 +52,11 @@ export function createTraceRecorder(
   let currentTurnIndex = 0;
   let currentStepIndex: number | null = null;
   let pendingUserMessage: string | null = null;
-  let pendingCall: ToolCallPayload | null = null;
+  // For a batched step, multiple `tool_call_parsed` events may arrive
+  // before any `tool_call_executed`. We keep the parsed calls keyed by
+  // their `batchIndex` so the executed callback can pair them
+  // deterministically. Solo steps land in `pendingCalls.get(0)`.
+  let pendingCalls = new Map<number, ToolCallPayload>();
 
   const nextSeq = (): number => seq++;
   const push = (event: TraceEvent): void => options.emit(event);
@@ -110,11 +114,11 @@ export function createTraceRecorder(
         return;
       }
       case "tool_call_parsed":
-        pendingCall = inner.call;
+        pendingCalls.set(inner.batchIndex, inner.call);
         return;
       case "tool_call_executed": {
-        const call = pendingCall;
-        pendingCall = null;
+        const call = pendingCalls.get(inner.batchIndex);
+        pendingCalls.delete(inner.batchIndex);
         push({
           type: "tool_invocation",
           seq: nextSeq(),
@@ -130,6 +134,9 @@ export function createTraceRecorder(
             ? { details: inner.result.details }
             : {}),
           ...(inner.result.truncated ? { toolTruncated: true } : {}),
+          ...(inner.batchSize > 1
+            ? { batchIndex: inner.batchIndex, batchSize: inner.batchSize }
+            : {}),
         });
         return;
       }
@@ -207,7 +214,7 @@ export function createTraceRecorder(
           return;
         case "step_started":
           currentStepIndex = event.stepIndex;
-          pendingCall = null;
+          pendingCalls = new Map();
           push({
             type: "step_started",
             seq: nextSeq(),
@@ -229,7 +236,7 @@ export function createTraceRecorder(
             durationMs: event.durationMs,
           });
           currentStepIndex = null;
-          pendingCall = null;
+          pendingCalls = new Map();
           return;
         case "loop_detected":
           push({

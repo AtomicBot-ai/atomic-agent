@@ -120,6 +120,22 @@ export interface AtomicAgentConfig {
      * `ATOMIC_AGENT_AUTO_EXPAND_RARE_ON_ERROR`.
      */
     autoExpandRareOnError: boolean;
+    /**
+     * Maximum number of tool calls the model may emit in a single
+     * inference step (a "batch"). The grammar caps the array at 16
+     * structurally; this knob is the runtime soft cap and also drives
+     * the prompt instructions paragraph. Env-only:
+     * `ATOMIC_AGENT_MAX_PARALLEL_TOOL_CALLS`. Hard upper bound: 16.
+     */
+    maxParallelToolCalls: number;
+    /**
+     * Soft cap on the combined character length of all tool-result
+     * summaries appended in a single batched step. When exceeded the
+     * oldest within-batch results get an extra truncation pass before
+     * being added to the conversation transcript. Env-only:
+     * `ATOMIC_AGENT_BATCH_TOOL_RESULT_CHAR_CAP`.
+     */
+    batchToolResultCharCap: number;
   };
   browser: {
     channel: BrowserChannel;
@@ -566,6 +582,10 @@ export const ENV_DEFAULTS = {
   LOADED_TOOLS_MAX_TOKENS: 600,
   /** Auto-attach full rare-tool schema after a tool execution error. */
   AUTO_EXPAND_RARE_ON_ERROR: true,
+  /** Soft cap on tool calls per inference step. Hard upper bound is 16 (grammar). */
+  MAX_PARALLEL_TOOL_CALLS: 4,
+  /** Soft cap on combined chars across all tool_result summaries in one batched step. */
+  BATCH_TOOL_RESULT_CHAR_CAP: 16_000,
 };
 
 export class ConfigValidationError extends Error {

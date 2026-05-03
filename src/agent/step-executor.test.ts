@@ -95,12 +95,247 @@ describe("executeStep rare tool autoload", () => {
       },
     );
 
-    expect(outcome.toolResult.status).toBe("error");
+    expect(outcome.toolResults).toHaveLength(1);
+    expect(outcome.toolResults[0]!.status).toBe("error");
     const names = outcome.nextSession.loadedTools.map((t) => t.name);
     expect(names).toContain("os.git.show");
     expect(
       outcome.nextSession.loadedTools.find((t) => t.name === "os.git.show")
         ?.source,
     ).toBe("auto");
+  });
+});
+
+describe("executeStep batch handling", () => {
+  let grammarsDir: string;
+
+  beforeEach(() => {
+    grammarsDir = join(process.cwd(), "grammars");
+  });
+
+  function makeRegistry() {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "read",
+      readonly: true,
+      async run(args) {
+        return compressToolResult({
+          tool: "os.fs.read",
+          status: "ok",
+          output: `read ${args.path}`,
+        });
+      },
+    });
+    registry.register({
+      name: "reply",
+      description: "reply",
+      readonly: true,
+      async run(args) {
+        return compressToolResult({
+          tool: "reply",
+          status: "ok",
+          output: String(args.text ?? ""),
+        });
+      },
+    });
+    return registry;
+  }
+
+  async function runWithBody(body: string) {
+    const registry = makeRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const session = createEmptySessionState({ id: "s-batch", workingDir: "/w" });
+    return executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async () => ({
+          content: body,
+          reasoningContent: "",
+          stop: true,
+          truncated: false,
+          timing: {
+            promptMs: 1,
+            predictedMs: 1,
+            promptTokens: 20,
+            predictedTokens: 5,
+          },
+          cacheHitTokens: 0,
+          slotId: 0,
+          modelId: "mock",
+        }),
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+      },
+    );
+  }
+
+  it("executes a 3-call read batch and returns aligned arrays", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.read", args: { path: "a" } },
+      { tool: "os.fs.read", args: { path: "b" } },
+      { tool: "os.fs.read", args: { path: "c" } },
+    ]);
+    const outcome = await runWithBody(body);
+    expect(outcome.toolCalls).toHaveLength(3);
+    expect(outcome.toolResults).toHaveLength(3);
+    expect(outcome.toolResults.every((r) => r.status === "ok")).toBe(true);
+    expect(outcome.toolResults.map((r) => r.summary)).toEqual([
+      "read a",
+      "read b",
+      "read c",
+    ]);
+    expect(outcome.terminal).toBeNull();
+  });
+
+  it("rejects a batch containing a terminal verb (forces solo via parser-retry)", async () => {
+    // Same body returned twice — both attempts fail validation, so the
+    // executor surfaces the validation error as a GrammarError after
+    // the one-shot retry.
+    const body = JSON.stringify([
+      { tool: "os.fs.read", args: { path: "a" } },
+      { tool: "reply", args: { text: "done" } },
+    ]);
+    await expect(runWithBody(body)).rejects.toThrow(
+      /terminal verb 'reply' is forbidden inside a batch/,
+    );
+  });
+
+  it("rejects a batch containing an approval-gated verb", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.read", args: { path: "a" } },
+      { tool: "os.shell.run", args: { cmd: "echo", args: ["hi"] } },
+    ]);
+    await expect(runWithBody(body)).rejects.toThrow(
+      /approval-gated tool 'os.shell.run' is forbidden inside a batch/,
+    );
+  });
+
+  it("emits one tool_call_parsed and tool_call_executed per call with batchIndex", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.read", args: { path: "a" } },
+      { tool: "os.fs.read", args: { path: "b" } },
+    ]);
+    const events: Array<{
+      type: string;
+      batchIndex?: number;
+      batchSize?: number;
+    }> = [];
+    const registry = makeRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const session = createEmptySessionState({ id: "s-ev", workingDir: "/w" });
+    await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async () => ({
+          content: body,
+          reasoningContent: "",
+          stop: true,
+          truncated: false,
+          timing: {
+            promptMs: 1,
+            predictedMs: 1,
+            promptTokens: 20,
+            predictedTokens: 5,
+          },
+          cacheHitTokens: 0,
+          slotId: 0,
+          modelId: "mock",
+        }),
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        onEvent: (ev) => {
+          if (
+            ev.type === "tool_call_parsed" ||
+            ev.type === "tool_call_executed"
+          ) {
+            events.push({
+              type: ev.type,
+              batchIndex: ev.batchIndex,
+              batchSize: ev.batchSize,
+            });
+          }
+        },
+      },
+    );
+    const parsed = events.filter((e) => e.type === "tool_call_parsed");
+    const executed = events.filter((e) => e.type === "tool_call_executed");
+    expect(parsed).toHaveLength(2);
+    expect(executed).toHaveLength(2);
+    expect(parsed.map((e) => e.batchIndex).sort()).toEqual([0, 1]);
+    expect(parsed.every((e) => e.batchSize === 2)).toBe(true);
+    expect(executed.every((e) => e.batchSize === 2)).toBe(true);
+  });
+
+  it("appends N call/result pairs to the conversation in batch-index order", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.read", args: { path: "a" } },
+      { tool: "os.fs.read", args: { path: "b" } },
+    ]);
+    const outcome = await runWithBody(body);
+    const turns = outcome.nextSession.turns;
+    // Last 4 turns: call0, result0, call1, result1.
+    const tail = turns.slice(-4);
+    expect(tail.map((t) => t.kind)).toEqual([
+      "assistant_tool_call",
+      "tool_result",
+      "assistant_tool_call",
+      "tool_result",
+    ]);
+    expect(
+      (tail[1] as { summary: string }).summary,
+    ).toBe("read a");
+    expect(
+      (tail[3] as { summary: string }).summary,
+    ).toBe("read b");
+  });
+
+  it("does not collect a per-failed-rare autoload for successful batches", async () => {
+    const body = JSON.stringify([
+      { tool: "os.fs.read", args: { path: "a" } },
+      { tool: "os.fs.read", args: { path: "b" } },
+    ]);
+    const outcome = await runWithBody(body);
+    expect(outcome.nextSession.loadedTools).toEqual([]);
+  });
+
+  it("preserves single-call legacy shape when model emits a plain object", async () => {
+    const body = JSON.stringify({
+      tool: "os.fs.read",
+      args: { path: "only" },
+    });
+    const outcome = await runWithBody(body);
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolResults).toHaveLength(1);
+    expect(outcome.toolResults[0]!.summary).toBe("read only");
+    expect(outcome.terminal).toBeNull();
+  });
+
+  it("treats a single-element array as solo (terminal verb allowed)", async () => {
+    const body = JSON.stringify([
+      { tool: "reply", args: { text: "all done" } },
+    ]);
+    const outcome = await runWithBody(body);
+    expect(outcome.terminal).toBe("turn");
   });
 });

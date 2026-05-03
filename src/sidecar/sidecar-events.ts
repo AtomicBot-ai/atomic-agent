@@ -127,6 +127,14 @@ export interface ToolCallStartedPayload {
   stepIndex: number;
   tool: string;
   args: unknown;
+  /**
+   * Position of this call inside the parent step's batch, when the
+   * step emitted multiple parallel tool calls. Optional for back-
+   * compat: solo steps omit both fields. Hosts that ignore them
+   * continue to render single-call UIs.
+   */
+  batchIndex?: number;
+  batchSize?: number;
 }
 
 export interface ToolCallResultPayload {
@@ -135,6 +143,9 @@ export interface ToolCallResultPayload {
   tool: string;
   status: "ok" | "error";
   summary: string;
+  /** Mirrors the matching `ToolCallStartedPayload.batchIndex`. */
+  batchIndex?: number;
+  batchSize?: number;
   truncated?: boolean;
 }
 

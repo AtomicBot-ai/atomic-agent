@@ -4,7 +4,11 @@ import {
   type ModelProfile,
 } from "./model-profile.js";
 
-const PRELUDE_ROOT_RE = /^root ::= [a-z-]+-prelude tool-call$/m;
+// After parallel-tool-calls landed and the GBNF first-token bias
+// problem was identified, the root collapsed to array-only on both
+// reasoning and plain profiles. A "solo" step is now `[{...}]`.
+const PRELUDE_ROOT_RE = /^root ::= [a-z-]+-prelude tool-call-array$/m;
+const PLAIN_ROOT_RE = /^root ::= tool-call-array$/m;
 
 export function checkProfileGrammarAligned(
   profile: ModelProfile,
@@ -16,8 +20,10 @@ export function checkProfileGrammarAligned(
     if (PRELUDE_ROOT_RE.test(grammar)) {
       violations.push("plain profile must not use a reasoning prelude root");
     }
-    if (!/^root ::= tool-call$/m.test(grammar)) {
-      violations.push("plain profile grammar must keep `root ::= tool-call`");
+    if (!PLAIN_ROOT_RE.test(grammar)) {
+      violations.push(
+        "plain profile grammar must keep `root ::= tool-call-array`",
+      );
     }
     return violations;
   }

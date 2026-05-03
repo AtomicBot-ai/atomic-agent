@@ -128,7 +128,7 @@ describe("buildPrompt", () => {
     expect(a.text).not.toBe(b.text);
   });
 
-  it("pins the `Emit one JSON tool call now` instruction in the stable prefix (KV-cache hygiene)", () => {
+  it("pins the array-only tool-call instruction in the stable prefix (KV-cache hygiene)", () => {
     const prompt = buildPrompt({
       session: mkSession(),
       toolDescriptors: TOOLS,
@@ -136,13 +136,33 @@ describe("buildPrompt", () => {
       skillCatalog: SKILLS,
     });
     expect(prompt.stablePrefix).toContain("### instructions");
-    expect(prompt.stablePrefix).toContain("Emit one JSON tool call now");
-    expect(prompt.stablePrefix).toContain("`skill.view` counts");
+    // Array-only contract — every emission starts with `[`. This is
+    // load-bearing: the GBNF root collapsed to `tool-call-array` to
+    // beat the first-token bias.
+    expect(prompt.stablePrefix).toContain("Emit a JSON ARRAY of tool calls now");
+    expect(prompt.stablePrefix).toContain("Always start with `[` and end with `]`");
     expect(prompt.stablePrefix).toContain(
       "Use `reply` for natural-language answers to the user.",
     );
+    // Batch parallel-tool-call hint must be in the stable prefix so
+    // the model sees it on every step (and the cache stays warm).
+    expect(prompt.stablePrefix).toContain("PARALLEL:");
+    expect(prompt.stablePrefix).toContain(
+      "put up to 4 calls in the SAME array",
+    );
+    // Concrete worked examples anchor the array shape so the model
+    // does not invent a different schema.
+    expect(prompt.stablePrefix).toContain(
+      '[{"tool":"os.fs.read","args":{"path":"a.ts"}}]',
+    );
+    expect(prompt.stablePrefix).toContain(
+      '[{"tool":"os.fs.read","args":{"path":"a.csv"}}',
+    );
+    expect(prompt.stablePrefix).toContain(
+      "Keep a call solo (length-1 array) when:",
+    );
     expect(prompt.tail).not.toContain("### response");
-    expect(prompt.tail).not.toContain("Emit one JSON tool call now");
+    expect(prompt.tail).not.toContain("Emit a JSON ARRAY of tool calls now");
   });
 
   it("pins a short `### respond` anchor at the end of the tail (anti-loop)", () => {

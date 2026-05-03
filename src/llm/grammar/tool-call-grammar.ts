@@ -41,6 +41,27 @@ export interface ToolCallPayload {
   reasoning?: string;
 }
 
+/**
+ * Result of parsing one LLM completion.
+ *
+ * - `kind: "single"` — model emitted one `{tool, args}` object. The
+ *   single call lives at `calls[0]`. This is the legacy shape; every
+ *   pre-batch caller maps onto it.
+ * - `kind: "batch"` — model emitted a JSON array of N `{tool, args}`
+ *   objects. `calls.length >= 1`; the runtime caps `N` against
+ *   `agent.maxParallelToolCalls`. Callers iterate `calls` and feed the
+ *   result through the batch executor.
+ *
+ * `reasoning` is the full `<think>` block (or `reasoning_content`
+ * channel text) for the whole completion — there is exactly one
+ * per inference, regardless of `kind`.
+ */
+export interface ToolCallBatch {
+  kind: "single" | "batch";
+  calls: ToolCallPayload[];
+  reasoning?: string;
+}
+
 export interface ReasoningTagOptions {
   openTag?: string;
   closeTag?: string;
@@ -106,12 +127,49 @@ export function extractReasoning(
   };
 }
 
+/**
+ * Legacy single-call parser. Returns the only call from the parsed
+ * batch and throws if the model emitted >1 calls. Kept for back-compat
+ * with callers that pre-date parallel tool calls (tests, replay, etc.).
+ * Now accepts both `{tool, args}` and a single-element `[{tool, args}]`
+ * since the grammar collapsed to array-only at runtime — the bare-
+ * object form is still legal for callers that synthesise a completion
+ * by hand (tests, replay scenarios). New code should prefer
+ * `parseToolCalls`.
+ */
 export function parseToolCall(
   raw: string,
   options: ReasoningTagOptions = {},
 ): ToolCallPayload {
+  const batch = parseToolCalls(raw, options);
+  if (batch.calls.length > 1) {
+    throw new ToolCallParseError(
+      `parseToolCall received a batch of ${batch.calls.length} calls; use parseToolCalls`,
+    );
+  }
+  return batch.reasoning !== undefined && batch.reasoning.length > 0
+    ? { ...batch.calls[0]!, reasoning: batch.reasoning }
+    : batch.calls[0]!;
+}
+
+/**
+ * Parse one LLM completion into a batch of tool calls. Accepts either a
+ * single `{tool, args}` object (legacy single-call shape) or a JSON array
+ * of objects (parallel-batch shape). Reasoning is extracted once for the
+ * whole completion and surfaced on the batch — never duplicated per call.
+ *
+ * Empty arrays are rejected here (validator-friendly: callers can rely
+ * on `calls.length >= 1`). Oversized arrays are NOT rejected here — the
+ * grammar caps the array length structurally and the step executor
+ * applies the runtime soft cap from `agent.maxParallelToolCalls`. This
+ * keeps the parser policy-free.
+ */
+export function parseToolCalls(
+  raw: string,
+  options: ReasoningTagOptions = {},
+): ToolCallBatch {
   const extracted = extractReasoning(raw, options);
-  const jsonText = extractJsonObject(extracted.body);
+  const { jsonText, kind } = extractJsonRoot(extracted.body);
 
   let parsed: unknown;
   try {
@@ -122,14 +180,39 @@ export function parseToolCall(
     );
   }
 
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new ToolCallParseError("tool-call root must be a JSON object");
+  const reasoning = extracted.reasoning;
+  if (kind === "object") {
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new ToolCallParseError("tool-call root must be a JSON object");
+    }
+    const normalized = normalizeToolCall(parsed as Record<string, unknown>);
+    return {
+      kind: "single",
+      calls: [normalized],
+      ...(reasoning.length > 0 ? { reasoning } : {}),
+    };
   }
-
-  const normalized = normalizeToolCall(parsed as Record<string, unknown>);
-  return extracted.reasoning.length > 0
-    ? { ...normalized, reasoning: extracted.reasoning }
-    : normalized;
+  if (!Array.isArray(parsed)) {
+    throw new ToolCallParseError("tool-call array root must be a JSON array");
+  }
+  if (parsed.length === 0) {
+    throw new ToolCallParseError("tool-call array must contain at least one call");
+  }
+  const calls: ToolCallPayload[] = [];
+  for (let i = 0; i < parsed.length; i += 1) {
+    const entry = parsed[i];
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new ToolCallParseError(
+        `tool-call array entry ${i} must be a JSON object`,
+      );
+    }
+    calls.push(normalizeToolCall(entry as Record<string, unknown>));
+  }
+  return {
+    kind: "batch",
+    calls,
+    ...(reasoning.length > 0 ? { reasoning } : {}),
+  };
 }
 
 function normalizeToolCall(payload: Record<string, unknown>): ToolCallPayload {
@@ -184,14 +267,27 @@ function readArgs(payload: Record<string, unknown>): Record<string, unknown> {
   return flatArgs;
 }
 
-function extractJsonObject(raw: string): string {
+interface ExtractedRoot {
+  jsonText: string;
+  kind: "object" | "array";
+}
+
+/**
+ * Locate the first balanced JSON value at the start of `raw` after
+ * skipping leading whitespace. Recognises both `{...}` (single call)
+ * and `[...]` (batch) shapes; nested objects/arrays are bracket-counted
+ * with proper string-escape awareness.
+ */
+function extractJsonRoot(raw: string): ExtractedRoot {
   const input = raw.trim();
   if (input.length === 0) {
     throw new ToolCallParseError("tool-call body is empty");
   }
 
   let start = -1;
-  let depth = 0;
+  let kind: "object" | "array" | null = null;
+  let depthCurly = 0;
+  let depthSquare = 0;
   let inString = false;
   let escaped = false;
 
@@ -200,7 +296,12 @@ function extractJsonObject(raw: string): string {
     if (start === -1) {
       if (ch === "{") {
         start = idx;
-        depth = 1;
+        kind = "object";
+        depthCurly = 1;
+      } else if (ch === "[") {
+        start = idx;
+        kind = "array";
+        depthSquare = 1;
       } else if (!/\s/.test(ch)) {
         continue;
       }
@@ -223,21 +324,32 @@ function extractJsonObject(raw: string): string {
       continue;
     }
     if (ch === "{") {
-      depth += 1;
+      depthCurly += 1;
       continue;
     }
     if (ch === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return input.slice(start, idx + 1);
+      depthCurly -= 1;
+      if (kind === "object" && depthCurly === 0 && depthSquare === 0) {
+        return { jsonText: input.slice(start, idx + 1), kind: "object" };
+      }
+      continue;
+    }
+    if (ch === "[") {
+      depthSquare += 1;
+      continue;
+    }
+    if (ch === "]") {
+      depthSquare -= 1;
+      if (kind === "array" && depthSquare === 0 && depthCurly === 0) {
+        return { jsonText: input.slice(start, idx + 1), kind: "array" };
       }
     }
   }
 
   if (start === -1) {
-    throw new ToolCallParseError("tool-call JSON object not found");
+    throw new ToolCallParseError("tool-call JSON value not found");
   }
-  throw new ToolCallParseError("tool-call JSON object is incomplete");
+  throw new ToolCallParseError("tool-call JSON value is incomplete");
 }
 
 function escapeRegex(text: string): string {

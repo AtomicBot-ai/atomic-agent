@@ -91,6 +91,12 @@ export async function bootstrapSidecar(): Promise<{
               stepIndex: -1,
               tool: inner.call.tool,
               args: inner.call.args,
+              ...(inner.batchSize > 1
+                ? {
+                    batchIndex: inner.batchIndex,
+                    batchSize: inner.batchSize,
+                  }
+                : {}),
             });
           } else if (inner.type === "tool_call_executed") {
             protocol.emitEvent("tool_call_result", {
@@ -100,6 +106,12 @@ export async function bootstrapSidecar(): Promise<{
               status: inner.result.status,
               summary: inner.result.summary,
               truncated: inner.result.truncated,
+              ...(inner.batchSize > 1
+                ? {
+                    batchIndex: inner.batchIndex,
+                    batchSize: inner.batchSize,
+                  }
+                : {}),
             });
           } else if (inner.type === "assistant_reply") {
             protocol.emitEvent("assistant_reply", {

@@ -4,6 +4,13 @@ import { createHash } from "node:crypto";
  * Snapshot of a single executed step, fed into the detector after the
  * tool result has been compressed and any side-effects applied to the
  * session (so `worldDigest` reflects the post-step world).
+ *
+ * For a batched step (N > 1 tool calls in one inference), pass the
+ * synthetic call-tuple form: `tool` is the canonical synthetic label
+ * `"<batch>"`, and `batchCalls` carries the (tool, args, summary)
+ * tuples in batch-index order. Permuting the batch produces a
+ * different digest by design — the model may legitimately reorder a
+ * set after re-thinking, so we do not flag that as a loop.
  */
 export interface LoopObservation {
   tool: string;
@@ -16,7 +23,21 @@ export interface LoopObservation {
    * of non-browser tools with identical args and output will still fire.
    */
   worldDigest: string | null;
+  /**
+   * Optional ordered tuples for a batched step. When set, `tool`/`args`/
+   * `resultSummary` are ignored in favour of a composite hash of the
+   * full batch (preserving the model's emit order). When unset, the
+   * single-call path is used.
+   */
+  batchCalls?: ReadonlyArray<{
+    tool: string;
+    args: unknown;
+    resultSummary: string;
+  }>;
 }
+
+/** Synthetic tool name used for the `repeat` verdict on batched steps. */
+export const BATCH_LOOP_LABEL = "<batch>";
 
 export type LoopVerdict =
   | { kind: "ok" }
@@ -75,12 +96,23 @@ export class LoopDetector {
   }
 
   observe(step: LoopObservation): LoopVerdict {
-    const entry: Entry = {
-      tool: step.tool,
-      argsHash: hashCanonical(step.args),
-      resultHash: hashString(step.resultSummary),
-      worldDigest: step.worldDigest,
-    };
+    const entry: Entry = step.batchCalls
+      ? {
+          tool: BATCH_LOOP_LABEL,
+          argsHash: hashCanonical(
+            step.batchCalls.map((c) => [c.tool, c.args]),
+          ),
+          resultHash: hashCanonical(
+            step.batchCalls.map((c) => c.resultSummary),
+          ),
+          worldDigest: step.worldDigest,
+        }
+      : {
+          tool: step.tool,
+          argsHash: hashCanonical(step.args),
+          resultHash: hashString(step.resultSummary),
+          worldDigest: step.worldDigest,
+        };
     const last = this.ring.at(-1);
     const isRepeat = last !== undefined && entriesEqual(last, entry);
     this.ring.push(entry);

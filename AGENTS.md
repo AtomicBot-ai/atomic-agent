@@ -15,8 +15,8 @@ This is the source-of-truth for automated contributors (LLM agents, codegen, etc
 
 1. **Project ≠ Prompt.** Session state, compressed tool results, and world snapshots live outside the model; the prompt is always a small slice.
 2. **Stable prefix.** The prompt is `buildStablePrefix` (persona + `### rules` + skill catalog under `### skills` + `### tools` + `### capabilities` + `### instructions`) followed by a **variable tail** in mutability order: `### loaded-skills` (optional) → `### loaded-tools` (optional) → `### profile` (optional) → `### memory-index` (optional) → `### session-facts` (optional) → `### recalled` (optional) → `### world` → `### conversation` → optional `### notice` → `### respond` (+ optional reasoning prefill). Only the stable-prefix bytes must stay stable within a session for KV-cache — this is what `cache_prompt + slot_id` on `llama-server` relies on.
-3. **One step per inference.** No reasoning loops inside a single LLM call. The runtime drives the loop.
-4. **Grammar-constrained tool calls.** The sidecar sends a GBNF grammar with every completion request that must produce a tool call.
+3. **One inference per step.** No reasoning loops inside a single LLM call — the runtime drives the loop. A single inference always emits a JSON **array** of `1..N` tool calls (`[{tool, args}, ...]`); a "solo" step is just a length-1 array (`[{...}]`). `N` is capped by `agent.maxParallelToolCalls` (default 4, hard ceiling 16 in the grammar). See §"Parallel tool calls per step" for the rationale (GBNF first-token bias) and the executor pipeline.
+4. **Grammar-constrained tool calls.** The sidecar sends a GBNF grammar with every completion request that must produce a tool call. The root collapsed to **array-only** (`root ::= tool-call-array`) so the model cannot fall into the single-object form via first-token bias even when it only needs one call.
 5. **No global singletons.** Dependencies are passed explicitly. `getConfig()` is the only exception.
 6. **Session is multi-turn chat only.** A session is a long-lived chat: `user message → 0..N tool steps → reply` is a macro-turn, multiple turns share one `SessionState.turns[]`. Two terminals exist — `reply` ends the turn, `finish` ends the whole session. All three frontends (CLI `run`, TUI, sidecar) go through `runtime.runTurn` only; there is no one-shot goal mode.
 
@@ -27,6 +27,80 @@ The stable-prefix `### tools` block lists **frequent** tools with full `args` sc
 - **Discovery tool.** `tool.view { name }` (see `src/tools/tool-view/`) appends the full descriptor for `name` to `SessionState.loadedTools` (LRU-evicted, cap `config.agent.loadedToolsCap`). The next step’s `buildPrompt` includes `### loaded-tools` with capped token budget `config.agent.loadedToolsMaxTokens`; the effective conversation cap subtracts that budget (see `src/prompt/token-budget.ts`). Optional `config.agent.autoExpandRareOnError` re-invokes a rare tool with autoloaded schema after an invalid-args failure (`src/agent/step-executor.ts`).
 
 - **Contract.** Follow the same idea as `skill.view`: do not call a rare tool with precise arguments until its schema is present under `### loaded-tools` (call `tool.view` first, or rely on autoload on error if enabled). GBNF allows `tool.view` alongside other tools (`grammars/tool-call.gbnf`).
+
+## Parallel tool calls per step
+
+A single LLM inference always emits a JSON **array** of `1..N` tool calls. The runtime executes the array with class-aware concurrency: independent reads fan out, mutating tools serialise, and the wall time of the step collapses to `max(group_duration)` instead of the sum. This is the path that turns "scan 4 CSVs for PII" from 4 sequential `os.fs.read`s into one batched step.
+
+### Grammar shape (array-only)
+
+`grammars/tool-call.gbnf`:
+
+```
+root ::= tool-call-array
+tool-call ::= "{" ws "\"tool\"" ws ":" ws tool-name ws "," ws "\"args\"" ws ":" ws object ws "}"
+tool-call-array ::= "[" ws tool-call ( ws "," ws tool-call ){0,15} ws "]"
+```
+
+**Why array-only.** The first iteration of this feature shipped with `root ::= tool-call | tool-call-array` so a solo step could keep the legacy `{tool, args}` shape. Production traces showed that small/medium models (Qwen3-30B-A3B-Instruct in particular) almost never picked the array branch even when their `<think>` block reasoned about parallel reads — the GBNF sampler's first-token mass strongly favours `{` over `[`. Collapsing the root to `tool-call-array` removes that choice entirely: the model **must** start with `[`, which makes "one call vs many calls" a decision about array length instead of a first-token gamble. A solo step is now `[{...}]`. The legacy `parseToolCall` still accepts a bare `{tool, args}` for tests/replay scenarios, but `llama-server` will never emit one under the production grammar.
+
+The hard upper bound on array length is **16** (grammar). The runtime soft cap is `agent.maxParallelToolCalls` (default `4`, env `ATOMIC_AGENT_MAX_PARALLEL_TOOL_CALLS`). Both reasoning profiles (`qwen-think`, `gemma4-think`) route the prelude into `tool-call-array`, so think-mode batches work the same way (see [src/llm/grammar/build-grammar.ts](src/llm/grammar/build-grammar.ts) and the matching invariant in [src/llm/profile-invariants.ts](src/llm/profile-invariants.ts)).
+
+The change to the array-only root **invalidates KV-cache** for any session that started under the old grammar — the stable prefix bytes change once, then stay stable. There is no hot migration path; restart with a fresh session pool.
+
+### Resource-class taxonomy
+
+[src/agent/tool-resource-class.ts](src/agent/tool-resource-class.ts) maps every registered tool to one of nine classes. The batch executor groups calls by class — same-class calls run **inside** the group (parallel for `pure_read`, serial for everything else), distinct groups run **concurrently** with each other.
+
+| Class | Examples | Within-group | Cross-group |
+|---|---|---|---|
+| `pure_read` | `os.fs.read`, `os.fs.glob`, `os.fs.grep`, `os.git.*` (read), `os.fs.list`, `os.fs.read_document`, `memory.notes.recall`, `tasks.list` | **parallel** (`Promise.allSettled`) | parallel |
+| `browser` | `browser.*` | serial (Playwright is single-process) | parallel |
+| `memory_write` | `memory.profile.set`, `memory.notes.store`, `os.clipboard.write`, `os.notify` | serial | parallel |
+| `tasks_write` | `tasks.schedule`, `tasks.cron`, `tasks.cancel` | serial | parallel |
+| `vision` | `vision.describe` | serial (bounds backend load) | parallel |
+| `fs_write` | reserved | serial | parallel |
+| `approval_gated` | `os.shell.run`, `os.fs.{write,edit,trash,patch,archive.extract}`, `os.proc.kill`, `os.http.request`, `skill.run_script` | **forbidden in batch** — must be solo | — |
+| `terminal` | `reply`, `finish` | **forbidden in batch** — always solo | — |
+| `unknown` | unregistered names | **forbidden in batch** (fail-closed) | — |
+
+Adding a new tool **requires** an entry in `TOOL_RESOURCE_CLASS`; pinned by [src/agent/tool-resource-class.test.ts](src/agent/tool-resource-class.test.ts) which iterates `DEFAULT_TOOL_DESCRIPTORS` and rejects any with `unknown` class.
+
+### Batch executor and step pipeline
+
+[src/agent/batch-executor.ts](src/agent/batch-executor.ts) owns the planner. The flow inside [src/agent/step-executor.ts](src/agent/step-executor.ts) is:
+
+1. **Parse.** `parseToolCalls(...)` returns a `ToolCallBatch { kind: "single" | "batch", calls: ToolCallPayload[], reasoning? }`. Under the array-only production grammar `kind` is always `"batch"` (a solo step has `calls.length === 1`); the `"single"` branch only fires for legacy bare-object input from tests / replay traces.
+2. **Validate.** `validateBatch` rejects multi-call batches that contain a terminal verb, an approval-gated tool, an unknown class, or exceed `maxParallelToolCalls`. A failure is treated like a parse error: the executor triggers the existing one-shot LLM retry. After two failures it surfaces as `GrammarError` with the per-call reasons. Length-1 batches bypass these checks (legacy semantics for any tool, including `reply`/`finish`/approval-gated).
+3. **Registry check.** Missing tools throw `ToolExecutionError` (category `tool`) without retry — replaying the prompt would not change the registry.
+4. **Execute.** `executeBatch` plans groups, fans out, collects `BatchCallResult[]`. Failures of one call are folded into a synthetic `CompressedToolResult{status:"error"}` so siblings keep running. `signal.aborted` halts in-flight serial groups and marks the tail as `cancelled`.
+5. **Apply effects.** `applyStateEffects` is invoked per result in batch-index order; `recordLatestResult` is "last writer wins". World snapshot updates from multiple browser calls collapse to the last batch index.
+6. **Auto-expand on error.** Failed rare-tool calls trigger `autoExpandRareOnError` independently per batch index — each rare tool that errored gets its full descriptor injected into `### loaded-tools` for the next step.
+7. **Append turns.** `appendBatchedTurns` writes N `assistant_tool_call` + N `tool_result` pairs in batch-index order. Reasoning is attached once on the first `assistant_tool_call` (one inference ⇒ one `<think>` block). The new `agent.batchToolResultCharCap` (default `16000`, env `ATOMIC_AGENT_BATCH_TOOL_RESULT_CHAR_CAP`) trims oldest within-batch summaries first when the combined char total overflows.
+
+### Locked invariants (pinned by tests)
+
+Pinned by [src/agent/batch-executor.test.ts](src/agent/batch-executor.test.ts), [src/agent/step-executor.test.ts](src/agent/step-executor.test.ts), [src/agent/parallel-tool-calls.integration.test.ts](src/agent/parallel-tool-calls.integration.test.ts), [src/agent/loop-detector.test.ts](src/agent/loop-detector.test.ts), [src/llm/grammar/tool-call-grammar.test.ts](src/llm/grammar/tool-call-grammar.test.ts), [src/llm/grammar/build-grammar.test.ts](src/llm/grammar/build-grammar.test.ts), [src/tracing/trace/trace-recorder.test.ts](src/tracing/trace/trace-recorder.test.ts):
+
+1. **One inference per step.** Batches do not start a new LLM call — they execute multiple tools after one inference completes.
+2. **Terminal verbs and approval-gated tools are always solo.** Validator rejects them from any multi-call batch; one-shot retry asks the model to re-emit as a length-1 array (`[{...}]`).
+3. **Result order matches batch-index order.** `toolResults[i]` corresponds to `toolCalls[i]` regardless of completion order. Pure-read fan-out reorders execution but not results.
+4. **Failures isolate.** A failed call never aborts siblings; it lands in `toolResults[i]` as `{status: "error", details}`. `loop_failed` only fires on infra failures (parse/grammar/cancel), not on tool-level errors.
+5. **Loop detector uses a composite hash for batches.** Two identical batches in a row count as a repeat; a permuted batch (same calls, different order) does **not** — the model may legitimately reorder a set after re-thinking. Synthetic label `<batch>` (`BATCH_LOOP_LABEL`).
+6. **Per-step trace = N `tool_invocation` events.** `trace-recorder.ts` keys pending parsed calls by `batchIndex` so each pair is recorded with `{batchIndex, batchSize}` (omitted for solo steps for back-compat).
+7. **Sidecar forwards batch metadata optionally.** `tool_call_started` / `tool_call_result` carry `batchIndex` / `batchSize` only when `batchSize > 1`; hosts that ignore them keep working.
+8. **Cross-session parallelism unchanged.** `TurnController` per-session FIFO is untouched — batches are *intra*-step parallelism, not inter-session.
+
+### Configuration (`agent.*`)
+
+- `agent.maxParallelToolCalls` — default `4`, range `[1, 16]`. Env `ATOMIC_AGENT_MAX_PARALLEL_TOOL_CALLS`. Set to `1` to disable batching; set to higher values to widen pure-read fan-out.
+- `agent.batchToolResultCharCap` — default `16000`. Env `ATOMIC_AGENT_BATCH_TOOL_RESULT_CHAR_CAP`. Soft cap on combined summary length per batched step before per-result truncation.
+
+Both are env-only; not user-config-file material.
+
+### Out of scope (deferred)
+
+Speculative batching (the runtime guessing that the model "should" have batched and rewriting the next step's prompt), per-class concurrency limits beyond the binary parallel/serial split, dependency analysis (`B uses A`'s output) — the model decides what is independent, the runtime trusts it.
 
 ## Layout rules (enforced)
 
@@ -50,7 +124,7 @@ The stable-prefix `### tools` block lists **frequent** tools with full `args` sc
 | `src/llm/` | HTTP client for external llama-server + GBNF grammar |
 | `src/prompt/` | Prompt builder, stable prefix, token budget. See [PROMPT.md](PROMPT.md) for full anatomy of the stable prefix and variable tail. |
 | `src/session/` | Session state + sqlite persistence |
-| `src/agent/` | Agent loop + plan generator + step executor |
+| `src/agent/` | Agent loop + step executor + parallel batch executor (`batch-executor.ts`) + resource-class taxonomy (`tool-resource-class.ts`) + no-progress loop detector |
 | `src/tools/` | Tool registry + individual tools. OS tools: `shell.run`, `fs.read` (w/ `offset`/`limit`/`lineNumbers`), `fs.write`, `fs.list`, `fs.glob`, `fs.grep` (bundled ripgrep), `fs.edit` (atomic string replace), `fs.read_document` (PDF/DOCX/XLSX/RTF/ODT/PPTX/legacy .doc → plain text via pure-JS), `fs.archive.list` / `fs.archive.read_entry` / `fs.archive.extract` (zip/tar/tar.gz/gz via pure-JS; zip-slip + bomb guards), `fs.hash` (md5/sha1/sha256/sha512 streaming), `fs.diff` (unified diff, jsdiff), `fs.patch` (dry-run default, all-or-nothing apply), `fs.watch` (chokidar one-shot, timeout-capped), `git.status` / `git.log` / `git.diff` / `git.show` / `git.blame` / `git.branch` (read-only shell-out with structured parse), `proc.list` / `proc.kill` (ps/tasklist + approval), `http.request` (curl + host allowlist + `config.http.approvalMode`), `clipboard.*`, `window.*`, `notify`. |
 | `src/compressor/` | Result compressor, log summariser |
 | `src/sandbox/` | git worktree + sandboxed command runner |

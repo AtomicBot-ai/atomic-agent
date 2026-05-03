@@ -9,8 +9,42 @@ const DEFAULT_IGNORE = [
   "**/node_modules/**",
   "**/.git/**",
   "**/dist/**",
+  "**/build/**",
+  "**/target/**",
+  "**/coverage/**",
+  "**/.next/**",
+  "**/.nuxt/**",
+  "**/.turbo/**",
+  "**/.cache/**",
+  "**/Library/**",
+  "**/.rustup/**",
+  "**/.cargo/**",
+  "**/.npm/**",
+  "**/.pnpm-store/**",
+  "**/.yarn/**",
+  "**/.gradle/**",
+  "**/.m2/**",
+  "**/__pycache__/**",
+  "**/site-packages/**",
+  "**/vendor/**",
+  "**/.venv/**",
+  "**/venv/**",
+  "**/.tox/**",
+  "**/.pytest_cache/**",
+  "**/.mypy_cache/**",
+  "**/.ruff_cache/**",
+  "**/.terraform/**",
+  "**/.idea/**",
+  "**/.vscode/**",
+  "**/.Trash/**",
+  "**/.svn/**",
+  "**/.hg/**",
 ];
 const DEFAULT_LIMIT = 1000;
+// Hard scan ceiling: walk visits up to this many matching files before forcibly
+// truncating. Decoupled from `limit` so that `sortByMtime` and alphabetical
+// sort actually consider the whole tree (within reason) before slicing.
+const MAX_FILES_COLLECTED = 50_000;
 
 interface GlobArgs {
   patterns: string[];
@@ -19,6 +53,7 @@ interface GlobArgs {
   absolute: boolean;
   limit: number;
   sortByMtime: boolean;
+  nocase: boolean;
 }
 
 interface GlobEntry {
@@ -29,17 +64,22 @@ interface GlobEntry {
 export const osFsGlobTool: ToolDefinition = {
   name: "os.fs.glob",
   description:
-    "Recursively find files matching one or more glob patterns. Supports `*` (any chars except `/`), `**` (any path segments), `?` (single char), and `{a,b}` brace expansion. Search root is `cwd` or `path` (same meaning; if both are set, `cwd` wins). Returns POSIX-style paths relative to that root by default.",
+    "Recursively find files matching one or more glob patterns. Supports `*` (any chars except `/`), `**` (any path segments), `?` (single char), and `{a,b}` brace expansion. Search root is `cwd` or `path` (same meaning; if both are set, `cwd` wins). Returns POSIX-style paths relative to that root by default. The whole tree (minus `ignore`) is walked first, then sorted (alphabetically, or by mtime when `sortByMtime=true`), then sliced to `limit` — so `limit` is always applied to the best results, not to walk-order leftovers. Pass `nocase=true` for case-insensitive matching (e.g. `**/*cv*` then matches both `CV.pdf` and `cv.pdf`).",
   readonly: true,
   async run(rawArgs, ctx) {
     const args = parseArgs(rawArgs, ctx.workingDir);
-    const matchers = args.patterns.map(compileGlob);
-    const ignoreMatchers = args.ignore.map(compileGlob);
+    const flags = args.nocase ? "i" : "";
+    const matchers = args.patterns.map((p) => compileGlob(p, flags));
+    const ignoreMatchers = args.ignore.map((p) => compileGlob(p, flags));
     const fileMatches: GlobEntry[] = [];
     let totalScanned = 0;
     let truncated = false;
 
     async function walk(current: string): Promise<void> {
+      if (fileMatches.length >= MAX_FILES_COLLECTED) {
+        truncated = true;
+        return;
+      }
       let entries: Dirent[];
       try {
         entries = (await readdir(current, { withFileTypes: true })) as Dirent[];
@@ -47,7 +87,7 @@ export const osFsGlobTool: ToolDefinition = {
         return;
       }
       for (const entry of entries) {
-        if (fileMatches.length >= args.limit) {
+        if (fileMatches.length >= MAX_FILES_COLLECTED) {
           truncated = true;
           return;
         }
@@ -71,10 +111,6 @@ export const osFsGlobTool: ToolDefinition = {
         }
         if (isDir) {
           await walk(abs);
-          if (fileMatches.length >= args.limit) {
-            truncated = true;
-            return;
-          }
         }
       }
     }
@@ -85,6 +121,9 @@ export const osFsGlobTool: ToolDefinition = {
       fileMatches.sort((a, b) => b.mtimeMs - a.mtimeMs);
     } else {
       fileMatches.sort((a, b) => a.path.localeCompare(b.path));
+    }
+    if (fileMatches.length > args.limit) {
+      truncated = true;
     }
     const finalPaths = fileMatches
       .slice(0, args.limit)
@@ -153,7 +192,8 @@ function parseArgs(
       ? Math.max(1, Math.trunc(rawArgs.limit))
       : DEFAULT_LIMIT;
   const sortByMtime = rawArgs.sortByMtime === true;
-  return { patterns, cwd, ignore, absolute, limit, sortByMtime };
+  const nocase = rawArgs.nocase === true;
+  return { patterns, cwd, ignore, absolute, limit, sortByMtime, nocase };
 }
 
 function toPosix(p: string): string {
@@ -168,7 +208,8 @@ function matchesAny(matchers: RegExp[], path: string): boolean {
 }
 
 /**
- * Compile a glob pattern into a case-sensitive regex anchored at both ends.
+ * Compile a glob pattern into a regex anchored at both ends. Pass `flags="i"`
+ * for case-insensitive matching (used when `nocase=true` on the tool args).
  * Supports:
  *   - `*`     any chars except `/`
  *   - `**`    any number of path segments (including zero)
@@ -178,7 +219,7 @@ function matchesAny(matchers: RegExp[], path: string): boolean {
  *
  * Everything else is treated as a literal, with regex metachars escaped.
  */
-export function compileGlob(pattern: string): RegExp {
+export function compileGlob(pattern: string, flags = ""): RegExp {
   let re = "^";
   const len = pattern.length;
   let i = 0;
@@ -240,7 +281,7 @@ export function compileGlob(pattern: string): RegExp {
     i++;
   }
   re += "$";
-  return new RegExp(re);
+  return new RegExp(re, flags);
 }
 
 function escapeRegexChar(c: string): string {

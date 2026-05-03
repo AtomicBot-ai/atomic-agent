@@ -36,7 +36,7 @@ Its current limits are also clear:
 Any core evolution should preserve the current architectural invariants:
 
 - keep the stable prefix byte-stable within a session
-- keep one LLM inference equal to one agent step
+- keep one LLM inference equal to one agent step (the inference always emits a JSON array of `1..N` independent calls — a "solo" step is a length-1 array; the loop still drives the macro-turn, see "Parallel tool calls per step" milestone below)
 - keep tool calls grammar-constrained
 - keep dependencies explicit
 - keep session state outside the model whenever possible
@@ -377,3 +377,27 @@ If only one substantial investment is possible, start with a combined milestone:
 This keeps the existing runtime model intact while improving the failure modes users hit first in real work.
 
 Implementation notes (2026-04-23): prompt-time compression lives in `packConversation` (`src/session/conversation-turn.ts`); world / conversation safety-net caps (`agent.worldSnapshotMaxTokens`, `agent.conversationMaxTokens`) are enforced in `buildPrompt` and clamped by `ModelProfile.contextWindow` via `computeEffectiveConversationCap`. Parser retry lives in `src/agent/step-executor.ts` (one-shot unary retry, emits `parse_retry`); transport retry sits in `LlamaServerClient` (`complete` + pre-body of `completeStream`), bounded by `llama.completionRetries` / `llama.completionRetryBackoffMs` and limited to network errors and HTTP 5xx. See `AGENTS.md` §"Current memory model" / §"LLM reliability policy".
+
+## Milestone — parallel tool calls per step [done: 2026-05-04]
+
+Motivation: comparing the agent against Hermes on a "scan four CSVs for PII" task showed `atomic-agent` taking ~11 minutes vs Hermes' ~5. Trace inspection revealed the bottleneck was not the model or the file IO — it was the architectural constraint that one inference produces exactly one tool call. Hermes had been emitting parallel batches all along; we had been doing four sequential reads.
+
+What it adds:
+
+- `root ::= tool-call-array` (array-only) in `grammars/tool-call.gbnf` (and the same array-only root routed through reasoning preludes in `src/llm/grammar/build-grammar.ts`). The first iteration shipped with `root ::= tool-call | tool-call-array` so a solo step could keep the legacy `{tool, args}` shape — production traces immediately exposed a GBNF first-token bias: small/medium models (Qwen3-30B-A3B-Instruct in particular) almost always picked `{` over `[` even when their `<think>` block explicitly reasoned about parallel reads. Collapsing the root removes the choice entirely; a solo step is now `[{...}]`.
+- `parseToolCalls` returning a `ToolCallBatch { kind: "single" | "batch", calls, reasoning? }` in `src/llm/grammar/tool-call-grammar.ts`. Under the array-only production grammar `kind` is always `"batch"` (a solo step has `calls.length === 1`); the `"single"` branch is preserved for legacy bare-object input from tests / replay traces. `parseToolCall` is kept as a one-call wrapper that now also accepts a length-1 array.
+- `src/agent/tool-resource-class.ts` — every registered tool maps to one of nine classes (`pure_read`, `fs_write`, `browser`, `memory_write`, `tasks_write`, `vision`, `approval_gated`, `terminal`, `unknown`). A test pins that every entry of `DEFAULT_TOOL_DESCRIPTORS` has an explicit class — adding a new tool requires adding it here.
+- `src/agent/batch-executor.ts` — per-class planner. `pure_read` fans out (`Promise.allSettled`); other batchable classes serialise within their group; distinct groups run concurrently. Failures of one call are folded into a synthetic `CompressedToolResult{status:"error"}` and never abort siblings. Cancellation marks the in-flight tail as `cancelled`.
+- `src/agent/step-executor.ts` rewrite — `StepOutcome` now carries `toolCalls[]` + `toolResults[]` aligned by index. `validateBatch` rejects multi-call batches that include terminal verbs, approval-gated tools, unknown classes, or exceed `agent.maxParallelToolCalls`. Validation failures piggy-back on the existing one-shot LLM retry. Per-failed-rare autoload runs in batch-index order. Conversation turns are appended N call/result pairs in batch-index order; reasoning is attached once on the first `assistant_tool_call`.
+- `src/agent/loop-detector.ts` — composite hash for batched observations (`batchCalls[]`). Two identical batches in a row count as a repeat; a permuted batch (same calls, different order) does **not** — the model may legitimately reorder a set after re-thinking.
+- Tracing & sidecar — `tool_invocation` events carry optional `batchIndex` / `batchSize` for batched steps; solo steps omit them for back-compat with older replay code. Sidecar `tool_call_started` / `tool_call_result` mirror the same optional fields.
+- Stable-prefix instructions — rewritten for the array-only contract: "Emit a JSON ARRAY of tool calls now. Always start with `[` and end with `]`, even for a single call." Three worked examples (solo `[{...}]`, parallel batch, reply) anchor the shape, and an explicit "keep solo when" list pins terminal verbs / approval-gated tools / data-dependent chains to length-1 batches. The whole block is part of the byte-stable prefix so the cache stays warm.
+- New env-only config: `agent.maxParallelToolCalls` (default `4`, hard ceiling `16`), `agent.batchToolResultCharCap` (default `16000`).
+
+Why it matters:
+
+- collapses N independent reads from a sequential `N × per-call latency` wall to roughly `max(per-call latency)`, which is the difference between an 11-minute and a 5-minute multi-file scan
+- preserves the "one inference per step" invariant — the loop is unchanged, the model just gets to express more parallelism per inference
+- cross-session parallelism (`TurnController` per-session FIFO) is untouched — batches are intra-step, not inter-session
+
+Implementation notes (2026-05-04): the integration test at `src/agent/parallel-tool-calls.integration.test.ts` measures wall time for a 4-call read batch against an instrumented registry; with `PER_CALL_LATENCY_MS = 80`, sequential would be ≥ 320 ms and the parallel path comes in at ~85 ms (`peakInFlight > 1` confirms real concurrency). Approval-gated tools are unconditionally rejected from multi-call batches because their approval gate is per-call and would deadlock under concurrency. The validator's "approval-gated stays solo" rule is enforced even when `approvalRequired=false` so the runtime can flip the gate on without changing batching semantics. The array-only grammar pivot was the load-bearing fix: the original `tool-call | tool-call-array` shipped functionally complete, but production traces (e.g. the "read README/AGENTS/PROMPT/EVOLUTION and check for mentions of vision" trigger) showed the model declaring intent to batch in `<think>` and then sampling `{` anyway, exhausting the parallelism gain. Collapsing to `tool-call-array` is a one-time stable-prefix invalidation but leaves the rest of the pipeline (parser, executor, tracing, sidecar) unchanged. See `AGENTS.md` §"Parallel tool calls per step" for the full contract; `PROMPT.md` §2 for the new `### instructions` block; `src/agent/parallel-tool-calls.integration.test.ts` for the wall-time pin.
