@@ -55,6 +55,54 @@ async function copyOptional(src: string, dest: string): Promise<boolean> {
 }
 
 /**
+ * Lays out a `node_modules/playwright-core` tree next to the SEA binary
+ * so the runtime loader (see `src/native/load-playwright-core.ts`) can
+ * resolve it via `createRequire` anchored at the executable's dir.
+ *
+ * playwright-core has zero runtime npm dependencies, so we ship the
+ * package tree as-is, minus type definitions and developer-facing docs
+ * which are not exercised at runtime. The package.json itself MUST be
+ * present because Playwright internals call
+ * `require.resolve("../../../package.json")` to derive `coreDir` for
+ * stack-frame boxing — that exact file lookup is the failure we are
+ * fixing.
+ */
+async function copyPlaywrightCoreRuntime(stageDir: string): Promise<void> {
+  const SOURCE_ROOT = join(ROOT, "node_modules", "playwright-core");
+  if (!(await pathExists(SOURCE_ROOT))) {
+    stderr.write(
+      "warning: playwright-core not found under node_modules; skipping.\n",
+    );
+    return;
+  }
+
+  const DEST = join(stageDir, "node_modules", "playwright-core");
+
+  // Skip TypeScript type definitions and developer-facing docs that
+  // bloat the bundle without changing runtime behaviour. Everything
+  // else (lib/, index.{js,mjs}, package.json, browsers.json, bin/,
+  // LICENSE, NOTICE, ThirdPartyNotices.txt) must be preserved verbatim
+  // for Playwright's internal `require.resolve` paths to keep working.
+  const SKIP_DIRS = new Set(["types"]);
+  const SKIP_FILES = new Set(["index.d.ts", "README.md"]);
+
+  await mkdir(DEST, { recursive: true });
+  await cp(SOURCE_ROOT, DEST, {
+    recursive: true,
+    filter: (src) => {
+      const rel = src.slice(SOURCE_ROOT.length).replace(/^[\\/]/, "");
+      if (rel === "") return true;
+      const top = rel.split(/[\\/]/, 1)[0]!;
+      if (SKIP_DIRS.has(top)) return false;
+      if (rel.endsWith(".d.ts")) return false;
+      if (SKIP_FILES.has(rel)) return false;
+      return true;
+    },
+  });
+  stdout.write(`bundled playwright-core → ${DEST}\n`);
+}
+
+/**
  * Lays out a minimal `node_modules/better-sqlite3` tree next to the SEA
  * binary so the runtime loader (see `src/native/load-better-sqlite3.ts`)
  * can resolve it via `createRequire` anchored at the executable's dir.
@@ -195,6 +243,31 @@ async function main(): Promise<number> {
     );
   }
 
+  // pdfjs worker for os.fs.read_document(format=pdf). The pdfjs-dist v4
+  // legacy build still spawns an in-process "fake worker" by dynamically
+  // importing `./pdf.worker.mjs`. esbuild does not bundle that file into
+  // dist-sea/cli.mjs (the import is non-static), so the SEA binary needs
+  // the worker on disk. `pdf-extractor.ts:resolvePdfWorkerSrc` looks for
+  // it at `<dirname(execPath)>/vendor/pdfjs/pdf.worker.mjs` first.
+  const pdfWorkerSrc = join(
+    ROOT,
+    "node_modules",
+    "pdfjs-dist",
+    "legacy",
+    "build",
+    "pdf.worker.mjs",
+  );
+  const pdfWorkerDest = join(stageDir, "vendor", "pdfjs", "pdf.worker.mjs");
+  if (await pathExists(pdfWorkerSrc)) {
+    await mkdir(dirname(pdfWorkerDest), { recursive: true });
+    await cp(pdfWorkerSrc, pdfWorkerDest);
+    stdout.write(`bundled pdfjs worker → ${pdfWorkerDest}\n`);
+  } else {
+    stderr.write(
+      `warning: pdfjs worker missing at ${pdfWorkerSrc}. Run \`npm install\` before packaging or os.fs.read_document(format=pdf) will fail in the SEA binary.\n`,
+    );
+  }
+
   // better-sqlite3 must live in a standard `node_modules/` layout next to
   // the SEA binary because `src/native/load-better-sqlite3.ts` uses
   // `createRequire(<execDir>/__atomic_sea_anchor__.js)` at runtime to
@@ -202,6 +275,13 @@ async function main(): Promise<number> {
   // with the same layout. Devdeps / docs / sources are skipped to keep the
   // bundle slim; tests in each package are skipped too.
   await copyBetterSqlite3Runtime(stageDir);
+
+  // playwright-core follows the same anchored-require pattern. It is
+  // marked external in `scripts/bundle-sea.ts` because esbuild cannot
+  // statically resolve its internal `require.resolve("../../../package.json")`
+  // calls; bundling them produces a SEA binary that crashes on first
+  // browser tool invocation with `Cannot find module '../../../package.json'`.
+  await copyPlaywrightCoreRuntime(stageDir);
 
   const readme = [
     `atomic-agent CLI (${target.slug}, Node SEA)`,

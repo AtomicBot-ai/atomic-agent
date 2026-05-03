@@ -4,6 +4,7 @@ import type {
   Page,
 } from "playwright-core";
 import type { BrowserChannel } from "../../config/index.js";
+import { loadPlaywrightCore } from "../../native/load-playwright-core.js";
 import { summariseAriaSnapshot } from "./aria-compressor.js";
 import { buildChromeLaunchArgs } from "./build-chrome-launch-args.js";
 import {
@@ -267,7 +268,7 @@ export class PlaywrightBackend implements BrowserBackend {
   }
 
   private async initialise(): Promise<void> {
-    const playwright = await import("playwright-core");
+    const playwright = await loadPlaywrightCore();
     const cdpUrl = this.options.cdpUrl ?? (await this.launchOwnChrome());
     const browser = await playwright.chromium.connectOverCDP(cdpUrl, {
       timeout: this.options.launchTimeoutMs,

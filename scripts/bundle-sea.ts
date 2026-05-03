@@ -37,7 +37,13 @@ async function main(): Promise<number> {
     jsx: "automatic",
     jsxImportSource: "react",
     mainFields: ["module", "main"],
-    external: ["better-sqlite3"],
+    // `playwright-core` performs `require.resolve(...)` calls at module load
+    // (e.g. `lib/server/utils/userAgent.js → coreDir`) that esbuild cannot
+    // statically inline. Bundling them produces a SEA binary that fails with
+    // `Cannot find module '../../../package.json'` the first time a browser
+    // tool runs. Externalise the package and ship its `node_modules/` tree
+    // next to the binary (see `scripts/package-bundle.ts`).
+    external: ["better-sqlite3", "playwright-core"],
     loader: { ".node": "file" },
     // CJS dependencies use `require("events")`, `__dirname`, and `__filename`. The ESM output must
     // polyfill all three: `createRequire(import.meta.url)` for `require`, and

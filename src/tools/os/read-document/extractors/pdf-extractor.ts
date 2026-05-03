@@ -1,3 +1,7 @@
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { execPath } from "node:process";
+import { pathToFileURL } from "node:url";
 import type { Extractor, ExtractResult } from "./extractor-types.js";
 
 /**
@@ -124,13 +128,62 @@ function clampPageRange(
  * Dynamic import is intentional: pdfjs-dist is ~1.8 MB and has top-level
  * side effects (globalThis patching). Only load it when we actually need
  * to parse a PDF. Cached in module scope after first call.
+ *
+ * pdfjs v4 legacy still spins up a "fake worker" in Node — it dynamically
+ * imports `./pdf.worker.mjs` relative to its own file. That dynamic import
+ * fails in both bundled (SEA) and unbundled runtimes because the path is
+ * not statically analysable. We resolve the worker file ourselves and pin
+ * it on `GlobalWorkerOptions.workerSrc` before the first `getDocument` call.
  */
 let pdfJsModule: typeof import("pdfjs-dist/legacy/build/pdf.mjs") | undefined;
 async function loadPdfJs(): Promise<
   typeof import("pdfjs-dist/legacy/build/pdf.mjs")
 > {
   if (!pdfJsModule) {
-    pdfJsModule = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const mod = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const workerSrc = resolvePdfWorkerSrc();
+    if (workerSrc !== null) {
+      mod.GlobalWorkerOptions.workerSrc = workerSrc;
+    }
+    pdfJsModule = mod;
   }
   return pdfJsModule;
+}
+
+/**
+ * Resolve `pdf.worker.mjs` across runtime modes:
+ *
+ *   1. `ATOMIC_AGENT_PDF_WORKER_PATH` env override (operator escape hatch).
+ *   2. `<dirname(execPath)>/vendor/pdfjs/pdf.worker.mjs` — sidecar file shipped
+ *      next to the SEA binary by `scripts/package-bundle.ts`. Same convention
+ *      as `vendor/rg` for ripgrep.
+ *   3. `import.meta.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs")` — dev
+ *      / npm consumers with a real `node_modules` tree.
+ *
+ * Returns `null` if every tier fails; the caller leaves
+ * `GlobalWorkerOptions.workerSrc` unset and pdfjs surfaces its own
+ * "Setting up fake worker failed" error on first use, which is more
+ * informative than a synthetic one here.
+ */
+function resolvePdfWorkerSrc(): string | null {
+  const override = process.env.ATOMIC_AGENT_PDF_WORKER_PATH;
+  if (typeof override === "string" && override.length > 0) {
+    return pathToFileURL(override).href;
+  }
+
+  const nextToBinary = join(
+    dirname(execPath),
+    "vendor",
+    "pdfjs",
+    "pdf.worker.mjs",
+  );
+  if (existsSync(nextToBinary)) {
+    return pathToFileURL(nextToBinary).href;
+  }
+
+  try {
+    return import.meta.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
+  } catch {
+    return null;
+  }
 }
