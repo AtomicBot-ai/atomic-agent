@@ -243,31 +243,6 @@ async function main(): Promise<number> {
     );
   }
 
-  // pdfjs worker for os.fs.read_document(format=pdf). The pdfjs-dist v4
-  // legacy build still spawns an in-process "fake worker" by dynamically
-  // importing `./pdf.worker.mjs`. esbuild does not bundle that file into
-  // dist-sea/cli.mjs (the import is non-static), so the SEA binary needs
-  // the worker on disk. `pdf-extractor.ts:resolvePdfWorkerSrc` looks for
-  // it at `<dirname(execPath)>/vendor/pdfjs/pdf.worker.mjs` first.
-  const pdfWorkerSrc = join(
-    ROOT,
-    "node_modules",
-    "pdfjs-dist",
-    "legacy",
-    "build",
-    "pdf.worker.mjs",
-  );
-  const pdfWorkerDest = join(stageDir, "vendor", "pdfjs", "pdf.worker.mjs");
-  if (await pathExists(pdfWorkerSrc)) {
-    await mkdir(dirname(pdfWorkerDest), { recursive: true });
-    await cp(pdfWorkerSrc, pdfWorkerDest);
-    stdout.write(`bundled pdfjs worker → ${pdfWorkerDest}\n`);
-  } else {
-    stderr.write(
-      `warning: pdfjs worker missing at ${pdfWorkerSrc}. Run \`npm install\` before packaging or os.fs.read_document(format=pdf) will fail in the SEA binary.\n`,
-    );
-  }
-
   // better-sqlite3 must live in a standard `node_modules/` layout next to
   // the SEA binary because `src/native/load-better-sqlite3.ts` uses
   // `createRequire(<execDir>/__atomic_sea_anchor__.js)` at runtime to

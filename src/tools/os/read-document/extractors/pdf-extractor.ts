@@ -1,7 +1,3 @@
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { execPath } from "node:process";
-import { pathToFileURL } from "node:url";
 import type { Extractor, ExtractResult } from "./extractor-types.js";
 
 /**
@@ -129,11 +125,23 @@ function clampPageRange(
  * side effects (globalThis patching). Only load it when we actually need
  * to parse a PDF. Cached in module scope after first call.
  *
- * pdfjs v4 legacy still spins up a "fake worker" in Node — it dynamically
- * imports `./pdf.worker.mjs` relative to its own file. That dynamic import
- * fails in both bundled (SEA) and unbundled runtimes because the path is
- * not statically analysable. We resolve the worker file ourselves and pin
- * it on `GlobalWorkerOptions.workerSrc` before the first `getDocument` call.
+ * pdfjs v4 legacy spins up an in-process "fake worker" by doing
+ * `await import(GlobalWorkerOptions.workerSrc || "./pdf.worker.mjs")`.
+ * That fails in two ways depending on the runtime:
+ *
+ *   - In Node SEA, dynamic `import()` of arbitrary `file://` URLs is not
+ *     supported by the SEA loader (it can only resolve specifiers bundled
+ *     into the blob), so even pinning `workerSrc` to a sidecar file path
+ *     errors with `No such built-in module: file:///...`.
+ *   - In dev, the relative `./pdf.worker.mjs` resolves against pdfjs's own
+ *     module URL, which is also not a static specifier.
+ *
+ * pdfjs has a documented escape hatch: before the dynamic import it checks
+ * `globalThis.pdfjsWorker?.WorkerMessageHandler`. If present, it uses that
+ * handler directly. We pre-load the worker module via a *string-literal*
+ * dynamic import — esbuild bundles it into the SEA blob, and Node's own
+ * resolver handles it from `node_modules` in dev — and stash the namespace
+ * on `globalThis.pdfjsWorker`, which works identically in both runtimes.
  */
 let pdfJsModule: typeof import("pdfjs-dist/legacy/build/pdf.mjs") | undefined;
 async function loadPdfJs(): Promise<
@@ -141,49 +149,28 @@ async function loadPdfJs(): Promise<
 > {
   if (!pdfJsModule) {
     const mod = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const workerSrc = resolvePdfWorkerSrc();
-    if (workerSrc !== null) {
-      mod.GlobalWorkerOptions.workerSrc = workerSrc;
-    }
+    await ensurePdfWorkerOnMainThread();
     pdfJsModule = mod;
   }
   return pdfJsModule;
 }
 
-/**
- * Resolve `pdf.worker.mjs` across runtime modes:
- *
- *   1. `ATOMIC_AGENT_PDF_WORKER_PATH` env override (operator escape hatch).
- *   2. `<dirname(execPath)>/vendor/pdfjs/pdf.worker.mjs` — sidecar file shipped
- *      next to the SEA binary by `scripts/package-bundle.ts`. Same convention
- *      as `vendor/rg` for ripgrep.
- *   3. `import.meta.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs")` — dev
- *      / npm consumers with a real `node_modules` tree.
- *
- * Returns `null` if every tier fails; the caller leaves
- * `GlobalWorkerOptions.workerSrc` unset and pdfjs surfaces its own
- * "Setting up fake worker failed" error on first use, which is more
- * informative than a synthetic one here.
- */
-function resolvePdfWorkerSrc(): string | null {
-  const override = process.env.ATOMIC_AGENT_PDF_WORKER_PATH;
-  if (typeof override === "string" && override.length > 0) {
-    return pathToFileURL(override).href;
-  }
+// pdfjs-dist does not ship `.d.ts` declarations for the worker entry point
+// (only the main `pdf.mjs` is typed). At runtime the module exports
+// `WorkerMessageHandler` as a named export — that is the only shape pdfjs
+// requires on `globalThis.pdfjsWorker`.
+interface PdfWorkerModule {
+  WorkerMessageHandler: unknown;
+}
+interface PdfWorkerGlobal {
+  pdfjsWorker?: PdfWorkerModule;
+}
 
-  const nextToBinary = join(
-    dirname(execPath),
-    "vendor",
-    "pdfjs",
-    "pdf.worker.mjs",
-  );
-  if (existsSync(nextToBinary)) {
-    return pathToFileURL(nextToBinary).href;
-  }
-
-  try {
-    return import.meta.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs");
-  } catch {
-    return null;
-  }
+async function ensurePdfWorkerOnMainThread(): Promise<void> {
+  const slot = globalThis as unknown as PdfWorkerGlobal;
+  if (slot.pdfjsWorker?.WorkerMessageHandler) return;
+  const workerModule = (await import(
+    "pdfjs-dist/legacy/build/pdf.worker.mjs"
+  )) as PdfWorkerModule;
+  slot.pdfjsWorker = workerModule;
 }
