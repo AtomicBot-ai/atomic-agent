@@ -129,6 +129,19 @@ export interface TraceToolInvocation extends TraceEventBase {
   summary: string;
   details?: Record<string, unknown>;
   toolTruncated?: boolean;
+  /**
+   * Position of this call in the parent step's batch. `0` for solo
+   * steps; `0..(batchSize-1)` for batched steps. Optional for
+   * forward-compatibility with traces recorded before parallel tool
+   * calls landed — old replay code that ignores the field continues
+   * to work.
+   */
+  batchIndex?: number;
+  /**
+   * Total calls in the parent step. `1` for solo steps; `>=2` for
+   * batched steps. Optional for back-compat (see `batchIndex`).
+   */
+  batchSize?: number;
 }
 
 export interface TraceParseRetry extends TraceEventBase {

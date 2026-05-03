@@ -54,6 +54,8 @@ describe("createTraceRecorder", () => {
       event: {
         type: "tool_call_parsed",
         call: { tool: "shell.run", args: { command: "ls" } },
+        batchIndex: 0,
+        batchSize: 1,
       },
     });
     rec.onAgentEvent({
@@ -67,6 +69,8 @@ describe("createTraceRecorder", () => {
           details: { exitCode: 0 },
           truncated: false,
         },
+        batchIndex: 0,
+        batchSize: 1,
       },
     });
     const invocation = events.find((e) => e.type === "tool_invocation");
@@ -80,6 +84,68 @@ describe("createTraceRecorder", () => {
       turnIndex: 0,
       stepIndex: 0,
     });
+    // Solo step → batchIndex/batchSize are omitted from the trace
+    // payload (forward-compat with replay code that ignores them).
+    expect(invocation && "batchIndex" in invocation).toBe(false);
+    expect(invocation && "batchSize" in invocation).toBe(false);
+  });
+
+  it("emits N tool_invocation events per stepIndex with monotonic batchIndex", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-batch", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 0 });
+    // Three parsed events arrive first, then three executed.
+    for (let i = 0; i < 3; i += 1) {
+      rec.onAgentEvent({
+        type: "llm_event",
+        event: {
+          type: "tool_call_parsed",
+          call: { tool: "os.fs.read", args: { path: `f${i}` } },
+          batchIndex: i,
+          batchSize: 3,
+        },
+      });
+    }
+    for (let i = 0; i < 3; i += 1) {
+      rec.onAgentEvent({
+        type: "llm_event",
+        event: {
+          type: "tool_call_executed",
+          result: {
+            tool: "os.fs.read",
+            status: "ok",
+            summary: `read f${i}`,
+            truncated: false,
+          },
+          batchIndex: i,
+          batchSize: 3,
+        },
+      });
+    }
+    const invocations = events.filter((e) => e.type === "tool_invocation");
+    expect(invocations).toHaveLength(3);
+    expect(
+      invocations.map((e) =>
+        e.type === "tool_invocation" ? e.batchIndex : -1,
+      ),
+    ).toEqual([0, 1, 2]);
+    expect(
+      invocations.map((e) =>
+        e.type === "tool_invocation" ? e.batchSize : -1,
+      ),
+    ).toEqual([3, 3, 3]);
+    expect(
+      invocations.map((e) =>
+        e.type === "tool_invocation" ? e.args : null,
+      ),
+    ).toEqual([{ path: "f0" }, { path: "f1" }, { path: "f2" }]);
+    // All events sit on the same stepIndex.
+    expect(
+      invocations.every(
+        (e) => e.type === "tool_invocation" && e.stepIndex === 0,
+      ),
+    ).toBe(true);
   });
 
   it("forwards prompt_captured verbatim", () => {

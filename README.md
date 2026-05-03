@@ -18,6 +18,7 @@ Embed it in a Tauri app, run it in the terminal, or expose it behind an OpenAI-c
 
 - **Local-first by design**: your browser, your files, your machine, your `llama.cpp` server.
 - **Small-model friendly**: stable prompt prefix, KV-cache reuse, grammar-constrained tool calls, bounded prompt growth.
+- **Parallel tool calls**: every inference emits a JSON array of `1..N` tool calls (a solo step is a length-1 array); the runtime executes them concurrently where safe (read-only fan-out) and serialises the rest, so a "scan 4 CSVs" step takes ~1 read of wall time instead of 4.
 - **More than chat**: browser automation, OS tools, user-authored skills, background tasks, webhooks, and traces.
 - **Easy to embed**: Tauri sidecar over NDJSON, standalone CLI/TUI, or OpenAI-compatible HTTP surface.
 - **Safer to ship**: dangerous actions go through approvals, state lives in SQLite, traces stay local, and runtime behavior is explicit.
@@ -146,7 +147,8 @@ atomic-agent config set '<full-json>'
 
 - **Stable prompt prefix** keeps the expensive part of the prompt byte-stable inside a session.
 - **Per-session slot reuse** lets `llama-server` hit KV cache instead of rebuilding context every step.
-- **Grammar-constrained tool calls** keep structured JSON reliable on smaller models.
+- **Grammar-constrained tool calls** keep structured JSON reliable on smaller models — `root ::= tool-call-array` forces every emission to start with `[`, removing the GBNF first-token bias toward `{` that otherwise traps small models in the single-call form even when their reasoning planned a parallel batch.
+- **Resource-class-aware parallel batches** let the model collapse N independent reads into one inference + one batched execution, with deterministic batch-index ordering and per-call failure isolation. Approval-gated and terminal verbs (`reply`, `finish`) are validated to stay solo (length-1 arrays). See `AGENTS.md` §"Parallel tool calls per step".
 - **Bounded prompt tail** prevents world state, conversation, and memory from growing without limit.
 - **Externalized state** means sessions, world snapshots, loaded skills, notes, and tasks live outside the model.
 - **Narrow retry policy** improves resilience without replaying already-executed tools.

@@ -1,9 +1,20 @@
 import {
   extractReasoning,
-  parseToolCall,
+  parseToolCalls,
   ToolCallParseError,
 } from "../llm/grammar/tool-call-grammar.js";
-import type { ToolCallPayload } from "../llm/grammar/tool-call-grammar.js";
+import type {
+  ToolCallBatch,
+  ToolCallPayload,
+} from "../llm/grammar/tool-call-grammar.js";
+import {
+  executeBatch,
+  toBatchInputs,
+} from "./batch-executor.js";
+import {
+  isBatchable,
+  resourceClassFor,
+} from "./tool-resource-class.js";
 import { createStreamParser } from "../llm/grammar/stream-parser.js";
 import type { StreamParseEvent } from "../llm/grammar/stream-parser.js";
 import { checkProfilePromptAligned } from "../llm/profile-invariants.js";
@@ -133,13 +144,39 @@ export interface StepContext {
  */
 export type StepTerminal = "turn" | "session" | null;
 
+/**
+ * Outcome of a single inference step.
+ *
+ * `toolCalls` / `toolResults` always have length ≥ 1 and are aligned
+ * by index (the result at `toolResults[i]` corresponds to the call at
+ * `toolCalls[i]`). For the legacy single-call path both arrays have
+ * length 1; for a batched step both arrays have N entries in
+ * batch-index order (the order the model emitted them).
+ *
+ * `terminal` is only set when the model emitted exactly one terminal
+ * verb (`reply` or `finish`). Terminal verbs are forbidden inside
+ * multi-call batches, so a `terminal !== null` outcome always implies
+ * `toolCalls.length === 1`.
+ */
 export interface StepOutcome {
-  toolCall: ToolCallPayload;
-  toolResult: CompressedToolResult;
+  toolCalls: ToolCallPayload[];
+  toolResults: CompressedToolResult[];
   completion: CompletionResult;
   prompt: BuiltPrompt;
   nextSession: SessionState;
   terminal: StepTerminal;
+}
+
+/** Validation failure for a multi-call batch (forbidden tool / oversized / unknown). */
+export class BatchValidationError extends Error {
+  constructor(
+    message: string,
+    /** Per-call error reason, indexed by `batchIndex`. `null` ⇒ this call was fine. */
+    public readonly perCall: Array<string | null>,
+  ) {
+    super(message);
+    this.name = "BatchValidationError";
+  }
 }
 
 /**
@@ -270,11 +307,20 @@ async function executeStepInner(
     );
   }
 
-  let parsed = tryParseToolCall(completion, deps.profile);
+  let parsed = tryParseToolCalls(completion, deps.profile);
+  if (parsed.ok) {
+    const validation = validateBatch(parsed.batch, deps.registry);
+    if (!validation.ok) {
+      parsed = { ok: false, error: validation.error };
+    }
+  }
+
   if (!parsed.ok) {
-    // One-shot parser retry: grammar outputs can be truncated or
-    // malformed for transient reasons (stop-sequence race, model hiccup).
-    // Retry via the unary LLM path — the streaming path has already
+    // One-shot retry: grammar outputs can be truncated or malformed for
+    // transient reasons (stop-sequence race, model hiccup), and a batch
+    // can fail validation when the model puts an approval-gated or
+    // terminal verb inside an array. The retry replays the inference
+    // through the unary LLM path — the streaming path has already
     // flushed partial deltas, so replaying through it would double-emit.
     deps.onEvent?.({
       type: "parse_retry",
@@ -334,7 +380,13 @@ async function executeStepInner(
       );
     }
 
-    parsed = tryParseToolCall(completion, deps.profile);
+    parsed = tryParseToolCalls(completion, deps.profile);
+    if (parsed.ok) {
+      const validation = validateBatch(parsed.batch, deps.registry);
+      if (!validation.ok) {
+        parsed = { ok: false, error: validation.error };
+      }
+    }
     if (!parsed.ok) {
       deps.logger?.warn("tool-call parse failed after retry", {
         sessionId: ctx.session.id,
@@ -349,113 +401,170 @@ async function executeStepInner(
       );
     }
   }
-  const toolCall = parsed.toolCall;
-  if (!deps.registry.has(toolCall.tool)) {
-    throw new ToolExecutionError(
-      toolCall.tool,
-      `tool not registered in this agent: ${toolCall.tool}`,
-    );
-  }
-  deps.onEvent?.({ type: "tool_call_parsed", call: toolCall });
+  const batch = parsed.batch;
+  const calls = batch.calls;
+  const isSolo = calls.length === 1;
+  const batchSize = calls.length;
 
-  const toolStartedAt = Date.now();
-  let toolResult: CompressedToolResult;
-  let workSession = ctx.session;
-  try {
-    toolResult = await deps.registry.invoke(toolCall.tool, toolCall.args, {
-      workingDir: ctx.session.workingDir,
-      sessionId: ctx.session.id,
-      stepIndex: ctx.stepIndex,
-      signal: ctx.signal,
-    });
-  } catch (err) {
-    // Abort signal trumps error handling: propagate so the loop can
-    // close the turn cleanly with `reason: cancelled`.
-    if (ctx.signal.aborted) throw err;
-    const cause = err instanceof Error ? err : new Error(String(err));
-    deps.logger?.warn("tool execution failed", {
-      sessionId: ctx.session.id,
-      stepIndex: ctx.stepIndex,
-      tool: toolCall.tool,
-      error: cause.message,
-    });
-    toolResult = compressToolResult({
-      tool: toolCall.tool,
-      status: "error",
-      output: cause.message,
-      details: { errorName: cause.name },
-    });
-  }
-  if (
-    toolResult.status === "error" &&
-    getConfig().agent.autoExpandRareOnError &&
-    isRareToolName(toolCall.tool) &&
-    !workSession.loadedTools.some((t) => t.name === toolCall.tool)
-  ) {
-    const d = getToolDescriptorByName(toolCall.tool);
-    if (d && d.tier === "rare") {
-      workSession = recordLoadedTool(
-        workSession,
-        {
-          name: d.name,
-          summary: d.summary,
-          argsSchema: d.argsSchema,
-          ...(d.examples && d.examples.length > 0
-            ? { examples: d.examples }
-            : {}),
-          source: "auto",
-        },
-        getConfig().agent.loadedToolsCap,
+  // Registry membership: surfaces as `ToolExecutionError` (category
+  // `tool`) instead of `BatchValidationError`. A missing tool is a
+  // bootstrap-time configuration mismatch, not a transient grammar
+  // failure — replaying the prompt would not change the registry.
+  for (const call of calls) {
+    if (!deps.registry.has(call.tool)) {
+      throw new ToolExecutionError(
+        call.tool,
+        `tool not registered in this agent: ${call.tool}`,
       );
-      deps.onEvent?.({
-        type: "rare_tool_autoloaded",
-        tool: toolCall.tool,
-        source: "auto",
-        stepIndex: ctx.stepIndex,
-      });
     }
   }
-  const toolDurationMs = Date.now() - toolStartedAt;
-  deps.onEvent?.({ type: "tool_call_executed", result: toolResult });
-  deps.metrics?.recordTool({
-    sessionId: ctx.session.id,
-    tool: toolResult.tool,
-    status: toolResult.status,
-    durationMs: toolDurationMs,
-  });
-  deps.logger?.info("tool executed", {
+
+  // Emit one `tool_call_parsed` per call. Single-call steps preserve the
+  // legacy ordering (parsed → executed → next event) one-for-one;
+  // batched steps emit all parsed events first, then execution-order
+  // results. Consumers correlate via `batchIndex` / `batchSize`.
+  for (let i = 0; i < calls.length; i += 1) {
+    deps.onEvent?.({
+      type: "tool_call_parsed",
+      call: calls[i]!,
+      batchIndex: i,
+      batchSize,
+    });
+  }
+
+  const stepStartedAt = Date.now();
+  const inputs = toBatchInputs(calls);
+  const batchOutcome = await executeBatch(inputs, deps.registry, {
+    workingDir: ctx.session.workingDir,
     sessionId: ctx.session.id,
     stepIndex: ctx.stepIndex,
-    tool: toolResult.tool,
-    status: toolResult.status,
-    durationMs: toolDurationMs,
-  });
-
-  const terminal = classifyTerminal(toolCall, toolResult);
-
-  let nextSession = recordLatestResult(
-    {
-      ...workSession,
-      stepCount: workSession.stepCount + 1,
+    signal: ctx.signal,
+    onCallFinished: ({ batchIndex, result, durationMs }) => {
+      deps.onEvent?.({
+        type: "tool_call_executed",
+        result,
+        batchIndex,
+        batchSize,
+      });
+      deps.metrics?.recordTool({
+        sessionId: ctx.session.id,
+        tool: result.tool,
+        status: result.status,
+        durationMs,
+      });
+      deps.logger?.info("tool executed", {
+        sessionId: ctx.session.id,
+        stepIndex: ctx.stepIndex,
+        batchIndex,
+        batchSize,
+        tool: result.tool,
+        status: result.status,
+        durationMs,
+      });
     },
-    {
-      tool: toolResult.tool,
-      status: toolResult.status,
-      summary: toolResult.summary,
-      ...(toolResult.details !== undefined ? { details: toolResult.details } : {}),
+  });
+  const stepDurationMs = Date.now() - stepStartedAt;
+
+  // Materialise per-call results in batch-index order. Cancelled tail
+  // calls are folded into a synthetic error result so the transcript
+  // and `applyStateEffects` stay in lockstep with `toolCalls.length`.
+  const toolResults: CompressedToolResult[] = batchOutcome.results.map(
+    (slot, idx): CompressedToolResult => {
+      if (slot.compressed) return slot.compressed;
+      return compressToolResult({
+        tool: slot.call.tool,
+        status: "error",
+        output: `cancelled before invocation (batch index ${idx})`,
+        details: { cancelled: true },
+      });
     },
   );
-  nextSession = applyStateEffects(nextSession, toolResult);
-  nextSession = appendConversationTurns({
+
+  let workSession: SessionState = {
+    ...ctx.session,
+    stepCount: ctx.session.stepCount + 1,
+  };
+
+  // Per-failed-rare autoload, applied in batch-index order. Successful
+  // rare calls feed `recordLoadedTool` via `details.toolLoaded` in
+  // `applyStateEffects` below.
+  for (let i = 0; i < toolResults.length; i += 1) {
+    const result = toolResults[i]!;
+    const call = calls[i]!;
+    if (
+      result.status === "error" &&
+      getConfig().agent.autoExpandRareOnError &&
+      isRareToolName(call.tool) &&
+      !workSession.loadedTools.some((t) => t.name === call.tool)
+    ) {
+      const d = getToolDescriptorByName(call.tool);
+      if (d && d.tier === "rare") {
+        workSession = recordLoadedTool(
+          workSession,
+          {
+            name: d.name,
+            summary: d.summary,
+            argsSchema: d.argsSchema,
+            ...(d.examples && d.examples.length > 0
+              ? { examples: d.examples }
+              : {}),
+            source: "auto",
+          },
+          getConfig().agent.loadedToolsCap,
+        );
+        deps.onEvent?.({
+          type: "rare_tool_autoloaded",
+          tool: call.tool,
+          source: "auto",
+          stepIndex: ctx.stepIndex,
+        });
+      }
+    }
+  }
+
+  // Apply state effects in batch-index order. `recordLatestResult` is
+  // called on every result (last writer wins, deterministic). World
+  // snapshot updates from multiple results collapse to last writer
+  // by index.
+  let nextSession: SessionState = workSession;
+  for (let i = 0; i < toolResults.length; i += 1) {
+    const result = toolResults[i]!;
+    nextSession = recordLatestResult(nextSession, {
+      tool: result.tool,
+      status: result.status,
+      summary: result.summary,
+      ...(result.details !== undefined ? { details: result.details } : {}),
+    });
+    nextSession = applyStateEffects(nextSession, result);
+  }
+
+  // Terminal classification only meaningful for solo calls — terminal
+  // verbs are validated out of multi-call batches.
+  const terminal: StepTerminal = isSolo
+    ? classifyTerminal(calls[0]!, toolResults[0]!)
+    : null;
+
+  nextSession = appendBatchedTurns({
     state: nextSession,
-    toolCall,
-    toolResult,
+    calls,
+    results: toolResults,
     reasoning,
     terminal,
     onEvent: deps.onEvent,
   });
 
-  return { toolCall, toolResult, completion, prompt, nextSession, terminal };
+  void stepDurationMs; // captured for future cross-call observability hooks
+  if (batchOutcome.cancelled) {
+    throw new CancelledError("batch cancelled mid-execution");
+  }
+  return {
+    toolCalls: calls,
+    toolResults,
+    completion,
+    prompt,
+    nextSession,
+    terminal,
+  };
 }
 
 interface InitialCompletionArgs {
@@ -533,27 +642,102 @@ function normalizeContent(
     : completion.content;
 }
 
-type ToolCallParseResult =
-  | { ok: true; toolCall: ToolCallPayload }
+type ToolCallBatchParseResult =
+  | { ok: true; batch: ToolCallBatch }
   | { ok: false; error: Error };
 
 /**
  * Non-throwing parser wrapper. The step executor uses it to distinguish
  * a malformed first attempt (retryable) from any other error shape.
+ * Returns a `ToolCallBatch` that may carry a single call (legacy
+ * shape) or N calls in batch-index order.
  */
-function tryParseToolCall(
+function tryParseToolCalls(
   completion: CompletionResult,
   profile: ModelProfile,
-): ToolCallParseResult {
+): ToolCallBatchParseResult {
   try {
-    const toolCall = parseToolCall(
+    const batch = parseToolCalls(
       normalizeContent(completion, profile),
       getReasoningTagOptions(profile),
     );
-    return { ok: true, toolCall };
+    return { ok: true, batch };
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err : new Error(String(err)) };
+    return {
+      ok: false,
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
   }
+}
+
+interface BatchValidation {
+  ok: true;
+}
+
+interface BatchValidationFailure {
+  ok: false;
+  error: BatchValidationError;
+}
+
+/**
+ * Enforce batch invariants:
+ *  - Every tool name resolves in the registry (defence in depth — the
+ *    grammar already restricts this).
+ *  - Every call has a known `ResourceClass`.
+ *  - When `calls.length > 1`:
+ *      * No `terminal` verbs (`reply` / `finish`) inside a batch.
+ *      * No `approval_gated` verbs inside a batch.
+ *      * `length <= agent.maxParallelToolCalls`.
+ *  - Single-call payloads always pass — they preserve the legacy
+ *    solo path semantics for any tool, including approval-gated and
+ *    terminal verbs.
+ */
+function validateBatch(
+  batch: ToolCallBatch,
+  registry: ToolRegistry,
+): BatchValidation | BatchValidationFailure {
+  const calls = batch.calls;
+  const perCall: Array<string | null> = new Array(calls.length).fill(null);
+  let firstError: string | null = null;
+
+  // Note: missing-from-registry is intentionally NOT validated here.
+  // That class of failure is surfaced as `ToolExecutionError` by the
+  // step executor (matching the legacy single-call semantics) so the
+  // agent loop's failure category is `tool`, not `grammar`. Replaying
+  // the same prompt would not change the registry contents.
+  void registry;
+  if (calls.length > 1) {
+    const cap = getConfig().agent.maxParallelToolCalls;
+    if (calls.length > cap) {
+      const msg = `batch exceeds maxParallelToolCalls (${calls.length} > ${cap})`;
+      firstError ??= msg;
+    }
+    for (let i = 0; i < calls.length; i += 1) {
+      const call = calls[i]!;
+      const cls = resourceClassFor(call.tool);
+      if (cls === "terminal") {
+        const msg = `terminal verb '${call.tool}' is forbidden inside a batch; emit it as a single call`;
+        perCall[i] = msg;
+        firstError ??= msg;
+      } else if (cls === "approval_gated") {
+        const msg = `approval-gated tool '${call.tool}' is forbidden inside a batch; emit it as a single call`;
+        perCall[i] = msg;
+        firstError ??= msg;
+      } else if (!isBatchable(cls)) {
+        // Unknown class: reject from any batch.
+        const msg = `tool '${call.tool}' has no resource class and cannot be batched`;
+        perCall[i] = msg;
+        firstError ??= msg;
+      }
+    }
+  }
+  if (firstError !== null) {
+    return {
+      ok: false,
+      error: new BatchValidationError(firstError, perCall),
+    };
+  }
+  return { ok: true };
 }
 
 /**
@@ -749,25 +933,41 @@ function classifyTerminal(
   return null;
 }
 
-interface AppendTurnsParams {
+interface AppendBatchedTurnsParams {
   state: SessionState;
-  toolCall: ToolCallPayload;
-  toolResult: CompressedToolResult;
+  calls: readonly ToolCallPayload[];
+  results: readonly CompressedToolResult[];
   reasoning: string;
   terminal: StepTerminal;
   onEvent?: (event: StepEvent) => void;
 }
 
 /**
- * Project the executed step into the conversation transcript. `reply` is
- * collapsed into a single `assistant_reply` turn (no separate tool-call /
- * tool-result pair) so the chat reads naturally. Everything else gets the
- * canonical pair.
+ * Project the executed step (single or batched) into the conversation
+ * transcript. The terminal `reply` verb is always solo (validated out
+ * of multi-call batches) and is collapsed into a single
+ * `assistant_reply` turn — no separate tool-call / tool-result pair —
+ * so the chat reads naturally. For everything else (single non-
+ * terminal call OR a multi-call batch), the canonical
+ * `assistant_tool_call` + `tool_result` pairs are appended in
+ * batch-index order. Reasoning is attached once on the first
+ * `assistant_tool_call` of the batch (a single inference produces a
+ * single `<think>` block regardless of `kind`).
+ *
+ * Per-batch char cap: when the combined summary text would exceed
+ * `agent.batchToolResultCharCap`, oldest within-batch results get
+ * truncated before being appended. This keeps the conversation
+ * section bounded under pathological large-batch outputs without
+ * losing the call/result pairing.
  */
-function appendConversationTurns(params: AppendTurnsParams): SessionState {
-  const { state, toolCall, toolResult, reasoning, terminal, onEvent } = params;
+function appendBatchedTurns(
+  params: AppendBatchedTurnsParams,
+): SessionState {
+  const { state, calls, results, reasoning, terminal, onEvent } = params;
 
   if (terminal === "turn") {
+    const toolCall = calls[0]!;
+    const toolResult = results[0]!;
     const text =
       typeof toolCall.args?.text === "string" && toolCall.args.text.length > 0
         ? (toolCall.args.text as string)
@@ -782,24 +982,66 @@ function appendConversationTurns(params: AppendTurnsParams): SessionState {
     );
   }
 
-  let next = recordTurn(
-    state,
-    assistantToolCallTurn({
-      tool: toolCall.tool,
-      args: toolCall.args,
-      ...(reasoning.length > 0 ? { reasoning } : {}),
-    }),
+  const renderedSummaries = capBatchSummaries(
+    results.map((r) => r.summary),
+    getConfig().agent.batchToolResultCharCap,
   );
-  next = recordTurn(
-    next,
-    toolResultTurn({
-      tool: toolResult.tool,
-      status: toolResult.status,
-      summary: toolResult.summary,
-      ...(toolResult.truncated ? { truncated: true } : {}),
-    }),
-  );
+
+  let next = state;
+  for (let i = 0; i < calls.length; i += 1) {
+    const call = calls[i]!;
+    const result = results[i]!;
+    const cappedSummary = renderedSummaries[i]!;
+    const cappedTruncated = cappedSummary !== result.summary;
+    next = recordTurn(
+      next,
+      assistantToolCallTurn({
+        tool: call.tool,
+        args: call.args,
+        ...(i === 0 && reasoning.length > 0 ? { reasoning } : {}),
+      }),
+    );
+    next = recordTurn(
+      next,
+      toolResultTurn({
+        tool: result.tool,
+        status: result.status,
+        summary: cappedSummary,
+        ...(result.truncated || cappedTruncated ? { truncated: true } : {}),
+      }),
+    );
+  }
   return next;
+}
+
+/**
+ * Apply a soft per-batch char cap across all summaries in one step.
+ * Truncates from the start of the list (oldest within-batch results
+ * lose detail first) so the freshest results — typically the ones the
+ * model will reason about next — keep their full text.
+ */
+function capBatchSummaries(
+  summaries: readonly string[],
+  capChars: number,
+): string[] {
+  const total = summaries.reduce((acc, s) => acc + s.length, 0);
+  if (total <= capChars) return summaries.slice();
+  const out = summaries.slice();
+  let overshoot = total - capChars;
+  for (let i = 0; i < out.length && overshoot > 0; i += 1) {
+    const s = out[i]!;
+    if (s.length === 0) continue;
+    const drop = Math.min(s.length, overshoot);
+    const keep = s.length - drop;
+    if (keep <= 16) {
+      out[i] = "[truncated]";
+      overshoot -= s.length - "[truncated]".length;
+    } else {
+      out[i] = `${s.slice(0, keep)} … [truncated]`;
+      overshoot -= drop - " … [truncated]".length;
+    }
+  }
+  return out;
 }
 
 /**

@@ -12,11 +12,17 @@ import {
 
 describe("checkProfileGrammarAligned", () => {
   it("flags a reasoning profile paired with plain grammar", () => {
-    expect(checkProfileGrammarAligned(QWEN_THINK_PROFILE, "root ::= tool-call")).toHaveLength(2);
+    expect(
+      checkProfileGrammarAligned(
+        QWEN_THINK_PROFILE,
+        "root ::= tool-call-array",
+      ),
+    ).toHaveLength(2);
   });
 
   it("flags a gemma grammar that omits the configured close tag", () => {
-    const grammar = "root ::= channel-prelude tool-call\nchannel-prelude ::= channel-body";
+    const grammar =
+      "root ::= channel-prelude tool-call-array\nchannel-prelude ::= channel-body";
     expect(checkProfileGrammarAligned(GEMMA4_THINK_PROFILE, grammar)).toContain(
       "reasoning profile grammar must contain the configured close tag",
     );
@@ -24,7 +30,7 @@ describe("checkProfileGrammarAligned", () => {
 
   it("accepts matching qwen reasoning grammar", () => {
     const grammar = [
-      "root ::= think-prelude tool-call",
+      "root ::= think-prelude tool-call-array",
       'think-prelude ::= think-body "</think>" ws',
     ].join("\n");
     expect(checkProfileGrammarAligned(QWEN_THINK_PROFILE, grammar)).toEqual([]);
@@ -32,16 +38,19 @@ describe("checkProfileGrammarAligned", () => {
 
   it("accepts matching gemma reasoning grammar", () => {
     const grammar = [
-      "root ::= channel-prelude tool-call",
+      "root ::= channel-prelude tool-call-array",
       'channel-prelude ::= channel-body "<channel|>" ws',
     ].join("\n");
     expect(checkProfileGrammarAligned(GEMMA4_THINK_PROFILE, grammar)).toEqual([]);
   });
 
   it("accepts the plain grammar for plain profile", () => {
-    expect(checkProfileGrammarAligned(PLAIN_INSTRUCT_PROFILE, "root ::= tool-call")).toEqual(
-      [],
-    );
+    expect(
+      checkProfileGrammarAligned(
+        PLAIN_INSTRUCT_PROFILE,
+        "root ::= tool-call-array",
+      ),
+    ).toEqual([]);
   });
 });
 

@@ -18,8 +18,14 @@ export interface PromptCapturedTokens {
  *   3. Optional `reasoning` / `reasoning_delta` / `assistant_delta`
  *   4. Optional `parse_retry` (followed by another `llm_completed` +
  *      `llm_raw_completion` with `attempt: 2`)
- *   5. `tool_call_parsed`
- *   6. `tool_call_executed`
+ *   5. `tool_call_parsed` — once per call. For a batched step (N > 1),
+ *      N events fire in batch-index order before any execution starts.
+ *      `batchIndex`/`batchSize` are present on every event; single
+ *      calls report `batchIndex: 0, batchSize: 1`.
+ *   6. `tool_call_executed` — once per call. Order matches the order
+ *      results land (within a serialised group: batch-index order;
+ *      across groups: undefined). The matching `batchIndex` is carried
+ *      so consumers can correlate parsed↔executed pairs.
  *   7. Optional `assistant_reply` for the `reply` terminal
  *
  * `step_error` short-circuits the sequence and carries the failure.
@@ -76,8 +82,25 @@ export type StepEvent =
    * text.
    */
   | { type: "assistant_delta"; text: string }
-  | { type: "tool_call_parsed"; call: ToolCallPayload }
-  | { type: "tool_call_executed"; result: CompressedToolResult }
+  | {
+      type: "tool_call_parsed";
+      call: ToolCallPayload;
+      /**
+       * Position of this call inside the parsed batch (0-based). For a
+       * single-call step always `0`; for a batched step every parsed
+       * event in the same step shares the same `batchSize` and
+       * different `batchIndex` values in `[0, batchSize)`.
+       */
+      batchIndex: number;
+      batchSize: number;
+    }
+  | {
+      type: "tool_call_executed";
+      result: CompressedToolResult;
+      /** Mirrors the corresponding `tool_call_parsed.batchIndex`. */
+      batchIndex: number;
+      batchSize: number;
+    }
   /**
    * Rare-tool execution failed; the runtime injected the full schema into
    * `session.loadedTools` so the next step can retry with valid args.

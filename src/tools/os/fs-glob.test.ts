@@ -59,6 +59,14 @@ describe("compileGlob", () => {
     expect(re.test("a.b+c.txt")).toBe(true);
     expect(re.test("aXbXcXtxt")).toBe(false);
   });
+
+  it("is case-sensitive by default and case-insensitive with flag i", () => {
+    const cs = compileGlob("**/*cv*");
+    expect(cs.test("dir/Resume CV.pdf")).toBe(false);
+    const ci = compileGlob("**/*cv*", "i");
+    expect(ci.test("dir/Resume CV.pdf")).toBe(true);
+    expect(ci.test("dir/Resume cv.pdf")).toBe(true);
+  });
 });
 
 describe("os.fs.glob", () => {
@@ -189,5 +197,73 @@ describe("os.fs.glob", () => {
       makeCtx(dir),
     );
     expect(result.details.files).toEqual(["x.txt"]);
+  });
+
+  it("sortByMtime returns globally newest within limit, even when many noise files in alphabetically earlier dirs", async () => {
+    // .cache sorts before Downloads alphabetically — this mirrors the real
+    // bug where the walk filled limit on .cache files and never reached the
+    // real target. With the fix the whole tree is walked and the newest
+    // matches win regardless of walk order.
+    await mkdir(join(dir, ".cache"));
+    for (let i = 0; i < 20; i++) {
+      const p = join(dir, ".cache", `noise-cv-${i}.txt`);
+      await writeFile(p, "", "utf8");
+      const past = new Date(Date.now() - 60 * 60_000);
+      await utimes(p, past, past);
+    }
+    await mkdir(join(dir, "Downloads"));
+    const target = join(dir, "Downloads", "Nikita CV.pdf");
+    await writeFile(target, "", "utf8");
+    const now = new Date();
+    await utimes(target, now, now);
+    const result = await osFsGlobTool.run(
+      {
+        pattern: ["**/*cv*", "**/*CV*"],
+        ignore: [],
+        sortByMtime: true,
+        limit: 1,
+      },
+      makeCtx(dir),
+    );
+    const files = result.details.files as string[];
+    expect(files).toEqual(["Downloads/Nikita CV.pdf"]);
+    expect(result.details.truncated).toBe(true);
+  });
+
+  it("nocase=true matches mixed-case basenames in one pass", async () => {
+    await mkdir(join(dir, "Downloads"));
+    await writeFile(join(dir, "Downloads", "Nikita CV.pdf"), "", "utf8");
+    await writeFile(join(dir, "Downloads", "alex_cv.pdf"), "", "utf8");
+    const result = await osFsGlobTool.run(
+      { pattern: "**/*cv*.pdf", ignore: [], nocase: true },
+      makeCtx(dir),
+    );
+    expect((result.details.files as string[]).sort()).toEqual([
+      "Downloads/Nikita CV.pdf",
+      "Downloads/alex_cv.pdf",
+    ]);
+  });
+
+  it("default ignore skips .cache, Library, .cargo and similar caches", async () => {
+    for (const trashy of [".cache", "Library", ".cargo", "__pycache__", ".npm"]) {
+      await mkdir(join(dir, trashy));
+      await writeFile(join(dir, trashy, "noise.txt"), "", "utf8");
+    }
+    await writeFile(join(dir, "keep.txt"), "", "utf8");
+    const result = await osFsGlobTool.run(
+      { pattern: "**/*.txt" },
+      makeCtx(dir),
+    );
+    expect(result.details.files).toEqual(["keep.txt"]);
+  });
+
+  it("explicit ignore=[] re-enables searching default-ignored dirs", async () => {
+    await mkdir(join(dir, ".cache"));
+    await writeFile(join(dir, ".cache", "found.txt"), "", "utf8");
+    const result = await osFsGlobTool.run(
+      { pattern: "**/*.txt", ignore: [] },
+      makeCtx(dir),
+    );
+    expect(result.details.files).toEqual([".cache/found.txt"]);
   });
 });

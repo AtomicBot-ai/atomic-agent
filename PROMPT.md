@@ -24,7 +24,13 @@ The runtime is built around three hard constraints:
    byte-stable across an entire session.
 3. **One inference per step.** No tool call is ever invoked from inside the
    model. The runtime drives the loop, so the prompt only needs to describe
-   the next step's situation, not a chain of thought.
+   the next step's situation, not a chain of thought. A single inference always
+   emits a JSON **array** of `1..N` independent calls (`[{tool, args}, ...]`);
+   a "solo" step is just a length-1 array (`[{...}]`). The grammar root
+   collapsed to `tool-call-array` to beat GBNF first-token bias — see
+   `AGENTS.md` §"Parallel tool calls per step" for the full contract. From the
+   prompt's point of view nothing changes — the same stable prefix is reused
+   across solo and multi-call steps.
 
 The output is a two-zone prompt:
 
@@ -76,7 +82,12 @@ wmctrl: no
 notifications: yes
 
 ### instructions
-Emit one JSON tool call now (`skill.view` counts). Use `reply` for natural-language answers to the user.
+Emit a JSON ARRAY of tool calls now. Always start with `[` and end with `]`, even for a single call. Use `reply` for natural-language answers to the user.
+PARALLEL: when you need multiple INDEPENDENT actions (e.g. read 3 different files, run 2 globs, look up 4 git logs), put up to 4 calls in the SAME array — they run in parallel and cut wall time by ~Nx. Examples:
+  - one call: [{"tool":"os.fs.read","args":{"path":"a.ts"}}]
+  - parallel batch: [{"tool":"os.fs.read","args":{"path":"a.csv"}},{"tool":"os.fs.read","args":{"path":"b.csv"}},{"tool":"os.fs.read","args":{"path":"c.csv"}}]
+  - reply: [{"tool":"reply","args":{"text":"..."}}]
+Keep a call solo (length-1 array) when: it is `reply`/`finish`, may need approval (`os.shell.run`, `os.fs.write`, `os.fs.edit`, `os.fs.trash`, `os.fs.patch`, `os.fs.archive.extract`, `os.proc.kill`, `os.http.request`, `skill.run_script`), or its args depend on a previous call's result.
 ```
 
 ### What lives here and why
@@ -88,7 +99,7 @@ Emit one JSON tool call now (`skill.view` counts). Use `reply` for natural-langu
 | `### skills` | Catalog of available skills (name + description), not their bodies. Placed **before** `### tools` so the model sees playbooks before the full tool wall. | Catalog is read once at bootstrap. |
 | `### tools` | One bullet per tool, formatted by `formatTool`. Includes optional `examples[]`. | Tool registry is fixed at bootstrap. |
 | `### capabilities` | OS, browser channel, cwd, capability flags. | Computed once at session start. |
-| `### instructions` | One-line nudge to emit a tool call (`skill.view` counts). | Static literal. |
+| `### instructions` | The array-only contract: always start with `[`, length-1 for solo, length-N for parallel independent actions. Three worked examples (solo, batch, reply) anchor the shape, and an explicit "keep solo when" list pins terminal verbs / approval-gated tools / data-dependent chains to length-1 batches. | Static literal — the array-only contract, the examples, and the solo list are part of the byte-stable prefix so the model sees them every step without invalidating the cache. |
 
 ### What does NOT live here (intentional)
 

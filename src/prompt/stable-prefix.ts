@@ -99,7 +99,12 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     caps,
     ``,
     `### instructions`,
-    `Emit one JSON tool call now (\`skill.view\` counts). Use \`reply\` for natural-language answers to the user.`,
+    `Emit a JSON ARRAY of tool calls now. Always start with \`[\` and end with \`]\`, even for a single call. Use \`reply\` for natural-language answers to the user.`,
+    `PARALLEL: when you need multiple INDEPENDENT actions (e.g. read 3 different files, run 2 globs, look up 4 git logs), put up to 4 calls in the SAME array — they run in parallel and cut wall time by ~Nx. Examples:`,
+    `  - one call: [{"tool":"os.fs.read","args":{"path":"a.ts"}}]`,
+    `  - parallel batch: [{"tool":"os.fs.read","args":{"path":"a.csv"}},{"tool":"os.fs.read","args":{"path":"b.csv"}},{"tool":"os.fs.read","args":{"path":"c.csv"}}]`,
+    `  - reply: [{"tool":"reply","args":{"text":"..."}}]`,
+    `Keep a call solo (length-1 array) when: it is \`reply\`/\`finish\`, may need approval (\`os.shell.run\`, \`os.fs.write\`, \`os.fs.edit\`, \`os.fs.trash\`, \`os.fs.patch\`, \`os.fs.archive.extract\`, \`os.proc.kill\`, \`os.http.request\`, \`skill.run_script\`), or its args depend on a previous call's result.`,
     ``,
   ].join("\n");
 }

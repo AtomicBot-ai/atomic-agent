@@ -295,7 +295,9 @@ describe("createAgentRuntime", () => {
       },
     });
     try {
-      expect(runtime.grammar).toContain("root ::= channel-prelude tool-call");
+      expect(runtime.grammar).toContain(
+        "root ::= channel-prelude tool-call-array",
+      );
       expect(runtime.grammar).toContain("<channel|>");
     } finally {
       await runtime.shutdown();
