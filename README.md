@@ -14,7 +14,7 @@
 ![llama.cpp](https://img.shields.io/badge/llama.cpp-supported-111827)
 ![Tauri sidecar](https://img.shields.io/badge/Tauri-sidecar-24C8DB?logo=tauri&logoColor=white)
 
-`atomic-agent` is a local agent that can operate a real desktop: browser, files, shell, documents, notes, memory, scheduled work, approvals, and traces. Think of it in the same product category as OpenClaw Operator and Hermes Agent, but built as a lightweight TypeScript runtime around local `llama.cpp` models rather than a hosted control plane.
+`atomic-agent` is a local agent that can operate a real desktop: browser, files, shell, documents, notes, memory, scheduled work, approvals, and traces. Think of it in the same product category as OpenClaw Operator and Hermes Agent, but shipped as a standalone SEA binary and tuned for local models so it can squeeze the most out of them instead of relying on a hosted control plane.
 
 **Active development:** APIs, commands, configuration, and behavior may change while the runtime is still moving quickly. Pin a release if you need a stable integration point.
 
