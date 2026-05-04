@@ -35,7 +35,7 @@ describe("loadConfig", () => {
     const written = JSON.parse(readFileSync(path, "utf8"));
     expect(written.version).toBe(USER_CONFIG_VERSION);
     expect(config.localModels.url).toBe("http://127.0.0.1:8080");
-    expect(config.localModels.completionMaxTokens).toBe(4096);
+    expect(config.localModels.completionMaxTokens).toBe(8192);
     expect(config.log.level).toBe("info");
     expect(config.agent.approvalRequired).toBe(true);
   });
@@ -50,6 +50,31 @@ describe("loadConfig", () => {
     process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = "999999999";
     resetConfigCache();
     expect(loadConfig().localModels.completionMaxTokens).toBe(131_072);
+  });
+
+  it("reads localModels.completionMaxTokens from the user config file", () => {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      localModels: {
+        ...USER_CONFIG_DEFAULTS.localModels,
+        completionMaxTokens: 8192,
+      },
+    });
+    resetConfigCache();
+    expect(loadConfig().localModels.completionMaxTokens).toBe(8192);
+  });
+
+  it("ATOMIC_AGENT_LLAMA_MAX_TOKENS overrides the file value", () => {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      localModels: {
+        ...USER_CONFIG_DEFAULTS.localModels,
+        completionMaxTokens: 8192,
+      },
+    });
+    process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = "16384";
+    resetConfigCache();
+    expect(loadConfig().localModels.completionMaxTokens).toBe(16_384);
   });
 
   it("reads values from an existing user config file", () => {

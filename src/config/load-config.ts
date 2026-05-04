@@ -114,7 +114,7 @@ export function loadConfig(): AtomicAgentConfig {
       completionPath: "/completion",
       completionMaxTokens: readBoundedPositiveInt(
         "ATOMIC_AGENT_LLAMA_MAX_TOKENS",
-        ENV_DEFAULTS.LLAMA_COMPLETION_MAX_TOKENS,
+        user.localModels.completionMaxTokens,
         64,
         131_072,
       ),

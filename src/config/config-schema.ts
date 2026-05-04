@@ -382,6 +382,14 @@ export interface UserConfigFile {
   localModels: {
     url: string;
     mode: LocalLlmMode;
+    /**
+     * Upper bound on `n_predict` for grammar-constrained tool-call
+     * completions. Added in config v7 to let users raise the cap
+     * without juggling the `ATOMIC_AGENT_LLAMA_MAX_TOKENS` env var.
+     * Range [64, 131072]. The env var, when set, still wins over
+     * this file value (operator override).
+     */
+    completionMaxTokens: number;
     managed: UserManagedLocalLlmConfig;
   };
   log: { level: LogLevel };
@@ -457,24 +465,28 @@ export interface UserConfigFile {
   };
 }
 
-export const USER_CONFIG_VERSION = 6 as const;
+export const USER_CONFIG_VERSION = 7 as const;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
  * v5 renamed the `llama` block to `localModels` to remove the Meta
  * "Llama" conflation — the runtime never ran Llama family models
- * specifically. v6 added the optional `vision.*` block; v5 files are
- * transparently upgraded by filling in `USER_CONFIG_DEFAULTS.vision`.
- * Anything older than v5 is not migrated: this is active development,
- * callers delete their `config.json` and start over.
+ * specifically. v6 added the optional `vision.*` block; v7 added
+ * `localModels.completionMaxTokens` so users can raise the
+ * tool-call `n_predict` cap from the file. Older files are
+ * transparently upgraded by filling missing blocks/fields from
+ * `USER_CONFIG_DEFAULTS`. Anything older than v5 is not migrated:
+ * this is active development, callers delete their `config.json`
+ * and start over.
  */
-const SUPPORTED_INPUT_VERSIONS: readonly number[] = [5, USER_CONFIG_VERSION];
+const SUPPORTED_INPUT_VERSIONS: readonly number[] = [5, 6, USER_CONFIG_VERSION];
 
 export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   version: USER_CONFIG_VERSION,
   localModels: {
     url: "http://127.0.0.1:8080",
     mode: "external",
+    completionMaxTokens: 8192,
     managed: {
       modelId: null,
       port: 19091,
@@ -555,8 +567,6 @@ export const ENV_DEFAULTS = {
   COMPLETION_RETRIES: 3,
   COMPLETION_RETRY_BACKOFF_MS: 150,
   DEFAULT_SLOT_ID: 0,
-  /** Default `n_predict` for grammar-constrained tool JSON (512 truncates long `reply.text`). */
-  LLAMA_COMPLETION_MAX_TOKENS: 4096,
   STABLE_PREFIX_SALT: "atomic-agent-v1",
   BROWSER_CHANNEL: "chrome" as BrowserChannel,
   BROWSER_HEADLESS: false,
@@ -647,6 +657,29 @@ export function parsePositiveInt(raw: unknown, field: string): number {
     throw new ConfigValidationError(
       field,
       `expected positive integer, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Parse a positive integer that must lie inside a closed `[min, max]`
+ * range. Used by user-config knobs that have hard physical bounds
+ * (e.g. `completionMaxTokens`). Out-of-range values throw — the env
+ * counterpart silently clamps because operator-supplied env vars are
+ * less strict than file-supplied user config.
+ */
+export function parseBoundedPositiveInt(
+  raw: unknown,
+  field: string,
+  min: number,
+  max: number,
+): number {
+  const value = parsePositiveInt(raw, field);
+  if (value < min || value > max) {
+    throw new ConfigValidationError(
+      field,
+      `expected integer in [${min}, ${max}], got ${value}`,
     );
   }
   return value;
@@ -945,6 +978,13 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       mode: parseLocalLlmMode(
         localModels.mode ?? USER_CONFIG_DEFAULTS.localModels.mode,
         "localModels.mode",
+      ),
+      completionMaxTokens: parseBoundedPositiveInt(
+        localModels.completionMaxTokens ??
+          USER_CONFIG_DEFAULTS.localModels.completionMaxTokens,
+        "localModels.completionMaxTokens",
+        64,
+        131_072,
       ),
       managed,
     },

@@ -63,7 +63,7 @@ describe("user config file IO", () => {
     warn.mockRestore();
   });
 
-  it("ensureUserConfigFileSync migrates v5 → v6 on disk and preserves user values", () => {
+  it("ensureUserConfigFileSync migrates v5 on disk and preserves user values", () => {
     const path = getUserConfigPath(dir);
     const v5 = {
       version: 5,
@@ -91,6 +91,9 @@ describe("user config file IO", () => {
 
     expect(migrated.version).toBe(USER_CONFIG_VERSION);
     expect(migrated.localModels.url).toBe("http://127.0.0.1:9999");
+    expect(migrated.localModels.completionMaxTokens).toBe(
+      USER_CONFIG_DEFAULTS.localModels.completionMaxTokens,
+    );
     expect(migrated.log.level).toBe("debug");
     expect(migrated.vision).toEqual(USER_CONFIG_DEFAULTS.vision);
 
@@ -98,10 +101,74 @@ describe("user config file IO", () => {
     expect(onDisk.version).toBe(USER_CONFIG_VERSION);
     expect(onDisk.vision).toEqual(USER_CONFIG_DEFAULTS.vision);
     expect(onDisk.localModels.url).toBe("http://127.0.0.1:9999");
+    expect(onDisk.localModels.completionMaxTokens).toBe(
+      USER_CONFIG_DEFAULTS.localModels.completionMaxTokens,
+    );
 
     const calls = warn.mock.calls.map((args) => String(args[0]));
-    expect(calls.some((line) => line.includes("migrated config v5 → v6"))).toBe(true);
+    expect(
+      calls.some((line) => line.includes(`migrated config v5 → v${USER_CONFIG_VERSION}`)),
+    ).toBe(true);
     warn.mockRestore();
+  });
+
+  it("ensureUserConfigFileSync migrates v6 → v7 by filling completionMaxTokens default", () => {
+    const path = getUserConfigPath(dir);
+    const v6 = {
+      version: 6,
+      localModels: {
+        url: "http://127.0.0.1:9999",
+        mode: "managed",
+        managed: {
+          modelId: "qwen-3.5-4b",
+          port: 19091,
+          dataDirOverride: null,
+          autoUpdate: false,
+        },
+      },
+      log: { level: "debug" },
+      agent: USER_CONFIG_DEFAULTS.agent,
+      http: USER_CONFIG_DEFAULTS.http,
+      tracing: USER_CONFIG_DEFAULTS.tracing,
+      memory: USER_CONFIG_DEFAULTS.memory,
+      webhooks: {},
+      vision: USER_CONFIG_DEFAULTS.vision,
+    };
+    writeFileSync(path, JSON.stringify(v6, null, 2) + "\n", "utf8");
+
+    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const migrated = ensureUserConfigFileSync(path);
+
+    expect(migrated.version).toBe(USER_CONFIG_VERSION);
+    expect(migrated.localModels.url).toBe("http://127.0.0.1:9999");
+    expect(migrated.localModels.completionMaxTokens).toBe(
+      USER_CONFIG_DEFAULTS.localModels.completionMaxTokens,
+    );
+
+    const onDisk = JSON.parse(readFileSync(path, "utf8"));
+    expect(onDisk.version).toBe(USER_CONFIG_VERSION);
+    expect(onDisk.localModels.completionMaxTokens).toBe(
+      USER_CONFIG_DEFAULTS.localModels.completionMaxTokens,
+    );
+
+    const calls = warn.mock.calls.map((args) => String(args[0]));
+    expect(
+      calls.some((line) => line.includes(`migrated config v6 → v${USER_CONFIG_VERSION}`)),
+    ).toBe(true);
+    warn.mockRestore();
+  });
+
+  it("parseUserConfigFile rejects out-of-range completionMaxTokens", () => {
+    const path = getUserConfigPath(dir);
+    const bad = {
+      ...USER_CONFIG_DEFAULTS,
+      localModels: {
+        ...USER_CONFIG_DEFAULTS.localModels,
+        completionMaxTokens: 16,
+      },
+    };
+    writeFileSync(path, JSON.stringify(bad, null, 2) + "\n", "utf8");
+    expect(() => readUserConfigFileSync(path)).toThrow(ConfigValidationError);
   });
 
   it("ensureUserConfigFileSync leaves an up-to-date file untouched on disk", () => {
