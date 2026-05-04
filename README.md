@@ -370,6 +370,25 @@ Important environment variables:
 
 The config CLI uses **whole-file semantics**. Pass a full JSON document, not dotted patches.
 
+### Secrets and API keys
+
+Optional file `<stateDir>/.env` (default `~/.atomic-agent/.env`, `chmod 600` recommended) is read once at startup and merged into the agent process environment. Use it for skill API keys instead of putting secrets into `config.json`.
+
+```
+NOTION_API_KEY=ntn_xxxxxxxx
+GITHUB_TOKEN=ghp_xxxxxxxx
+OBSIDIAN_VAULT_PATH=/Users/me/Documents/Obsidian Vault
+```
+
+Rules:
+
+- One `KEY=VALUE` per line. Values may be wrapped in single or double quotes; the quotes are stripped. No `${VAR}` interpolation, no `export ` prefix, no multiline values.
+- Lines starting with `#` and blank lines are ignored.
+- Shell-exported variables always win — anything already set in the parent shell is left untouched.
+- Missing file is a silent no-op.
+
+Skills reference the variables as `$NOTION_API_KEY` etc. The agent does not currently filter the environment before spawning subprocesses, so every variable in `process.env` is visible to `os.shell.run`, skill scripts, and the local `llama-server` (when launched in managed mode). Treat `<stateDir>/.env` as sensitive and keep it out of version control.
+
 ## Browser And Host Requirements
 
 - Install **Google Chrome** or **Microsoft Edge**. Browser binaries are not bundled.

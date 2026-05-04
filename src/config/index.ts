@@ -22,3 +22,5 @@ export {
 } from "./config-file.js";
 export { loadConfig } from "./load-config.js";
 export { getConfig, resetConfigCache } from "./config-cache.js";
+export { loadDotenvFromStateDir } from "./load-dotenv.js";
+export type { DotenvLoadResult } from "./load-dotenv.js";

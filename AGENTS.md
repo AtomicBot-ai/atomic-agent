@@ -144,6 +144,12 @@ Speculative batching (the runtime guessing that the model "should" have batched 
 | `src/llm/provider/` | Provider abstraction layer (`LlmProvider` interface) + `LlamaServerProvider` adapter. Text completion stays on `LlamaServerClient.complete` / `completeStream` (legacy `/completion` extension with GBNF + slot ids); vision routes through `LlamaServerProvider.describeImage` against `/v1/chat/completions` with OpenAI-shape `image_url` content blocks. See §"Vision (multimodal input)". |
 | `src/tools/vision/` | `vision.describe` tool + `loadImageFile` helper. Registered whenever `config.vision.enabled` is true and a provider is constructed; the actual capability gate (`capabilities.vision`) is a dynamic getter that re-reads `ModelProfile` on every check, so vision availability tracks `ModelProfileManager` hot-swaps without a restart. See §"Vision (multimodal input)". |
 
+## Secrets and process environment
+
+Skills that need API keys (Notion, GitHub, etc.) read them from `process.env`. The agent populates `process.env` once at bootstrap from the optional file `<stateDir>/.env` via `loadDotenvFromStateDir` in [src/config/load-dotenv.ts](src/config/load-dotenv.ts), invoked from [src/config/load-config.ts](src/config/load-config.ts) immediately after `stateDir` is resolved and before `ensureUserConfigFileSync`. Shell-exported variables always win — the loader only sets a key when it is currently unset or empty. Missing file is a silent no-op. The parser is deliberately tiny (`KEY=VALUE` per line, optional surrounding quotes, `#` comments, blank lines; no interpolation, no `export ` prefix, no multiline values) so we do not depend on the `dotenv` package.
+
+There is currently **no per-tool env filtering**. `runCommand` in [src/sandbox/command-runner.ts](src/sandbox/command-runner.ts) inherits the full agent `process.env`, so every spawned subprocess (`os.shell.run`, `runSkillScript`, the managed `llama-server`, future MCP servers) sees every variable loaded from `.env`. Tightening this — per-skill `env_vars` whitelist + safe-baseline filtering (`PATH`, `HOME`, `USER`, `LANG`, `TERM`, `XDG_*`) — is tracked as a separate effort and pinned by no tests yet. Do not assume isolation when designing new skills that handle highly sensitive secrets; document the shared-env reality in the skill's `SKILL.md` instead.
+
 ## Build & test
 
 ```bash

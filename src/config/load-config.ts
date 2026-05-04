@@ -12,6 +12,7 @@ import {
   ensureUserConfigFileSync,
   getUserConfigPath,
 } from "./config-file.js";
+import { loadDotenvFromStateDir } from "./load-dotenv.js";
 
 function readEnv(key: string): string | undefined {
   const value = process.env[key];
@@ -86,6 +87,7 @@ export function loadConfig(): AtomicAgentConfig {
     readEnv("ATOMIC_AGENT_STATE_DIR"),
     ENV_DEFAULTS.STATE_DIR,
   );
+  loadDotenvFromStateDir(stateDir);
   const userConfigFile = getUserConfigPath(stateDir);
   const user = ensureUserConfigFileSync(userConfigFile);
   const grammarsDir = resolveAssetDir("ATOMIC_AGENT_GRAMMARS_DIR", "grammars");
