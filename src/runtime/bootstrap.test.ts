@@ -1,10 +1,20 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createAgentRuntime, managedLocalLlmHealthFailureHint } from "./bootstrap.js";
-import { resetConfigCache } from "../config/index.js";
+import {
+  getUserConfigPath,
+  resetConfigCache,
+  USER_CONFIG_DEFAULTS,
+  writeUserConfigFileSync,
+} from "../config/index.js";
+import type {
+  BotFactory,
+  BotInstance,
+} from "../channels/telegram/index.js";
+import type { ChannelStatus } from "./channel-status.js";
 import { GEMMA4_PROPS } from "../llm/model-profile.fixtures.js";
 import type {
   AriaSnapshot,
@@ -361,6 +371,174 @@ describe("createAgentRuntime", () => {
   it("managedLocalLlmHealthFailureHint documents CLI daemon control", () => {
     expect(managedLocalLlmHealthFailureHint(18991)).toContain("atomic-agent models start");
     expect(managedLocalLlmHealthFailureHint(18991)).toContain("127.0.0.1:18991");
+  });
+
+  // -----------------------------------------------------------------
+  // Telegram channel construction + shutdown ordering. The three
+  // construction branches (`enabled=false`, `enabled=true` with no
+  // env token, `enabled=true` with a fake bot factory) are exercised
+  // separately and then the shutdown-order invariant —
+  // `telegramChannel.stop()` must run before `sessionStore.close()` —
+  // is asserted via `vi.fn().mock.invocationCallOrder` so a future
+  // refactor of the shutdown sequence will fail loudly.
+  // -----------------------------------------------------------------
+
+  /** Write a config v9 file with `telegram.enabled` overridden. */
+  function enableTelegramInConfig(): void {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      telegram: { ...USER_CONFIG_DEFAULTS.telegram, enabled: true },
+    });
+    resetConfigCache();
+  }
+
+  /** Build a fake `BotFactory` whose `stop` is a recordable spy. */
+  function makeFakeBotFactory(): {
+    factory: BotFactory;
+    stopSpy: ReturnType<typeof vi.fn>;
+  } {
+    const stopSpy = vi.fn(async () => undefined);
+    const factory: BotFactory = () => {
+      const bot: BotInstance = {
+        api: {
+          sendMessage: vi.fn(async () => ({ message_id: 1 })),
+          getMe: vi.fn(async () => ({ id: 1, username: "test_bot" })),
+          setMyCommands: vi.fn(async () => undefined),
+        },
+        setTextHandler: () => undefined,
+        start: () => undefined,
+        stop: stopSpy,
+      };
+      return bot;
+    };
+    return { factory, stopSpy };
+  }
+
+  /** Spin until `predicate` is true or `timeoutMs` elapses. */
+  async function waitFor(
+    predicate: () => boolean,
+    { timeoutMs = 1000, stepMs = 5 }: { timeoutMs?: number; stepMs?: number } = {},
+  ): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (!predicate()) {
+      if (Date.now() > deadline) throw new Error("waitFor timed out");
+      await new Promise((r) => setTimeout(r, stepMs));
+    }
+  }
+
+  it("telegramChannel is null when telegram.enabled is false (default)", async () => {
+    const statuses: ChannelStatus[] = [];
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalRequired: false,
+      handlers: { onChannelStatus: (s) => statuses.push(s) },
+      overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
+    });
+    try {
+      expect(runtime.telegramChannel).toBeNull();
+      expect(statuses).toEqual([]);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("telegramChannel is constructed but reports `down` when token is missing", async () => {
+    enableTelegramInConfig();
+    const previousToken = process.env.TELEGRAM_BOT_TOKEN;
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    const statuses: ChannelStatus[] = [];
+    try {
+      const runtime = await createAgentRuntime({
+        workingDir,
+        approvalRequired: false,
+        handlers: { onChannelStatus: (s) => statuses.push(s) },
+        overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
+      });
+      try {
+        expect(runtime.telegramChannel).not.toBeNull();
+        await waitFor(() => runtime.telegramChannel!.state() === "down");
+        expect(runtime.telegramChannel!.lastError()).toBe(
+          "missing TELEGRAM_BOT_TOKEN",
+        );
+        expect(statuses.at(-1)).toMatchObject({
+          channel: "telegram",
+          state: "down",
+          lastError: "missing TELEGRAM_BOT_TOKEN",
+        });
+      } finally {
+        await runtime.shutdown();
+      }
+    } finally {
+      if (previousToken !== undefined) {
+        process.env.TELEGRAM_BOT_TOKEN = previousToken;
+      }
+    }
+  });
+
+  it("telegramChannel reaches `up` when enabled and a fake bot factory is wired", async () => {
+    enableTelegramInConfig();
+    const previousToken = process.env.TELEGRAM_BOT_TOKEN;
+    process.env.TELEGRAM_BOT_TOKEN = "1234:test-token-aaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const statuses: ChannelStatus[] = [];
+    const { factory } = makeFakeBotFactory();
+    try {
+      const runtime = await createAgentRuntime({
+        workingDir,
+        approvalRequired: false,
+        handlers: { onChannelStatus: (s) => statuses.push(s) },
+        overrides: {
+          browserBackend: backend,
+          skipLlamaHealthCheck: true,
+          telegramBotFactory: factory,
+        },
+      });
+      try {
+        expect(runtime.telegramChannel).not.toBeNull();
+        await waitFor(() => runtime.telegramChannel!.state() === "up");
+        expect(runtime.telegramChannel!.lastError()).toBeNull();
+        expect(statuses.map((s) => s.state)).toContain("starting");
+        expect(statuses.map((s) => s.state)).toContain("up");
+      } finally {
+        await runtime.shutdown();
+      }
+    } finally {
+      if (previousToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
+      else process.env.TELEGRAM_BOT_TOKEN = previousToken;
+    }
+  });
+
+  it("shutdown stops the Telegram channel before closing the session store", async () => {
+    enableTelegramInConfig();
+    const previousToken = process.env.TELEGRAM_BOT_TOKEN;
+    process.env.TELEGRAM_BOT_TOKEN = "1234:test-token-bbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const { factory, stopSpy } = makeFakeBotFactory();
+    try {
+      const runtime = await createAgentRuntime({
+        workingDir,
+        approvalRequired: false,
+        overrides: {
+          browserBackend: backend,
+          skipLlamaHealthCheck: true,
+          telegramBotFactory: factory,
+        },
+      });
+      // Wait until the channel is `up` so shutdown actually has a bot
+      // instance to stop — otherwise the `bot.stop()` branch is skipped
+      // and the test would only assert that close ran.
+      await waitFor(() => runtime.telegramChannel!.state() === "up");
+      const closeSpy = vi.spyOn(runtime.sessionStore, "close");
+
+      await runtime.shutdown();
+
+      expect(stopSpy).toHaveBeenCalledTimes(1);
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+      const stopOrder = stopSpy.mock.invocationCallOrder[0]!;
+      const closeOrder = closeSpy.mock.invocationCallOrder[0]!;
+      expect(stopOrder).toBeLessThan(closeOrder);
+    } finally {
+      if (previousToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
+      else process.env.TELEGRAM_BOT_TOKEN = previousToken;
+    }
   });
 
   it("warns once and falls back to plain profile when props probing fails", async () => {

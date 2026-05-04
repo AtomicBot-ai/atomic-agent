@@ -112,6 +112,40 @@ describe("user config file IO", () => {
     warn.mockRestore();
   });
 
+  it("ensureUserConfigFileSync migrates v8 → v9 by filling telegram defaults", () => {
+    const path = getUserConfigPath(dir);
+    const v8 = {
+      version: 8,
+      localModels: USER_CONFIG_DEFAULTS.localModels,
+      log: { level: "info" },
+      agent: USER_CONFIG_DEFAULTS.agent,
+      http: USER_CONFIG_DEFAULTS.http,
+      tracing: USER_CONFIG_DEFAULTS.tracing,
+      memory: USER_CONFIG_DEFAULTS.memory,
+      webhooks: {},
+      vision: USER_CONFIG_DEFAULTS.vision,
+      skills: { disabled: ["legacy-skill"] },
+    };
+    writeFileSync(path, JSON.stringify(v8, null, 2) + "\n", "utf8");
+
+    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const migrated = ensureUserConfigFileSync(path);
+
+    expect(migrated.version).toBe(USER_CONFIG_VERSION);
+    expect(migrated.telegram).toEqual(USER_CONFIG_DEFAULTS.telegram);
+    expect(migrated.skills.disabled).toEqual(["legacy-skill"]);
+
+    const onDisk = JSON.parse(readFileSync(path, "utf8"));
+    expect(onDisk.version).toBe(USER_CONFIG_VERSION);
+    expect(onDisk.telegram).toEqual(USER_CONFIG_DEFAULTS.telegram);
+
+    const calls = warn.mock.calls.map((args) => String(args[0]));
+    expect(
+      calls.some((line) => line.includes(`migrated config v8 → v${USER_CONFIG_VERSION}`)),
+    ).toBe(true);
+    warn.mockRestore();
+  });
+
   it("ensureUserConfigFileSync migrates v6 → v7 by filling completionMaxTokens default", () => {
     const path = getUserConfigPath(dir);
     const v6 = {

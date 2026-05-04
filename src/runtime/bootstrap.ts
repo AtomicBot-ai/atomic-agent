@@ -7,6 +7,10 @@ import { getConfig } from "../config/index.js";
 
 import { TurnController } from "./turn-controller.js";
 import type { TurnEventHook, TurnOrigin } from "./turn-controller.js";
+import type { ChannelStatus } from "./channel-status.js";
+
+import { TelegramChannel } from "../channels/telegram/index.js";
+import type { BotFactory } from "../channels/telegram/index.js";
 
 import { LlamaServerClient } from "../llm/llama-server-client.js";
 import type {
@@ -95,6 +99,13 @@ export interface RuntimeEventHandlers {
   onAgentEvent?: (event: AgentLoopEvent) => void;
   onApprovalRequest?: (request: ApprovalRequest) => void;
   onSkillRegistryChange?: (entries: SkillCatalogEntry[]) => void;
+  /**
+   * Optional sink for remote-control channel lifecycle changes (e.g.
+   * Telegram). Fires on every observable transition (`starting →
+   * up`, `up → down`, `disabled → starting`, …). Hosts that ignore
+   * this handler keep working — the runtime never blocks on it.
+   */
+  onChannelStatus?: (status: ChannelStatus) => void;
   logSinks?: LogSink[];
   metricSinks?: MetricSink[];
   /**
@@ -159,6 +170,12 @@ export interface CreateAgentRuntimeOptions {
     deferLlamaHealthCheck?: boolean;
     llamaProps?: Record<string, unknown>;
     llamaPropsError?: Error;
+    /**
+     * Test seam — replace the default grammy adapter used by the
+     * Telegram channel. Production wiring leaves this undefined and
+     * `TelegramChannel` falls back to `defaultGrammyBotFactory`.
+     */
+    telegramBotFactory?: BotFactory;
   };
 }
 
@@ -217,6 +234,17 @@ export interface AgentRuntime {
    * cost is negligible even when no webhooks are configured.
    */
   readonly webhookSessionStore: WebhookSessionStore;
+  /**
+   * Telegram remote-control channel. `null` when
+   * `config.telegram.enabled` is `false`. When enabled, the channel
+   * is always non-null — it owns token resolution and transitions
+   * itself through `starting → up | down` on `start()`. A missing
+   * `TELEGRAM_BOT_TOKEN` lands as `state: "down"`, not as a missing
+   * channel, so slice 3 live-control surfaces can populate the token
+   * later and call `start()` again. Status is propagated to hosts
+   * via `RuntimeEventHandlers.onChannelStatus`.
+   */
+  readonly telegramChannel: TelegramChannel | null;
   readonly capabilities: CapabilitiesSummary;
   readonly skillCatalog: readonly SkillCatalogEntry[];
   readonly toolDescriptors: readonly ToolDescriptor[];
@@ -645,6 +673,12 @@ export async function createAgentRuntime(
     loopDeps as typeof loopDeps & { skillCatalog: readonly SkillCatalogEntry[] },
   );
 
+  // Forward declaration: the Telegram channel is constructed after the
+  // runtime body assembles (it needs a stable `runtime` reference) but
+  // `shutdown` must be able to stop it before tearing down the session
+  // store. The variable is bound in the `let` slot below; the closure
+  // resolves it lazily so the order-of-construction concern is local.
+  let telegramChannelForShutdown: TelegramChannel | null = null;
   let shutdownCalled = false;
   const shutdown = async (): Promise<void> => {
     if (shutdownCalled) return;
@@ -656,6 +690,15 @@ export async function createAgentRuntime(
       reflectionRunner?.abortPending();
     } catch {
       // runner already disposed
+    }
+    if (telegramChannelForShutdown) {
+      try {
+        await telegramChannelForShutdown.stop();
+      } catch (err) {
+        logger.warn("telegram: shutdown failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
     try {
       await browserBackend.shutdown();
@@ -829,6 +872,7 @@ export async function createAgentRuntime(
     taskRunner,
     scheduler,
     webhookSessionStore,
+    telegramChannel: null,
     capabilities,
     toolDescriptors: effectiveToolDescriptors,
     grammar,
@@ -839,11 +883,42 @@ export async function createAgentRuntime(
     executeTurn,
     refreshSkills,
     shutdown,
-  } as AgentRuntime;
+  } as AgentRuntime & { telegramChannel: TelegramChannel | null };
   Object.defineProperty(runtime, "skillCatalog", {
     enumerable: true,
     get: () => skillCatalog,
   });
+
+  // Telegram remote-control channel — slice 1 wiring. The channel
+  // owns token resolution end-to-end (reads `TELEGRAM_BOT_TOKEN` from
+  // the env on construction); bootstrap deliberately does not look at
+  // the env var so it stays agnostic of telegram-specific naming.
+  // When `enabled=true` but no token is present, the channel
+  // transitions to `down` with `lastError: "missing
+  // TELEGRAM_BOT_TOKEN"` and is still wired to `runtime.telegramChannel`
+  // so slice 3 live-control surfaces can flip it on later.
+  // `start()` is fired-and-forgotten so a slow `getMe` probe never
+  // delays the first user turn.
+  if (config.telegram.enabled) {
+    const telegramChannel = new TelegramChannel({
+      runtime,
+      config,
+      logger,
+      metrics,
+      emitStatus: (status) => options.handlers?.onChannelStatus?.(status),
+      ...(options.overrides?.telegramBotFactory
+        ? { botFactory: options.overrides.telegramBotFactory }
+        : {}),
+    });
+    void telegramChannel.start().catch((err) => {
+      logger.error("telegram: start() rejected unexpectedly", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+    runtime.telegramChannel = telegramChannel;
+    telegramChannelForShutdown = telegramChannel;
+  }
+
   return runtime;
 }
 

@@ -324,5 +324,9 @@ export function loadConfig(): AtomicAgentConfig {
       maxImageBytes: user.vision.maxImageBytes,
       maxImagesPerCall: user.vision.maxImagesPerCall,
     },
+    telegram: {
+      enabled: user.telegram.enabled,
+      ownerUserId: user.telegram.ownerUserId,
+    },
   };
 }
