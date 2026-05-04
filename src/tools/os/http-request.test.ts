@@ -336,6 +336,125 @@ describe("os.http.request", () => {
     expect(result.details.exitCode).toBe(6);
   });
 
+  it("strips HTML to plain text when content-type is text/html", async () => {
+    const html = [
+      "<!doctype html>",
+      "<html><head><title>T</title><style>.x{color:red}</style></head>",
+      "<body>",
+      "<script>alert('x')</script>",
+      "<h1>Hello</h1>",
+      "<p>This is <a href='https://x.test'>a link</a> in a paragraph.</p>",
+      "<ul><li>one</li><li>two</li></ul>",
+      "</body></html>",
+    ].join("\n");
+    const tool = buildOsHttpRequestTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun({}, {
+        stdout: `${html}\n__ATOMIC_CURL_META__200|text/html; charset=utf-8|${html.length}|0.01`,
+      }),
+    });
+    const result = await tool.run(
+      { url: "https://example.com" },
+      makeCtx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.details.htmlStripped).toBe(true);
+    expect(result.summary).not.toMatch(/<\/?(html|body|h1|p|ul|li|a)\b/i);
+    expect(result.summary).not.toContain("alert('x')");
+    expect(result.summary).not.toContain(".x{color:red}");
+    // html-to-text uppercases <h1> headings by default — fine for LLMs.
+    expect(result.summary.toLowerCase()).toContain("hello");
+    expect(result.summary).toContain("a link");
+    expect(result.summary).toContain("one");
+    expect(result.summary).toContain("two");
+    expect(result.truncated).toBe(false);
+  });
+
+  it("leaves JSON responses intact and does not flag htmlStripped", async () => {
+    const json = JSON.stringify({
+      items: [{ id: 1, name: "a" }, { id: 2, name: "b" }],
+      cursor: "abc",
+    });
+    const tool = buildOsHttpRequestTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun({}, {
+        stdout: `${json}\n__ATOMIC_CURL_META__200|application/json; charset=utf-8|${json.length}|0.01`,
+      }),
+    });
+    const result = await tool.run(
+      { url: "https://api.example.com/items" },
+      makeCtx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.details.htmlStripped).toBe(false);
+    expect(result.summary).toContain('"cursor":"abc"');
+    expect(result.summary).toContain('"name":"b"');
+    expect(result.truncated).toBe(false);
+  });
+
+  it("sniffs HTML body when content-type is missing", async () => {
+    const html = "<!doctype html><html><body><p>Sniffed</p></body></html>";
+    const tool = buildOsHttpRequestTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun({}, {
+        stdout: `${html}\n__ATOMIC_CURL_META__200||${html.length}|0.01`,
+      }),
+    });
+    const result = await tool.run(
+      { url: "https://example.com" },
+      makeCtx(),
+    );
+    expect(result.details.htmlStripped).toBe(true);
+    expect(result.summary).toContain("Sniffed");
+    expect(result.summary).not.toMatch(/<\/?(html|body|p)\b/i);
+  });
+
+  it("does not strip plain-text responses that happen to contain '<'", async () => {
+    const body = "if (a < b) return true; else return false;";
+    const tool = buildOsHttpRequestTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun({}, {
+        stdout: `${body}\n__ATOMIC_CURL_META__200|text/plain|${body.length}|0.01`,
+      }),
+    });
+    const result = await tool.run(
+      { url: "https://example.com" },
+      makeCtx(),
+    );
+    expect(result.details.htmlStripped).toBe(false);
+    expect(result.summary).toContain("a < b");
+  });
+
+  it("preserves a long JSON body without compressor truncation", async () => {
+    const big = JSON.stringify(
+      Array.from({ length: 200 }, (_, i) => ({ id: i, value: `row-${i}` })),
+    );
+    expect(big.length).toBeGreaterThan(2000);
+    const tool = buildOsHttpRequestTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun({}, {
+        stdout: `${big}\n__ATOMIC_CURL_META__200|application/json|${big.length}|0.01`,
+      }),
+    });
+    const result = await tool.run(
+      { url: "https://api.example.com/big" },
+      makeCtx(),
+    );
+    expect(result.summary).toContain('"id":199');
+    expect(result.summary).toContain('"value":"row-199"');
+    expect(result.truncated).toBe(false);
+  });
+
   it("uses config.http.defaultTimeoutMs when timeoutMs is not provided", async () => {
     const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
     const tool = buildOsHttpRequestTool({

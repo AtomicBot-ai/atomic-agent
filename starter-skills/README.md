@@ -11,3 +11,16 @@ directory that contains the same layout (e.g. `duckduckgo-search/SKILL.md`).
 Do not reuse a **built-in starter skill name** for unrelated custom work under
 the global skills dir — it will be replaced on the next boot. Use a distinct
 `name` or a project-local `.atomic-agent/skills/` tree instead.
+
+## Bundled skills
+
+| Folder | What it does | External requirement |
+|---|---|---|
+| `duckduckgo-search/` | DuckDuckGo HTML search | none |
+| `wttr-weather/` | Weather lookup via `wttr.in` | none |
+| `skill-creator/` | Author or edit `SKILL.md` files | none |
+| `obsidian/` | Read / search / write notes in an Obsidian vault | `OBSIDIAN_VAULT_PATH` env var (default `~/Documents/Obsidian Vault`) |
+| `apple-notes/` | Manage Apple Notes via the `memo` CLI | macOS + `brew install antoniorodr/memo/memo` + Automation permission |
+| `apple-reminders/` | Manage Apple Reminders via the `remindctl` CLI | macOS + `brew install steipete/tap/remindctl` + Reminders permission |
+| `notion/` | Notion REST API (pages, databases, blocks) | `NOTION_API_KEY` in `~/.atomic-agent/.env` + page sharing |
+| `xurl/` | X (Twitter) API via the official `xurl` CLI | `xurl` installed + OAuth 2.0 set up by user out-of-band |

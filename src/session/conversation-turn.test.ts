@@ -3,6 +3,7 @@ import {
   appendTurn,
   assistantReplyTurn,
   assistantToolCallTurn,
+  findCurrentMacroTurnStart,
   packConversation,
   renderTurnForPrompt,
   toolResultTurn,
@@ -120,6 +121,50 @@ describe("conversation-turn helpers", () => {
     expect(rendered).toContain("[rendering-truncated");
   });
 
+  it("renders fresh os.http.request results uncapped", () => {
+    const big = "x".repeat(10_000);
+    const rendered = renderTurnForPrompt(
+      toolResultTurn({
+        tool: "os.http.request",
+        status: "ok",
+        summary: big,
+        at: 7,
+      }),
+      { inCurrentMacroTurn: true },
+    );
+    expect(rendered).toBe(`tool_result[os.http.request ok]: ${big}`);
+    expect(rendered).not.toContain("[rendering-truncated");
+  });
+
+  it("caps historical os.http.request results to ~400 chars", () => {
+    const big = "x".repeat(10_000);
+    const rendered = renderTurnForPrompt(
+      toolResultTurn({
+        tool: "os.http.request",
+        status: "ok",
+        summary: big,
+        at: 7,
+      }),
+      { inCurrentMacroTurn: false },
+    );
+    expect(rendered.length).toBeLessThan(800);
+    expect(rendered).toContain("[rendering-truncated");
+    expect(rendered.startsWith("tool_result[os.http.request ok]: ")).toBe(true);
+  });
+
+  it("defaults to history mode for os.http.request when option is omitted", () => {
+    const big = "x".repeat(10_000);
+    const rendered = renderTurnForPrompt(
+      toolResultTurn({
+        tool: "os.http.request",
+        status: "ok",
+        summary: big,
+        at: 7,
+      }),
+    );
+    expect(rendered).toContain("[rendering-truncated");
+  });
+
   it("leaves short tool_result summaries untouched", () => {
     const rendered = renderTurnForPrompt(
       toolResultTurn({
@@ -130,6 +175,40 @@ describe("conversation-turn helpers", () => {
       }),
     );
     expect(rendered).toBe("tool_result[os.fs.list ok]: 3 entries: a, b, c");
+  });
+
+  describe("findCurrentMacroTurnStart", () => {
+    it("returns 0 when no assistant_reply has been emitted", () => {
+      const turns: ConversationTurn[] = [
+        userTurn("hi", 1),
+        assistantToolCallTurn({ tool: "x", args: {}, at: 2 }),
+        toolResultTurn({ tool: "x", status: "ok", summary: "s", at: 3 }),
+      ];
+      expect(findCurrentMacroTurnStart(turns)).toBe(0);
+    });
+
+    it("returns 0 for an empty list", () => {
+      expect(findCurrentMacroTurnStart([])).toBe(0);
+    });
+
+    it("returns the index right after the last assistant_reply", () => {
+      const turns: ConversationTurn[] = [
+        userTurn("hi", 1),
+        assistantReplyTurn("done", 2),
+        userTurn("more", 3),
+        assistantToolCallTurn({ tool: "x", args: {}, at: 4 }),
+        toolResultTurn({ tool: "x", status: "ok", summary: "s", at: 5 }),
+      ];
+      expect(findCurrentMacroTurnStart(turns)).toBe(2);
+    });
+
+    it("returns turns.length when the last turn is an assistant_reply", () => {
+      const turns: ConversationTurn[] = [
+        userTurn("hi", 1),
+        assistantReplyTurn("done", 2),
+      ];
+      expect(findCurrentMacroTurnStart(turns)).toBe(2);
+    });
   });
 
   it("appendTurn returns a new array without mutating", () => {

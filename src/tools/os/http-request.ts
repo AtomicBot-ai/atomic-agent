@@ -12,6 +12,7 @@ import type {
   HttpApprovalMode,
 } from "../../config/index.js";
 import type { ToolDefinition } from "../tool-registry.js";
+import { convertHtmlToText, looksLikeHtml } from "./html-to-text.js";
 
 /**
  * Marker we append to curl stdout via `-w` so we can split the response
@@ -100,21 +101,35 @@ export function buildOsHttpRequestTool(
 
       const parsed = parseCurlOutput(commandResult.stdout);
       const truncated = commandResult.truncated;
-      return compressToolResult({
-        tool: "os.http.request",
-        status: "ok",
-        output: parsed.body,
-        details: {
-          url: args.url,
-          method: args.method,
-          status: parsed.status,
-          contentType: parsed.contentType,
-          sizeDownload: parsed.sizeDownload,
-          timeTotalSeconds: parsed.timeTotal,
-          truncated,
-          command: ["curl", ...curlArgs],
+      const htmlStripped = looksLikeHtml(parsed.contentType, parsed.body);
+      const body = htmlStripped ? convertHtmlToText(parsed.body) : parsed.body;
+      // Lift compressor caps so HTML→text conversion (and small JSON
+      // payloads that would otherwise be cropped to 400 chars / 12 lines)
+      // survive intact for the LLM. The body is already bounded by curl
+      // via `maxResponseBytes`; the downstream rendering layer applies
+      // its own per-turn cap.
+      return compressToolResult(
+        {
+          tool: "os.http.request",
+          status: "ok",
+          output: body,
+          details: {
+            url: args.url,
+            method: args.method,
+            status: parsed.status,
+            contentType: parsed.contentType,
+            sizeDownload: parsed.sizeDownload,
+            timeTotalSeconds: parsed.timeTotal,
+            truncated,
+            htmlStripped,
+            command: ["curl", ...curlArgs],
+          },
         },
-      });
+        {
+          maxSummaryLength: httpCfg.maxResponseBytes,
+          maxTailLines: Number.MAX_SAFE_INTEGER,
+        },
+      );
     },
   };
 }

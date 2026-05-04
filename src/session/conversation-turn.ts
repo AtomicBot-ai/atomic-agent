@@ -106,11 +106,48 @@ export function assistantReplyTurn(
 const TOOL_RESULT_RENDER_CAP_CHARS = 4000;
 
 /**
+ * Tools whose `tool_result.summary` is rendered **uncapped** into
+ * `### conversation` while the result is "fresh" (still inside the
+ * current macro-turn — i.e. no `assistant_reply` has been emitted since
+ * the call). Once the macro-turn closes with an `assistant_reply`, these
+ * results revert to the standard `TOOL_RESULT_RENDER_CAP_CHARS` cap so
+ * the conversation history does not pay full token cost forever.
+ *
+ * The semantic: the model needs the full body **on the inference that
+ * consumes the result**. After the agent has produced its reply for the
+ * user, the body is no longer load-bearing — a compact tail is enough
+ * for "did this happen?" recall.
+ */
+const TOOLS_FULL_BODY_WHEN_FRESH: ReadonlySet<string> = new Set([
+  "os.http.request",
+]);
+
+/**
+ * Cap applied to fresh-bypass tool results once they age out of the
+ * current macro-turn. Matches the original `compressToolResult` default
+ * (400 chars) so the historical "summary" footprint stays unchanged.
+ */
+const TOOL_RESULT_HISTORY_CAP_CHARS = 400;
+
+export interface RenderTurnOptions {
+  /**
+   * `true` when this turn is part of the **current macro-turn** — i.e.
+   * the slice of turns after the most recent `assistant_reply`. The
+   * caller is responsible for computing this; defaults to `false` (safe
+   * — applies the standard render cap).
+   */
+  inCurrentMacroTurn?: boolean;
+}
+
+/**
  * Render a single turn as a compact line for the prompt's `### conversation`
  * section. The format mirrors the one used by ChatML/Hermes-style models so
  * a small LLM can recognise the turn boundaries without a custom template.
  */
-export function renderTurnForPrompt(turn: ConversationTurn): string {
+export function renderTurnForPrompt(
+  turn: ConversationTurn,
+  options: RenderTurnOptions = {},
+): string {
   switch (turn.kind) {
     case "user":
       return `user: ${turn.text}`;
@@ -120,7 +157,7 @@ export function renderTurnForPrompt(turn: ConversationTurn): string {
     }
     case "tool_result": {
       const prefix = `tool_result[${turn.tool} ${turn.status}]`;
-      const body = capToolResultSummary(turn.summary);
+      const body = renderToolResultBody(turn, options);
       return `${prefix}: ${body}${turn.truncated ? " (truncated)" : ""}`;
     }
     case "assistant_reply":
@@ -128,10 +165,36 @@ export function renderTurnForPrompt(turn: ConversationTurn): string {
   }
 }
 
-function capToolResultSummary(summary: string): string {
-  if (summary.length <= TOOL_RESULT_RENDER_CAP_CHARS) return summary;
-  const keep = TOOL_RESULT_RENDER_CAP_CHARS - 40;
+function renderToolResultBody(
+  turn: Extract<ConversationTurn, { kind: "tool_result" }>,
+  options: RenderTurnOptions,
+): string {
+  if (TOOLS_FULL_BODY_WHEN_FRESH.has(turn.tool)) {
+    if (options.inCurrentMacroTurn === true) return turn.summary;
+    return capSummary(turn.summary, TOOL_RESULT_HISTORY_CAP_CHARS);
+  }
+  return capSummary(turn.summary, TOOL_RESULT_RENDER_CAP_CHARS);
+}
+
+function capSummary(summary: string, capChars: number): string {
+  if (summary.length <= capChars) return summary;
+  const keep = Math.max(1, capChars - 40);
   return `${summary.slice(0, keep)}\n… [rendering-truncated ${summary.length - keep} chars]`;
+}
+
+/**
+ * Find the index of the first turn that belongs to the current
+ * macro-turn — i.e. the slice of turns strictly after the most recent
+ * `assistant_reply`. Returns `0` when no reply has been emitted yet
+ * (everything is part of the current macro-turn).
+ */
+export function findCurrentMacroTurnStart(
+  turns: readonly ConversationTurn[],
+): number {
+  for (let i = turns.length - 1; i >= 0; i -= 1) {
+    if (turns[i]?.kind === "assistant_reply") return i + 1;
+  }
+  return 0;
 }
 
 /**
@@ -174,7 +237,14 @@ export function packConversation(
     };
   }
 
-  const rendered = turns.map(renderTurnForPrompt);
+  // Estimate sizes with the same `inCurrentMacroTurn` flag the renderer
+  // will apply downstream — otherwise tools that bypass the cap when
+  // fresh (e.g. `os.http.request`) get under-estimated and the packed
+  // section overshoots `maxTokens`.
+  const currentStart = findCurrentMacroTurnStart(turns);
+  const rendered = turns.map((turn, i) =>
+    renderTurnForPrompt(turn, { inCurrentMacroTurn: i >= currentStart }),
+  );
   const tokenCosts = rendered.map((line) => estimateTokens(line) + 1);
   const total = tokenCosts.reduce((a, b) => a + b, 0);
   if (total <= maxTokens) {

@@ -54,6 +54,7 @@
     "exceljs": "^4.4.0",
     "fast-xml-parser": "^5.7.1",
     "fuzzysort": "^3.1.0",
+    "html-to-text": "^10.0.0",
     "ink": "^7.0.1",
     "jszip": "^3.10.1",
     "mammoth": "^1.12.0",
@@ -69,6 +70,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
+    "@types/html-to-text": "^9.0.4",
     "@types/node": "^24.12.2",
     "@types/node-notifier": "^8.0.5",
     "@types/react": "^19.2.14",
