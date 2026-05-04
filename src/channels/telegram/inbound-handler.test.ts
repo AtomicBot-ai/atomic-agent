@@ -345,4 +345,40 @@ describe("handleInboundText", () => {
     await handleInboundText(makeUpdate("hello"), ctx);
     expect(calls[0]!.sessionId).toBe("s-existing");
   });
+
+  it("calls ensureApprovalSession with the active session id and chat id before dispatch", async () => {
+    const { runtime, sessions } = makeFakeRuntime({
+      scripts: [
+        {
+          events: [
+            {
+              type: "llm_event",
+              event: { type: "assistant_reply", text: "ok" },
+            },
+          ],
+        },
+      ],
+    });
+    const api = makeFakeApi();
+    const ensureApprovalSession = vi.fn();
+    const ctx = {
+      ...makeContext(runtime, api, pointer, OWNER),
+      ensureApprovalSession,
+    };
+    await handleInboundText(makeUpdate("hello"), ctx);
+    expect(ensureApprovalSession).toHaveBeenCalledTimes(1);
+    expect(ensureApprovalSession).toHaveBeenCalledWith(sessions[0]!.id, CHAT);
+  });
+
+  it("does not call ensureApprovalSession for slash commands", async () => {
+    const { runtime } = makeFakeRuntime();
+    const api = makeFakeApi();
+    const ensureApprovalSession = vi.fn();
+    const ctx = {
+      ...makeContext(runtime, api, pointer, OWNER),
+      ensureApprovalSession,
+    };
+    await handleInboundText(makeUpdate("/help"), ctx);
+    expect(ensureApprovalSession).not.toHaveBeenCalled();
+  });
 });

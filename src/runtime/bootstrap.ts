@@ -28,6 +28,8 @@ import { SlotManager } from "../llm/slot-manager.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
 
 import { ApprovalGate } from "../approval/approval-gate.js";
+import { ApprovalRouter } from "../approval/approval-router.js";
+import type { ApprovalHandler } from "../approval/approval-router.js";
 import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 
 import { ToolRegistry } from "../tools/tool-registry.js";
@@ -301,6 +303,21 @@ export interface AgentRuntime {
   ): Promise<RunTurnResult>;
   /** Refresh the skill registry after install/uninstall and rebuild the catalog. */
   refreshSkills(): Promise<void>;
+  /**
+   * Register `handler` as the approval sink for `sessionId`. Every
+   * `ApprovalRequest` whose `sessionId` matches will be routed to
+   * `handler` instead of the host's `onApprovalRequest` fallback.
+   * Returns an `unsubscribe` callback that removes the registration —
+   * the unsubscribe is a no-op if a later registration has already
+   * replaced this one (see `ApprovalRouter` for the locked
+   * invariants). Channels that own a session (Telegram today) call
+   * this so an approval prompt lands on the surface that originated
+   * the turn.
+   */
+  setApprovalHandlerForSession(
+    sessionId: string,
+    handler: ApprovalHandler,
+  ): () => void;
   /** Close all resources (browser, sqlite, llama client). Safe to call twice. */
   shutdown(): Promise<void>;
 }
@@ -370,8 +387,17 @@ export async function createAgentRuntime(
     },
   });
 
+  // Approval requests flow through `ApprovalRouter`: per-session
+  // handlers (Telegram channel, future Slack/etc.) win, otherwise the
+  // host's `onApprovalRequest` callback fires. The fallback closure
+  // captures `options.handlers` once so handler-rebinding via a
+  // future API would not be observed here — sessions that need a
+  // different fallback should register a per-session handler instead.
+  const approvalRouter = new ApprovalRouter((request) => {
+    options.handlers?.onApprovalRequest?.(request);
+  });
   const approvals = new ApprovalGate({
-    emit: (request) => options.handlers?.onApprovalRequest?.(request),
+    emit: (request) => approvalRouter.emit(request),
     autoApprove: !options.approvalRequired,
   });
   const dangerous: DangerousToolOptions = {
@@ -882,6 +908,8 @@ export async function createAgentRuntime(
     runTurn,
     executeTurn,
     refreshSkills,
+    setApprovalHandlerForSession: (sessionId, handler) =>
+      approvalRouter.setForSession(sessionId, handler),
     shutdown,
   } as AgentRuntime & { telegramChannel: TelegramChannel | null };
   Object.defineProperty(runtime, "skillCatalog", {

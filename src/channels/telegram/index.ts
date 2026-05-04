@@ -9,6 +9,11 @@ export type {
   InboundContext,
   InboundTextUpdate,
 } from "./inbound-handler.js";
+export { ApprovalBridge } from "./approval-bridge.js";
+export type {
+  ApprovalBridgeDeps,
+  InboundCallbackUpdate,
+} from "./approval-bridge.js";
 export type { TelegramApi } from "./outbound-sender.js";
 export {
   TelegramSessionPointer,

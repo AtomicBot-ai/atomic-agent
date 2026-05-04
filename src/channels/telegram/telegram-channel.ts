@@ -10,6 +10,7 @@ import {
   handleInboundText,
   type InboundTextUpdate,
 } from "./inbound-handler.js";
+import { ApprovalBridge, type InboundCallbackUpdate } from "./approval-bridge.js";
 import type { TelegramApi } from "./outbound-sender.js";
 import { TelegramSessionPointer } from "./telegram-session-pointer.js";
 import { TelegramLockfile, type ChannelLock } from "./telegram-lockfile.js";
@@ -31,6 +32,14 @@ export interface BotInstance {
     ): Promise<unknown>;
   };
   setTextHandler(handler: (u: InboundTextUpdate) => void | Promise<void>): void;
+  /**
+   * Register the inline-keyboard callback handler. Optional because a
+   * bot that never sends a keyboard does not need one — slice 1 ran
+   * without it. Slice 2's `ApprovalBridge` requires it.
+   */
+  setCallbackHandler?(
+    handler: (u: InboundCallbackUpdate) => void | Promise<void>,
+  ): void;
   /**
    * Begin long-polling. Implementations are fire-and-forget — the
    * polling loop runs in the background until `stop()` is called and
@@ -86,6 +95,18 @@ export class TelegramChannel {
   private readonly inflight = new Map<number, AbortController>();
   private readonly token: string | null;
   private bot: BotInstance | null = null;
+  private approvalBridge: ApprovalBridge | null = null;
+  /**
+   * The approval router subscription for the currently active
+   * Telegram session. Re-bound by `ensureApprovalSession` whenever
+   * the inbound handler swaps to a different session (lazy creation,
+   * `/new` rotation, missing-pointer recovery).
+   */
+  private approvalSubscription: {
+    sessionId: string;
+    chatId: number;
+    unsubscribe: () => void;
+  } | null = null;
   private currentState: ChannelStatus["state"] = "disabled";
   private currentError: string | null = null;
   private startInFlight = false;
@@ -133,6 +154,13 @@ export class TelegramChannel {
         botId: me.id,
         botUsername: me.username,
       });
+      const bridge = new ApprovalBridge({
+        api: bot.api,
+        approvals: this.deps.runtime.approvals,
+        ownerUserId: this.deps.config.telegram.ownerUserId,
+        logger: this.deps.logger,
+      });
+      this.approvalBridge = bridge;
       bot.setTextHandler((update) =>
         handleInboundText(update, {
           runtime: this.deps.runtime,
@@ -141,8 +169,11 @@ export class TelegramChannel {
           logger: this.deps.logger,
           ownerUserId: this.deps.config.telegram.ownerUserId,
           inflight: this.inflight,
+          ensureApprovalSession: (sessionId, chatId) =>
+            this.ensureApprovalSession(sessionId, chatId),
         }),
       );
+      bot.setCallbackHandler?.((update) => bridge.handleCallback(update));
       try {
         await bot.api.setMyCommands?.([
           { command: "start", description: "Show help" },
@@ -189,6 +220,13 @@ export class TelegramChannel {
       }
     }
     this.inflight.clear();
+    // Drop the approval subscription before tearing down the bot so a
+    // late-arriving approval request lands on the host fallback
+    // instead of a no-op closure.
+    this.approvalSubscription?.unsubscribe();
+    this.approvalSubscription = null;
+    this.approvalBridge?.cancelAll();
+    this.approvalBridge = null;
     if (this.bot) {
       try {
         await this.bot.stop();
@@ -207,6 +245,36 @@ export class TelegramChannel {
       });
     }
     this.transition("disabled", null);
+  }
+
+  /**
+   * Bind (or re-bind) the approval router so requests for the active
+   * Telegram session land on the inline-keyboard bridge with the
+   * right `chatId`. Called by the inbound handler every time it
+   * acquires a session — no-op when the binding is already current.
+   * `chatId` enters the closure because a request only ever needs to
+   * reach the chat that originated the latest turn, not the session
+   * that was current at request-creation time.
+   */
+  private ensureApprovalSession(sessionId: string, chatId: number): void {
+    if (
+      this.approvalSubscription &&
+      this.approvalSubscription.sessionId === sessionId &&
+      this.approvalSubscription.chatId === chatId
+    ) {
+      return;
+    }
+    this.approvalSubscription?.unsubscribe();
+    this.approvalSubscription = null;
+    const bridge = this.approvalBridge;
+    if (!bridge) return;
+    const unsubscribe = this.deps.runtime.setApprovalHandlerForSession(
+      sessionId,
+      (request) => {
+        void bridge.dispatch(request, chatId);
+      },
+    );
+    this.approvalSubscription = { sessionId, chatId, unsubscribe };
   }
 
   private transition(

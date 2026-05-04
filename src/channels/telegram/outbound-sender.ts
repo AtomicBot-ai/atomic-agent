@@ -21,6 +21,15 @@ export interface TelegramApi {
     text: string,
     opts?: Record<string, unknown>,
   ): Promise<unknown>;
+  /**
+   * Acknowledge a `callback_query` so the in-app loading spinner on
+   * the operator's client dismisses. Optional because the inbound
+   * paths that don't process callback queries never call it.
+   */
+  answerCallbackQuery?(
+    callbackQueryId: string,
+    opts?: Record<string, unknown>,
+  ): Promise<unknown>;
 }
 
 export interface TelegramLogger {

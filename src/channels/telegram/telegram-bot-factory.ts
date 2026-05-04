@@ -1,3 +1,4 @@
+import type { InboundCallbackUpdate } from "./approval-bridge.js";
 import type { InboundTextUpdate } from "./inbound-handler.js";
 import type { BotFactory, BotInstance } from "./telegram-channel.js";
 
@@ -13,6 +14,9 @@ export const defaultGrammyBotFactory: BotFactory = async (token) => {
   const bot = new grammy.Bot(token);
   let textHandler: ((u: InboundTextUpdate) => void | Promise<void>) | null =
     null;
+  let callbackHandler:
+    | ((u: InboundCallbackUpdate) => void | Promise<void>)
+    | null = null;
   // grammy's built-in `bot.start()` long-polling drains updates
   // sequentially: it `await`s every middleware before fetching the
   // next batch via `getUpdates`. Awaiting `textHandler` here would
@@ -53,10 +57,45 @@ export const defaultGrammyBotFactory: BotFactory = async (token) => {
         );
       });
   });
+  // Same fire-and-forget pattern as `message:text` (see comment
+  // above): grammy's polling loop blocks `getUpdates` while it awaits
+  // any middleware, so awaiting an approval-callback handler would
+  // re-introduce the same /cancel-blocking class of bug.
+  bot.on("callback_query:data", (gctx) => {
+    const handler = callbackHandler;
+    if (!handler) return;
+    const cb = gctx.callbackQuery;
+    if (!cb) return;
+    const update: InboundCallbackUpdate = {
+      id: cb.id,
+      ...(gctx.from ? { from: { id: gctx.from.id } } : {}),
+      ...(cb.message
+        ? {
+            message: {
+              chat: { id: cb.message.chat.id },
+              message_id: cb.message.message_id,
+            },
+          }
+        : {}),
+      ...(cb.data ? { data: cb.data } : {}),
+    };
+    void Promise.resolve()
+      .then(() => handler(update))
+      .catch((err) => {
+        process.stderr.write(
+          `[telegram] callbackHandler rejected unexpectedly: ${
+            err instanceof Error ? err.message : String(err)
+          }\n`,
+        );
+      });
+  });
   const instance: BotInstance = {
     api: bot.api as unknown as BotInstance["api"],
     setTextHandler(handler) {
       textHandler = handler;
+    },
+    setCallbackHandler(handler) {
+      callbackHandler = handler;
     },
     start(onStart) {
       void bot.start({ onStart }).catch(() => undefined);

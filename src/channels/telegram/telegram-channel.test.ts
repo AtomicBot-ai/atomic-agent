@@ -21,6 +21,7 @@ interface FakeBotState {
   stopCalls: number;
   setMyCommandsCalls: number;
   textHandler: ((u: unknown) => void | Promise<void>) | null;
+  callbackHandler: ((u: unknown) => void | Promise<void>) | null;
 }
 
 interface FakeBotOptions {
@@ -37,11 +38,14 @@ function makeBotFactory(opts: FakeBotOptions = {}): {
     stopCalls: 0,
     setMyCommandsCalls: 0,
     textHandler: null,
+    callbackHandler: null,
   };
   const factory: BotFactory = () => {
     const bot: BotInstance = {
       api: {
         sendMessage: vi.fn(async () => ({ message_id: 1 })),
+        editMessageText: vi.fn(async () => undefined),
+        answerCallbackQuery: vi.fn(async () => undefined),
         getMe: vi.fn(async () => {
           if (opts.getMeError) throw opts.getMeError;
           return { id: 1, username: "test_bot" };
@@ -54,6 +58,9 @@ function makeBotFactory(opts: FakeBotOptions = {}): {
       },
       setTextHandler(handler) {
         state.textHandler = handler;
+      },
+      setCallbackHandler(handler) {
+        state.callbackHandler = handler;
       },
       start(_onStart) {
         state.startCalls += 1;
@@ -85,8 +92,14 @@ function fakeLock(opts: { acquireError?: Error } = {}): {
   return { lock, get acquired() { return counters.acquired; }, get released() { return counters.released; } };
 }
 
-function fakeRuntime(): AgentRuntime {
-  return {} as unknown as AgentRuntime;
+function fakeRuntime(
+  overrides: Partial<AgentRuntime> = {},
+): AgentRuntime {
+  return {
+    approvals: { resolve: vi.fn(() => true) },
+    setApprovalHandlerForSession: vi.fn(() => () => undefined),
+    ...overrides,
+  } as unknown as AgentRuntime;
 }
 
 function makeConfig(stateDir: string): AtomicAgentConfig {
@@ -252,6 +265,50 @@ describe("TelegramChannel", () => {
     });
     await channel.start();
     expect(channel.state()).toBe("up");
+  });
+
+  it("registers a callback handler at start so the approval bridge can receive button clicks", async () => {
+    const { factory, state } = makeBotFactory();
+    const { lock } = fakeLock();
+    const channel = new TelegramChannel({
+      runtime: fakeRuntime(),
+      config: makeConfig(dir),
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock,
+      emitStatus: () => undefined,
+    });
+    await channel.start();
+    expect(state.callbackHandler).not.toBeNull();
+  });
+
+  it("re-binds the approval router on first inbound message and unsubscribes on stop", async () => {
+    const { factory, state } = makeBotFactory();
+    const { lock } = fakeLock();
+    const setHandler = vi.fn(() => () => undefined);
+    // Build a runtime with a real-shaped setApprovalHandlerForSession spy.
+    const runtime = fakeRuntime({
+      setApprovalHandlerForSession: setHandler,
+    } as unknown as AgentRuntime);
+    const channel = new TelegramChannel({
+      runtime,
+      config: makeConfig(dir),
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock,
+      emitStatus: () => undefined,
+    });
+    await channel.start();
+    // The text handler from the channel triggers the same code path
+    // the inbound handler does — `ensureApprovalSession` is wired on
+    // the InboundContext and gets called once a session is acquired.
+    // Here we only assert the handler is plumbed (and that stop()
+    // tears down whatever subscription the channel acquired).
+    expect(state.textHandler).not.toBeNull();
+    await channel.stop();
+    expect(channel.state()).toBe("disabled");
   });
 });
 

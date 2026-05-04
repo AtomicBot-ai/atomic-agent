@@ -54,6 +54,14 @@ export interface InboundContext {
    * the handler stateless.
    */
   inflight: Map<number, AbortController>;
+  /**
+   * Bind the approval router so a request for `sessionId` lands on
+   * the Telegram inline-keyboard bridge with the active `chatId`.
+   * Provided by `TelegramChannel`; absent in slice 1-style tests
+   * that only exercise the text path. Idempotent — the channel
+   * no-ops when the binding is already current.
+   */
+  ensureApprovalSession?: (sessionId: string, chatId: number) => void;
   /** Called whenever the handler successfully delivered a reply chunk. */
   onMessageSent?: (chunks: number) => void;
   /** Called whenever the handler accepted an inbound text message. */
@@ -157,6 +165,11 @@ async function dispatchToRuntime(
   ctx: InboundContext,
 ): Promise<void> {
   const session = acquireOrCreateSession(ctx);
+  // Re-bind the approval router for this session/chat pair before any
+  // turn step can request approval — `ApprovalRouter.setForSession`
+  // is the only path that turns a generic `ApprovalRequest` into a
+  // 2-button keyboard in this chat. Idempotent on the channel side.
+  ctx.ensureApprovalSession?.(session.id, chatId);
   const controller = new AbortController();
   ctx.inflight.set(chatId, controller);
 
