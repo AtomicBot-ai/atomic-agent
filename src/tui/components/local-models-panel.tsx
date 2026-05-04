@@ -209,31 +209,7 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
   }
   return (
     <Box flexDirection="column">
-      <DownloadBanner panel={panel} />
-      {panel.errorLine ? (
-        <Text color="red">{panel.errorLine}</Text>
-      ) : null}
-      <Text color={theme.colors.muted}>
-        mode: {panel.configMode}
-        {panel.totalRamGb !== null ? ` · host RAM ${panel.totalRamGb} GB` : ""}
-        {panel.lastRefreshedAt
-          ? ` · refreshed ${new Date(panel.lastRefreshedAt).toLocaleTimeString()}`
-          : ""}
-      </Text>
-      {renderDaemonLine(panel)}
-      {panel.daemonError ? (
-        <Text color="red">daemon: {panel.daemonError}</Text>
-      ) : null}
-      {panel.dataDir ? (
-        <Text color={theme.colors.muted}>
-          data dir: {panel.dataDir} · backend {panel.backend.currentTag ?? "—"}
-          {panel.backend.updateAvailable === true ? " (update available)" : ""}
-        </Text>
-      ) : null}
-      <Text color={theme.colors.muted}>
-        j/k move · Enter download/activate (incl. mmproj) · g gguf only · s start/stop · i info · d remove · B backend · r refresh · L logs
-      </Text>
-      <Box marginTop={1} flexDirection="column">
+      <Box flexDirection="column">
         {panel.rows.map((r, i) => {
           const downloading =
             panel.pull !== null &&
@@ -282,6 +258,32 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
             </Box>
           );
         })}
+      </Box>
+      <Box marginTop={1} flexDirection="column">
+        <DownloadBanner panel={panel} />
+        {panel.errorLine ? (
+          <Text color="red">{panel.errorLine}</Text>
+        ) : null}
+        <Text color={theme.colors.muted}>
+          mode: {panel.configMode}
+          {panel.totalRamGb !== null ? ` · host RAM ${panel.totalRamGb} GB` : ""}
+          {panel.lastRefreshedAt
+            ? ` · refreshed ${new Date(panel.lastRefreshedAt).toLocaleTimeString()}`
+            : ""}
+        </Text>
+        {renderDaemonLine(panel)}
+        {panel.daemonError ? (
+          <Text color="red">daemon: {panel.daemonError}</Text>
+        ) : null}
+        {panel.dataDir ? (
+          <Text color={theme.colors.muted}>
+            data dir: {panel.dataDir} · backend {panel.backend.currentTag ?? "—"}
+            {panel.backend.updateAvailable === true ? " (update available)" : ""}
+          </Text>
+        ) : null}
+        <Text color={theme.colors.muted}>
+          j/k move · Enter download/activate (incl. mmproj) · g gguf only · s start/stop · i info · d remove · B backend · r refresh · L logs
+        </Text>
       </Box>
     </Box>
   );
