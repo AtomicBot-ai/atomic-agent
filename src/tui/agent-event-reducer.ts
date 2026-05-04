@@ -17,6 +17,7 @@ import {
 import { reduceUiAction } from "./reduce-ui-actions.js";
 import { reduceLocalModelsAction } from "./local-models/local-models-reducer.js";
 import { reduceTasksAction } from "./tasks/tasks-reducer.js";
+import { reduceSkillsAction } from "./skills/skills-reducer.js";
 import type { TuiAction } from "./tui-action.js";
 import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
 
@@ -27,6 +28,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (localModelsHandled !== null) return localModelsHandled;
   const tasksHandled = reduceTasksAction(state, action);
   if (tasksHandled !== null) return tasksHandled;
+  const skillsHandled = reduceSkillsAction(state, action);
+  if (skillsHandled !== null) return skillsHandled;
   const uiHandled = reduceUiAction(state, action);
   if (uiHandled !== null) return uiHandled;
   switch (action.type) {

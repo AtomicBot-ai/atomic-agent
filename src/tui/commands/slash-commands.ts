@@ -38,7 +38,13 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   { name: "new", description: "start a fresh session (keeps warm runtime)" },
   {
     name: "skills",
-    description: "list installed skill catalog (name, source, description) in chat",
+    description:
+      "jump to the Skills tab · subcommand: `/skills dump` to print catalog in chat",
+  },
+  {
+    name: "skill",
+    description:
+      "skill subcommand: `/skill enable <name>` | `/skill disable <name>`",
   },
   { name: "memory", description: "dump the current user profile (cross-session facts)" },
   {

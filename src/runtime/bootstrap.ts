@@ -415,10 +415,13 @@ export async function createAgentRuntime(
     logger,
   });
 
-  const skillRegistry = new SkillRegistry({
-    globalDir: config.paths.globalSkillsDir,
-    projectDir: join(workingDir, config.paths.projectSkillsDirName),
-  });
+  const skillRegistry = new SkillRegistry(
+    {
+      globalDir: config.paths.globalSkillsDir,
+      projectDir: join(workingDir, config.paths.projectSkillsDirName),
+    },
+    config.skills.disabled,
+  );
   await skillRegistry.refresh();
   for (const e of skillRegistry.errors()) {
     logger.warn("skill registry: skipped skill directory", {

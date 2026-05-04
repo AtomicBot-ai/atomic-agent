@@ -10,6 +10,7 @@ import { captureAndWriteDebugBundle } from "./debug-bundle/index.js";
 import { LlmHealthPoller } from "./llm-health/llm-health-poller.js";
 import { LocalModelsOrchestrator } from "./local-models/local-models-orchestrator.js";
 import { TasksOrchestrator } from "./tasks/tasks-orchestrator.js";
+import { SkillsOrchestrator } from "./skills/skills-orchestrator.js";
 import type { TuiEventBus } from "./tui-app.js";
 import { turnsToMessages } from "./turns-to-messages.js";
 import type { SessionPickerEntry, TuiState } from "./tui-state.js";
@@ -67,6 +68,7 @@ export class ChatOrchestrator {
   private readonly queue: string[] = [];
   public exitCode = 0;
   public readonly tasks: TasksOrchestrator;
+  public readonly skills: SkillsOrchestrator;
   public readonly localModels: LocalModelsOrchestrator;
   public readonly llmHealth: LlmHealthPoller;
 
@@ -79,6 +81,7 @@ export class ChatOrchestrator {
       getCurrentSessionId: () => this.session?.id ?? null,
       switchSession: (id) => this.switchSession(id),
     });
+    this.skills = new SkillsOrchestrator(runtime, bus);
     this.localModels = new LocalModelsOrchestrator(bus);
     this.llmHealth = new LlmHealthPoller(bus, options.llamaUrl);
   }
@@ -334,6 +337,7 @@ export class ChatOrchestrator {
   async shutdown(): Promise<void> {
     this.abortCurrentTurn();
     this.tasks.shutdown();
+    this.skills.shutdown();
     this.localModels.shutdown();
     this.llmHealth.stop();
     await this.runtime.shutdown();

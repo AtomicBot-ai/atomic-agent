@@ -21,6 +21,10 @@ import {
   createInitialTasksPanelState,
   type TasksPanelState,
 } from "./tasks/tasks-panel-state.js";
+import {
+  createInitialSkillsPanelState,
+  type SkillsPanelState,
+} from "./skills/skills-panel-state.js";
 
 /**
  * High-level lifecycle of the TUI. Mirrors the underlying `SessionState`
@@ -59,6 +63,7 @@ export type TuiTab =
   | "reasoning"
   | "logs"
   | "tasks"
+  | "skills"
   | "models"
   | "llm-logs";
 
@@ -258,6 +263,8 @@ export interface TuiState {
   ringBufferSize: number;
   /** State slice driving the Tasks tab (Option 4 background autonomy UI). */
   tasksPanel: TasksPanelState;
+  /** State slice driving the Skills tab (enable / disable + detail view). */
+  skillsPanel: SkillsPanelState;
   /** Managed llama.cpp catalog + download UI (daemon lifecycle stays CLI-only). */
   localModelsPanel: LocalModelsPanelState;
   /** Tail of `<dataDir>/llama-server.log` driving the "LLM logs" tab. */
@@ -333,6 +340,7 @@ export function createInitialTuiState(
     aborting: false,
     ringBufferSize,
     tasksPanel: createInitialTasksPanelState(),
+    skillsPanel: createInitialSkillsPanelState(),
     localModelsPanel: createInitialLocalModelsPanelState(),
     localLlmLogs: createInitialLocalLlmLogsState(),
     llmHealth: createInitialLlmHealthState(),

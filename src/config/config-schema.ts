@@ -147,6 +147,15 @@ export interface AtomicAgentConfig {
   };
   skills: {
     catalogTokenBudget: number;
+    /**
+     * Names of installed skills that should be hidden from the
+     * registry. A disabled name is filtered out of `SkillRegistry.list()`
+     * entirely — the catalog row in `### skills` disappears and
+     * `skill.view` returns `SkillNotFoundError`. Mirrors
+     * `UserConfigFile.skills.disabled`. Editing the list invalidates
+     * KV-cache once because the stable prefix changes.
+     */
+    disabled: string[];
   };
   http: {
     enabled: boolean;
@@ -463,9 +472,18 @@ export interface UserConfigFile {
     maxImageBytes: number;
     maxImagesPerCall: number;
   };
+  /**
+   * Skill management. Added in config v8 so installed skills can be
+   * turned off without removing their files from disk. `disabled`
+   * holds kebab-case skill names; older files are transparently
+   * upgraded with `skills: { disabled: [] }`.
+   */
+  skills: {
+    disabled: string[];
+  };
 }
 
-export const USER_CONFIG_VERSION = 7 as const;
+export const USER_CONFIG_VERSION = 8 as const;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -473,13 +491,19 @@ export const USER_CONFIG_VERSION = 7 as const;
  * "Llama" conflation — the runtime never ran Llama family models
  * specifically. v6 added the optional `vision.*` block; v7 added
  * `localModels.completionMaxTokens` so users can raise the
- * tool-call `n_predict` cap from the file. Older files are
- * transparently upgraded by filling missing blocks/fields from
- * `USER_CONFIG_DEFAULTS`. Anything older than v5 is not migrated:
- * this is active development, callers delete their `config.json`
- * and start over.
+ * tool-call `n_predict` cap from the file. v8 added the optional
+ * `skills.*` block so installed skills can be turned off without
+ * removing files from disk. Older files are transparently upgraded
+ * by filling missing blocks/fields from `USER_CONFIG_DEFAULTS`.
+ * Anything older than v5 is not migrated: this is active
+ * development, callers delete their `config.json` and start over.
  */
-const SUPPORTED_INPUT_VERSIONS: readonly number[] = [5, 6, USER_CONFIG_VERSION];
+const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
+  5,
+  6,
+  7,
+  USER_CONFIG_VERSION,
+];
 
 export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   version: USER_CONFIG_VERSION,
@@ -554,6 +578,9 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     autoDetect: true,
     maxImageBytes: 8 * 1024 * 1024,
     maxImagesPerCall: 4,
+  },
+  skills: {
+    disabled: [],
   },
 };
 
@@ -772,6 +799,45 @@ export function parseStringArrayOrNull(
   return result;
 }
 
+const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/;
+
+/**
+ * Parse a list of skill names (kebab-case, matches the `name` regex
+ * enforced by `skill-manifest.ts`). Empty input is accepted and
+ * returned as an empty array. Duplicates are silently deduped to
+ * keep the on-disk representation canonical.
+ */
+export function parseSkillNameArray(raw: unknown, field: string): string[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      field,
+      `expected string[], got ${JSON.stringify(raw)}`,
+    );
+  }
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    if (typeof entry !== "string" || entry.length === 0) {
+      throw new ConfigValidationError(
+        `${field}[${i}]`,
+        `expected non-empty string, got ${JSON.stringify(entry)}`,
+      );
+    }
+    if (!SKILL_NAME_RE.test(entry)) {
+      throw new ConfigValidationError(
+        `${field}[${i}]`,
+        `expected kebab-case skill name, got ${JSON.stringify(entry)}`,
+      );
+    }
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    result.push(entry);
+  }
+  return result;
+}
+
 /**
  * Validate and normalise the keyed `webhooks` block. The schedule,
  * when supplied, is left as raw JSON here (cron/interval/at) — it's
@@ -943,6 +1009,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (memory.index as Record<string, unknown> | undefined) ?? {};
   const webhooks = parseWebhookMap(obj.webhooks ?? {}, "webhooks");
   const vision = (obj.vision as Record<string, unknown> | undefined) ?? {};
+  const skills = (obj.skills as Record<string, unknown> | undefined) ?? {};
 
   const rawManaged =
     (localModels.managed as Record<string, unknown> | undefined) ?? {};
@@ -1178,6 +1245,12 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       maxImagesPerCall: parsePositiveInt(
         vision.maxImagesPerCall ?? USER_CONFIG_DEFAULTS.vision.maxImagesPerCall,
         "vision.maxImagesPerCall",
+      ),
+    },
+    skills: {
+      disabled: parseSkillNameArray(
+        skills.disabled ?? USER_CONFIG_DEFAULTS.skills.disabled,
+        "skills.disabled",
       ),
     },
   };

@@ -56,12 +56,16 @@ export function handleAppKey(
     (state.tasksPanel.mode === "create" ||
       state.tasksPanel.cancelConfirm !== null ||
       state.tasksPanel.searchOpen);
+  const skillsTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "skills" &&
+    state.skillsPanel.mode === "detail";
   const localModelsTabBusy =
     state.uiMode === "debug" &&
     state.activeTab === "models" &&
     (state.localModelsPanel.mode === "backendUpdate" ||
       state.localModelsPanel.removeConfirmId !== null);
-  const debugTabBusy = tasksTabBusy || localModelsTabBusy;
+  const debugTabBusy = tasksTabBusy || skillsTabBusy || localModelsTabBusy;
   if (!debugTabBusy && state.uiMode === "debug" && key.tab && !key.shift) {
     dispatch({
       type: "tab_changed",

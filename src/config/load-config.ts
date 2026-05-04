@@ -223,6 +223,7 @@ export function loadConfig(): AtomicAgentConfig {
         "ATOMIC_AGENT_SKILLS_CATALOG_BUDGET",
         ENV_DEFAULTS.SKILLS_CATALOG_BUDGET,
       ),
+      disabled: user.skills.disabled,
     },
     http: {
       enabled: user.http.enabled,

@@ -100,6 +100,40 @@ describe("buildPrompt", () => {
     expect(prompt.stablePrefix).toContain("os.fs.read_document");
   });
 
+  it("stable prefix changes deterministically when a skill is removed from the catalog (skills.disabled)", () => {
+    // Pins the contract for the `skills.disabled` denylist: the
+    // `SkillRegistry` filters disabled skills out of `list()`, the
+    // filtered list feeds `buildSkillCatalog` which feeds the stable
+    // prefix. Therefore disabling a skill invalidates KV-cache exactly
+    // once (prefix bytes change) and stays stable thereafter
+    // (subsequent identical inputs produce identical bytes).
+    const withSkill = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const withoutSkill = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: [],
+    });
+    expect(withSkill.stablePrefix).not.toBe(withoutSkill.stablePrefix);
+    expect(withSkill.stablePrefix).toContain("check-gmail-inbox");
+    expect(withoutSkill.stablePrefix).not.toContain("check-gmail-inbox");
+    // Reapplying the same input twice yields byte-identical bytes —
+    // the cache is invalidated only once on the toggle, not on every
+    // step.
+    const replay = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: [],
+    });
+    expect(replay.stablePrefix).toBe(withoutSkill.stablePrefix);
+  });
+
   it("stable prefix does not depend on session or latest result", () => {
     const a = buildPrompt({
       session: mkSession(),

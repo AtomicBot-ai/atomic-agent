@@ -131,6 +131,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onTaskCancelConfirmed: (taskId) => orchestrator.tasks.cancelTask(taskId),
         onTaskRunNowRequested: (taskId) => orchestrator.tasks.runNow(taskId),
         onTaskCreateSubmitted: (input) => orchestrator.tasks.createTask(input),
+        onSkillsAutoRefreshStart: () => orchestrator.skills.startAutoRefresh(),
+        onSkillsRefreshRequested: () => orchestrator.skills.refresh(),
+        onSkillDetailRequested: (name) =>
+          void orchestrator.skills.openDetail(name),
+        onSkillToggleRequested: (name) =>
+          void orchestrator.skills.toggleSkill(name),
+        onSkillEnableRequested: (name) =>
+          void orchestrator.skills.setSkillDisabled(name, false),
+        onSkillDisableRequested: (name) =>
+          void orchestrator.skills.setSkillDisabled(name, true),
         onDebugBundleExportRequested: (state) =>
           orchestrator.exportDebugBundle(state),
         onLocalModelsAutoRefreshStart: () => orchestrator.localModels.startAutoRefresh(),

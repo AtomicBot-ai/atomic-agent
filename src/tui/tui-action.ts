@@ -4,6 +4,7 @@ import type { MetricSample } from "../tracing/metrics-collector.js";
 import type { LogRecord } from "../tracing/structured-logger.js";
 import type { LocalModelsAction } from "./local-models/local-models-actions.js";
 import type { TasksAction } from "./tasks/tasks-actions.js";
+import type { SkillsAction } from "./skills/skills-actions.js";
 import type { ChatMessage, SessionPickerEntry, TuiTab, TuiUiMode } from "./tui-state.js";
 
 /**
@@ -116,4 +117,5 @@ export type TuiAction =
       checkedAt: number;
     }
   | LocalModelsAction
-  | TasksAction;
+  | TasksAction
+  | SkillsAction;

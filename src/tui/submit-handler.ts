@@ -124,6 +124,8 @@ export function runSlashCommand(
   }
   if (result.taskCancelId) callbacks.onTaskCancelConfirmed?.(result.taskCancelId);
   if (result.taskRunId) callbacks.onTaskRunNowRequested?.(result.taskRunId);
+  if (result.skillEnableName) callbacks.onSkillEnableRequested?.(result.skillEnableName);
+  if (result.skillDisableName) callbacks.onSkillDisableRequested?.(result.skillDisableName);
   if (
     result.localModelsPullModelId &&
     isKnownLocalModelId(result.localModelsPullModelId)

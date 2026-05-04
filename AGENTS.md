@@ -28,6 +28,10 @@ The stable-prefix `### tools` block lists **frequent** tools with full `args` sc
 
 - **Contract.** Follow the same idea as `skill.view`: do not call a rare tool with precise arguments until its schema is present under `### loaded-tools` (call `tool.view` first, or rely on autoload on error if enabled). GBNF allows `tool.view` alongside other tools (`grammars/tool-call.gbnf`).
 
+## Skills enable / disable
+
+Installed skills can be turned off without removing their files via `skills.disabled: string[]` in `<stateDir>/config.json` (config v8). A disabled name is filtered out of `SkillRegistry.list()` entirely — it disappears from the `### skills` catalog block in the stable prefix, `skill.view` returns `SkillNotFoundError`, and the underlying skill directory stays put on disk so `seed-starter-skills` re-seeds remain idempotent. The CLI surface is `atomic-agent skill enable|disable <name>` and `atomic-agent skill list` (with an `enabled`/`disabled` column); the TUI exposes the same toggle through a dedicated **Skills tab** (`/skills` opens it, `/skill enable|disable <name>` mutates from chat). Editing the list invalidates KV-cache once because the stable-prefix bytes change — identical to install/uninstall today. Pinned by [src/skills/skill-registry.test.ts](src/skills/skill-registry.test.ts) (filtering + `listAll()`), [src/cli/skill.test.ts](src/cli/skill.test.ts) (idempotent enable/disable round-trip), [src/prompt/build-prompt.test.ts](src/prompt/build-prompt.test.ts) ("stable prefix changes deterministically when a skill is removed from the catalog"), and [src/config/config-schema.test.ts](src/config/config-schema.test.ts) (v7 → v8 transparent migration).
+
 ## Parallel tool calls per step
 
 A single LLM inference always emits a JSON **array** of `1..N` tool calls. The runtime executes the array with class-aware concurrency: independent reads fan out, mutating tools serialise, and the wall time of the step collapses to `max(group_duration)` instead of the sum. This is the path that turns "scan 4 CSVs for PII" from 4 sequential `os.fs.read`s into one batched step.

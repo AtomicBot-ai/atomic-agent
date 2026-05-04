@@ -36,6 +36,7 @@ import {
 } from "./tui-state.js";
 import { handleLocalModelsTabKey } from "./local-models/local-models-key-bindings.js";
 import { handleTasksTabKey } from "./tasks/tasks-key-bindings.js";
+import { handleSkillsTabKey } from "./skills/skills-key-bindings.js";
 
 export { makeTuiEventBus } from "./make-event-bus.js";
 
@@ -104,6 +105,18 @@ export interface TuiAppCallbacks {
     message: string;
     kind: TaskCreateKind;
   }): void;
+  /** Skills tab: start the 5s registry-listing refresh loop on first entry. */
+  onSkillsAutoRefreshStart?(): void;
+  /** Skills tab: one-shot refresh dispatched on `r` keypress. */
+  onSkillsRefreshRequested?(): void;
+  /** Skills tab: load the SKILL.md body and open the detail view. */
+  onSkillDetailRequested?(name: string): void;
+  /** Skills tab: flip the disabled bit and persist to `config.json`. */
+  onSkillToggleRequested?(name: string): void;
+  /** Slash-command surface: enable a skill explicitly (`/skill enable <name>`). */
+  onSkillEnableRequested?(name: string): void;
+  /** Slash-command surface: disable a skill explicitly (`/skill disable <name>`). */
+  onSkillDisableRequested?(name: string): void;
   /**
    * Fired by `/dump`: asks the orchestrator to collect the current TUI
    * state + recent session traces into a zip under `~/Documents`. The
@@ -155,6 +168,12 @@ export function TuiApp({
   }, [state.uiMode, state.activeTab, callbacks]);
 
   useEffect(() => {
+    if (state.uiMode === "debug" && state.activeTab === "skills") {
+      callbacks.onSkillsAutoRefreshStart?.();
+    }
+  }, [state.uiMode, state.activeTab, callbacks]);
+
+  useEffect(() => {
     if (state.uiMode === "debug" && state.activeTab === "models") {
       callbacks.onLocalModelsAutoRefreshStart?.();
     }
@@ -180,11 +199,14 @@ export function TuiApp({
 
   const tasksTabActive =
     state.uiMode === "debug" && state.activeTab === "tasks";
+  const skillsTabActive =
+    state.uiMode === "debug" && state.activeTab === "skills";
   const localModelsTabActive =
     state.uiMode === "debug" && state.activeTab === "models";
   const editorFocus =
     !state.pendingApproval &&
     !tasksTabActive &&
+    !skillsTabActive &&
     !(
       localModelsTabActive &&
       (state.localModelsPanel.pull !== null ||
@@ -203,6 +225,10 @@ export function TuiApp({
     if (appHandled) return;
     if (tasksTabActive) {
       handleTasksTabKey(input, key, { state, dispatch, callbacks });
+      return;
+    }
+    if (skillsTabActive) {
+      handleSkillsTabKey(input, key, { state, dispatch, callbacks });
       return;
     }
     if (localModelsTabActive) {

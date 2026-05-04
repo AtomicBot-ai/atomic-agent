@@ -40,6 +40,10 @@ export interface SlashDispatchResult {
   readonly taskCancelId?: string;
   /** Task id to run immediately via `TaskRunner.runOne` (`/task run <id>`). */
   readonly taskRunId?: string;
+  /** Skill name to enable via the orchestrator (`/skill enable <name>`). */
+  readonly skillEnableName?: string;
+  /** Skill name to disable via the orchestrator (`/skill disable <name>`). */
+  readonly skillDisableName?: string;
   readonly localModelsPullModelId?: string;
   readonly localModelsUseModelId?: string;
   readonly triggerLocalModelsStatus?: boolean;
@@ -147,7 +151,9 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
     case "new":
       return pureActions([], { triggerSessionNew: true });
     case "skills":
-      return pureActions([], { triggerSkillCatalogDump: true });
+      return dispatchSkillsSub(parsed.args);
+    case "skill":
+      return dispatchSkillSub(parsed.args);
     case "memory":
       return pureActions([], { triggerMemoryDump: true });
     case "models":
@@ -198,6 +204,8 @@ function pureActions(
     persistLlamaUrl: undefined,
     taskCancelId: undefined,
     taskRunId: undefined,
+    skillEnableName: undefined,
+    skillDisableName: undefined,
     localModelsPullModelId: undefined,
     localModelsUseModelId: undefined,
     triggerLocalModelsStatus: false,
@@ -286,5 +294,54 @@ function dispatchTaskSub(rawArgs: string): SlashDispatchResult {
   }
   return pureActions([], {
     systemMessage: "usage: /task new | /task cancel <id> | /task run <id>",
+  });
+}
+
+/**
+ * Sub-dispatcher for `/skills [verb]`. Bare `/skills` opens the Skills
+ * tab (the visual catalog). The legacy "dump catalog in chat" flow is
+ * preserved under `/skills dump` for users who want a flat text dump
+ * piped through the chat transcript (e.g. agent-readable output).
+ */
+function dispatchSkillsSub(rawArgs: string): SlashDispatchResult {
+  const argPart = rawArgs.trim();
+  if (argPart.length === 0) {
+    return pureActions([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "skills" },
+    ]);
+  }
+  if (argPart.toLowerCase() === "dump") {
+    return pureActions([], { triggerSkillCatalogDump: true });
+  }
+  return pureActions([], {
+    systemMessage: "usage: /skills | /skills dump",
+  });
+}
+
+/**
+ * Sub-dispatcher for `/skill <verb> <name>`. Accepted verbs:
+ *   - `enable <name>`  — enable a previously disabled skill.
+ *   - `disable <name>` — hide a skill from the registry without deleting files.
+ */
+function dispatchSkillSub(rawArgs: string): SlashDispatchResult {
+  const [verb, ...rest] = rawArgs.trim().split(/\s+/);
+  const verbLower = (verb ?? "").toLowerCase();
+  if (verbLower === "enable") {
+    const name = rest.join(" ").trim();
+    if (name.length === 0) {
+      return pureActions([], { systemMessage: "usage: /skill enable <name>" });
+    }
+    return pureActions([], { skillEnableName: name });
+  }
+  if (verbLower === "disable") {
+    const name = rest.join(" ").trim();
+    if (name.length === 0) {
+      return pureActions([], { systemMessage: "usage: /skill disable <name>" });
+    }
+    return pureActions([], { skillDisableName: name });
+  }
+  return pureActions([], {
+    systemMessage: "usage: /skill enable <name> | /skill disable <name>",
   });
 }

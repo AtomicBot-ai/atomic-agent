@@ -303,4 +303,44 @@ describe("parseUserConfigFile", () => {
       }),
     ).toThrow(/localModels.managed.modelId/);
   });
+
+  it("applies skills defaults when the section is absent", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.skills).toEqual(USER_CONFIG_DEFAULTS.skills);
+  });
+
+  it("accepts a v7 file and fills in skills.* defaults transparently", () => {
+    const parsed = parseUserConfigFile({ version: 7 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.skills).toEqual(USER_CONFIG_DEFAULTS.skills);
+  });
+
+  it("preserves a non-empty skills.disabled list and dedupes duplicates", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      skills: { disabled: ["apple-notes", "obsidian", "apple-notes"] },
+    });
+    expect(parsed.skills.disabled).toEqual(["apple-notes", "obsidian"]);
+  });
+
+  it("rejects invalid skills.disabled entries", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        skills: { disabled: ["Apple-Notes"] },
+      }),
+    ).toThrow(/skills.disabled\[0\]/);
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        skills: { disabled: [""] },
+      }),
+    ).toThrow(/skills.disabled\[0\]/);
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        skills: { disabled: "obsidian" },
+      }),
+    ).toThrow(/skills.disabled/);
+  });
 });

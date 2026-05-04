@@ -72,11 +72,40 @@ describe("dispatchSlashCommand", () => {
     expect(result.clearBuffer).toBe(true);
   });
 
-  it("signals triggerSkillCatalogDump for /skills", () => {
+  it("opens the Skills tab for bare /skills", () => {
     const result = dispatchSlashCommand("/skills");
+    expect(result.actions).toEqual([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "skills" },
+    ]);
+    expect(result.triggerSkillCatalogDump).toBe(false);
+    expect(result.clearBuffer).toBe(true);
+  });
+
+  it("signals triggerSkillCatalogDump for legacy /skills dump", () => {
+    const result = dispatchSlashCommand("/skills dump");
     expect(result.triggerSkillCatalogDump).toBe(true);
     expect(result.actions).toEqual([]);
     expect(result.clearBuffer).toBe(true);
+  });
+
+  it("emits skillEnableName for /skill enable <name>", () => {
+    const result = dispatchSlashCommand("/skill enable apple-notes");
+    expect(result.skillEnableName).toBe("apple-notes");
+    expect(result.skillDisableName).toBeUndefined();
+    expect(result.clearBuffer).toBe(true);
+  });
+
+  it("emits skillDisableName for /skill disable <name>", () => {
+    const result = dispatchSlashCommand("/skill disable apple-notes");
+    expect(result.skillDisableName).toBe("apple-notes");
+    expect(result.skillEnableName).toBeUndefined();
+  });
+
+  it("rejects /skill enable with no name", () => {
+    const result = dispatchSlashCommand("/skill enable");
+    expect(result.skillEnableName).toBeUndefined();
+    expect(result.systemMessage).toMatch(/usage: \/skill enable/);
   });
 
   it("signals triggerDebugBundleDump for /dump", () => {

@@ -9,6 +9,7 @@ import type { TuiState, TuiTab } from "../tui-state.js";
 import { LocalLlmLogsPanel } from "./local-llm-logs-panel.js";
 import { LocalModelsPanel } from "./local-models-panel.js";
 import { TasksPanel } from "./tasks-panel.js";
+import { SkillsPanel } from "./skills-panel.js";
 
 interface DebugPaneProps {
   state: TuiState;
@@ -41,6 +42,7 @@ function DebugTabBar({ state }: { state: TuiState }): ReactElement {
     },
     { id: "logs", label: `Logs${suffix(state.logs.length)}` },
     { id: "tasks", label: `Tasks${suffix(state.tasksPanel.rows.length)}` },
+    { id: "skills", label: `Skills${suffix(state.skillsPanel.rows.length)}` },
     { id: "models", label: "Local LLM" },
     { id: "llm-logs", label: "LLM logs" },
   ];
@@ -89,6 +91,8 @@ function ActiveDebugTab({
       return <LogsTab state={state} maxVisible={maxVisible} />;
     case "tasks":
       return <TasksPanel panel={state.tasksPanel} now={Date.now()} />;
+    case "skills":
+      return <SkillsPanel panel={state.skillsPanel} />;
     case "models":
       return <LocalModelsPanel panel={state.localModelsPanel} />;
     case "llm-logs":
@@ -109,6 +113,7 @@ const DEBUG_TAB_ORDER: readonly TuiTab[] = [
   "reasoning",
   "logs",
   "tasks",
+  "skills",
   "models",
   "llm-logs",
 ];
