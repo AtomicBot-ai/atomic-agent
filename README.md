@@ -11,10 +11,12 @@
 [![Node.js](https://img.shields.io/badge/node-%3E%3D25.7-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/typescript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 ![Local first](https://img.shields.io/badge/local--first-runtime-7C3AED)
+![Private by default](https://img.shields.io/badge/private--by--default-local-059669)
+![No per-token fees](https://img.shields.io/badge/no%20per--token%20fees-llama.cpp-111827)
 ![llama.cpp](https://img.shields.io/badge/llama.cpp-supported-111827)
 ![Tauri sidecar](https://img.shields.io/badge/Tauri-sidecar-24C8DB?logo=tauri&logoColor=white)
 
-`atomic-agent` is a local agent that can operate a real desktop: browser, files, shell, documents, notes, memory, scheduled work, approvals, and traces. Think of it in the same product category as OpenClaw Operator and Hermes Agent, but shipped as a standalone SEA binary and tuned for local models so it can squeeze the most out of them instead of relying on a hosted control plane.
+`atomic-agent` is a local agent that can operate a real desktop: browser, files, shell, documents, notes, memory, scheduled work, approvals, and traces. Think of it in the same product category as OpenClaw Operator and Hermes Agent, but shipped as a standalone SEA binary and tuned for local models so it can squeeze the most out of them instead of relying on a hosted control plane. Your data, traces, browser profile, memory, and model traffic stay on your machine by default.
 
 **Active development:** APIs, commands, configuration, and behavior may change while the runtime is still moving quickly. Pin a release if you need a stable integration point.
 
@@ -75,6 +77,19 @@ This is runtime architecture, not prompt superstition.
 - **Vision:** optional `vision.describe` tool for multimodal `llama.cpp` models with an `mmproj` projector, kept outside the text conversation transcript.
 
 Dangerous actions go through approvals. Read-heavy inspection stays low-friction.
+
+## Privacy And Cost
+
+Most cloud agents have the same hidden tax: your prompts, files, browser context, tool outputs, and usage patterns must pass through somebody else's infrastructure. Even when the product is well-run, that is still remote telemetry, remote retention policy, and a bill that scales with tokens.
+
+`atomic-agent` keeps the control plane local:
+
+- **Private by default:** model calls go to your configured `llama-server`; sessions, memory, tasks, skills, browser profile, and traces live under `<stateDir>` on your machine.
+- **No SaaS meter:** once you have local hardware and model files, the runtime does not charge per prompt, per token, per tool call, or per seat.
+- **Inspectable artifacts:** traces are local NDJSON, state is local SQLite, and skills are local folders you can read and edit.
+- **Explicit egress:** network access happens only through configured model endpoints, browser navigation, HTTP tools, webhooks, or user-installed skills. Dangerous actions still pass through approvals.
+
+Local-first does not magically remove every privacy risk: if you point the runtime at a remote `llama-server`, browse to a website, call an API, or put secrets in skill scripts, those systems still see what you send. The difference is that `atomic-agent` does not require a hosted agent provider to sit in the middle of every step.
 
 ## Quick Start
 
