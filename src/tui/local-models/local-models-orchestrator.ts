@@ -387,10 +387,54 @@ export class LocalModelsOrchestrator {
     }
   }
 
-  removeLocalModel(id: LocalModelId): void {
-    const dataDir = getConfig().paths.localModelsDataDir;
-    removeModel(dataDir, id);
-    void this.refresh();
+  /**
+   * Delete a model's on-disk files. If the daemon is currently serving
+   * the model we are about to remove, stop it first — otherwise the
+   * server keeps the GGUF mmap'd, the next refresh races against a
+   * partially-deleted directory, and the operator is left staring at a
+   * frozen UI while `rm` churns through gigabytes. Status lines flow
+   * into the runtime feed so it is obvious what is happening even
+   * though the modal closes immediately.
+   */
+  async removeLocalModel(id: LocalModelId): Promise<void> {
+    const cfg = getConfig();
+    const dataDir = cfg.paths.localModelsDataDir;
+    const def = getLocalModelDef(id);
+    this.bus.emit({
+      type: "runtime_info",
+      line: `local-llm: removing ${def.name}…`,
+    });
+    if (
+      cfg.localModels.mode === "managed" &&
+      cfg.localModels.managed.modelId === id
+    ) {
+      const st = await getDaemonStatus(
+        dataDir,
+        cfg.localModels.managed.port,
+      );
+      if (st.running) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: stopping daemon (was serving ${def.name})…`,
+        });
+        await this.stopDaemon({ silent: true });
+      }
+    }
+    try {
+      await removeModel(dataDir, id);
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: ${def.name} removed`,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.bus.emit({
+        type: "local_models_error_set",
+        message: `remove failed: ${msg}`,
+      });
+    } finally {
+      await this.refresh();
+    }
   }
 
   /**

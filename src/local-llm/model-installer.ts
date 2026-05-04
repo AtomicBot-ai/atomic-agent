@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import type { LocalModelDef, LocalModelId } from "./models-catalog.js";
@@ -67,6 +68,17 @@ export async function downloadMmproj(
   await downloadFile(model.mmprojUrl, dest, opts);
 }
 
-export function removeModel(dataDir: string, modelId: LocalModelId): void {
-  rmSync(resolveModelDir(dataDir, modelId), { recursive: true, force: true });
+/**
+ * Delete the on-disk directory for a model (GGUF + mmproj). Async so it
+ * does not block the Ink event loop on multi-gigabyte models — `rmSync`
+ * here used to freeze the TUI for several seconds on slower disks.
+ */
+export async function removeModel(
+  dataDir: string,
+  modelId: LocalModelId,
+): Promise<void> {
+  await rm(resolveModelDir(dataDir, modelId), {
+    recursive: true,
+    force: true,
+  });
 }

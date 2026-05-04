@@ -141,7 +141,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onLocalModelsBackendPullRequested: () =>
           void orchestrator.localModels.pullBackend(),
         onLocalModelsRefreshRequested: () => void orchestrator.localModels.refresh(),
-        onLocalModelsRemoveConfirmed: (id) => orchestrator.localModels.removeLocalModel(id),
+        onLocalModelsRemoveConfirmed: (id) =>
+          void orchestrator.localModels.removeLocalModel(id),
         onLocalModelsStatusRequested: () => orchestrator.localModels.emitStatusLine(),
         onLocalModelsDaemonStartRequested: () =>
           void orchestrator.localModels.startDaemon(),

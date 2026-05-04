@@ -272,7 +272,7 @@ export async function runLocalModelsRemove(idArg: string | undefined): Promise<n
       return 1;
     }
   }
-  removeModel(dataDir, idArg);
+  await removeModel(dataDir, idArg);
   process.stdout.write(`removed ${idArg}\n`);
   return 0;
 }

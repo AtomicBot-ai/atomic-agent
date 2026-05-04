@@ -209,6 +209,35 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
   }
   return (
     <Box flexDirection="column">
+      {panel.removeConfirmId ? (
+        <Box
+          flexDirection="column"
+          borderStyle="round"
+          borderColor="red"
+          paddingX={1}
+          marginBottom={1}
+        >
+          <Text bold color="red">
+            ⚠ Delete model: {panel.removeConfirmId}
+          </Text>
+          <Text color={theme.colors.muted}>
+            Removes the GGUF{" "}
+            {panel.rows.find((r) => r.id === panel.removeConfirmId)?.def
+              .supportsVision
+              ? "(and mmproj) "
+              : ""}
+            from disk. If the daemon is serving this model it will be
+            stopped first.
+          </Text>
+          <Text>
+            <Text bold color="red">
+              (y)
+            </Text>{" "}
+            confirm ·{" "}
+            <Text bold>(n)</Text>/Esc cancel
+          </Text>
+        </Box>
+      ) : null}
       <Box flexDirection="column">
         {panel.rows.map((r, i) => {
           const downloading =
