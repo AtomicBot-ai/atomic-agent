@@ -2,9 +2,19 @@
 
 **An OpenClaw/Hermes-style local operator agent for `llama.cpp`.**
 
+[![Release](https://github.com/AtomicBot-ai/atomic-agent/actions/workflows/release.yml/badge.svg)](https://github.com/AtomicBot-ai/atomic-agent/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/AtomicBot-ai/atomic-agent?sort=semver&display_name=tag&logo=github)](https://github.com/AtomicBot-ai/atomic-agent/releases)
+[![Version](https://img.shields.io/github/package-json/v/AtomicBot-ai/atomic-agent?logo=npm)](package.json)
+[![License](https://img.shields.io/github/license/AtomicBot-ai/atomic-agent)](LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D25.7-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/typescript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+![Local first](https://img.shields.io/badge/local--first-runtime-7C3AED)
+![llama.cpp](https://img.shields.io/badge/llama.cpp-supported-111827)
+![Tauri sidecar](https://img.shields.io/badge/Tauri-sidecar-24C8DB?logo=tauri&logoColor=white)
+
 `atomic-agent` is a local agent that can operate a real desktop: browser, files, shell, documents, notes, memory, scheduled work, approvals, and traces. Think of it in the same product category as OpenClaw Operator and Hermes Agent, but built as a lightweight TypeScript runtime around local `llama.cpp` models rather than a hosted control plane.
 
-[Node.js](https://nodejs.org/) | [TypeScript](https://www.typescriptlang.org/) | [MIT](LICENSE)
+![atomic-agent terminal demo](assets/demo.gif)
 
 **Active development:** APIs, commands, configuration, and behavior may change while the runtime is still moving quickly. Pin a release if you need a stable integration point.
 

@@ -12,8 +12,6 @@ Do not reuse a **built-in starter skill name** for unrelated custom work under
 the global skills dir — it will be replaced on the next boot. Use a distinct
 `name` or a project-local `.atomic-agent/skills/` tree instead.
 
-![atomic-agent demo](../assets/demo.gif)
-
 ## Bundled skills
 
 | Folder | What it does | External requirement |
