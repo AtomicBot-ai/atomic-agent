@@ -142,7 +142,7 @@ export interface FeedEntry {
   stepIndex: number | null;
   line: string;
   /** Ink `color` prop — controls the left gutter glyph colouring. */
-  color: "green" | "red" | "yellow" | "cyan" | "gray" | "magenta" | "white";
+  color: "green" | "red" | "yellow" | "blue" | "gray" | "magenta" | "white";
   timestamp: number;
 }
 

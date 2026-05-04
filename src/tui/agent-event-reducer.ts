@@ -35,7 +35,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         kind: "runtime_info",
         stepIndex: null,
         line: action.line,
-        color: "cyan",
+        color: "blue",
       });
     case "system_message":
       return appendChatMessage(state, { role: "system", text: action.text });
@@ -120,7 +120,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           kind: "step_started",
           stepIndex: event.stepIndex,
           line: formatFeedLine({ type: "step_started", stepIndex: event.stepIndex }),
-          color: "cyan",
+          color: "blue",
         }),
         status: "running",
         currentStep: event.stepIndex,

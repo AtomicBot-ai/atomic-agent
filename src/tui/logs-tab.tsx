@@ -10,7 +10,7 @@ interface LogsTabProps {
 
 const LEVEL_COLOR: Record<LogRecord["level"], string> = {
   debug: "gray",
-  info: "cyan",
+  info: "blue",
   warn: "yellow",
   error: "red",
 };

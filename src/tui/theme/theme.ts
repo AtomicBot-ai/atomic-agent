@@ -59,21 +59,21 @@ export interface TuiTheme {
 }
 
 const COLORS: TuiColors = {
-  user: "cyan",
+  user: "blue",
   assistant: "green",
   system: "gray",
   reasoning: "magenta",
   tool: "blue",
   toolOk: "green",
   toolError: "red",
-  accent: "cyan",
-  accentSoft: "cyanBright",
+  accent: "blue",
+  accentSoft: "blueBright",
   border: "gray",
   muted: "gray",
   error: "red",
   warn: "yellow",
   success: "green",
-  info: "cyan",
+  info: "blue",
 };
 
 const GLYPHS: TuiGlyphs = {
