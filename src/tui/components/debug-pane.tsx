@@ -10,6 +10,7 @@ import { LocalLlmLogsPanel } from "./local-llm-logs-panel.js";
 import { LocalModelsPanel } from "./local-models-panel.js";
 import { TasksPanel } from "./tasks-panel.js";
 import { SkillsPanel } from "./skills-panel.js";
+import { TelegramPanel } from "../telegram/components/telegram-panel.js";
 
 interface DebugPaneProps {
   state: TuiState;
@@ -45,6 +46,7 @@ function DebugTabBar({ state }: { state: TuiState }): ReactElement {
     { id: "skills", label: `Skills${suffix(state.skillsPanel.rows.length)}` },
     { id: "models", label: "Local LLM" },
     { id: "llm-logs", label: "LLM logs" },
+    { id: "telegram", label: telegramTabLabel(state) },
   ];
   return (
     <Box>
@@ -97,6 +99,8 @@ function ActiveDebugTab({
       return <LocalModelsPanel panel={state.localModelsPanel} />;
     case "llm-logs":
       return <LocalLlmLogsPanel logs={state.localLlmLogs} maxLines={maxVisible} />;
+    case "telegram":
+      return <TelegramPanel panel={state.telegramPanel} />;
     default:
       return <EventFeed state={state} maxVisible={maxVisible} />;
   }
@@ -105,6 +109,18 @@ function ActiveDebugTab({
 function suffix(count: number): string {
   if (count === 0) return "";
   return ` (${count})`;
+}
+
+/**
+ * Label shown in the debug tab bar for the Telegram tab. Communicates
+ * the current channel state at a glance so operators on other tabs
+ * still see "Telegram down" without entering the panel.
+ */
+function telegramTabLabel(state: TuiState): string {
+  const channelState = state.telegramPanel.channelState;
+  if (channelState === "up") return "Telegram (up)";
+  if (channelState === "down") return "Telegram (down)";
+  return "Telegram";
 }
 
 const DEBUG_TAB_ORDER: readonly TuiTab[] = [
@@ -116,6 +132,7 @@ const DEBUG_TAB_ORDER: readonly TuiTab[] = [
   "skills",
   "models",
   "llm-logs",
+  "telegram",
 ];
 
 /**

@@ -47,6 +47,21 @@ export interface SlashDispatchResult {
   readonly localModelsPullModelId?: string;
   readonly localModelsUseModelId?: string;
   readonly triggerLocalModelsStatus?: boolean;
+  /**
+   * `/telegram <verb>` side-effect requested by the user. Each verb
+   * maps to a single orchestrator method; the caller (submit-handler)
+   * dispatches by switch.
+   */
+  readonly telegramVerb?:
+    | "enable"
+    | "disable"
+    | "start"
+    | "stop"
+    | "restart"
+    | "pair"
+    | "token"
+    | "clear-token"
+    | "clear-owner";
 }
 
 /**
@@ -165,6 +180,8 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       ]);
     case "task":
       return dispatchTaskSub(parsed.args);
+    case "telegram":
+      return dispatchTelegramSub(parsed.args);
     default:
       return pureActions([], {
         systemMessage: `command /${resolved.name} not yet implemented`,
@@ -209,6 +226,7 @@ function pureActions(
     localModelsPullModelId: undefined,
     localModelsUseModelId: undefined,
     triggerLocalModelsStatus: false,
+    telegramVerb: undefined,
     ...overrides,
   };
 }
@@ -344,4 +362,46 @@ function dispatchSkillSub(rawArgs: string): SlashDispatchResult {
   return pureActions([], {
     systemMessage: "usage: /skill enable <name> | /skill disable <name>",
   });
+}
+
+/**
+ * Sub-dispatcher for `/telegram [verb]`. Bare `/telegram` opens the
+ * Telegram tab. Verbs (`enable | disable | start | stop | restart |
+ * pair | token | clear-token | clear-owner`) are forwarded to the
+ * orchestrator as side-effect flags. The token verb just opens the
+ * masked prompt — slash commands never accept a token argument so the
+ * value never lands in shell history.
+ */
+function dispatchTelegramSub(rawArgs: string): SlashDispatchResult {
+  const argPart = rawArgs.trim();
+  if (argPart.length === 0) {
+    return pureActions([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "telegram" },
+    ]);
+  }
+  const verb = argPart.split(/\s+/)[0]?.toLowerCase() ?? "";
+  switch (verb) {
+    case "enable":
+    case "disable":
+    case "start":
+    case "stop":
+    case "restart":
+    case "pair":
+    case "token":
+    case "clear-token":
+    case "clear-owner":
+      return {
+        ...pureActions([
+          { type: "ui_mode_set", mode: "debug" },
+          { type: "tab_changed", tab: "telegram" },
+        ]),
+        telegramVerb: verb,
+      };
+    default:
+      return pureActions([], {
+        systemMessage:
+          "usage: /telegram | /telegram enable | disable | start | stop | restart | pair | token | clear-token | clear-owner",
+      });
+  }
 }

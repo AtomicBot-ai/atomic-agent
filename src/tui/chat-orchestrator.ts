@@ -11,6 +11,7 @@ import { LlmHealthPoller } from "./llm-health/llm-health-poller.js";
 import { LocalModelsOrchestrator } from "./local-models/local-models-orchestrator.js";
 import { TasksOrchestrator } from "./tasks/tasks-orchestrator.js";
 import { SkillsOrchestrator } from "./skills/skills-orchestrator.js";
+import { TuiTelegramOrchestrator } from "./telegram/tui-telegram-orchestrator.js";
 import type { TuiEventBus } from "./tui-app.js";
 import { turnsToMessages } from "./turns-to-messages.js";
 import type { SessionPickerEntry, TuiState } from "./tui-state.js";
@@ -71,6 +72,7 @@ export class ChatOrchestrator {
   public readonly skills: SkillsOrchestrator;
   public readonly localModels: LocalModelsOrchestrator;
   public readonly llmHealth: LlmHealthPoller;
+  public readonly telegram: TuiTelegramOrchestrator;
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -84,6 +86,7 @@ export class ChatOrchestrator {
     this.skills = new SkillsOrchestrator(runtime, bus);
     this.localModels = new LocalModelsOrchestrator(bus);
     this.llmHealth = new LlmHealthPoller(bus, options.llamaUrl);
+    this.telegram = new TuiTelegramOrchestrator(runtime, bus);
   }
 
   start(): void {
@@ -91,6 +94,7 @@ export class ChatOrchestrator {
     this.session = this.runtime.createSession();
     this.bus.emit({ type: "session_created", sessionId: this.session.id });
     this.llmHealth.start();
+    this.telegram.start();
   }
 
   /** Update the llama-server URL tracked by the footer health poller. */
@@ -340,6 +344,7 @@ export class ChatOrchestrator {
     this.skills.shutdown();
     this.localModels.shutdown();
     this.llmHealth.stop();
+    this.telegram.shutdown();
     await this.runtime.shutdown();
   }
 }

@@ -25,6 +25,10 @@ import {
   createInitialSkillsPanelState,
   type SkillsPanelState,
 } from "./skills/skills-panel-state.js";
+import {
+  createInitialTelegramPanelState,
+  type TelegramPanelState,
+} from "./telegram/telegram-panel-state.js";
 
 /**
  * High-level lifecycle of the TUI. Mirrors the underlying `SessionState`
@@ -65,7 +69,8 @@ export type TuiTab =
   | "tasks"
   | "skills"
   | "models"
-  | "llm-logs";
+  | "llm-logs"
+  | "telegram";
 
 /**
  * Top-level UI mode: `chat` is the default single-scroll openclaw-style
@@ -271,6 +276,8 @@ export interface TuiState {
   localLlmLogs: LocalLlmLogsState;
   /** Always-on llama-server `/health` probe result driving the footer indicator. */
   llmHealth: LlmHealthState;
+  /** State slice driving the Telegram tab (slice-3B live-control UI). */
+  telegramPanel: TelegramPanelState;
 }
 
 /**
@@ -344,5 +351,6 @@ export function createInitialTuiState(
     localModelsPanel: createInitialLocalModelsPanelState(),
     localLlmLogs: createInitialLocalLlmLogsState(),
     llmHealth: createInitialLlmHealthState(),
+    telegramPanel: createInitialTelegramPanelState(),
   };
 }

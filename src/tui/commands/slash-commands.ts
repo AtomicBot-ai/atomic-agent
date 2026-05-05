@@ -59,6 +59,11 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     description:
       "task subcommand: `/task new` | `/task cancel <id>` | `/task run <id>`",
   },
+  {
+    name: "telegram",
+    description:
+      "telegram tab · subcommands: enable | disable | start | stop | restart | pair | token",
+  },
 ];
 
 /**

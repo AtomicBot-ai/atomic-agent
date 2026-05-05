@@ -237,14 +237,19 @@ export interface AgentRuntime {
    */
   readonly webhookSessionStore: WebhookSessionStore;
   /**
-   * Telegram remote-control channel. `null` when
-   * `config.telegram.enabled` is `false`. When enabled, the channel
-   * is always non-null — it owns token resolution and transitions
-   * itself through `starting → up | down` on `start()`. A missing
-   * `TELEGRAM_BOT_TOKEN` lands as `state: "down"`, not as a missing
-   * channel, so slice 3 live-control surfaces can populate the token
-   * later and call `start()` again. Status is propagated to hosts
-   * via `RuntimeEventHandlers.onChannelStatus`.
+   * Telegram remote-control channel. **Always non-null** post slice 3B
+   * — the channel is constructed unconditionally so the live-control
+   * TUI panel can flip `enabled=true` (or update token / owner) without
+   * restarting the host. When `config.telegram.enabled === false` at
+   * boot, `start()` is *not* invoked and the channel stays in
+   * `disabled` state, idle and emitting no lifecycle events. When
+   * enabled, the channel owns token resolution and transitions itself
+   * through `starting → up | down` on `start()`; a missing
+   * `TELEGRAM_BOT_TOKEN` lands as `state: "down"`. Status is
+   * propagated to hosts via `RuntimeEventHandlers.onChannelStatus`.
+   * The type stays `TelegramChannel | null` for forward compatibility
+   * with potential subsystem-disable flags; callers should still
+   * defensively check before calling.
    */
   readonly telegramChannel: TelegramChannel | null;
   readonly capabilities: CapabilitiesSummary;
@@ -917,34 +922,36 @@ export async function createAgentRuntime(
     get: () => skillCatalog,
   });
 
-  // Telegram remote-control channel — slice 1 wiring. The channel
-  // owns token resolution end-to-end (reads `TELEGRAM_BOT_TOKEN` from
-  // the env on construction); bootstrap deliberately does not look at
-  // the env var so it stays agnostic of telegram-specific naming.
-  // When `enabled=true` but no token is present, the channel
+  // Telegram remote-control channel. The channel is always constructed
+  // (even when `telegram.enabled === false` at boot) so slice-3B
+  // live-control surfaces can flip it on without restarting the host —
+  // the constructor is side-effect-free, only `start()` opens the
+  // network connection. The channel owns token resolution end-to-end
+  // (reads `TELEGRAM_BOT_TOKEN` from the env on construction);
+  // bootstrap deliberately does not look at the env var so it stays
+  // agnostic of telegram-specific naming. `start()` is fired-and-
+  // forgotten so a slow `getMe` probe never delays the first user
+  // turn; when `enabled=true` but no token is present, the channel
   // transitions to `down` with `lastError: "missing
-  // TELEGRAM_BOT_TOKEN"` and is still wired to `runtime.telegramChannel`
-  // so slice 3 live-control surfaces can flip it on later.
-  // `start()` is fired-and-forgotten so a slow `getMe` probe never
-  // delays the first user turn.
+  // TELEGRAM_BOT_TOKEN"`.
+  const telegramChannel = new TelegramChannel({
+    runtime,
+    config,
+    logger,
+    metrics,
+    emitStatus: (status) => options.handlers?.onChannelStatus?.(status),
+    ...(options.overrides?.telegramBotFactory
+      ? { botFactory: options.overrides.telegramBotFactory }
+      : {}),
+  });
+  runtime.telegramChannel = telegramChannel;
+  telegramChannelForShutdown = telegramChannel;
   if (config.telegram.enabled) {
-    const telegramChannel = new TelegramChannel({
-      runtime,
-      config,
-      logger,
-      metrics,
-      emitStatus: (status) => options.handlers?.onChannelStatus?.(status),
-      ...(options.overrides?.telegramBotFactory
-        ? { botFactory: options.overrides.telegramBotFactory }
-        : {}),
-    });
     void telegramChannel.start().catch((err) => {
       logger.error("telegram: start() rejected unexpectedly", {
         error: err instanceof Error ? err.message : String(err),
       });
     });
-    runtime.telegramChannel = telegramChannel;
-    telegramChannelForShutdown = telegramChannel;
   }
 
   return runtime;

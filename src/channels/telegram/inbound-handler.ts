@@ -62,6 +62,14 @@ export interface InboundContext {
    * no-ops when the binding is already current.
    */
   ensureApprovalSession?: (sessionId: string, chatId: number) => void;
+  /**
+   * Pairing-mode hook. Provided by `TelegramChannel` so a pairing
+   * window can capture the next eligible DM as the new owner before
+   * the owner check fires. Returns `true` when the update was
+   * consumed by pairing (and must not be dispatched further). Absent
+   * in slice 1-style tests that pre-configure the owner directly.
+   */
+  tryClaimForPairing?: (update: InboundTextUpdate) => boolean;
   /** Called whenever the handler successfully delivered a reply chunk. */
   onMessageSent?: (chunks: number) => void;
   /** Called whenever the handler accepted an inbound text message. */
@@ -94,6 +102,19 @@ export async function handleInboundText(
   if (update.chat.type !== "private") return;
   const fromId = update.from?.id;
   if (typeof fromId !== "number") return;
+  // Pairing wins over the owner check: the whole point of a pairing
+  // window is to accept the *first* eligible DM as the new owner,
+  // even when `ownerUserId` is currently null or set to someone else.
+  // The channel persists the new owner and restarts; the original
+  // (claiming) message is consumed silently here so the operator
+  // never sees their pairing trigger echoed back through the agent.
+  if (ctx.tryClaimForPairing?.(update)) {
+    ctx.logger.info("telegram: pairing claimed by inbound DM", {
+      fromId,
+      chatId: update.chat.id,
+    });
+    return;
+  }
   if (ctx.ownerUserId === null || fromId !== ctx.ownerUserId) {
     ctx.logger.warn("telegram: dropping non-owner DM", {
       fromId,
@@ -165,6 +186,12 @@ async function dispatchToRuntime(
   ctx: InboundContext,
 ): Promise<void> {
   const session = acquireOrCreateSession(ctx);
+  // Count agent-visible inbound messages (post owner-check, post
+  // slash-command-shortcut). Slash commands and dropped non-owner
+  // DMs are intentionally excluded — they never reach `runTurn`.
+  // Optional chain shields hand-rolled test mocks from depending on
+  // the full `AgentRuntime` shape.
+  ctx.runtime.metrics?.recordTelegramMessage({ direction: "in" });
   // Re-bind the approval router for this session/chat pair before any
   // turn step can request approval — `ApprovalRouter.setForSession`
   // is the only path that turns a generic `ApprovalRequest` into a
@@ -212,6 +239,11 @@ async function dispatchToRuntime(
         ? formatFailure(failure)
         : "(no reply)";
   await sendText(ctx, chatId, final);
+  // Count one outbound message per logical agent reply (not per
+  // sendMessage chunk). Status-only confirmations from slash
+  // commands (`/help`, `/status`, etc.) are excluded — they are
+  // not agent-driven. Optional chain matches the inbound counter.
+  ctx.runtime.metrics?.recordTelegramMessage({ direction: "out" });
 }
 
 function acquireOrCreateSession(ctx: InboundContext): SessionState {

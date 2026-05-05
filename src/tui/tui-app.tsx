@@ -37,6 +37,7 @@ import {
 import { handleLocalModelsTabKey } from "./local-models/local-models-key-bindings.js";
 import { handleTasksTabKey } from "./tasks/tasks-key-bindings.js";
 import { handleSkillsTabKey } from "./skills/skills-key-bindings.js";
+import { handleTelegramTabKey } from "./telegram/telegram-key-bindings.js";
 
 export { makeTuiEventBus } from "./make-event-bus.js";
 
@@ -124,6 +125,42 @@ export interface TuiAppCallbacks {
    * event bus.
    */
   onDebugBundleExportRequested?(state: TuiState): void;
+  /** Telegram tab: refresh state mirror (token presence, owner, etc.). */
+  onTelegramRefreshRequested?(): void;
+  /**
+   * Telegram tab: flip `enabled` from the current panel state. The
+   * toggle uses `state.telegramPanel.enabled` as the source of truth;
+   * use `onTelegramSetEnabledRequested` when the desired value is
+   * known (e.g. slash command `/telegram enable`).
+   */
+  onTelegramToggleEnabledRequested?(): void | Promise<void>;
+  /** Telegram tab: persist + reconcile to an explicit enabled value. */
+  onTelegramSetEnabledRequested?(enabled: boolean): void | Promise<void>;
+  /** Telegram tab: explicit restart (e.g. after backend hiccup). */
+  onTelegramRestartRequested?(): void | Promise<void>;
+  /** Telegram tab: open the masked token-entry modal. */
+  onTelegramTokenPromptOpenRequested?(): void;
+  /** Telegram tab: submit the token from the modal buffer. */
+  onTelegramTokenSubmitted?(buffer: string): void | Promise<void>;
+  /** Telegram tab: clear the persisted token (back to `down`). */
+  onTelegramClearTokenRequested?(): void | Promise<void>;
+  /** Telegram tab: arm a 60s pairing window that captures the next DM. */
+  onTelegramStartPairingRequested?(): void | Promise<void>;
+  /** Telegram tab: cancel an active pairing window. */
+  onTelegramCancelPairingRequested?(): void;
+  /** Telegram tab: dismiss the pairing-result modal. */
+  onTelegramDismissPairingResultRequested?(): void;
+  /** Telegram tab: clear `ownerUserId` (the operator wants to re-pair). */
+  onTelegramClearOwnerRequested?(): void | Promise<void>;
+  /**
+   * Telegram tab: drive the setup flow forward by one step (the
+   * primary Enter-key CTA). Reads from the live channel + config so
+   * repeated presses cannot skip a step or trigger a duplicate
+   * pairing window. See `TuiTelegramOrchestrator.advanceConnect`.
+   */
+  onTelegramAdvanceConnectRequested?(): void | Promise<void>;
+  /** Telegram tab: toggle the inline advanced controls. */
+  onTelegramAdvancedToggleRequested?(): void;
 }
 
 export interface TuiAppProps {
@@ -203,10 +240,13 @@ export function TuiApp({
     state.uiMode === "debug" && state.activeTab === "skills";
   const localModelsTabActive =
     state.uiMode === "debug" && state.activeTab === "models";
+  const telegramTabActive =
+    state.uiMode === "debug" && state.activeTab === "telegram";
   const editorFocus =
     !state.pendingApproval &&
     !tasksTabActive &&
     !skillsTabActive &&
+    !telegramTabActive &&
     !(
       localModelsTabActive &&
       (state.localModelsPanel.pull !== null ||
@@ -233,6 +273,10 @@ export function TuiApp({
     }
     if (localModelsTabActive) {
       handleLocalModelsTabKey(input, key, { state, dispatch, callbacks });
+      return;
+    }
+    if (telegramTabActive) {
+      handleTelegramTabKey(input, key, { state, dispatch, callbacks });
       return;
     }
   });

@@ -143,6 +143,8 @@ Speculative batching (the runtime guessing that the model "should" have batched 
 | `src/tools/tasks/` | Agent-facing self-scheduling tools (`tasks.schedule`, `tasks.cron`, `tasks.list`, `tasks.cancel`, `tasks.show`), gated by `tasks.agentToolsEnabled`. |
 | `src/llm/provider/` | Provider abstraction layer (`LlmProvider` interface) + `LlamaServerProvider` adapter. Text completion stays on `LlamaServerClient.complete` / `completeStream` (legacy `/completion` extension with GBNF + slot ids); vision routes through `LlamaServerProvider.describeImage` against `/v1/chat/completions` with OpenAI-shape `image_url` content blocks. See §"Vision (multimodal input)". |
 | `src/tools/vision/` | `vision.describe` tool + `loadImageFile` helper. Registered whenever `config.vision.enabled` is true and a provider is constructed; the actual capability gate (`capabilities.vision`) is a dynamic getter that re-reads `ModelProfile` on every check, so vision availability tracks `ModelProfileManager` hot-swaps without a restart. See §"Vision (multimodal input)". |
+| `src/channels/telegram/` | `TelegramChannel` (lifecycle + live-control), `inbound-handler` (slash commands + dispatch into `runTurn`), `outbound-sender` (chunked replies + 429 retry), `approval-bridge` (inline-keyboard approvals with 8-min auto-deny), `pairing-mode` (60s window for first-DM owner claim), `telegram-settings` (`config.json` + `.env` persistence), `telegram-bot-factory` (grammy adapter). The **only** module that imports `grammy`. See §"Telegram remote-control channel". |
+| `src/tui/telegram/` | TUI "Telegram" tab: `telegram-panel-state` + `telegram-actions` + `telegram-panel-reducer` (pure UI state slice), `tui-telegram-orchestrator` (the only TUI module that touches `runtime.telegramChannel`), `telegram-key-bindings`, and the `telegram-panel` / `telegram-token-prompt` / `telegram-pairing-modal` components. See §"Telegram remote-control channel". |
 
 ## Secrets and process environment
 
@@ -585,6 +587,95 @@ User-config block (`config.json` v6; `ensureUserConfigFileSync` actively migrate
 ### Out of scope (deferred)
 
 Image inputs as first-class `ConversationTurn` payloads (the user pasting an image directly into the chat instead of going through the `vision.describe` tool), paste-from-clipboard / drag-and-drop ingestion in TUI, mmproj checksum verification, per-projector tuning of the image-token budget (today the 560-token tier is uniform across vision models), and an OpenAI-API provider adapter are all out of scope for this milestone. The provider abstraction is intentionally narrow — only `describeImage` — and will grow when a second adapter actually lands.
+
+## Telegram remote-control channel
+
+`atomic-agent` ships an opt-in Telegram bot that acts as a **remote control for the same single-user agent runtime** — not a separate process, not a multi-user service. When the user starts the TUI / `atomic-agent run` / `atomic-agent serve`, an enabled Telegram channel boots automatically and shares the runtime's `TurnController`, `ApprovalGate`, `SessionStore`, `MemoryStore`, and `ProfileStore`. Code lives in [src/channels/telegram/](src/channels/telegram/) (runtime side) and [src/tui/telegram/](src/tui/telegram/) (TUI panel).
+
+### Lifecycle
+
+The channel is **always constructed** at bootstrap when the `telegram` config block exists; only `start()` is gated on `config.telegram.enabled`. This is load-bearing for live-control: the TUI / slash commands can flip `enabled` on at runtime without restarting the host. When `enabled=true` but `TELEGRAM_BOT_TOKEN` is missing, the channel transitions to `down` with `lastError: "missing TELEGRAM_BOT_TOKEN"` instead of crashing the runtime. Errors are reported through `runtime.onChannelStatus` (a `ChannelStatus` sink in [src/runtime/channel-status.ts](src/runtime/channel-status.ts)) so CLI / TUI / sidecar can surface them without parsing logs.
+
+Single-instance enforcement is a `<stateDir>/telegram.lock` file ([telegram-lockfile.ts](src/channels/telegram/telegram-lockfile.ts)); the second runtime to boot fails fast at `start()` with a `lock_held` reason. `stop()` releases the lock; bootstrap shutdown awaits `telegramChannel.stop()` before closing SQLite handles.
+
+### Polling — explicit AGENTS.md carve-out
+
+The Telegram client uses **long-polling** (`grammy.Bot.start()` under the hood). Long-polling is normally forbidden by §"Background autonomy" — `Scheduler` is the only periodic timer in the runtime, and §"Concurrency contract" disallows additional internal queues. Telegram is the **single bounded exception**:
+
+- The polling loop is owned exclusively by the grammy adapter inside [telegram-bot-factory.ts](src/channels/telegram/telegram-bot-factory.ts); no other code in `src/channels/telegram/` calls `setInterval` / `setTimeout` for periodic work.
+- Every Telegram update is processed in a **fire-and-forget** wrapper (`bot.on("message:text", …) → void handler(update).catch(…)`); the polling loop never blocks on `runTurn`. This is what makes `/cancel` work mid-turn.
+- Updates always materialise into a normal `runtime.runTurn(..., { origin: "telegram" })` call. Telegram never writes to `SessionStore`, `ApprovalGate`, or `TurnController` directly. Per-session FIFO + cross-session parallelism are inherited from §"Concurrency contract" for free.
+- The carve-out is bounded to grammy. New channels (Slack, WhatsApp, …) will need a similar one-time review before adopting long-polling, and **must not** route through this code path; the `src/channels/<name>/` folder is the seam.
+
+### Sessions
+
+Telegram has its own dedicated session, persisted as a pointer in `<stateDir>/telegram-session.json` ([telegram-session-pointer.ts](src/channels/telegram/telegram-session-pointer.ts)). The TUI session and the Telegram session never collide. `/new` from Telegram rotates the pointer; the TUI's `/new` does not. The pointer file is the only Telegram-specific session metadata; everything else lives in the shared `sessions.sqlite`.
+
+### Approvals
+
+When a `runtime.runTurn` call originated on Telegram (`{ origin: "telegram" }`), `ApprovalRouter` ([src/approval/approval-router.ts](src/approval/approval-router.ts)) routes the `ApprovalRequest` to `ApprovalBridge` ([approval-bridge.ts](src/channels/telegram/approval-bridge.ts)) instead of falling through to the host UI. The bridge:
+
+- Sends a 2-button inline keyboard (`✅ Approve` / `❌ Deny`) to the owner's DM as plain text (no MarkdownV2 — escaping rules are easy to get wrong with tool names containing backticks / underscores).
+- Validates the callback `userId` against the live `ownerUserId` mirror — a stale callback from a previous owner is rejected.
+- Auto-denies after 8 minutes (`config.telegram.approvalTimeoutMs`) and edits the original message to `⏱ timed out — auto-denied` with the buttons removed.
+- Folds button-click / timeout / external-cancel into a single `approvals.resolve()` call; double-resolution is prevented by a `pending` map check.
+
+Known UX gap (deferred): `/cancel` aborts the turn but the inline-keyboard message lingers because the bridge does not know it was cancelled externally. Documented inline in `approval-bridge.ts`.
+
+### Live control
+
+`TelegramChannel` exposes a small live-control API used by the TUI panel and `/telegram` slash commands:
+
+- `setEnabled(enabled)` — flips `config.telegram.enabled` in `config.json` and starts/stops the channel.
+- `setOwnerUserId(id | null)` — updates the live mirror + `config.json`; restarts when the channel is `up` so inbound-handler / approval-bridge re-capture the new value.
+- `setToken(token | null)` — writes `TELEGRAM_BOT_TOKEN` into `<stateDir>/.env` via [dotenv-writer.ts](src/config/dotenv-writer.ts) (atomic, mode `0600`, never logged), mirrors into `process.env`, and restarts when `up`.
+- `restart()` — clean stop + start; useful to reload a token without flipping `enabled`.
+- `startPairing(timeoutMs?)` / `cancelPairing()` — opens a 60s window where the first eligible private DM claims ownership ([pairing-mode.ts](src/channels/telegram/pairing-mode.ts)). Only allowed when the channel is `up`. Inbound handler calls `tryClaimForPairing` **before** the owner check so an unowned bot can be paired.
+
+Persistence is split: `enabled` and `ownerUserId` live in `<stateDir>/config.json`; the token lives only in `<stateDir>/.env`. The token is never copied into config, never echoed in TUI, and never logged on error paths (errors are scrubbed via `scrubErrorMessage` in [telegram-channel-types.ts](src/channels/telegram/telegram-channel-types.ts)).
+
+### TUI panel
+
+The "Telegram" tab in `atomic-agent tui` mirrors the channel state and exposes the live-control API. Architecture matches the existing Tasks / Skills tab pattern (see §"TUI surface (Tasks tab)"):
+
+- [tui-telegram-orchestrator.ts](src/tui/telegram/tui-telegram-orchestrator.ts) is the **only** TUI module that imports `TelegramChannel` or reads `process.env.TELEGRAM_BOT_TOKEN`. The token never leaves this file: `setToken` calls into the channel by value; the UI mirrors its presence as a `hasToken: boolean`.
+- The reducer ([telegram-panel-reducer.ts](src/tui/telegram/telegram-panel-reducer.ts)) is pure; every side effect (channel calls, persistence, timers) lives in the orchestrator.
+- The pairing countdown ticker is owned by the orchestrator and is cleared on shutdown / resolution / dismissal. Pinned by [tui-telegram-orchestrator.test.ts](src/tui/telegram/tui-telegram-orchestrator.test.ts).
+
+Slash commands: `/telegram enable|disable`, `/telegram start|stop` (alias for the same), `/telegram restart`, `/telegram pair`, `/telegram token` (opens the masked modal), `/telegram clear-token`, `/telegram clear-owner`. The `e` / `t` / `o` hotkeys mirror enable-toggle / token-prompt / pairing.
+
+### Configuration
+
+`config.telegram` (user config, v9) — see [src/config/config-schema.ts](src/config/config-schema.ts):
+
+- `telegram.enabled` (default `false`) — master switch for `start()`.
+- `telegram.ownerUserId` (default `null`) — numeric Telegram user id authorised to send DMs to the bot. When `null`, the bot ignores all messages and approvals are dropped.
+- `telegram.approvalTimeoutMs` (default `480000` = 8 min) — `ApprovalBridge` auto-deny window.
+
+`TELEGRAM_BOT_TOKEN` (env / `<stateDir>/.env`) — bot token. Stored only in `.env` with mode `0600`; never copied into `config.json` or logged.
+
+### Metrics
+
+[src/tracing/agent-metrics.ts](src/tracing/agent-metrics.ts):
+
+- Counters: `agent.telegram.up`, `agent.telegram.down` (tagged by `outcome` + short `reason`), `agent.telegram.messages_received`, `agent.telegram.messages_sent`, `agent.telegram.approvals_resolved` (tagged by `resolver` + `approved`).
+- The `messages_*` counters track agent-visible inbound (post owner-check, post slash-command-shortcut) and one-per-reply outbound, **not** raw Telegram updates / `sendMessage` chunks.
+
+### Locked invariants
+
+Pinned by [src/runtime/bootstrap.test.ts](src/runtime/bootstrap.test.ts), [src/channels/telegram/telegram-channel.test.ts](src/channels/telegram/telegram-channel.test.ts), [src/channels/telegram/inbound-handler.test.ts](src/channels/telegram/inbound-handler.test.ts), [src/channels/telegram/approval-bridge.test.ts](src/channels/telegram/approval-bridge.test.ts), [src/channels/telegram/pairing-mode.test.ts](src/channels/telegram/pairing-mode.test.ts), [src/config/dotenv-writer.test.ts](src/config/dotenv-writer.test.ts), [src/tui/telegram/telegram-panel-reducer.test.ts](src/tui/telegram/telegram-panel-reducer.test.ts), [src/tui/telegram/tui-telegram-orchestrator.test.ts](src/tui/telegram/tui-telegram-orchestrator.test.ts):
+
+1. **Polling carve-out is scoped to grammy.** `setInterval` / long-polling outside `telegram-bot-factory.ts` is forbidden in `src/channels/telegram/`. Other channels must repeat the carve-out review.
+2. **Telegram updates always go through `runtime.runTurn`.** Never directly into `SessionStore`, `ApprovalGate`, or `TurnController`.
+3. **The token never leaves `src/channels/telegram/` or [tui-telegram-orchestrator.ts](src/tui/telegram/tui-telegram-orchestrator.ts).** UI state mirrors only the boolean `hasToken`; reducer actions never carry the value. Errors are scrubbed.
+4. **`TelegramChannel` is always constructed when the `telegram` config block exists.** Bootstrap sets `runtime.telegramChannel` regardless of `enabled`; the live-control API stays callable from the TUI without a host restart.
+5. **Pairing bypasses the owner check.** Inbound handler calls `tryClaimForPairing` **before** filtering by `ownerUserId` — the only path where a non-owner DM is allowed to claim ownership.
+6. **Approval routing is per-session.** `ApprovalRouter.setForSession(sessionId, handler)` binds the Telegram session id to `ApprovalBridge`; everyone else falls through to the host UI handler. A fallback collision between two channels on the same session is intentionally not supported.
+7. **`grammy` is imported from one file only.** [telegram-bot-factory.ts](src/channels/telegram/telegram-bot-factory.ts). Future replacement of the Telegram client touches one file.
+
+### Out of scope (deferred)
+
+Multi-user pairing flows, per-chat session isolation, MarkdownV2 / HTML rendering of agent replies, structured menu / command surfaces beyond plain text, message editing for streaming output, file uploads (image / document ingestion through Telegram), webhook ingress as a Telegram-specific endpoint (the generic `/api/webhooks/:name` path is the existing surface), and a generic `Channel` abstraction (Slack / WhatsApp adapters) are all deferred. The seam is `src/channels/<name>/`; only extract shared interfaces when a second concrete channel actually lands.
 
 ## LLM reliability policy
 

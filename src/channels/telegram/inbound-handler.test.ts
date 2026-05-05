@@ -381,4 +381,61 @@ describe("handleInboundText", () => {
     await handleInboundText(makeUpdate("/help"), ctx);
     expect(ensureApprovalSession).not.toHaveBeenCalled();
   });
+
+  it("pairing claim consumes the message silently and skips runtime dispatch", async () => {
+    const { runtime, calls } = makeFakeRuntime();
+    const api = makeFakeApi();
+    const tryClaimForPairing = vi.fn().mockReturnValue(true);
+    const ctx = {
+      ...makeContext(runtime, api, pointer, null),
+      tryClaimForPairing,
+    };
+    await handleInboundText(makeUpdate("/pair", NON_OWNER), ctx);
+    expect(tryClaimForPairing).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(0);
+    expect(api.sent).toHaveLength(0);
+  });
+
+  it("pairing claim wins over the owner check: non-owner DMs are accepted during pairing", async () => {
+    const { runtime, calls } = makeFakeRuntime();
+    const api = makeFakeApi();
+    const tryClaimForPairing = vi.fn().mockReturnValue(true);
+    const ctx = {
+      ...makeContext(runtime, api, pointer, OWNER),
+      tryClaimForPairing,
+    };
+    await handleInboundText(makeUpdate("/pair", NON_OWNER), ctx);
+    expect(tryClaimForPairing).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("pairing tryClaim returning false falls through to the owner check", async () => {
+    const { runtime, calls } = makeFakeRuntime();
+    const api = makeFakeApi();
+    const tryClaimForPairing = vi.fn().mockReturnValue(false);
+    const ctx = {
+      ...makeContext(runtime, api, pointer, OWNER),
+      tryClaimForPairing,
+    };
+    await handleInboundText(makeUpdate("hello", NON_OWNER), ctx);
+    expect(tryClaimForPairing).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(0); // dropped by owner check
+    expect(api.sent).toHaveLength(0);
+  });
+
+  it("pairing is consulted before the owner check so a stale owner does not block pairing", async () => {
+    const callOrder: string[] = [];
+    const { runtime } = makeFakeRuntime();
+    const api = makeFakeApi();
+    const tryClaimForPairing = vi.fn(() => {
+      callOrder.push("pairing");
+      return true;
+    });
+    const ctx = {
+      ...makeContext(runtime, api, pointer, OWNER),
+      tryClaimForPairing,
+    };
+    await handleInboundText(makeUpdate("hi", NON_OWNER), ctx);
+    expect(callOrder).toEqual(["pairing"]);
+  });
 });

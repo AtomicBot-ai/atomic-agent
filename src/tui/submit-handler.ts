@@ -139,4 +139,38 @@ export function runSlashCommand(
     callbacks.onLocalModelsSetActiveRequested?.(result.localModelsUseModelId);
   }
   if (result.triggerLocalModelsStatus) void callbacks.onLocalModelsStatusRequested?.();
+  if (result.telegramVerb) {
+    runTelegramVerb(result.telegramVerb, callbacks);
+  }
+}
+
+function runTelegramVerb(
+  verb: NonNullable<SlashDispatchResult["telegramVerb"]>,
+  callbacks: TuiAppCallbacks,
+): void {
+  switch (verb) {
+    case "enable":
+    case "start":
+      void callbacks.onTelegramSetEnabledRequested?.(true);
+      return;
+    case "disable":
+    case "stop":
+      void callbacks.onTelegramSetEnabledRequested?.(false);
+      return;
+    case "restart":
+      void callbacks.onTelegramRestartRequested?.();
+      return;
+    case "pair":
+      void callbacks.onTelegramStartPairingRequested?.();
+      return;
+    case "token":
+      callbacks.onTelegramTokenPromptOpenRequested?.();
+      return;
+    case "clear-token":
+      void callbacks.onTelegramClearTokenRequested?.();
+      return;
+    case "clear-owner":
+      void callbacks.onTelegramClearOwnerRequested?.();
+      return;
+  }
 }

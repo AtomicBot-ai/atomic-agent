@@ -65,7 +65,16 @@ export function handleAppKey(
     state.activeTab === "models" &&
     (state.localModelsPanel.mode === "backendUpdate" ||
       state.localModelsPanel.removeConfirmId !== null);
-  const debugTabBusy = tasksTabBusy || skillsTabBusy || localModelsTabBusy;
+  // Telegram tab disables the editor outright (the panel owns letter
+  // hotkeys), so on entry Tab/Shift+Tab still cycle. The "busy" flag
+  // applies only when a modal is open and Tab/letters need to be
+  // captured by the modal layer instead of cycling away from it.
+  const telegramTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "telegram" &&
+    state.telegramPanel.mode !== "list";
+  const debugTabBusy =
+    tasksTabBusy || skillsTabBusy || localModelsTabBusy || telegramTabBusy;
   if (!debugTabBusy && state.uiMode === "debug" && key.tab && !key.shift) {
     dispatch({
       type: "tab_changed",

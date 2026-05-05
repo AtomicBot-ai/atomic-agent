@@ -59,6 +59,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
   const logSink: LogSink = (record: LogRecord) => bus.emitLog(record);
   const metricSink: MetricSink = (sample: MetricSample) => bus.emitMetric(sample);
 
+  // Forward declaration: the channel-status sink needs the
+  // orchestrator, but the orchestrator needs the runtime, which the
+  // sink must already exist for. Bind a `let` slot now and resolve it
+  // after construction; the closure stays inert until the runtime
+  // emits its first transition.
+  let orchestratorForChannelStatus: ChatOrchestrator | null = null;
   const runtime = await createAgentRuntime({
     workingDir: parsed.workingDir,
     approvalRequired,
@@ -68,6 +74,19 @@ export async function tuiCommand(args: string[]): Promise<number> {
       onApprovalRequest: (request) => bus.emitApproval(request),
       onSkillRegistryChange: (entries) =>
         bus.emit({ type: "skill_count_changed", count: entries.length }),
+      onChannelStatus: (status) => {
+        // Telegram status flows through the panel orchestrator, which
+        // both updates the panel slice and emits a runtime_info line
+        // for the Feed tab. Future channels can fan out from this
+        // single sink without touching the runtime contract.
+        orchestratorForChannelStatus?.telegram.forwardStatus(status);
+        bus.emit({
+          type: "runtime_info",
+          line: status.lastError
+            ? `[${status.channel}] ${status.state}: ${status.lastError}`
+            : `[${status.channel}] ${status.state}`,
+        });
+      },
       logSinks: [logSink],
       metricSinks: [metricSink],
     },
@@ -91,6 +110,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
     maxSteps,
     llamaUrl: config.localModels.url,
   });
+  orchestratorForChannelStatus = orchestrator;
 
   const onSignal = (): void => orchestrator.quit();
   process.once("SIGINT", onSignal);
@@ -162,6 +182,35 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.localModels.startLogsAutoRefresh(),
         onLocalLlmLogsAutoRefreshStop: () =>
           orchestrator.localModels.stopLogsAutoRefresh(),
+        onTelegramRefreshRequested: () => orchestrator.telegram.refreshSettings(),
+        onTelegramToggleEnabledRequested: () => {
+          // The toggle reads from the live runtime config rather than
+          // a (possibly stale) UI mirror so multiple rapid hotkey
+          // presses cannot land on a contradictory enabled bit.
+          const cfg = runtime.config.telegram;
+          return orchestrator.telegram.setEnabled(!cfg.enabled);
+        },
+        onTelegramSetEnabledRequested: (enabled) =>
+          orchestrator.telegram.setEnabled(enabled),
+        onTelegramRestartRequested: () => orchestrator.telegram.restart(),
+        onTelegramTokenPromptOpenRequested: () =>
+          bus.emit({ type: "telegram_token_prompt_opened" }),
+        onTelegramTokenSubmitted: (buffer) =>
+          orchestrator.telegram.submitToken(buffer),
+        onTelegramClearTokenRequested: () =>
+          orchestrator.telegram.clearToken(),
+        onTelegramStartPairingRequested: () =>
+          orchestrator.telegram.startPairing(),
+        onTelegramCancelPairingRequested: () =>
+          orchestrator.telegram.cancelPairing(),
+        onTelegramDismissPairingResultRequested: () =>
+          orchestrator.telegram.dismissPairingResult(),
+        onTelegramClearOwnerRequested: () =>
+          orchestrator.telegram.clearOwnerUserId(),
+        onTelegramAdvanceConnectRequested: () =>
+          orchestrator.telegram.advanceConnect(),
+        onTelegramAdvancedToggleRequested: () =>
+          orchestrator.telegram.toggleAdvanced(),
       },
     }),
     { stdout: process.stdout, stderr: process.stderr, exitOnCtrlC: false },

@@ -426,7 +426,12 @@ describe("createAgentRuntime", () => {
     }
   }
 
-  it("telegramChannel is null when telegram.enabled is false (default)", async () => {
+  it("telegramChannel is constructed but stays disabled when telegram.enabled is false (default)", async () => {
+    // Slice 3B invariant: the channel is *always* constructed so the
+    // TUI live-control surface can flip `enabled=true` without
+    // restarting the runtime. With the default config (`enabled=false`)
+    // the channel stays in `disabled` state and emits no lifecycle
+    // events because `start()` is never called.
     const statuses: ChannelStatus[] = [];
     const runtime = await createAgentRuntime({
       workingDir,
@@ -435,7 +440,8 @@ describe("createAgentRuntime", () => {
       overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
     });
     try {
-      expect(runtime.telegramChannel).toBeNull();
+      expect(runtime.telegramChannel).not.toBeNull();
+      expect(runtime.telegramChannel!.state()).toBe("disabled");
       expect(statuses).toEqual([]);
     } finally {
       await runtime.shutdown();
