@@ -362,6 +362,48 @@ export interface AtomicAgentConfig {
     /** Hard upper bound on the number of images per `vision.describe` call. */
     maxImagesPerCall: number;
   };
+  /**
+   * Telegram remote-control channel. Mirrors `UserConfigFile.telegram`.
+   * The bot token is **not** stored here — it lives in
+   * `<stateDir>/.env` as `TELEGRAM_BOT_TOKEN` and is loaded at
+   * bootstrap by `loadDotenvFromStateDir`. This block only carries
+   * the master kill switch and the single-operator owner id.
+   */
+  telegram: TelegramConfig;
+}
+
+/**
+ * Telegram parse mode applied to *agent replies* on outbound. Slash
+ * commands, failure messages, and approval keyboards always send as
+ * plain text regardless of this setting (see AGENTS.md §"Telegram
+ * remote-control channel"). MarkdownV2 is intentionally excluded —
+ * the escape surface is too wide for typical LLM output.
+ */
+export type TelegramParseMode = "plain" | "html";
+
+/**
+ * Telegram channel configuration. Single-operator semantics: only
+ * messages whose `from.id` matches `ownerUserId` are dispatched into
+ * the agent loop. Group chats are dropped unconditionally.
+ */
+export interface TelegramConfig {
+  /** Master kill switch. When `false`, the channel is constructed but never started. */
+  enabled: boolean;
+  /**
+   * Numeric Telegram user id of the sole permitted operator. `null`
+   * means "not configured yet" — the channel refuses to start until
+   * an id is set (manually or via the slice-3 pairing flow).
+   */
+  ownerUserId: number | null;
+  /**
+   * Render mode for agent-driven outbound replies. Defaults to
+   * `"html"` (markdown → Telegram HTML subset). Set `"plain"` to
+   * disable formatting entirely — useful as an escape hatch if the
+   * formatter ever misbehaves in the wild. Added in config v10;
+   * older files transparently get `"html"` via the migration in
+   * `parseUserConfigFile`.
+   */
+  parseMode: TelegramParseMode;
 }
 
 /**
@@ -481,9 +523,16 @@ export interface UserConfigFile {
   skills: {
     disabled: string[];
   };
+  /**
+   * Telegram remote-control channel. Added in config v9. Older files
+   * are transparently upgraded with `telegram: { enabled: false,
+   * ownerUserId: null }`. The bot token is intentionally not stored
+   * here — see `TelegramConfig` for rationale.
+   */
+  telegram: TelegramConfig;
 }
 
-export const USER_CONFIG_VERSION = 8 as const;
+export const USER_CONFIG_VERSION = 10 as const;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -493,15 +542,21 @@ export const USER_CONFIG_VERSION = 8 as const;
  * `localModels.completionMaxTokens` so users can raise the
  * tool-call `n_predict` cap from the file. v8 added the optional
  * `skills.*` block so installed skills can be turned off without
- * removing files from disk. Older files are transparently upgraded
- * by filling missing blocks/fields from `USER_CONFIG_DEFAULTS`.
- * Anything older than v5 is not migrated: this is active
- * development, callers delete their `config.json` and start over.
+ * removing files from disk. v9 added the optional `telegram.*`
+ * block so the Telegram remote-control channel can be enabled and
+ * scoped to a single owner. v10 added `telegram.parseMode` so
+ * agent replies render as Telegram HTML by default. Older files
+ * are transparently upgraded by filling missing blocks/fields from
+ * `USER_CONFIG_DEFAULTS`. Anything older than v5 is not migrated:
+ * this is active development, callers delete their `config.json`
+ * and start over.
  */
 const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   5,
   6,
   7,
+  8,
+  9,
   USER_CONFIG_VERSION,
 ];
 
@@ -581,6 +636,11 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   },
   skills: {
     disabled: [],
+  },
+  telegram: {
+    enabled: false,
+    ownerUserId: null,
+    parseMode: "html",
   },
 };
 
@@ -1010,6 +1070,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const webhooks = parseWebhookMap(obj.webhooks ?? {}, "webhooks");
   const vision = (obj.vision as Record<string, unknown> | undefined) ?? {};
   const skills = (obj.skills as Record<string, unknown> | undefined) ?? {};
+  const telegram = (obj.telegram as Record<string, unknown> | undefined) ?? {};
 
   const rawManaged =
     (localModels.managed as Record<string, unknown> | undefined) ?? {};
@@ -1253,5 +1314,68 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         "skills.disabled",
       ),
     },
+    telegram: {
+      enabled: parseBool(
+        telegram.enabled ?? USER_CONFIG_DEFAULTS.telegram.enabled,
+        "telegram.enabled",
+      ),
+      ownerUserId: parseTelegramOwnerId(
+        telegram.ownerUserId ?? USER_CONFIG_DEFAULTS.telegram.ownerUserId,
+        "telegram.ownerUserId",
+      ),
+      parseMode: parseTelegramParseMode(
+        telegram.parseMode ?? USER_CONFIG_DEFAULTS.telegram.parseMode,
+        "telegram.parseMode",
+      ),
+    },
   };
+}
+
+/**
+ * Parse the agent-reply parse mode for outbound Telegram messages.
+ * Accepts `"plain"` and `"html"` only — `markdownV2` is intentionally
+ * excluded (see `TelegramParseMode` doc-comment for rationale).
+ */
+export function parseTelegramParseMode(
+  raw: unknown,
+  field: string,
+): TelegramParseMode {
+  if (raw === "plain" || raw === "html") return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected one of plain|html, got ${JSON.stringify(raw)}`,
+  );
+}
+
+/**
+ * Parse a Telegram numeric user id. Accepts `null` (not configured),
+ * a positive integer, or a numeric string (so hand-edited config
+ * files written by humans still validate). Anything else throws.
+ * Telegram user ids fit comfortably inside `Number.MAX_SAFE_INTEGER`
+ * for the foreseeable future, so we keep the simpler `number` shape
+ * instead of `bigint`.
+ */
+export function parseTelegramOwnerId(
+  raw: unknown,
+  field: string,
+): number | null {
+  if (raw === null || raw === undefined) return null;
+  const value =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string"
+        ? Number(raw)
+        : NaN;
+  if (
+    !Number.isFinite(value) ||
+    !Number.isInteger(value) ||
+    value <= 0 ||
+    value > Number.MAX_SAFE_INTEGER
+  ) {
+    throw new ConfigValidationError(
+      field,
+      `expected positive integer or null, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return value;
 }

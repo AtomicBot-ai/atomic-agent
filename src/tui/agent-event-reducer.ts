@@ -18,6 +18,7 @@ import { reduceUiAction } from "./reduce-ui-actions.js";
 import { reduceLocalModelsAction } from "./local-models/local-models-reducer.js";
 import { reduceTasksAction } from "./tasks/tasks-reducer.js";
 import { reduceSkillsAction } from "./skills/skills-reducer.js";
+import { reduceTelegramAction } from "./telegram/telegram-panel-reducer.js";
 import type { TuiAction } from "./tui-action.js";
 import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
 
@@ -30,6 +31,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (tasksHandled !== null) return tasksHandled;
   const skillsHandled = reduceSkillsAction(state, action);
   if (skillsHandled !== null) return skillsHandled;
+  const telegramHandled = reduceTelegramAction(state, action);
+  if (telegramHandled !== null) return telegramHandled;
   const uiHandled = reduceUiAction(state, action);
   if (uiHandled !== null) return uiHandled;
   switch (action.type) {

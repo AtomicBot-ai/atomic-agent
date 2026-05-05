@@ -6,7 +6,13 @@ import type { AgentLoopEvent } from "../agent/agent-loop.js";
  * controller itself does not branch on origin, but downstream consumers
  * (recorder, metrics, scheduler audit) can.
  */
-export type TurnOrigin = "cli" | "tui" | "http" | "sidecar" | "scheduler";
+export type TurnOrigin =
+  | "cli"
+  | "tui"
+  | "http"
+  | "sidecar"
+  | "scheduler"
+  | "telegram";
 
 /**
  * Per-turn event sink. Installed atomically when a submission starts

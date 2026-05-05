@@ -4,6 +4,8 @@ export type {
   ApprovalEmitter,
   ApprovalRequest,
 } from "./approval-gate.js";
+export { ApprovalRouter } from "./approval-router.js";
+export type { ApprovalHandler } from "./approval-router.js";
 export {
   requireApproval,
   ApprovalDeniedError,

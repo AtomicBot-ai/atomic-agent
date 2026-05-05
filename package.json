@@ -1,6 +1,6 @@
 {
   "name": "atomic-agent",
-  "version": "0.1.22",
+  "version": "0.1.23",
   "description": "Lightweight local operator agent (browser + OS) runtime for Tauri apps. Connects to an external llama.cpp server via HTTP and exposes a sidecar NDJSON protocol plus a debug CLI.",
   "license": "MIT",
   "type": "module",
@@ -54,6 +54,7 @@
     "exceljs": "^4.4.0",
     "fast-xml-parser": "^5.7.1",
     "fuzzysort": "^3.1.0",
+    "grammy": "^1.42.0",
     "html-to-text": "^10.0.0",
     "ink": "^7.0.1",
     "jszip": "^3.10.1",

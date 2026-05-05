@@ -204,6 +204,35 @@ atomic-agent serve \
 
 The main chat surface is `POST /v1/chat/completions`. One request maps to one full macro-turn: `user -> 0..N tool steps -> reply`. Atomic-specific routes expose capabilities, config, sessions, approvals, tasks, webhooks, events, and traces.
 
+### Telegram Remote Control
+
+Optional. When enabled in `<stateDir>/config.json` (or via the TUI Telegram tab), `atomic-agent` connects your own bot to the same single-user runtime — Telegram is just another way to talk to the same sessions, share the same approvals, and observe the same world.
+
+```jsonc
+// <stateDir>/config.json
+{
+  "telegram": { "enabled": true, "ownerUserId": null }
+}
+```
+
+```bash
+# <stateDir>/.env  (file is created with mode 0600 when written from the TUI)
+TELEGRAM_BOT_TOKEN=123456789:AA-your-bot-token
+```
+
+Workflow:
+
+1. Create a bot with `@BotFather` and copy the token.
+2. Open `atomic-agent tui`, switch to the **Telegram** tab.
+3. Press `t` to paste the token (input is masked, never echoed back, written only into `<stateDir>/.env`).
+4. Press `e` to enable; the channel boots and reports `up` in the tab header.
+5. Press `o` to open a 60-second pairing window, then send any text from your phone — the first private DM claims `ownerUserId`. From that point only the owner can drive the bot.
+6. From your phone: send a normal message to drive a turn, `/cancel` to abort the running turn, `/new` to rotate the Telegram session, `/help` for the full command list.
+
+Approvals come back as inline-keyboard messages (Approve / Deny) directly in your DM, with an 8-minute auto-deny timeout. Slash commands (`/telegram enable|disable|restart|pair|token|clear-token|clear-owner`) are also available from the TUI chat. The Telegram session is persisted separately from the TUI session, so the two never collide.
+
+Telegram is intentionally single-user; multi-user flows are out of scope. See [AGENTS.md §"Telegram remote-control channel"](AGENTS.md) for the full architecture, polling carve-out, and locked invariants.
+
 ### Tauri Sidecar
 
 The sidecar speaks newline-delimited JSON over stdio, which is easy to embed, tail, and debug from a desktop app.

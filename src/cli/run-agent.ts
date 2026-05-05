@@ -230,6 +230,13 @@ export async function runAgentCommand(args: string[]): Promise<number> {
           });
         });
       },
+      onChannelStatus: (status) => {
+        const suffix =
+          status.lastError && status.state === "down"
+            ? `: ${status.lastError}`
+            : "";
+        process.stderr.write(`[${status.channel}] ${status.state}${suffix}\n`);
+      },
       logSinks: [stderrSink()],
     },
   });

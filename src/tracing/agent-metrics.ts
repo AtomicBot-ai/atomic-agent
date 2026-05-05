@@ -40,6 +40,11 @@ export const METRIC_NAMES = {
   schedulerBatchSize: "agent.scheduler.batch_size",
   schedulerTickDuration: "agent.scheduler.tick_duration_ms",
   webhooksReceived: "agent.webhooks.received",
+  telegramUp: "agent.telegram.up",
+  telegramDown: "agent.telegram.down",
+  telegramMessagesReceived: "agent.telegram.messages_received",
+  telegramMessagesSent: "agent.telegram.messages_sent",
+  telegramApprovalsResolved: "agent.telegram.approvals_resolved",
 } as const;
 
 export type MetricName = (typeof METRIC_NAMES)[keyof typeof METRIC_NAMES];
@@ -180,6 +185,34 @@ export interface SchedulerTickSample {
 export interface WebhookReceivedSample {
   webhookName: string;
   status: "accepted" | "rejected";
+}
+
+/**
+ * Telegram remote-control channel events. Counters are intentionally
+ * narrow: `up`/`down` mark lifecycle transitions (not poll ticks),
+ * `messages_received`/`messages_sent` count agent-visible payloads
+ * (slash commands and dropped non-owner DMs are excluded), and
+ * `approvals_resolved` fires once per approval decision regardless of
+ * whether the resolver was a button tap, the auto-deny timer, or an
+ * external `/cancel` propagating into the bridge.
+ */
+export type TelegramLifecycleOutcome = "ok" | "error";
+
+export interface TelegramLifecycleSample {
+  outcome: TelegramLifecycleOutcome;
+  /** Last-error category when `outcome === "error"`; opaque short string. */
+  reason?: string;
+}
+
+export interface TelegramMessageSample {
+  /** Direction of the payload from the runtime's POV. */
+  direction: "in" | "out";
+}
+
+export interface TelegramApprovalSample {
+  /** Resolution path so dashboards can split user vs auto-deny vs external. */
+  resolver: "button" | "timeout" | "external";
+  approved: boolean;
 }
 
 /**
@@ -403,6 +436,59 @@ export class AgentMetrics {
     this.collector.counter(METRIC_NAMES.webhooksReceived, 1, {
       webhook_name: sample.webhookName,
       status: sample.status,
+    });
+  }
+
+  /**
+   * Record a Telegram channel transition into `up`. Bumped only on
+   * the actual transition (idempotent `start()` calls do not
+   * double-count).
+   */
+  recordTelegramUp(): void {
+    this.collector.counter(METRIC_NAMES.telegramUp, 1, {});
+  }
+
+  /**
+   * Record a Telegram channel transition into `down`. Bumped on
+   * every `disabled→down` / `up→down` transition; the `reason` tag
+   * carries an opaque short string (`getMe_failed`, `lock_held`,
+   * `missing_token`, …) so dashboards can split persistent backend
+   * issues from operator-initiated stops.
+   */
+  recordTelegramDown(sample: TelegramLifecycleSample = { outcome: "ok" }): void {
+    this.collector.counter(METRIC_NAMES.telegramDown, 1, {
+      outcome: sample.outcome,
+      ...(sample.reason ? { reason: sample.reason } : {}),
+    });
+  }
+
+  /**
+   * Record a Telegram message crossing the agent boundary: an
+   * inbound DM dispatched into `runTurn` (`direction: "in"`) or an
+   * outbound `assistant_reply` chunk written to the bot
+   * (`direction: "out"`). Slash commands handled inside the channel
+   * and non-owner DMs dropped before dispatch are intentionally
+   * excluded — they are not agent-visible work.
+   */
+  recordTelegramMessage(sample: TelegramMessageSample): void {
+    const counter =
+      sample.direction === "in"
+        ? METRIC_NAMES.telegramMessagesReceived
+        : METRIC_NAMES.telegramMessagesSent;
+    this.collector.counter(counter, 1, { direction: sample.direction });
+  }
+
+  /**
+   * Record an approval decision routed through the Telegram bridge.
+   * `resolver` distinguishes button taps, the 8-minute auto-deny
+   * timer, and external resolutions that propagate through the
+   * router (e.g. operator typed `y`/`n` in the host TUI before the
+   * Telegram message was tapped).
+   */
+  recordTelegramApprovalResolved(sample: TelegramApprovalSample): void {
+    this.collector.counter(METRIC_NAMES.telegramApprovalsResolved, 1, {
+      resolver: sample.resolver,
+      approved: sample.approved ? "true" : "false",
     });
   }
 

@@ -7,6 +7,10 @@ import { getConfig } from "../config/index.js";
 
 import { TurnController } from "./turn-controller.js";
 import type { TurnEventHook, TurnOrigin } from "./turn-controller.js";
+import type { ChannelStatus } from "./channel-status.js";
+
+import { TelegramChannel } from "../channels/telegram/index.js";
+import type { BotFactory } from "../channels/telegram/index.js";
 
 import { LlamaServerClient } from "../llm/llama-server-client.js";
 import type {
@@ -24,6 +28,8 @@ import { SlotManager } from "../llm/slot-manager.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
 
 import { ApprovalGate } from "../approval/approval-gate.js";
+import { ApprovalRouter } from "../approval/approval-router.js";
+import type { ApprovalHandler } from "../approval/approval-router.js";
 import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 
 import { ToolRegistry } from "../tools/tool-registry.js";
@@ -95,6 +101,13 @@ export interface RuntimeEventHandlers {
   onAgentEvent?: (event: AgentLoopEvent) => void;
   onApprovalRequest?: (request: ApprovalRequest) => void;
   onSkillRegistryChange?: (entries: SkillCatalogEntry[]) => void;
+  /**
+   * Optional sink for remote-control channel lifecycle changes (e.g.
+   * Telegram). Fires on every observable transition (`starting →
+   * up`, `up → down`, `disabled → starting`, …). Hosts that ignore
+   * this handler keep working — the runtime never blocks on it.
+   */
+  onChannelStatus?: (status: ChannelStatus) => void;
   logSinks?: LogSink[];
   metricSinks?: MetricSink[];
   /**
@@ -159,6 +172,12 @@ export interface CreateAgentRuntimeOptions {
     deferLlamaHealthCheck?: boolean;
     llamaProps?: Record<string, unknown>;
     llamaPropsError?: Error;
+    /**
+     * Test seam — replace the default grammy adapter used by the
+     * Telegram channel. Production wiring leaves this undefined and
+     * `TelegramChannel` falls back to `defaultGrammyBotFactory`.
+     */
+    telegramBotFactory?: BotFactory;
   };
 }
 
@@ -217,6 +236,22 @@ export interface AgentRuntime {
    * cost is negligible even when no webhooks are configured.
    */
   readonly webhookSessionStore: WebhookSessionStore;
+  /**
+   * Telegram remote-control channel. **Always non-null** post slice 3B
+   * — the channel is constructed unconditionally so the live-control
+   * TUI panel can flip `enabled=true` (or update token / owner) without
+   * restarting the host. When `config.telegram.enabled === false` at
+   * boot, `start()` is *not* invoked and the channel stays in
+   * `disabled` state, idle and emitting no lifecycle events. When
+   * enabled, the channel owns token resolution and transitions itself
+   * through `starting → up | down` on `start()`; a missing
+   * `TELEGRAM_BOT_TOKEN` lands as `state: "down"`. Status is
+   * propagated to hosts via `RuntimeEventHandlers.onChannelStatus`.
+   * The type stays `TelegramChannel | null` for forward compatibility
+   * with potential subsystem-disable flags; callers should still
+   * defensively check before calling.
+   */
+  readonly telegramChannel: TelegramChannel | null;
   readonly capabilities: CapabilitiesSummary;
   readonly skillCatalog: readonly SkillCatalogEntry[];
   readonly toolDescriptors: readonly ToolDescriptor[];
@@ -273,6 +308,21 @@ export interface AgentRuntime {
   ): Promise<RunTurnResult>;
   /** Refresh the skill registry after install/uninstall and rebuild the catalog. */
   refreshSkills(): Promise<void>;
+  /**
+   * Register `handler` as the approval sink for `sessionId`. Every
+   * `ApprovalRequest` whose `sessionId` matches will be routed to
+   * `handler` instead of the host's `onApprovalRequest` fallback.
+   * Returns an `unsubscribe` callback that removes the registration —
+   * the unsubscribe is a no-op if a later registration has already
+   * replaced this one (see `ApprovalRouter` for the locked
+   * invariants). Channels that own a session (Telegram today) call
+   * this so an approval prompt lands on the surface that originated
+   * the turn.
+   */
+  setApprovalHandlerForSession(
+    sessionId: string,
+    handler: ApprovalHandler,
+  ): () => void;
   /** Close all resources (browser, sqlite, llama client). Safe to call twice. */
   shutdown(): Promise<void>;
 }
@@ -342,8 +392,17 @@ export async function createAgentRuntime(
     },
   });
 
+  // Approval requests flow through `ApprovalRouter`: per-session
+  // handlers (Telegram channel, future Slack/etc.) win, otherwise the
+  // host's `onApprovalRequest` callback fires. The fallback closure
+  // captures `options.handlers` once so handler-rebinding via a
+  // future API would not be observed here — sessions that need a
+  // different fallback should register a per-session handler instead.
+  const approvalRouter = new ApprovalRouter((request) => {
+    options.handlers?.onApprovalRequest?.(request);
+  });
   const approvals = new ApprovalGate({
-    emit: (request) => options.handlers?.onApprovalRequest?.(request),
+    emit: (request) => approvalRouter.emit(request),
     autoApprove: !options.approvalRequired,
   });
   const dangerous: DangerousToolOptions = {
@@ -645,6 +704,12 @@ export async function createAgentRuntime(
     loopDeps as typeof loopDeps & { skillCatalog: readonly SkillCatalogEntry[] },
   );
 
+  // Forward declaration: the Telegram channel is constructed after the
+  // runtime body assembles (it needs a stable `runtime` reference) but
+  // `shutdown` must be able to stop it before tearing down the session
+  // store. The variable is bound in the `let` slot below; the closure
+  // resolves it lazily so the order-of-construction concern is local.
+  let telegramChannelForShutdown: TelegramChannel | null = null;
   let shutdownCalled = false;
   const shutdown = async (): Promise<void> => {
     if (shutdownCalled) return;
@@ -656,6 +721,15 @@ export async function createAgentRuntime(
       reflectionRunner?.abortPending();
     } catch {
       // runner already disposed
+    }
+    if (telegramChannelForShutdown) {
+      try {
+        await telegramChannelForShutdown.stop();
+      } catch (err) {
+        logger.warn("telegram: shutdown failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
     try {
       await browserBackend.shutdown();
@@ -829,6 +903,7 @@ export async function createAgentRuntime(
     taskRunner,
     scheduler,
     webhookSessionStore,
+    telegramChannel: null,
     capabilities,
     toolDescriptors: effectiveToolDescriptors,
     grammar,
@@ -838,12 +913,47 @@ export async function createAgentRuntime(
     runTurn,
     executeTurn,
     refreshSkills,
+    setApprovalHandlerForSession: (sessionId, handler) =>
+      approvalRouter.setForSession(sessionId, handler),
     shutdown,
-  } as AgentRuntime;
+  } as AgentRuntime & { telegramChannel: TelegramChannel | null };
   Object.defineProperty(runtime, "skillCatalog", {
     enumerable: true,
     get: () => skillCatalog,
   });
+
+  // Telegram remote-control channel. The channel is always constructed
+  // (even when `telegram.enabled === false` at boot) so slice-3B
+  // live-control surfaces can flip it on without restarting the host —
+  // the constructor is side-effect-free, only `start()` opens the
+  // network connection. The channel owns token resolution end-to-end
+  // (reads `TELEGRAM_BOT_TOKEN` from the env on construction);
+  // bootstrap deliberately does not look at the env var so it stays
+  // agnostic of telegram-specific naming. `start()` is fired-and-
+  // forgotten so a slow `getMe` probe never delays the first user
+  // turn; when `enabled=true` but no token is present, the channel
+  // transitions to `down` with `lastError: "missing
+  // TELEGRAM_BOT_TOKEN"`.
+  const telegramChannel = new TelegramChannel({
+    runtime,
+    config,
+    logger,
+    metrics,
+    emitStatus: (status) => options.handlers?.onChannelStatus?.(status),
+    ...(options.overrides?.telegramBotFactory
+      ? { botFactory: options.overrides.telegramBotFactory }
+      : {}),
+  });
+  runtime.telegramChannel = telegramChannel;
+  telegramChannelForShutdown = telegramChannel;
+  if (config.telegram.enabled) {
+    void telegramChannel.start().catch((err) => {
+      logger.error("telegram: start() rejected unexpectedly", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
+
   return runtime;
 }
 
