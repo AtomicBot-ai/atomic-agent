@@ -4,7 +4,12 @@ import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { SessionState } from "../../session/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
-import { sendOutbound, type TelegramApi, type TelegramLogger } from "./outbound-sender.js";
+import {
+  sendOutbound,
+  type TelegramApi,
+  type TelegramLogger,
+  type TelegramParseMode,
+} from "./outbound-sender.js";
 import type { TelegramSessionPointer } from "./telegram-session-pointer.js";
 
 /**
@@ -76,6 +81,17 @@ export interface InboundContext {
   onMessageReceived?: () => void;
   /** Test seam — replaces `setInterval` for the typing-action keepalive. */
   scheduleKeepalive?: (cb: () => void, ms: number) => () => void;
+  /**
+   * Parse mode applied **only** to the agent's reply text. Slash-command
+   * acks (`/help`, `/status`, `/new`, `/cancel`), infra messages
+   * (`Turn cancelled.`, `(no reply)`), and failure envelopes
+   * (`Turn failed [...]: ...`) always send as plain text regardless,
+   * matching the AGENTS.md scope carve-out: only "agent content"
+   * is formatted, "channel infrastructure" stays unformatted so the
+   * operator can never misread a runtime error as agent output.
+   * Defaults to `"plain"` when omitted.
+   */
+  agentReplyParseMode?: TelegramParseMode;
 }
 
 /** How long Telegram displays a `chatAction: "typing"` indicator. */
@@ -231,14 +247,21 @@ async function dispatchToRuntime(
     }
   }
 
-  const final = controller.signal.aborted
-    ? "Turn cancelled."
-    : reply !== null
-      ? reply
-      : failure
-        ? formatFailure(failure)
-        : "(no reply)";
-  await sendText(ctx, chatId, final);
+  // Only the agent's natural-language reply gets parse-mode
+  // formatting. Cancellation acks, the empty-reply marker, and
+  // failure envelopes are channel infrastructure and stay plain so
+  // the operator never confuses runtime telemetry with agent
+  // content (and so a stray `<` in an error message can never
+  // collide with the HTML grammar).
+  if (controller.signal.aborted) {
+    await sendText(ctx, chatId, "Turn cancelled.");
+  } else if (reply !== null) {
+    await sendText(ctx, chatId, reply, ctx.agentReplyParseMode ?? "plain");
+  } else if (failure) {
+    await sendText(ctx, chatId, formatFailure(failure));
+  } else {
+    await sendText(ctx, chatId, "(no reply)");
+  }
   // Count one outbound message per logical agent reply (not per
   // sendMessage chunk). Status-only confirmations from slash
   // commands (`/help`, `/status`, etc.) are excluded — they are
@@ -309,11 +332,13 @@ async function sendText(
   ctx: InboundContext,
   chatId: number,
   text: string,
+  parseMode: TelegramParseMode = "plain",
 ): Promise<void> {
   const result = await sendOutbound({
     api: ctx.api,
     chatId,
     text,
+    parseMode,
     logger: toTelegramLogger(ctx.logger),
   });
   if (result.chunks > result.dropped) {

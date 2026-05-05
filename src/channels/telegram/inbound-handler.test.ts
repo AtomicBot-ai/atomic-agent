@@ -100,20 +100,34 @@ function makeFakeRuntime(opts: FakeRuntimeOpts = {}): {
 }
 
 interface FakeApi extends TelegramApi {
-  sent: Array<{ chatId: number; text: string }>;
+  sent: Array<{
+    chatId: number;
+    text: string;
+    opts?: Record<string, unknown> | undefined;
+  }>;
   typingChats: number[];
 }
 
 function makeFakeApi(): FakeApi {
-  const sent: Array<{ chatId: number; text: string }> = [];
+  const sent: Array<{
+    chatId: number;
+    text: string;
+    opts?: Record<string, unknown> | undefined;
+  }> = [];
   const typingChats: number[] = [];
   return {
     sent,
     typingChats,
-    sendMessage: vi.fn(async (chatId: number, text: string) => {
-      sent.push({ chatId, text });
-      return { message_id: sent.length };
-    }),
+    sendMessage: vi.fn(
+      async (
+        chatId: number,
+        text: string,
+        opts?: Record<string, unknown>,
+      ) => {
+        sent.push({ chatId, text, opts });
+        return { message_id: sent.length };
+      },
+    ),
     sendChatAction: vi.fn(async (chatId: number) => {
       typingChats.push(chatId);
       return undefined;
@@ -421,6 +435,106 @@ describe("handleInboundText", () => {
     expect(tryClaimForPairing).toHaveBeenCalledTimes(1);
     expect(calls).toHaveLength(0); // dropped by owner check
     expect(api.sent).toHaveLength(0);
+  });
+
+  describe("agentReplyParseMode", () => {
+    it("renders agent replies as HTML when agentReplyParseMode='html'", async () => {
+      const { runtime } = makeFakeRuntime({
+        scripts: [
+          {
+            events: [
+              {
+                type: "llm_event",
+                event: {
+                  type: "assistant_reply",
+                  text: "**bold** and `code`",
+                },
+              },
+            ],
+          },
+        ],
+      });
+      const api = makeFakeApi();
+      const ctx = {
+        ...makeContext(runtime, api, pointer, OWNER),
+        agentReplyParseMode: "html" as const,
+      };
+      await handleInboundText(makeUpdate("hello"), ctx);
+      const reply = api.sent.find((m) =>
+        m.text.includes("<b>bold</b>"),
+      );
+      expect(reply).toBeDefined();
+      expect(reply!.text).toBe("<b>bold</b> and <code>code</code>");
+      expect(reply!.opts).toEqual({
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+      });
+    });
+
+    it("keeps slash-command responses plain even when html is configured", async () => {
+      const { runtime } = makeFakeRuntime();
+      const api = makeFakeApi();
+      const ctx = {
+        ...makeContext(runtime, api, pointer, OWNER),
+        agentReplyParseMode: "html" as const,
+      };
+      await handleInboundText(makeUpdate("/help"), ctx);
+      expect(api.sent).toHaveLength(1);
+      expect(api.sent[0]!.opts).toBeUndefined();
+    });
+
+    it("keeps failure envelopes plain even when html is configured", async () => {
+      const { runtime } = makeFakeRuntime({
+        scripts: [
+          {
+            events: [
+              {
+                type: "loop_failed",
+                error: new Error("kaboom <oops>"),
+                category: "transport",
+              },
+            ],
+          },
+        ],
+      });
+      const api = makeFakeApi();
+      const ctx = {
+        ...makeContext(runtime, api, pointer, OWNER),
+        agentReplyParseMode: "html" as const,
+      };
+      await handleInboundText(makeUpdate("do it"), ctx);
+      const failure = api.sent.find((m) => m.text.startsWith("Turn failed"));
+      expect(failure).toBeDefined();
+      // No parse_mode header — failure metadata stays plain so `<oops>`
+      // never gets parsed as an HTML tag.
+      expect(failure!.opts).toBeUndefined();
+      expect(failure!.text).toContain("<oops>");
+    });
+
+    it("agent replies remain plain by default when agentReplyParseMode is omitted", async () => {
+      const { runtime } = makeFakeRuntime({
+        scripts: [
+          {
+            events: [
+              {
+                type: "llm_event",
+                event: {
+                  type: "assistant_reply",
+                  text: "**bold** stays literal",
+                },
+              },
+            ],
+          },
+        ],
+      });
+      const api = makeFakeApi();
+      const ctx = makeContext(runtime, api, pointer, OWNER);
+      await handleInboundText(makeUpdate("hi"), ctx);
+      const reply = api.sent.find((m) => m.text.includes("**bold**"));
+      expect(reply).toBeDefined();
+      expect(reply!.text).toBe("**bold** stays literal");
+      expect(reply!.opts).toBeUndefined();
+    });
   });
 
   it("pairing is consulted before the owner check so a stale owner does not block pairing", async () => {

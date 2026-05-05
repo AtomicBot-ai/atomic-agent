@@ -355,12 +355,38 @@ describe("parseUserConfigFile", () => {
     expect(parsed.telegram).toEqual(USER_CONFIG_DEFAULTS.telegram);
   });
 
-  it("preserves a configured telegram block", () => {
+  it("accepts a v9 file and fills in telegram.parseMode='html' transparently", () => {
     const parsed = parseUserConfigFile({
-      version: USER_CONFIG_VERSION,
+      version: 9,
       telegram: { enabled: true, ownerUserId: 12345678 },
     });
-    expect(parsed.telegram).toEqual({ enabled: true, ownerUserId: 12345678 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.telegram).toEqual({
+      enabled: true,
+      ownerUserId: 12345678,
+      parseMode: "html",
+    });
+  });
+
+  it("preserves a configured telegram block including parseMode", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      telegram: { enabled: true, ownerUserId: 12345678, parseMode: "plain" },
+    });
+    expect(parsed.telegram).toEqual({
+      enabled: true,
+      ownerUserId: 12345678,
+      parseMode: "plain",
+    });
+  });
+
+  it("rejects an unknown telegram.parseMode", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        telegram: { enabled: true, ownerUserId: 1, parseMode: "markdownV2" },
+      }),
+    ).toThrow(/telegram.parseMode/);
   });
 
   it("accepts a numeric-string telegram.ownerUserId", () => {
@@ -387,5 +413,13 @@ describe("parseUserConfigFile", () => {
         telegram: { enabled: true, ownerUserId: 3.14 },
       }),
     ).toThrow(/telegram.ownerUserId/);
+  });
+
+  it("defaults telegram.parseMode to 'html' when absent", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      telegram: { enabled: true, ownerUserId: 1 },
+    });
+    expect(parsed.telegram.parseMode).toBe("html");
   });
 });

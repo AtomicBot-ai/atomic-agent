@@ -373,6 +373,15 @@ export interface AtomicAgentConfig {
 }
 
 /**
+ * Telegram parse mode applied to *agent replies* on outbound. Slash
+ * commands, failure messages, and approval keyboards always send as
+ * plain text regardless of this setting (see AGENTS.md §"Telegram
+ * remote-control channel"). MarkdownV2 is intentionally excluded —
+ * the escape surface is too wide for typical LLM output.
+ */
+export type TelegramParseMode = "plain" | "html";
+
+/**
  * Telegram channel configuration. Single-operator semantics: only
  * messages whose `from.id` matches `ownerUserId` are dispatched into
  * the agent loop. Group chats are dropped unconditionally.
@@ -386,6 +395,15 @@ export interface TelegramConfig {
    * an id is set (manually or via the slice-3 pairing flow).
    */
   ownerUserId: number | null;
+  /**
+   * Render mode for agent-driven outbound replies. Defaults to
+   * `"html"` (markdown → Telegram HTML subset). Set `"plain"` to
+   * disable formatting entirely — useful as an escape hatch if the
+   * formatter ever misbehaves in the wild. Added in config v10;
+   * older files transparently get `"html"` via the migration in
+   * `parseUserConfigFile`.
+   */
+  parseMode: TelegramParseMode;
 }
 
 /**
@@ -514,7 +532,7 @@ export interface UserConfigFile {
   telegram: TelegramConfig;
 }
 
-export const USER_CONFIG_VERSION = 9 as const;
+export const USER_CONFIG_VERSION = 10 as const;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -526,16 +544,19 @@ export const USER_CONFIG_VERSION = 9 as const;
  * `skills.*` block so installed skills can be turned off without
  * removing files from disk. v9 added the optional `telegram.*`
  * block so the Telegram remote-control channel can be enabled and
- * scoped to a single owner. Older files are transparently upgraded
- * by filling missing blocks/fields from `USER_CONFIG_DEFAULTS`.
- * Anything older than v5 is not migrated: this is active
- * development, callers delete their `config.json` and start over.
+ * scoped to a single owner. v10 added `telegram.parseMode` so
+ * agent replies render as Telegram HTML by default. Older files
+ * are transparently upgraded by filling missing blocks/fields from
+ * `USER_CONFIG_DEFAULTS`. Anything older than v5 is not migrated:
+ * this is active development, callers delete their `config.json`
+ * and start over.
  */
 const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   5,
   6,
   7,
   8,
+  9,
   USER_CONFIG_VERSION,
 ];
 
@@ -619,6 +640,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   telegram: {
     enabled: false,
     ownerUserId: null,
+    parseMode: "html",
   },
 };
 
@@ -1301,8 +1323,28 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         telegram.ownerUserId ?? USER_CONFIG_DEFAULTS.telegram.ownerUserId,
         "telegram.ownerUserId",
       ),
+      parseMode: parseTelegramParseMode(
+        telegram.parseMode ?? USER_CONFIG_DEFAULTS.telegram.parseMode,
+        "telegram.parseMode",
+      ),
     },
   };
+}
+
+/**
+ * Parse the agent-reply parse mode for outbound Telegram messages.
+ * Accepts `"plain"` and `"html"` only — `markdownV2` is intentionally
+ * excluded (see `TelegramParseMode` doc-comment for rationale).
+ */
+export function parseTelegramParseMode(
+  raw: unknown,
+  field: string,
+): TelegramParseMode {
+  if (raw === "plain" || raw === "html") return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected one of plain|html, got ${JSON.stringify(raw)}`,
+  );
 }
 
 /**

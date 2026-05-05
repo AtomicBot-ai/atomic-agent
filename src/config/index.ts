@@ -5,6 +5,7 @@ export type {
   LocalLlmMode,
   LogLevel,
   TelegramConfig,
+  TelegramParseMode,
   UserConfigFile,
   UserManagedLocalLlmConfig,
   WebhookConfig,

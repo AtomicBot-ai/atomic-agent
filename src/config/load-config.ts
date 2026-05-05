@@ -327,6 +327,7 @@ export function loadConfig(): AtomicAgentConfig {
     telegram: {
       enabled: user.telegram.enabled,
       ownerUserId: user.telegram.ownerUserId,
+      parseMode: user.telegram.parseMode,
     },
   };
 }

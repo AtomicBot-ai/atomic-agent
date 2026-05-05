@@ -20,6 +20,7 @@ import {
   writeTelegramSettings,
   writeTelegramToken,
 } from "./telegram-settings.js";
+import type { TelegramParseMode } from "./outbound-sender.js";
 import { sendWelcomeMessage } from "./welcome-message.js";
 import {
   resolveTokenFromDeps,
@@ -78,6 +79,15 @@ export class TelegramChannel {
    */
   private currentOwnerUserId: number | null;
   /**
+   * Live parse-mode mirror for agent replies. Captured from
+   * `config.telegram.parseMode` at construction. Re-captured by the
+   * inbound handler on every `start()`. `setParseMode` mutates it in
+   * place and persists to `config.json`; a restart is only required
+   * if the channel is currently `up` (so the new value reaches the
+   * already-registered text handler).
+   */
+  private currentParseMode: TelegramParseMode;
+  /**
    * Bot identity captured from `getMe` on every successful start.
    * `null` until the channel reaches `up` for the first time. Cleared
    * on stop so `down` panels never show a stale `@username`.
@@ -99,6 +109,7 @@ export class TelegramChannel {
     this.deps = deps;
     this.currentToken = resolveTokenFromDeps(deps);
     this.currentOwnerUserId = deps.config.telegram.ownerUserId;
+    this.currentParseMode = deps.config.telegram.parseMode;
     this.stateDir = deps.config.paths.stateDir;
     this.userConfigPath =
       deps.userConfigPath ?? getUserConfigPath(this.stateDir);
@@ -121,6 +132,11 @@ export class TelegramChannel {
   /** Live owner id. Reflects mutations from `setOwnerUserId` / pairing. */
   getOwnerUserId(): number | null {
     return this.currentOwnerUserId;
+  }
+
+  /** Live parse-mode mirror. Reflects mutations from `setParseMode`. */
+  getParseMode(): TelegramParseMode {
+    return this.currentParseMode;
   }
 
   /** Live bot identity from the last successful `getMe`. */
@@ -175,6 +191,11 @@ export class TelegramChannel {
           sessionPointer: this.sessionPointer,
           logger: this.deps.logger,
           ownerUserId: this.currentOwnerUserId,
+          // Captured by value at registration time. `setParseMode`
+          // restarts the channel when up so the new mode reaches
+          // the freshly-registered text handler — same pattern as
+          // `setOwnerUserId`.
+          agentReplyParseMode: this.currentParseMode,
           inflight: this.inflight,
           ensureApprovalSession: (sessionId, chatId) =>
             this.ensureApprovalSession(sessionId, chatId),
@@ -290,6 +311,23 @@ export class TelegramChannel {
       { ownerUserId },
     );
     this.currentOwnerUserId = ownerUserId;
+    if (this.currentState === "up") {
+      await this.restart();
+    }
+  }
+
+  /**
+   * Persist `parseMode` to user config and re-register the inbound
+   * handler so agent replies pick up the new mode. Restart is only
+   * needed when the channel is up; an idle channel just updates the
+   * mirror so the next `start()` reads the fresh value.
+   */
+  async setParseMode(parseMode: TelegramParseMode): Promise<void> {
+    writeTelegramSettings(
+      { userConfigPath: this.userConfigPath, stateDir: this.stateDir },
+      { parseMode },
+    );
+    this.currentParseMode = parseMode;
     if (this.currentState === "up") {
       await this.restart();
     }

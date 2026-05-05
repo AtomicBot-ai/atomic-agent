@@ -118,7 +118,7 @@ function fakeRuntime(
 function makeConfig(stateDir: string): AtomicAgentConfig {
   return {
     paths: { stateDir },
-    telegram: { enabled: true, ownerUserId: 42 },
+    telegram: { enabled: true, ownerUserId: 42, parseMode: "html" },
   } as unknown as AtomicAgentConfig;
 }
 
@@ -346,9 +346,14 @@ describe("TelegramChannel live-control surface", () => {
   function readPersistedTelegramConfig(): {
     enabled: boolean;
     ownerUserId: number | null;
+    parseMode?: "plain" | "html";
   } {
     const raw = JSON.parse(readFileSync(userConfigPath, "utf8")) as {
-      telegram: { enabled: boolean; ownerUserId: number | null };
+      telegram: {
+        enabled: boolean;
+        ownerUserId: number | null;
+        parseMode?: "plain" | "html";
+      };
     };
     return raw.telegram;
   }
@@ -705,6 +710,74 @@ describe("TelegramChannel live-control surface", () => {
     expect(outcome!.welcomeDelivered).toBe(false);
     expect(channel.getOwnerUserId()).toBe(777);
     expect(channel.state()).toBe("up");
+  });
+
+  it("getParseMode reflects the value seeded from config at construction", () => {
+    const { factory } = makeBotFactory();
+    const { lock } = fakeLock();
+    const channel = new TelegramChannel({
+      runtime: fakeRuntime(),
+      config: {
+        ...makeConfig(dir),
+        telegram: { enabled: true, ownerUserId: 42, parseMode: "plain" },
+      } as AtomicAgentConfig,
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock,
+      userConfigPath,
+      emitStatus: () => undefined,
+    });
+    expect(channel.getParseMode()).toBe("plain");
+  });
+
+  it("setParseMode persists and restarts the channel when up", async () => {
+    const { factory, state } = makeBotFactory();
+    const { lock } = fakeLock();
+    const channel = new TelegramChannel({
+      runtime: fakeRuntime(),
+      config: makeConfig(dir),
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock,
+      userConfigPath,
+      emitStatus: () => undefined,
+    });
+    await channel.start();
+    expect(channel.getParseMode()).toBe("html");
+
+    await channel.setParseMode("plain");
+
+    expect(channel.state()).toBe("up");
+    expect(channel.getParseMode()).toBe("plain");
+    expect(state.stopCalls).toBe(1);
+    expect(state.startCalls).toBe(2);
+    expect(readPersistedTelegramConfig().parseMode).toBe("plain");
+  });
+
+  it("setParseMode persists without restart when channel is down", async () => {
+    const { factory, state } = makeBotFactory();
+    const { lock } = fakeLock();
+    const channel = new TelegramChannel({
+      runtime: fakeRuntime(),
+      config: makeConfig(dir),
+      token: null,
+      logger,
+      botFactory: factory,
+      lock,
+      userConfigPath,
+      emitStatus: () => undefined,
+    });
+    await channel.start();
+    expect(channel.state()).toBe("down");
+
+    await channel.setParseMode("plain");
+
+    expect(state.startCalls).toBe(0);
+    expect(state.stopCalls).toBe(0);
+    expect(channel.getParseMode()).toBe("plain");
+    expect(readPersistedTelegramConfig().parseMode).toBe("plain");
   });
 });
 

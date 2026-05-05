@@ -646,10 +646,11 @@ Slash commands: `/telegram enable|disable`, `/telegram start|stop` (alias for th
 
 ### Configuration
 
-`config.telegram` (user config, v9) — see [src/config/config-schema.ts](src/config/config-schema.ts):
+`config.telegram` (user config, v10) — see [src/config/config-schema.ts](src/config/config-schema.ts):
 
 - `telegram.enabled` (default `false`) — master switch for `start()`.
 - `telegram.ownerUserId` (default `null`) — numeric Telegram user id authorised to send DMs to the bot. When `null`, the bot ignores all messages and approvals are dropped.
+- `telegram.parseMode` (default `"html"`) — agent-reply rendering mode. `"html"` converts the agent's markdown to Telegram's HTML subset via `convertMarkdownToTelegramHtml` and sends with `parse_mode: "HTML"` + `disable_web_page_preview: true`; on HTTP 400 ("can't parse entities") the same chunk is retried once as plain text so a formatter regression never silently swallows a reply. `"plain"` disables formatting entirely (legacy behaviour). Slash-command acks, infra messages (`Turn cancelled.`, `(no reply)`), and failure envelopes (`Turn failed [...]: ...`) **always** send as plain text regardless — only "agent content" is formatted, "channel infrastructure" stays unformatted so a stray `<` in an error message can never collide with the HTML grammar. MarkdownV2 is intentionally unsupported (escape surface too wide for typical LLM output). Added in config v10; older files transparently get `"html"`.
 - `telegram.approvalTimeoutMs` (default `480000` = 8 min) — `ApprovalBridge` auto-deny window.
 
 `TELEGRAM_BOT_TOKEN` (env / `<stateDir>/.env`) — bot token. Stored only in `.env` with mode `0600`; never copied into `config.json` or logged.
@@ -661,9 +662,17 @@ Slash commands: `/telegram enable|disable`, `/telegram start|stop` (alias for th
 - Counters: `agent.telegram.up`, `agent.telegram.down` (tagged by `outcome` + short `reason`), `agent.telegram.messages_received`, `agent.telegram.messages_sent`, `agent.telegram.approvals_resolved` (tagged by `resolver` + `approved`).
 - The `messages_*` counters track agent-visible inbound (post owner-check, post slash-command-shortcut) and one-per-reply outbound, **not** raw Telegram updates / `sendMessage` chunks.
 
+### Outbound formatting (HTML mode)
+
+Agent replies are rendered as Telegram HTML by default ([config v10](src/config/config-schema.ts), `telegram.parseMode = "html"`). The path is:
+
+- [markdown-to-html.ts](src/channels/telegram/markdown-to-html.ts) is a pure converter that maps a deliberately narrow LLM-friendly markdown subset (headings → `<b>`, bold/italic/strikethrough, inline + fenced code, links, lists, blockquotes) into Telegram's HTML subset (`<b>`, `<i>`, `<u>`, `<s>`, `<code>`, `<pre>`, `<a>`, `<blockquote>`). All non-tag text is HTML-escaped (`<`, `>`, `&`); link `href`s are validated against an `(https?|tg|mailto):` allowlist so unsafe schemes degrade to escaped plain text instead of becoming `<a>` tags.
+- [outbound-sender.ts](src/channels/telegram/outbound-sender.ts) `sendOutbound` accepts `parseMode: "plain" | "html"`. The chunker always operates on raw input text (line-break aware, identical to plain mode); the conversion runs **per chunk** so an unbalanced markdown delimiter that straddles a chunk boundary degrades to literal text rather than producing a corrupt HTML tag. HTML chunks are sent with `parse_mode: "HTML"` and `disable_web_page_preview: true` (so a stray bare URL in the agent's reply does not unfurl an unwanted preview card).
+- On HTTP 400 with a "can't parse entities" / "unsupported start tag" / "can't find end of" description, the same chunk is retried **once** as plain text and the `parseFallbacks` counter on `OutboundSendResult` increments. Other 400s drop the chunk like any non-429 error. This is the load-bearing safety net: a formatter regression never silently swallows a reply.
+
 ### Locked invariants
 
-Pinned by [src/runtime/bootstrap.test.ts](src/runtime/bootstrap.test.ts), [src/channels/telegram/telegram-channel.test.ts](src/channels/telegram/telegram-channel.test.ts), [src/channels/telegram/inbound-handler.test.ts](src/channels/telegram/inbound-handler.test.ts), [src/channels/telegram/approval-bridge.test.ts](src/channels/telegram/approval-bridge.test.ts), [src/channels/telegram/pairing-mode.test.ts](src/channels/telegram/pairing-mode.test.ts), [src/config/dotenv-writer.test.ts](src/config/dotenv-writer.test.ts), [src/tui/telegram/telegram-panel-reducer.test.ts](src/tui/telegram/telegram-panel-reducer.test.ts), [src/tui/telegram/tui-telegram-orchestrator.test.ts](src/tui/telegram/tui-telegram-orchestrator.test.ts):
+Pinned by [src/runtime/bootstrap.test.ts](src/runtime/bootstrap.test.ts), [src/channels/telegram/telegram-channel.test.ts](src/channels/telegram/telegram-channel.test.ts), [src/channels/telegram/inbound-handler.test.ts](src/channels/telegram/inbound-handler.test.ts), [src/channels/telegram/approval-bridge.test.ts](src/channels/telegram/approval-bridge.test.ts), [src/channels/telegram/pairing-mode.test.ts](src/channels/telegram/pairing-mode.test.ts), [src/channels/telegram/markdown-to-html.test.ts](src/channels/telegram/markdown-to-html.test.ts), [src/channels/telegram/outbound-sender.test.ts](src/channels/telegram/outbound-sender.test.ts), [src/config/dotenv-writer.test.ts](src/config/dotenv-writer.test.ts), [src/tui/telegram/telegram-panel-reducer.test.ts](src/tui/telegram/telegram-panel-reducer.test.ts), [src/tui/telegram/tui-telegram-orchestrator.test.ts](src/tui/telegram/tui-telegram-orchestrator.test.ts):
 
 1. **Polling carve-out is scoped to grammy.** `setInterval` / long-polling outside `telegram-bot-factory.ts` is forbidden in `src/channels/telegram/`. Other channels must repeat the carve-out review.
 2. **Telegram updates always go through `runtime.runTurn`.** Never directly into `SessionStore`, `ApprovalGate`, or `TurnController`.
@@ -672,10 +681,13 @@ Pinned by [src/runtime/bootstrap.test.ts](src/runtime/bootstrap.test.ts), [src/c
 5. **Pairing bypasses the owner check.** Inbound handler calls `tryClaimForPairing` **before** filtering by `ownerUserId` — the only path where a non-owner DM is allowed to claim ownership.
 6. **Approval routing is per-session.** `ApprovalRouter.setForSession(sessionId, handler)` binds the Telegram session id to `ApprovalBridge`; everyone else falls through to the host UI handler. A fallback collision between two channels on the same session is intentionally not supported.
 7. **`grammy` is imported from one file only.** [telegram-bot-factory.ts](src/channels/telegram/telegram-bot-factory.ts). Future replacement of the Telegram client touches one file.
+8. **Only agent replies are formatted.** Slash-command acks (`/help`, `/status`, `/new`, `/cancel`), infra messages (`Turn cancelled.`, `(no reply)`), failure envelopes (`Turn failed [<category>]: ...`), pairing welcomes, and approval-keyboard text always send as plain text regardless of `telegram.parseMode`. The carve-out keeps a stray `<` in an error message from colliding with the HTML grammar and keeps the operator's mental model clean: formatted text == agent content, plain text == channel infrastructure.
+9. **HTML conversion is tag-allowlisted.** `convertMarkdownToTelegramHtml` only emits tags from `{b, i, u, s, code, pre, a, blockquote}` and only `(https?|tg|mailto):` schemes for `<a href>`. New tag emission requires extending both the converter and the allowlist in [markdown-to-html.ts](src/channels/telegram/markdown-to-html.ts).
+10. **Plain-text fallback on HTTP 400 'can't parse entities'.** When `parseMode === "html"`, a parse-rejected chunk is retried once with `parse_mode` stripped and the original raw markdown body — not the formatted HTML — so the operator sees the LLM's intent instead of the broken tags. `parseFallbacks` is surfaced separately from `dropped` for metrics + regression detection.
 
 ### Out of scope (deferred)
 
-Multi-user pairing flows, per-chat session isolation, MarkdownV2 / HTML rendering of agent replies, structured menu / command surfaces beyond plain text, message editing for streaming output, file uploads (image / document ingestion through Telegram), webhook ingress as a Telegram-specific endpoint (the generic `/api/webhooks/:name` path is the existing surface), and a generic `Channel` abstraction (Slack / WhatsApp adapters) are all deferred. The seam is `src/channels/<name>/`; only extract shared interfaces when a second concrete channel actually lands.
+Multi-user pairing flows, per-chat session isolation, MarkdownV2 rendering (the escape surface is too wide for typical LLM output and `parse_mode: "MarkdownV2"` rejects the whole message on a single stray reserved char — see §"Outbound formatting"), structured menu / command surfaces beyond plain text, message editing for streaming output, file uploads (image / document ingestion through Telegram), webhook ingress as a Telegram-specific endpoint (the generic `/api/webhooks/:name` path is the existing surface), and a generic `Channel` abstraction (Slack / WhatsApp adapters) are all deferred. The seam is `src/channels/<name>/`; only extract shared interfaces when a second concrete channel actually lands.
 
 ## LLM reliability policy
 

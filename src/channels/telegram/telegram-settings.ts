@@ -2,6 +2,7 @@ import {
   readUserConfigFileSync,
   USER_CONFIG_DEFAULTS,
   writeUserConfigFileSync,
+  type TelegramParseMode,
   type UserConfigFile,
 } from "../../config/index.js";
 import { setDotenvKey, type SetDotenvKeyResult } from "../../config/dotenv-writer.js";
@@ -23,6 +24,7 @@ export interface TelegramSettingsPaths {
 export interface PersistedTelegramSettings {
   enabled: boolean;
   ownerUserId: number | null;
+  parseMode: TelegramParseMode;
 }
 
 /**
@@ -37,7 +39,11 @@ export function readTelegramSettings(
 ): PersistedTelegramSettings {
   const file = readUserConfigFileSync(paths.userConfigPath);
   const block = file?.telegram ?? USER_CONFIG_DEFAULTS.telegram;
-  return { enabled: block.enabled, ownerUserId: block.ownerUserId };
+  return {
+    enabled: block.enabled,
+    ownerUserId: block.ownerUserId,
+    parseMode: block.parseMode,
+  };
 }
 
 /**
@@ -60,10 +66,15 @@ export function writeTelegramSettings(
       ...(patch.ownerUserId !== undefined
         ? { ownerUserId: patch.ownerUserId }
         : {}),
+      ...(patch.parseMode !== undefined ? { parseMode: patch.parseMode } : {}),
     },
   };
   writeUserConfigFileSync(paths.userConfigPath, next);
-  return { enabled: next.telegram.enabled, ownerUserId: next.telegram.ownerUserId };
+  return {
+    enabled: next.telegram.enabled,
+    ownerUserId: next.telegram.ownerUserId,
+    parseMode: next.telegram.parseMode,
+  };
 }
 
 /**
