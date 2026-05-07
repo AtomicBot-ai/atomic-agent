@@ -13,13 +13,11 @@ import { handleAppKey } from "./app-key-bindings.js";
 import { ApprovalModal } from "./approval-modal.js";
 import { ChatLog } from "./components/chat-log.js";
 import { DebugPane } from "./components/debug-pane.js";
-import { FooterLine } from "./components/footer-line.js";
-import { HeaderLine } from "./components/header-line.js";
 import { HotkeyHint } from "./components/hotkey-hint.js";
 import { MultiLineEditor } from "./components/multi-line-editor.js";
 import { SessionPicker } from "./components/session-picker.js";
 import { SlashPalette } from "./components/slash-palette.js";
-import { StatusLine } from "./components/status-line.js";
+import { StatusBar } from "./components/status-bar.js";
 import { TasksCancelModal } from "./components/tasks-cancel-modal.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { slashPrefix } from "./commands/slash-command-parser.js";
@@ -318,6 +316,11 @@ export function TuiApp({
     }
   }, [state, callbacks]);
 
+  // Tab in the editor is reserved for slash-palette completion. Section
+  // / sub-tab cycling lives entirely in `handleAppKey` so the same key
+  // press cannot be acted on twice (once globally, once here through a
+  // stale `state` closure). The editor still consumes Tab without
+  // inserting a literal tab character — see `multi-line-editor.tsx`.
   const onTab = useCallback(() => {
     if (!state.slashPaletteOpen) return;
     const completions = filterSlashCommands(state.slashQuery);
@@ -353,7 +356,7 @@ export function TuiApp({
 
   return (
     <Box flexDirection="column" paddingLeft={2}>
-      <HeaderLine state={state} />
+      <StatusBar state={state} />
       {state.uiMode === "chat" ? (
         <ChatLog state={state} />
       ) : (
@@ -362,8 +365,6 @@ export function TuiApp({
       {state.pendingApproval ? (
         <ApprovalModal request={state.pendingApproval} />
       ) : null}
-      <StatusLine state={state} />
-      <FooterLine state={state} />
       {state.sessionPickerOpen ? (
         <SessionPicker
           sessions={state.sessionPickerList}

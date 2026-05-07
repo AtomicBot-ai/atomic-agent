@@ -26,7 +26,9 @@ describe("SplashBanner", () => {
     expect(frame).toContain("/help");
     expect(frame).toContain("/sessions");
     expect(frame).toContain("/new");
-    expect(frame).toContain("/debug");
+    expect(frame).toContain("/observe");
+    expect(frame).toContain("/manage");
+    expect(frame).toContain("/run");
     expect(frame).toContain("Ctrl+C");
   });
 });

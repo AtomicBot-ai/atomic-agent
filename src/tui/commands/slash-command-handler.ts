@@ -133,6 +133,16 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return pureActions([{ type: "ui_mode_toggled" }]);
     case "chat":
       return pureActions([{ type: "ui_mode_set", mode: "chat" }]);
+    case "observe":
+      return pureActions([
+        { type: "ui_mode_set", mode: "debug" },
+        { type: "tab_changed", tab: "feed" },
+      ]);
+    case "manage":
+      return pureActions([
+        { type: "ui_mode_set", mode: "debug" },
+        { type: "tab_changed", tab: "tasks" },
+      ]);
     case "feed":
       return pureActions([
         { type: "ui_mode_set", mode: "debug" },

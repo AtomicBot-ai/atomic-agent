@@ -182,6 +182,93 @@ describe("LlmHealthPoller", () => {
     expect(spy.mock.calls[1]?.[0]).toMatchObject({ url: "http://new:9000" });
   });
 
+  it("should fetch /props once and emit the model label after first healthy probe", async () => {
+    spy.mockResolvedValue({
+      reachable: true,
+      status: 200,
+      error: null,
+      latencyMs: 1,
+    } satisfies HealthResult);
+    const fetchCalls: string[] = [];
+    const fetchImpl: typeof fetch = (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      fetchCalls.push(url);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            model_alias: "Qwen3-30B-A3B-Instruct.gguf",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    };
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://127.0.0.1:19091",
+      300,
+      fetchImpl,
+    );
+    poller.start();
+    await sleep(450);
+    poller.stop();
+
+    const modelEvents = capture.actions.filter(
+      (a) => a.type === "llm_model_updated",
+    );
+    expect(modelEvents).toHaveLength(1);
+    expect(modelEvents[0]).toMatchObject({
+      type: "llm_model_updated",
+      model: "Qwen3-30B-A3B-Instruct.gguf",
+    });
+    expect(fetchCalls).toHaveLength(1);
+    expect(fetchCalls[0]).toContain("/props");
+  });
+
+  it("should re-fetch the model label after updateUrl", async () => {
+    spy.mockResolvedValue({
+      reachable: true,
+      status: 200,
+      error: null,
+      latencyMs: 1,
+    } satisfies HealthResult);
+    let propsCount = 0;
+    const fetchImpl: typeof fetch = () => {
+      propsCount += 1;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            model_alias: propsCount === 1 ? "first" : "second",
+          }),
+          { status: 200 },
+        ),
+      );
+    };
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://a:9000",
+      60_000,
+      fetchImpl,
+    );
+    poller.start();
+    await sleep(40);
+    poller.updateUrl("http://b:9000");
+    await sleep(40);
+    poller.stop();
+
+    const modelEvents = capture.actions.filter(
+      (a) => a.type === "llm_model_updated",
+    );
+    // Three: first label, reset to null on URL change, second label.
+    expect(modelEvents).toHaveLength(3);
+    expect(modelEvents.map((a) => (a as { model: string | null }).model)).toEqual([
+      "first",
+      null,
+      "second",
+    ]);
+  });
+
   it("should not emit after stop", async () => {
     let resolveProbe: ((r: HealthResult) => void) | null = null;
     spy.mockImplementationOnce(

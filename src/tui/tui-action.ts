@@ -117,6 +117,12 @@ export type TuiAction =
       error: string | null;
       checkedAt: number;
     }
+  /**
+   * Result of a one-shot `/props` probe done by `LlmHealthPoller` after
+   * the first healthy `/health`. Updates the active model label shown
+   * in the StatusBar without touching the rest of the health slice.
+   */
+  | { type: "llm_model_updated"; model: string | null }
   | LocalModelsAction
   | TasksAction
   | SkillsAction

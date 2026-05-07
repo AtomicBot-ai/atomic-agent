@@ -26,6 +26,13 @@ export interface LlmHealthState {
   latencyMs: number | null;
   /** Sticky error message from the last failed probe (`null` when healthy). */
   error: string | null;
+  /**
+   * Active model alias / file name reported by `/props`. The poller
+   * fetches this once per URL after the first healthy `/health` probe
+   * so the StatusBar can show what the agent is actually talking to.
+   * `null` until the first successful `/props` call.
+   */
+  model: string | null;
 }
 
 export function createInitialLlmHealthState(): LlmHealthState {
@@ -34,5 +41,6 @@ export function createInitialLlmHealthState(): LlmHealthState {
     lastCheckedAt: null,
     latencyMs: null,
     error: null,
+    model: null,
   };
 }

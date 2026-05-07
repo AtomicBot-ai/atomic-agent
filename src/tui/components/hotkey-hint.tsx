@@ -67,9 +67,21 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
       },
     ];
   }
+  if (state.uiMode === "debug") {
+    return [
+      { key: "tab", label: "next panel" },
+      { key: "shift+tab", label: "prev panel" },
+      { key: "/", label: "commands" },
+      {
+        key: "ctrl+c",
+        label: ctrlCArmed ? "press again to quit" : "quit",
+      },
+    ];
+  }
   return [
     { key: "enter", label: "send" },
     { key: "alt+enter", label: "newline" },
+    { key: "tab", label: "open Observe" },
     { key: "↑↓", label: "history" },
     { key: "/", label: "commands" },
     {

@@ -26,11 +26,21 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   { name: "abort", description: "abort the running turn" },
   { name: "quit", description: "exit atomic-agent", aliases: ["exit"] },
   { name: "debug", description: "toggle debug pane (feed / logs / world …)" },
-  { name: "chat", description: "return to single-view chat mode" },
-  { name: "feed", description: "jump to the debug Feed tab" },
-  { name: "logs", description: "jump to the debug Logs tab" },
-  { name: "reasoning", description: "jump to the debug Reasoning tab" },
-  { name: "world", description: "jump to the debug World tab" },
+  { name: "chat", description: "return to single-view chat mode", aliases: ["run"] },
+  {
+    name: "observe",
+    description:
+      "switch to the Observe section (feed / world / reasoning / logs / llm-logs)",
+  },
+  {
+    name: "manage",
+    description:
+      "switch to the Manage section (tasks / skills / local LLM / telegram)",
+  },
+  { name: "feed", description: "jump to the Observe → Feed tab" },
+  { name: "logs", description: "jump to the Observe → Logs tab" },
+  { name: "reasoning", description: "jump to the Observe → Reasoning tab" },
+  { name: "world", description: "jump to the Observe → World tab" },
   { name: "expand", description: "expand every tool card in the chat log" },
   { name: "collapse", description: "collapse every tool card in the chat log" },
   { name: "session", description: "show current session id" },

@@ -32,7 +32,10 @@ export function SplashBanner(): ReactElement {
         <Tip left="/help" right="list all slash commands" />
         <Tip left="/sessions" right="switch to a previous thread" />
         <Tip left="/new" right="start a fresh session" />
-        <Tip left="/debug" right="toggle chat ↔ debug pane" />
+        <Tip
+          left="/observe · /manage · /run"
+          right="operator dashboard (Tab cycles panels in debug)"
+        />
         <Tip left="Ctrl+C ×2" right="quit (once aborts a running turn)" />
       </Box>
     </Box>

@@ -24,5 +24,14 @@ export type {
   TuiTab,
   TuiUiMode,
 } from "./tui-state.js";
+export {
+  cycleSubTab,
+  getCurrentSection,
+  getDefaultTabForSection,
+  MANAGE_TABS,
+  OBSERVE_TABS,
+  SECTION_ORDER,
+} from "./section.js";
+export type { TuiSection } from "./section.js";
 export { theme } from "./theme/theme.js";
 export type { TuiTheme } from "./theme/theme.js";

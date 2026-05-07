@@ -1,6 +1,6 @@
 import type { Key } from "ink";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
-import { cycleDebugTab } from "./components/debug-pane.js";
+import { cycleNavSlot, type NavSlot } from "./section.js";
 import type { TuiAction } from "./tui-action.js";
 import type { TuiState } from "./tui-state.js";
 
@@ -75,21 +75,36 @@ export function handleAppKey(
     state.telegramPanel.mode !== "list";
   const debugTabBusy =
     tasksTabBusy || skillsTabBusy || localModelsTabBusy || telegramTabBusy;
-  if (!debugTabBusy && state.uiMode === "debug" && key.tab && !key.shift) {
-    dispatch({
-      type: "tab_changed",
-      tab: cycleDebugTab(state.activeTab, 1),
-    });
-    return true;
-  }
-  if (!debugTabBusy && state.uiMode === "debug" && key.tab && key.shift) {
-    dispatch({
-      type: "tab_changed",
-      tab: cycleDebugTab(state.activeTab, -1),
-    });
+  // Tab / Shift+Tab cycles globally across nav slots (chat → Observe
+  // tabs → Manage tabs → chat). Done here in the global handler — the
+  // editor consumes Tab without inserting it, so a single dispatch
+  // path avoids the double-jump that would otherwise happen if both
+  // useInput hooks acted on the same key. The slash palette gets
+  // priority so Tab there still accepts the completion.
+  if (
+    !debugTabBusy &&
+    !state.slashPaletteOpen &&
+    key.tab &&
+    !state.pendingApproval
+  ) {
+    const direction: 1 | -1 = key.shift ? -1 : 1;
+    const next = cycleNavSlot(state, direction);
+    applyNavSlot(dispatch, next);
     return true;
   }
   return false;
+}
+
+function applyNavSlot(
+  dispatch: (action: TuiAction) => void,
+  slot: NavSlot,
+): void {
+  if (slot.kind === "run") {
+    dispatch({ type: "ui_mode_set", mode: "chat" });
+    return;
+  }
+  dispatch({ type: "ui_mode_set", mode: "debug" });
+  dispatch({ type: "tab_changed", tab: slot.tab });
 }
 
 function handleApprovalKey(

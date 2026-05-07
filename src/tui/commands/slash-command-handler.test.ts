@@ -38,6 +38,27 @@ describe("dispatchSlashCommand", () => {
     expect(result.actions).toEqual([{ type: "ui_mode_toggled" }]);
   });
 
+  it("opens the Observe section default tab for /observe", () => {
+    const result = dispatchSlashCommand("/observe");
+    expect(result.actions).toEqual([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "feed" },
+    ]);
+  });
+
+  it("opens the Manage section default tab for /manage", () => {
+    const result = dispatchSlashCommand("/manage");
+    expect(result.actions).toEqual([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "tasks" },
+    ]);
+  });
+
+  it("returns to the Run section for /run (alias of /chat)", () => {
+    const result = dispatchSlashCommand("/run");
+    expect(result.actions).toEqual([{ type: "ui_mode_set", mode: "chat" }]);
+  });
+
   it("switches to debug mode and tab for /logs", () => {
     const result = dispatchSlashCommand("/logs");
     expect(result.actions).toEqual([

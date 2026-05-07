@@ -96,11 +96,17 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       return {
         ...state,
         llmHealth: {
+          ...state.llmHealth,
           status: action.status,
           lastCheckedAt: action.checkedAt,
           latencyMs: action.latencyMs,
           error: action.error,
         },
+      };
+    case "llm_model_updated":
+      return {
+        ...state,
+        llmHealth: { ...state.llmHealth, model: action.model },
       };
     default:
       return state;

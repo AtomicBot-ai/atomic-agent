@@ -28,8 +28,10 @@ export interface MultiLineEditorProps {
   onHistoryPrev?: () => void;
   /** Down arrow pressed while the cursor is on the last line. */
   onHistoryNext?: () => void;
-  /** Tab pressed — parent may use this to accept a slash completion. */
+  /** Tab pressed — parent may use this to accept a slash completion or navigate. */
   onTab?: () => void;
+  /** Shift+Tab pressed — parent may use this for reverse navigation. */
+  onShiftTab?: () => void;
 }
 
 /**
@@ -59,6 +61,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     onHistoryPrev,
     onHistoryNext,
     onTab,
+    onShiftTab,
   } = props;
   const [cursorPos, setCursorPos] = useState<number>(value.length);
   // Clamp cursor whenever the controlled value shrinks (e.g. slash
@@ -88,6 +91,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
         onEscape,
         onInterrupt,
         onTab,
+        onShiftTab,
         onHistoryPrev,
         onHistoryNext,
       });
@@ -118,6 +122,7 @@ interface KeyContext {
   onEscape?: () => void;
   onInterrupt?: () => void;
   onTab?: () => void;
+  onShiftTab?: () => void;
   onHistoryPrev?: () => void;
   onHistoryNext?: () => void;
 }
@@ -135,7 +140,11 @@ function handleKey(ctx: KeyContext): void {
     ctx.onEscape?.();
     return;
   }
-  if (key.tab && !key.shift) {
+  if (key.tab && key.shift) {
+    ctx.onShiftTab?.();
+    return;
+  }
+  if (key.tab) {
     ctx.onTab?.();
     return;
   }
