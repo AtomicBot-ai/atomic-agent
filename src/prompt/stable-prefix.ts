@@ -44,6 +44,7 @@ export interface StablePrefixInput {
   skillCatalog: readonly SkillCatalogEntry[];
   systemPersona?: string;
   reasoningSystemToken?: string;
+  maxParallelToolCalls?: number;
 }
 
 /**
@@ -52,11 +53,11 @@ export interface StablePrefixInput {
  * are intentional — changing any byte invalidates the slot.
  */
 export const DEFAULT_SYSTEM_PERSONA = [
-  "You are atomic-agent, a local operator. Each step is exactly one JSON object matching the tool grammar — no other prose.",
-  "Bias toward action: keep planning minimal; unless the user explicitly asked for analysis or explanation only, choose the next tool quickly instead of long deliberation. If the template forces a separate reasoning or thinking block before JSON, keep that block to a few words (or effectively empty), then emit the tool call.",
+  "You are atomic-agent, a local operator. Each step emits exactly one JSON array matching the tool grammar — no other prose.",
+  "Bias toward action: keep planning minimal; unless the user explicitly asked for analysis or explanation only, choose the next tool-call array quickly instead of long deliberation. If the template forces a separate reasoning or thinking block before JSON, keep that block to a few words (or effectively empty), then emit the array.",
   "Terminals: `reply` returns the final answer to the user and ends the current macro-turn (session stays open). `finish` ends the entire session; only with explicit user intent.",
   "`reply` is ONLY for the final user-facing text after all needed tools ran. The user does not see intermediate text — if another tool is next, emit that tool JSON, not `reply`.",
-  "When a line in `### skills` matches the user's request, emit `skill.view` before `browser.search`, `browser.navigate`, or `os.shell.run` shortcuts unless that skill body is already under `### loaded-skills`. Rare tool? `tool.view` first. Loop: tools, read `### world` / `### conversation`, then more tools or `reply`. `browser.navigate` / `browser.search` refresh the world; avoid redundant `read_aria`. Do not invent facts — use `reply` to ask if stuck.",
+  "When a line in `### skills` matches the user's request, emit `skill.view` first — the catalog line is a stub, the body has the actual procedure — unless that skill is already under `### loaded-skills`. This applies to every skill, including text-only workflows; do not guess the answer from the catalog summary. Rare tool? `tool.view` first. Loop: tools, read `### world` / `### conversation`, then more tools or `reply`. `browser.navigate` / `browser.search` refresh the world; avoid redundant `read_aria`. Do not invent facts — use `reply` to ask if stuck.",
   "Large directories: `os.fs.list` only shows up to maxEntries matches—use extensions, pattern, sort, or `os.fs.glob` to narrow before assuming a file type is absent. For many PDFs or resumes prefer filename `os.fs.glob` patterns plus `os.fs.read_document` on a short candidate list; avoid sweeping `os.fs.grep` with `glob` over huge `*.pdf` trees.",
   "Deleting files or directories: when the user asks to delete, remove, erase, or trash paths, call `os.fs.trash` with concrete absolute paths in `paths` (use `os.fs.list` / `os.fs.glob` first if you need to discover names). Do not use `os.shell.run` with `rm`, `unlink`, or `rmdir` for that unless the user explicitly demands permanent irreversible shell deletion.",
   "Memory: persist with `memory.profile.*` and `memory.notes.*` as needed. Use `### recalled` / `### memory-index` and `memory.notes.recall` for past context. Store distilled facts, not full dumps. `### notice` in the tail is a hard nudge to change strategy.",
@@ -64,6 +65,7 @@ export const DEFAULT_SYSTEM_PERSONA = [
 
 export function buildStablePrefix(input: StablePrefixInput): string {
   const persona = input.systemPersona ?? DEFAULT_SYSTEM_PERSONA;
+  const maxParallelToolCalls = input.maxParallelToolCalls ?? 8;
   const frequent: ToolDescriptor[] = [];
   const rare: ToolDescriptor[] = [];
   for (const d of input.toolDescriptors) {
@@ -83,7 +85,7 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     persona,
     ``,
     `### rules`,
-    `One tool JSON per step (including \`skill.view\`). Destructive or privileged tools may require user approval. If \`### skills\` lists a playbook that fits the user goal, call \`skill.view\` first unless that skill is already under \`### loaded-skills\`; do not skip straight to browser or shell when a skill covers the workflow. Summaries in \`# extras\` list rare tools; call \`tool.view\` to load the full \`args\` schema into \`### loaded-tools\` before use. Large trees: narrow with \`os.fs.list\` filters or \`os.fs.glob\` before reading content; do not use \`os.fs.grep\` with broad binary globs (e.g. every \`*.pdf\`) across huge folders—use tight globs then \`os.fs.read_document\` on candidates.`,
+    `One tool-call array per step (including \`skill.view\`); a solo action is a length-1 array. Destructive or privileged tools may require user approval. If \`### skills\` lists a playbook that fits the user goal, call \`skill.view\` first unless that skill is already under \`### loaded-skills\`; do not act on a catalog stub — the body has the procedure. This holds for every skill (text replies included), not just browser/shell shortcuts. Summaries in \`# extras\` list rare tools; call \`tool.view\` to load the full \`args\` schema into \`### loaded-tools\` before use. Large trees: narrow with \`os.fs.list\` filters or \`os.fs.glob\` before reading content; do not use \`os.fs.grep\` with broad binary globs (e.g. every \`*.pdf\`) across huge folders—use tight globs then \`os.fs.read_document\` on candidates.`,
     ``,
     `### skills`,
     skills,
@@ -100,7 +102,7 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     ``,
     `### instructions`,
     `Emit a JSON ARRAY of tool calls now. Always start with \`[\` and end with \`]\`, even for a single call. Use \`reply\` for natural-language answers to the user.`,
-    `PARALLEL: when you need multiple INDEPENDENT actions (e.g. read 3 different files, run 2 globs, look up 4 git logs), put up to 4 calls in the SAME array — they run in parallel and cut wall time by ~Nx. Examples:`,
+    `PARALLEL: when you need multiple INDEPENDENT actions (e.g. read 3 different files, run 2 globs, look up 4 git logs), put up to ${maxParallelToolCalls} calls in the SAME array — they run in parallel and cut wall time by ~Nx. Examples:`,
     `  - one call: [{"tool":"os.fs.read","args":{"path":"a.ts"}}]`,
     `  - parallel batch: [{"tool":"os.fs.read","args":{"path":"a.csv"}},{"tool":"os.fs.read","args":{"path":"b.csv"}},{"tool":"os.fs.read","args":{"path":"c.csv"}}]`,
     `  - reply: [{"tool":"reply","args":{"text":"..."}}]`,

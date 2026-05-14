@@ -207,6 +207,50 @@ function reduceStepEvent(
         streamingAssistantText:
           (state.streamingAssistantText ?? "") + event.text,
       };
+    case "prompt_captured": {
+      const withFeed = appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: formatFeedLine({
+          type: "prompt_captured",
+          stepIndex: event.stepIndex,
+          total: event.tokens.total,
+          stablePrefix: event.tokens.stablePrefix,
+          tail: event.tokens.tail,
+          cacheReused: event.cacheReused,
+        }),
+        color: event.cacheReused ? "green" : "yellow",
+      });
+      return {
+        ...withFeed,
+        metrics: {
+          ...withFeed.metrics,
+          promptTokensLast: event.tokens.total,
+          promptStablePrefixTokensLast: event.tokens.stablePrefix,
+          promptTailTokensLast: event.tokens.tail,
+        },
+      };
+    }
+    case "parse_retry": {
+      const withFeed = appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: formatFeedLine({
+          type: "parse_retry",
+          stepIndex: event.stepIndex,
+          attempt: event.attempt,
+          reason: event.reason,
+        }),
+        color: "yellow",
+      });
+      return {
+        ...withFeed,
+        metrics: {
+          ...withFeed.metrics,
+          parseRetries: withFeed.metrics.parseRetries + 1,
+        },
+      };
+    }
     case "tool_call_parsed": {
       const call: StreamingToolCall = {
         id: `tc-${Date.now()}-${state.streamingToolCalls.length}-${state.streamingToolCards.length}`,
@@ -223,6 +267,8 @@ function reduceStepEvent(
             type: "tool_call_parsed",
             tool: event.call.tool,
             args: event.call.args,
+            batchIndex: event.batchIndex,
+            batchSize: event.batchSize,
           }),
           color: "magenta",
         }),
@@ -243,6 +289,8 @@ function reduceStepEvent(
           status: event.result.status,
           summary: event.result.summary,
           truncated: event.result.truncated ?? false,
+          batchIndex: event.batchIndex,
+          batchSize: event.batchSize,
         }),
         color,
       });
@@ -267,6 +315,16 @@ function reduceStepEvent(
           : state.currentTurnToolSteps + 1,
       };
     }
+    case "rare_tool_autoloaded":
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: formatFeedLine({
+          type: "rare_tool_autoloaded",
+          tool: event.tool,
+        }),
+        color: "yellow",
+      });
     case "assistant_reply": {
       const reasoningForTurn = state.reasoning.map((r) => r.text);
       const toolCardsForTurn = state.streamingToolCards;

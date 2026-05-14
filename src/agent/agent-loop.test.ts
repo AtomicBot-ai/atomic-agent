@@ -373,6 +373,71 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(events[0]?.count).toBeGreaterThanOrEqual(3);
   });
 
+  it("refreshes memory context between non-terminal tool steps", async () => {
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: "read src/cart.ts",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    const providerInputs: Array<{
+      userMessage: string | null;
+      toolResultSummaries?: readonly string[];
+    }> = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        return makeCompletion(
+          calls === 1
+            ? JSON.stringify({ tool: "noop", args: {} })
+            : JSON.stringify({ tool: "reply", args: { text: "done" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      memoryContextProvider: {
+        buildMemoryContext(input) {
+          providerInputs.push({
+            userMessage: input.userMessage,
+            toolResultSummaries: input.toolResultSummaries,
+          });
+          return { recalled: [], index: [] };
+        },
+      },
+    });
+    const session = createEmptySessionState({
+      id: "memory-refresh",
+      workingDir,
+    });
+    await loop.runTurn(session, {
+      userMessage: "fix cart total",
+      maxSteps: 3,
+      signal: new AbortController().signal,
+    });
+    expect(providerInputs.length).toBeGreaterThanOrEqual(2);
+    expect(providerInputs[0]).toMatchObject({
+      userMessage: "fix cart total",
+      toolResultSummaries: [],
+    });
+    expect(providerInputs[1]?.toolResultSummaries).toContain(
+      "noop: read src/cart.ts",
+    );
+  });
+
   it("does not inject a notice when consecutive steps differ", async () => {
     const registry = buildDefaultToolRegistry();
     registry.register({

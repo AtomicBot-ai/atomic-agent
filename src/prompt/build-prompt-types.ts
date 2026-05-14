@@ -56,6 +56,7 @@ export interface BuiltPrompt {
     conversation: number;
     recalled: number;
     memoryIndex: number;
+    taskPolicy: number;
     total: number;
   };
   limits: TokenBudgetLimits;

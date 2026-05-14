@@ -165,9 +165,29 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
   });
 
   const ask = (rli: ReadlineInterface): Promise<string | null> =>
-    new Promise((resolvePrompt) => {
-      rli.question("you> ", (answer) => resolvePrompt(answer));
-      rli.once("close", () => resolvePrompt(null));
+    new Promise((resolvePrompt, rejectPrompt) => {
+      if ((rli as { closed?: boolean }).closed === true) {
+        resolvePrompt(null);
+        return;
+      }
+      const onClose = () => resolvePrompt(null);
+      rli.once("close", onClose);
+      try {
+        rli.question("you> ", (answer) => {
+          rli.off("close", onClose);
+          resolvePrompt(answer);
+        });
+      } catch (err) {
+        rli.off("close", onClose);
+        if (
+          err instanceof Error &&
+          err.message.toLowerCase().includes("readline was closed")
+        ) {
+          resolvePrompt(null);
+          return;
+        }
+        rejectPrompt(err);
+      }
     });
 
   try {

@@ -12,14 +12,81 @@ import { httpGetStatus } from "./http-get-status.case.js";
 import { httpPostEcho } from "./http-post-echo.case.js";
 import { summarizeReadme } from "./summarize-readme.case.js";
 import { explainTreeShape } from "./explain-tree-shape.case.js";
+import { codingFixCartTotal } from "./coding-fix-cart-total.case.js";
+import { debugFixSlugify } from "./debug-fix-slugify.case.js";
+import { codingWireSharedTaxRate } from "./coding-wire-shared-tax-rate.case.js";
+
+// Bucket A — AgentBench-OS-style fs + shell + grep.
+import { osFsCountPyLines } from "./os-fs-count-py-lines.case.js";
+import { osFsFindDuplicateFilenames } from "./os-fs-find-duplicate-filenames.case.js";
+import { osFsExtractEmails } from "./os-fs-extract-emails.case.js";
+import { osFsLargestFileName } from "./os-fs-largest-file-name.case.js";
+import { osFsTailLastLine } from "./os-fs-tail-last-line.case.js";
+import { osFsRenameMdToMdx } from "./os-fs-rename-md-to-mdx.case.js";
+import { osFsHashSha256 } from "./os-fs-hash-sha256.case.js";
+import { osGrepFindFunctionDef } from "./os-grep-find-function-def.case.js";
+
+// Bucket B — single-file bug fixes (SWE-bench-Lite pattern).
+import { codingFixPaginationOffset } from "./coding-fix-pagination-offset.case.js";
+import { codingFixLooseEquality } from "./coding-fix-loose-equality.case.js";
+import { codingFixMissingNullCheck } from "./coding-fix-missing-null-check.case.js";
+import { codingFixSwappedDateArgs } from "./coding-fix-swapped-date-args.case.js";
+import { codingFixWrongDefaultOption } from "./coding-fix-wrong-default-option.case.js";
+import { codingFixGreedyRegex } from "./coding-fix-greedy-regex.case.js";
+
+// Bucket C — multi-file refactors.
+import { codingExtractSharedConstant } from "./coding-extract-shared-constant.case.js";
+import { codingRenameFunctionAcrossFiles } from "./coding-rename-function-across-files.case.js";
+import { codingSplitGodModule } from "./coding-split-god-module.case.js";
+
+// Bucket D — judge-based knowledge / understanding.
+import { judgeExplainCacheDecision } from "./judge-explain-cache-decision.case.js";
+import { judgeSummarizeConfigSchema } from "./judge-summarize-config-schema.case.js";
+import { judgeFindModuleDependency } from "./judge-find-module-dependency.case.js";
+
+// Bucket E — axe-focused diagnostic cases. Each case isolates a single
+// capability axis (see CapabilityAxis in case-schema.ts) so a fail
+// directly identifies the component to fix.
+import { axisToolSelectionReadNotShell } from "./axis-tool-selection-read-not-shell.case.js";
+import { axisToolSelectionEditNotWrite } from "./axis-tool-selection-edit-not-write.case.js";
+import { axisArgsShapingGrepSpecialChars } from "./axis-args-shaping-grep-special-chars.case.js";
+import { axisArgsShapingWriteMode } from "./axis-args-shaping-write-mode.case.js";
+import { axisMinStepsSingleRead } from "./axis-min-steps-single-read.case.js";
+import { axisMinStepsTrivialReply } from "./axis-min-steps-trivial-reply.case.js";
+import { axisBatchingFourIndependentReads } from "./axis-batching-four-independent-reads.case.js";
+import { axisRecoveryBadPathThenFix } from "./axis-recovery-bad-path-then-fix.case.js";
+import { axisInstructionNoEditJustReport } from "./axis-instruction-no-edit-just-report.case.js";
+import { axisInstructionNoShell } from "./axis-instruction-no-shell.case.js";
+import { axisSelfTermAfterFind } from "./axis-self-term-after-find.case.js";
+import { axisGrammarAdherenceJsonInPrompt } from "./axis-grammar-adherence-json-in-prompt.case.js";
+import { axisContextRetentionConfigValue } from "./axis-context-retention-config-value.case.js";
+import { axisRefusalMissingFile } from "./axis-refusal-missing-file.case.js";
+import { axisRefusalEmptyResult } from "./axis-refusal-empty-result.case.js";
 
 /**
- * Initial eval corpus. Order is stable so report rows can be diff'd
- * across runs without sorting. Categories: 8 OS + 2 skill + 2 http.
- * The two OS judge cases at the tail use LLM-as-judge for open-ended
- * replies (summarisation, structural description).
+ * Eval corpus. Order is stable so report rows can be diff'd across runs
+ * without sorting. The corpus is split into stable buckets:
+ *
+ *  - Original 15: smoke + first-iteration OS / skill / HTTP / coding /
+ *    debug coverage.
+ *  - Bucket A (+8): AgentBench-OS-style fs + shell + grep.
+ *  - Bucket B (+6): SWE-bench-Lite-shaped single-file bug fixes.
+ *  - Bucket C (+3): multi-file refactor (read-fan-out, multi-write).
+ *  - Bucket D (+3): judge-based knowledge / code understanding.
+ *  - Bucket E (+15): axe-focused diagnostics. Each case isolates ONE
+ *    capability axis (tool_selection, args_shaping, min_steps,
+ *    parallel_batching, tool_error_recovery, instruction_adherence,
+ *    self_termination, grammar_adherence, context_retention,
+ *    refusal_of_impossible). Failures from Bucket E directly point
+ *    at the component to fix — they are the "where to improve"
+ *    signal, while the other buckets remain the "how well overall"
+ *    signal.
+ *
+ * Total = 50. Run `eval:summary` (after a full prog) to get a
+ * per-axis pass-rate breakdown.
  */
 export const EVAL_CASES: ReadonlyArray<EvalCase> = [
+  // Original 15.
   fsReadReadme,
   fsGrepTodo,
   fsCreateChangelog,
@@ -32,4 +99,52 @@ export const EVAL_CASES: ReadonlyArray<EvalCase> = [
   httpPostEcho,
   summarizeReadme,
   explainTreeShape,
+  codingFixCartTotal,
+  debugFixSlugify,
+  codingWireSharedTaxRate,
+
+  // Bucket A.
+  osFsCountPyLines,
+  osFsFindDuplicateFilenames,
+  osFsExtractEmails,
+  osFsLargestFileName,
+  osFsTailLastLine,
+  osFsRenameMdToMdx,
+  osFsHashSha256,
+  osGrepFindFunctionDef,
+
+  // Bucket B.
+  codingFixPaginationOffset,
+  codingFixLooseEquality,
+  codingFixMissingNullCheck,
+  codingFixSwappedDateArgs,
+  codingFixWrongDefaultOption,
+  codingFixGreedyRegex,
+
+  // Bucket C.
+  codingExtractSharedConstant,
+  codingRenameFunctionAcrossFiles,
+  codingSplitGodModule,
+
+  // Bucket D.
+  judgeExplainCacheDecision,
+  judgeSummarizeConfigSchema,
+  judgeFindModuleDependency,
+
+  // Bucket E — diagnostic axe-focused cases.
+  axisToolSelectionReadNotShell,
+  axisToolSelectionEditNotWrite,
+  axisArgsShapingGrepSpecialChars,
+  axisArgsShapingWriteMode,
+  axisMinStepsSingleRead,
+  axisMinStepsTrivialReply,
+  axisBatchingFourIndependentReads,
+  axisRecoveryBadPathThenFix,
+  axisInstructionNoEditJustReport,
+  axisInstructionNoShell,
+  axisSelfTermAfterFind,
+  axisGrammarAdherenceJsonInPrompt,
+  axisContextRetentionConfigValue,
+  axisRefusalMissingFile,
+  axisRefusalEmptyResult,
 ];

@@ -24,6 +24,9 @@ export interface TraceMetrics {
   cacheHits: number;
   parseRetries: number;
   loopDetected: number;
+  toolErrorCount: number;
+  batchCount: number;
+  maxBatchSize: number;
   toolInvocations: ToolInvocationSummary[];
   /** Last `error.category` seen, or null when no error event was emitted. */
   failureCategory: string | null;
@@ -40,6 +43,9 @@ export async function collectTraceMetrics(path: string): Promise<TraceMetrics> {
     cacheHits: 0,
     parseRetries: 0,
     loopDetected: 0,
+    toolErrorCount: 0,
+    batchCount: 0,
+    maxBatchSize: 0,
     toolInvocations: [],
     failureCategory: null,
     failureMessage: null,
@@ -77,6 +83,11 @@ export async function collectTraceMetrics(path: string): Promise<TraceMetrics> {
     } else if (type === "tool_invocation") {
       const tool = typeof event.tool === "string" ? event.tool : "unknown";
       const status = event.status === "error" ? "error" : "ok";
+      const batchSize = typeof event.batchSize === "number" ? event.batchSize : 1;
+      const batchIndex = typeof event.batchIndex === "number" ? event.batchIndex : 0;
+      if (status === "error") metrics.toolErrorCount += 1;
+      if (batchSize > 1 && batchIndex === 0) metrics.batchCount += 1;
+      metrics.maxBatchSize = Math.max(metrics.maxBatchSize, batchSize);
       metrics.toolInvocations.push({ tool, status });
     } else if (type === "parse_retry") {
       metrics.parseRetries += 1;

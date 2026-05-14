@@ -316,26 +316,30 @@ async function executeStepInner(
   }
 
   if (!parsed.ok) {
-    // One-shot retry: grammar outputs can be truncated or malformed for
+    // One-shot repair: grammar outputs can be truncated or malformed for
     // transient reasons (stop-sequence race, model hiccup), and a batch
     // can fail validation when the model puts an approval-gated or
-    // terminal verb inside an array. The retry replays the inference
-    // through the unary LLM path — the streaming path has already
-    // flushed partial deltas, so replaying through it would double-emit.
+    // terminal verb inside an array. The repair call replays through the
+    // unary LLM path with a short corrective notice appended — the
+    // streaming path has already flushed partial deltas, so replaying
+    // through it would double-emit.
     deps.onEvent?.({
       type: "parse_retry",
       stepIndex: ctx.stepIndex,
       attempt: 1,
       reason: parsed.error.message,
     });
-    deps.logger?.warn("tool-call parse failed, retrying once", {
+    deps.logger?.warn("tool-call parse failed, repairing once", {
       sessionId: ctx.session.id,
       stepIndex: ctx.stepIndex,
       reason: parsed.error.message,
     });
 
     const retryStartedAt = Date.now();
-    completion = await deps.llmComplete(llmParams);
+    completion = await deps.llmComplete({
+      ...llmParams,
+      prompt: buildToolCallRepairPrompt(prompt.text, parsed.error),
+    });
     const retryDurationMs = Date.now() - retryStartedAt;
     deps.onCompletion?.(completion);
     deps.onEvent?.({ type: "llm_completed", completion });
@@ -749,6 +753,33 @@ function validateBatch(
 function rawPreview(content: string): string {
   const slice = content.slice(0, 240).replace(/\n/g, "\\n");
   return content.length > 240 ? `${slice}…` : slice;
+}
+
+function buildToolCallRepairPrompt(promptText: string, error: Error): string {
+  const lines = [
+    promptText.trimEnd(),
+    "",
+    "### tool-call-repair",
+    "The previous completion was rejected before any tool ran.",
+    `reason: ${error.message}`,
+  ];
+  if (error instanceof BatchValidationError) {
+    const perCall = error.perCall
+      .map((reason, index) => (reason ? `- call[${index}]: ${reason}` : null))
+      .filter((line): line is string => line !== null);
+    if (perCall.length > 0) {
+      lines.push("per-call errors:", ...perCall);
+    }
+  }
+  lines.push(
+    "Emit a corrected JSON array only.",
+    "Use a length-1 array for `reply`, `finish`, approval-gated tools, or any call that depends on a previous result.",
+    "Do not repeat the invalid batch shape.",
+    "",
+    "### respond",
+    "Respond now.",
+  );
+  return lines.join("\n");
 }
 
 /**

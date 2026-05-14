@@ -162,6 +162,48 @@ function checkSyncExpectation(
       }
       return null;
     }
+    case "tool_not_invoked": {
+      const matches = ctx.metrics.toolInvocations.filter(
+        (i) => i.tool === expectation.tool,
+      );
+      if (matches.length === 0) return null;
+      return {
+        kind: expectation.kind,
+        description: `tool ${expectation.tool} must NOT have been invoked, but it ran ${matches.length} time(s)`,
+      };
+    }
+    case "step_count": {
+      const steps = ctx.metrics.stepCount;
+      if (expectation.max !== undefined && steps > expectation.max) {
+        return {
+          kind: expectation.kind,
+          description: `step_count: expected <= ${expectation.max}, got ${steps}`,
+        };
+      }
+      if (expectation.min !== undefined && steps < expectation.min) {
+        return {
+          kind: expectation.kind,
+          description: `step_count: expected >= ${expectation.min}, got ${steps}`,
+        };
+      }
+      return null;
+    }
+    case "parse_retries_max": {
+      const retries = ctx.metrics.parseRetries;
+      if (retries <= expectation.max) return null;
+      return {
+        kind: expectation.kind,
+        description: `parse_retries: expected <= ${expectation.max}, got ${retries}`,
+      };
+    }
+    case "batch_size_min": {
+      const max = ctx.metrics.maxBatchSize;
+      if (max >= expectation.min) return null;
+      return {
+        kind: expectation.kind,
+        description: `batch_size_min: expected at least one batch of size >= ${expectation.min}, observed max ${max}`,
+      };
+    }
     default: {
       const _exhaustive: never = expectation;
       return _exhaustive;

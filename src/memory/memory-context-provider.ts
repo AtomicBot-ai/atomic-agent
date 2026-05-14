@@ -13,7 +13,8 @@ import type {
  * Configuration for the default memory context provider.
  *
  * `recall.k` / `recall.enabled` drive the `### recalled` section
- * (top-K BM25 notes against the current user message).
+ * (top-K BM25 notes against the current user message and recent tool
+ * observations).
  * `index.limit` / `index.enabled` drive the `### memory-index` section
  * (compact pointer rows). Both are passed through to the renderer via
  * the agent loop's ephemeral session fields.
@@ -65,7 +66,7 @@ export function createDefaultMemoryContextProvider(
         ? loadRecalled({
             store: opts.store,
             k: opts.recall.k,
-            userMessage: input.userMessage,
+            query: buildRecallQuery(input),
             workingDir: opts.workingDir,
           })
         : [];
@@ -87,13 +88,13 @@ export function createDefaultMemoryContextProvider(
 interface LoadRecalledArgs {
   store: MemoryStore;
   k: number;
-  userMessage: string | null;
+  query: string;
   workingDir: string | null | undefined;
 }
 
 function loadRecalled(args: LoadRecalledArgs): readonly MemoryEntry[] {
   if (args.k <= 0) return [];
-  const query = (args.userMessage ?? "").trim();
+  const query = args.query.trim();
   if (query.length === 0) return [];
   try {
     return args.store.recall(query, {
@@ -105,6 +106,17 @@ function loadRecalled(args: LoadRecalledArgs): readonly MemoryEntry[] {
   } catch {
     return [];
   }
+}
+
+function buildRecallQuery(input: MemoryContextProviderInput): string {
+  const parts: string[] = [];
+  const userMessage = (input.userMessage ?? "").trim();
+  if (userMessage.length > 0) parts.push(userMessage);
+  for (const summary of input.toolResultSummaries ?? []) {
+    const normalized = summary.trim();
+    if (normalized.length > 0) parts.push(normalized);
+  }
+  return parts.join("\n");
 }
 
 interface LoadIndexArgs {

@@ -10,12 +10,13 @@ import type { RunCaseResult } from "./run-case.js";
  * consumers keep working.
  *
  * Columns:
- *   ts, case_id, category, status, duration_ms, steps,
+ *   ts, case_id, category, axis, status, duration_ms, steps,
  *   prompt_tokens, predicted_tokens, cache_hits, parse_retries,
- *   tools_used, failures, failure_category,
+ *   tool_errors, batch_count, max_batch_size, tools_used, failures, failure_category,
  *   judge_count, judge_avg_score, judge_pass_rate
  *
  * Where:
+ *   axis           = capability axis the case isolates ("" if untagged)
  *   status         = pass | fail | skip
  *   tools_used     = "|" separated tool:status pairs
  *   failures       = "|" separated short descriptions (truncated)
@@ -29,6 +30,7 @@ const HEADER = [
   "ts",
   "case_id",
   "category",
+  "axis",
   "status",
   "duration_ms",
   "steps",
@@ -36,6 +38,9 @@ const HEADER = [
   "predicted_tokens",
   "cache_hits",
   "parse_retries",
+  "tool_errors",
+  "batch_count",
+  "max_batch_size",
   "tools_used",
   "failures",
   "failure_category",
@@ -82,6 +87,7 @@ export function appendReportRow({ spec, result, reportPath }: ReportRowInput): v
     new Date().toISOString(),
     spec.id,
     spec.category,
+    spec.capabilityAxis ?? "",
     status,
     result.spawn.durationMs.toString(),
     result.metrics.stepCount.toString(),
@@ -89,6 +95,9 @@ export function appendReportRow({ spec, result, reportPath }: ReportRowInput): v
     result.metrics.totalPredictedTokens.toString(),
     result.metrics.cacheHits.toString(),
     result.metrics.parseRetries.toString(),
+    result.metrics.toolErrorCount.toString(),
+    result.metrics.batchCount.toString(),
+    result.metrics.maxBatchSize.toString(),
     csvEscape(tools),
     csvEscape(failures),
     result.metrics.failureCategory ?? "",

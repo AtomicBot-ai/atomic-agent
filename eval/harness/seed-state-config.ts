@@ -9,8 +9,8 @@ import { join } from "node:path";
  * still time out loudly if the default port is not reachable, which is
  * the honest signal).
  *
- * We deliberately write only the 6 user-facing keys covered by the
- * config schema. Everything else is env-driven and untouched here.
+ * We deliberately write only user-facing keys covered by the config
+ * schema. Everything else is env-driven and untouched here.
  *
  * `approvalRequired: false` is redundant with the `--no-approval` CLI
  * flag the harness already passes, but keeping both makes the intent
@@ -21,8 +21,8 @@ export function seedStateDirConfig(stateDir: string): void {
   if (!llamaUrl || llamaUrl.length === 0) return;
 
   const body = {
-    version: 2,
-    llama: { url: llamaUrl },
+    version: 10,
+    localModels: { url: llamaUrl },
     log: { level: "info" },
     agent: {
       tokenBudget: 3000,

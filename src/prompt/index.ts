@@ -21,6 +21,8 @@ export {
   CONVERSATION_CAP_SAFETY_MARGIN,
   CONVERSATION_CAP_FLOOR,
 } from "./token-budget.js";
+export { renderTaskPolicy } from "./render-task-policy.js";
+export type { RenderedTaskPolicy, TaskPolicyKind } from "./render-task-policy.js";
 export type {
   TokenBudgetLimits,
   BudgetCheckResult,

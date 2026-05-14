@@ -233,6 +233,63 @@ describe("chat loop", () => {
     expect(next.currentTurnToolSteps).toBe(0);
   });
 
+  it("surfaces prompt budget and parse repair signals in the feed", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: {
+            type: "prompt_captured",
+            stepIndex: 0,
+            stablePrefixHash: "a".repeat(64),
+            tail: "### conversation",
+            tokens: { total: 120, stablePrefix: 80, tail: 40 },
+            slotId: 0,
+            cacheReused: true,
+          },
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: {
+            type: "parse_retry",
+            stepIndex: 0,
+            attempt: 1,
+            reason: "terminal verb 'reply' is forbidden inside a batch",
+          },
+        },
+      },
+    ]);
+    expect(next.feed.map((entry) => entry.line)).toEqual([
+      expect.stringContaining("prompt 120 tok"),
+      expect.stringContaining("repair retry 1"),
+    ]);
+    expect(next.metrics.promptTokensLast).toBe(120);
+    expect(next.metrics.promptTailTokensLast).toBe(40);
+    expect(next.metrics.parseRetries).toBe(1);
+  });
+
+  it("labels batched tool calls in the feed", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = reduceTuiState(initial, {
+      type: "agent_event",
+      event: {
+        type: "llm_event",
+        event: {
+          type: "tool_call_parsed",
+          call: { tool: "os.fs.read", args: { path: "a.ts" } },
+          batchIndex: 1,
+          batchSize: 3,
+        },
+      },
+    });
+    expect(next.feed[0]?.line).toContain("[2/3] os.fs.read");
+  });
+
   it("should compute non-zero durationMs for archived run", async () => {
     const initial = createInitialTuiState(fakeSession());
     const afterSubmit = reduceTuiState(initial, {

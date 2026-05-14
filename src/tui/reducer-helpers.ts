@@ -167,6 +167,8 @@ export function startNewRun(state: TuiState): TuiState {
     metrics: {
       ...state.metrics,
       promptTokensLast: null,
+      promptStablePrefixTokensLast: null,
+      promptTailTokensLast: null,
       completionTokensLast: null,
       llmDurationMsLast: null,
       stepDurationMsLast: null,

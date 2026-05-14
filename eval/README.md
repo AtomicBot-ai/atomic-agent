@@ -143,7 +143,7 @@ npm run eval:judge -- --run eval/reports/run-2026-04-23.jsonl --out /tmp/aurora.
 ## Adding a case
 
 1. Create `eval/cases/<id>.case.ts` exporting an `EvalCase` with a
-   stable `id`, a category (`os` / `skill` / `http`), the user `prompt`,
+   stable `id`, a category (`os` / `skill` / `http` / `coding` / `debug`), the user `prompt`,
    optional `setup`, and a list of `expectations`.
 2. Append the named export to `eval/cases/index.ts`.
 3. Run `npm run eval:lint` to typecheck.
@@ -161,14 +161,19 @@ world — partial credit is visible in the CSV's `failures` column. Use
 that to spot regressions per category before the absolute pass-rate
 moves.
 
+For agent-quality work, compare the trace-derived columns as well:
+`steps`, `parse_retries`, `tool_errors`, `batch_count`, `max_batch_size`,
+`prompt_tokens`, and `predicted_tokens`. They separate "wrong final
+answer" from planner churn, tool-call brittleness, and missed batching.
+
 ## Limitations
 
 - No retry / `Pass@k` yet: each case runs exactly once. Add retries via
   vitest's `retry` option in `vitest.config.ts` if you want stochastic
   reliability metrics later.
-- No browser cases: the corpus is restricted to OS / skill / HTTP for
-  the first iteration. Browser cases need a headless Chrome + a fixed
-  local site fixture; left for the second pass.
+- No browser cases: the corpus is restricted to OS / skill / HTTP /
+  coding / debug for the first iteration. Browser cases need a headless
+  Chrome + a fixed local site fixture; left for the second pass.
 - Judge bias: with the default OpenRouter judge this is mitigated, but
   the judge is still a single model. For high-stakes regressions
   cross-check by swapping `ATOMIC_AGENT_JUDGE_MODEL` between two

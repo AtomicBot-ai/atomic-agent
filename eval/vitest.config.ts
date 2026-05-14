@@ -17,7 +17,7 @@ export default defineConfig({
     include: ["eval/**/*.eval.ts"],
     environment: "node",
     globals: false,
-    testTimeout: 180_000,
+    testTimeout: 360_000,
     hookTimeout: 60_000,
     fileParallelism: false,
     maxConcurrency: 1,

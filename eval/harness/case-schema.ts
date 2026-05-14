@@ -14,7 +14,38 @@
  * is still informative.
  */
 
-export type EvalCategory = "os" | "skill" | "http";
+export type EvalCategory = "os" | "skill" | "http" | "coding" | "debug";
+
+/**
+ * Capability axes the agent is evaluated against. Each axe-focused case
+ * MUST isolate a single axis so a fail directly points at the component
+ * to fix (prompt, planner, grammar, tool descriptor, etc.). Scenario
+ * cases (the original 35) can be left untagged; their failures stay
+ * "mixed-cause" smoke signals.
+ *
+ * Axis-to-fix mapping (rough):
+ *   tool_selection         -> tool descriptors, examples, persona "common tools"
+ *   args_shaping           -> grammar, argsSchema, descriptor examples
+ *   min_steps              -> persona "bias toward action", task-policy
+ *   parallel_batching      -> task-policy broad_exploration, parallel hint
+ *   tool_error_recovery    -> step-executor, structured repair
+ *   instruction_adherence  -> persona rules, task-policy constraints
+ *   self_termination       -> persona, terminal-verbs grammar
+ *   grammar_adherence      -> GBNF, repair flow
+ *   context_retention      -> conversation packer, latest-result placement
+ *   refusal_of_impossible  -> persona honesty rules, error compression
+ */
+export type CapabilityAxis =
+  | "tool_selection"
+  | "args_shaping"
+  | "min_steps"
+  | "parallel_batching"
+  | "tool_error_recovery"
+  | "instruction_adherence"
+  | "self_termination"
+  | "grammar_adherence"
+  | "context_retention"
+  | "refusal_of_impossible";
 
 export interface EvalSetupContext {
   /** Per-case temp working directory; passed to the agent as --cwd. */
@@ -53,6 +84,47 @@ export interface ToolInvokedExpectation {
 }
 
 /**
+ * Negation of `tool_invoked`. Useful for instruction-adherence cases
+ * ("find the bug but DO NOT modify any file"). Fails iff the trace
+ * contains AT LEAST one invocation of `tool`. Pure existence check —
+ * no `mustSucceed` knob (any call counts, even an error).
+ */
+export interface ToolNotInvokedExpectation {
+  kind: "tool_not_invoked";
+  tool: string;
+}
+
+/**
+ * Bound the LLM step count surfaced by the trace. Diagnostic axis:
+ * `min_steps` (was the planner concise?) and `self_termination` (did
+ * the agent know when to stop?). Either bound can be omitted.
+ */
+export interface StepCountExpectation {
+  kind: "step_count";
+  max?: number;
+  min?: number;
+}
+
+/**
+ * Diagnostic axis `grammar_adherence`: assert structured-repair did not
+ * have to fire. Fails iff `metrics.parseRetries > max`.
+ */
+export interface ParseRetriesMaxExpectation {
+  kind: "parse_retries_max";
+  max: number;
+}
+
+/**
+ * Diagnostic axis `parallel_batching`: assert the planner saw the
+ * independent-action signal and packed at least `min` calls into a
+ * single inference's array. Reads `metrics.maxBatchSize`.
+ */
+export interface BatchSizeMinExpectation {
+  kind: "batch_size_min";
+  min: number;
+}
+
+/**
  * LLM-as-judge expectation. The judge receives the original prompt, the
  * agent's reply, and the rubric; it returns an integer score 1..5. The
  * expectation passes iff `verdict.score >= threshold` (default 4).
@@ -73,6 +145,10 @@ export type EvalExpectation =
   | FileExistsExpectation
   | FileMatchesExpectation
   | ToolInvokedExpectation
+  | ToolNotInvokedExpectation
+  | StepCountExpectation
+  | ParseRetriesMaxExpectation
+  | BatchSizeMinExpectation
   | JudgeExpectation;
 
 export interface EvalCase {
@@ -81,6 +157,12 @@ export interface EvalCase {
   /** Short human-readable label. */
   name: string;
   category: EvalCategory;
+  /**
+   * Optional capability axis this case isolates. Axe-focused cases set
+   * exactly one axis; scenario cases (the original 35) leave it unset.
+   * Read by the per-axis summarizer; never affects pass/fail logic.
+   */
+  capabilityAxis?: CapabilityAxis;
   /** User message fed to the agent (one turn). */
   prompt: string;
   /** Override config.agent.maxSteps for this case. */

@@ -1,6 +1,6 @@
 ---
 name: eval-ping
-description: "Eval-only smoke skill: tells the agent how to respond to a ping."
+description: "Eval-only smoke skill: required playbook for any 'ping' message — load with skill.view before replying, do not guess the response."
 version: 0.1.0
 dangerous: false
 ---

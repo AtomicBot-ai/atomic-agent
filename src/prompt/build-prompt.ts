@@ -17,6 +17,7 @@ import type {
 import { buildStablePrefix } from "./stable-prefix.js";
 import { buildSessionSectionParts } from "./session-tail-sections.js";
 import { renderLoadedToolsSection } from "./render-loaded-tools.js";
+import { renderTaskPolicy } from "./render-task-policy.js";
 import {
   checkBudget,
   computeEffectiveConversationCap,
@@ -73,6 +74,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     capabilities: input.capabilities,
     skillCatalog: input.skillCatalog,
     reasoningSystemToken: input.profile?.reasoningSystemToken,
+    maxParallelToolCalls: config.agent.maxParallelToolCalls,
     ...(input.systemPersona !== undefined
       ? { systemPersona: input.systemPersona }
       : {}),
@@ -169,6 +171,12 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
 
   const packed = packConversation(input.session.turns, conversationCapEffective);
   const conversation = renderPackedConversation(packed);
+  const taskPolicy = renderTaskPolicy({
+    userMessage: input.userMessage ?? null,
+    turns: input.session.turns,
+  });
+  const taskPolicyTokens =
+    taskPolicy === null ? 0 : estimateTokens(taskPolicy.body);
 
   const tailParts: string[] = [];
   if (loadedForTail !== null) {
@@ -197,6 +205,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     conversation,
     ``,
   );
+  if (taskPolicy !== null) {
+    tailParts.push(`### task-policy`, taskPolicy.body, ``);
+  }
   if (input.transientNotice && input.transientNotice.length > 0) {
     tailParts.push(`### notice`, input.transientNotice, ``);
   }
@@ -254,12 +265,14 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       profile: profileTokens,
       recalled: recalledTokens,
       memoryIndex: memoryIndexTokens,
+      taskPolicy: taskPolicyTokens,
       total:
         budgetResult.perSection.total +
         loadedToolsTokens +
         profileTokens +
         recalledTokens +
-        memoryIndexTokens,
+        memoryIndexTokens +
+        taskPolicyTokens,
     },
     limits,
     truncated:

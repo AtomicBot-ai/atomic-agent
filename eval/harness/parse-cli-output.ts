@@ -18,13 +18,9 @@ export interface ParsedCliOutput {
   lastError: string | null;
 }
 
-const TRAILING_JSON_RE = /(\{[\s\S]*\})\s*$/;
-
 export function parseCliOutput(stdout: string, stderr: string): ParsedCliOutput {
   const reply = stdout.trim();
-  const tail = stderr.trim();
-  const match = tail.match(TRAILING_JSON_RE);
-  const jsonBlob = match?.[1];
+  const jsonBlob = findTrailingJsonBlock(stderr);
   if (!jsonBlob) {
     return {
       reply,
@@ -57,4 +53,20 @@ export function parseCliOutput(stdout: string, stderr: string): ParsedCliOutput 
       lastError: null,
     };
   }
+}
+
+function findTrailingJsonBlock(stderr: string): string | null {
+  const lines = stderr.trimEnd().split(/\r?\n/);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index]?.trimStart().startsWith("{") !== true) continue;
+    const candidate = lines.slice(index).join("\n").trim();
+    try {
+      JSON.parse(candidate);
+      return candidate;
+    } catch {
+      // Keep scanning upward. Earlier log lines can contain inline JSON
+      // fragments; only the final status object should parse by itself.
+    }
+  }
+  return null;
 }

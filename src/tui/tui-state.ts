@@ -158,11 +158,14 @@ export interface FeedEntry {
 
 export interface RollingMetrics {
   promptTokensLast: number | null;
+  promptStablePrefixTokensLast: number | null;
+  promptTailTokensLast: number | null;
   completionTokensLast: number | null;
   llmDurationMsLast: number | null;
   stepDurationMsLast: number | null;
   kvCacheHits: number;
   kvCacheMisses: number;
+  parseRetries: number;
   totalTokens: number;
   toolsOk: number;
   toolsError: number;
@@ -368,11 +371,14 @@ export function createInitialTuiState(
     latestResult: null,
     metrics: {
       promptTokensLast: null,
+      promptStablePrefixTokensLast: null,
+      promptTailTokensLast: null,
       completionTokensLast: null,
       llmDurationMsLast: null,
       stepDurationMsLast: null,
       kvCacheHits: 0,
       kvCacheMisses: 0,
+      parseRetries: 0,
       totalTokens: 0,
       toolsOk: 0,
       toolsError: 0,

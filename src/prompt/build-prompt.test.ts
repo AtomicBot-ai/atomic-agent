@@ -182,8 +182,10 @@ describe("buildPrompt", () => {
     // the model sees it on every step (and the cache stays warm).
     expect(prompt.stablePrefix).toContain("PARALLEL:");
     expect(prompt.stablePrefix).toContain(
-      "put up to 4 calls in the SAME array",
+      "put up to 8 calls in the SAME array",
     );
+    expect(prompt.stablePrefix).not.toContain("one JSON object");
+    expect(prompt.stablePrefix).not.toContain("One tool JSON per step");
     // Concrete worked examples anchor the array shape so the model
     // does not invent a different schema.
     expect(prompt.stablePrefix).toContain(
@@ -504,6 +506,40 @@ describe("buildPrompt", () => {
     const conversationIdx = prompt.tail.indexOf("### conversation");
     expect(noticeIdx).toBeGreaterThan(-1);
     expect(noticeIdx).toBeGreaterThan(conversationIdx);
+  });
+
+  it("renders a task policy for code and debug work without changing the stable prefix", () => {
+    const base = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const codeTask = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      userMessage: "update src/cart.ts and add focused tests",
+    });
+    expect(codeTask.stablePrefix).toBe(base.stablePrefix);
+    expect(codeTask.tail).toContain("### task-policy");
+    expect(codeTask.tail).toContain("kind: code_edit");
+    expect(codeTask.tail).toContain("Inspect relevant files");
+    expect(codeTask.tail).toContain("Final check before `reply`");
+    expect(codeTask.tokens.taskPolicy).toBeGreaterThan(0);
+  });
+
+  it("omits task policy for simple answer prompts", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      userMessage: "what is 2 plus 2?",
+    });
+    expect(prompt.tail).not.toContain("### task-policy");
+    expect(prompt.tokens.taskPolicy).toBe(0);
   });
 
   it("does not include transientNotice in the stable prefix", () => {

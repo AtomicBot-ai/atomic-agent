@@ -26,8 +26,29 @@ describe("replyTool", () => {
     );
   });
 
-  it("rejects non-string text", async () => {
-    await expect(replyTool.run({ text: 42 }, ctx)).rejects.toThrow(
+  it("coerces a finite number to its string form", async () => {
+    const out = await replyTool.run({ text: 8421 }, ctx);
+    expect(out.status).toBe("ok");
+    expect(out.details).toMatchObject({ text: "8421", terminal: "turn" });
+  });
+
+  it("coerces a boolean to its string form", async () => {
+    const out = await replyTool.run({ text: true }, ctx);
+    expect(out.status).toBe("ok");
+    expect(out.details).toMatchObject({ text: "true", terminal: "turn" });
+  });
+
+  it("rejects non-coercible values (object, array, null, NaN)", async () => {
+    await expect(replyTool.run({ text: null }, ctx)).rejects.toThrow(
+      /non-empty string/,
+    );
+    await expect(replyTool.run({ text: { a: 1 } }, ctx)).rejects.toThrow(
+      /non-empty string/,
+    );
+    await expect(replyTool.run({ text: ["a"] }, ctx)).rejects.toThrow(
+      /non-empty string/,
+    );
+    await expect(replyTool.run({ text: Number.NaN }, ctx)).rejects.toThrow(
       /non-empty string/,
     );
   });

@@ -88,14 +88,15 @@ export interface AgentLoopDependencies {
    */
   profileFactsProvider?: () => readonly ProfileFact[];
   /**
-   * Optional pre-step memory hook. Invoked once per `runTurn`, right
-   * after the user message is recorded, to populate the ephemeral
+   * Optional pre-step memory hook. Invoked before the first step and
+   * refreshed after non-terminal tool results to populate the ephemeral
    * `recalledNotes` / `memoryIndex` fields on the session state. Those
    * are rendered into the `### recalled` and `### memory-index`
    * sections of every step's prompt without touching the stable prefix.
    *
    * The provider is expected to:
-   *  - Run BM25 recall for the top-K notes against `userMessage`.
+   *  - Run BM25 recall for the top-K notes against `userMessage` plus
+   *    recent tool-result summaries when present.
    *  - List the compact memory index (most recent pointers).
    *  - Deduplicate: entries returned in `recalled` must not reappear in
    *    `index`, and vice versa — the renderer does no dedup itself.
@@ -124,6 +125,7 @@ export interface AgentLoopDependencies {
 export interface MemoryContextProviderInput {
   sessionId: string;
   userMessage: string | null;
+  toolResultSummaries?: readonly string[];
   signal: AbortSignal;
 }
 
@@ -239,28 +241,7 @@ export class AgentLoop {
     this.deps.onEvent?.({ type: "turn_started", turnIndex });
     const turnStartedAt = Date.now();
 
-    // Pre-step memory hook: pre-fetch the `### recalled` and
-    // `### memory-index` sections once per turn. Failures are swallowed
-    // so a flaky memory layer can never block the agent loop.
-    if (this.deps.memoryContextProvider) {
-      try {
-        const ctx = await this.deps.memoryContextProvider.buildMemoryContext({
-          sessionId: state.id,
-          userMessage: options.userMessage ?? null,
-          signal: options.signal,
-        });
-        state = {
-          ...state,
-          recalledNotes: ctx.recalled,
-          memoryIndex: ctx.index,
-        };
-      } catch (err) {
-        this.deps.logger?.warn("memory context provider failed", {
-          sessionId: state.id,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
+    state = await refreshMemoryContext(this.deps, state, options);
 
     // Proactively sync with the live `llama-server` before the first
     // step. Catches the case where the operator swapped the model
@@ -426,6 +407,7 @@ export class AgentLoop {
             stepIndex: i,
           });
         }
+        state = await refreshMemoryContext(this.deps, state, options);
       } catch (err) {
         runError = err instanceof Error ? err : new Error(String(err));
         const category = classifyFailure(err);
@@ -545,4 +527,44 @@ function findLastAssistantReply(state: SessionState): string | null {
     if (turn?.kind === "assistant_reply") return turn.text;
   }
   return null;
+}
+
+async function refreshMemoryContext(
+  deps: AgentLoopDependencies,
+  state: SessionState,
+  options: RunTurnOptions,
+): Promise<SessionState> {
+  if (!deps.memoryContextProvider) return state;
+  try {
+    const ctx = await deps.memoryContextProvider.buildMemoryContext({
+      sessionId: state.id,
+      userMessage: options.userMessage ?? null,
+      toolResultSummaries: collectRecentToolResultSummaries(state),
+      signal: options.signal,
+    });
+    return {
+      ...state,
+      recalledNotes: ctx.recalled,
+      memoryIndex: ctx.index,
+    };
+  } catch (err) {
+    deps.logger?.warn("memory context provider failed", {
+      sessionId: state.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return state;
+  }
+}
+
+function collectRecentToolResultSummaries(
+  state: SessionState,
+  maxEntries = 4,
+): string[] {
+  const summaries: string[] = [];
+  for (let i = state.turns.length - 1; i >= 0 && summaries.length < maxEntries; i -= 1) {
+    const turn = state.turns[i];
+    if (turn?.kind !== "tool_result") continue;
+    summaries.push(`${turn.tool}: ${turn.summary}`);
+  }
+  return summaries.reverse();
 }

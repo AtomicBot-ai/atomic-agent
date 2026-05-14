@@ -105,7 +105,6 @@ export function spawnAgentRun(opts: SpawnAgentOptions): Promise<SpawnAgentResult
     });
 
     child.stdin.write(`${opts.prompt}\n`);
-    child.stdin.write("/quit\n");
     child.stdin.end();
   });
 }

@@ -31,6 +31,7 @@ export function appendJsonlRow({
       id: spec.id,
       name: spec.name,
       category: spec.category,
+      capabilityAxis: spec.capabilityAxis ?? null,
       prompt: spec.prompt,
     },
     expectations: spec.expectations.map((e) => summariseExpectation(e)),
@@ -51,6 +52,9 @@ export function appendJsonlRow({
       predictedTokens: result.metrics.totalPredictedTokens,
       cacheHits: result.metrics.cacheHits,
       parseRetries: result.metrics.parseRetries,
+      toolErrors: result.metrics.toolErrorCount,
+      batchCount: result.metrics.batchCount,
+      maxBatchSize: result.metrics.maxBatchSize,
       tools: result.metrics.toolInvocations,
       failureCategory: result.metrics.failureCategory,
     },
@@ -70,6 +74,14 @@ function summariseExpectation(e: EvalCase["expectations"][number]): unknown {
       return { kind: e.kind, path: e.path, pattern: e.pattern.source };
     case "tool_invoked":
       return { kind: e.kind, tool: e.tool, mustSucceed: e.mustSucceed ?? false };
+    case "tool_not_invoked":
+      return { kind: e.kind, tool: e.tool };
+    case "step_count":
+      return { kind: e.kind, max: e.max ?? null, min: e.min ?? null };
+    case "parse_retries_max":
+      return { kind: e.kind, max: e.max };
+    case "batch_size_min":
+      return { kind: e.kind, min: e.min };
     case "judge":
       return { kind: e.kind, rubric: e.rubric, threshold: e.threshold ?? 4 };
     default: {

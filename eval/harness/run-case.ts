@@ -79,7 +79,7 @@ export async function runCase(
       stateDir: workspace.stateDir,
       prompt: spec.prompt,
       maxSteps,
-      timeoutMs: deps.timeoutMs ?? 120_000,
+      timeoutMs: resolveCaseTimeoutMs(deps),
     });
 
     const cli = parseCliOutput(spawn.stdout, spawn.stderr);
@@ -116,6 +116,25 @@ export async function runCase(
   }
 }
 
+/**
+ * Hard wall-clock cap per case. Defaults to 300_000 ms (5 min) — enough
+ * head-room for a 9B-class model to finish 5–8 step coding cases at
+ * 5–15 s/step. Override with `ATOMIC_AGENT_EVAL_TIMEOUT_MS` for slower
+ * models or longer corpora. `RunCaseDependencies.timeoutMs` wins over
+ * the env value when set (used by harness-internal tests).
+ */
+function resolveCaseTimeoutMs(deps: RunCaseDependencies): number {
+  if (typeof deps.timeoutMs === "number" && deps.timeoutMs > 0) {
+    return deps.timeoutMs;
+  }
+  const raw = process.env.ATOMIC_AGENT_EVAL_TIMEOUT_MS;
+  if (raw) {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return 300_000;
+}
+
 function checkRequirements(
   spec: EvalCase,
   deps: RunCaseDependencies,
@@ -138,6 +157,9 @@ function emptyMetrics(): TraceMetrics {
     cacheHits: 0,
     parseRetries: 0,
     loopDetected: 0,
+    toolErrorCount: 0,
+    batchCount: 0,
+    maxBatchSize: 0,
     toolInvocations: [],
     failureCategory: null,
     failureMessage: null,

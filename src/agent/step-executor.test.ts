@@ -211,6 +211,63 @@ describe("executeStep batch handling", () => {
     );
   });
 
+  it("uses a structured repair prompt for validation retry", async () => {
+    const registry = makeRegistry();
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const session = createEmptySessionState({ id: "s-repair", workingDir: "/w" });
+    const prompts: string[] = [];
+    const bodies = [
+      JSON.stringify([
+        { tool: "os.fs.read", args: { path: "a" } },
+        { tool: "reply", args: { text: "done" } },
+      ]),
+      JSON.stringify({ tool: "reply", args: { text: "done" } }),
+    ];
+    let calls = 0;
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async ({ prompt }) => {
+          prompts.push(prompt);
+          const content = bodies[calls] ?? bodies[bodies.length - 1]!;
+          calls += 1;
+          return {
+            content,
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+          };
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+      },
+    );
+    expect(outcome.terminal).toBe("turn");
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).toContain("### tool-call-repair");
+    expect(prompts[1]).toContain("terminal verb 'reply' is forbidden inside a batch");
+    expect(prompts[1]).toContain("Use a length-1 array");
+  });
+
   it("rejects a batch containing an approval-gated verb", async () => {
     const body = JSON.stringify([
       { tool: "os.fs.read", args: { path: "a" } },

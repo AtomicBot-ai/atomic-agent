@@ -23,10 +23,14 @@ describe("createDefaultMemoryContextProvider", () => {
     rmSync(tmp, { recursive: true, force: true });
   });
 
-  function input(userMessage: string | null = null) {
+  function input(
+    userMessage: string | null = null,
+    toolResultSummaries: readonly string[] = [],
+  ) {
     return {
       sessionId: "s1",
       userMessage,
+      toolResultSummaries,
       signal: new AbortController().signal,
     };
   }
@@ -78,6 +82,25 @@ describe("createDefaultMemoryContextProvider", () => {
       recalled: [],
       index: [],
     });
+  });
+
+  it("recalls against recent tool-result summaries between agent steps", () => {
+    store.store({ content: "cart total bug lives in src/cart.ts" });
+    store.store({ content: "unrelated grocery list" });
+    const provider = createDefaultMemoryContextProvider({
+      store,
+      recall: { enabled: true, k: 5 },
+      index: { enabled: false, limit: 0, previewChars: 40 },
+    });
+    const ctx = provider.buildMemoryContext(
+      input("fix the failing test", ["os.fs.read: opened src/cart.ts"]),
+    ) as unknown as {
+      recalled: Array<{ content: string }>;
+      index: unknown[];
+    };
+    expect(ctx.recalled.map((entry) => entry.content)).toContain(
+      "cart total bug lives in src/cart.ts",
+    );
   });
 
   it("populates the memory-index with recent entries", () => {
