@@ -14,11 +14,15 @@ import { ApprovalModal } from "./approval-modal.js";
 import { ChatLog } from "./components/chat-log.js";
 import { DebugPane } from "./components/debug-pane.js";
 import { HotkeyHint } from "./components/hotkey-hint.js";
-import { MultiLineEditor } from "./components/multi-line-editor.js";
+import { LlmHealthBadge } from "./components/llm-health-badge.js";
+import { PromptShell } from "./components/prompt-shell.js";
 import { SessionPicker } from "./components/session-picker.js";
+import { Sidebar } from "./components/sidebar.js";
+import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import { SlashPalette } from "./components/slash-palette.js";
 import { StatusBar } from "./components/status-bar.js";
 import { TasksCancelModal } from "./components/tasks-cancel-modal.js";
+import { useTerminalSize } from "./hooks/use-terminal-size.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { slashPrefix } from "./commands/slash-command-parser.js";
 import { handleEditorSubmit } from "./submit-handler.js";
@@ -66,6 +70,12 @@ export interface TuiAppCallbacks {
   onTasksRefreshRequested?(): void;
   /** Open the detail view for a task (re-seeds firings ring). */
   onTaskDetailRequested?(taskId: string): void;
+  /**
+   * Sidebar Tasks pane: Enter pressed on the row for `taskId`. The
+   * handler is expected to switch to the Tasks debug tab and open the
+   * detail view, mirroring what the operator would do manually.
+   */
+  onSidebarTaskActivated?(taskId: string): void;
   /** Switch the chat transcript to the task's session. */
   onTaskOpenSessionRequested?(taskId: string): void;
   /** Proceed with a task cancellation — the caller owns any confirm modal. */
@@ -173,6 +183,29 @@ export interface TuiAppProps {
 const DEFAULT_MAX_VISIBLE_ROWS = 14;
 const CTRL_C_WINDOW_MS = 1500;
 
+/**
+ * Minimum terminal width (in columns) at which the right-rail sidebar
+ * is rendered. Narrower terminals collapse the layout back to the
+ * single-column form so cramped sessions over SSH stay usable. Picked
+ * to match opencode's threshold.
+ */
+const SIDEBAR_MIN_COLUMNS = 100;
+const SIDEBAR_WIDTH = 30;
+
+/**
+ * Rotating placeholder pool shown in the prompt's empty state. Phrasing
+ * intentionally nudges the operator toward concrete actions the agent
+ * can execute locally — file ops, browser automation, codebase Q&A —
+ * rather than open-ended chat.
+ */
+const PROMPT_PLACEHOLDERS: readonly string[] = [
+  "Type a message or `/` for commands…",
+  "Ask anything about your codebase…",
+  "Try `/help` to see all commands",
+  "What are you working on today?",
+  "Inspect a file, run a search, draft a fix…",
+];
+
 export function TuiApp({
   session,
   bus,
@@ -240,17 +273,31 @@ export function TuiApp({
     state.uiMode === "debug" && state.activeTab === "models";
   const telegramTabActive =
     state.uiMode === "debug" && state.activeTab === "telegram";
+  const terminalSize = useTerminalSize();
+  const sidebarVisible =
+    state.uiMode === "chat" && terminalSize.columns >= SIDEBAR_MIN_COLUMNS;
+  const sidebarFocused = sidebarVisible && state.chatFocus === "sidebar";
   const editorFocus =
     !state.pendingApproval &&
     !tasksTabActive &&
     !skillsTabActive &&
     !telegramTabActive &&
+    !sidebarFocused &&
     !(
       localModelsTabActive &&
       (state.localModelsPanel.pull !== null ||
         state.localModelsPanel.mode === "backendUpdate" ||
         state.localModelsPanel.removeConfirmId !== null)
     );
+
+  // When the sidebar collapses below the width threshold (terminal
+  // resized smaller), focus must follow back to the editor so Tab does
+  // not strand the operator on an invisible surface.
+  useEffect(() => {
+    if (!sidebarVisible && state.chatFocus === "sidebar") {
+      dispatch({ type: "chat_focus_set", focus: "editor" });
+    }
+  }, [sidebarVisible, state.chatFocus]);
 
   useInput((input, key) => {
     const appHandled = handleAppKey(input, key, {
@@ -259,6 +306,7 @@ export function TuiApp({
       callbacks,
       ctrlCArmed,
       setCtrlCArmed,
+      sidebarVisible,
     });
     if (appHandled) return;
     if (tasksTabActive) {
@@ -307,6 +355,14 @@ export function TuiApp({
       return;
     }
     if (state.pendingApproval) return;
+    // Esc with the chat scrolled away from the bottom snaps back to
+    // the latest reply before doing anything else — avoids a confused
+    // "why didn't my Esc abort?" when the operator left the scroll
+    // pinned mid-history.
+    if (state.chatScrollOffset > 0) {
+      dispatch({ type: "chat_scroll_reset" });
+      return;
+    }
     if (canAcceptMessage(state)) {
       callbacks.onQuit();
       dispatch({ type: "quit_requested" });
@@ -354,46 +410,88 @@ export function TuiApp({
     dispatch({ type: "input_history_navigated", delta: 1 });
   }, [state.slashPaletteOpen, state.sessionPickerOpen]);
 
+  // Pin the layout to the live terminal height **only** under a real
+  // TTY. ink-testing-library's mock stdout reports a fake `rows` value
+  // (or none at all) which would clip the content to ~24 rows and make
+  // the smoke tests assert against an overlapped frame. In production
+  // the alt-screen + `height={rows}` combo gives us the opencode-style
+  // pinned-input-at-bottom UX.
+  const isTty = Boolean(process.stdout.isTTY);
+  const rootHeight = isTty ? terminalSize.rows : undefined;
   return (
-    <Box flexDirection="column" paddingLeft={2}>
-      <StatusBar state={state} />
-      {state.uiMode === "chat" ? (
-        <ChatLog state={state} />
-      ) : (
-        <DebugPane state={state} maxVisible={maxVisibleRows} />
-      )}
-      {state.pendingApproval ? (
-        <ApprovalModal request={state.pendingApproval} />
-      ) : null}
-      {state.sessionPickerOpen ? (
-        <SessionPicker
-          sessions={state.sessionPickerList}
-          cursor={state.sessionPickerCursor}
-          currentSessionId={state.session.sessionId}
-        />
-      ) : null}
-      {state.slashPaletteOpen ? (
-        <SlashPalette
-          query={state.slashQuery}
-          cursor={state.slashPaletteCursor}
-        />
-      ) : null}
-      {state.tasksPanel.cancelConfirm ? (
-        <TasksCancelModal confirm={state.tasksPanel.cancelConfirm} />
-      ) : null}
-      <MultiLineEditor
-        value={state.inputValue}
-        placeholder="Type a message or `/` for commands…"
-        focus={editorFocus}
-        disabled={!canAcceptMessage(state)}
-        onChange={onEditorChange}
-        onSubmit={submit}
-        onEscape={onEscape}
-        onTab={onTab}
-        onHistoryPrev={onHistoryPrev}
-        onHistoryNext={onHistoryNext}
-      />
-      <HotkeyHint state={state} ctrlCArmed={ctrlCArmed} />
+    <Box
+      flexDirection="column"
+      paddingLeft={2}
+      {...(rootHeight ? { height: rootHeight } : {})}
+    >
+      <Box flexShrink={0}>
+        <StatusBar state={state} />
+      </Box>
+      <Box flexDirection="row" flexGrow={1} flexShrink={1} overflow="hidden">
+        <Box flexDirection="column" flexGrow={1} overflow="hidden">
+          <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+            {state.uiMode === "chat" ? (
+              <ChatLog state={state} dispatch={dispatch} />
+            ) : (
+              <DebugPane state={state} maxVisible={maxVisibleRows} />
+            )}
+          </Box>
+          {state.pendingApproval ? (
+            <Box flexShrink={0}>
+              <ApprovalModal request={state.pendingApproval} />
+            </Box>
+          ) : null}
+          {state.sessionPickerOpen ? (
+            <Box flexShrink={0}>
+              <SessionPicker
+                sessions={state.sessionPickerList}
+                cursor={state.sessionPickerCursor}
+                currentSessionId={state.session.sessionId}
+              />
+            </Box>
+          ) : null}
+          {state.slashPaletteOpen ? (
+            <SlashPalette
+              query={state.slashQuery}
+              cursor={state.slashPaletteCursor}
+            />
+          ) : null}
+          {state.tasksPanel.cancelConfirm ? (
+            <Box flexShrink={0}>
+              <TasksCancelModal confirm={state.tasksPanel.cancelConfirm} />
+            </Box>
+          ) : null}
+          <PromptShell
+            value={state.inputValue}
+            placeholder="Type a message or `/` for commands…"
+            rotatingPlaceholders={PROMPT_PLACEHOLDERS}
+            model={state.llmHealth.model}
+            provider="llama.cpp"
+            leftSlot={<LlmHealthBadge health={state.llmHealth} />}
+            focus={editorFocus}
+            disabled={!canAcceptMessage(state)}
+            onChange={onEditorChange}
+            onSubmit={submit}
+            onEscape={onEscape}
+            onTab={onTab}
+            onHistoryPrev={onHistoryPrev}
+            onHistoryNext={onHistoryNext}
+          />
+          <HotkeyHint state={state} ctrlCArmed={ctrlCArmed} />
+        </Box>
+        {sidebarVisible ? (
+          <Sidebar
+            width={SIDEBAR_WIDTH}
+            sessions={state.recentSessions}
+            sessionsCursor={state.sidebarCursor}
+            currentSessionId={state.session.sessionId}
+            tasks={selectSidebarTasks(state.tasksPanel.rows)}
+            tasksCursor={state.sidebarTasksCursor}
+            activeSection={state.sidebarSection}
+            focused={sidebarFocused}
+          />
+        ) : null}
+      </Box>
     </Box>
   );
 }

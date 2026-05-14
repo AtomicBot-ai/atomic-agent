@@ -23,7 +23,12 @@ export function SlashPalette(props: SlashPaletteProps): ReactElement | null {
   const completions = props.commands ?? filterSlashCommands(props.query);
   if (completions.length === 0) {
     return (
-      <Box borderStyle="round" borderColor={theme.colors.warn} paddingX={1}>
+      <Box
+        borderStyle="round"
+        borderColor={theme.colors.warn}
+        paddingX={1}
+        flexShrink={0}
+      >
         <Text color={theme.colors.warn}>no matching command</Text>
       </Box>
     );
@@ -40,6 +45,7 @@ export function SlashPalette(props: SlashPaletteProps): ReactElement | null {
       borderColor={theme.colors.accent}
       paddingX={1}
       flexDirection="column"
+      flexShrink={0}
     >
       {hiddenBefore > 0 ? (
         <Text color={theme.colors.muted}>↑ {hiddenBefore} above</Text>

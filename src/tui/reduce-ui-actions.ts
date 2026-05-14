@@ -1,4 +1,5 @@
 import { filterSlashCommands } from "./commands/slash-commands.js";
+import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import type { TuiAction } from "./tui-action.js";
 import type { TuiState } from "./tui-state.js";
 
@@ -104,6 +105,58 @@ export function reduceUiAction(
         ...state,
         session: { ...state.session, llamaUrl: action.url },
       };
+    case "recent_sessions_updated": {
+      const max = Math.max(0, action.sessions.length - 1);
+      return {
+        ...state,
+        recentSessions: action.sessions,
+        sidebarCursor: Math.min(state.sidebarCursor, max),
+      };
+    }
+    case "chat_focus_toggled":
+      return {
+        ...state,
+        chatFocus: state.chatFocus === "editor" ? "sidebar" : "editor",
+      };
+    case "chat_focus_set":
+      return { ...state, chatFocus: action.focus };
+    case "sidebar_section_focused":
+      return { ...state, sidebarSection: action.section };
+    case "sidebar_cursor_moved": {
+      const max = Math.max(0, state.recentSessions.length - 1);
+      const next = Math.min(
+        max,
+        Math.max(0, state.sidebarCursor + action.delta),
+      );
+      return { ...state, sidebarCursor: next };
+    }
+    case "sidebar_tasks_cursor_moved": {
+      // Upper bound here is the **rendered** sidebar tasks list size,
+      // capped by SIDEBAR_TASKS_LIMIT and the number of active/recurring
+      // rows currently in `tasksPanel.rows`. We use the projected length
+      // so the cursor can never point past the last visible row even if
+      // the underlying `rows` array is much larger.
+      const visible = selectSidebarTasks(state.tasksPanel.rows);
+      const max = Math.max(0, visible.length - 1);
+      const next = Math.min(
+        max,
+        Math.max(0, state.sidebarTasksCursor + action.delta),
+      );
+      return { ...state, sidebarTasksCursor: next };
+    }
+    case "chat_scrolled": {
+      // `chatScrollOffset` is in **lines** since the line-by-line
+      // scroll refactor — the unit changed but the field name is
+      // preserved for cross-cutting compat. Upper-clamping happens
+      // visually in `ChatLog` (which knows the rendered content
+      // height); the reducer only protects the lower bound. Letting
+      // the value drift slightly past the on-screen max is fine —
+      // the next PageDown / Esc snaps it back without surprise.
+      const next = Math.max(0, state.chatScrollOffset + action.delta);
+      return { ...state, chatScrollOffset: next };
+    }
+    case "chat_scroll_reset":
+      return { ...state, chatScrollOffset: 0 };
     case "session_switched":
       return {
         ...state,
@@ -129,6 +182,11 @@ export function reduceUiAction(
         runHistory: [],
         sessionPickerOpen: false,
         sessionPickerCursor: 0,
+        chatScrollOffset: 0,
+        chatFocus: "editor",
+        sidebarSection: "sessions",
+        sidebarCursor: 0,
+        sidebarTasksCursor: 0,
       };
     default:
       return null;

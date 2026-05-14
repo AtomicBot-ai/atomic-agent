@@ -123,6 +123,22 @@ export type TuiAction =
    * in the StatusBar without touching the rest of the health slice.
    */
   | { type: "llm_model_updated"; model: string | null }
+  /** Refresh the always-on sidebar session list (orchestrator drives the load). */
+  | { type: "recent_sessions_updated"; sessions: readonly SessionPickerEntry[] }
+  /** Toggle keyboard focus between editor and sidebar. */
+  | { type: "chat_focus_toggled" }
+  /** Set keyboard focus explicitly (used when the sidebar collapses below the width threshold). */
+  | { type: "chat_focus_set"; focus: "editor" | "sidebar" }
+  /** Pick which sidebar pane (Sessions / Tasks) is the current Tab-cycle stop. */
+  | { type: "sidebar_section_focused"; section: "sessions" | "tasks" }
+  /** Move the sidebar's session-list cursor by N rows (clamped). */
+  | { type: "sidebar_cursor_moved"; delta: 1 | -1 }
+  /** Move the sidebar's tasks-list cursor by N rows (clamped). */
+  | { type: "sidebar_tasks_cursor_moved"; delta: 1 | -1 }
+  /** Scroll the chat history by N messages (positive = older). Clamped to [0, total]. */
+  | { type: "chat_scrolled"; delta: number }
+  /** Snap the chat scroll back to the bottom (newest message). */
+  | { type: "chat_scroll_reset" }
   | LocalModelsAction
   | TasksAction
   | SkillsAction

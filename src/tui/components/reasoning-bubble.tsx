@@ -12,10 +12,12 @@ interface ReasoningBubbleProps {
 const SUMMARY_LIMIT = 180;
 
 /**
- * Collapsible `<think>` block. Openclaw hides reasoning behind a gutter
- * marker; we follow the same convention and render a single-line summary
- * by default, with the full transcript revealed when `expanded` is true.
- * The toggle itself is owned by the parent (chat-log) via `onToggle`.
+ * Collapsible `<think>` block. Mirrors the user / assistant ribbon
+ * layout (left coloured border, `marginTop=1`, padded body) so
+ * reasoning blends into the chat flow instead of fighting it. Magenta
+ * border identifies the role; a single muted-colour header keeps the
+ * "(N blocks)" hint visible. The toggle itself is owned by the parent
+ * (chat-log) via `onToggle`.
  */
 export function ReasoningBubble({
   blocks,
@@ -24,28 +26,37 @@ export function ReasoningBubble({
   if (blocks.length === 0) return null;
   const joined = blocks.join("\n\n").trim();
   if (joined.length === 0) return null;
+  const lines = expanded
+    ? splitLines(joined)
+    : [clip(joined.replace(/\s+/g, " "), SUMMARY_LIMIT)];
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Text color={theme.colors.reasoning} bold>
-        {theme.glyphs.reasoningMarker} reasoning
-        <Text color={theme.colors.muted}>
-          {" "}
-          ({blocks.length} block{blocks.length === 1 ? "" : "s"})
+    <Box marginTop={1}>
+      <Box
+        borderStyle="single"
+        borderTop={false}
+        borderRight={false}
+        borderBottom={false}
+        borderLeft
+        borderColor={theme.colors.reasoning}
+        paddingTop={1}
+        paddingBottom={1}
+        paddingLeft={2}
+        paddingRight={1}
+        flexDirection="column"
+      >
+        <Text color={theme.colors.reasoning} bold>
+          {theme.glyphs.reasoningMarker} reasoning
+          <Text color={theme.colors.muted}>
+            {" "}
+            ({blocks.length} block{blocks.length === 1 ? "" : "s"})
+          </Text>
         </Text>
-      </Text>
-      {expanded ? (
-        splitLines(joined).map((line, idx) => (
+        {lines.map((line, idx) => (
           <Text key={idx} color={theme.colors.muted}>
-            {"  "}
             {line}
           </Text>
-        ))
-      ) : (
-        <Text color={theme.colors.muted}>
-          {"  "}
-          {clip(joined.replace(/\s+/g, " "), SUMMARY_LIMIT)}
-        </Text>
-      )}
+        ))}
+      </Box>
     </Box>
   );
 }

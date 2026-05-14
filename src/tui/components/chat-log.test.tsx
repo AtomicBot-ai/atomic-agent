@@ -29,7 +29,7 @@ describe("ChatLog", () => {
     expect(text).toContain("/help");
   });
 
-  it("renders a user and assistant bubble", () => {
+  it("renders a user and assistant bubble with the role implied by the border colour", () => {
     const state: TuiState = {
       ...createInitialTuiState(BASE_SESSION),
       messages: [
@@ -50,10 +50,98 @@ describe("ChatLog", () => {
     };
     const { lastFrame } = render(<ChatLog state={state} />);
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("you");
+    // No more inline "you" / "assistant" labels in the opencode-style
+    // ribbon; the border colour identifies the role. Body text still
+    // round-trips intact.
     expect(text).toContain("hello");
-    expect(text).toContain("assistant");
     expect(text).toContain("hi there");
+  });
+
+  it("hides the `reply` tool card so it does not duplicate the assistant bubble", () => {
+    const state: TuiState = {
+      ...createInitialTuiState(BASE_SESSION),
+      messages: [
+        {
+          id: "m1",
+          role: "assistant",
+          text: "Hello there!",
+          toolSteps: 1,
+          toolCards: [
+            {
+              id: "tc-1",
+              stepIndex: 0,
+              tool: "reply",
+              args: { text: "Hello there!" },
+              status: "ok",
+              summary: 'text="Hello there!"',
+              truncated: false,
+              startedAt: 1,
+              finishedAt: 1,
+            },
+          ],
+          timestamp: 2,
+        },
+      ],
+    };
+    const { lastFrame } = render(<ChatLog state={state} />);
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("Hello there!");
+    // The tool-card header carries `reply` literally; if it was rendered
+    // we would see it next to a `✓ 0ms` timing block.
+    expect(text).not.toMatch(/reply.*0ms/);
+  });
+
+  it("hides streaming `reply` tool cards while keeping other tools visible", () => {
+    const state: TuiState = {
+      ...createInitialTuiState(BASE_SESSION),
+      streamingToolCards: [
+        {
+          id: "tc-real",
+          stepIndex: 0,
+          tool: "os.fs.read",
+          args: { path: "src/index.ts" },
+          status: "ok",
+          summary: "read 42 lines",
+          truncated: false,
+          startedAt: 1,
+          finishedAt: 1,
+        },
+        {
+          id: "tc-reply",
+          stepIndex: 0,
+          tool: "reply",
+          args: { text: "Done" },
+          status: "ok",
+          summary: 'text="Done"',
+          truncated: false,
+          startedAt: 1,
+          finishedAt: 1,
+        },
+      ],
+    };
+    const { lastFrame } = render(<ChatLog state={state} />);
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("os.fs.read");
+    expect(text).not.toContain('text="Done"');
+  });
+
+  it("shows a tool-step footer below the assistant bubble when toolSteps > 0", () => {
+    const state: TuiState = {
+      ...createInitialTuiState(BASE_SESSION),
+      messages: [
+        {
+          id: "m1",
+          role: "assistant",
+          text: "done",
+          toolSteps: 3,
+          timestamp: 1,
+        },
+      ],
+    };
+    const { lastFrame } = render(<ChatLog state={state} />);
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("done");
+    expect(text).toMatch(/3 tool steps/);
   });
 
   it("renders the streaming assistant tail when streamingAssistantText is set", () => {

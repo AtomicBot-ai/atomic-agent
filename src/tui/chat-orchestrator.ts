@@ -66,6 +66,7 @@ export class ChatOrchestrator {
   private session: SessionState | null = null;
   private currentController: AbortController | null = null;
   private quitting = false;
+  private started = false;
   private readonly queue: string[] = [];
   public exitCode = 0;
   public readonly tasks: TasksOrchestrator;
@@ -89,12 +90,39 @@ export class ChatOrchestrator {
     this.telegram = new TuiTelegramOrchestrator(runtime, bus);
   }
 
+  /**
+   * Boots the long-running side-channels (LLM health poller, Telegram
+   * channel, recent-sessions sidebar) but **does not** allocate a chat
+   * session — that is deferred to the first `sendMessage` so opening
+   * the TUI to glance at sessions / settings does not litter the store
+   * with empty rows. `newSession()` and `sendMessage()` are the only
+   * paths that mint a fresh `SessionState`.
+   */
   start(): void {
-    if (this.session) return;
-    this.session = this.runtime.createSession();
-    this.bus.emit({ type: "session_created", sessionId: this.session.id });
+    if (this.started) return;
+    this.started = true;
+    this.refreshRecentSessions();
     this.llmHealth.start();
     this.telegram.start();
+    // Boot the tasks orchestrator on TUI mount so the always-on
+    // sidebar's Tasks pane has fresh data without waiting for the
+    // operator to open the Tasks debug tab. Idempotent — opening the
+    // Tasks tab later just re-uses the same interval.
+    this.tasks.startAutoRefresh();
+  }
+
+  /**
+   * Allocates a fresh `SessionState` if none is active yet and notifies
+   * listeners. Idempotent — callers can invoke before any operation
+   * that needs a live session id (`sendMessage`, opening the working
+   * dir for skill scripts, …).
+   */
+  private ensureSession(): SessionState {
+    if (this.session) return this.session;
+    this.session = this.runtime.createSession();
+    this.bus.emit({ type: "session_created", sessionId: this.session.id });
+    this.refreshRecentSessions();
+    return this.session;
   }
 
   /** Update the llama-server URL tracked by the footer health poller. */
@@ -107,6 +135,18 @@ export class ChatOrchestrator {
       .listRecent(25)
       .map((s) => toPickerEntry(s));
     this.bus.emit({ type: "session_picker_opened", sessions });
+  }
+
+  /**
+   * Refreshes the always-on sidebar's session list. Called on TUI
+   * mount + after `session_created` / `session_switched` so the rail
+   * stays in sync without the user having to open the modal picker.
+   */
+  refreshRecentSessions(): void {
+    const sessions = this.runtime.sessionStore
+      .listRecent(25)
+      .map((s) => toPickerEntry(s));
+    this.bus.emit({ type: "recent_sessions_updated", sessions });
   }
 
   switchSession(sessionId: string): void {
@@ -134,6 +174,7 @@ export class ChatOrchestrator {
       workingDir: loaded.workingDir,
       messages: turnsToMessages(loaded.turns),
     });
+    this.refreshRecentSessions();
     this.bus.emit({
       type: "runtime_info",
       line: `switched to session ${loaded.id} (${loaded.turnCount} turn${loaded.turnCount === 1 ? "" : "s"})`,
@@ -221,6 +262,7 @@ export class ChatOrchestrator {
       workingDir: this.session.workingDir,
       messages: [],
     });
+    this.refreshRecentSessions();
     this.bus.emit({
       type: "runtime_info",
       line: `new session ${this.session.id} created`,
@@ -229,7 +271,7 @@ export class ChatOrchestrator {
 
   sendMessage(text: string): void {
     if (this.quitting) return;
-    if (!this.session) this.start();
+    this.ensureSession();
     if (this.currentController) {
       this.queue.push(text);
       return;

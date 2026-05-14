@@ -5,8 +5,11 @@ import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { LogRecord, LogSink } from "../tracing/structured-logger.js";
 import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
+import { enterAltScreen } from "./alt-screen.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
+import { installMouseInput } from "./mouse-input.js";
 import { parseTuiArgs } from "./tui-args.js";
+import { createWheelAccelerator } from "./wheel-accelerator.js";
 import { persistUserLocalLlmUrl } from "./persist-user-local-models-config.js";
 import {
   isManagedModeReadyOnDisk,
@@ -14,6 +17,19 @@ import {
 } from "./run-local-models-config-wizard.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
 import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
+
+/**
+ * Wheel notch tuning. `baseDelta` is in **terminal rows** per notch
+ * (2 — slightly calmer than a browser default; the chat surface still
+ * feels web-like but takes a few extra ticks to flick the screen).
+ * The accelerator multiplies that delta when notches arrive in quick
+ * succession, so a slow scroll stays line-precise but a fast flick
+ * covers ground. See `wheel-accelerator.ts` for the math.
+ */
+const WHEEL_BASE_DELTA = 2;
+const WHEEL_ACCEL_WINDOW_MS = 140;
+const WHEEL_ACCEL_STEP = 1.35;
+const WHEEL_ACCEL_MAX_MULTIPLIER = 5;
 
 /**
  * CLI entry for `atomic-agent tui`. Boots the full runtime once and stays
@@ -116,11 +132,27 @@ export async function tuiCommand(args: string[]): Promise<number> {
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
 
-  // Render into the primary terminal buffer (no alternate screen) so the
-  // chat transcript lands in the host terminal's native scrollback and
-  // the user can scroll the history with the wheel / scrollbar. The trade-
-  // off is that the final frame stays in the terminal after exit — that
-  // is acceptable for a conversational agent.
+  // Switch into the alternate screen buffer + enable SGR mouse **before**
+  // mounting Ink so the proxy stdin returned by `installMouseInput` can
+  // be threaded into `render(...)`. Without this split the SGR escape
+  // sequences (`\x1b[<64;71;26M`, ...) leak into Ink's keypress parser
+  // and end up dumped into the editor as literal text. Both are no-ops
+  // when stdout is not a TTY (CI / piped output) so harness runs are
+  // unaffected.
+  const altScreen = enterAltScreen({ stdout: process.stdout, hideCursor: false });
+  const wheelAccel = createWheelAccelerator({
+    baseDelta: WHEEL_BASE_DELTA,
+    accelWindowMs: WHEEL_ACCEL_WINDOW_MS,
+    accelStep: WHEEL_ACCEL_STEP,
+    maxMultiplier: WHEEL_ACCEL_MAX_MULTIPLIER,
+  });
+  const mouse = installMouseInput({
+    onEvent: (event) => {
+      const delta = wheelAccel.next(event.type === "wheel_up" ? 1 : -1);
+      bus.emit({ type: "chat_scrolled", delta });
+    },
+  });
+
   const ink = render(
     React.createElement(TuiApp, {
       session: sessionInfo,
@@ -146,6 +178,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onTasksAutoRefreshStart: () => orchestrator.tasks.startAutoRefresh(),
         onTasksRefreshRequested: () => orchestrator.tasks.refresh(),
         onTaskDetailRequested: (taskId) => orchestrator.tasks.openDetail(taskId),
+        onSidebarTaskActivated: (taskId) => {
+          // Sidebar Enter on a task: jump to the Tasks debug tab and
+          // surface the detail view. Two dispatches because the keymap
+          // layer cannot reach the bus directly — `tab_changed` flips
+          // the active tab, then `openDetail` seeds the firings ring +
+          // emits `tasks_detail_opened`.
+          bus.emit({ type: "ui_mode_set", mode: "debug" });
+          bus.emit({ type: "tab_changed", tab: "tasks" });
+          orchestrator.tasks.openDetail(taskId);
+        },
         onTaskOpenSessionRequested: (taskId) =>
           orchestrator.tasks.openSession(taskId),
         onTaskCancelConfirmed: (taskId) => orchestrator.tasks.cancelTask(taskId),
@@ -213,7 +255,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.telegram.toggleAdvanced(),
       },
     }),
-    { stdout: process.stdout, stderr: process.stderr, exitOnCtrlC: false },
+    {
+      stdin: mouse.stdin,
+      stdout: process.stdout,
+      stderr: process.stderr,
+      exitOnCtrlC: false,
+    },
   );
 
   orchestrator.start();
@@ -234,9 +281,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
   } finally {
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
-    // `ink.clear()` wipes the live region of the final Ink frame; the
-    // finalised chat messages printed by `<Static>` remain in the
-    // terminal's scrollback so the user keeps their conversation log.
+    mouse.stop();
+    altScreen.restore();
     ink.clear();
     await orchestrator.shutdown();
   }

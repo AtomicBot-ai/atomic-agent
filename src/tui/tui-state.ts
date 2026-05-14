@@ -278,6 +278,54 @@ export interface TuiState {
   llmHealth: LlmHealthState;
   /** State slice driving the Telegram tab (slice-3B live-control UI). */
   telegramPanel: TelegramPanelState;
+  /**
+   * Recently-modified sessions surfaced in the always-on sidebar. Loaded
+   * once at TUI mount and refreshed when a new session is created or
+   * switched to. Distinct from `sessionPickerList` (which is the modal
+   * overlay) — a sidebar consumer rendering a quiet, paginated list
+   * does not want the picker's "open / closed" lifecycle.
+   */
+  recentSessions: readonly SessionPickerEntry[];
+  /**
+   * Which surface owns keyboard focus inside the chat layout: the
+   * editor (default) or the sidebar's panes (Sessions / Tasks). Tab
+   * cycles `editor → sidebar(sessions) → sidebar(tasks) → editor` when
+   * the sidebar is visible; the active sidebar pane is tracked
+   * independently in `sidebarSection`. The reducer never inspects
+   * terminal width — visibility is computed at render time so the
+   * focus state stays valid even when the sidebar is collapsed under
+   * the width threshold (Tab simply has nothing to focus).
+   */
+  chatFocus: "editor" | "sidebar";
+  /**
+   * Which sidebar pane is the current Tab-cycle stop. Only meaningful
+   * when `chatFocus === "sidebar"` (the highlight follows it), but kept
+   * in state always so a Tab back into the sidebar lands on the same
+   * pane the operator left.
+   */
+  sidebarSection: "sessions" | "tasks";
+  /**
+   * Highlighted row in the sidebar's session list. `0` = newest session,
+   * `recentSessions.length - 1` = oldest. Independent of
+   * `sessionPickerCursor` so opening / closing the modal picker does not
+   * disturb the sidebar selection.
+   */
+  sidebarCursor: number;
+  /**
+   * Highlighted row in the sidebar's tasks list. Bounded by the number
+   * of rows produced by `selectSidebarTasks` at render time; the
+   * reducer clamps against the global `tasksPanel.rows` cap (5) since
+   * the sidebar selector is a pure projection of that snapshot.
+   */
+  sidebarTasksCursor: number;
+  /**
+   * Scrollback offset (in messages from the bottom) for the chat
+   * surface. `0` means "stuck to the latest message"; a positive value
+   * scrolls up so older messages appear at the bottom of the window.
+   * Resets to `0` whenever a new turn starts so the operator never
+   * loses sight of the freshest reply.
+   */
+  chatScrollOffset: number;
 }
 
 /**
@@ -352,5 +400,11 @@ export function createInitialTuiState(
     localLlmLogs: createInitialLocalLlmLogsState(),
     llmHealth: createInitialLlmHealthState(),
     telegramPanel: createInitialTelegramPanelState(),
+    recentSessions: [],
+    chatFocus: "editor",
+    sidebarSection: "sessions",
+    sidebarCursor: 0,
+    sidebarTasksCursor: 0,
+    chatScrollOffset: 0,
   };
 }

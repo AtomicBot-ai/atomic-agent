@@ -23,7 +23,7 @@ interface HotkeyChip {
 export function HotkeyHint({ state, ctrlCArmed }: HotkeyHintProps): ReactElement {
   const chips = resolveChips(state, ctrlCArmed ?? false);
   return (
-    <Box>
+    <Box flexShrink={0}>
       {chips.map((chip, idx) => (
         <Text key={chip.key}>
           <Text color={theme.colors.accentSoft} bold>
@@ -71,7 +71,20 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
     return [
       { key: "tab", label: "next panel" },
       { key: "shift+tab", label: "prev panel" },
+      { key: "ctrl+b", label: "next panel" },
       { key: "/", label: "commands" },
+      {
+        key: "ctrl+c",
+        label: ctrlCArmed ? "press again to quit" : "quit",
+      },
+    ];
+  }
+  if (state.chatFocus === "sidebar") {
+    return [
+      { key: "↑↓", label: "select" },
+      { key: "enter", label: "open" },
+      { key: "tab", label: "next pane" },
+      { key: "esc", label: "back to editor" },
       {
         key: "ctrl+c",
         label: ctrlCArmed ? "press again to quit" : "quit",
@@ -81,8 +94,8 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
   return [
     { key: "enter", label: "send" },
     { key: "alt+enter", label: "newline" },
-    { key: "tab", label: "open Observe" },
-    { key: "↑↓", label: "history" },
+    { key: "tab", label: "sidebar" },
+    { key: "ctrl+b", label: "open Observe" },
     { key: "/", label: "commands" },
     {
       key: "ctrl+c",

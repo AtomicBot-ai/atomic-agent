@@ -32,6 +32,13 @@ export interface MultiLineEditorProps {
   onTab?: () => void;
   /** Shift+Tab pressed — parent may use this for reverse navigation. */
   onShiftTab?: () => void;
+  /**
+   * Suppress the editor's own rounded border + horizontal padding. The
+   * caller takes ownership of the visual chrome — used by `PromptShell`
+   * to draw the opencode-style left tail and meta-row around the bare
+   * editor body.
+   */
+  bare?: boolean;
 }
 
 /**
@@ -62,6 +69,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     onHistoryNext,
     onTab,
     onShiftTab,
+    bare = false,
   } = props;
   const [cursorPos, setCursorPos] = useState<number>(value.length);
   // Clamp cursor whenever the controlled value shrinks (e.g. slash
@@ -100,6 +108,16 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
   );
 
   const cursor = cursorToRowCol(value, cursorPos);
+  if (bare) {
+    return (
+      <EditorBody
+        value={value}
+        cursor={cursor}
+        placeholder={placeholder ?? ""}
+        focus={focus && !disabled}
+      />
+    );
+  }
   return (
     <Box
       borderStyle="round"

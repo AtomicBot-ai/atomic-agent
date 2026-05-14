@@ -59,21 +59,27 @@ export interface TuiTheme {
 }
 
 const COLORS: TuiColors = {
-  user: "blue",
-  assistant: "green",
+  // Bright variants for the bubble ribbon. The "blue" terminal slot on
+  // most dark macOS / Linux themes is almost invisible against the
+  // default background — the user reads the ribbon as "messages
+  // touching" instead of "blue / green role indicator". Bright slots
+  // are the same hue but sit several stops higher in luminance and
+  // survive every default theme we tested.
+  user: "blueBright",
+  assistant: "greenBright",
   system: "gray",
-  reasoning: "magenta",
-  tool: "blue",
-  toolOk: "green",
+  reasoning: "magentaBright",
+  tool: "blueBright",
+  toolOk: "greenBright",
   toolError: "red",
-  accent: "blue",
+  accent: "blueBright",
   accentSoft: "blueBright",
   border: "gray",
   muted: "gray",
   error: "red",
   warn: "yellow",
-  success: "green",
-  info: "blue",
+  success: "greenBright",
+  info: "blueBright",
 };
 
 const GLYPHS: TuiGlyphs = {

@@ -7,19 +7,36 @@ interface UserBubbleProps {
 }
 
 /**
- * Openclaw-style user message: one-line role header with a colour-coded
- * marker, then the raw text on following lines. No markdown — the user
- * authored it, so we render literally.
+ * opencode-style user message: a colored vertical left border plus
+ * generous vertical padding around the body. The role itself is
+ * implied by the border color (blue = user) — there is no inline
+ * "you" label, so consecutive user / assistant turns read as a
+ * coloured ribbon rather than a labelled list. `marginTop=1` between
+ * messages prevents bubbles from touching.
+ *
+ * No markdown rendering — the user authored the text and expects to
+ * see exactly what they typed.
  */
 export function UserBubble({ text }: UserBubbleProps): ReactElement {
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Text color={theme.colors.user} bold>
-        {theme.glyphs.userMarker} you
-      </Text>
-      {splitLines(text).map((line, idx) => (
-        <Text key={idx}>  {line}</Text>
-      ))}
+    <Box marginTop={1}>
+      <Box
+        borderStyle="single"
+        borderTop={false}
+        borderRight={false}
+        borderBottom={false}
+        borderLeft
+        borderColor={theme.colors.user}
+        paddingTop={1}
+        paddingBottom={1}
+        paddingLeft={2}
+        paddingRight={1}
+        flexDirection="column"
+      >
+        {splitLines(text).map((line, idx) => (
+          <Text key={idx}>{line}</Text>
+        ))}
+      </Box>
     </Box>
   );
 }

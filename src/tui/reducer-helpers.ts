@@ -163,6 +163,7 @@ export function startNewRun(state: TuiState): TuiState {
     streamingToolCalls: [],
     streamingToolCards: [],
     pendingApproval: null,
+    chatScrollOffset: 0,
     metrics: {
       ...state.metrics,
       promptTokensLast: null,
