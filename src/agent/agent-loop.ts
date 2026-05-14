@@ -50,6 +50,8 @@ export interface AgentLoopDependencies {
     grammar: string;
     slotId: number;
     sessionId: string;
+    /** Optional `n_predict` cap (used by the repair retry path). */
+    maxTokens?: number;
   }) => Promise<CompletionResult>;
   /**
    * Optional streaming sibling of `llmComplete`. When wired, live
@@ -61,6 +63,8 @@ export interface AgentLoopDependencies {
     grammar: string;
     slotId: number;
     sessionId: string;
+    /** Optional `n_predict` cap (used by the repair retry path). */
+    maxTokens?: number;
   }) => AsyncGenerator<StreamChunk, CompletionResult, void>;
   /** Stable tool catalog used in the prompt prefix. Pass the same array on every step. */
   toolDescriptors: readonly ToolDescriptor[];

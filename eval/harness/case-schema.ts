@@ -14,7 +14,23 @@
  * is still informative.
  */
 
-export type EvalCategory = "os" | "skill" | "http" | "coding" | "debug";
+export type EvalCategory =
+  | "os"
+  | "skill"
+  | "http"
+  | "coding"
+  | "debug"
+  /**
+   * GAIA-style document QA: agent receives a question + a fixture
+   * document (PDF/XLSX/DOCX) in the workspace and must extract a
+   * specific fact via `os.fs.read_document`. Mirrors the GAIA
+   * Level 1-2 pattern (file-attached question with a single known
+   * answer) without requiring web access or audio/video tools.
+   * Authored as self-contained fixtures (NOT real GAIA data) so
+   * pass-rates are NOT comparable to published GAIA leaderboards;
+   * use as an internal proxy for assistant-style file-fact retrieval.
+   */
+  | "gaia-style";
 
 /**
  * Capability axes the agent is evaluated against. Each axe-focused case

@@ -76,6 +76,13 @@ export interface LlmStreamParams {
   grammar: string;
   slotId: number;
   sessionId: string;
+  /**
+   * Optional `n_predict` cap for this completion. Falls through to
+   * `config.localModels.completionMaxTokens` when omitted. Used by the
+   * structured-repair retry path to bound a runaway reasoning-loop
+   * failure mode (see `REPAIR_MAX_TOKENS` and the call-site comment).
+   */
+  maxTokens?: number;
 }
 
 export type LlmCompleteStream = (
@@ -338,7 +345,20 @@ async function executeStepInner(
     const retryStartedAt = Date.now();
     completion = await deps.llmComplete({
       ...llmParams,
-      prompt: buildToolCallRepairPrompt(prompt.text, parsed.error),
+      prompt: buildToolCallRepairPrompt(prompt.text, parsed.error, deps.profile),
+      // Tight cap on the repair completion. A correct one-shot tool-call
+      // (worst-case `os.fs.edit` with a 200-char `oldString` + replacement)
+      // fits comfortably under 512 tokens. Without this cap, reasoning
+      // models (qwen-3.5-9b in particular) routinely fall into a
+      // self-deliberation loop after a `BatchValidationError` and burn
+      // the full `completionMaxTokens` (8192) generating dozens of
+      // duplicated JSON candidates wrapped in "wait, let me reconsider"
+      // prose — that's 3-5 minutes of wall time per repair on a 9B
+      // model and the slot stays busy the entire time, cascading into
+      // 0-step timeouts on subsequent eval cases. With the cap, an
+      // unrecoverable repair fails in ~7s instead and the slot is freed
+      // immediately; a recoverable one fits in 512 tokens by design.
+      maxTokens: REPAIR_MAX_TOKENS,
     });
     const retryDurationMs = Date.now() - retryStartedAt;
     deps.onCompletion?.(completion);
@@ -755,9 +775,30 @@ function rawPreview(content: string): string {
   return content.length > 240 ? `${slice}…` : slice;
 }
 
-function buildToolCallRepairPrompt(promptText: string, error: Error): string {
+/**
+ * Hard cap on `n_predict` for the repair completion. See the comment at
+ * the call-site (search `REPAIR_MAX_TOKENS` in this file) for the
+ * rationale. Exported so tests can lower it for fast simulation.
+ */
+export const REPAIR_MAX_TOKENS = 512;
+
+function buildToolCallRepairPrompt(
+  promptText: string,
+  error: Error,
+  profile?: ModelProfile,
+): string {
+  // Strip the trailing reasoning open-tag prefill (e.g. `<think>` for
+  // qwen-think, `<|channel>thought\n` for gemma4-think) before
+  // appending repair instructions. Without this strip, the repair
+  // notice ends up wedged INSIDE the model's open think-block — the
+  // model then treats the system instructions as its own prior thought
+  // and enters a "wait, let me reconsider" loop that burns the entire
+  // `n_predict` budget. Below we re-open AND immediately close the
+  // think-block at the very end, signalling "no thinking, emit JSON
+  // straight away" (the standard `/no_think` trick for qwen models).
+  const baseText = stripTrailingReasoningPrefill(promptText, profile);
   const lines = [
-    promptText.trimEnd(),
+    baseText.trimEnd(),
     "",
     "### tool-call-repair",
     "The previous completion was rejected before any tool ran.",
@@ -772,14 +813,41 @@ function buildToolCallRepairPrompt(promptText: string, error: Error): string {
     }
   }
   lines.push(
-    "Emit a corrected JSON array only.",
+    "Emit a corrected JSON array only. No prose, no thinking, no commentary.",
     "Use a length-1 array for `reply`, `finish`, approval-gated tools, or any call that depends on a previous result.",
     "Do not repeat the invalid batch shape.",
     "",
     "### respond",
     "Respond now.",
   );
+  // For reasoning profiles, append a closed (empty) think-block so the
+  // model continues straight into the JSON array instead of opening a
+  // fresh `<think>` chain. For `none` profiles this is a no-op.
+  const closedReasoning = renderClosedReasoningBlock(profile);
+  if (closedReasoning.length > 0) {
+    lines.push(closedReasoning);
+  }
   return lines.join("\n");
+}
+
+function stripTrailingReasoningPrefill(
+  promptText: string,
+  profile: ModelProfile | undefined,
+): string {
+  if (!profile || !profile.requiresPromptThinkPrefix) return promptText;
+  if (profile.reasoningStyle === "none") return promptText;
+  const openTag = profile.reasoningOpenTag.trimEnd();
+  const trimmed = promptText.trimEnd();
+  if (trimmed.endsWith(openTag)) {
+    return trimmed.slice(0, trimmed.length - openTag.length);
+  }
+  return promptText;
+}
+
+function renderClosedReasoningBlock(profile: ModelProfile | undefined): string {
+  if (!profile || !profile.requiresPromptThinkPrefix) return "";
+  if (profile.reasoningStyle === "none") return "";
+  return `${profile.reasoningOpenTag.trimEnd()}\n${profile.reasoningCloseTag.trimEnd()}`;
 }
 
 /**

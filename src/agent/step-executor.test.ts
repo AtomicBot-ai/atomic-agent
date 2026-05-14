@@ -4,7 +4,11 @@ import { executeStep } from "./step-executor.js";
 import { ToolRegistry } from "../tools/tool-registry.js";
 import { compressToolResult } from "../compressor/result-compressor.js";
 import { SlotManager } from "../llm/slot-manager.js";
-import { PLAIN_INSTRUCT_PROFILE } from "../llm/model-profile.js";
+import {
+  PLAIN_INSTRUCT_PROFILE,
+  QWEN_THINK_PROFILE,
+} from "../llm/model-profile.js";
+import { REPAIR_MAX_TOKENS } from "./step-executor.js";
 import { buildGrammar } from "../llm/grammar/build-grammar.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
@@ -267,6 +271,100 @@ describe("executeStep batch handling", () => {
     expect(prompts[1]).toContain("terminal verb 'reply' is forbidden inside a batch");
     expect(prompts[1]).toContain("Use a length-1 array");
   });
+
+  it(
+    "for thinking profiles strips the trailing <think> prefill, " +
+      "appends a closed think-block, and caps the repair completion at REPAIR_MAX_TOKENS",
+    async () => {
+      const registry = makeRegistry();
+      const grammar = await buildGrammar(QWEN_THINK_PROFILE, grammarsDir);
+      const session = createEmptySessionState({
+        id: "s-repair-think",
+        workingDir: "/w",
+      });
+      const prompts: string[] = [];
+      const maxTokensSeen: Array<number | undefined> = [];
+      // Bodies are what llama-server returns AFTER the appended
+      // `<think>` prefill; the executor's normalizeContent prepends
+      // the prefix back, so we close the think-block immediately and
+      // emit the JSON body. For the repair attempt, the closed-think
+      // block lives in the prompt itself, so the model would emit
+      // just the JSON — but `normalizeContent` still prepends the
+      // open tag, so we keep the same `</think>` shape for symmetry.
+      const bodies = [
+        `</think>${JSON.stringify([
+          { tool: "os.fs.read", args: { path: "a" } },
+          { tool: "reply", args: { text: "done" } },
+        ])}`,
+        `</think>${JSON.stringify({ tool: "reply", args: { text: "done" } })}`,
+      ];
+      let calls = 0;
+      const outcome = await executeStep(
+        {
+          session,
+          toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+          capabilities: CAPS,
+          skillCatalog: SKILLS,
+          stepIndex: 0,
+          signal: new AbortController().signal,
+          userMessage: "x",
+        },
+        {
+          registry,
+          slotManager: new SlotManager(2),
+          llmComplete: async ({ prompt, maxTokens }) => {
+            prompts.push(prompt);
+            maxTokensSeen.push(maxTokens);
+            const content = bodies[calls] ?? bodies[bodies.length - 1]!;
+            calls += 1;
+            return {
+              content,
+              reasoningContent: "",
+              stop: true,
+              truncated: false,
+              timing: {
+                promptMs: 1,
+                predictedMs: 1,
+                promptTokens: 20,
+                predictedTokens: 5,
+              },
+              cacheHitTokens: 0,
+              slotId: 0,
+              modelId: "mock",
+            };
+          },
+          grammar,
+          profile: QWEN_THINK_PROFILE,
+        },
+      );
+
+      expect(outcome.terminal).toBe("turn");
+      expect(prompts).toHaveLength(2);
+
+      // First call: standard prompt — buildPrompt appends the `<think>`
+      // prefill at the very end so qwen-think starts in reasoning mode.
+      expect(prompts[0]!.trimEnd().endsWith("<think>")).toBe(true);
+
+      // Repair call: the trailing `<think>` must be stripped (otherwise
+      // the repair instructions would land INSIDE the open think-block
+      // and the model would loop on self-deliberation), and the prompt
+      // must end with a closed empty think-block so generation skips
+      // straight to JSON.
+      const repairPrompt = prompts[1]!;
+      expect(repairPrompt).toContain("### tool-call-repair");
+      expect(repairPrompt.trimEnd().endsWith("<think>\n</think>")).toBe(true);
+      // No second `<think>` open tag dangling before the closed block.
+      const openTagOccurrences = repairPrompt.match(/<think>/g) ?? [];
+      // Exactly one: the one inside the closed `<think></think>` pair.
+      expect(openTagOccurrences.length).toBe(1);
+
+      // Hard cap on the repair completion (defends against runaway
+      // reasoning loops on the structured-repair path).
+      expect(maxTokensSeen[0]).toBeUndefined();
+      expect(maxTokensSeen[1]).toBe(REPAIR_MAX_TOKENS);
+      expect(REPAIR_MAX_TOKENS).toBeLessThanOrEqual(1024);
+    },
+  );
 
   it("rejects a batch containing an approval-gated verb", async () => {
     const body = JSON.stringify([

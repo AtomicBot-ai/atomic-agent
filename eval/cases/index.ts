@@ -63,6 +63,16 @@ import { axisContextRetentionConfigValue } from "./axis-context-retention-config
 import { axisRefusalMissingFile } from "./axis-refusal-missing-file.case.js";
 import { axisRefusalEmptyResult } from "./axis-refusal-empty-result.case.js";
 
+// Bucket F — GAIA-style document QA. Self-contained PDF/XLSX
+// fixtures (NOT real GAIA data) used as an internal proxy for
+// assistant-style file-fact retrieval. See category="gaia-style"
+// in case-schema.ts for the scope/limitations.
+import { gaiaPdfTableCell } from "./gaia-pdf-table-cell.case.js";
+import { gaiaPdfMultiPageFact } from "./gaia-pdf-multi-page-fact.case.js";
+import { gaiaPdfCrossDocArithmetic } from "./gaia-pdf-cross-doc-arithmetic.case.js";
+import { gaiaXlsxConditionalSum } from "./gaia-xlsx-conditional-sum.case.js";
+import { gaiaXlsxCountDistinct } from "./gaia-xlsx-count-distinct.case.js";
+
 /**
  * Eval corpus. Order is stable so report rows can be diff'd across runs
  * without sorting. The corpus is split into stable buckets:
@@ -81,8 +91,11 @@ import { axisRefusalEmptyResult } from "./axis-refusal-empty-result.case.js";
  *    at the component to fix — they are the "where to improve"
  *    signal, while the other buckets remain the "how well overall"
  *    signal.
+ *  - Bucket F (+5): GAIA-style document QA over self-authored
+ *    PDF / XLSX fixtures. Internal proxy for assistant-style file
+ *    fact retrieval — NOT comparable to published GAIA scores.
  *
- * Total = 50. Run `eval:summary` (after a full prog) to get a
+ * Total = 55. Run `eval:summary` (after a full prog) to get a
  * per-axis pass-rate breakdown.
  */
 export const EVAL_CASES: ReadonlyArray<EvalCase> = [
@@ -147,4 +160,11 @@ export const EVAL_CASES: ReadonlyArray<EvalCase> = [
   axisContextRetentionConfigValue,
   axisRefusalMissingFile,
   axisRefusalEmptyResult,
+
+  // Bucket F — GAIA-style.
+  gaiaPdfTableCell,
+  gaiaPdfMultiPageFact,
+  gaiaPdfCrossDocArithmetic,
+  gaiaXlsxConditionalSum,
+  gaiaXlsxCountDistinct,
 ];

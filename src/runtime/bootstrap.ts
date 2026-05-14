@@ -139,6 +139,7 @@ export interface CreateAgentRuntimeOptions {
       grammar: string;
       slotId: number;
       sessionId: string;
+      maxTokens?: number;
     }) => Promise<CompletionResult>;
     /**
      * Streaming counterpart of `llamaComplete`. Tests inject a fake SSE
@@ -150,6 +151,7 @@ export interface CreateAgentRuntimeOptions {
       grammar: string;
       slotId: number;
       sessionId: string;
+      maxTokens?: number;
     }) => AsyncGenerator<StreamChunk, CompletionResult, void>;
     /**
      * When true, skip wiring the streaming client at all. Useful for the
@@ -599,6 +601,13 @@ export async function createAgentRuntime(
         slotId: params.slotId,
         sessionId: params.sessionId,
         cachePrompt: true,
+        // Forward an optional per-call `n_predict` cap. The agent-loop
+        // repair path uses this to bound runaway reasoning loops; the
+        // hot path leaves it undefined so the configured default
+        // applies.
+        ...(typeof params.maxTokens === "number"
+          ? { maxTokens: params.maxTokens }
+          : {}),
       });
     });
 
