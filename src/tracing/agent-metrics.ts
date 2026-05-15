@@ -45,6 +45,7 @@ export const METRIC_NAMES = {
   telegramMessagesReceived: "agent.telegram.messages_received",
   telegramMessagesSent: "agent.telegram.messages_sent",
   telegramApprovalsResolved: "agent.telegram.approvals_resolved",
+  batchTrimmed: "agent.batch.trimmed",
 } as const;
 
 export type MetricName = (typeof METRIC_NAMES)[keyof typeof METRIC_NAMES];
@@ -82,6 +83,22 @@ export interface ToolMetricSample {
 export interface LlmFailureMetricSample {
   sessionId: string;
   category: LlmFailureCategory;
+}
+
+/**
+ * Sample recorded each time the step executor auto-splits a multi-call
+ * batch that failed validation. The counter is tagged by `reason` so
+ * dashboards can distinguish the (currently sole) approval-gated split
+ * from future split causes.
+ */
+export interface BatchTrimmedMetricSample {
+  sessionId: string;
+  /** Trim cause; matches the event payload of the same name. */
+  reason: "approval-gated-batched";
+  /** Original batch size the model emitted. Always >= 2. */
+  originalSize: number;
+  /** Number of calls dropped (== originalSize - 1). */
+  droppedCount: number;
 }
 
 /**
@@ -270,6 +287,21 @@ export class AgentMetrics {
     this.collector.counter(METRIC_NAMES.llmFailure, 1, {
       sessionId: sample.sessionId,
       category: sample.category,
+    });
+  }
+
+  /**
+   * Record an auto-split of a multi-call batch by `executeStepInner`.
+   * Tagged by `reason` (today only `approval-gated-batched`) and
+   * `originalSize` so dashboards can distinguish a single dropped call
+   * from a wholesale 6-call rejection. `droppedCount` ships as a
+   * histogram value so percentile analyses are cheap.
+   */
+  recordBatchTrimmed(sample: BatchTrimmedMetricSample): void {
+    this.collector.counter(METRIC_NAMES.batchTrimmed, 1, {
+      sessionId: sample.sessionId,
+      reason: sample.reason,
+      originalSize: String(sample.originalSize),
     });
   }
 

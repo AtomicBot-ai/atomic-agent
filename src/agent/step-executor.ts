@@ -172,6 +172,16 @@ export interface StepOutcome {
   prompt: BuiltPrompt;
   nextSession: SessionState;
   terminal: StepTerminal;
+  /**
+   * Set when the step's parsed batch failed validation purely because
+   * it contained approval-gated tools. The runtime auto-split the batch
+   * to a length-1 execution (the first approval-gated call); this notice
+   * is meant to be injected into the next step's `transientNotice` so
+   * the model knows which calls were dropped and can retry them
+   * one-by-one. Distinct from `parse_retry` — no LLM round-trip
+   * happened for the trim.
+   */
+  trimmedBatchNotice?: string;
 }
 
 /** Validation failure for a multi-call batch (forbidden tool / oversized / unknown). */
@@ -314,11 +324,72 @@ async function executeStepInner(
     );
   }
 
+  // Notice text injected into the NEXT step's `transientNotice` when
+  // `executeStepInner` auto-trims a multi-call batch. Set only when the
+  // trim fires; left undefined otherwise so the agent loop knows not to
+  // overwrite a higher-priority pending notice (loop-detector hint).
+  let trimmedBatchNotice: string | undefined;
+
+  /**
+   * Inline helper: if a `BatchValidationError` is purely about
+   * approval-gated tools batched together, trim the batch to the first
+   * approval-gated call (length-1), emit the observability event, and
+   * capture the notice for the next step. Returns the trimmed batch
+   * paired with a fresh `ok: true` parse result, or `null` if the
+   * failure is not trim-eligible (terminal verbs, oversized, unknown
+   * resource class — those still go through the LLM repair path).
+   */
+  const tryTrimApprovalGated = (
+    batch: ToolCallBatch,
+    error: BatchValidationError,
+  ): { ok: true; batch: ToolCallBatch } | null => {
+    if (!isApprovalGatedOnlyFailure(error)) return null;
+    const trim = trimBatchToFirstApprovalGated(batch);
+    if (trim === null) return null;
+    trimmedBatchNotice = formatBatchTrimNotice(trim);
+    deps.onEvent?.({
+      type: "batch_trimmed",
+      stepIndex: ctx.stepIndex,
+      originalSize: trim.originalSize,
+      kept: trim.kept.tool,
+      dropped: trim.dropped.map((call) => call.tool),
+      reason: "approval-gated-batched",
+    });
+    deps.metrics?.recordBatchTrimmed({
+      sessionId: ctx.session.id,
+      reason: "approval-gated-batched",
+      originalSize: trim.originalSize,
+      droppedCount: trim.dropped.length,
+    });
+    deps.logger?.info("batch trimmed to first approval-gated call", {
+      sessionId: ctx.session.id,
+      stepIndex: ctx.stepIndex,
+      originalSize: trim.originalSize,
+      kept: trim.kept.tool,
+      dropped: trim.dropped.map((call) => call.tool),
+    });
+    return {
+      ok: true,
+      batch: { ...batch, calls: [trim.kept] },
+    };
+  };
+
   let parsed = tryParseToolCalls(completion, deps.profile);
   if (parsed.ok) {
     const validation = validateBatch(parsed.batch, deps.registry);
     if (!validation.ok) {
-      parsed = { ok: false, error: validation.error };
+      // Try the cheap mechanical fix first. If the only reason the
+      // batch failed is "approval-gated tools must be solo", we trim
+      // to the first approval-gated call and proceed — no LLM repair
+      // round-trip, no `parse_retry`. Anything else (terminal verbs in
+      // a batch, oversized, unknown resource class) still routes
+      // through the model so it can re-plan.
+      const trimmed = tryTrimApprovalGated(parsed.batch, validation.error);
+      if (trimmed !== null) {
+        parsed = trimmed;
+      } else {
+        parsed = { ok: false, error: validation.error };
+      }
     }
   }
 
@@ -346,18 +417,23 @@ async function executeStepInner(
     completion = await deps.llmComplete({
       ...llmParams,
       prompt: buildToolCallRepairPrompt(prompt.text, parsed.error, deps.profile),
-      // Tight cap on the repair completion. A correct one-shot tool-call
-      // (worst-case `os.fs.edit` with a 200-char `oldString` + replacement)
-      // fits comfortably under 512 tokens. Without this cap, reasoning
+      // Bounded cap on the repair completion. Without it, reasoning
       // models (qwen-3.5-9b in particular) routinely fall into a
       // self-deliberation loop after a `BatchValidationError` and burn
       // the full `completionMaxTokens` (8192) generating dozens of
       // duplicated JSON candidates wrapped in "wait, let me reconsider"
       // prose — that's 3-5 minutes of wall time per repair on a 9B
       // model and the slot stays busy the entire time, cascading into
-      // 0-step timeouts on subsequent eval cases. With the cap, an
-      // unrecoverable repair fails in ~7s instead and the slot is freed
-      // immediately; a recoverable one fits in 512 tokens by design.
+      // 0-step timeouts on subsequent eval cases.
+      //
+      // The cap was originally 512 but production traces of a
+      // multi-file rename refactor showed legitimate single-call
+      // `os.fs.edit` repairs (absolute path in a deep temp dir +
+      // realistic `oldString`/`newString`) hitting exactly that
+      // ceiling, truncating mid-JSON, and surfacing as
+      // `GrammarError: tool-call body is empty`. 1024 keeps the
+      // anti-loop guard (still well under `completionMaxTokens=8192`)
+      // while leaving room for one full edit call in the worst case.
       maxTokens: REPAIR_MAX_TOKENS,
     });
     const retryDurationMs = Date.now() - retryStartedAt;
@@ -408,7 +484,16 @@ async function executeStepInner(
     if (parsed.ok) {
       const validation = validateBatch(parsed.batch, deps.registry);
       if (!validation.ok) {
-        parsed = { ok: false, error: validation.error };
+        // Same trim shortcut for the post-repair attempt: if the model
+        // came back from repair with another approval-gated batch,
+        // mechanically split it instead of escalating to `GrammarError`.
+        // Surfaces in the same `batch_trimmed` event/metric.
+        const trimmed = tryTrimApprovalGated(parsed.batch, validation.error);
+        if (trimmed !== null) {
+          parsed = trimmed;
+        } else {
+          parsed = { ok: false, error: validation.error };
+        }
       }
     }
     if (!parsed.ok) {
@@ -588,6 +673,7 @@ async function executeStepInner(
     prompt,
     nextSession,
     terminal,
+    ...(trimmedBatchNotice !== undefined ? { trimmedBatchNotice } : {}),
   };
 }
 
@@ -765,6 +851,74 @@ function validateBatch(
 }
 
 /**
+ * Classify a `BatchValidationError`: is it "approval-gated calls in a
+ * batch and nothing else" (mechanically fixable by trimming) or does
+ * the batch also contain a terminal verb / unknown class / oversized
+ * payload (which we keep routing through the LLM repair path because
+ * trimming the wrong call could lose semantic intent the model is
+ * better placed to reconcile)?
+ *
+ * The classifier is intentionally strict: every non-null per-call entry
+ * must mention `approval-gated`. A single `terminal verb` or
+ * `no resource class` reason kicks the batch back to repair.
+ */
+export function isApprovalGatedOnlyFailure(
+  error: BatchValidationError,
+): boolean {
+  const reasons = error.perCall.filter(
+    (entry): entry is string => entry !== null,
+  );
+  if (reasons.length === 0) return false;
+  return reasons.every((reason) => reason.includes("approval-gated"));
+}
+
+/**
+ * Trim a model-emitted batch down to a length-1 array containing the
+ * **first** approval-gated call. The dropped calls are surfaced in
+ * `dropped` so the caller can render a `### notice` listing them. The
+ * "first approval-gated wins" rule respects the model's emit order
+ * (writes typically precede the edits that depend on them) without
+ * asking the model to re-plan.
+ */
+export interface BatchTrimResult {
+  kept: ToolCallPayload;
+  dropped: ToolCallPayload[];
+  /** Original batch size before trimming. Always >= 2. */
+  originalSize: number;
+}
+
+export function trimBatchToFirstApprovalGated(
+  batch: ToolCallBatch,
+): BatchTrimResult | null {
+  const calls = batch.calls;
+  const firstApprovalIdx = calls.findIndex(
+    (call) => resourceClassFor(call.tool) === "approval_gated",
+  );
+  if (firstApprovalIdx === -1) return null;
+  const kept = calls[firstApprovalIdx]!;
+  const dropped = calls.filter((_, idx) => idx !== firstApprovalIdx);
+  return { kept, dropped, originalSize: calls.length };
+}
+
+/**
+ * Render the `### notice` text the model sees on the next step after a
+ * trim. The wording is deliberately concrete: it lists the dropped tool
+ * names so the model can re-emit them in batch-index order as length-1
+ * arrays without re-deriving them from scratch. Mentioning that
+ * approval-gated tools must be solo reinforces the rule without
+ * triggering the prompt-rule regression we saw earlier (the message
+ * lives in the variable tail of the next step's prompt only — never the
+ * stable prefix).
+ */
+export function formatBatchTrimNotice(trim: BatchTrimResult): string {
+  const droppedNames = trim.dropped.map((call) => `\`${call.tool}\``).join(", ");
+  return [
+    `Your previous emission contained ${trim.originalSize} calls including approval-gated tools that must be solo (length-1 array). The runtime auto-executed \`${trim.kept.tool}\` and dropped the rest: ${droppedNames}.`,
+    "Retry the dropped calls now, one per step, each as a length-1 array. Do not re-batch them.",
+  ].join(" ");
+}
+
+/**
  * Trim a raw completion body to the short preview attached to every
  * `GrammarError` so postmortems can tell grammar misconfiguration apart
  * from truncation or an empty response without digging through streaming
@@ -779,8 +933,14 @@ function rawPreview(content: string): string {
  * Hard cap on `n_predict` for the repair completion. See the comment at
  * the call-site (search `REPAIR_MAX_TOKENS` in this file) for the
  * rationale. Exported so tests can lower it for fast simulation.
+ *
+ * Bumped from 512 → 1024 after a multi-file rename trace showed
+ * legitimate single-call `os.fs.edit` repairs (deep temp path + realistic
+ * old/new strings) hitting the 512 ceiling and surfacing as
+ * `GrammarError: tool-call body is empty`. 1024 still keeps the
+ * anti-runaway guard well under `completionMaxTokens` (8192).
  */
-export const REPAIR_MAX_TOKENS = 512;
+export const REPAIR_MAX_TOKENS = 1024;
 
 function buildToolCallRepairPrompt(
   promptText: string,
@@ -793,9 +953,18 @@ function buildToolCallRepairPrompt(
   // notice ends up wedged INSIDE the model's open think-block — the
   // model then treats the system instructions as its own prior thought
   // and enters a "wait, let me reconsider" loop that burns the entire
-  // `n_predict` budget. Below we re-open AND immediately close the
-  // think-block at the very end, signalling "no thinking, emit JSON
-  // straight away" (the standard `/no_think` trick for qwen models).
+  // `n_predict` budget. Below we re-append the OPEN reasoning prefill
+  // at the very end so the model continues in its normal think → emit
+  // pattern (bounded by `REPAIR_MAX_TOKENS`).
+  //
+  // Earlier iterations of this function appended a CLOSED think-block
+  // (`<think>\n</think>`) here, attempting a `/no_think` shortcut.
+  // Production traces on both qwen-3.5-9b and qwen-3.6-35b-a3b showed
+  // the model ignored the close marker and produced markdown-fenced
+  // JSON with interleaved prose ("Wait, I need to..."), tripping
+  // `GrammarError: tool-call body is empty`. Letting the model think
+  // normally in repair — bounded by `REPAIR_MAX_TOKENS` so it cannot
+  // run away — restores grammar-clean output.
   const baseText = stripTrailingReasoningPrefill(promptText, profile);
   const lines = [
     baseText.trimEnd(),
@@ -813,19 +982,16 @@ function buildToolCallRepairPrompt(
     }
   }
   lines.push(
-    "Emit a corrected JSON array only. No prose, no thinking, no commentary.",
+    "Emit a corrected JSON array only. No prose, no commentary after the array.",
     "Use a length-1 array for `reply`, `finish`, approval-gated tools, or any call that depends on a previous result.",
     "Do not repeat the invalid batch shape.",
     "",
     "### respond",
     "Respond now.",
   );
-  // For reasoning profiles, append a closed (empty) think-block so the
-  // model continues straight into the JSON array instead of opening a
-  // fresh `<think>` chain. For `none` profiles this is a no-op.
-  const closedReasoning = renderClosedReasoningBlock(profile);
-  if (closedReasoning.length > 0) {
-    lines.push(closedReasoning);
+  const openReasoning = renderOpenReasoningBlock(profile);
+  if (openReasoning.length > 0) {
+    lines.push(openReasoning);
   }
   return lines.join("\n");
 }
@@ -844,10 +1010,17 @@ function stripTrailingReasoningPrefill(
   return promptText;
 }
 
-function renderClosedReasoningBlock(profile: ModelProfile | undefined): string {
+/**
+ * Re-append the reasoning open tag (e.g. `<think>`) at the end of the
+ * repair prompt for thinking profiles, mirroring the shape of a normal
+ * prompt. The model then continues in its standard think → `</think>`
+ * → JSON flow, just bounded by `REPAIR_MAX_TOKENS`. For `none` profiles
+ * this is a no-op.
+ */
+function renderOpenReasoningBlock(profile: ModelProfile | undefined): string {
   if (!profile || !profile.requiresPromptThinkPrefix) return "";
   if (profile.reasoningStyle === "none") return "";
-  return `${profile.reasoningOpenTag.trimEnd()}\n${profile.reasoningCloseTag.trimEnd()}`;
+  return profile.reasoningOpenTag.trimEnd();
 }
 
 /**

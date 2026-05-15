@@ -72,6 +72,18 @@ import { gaiaPdfMultiPageFact } from "./gaia-pdf-multi-page-fact.case.js";
 import { gaiaPdfCrossDocArithmetic } from "./gaia-pdf-cross-doc-arithmetic.case.js";
 import { gaiaXlsxConditionalSum } from "./gaia-xlsx-conditional-sum.case.js";
 import { gaiaXlsxCountDistinct } from "./gaia-xlsx-count-distinct.case.js";
+import { gaiaPdfDisambiguateName } from "./gaia-pdf-disambiguate-name.case.js";
+import { gaiaPdfDeepNeedle } from "./gaia-pdf-deep-needle.case.js";
+import { gaiaXlsxWhichIsMissing } from "./gaia-xlsx-which-is-missing.case.js";
+import { gaiaCrossFormatPolicyJoin } from "./gaia-cross-format-policy-join.case.js";
+import { gaiaMultihopVendorBudget } from "./gaia-multihop-vendor-budget.case.js";
+import { gaiaConditionalRevenue } from "./gaia-conditional-revenue.case.js";
+import { gaiaXlsxTop3Customers } from "./gaia-xlsx-top-3-customers.case.js";
+import { gaiaXlsxMultisheetJoin } from "./gaia-xlsx-multisheet-join.case.js";
+import { gaiaHardVaguePrompt } from "./gaia-hard-vague-prompt.case.js";
+import { gaiaHardDecoyFiles } from "./gaia-hard-decoy-files.case.js";
+import { gaiaHardMultihopVague } from "./gaia-hard-multihop-vague.case.js";
+import { gaiaHardStaleSource } from "./gaia-hard-stale-source.case.js";
 
 /**
  * Eval corpus. Order is stable so report rows can be diff'd across runs
@@ -91,11 +103,17 @@ import { gaiaXlsxCountDistinct } from "./gaia-xlsx-count-distinct.case.js";
  *    at the component to fix — they are the "where to improve"
  *    signal, while the other buckets remain the "how well overall"
  *    signal.
- *  - Bucket F (+5): GAIA-style document QA over self-authored
- *    PDF / XLSX fixtures. Internal proxy for assistant-style file
- *    fact retrieval — NOT comparable to published GAIA scores.
+ *  - Bucket F (+17): GAIA-style document QA over self-authored
+ *    PDF / XLSX fixtures. Mix of single-doc lookup, multi-doc
+ *    join, long-context needle, set-difference, conditional
+ *    answer, top-N ranking, multi-sheet JOIN, plus a "hard"
+ *    sub-set that strips section pointers, adds decoy files,
+ *    requires semantic-keyword bridging, and forces choosing
+ *    a current source over a stale legacy. Internal proxy for
+ *    assistant-style file fact retrieval — NOT comparable to
+ *    published GAIA scores.
  *
- * Total = 55. Run `eval:summary` (after a full prog) to get a
+ * Total = 67. Run `eval:summary` (after a full prog) to get a
  * per-axis pass-rate breakdown.
  */
 export const EVAL_CASES: ReadonlyArray<EvalCase> = [
@@ -167,4 +185,17 @@ export const EVAL_CASES: ReadonlyArray<EvalCase> = [
   gaiaPdfCrossDocArithmetic,
   gaiaXlsxConditionalSum,
   gaiaXlsxCountDistinct,
+  gaiaPdfDisambiguateName,
+  gaiaPdfDeepNeedle,
+  gaiaXlsxWhichIsMissing,
+  gaiaCrossFormatPolicyJoin,
+  gaiaMultihopVendorBudget,
+  gaiaConditionalRevenue,
+  gaiaXlsxTop3Customers,
+  gaiaXlsxMultisheetJoin,
+  // Bucket F (hard sub-set) — strip the hints.
+  gaiaHardVaguePrompt,
+  gaiaHardDecoyFiles,
+  gaiaHardMultihopVague,
+  gaiaHardStaleSource,
 ];

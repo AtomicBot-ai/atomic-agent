@@ -23,9 +23,18 @@
 //   7. Hard-kills after `--timeout-ms` (default 60s) and prints the last
 //      observed stderr line.
 
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -244,14 +253,81 @@ async function main() {
     log(`⚠ HUNG — last stderr line was ${args.timeoutMs}ms ago`);
   }
 
-  // 6. Cleanup workspace + daemon (if we started it).
-  rmSync(workspace, { recursive: true, force: true });
+  // 6. Postmortem: dump working-dir source files and save trace.
+  log("─".repeat(60));
+  log("WORKING DIR FILES:");
+  dumpTreeAndReadSmallFiles(workingDir);
+
+  log("─".repeat(60));
+  const tracesDir = join(stateDir, "traces");
+  const reportsDir = join(REPO_ROOT, "eval", "reports");
+  if (existsSync(tracesDir)) {
+    const traces = readdirSync(tracesDir)
+      .filter((name) => name.endsWith(".ndjson"))
+      .map((name) => ({
+        name,
+        full: join(tracesDir, name),
+        mtime: statSync(join(tracesDir, name)).mtimeMs,
+      }))
+      .sort((a, b) => b.mtime - a.mtime);
+    if (traces.length === 0) {
+      log("⚠ no NDJSON trace files in stateDir/traces/");
+    } else {
+      mkdirSync(reportsDir, { recursive: true });
+      const target = join(reportsDir, `diagnose-${args.caseId}.ndjson`);
+      copyFileSync(traces[0].full, target);
+      log(`trace saved to ${relative(REPO_ROOT, target)} (${traces.length} candidate(s))`);
+    }
+  } else {
+    log("⚠ no traces/ directory was created (agent never started a session)");
+  }
+
+  // 7. Cleanup workspace + daemon (if we started it).
+  if (process.env.ATOMIC_AGENT_EVAL_KEEP_WORKSPACE === "1") {
+    log(`keeping workspace at ${workspace} (ATOMIC_AGENT_EVAL_KEEP_WORKSPACE=1)`);
+  } else {
+    rmSync(workspace, { recursive: true, force: true });
+  }
   if (daemon.startedByUs && process.env.ATOMIC_AGENT_EVAL_KEEP_DAEMON !== "1") {
     log(`stopping daemon (set ATOMIC_AGENT_EVAL_KEEP_DAEMON=1 to keep it)`);
     runCli(["models", "stop"]);
   }
 
   process.exit(timedOut ? 1 : 0);
+}
+
+function dumpTreeAndReadSmallFiles(rootDir) {
+  if (!existsSync(rootDir)) {
+    log(`  (workingDir vanished: ${rootDir})`);
+    return;
+  }
+  const entries = [];
+  walk(rootDir, (full) => {
+    const rel = relative(rootDir, full);
+    const size = statSync(full).size;
+    entries.push({ rel, full, size });
+  });
+  entries.sort((a, b) => a.rel.localeCompare(b.rel));
+  for (const { rel, full, size } of entries) {
+    log(`  ${rel} (${size}B)`);
+    if (size > 0 && size < 4096 && /\.(ts|tsx|js|mjs|json|md|txt)$/i.test(rel)) {
+      const body = readFileSync(full, "utf8");
+      for (const line of body.split("\n")) {
+        console.log(`        │ ${line}`);
+      }
+    }
+  }
+}
+
+function walk(dir, onFile) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      walk(full, onFile);
+    } else if (entry.isFile()) {
+      onFile(full);
+    }
+  }
 }
 
 main().catch((err) => {

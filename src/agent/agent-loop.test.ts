@@ -167,13 +167,14 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       skillCatalog: SKILLS,
     });
     const session = createEmptySessionState({ id: "s-bad", workingDir });
-    await expect(
-      loop.runTurn(session, {
-        userMessage: "whatever",
-        maxSteps: 3,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow(/tool-call/);
+    const result = await loop.runTurn(session, {
+      userMessage: "whatever",
+      maxSteps: 3,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("failed");
+    expect(result.session.status).toBe("failed");
+    expect(result.session.lastError).toMatch(/tool-call/);
   });
 
   it("recovers via a one-shot parser retry when the first completion is malformed", async () => {
@@ -371,6 +372,64 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(events.length).toBeGreaterThanOrEqual(1);
     expect(events[0]?.tool).toBe("noop");
     expect(events[0]?.count).toBeGreaterThanOrEqual(3);
+  });
+
+  it("aborts the turn with a `loop_failed` after the detector fires twice in a row", async () => {
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: "noop",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    const detectedEvents: Array<{ count: number }> = [];
+    const failedEvents: Array<{ category: string; message: string }> = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () =>
+        makeCompletion(JSON.stringify({ tool: "noop", args: {} })),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "loop_detected") {
+          detectedEvents.push({ count: event.count });
+        } else if (event.type === "loop_failed") {
+          failedEvents.push({
+            category: event.category,
+            message: event.error.message,
+          });
+        }
+      },
+    });
+    const session = createEmptySessionState({
+      id: "s-loop-abort",
+      workingDir,
+    });
+    // maxSteps=7 lets the detector fire twice (steps 0..2 → fire 1, steps 3..5
+    // → fire 2 → abort returned from step 5 as `reason: "failed"`).
+    const result = await loop.runTurn(session, {
+      userMessage: "stuck",
+      maxSteps: 7,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("failed");
+    expect(result.session.status).toBe("failed");
+    expect(result.session.lastError).toMatch(/no-progress loop/);
+    expect(detectedEvents.length).toBe(2);
+    expect(failedEvents.length).toBe(1);
+    expect(failedEvents[0]!.category).toBe("model");
+    expect(failedEvents[0]!.message).toMatch(/no-progress loop/);
   });
 
   it("refreshes memory context between non-terminal tool steps", async () => {
@@ -676,13 +735,13 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       },
     });
     const session = createEmptySessionState({ id: "s-truncated", workingDir });
-    await expect(
-      loop.runTurn(session, {
-        userMessage: "go",
-        maxSteps: 3,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow();
+    const result = await loop.runTurn(session, {
+      userMessage: "go",
+      maxSteps: 3,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("failed");
+    expect(result.session.status).toBe("failed");
     expect(llmCalls).toBe(1);
     expect(parseRetries).toHaveLength(0);
     expect(stepErrors).toHaveLength(1);
@@ -712,13 +771,13 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       },
     });
     const session = createEmptySessionState({ id: "s-empty", workingDir });
-    await expect(
-      loop.runTurn(session, {
-        userMessage: "go",
-        maxSteps: 3,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow();
+    const result = await loop.runTurn(session, {
+      userMessage: "go",
+      maxSteps: 3,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("failed");
+    expect(result.session.status).toBe("failed");
     expect(llmCalls).toBe(1);
     expect(stepErrors[0]?.category).toBe("model");
   });
@@ -751,13 +810,13 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       },
     });
     const session = createEmptySessionState({ id: "s-grammar", workingDir });
-    await expect(
-      loop.runTurn(session, {
-        userMessage: "go",
-        maxSteps: 3,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow();
+    const result = await loop.runTurn(session, {
+      userMessage: "go",
+      maxSteps: 3,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("failed");
+    expect(result.session.status).toBe("failed");
     expect(llmCalls).toBe(2);
     expect(parseRetries).toHaveLength(1);
     expect(stepErrors[0]?.category).toBe("grammar");
@@ -787,13 +846,14 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       },
     });
     const session = createEmptySessionState({ id: "s-missing", workingDir });
-    await expect(
-      loop.runTurn(session, {
-        userMessage: "go",
-        maxSteps: 3,
-        signal: new AbortController().signal,
-      }),
-    ).rejects.toThrow(/does_not_exist/);
+    const result = await loop.runTurn(session, {
+      userMessage: "go",
+      maxSteps: 3,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("failed");
+    expect(result.session.status).toBe("failed");
+    expect(result.session.lastError).toMatch(/does_not_exist/);
     expect(stepErrors[0]?.category).toBe("tool");
     expect(stepErrors[0]?.message).toMatch(/does_not_exist/);
   });

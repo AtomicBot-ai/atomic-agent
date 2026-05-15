@@ -122,11 +122,30 @@ async function handleNonStream(
       origin: "http",
     });
   } catch (err) {
+    // Reaches this branch only for unclassified / programming
+    // exceptions. Classified terminal failures (`category` ∈
+    // `transport`/`grammar`/`model`/`tool`/`cancelled`) come back as
+    // `result.session.status === "failed"` instead of throwing — see
+    // the next block.
     const message = err instanceof Error ? err.message : String(err);
     sendError(
       res,
       500,
       openaiError(`Internal server error: ${message}`, "server_error"),
+    );
+    return;
+  }
+  if (result.session.status === "failed") {
+    // Surface classified LLM failures as HTTP 500 (matches the legacy
+    // `runTurn`-throws contract that OpenAI clients depend on; an empty
+    // body with finish_reason="stop" would silently strand the caller).
+    sendError(
+      res,
+      500,
+      openaiError(
+        `Agent loop failed: ${result.session.lastError ?? "unknown error"}`,
+        "server_error",
+      ),
     );
     return;
   }
@@ -209,9 +228,18 @@ async function handleStream(
       eventHook: hook,
     });
   } catch (err) {
+    // Same contract as the non-stream branch above: classified
+    // failures land in `result.session.status === "failed"`. This
+    // catch only fires for unclassified exceptions.
     error = err instanceof Error ? err : new Error(String(err));
   } finally {
     ctx.completionRegistry.unregister(env.completionId);
+  }
+
+  if (!error && result?.session.status === "failed") {
+    error = new Error(
+      `Agent loop failed: ${result.session.lastError ?? "unknown error"}`,
+    );
   }
 
   if (error) {

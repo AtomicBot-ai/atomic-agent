@@ -119,6 +119,29 @@ export type StepEvent =
    */
   | { type: "parse_retry"; stepIndex: number; attempt: number; reason: string }
   /**
+   * Emitted in place of `parse_retry` when a multi-call batch failed
+   * validation purely because it contained approval-gated tools. The
+   * runtime auto-splits the batch: the first approval-gated call is
+   * executed as a length-1 batch, all other calls are dropped, and a
+   * `### notice` is injected into the next step's prompt so the model
+   * can retry the dropped calls one-by-one. No LLM round-trip happens
+   * for the trim — this avoids the bewildered-repair pathology where
+   * qwen models pivot to an irrelevant length-1 tool (e.g.
+   * `skill.view`).
+   */
+  | {
+      type: "batch_trimmed";
+      stepIndex: number;
+      /** Original batch size emitted by the model. Always >= 2. */
+      originalSize: number;
+      /** Tool name of the call we kept (executed as length-1 batch). */
+      kept: string;
+      /** Tool names of dropped calls in original batch-index order. */
+      dropped: string[];
+      /** Canonical trim cause. New reasons may be added over time. */
+      reason: "approval-gated-batched";
+    }
+  /**
    * Terminal error for this step. The `category` follows the canonical
    * LLM failure taxonomy (see `src/llm/reliability/`) and is always set
    * even when the underlying error shape is a legacy `Error` — the step

@@ -132,6 +132,30 @@ describe("executeStep batch handling", () => {
       },
     });
     registry.register({
+      name: "os.fs.write",
+      description: "write",
+      readonly: false,
+      async run(args) {
+        return compressToolResult({
+          tool: "os.fs.write",
+          status: "ok",
+          output: `wrote ${args.path}`,
+        });
+      },
+    });
+    registry.register({
+      name: "os.fs.edit",
+      description: "edit",
+      readonly: false,
+      async run(args) {
+        return compressToolResult({
+          tool: "os.fs.edit",
+          status: "ok",
+          output: `edited ${args.path}`,
+        });
+      },
+    });
+    registry.register({
       name: "reply",
       description: "reply",
       readonly: true,
@@ -273,8 +297,8 @@ describe("executeStep batch handling", () => {
   });
 
   it(
-    "for thinking profiles strips the trailing <think> prefill, " +
-      "appends a closed think-block, and caps the repair completion at REPAIR_MAX_TOKENS",
+    "for thinking profiles strips and re-appends the <think> open tag, " +
+      "and caps the repair completion at REPAIR_MAX_TOKENS",
     async () => {
       const registry = makeRegistry();
       const grammar = await buildGrammar(QWEN_THINK_PROFILE, grammarsDir);
@@ -287,10 +311,9 @@ describe("executeStep batch handling", () => {
       // Bodies are what llama-server returns AFTER the appended
       // `<think>` prefill; the executor's normalizeContent prepends
       // the prefix back, so we close the think-block immediately and
-      // emit the JSON body. For the repair attempt, the closed-think
-      // block lives in the prompt itself, so the model would emit
-      // just the JSON — but `normalizeContent` still prepends the
-      // open tag, so we keep the same `</think>` shape for symmetry.
+      // emit the JSON body. The repair attempt has the same shape:
+      // prompt ends with `<think>` (re-appended after strip), model
+      // closes it and emits JSON.
       const bodies = [
         `</think>${JSON.stringify([
           { tool: "os.fs.read", args: { path: "a" } },
@@ -347,16 +370,18 @@ describe("executeStep batch handling", () => {
 
       // Repair call: the trailing `<think>` must be stripped (otherwise
       // the repair instructions would land INSIDE the open think-block
-      // and the model would loop on self-deliberation), and the prompt
-      // must end with a closed empty think-block so generation skips
-      // straight to JSON.
+      // and the model would loop on self-deliberation), then re-appended
+      // at the very end so the model continues in its normal think →
+      // `</think>` → JSON flow (bounded by `REPAIR_MAX_TOKENS`).
       const repairPrompt = prompts[1]!;
       expect(repairPrompt).toContain("### tool-call-repair");
-      expect(repairPrompt.trimEnd().endsWith("<think>\n</think>")).toBe(true);
-      // No second `<think>` open tag dangling before the closed block.
+      expect(repairPrompt.trimEnd().endsWith("<think>")).toBe(true);
+      // The repair body must contain exactly one `<think>` open tag
+      // (the trailing one) and no closing `</think>` — the model emits
+      // the close marker itself in its response.
       const openTagOccurrences = repairPrompt.match(/<think>/g) ?? [];
-      // Exactly one: the one inside the closed `<think></think>` pair.
       expect(openTagOccurrences.length).toBe(1);
+      expect(repairPrompt).not.toContain("</think>");
 
       // Hard cap on the repair completion (defends against runaway
       // reasoning loops on the structured-repair path).
@@ -366,15 +391,143 @@ describe("executeStep batch handling", () => {
     },
   );
 
-  it("rejects a batch containing an approval-gated verb", async () => {
-    const body = JSON.stringify([
-      { tool: "os.fs.read", args: { path: "a" } },
-      { tool: "os.shell.run", args: { cmd: "echo", args: ["hi"] } },
-    ]);
-    await expect(runWithBody(body)).rejects.toThrow(
-      /approval-gated tool 'os.shell.run' is forbidden inside a batch/,
-    );
-  });
+  it(
+    "auto-trims a batch containing an approval-gated verb to a length-1 " +
+      "execution (no LLM repair round-trip, no parse_retry)",
+    async () => {
+      // Mirrors the production `coding-extract-shared-constant` trace
+      // pattern: model emits [write, edit, edit] expecting parallel
+      // execution. The runtime cannot batch approval-gated tools, so
+      // the trim path executes the first approval-gated call (write)
+      // and surfaces a `### notice` for the next step listing the
+      // dropped tools so the model can retry them one-by-one.
+      const body = JSON.stringify([
+        { tool: "os.fs.write", args: { path: "src/constants.ts", content: "x" } },
+        {
+          tool: "os.fs.edit",
+          args: { path: "src/a.ts", oldString: "x", newString: "y" },
+        },
+        {
+          tool: "os.fs.edit",
+          args: { path: "src/b.ts", oldString: "x", newString: "y" },
+        },
+      ]);
+      const events: Array<{ type: string; reason?: string; kept?: string }> = [];
+      const registry = makeRegistry();
+      const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+      const session = createEmptySessionState({
+        id: "s-trim",
+        workingDir: "/w",
+      });
+      const outcome = await executeStep(
+        {
+          session,
+          toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+          capabilities: CAPS,
+          skillCatalog: SKILLS,
+          stepIndex: 0,
+          signal: new AbortController().signal,
+          userMessage: "x",
+        },
+        {
+          registry,
+          slotManager: new SlotManager(2),
+          llmComplete: async () => ({
+            content: body,
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+          }),
+          grammar,
+          profile: PLAIN_INSTRUCT_PROFILE,
+          onEvent: (ev) => {
+            if (ev.type === "batch_trimmed" || ev.type === "parse_retry") {
+              events.push({
+                type: ev.type,
+                ...(ev.type === "batch_trimmed"
+                  ? { kept: ev.kept, reason: ev.reason }
+                  : { reason: ev.reason }),
+              });
+            }
+          },
+        },
+      );
+
+      // Only the first approval-gated call executes; the other two are
+      // dropped without invoking the registry.
+      expect(outcome.toolCalls).toHaveLength(1);
+      expect(outcome.toolResults).toHaveLength(1);
+      expect(outcome.toolCalls[0]!.tool).toBe("os.fs.write");
+      expect(outcome.toolResults[0]!.status).toBe("ok");
+      expect(outcome.toolResults[0]!.summary).toBe("wrote src/constants.ts");
+
+      // A `batch_trimmed` event fires in place of `parse_retry` — no
+      // second LLM call happened on the trim path.
+      const trims = events.filter((e) => e.type === "batch_trimmed");
+      const retries = events.filter((e) => e.type === "parse_retry");
+      expect(trims).toHaveLength(1);
+      expect(retries).toHaveLength(0);
+      expect(trims[0]!.kept).toBe("os.fs.write");
+      expect(trims[0]!.reason).toBe("approval-gated-batched");
+
+      // Trim notice text is captured on the outcome so the agent loop
+      // can plumb it into the next step's `transientNotice`.
+      expect(outcome.trimmedBatchNotice).toBeDefined();
+      expect(outcome.trimmedBatchNotice).toContain("os.fs.write");
+      expect(outcome.trimmedBatchNotice).toContain("os.fs.edit");
+      expect(outcome.trimmedBatchNotice).toContain("length-1 array");
+    },
+  );
+
+  it(
+    "still routes a batch containing a terminal verb through the LLM " +
+      "repair path (terminal verbs are not trim-eligible)",
+    async () => {
+      // `[read, reply]` mixes a batchable read with a terminal verb;
+      // the validator rejects both because `reply` is terminal, not
+      // because approval-gated, so the trim shortcut must NOT engage.
+      // Both attempts return the same offending body, surfacing the
+      // legacy GrammarError after the one-shot repair.
+      const body = JSON.stringify([
+        { tool: "os.fs.read", args: { path: "a" } },
+        { tool: "reply", args: { text: "done" } },
+      ]);
+      await expect(runWithBody(body)).rejects.toThrow(
+        /terminal verb 'reply' is forbidden inside a batch/,
+      );
+    },
+  );
+
+  it(
+    "trims an approval-gated call even when it is not the first in the batch",
+    async () => {
+      // Model batches [read, edit]: the read is `pure_read` (batchable)
+      // but the edit is approval-gated, so the validator rejects the
+      // whole batch. Trim keeps the edit (the first approval-gated
+      // call), drops the read, and surfaces the read in the notice so
+      // the model can re-emit it next step if it still wants it.
+      const body = JSON.stringify([
+        { tool: "os.fs.read", args: { path: "src/a.ts" } },
+        {
+          tool: "os.fs.edit",
+          args: { path: "src/a.ts", oldString: "x", newString: "y" },
+        },
+      ]);
+      const outcome = await runWithBody(body);
+      expect(outcome.toolCalls).toHaveLength(1);
+      expect(outcome.toolCalls[0]!.tool).toBe("os.fs.edit");
+      expect(outcome.trimmedBatchNotice).toContain("os.fs.read");
+    },
+  );
 
   it("emits one tool_call_parsed and tool_call_executed per call with batchIndex", async () => {
     const body = JSON.stringify([

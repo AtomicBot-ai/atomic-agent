@@ -13,8 +13,13 @@
 //
 // Usage:
 //   npm run eval:full
-//   ATOMIC_AGENT_EVAL_KEEP_DAEMON=1 npm run eval:full   # keep daemon up after the run
+//   npm run eval:full -- -t gaia-pdf-disambiguate-name   # forward filter to vitest
+//   npm run eval:full -- --reporter=verbose              # any vitest flag
+//   ATOMIC_AGENT_EVAL_KEEP_DAEMON=1 npm run eval:full    # keep daemon up after the run
 //   ATOMIC_AGENT_EVAL_LLAMA_URL=http://...  npm run eval:full   # bypass managed mode entirely
+//
+// Anything after `--` (in npm) lands in `process.argv.slice(2)` and is
+// forwarded verbatim to the underlying `vitest run` invocation.
 
 import { spawn, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
@@ -119,10 +124,13 @@ async function main() {
 }
 
 function runVitest(baseUrl) {
+  // Forward any extra args (e.g. `-t gaia-pdf-disambiguate-name`) verbatim
+  // to `vitest run`. `npm run` collects everything after `--` into argv.
+  const forwarded = process.argv.slice(2);
   return new Promise((resolvePromise) => {
     const child = spawn(
       "npx",
-      ["vitest", "run", "--config", "eval/vitest.config.ts"],
+      ["vitest", "run", "--config", "eval/vitest.config.ts", ...forwarded],
       {
         cwd: REPO_ROOT,
         env: { ...process.env, ATOMIC_AGENT_EVAL_LLAMA_URL: baseUrl },

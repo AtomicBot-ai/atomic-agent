@@ -9,6 +9,16 @@ import type { RunCaseResult } from "./run-case.js";
  * prompt, the full assistant reply, and per-judge verdicts. This is the
  * input format for `npm run eval:judge`, which re-scores saved replies
  * without re-running the agent.
+ *
+ * On failure (`exitCode !== 0` or `sessionId === null`) we additionally
+ * persist a tail of the spawned CLI's stderr/stdout under `diagnostics`.
+ * This is the only durable record of the agent's exit reason — the temp
+ * workspace (and its trace files) is wiped by `runCase` immediately
+ * after we're called. Without this tail, the entire root-cause story
+ * for "0-step / 0-token / exitCode 1" failures gets lost forever.
+ *
+ * The diagnostics block is intentionally absent on success so passing
+ * runs stay byte-for-byte identical to schema-1 records.
  */
 
 export interface JsonlRowInput {
@@ -17,6 +27,11 @@ export interface JsonlRowInput {
   jsonlPath: string;
 }
 
+const STDERR_TAIL_MAX_LINES = 120;
+const STDERR_TAIL_MAX_BYTES = 16 * 1024;
+const STDOUT_TAIL_MAX_LINES = 40;
+const STDOUT_TAIL_MAX_BYTES = 4 * 1024;
+
 export function appendJsonlRow({
   spec,
   result,
@@ -24,7 +39,7 @@ export function appendJsonlRow({
 }: JsonlRowInput): void {
   const dir = dirname(jsonlPath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const record = {
+  const record: Record<string, unknown> = {
     schema: 1,
     ts: new Date().toISOString(),
     case: {
@@ -61,7 +76,51 @@ export function appendJsonlRow({
     failures: result.failures,
     judgeRecords: result.judgeRecords,
   };
+
+  const diagnostics = buildDiagnostics(result);
+  if (diagnostics !== null) record.diagnostics = diagnostics;
+
   appendFileSync(jsonlPath, `${JSON.stringify(record)}\n`, "utf8");
+}
+
+interface DiagnosticsBlock {
+  reason: "exit_code_nonzero" | "no_session_id" | "timed_out";
+  signal: NodeJS.Signals | null;
+  lastError: string | null;
+  stderrTail: string;
+  stdoutTail: string;
+}
+
+function buildDiagnostics(result: RunCaseResult): DiagnosticsBlock | null {
+  if (result.skipped) return null;
+  const reason = classifyFailureReason(result);
+  if (reason === null) return null;
+  return {
+    reason,
+    signal: result.spawn.signal,
+    lastError: result.cli.lastError,
+    stderrTail: tailText(result.spawn.stderr, STDERR_TAIL_MAX_LINES, STDERR_TAIL_MAX_BYTES),
+    stdoutTail: tailText(result.spawn.stdout, STDOUT_TAIL_MAX_LINES, STDOUT_TAIL_MAX_BYTES),
+  };
+}
+
+function classifyFailureReason(result: RunCaseResult): DiagnosticsBlock["reason"] | null {
+  if (result.spawn.timedOut) return "timed_out";
+  if (result.spawn.exitCode !== 0 && result.spawn.exitCode !== null) return "exit_code_nonzero";
+  if (result.cli.sessionId === null) return "no_session_id";
+  return null;
+}
+
+function tailText(input: string, maxLines: number, maxBytes: number): string {
+  if (input.length === 0) return "";
+  const lines = input.split(/\r?\n/);
+  const lastLines = lines.slice(-maxLines);
+  let tail = lastLines.join("\n");
+  if (tail.length > maxBytes) {
+    const overflow = tail.length - maxBytes;
+    tail = `[…${overflow} bytes truncated…]\n` + tail.slice(overflow);
+  }
+  return tail;
 }
 
 function summariseExpectation(e: EvalCase["expectations"][number]): unknown {

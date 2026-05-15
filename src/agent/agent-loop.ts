@@ -12,6 +12,7 @@ import type { ToolRegistry } from "../tools/tool-registry.js";
 import {
   CancelledError,
   LlmFailure,
+  ModelError,
   classifyFailure,
 } from "../llm/index.js";
 import type { LlmFailureCategory } from "../llm/index.js";
@@ -159,6 +160,17 @@ export type AgentLoopReason =
   | "cancelled"
   | "failed";
 
+/**
+ * Hard upper bound on the number of `loop_detected` notices we tolerate
+ * in a single turn before aborting. The first hint injects a `### notice`
+ * and gives the model a fresh step to break the loop; further hints
+ * indicate the model is genuinely stuck and additional iterations would
+ * just burn daemon slot time. With the default detector threshold of 3
+ * consecutive identical observations, `2` corresponds to ~6 wasted steps
+ * before the turn is cut.
+ */
+const LOOP_ABORT_AFTER_HINTS = 2;
+
 export type AgentLoopEvent =
   | { type: "user_message"; text: string }
   | { type: "turn_started"; turnIndex: number }
@@ -263,6 +275,11 @@ export class AgentLoop {
     // as soon as it is consumed so the stable tail does not carry stale
     // nudges across steps.
     let pendingNotice: string | undefined;
+    // Number of times the loop detector has fired in this turn. The first
+    // fire injects a `### notice` and lets the model try to break out;
+    // subsequent fires escalate (see `LOOP_ABORT_AFTER_HINTS`). Reset only
+    // when a non-repeat observation breaks the run inside the detector.
+    let loopHintCount = 0;
 
     state = { ...state, status: "running" };
 
@@ -372,6 +389,16 @@ export class AgentLoop {
           reason = "reply";
           break;
         }
+        // A trimmed-batch step (auto-split: approval-gated solo) seeds
+        // the next step's `pendingNotice` so the model sees which calls
+        // were dropped and can retry them as length-1 arrays. The
+        // loop-detector path below may overwrite this with a repeat
+        // notice — that is intentional: a loop hint outranks a trim
+        // hint since the loop indicates the model failed to make
+        // progress over multiple steps.
+        if (outcome.trimmedBatchNotice !== undefined) {
+          pendingNotice = outcome.trimmedBatchNotice;
+        }
         // Feed the detector AFTER terminal checks so `reply`/`finish` never
         // trigger a hint (those steps legitimately look identical to the
         // previous tool output). Batched steps feed the composite hash
@@ -398,11 +425,13 @@ export class AgentLoop {
               });
         if (verdict.kind === "repeat") {
           pendingNotice = formatRepeatNotice(verdict);
+          loopHintCount += 1;
           this.deps.logger?.warn("no-progress loop detected", {
             sessionId: state.id,
             stepIndex: i,
             tool: verdict.tool,
             count: verdict.count,
+            hintCount: loopHintCount,
           });
           this.deps.onEvent?.({
             type: "loop_detected",
@@ -410,6 +439,22 @@ export class AgentLoop {
             count: verdict.count,
             stepIndex: i,
           });
+          if (loopHintCount >= LOOP_ABORT_AFTER_HINTS) {
+            // The detector has fired `LOOP_ABORT_AFTER_HINTS` times in
+            // this turn without the model changing behaviour. Each fire
+            // already injected a `### notice` and gave the model a fresh
+            // step to react, so further iterations would just burn
+            // daemon slot time and step budget without progress. Throw a
+            // `ModelError` ("no_stop" — the model failed to terminate
+            // its sequence) so the existing failure path emits
+            // `loop_failed`, marks the session `failed`, frees the slot
+            // immediately, and lets the eval harness / CLI surface a
+            // clean exit instead of a 15+-step disaster.
+            throw new ModelError(
+              "no_stop",
+              `no-progress loop: \`${verdict.tool}\` repeated identically across ${loopHintCount} hint cycles (${verdict.count} consecutive observations in the latest run); abandoning turn.`,
+            );
+          }
         }
         state = await refreshMemoryContext(this.deps, state, options);
       } catch (err) {
@@ -451,7 +496,22 @@ export class AgentLoop {
           });
           return { session: state, reason: "cancelled", stepCount: stepsTaken };
         }
+        // Symmetric with the cancelled path above: set terminal state,
+        // emit `loop_completed` + `turn_finished`, increment turnCount,
+        // and RETURN — never throw. Callers (CLI / TUI / task-runner /
+        // OpenAI HTTP / Telegram) all already key off
+        // `result.session.status === "failed"` or `result.reason ===
+        // "failed"`; the throw was an unintended asymmetry that
+        // pre-dated the `failed` branch in `task-runner.ts:288-294` and
+        // `tui/chat-orchestrator.ts:293`. Throwing here also caused the
+        // outer CLI catch to drop the JSON status block, hiding
+        // sessionId from the eval harness — the very symptom we are
+        // fixing here. `cancelled` and `failed` are both classified
+        // terminations; only programming bugs or unclassified errors
+        // should ever bubble past this point.
         state = { ...state, status: "failed", lastError: runError.message };
+        this.deps.onEvent?.({ type: "loop_completed", reason: "failed" });
+        state = incrementTurnCount(state);
         const durationMs = Date.now() - turnStartedAt;
         this.deps.onEvent?.({
           type: "turn_finished",
@@ -460,7 +520,7 @@ export class AgentLoop {
           stepCount: stepsTaken,
           durationMs,
         });
-        throw runError;
+        return { session: state, reason: "failed", stepCount: stepsTaken };
       }
     }
 

@@ -30,6 +30,7 @@
     "eval:stub": "node eval/scripts/stub-llama-server.mjs",
     "eval:with-stub": "node eval/scripts/run-with-stub.mjs",
     "eval:full": "node eval/scripts/run-full-eval.mjs",
+    "eval:gaia": "node eval/scripts/run-full-eval.mjs -t gaia-style",
     "eval:summary": "node eval/scripts/summarize-run.mjs",
     "cli": "node --enable-source-maps dist/cli/index.js",
     "sidecar": "node --enable-source-maps dist/sidecar/main.js",
