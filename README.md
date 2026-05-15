@@ -96,7 +96,7 @@ Local-first does not magically remove every privacy risk: if you point the runti
 ### Install From Release
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AtomicBot-ai/atomic-agent/main/scripts/install.sh | sh
+curl -fsSL https://api.atomicbot.ai/agent-install | sh
 ```
 
 The installer downloads the matching archive, verifies the checksum, and installs the CLI plus runtime assets such as `grammars/`, `vendor/rg`, and native prebuilds.
