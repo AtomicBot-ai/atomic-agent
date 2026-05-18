@@ -330,10 +330,15 @@ export class MemoryStore {
     );
     // Utility-weighted eviction. Single SQL statement — cross-phase
     // invariant 5: no per-row JS loop with I/O (§13.7.6).
+    // Phase 7a: `vote_score ASC` slots in as the **first** tier so
+    // negatively-voted rows are demoted ahead of merely-unused
+    // ones (cross-phase invariant 19). Ties between equal-score
+    // rows still fall through to the utility-recall ladder.
     this.evictUtilityStmt = this.db.prepare(
       `DELETE FROM memories WHERE id IN (
          SELECT id FROM memories
-          ORDER BY recall_count ASC,
+          ORDER BY vote_score ASC,
+                   recall_count ASC,
                    COALESCE(last_recalled_at, 0) ASC,
                    updated_at ASC,
                    id ASC

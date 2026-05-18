@@ -14,7 +14,7 @@
  * `applyMigrations` with a new step. The `schema_meta` table records the
  * version actually present on disk so upgrades are idempotent.
  */
-export const MEMORY_SCHEMA_VERSION = 8 as const;
+export const MEMORY_SCHEMA_VERSION = 9 as const;
 
 const BASE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -342,6 +342,82 @@ CREATE TRIGGER lessons_au AFTER UPDATE ON lessons BEGIN
 END;
 `;
 
+// V9 introduces the **vote curation layer** — memory-v2 phase 7a
+// (Path E, ExpeL-style). Three additions:
+//
+//   1. `vote_score REAL NOT NULL DEFAULT 0.0` columns on `memories`,
+//      `lessons`, and `profile_facts`. The default is `0.0` so every
+//      pre-existing row migrates cleanly: a v8 corpus boots as if the
+//      voting layer is silent until the first reflection sub-call
+//      actually writes a vote. `REAL` lets `signalDecay` (default
+//      `0.95`) accumulate fractional ageing instead of integer
+//      truncation, which would otherwise round most scores to zero
+//      after a single consolidator tick.
+//
+//   2. `vote_events` audit table. One row per applied vote. Columns:
+//        - `id`           autoincrement primary key.
+//        - `kind`         `'memory' | 'lesson' | 'profile'` (text so
+//                          7b can extend to `'procedure'` without a
+//                          schema bump).
+//        - `target_id`    soft pointer into the corresponding table
+//                          (`memories.id`, `lessons.id`,
+//                          `profile_facts.id`). Intentionally **not**
+//                          a foreign key: target rows can be evicted
+//                          for utility-eviction reasons (phase 1A) or
+//                          deprecated (phase 6) while the audit log
+//                          still needs to remember the vote happened.
+//        - `direction`    `+1` upvote, `-1` downvote.
+//        - `session_id`   the session that produced the vote (for
+//                          per-session attribution; phase 7a does not
+//                          consume it but trace correlation does).
+//        - `turn_index`   monotonically increasing turn counter
+//                          within the session at the moment of the
+//                          vote. Useful for after-the-fact reasoning
+//                          about which turn produced which signal.
+//        - `created_at`   wall-clock ms; drives FIFO eviction once
+//                          `memory.voting.eventLogMaxRows` is hit.
+//      Both the table and the FIFO eviction predicate are explicitly
+//      capped — see cross-phase invariant 19 in MEMORY_FABRIC_V2.md
+//      §13.7.7. Without the cap, a long-running agent would grow
+//      `vote_events` unboundedly.
+//
+//   3. Indexes for ranking + sweep: `idx_memories_vote_score`,
+//      `idx_lessons_vote_score`, `idx_vote_events_created`. The two
+//      `vote_score` indexes back the secondary-sort used by lesson
+//      recall reranking (`combinedScore = scoreBlend * vote_score +
+//      (1 - scoreBlend) * (success_count - failure_count)`) and by
+//      utility-eviction's `vote_score ASC` tiebreak. The
+//      `created_at` index on `vote_events` makes FIFO eviction
+//      `ORDER BY created_at ASC LIMIT N` cheap.
+//
+// **No KV-cache invalidation.** The schema change is invisible to
+// the stable prefix; nothing in the agent's prompt mentions a vote
+// score. The reflection slot **does** get a new sub-prompt (vote
+// micro-prompt), but that lives entirely on the reflection slot —
+// the main agent slot's KV cache is untouched. See cross-phase
+// invariant 7 in MEMORY_FABRIC_V2.md §13.7.
+const V9_MIGRATION = `
+ALTER TABLE memories       ADD COLUMN vote_score REAL NOT NULL DEFAULT 0.0;
+ALTER TABLE lessons        ADD COLUMN vote_score REAL NOT NULL DEFAULT 0.0;
+ALTER TABLE profile_facts  ADD COLUMN vote_score REAL NOT NULL DEFAULT 0.0;
+
+CREATE INDEX idx_memories_vote_score ON memories(vote_score);
+CREATE INDEX idx_lessons_vote_score  ON lessons(vote_score);
+
+CREATE TABLE vote_events (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind        TEXT NOT NULL,
+  target_id   INTEGER NOT NULL,
+  direction   INTEGER NOT NULL,
+  session_id  TEXT,
+  turn_index  INTEGER,
+  created_at  INTEGER NOT NULL
+);
+
+CREATE INDEX idx_vote_events_created ON vote_events(created_at);
+CREATE INDEX idx_vote_events_target  ON vote_events(kind, target_id);
+`;
+
 export interface MemoryDatabaseLike {
   exec(sql: string): unknown;
   prepare(sql: string): {
@@ -381,6 +457,9 @@ export function applyMigrations(db: MemoryDatabaseLike): void {
   }
   if (current < 8) {
     db.exec(V8_MIGRATION);
+  }
+  if (current < 9) {
+    db.exec(V9_MIGRATION);
   }
   if (current === MEMORY_SCHEMA_VERSION) return;
   db.prepare(

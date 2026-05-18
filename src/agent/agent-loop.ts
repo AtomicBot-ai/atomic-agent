@@ -123,6 +123,26 @@ export interface AgentLoopDependencies {
    * that lives in `src/memory/reflection/`.
    */
   reflectionRunner?: ReflectionRunner;
+  /**
+   * Memory-v2 phase 6 — lesson lifecycle hook.
+   *
+   * Invoked exactly once at the end of every `runTurn` with the
+   * union of lesson ids that were surfaced into `### lessons`
+   * across the turn (`state.recalledLessons` may be refreshed
+   * per-step) and the terminal reason. Cross-phase invariants:
+   *
+   *  - **Once per turn, deduplicated.** Even if the same lesson
+   *    surfaced on multiple steps, the bump fires exactly once.
+   *  - **No bump for cancelled / max_steps.** Those are neither
+   *    success nor failure signals; phase 7a may revisit
+   *    `max_steps` as a soft negative once vote curation lands.
+   *  - **Fire-safe.** The hook is invoked synchronously after
+   *    `turn_finished` is emitted; errors are swallowed by the
+   *    caller so a sqlite hiccup never derails the return path.
+   *
+   * Pinned by `agent-loop-lesson-lifecycle.test.ts`.
+   */
+  lessonLifecycle?: LessonLifecycleHook;
   onEvent?: (event: AgentLoopEvent) => void;
   metrics?: AgentMetrics;
   logger?: StructuredLogger;
@@ -150,6 +170,29 @@ export interface MemoryContextProvider {
   buildMemoryContext(
     input: MemoryContextProviderInput,
   ): Promise<MemoryContext> | MemoryContext;
+}
+
+/**
+ * Memory-v2 phase 6. Outcome signal for `LessonLifecycleHook`.
+ * `reply` and `finish` are positive; `failed` is negative;
+ * `cancelled` / `max_steps` are filtered out by the caller before
+ * invoking the hook (so implementations only see informative
+ * outcomes).
+ */
+export type LessonLifecycleOutcome = "success" | "failure";
+
+export interface LessonLifecycleHook {
+  /**
+   * Bump `success_count` / `failure_count` for each surfaced lesson
+   * id, once per turn. Implementations must be idempotent — the
+   * loop deduplicates ids before invoking the hook, but a
+   * paranoid implementation is welcome to dedupe again.
+   */
+  recordTurnOutcome(args: {
+    sessionId: string;
+    surfacedLessonIds: readonly number[];
+    outcome: LessonLifecycleOutcome;
+  }): void;
 }
 
 export interface RunTurnOptions {
@@ -278,6 +321,18 @@ export class AgentLoop {
     let stepsTaken = 0;
     let runError: Error | null = null;
     const loopDetector = new LoopDetector();
+    // Memory-v2 phase 6 — accumulate the union of lesson ids surfaced
+    // across every step of this turn. `refreshMemoryContext` may
+    // recompute `state.recalledLessons` per step; we record each new
+    // id as it lands so the lifecycle hook fires once-per-turn-per-id
+    // even when the same lesson keeps re-surfacing.
+    const surfacedLessonIds = new Set<number>();
+    const recordSurfacedLessons = (s: SessionState): void => {
+      for (const l of s.recalledLessons ?? []) {
+        surfacedLessonIds.add(l.id);
+      }
+    };
+    recordSurfacedLessons(state);
     // One-shot notice injected into the NEXT step's prompt only. Cleared
     // as soon as it is consumed so the stable tail does not carry stale
     // nudges across steps.
@@ -464,6 +519,7 @@ export class AgentLoop {
           }
         }
         state = await refreshMemoryContext(this.deps, state, options);
+        recordSurfacedLessons(state);
       } catch (err) {
         runError = err instanceof Error ? err : new Error(String(err));
         const category = classifyFailure(err);
@@ -527,6 +583,11 @@ export class AgentLoop {
           stepCount: stepsTaken,
           durationMs,
         });
+        // Phase 6 — bump failure_count for every surfaced lesson.
+        // `cancelled` is intentionally NOT routed here; that branch
+        // returned earlier without calling the hook (cancellation
+        // carries neither success nor failure signal).
+        invokeLessonLifecycle(this.deps, state.id, surfacedLessonIds, "failure");
         return { session: state, reason: "failed", stepCount: stepsTaken };
       }
     }
@@ -570,6 +631,15 @@ export class AgentLoop {
       durationMs,
     });
 
+    // Phase 6 — bump success/failure counters on surfaced lessons.
+    // `reply` / `finish` are positive outcomes; `cancelled` /
+    // `max_steps` are filtered out (neither a success nor failure
+    // signal). The `failed` branch already fired the hook above
+    // before its early `return`.
+    if (reason === "reply" || reason === "finish") {
+      invokeLessonLifecycle(this.deps, state.id, surfacedLessonIds, "success");
+    }
+
     // Fire async memory reflection for turns that ended with a genuine
     // assistant reply. Never awaited — the runner swallows its own
     // errors; the loop stays decoupled from memory-formation latency.
@@ -580,6 +650,16 @@ export class AgentLoop {
     ) {
       const assistantReply = findLastAssistantReply(state);
       if (assistantReply !== null) {
+        // Memory-v2 phase 7a. The allowlist for the vote-runner is
+        // the union of (notes recalled this turn) ∪ (lessons
+        // recalled across all steps of this turn) ∪ (profile
+        // facts currently active). Profile facts are not gated by
+        // recall — they're always candidates because the renderer
+        // already surfaces them whenever they pass the
+        // contextual-keyword gate. Sourcing them here keeps the
+        // decorator's hydration cheap.
+        const profileFacts =
+          this.deps.profileFactsProvider?.() ?? [];
         void this.deps.reflectionRunner.reflect({
           sessionId: state.id,
           userMessage: options.userMessage,
@@ -590,11 +670,54 @@ export class AgentLoop {
           ...(state.recalledNotes && state.recalledNotes.length > 0
             ? { recalledMemoryIds: state.recalledNotes.map((n) => n.id) }
             : {}),
+          // Memory-v2 phase 7a. Allowlist for the vote-runner —
+          // every lesson surfaced through any step of this turn,
+          // every profile fact currently active.
+          ...(surfacedLessonIds.size > 0
+            ? { recalledLessonIds: Array.from(surfacedLessonIds) }
+            : {}),
+          ...(profileFacts.length > 0
+            ? {
+                recalledProfileFactIds: profileFacts
+                  .map((f) => f.id)
+                  .filter((id): id is number => typeof id === "number"),
+              }
+            : {}),
+          turnIndex: state.turns.length,
         });
       }
     }
 
     return { session: state, reason, stepCount: stepsTaken };
+  }
+}
+
+/**
+ * Phase 6 — fire the lesson lifecycle hook exactly once with the
+ * de-duplicated set of surfaced ids. Empty set or missing hook is a
+ * silent no-op. Hook errors are swallowed so a sqlite hiccup never
+ * derails the agent-loop return path.
+ */
+function invokeLessonLifecycle(
+  deps: AgentLoopDependencies,
+  sessionId: string,
+  surfacedIds: ReadonlySet<number>,
+  outcome: LessonLifecycleOutcome,
+): void {
+  const hook = deps.lessonLifecycle;
+  if (!hook) return;
+  if (surfacedIds.size === 0) return;
+  try {
+    hook.recordTurnOutcome({
+      sessionId,
+      surfacedLessonIds: Array.from(surfacedIds),
+      outcome,
+    });
+  } catch (err) {
+    deps.logger?.warn?.("lesson lifecycle hook failed", {
+      sessionId,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 

@@ -1052,11 +1052,19 @@ describe("AgentLoop reflection hook", () => {
     expect(result.reason).toBe("reply");
     expect(abortPending).toHaveBeenCalledTimes(1);
     expect(reflect).toHaveBeenCalledTimes(1);
-    expect(reflect).toHaveBeenCalledWith({
-      sessionId: "s-ref-1",
-      userMessage: "hi there",
-      assistantReply: "hello back",
-    });
+    // Phase 7a — `turnIndex` is threaded into `ReflectionInput` so
+    // the vote-runner can stamp `vote_events.turn_index`. The exact
+    // value tracks `state.turns.length` after the assistant reply
+    // lands; assertion uses `objectContaining` so subsequent
+    // phases can extend the input without re-breaking this test.
+    expect(reflect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "s-ref-1",
+        userMessage: "hi there",
+        assistantReply: "hello back",
+        turnIndex: expect.any(Number),
+      }),
+    );
   });
 
   it("does not fire reflect() when runTurn is resumed without a new user message", async () => {

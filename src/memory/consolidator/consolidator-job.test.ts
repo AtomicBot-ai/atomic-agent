@@ -111,6 +111,103 @@ function makeHarness(opts: HarnessOptions = {}): Harness {
   } as Harness;
 }
 
+// Phase 6 — dedicated fixture with injectable clock and metrics wired
+// into BOTH the lessonStore (so `markDeprecated` fires the metric)
+// AND the job. Keeps the phase-6 sweep tests self-contained without
+// the layered re-harness dance the phase-5 tests use.
+interface Phase6Fixture {
+  job: ConsolidatorJob;
+  lessonStore: LessonStore;
+  memoryStore: MemoryStore;
+  linkStore: LinkStore;
+  events: Event[];
+  clock: number;
+  dispose: () => void;
+}
+
+function makePhase6Fixture(opts: {
+  deprecationAgeMs: number;
+  maxEntries: number;
+  maxDeprecationsPerTick?: number;
+}): Phase6Fixture {
+  const dir = mkdtempSync(join(tmpdir(), "atomic-consolidator-p6-"));
+  const memoryStore = new MemoryStore({
+    dbFile: join(dir, "memory.sqlite"),
+    maxEntries: 100,
+  });
+  const linkStore = new LinkStore({
+    db: memoryStore.getDatabaseHandleForEmbeddings(),
+  });
+  const events: Event[] = [];
+  const collector = new MetricsCollector({
+    sinks: [
+      (e) =>
+        events.push({
+          name: e.name,
+          value: e.value,
+          tags: e.tags as Record<string, string> | undefined,
+        }),
+    ],
+  });
+  const metrics = new AgentMetrics(collector);
+  // Closure-captured clock; tests mutate `fixture.clock` directly.
+  // The LessonStore + the job share the **same** clock so `created_at`
+  // and `now - deprecationAgeMs` line up deterministically.
+  const fixture: Partial<Phase6Fixture> & { clock: number } = {
+    clock: 1_000_000,
+  };
+  const clock = () => fixture.clock;
+  const lessonStore = new LessonStore({
+    dbFile: join(dir, "memory.sqlite"),
+    maxEntries: opts.maxEntries,
+    metrics,
+    now: clock,
+  });
+  const distill = new DistillRunner({
+    llmComplete: async () =>
+      ({
+        content: `LESSON activation="x"; principle="y"\n`,
+        reasoningContent: null,
+        finishReason: "stop",
+        usage: null,
+      }) as never,
+    slotId: -1,
+    timeoutMs: 5000,
+  });
+  const job = new ConsolidatorJob(
+    {
+      enabled: true,
+      intervalMs: 60_000,
+      cooldownMs: 0,
+      minClusterSize: 3,
+      maxClustersPerTick: 5,
+      requireSharedTag: false,
+      consolidationLeaseMs: 60_000,
+      deprecationAgeMs: opts.deprecationAgeMs,
+      maxDeprecationsPerTick: opts.maxDeprecationsPerTick ?? 100,
+    },
+    {
+      memoryStore,
+      linkStore,
+      lessonStore,
+      distillRunner: distill,
+      metrics,
+      now: clock,
+    },
+  );
+  fixture.job = job;
+  fixture.lessonStore = lessonStore;
+  fixture.memoryStore = memoryStore;
+  fixture.linkStore = linkStore;
+  fixture.events = events;
+  fixture.dispose = () => {
+    lessonStore.close();
+    memoryStore.close();
+    rmSync(dir, { recursive: true, force: true });
+  };
+  return fixture as Phase6Fixture;
+}
+
 describe("ConsolidatorJob (phase 5, scenario 5.A)", () => {
   let h: Harness;
 
@@ -301,6 +398,253 @@ describe("ConsolidatorJob (phase 5, scenario 5.A)", () => {
     );
     expect(run).toBeDefined();
     expect(run?.tags?.outcome).toBe("ok");
+  });
+
+  // Phase 6 — scenario 6.A.1 / 6.A.6: aged-out lessons with
+  // success_count==0 get demoted to `deprecated` and the metric
+  // fires with reason=aged_out.
+  it("deprecation sweep demotes aged-out lessons with success_count=0 and fires the metric", async () => {
+    h.dispose();
+    const fixture = makePhase6Fixture({
+      deprecationAgeMs: 1000,
+      maxEntries: 100,
+    });
+    try {
+      // Both rows created at clock=T0, success_count=0/1. The job
+      // ticks at clock=T0+5000, so age=5000 > 1000 — both are
+      // eligible by age. Bumping success on `b` saves it.
+      fixture.clock = 1_000_000;
+      const a = fixture.lessonStore.create({
+        activation: "old useless",
+        principle: "p",
+        parentIds: [1, 2, 3],
+      });
+      const b = fixture.lessonStore.create({
+        activation: "old useful",
+        principle: "p",
+        parentIds: [4, 5, 6],
+      });
+      fixture.lessonStore.bumpSuccess(b.id);
+      fixture.clock = 1_005_000;
+      const result = await fixture.job.runOnce();
+      expect(result.lessonsDeprecatedByAge).toBe(1);
+      expect(fixture.lessonStore.getById(a.id)?.status).toBe("deprecated");
+      expect(fixture.lessonStore.getById(b.id)?.status).toBe("active");
+      const dep = fixture.events.find(
+        (e) => e.name === "agent.memory.lessons.deprecated",
+      );
+      expect(dep).toBeDefined();
+      expect(dep?.tags?.reason).toBe("aged_out");
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  // Phase 6 — scorecard 6.A.4: deprecated lessons remain readable by id.
+  it("deprecated lessons are excluded from recall but still readable by id", async () => {
+    const a = h.lessonStore.create({
+      activation: "needle exact match",
+      principle: "principle a",
+      parentIds: [1, 2, 3],
+    });
+    h.lessonStore.markDeprecated(a.id, "aged_out");
+    // BM25 recall (active-only by default) drops the deprecated row.
+    expect(h.lessonStore.recall({ query: "needle" }).map((l) => l.id)).not.toContain(
+      a.id,
+    );
+    // `getById` returns it regardless of status.
+    expect(h.lessonStore.getById(a.id)?.status).toBe("deprecated");
+  });
+
+  // Phase 6 — `maxEntries` FIFO eviction (bounded total).
+  it("overflow sweep demotes oldest active lessons by updated_at FIFO and fires the metric", async () => {
+    h.dispose();
+    const fixture = makePhase6Fixture({
+      deprecationAgeMs: 0,
+      maxEntries: 2,
+    });
+    try {
+      fixture.clock = 1_000;
+      const oldest = fixture.lessonStore.create({
+        activation: "oldest",
+        principle: "p",
+        parentIds: [1],
+      });
+      fixture.clock = 2_000;
+      const middle = fixture.lessonStore.create({
+        activation: "middle",
+        principle: "p",
+        parentIds: [2],
+      });
+      fixture.clock = 3_000;
+      const newest = fixture.lessonStore.create({
+        activation: "newest",
+        principle: "p",
+        parentIds: [3],
+      });
+      fixture.lessonStore.bumpSuccess(oldest.id);
+      fixture.lessonStore.bumpSuccess(middle.id);
+      fixture.lessonStore.bumpSuccess(newest.id);
+      fixture.clock = 9_000;
+      const result = await fixture.job.runOnce();
+      expect(result.lessonsDeprecatedByOverflow).toBe(1);
+      expect(fixture.lessonStore.getById(oldest.id)?.status).toBe("deprecated");
+      expect(fixture.lessonStore.countActive()).toBe(2);
+      const overflow = fixture.events.find(
+        (e) =>
+          e.name === "agent.memory.lessons.deprecated" &&
+          e.tags?.reason === "overflow",
+      );
+      expect(overflow).toBeDefined();
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  // Phase 6 — combined cap.
+  it("sweep respects maxDeprecationsPerTick across both passes", async () => {
+    h.dispose();
+    const fixture = makePhase6Fixture({
+      deprecationAgeMs: 0,
+      maxEntries: 1,
+      maxDeprecationsPerTick: 1,
+    });
+    try {
+      for (let i = 0; i < 5; i++) {
+        fixture.clock = 1_000 + i;
+        const l = fixture.lessonStore.create({
+          activation: `a${i}`,
+          principle: "p",
+          parentIds: [i + 1],
+        });
+        fixture.lessonStore.bumpSuccess(l.id);
+      }
+      fixture.clock = 100_000;
+      const result = await fixture.job.runOnce();
+      const total =
+        result.lessonsDeprecatedByAge + result.lessonsDeprecatedByOverflow;
+      expect(total).toBe(1);
+    } finally {
+      fixture.dispose();
+    }
+  });
+
+  // Phase 6 — scorecard 6.A.4: deprecated lessons remain readable by id.
+  it("deprecated lessons are excluded from recall but still readable by id", async () => {
+    const a = h.lessonStore.create({
+      activation: "needle exact match",
+      principle: "principle a",
+      parentIds: [1, 2, 3],
+    });
+    h.lessonStore.markDeprecated(a.id, "aged_out");
+    expect(
+      h.lessonStore.recall({ query: "needle" }).map((l) => l.id),
+    ).not.toContain(a.id);
+    expect(h.lessonStore.getById(a.id)?.status).toBe("deprecated");
+  });
+
+  // Phase 6 — scorecard 6.A.5: `lesson_deprecated` event fires once
+  // per demoted lesson with the right reason.
+  it("emits onLessonDeprecated for every demoted lesson (age + overflow)", async () => {
+    h.dispose();
+    const events: Array<{ lessonId: number; reason: string }> = [];
+    const baseFixture = makePhase6Fixture({
+      deprecationAgeMs: 100,
+      maxEntries: 1,
+    });
+    try {
+      // Replace the job with one that has the callback wired. The
+      // shared fixture builds the job without the callback by
+      // default; we recreate it cheaply over the same stores.
+      const customJob = new ConsolidatorJob(
+        {
+          enabled: true,
+          intervalMs: 60_000,
+          cooldownMs: 0,
+          minClusterSize: 3,
+          maxClustersPerTick: 5,
+          requireSharedTag: false,
+          consolidationLeaseMs: 60_000,
+          deprecationAgeMs: 100,
+          maxDeprecationsPerTick: 100,
+        },
+        {
+          memoryStore: baseFixture.memoryStore,
+          linkStore: baseFixture.linkStore,
+          lessonStore: baseFixture.lessonStore,
+          distillRunner: new DistillRunner({
+            llmComplete: async () =>
+              ({
+                content: `LESSON activation="x"; principle="y"\n`,
+                reasoningContent: null,
+                finishReason: "stop",
+                usage: null,
+              }) as never,
+            slotId: -1,
+            timeoutMs: 5_000,
+          }),
+          now: () => baseFixture.clock,
+          onLessonDeprecated: (e) => events.push(e),
+        },
+      );
+      baseFixture.clock = 1_000;
+      const aged = baseFixture.lessonStore.create({
+        activation: "aged",
+        principle: "p",
+        parentIds: [1],
+      });
+      // Two successful survivors — after the age sweep demotes
+      // `aged`, the FIFO sweep with maxEntries=1 still demotes the
+      // oldest of the two surviving rows.
+      const survivor1 = baseFixture.lessonStore.create({
+        activation: "survivor1",
+        principle: "p",
+        parentIds: [2],
+      });
+      baseFixture.lessonStore.bumpSuccess(survivor1.id);
+      baseFixture.clock = 1_500;
+      const survivor2 = baseFixture.lessonStore.create({
+        activation: "survivor2",
+        principle: "p",
+        parentIds: [3],
+      });
+      baseFixture.lessonStore.bumpSuccess(survivor2.id);
+      baseFixture.clock = 2_000;
+      await customJob.runOnce();
+      const byLesson = new Map(events.map((e) => [e.lessonId, e.reason]));
+      expect(byLesson.get(aged.id)).toBe("aged_out");
+      // The older of the two survivors is `survivor1`.
+      expect(byLesson.get(survivor1.id)).toBe("overflow");
+      expect(byLesson.has(survivor2.id)).toBe(false);
+    } finally {
+      baseFixture.dispose();
+    }
+  });
+
+  // Phase 6 — sweep runs even on a "none" tick (no clusters formed).
+  it("deprecation sweep runs on every tick, including when no clusters form", async () => {
+    h.dispose();
+    const fixture = makePhase6Fixture({
+      deprecationAgeMs: 100,
+      maxEntries: 100,
+    });
+    try {
+      fixture.clock = 1_000;
+      const a = fixture.lessonStore.create({
+        activation: "stale",
+        principle: "p",
+        parentIds: [1],
+      });
+      // Move the clock past the threshold.
+      fixture.clock = 2_000;
+      // No memories in the store → distillation returns "none".
+      const result = await fixture.job.runOnce();
+      expect(result.outcome).toBe("none");
+      expect(result.lessonsDeprecatedByAge).toBe(1);
+      expect(fixture.lessonStore.getById(a.id)?.status).toBe("deprecated");
+    } finally {
+      fixture.dispose();
+    }
   });
 
   it("re-entry guard returns a zero-summary when another tick is in flight", async () => {

@@ -304,6 +304,82 @@ describe("createTraceRecorder", () => {
     expect(events.filter((e) => e.type === "llm_completion")).toHaveLength(0);
   });
 
+  // Phase 7a — recorder owns the seq counter for vote events too,
+  // so they interleave cleanly with the agent-loop stream even
+  // though `VoteRunner` fires post-turn (after `turn_finished`).
+  it("emits vote_applied with monotonic seq", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-vote-a", emit, now });
+    rec.beginSession({ workingDir: "/w" });
+    rec.recordVoteApplied({
+      kind: "lesson",
+      targetId: 42,
+      direction: 1,
+      score: 3,
+      clampHit: false,
+    });
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({
+      type: "vote_applied",
+      sessionId: "s-vote-a",
+      seq: 1,
+      ts: 1000,
+      kind: "lesson",
+      targetId: 42,
+      direction: 1,
+      score: 3,
+      clampHit: false,
+    });
+  });
+
+  it("emits vote_rejected with the supplied reason", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-vote-r", emit, now });
+    rec.recordVoteRejected({
+      kind: "memory",
+      targetId: 7,
+      direction: -1,
+      reason: "out_of_allowlist",
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "vote_rejected",
+      sessionId: "s-vote-r",
+      seq: 0,
+      kind: "memory",
+      targetId: 7,
+      direction: -1,
+      reason: "out_of_allowlist",
+    });
+  });
+
+  it("vote events share the same seq counter as agent events", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-vote-mix", emit, now });
+    rec.beginSession({ workingDir: "/w" });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.recordVoteApplied({
+      kind: "lesson",
+      targetId: 1,
+      direction: 1,
+      score: 1,
+      clampHit: false,
+    });
+    rec.recordVoteRejected({
+      kind: "memory",
+      targetId: null,
+      direction: null,
+      reason: "malformed",
+    });
+    expect(events.map((e) => e.seq)).toEqual([0, 1, 2, 3]);
+    expect(events.map((e) => e.type)).toEqual([
+      "session_started",
+      "turn_started",
+      "vote_applied",
+      "vote_rejected",
+    ]);
+  });
+
   it("assigns monotonic seq across events", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-9", emit, now });

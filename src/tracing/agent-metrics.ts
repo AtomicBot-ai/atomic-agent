@@ -51,6 +51,12 @@ export const METRIC_NAMES = {
   memoryConsolidationDistillLatency:
     "agent.memory.consolidation.distill_latency_ms",
   memoryConsolidationClusters: "agent.memory.consolidation.clusters",
+  // memory-v2 phase 7a
+  memoryVotingRunner: "agent.memory.voting.runner",
+  memoryVotingRunnerLatency: "agent.memory.voting.runner_latency_ms",
+  memoryVotingApplied: "agent.memory.voting.applied",
+  memoryVotingRejected: "agent.memory.voting.rejected",
+  memoryVotingDecayed: "agent.memory.voting.decayed",
   tasksCreated: "agent.tasks.created",
   tasksStarted: "agent.tasks.started",
   tasksCompleted: "agent.tasks.completed",
@@ -356,6 +362,80 @@ export interface MemoryProfileSupersededSample {
   key: string;
   previousId: number;
   nextId: number;
+}
+
+/**
+ * Memory-v2 phase 7a. Outcome of one vote-runner sub-call.
+ *
+ *  - `ok`       — at least one vote was applied.
+ *  - `none`     — parser returned NONE or all votes were rejected.
+ *  - `skipped`  — candidate count below the runner's minimum
+ *                  threshold; no LLM call fired.
+ *  - `aborted`  — explicit `abortPending` from another in-flight
+ *                  call on the same session.
+ *  - `timeout`  — `memory.reflection.timeoutMs` exceeded.
+ *  - `failed`   — LLM call threw / store invariant violated; the
+ *                  runner itself never throws (invariant 13).
+ */
+export type VotingRunnerOutcomeTag =
+  | "ok"
+  | "none"
+  | "skipped"
+  | "aborted"
+  | "timeout"
+  | "failed";
+
+export interface MemoryVotingRunnerSample {
+  sessionId: string;
+  outcome: VotingRunnerOutcomeTag;
+  durationMs: number;
+  /** Number of votes that mutated `vote_score`. */
+  applied: number;
+  /** Total parser-level and store-level rejections (allowlist + clamp). */
+  rejected: number;
+}
+
+export type VotingKindTag = "memory" | "lesson" | "profile";
+
+export interface MemoryVotingAppliedSample {
+  sessionId: string;
+  kind: VotingKindTag;
+  /** `+1` upvote, `-1` downvote. */
+  direction: 1 | -1;
+}
+
+/**
+ * Reason taxonomy for `agent.memory.voting.rejected`. Mirrors the
+ * union of `ParseRejection.reason` and `ApplyVoteResult` statuses
+ * that are not `applied`. Distinct values let dashboards
+ * distinguish "model fabricates ids" (`not_surfaced`) from "model
+ * keeps pumping a maxed score" (`clamp_hit`).
+ */
+export type VotingRejectedReasonTag =
+  | "malformed"
+  | "not_surfaced"
+  | "duplicate"
+  | "cap_exceeded"
+  | "clamp_hit"
+  | "target_missing";
+
+export interface MemoryVotingRejectedSample {
+  sessionId: string;
+  reason: VotingRejectedReasonTag;
+  /** Best-effort decoded kind when the reason carries one. */
+  kind?: VotingKindTag;
+}
+
+/**
+ * Memory-v2 phase 7a. Cold-path decay pass on the consolidator
+ * tick. One sample per `(kind)` UPDATE — three samples per tick.
+ * The `rows` field is `Statement.changes`, i.e. the actual number
+ * of rows touched (zero when the table had no non-zero scores).
+ */
+export interface MemoryVotingDecayedSample {
+  kind: VotingKindTag;
+  rows: number;
+  factor: number;
 }
 
 /**
@@ -792,6 +872,61 @@ export class AgentMetrics {
       key: sample.key,
       previous_id: String(sample.previousId),
       next_id: String(sample.nextId),
+    });
+  }
+
+  /**
+   * Memory-v2 phase 7a. Record one vote-runner sub-call outcome.
+   * The histogram pairs with the counter so dashboards can compute
+   * both error rate and p95 latency from one set of samples.
+   */
+  recordVotingRunner(sample: MemoryVotingRunnerSample): void {
+    const tags: Record<string, string> = {
+      session_id: sample.sessionId,
+      outcome: sample.outcome,
+    };
+    this.collector.counter(METRIC_NAMES.memoryVotingRunner, 1, tags);
+    this.collector.histogram(
+      METRIC_NAMES.memoryVotingRunnerLatency,
+      sample.durationMs,
+      tags,
+    );
+  }
+
+  /**
+   * Memory-v2 phase 7a. Record one successful vote write.
+   */
+  recordVotingApplied(sample: MemoryVotingAppliedSample): void {
+    this.collector.counter(METRIC_NAMES.memoryVotingApplied, 1, {
+      session_id: sample.sessionId,
+      kind: sample.kind,
+      direction: sample.direction === 1 ? "up" : "down",
+    });
+  }
+
+  /**
+   * Memory-v2 phase 7a. Record one rejected vote, including both
+   * parser-level rejections (allowlist miss, malformed line) and
+   * store-level rejections (clamp hit, target missing).
+   */
+  recordVotingRejected(sample: MemoryVotingRejectedSample): void {
+    const tags: Record<string, string> = {
+      session_id: sample.sessionId,
+      reason: sample.reason,
+    };
+    if (sample.kind) tags.kind = sample.kind;
+    this.collector.counter(METRIC_NAMES.memoryVotingRejected, 1, tags);
+  }
+
+  /**
+   * Memory-v2 phase 7a. Record the cold-path vote-score decay
+   * applied by `ConsolidatorJob` once per tick. One sample per
+   * (kind) per tick.
+   */
+  recordVotingDecayed(sample: MemoryVotingDecayedSample): void {
+    this.collector.counter(METRIC_NAMES.memoryVotingDecayed, sample.rows, {
+      kind: sample.kind,
+      factor: sample.factor.toFixed(4),
     });
   }
 

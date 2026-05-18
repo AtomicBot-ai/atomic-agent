@@ -71,6 +71,24 @@ export interface ConsolidatorTickResult {
   lessonsCreated: number;
   lessonsAbstained: number;
   failures: number;
+  /**
+   * Phase 6. Count of lessons demoted to `status='deprecated'`
+   * during this tick.
+   */
+  lessonsDeprecatedByAge: number;
+  lessonsDeprecatedByOverflow: number;
+  /**
+   * Phase 7a. Count of lessons demoted because their `vote_score`
+   * went negative before they ever helped a turn. Always `0`
+   * when `voting.enabled === false`.
+   */
+  lessonsDeprecatedByVote: number;
+  /**
+   * Phase 7a. Whether the per-tick `decayAllScores` pass ran on
+   * this tick. `false` when voting is disabled or the runtime
+   * could not construct a `VoteStore`.
+   */
+  voteDecayApplied: boolean;
 }
 
 export interface ConsolidatorJobOptions {
@@ -83,6 +101,27 @@ export interface ConsolidatorJobOptions {
   requireSharedTag: boolean;
   /** Reuses `memory.evolution.leaseMs` so the lock contract is uniform. */
   consolidationLeaseMs: number;
+  /**
+   * Phase 6 — age threshold for demoting unused (`success_count = 0`)
+   * lessons. `0` disables the age sweep. Wired from
+   * `memory.lessons.deprecationAgeMs`.
+   */
+  deprecationAgeMs?: number;
+  /**
+   * Phase 6 — defensive per-tick cap on how many lessons the
+   * combined age + FIFO sweep may demote. Prevents a runaway tick
+   * from churning the store if `LessonStore` somehow returns a
+   * pathological set. Default `100`.
+   */
+  maxDeprecationsPerTick?: number;
+  /**
+   * Phase 7a — decay factor applied to every `vote_score` row
+   * once per tick (cross-phase invariant 23: decay is per-tick, not
+   * per-turn). `0` or `undefined` disables both decay and the
+   * vote-driven deprecation pass entirely. Should typically be
+   * sourced from `memory.voting.signalDecay`.
+   */
+  voteSignalDecay?: number;
 }
 
 export interface ConsolidatorJobDeps {
@@ -90,10 +129,33 @@ export interface ConsolidatorJobDeps {
   linkStore: LinkStore;
   lessonStore: LessonStore;
   distillRunner: DistillRunner;
+  /**
+   * Memory-v2 phase 7a — optional vote store. When present **and**
+   * `voteSignalDecay` is positive, every tick decays scores before
+   * the deprecation sweep runs. Optional so phase 5 / 6 tests can
+   * still spin a consolidator without wiring voting.
+   */
+  voteStore?: {
+    decayAllScores(factor: number): {
+      memories: number;
+      lessons: number;
+      profileFacts: number;
+    };
+  } | null;
   /** Default `Date.now`. Injectable for tests. */
   now?: () => number;
   metrics?: AgentMetrics;
   logger?: StructuredLogger;
+  /**
+   * Memory-v2 phase 6 — optional sink for the `lesson_deprecated`
+   * trace event. Fired once per demoted lesson during the sweep.
+   * The job stays decoupled from `TraceBus` so unit tests do not
+   * need to wire one up.
+   */
+  onLessonDeprecated?: (event: {
+    lessonId: number;
+    reason: string;
+  }) => void;
   /**
    * A correlation id to stamp on every trace event emitted during a
    * tick. Useful when a long-running deployment has dozens of ticks
@@ -158,23 +220,11 @@ export class ConsolidatorJob {
   async runOnce(signal?: AbortSignal): Promise<ConsolidatorTickResult> {
     if (this.running) {
       // Reentry guard — the previous tick still owns the lease set.
-      return {
-        outcome: "none",
-        clustersConsidered: 0,
-        lessonsCreated: 0,
-        lessonsAbstained: 0,
-        failures: 0,
-      };
+      return zeroSummary();
     }
     this.running = true;
     const sig = signal ?? new AbortController().signal;
-    let result: ConsolidatorTickResult = {
-      outcome: "none",
-      clustersConsidered: 0,
-      lessonsCreated: 0,
-      lessonsAbstained: 0,
-      failures: 0,
-    };
+    let result: ConsolidatorTickResult = zeroSummary();
     try {
       result = await this.runTick(sig);
     } catch (err) {
@@ -183,6 +233,34 @@ export class ConsolidatorJob {
       });
       result = { ...result, outcome: "failed", failures: result.failures + 1 };
     } finally {
+      // Phase 6 — the deprecation sweep runs **after** the
+      // distillation loop, **inside** the running guard, even when
+      // distillation produced nothing (`outcome: "none"`). This
+      // matters for the steady-state cron: most ticks find no new
+      // clusters but still need to keep the lesson set bounded.
+      // Sweep failures are isolated and never overwrite the
+      // distillation outcome — the worst case is that the sweep
+      // counters stay at 0 and the next tick retries.
+      try {
+        // Phase 7a — decay first so the vote-deprecation pass below
+        // sees up-to-date `vote_score` values. Bulk SQL; one
+        // transaction per `(memories|lessons|profile_facts)` table.
+        // Cross-phase invariant 23: decay runs per-tick, not
+        // per-turn.
+        const decayApplied = this.runVoteDecay();
+        const sweep = this.runDeprecationSweep(this.now());
+        result = {
+          ...result,
+          lessonsDeprecatedByAge: sweep.byAge,
+          lessonsDeprecatedByOverflow: sweep.byOverflow,
+          lessonsDeprecatedByVote: sweep.byVote,
+          voteDecayApplied: decayApplied,
+        };
+      } catch (err) {
+        this.deps.logger?.warn?.("consolidator.sweep.failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
       this.running = false;
     }
     this.deps.metrics?.recordConsolidationRun({
@@ -199,13 +277,7 @@ export class ConsolidatorJob {
     const now = this.now();
     const candidates = this.selectCandidates(now);
     if (candidates.length === 0) {
-      return {
-        outcome: "none",
-        clustersConsidered: 0,
-        lessonsCreated: 0,
-        lessonsAbstained: 0,
-        failures: 0,
-      };
+      return zeroSummary();
     }
     const clusters = clusterEpisodes(
       candidates,
@@ -217,13 +289,7 @@ export class ConsolidatorJob {
       { linkStore: this.deps.linkStore },
     );
     if (clusters.length === 0) {
-      return {
-        outcome: "none",
-        clustersConsidered: 0,
-        lessonsCreated: 0,
-        lessonsAbstained: 0,
-        failures: 0,
-      };
+      return zeroSummary();
     }
 
     const byId = new Map<number, MemoryEntry>();
@@ -273,7 +339,168 @@ export class ConsolidatorJob {
       lessonsCreated,
       lessonsAbstained,
       failures,
+      lessonsDeprecatedByAge: 0,
+      lessonsDeprecatedByOverflow: 0,
+      lessonsDeprecatedByVote: 0,
+      voteDecayApplied: false,
     };
+  }
+
+  /**
+   * Phase 6 — combined deprecation sweep. Runs in two passes:
+   *
+   *  1. **Age sweep.** `LessonStore.pickAgeDeprecationCandidates`
+   *     returns ids where `status='active' AND success_count=0 AND
+   *     created_at <= now - deprecationAgeMs`. Each is demoted via
+   *     `markDeprecated(id, "aged_out")` which fires the metric +
+   *     trace hook.
+   *  2. **FIFO sweep.** `LessonStore.pickOverflowForDeprecation`
+   *     returns oldest-by-`updated_at` ids when the active count
+   *     exceeds `maxEntries`. Each is demoted via
+   *     `markDeprecated(id, "overflow")`.
+   *
+   * The combined sweep is capped at `maxDeprecationsPerTick`
+   * (default `100`) so a misconfigured `deprecationAgeMs` cannot
+   * flatten the entire lesson set in one tick.
+   *
+   * Pinned by `consolidator-job.test.ts` ("deprecation sweep demotes
+   * aged out lessons" + "overflow sweep demotes oldest by FIFO" +
+   * "sweep respects maxDeprecationsPerTick").
+   */
+  private runDeprecationSweep(now: number): {
+    byAge: number;
+    byOverflow: number;
+    byVote: number;
+  } {
+    const cap = Math.max(0, this.options.maxDeprecationsPerTick ?? 100);
+    if (cap === 0) return { byAge: 0, byOverflow: 0, byVote: 0 };
+    let remaining = cap;
+    let byAge = 0;
+    let byOverflow = 0;
+    let byVote = 0;
+    // Phase 7a — vote-driven sweep runs **first** so highest-
+    // confidence "this is bad" signals retire ahead of age-only
+    // candidates when the per-tick cap binds. The predicate
+    // (`vote_score < 0 AND success_count = 0`) does **not**
+    // depend on `deprecationAgeMs`, so vote curation works even
+    // when the age sweep is disabled.
+    if (this.options.voteSignalDecay && this.options.voteSignalDecay > 0) {
+      const downvoted = this.deps.lessonStore.pickVoteDeprecationCandidates({
+        limit: remaining,
+      });
+      for (const id of downvoted) {
+        if (remaining <= 0) break;
+        try {
+          if (this.deps.lessonStore.markDeprecated(id, "downvoted")) {
+            byVote += 1;
+            remaining -= 1;
+            this.emitLessonDeprecated(id, "downvoted");
+          }
+        } catch (err) {
+          this.deps.logger?.warn?.("consolidator.sweep.vote.failed", {
+            lessonId: id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
+    const ageMs = this.options.deprecationAgeMs ?? 0;
+    if (ageMs > 0) {
+      const aged = this.deps.lessonStore.pickAgeDeprecationCandidates({
+        now,
+        deprecationAgeMs: ageMs,
+        limit: remaining,
+      });
+      for (const id of aged) {
+        if (remaining <= 0) break;
+        try {
+          if (this.deps.lessonStore.markDeprecated(id, "aged_out")) {
+            byAge += 1;
+            remaining -= 1;
+            this.emitLessonDeprecated(id, "aged_out");
+          }
+        } catch (err) {
+          this.deps.logger?.warn?.("consolidator.sweep.age.failed", {
+            lessonId: id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
+    if (remaining > 0) {
+      const overflow = this.deps.lessonStore.pickOverflowForDeprecation();
+      for (const id of overflow) {
+        if (remaining <= 0) break;
+        try {
+          if (this.deps.lessonStore.markDeprecated(id, "overflow")) {
+            byOverflow += 1;
+            remaining -= 1;
+            this.emitLessonDeprecated(id, "overflow");
+          }
+        } catch (err) {
+          this.deps.logger?.warn?.("consolidator.sweep.overflow.failed", {
+            lessonId: id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
+    if (byAge > 0 || byOverflow > 0 || byVote > 0) {
+      this.deps.logger?.info?.("consolidator.sweep.done", {
+        byAge,
+        byOverflow,
+        byVote,
+      });
+    }
+    return { byAge, byOverflow, byVote };
+  }
+
+  /**
+   * Phase 7a — bulk decay of every `vote_score` row across
+   * memories / lessons / profile_facts. Pure bookkeeping; never
+   * fails the tick. Returns `true` if a decay pass actually ran
+   * (factor in (0,1), store wired); `false` otherwise so the
+   * tick-result `voteDecayApplied` flag is honest about the
+   * "voting is disabled" case.
+   *
+   * Decay factor handling: a factor of `0` would zero out every
+   * score, which we deliberately treat as "do nothing" — set
+   * `voting.enabled = false` instead. Factor `1` is no-op
+   * (identity); we still emit the metric for observability.
+   * Anything outside (0, 1] is clamped by `VoteStore.decayAllScores`.
+   */
+  private runVoteDecay(): boolean {
+    const factor = this.options.voteSignalDecay ?? 0;
+    if (factor <= 0) return false;
+    const store = this.deps.voteStore;
+    if (!store) return false;
+    try {
+      const result = store.decayAllScores(factor);
+      const m = this.deps.metrics;
+      if (m) {
+        m.recordVotingDecayed({
+          kind: "memory",
+          rows: result.memories,
+          factor,
+        });
+        m.recordVotingDecayed({
+          kind: "lesson",
+          rows: result.lessons,
+          factor,
+        });
+        m.recordVotingDecayed({
+          kind: "profile",
+          rows: result.profileFacts,
+          factor,
+        });
+      }
+      return true;
+    } catch (err) {
+      this.deps.logger?.warn?.("consolidator.vote_decay.failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
   }
 
   /**
@@ -327,6 +554,25 @@ export class ConsolidatorJob {
     }
   }
 
+  /**
+   * Phase 6 — fire the optional `onLessonDeprecated` callback. The
+   * caller (bootstrap) bridges it to `TraceBus.emit({ type:
+   * "lesson_deprecated", ... })`. Errors are swallowed so a
+   * misbehaving sink never derails the sweep.
+   */
+  private emitLessonDeprecated(lessonId: number, reason: string): void {
+    if (!this.deps.onLessonDeprecated) return;
+    try {
+      this.deps.onLessonDeprecated({ lessonId, reason });
+    } catch (err) {
+      this.deps.logger?.warn?.("consolidator.trace.failed", {
+        lessonId,
+        reason,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   private async distillAndPersist(args: {
     cluster: MemoryCluster;
     episodesById: Map<number, MemoryEntry>;
@@ -373,6 +619,21 @@ export class ConsolidatorJob {
     }
     return "failed";
   }
+}
+
+/** Phase 6: shared zero-summary so the new fields stay in sync. */
+function zeroSummary(): ConsolidatorTickResult {
+  return {
+    outcome: "none",
+    clustersConsidered: 0,
+    lessonsCreated: 0,
+    lessonsAbstained: 0,
+    failures: 0,
+    lessonsDeprecatedByAge: 0,
+    lessonsDeprecatedByOverflow: 0,
+    lessonsDeprecatedByVote: 0,
+    voteDecayApplied: false,
+  };
 }
 
 /**

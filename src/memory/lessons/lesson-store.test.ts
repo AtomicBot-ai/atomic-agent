@@ -301,4 +301,123 @@ describe("LessonStore", () => {
   it("getById returns null for unknown id", () => {
     expect(h.store.getById(9999)).toBeNull();
   });
+
+  // Phase 6 — age-based deprecation predicate.
+  it("pickAgeDeprecationCandidates picks active lessons with success_count==0 older than threshold", () => {
+    h.dispose();
+    const dir = mkdtempSync(join(tmpdir(), "atomic-lessons-age-"));
+    // Hand-roll clock so we can control created_at deterministically.
+    let clock = 1_000_000;
+    const store = new LessonStore({
+      dbFile: join(dir, "memory.sqlite"),
+      now: () => clock,
+    });
+    try {
+      clock = 1_000_000;
+      const old = store.create({
+        activation: "old",
+        principle: "p",
+        parentIds: [1],
+      });
+      clock = 2_000_000;
+      const young = store.create({
+        activation: "young",
+        principle: "p",
+        parentIds: [2],
+      });
+      clock = 1_000_000;
+      const usefulOld = store.create({
+        activation: "usefulOld",
+        principle: "p",
+        parentIds: [3],
+      });
+      // Bump success on usefulOld so age picker should skip it.
+      store.bumpSuccess(usefulOld.id);
+
+      const now = 3_000_000;
+      const candidates = store.pickAgeDeprecationCandidates({
+        now,
+        deprecationAgeMs: 500_000,
+      });
+      // `old` is past threshold (now - old.created_at = 2_000_000 > 500_000), success_count=0 → eligible.
+      // `young` is within threshold (now - young.created_at = 1_000_000 > 500_000) — also old enough actually.
+      // Re-check: now=3M, young.created=2M, age=1M > 500_000 → also eligible.
+      // To exercise the threshold properly, set a tighter window.
+      const tight = store.pickAgeDeprecationCandidates({
+        now,
+        deprecationAgeMs: 1_500_000,
+      });
+      // age >= 1.5M only matches `old` (age=2M); `young` age=1M is below threshold.
+      expect(tight).toEqual([old.id]);
+      // Loose threshold also excludes usefulOld (success_count>0).
+      expect(candidates.sort()).toEqual([old.id, young.id].sort());
+      expect(candidates).not.toContain(usefulOld.id);
+
+      // Deprecate `old`, re-query — must drop because status != 'active'.
+      store.markDeprecated(old.id, "aged_out");
+      const after = store.pickAgeDeprecationCandidates({
+        now,
+        deprecationAgeMs: 1_500_000,
+      });
+      expect(after).toEqual([]);
+    } finally {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("pickAgeDeprecationCandidates returns oldest first (deterministic FIFO order)", () => {
+    h.dispose();
+    const dir = mkdtempSync(join(tmpdir(), "atomic-lessons-age2-"));
+    let clock = 1_000_000;
+    const store = new LessonStore({
+      dbFile: join(dir, "memory.sqlite"),
+      now: () => clock,
+    });
+    try {
+      clock = 1_000_000;
+      const a = store.create({ activation: "a", principle: "p", parentIds: [1] });
+      clock = 1_100_000;
+      const b = store.create({ activation: "b", principle: "p", parentIds: [2] });
+      clock = 1_200_000;
+      const c = store.create({ activation: "c", principle: "p", parentIds: [3] });
+      const ids = store.pickAgeDeprecationCandidates({
+        now: 5_000_000,
+        deprecationAgeMs: 100_000,
+      });
+      expect(ids).toEqual([a.id, b.id, c.id]);
+    } finally {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("pickAgeDeprecationCandidates honours limit", () => {
+    h.dispose();
+    const dir = mkdtempSync(join(tmpdir(), "atomic-lessons-age3-"));
+    let clock = 1_000_000;
+    const store = new LessonStore({
+      dbFile: join(dir, "memory.sqlite"),
+      now: () => clock,
+    });
+    try {
+      for (let i = 0; i < 5; i++) {
+        clock = 1_000_000 + i * 1000;
+        store.create({
+          activation: `a${i}`,
+          principle: "p",
+          parentIds: [i + 1],
+        });
+      }
+      const ids = store.pickAgeDeprecationCandidates({
+        now: 9_000_000,
+        deprecationAgeMs: 1000,
+        limit: 2,
+      });
+      expect(ids.length).toBe(2);
+    } finally {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

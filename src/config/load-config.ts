@@ -362,6 +362,14 @@ export function loadConfig(): AtomicAgentConfig {
         requireSharedTag: user.memory.consolidation.requireSharedTag,
         distillTimeoutMs: user.memory.consolidation.distillTimeoutMs,
       },
+      voting: {
+        enabled: user.memory.voting.enabled,
+        maxVotePerItem: user.memory.voting.maxVotePerItem,
+        signalDecay: user.memory.voting.signalDecay,
+        scoreBlend: user.memory.voting.scoreBlend,
+        eventLogMaxRows: user.memory.voting.eventLogMaxRows,
+        profileFilterThreshold: user.memory.voting.profileFilterThreshold,
+      },
     },
     webhooks: user.webhooks,
     vision: {

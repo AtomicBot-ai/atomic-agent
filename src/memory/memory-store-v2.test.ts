@@ -269,6 +269,38 @@ describe("MemoryStore v2 phase 1A", () => {
       }
     });
 
+    // Phase 7a — vote_score is the first eviction tier in
+    // utility-weighted mode. A row with `vote_score < 0` ranks
+    // **below** even never-recalled neutral rows, so the operator
+    // can force eviction by downvoting (cross-phase invariant 19).
+    it("evicts the most-downvoted row first under utility-weighted mode (scorecard 7a.A.3)", () => {
+      const store = makeStore({
+        maxEntries: 3,
+        eviction: { utilityWeighted: true, maxAgeMs: 1_000_000 },
+      });
+      try {
+        const downvoted = store.store({ content: "downvoted alpha" }, 1);
+        const neutral1 = store.store({ content: "neutral beta" }, 2);
+        const neutral2 = store.store({ content: "neutral gamma" }, 3);
+        // Stamp vote_score = -2 directly. The VoteStore is the
+        // production writer; we shortcut here so the test does not
+        // need its full wiring.
+        store
+          .getDatabaseHandleForEmbeddings()
+          .prepare("UPDATE memories SET vote_score = -2 WHERE id = ?")
+          .run(downvoted.id);
+
+        store.store({ content: "fresh delta" }, 4);
+
+        expect(store.count()).toBe(3);
+        expect(store.get(downvoted.id)).toBeNull();
+        expect(store.get(neutral1.id)).not.toBeNull();
+        expect(store.get(neutral2.id)).not.toBeNull();
+      } finally {
+        store.close();
+      }
+    });
+
     it("falls back to legacy FIFO when utilityWeighted=false (default)", () => {
       // Reproduces the v1 test: the first inserted row is the first
       // evicted when overflow fires, regardless of recall pattern.

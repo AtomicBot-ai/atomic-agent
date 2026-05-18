@@ -50,6 +50,7 @@ import type { LlmProvider } from "../llm/provider/index.js";
 import { MemoryStore } from "../memory/memory-store.js";
 import { ProfileStore } from "../memory/profile-store.js";
 import { LessonStore } from "../memory/lessons/lesson-store.js";
+import { createLessonLifecycleHook } from "../memory/lessons/lesson-lifecycle-hook.js";
 import { createDefaultMemoryContextProvider } from "../memory/memory-context-provider.js";
 import {
   EmbeddingStore,
@@ -76,6 +77,11 @@ import {
   ConsolidatorJob,
   DistillRunner,
 } from "../memory/consolidator/index.js";
+import {
+  VoteStore,
+  createVoteRunner,
+  createVoteAwareReflectionRunner,
+} from "../memory/voting/index.js";
 
 import { SkillRegistry } from "../skills/skill-registry.js";
 import { buildSkillCatalog } from "../skills/skill-catalog.js";
@@ -244,6 +250,12 @@ export interface AgentRuntime {
    * close it cleanly.
    */
   readonly lessonStore: LessonStore;
+  /**
+   * Memory-v2 phase 7a. Curation vote store. `null` when
+   * `memory.voting.enabled` is `false`. Shares its SQLite handle
+   * with `notesStore`, so no separate dispose is required.
+   */
+  readonly voteStore: VoteStore | null;
   /**
    * Durable task queue. Always present, even when `tasks.enabled` is
    * false, because the store owns its SQLite connection and must be
@@ -525,13 +537,42 @@ export async function createAgentRuntime(
     browserChannel: config.browser.channel,
   });
 
+  // Memory-v2 phase 7a — fail-fast clamp/decay validation. The
+  // config schema already enforces these ranges, but bootstrap
+  // re-asserts so a hand-edited `config.json` with a v16 marker but
+  // garbage values cannot smuggle invalid voting params past the
+  // runtime. Scenario 7a.C.3 ("bootstrap fails fast on invalid
+  // clamp") is pinned by `consolidator-vote.test.ts` indirectly via
+  // the schema test, but the explicit guard here covers the
+  // post-load codepath where `validateConfigFile` is bypassed.
+  if (config.memory.voting.enabled) {
+    if (
+      !Number.isInteger(config.memory.voting.maxVotePerItem) ||
+      config.memory.voting.maxVotePerItem <= 0
+    ) {
+      throw new Error(
+        `bootstrap: memory.voting.maxVotePerItem must be a positive integer (got ${config.memory.voting.maxVotePerItem})`,
+      );
+    }
+    const sd = config.memory.voting.signalDecay;
+    if (!(sd > 0 && sd <= 1)) {
+      throw new Error(
+        `bootstrap: memory.voting.signalDecay must be in (0, 1] (got ${sd})`,
+      );
+    }
+    const sb = config.memory.voting.scoreBlend;
+    if (!(sb >= 0 && sb <= 1)) {
+      throw new Error(
+        `bootstrap: memory.voting.scoreBlend must be in [0, 1] (got ${sb})`,
+      );
+    }
+  }
   // TODO(memory-v2): cross-phase invariant 4 — the consolidator
   // (phase 5) registers with the existing `Scheduler` here, not via a
   // new `setInterval`. Bootstrap also gains a check from phase 5
   // onwards: assert `memory.dedup.fts5Threshold ≤
   // memory.consolidation.similarityThreshold` (§13.7.3 / invariant 14),
-  // fail-fast on violation. Phase 7a adds clamp/decay validation:
-  // `memory.voting.maxVotePerItem > 0`, `memory.voting.signalDecay ∈ (0,1]`.
+  // fail-fast on violation.
   const profileStore = new ProfileStore({
     dbFile: config.paths.memoryDbFile,
     metrics,
@@ -645,6 +686,18 @@ export async function createAgentRuntime(
     maxEntries: config.memory.lessons.maxEntries,
     metrics,
   });
+
+  // Memory-v2 phase 7a. `VoteStore` shares the same SQLite handle as
+  // the `MemoryStore` (the `vote_score` columns live on the same
+  // tables it owns), so there is no separate file to close in
+  // `shutdown`. It is always constructed when `memory.voting.enabled`
+  // is on; the rest of the wiring (reflection decorator, consolidator
+  // dep) is conditional on the same flag.
+  const voteStore: VoteStore | null = config.memory.voting.enabled
+    ? new VoteStore({
+        db: notesStore.getDatabaseHandleForEmbeddings(),
+      })
+    : null;
 
   const toolRegistry = new ToolRegistry();
   toolRegistry.register(finishTool);
@@ -876,6 +929,94 @@ export async function createAgentRuntime(
     });
   }
 
+  // Memory-v2 phase 7a. Decorate the reflection runner with the
+  // vote-runner sub-call so curation runs after `SET` / `NOTE` /
+  // link-gen / `EVOLVE`. The decorator is fire-safe: a failed
+  // vote-runner never breaks the reflection chain. Wiring only
+  // proceeds when:
+  //   - The base reflection chain is wired.
+  //   - `memory.voting.enabled` (carries the VoteStore).
+  // The vote-runner rides the **same** reflection slot as the
+  // upstream chain (cross-phase invariant 2). Allowlist is
+  // sourced from `ReflectionInput.{recalledIds, recalledLessonIds,
+  // recalledProfileFactIds}` populated by `agent-loop.runTurn`
+  // from `memory-context-provider` and `LessonStore.recall` —
+  // anti-feedback-loop guardrail (invariant 18).
+  if (reflectionRunner && voteStore) {
+    const reservedSlot = slotManager.reserveReflectionSlot();
+    const voteSlotId = reservedSlot ?? -1;
+    const voteLlmComplete = async (params: {
+      prompt: string;
+      grammar: string;
+      slotId: number;
+      sessionId: string;
+      signal: AbortSignal;
+    }) => {
+      if (params.signal.aborted) {
+        throw new DOMException("aborted", "AbortError");
+      }
+      const abortPromise = new Promise<never>((_, reject) => {
+        params.signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("aborted", "AbortError")),
+          { once: true },
+        );
+      });
+      const completionPromise = llmComplete({
+        prompt: params.prompt,
+        grammar: params.grammar,
+        slotId: params.slotId,
+        sessionId: params.sessionId,
+      });
+      return Promise.race([completionPromise, abortPromise]);
+    };
+    const voteRunner = createVoteRunner({
+      llmComplete: voteLlmComplete,
+      voteStore,
+      reflectionSlotId: voteSlotId,
+      timeoutMs: config.memory.reflection.timeoutMs,
+      maxVotePerItem: config.memory.voting.maxVotePerItem,
+      eventLogMaxRows: config.memory.voting.eventLogMaxRows,
+      logger,
+      metrics,
+      // Memory-v2 phase 7a — wire trace emission through the
+      // per-session recorder owned by the runtime. The recorder
+      // map (`recorders`) is keyed by sessionId; we resolve it
+      // lazily on every event so a session created after the
+      // runtime booted is still observable. Reflection runs
+      // fire-and-forget after `turn_finished`, so a missing
+      // recorder is a normal "tracing disabled for this session"
+      // outcome, not an error.
+      emitTrace: (event) => {
+        const recorder = recorders.get(event.sessionId);
+        if (!recorder) return;
+        if (event.type === "applied") {
+          recorder.recordVoteApplied({
+            kind: event.kind,
+            targetId: event.targetId,
+            direction: event.direction,
+            score: event.score,
+            clampHit: event.clampHit,
+          });
+        } else {
+          recorder.recordVoteRejected({
+            kind: event.kind,
+            targetId: event.targetId,
+            direction: event.direction,
+            reason: event.reason,
+          });
+        }
+      },
+    });
+    reflectionRunner = createVoteAwareReflectionRunner({
+      reflection: reflectionRunner,
+      voteRunner,
+      memoryStore: notesStore,
+      lessonStore,
+      profileStore,
+    });
+  }
+
   // Read-side counterpart of reflection: pre-step recall injection and
   // memory-index pointer rendering. Wired only when `memory.notes` is
   // enabled — otherwise the runtime has nothing to read from and the
@@ -940,6 +1081,20 @@ export async function createAgentRuntime(
       : {}),
     ...(reflectionRunner ? { reflectionRunner } : {}),
     ...(memoryContextProvider ? { memoryContextProvider } : {}),
+    // Memory-v2 phase 6 — lesson lifecycle hook. Bumps
+    // `success_count` / `failure_count` on every surfaced lesson at
+    // the end of each turn (reply/finish → success, failed →
+    // failure; cancelled/max_steps → skip). Gated on
+    // `memory.lessons.enabled` since a disabled lesson surface
+    // means there is nothing to bump.
+    ...(config.memory.lessons.enabled
+      ? {
+          lessonLifecycle: createLessonLifecycleHook({
+            lessonStore,
+            logger,
+          }),
+        }
+      : {}),
     onEvent: (event: AgentLoopEvent) => {
       // The loop has no awareness of which session it is currently
       // driving; resolve that from the per-turn ALS frame so two
@@ -1226,6 +1381,23 @@ export async function createAgentRuntime(
           config.memory.consolidation.maxClustersPerTick,
         requireSharedTag: config.memory.consolidation.requireSharedTag,
         consolidationLeaseMs: 60_000,
+        // Memory-v2 phase 6 — wire the age-based deprecation
+        // threshold and the per-tick deprecation cap. Both come
+        // from `memory.lessons.*` since they govern lesson rows.
+        // `maxEntries` is held inside the `LessonStore` itself
+        // (already passed via `LessonStoreOptions`) and surfaces
+        // through `pickOverflowForDeprecation()`.
+        deprecationAgeMs: config.memory.lessons.deprecationAgeMs,
+        maxDeprecationsPerTick: 100,
+        // Memory-v2 phase 7a — vote-driven decay runs once per
+        // tick (cross-phase invariant 23). `0` here disables both
+        // the decay pass and the vote-driven deprecation sweep
+        // even if the `voteStore` dep is present, so the master
+        // switch is honoured without re-checking `enabled` deep
+        // inside the job.
+        voteSignalDecay: config.memory.voting.enabled
+          ? config.memory.voting.signalDecay
+          : 0,
       },
       {
         memoryStore: notesStore,
@@ -1234,6 +1406,36 @@ export async function createAgentRuntime(
         distillRunner,
         metrics,
         logger,
+        ...(voteStore ? { voteStore } : {}),
+        // Memory-v2 phase 6. Bridge the sweep's per-lesson demotion
+        // callback to the trace bus. The consolidator runs
+        // out-of-band so we use the synthetic `consolidator`
+        // session id (matching the one the DistillRunner uses).
+        // The bus fans out to the NDJSON sink which writes to
+        // `<stateDir>/traces/consolidator.ndjson` — a dedicated
+        // cold-path log keyed by sessionId. A local `seq` counter
+        // keeps the file monotonically ordered; per-session
+        // counters are recorder-owned, but the consolidator does
+        // not run through a recorder.
+        ...(traceBus
+          ? {
+              onLessonDeprecated: ((): ((event: {
+                lessonId: number;
+                reason: string;
+              }) => void) => {
+                let consolidatorSeq = 0;
+                return ({ lessonId, reason }) =>
+                  traceBus.emit({
+                    type: "lesson_deprecated",
+                    sessionId: "consolidator",
+                    seq: consolidatorSeq++,
+                    ts: Date.now(),
+                    lessonId,
+                    reason,
+                  });
+              })(),
+            }
+          : {}),
       },
     );
     consolidatorJob.start();
@@ -1251,6 +1453,7 @@ export async function createAgentRuntime(
     profileStore,
     notesStore,
     lessonStore,
+    voteStore,
     taskStore,
     taskRunner,
     scheduler,

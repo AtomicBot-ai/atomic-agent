@@ -366,6 +366,147 @@ describe("applyMigrations", () => {
     expect(Number(version)).toBe(MEMORY_SCHEMA_VERSION);
   });
 
+  it("adds vote_score columns to memories/lessons/profile_facts on v9", () => {
+    applyMigrations(db);
+    for (const table of ["memories", "lessons", "profile_facts"]) {
+      const cols = db
+        .prepare(`PRAGMA table_info(${table})`)
+        .all() as Array<{ name: string; type: string; dflt_value: string | null; notnull: number }>;
+      const byName = new Map(cols.map((c) => [c.name, c]));
+      const col = byName.get("vote_score");
+      expect(col, `${table}.vote_score must exist`).toBeDefined();
+      expect(col!.type.toUpperCase()).toBe("REAL");
+      expect(col!.notnull).toBe(1);
+      expect(col!.dflt_value).toBe("0.0");
+    }
+  });
+
+  it("creates vote_events table with autoincrement id + indexes on v9", () => {
+    applyMigrations(db);
+    const cols = db
+      .prepare(`PRAGMA table_info(vote_events)`)
+      .all() as Array<{ name: string; notnull: number; pk: number }>;
+    const names = cols.map((c) => c.name);
+    expect(names).toEqual([
+      "id",
+      "kind",
+      "target_id",
+      "direction",
+      "session_id",
+      "turn_index",
+      "created_at",
+    ]);
+    expect(cols.find((c) => c.name === "kind")!.notnull).toBe(1);
+    expect(cols.find((c) => c.name === "target_id")!.notnull).toBe(1);
+    expect(cols.find((c) => c.name === "direction")!.notnull).toBe(1);
+    expect(cols.find((c) => c.name === "created_at")!.notnull).toBe(1);
+    expect(cols.find((c) => c.name === "id")!.pk).toBe(1);
+
+    const indexes = db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='vote_events' ORDER BY name`,
+      )
+      .all() as Array<{ name: string }>;
+    const indexNames = indexes.map((i) => i.name);
+    expect(indexNames).toContain("idx_vote_events_created");
+    expect(indexNames).toContain("idx_vote_events_target");
+
+    const memoryIndexes = db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='memories'`,
+      )
+      .all() as Array<{ name: string }>;
+    expect(memoryIndexes.map((i) => i.name)).toContain(
+      "idx_memories_vote_score",
+    );
+    const lessonIndexes = db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='lessons'`,
+      )
+      .all() as Array<{ name: string }>;
+    expect(lessonIndexes.map((i) => i.name)).toContain(
+      "idx_lessons_vote_score",
+    );
+  });
+
+  it("migrates a v8 database to v9 preserving existing rows with vote_score=0", () => {
+    db.exec(`
+      CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE profile_facts (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        key             TEXT NOT NULL,
+        value           TEXT NOT NULL,
+        pinned          INTEGER NOT NULL DEFAULT 1,
+        keywords        TEXT,
+        valid_from      INTEGER NOT NULL,
+        superseded_by   INTEGER,
+        supersedes      INTEGER,
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX idx_profile_active_key
+        ON profile_facts(key) WHERE superseded_by IS NULL;
+      CREATE TABLE memories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        session_id TEXT,
+        working_dir TEXT,
+        tags TEXT,
+        recall_count INTEGER NOT NULL DEFAULT 0,
+        last_recalled_at INTEGER,
+        consolidating_at INTEGER,
+        consolidated_into INTEGER
+      );
+      CREATE VIRTUAL TABLE memories_fts USING fts5(content);
+      CREATE TABLE lessons (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        activation      TEXT NOT NULL,
+        principle       TEXT NOT NULL,
+        tags            TEXT,
+        status          TEXT NOT NULL DEFAULT 'active',
+        success_count   INTEGER NOT NULL DEFAULT 0,
+        failure_count   INTEGER NOT NULL DEFAULT 0,
+        parent_ids      TEXT NOT NULL,
+        working_dir     TEXT,
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL,
+        deprecated_at   INTEGER
+      );
+      INSERT INTO schema_meta(key, value) VALUES ('version', '8');
+      INSERT INTO memories (content, created_at, updated_at, source)
+        VALUES ('legacy note', 1000, 1000, 'agent');
+      INSERT INTO profile_facts (key, value, valid_from, created_at, updated_at)
+        VALUES ('language', 'ru', 1000, 1000, 1000);
+      INSERT INTO lessons (activation, principle, parent_ids, created_at, updated_at)
+        VALUES ('when X', 'do Y', '[1]', 1000, 1000);
+    `);
+    applyMigrations(db);
+    const mem = db
+      .prepare(`SELECT content, vote_score FROM memories`)
+      .get() as { content: string; vote_score: number };
+    expect(mem.content).toBe("legacy note");
+    expect(mem.vote_score).toBe(0);
+    const fact = db
+      .prepare(`SELECT key, vote_score FROM profile_facts WHERE key='language'`)
+      .get() as { key: string; vote_score: number };
+    expect(fact.key).toBe("language");
+    expect(fact.vote_score).toBe(0);
+    const lesson = db
+      .prepare(`SELECT activation, vote_score FROM lessons`)
+      .get() as { activation: string; vote_score: number };
+    expect(lesson.activation).toBe("when X");
+    expect(lesson.vote_score).toBe(0);
+    const version = (
+      db.prepare("SELECT value FROM schema_meta WHERE key='version'").get() as {
+        value: string;
+      }
+    ).value;
+    expect(Number(version)).toBe(MEMORY_SCHEMA_VERSION);
+  });
+
   it("refuses to downgrade from a newer version", () => {
     applyMigrations(db);
     db.prepare(

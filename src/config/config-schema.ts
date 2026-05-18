@@ -413,6 +413,23 @@ export interface AtomicAgentConfig {
       requireSharedTag: boolean;
       distillTimeoutMs: number;
     };
+    /**
+     * Phase 7a: ExpeL-style vote curation. The reflection slot grows
+     * one extra sub-call per turn (after link-generator and
+     * neighbor-evolver) that asks the model to UPVOTE/DOWNVOTE the
+     * items surfaced in this turn's variable tail. See
+     * `UserConfigFile.memory.voting` for full doc. Default disabled
+     * — flipping it on adds the extra LLM call on the shared
+     * reflection slot.
+     */
+    voting: {
+      enabled: boolean;
+      maxVotePerItem: number;
+      signalDecay: number;
+      scoreBlend: number;
+      eventLogMaxRows: number;
+      profileFilterThreshold: number;
+    };
   };
   /**
    * Webhook ingress bindings. Mirrors `UserConfigFile.webhooks` —
@@ -750,6 +767,57 @@ export interface UserConfigFile {
       requireSharedTag: boolean;
       distillTimeoutMs: number;
     };
+    /**
+     * Memory-v2 phase 7a. Vote curation (ExpeL-style). Adds a vote
+     * sub-call to the reflection pipeline that emits UPVOTE /
+     * DOWNVOTE markers against items surfaced in the current turn,
+     * plus a cold-path decay applied by `ConsolidatorJob`.
+     *
+     * `voting` keys:
+     *   - `enabled`               master switch. When `false` the
+     *                              vote sub-call is skipped, decay
+     *                              does not run, and the lesson
+     *                              recall reranker treats every
+     *                              row as if `vote_score = 0`.
+     *                              Default `false`.
+     *   - `maxVotePerItem`        clamp on `|vote_score|`. Each
+     *                              UPVOTE/DOWNVOTE is `+1`/`-1` and
+     *                              the row is pinned in
+     *                              `[-maxVotePerItem, +maxVotePerItem]`.
+     *                              Must be > 0; bootstrap rejects 0.
+     *                              Default `50`.
+     *   - `signalDecay`           per-tick scaling factor applied
+     *                              to every `vote_score` value on
+     *                              the consolidator tick. Range
+     *                              `(0, 1]`; `1.0` disables decay,
+     *                              `0.95` matches the spec default.
+     *                              Bootstrap rejects `<= 0` and
+     *                              `> 1`. Default `0.95`.
+     *   - `scoreBlend`            weight of `vote_score` in
+     *                              `combinedScore = scoreBlend *
+     *                              vote_score + (1 - scoreBlend) *
+     *                              (success_count - failure_count)`.
+     *                              Range `[0, 1]`. Default `0.6`.
+     *   - `eventLogMaxRows`       FIFO cap on the `vote_events`
+     *                              audit log. Default `50_000`;
+     *                              `0` disables eviction (the row
+     *                              count is then bounded only by
+     *                              disk space).
+     *   - `profileFilterThreshold` minimum `|vote_score|` at which a
+     *                              `profile_facts` row is hidden
+     *                              from `### profile`. Negative
+     *                              votes ≤ `-profileFilterThreshold`
+     *                              mute the fact; positive scores
+     *                              never hide a fact. Default `3`.
+     */
+    voting: {
+      enabled: boolean;
+      maxVotePerItem: number;
+      signalDecay: number;
+      scoreBlend: number;
+      eventLogMaxRows: number;
+      profileFilterThreshold: number;
+    };
   };
   /**
    * Keyed map of webhook ingress bindings. Each entry is mounted at
@@ -786,7 +854,7 @@ export interface UserConfigFile {
   telegram: TelegramConfig;
 }
 
-export const USER_CONFIG_VERSION = 15 as const;
+export const USER_CONFIG_VERSION = 16 as const;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -810,6 +878,9 @@ export const USER_CONFIG_VERSION = 15 as const;
  * EVOLVE grammar branch + B↔C lease). v15 added `memory.lessons.*` and
  * `memory.consolidation.*` for memory-v2 phase 5 (distilled lessons +
  * cold-path consolidator + first stable-prefix bump for `### lessons`).
+ * v16 added `memory.voting.*` for memory-v2 phase 7a (ExpeL-style vote
+ * curation — UPVOTE/DOWNVOTE sub-call on the reflection slot + decay
+ * on the consolidator tick + utility-eviction + lesson recall reranker).
  * Older files are transparently upgraded by filling missing
  * blocks/fields from `USER_CONFIG_DEFAULTS`. Anything older than v5
  * is not migrated: this is active development, callers delete their
@@ -826,6 +897,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   12,
   13,
   14,
+  15,
   USER_CONFIG_VERSION,
 ];
 
@@ -964,6 +1036,19 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       maxClustersPerTick: 5,
       requireSharedTag: true,
       distillTimeoutMs: 45_000,
+    },
+    voting: {
+      // Phase 7a defaults — disabled out of the box. Flipping on
+      // adds an extra LLM sub-call to the reflection pipeline (on
+      // the shared reflection slot) and engages the cold-path
+      // decay on every consolidator tick. Costs scale with
+      // reflection traffic, so we ship dark.
+      enabled: false,
+      maxVotePerItem: 50,
+      signalDecay: 0.95,
+      scoreBlend: 0.6,
+      eventLogMaxRows: 50_000,
+      profileFilterThreshold: 3,
     },
   },
   webhooks: {},
@@ -1154,6 +1239,33 @@ export function parseUnitInterval(raw: unknown, field: string): number {
   }
   return value;
 }
+
+/**
+ * Parse a number in `(0, 1]` — strict positive lower bound,
+ * inclusive at `1`. Used by `memory.voting.signalDecay` where `0`
+ * is forbidden (a zero decay zeroes every score on the next tick,
+ * which trivially destroys all signal) but `1` is allowed (no
+ * decay at all, mostly useful for tests and offline replay).
+ */
+export function parseHalfOpenUnitInterval(
+  raw: unknown,
+  field: string,
+): number {
+  const value =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string"
+        ? Number.parseFloat(raw)
+        : NaN;
+  if (!Number.isFinite(value) || value <= 0 || value > 1) {
+    throw new ConfigValidationError(
+      field,
+      `expected number in (0, 1], got ${JSON.stringify(raw)}`,
+    );
+  }
+  return value;
+}
+
 
 export function parseBool(raw: unknown, field: string): boolean {
   if (typeof raw === "boolean") return raw;
@@ -1444,6 +1556,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (memory.lessons as Record<string, unknown> | undefined) ?? {};
   const memoryConsolidation =
     (memory.consolidation as Record<string, unknown> | undefined) ?? {};
+  const memoryVoting =
+    (memory.voting as Record<string, unknown> | undefined) ?? {};
   const webhooks = parseWebhookMap(obj.webhooks ?? {}, "webhooks");
   const vision = (obj.vision as Record<string, unknown> | undefined) ?? {};
   const skills = (obj.skills as Record<string, unknown> | undefined) ?? {};
@@ -1850,6 +1964,37 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           memoryConsolidation.distillTimeoutMs ??
             USER_CONFIG_DEFAULTS.memory.consolidation.distillTimeoutMs,
           "memory.consolidation.distillTimeoutMs",
+        ),
+      },
+      voting: {
+        enabled: parseBool(
+          memoryVoting.enabled ?? USER_CONFIG_DEFAULTS.memory.voting.enabled,
+          "memory.voting.enabled",
+        ),
+        maxVotePerItem: parsePositiveInt(
+          memoryVoting.maxVotePerItem ??
+            USER_CONFIG_DEFAULTS.memory.voting.maxVotePerItem,
+          "memory.voting.maxVotePerItem",
+        ),
+        signalDecay: parseHalfOpenUnitInterval(
+          memoryVoting.signalDecay ??
+            USER_CONFIG_DEFAULTS.memory.voting.signalDecay,
+          "memory.voting.signalDecay",
+        ),
+        scoreBlend: parseUnitInterval(
+          memoryVoting.scoreBlend ??
+            USER_CONFIG_DEFAULTS.memory.voting.scoreBlend,
+          "memory.voting.scoreBlend",
+        ),
+        eventLogMaxRows: parseNonNegativeInt(
+          memoryVoting.eventLogMaxRows ??
+            USER_CONFIG_DEFAULTS.memory.voting.eventLogMaxRows,
+          "memory.voting.eventLogMaxRows",
+        ),
+        profileFilterThreshold: parsePositiveInt(
+          memoryVoting.profileFilterThreshold ??
+            USER_CONFIG_DEFAULTS.memory.voting.profileFilterThreshold,
+          "memory.voting.profileFilterThreshold",
         ),
       },
     },

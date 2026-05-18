@@ -129,22 +129,73 @@ the gold lesson via LLM-judge (with operator sampling).
 "wrong" (contradicts gold). Otherwise the consolidator prompt /
 grammar needs tuning before phase 6 ships.
 
+### E5 — vote decision audit (phase 7a specific) [shipped]
+
+**Question:** when the runtime surfaces a set of `lessons` / `memories`
+/ `profile` items to a turn, does the vote sub-call cast votes that
+correctly reflect which ones helped vs which ones were noise?
+
+**Method:** 8 hand-written cases — each is a single `(user, assistant)`
+exchange + a surfaced candidate set + per-candidate gold labels
+(`helpful` / `noise` / `neutral`). Run the vote sub-call in isolation
+via `runIsolatedVote` (LLM + GBNF + parser, no `VoteStore` writes).
+Classify each produced vote against the gold (`correct_upvote`,
+`correct_downvote`, `correct_abstain`, `missed_signal`,
+`false_upvote`, `false_downvote`); judge each decision 1..5.
+
+**Cost:** ~3 minutes (one llama-server completion per case + judge).
+
+**Decision boundary:** `correctness ≥ 0.60`, `falseVoteRate ≤ 0.20`,
+`missedSignalRate ≤ 0.50`. Permissive on purpose — voting is a new
+9B sub-call and the design contract is "drag noise down over many
+turns", not "perfect first-shot". Allowlist breaches must be **0** —
+that's the load-bearing invariant 18 guard, not a soft target.
+
+### E7 — lesson lifecycle bench (phase 6 + 7a, deterministic, no LLM) [shipped]
+
+**Question:** do the age-out sweep, vote-driven deprecation, and
+score-blended recall reranking actually behave the way Phase 6 + 7a
+contracts say they do?
+
+**Method:** 5 deterministic scenarios. Each seeds a fresh
+`memory.sqlite` with lessons of varying `(created_at, success_count,
+vote_score)`, runs `ConsolidatorJob.runOnce()` once with a frozen
+`now`, and asserts:
+
+1. Per-lesson final `status` matches the expected map.
+2. The `(byVote, byAge, byOverflow)` count tuple matches the gold
+   tally so we pin not just *what* was deprecated but *why*.
+3. When the scenario carries a `rerank` block, `lessonStore.recall(...)`
+   under `scoreBlend` returns the expected top-K order.
+
+**Cost:** ~1 second total (pure SQL + no LLM).
+
+**Decision boundary:** all three precisions = 1.0 by default. This
+is an architectural-correctness bench — any drop is a Phase 6/7a
+regression worth investigating, not a tuning question.
+
 ## Run order and gates
 
-Strict-gates ROI ordering — cheapest signal first:
+Strict-gates ROI ordering — deterministic + cheapest LLM signal first:
 
-1. **E1** (offline, ~5 min) → answers the embeddings question. If
+1. **E7** (deterministic, ~1 s) → answers the Phase 6/7a lifecycle
+   question. If lessons aren't deprecating / reranking correctly,
+   nothing downstream is trustworthy.
+2. **E1** (offline, ~5 min) → answers the embeddings question. If
    negative, fix or disable phase 1B before continuing.
-2. **E3** (semi-auto, ~30 min + manual) → answers the reflection
+3. **E3** (semi-auto, ~30 min + manual) → answers the reflection
    question. If reflection is noisy, fixing prompt / parser comes
    **before** E2 — otherwise we'd measure the noise, not the
    feature.
-3. **E2** (~1–2 h LLM time) → the headline number. Pass / fail signal
+4. **E5** (~3 min) → answers the vote-quality question. A red E5
+   does not block E2/E4 (vote curation is emergent over many turns)
+   but informs whether E2's deltas can be attributed to voting.
+5. **E2** (~1–2 h LLM time) → the headline number. Pass / fail signal
    for "memory ON helps the agent".
-4. **E4** (~15 min) → phase 5 internal QA.
+6. **E4** (~15 min) → phase 5 internal QA.
 
-A red verdict on E2 or E3 is a **stop-go** signal — debug before
-phase 6.
+A red verdict on E7, E2, or E3 is a **stop-go** signal — debug before
+shipping further phases.
 
 ## Running
 
@@ -160,14 +211,16 @@ cp eval-memory/.env.example eval-memory/.env
 Run a single experiment:
 
 ```bash
+npm run eval:memory:e7                   # lifecycle bench (deterministic, no LLM)
 npm run eval:memory:e1                   # recall precision (no LLM)
 npm run eval:memory:e1 -- --bm25-only       # offline-only subset
 npm run eval:memory:e3                   # reflection audit (LLM + judge)
+npm run eval:memory:e5                   # vote decision audit (LLM + judge)
 npm run eval:memory:e2                   # paired ON/OFF sessions (LLM + judge)
 npm run eval:memory:e4                   # distillation audit (LLM + judge)
 ```
 
-Run the full campaign (E1 → E3 → E2 → E4):
+Run the full campaign (E7 → E1 → E3 → E5 → E2 → E4):
 
 ```bash
 npm run eval:memory                      # full sweep, exits non-zero on red verdicts
@@ -178,7 +231,7 @@ Reports land in `eval-memory/reports/run-<ISO>/`.
 
 ## Out of scope (deferred)
 
-- **Phase 6/7a/7b evals** — wait until those phases land. The harness
+- **Phase 7b evals** — wait until that phase lands. The harness
   shape will accommodate them.
 - **Real-world journal** — multi-day memory drift / consolidation
   observation. Needs operator commitment, not scriptable.

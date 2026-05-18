@@ -62,6 +62,14 @@ export interface ProfileFact {
    * historical and excluded from `list()` / `get()`.
    */
   supersededBy: number | null;
+  /**
+   * Memory-v2 phase 7a. Aggregated curation signal clamped to
+   * `±memory.voting.maxVotePerItem`. Decays once per consolidator
+   * tick. Defaults to `0` for any row migrated from a v8 database.
+   * The profile renderer hides facts with
+   * `vote_score ≤ -profileFilterThreshold`.
+   */
+  voteScore: number;
 }
 
 export interface ProfileStoreOptions {
@@ -118,6 +126,7 @@ interface ProfileRow {
   supersedes: number | null;
   created_at: number;
   updated_at: number;
+  vote_score: number;
 }
 
 /**
@@ -180,26 +189,30 @@ export class ProfileStore {
     );
     this.selectActiveByKeyStmt = this.db.prepare(
       `SELECT id, key, value, pinned, keywords, valid_from,
-              superseded_by, supersedes, created_at, updated_at
+              superseded_by, supersedes, created_at, updated_at,
+              vote_score
          FROM profile_facts
         WHERE key = ? AND superseded_by IS NULL`,
     );
     this.selectActiveByIdStmt = this.db.prepare(
       `SELECT id, key, value, pinned, keywords, valid_from,
-              superseded_by, supersedes, created_at, updated_at
+              superseded_by, supersedes, created_at, updated_at,
+              vote_score
          FROM profile_facts
         WHERE id = ?`,
     );
     this.selectAllActiveStmt = this.db.prepare(
       `SELECT id, key, value, pinned, keywords, valid_from,
-              superseded_by, supersedes, created_at, updated_at
+              superseded_by, supersedes, created_at, updated_at,
+              vote_score
          FROM profile_facts
         WHERE superseded_by IS NULL
         ORDER BY key ASC`,
     );
     this.historyByKeyStmt = this.db.prepare(
       `SELECT id, key, value, pinned, keywords, valid_from,
-              superseded_by, supersedes, created_at, updated_at
+              superseded_by, supersedes, created_at, updated_at,
+              vote_score
          FROM profile_facts
         WHERE key = ?
         ORDER BY valid_from ASC, id ASC`,
@@ -331,6 +344,7 @@ export class ProfileStore {
       keywords,
       supersedes,
       supersededBy: null,
+      voteScore: 0,
     };
   }
 
@@ -425,6 +439,7 @@ function rowToFact(row: ProfileRow): ProfileFact {
     keywords: parseKeywords(row.keywords),
     supersedes: row.supersedes,
     supersededBy: row.superseded_by,
+    voteScore: row.vote_score ?? 0,
   };
 }
 

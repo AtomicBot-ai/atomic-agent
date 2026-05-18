@@ -422,4 +422,103 @@ describe("parseUserConfigFile", () => {
     });
     expect(parsed.telegram.parseMode).toBe("html");
   });
+
+  it("applies memory.voting defaults when the section is absent", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.memory.voting).toEqual(USER_CONFIG_DEFAULTS.memory.voting);
+    expect(parsed.memory.voting.enabled).toBe(false);
+  });
+
+  it("accepts user-supplied memory.voting overrides", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      memory: {
+        voting: {
+          enabled: true,
+          maxVotePerItem: 100,
+          signalDecay: 0.9,
+          scoreBlend: 0.5,
+          eventLogMaxRows: 10_000,
+          profileFilterThreshold: 5,
+        },
+      },
+    });
+    expect(parsed.memory.voting).toEqual({
+      enabled: true,
+      maxVotePerItem: 100,
+      signalDecay: 0.9,
+      scoreBlend: 0.5,
+      eventLogMaxRows: 10_000,
+      profileFilterThreshold: 5,
+    });
+  });
+
+  // Scorecard 7a.C.3 — bootstrap fails fast on a non-positive vote clamp.
+  it("rejects memory.voting.maxVotePerItem <= 0 (scorecard 7a.C.3)", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { voting: { maxVotePerItem: 0 } },
+      }),
+    ).toThrow(/memory\.voting\.maxVotePerItem/);
+  });
+
+  // Scorecard 7a.C.4 — bootstrap fails fast on a decay outside (0, 1].
+  it("rejects memory.voting.signalDecay > 1 (scorecard 7a.C.4)", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { voting: { signalDecay: 1.5 } },
+      }),
+    ).toThrow(/memory\.voting\.signalDecay/);
+  });
+
+  it("rejects memory.voting.signalDecay = 0", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { voting: { signalDecay: 0 } },
+      }),
+    ).toThrow(/memory\.voting\.signalDecay/);
+  });
+
+  it("accepts memory.voting.signalDecay = 1 (decay disabled)", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      memory: { voting: { signalDecay: 1 } },
+    });
+    expect(parsed.memory.voting.signalDecay).toBe(1);
+  });
+
+  it("rejects memory.voting.scoreBlend outside [0, 1]", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { voting: { scoreBlend: 1.2 } },
+      }),
+    ).toThrow(/memory\.voting\.scoreBlend/);
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { voting: { scoreBlend: -0.1 } },
+      }),
+    ).toThrow(/memory\.voting\.scoreBlend/);
+  });
+
+  it("accepts memory.voting.eventLogMaxRows = 0 (disables FIFO eviction)", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      memory: { voting: { eventLogMaxRows: 0 } },
+    });
+    expect(parsed.memory.voting.eventLogMaxRows).toBe(0);
+  });
+
+  it("rejects negative memory.voting.eventLogMaxRows", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { voting: { eventLogMaxRows: -1 } },
+      }),
+    ).toThrow(/memory\.voting\.eventLogMaxRows/);
+  });
 });

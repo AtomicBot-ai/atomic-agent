@@ -1,6 +1,11 @@
 export {
+  createLessonLifecycleHook,
+  type LessonLifecycleHookOptions,
+} from "./lesson-lifecycle-hook.js";
+export {
   LessonStore,
   LessonValidationError,
+  computeLessonCombinedScore,
   LESSON_ACTIVATION_MAX_LENGTH,
   LESSON_PRINCIPLE_MAX_LENGTH,
   LESSON_MAX_TAGS,

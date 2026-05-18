@@ -46,6 +46,15 @@ export interface Lesson {
   createdAt: number;
   updatedAt: number;
   deprecatedAt: number | null;
+  /**
+   * Memory-v2 phase 7a. Vote score accumulated from
+   * UPVOTE/DOWNVOTE markers across reflection turns. Defaults to
+   * `0`. Mutated only by `VoteStore` writes (live) and
+   * `ConsolidatorJob.decayAllScores` (cold). When the optional
+   * `scoreBlend` is passed to `recall()`, this column drives a
+   * post-BM25 reranking layer (cross-phase §6.4 path E).
+   */
+  voteScore: number;
 }
 
 export interface LessonStoreOptions {
@@ -80,6 +89,28 @@ export interface LessonRecallOptions {
    * Set to `true` for diagnostics / id-history listings.
    */
   includeDeprecated?: boolean;
+  /**
+   * Memory-v2 phase 7a. When provided in `[0, 1]`, apply a
+   * post-BM25 reranking by combined score
+   *
+   *   combined = scoreBlend * vote_score
+   *            + (1 - scoreBlend) * (success_count - failure_count)
+   *
+   * Higher combined values bubble to the top. When omitted, the
+   * BM25 order is preserved exactly (legacy phase 5 / 6 behaviour).
+   * Callers should source the default value from
+   * `memory.voting.scoreBlend`.
+   */
+  scoreBlend?: number;
+  /**
+   * Memory-v2 phase 7a. When `scoreBlend` is set, widens the BM25
+   * pool to `k * rerankPoolMultiplier` candidates before applying
+   * the combined-score sort. Default 3 — a pool of 3K means a
+   * mildly positive vote can promote a sub-top BM25 match, but a
+   * fully unrelated row cannot crash into the top-K. Clamped to
+   * [1, 5].
+   */
+  rerankPoolMultiplier?: number;
 }
 
 export interface LessonIndexEntry {
@@ -121,6 +152,7 @@ interface LessonRow {
   created_at: number;
   updated_at: number;
   deprecated_at: number | null;
+  vote_score: number;
 }
 
 export class LessonValidationError extends Error {
@@ -183,7 +215,8 @@ export class LessonStore {
     this.getByIdStmt = this.db.prepare(
       `SELECT id, activation, principle, tags, status,
               success_count, failure_count, parent_ids,
-              working_dir, created_at, updated_at, deprecated_at
+              working_dir, created_at, updated_at, deprecated_at,
+              vote_score
          FROM lessons
         WHERE id = ?`,
     );
@@ -198,6 +231,7 @@ export class LessonStore {
       `SELECT l.id, l.activation, l.principle, l.tags, l.status,
               l.success_count, l.failure_count, l.parent_ids,
               l.working_dir, l.created_at, l.updated_at, l.deprecated_at,
+              l.vote_score,
               bm25(lessons_fts) AS score
          FROM lessons_fts
          JOIN lessons l ON l.id = lessons_fts.rowid
@@ -210,6 +244,7 @@ export class LessonStore {
       `SELECT l.id, l.activation, l.principle, l.tags, l.status,
               l.success_count, l.failure_count, l.parent_ids,
               l.working_dir, l.created_at, l.updated_at, l.deprecated_at,
+              l.vote_score,
               bm25(lessons_fts) AS score
          FROM lessons_fts
          JOIN lessons l ON l.id = lessons_fts.rowid
@@ -285,6 +320,7 @@ export class LessonStore {
       createdAt: now,
       updatedAt: now,
       deprecatedAt: null,
+      voteScore: 0,
     };
   }
 
@@ -330,6 +366,37 @@ export class LessonStore {
     const stmt = opts.includeDeprecated
       ? this.recallAnyStmt
       : this.recallActiveStmt;
+
+    // Phase 7a: when `scoreBlend` is set, fetch a wider pool from
+    // BM25, then re-sort the pool by `combinedScore` desc and clip
+    // to top-K. A wider pool lets a mildly positive vote promote a
+    // borderline BM25 hit without letting unrelated rows crash the
+    // top-K (the pool itself is still BM25-filtered for relevance).
+    if (typeof opts.scoreBlend === "number") {
+      const blend = Math.max(0, Math.min(1, opts.scoreBlend));
+      const poolMultiplier = Math.max(
+        1,
+        Math.min(5, Math.floor(opts.rerankPoolMultiplier ?? 3)),
+      );
+      const pool = Math.max(k, k * poolMultiplier);
+      const rows = stmt.all(ftsQuery, pool) as LessonRow[];
+      const lessons = rows.map(rowToLesson);
+      // BM25 already ordered ascending (lower = better). To break
+      // ties at equal combinedScore values we preserve that order
+      // via a stable sort + a secondary "BM25 rank" comparator —
+      // `Array.prototype.sort` is stable in V8 / current Node.
+      const indexed = lessons.map((lesson, idx) => ({
+        lesson,
+        bm25Rank: idx,
+        combined: computeLessonCombinedScore(lesson, blend),
+      }));
+      indexed.sort((a, b) => {
+        if (a.combined !== b.combined) return b.combined - a.combined;
+        return a.bm25Rank - b.bm25Rank;
+      });
+      return indexed.slice(0, k).map((entry) => entry.lesson);
+    }
+
     const rows = stmt.all(ftsQuery, k) as LessonRow[];
     return rows.map(rowToLesson);
   }
@@ -417,6 +484,80 @@ export class LessonStore {
   }
 
   /**
+   * Phase 6 — age-based deprecation predicate.
+   *
+   * Returns ids of **active** lessons whose `success_count == 0` AND
+   * `created_at <= now - deprecationAgeMs`. The "still unused"
+   * predicate is the load-bearing filter: a lesson that has helped at
+   * least one turn (`success_count >= 1`) survives indefinitely
+   * regardless of age — only the FIFO `pickOverflowForDeprecation`
+   * sweep can demote it. Failure-count is **not** part of the
+   * predicate; phase 7a will combine `vote_score < 0` with age. The
+   * `limit` is a defensive cap (default `1000`) so a runaway tick
+   * cannot burn the SQLite handle scanning millions of rows.
+   *
+   * Pinned by `lesson-store.test.ts` ("age picker filters by
+   * success_count and creation time").
+   */
+  pickAgeDeprecationCandidates(args: {
+    now: number;
+    deprecationAgeMs: number;
+    limit?: number;
+  }): number[] {
+    const threshold = args.now - Math.max(0, args.deprecationAgeMs);
+    const limit = Math.max(0, args.limit ?? 1000);
+    if (limit === 0) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT id FROM lessons
+           WHERE status = 'active'
+             AND success_count = 0
+             AND created_at <= ?
+           ORDER BY created_at ASC, id ASC
+           LIMIT ?`,
+      )
+      .all(threshold, limit) as Array<{ id: number }>;
+    return rows.map((r) => r.id);
+  }
+
+  /**
+   * Phase 7a — vote-based deprecation predicate (scorecard 7a.A).
+   *
+   * Returns ids of **active** lessons whose `vote_score < 0` AND
+   * `success_count == 0`. A lesson that the operator has actively
+   * downvoted before it ever helped a turn is treated as
+   * disqualified — `pickAgeDeprecationCandidates` would have waited
+   * the full `deprecationAgeMs` (30 days by default), this predicate
+   * promotes them immediately at the next consolidator tick.
+   *
+   * `success_count == 0` is load-bearing: a lesson that has
+   * accumulated success bumps from previous turns survives even a
+   * net-negative vote signal, since the automatic feedback channel
+   * is harder to game than ad-hoc voting. Operators who want to
+   * forcibly retire a successful lesson use `markDeprecated`
+   * directly.
+   *
+   * Ordering: most-negative votes first so the highest-confidence
+   * "this is bad" signals get retired before borderline cases when
+   * the tick cap (`maxDeprecationsPerTick`) binds.
+   */
+  pickVoteDeprecationCandidates(args: { limit?: number } = {}): number[] {
+    const limit = Math.max(0, args.limit ?? 1000);
+    if (limit === 0) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT id FROM lessons
+           WHERE status = 'active'
+             AND success_count = 0
+             AND vote_score < 0
+           ORDER BY vote_score ASC, created_at ASC, id ASC
+           LIMIT ?`,
+      )
+      .all(limit) as Array<{ id: number }>;
+    return rows.map((r) => r.id);
+  }
+
+  /**
    * Hard-cap helper. Returns the ids of lessons that should be
    * demoted to honour `maxEntries`. Caller decides whether to
    * flip them via `markDeprecated`. Returns `[]` when below the
@@ -458,7 +599,33 @@ function rowToLesson(row: LessonRow): Lesson {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     deprecatedAt: row.deprecated_at,
+    voteScore: typeof row.vote_score === "number" ? row.vote_score : 0,
   };
+}
+
+/**
+ * Memory-v2 phase 7a. Combined lesson ranking score used for the
+ * post-BM25 reranking layer in `LessonStore.recall()`. Higher is
+ * better. The blend gives the operator one knob
+ * (`memory.voting.scoreBlend`) to dial how much the curation
+ * signal dominates the automatic success/failure counters.
+ *
+ *   combined = scoreBlend * voteScore
+ *            + (1 - scoreBlend) * (successCount - failureCount)
+ *
+ * `scoreBlend = 0` ⇒ pure automatic feedback.
+ * `scoreBlend = 1` ⇒ pure manual voting.
+ * `scoreBlend = 0.6` ⇒ default mix from config.
+ */
+export function computeLessonCombinedScore(
+  lesson: Pick<Lesson, "voteScore" | "successCount" | "failureCount">,
+  scoreBlend: number,
+): number {
+  const blend = Math.max(0, Math.min(1, scoreBlend));
+  return (
+    blend * lesson.voteScore +
+    (1 - blend) * (lesson.successCount - lesson.failureCount)
+  );
 }
 
 function parseTags(raw: string | null): string[] {

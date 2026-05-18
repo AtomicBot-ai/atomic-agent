@@ -26,6 +26,27 @@ export interface ReflectionInput {
    * turn entirely.
    */
   recalledMemoryIds?: readonly number[];
+  /**
+   * Memory-v2 phase 7a. Ids of lessons that actually rendered into
+   * the `### lessons` section for this turn. Threaded into the
+   * vote-runner allowlist (cross-phase invariant 18) so the model
+   * can never vote on a lesson it did not see in context.
+   */
+  recalledLessonIds?: readonly number[];
+  /**
+   * Memory-v2 phase 7a. Ids of profile_facts that actually rendered
+   * into the `### profile` section for this turn. Threaded into the
+   * vote-runner allowlist so the LLM can only vote on facts that
+   * were visible (pinned facts plus contextually-gated ones that
+   * passed the keyword filter).
+   */
+  recalledProfileFactIds?: readonly number[];
+  /**
+   * Memory-v2 phase 7a. 0-based turn index within the session,
+   * propagated into `vote_events.turn_index` for audit attribution.
+   * Optional — when missing, the audit row stores `NULL`.
+   */
+  turnIndex?: number;
 }
 
 /**
