@@ -4,6 +4,7 @@ import {
   renderMemoryIndexSection,
   renderRecalledSection,
 } from "../memory/notes-renderer.js";
+import { renderLessonsSection } from "../memory/lessons/lessons-renderer.js";
 import { packConversation } from "../session/conversation-turn.js";
 import {
   renderPackedConversation,
@@ -167,6 +168,19 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const memoryIndexTokens =
     memoryIndex !== null ? estimateTokens(memoryIndex) : 0;
 
+  const lessonsMaxTokens =
+    input.lessonsMaxTokens ?? config.memory.lessons.maxTokens;
+  const recalledLessons = input.session.recalledLessons;
+  const lessonsFull =
+    recalledLessons !== undefined && recalledLessons.length > 0
+      ? renderLessonsSection(recalledLessons)
+      : null;
+  const lessons =
+    lessonsFull !== null
+      ? truncateToTokens(lessonsFull, lessonsMaxTokens)
+      : null;
+  const lessonsTokens = lessons !== null ? estimateTokens(lessons) : 0;
+
   const worldSnapshotFull = renderWorldSnapshotSection(input.session);
   const worldSnapshot = truncateToTokens(
     worldSnapshotFull,
@@ -185,6 +199,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     profileTokens,
     recalledTokens,
     memoryIndexTokens,
+    lessonsTokens,
     loadedToolsTokens,
     completionMaxTokens,
   });
@@ -207,6 +222,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   }
   if (profile !== null) {
     tailParts.push("### profile", profile, ``);
+  }
+  if (lessons !== null) {
+    tailParts.push("### lessons", lessons, ``);
   }
   if (memoryIndex !== null) {
     tailParts.push("### memory-index", memoryIndex, ``);

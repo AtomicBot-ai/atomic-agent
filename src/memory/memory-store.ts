@@ -126,6 +126,14 @@ export interface MemoryListOptions {
   scope?: "project" | "all";
   workingDir?: string | null;
   limit?: number;
+  /**
+   * Memory-v2 phase 5. When `true` (default for the prompt-side
+   * `### memory-index` rendering, opt-in for direct callers), rows
+   * with `consolidated_into IS NOT NULL` are filtered out. Archived
+   * episodes are still readable by id via `get(id)` — they only
+   * drop out of the hot index view that competes for prompt budget.
+   */
+  excludeArchived?: boolean;
 }
 
 /**
@@ -714,6 +722,9 @@ export class MemoryStore {
       where.push(`working_dir = ?`);
       params.push(dir);
     }
+    if (opts.excludeArchived) {
+      where.push(`consolidated_into IS NULL`);
+    }
     const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
     const sql = `
       SELECT id, content, created_at, updated_at,
@@ -797,6 +808,57 @@ export class MemoryStore {
       )
       .run(now, normalizedId, threshold) as { changes: number };
     return r.changes > 0;
+  }
+
+  /**
+   * Memory-v2 phase 5. Stamp `consolidated_into` on the given memory
+   * rows so they drop out of `### memory-index` while staying
+   * recallable by id (cross-phase invariant 9: archived episodes are
+   * never deleted). Runs all updates in a single transaction.
+   *
+   * Returns the number of rows that actually got stamped. Callers
+   * may pass ids that are already archived (e.g. by a concurrent
+   * tick) — those count as zero changes. Missing ids likewise count
+   * as zero.
+   */
+  archiveInto(
+    parentIds: readonly number[],
+    lessonId: number,
+    now: number = this.now(),
+  ): number {
+    const normalisedLessonId = validateId(lessonId);
+    const normalisedParents = parentIds.map((id) => validateId(id));
+    if (normalisedParents.length === 0) return 0;
+    const stmt = this.db.prepare(
+      `UPDATE memories
+          SET consolidated_into = ?,
+              updated_at = ?
+        WHERE id = ?
+          AND consolidated_into IS NULL`,
+    );
+    const txn = this.db.transaction((): number => {
+      let touched = 0;
+      for (const id of normalisedParents) {
+        const r = stmt.run(normalisedLessonId, now, id) as { changes: number };
+        touched += r.changes;
+      }
+      return touched;
+    });
+    return txn();
+  }
+
+  /**
+   * Memory-v2 phase 5. Read the archive back-pointer for a memory
+   * row. Returns `null` when the row is missing or still active.
+   * Used by the consolidator (idempotency check) and the
+   * `### memory-index` exclusion pass.
+   */
+  getConsolidatedInto(id: number): number | null {
+    const normalisedId = validateId(id);
+    const row = this.db
+      .prepare(`SELECT consolidated_into FROM memories WHERE id = ?`)
+      .get(normalisedId) as { consolidated_into: number | null } | undefined;
+    return row ? row.consolidated_into : null;
   }
 
   /**

@@ -101,6 +101,16 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    name: "memory.lessons.recall",
+    summary:
+      "Read distilled lessons by id (pointer from `### lessons`) or BM25 query. Returns full principle bodies; the prompt only shows activation pointers.",
+    argsSchema: "{ id?: number, query?: string, k?: number /* 1..10 */ }",
+    examples: [
+      '{"id":42}',
+      '{"query":"pnpm install","k":2}',
+    ],
+  },
+  {
     name: "tasks.schedule",
     summary: "Schedule a one-shot task; current session or newSession.",
     argsSchema: "{ userMessage: string, at?: number, inSeconds?: number, newSession?: boolean }",

@@ -49,6 +49,7 @@ import type { LlmProvider } from "../llm/provider/index.js";
 
 import { MemoryStore } from "../memory/memory-store.js";
 import { ProfileStore } from "../memory/profile-store.js";
+import { LessonStore } from "../memory/lessons/lesson-store.js";
 import { createDefaultMemoryContextProvider } from "../memory/memory-context-provider.js";
 import {
   EmbeddingStore,
@@ -71,6 +72,10 @@ import {
   createLinkAwareReflectionRunner,
 } from "../memory/links/index.js";
 import { NeighborEvolver } from "../memory/evolution/index.js";
+import {
+  ConsolidatorJob,
+  DistillRunner,
+} from "../memory/consolidator/index.js";
 
 import { SkillRegistry } from "../skills/skill-registry.js";
 import { buildSkillCatalog } from "../skills/skill-catalog.js";
@@ -231,6 +236,14 @@ export interface AgentRuntime {
    * `shutdown()`.
    */
   readonly notesStore: MemoryStore;
+  /**
+   * Memory-v2 phase 5. Distilled lesson store. Always present (lives
+   * alongside `notesStore` in `memory.sqlite`), regardless of
+   * `memory.lessons.enabled` — the agent-facing tool registration is
+   * gated, but the store itself is always open so `shutdown` can
+   * close it cleanly.
+   */
+  readonly lessonStore: LessonStore;
   /**
    * Durable task queue. Always present, even when `tasks.enabled` is
    * false, because the store owns its SQLite connection and must be
@@ -620,6 +633,19 @@ export async function createAgentRuntime(
     db: notesStore.getDatabaseHandleForEmbeddings(),
   });
 
+  // Memory-v2 phase 5. `LessonStore` is always constructed when the
+  // schema is present (v8+) — the agent-facing tool registration is
+  // gated on `memory.lessons.enabled`, and the consolidator is
+  // additionally gated on `memory.consolidation.enabled`. Keeping the
+  // handle open even when both switches are off is intentional: the
+  // SQLite connection lives next to `MemoryStore` / `ProfileStore` /
+  // `LinkStore` in the same file and must be closed in `shutdown`.
+  const lessonStore = new LessonStore({
+    dbFile: config.paths.memoryDbFile,
+    maxEntries: config.memory.lessons.maxEntries,
+    metrics,
+  });
+
   const toolRegistry = new ToolRegistry();
   toolRegistry.register(finishTool);
   toolRegistry.register(replyTool);
@@ -636,6 +662,8 @@ export async function createAgentRuntime(
     notesEnabled: config.memory.notes.enabled,
     notesRecallDefaultK: config.memory.notes.recallDefaultK,
     notesMaxContentChars: config.memory.notes.maxContentChars,
+    lessonStore,
+    lessonsEnabled: config.memory.lessons.enabled,
   });
 
   // Vision provider wiring is deferred until after `profileManager` is
@@ -878,6 +906,19 @@ export async function createAgentRuntime(
               metrics,
             }
           : {}),
+        // Memory-v2 phase 5: surface lesson pointers in `### lessons`.
+        // When `memory.lessons.enabled=false`, the provider skips the
+        // call entirely and `recalledLessons` stays empty — the prompt
+        // renderer then omits the section header.
+        ...(config.memory.lessons.enabled
+          ? {
+              lessons: {
+                enabled: true,
+                store: lessonStore,
+                k: config.memory.lessons.recallK,
+              },
+            }
+          : {}),
       })
     : undefined;
 
@@ -968,6 +1009,15 @@ export async function createAgentRuntime(
       // already closed
     }
     try {
+      // Memory-v2 phase 5. LessonStore owns its own SQLite handle on
+      // the same `memory.sqlite` file as MemoryStore / ProfileStore /
+      // LinkStore — close before letting the process exit so WAL
+      // checkpointing finishes cleanly.
+      lessonStore.close();
+    } catch {
+      // already closed
+    }
+    try {
       notesStore.close();
     } catch {
       // already closed
@@ -977,6 +1027,15 @@ export async function createAgentRuntime(
         await scheduler.stop();
       } catch (err) {
         logger.warn("scheduler stop failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    if (consolidatorJob) {
+      try {
+        await consolidatorJob.stop();
+      } catch (err) {
+        logger.warn("consolidator stop failed", {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -1107,6 +1166,79 @@ export async function createAgentRuntime(
       : null;
   scheduler?.start();
 
+  // Memory-v2 phase 5: cold-path consolidator. Owns its own
+  // `setInterval` (scoped carve-out from "Scheduler is the only
+  // periodic timer" invariant — analogous to the Telegram polling
+  // carve-out). Started only when `memory.consolidation.enabled` is
+  // true AND a reflection-slot llmComplete is available. Distillation
+  // shares the reflection slot reserved above for link-generation;
+  // when no slot was reserved (memory.reflection disabled or only one
+  // llama-server slot) we fall back to slotId=-1 (no KV-cache reuse).
+  let consolidatorJob: ConsolidatorJob | null = null;
+  if (
+    config.memory.lessons.enabled &&
+    config.memory.consolidation.enabled
+  ) {
+    // Reserve (or piggy-back on) the reflection slot for the distill
+    // call. The slot is per-runtime, not per-job, so calling
+    // `reserveReflectionSlot` again here is idempotent — the slot
+    // manager returns the same id.
+    const distillSlot = slotManager.reserveReflectionSlot() ?? -1;
+    const distillLlmComplete = async (params: {
+      prompt: string;
+      grammar: string;
+      slotId: number;
+      sessionId: string;
+      signal: AbortSignal;
+    }) => {
+      if (params.signal.aborted) {
+        throw new DOMException("aborted", "AbortError");
+      }
+      const abortPromise = new Promise<never>((_, reject) => {
+        params.signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("aborted", "AbortError")),
+          { once: true },
+        );
+      });
+      const completionPromise = llmComplete({
+        prompt: params.prompt,
+        grammar: params.grammar,
+        slotId: params.slotId,
+        sessionId: params.sessionId,
+      });
+      return Promise.race([completionPromise, abortPromise]);
+    };
+    const distillRunner = new DistillRunner({
+      llmComplete: distillLlmComplete,
+      slotId: distillSlot,
+      timeoutMs: config.memory.consolidation.distillTimeoutMs,
+      logger,
+      metrics,
+    });
+    consolidatorJob = new ConsolidatorJob(
+      {
+        enabled: true,
+        intervalMs: config.memory.consolidation.intervalMs,
+        cooldownMs: config.memory.consolidation.cooldownMs,
+        minClusterSize: config.memory.consolidation.minClusterSize,
+        maxClustersPerTick:
+          config.memory.consolidation.maxClustersPerTick,
+        requireSharedTag: config.memory.consolidation.requireSharedTag,
+        consolidationLeaseMs: 60_000,
+      },
+      {
+        memoryStore: notesStore,
+        linkStore,
+        lessonStore,
+        distillRunner,
+        metrics,
+        logger,
+      },
+    );
+    consolidatorJob.start();
+  }
+
   const runtime = {
     config,
     loop,
@@ -1118,6 +1250,7 @@ export async function createAgentRuntime(
     turnController,
     profileStore,
     notesStore,
+    lessonStore,
     taskStore,
     taskRunner,
     scheduler,

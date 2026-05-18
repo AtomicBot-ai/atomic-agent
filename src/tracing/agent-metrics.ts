@@ -43,6 +43,14 @@ export const METRIC_NAMES = {
   memoryEvolutionSkipped: "agent.memory.evolution.skipped",
   // memory-v2 phase 4
   memoryProfileSuperseded: "agent.memory.profile.superseded",
+  // memory-v2 phase 5
+  memoryLessonsCreated: "agent.memory.lessons.created",
+  memoryLessonsDeprecated: "agent.memory.lessons.deprecated",
+  memoryLessonsRecalled: "agent.memory.lessons.recalled",
+  memoryConsolidationRun: "agent.memory.consolidation.run",
+  memoryConsolidationDistillLatency:
+    "agent.memory.consolidation.distill_latency_ms",
+  memoryConsolidationClusters: "agent.memory.consolidation.clusters",
   tasksCreated: "agent.tasks.created",
   tasksStarted: "agent.tasks.started",
   tasksCompleted: "agent.tasks.completed",
@@ -285,6 +293,53 @@ export type MemoryEvolutionOutcomeTag =
 export interface MemoryEvolutionSample {
   sessionId: string;
   outcome: MemoryEvolutionOutcomeTag;
+}
+
+/**
+ * Memory-v2 phase 5. A new lesson row landed in `LessonStore` via
+ * the consolidator's distillation step. `parentCount` is the size
+ * of the cluster that was promoted.
+ */
+export interface MemoryLessonCreatedSample {
+  lessonId: number;
+  parentCount: number;
+}
+
+/**
+ * Memory-v2 phase 5/6. A lesson got flipped to `deprecated`. `reason`
+ * is a short tag (`age`, `manual`, `cap_hit`, …) for postmortem
+ * filtering — keep it low-cardinality.
+ */
+export interface MemoryLessonDeprecatedSample {
+  lessonId: number;
+  reason: string;
+}
+
+/**
+ * Memory-v2 phase 5. Fires when the agent's hot path surfaced one or
+ * more lesson pointers in `### lessons` for a turn. `hits` is the
+ * number of pointers actually written to the prompt tail. Used to
+ * verify scenario 5.B.5 ("`agent.memory.lessons.recalled` ≥ 1").
+ */
+export interface MemoryLessonRecalledSample {
+  sessionId: string;
+  hits: number;
+}
+
+/**
+ * Memory-v2 phase 5. A consolidator tick completed.
+ *
+ *  - `ok`     — at least one cluster was distilled and persisted.
+ *  - `none`   — no clusters met the cooldown / size / lease bar.
+ *  - `failed` — distill threw / parse failed / FK violated; the tick
+ *               itself never throws (cross-phase invariant 13).
+ */
+export type MemoryConsolidationOutcomeTag = "ok" | "none" | "failed";
+
+export interface MemoryConsolidationRunSample {
+  outcome: MemoryConsolidationOutcomeTag;
+  clustersConsidered: number;
+  lessonsCreated: number;
 }
 
 /**
@@ -663,6 +718,68 @@ export class AgentMetrics {
       ...tags,
       reason: sample.outcome.replace(/^skipped_/, ""),
     });
+  }
+
+  /**
+   * Memory-v2 phase 5. Record a successful lesson creation by the
+   * consolidator. Tagged with the parent cluster size so the
+   * distribution of "how many episodes did a lesson swallow" can be
+   * read off a histogram view in any sink.
+   */
+  recordLessonCreated(sample: MemoryLessonCreatedSample): void {
+    this.collector.counter(METRIC_NAMES.memoryLessonsCreated, 1, {
+      lesson_id: String(sample.lessonId),
+      parent_count: String(sample.parentCount),
+    });
+  }
+
+  /**
+   * Memory-v2 phase 5/6. Record a lesson lifecycle demotion.
+   */
+  recordLessonDeprecated(sample: MemoryLessonDeprecatedSample): void {
+    this.collector.counter(METRIC_NAMES.memoryLessonsDeprecated, 1, {
+      lesson_id: String(sample.lessonId),
+      reason: sample.reason,
+    });
+  }
+
+  /**
+   * Memory-v2 phase 5. Record a turn where one or more lessons
+   * actually landed in the `### lessons` prompt section.
+   */
+  recordLessonsRecalled(sample: MemoryLessonRecalledSample): void {
+    this.collector.counter(METRIC_NAMES.memoryLessonsRecalled, sample.hits, {
+      session_id: sample.sessionId,
+    });
+  }
+
+  /**
+   * Memory-v2 phase 5. Record a consolidator tick. The `clusters`
+   * counter mirrors `clustersConsidered` so the operator can see
+   * whether the tick had work at all even when zero lessons landed.
+   */
+  recordConsolidationRun(sample: MemoryConsolidationRunSample): void {
+    this.collector.counter(METRIC_NAMES.memoryConsolidationRun, 1, {
+      outcome: sample.outcome,
+      lessons_created: String(sample.lessonsCreated),
+    });
+    this.collector.counter(
+      METRIC_NAMES.memoryConsolidationClusters,
+      sample.clustersConsidered,
+      { outcome: sample.outcome },
+    );
+  }
+
+  /**
+   * Memory-v2 phase 5. Histogram of distillation latency per
+   * cluster. One observation per distilled cluster, **not** per
+   * tick — a multi-cluster tick produces multiple samples.
+   */
+  recordConsolidationDistillLatency(durationMs: number): void {
+    this.collector.histogram(
+      METRIC_NAMES.memoryConsolidationDistillLatency,
+      durationMs,
+    );
   }
 
   /**

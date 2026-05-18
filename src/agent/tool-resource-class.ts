@@ -108,6 +108,7 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // memory.*
   "memory.profile.list": "pure_read",
   "memory.profile.history": "pure_read",
+  "memory.lessons.recall": "pure_read",
   "memory.notes.recall": "pure_read",
   "memory.profile.set": "memory_write",
   "memory.profile.remove": "memory_write",

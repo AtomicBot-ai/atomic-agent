@@ -34,6 +34,7 @@ import type {
   MemoryEntry,
   MemoryIndexEntry,
 } from "../memory/memory-store.js";
+import type { LessonIndexEntry } from "../memory/lessons/lesson-store.js";
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { ReflectionRunner } from "../memory/reflection/index.js";
 import { executeStep } from "./step-executor.js";
@@ -137,6 +138,12 @@ export interface MemoryContextProviderInput {
 export interface MemoryContext {
   recalled: readonly MemoryEntry[];
   index: readonly MemoryIndexEntry[];
+  /**
+   * Memory-v2 phase 5. Top-K pointer rows from `LessonStore` for the
+   * current turn. Optional so phase 1A/B/2/3/4 providers stay
+   * source-compatible — missing field is treated as "no lessons".
+   */
+  lessons?: readonly LessonIndexEntry[];
 }
 
 export interface MemoryContextProvider {
@@ -612,10 +619,18 @@ async function refreshMemoryContext(
       toolResultSummaries: collectRecentToolResultSummaries(state),
       signal: options.signal,
     });
+    const lessons = ctx.lessons ?? [];
+    if (lessons.length > 0) {
+      deps.metrics?.recordLessonsRecalled({
+        sessionId: state.id,
+        hits: lessons.length,
+      });
+    }
     return {
       ...state,
       recalledNotes: ctx.recalled,
       memoryIndex: ctx.index,
+      recalledLessons: lessons,
     };
   } catch (err) {
     deps.logger?.warn("memory context provider failed", {

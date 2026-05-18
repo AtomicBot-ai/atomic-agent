@@ -14,7 +14,7 @@
  * `applyMigrations` with a new step. The `schema_meta` table records the
  * version actually present on disk so upgrades are idempotent.
  */
-export const MEMORY_SCHEMA_VERSION = 7 as const;
+export const MEMORY_SCHEMA_VERSION = 8 as const;
 
 const BASE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -254,6 +254,94 @@ INSERT INTO profile_facts
 DROP TABLE profile_facts_legacy;
 `;
 
+// V8 introduces the **lessons** table — memory-v2 phase 5 (Path C-half).
+// A lesson is a distilled summary of N related episodes (NOTEs) that
+// the cold-path consolidator promotes into a compact pointer view
+// (`### lessons` in the prompt tail). The original episodes are
+// archived (`consolidated_into = <lessonId>`) but **never deleted** —
+// `memory.notes.recall { id }` of an archived row still returns the
+// original `MemoryEntry`, preserving audit/trace integrity (this is
+// cross-phase invariant 9 in MEMORY_FABRIC_V2.md §9).
+//
+// Shape highlights:
+//   - `activation` and `principle` are the two LLM-distilled fields;
+//     they get indexed in `lessons_fts` for BM25 recall on the user
+//     message. `activation` is the one-sentence "when this lesson
+//     applies" hook; `principle` is the 1–3 sentence durable
+//     observation.
+//   - `parent_ids` is a JSON array of the episode ids that were
+//     consolidated into this lesson. Mandatory so a deprecation /
+//     audit pass can walk back from a lesson to its parents.
+//   - `status` is `'active' | 'deprecated'`. Deprecated lessons stay
+//     on disk and are still recallable by id, but drop out of the
+//     hot `### lessons` index. Phase 6 owns the deprecation logic;
+//     phase 5 only ships the column shape.
+//   - `success_count` / `failure_count` are phase-6 lifecycle
+//     signals. Always zero on creation in phase 5.
+//   - `working_dir` mirrors the episode-level scope so per-project
+//     lessons can be filtered later (phase 7a `scope` filtering).
+//
+// `consolidated_into` on `memories` is the back-pointer added in this
+// same migration. The index supports two hot lookups:
+//   1. "Is this episode archived?" (used by the renderer / context
+//      provider to exclude archived rows from `### memory-index`).
+//   2. "What are the parents of this lesson?" (used by the
+//      consolidator's link-rewire pass).
+//
+// `lessons_fts` is an FTS5 contentless table (`content='lessons'`)
+// with the same triggers pattern as `memories_fts` (insert / delete /
+// update). All three triggers fire on `lessons` mutations.
+//
+// **KV-cache invalidation note.** Phase 5 also adds a `### lessons`
+// mention to the persona stable prefix in [src/prompt/persona.ts].
+// That is the first of two planned one-time main-slot KV-cache
+// invalidations for memory-v2 (the second lands with phase 7b's
+// `### procedures`). The schema migration itself never touches the
+// stable prefix, so no cache flush is triggered by the SQL above.
+const V8_MIGRATION = `
+ALTER TABLE memories ADD COLUMN consolidated_into INTEGER;
+CREATE INDEX idx_memories_consolidated ON memories(consolidated_into);
+
+CREATE TABLE lessons (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  activation      TEXT NOT NULL,
+  principle       TEXT NOT NULL,
+  tags            TEXT,
+  status          TEXT NOT NULL DEFAULT 'active',
+  success_count   INTEGER NOT NULL DEFAULT 0,
+  failure_count   INTEGER NOT NULL DEFAULT 0,
+  parent_ids      TEXT NOT NULL,
+  working_dir     TEXT,
+  created_at      INTEGER NOT NULL,
+  updated_at      INTEGER NOT NULL,
+  deprecated_at   INTEGER
+);
+CREATE INDEX idx_lessons_status ON lessons(status);
+CREATE INDEX idx_lessons_updated_at ON lessons(updated_at);
+
+CREATE VIRTUAL TABLE lessons_fts USING fts5(
+  activation, principle, tags,
+  content='lessons',
+  content_rowid='id',
+  tokenize='porter unicode61'
+);
+
+CREATE TRIGGER lessons_ai AFTER INSERT ON lessons BEGIN
+  INSERT INTO lessons_fts(rowid, activation, principle, tags)
+    VALUES (new.id, new.activation, new.principle, COALESCE(new.tags, ''));
+END;
+CREATE TRIGGER lessons_ad AFTER DELETE ON lessons BEGIN
+  INSERT INTO lessons_fts(lessons_fts, rowid, activation, principle, tags)
+    VALUES ('delete', old.id, old.activation, old.principle, COALESCE(old.tags, ''));
+END;
+CREATE TRIGGER lessons_au AFTER UPDATE ON lessons BEGIN
+  INSERT INTO lessons_fts(lessons_fts, rowid, activation, principle, tags)
+    VALUES ('delete', old.id, old.activation, old.principle, COALESCE(old.tags, ''));
+  INSERT INTO lessons_fts(rowid, activation, principle, tags)
+    VALUES (new.id, new.activation, new.principle, COALESCE(new.tags, ''));
+END;
+`;
+
 export interface MemoryDatabaseLike {
   exec(sql: string): unknown;
   prepare(sql: string): {
@@ -290,6 +378,9 @@ export function applyMigrations(db: MemoryDatabaseLike): void {
   }
   if (current < 7) {
     db.exec(V7_MIGRATION);
+  }
+  if (current < 8) {
+    db.exec(V8_MIGRATION);
   }
   if (current === MEMORY_SCHEMA_VERSION) return;
   db.prepare(

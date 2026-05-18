@@ -2,6 +2,7 @@ import type {
   MemoryEntry,
   MemoryIndexEntry,
 } from "../memory/memory-store.js";
+import type { LessonIndexEntry } from "../memory/lessons/lesson-store.js";
 import {
   appendTurn,
   type ConversationTurn,
@@ -128,11 +129,21 @@ export interface SessionState {
    * persistence rules as `recalledNotes`.
    */
   memoryIndex?: readonly MemoryIndexEntry[];
+  /**
+   * Memory-v2 phase 5. Pointer view of distilled lessons surfaced for
+   * the current turn. Populated by `memory-context-provider.buildMemoryContext`
+   * and rendered as `### lessons` between `### profile` and
+   * `### memory-index` in the variable tail. Carries only the
+   * `LessonIndexEntry` fields — the full `principle` is gated behind
+   * `memory.lessons.recall { id }`.
+   *
+   * Ephemeral: stripped by `stripEphemeral` below before `SessionStore`
+   * persistence. Cross-phase invariant 8.
+   */
+  recalledLessons?: readonly LessonIndexEntry[];
   // TODO(memory-v2): cross-phase invariant 8 — every new prompt-only
   // memory field added in v2 must be ephemeral (per-turn) and stripped
   // by `stripEphemeral()` below before session-store persistence:
-  //   - phase 5 adds `recalledLessons?: readonly Lesson[]` (rendered as
-  //     `### lessons`).
   //   - phase 7a adds `surfacedIds?: readonly { kind, id }[]` (consumed
   //     by the vote-runner allowlist; never rendered).
   //   - phase 7b adds `recalledProcedures?: readonly Procedure[]`
@@ -259,9 +270,18 @@ export function incrementTurnCount(state: SessionState): SessionState {
  * next turn begins.
  */
 export function stripEphemeral(state: SessionState): SessionState {
-  if (state.recalledNotes === undefined && state.memoryIndex === undefined) {
+  if (
+    state.recalledNotes === undefined &&
+    state.memoryIndex === undefined &&
+    state.recalledLessons === undefined
+  ) {
     return state;
   }
-  const { recalledNotes: _r, memoryIndex: _m, ...rest } = state;
+  const {
+    recalledNotes: _r,
+    memoryIndex: _m,
+    recalledLessons: _l,
+    ...rest
+  } = state;
   return rest;
 }

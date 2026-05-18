@@ -389,6 +389,30 @@ export interface AtomicAgentConfig {
       maxPerWrite: number;
       leaseMs: number;
     };
+    /**
+     * Phase 5: distilled lessons + cold-path consolidator. See
+     * UserConfigFile.memory.lessons for full doc. Default disabled —
+     * with the master switch off, `### lessons` is not rendered,
+     * `memory.lessons.recall` returns `LessonsDisabledError`, and
+     * the consolidator never registers its periodic timer.
+     */
+    lessons: {
+      enabled: boolean;
+      recallK: number;
+      maxTokens: number;
+      indexLimit: number;
+      maxEntries: number;
+      deprecationAgeMs: number;
+    };
+    consolidation: {
+      enabled: boolean;
+      intervalMs: number;
+      cooldownMs: number;
+      minClusterSize: number;
+      maxClustersPerTick: number;
+      requireSharedTag: boolean;
+      distillTimeoutMs: number;
+    };
   };
   /**
    * Webhook ingress bindings. Mirrors `UserConfigFile.webhooks` —
@@ -662,6 +686,70 @@ export interface UserConfigFile {
       maxPerWrite: number;
       leaseMs: number;
     };
+    /**
+     * Memory-v2 phase 5. Distilled lessons + cold-path consolidator.
+     * Default disabled because rolling phase 5 on flips the stable
+     * prefix bytes once (see AGENTS.md "Memory fabric phase 5"), so
+     * deployments choose an explicit upgrade window.
+     *
+     * `lessons` keys:
+     *   - `enabled`            master switch for `### lessons`
+     *                          rendering + `memory.lessons.recall` +
+     *                          `ConsolidatorJob.start`. Default
+     *                          `false`.
+     *   - `recallK`            top-K lessons surfaced per turn (BM25).
+     *                          Default `2`.
+     *   - `maxTokens`          hard cap on the rendered `### lessons`
+     *                          block. Default `300`.
+     *   - `indexLimit`         row cap on `LessonStore.listIndex`.
+     *                          Default `20`.
+     *   - `maxEntries`         hard cap on active lessons. Default
+     *                          `500`. Phase 6 owns the deprecation
+     *                          sweep — phase 5 plumbs it dormant.
+     *   - `deprecationAgeMs`   phase 6 hook (still wired in phase 5):
+     *                          lessons with `success_count == 0`
+     *                          older than this become deprecated.
+     *                          Default `2_592_000_000` (30 days).
+     *
+     * `consolidation` keys:
+     *   - `enabled`              master switch on the consolidator
+     *                            timer. Default `false`. Independent
+     *                            from `lessons.enabled` so the schema
+     *                            can be inspected without ticking.
+     *   - `intervalMs`           consolidator tick period. Default
+     *                            `21_600_000` (6 h).
+     *   - `cooldownMs`           episodes younger than this are
+     *                            ineligible (must "cool down" before
+     *                            distillation). Default `86_400_000`
+     *                            (24 h).
+     *   - `minClusterSize`       minimum cluster size to distill.
+     *                            Default `3`.
+     *   - `maxClustersPerTick`   throughput cap on a single tick.
+     *                            Default `5`.
+     *   - `requireSharedTag`     when `true`, every member of a CC
+     *                            must share at least one tag with
+     *                            every other member. Default `true`
+     *                            for semantic cohesion.
+     *   - `distillTimeoutMs`     per-cluster LLM timeout. Default
+     *                            `45_000` ms.
+     */
+    lessons: {
+      enabled: boolean;
+      recallK: number;
+      maxTokens: number;
+      indexLimit: number;
+      maxEntries: number;
+      deprecationAgeMs: number;
+    };
+    consolidation: {
+      enabled: boolean;
+      intervalMs: number;
+      cooldownMs: number;
+      minClusterSize: number;
+      maxClustersPerTick: number;
+      requireSharedTag: boolean;
+      distillTimeoutMs: number;
+    };
   };
   /**
    * Keyed map of webhook ingress bindings. Each entry is mounted at
@@ -698,7 +786,7 @@ export interface UserConfigFile {
   telegram: TelegramConfig;
 }
 
-export const USER_CONFIG_VERSION = 14 as const;
+export const USER_CONFIG_VERSION = 15 as const;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -719,11 +807,13 @@ export const USER_CONFIG_VERSION = 14 as const;
  * dedicated to `/embedding`). v13 added `memory.links.*` for memory-v2
  * phase 2 (link graph + link-generator reflection sub-call). v14 added
  * `memory.evolution.*` for memory-v2 phase 3 (neighbor-evolver +
- * EVOLVE grammar branch + B↔C lease). Older files are transparently
- * upgraded by filling missing blocks/fields from
- * `USER_CONFIG_DEFAULTS`. Anything older than v5 is not migrated:
- * this is active development, callers delete their `config.json` and
- * start over.
+ * EVOLVE grammar branch + B↔C lease). v15 added `memory.lessons.*` and
+ * `memory.consolidation.*` for memory-v2 phase 5 (distilled lessons +
+ * cold-path consolidator + first stable-prefix bump for `### lessons`).
+ * Older files are transparently upgraded by filling missing
+ * blocks/fields from `USER_CONFIG_DEFAULTS`. Anything older than v5
+ * is not migrated: this is active development, callers delete their
+ * `config.json` and start over.
  */
 const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   5,
@@ -735,6 +825,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   11,
   12,
   13,
+  14,
   USER_CONFIG_VERSION,
 ];
 
@@ -848,6 +939,31 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       enabled: false,
       maxPerWrite: 2,
       leaseMs: 60_000,
+    },
+    lessons: {
+      // Phase 5 defaults — disabled out of the box. Flipping on
+      // adds `### lessons` to the prompt tail (stable-prefix
+      // change #1) and registers the consolidator timer.
+      enabled: false,
+      recallK: 2,
+      maxTokens: 300,
+      indexLimit: 20,
+      maxEntries: 500,
+      deprecationAgeMs: 2_592_000_000,
+    },
+    consolidation: {
+      // Phase 5 defaults — disabled out of the box. The consolidator
+      // is a scoped periodic timer carve-out (like Telegram polling)
+      // and only ticks when this switch is on. When off, the schema
+      // is still present but `lessons` rows are never written by
+      // the runtime.
+      enabled: false,
+      intervalMs: 21_600_000,
+      cooldownMs: 86_400_000,
+      minClusterSize: 3,
+      maxClustersPerTick: 5,
+      requireSharedTag: true,
+      distillTimeoutMs: 45_000,
     },
   },
   webhooks: {},
@@ -1324,6 +1440,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (memory.links as Record<string, unknown> | undefined) ?? {};
   const memoryEvolution =
     (memory.evolution as Record<string, unknown> | undefined) ?? {};
+  const memoryLessons =
+    (memory.lessons as Record<string, unknown> | undefined) ?? {};
+  const memoryConsolidation =
+    (memory.consolidation as Record<string, unknown> | undefined) ?? {};
   const webhooks = parseWebhookMap(obj.webhooks ?? {}, "webhooks");
   const vision = (obj.vision as Record<string, unknown> | undefined) ?? {};
   const skills = (obj.skills as Record<string, unknown> | undefined) ?? {};
@@ -1663,6 +1783,73 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           memoryEvolution.leaseMs ??
             USER_CONFIG_DEFAULTS.memory.evolution.leaseMs,
           "memory.evolution.leaseMs",
+        ),
+      },
+      lessons: {
+        enabled: parseBool(
+          memoryLessons.enabled ?? USER_CONFIG_DEFAULTS.memory.lessons.enabled,
+          "memory.lessons.enabled",
+        ),
+        recallK: parsePositiveInt(
+          memoryLessons.recallK ?? USER_CONFIG_DEFAULTS.memory.lessons.recallK,
+          "memory.lessons.recallK",
+        ),
+        maxTokens: parsePositiveInt(
+          memoryLessons.maxTokens ??
+            USER_CONFIG_DEFAULTS.memory.lessons.maxTokens,
+          "memory.lessons.maxTokens",
+        ),
+        indexLimit: parsePositiveInt(
+          memoryLessons.indexLimit ??
+            USER_CONFIG_DEFAULTS.memory.lessons.indexLimit,
+          "memory.lessons.indexLimit",
+        ),
+        maxEntries: parsePositiveInt(
+          memoryLessons.maxEntries ??
+            USER_CONFIG_DEFAULTS.memory.lessons.maxEntries,
+          "memory.lessons.maxEntries",
+        ),
+        deprecationAgeMs: parsePositiveInt(
+          memoryLessons.deprecationAgeMs ??
+            USER_CONFIG_DEFAULTS.memory.lessons.deprecationAgeMs,
+          "memory.lessons.deprecationAgeMs",
+        ),
+      },
+      consolidation: {
+        enabled: parseBool(
+          memoryConsolidation.enabled ??
+            USER_CONFIG_DEFAULTS.memory.consolidation.enabled,
+          "memory.consolidation.enabled",
+        ),
+        intervalMs: parsePositiveInt(
+          memoryConsolidation.intervalMs ??
+            USER_CONFIG_DEFAULTS.memory.consolidation.intervalMs,
+          "memory.consolidation.intervalMs",
+        ),
+        cooldownMs: parsePositiveInt(
+          memoryConsolidation.cooldownMs ??
+            USER_CONFIG_DEFAULTS.memory.consolidation.cooldownMs,
+          "memory.consolidation.cooldownMs",
+        ),
+        minClusterSize: parsePositiveInt(
+          memoryConsolidation.minClusterSize ??
+            USER_CONFIG_DEFAULTS.memory.consolidation.minClusterSize,
+          "memory.consolidation.minClusterSize",
+        ),
+        maxClustersPerTick: parsePositiveInt(
+          memoryConsolidation.maxClustersPerTick ??
+            USER_CONFIG_DEFAULTS.memory.consolidation.maxClustersPerTick,
+          "memory.consolidation.maxClustersPerTick",
+        ),
+        requireSharedTag: parseBool(
+          memoryConsolidation.requireSharedTag ??
+            USER_CONFIG_DEFAULTS.memory.consolidation.requireSharedTag,
+          "memory.consolidation.requireSharedTag",
+        ),
+        distillTimeoutMs: parsePositiveInt(
+          memoryConsolidation.distillTimeoutMs ??
+            USER_CONFIG_DEFAULTS.memory.consolidation.distillTimeoutMs,
+          "memory.consolidation.distillTimeoutMs",
         ),
       },
     },

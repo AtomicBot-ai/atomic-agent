@@ -10,6 +10,10 @@ import type {
   MemoryIndexEntry,
   MemoryStore,
 } from "./memory-store.js";
+import type {
+  LessonIndexEntry,
+  LessonStore,
+} from "./lessons/lesson-store.js";
 
 /**
  * Configuration for the default memory context provider.
@@ -51,6 +55,22 @@ export interface DefaultMemoryContextProviderOptions {
     store: LinkStore;
     depth: number;
     maxExpanded: number;
+  };
+  /**
+   * Memory-v2 phase 5. Top-K lessons surfaced into `### lessons`.
+   * When `store` is undefined or `enabled=false`, the provider
+   * returns an empty array and the prompt renderer skips the
+   * section entirely.
+   *
+   * Recall query is the same `buildRecallQuery` output used for
+   * `### recalled` (userMessage + recent tool summaries) — we keep
+   * the surfaces consistent so a thematic match against notes
+   * usually matches against lessons too.
+   */
+  lessons?: {
+    enabled: boolean;
+    store: LessonStore;
+    k: number;
   };
   /** Metrics sink for `agent.memory.link_expansion.hits`. */
   metrics?: AgentMetrics;
@@ -108,9 +128,56 @@ export function createDefaultMemoryContextProvider(
             excludeIds: recalledIds,
           })
         : [];
+      // Memory-v2 phase 5: only include `lessons` when the lessons
+      // surface is configured. Callers that pre-date the field still
+      // see byte-identical `{ recalled, index }` shape; phase-5
+      // consumers see a `lessons` array.
+      if (opts.lessons && opts.lessons.enabled) {
+        const lessons = loadLessons({
+          lessons: opts.lessons,
+          query: buildRecallQuery(input),
+        });
+        return { recalled, index, lessons };
+      }
       return { recalled, index };
     },
   };
+}
+
+interface LoadLessonsArgs {
+  lessons: DefaultMemoryContextProviderOptions["lessons"];
+  query: string;
+}
+
+/**
+ * Memory-v2 phase 5. Pre-fetch `### lessons` pointer rows.
+ *
+ * Cross-phase invariant 8: this is computed per-turn and stored
+ * ephemerally on `SessionState.recalledLessons`. The BM25 path is
+ * synchronous + fire-safe — any failure inside `LessonStore.recall`
+ * is swallowed so a corrupt FTS index never blocks the agent loop.
+ *
+ * The recall returns full `Lesson` rows; we project down to
+ * `LessonIndexEntry` so the renderer can stay byte-stable with the
+ * "no full body in the prompt" contract.
+ */
+function loadLessons(args: LoadLessonsArgs): readonly LessonIndexEntry[] {
+  const cfg = args.lessons;
+  if (!cfg || !cfg.enabled || cfg.k <= 0) return [];
+  const query = args.query.trim();
+  if (query.length === 0) return [];
+  try {
+    const hits = cfg.store.recall({ query, k: cfg.k });
+    return hits.map((l) => ({
+      id: l.id,
+      activation: l.activation,
+      tags: l.tags,
+      workingDir: l.workingDir,
+      updatedAt: l.updatedAt,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 interface LoadRecalledArgs {
@@ -224,6 +291,11 @@ function loadIndex(args: LoadIndexArgs): readonly MemoryIndexEntry[] {
     const raw = args.store.listIndex({
       limit: overfetch,
       previewChars: args.previewChars,
+      // Memory-v2 phase 5. Archived parents (`consolidated_into IS
+      // NOT NULL`) must drop out of the hot index — their content
+      // is now distilled into a lesson. They remain readable by id
+      // via `memory.notes.recall { id }` (cross-phase invariant 9).
+      excludeArchived: true,
       ...(args.workingDir !== undefined
         ? { scope: "project" as const, workingDir: args.workingDir }
         : {}),

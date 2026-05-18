@@ -112,7 +112,62 @@ describe("user config file IO", () => {
     warn.mockRestore();
   });
 
-  it("ensureUserConfigFileSync migrates v13 → v14 by filling memory.evolution defaults", () => {
+  it("ensureUserConfigFileSync migrates v14 → v15 by filling memory.lessons + memory.consolidation defaults", () => {
+    const path = getUserConfigPath(dir);
+    // Build a synthetic v14 by stripping the new `memory.lessons` and
+    // `memory.consolidation` blocks.
+    const memoryWithoutV15 = {
+      profile: USER_CONFIG_DEFAULTS.memory.profile,
+      reflection: USER_CONFIG_DEFAULTS.memory.reflection,
+      notes: USER_CONFIG_DEFAULTS.memory.notes,
+      recallInjection: USER_CONFIG_DEFAULTS.memory.recallInjection,
+      index: USER_CONFIG_DEFAULTS.memory.index,
+      dedup: USER_CONFIG_DEFAULTS.memory.dedup,
+      eviction: USER_CONFIG_DEFAULTS.memory.eviction,
+      embeddings: USER_CONFIG_DEFAULTS.memory.embeddings,
+      links: USER_CONFIG_DEFAULTS.memory.links,
+      evolution: USER_CONFIG_DEFAULTS.memory.evolution,
+    };
+    const v14 = {
+      version: 14,
+      localModels: USER_CONFIG_DEFAULTS.localModels,
+      log: { level: "info" },
+      agent: USER_CONFIG_DEFAULTS.agent,
+      http: USER_CONFIG_DEFAULTS.http,
+      tracing: USER_CONFIG_DEFAULTS.tracing,
+      memory: memoryWithoutV15,
+      webhooks: {},
+      vision: USER_CONFIG_DEFAULTS.vision,
+      skills: { disabled: [] },
+      telegram: USER_CONFIG_DEFAULTS.telegram,
+    };
+    writeFileSync(path, JSON.stringify(v14, null, 2) + "\n", "utf8");
+
+    const warn = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const migrated = ensureUserConfigFileSync(path);
+
+    expect(migrated.version).toBe(USER_CONFIG_VERSION);
+    expect(migrated.memory.lessons).toEqual(
+      USER_CONFIG_DEFAULTS.memory.lessons,
+    );
+    expect(migrated.memory.consolidation).toEqual(
+      USER_CONFIG_DEFAULTS.memory.consolidation,
+    );
+    expect(migrated.memory.lessons.enabled).toBe(false);
+    expect(migrated.memory.consolidation.enabled).toBe(false);
+
+    const onDisk = JSON.parse(readFileSync(path, "utf8"));
+    expect(onDisk.version).toBe(USER_CONFIG_VERSION);
+    expect(onDisk.memory.lessons).toEqual(USER_CONFIG_DEFAULTS.memory.lessons);
+    expect(onDisk.memory.consolidation).toEqual(
+      USER_CONFIG_DEFAULTS.memory.consolidation,
+    );
+    warn.mockRestore();
+  });
+
+  it("ensureUserConfigFileSync migrates v13 → v14 by filling memory.evolution defaults (via v15)", () => {
     const path = getUserConfigPath(dir);
     // Build a synthetic v13 by stripping the new `memory.evolution` block.
     const memoryWithoutV14 = {

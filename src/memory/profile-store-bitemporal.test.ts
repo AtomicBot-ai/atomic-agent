@@ -229,6 +229,19 @@ describe("ProfileStore (bi-temporal phase 4)", () => {
       INSERT INTO profile_facts (key, value, updated_at, pinned, keywords)
         VALUES ('language', 'ru', 12345, 1, NULL),
                ('deploy_cmd', 'pnpm deploy', 67890, 0, '["deploy","ship"]');
+      -- Seed minimal memories table so the v8 ALTER has a target.
+      -- Production v6 always has this table (from V2_SCHEMA); the
+      -- test simulates a partial v6 snapshot otherwise.
+      CREATE TABLE memories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        content TEXT NOT NULL,
+        tags TEXT,
+        source TEXT,
+        scope TEXT,
+        working_dir TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
       INSERT INTO schema_meta (key, value) VALUES ('version', '6');
     `);
     seed.close();

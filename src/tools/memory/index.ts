@@ -1,6 +1,7 @@
 import type { ToolRegistry } from "../tool-registry.js";
 import type { MemoryStore } from "../../memory/memory-store.js";
 import type { ProfileStore } from "../../memory/profile-store.js";
+import type { LessonStore } from "../../memory/lessons/lesson-store.js";
 
 import { buildProfileSetTool } from "./profile-set.js";
 import { buildProfileRemoveTool } from "./profile-remove.js";
@@ -9,6 +10,7 @@ import { buildProfileHistoryTool } from "./profile-history.js";
 import { buildNotesStoreTool } from "./notes-store.js";
 import { buildNotesRecallTool } from "./notes-recall.js";
 import { buildNotesForgetTool } from "./notes-forget.js";
+import { buildLessonsRecallTool } from "./lessons-recall.js";
 
 export { buildProfileSetTool } from "./profile-set.js";
 export { buildProfileRemoveTool } from "./profile-remove.js";
@@ -17,6 +19,7 @@ export { buildProfileHistoryTool } from "./profile-history.js";
 export { buildNotesStoreTool } from "./notes-store.js";
 export { buildNotesRecallTool } from "./notes-recall.js";
 export { buildNotesForgetTool } from "./notes-forget.js";
+export { buildLessonsRecallTool } from "./lessons-recall.js";
 
 export interface RegisterMemoryToolsOptions {
   profileStore: ProfileStore;
@@ -32,6 +35,14 @@ export interface RegisterMemoryToolsOptions {
   notesRecallDefaultK: number;
   /** Per-call input ceiling for `memory.notes.store.content`. */
   notesMaxContentChars: number;
+  /**
+   * Memory-v2 phase 5. `LessonStore` for `memory.lessons.recall`.
+   * Optional so callers can opt out (e.g. tests, or when
+   * `memory.lessons.enabled=false`). When provided and
+   * `lessonsEnabled=true`, the read-only tool is registered.
+   */
+  lessonStore?: LessonStore;
+  lessonsEnabled?: boolean;
 }
 
 /**
@@ -68,5 +79,8 @@ export function registerMemoryTools(
       }),
     );
     registry.register(buildNotesForgetTool({ store: options.notesStore }));
+  }
+  if (options.lessonsEnabled && options.lessonStore) {
+    registry.register(buildLessonsRecallTool({ store: options.lessonStore }));
   }
 }

@@ -345,6 +345,23 @@ export function loadConfig(): AtomicAgentConfig {
         maxPerWrite: user.memory.evolution.maxPerWrite,
         leaseMs: user.memory.evolution.leaseMs,
       },
+      lessons: {
+        enabled: user.memory.lessons.enabled,
+        recallK: user.memory.lessons.recallK,
+        maxTokens: user.memory.lessons.maxTokens,
+        indexLimit: user.memory.lessons.indexLimit,
+        maxEntries: user.memory.lessons.maxEntries,
+        deprecationAgeMs: user.memory.lessons.deprecationAgeMs,
+      },
+      consolidation: {
+        enabled: user.memory.consolidation.enabled,
+        intervalMs: user.memory.consolidation.intervalMs,
+        cooldownMs: user.memory.consolidation.cooldownMs,
+        minClusterSize: user.memory.consolidation.minClusterSize,
+        maxClustersPerTick: user.memory.consolidation.maxClustersPerTick,
+        requireSharedTag: user.memory.consolidation.requireSharedTag,
+        distillTimeoutMs: user.memory.consolidation.distillTimeoutMs,
+      },
     },
     webhooks: user.webhooks,
     vision: {
