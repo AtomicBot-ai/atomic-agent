@@ -34,6 +34,12 @@ export function persistUserLocalModelsConfig(partial: {
   url?: string;
   mode?: LocalLlmMode;
   managed?: Partial<UserConfigFile["localModels"]["managed"]>;
+  /**
+   * Memory-v2 phase 1B. Subset of `localModels.embeddings` to merge in.
+   * Passing `{ enabled: true, modelId: "..." }` is the canonical
+   * "operator wants hybrid recall on with this model" mutation.
+   */
+  embeddings?: Partial<UserConfigFile["localModels"]["embeddings"]>;
 }): void {
   const path = getConfig().paths.userConfigFile;
   const prev = ensureUserConfigFileSync(path);
@@ -44,6 +50,10 @@ export function persistUserLocalModelsConfig(partial: {
     managed: {
       ...prev.localModels.managed,
       ...(partial.managed ?? {}),
+    },
+    embeddings: {
+      ...prev.localModels.embeddings,
+      ...(partial.embeddings ?? {}),
     },
   };
   const draft = { ...prev, localModels: nextLocalModels };

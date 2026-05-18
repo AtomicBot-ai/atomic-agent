@@ -1,6 +1,7 @@
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
 import { isLocalModelsAction } from "./local-models-actions.js";
+import { totalRowCount } from "./local-models-panel-state.js";
 
 function clampCursor(cursor: number, len: number): number {
   if (len <= 0) return 0;
@@ -13,39 +14,45 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
   switch (action.type) {
     case "local_models_refresh_started":
       return { ...state, localModelsPanel: { ...p, loading: true, errorLine: null } };
-    case "local_models_snapshot_loaded":
+    case "local_models_snapshot_loaded": {
+      const nextPanel = {
+        ...p,
+        rows: action.rows,
+        backend: action.backend,
+        daemon: action.daemon,
+        configMode: action.configMode,
+        activeModelId: action.activeModelId,
+        totalRamGb: action.totalRamGb,
+        dataDir: action.dataDir,
+        embeddingRows: action.embeddingRows,
+        embeddingDaemon: action.embeddingDaemon,
+        lastRefreshedAt: action.at,
+        loading: false,
+        errorLine: null,
+        // Reconcile the UI-level phase with the snapshot: once the
+        // daemon is healthy we are no longer "starting"; once it is
+        // fully gone we are no longer "stopping".
+        daemonPhase:
+          p.daemonPhase === "starting" && action.daemon.healthy
+            ? "idle"
+            : p.daemonPhase === "stopping" && !action.daemon.running
+              ? "idle"
+              : p.daemonPhase,
+      };
       return {
         ...state,
         localModelsPanel: {
-          ...p,
-          rows: action.rows,
-          backend: action.backend,
-          daemon: action.daemon,
-          configMode: action.configMode,
-          activeModelId: action.activeModelId,
-          totalRamGb: action.totalRamGb,
-          dataDir: action.dataDir,
-          cursor: clampCursor(p.cursor, action.rows.length),
-          lastRefreshedAt: action.at,
-          loading: false,
-          errorLine: null,
-          // Reconcile the UI-level phase with the snapshot: once the
-          // daemon is healthy we are no longer "starting"; once it is
-          // fully gone we are no longer "stopping".
-          daemonPhase:
-            p.daemonPhase === "starting" && action.daemon.healthy
-              ? "idle"
-              : p.daemonPhase === "stopping" && !action.daemon.running
-                ? "idle"
-                : p.daemonPhase,
+          ...nextPanel,
+          cursor: clampCursor(p.cursor, totalRowCount(nextPanel)),
         },
       };
+    }
     case "local_models_cursor_up":
       return {
         ...state,
         localModelsPanel: {
           ...p,
-          cursor: clampCursor(p.cursor - 1, p.rows.length),
+          cursor: clampCursor(p.cursor - 1, totalRowCount(p)),
         },
       };
     case "local_models_cursor_down":
@@ -53,8 +60,35 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
         ...state,
         localModelsPanel: {
           ...p,
-          cursor: clampCursor(p.cursor + 1, p.rows.length),
+          cursor: clampCursor(p.cursor + 1, totalRowCount(p)),
         },
+      };
+    case "local_models_embedding_remove_confirm_opened":
+      return {
+        ...state,
+        localModelsPanel: { ...p, embeddingRemoveConfirmId: action.id },
+      };
+    case "local_models_embedding_remove_confirm_closed":
+      return {
+        ...state,
+        localModelsPanel: { ...p, embeddingRemoveConfirmId: null },
+      };
+    case "local_models_embedding_onboarding_opened":
+      return {
+        ...state,
+        localModelsPanel: {
+          ...p,
+          embeddingOnboardingPrompt: {
+            modelId: action.modelId,
+            name: action.name,
+            sizeLabel: action.sizeLabel,
+          },
+        },
+      };
+    case "local_models_embedding_onboarding_dismissed":
+      return {
+        ...state,
+        localModelsPanel: { ...p, embeddingOnboardingPrompt: null },
       };
     case "local_models_pull_started":
       // Keep list visible so the active row can show a live download indicator.

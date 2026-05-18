@@ -198,7 +198,260 @@ There is currently no dedicated workspace-memory, retrieval, embeddings, or reso
 
 ## Memory fabric
 
-A three-channel cross-session memory subsystem lives in [src/memory/](src/memory/) and exposes itself to the agent via six tools in [src/tools/memory/](src/tools/memory/). The full description is in [MEMORY.md](MEMORY.md); this section is the engineering summary.
+A three-channel cross-session memory subsystem lives in [src/memory/](src/memory/) and exposes itself to the agent via six tools in [src/tools/memory/](src/tools/memory/). The full description is in [MEMORY.md](MEMORY.md); this section is the engineering summary. The v2 roadmap (paths B+C+E+P: reactive graph, periodic consolidation, vote curation, procedure templates) lives in [MEMORY_FABRIC_V2.md](MEMORY_FABRIC_V2.md) and rolls out in strict-gated phases. Plan-level deviation from doc §9 invariant 2: v2 pays the stable-prefix KV-cache invalidation **twice** (once when `### lessons` lands in phase 5, once when `### procedures` lands in phase 7b) instead of the doc's intended single combined release — the strict-gates rollout requires evaluation windows between the two prefix-touching phases.
+
+### Memory-v2 phase 1B — hybrid FTS5 + embedding recall (opt-in)
+
+Lives in [src/memory/embeddings/](src/memory/embeddings/) and is **disabled by default**. When turned on, it adds a second `llama-server` process dedicated to `/embedding` requests and blends BM25 hits with cosine similarity over a `memory_embeddings` table (schema v5).
+
+**Two-daemon lifecycle.** `llama-server` cannot serve `/completion` and `/embedding` from the same process — the `--embeddings` flag forces pooling-only mode. The CLI therefore manages two parallel daemons:
+
+- **Chat daemon** (primary): existing flow, port `localModels.managed.port` (default 19091), pid `<stateDir>/llamacpp/llama-server.pid`.
+- **Embedding daemon** (optional secondary): new flow, port `localModels.embeddings.port` (default 19092), pid `<stateDir>/llamacpp/llama-embed.pid`. Built by `buildEmbeddingServerArgs` with `--embeddings --pooling <kind> --ctx-size 2048` and a dedicated embedding model GGUF (`nomic-embed-text-v1.5` ~84 MB, `bge-small-en-v1.5` ~33 MB — both in `EMBEDDING_MODELS_CATALOG`).
+
+`atomic-agent models start` calls `startChatAndEmbeddingDaemons` which is **atomic in the chat-primary sense**: if the chat daemon fails to start, the function rejects and the embedding daemon is never spawned. If the embedding daemon fails (model missing, port collision, daemon refuses health) the chat daemon stays up and the call returns `{ embedding: { error } }` — the runtime then degrades to FTS5-only recall and logs a warning. `atomic-agent models stop` always tries to kill **both** pid files, so half-broken states resolve in a single command. New CLI subcommands: `models list-embeddings`, `models pull-embedding <id>`, `models use-embedding <id>|--disable`.
+
+**Graceful degradation contract.** Every layer that touches the embedding daemon is non-throwing:
+
+- `LlamaEmbeddingClient.embed` wraps every transport / shape / dim mismatch failure as a typed `EmbeddingUnavailableError` so callers can branch without sniffing messages.
+- `EmbeddingWriter.writeFor` returns `boolean` and **never throws** — failures land in the `agent.memory.embeddings.fallback_to_fts5` counter (tagged by `reason`) and the row stays FTS5-only-recallable.
+- `recallHybrid` short-circuits to BM25-only when the embedding client / store is null, when `embed()` fails, or when the corpus exceeds `memory.embeddings.bruteForceCeiling` (default 200). The overflow case emits `agent.memory.embeddings.brute_force_overflow` so dashboards spot when the JS-side brute-force cosine has outgrown its budget — sqlite-vec / ANN migration is the deferred follow-up.
+- Bootstrap probes the embedding daemon's `/health` once with a short timeout; failure flips the runtime to text-only without aborting startup. The probe outcome is recorded in `agent.memory.embeddings.daemon_health` (`ok | unreachable | disabled`).
+
+**Storage.** Schema v5 adds `memory_embeddings (memory_id, model, dim, embedding BLOB, created_at)` keyed by `(memory_id, model)` so a single corpus can host multiple model versions during an A/B rollout. `embedding` is raw Float32 little-endian (`dim * 4` bytes). `FOREIGN KEY ON DELETE CASCADE` from `memories(id)` cleans up automatically on `MemoryStore.remove` — `foreign_keys=ON` is set on the connection at construction time. Stores are wired in bootstrap via `MemoryStore.attachEmbeddings({ writer, store })`, which is intentionally late-bound: `MemoryStore` owns the SQLite handle, `EmbeddingStore` opens against the same handle once the daemon is confirmed healthy.
+
+**Read/write paths.** Synchronous `MemoryStore.store()` kicks off a fire-and-forget embedding write (zero latency penalty for existing callers); `MemoryStore.storeAsync()` is the awaited sibling for tests that need the row to be hybrid-recallable on the next turn. `MemoryStore.recallHybridAsync()` is the new public entry point — it always goes through `recallHybrid` and is observably identical to the legacy `recall()` when embeddings are not attached. `createDefaultMemoryContextProvider` was switched to the async variant; the `MemoryContextProvider` interface already accepted `Promise<MemoryContext>`.
+
+**Locked invariants.** Pinned by [src/memory/embeddings/embedding-client.test.ts](src/memory/embeddings/embedding-client.test.ts), [src/memory/embeddings/embedding-store.test.ts](src/memory/embeddings/embedding-store.test.ts), [src/memory/embeddings/hybrid-recall.test.ts](src/memory/embeddings/hybrid-recall.test.ts), [src/memory/memory-schema.test.ts](src/memory/memory-schema.test.ts), [src/local-llm/daemon-lifecycle.test.ts](src/local-llm/daemon-lifecycle.test.ts):
+
+1. **Two-daemon separation is structural, not optional.** `llama-server --embeddings` forces pooling-only mode; a single instance cannot serve both `/completion` and `/embedding`. Anyone adding embedding usage MUST go through the secondary daemon's URL.
+2. **Embedding writes never block the agent loop.** `MemoryStore.store()` is synchronous; the embedding write is fire-and-forget. Tests that need determinism call `storeAsync()`.
+3. **Failure paths are observability-only.** Bootstrap, recall, write — none of them throw on embedding-daemon outages. Every degradation is a metric counter, never a status-`failed` turn.
+4. **Cosine path skips on overflow.** When `countByModel(model) > bruteForceCeiling`, cosine is **not** computed; FTS5-only result returns and `brute_force_overflow` increments. This is the signal to wire `sqlite-vec` or trim the corpus.
+5. **FK cascade is load-bearing.** `memories.remove(id)` must wipe the matching `memory_embeddings` row in the same transaction; the test `cascades delete from memories -> memory_embeddings` pins this.
+6. **Config gates everything.** `memory.embeddings.enabled=false` OR `localModels.embeddings.enabled=false` OR `localModels.embeddings.modelId=null` ⇒ no second daemon, no embedding writes, no hybrid recall. Bootstrap never constructs an `EmbeddingClient` against an absent daemon.
+
+**Configuration.** Added in user config v12 — older files transparently migrate with both blocks disabled.
+
+- `memory.embeddings.enabled` (default `false`).
+- `memory.embeddings.fts5Weight` / `vectorWeight` (defaults `0.5` / `0.5`, both in `[0, 1]`).
+- `memory.embeddings.bruteForceCeiling` (default `200`).
+- `localModels.embeddings.enabled` (default `false`) — must be `true` for the second daemon to be considered at startup.
+- `localModels.embeddings.modelId` (default `null` — must be one of `EmbeddingModelId`).
+- `localModels.embeddings.port` (default `19092`).
+
+**Out of scope (deferred to follow-up).** `sqlite-vec` virtual table integration (the JS brute force handles current corpus sizes; sqlite-vec graduates the schema without touching `EmbeddingStore` callers), ANN indexes, cross-model query embedding fallback (when the active model changes, the existing rows under a different `model` are simply skipped — there is no auto-reembed sweep yet), embedding-side reflection (the writer is only invoked by `MemoryStore.store`; reflection's own writes happen through the same path so they get embedded too, but there is no dedicated "embed everything" CLI command). All deferred items keep the wire-shape of `memory_embeddings` stable so no future migration is forced.
+
+### Memory-v2 phase 2 — reactive link graph (opt-in)
+
+Lives in [src/memory/links/](src/memory/links/) and is **disabled by default** (`memory.links.enabled=false` in config v13). When turned on, it gives memories a typed, directed graph layer that is grown by an end-of-turn LLM sub-call (`link-generator`) and consumed by `MemoryContextProvider` as BFS expansion on top of the BM25/cosine hits.
+
+**Storage.** Schema v6 adds:
+
+```
+memory_links (
+  from_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  to_id   INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  kind    TEXT NOT NULL,
+  weight  REAL NOT NULL DEFAULT 1.0,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (from_id, to_id, kind)
+)
+```
+
+Composite PK allows multiple link kinds between the same pair (a note can both `RELATES_TO` and `CONTRADICTS` another note). FK cascade fires on **either side**, so `MemoryStore.remove(id)` automatically wipes every edge touching the removed row — no orphan links. `kind` is bounded by `LINK_KINDS = { RELATES_TO, CAUSED_BY, REFERENCES, CONTRADICTS, DUPLICATES, SUPERSEDES }`; `LinkStore.add` and the parser both reject anything outside this set. Self-loops are rejected at insert time. Indexes `idx_memory_links_to` (reverse direction) and `idx_memory_links_kind` exist so BFS can walk in either direction in O(deg).
+
+**BFS expansion.** `LinkStore.expand(seedIds, { depth, maxExpanded, kinds? })` walks **outgoing + incoming** edges at each hop so the recall layer does not need the LLM to author symmetric edges. Returns ids in BFS order with seeds excluded; deduplicated. Depth is clamped to `[1, 3]` to bound BFS fan-out; `maxExpanded` (default 50, runtime-config default 12) hard-caps the result so a hot node cannot blow up the recall set. Empty seed ⇒ empty result.
+
+**link-generator reflection sub-call.** A standalone runner in [src/memory/links/link-generator-runner.ts](src/memory/links/link-generator-runner.ts) that fires **after** the main reflection runner returns. Composition is wrapped by `createLinkAwareReflectionRunner` — the agent loop still calls `reflectionRunner.reflect(input)`; the decorator runs base reflection first, then materialises `input.recalledMemoryIds` (added to `ReflectionInput` in phase 2 — populated from `state.recalledNotes` in `agent-loop`) into `{id, body}` candidates via `MemoryStore.get(id)` and fires the link-generator.
+
+Anti-feedback-loop guard (mirrors phase 7a invariant 18 from MEMORY_FABRIC_V2.md §13.7.4): the parser drops every LINK whose endpoints are not in the surfaced-id allowlist for this turn. Without it, a runaway model could connect arbitrary ids and pollute the graph permanently. Self-loops, malformed lines, unknown kinds, and duplicate triples are all silently filtered — one bad line never invalidates the rest of the batch.
+
+**Read-side integration.** `createDefaultMemoryContextProvider` takes an optional `links` block; when `memory.links.enabled=true` it calls `linkStore.expand(recalledBaseIds, …)`, hydrates the expanded ids via `MemoryStore.get`, and folds them into `recalled` after the base hits so BM25/cosine ranking is preserved at the head. The `### memory-index` section then dedupes against the expanded set. When `links` is omitted, the provider is byte-identical to phase 1B.
+
+**Slot affinity (cross-phase invariant 2).** `LinkGeneratorRunner` rides the **same** dedicated reflection slot (`slotManager.reserveReflectionSlot()`) as the base reflection runner. The main agent slot's KV cache is never touched. When only one slot is available, both runners fall back to `slotId: -1` (no cache reuse) — still safe because the main slot is untouched.
+
+**Locked invariants.** Pinned by [src/memory/links/link-store.test.ts](src/memory/links/link-store.test.ts), [src/memory/links/link-generator-parser.test.ts](src/memory/links/link-generator-parser.test.ts), [src/memory/links/link-generator-runner.test.ts](src/memory/links/link-generator-runner.test.ts), [src/memory/memory-schema.test.ts](src/memory/memory-schema.test.ts), [src/memory/memory-context-provider.test.ts](src/memory/memory-context-provider.test.ts):
+
+1. **FK cascade on both sides.** Deleting either endpoint memory wipes the link in the same transaction. No orphan rows possible.
+2. **Self-loops are rejected.** `LinkStore.add({fromId: a, toId: a, …})` throws `LinkValidationError`; the parser drops them silently. Self-loops add zero recall signal and break BFS termination guarantees.
+3. **`link-generator` rides the reflection slot.** Cross-phase invariant 2 — never the main agent slot. No new `setInterval`s introduced; the runner is fire-and-forget after the agent reply, identical pattern to `ReflectionRunner`.
+4. **Allowlist gates every persisted edge.** Parser drops links whose endpoints are not in the per-turn surfaced-id set. Without this guard the graph could grow edges between memories the LLM never saw — a feedback-loop hazard pinned ahead of phase 7a.
+5. **Recall stays byte-identical when `memory.links.enabled=false`.** `createDefaultMemoryContextProvider` short-circuits without touching `LinkStore` when the optional block is missing. Phase 1B test snapshots remain valid.
+6. **BFS is bounded.** Depth clamped to `[1, 3]`, `maxExpanded` caps the result, BFS expands both directions. Hot-node fan-out cannot blow up the recall set.
+7. **`autoGenerate=false` still allows manual graph growth.** With `enabled=true; autoGenerate=false`, recall expansion works but the link-generator LLM call is skipped — useful when external tooling (or a future `memory.links.add` tool, deferred) is the only graph writer.
+8. **Multi-hop demo lives in the test suite.** `src/memory/memory-context-provider.test.ts > "phase 2: expands recalled via link graph when enabled (multi-hop demo)"` pins the synthetic acceptance from the execution plan — only the seed matches the BM25 query, and `A → B → C` link traversal surfaces both downstream notes.
+
+**Configuration.** Added in user config v13 — older files transparently migrate with `memory.links` populated from defaults (everything disabled).
+
+- `memory.links.enabled` (default `false`) — master switch for both recall expansion and link generation.
+- `memory.links.autoGenerate` (default `true`) — fire the link-generator after reflection. Set to `false` to keep the schema + expansion machinery without the extra LLM round-trip.
+- `memory.links.expansionDepth` (default `1`) — BFS depth on recall. Clamped to `[1, 3]`.
+- `memory.links.maxExpanded` (default `12`) — hard cap on expanded-id count per recall turn.
+- `memory.links.maxLinksPerCall` (default `4`) — hard cap on persisted edges per link-generator call.
+- `memory.links.minCandidates` (default `2`) — skip the LLM call when the surfaced set has fewer than this many ids.
+- `memory.links.generatorTimeoutMs` (default `8000`) — hard timeout for the link-generator LLM call.
+
+**Metrics.** All env-only, exported from [src/tracing/agent-metrics.ts](src/tracing/agent-metrics.ts):
+
+- `agent.memory.link_generator` (counter, tagged by `outcome ∈ {ok, none, skipped, aborted, timeout, failed}`).
+- `agent.memory.link_generator.duration_ms` (histogram).
+- `agent.memory.links_written` (counter, tagged by `source ∈ {link_generator, tool, reflection}`).
+- `agent.memory.link_expansion.hits` (counter, tagged by `expanded` bucket + `depth`).
+
+**Out of scope (deferred).** Agent-facing `memory.links.add` / `memory.links.list` tools (the LLM can still grow the graph implicitly via the link-generator; explicit tool access is deferred until a use case actually demands it), weighted BFS ordering beyond the current weight-tiebreaker, graph-aware reflection (the link-generator currently consumes only `recalledMemoryIds`; consuming the **graph neighbourhood** of those ids during reflection extraction is a follow-up), and a CLI debugger (`atomic-agent memory links show`) for graph inspection. Neighbour-evolver landed in phase 3 (see below).
+
+### Memory-v2 phase 3 — neighbor-evolver (opt-in)
+
+A reactive metadata-refinement layer that lets a new reflection turn enrich the `tags` of **existing** memories without ever touching their `content`. Modules in [src/memory/evolution/](src/memory/evolution/) + the grammar/parser/runner pieces inside [src/memory/reflection/](src/memory/reflection/). Default disabled; opt in via `memory.evolution.enabled = true` after phase 2 is live in your config.
+
+**Grammar.** `REFLECTION_GRAMMAR` in [reflection-grammar.ts](src/memory/reflection/reflection-grammar.ts) gained an `evolve` alternative on `entry`:
+
+```
+entry  ::= set | note | evolve
+evolve ::= "EVOLVE #" digits " [tags=" taglist "]" "\n"
+```
+
+A bounded grammar shape (`digits = [0-9]+`, `taglist ::= tag ("," tag){0,9}`) keeps malformed completions cheap and the cap deterministic. Touching the grammar invalidates the **reflection slot's** KV cache for one call; the main agent slot is unaffected.
+
+**Parser.** [reflection-parser.ts](src/memory/reflection/reflection-parser.ts) extracts EVOLVE lines into `ReflectionEvolve { targetId, addTags }`. Hardened: empty tag lists are dropped, non-positive ids rejected, malformed lines silently skipped, duplicate EVOLVE entries for the same `targetId` collapse to last-writer-wins. Lower-cases tags, drops invalid tokens, caps tag count to 10.
+
+**Store-level surface.** `MemoryStore.evolveTags(id, addTags, { leaseMs, now? })` in [memory-store.ts](src/memory/memory-store.ts) is the single mutation entry point. The signature **does not accept** a content delta — the append-only invariant on `MemoryEntry.content` is defended at both the runner level (post-parser, content is not even extracted from the LLM line) and the store level (no SQL path can write `content`). Returns a discriminated `EvolveTagsResult`:
+
+- `applied`             — tags grew, `updated_at` bumped.
+- `skipped_lease_held`  — `consolidating_at` lease is fresh, B↔C contention guard fires.
+- `skipped_no_change`   — every proposed tag was already present, `updated_at` is **not** bumped (preserves legacy FIFO eviction ordering).
+- `missing`             — target row no longer exists.
+
+Companion lease helpers: `acquireConsolidationLease(id, leaseMs, now?)` (single-writer atomic check+stamp via SQL `WHERE consolidating_at IS NULL OR consolidating_at <= ?`), `releaseConsolidationLease(id)`, `getConsolidatingAt(id)`. Phase 5's consolidator will be the only `acquire` caller; phase 3 only **reads** the lease through `evolveTags`. The `consolidating_at` column itself landed dormant in v4 (phase 1A migration) so there is **no schema change** in phase 3.
+
+**Runner.** `NeighborEvolver` in [neighbor-evolver.ts](src/memory/evolution/neighbor-evolver.ts) is a non-LLM, fire-safe post-parser writer:
+
+- Enforces `maxPerWrite` (default `2`) as a hard cap; overflow → `skipped_cap_hit` (the dropped directives still record metrics).
+- Honours an optional `allowlist` (a `Set<number>` of surfaced ids for the current turn) — directives whose `targetId` is **not** in the set are dropped with `skipped_not_in_allowlist`. This is the anti-feedback guard (same idea as the link-generator phase 2's allowlist).
+- Wraps `MemoryStore.evolveTags` and folds `MemoryValidationError` → `skipped_invalid`. Throws nothing.
+- Emits one of seven structured outcomes per directive, each tagged through `AgentMetrics.recordMemoryEvolution`.
+
+**Reflection wiring.** `ReflectionRunnerDeps.neighborEvolver?` (optional) in [reflection-runner.ts](src/memory/reflection/reflection-runner.ts). When present, the runner applies parsed `EVOLVE` directives **after** SET + NOTE writes (so a NOTE created earlier in the same completion is never the target of its own EVOLVE — the surfaced-id allowlist already excludes brand-new rows). The runner reads `input.recalledMemoryIds` (already plumbed in phase 2) and turns it into the allowlist passed to the evolver. Sequencing inside `ReflectionRunner.runOne` is now:
+
+```
+parse  →  write SET  →  write NOTE  →  link-generator (phase 2)  →  neighbor-evolver (phase 3)
+```
+
+No new LLM call. Phase 3 is pure post-parser bookkeeping on top of the same reflection completion. Bootstrap constructs the evolver only when `memory.evolution.enabled === true` and threads it into `buildReflectionRunner`.
+
+**Locked invariants** (pinned by [src/memory/memory-store-evolve.test.ts](src/memory/memory-store-evolve.test.ts), [src/memory/evolution/neighbor-evolver.test.ts](src/memory/evolution/neighbor-evolver.test.ts), [src/memory/reflection/reflection-parser.test.ts](src/memory/reflection/reflection-parser.test.ts)):
+
+1. **`content` is byte-stable across N evolve calls.** Cross-phase invariant 5 from MEMORY_FABRIC_V2.md §13.7.7. Pinned by both `MemoryStore.evolveTags` (`preserves content byte-stable across N evolves`) and `NeighborEvolver` (`invariant 5 — content byte-stable across N evolve calls`). No SQL path on the evolve surface ever writes `content`; the LLM grammar never carries it either.
+2. **B↔C lease honoured.** `evolveTags` skips when `consolidating_at IS NOT NULL AND (now - consolidating_at) <= leaseMs`. Stale leases (`elapsed > leaseMs`) are ignored — the phase-5 consolidator is expected to release on success, but a crashed consolidator can never permanently freeze a row.
+3. **Allowlist filters before applyOne.** A directive whose `targetId` is not in `input.recalledMemoryIds` never reaches `MemoryStore`. Pinned by `filters by allowlist when provided`.
+4. **`maxPerWrite` cap is hard.** Directive `N+1` and beyond never call `evolveTags`. Excess is counted under `skipped_cap_hit` so dashboards can spot models that routinely propose more evolves than the budget allows.
+5. **Tag-cap overflow keeps existing tags.** When the target already has `MEMORY_MAX_TAGS` (16) tags, every proposed addition is dropped silently — the store returns `skipped_no_change` and existing tags win. Pinned by `does not write past MEMORY_MAX_TAGS`.
+6. **`updated_at` is not bumped on `skipped_no_change`.** Legacy FIFO eviction (`memory.eviction.utilityWeighted=false`) keeps its expected ordering when an evolve is a no-op.
+7. **`enabled=false` is the default.** Older configs auto-migrate to v14 with `memory.evolution.enabled = false`; parser still recognises EVOLVE but the runner silently drops directives because `neighborEvolver` is `undefined`. Flip the flag to opt in.
+8. **Schema unchanged.** Phase 3 reuses `consolidating_at` (added dormant in v4 / phase 1A). No new tables, no new migration step; `MEMORY_SCHEMA_VERSION` stays at `6`.
+
+**Configuration.** Added in user config v14 — older files transparently migrate with `memory.evolution` populated from defaults (everything disabled).
+
+- `memory.evolution.enabled` (default `false`) — master switch. Off ⇒ no evolver constructed, EVOLVE lines parsed and dropped.
+- `memory.evolution.maxPerWrite` (default `2`) — hard cap on applied directives per reflection turn.
+- `memory.evolution.leaseMs` (default `60000`) — B↔C lease window in ms.
+
+**Metrics.** Two counters in [src/tracing/agent-metrics.ts](src/tracing/agent-metrics.ts):
+
+- `agent.memory.evolution.applied` (counter, tagged by `session_id`).
+- `agent.memory.evolution.skipped` (counter, tagged by `session_id` + `reason ∈ {lease_held, no_change, not_in_allowlist, cap_hit, missing, invalid}`).
+
+The dual-counter shape matches the scorecard's §3.A.4 (`applied ≥ 1`) and §3.B.2 (`skipped{reason=lease_held} ≥ 1`) asserts.
+
+**Out of scope (deferred).** `context` column on `memories` (the doc's `EVOLVE [context=...]` branch — phase 3 sticks to tags-only, which is what the scorecard tests; adding `context` is a separate schema change), automatic neighbour discovery on writes (today the LLM proposes EVOLVE targets explicitly — discovery-driven evolution depends on phase 5's clustering pass), and an agent-facing `memory.notes.evolve` tool. The consolidator-side `acquireConsolidationLease` write path lands in phase 5; phase 3 only **reads** the lease.
+
+### Memory-v2 phase 4 — bi-temporal ProfileStore
+
+`profile_facts` no longer overwrites on conflict. Every `ProfileStore.set` produces a **new row** and the previous active row for the same key is flipped into the supersession chain inside one SQLite transaction. The renderer (`### profile`) keeps showing only the active row; the chain is exposed to the agent via the new `memory.profile.history` tool.
+
+**Schema v6 → v7** in [memory-schema.ts](src/memory/memory-schema.ts). The migration renames the legacy `profile_facts` to `profile_facts_legacy`, creates the v7 shape (`id INTEGER PRIMARY KEY AUTOINCREMENT`, `valid_from`, `superseded_by`, `supersedes`, `created_at`, `updated_at`), copies every legacy row into the v7 table with `valid_from = legacy.updated_at` and `superseded_by = NULL` (preserving `pinned` + `keywords`), then drops the legacy table. The migration is idempotent; restarting after a successful v7 boot is a no-op. Active-row uniqueness is enforced by the **partial unique index** `idx_profile_active_key ON profile_facts(key) WHERE superseded_by IS NULL` — the storage-layer guard for MEMORY_FABRIC_V2.md cross-phase invariant 6.
+
+**Store-level surface** ([profile-store.ts](src/memory/profile-store.ts)):
+
+- `set(key, value, opts?)` — always inserts a new row. When an active row for `key` exists it gets flipped in the same transaction. Because SQLite's partial unique index is **immediate, not deferred**, the writer first stamps the parent's `superseded_by` with a sentinel self-pointer (`= id`) so the partial index releases the active slot, then inserts the new row, then patches the parent's `superseded_by` to the real `newId`. The intermediate self-pointer is never visible outside the transaction. Returns a `ProfileFact` with `id`, `validFrom`, `supersedes`, `supersededBy` populated.
+- `get(key)` / `list()` — return active rows only (`superseded_by IS NULL`).
+- `getById(id)` — returns any row regardless of supersession (used by history walks).
+- `history(key)` — returns the full chain in `valid_from ASC, id ASC` order. The active row, when present, is the last entry. Cross-key supersession chains are **not** traversed automatically — `history` is per-key on purpose so the rendered timeline matches the column header the user sees in `### profile`.
+- `remove(key)` — deletes the **active** row only. Historical (superseded) rows are kept on disk so `history(key)` keeps working. The `superseded_by` self-pointer is a **soft pointer** (no FK constraint) precisely so this deletion never cascades into the historical chain.
+
+**Cross-key supersession.** When the LLM emits `SET full_name=Alex [supersedes=name]`, the parser captures `supersedes: "name"` on the `ReflectionFact`. The reflection runner threads this through as `set(...).supersedesKey`; the store then flips both the same-key active row (if any) **and** the cross-key `name` active row to the new row. Same-key supersession always wins for the `supersedes` back-pointer payload; cross-key parents become superseded but their `supersedes` column stays `NULL` (they were not themselves replacing anything). Pinned by `profile-store-bitemporal.test.ts` ("cross-key supersession via supersedesKey opt flips the source row").
+
+**Parser markers.** [reflection-parser.ts](src/memory/reflection/reflection-parser.ts) `extractSetMarker` was extended with two new clauses, both still semicolon-separated inside the existing trailing `[...]`:
+
+- `supersedes=KEY` — extracts a cross-key hint. Validated against the same `KEY_PATTERN` `ProfileStore` uses, so a malformed RHS (spaces, special chars, oversized) is dropped at parse time and never reaches the writer. Pinned by `drops a malformed supersedes RHS`.
+- `valid_from=now` — the only accepted literal. Any other RHS (explicit timestamp, future date, ISO string) is dropped silently. The runtime always stamps `valid_from` from the live clock so the LLM cannot rewrite past history. The field carries through to `ReflectionFact.validFrom` as `"now" | null` and is consumed by the metrics/audit path only — the store ignores it today.
+
+The GBNF reflection grammar itself is unchanged: `value ::= [^\n]{1,200}` already accepts the marker syntax. Parser-level validation drops malformed markers without re-prompting.
+
+**Reflection prompt.** [reflection-prompt.ts](src/memory/reflection/reflection-prompt.ts) `REFLECTION_STABLE_PREFIX` gained a "Bi-temporal versioning" paragraph teaching the LLM about the marker. This is the only prompt change in phase 4 — it invalidates the **reflection slot's** KV cache for one call. The main agent slot's stable prefix is untouched (none of phase 4's wiring leaks into `buildStablePrefix`).
+
+**Tool: `memory.profile.history { key }`** ([profile-history.ts](src/tools/memory/profile-history.ts)). Read-only. Returns the full chain in temporal order with an `active` flag on each row and a human-readable summary line (` * [#id] ISO-time: value (active)` / ` [#id] ISO-time: value → #N`). Registered alongside `memory.profile.{set,remove,list}` when `memory.profile.enabled` is true; resource class is `pure_read` so it fans out cleanly in parallel batches. Validation errors fold into a structured `status: "error"` tool result instead of throwing.
+
+**Reflection wiring.** `writeFacts` in [reflection-runner.ts](src/memory/reflection/reflection-runner.ts) now threads `fact.supersedes` (when present) into `ProfileStore.set` as `supersedesKey`. Same-key supersession does not need this — every same-key write auto-chains via the partial unique index path. The supersession hint is purely for cross-key cases. Sequence inside `ReflectionRunner.runOne` is unchanged:
+
+```
+parse  →  write SET  →  write NOTE  →  link-generator (phase 2)  →  neighbor-evolver (phase 3)
+```
+
+**Metrics.** New counter `agent.memory.profile.superseded` in [agent-metrics.ts](src/tracing/agent-metrics.ts), tagged by `key`, `previous_id`, `next_id`. Fires **once per parent flipped** — a cross-key supersession that touches two parents will fire twice with distinct `previous_id`s. (Today the writer fires it only on the structural same-key parent; cross-key supersession parents do not emit the metric — see `// TODO` below.)
+
+**Locked invariants** (pinned by [profile-store-bitemporal.test.ts](src/memory/profile-store-bitemporal.test.ts), [profile-history.test.ts](src/tools/memory/profile-history.test.ts), [reflection-parser.test.ts](src/memory/reflection/reflection-parser.test.ts) phase-4 cases, [reflection-runner.test.ts](src/memory/reflection/reflection-runner.test.ts) `scenario 4.A — SET with supersedes marker produces a bi-temporal chain`):
+
+1. **At most one active row per key.** Enforced by the partial unique index `idx_profile_active_key`. Pinned by `4.A.3 — partial unique index forbids two active rows for one key`.
+2. **Every SET preserves history.** Scenario 4.A: `ru → en` produces a 2-row chain with the `ru` row marked superseded. Pinned by `scenario 4.A — language change preserves history`.
+3. **`remove(key)` keeps the historical chain.** Only the active row is deleted. Pinned by `remove() deletes only the active row, history chain intact`.
+4. **Legacy v6 rows migrate transparently.** `valid_from = updated_at`, `superseded_by = NULL`, `pinned` + `keywords` preserved. Pinned by `legacy v3 row migrates to v7 with valid_from = updated_at and active state`.
+5. **Renderer untouched.** `### profile` filters via `list()` which already returns active-only rows. Stable-prefix bytes do not change because of phase 4.
+6. **Marker validation drops malformed RHS at parse time.** `supersedes=not a valid key` → `supersedes: null`. Pinned by `drops a malformed supersedes RHS`.
+7. **`valid_from` always stamped by the runtime clock.** The parser strips the literal `now`; the store reads it from `Date.now()` (or the injected `now` arg). Pinned by `drops a non-'now' valid_from RHS silently`.
+8. **No new top-level config.** Phase 4 is always-on once the v7 migration has run. No feature flag. Operators can still call `memory.profile.set` with `pinned=false; keywords=...` exactly as before — the new fields are additive.
+
+**Out of scope (deferred).** Cross-key history walks via `getById` (today `history(key)` is per-key; following `supersedes` / `supersededBy` across keys is left as a manual chain walk for the agent), `vote_score` column on `profile_facts` (phase 7a), per-parent metric emission on cross-key supersession (today only the same-key parent fires `agent.memory.profile.superseded`), an explicit `bitemporal.enabled` config flag (the schema migration is forward-only so a runtime toggle would have no on-disk effect), and `memory.profile.bitemporal.maxHistoryPerKey` capping (today the chain grows unbounded — practically bounded by reflection rate which is at most one SET per turn per key).
+
+**TUI surface — single screen, paired daemons, opt-in onboarding.** The "Models" tab in `atomic-agent tui` renders **both** the chat catalog and the embedding catalog on the same screen, separated by a `Embedding models (N) · paired with chat daemon` header. There is **no** catalog-toggle hotkey (the earlier `e` switcher was removed in favour of a single combined cursor). Indices `[0..rows.length-1]` are chat rows; `[rows.length..rows.length+embeddingRows.length-1]` are embedding rows; the shared helper `resolveRowAt(panel, idx)` is the single source of truth for "which row is under the cursor" — both the panel component and the key-binding layer go through it.
+
+Hotkeys are row-type-aware (resolved per-keystroke against the cursor's `LocalModelsRowRef.kind`):
+
+- **j / k / ↑ / ↓** — move the shared cursor across the combined list.
+- **Enter** on a chat row — pull (GGUF + mmproj for vision rows), or set active if already downloaded.
+- **Enter** on an embedding row — pull the GGUF (auto-flips `localModels.embeddings.{enabled, modelId}` to the row), or set active if downloaded.
+- **g** — chat-only GGUF pull (no-op on embedding rows; embedding models are text-only).
+- **i** — chat-only info detail (no-op on embedding rows).
+- **d** on a chat row — chat-scoped red-bordered remove-confirm modal (`removeConfirmId`).
+- **d** on an embedding row — embedding-scoped remove-confirm modal (`embeddingRemoveConfirmId`). The two modals are mutually exclusive at the type level so a stray `y` in the chat modal can never delete an embedding GGUF, and vice versa.
+- **E** (shift+e) — toggles `localModels.embeddings.enabled` without restarting any daemon. Operator chains an explicit `s` to apply.
+- **s** — drives `startChatAndEmbeddingDaemons` / `stopChatAndEmbeddingDaemons` (paired start and stop — see §"Daemon pairing" below).
+- **B / r / L** — backend pull, refresh, jump to LLM Logs.
+
+**Embedding-model onboarding modal.** When a chat-model pull finishes successfully AND no embedding model is currently configured AND no embedding GGUF exists on disk, the orchestrator **defers** the daemon start and emits `local_models_embedding_onboarding_opened` with the default embedding model (`DEFAULT_EMBEDDING_MODEL_ID`, `nomic-embed-text-v1.5` today). The panel renders an accent-bordered yes/no modal:
+
+- **y** — `orchestrator.resolveEmbeddingOnboarding(true)` pulls the default embedding model (flipping `embeddings.enabled = true`) and then starts the paired daemon.
+- **n / Esc** — `orchestrator.resolveEmbeddingOnboarding(false)` skips the pull and starts only the chat daemon.
+
+Either branch closes the modal and routes the operator back to chat (`ui_mode_set: chat`) once the start succeeds. The modal is a one-shot detour — it never re-appears after a chat-model pull if an embedding model is already on disk, even if `embeddings.enabled === false` (the operator's explicit "later" choice is respected). Pinned by [src/tui/local-models/local-models-reducer.test.ts](src/tui/local-models/local-models-reducer.test.ts) ("opens and dismisses the embedding onboarding modal") and [src/tui/local-models/local-models-key-bindings.test.ts](src/tui/local-models/local-models-key-bindings.test.ts) (`y` / `n` resolution).
+
+**Daemon pairing on TUI start/stop.** Every TUI code path that touches the daemon flows through `LocalModelsOrchestrator.{startDaemon, stopDaemon, stopDaemonSilent}` and they are wired to the paired entry points:
+
+- `startDaemon` → `startChatAndEmbeddingDaemons({ chat, embedding? })` — chat is fatal-on-failure, embedding is fatal-on-`buildEmbeddingStartOptions=undefined`-only-then-skip (graceful degradation contract). The skip conditions are: `embeddings.enabled=false`, `embeddings.modelId=null`, an unknown id, or the model GGUF is not on disk.
+- `stopDaemon` / `stopDaemonSilent` (shutdown) → `stopChatAndEmbeddingDaemons(dataDir)` — always tries to kill both pid files. `stopDaemonSilent` is invoked from `LocalModelsOrchestrator.shutdown()` so closing the TUI tears down both daemons together.
+- `autoStartIfReady` (called once at TUI launch) reuses `startDaemon`, so a fresh TUI boot starts both daemons whenever an embedding model is configured + downloaded.
+
+**Pairing reconciliation (`ensureEmbeddingPaired`).** Beyond the symmetric start/stop path, every TUI mutation that touches embedding-side config or model files reconciles the embedding daemon to the pairing invariant — **if the chat daemon is alive, the embedding daemon must be alive iff `embeddings.enabled && modelId is a known catalog entry && GGUF is on disk`**. The helper `LocalModelsOrchestrator.ensureEmbeddingPaired({ hotSwap? })` is the single seam; it is called from:
+
+- `pullEmbeddingModel` after a successful GGUF download (`hotSwap: true` — the new model replaces whatever the daemon was last serving, including the same-name reload edge case).
+- `setActiveEmbedding` when the chosen model is already on disk (`hotSwap: true` — model id changed, possibly with a different dim).
+- `toggleEmbeddingEnabled` for both directions (no `hotSwap` — `enabled=true` starts when nothing is running, `enabled=false` stops when running).
+- `autoStartIfReady` after adopting an externally-started chat daemon (no `hotSwap` — only fills in a missing embedding side, never preempts a healthy one).
+
+When the chat daemon is not running, `ensureEmbeddingPaired` is a no-op: the next paired `startDaemon` call (or `autoStartIfReady` on a cold TUI) handles both sides atomically via `startChatAndEmbeddingDaemons`, which is the cheaper path. The helper uses `startEmbeddingDaemon` / `stopEmbeddingDaemon` (single-side primitives) rather than the paired orchestrator so chat is never inadvertently bounced mid-conversation. All failures degrade gracefully — the embedding side reports the error to the runtime feed and falls back to FTS5-only recall; chat keeps running. Pinned by [src/tui/local-models/local-models-orchestrator-pairing.test.ts](src/tui/local-models/local-models-orchestrator-pairing.test.ts) (five cases: start-when-paired, no-op-when-chat-down, hot-swap, master-switch-off, adoption-pairs).
+
+The "LLM Logs" tab tails `llama-embed.log` next to the chat log in the same viewport (separator: `── llama-embed.log ──`) when the file exists — a missing embedding log is silently skipped so chat-only operators see no difference. `LocalModelsOrchestrator` is the only TUI module that touches `getEmbeddingDaemonStatus` / `startChatAndEmbeddingDaemons` / `pullEmbeddingModel` / `resolveEmbeddingOnboarding` — the orchestrator-as-seam invariant from the chat side extends verbatim.
 
 The three channels share one SQLite file `<stateDir>/memory.sqlite` (separate from `sessions.sqlite`):
 

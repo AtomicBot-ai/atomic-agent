@@ -51,10 +51,26 @@ import { MemoryStore } from "../memory/memory-store.js";
 import { ProfileStore } from "../memory/profile-store.js";
 import { createDefaultMemoryContextProvider } from "../memory/memory-context-provider.js";
 import {
+  EmbeddingStore,
+  EmbeddingWriter,
+  LlamaEmbeddingClient,
+} from "../memory/embeddings/index.js";
+import {
+  getEmbeddingModelDef,
+  isKnownEmbeddingModelId,
+  probeLlamaHealth,
+} from "../local-llm/index.js";
+import {
   createReflectionRunner,
   type ReflectionLlmComplete,
   type ReflectionRunner,
 } from "../memory/reflection/index.js";
+import {
+  LinkStore,
+  createLinkGeneratorRunner,
+  createLinkAwareReflectionRunner,
+} from "../memory/links/index.js";
+import { NeighborEvolver } from "../memory/evolution/index.js";
 
 import { SkillRegistry } from "../skills/skill-registry.js";
 import { buildSkillCatalog } from "../skills/skill-catalog.js";
@@ -496,10 +512,112 @@ export async function createAgentRuntime(
     browserChannel: config.browser.channel,
   });
 
-  const profileStore = new ProfileStore({ dbFile: config.paths.memoryDbFile });
+  // TODO(memory-v2): cross-phase invariant 4 — the consolidator
+  // (phase 5) registers with the existing `Scheduler` here, not via a
+  // new `setInterval`. Bootstrap also gains a check from phase 5
+  // onwards: assert `memory.dedup.fts5Threshold ≤
+  // memory.consolidation.similarityThreshold` (§13.7.3 / invariant 14),
+  // fail-fast on violation. Phase 7a adds clamp/decay validation:
+  // `memory.voting.maxVotePerItem > 0`, `memory.voting.signalDecay ∈ (0,1]`.
+  const profileStore = new ProfileStore({
+    dbFile: config.paths.memoryDbFile,
+    metrics,
+  });
   const notesStore = new MemoryStore({
     dbFile: config.paths.memoryDbFile,
     maxEntries: config.memory.notes.maxEntries,
+    dedup: {
+      enabled: config.memory.dedup.enabled,
+      fts5Threshold: config.memory.dedup.fts5Threshold,
+    },
+    eviction: {
+      utilityWeighted: config.memory.eviction.utilityWeighted,
+      maxAgeMs: config.memory.eviction.maxAgeMs,
+    },
+    metrics,
+  });
+
+  // Memory-v2 phase 1B. Embedding plumbing — opt-in, graceful
+  // degradation. Conditions to wire it up (in order):
+  //
+  //   1. Both feature flags on: `memory.embeddings.enabled` AND
+  //      `localModels.embeddings.enabled`. Either off ⇒ FTS5-only.
+  //   2. A valid embedding model id is configured.
+  //   3. Probe `localModels.embeddings.port` for `/health`. Daemon
+  //      down ⇒ FTS5-only (logged + counted as `disabled`, not as a
+  //      failure — runtime keeps booting).
+  //
+  // The probe runs in the bootstrap critical path with a short
+  // timeout so a stale lockfile / stuck daemon cannot wedge the
+  // entire startup. Failure is observability-only: we never throw.
+  let embeddingHealth: "ok" | "unreachable" | "disabled" = "disabled";
+  if (
+    config.memory.embeddings.enabled &&
+    config.localModels.embeddings.enabled &&
+    config.localModels.embeddings.modelId !== null &&
+    isKnownEmbeddingModelId(config.localModels.embeddings.modelId)
+  ) {
+    const embModelDef = getEmbeddingModelDef(
+      config.localModels.embeddings.modelId,
+    );
+    const embPort = config.localModels.embeddings.port;
+    const probe = await probeLlamaHealth(embPort).catch(
+      () => "down" as const,
+    );
+    if (probe === "ok") {
+      try {
+        const client = new LlamaEmbeddingClient({
+          url: `http://127.0.0.1:${embPort}`,
+          dim: embModelDef.dim,
+          model: embModelDef.id,
+        });
+        const embStore = new EmbeddingStore({
+          db: notesStore.getDatabaseHandleForEmbeddings(),
+        });
+        const writer = new EmbeddingWriter({
+          client,
+          store: embStore,
+          metrics,
+        });
+        notesStore.attachEmbeddings({ writer, store: embStore });
+        embeddingHealth = "ok";
+      } catch (e) {
+        // Construction errors here are pure programmer error
+        // (constructor validation): log + degrade, never throw.
+        process.stderr.write(
+          `memory-v2 phase 1B: failed to wire embedding client: ${
+            e instanceof Error ? e.message : String(e)
+          }\n`,
+        );
+        embeddingHealth = "unreachable";
+      }
+    } else {
+      embeddingHealth = "unreachable";
+      process.stderr.write(
+        `memory-v2 phase 1B: embedding daemon at port ${embPort} is ${probe}; ` +
+          `hybrid recall disabled, FTS5-only path active.\n`,
+      );
+    }
+    metrics.recordMemoryEmbeddingsDaemonHealth({
+      outcome: embeddingHealth,
+      model: embModelDef.id,
+    });
+  } else {
+    metrics.recordMemoryEmbeddingsDaemonHealth({
+      outcome: "disabled",
+      model: null,
+    });
+  }
+
+  // Memory-v2 phase 2. The link graph store rides the same memory.sqlite
+  // handle as `notesStore` — `MemoryStore` already enabled
+  // `foreign_keys = ON` so the cascade fires on `memories.remove(id)`.
+  // The store is always constructed (the table exists from schema v6
+  // onwards); the agent-facing recall expansion + link-generator
+  // sub-call are independently gated on `memory.links.enabled` /
+  // `memory.links.autoGenerate`.
+  const linkStore = new LinkStore({
+    db: notesStore.getDatabaseHandleForEmbeddings(),
   });
 
   const toolRegistry = new ToolRegistry();
@@ -642,7 +760,22 @@ export async function createAgentRuntime(
     });
   }
 
-  const reflectionRunner = buildReflectionRunner({
+  // Memory-v2 phase 3. The neighbor-evolver writes parsed EVOLVE
+  // directives back into `MemoryStore` after notes are stored.
+  // Construction is unconditional but cheap; the runner is only
+  // **wired into reflection** when the feature flag is on, so the
+  // evolver itself is harmless when present-but-not-used.
+  const neighborEvolver = config.memory.evolution.enabled
+    ? new NeighborEvolver({
+        memoryStore: notesStore,
+        maxPerWrite: config.memory.evolution.maxPerWrite,
+        leaseMs: config.memory.evolution.leaseMs,
+        logger,
+        metrics,
+      })
+    : undefined;
+
+  const baseReflectionRunner = buildReflectionRunner({
     config,
     slotManager,
     llmComplete,
@@ -650,7 +783,70 @@ export async function createAgentRuntime(
     notesStore,
     logger,
     metrics,
+    ...(neighborEvolver ? { neighborEvolver } : {}),
   });
+
+  // Memory-v2 phase 2. Compose the base reflection runner with the
+  // link-generator sub-call when the feature flag + auto-generation
+  // are both on. The wrapper keeps the agent-loop call site
+  // unchanged (it still calls `reflectionRunner.reflect(input)`); the
+  // link-generator fires after the base runner returns, using
+  // `input.recalledMemoryIds` as the allowlist.
+  //
+  // The link-generator rides the **same** `reflectionSlotId` as the
+  // base reflection (cross-phase invariant 2). When the base runner
+  // is absent (memory.reflection disabled), link-generation is also
+  // skipped — we never want to spawn an LLM call just for the graph.
+  let reflectionRunner: ReflectionRunner | undefined = baseReflectionRunner;
+  if (
+    baseReflectionRunner &&
+    config.memory.links.enabled &&
+    config.memory.links.autoGenerate
+  ) {
+    const reservedSlot = slotManager.reserveReflectionSlot();
+    const reflectionSlotId = reservedSlot ?? -1;
+    const linkGenLlmComplete = async (params: {
+      prompt: string;
+      grammar: string;
+      slotId: number;
+      sessionId: string;
+      signal: AbortSignal;
+    }) => {
+      if (params.signal.aborted) {
+        throw new DOMException("aborted", "AbortError");
+      }
+      const abortPromise = new Promise<never>((_, reject) => {
+        params.signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("aborted", "AbortError")),
+          { once: true },
+        );
+      });
+      const completionPromise = llmComplete({
+        prompt: params.prompt,
+        grammar: params.grammar,
+        slotId: params.slotId,
+        sessionId: params.sessionId,
+      });
+      return Promise.race([completionPromise, abortPromise]);
+    };
+    const linkGenerator = createLinkGeneratorRunner({
+      llmComplete: linkGenLlmComplete,
+      linkStore,
+      reflectionSlotId,
+      timeoutMs: config.memory.links.generatorTimeoutMs,
+      maxLinksPerCall: config.memory.links.maxLinksPerCall,
+      minCandidates: config.memory.links.minCandidates,
+      logger,
+      metrics,
+    });
+    reflectionRunner = createLinkAwareReflectionRunner({
+      reflection: baseReflectionRunner,
+      linkGenerator,
+      notesStore,
+      minCandidates: config.memory.links.minCandidates,
+    });
+  }
 
   // Read-side counterpart of reflection: pre-step recall injection and
   // memory-index pointer rendering. Wired only when `memory.notes` is
@@ -668,6 +864,20 @@ export async function createAgentRuntime(
           limit: config.memory.index.limit,
           previewChars: config.memory.index.previewChars,
         },
+        // Memory-v2 phase 2: read-side BFS expansion. Falls back to a
+        // no-op when the feature flag is off, so phase 1B callers stay
+        // byte-identical.
+        ...(config.memory.links.enabled
+          ? {
+              links: {
+                enabled: true,
+                store: linkStore,
+                depth: config.memory.links.expansionDepth,
+                maxExpanded: config.memory.links.maxExpanded,
+              },
+              metrics,
+            }
+          : {}),
       })
     : undefined;
 
@@ -1116,6 +1326,8 @@ function buildReflectionRunner(args: {
    * is silently dropped.
    */
   notesStore: MemoryStore;
+  /** Memory-v2 phase 3. Optional; when omitted EVOLVE is dropped. */
+  neighborEvolver?: NeighborEvolver;
   logger: StructuredLogger;
   metrics: AgentMetrics;
 }): ReflectionRunner | undefined {
@@ -1156,6 +1368,7 @@ function buildReflectionRunner(args: {
     llmComplete: reflectionLlmComplete,
     profileStore: args.profileStore,
     ...(notesWriteEnabled ? { memoryStore: args.notesStore } : {}),
+    ...(args.neighborEvolver ? { neighborEvolver: args.neighborEvolver } : {}),
     reflectionSlotId,
     timeoutMs: memory.reflection.timeoutMs,
     maxFactsPerCall: memory.reflection.maxFactsPerCall,

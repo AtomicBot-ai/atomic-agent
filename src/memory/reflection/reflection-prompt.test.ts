@@ -68,6 +68,11 @@ describe("buildReflectionPrompt", () => {
       - Default (pinned) — the fact is always rendered into \`### profile\`. Use for truly identity-level facts that apply to most turns (name, primary language, timezone).
       - Contextual — the fact is ONLY rendered when a keyword hits the current user message. Use for rare/large context (deploy commands, per-feature preferences, per-project env snippets). Emit as: SET key=value [pinned=false; keywords=a,b,c]. The [...] marker MUST be on the same line, keywords comma-separated, lowercase, 1–8 entries.
 
+      Bi-temporal versioning:
+      - Every SET preserves history automatically — re-writing the same key never erases the previous version. The earlier value is still available via the \`memory.profile.history\` tool.
+      - When the user explicitly switches a value ("actually let's use X now"), add a supersession marker so future readers can see the intent: SET key=new_value [valid_from=now; supersedes=key]. Same-key supersession (e.g. language: ru → en) makes the chain explicit; cross-key supersession (e.g. SET full_name=Alex [supersedes=name]) marks both rows in a single write.
+      - The valid_from token must be the literal "now"; the runtime stamps the actual timestamp.
+
       Rules:
       - Only durable content explicitly stated by the user or that the user asked to remember.
       - Skip trivia, chit-chat, weather, transient moods, facts about the AI itself.

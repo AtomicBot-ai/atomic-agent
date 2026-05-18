@@ -32,6 +32,26 @@ export type {
   BuiltPromptTruncationFlags,
 } from "./build-prompt-types.js";
 
+// TODO(memory-v2): cross-phase invariant 1 — the stable prefix bytes
+// must change exactly twice across the v2 rollout: once in phase 5
+// (adds `### lessons` to the variable tail + mentions it in the persona)
+// and once in phase 7b (adds `### procedures` + mentions it). Pinned by
+// hash test in `build-prompt.test.ts`. The expected gold hash moves once
+// per phase boundary and stays byte-stable otherwise. This is a
+// deliberate deviation from doc §9 invariant 2 (which expected one
+// combined release) — see AGENTS.md "Memory fabric" §2 for the rationale.
+//
+// TODO(memory-v2 phase 5): render `### lessons` between `### profile`
+// and `### recalled`. Source: ephemeral `SessionState.recalledLessons`
+// pre-fetched by `memory-context-provider`. Token budget
+// `memory.lessons.maxTokens` (default 300) subtracted from the effective
+// conversation cap in `token-budget.ts`.
+//
+// TODO(memory-v2 phase 7b): render `### procedures` between
+// `### lessons` and `### recalled`. Source: ephemeral
+// `SessionState.recalledProcedures`. Token budget
+// `memory.procedures.maxTokens` (default 400) likewise subtracted.
+
 /**
  * Assembles the prompt with the stable prefix at the top (persona + tools +
  * capabilities + skill catalog) and the variable tail at the bottom

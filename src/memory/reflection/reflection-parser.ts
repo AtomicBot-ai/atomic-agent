@@ -33,6 +33,28 @@ export interface ReflectionFact {
    * always sees canonical values.
    */
   keywords: string[];
+  /**
+   * Memory-v2 phase 4. Cross-key supersession hint lifted from a
+   * trailing `[valid_from=now; supersedes=KEY]` marker. When set,
+   * the writer should mark the active row for this key as
+   * superseded by the new row in addition to the structural
+   * same-key chaining handled by the partial unique index.
+   *
+   * Same-key supersession (e.g. `language: ru → en`) **does not**
+   * require this field — `ProfileStore.set` auto-chains every
+   * write. The field exists only for the rare cross-key case
+   * (e.g. `SET full_name=Alex [supersedes=name]`).
+   */
+  supersedes: string | null;
+  /**
+   * Memory-v2 phase 4. Currently always `"now"` when the marker is
+   * present, `null` otherwise. The store ignores any explicit
+   * timestamp — `valid_from` is always stamped from the runner's
+   * injected clock to prevent the LLM from rewriting past history.
+   * Carried through the parser so future versions can lift the
+   * restriction without a re-parse.
+   */
+  validFrom: "now" | null;
 }
 
 export interface ReflectionNote {
@@ -41,15 +63,47 @@ export interface ReflectionNote {
 }
 
 /**
+ * Memory-v2 phase 3. Metadata-only refinement of an existing memory's
+ * `tags` column. `content` is **never** carried here — the runner
+ * surface (`MemoryStore.evolveTags`) also does not accept content
+ * mutations, so the append-only invariant on `MemoryEntry.content`
+ * stays defended at two layers.
+ *
+ * `targetId` is the numeric id referenced by `EVOLVE #<id>` in the
+ * grammar. The runner is responsible for dropping ids that fall
+ * outside the surfaced allowlist for the turn (anti-feedback guard
+ * mirroring phase 2's link-generator).
+ */
+export interface ReflectionEvolve {
+  targetId: number;
+  /**
+   * Tags to **add** to the target memory's existing tag set. Always
+   * merge-semantics, never replace — the store implements the union.
+   * Deduplicated and lower-cased by the parser.
+   */
+  addTags: string[];
+}
+
+/**
  * Discriminated union returned by `parseReflectionOutput`. `"none"`
  * means the model emitted the literal `NONE` token (or every line was
- * malformed). `"facts"` carries whatever landed in either of the two
- * extraction channels — the name is historical; after Increment 0 it
- * covers both SET facts and NOTE bodies.
+ * malformed). `"facts"` carries whatever landed in any of the three
+ * extraction channels — the name is historical; after phase 3 it
+ * covers SET facts, NOTE bodies, AND EVOLVE directives.
  */
 export type ParsedReflection =
-  | { kind: "none"; facts: readonly ReflectionFact[]; notes: readonly ReflectionNote[] }
-  | { kind: "facts"; facts: readonly ReflectionFact[]; notes: readonly ReflectionNote[] };
+  | {
+      kind: "none";
+      facts: readonly ReflectionFact[];
+      notes: readonly ReflectionNote[];
+      evolves: readonly ReflectionEvolve[];
+    }
+  | {
+      kind: "facts";
+      facts: readonly ReflectionFact[];
+      notes: readonly ReflectionNote[];
+      evolves: readonly ReflectionEvolve[];
+    };
 
 /** Hard ceiling on the rendered NOTE body length (matches grammar `body`). */
 const NOTE_BODY_MAX_LENGTH = 500;
@@ -72,11 +126,15 @@ const NOTE_TAG_MAX_LENGTH = 40;
 export function parseReflectionOutput(raw: string): ParsedReflection {
   const text = raw.trim();
   if (text.length === 0 || text === "NONE") {
-    return { kind: "none", facts: [], notes: [] };
+    return { kind: "none", facts: [], notes: [], evolves: [] };
   }
 
   const byKey = new Map<string, ReflectionFact>();
   const notes: ReflectionNote[] = [];
+  // Deduplicate EVOLVE entries by targetId — multiple EVOLVE lines
+  // against the same target collapse into one (last writer wins on
+  // tags, then merged by the store).
+  const evolvesByTarget = new Map<number, ReflectionEvolve>();
   for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trimEnd();
     if (trimmed.length === 0) continue;
@@ -86,16 +144,62 @@ export function parseReflectionOutput(raw: string): ParsedReflection {
       continue;
     }
     const note = parseNoteLine(trimmed);
-    if (note) notes.push(note);
+    if (note) {
+      notes.push(note);
+      continue;
+    }
+    const evolve = parseEvolveLine(trimmed);
+    if (evolve) evolvesByTarget.set(evolve.targetId, evolve);
   }
 
-  if (byKey.size === 0 && notes.length === 0) {
-    return { kind: "none", facts: [], notes: [] };
+  if (byKey.size === 0 && notes.length === 0 && evolvesByTarget.size === 0) {
+    return { kind: "none", facts: [], notes: [], evolves: [] };
   }
 
   const facts: ReflectionFact[] = [];
   for (const fact of byKey.values()) facts.push(fact);
-  return { kind: "facts", facts, notes };
+  const evolves: ReflectionEvolve[] = [];
+  for (const evolve of evolvesByTarget.values()) evolves.push(evolve);
+  return { kind: "facts", facts, notes, evolves };
+}
+
+/**
+ * Memory-v2 phase 3. Recognise `EVOLVE #<id> [tags=a,b,c]`.
+ *
+ * Strict shape: the `#<id>` is required (a parser-side guarantee
+ * against the model emitting tag-only updates that we can't route
+ * anywhere) and the `[tags=...]` marker must be present and non-empty
+ * (a tag-less evolve has no effect — the runner would skip it anyway,
+ * but rejecting at parse time keeps the surface small).
+ */
+const EVOLVE_RE = /^EVOLVE\s+#(\d+)\s+\[tags=([^\]]*)\]\s*$/;
+const EVOLVE_TAG_MAX_LENGTH = 40;
+const EVOLVE_MAX_TAGS = 10;
+
+function parseEvolveLine(line: string): ReflectionEvolve | null {
+  const match = EVOLVE_RE.exec(line);
+  if (!match) return null;
+  const targetId = Number(match[1]);
+  if (!Number.isInteger(targetId) || targetId <= 0) return null;
+  const addTags = extractEvolveTags(match[2] ?? "");
+  if (addTags.length === 0) return null;
+  return { targetId, addTags };
+}
+
+function extractEvolveTags(raw: string): string[] {
+  const parts = raw
+    .split(",")
+    .map((t) => t.trim().toLowerCase())
+    .filter(
+      (t) =>
+        /^[a-z0-9][a-z0-9_-]*$/.test(t) && t.length <= EVOLVE_TAG_MAX_LENGTH,
+    );
+  const deduped: string[] = [];
+  for (const tag of parts) {
+    if (deduped.length >= EVOLVE_MAX_TAGS) break;
+    if (!deduped.includes(tag)) deduped.push(tag);
+  }
+  return deduped;
 }
 
 /**
@@ -114,13 +218,22 @@ function parseSetLine(line: string): ReflectionFact | null {
 
   let pinned = true;
   let keywords: string[] = [];
+  let supersedes: string | null = null;
+  let validFrom: "now" | null = null;
   const markerMatch = body.match(/\s*\[([^\]]*)\]\s*$/);
-  if (markerMatch && /pinned\s*=|keywords\s*=/.test(markerMatch[1] ?? "")) {
+  if (
+    markerMatch &&
+    /pinned\s*=|keywords\s*=|valid_from\s*=|supersedes\s*=/.test(
+      markerMatch[1] ?? "",
+    )
+  ) {
     const inner = markerMatch[1] ?? "";
     body = body.slice(0, markerMatch.index ?? 0).trimEnd();
     const extracted = extractSetMarker(inner);
     pinned = extracted.pinned;
     keywords = extracted.keywords;
+    supersedes = extracted.supersedes;
+    validFrom = extracted.validFrom;
   }
 
   const eq = body.indexOf("=");
@@ -133,6 +246,8 @@ function parseSetLine(line: string): ReflectionFact | null {
     value,
     pinned,
     keywords: pinned ? [] : keywords,
+    supersedes,
+    validFrom,
   };
 }
 
@@ -142,9 +257,13 @@ const SET_KEYWORDS_MAX = 8;
 function extractSetMarker(inner: string): {
   pinned: boolean;
   keywords: string[];
+  supersedes: string | null;
+  validFrom: "now" | null;
 } {
   let pinned = true;
   let keywords: string[] = [];
+  let supersedes: string | null = null;
+  let validFrom: "now" | null = null;
   // Top-level clauses are separated by `;` only — commas inside
   // `keywords=...` are payload, not clause separators. We also accept
   // a fallback form with a single clause before a comma (pinned=false)
@@ -161,6 +280,10 @@ function extractSetMarker(inner: string): {
       pinned = rhs.toLowerCase() !== "false";
     } else if (name === "keywords") {
       keywords = parseKeywordList(rhs);
+    } else if (name === "supersedes") {
+      supersedes = parseSupersedesKey(rhs);
+    } else if (name === "valid_from") {
+      validFrom = parseValidFromMarker(rhs);
     } else if (name.endsWith(" pinned") || name.endsWith(",pinned")) {
       // Fallback for LLMs that write `pinned=false, keywords=...`
       // without a `;`. We re-tokenise by splitting on commas only
@@ -179,7 +302,30 @@ function extractSetMarker(inner: string): {
       }
     }
   }
-  return { pinned, keywords };
+  return { pinned, keywords, supersedes, validFrom };
+}
+
+/**
+ * Memory-v2 phase 4. Recognise the RHS of `supersedes=KEY`. The
+ * allowed shape mirrors the same `KEY_PATTERN` ProfileStore uses so
+ * a marker that cannot become a valid `set()` parameter is dropped
+ * at parse time instead of throwing inside the writer.
+ */
+const SUPERSEDES_KEY_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_.\-]{0,119}$/;
+function parseSupersedesKey(rhs: string): string | null {
+  const trimmed = rhs.trim();
+  if (trimmed.length === 0) return null;
+  return SUPERSEDES_KEY_PATTERN.test(trimmed) ? trimmed : null;
+}
+
+/**
+ * Memory-v2 phase 4. Only the literal token `now` is accepted today.
+ * Any other RHS (explicit timestamp, future date, etc.) is dropped
+ * silently — the runner always stamps `valid_from` from the live
+ * clock so the LLM cannot rewrite past history.
+ */
+function parseValidFromMarker(rhs: string): "now" | null {
+  return rhs.trim().toLowerCase() === "now" ? "now" : null;
 }
 
 function parseKeywordList(raw: string): string[] {

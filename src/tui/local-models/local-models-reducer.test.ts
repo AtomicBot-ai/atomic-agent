@@ -2,6 +2,21 @@ import { describe, expect, it } from "vitest";
 
 import { reduceTuiState } from "../agent-event-reducer.js";
 import { createInitialTuiState, type TuiSessionInfo } from "../tui-state.js";
+import type {
+  EmbeddingDaemonInfo,
+  EmbeddingModelRow,
+} from "./local-models-panel-state.js";
+
+const EMPTY_EMBEDDING_ROWS: readonly EmbeddingModelRow[] = [];
+const DEFAULT_EMBEDDING_DAEMON: EmbeddingDaemonInfo = {
+  enabled: false,
+  running: false,
+  healthy: false,
+  loading: false,
+  pid: null,
+  port: 19092,
+  activeModelId: null,
+};
 
 const SESSION: TuiSessionInfo = {
   sessionId: null,
@@ -55,10 +70,14 @@ describe("reduceLocalModelsAction", () => {
       totalRamGb: 32,
       dataDir: "/tmp/data",
       at: 42,
+      embeddingRows: EMPTY_EMBEDDING_ROWS,
+      embeddingDaemon: DEFAULT_EMBEDDING_DAEMON,
     });
     expect(state.localModelsPanel.rows).toHaveLength(1);
     expect(state.localModelsPanel.lastRefreshedAt).toBe(42);
     expect(state.localModelsPanel.dataDir).toBe("/tmp/data");
+    expect(state.localModelsPanel.embeddingDaemon).toEqual(DEFAULT_EMBEDDING_DAEMON);
+    expect(state.localModelsPanel.embeddingRows).toEqual([]);
   });
 
   it("moves cursor up and down with clamp", () => {
@@ -122,6 +141,8 @@ describe("reduceLocalModelsAction", () => {
       totalRamGb: 32,
       dataDir: "/tmp/data",
       at: 1,
+      embeddingRows: EMPTY_EMBEDDING_ROWS,
+      embeddingDaemon: DEFAULT_EMBEDDING_DAEMON,
     });
     state = reduceTuiState(state, { type: "local_models_cursor_down" });
     expect(state.localModelsPanel.cursor).toBe(1);
@@ -196,8 +217,119 @@ describe("reduceLocalModelsAction", () => {
       totalRamGb: 32,
       dataDir: "/tmp/data",
       at: 100,
+      embeddingRows: EMPTY_EMBEDDING_ROWS,
+      embeddingDaemon: DEFAULT_EMBEDDING_DAEMON,
     });
     expect(state.localModelsPanel.daemonPhase).toBe("idle");
+  });
+
+  it("navigates a single cursor across the combined chat+embedding row list", () => {
+    let state = createInitialTuiState(SESSION);
+    state = reduceTuiState(state, {
+      type: "local_models_snapshot_loaded",
+      rows: [
+        {
+          id: "qwen-3.5-4b",
+          def: {
+            id: "qwen-3.5-4b",
+            name: "A",
+            filename: "a.gguf",
+            huggingFaceUrl: "u",
+            fileSizeGb: 1,
+            sizeLabel: "1",
+            description: "",
+            maxContextLength: 1,
+            contextLabel: "1",
+            minRamGb: 1,
+            recommendedRamGb: 1,
+            family: "qwen",
+            supportsVision: false,
+          },
+          downloaded: true,
+          mmprojStatus: "n/a",
+          active: true,
+        },
+      ],
+      backend: { currentTag: null, latestTag: null, updateAvailable: null },
+      daemon: {
+        running: false,
+        healthy: false,
+        loading: false,
+        pid: null,
+        port: 19091,
+      },
+      configMode: "managed",
+      activeModelId: "qwen-3.5-4b",
+      totalRamGb: 32,
+      dataDir: "/tmp/data",
+      at: 1,
+      embeddingRows: [
+        {
+          id: "nomic-embed-text-v1.5",
+          def: {
+            id: "nomic-embed-text-v1.5",
+            name: "Nomic",
+            filename: "n.gguf",
+            huggingFaceUrl: "u",
+            fileSizeGb: 0.1,
+            sizeLabel: "100 MB",
+            description: "",
+            dim: 768,
+            pooling: "mean",
+            minRamGb: 1,
+            recommendedRamGb: 1,
+          },
+          downloaded: true,
+          active: true,
+        },
+      ],
+      embeddingDaemon: { ...DEFAULT_EMBEDDING_DAEMON, enabled: true },
+    });
+    expect(state.localModelsPanel.cursor).toBe(0);
+    // Cursor walks from the chat row into the embedding row in one
+    // continuous range; clamping uses the combined length (2).
+    state = reduceTuiState(state, { type: "local_models_cursor_down" });
+    expect(state.localModelsPanel.cursor).toBe(1);
+    state = reduceTuiState(state, { type: "local_models_cursor_down" });
+    expect(state.localModelsPanel.cursor).toBe(1);
+    state = reduceTuiState(state, { type: "local_models_cursor_up" });
+    expect(state.localModelsPanel.cursor).toBe(0);
+  });
+
+  it("opens and dismisses the embedding onboarding modal", () => {
+    let state = createInitialTuiState(SESSION);
+    state = reduceTuiState(state, {
+      type: "local_models_embedding_onboarding_opened",
+      modelId: "nomic-embed-text-v1.5",
+      name: "Nomic Embed Text v1.5",
+      sizeLabel: "~84 MB",
+    });
+    expect(state.localModelsPanel.embeddingOnboardingPrompt).toEqual({
+      modelId: "nomic-embed-text-v1.5",
+      name: "Nomic Embed Text v1.5",
+      sizeLabel: "~84 MB",
+    });
+    state = reduceTuiState(state, {
+      type: "local_models_embedding_onboarding_dismissed",
+    });
+    expect(state.localModelsPanel.embeddingOnboardingPrompt).toBeNull();
+  });
+
+  it("opens and closes the embedding remove-confirm modal independently", () => {
+    let state = createInitialTuiState(SESSION);
+    state = reduceTuiState(state, {
+      type: "local_models_embedding_remove_confirm_opened",
+      id: "nomic-embed-text-v1.5",
+    });
+    expect(state.localModelsPanel.embeddingRemoveConfirmId).toBe(
+      "nomic-embed-text-v1.5",
+    );
+    // Chat-side modal stays untouched.
+    expect(state.localModelsPanel.removeConfirmId).toBeNull();
+    state = reduceTuiState(state, {
+      type: "local_models_embedding_remove_confirm_closed",
+    });
+    expect(state.localModelsPanel.embeddingRemoveConfirmId).toBeNull();
   });
 
   it("stores llama-server log tail on load", () => {

@@ -9,7 +9,7 @@ tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool
 browser-tool ::= "\"browser." ( "navigate" | "click" | "type" | "read_aria" | "search" | "tabs" | "scroll" ) "\""
 os-tool ::= "\"os." ( "shell.run" | "fs.read" | "fs.read_document" | "fs.write" | "fs.trash" | "fs.list" | "fs.grep" | "fs.glob" | "fs.edit" | "fs.hash" | "fs.diff" | "fs.patch" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "http.request" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" ) "\""
 discovery-tool ::= "\"skill." ( "view" | "run_script" ) "\"" | "\"tool.view\""
-memory-tool ::= "\"memory." ( "profile.set" | "profile.remove" | "profile.list" | "notes.store" | "notes.recall" | "notes.forget" ) "\""
+memory-tool ::= "\"memory." ( "profile.set" | "profile.remove" | "profile.list" | "profile.history" | "notes.store" | "notes.recall" | "notes.forget" ) "\""
 tasks-tool ::= "\"tasks." ( "schedule" | "cron" | "list" | "cancel" | "show" ) "\""
 vision-tool ::= "\"vision.describe\""
 

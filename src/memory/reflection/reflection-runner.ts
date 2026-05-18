@@ -2,6 +2,7 @@ import type { CompletionResult } from "../../llm/llama-server-client.js";
 import type { AgentMetrics } from "../../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
+import type { NeighborEvolver } from "../evolution/neighbor-evolver.js";
 import { MemoryStore, MemoryValidationError } from "../memory-store.js";
 import {
   ProfileStore,
@@ -16,6 +17,15 @@ export interface ReflectionInput {
   sessionId: string;
   userMessage: string;
   assistantReply: string;
+  /**
+   * Memory-v2 phase 2. Ids surfaced into the `### recalled` section
+   * for this turn (BM25/cosine hits plus any link-graph expansion).
+   * Used as the allowlist for the `link-generator` sub-call so the
+   * graph can never accumulate edges between memories the LLM never
+   * saw. Optional — when omitted, the link-generator skips this
+   * turn entirely.
+   */
+  recalledMemoryIds?: readonly number[];
 }
 
 /**
@@ -78,6 +88,15 @@ export interface ReflectionRunnerDeps {
    * floods `MemoryStore` on a pathological completion.
    */
   maxNotesPerCall?: number;
+  /**
+   * Memory-v2 phase 3. When provided, parsed `EVOLVE` directives are
+   * applied via this evolver after notes are stored. The evolver
+   * receives `input.recalledMemoryIds` as the allowlist so the
+   * surfaced set gates every metadata mutation. Leave undefined to
+   * disable EVOLVE handling entirely (parser still extracts the
+   * directives but the runner drops them silently).
+   */
+  neighborEvolver?: NeighborEvolver;
   logger?: StructuredLogger;
   metrics?: AgentMetrics;
   /** Injectable clock for deterministic tests. Defaults to `Date.now`. */
@@ -106,6 +125,16 @@ export interface ReflectionRunnerDeps {
  *    the matching session — used by `agent-loop.runTurn` at the
  *    start of every turn so a stale reflection from the previous
  *    same-session turn cannot race the next one.
+ *
+ * TODO(memory-v2): cross-phase invariant 2 — every new reflection
+ * sub-call (phase 2 `link-generator`, phase 3 `neighbor-evolver`,
+ * phase 7a `vote-runner`) must ride the same `reflectionSlotId` reserved
+ * here via `slotManager.reserveReflectionSlot()`. The main agent slot's
+ * KV cache must stay untouched. Sub-calls share the same `timeoutMs`
+ * budget; the runner runs them sequentially as
+ *   extract → for each NOTE { store → link-generator → for each link
+ *   { neighbor-evolver.tryEvolve } } → vote-runner.
+ * See [MEMORY_FABRIC_V2.md](../../../MEMORY_FABRIC_V2.md) §6.2 / §6.4.
  */
 export function createReflectionRunner(
   deps: ReflectionRunnerDeps,
@@ -220,7 +249,20 @@ export function createReflectionRunner(
         input.sessionId,
         deps.logger,
       );
-      if (factsWritten === 0 && notesWritten === 0) {
+      // Memory-v2 phase 3. Apply EVOLVE directives last. The evolver
+      // is fire-safe and the allowlist (surfaced ids for this turn)
+      // gates every write so a runaway completion can't pollute the
+      // store with mutations on memories the LLM never saw.
+      const evolvesApplied = applyEvolves(
+        parsed.evolves,
+        deps.neighborEvolver,
+        input,
+      );
+      if (
+        factsWritten === 0 &&
+        notesWritten === 0 &&
+        evolvesApplied === 0
+      ) {
         finish("none", { sessionId: input.sessionId, startedAt });
         return;
       }
@@ -288,6 +330,12 @@ function writeFacts(
     value: string;
     pinned: boolean;
     keywords: readonly string[];
+    /**
+     * Memory-v2 phase 4. Optional cross-key supersession hint. The
+     * parser drops malformed values; the store handles `null` /
+     * missing fields gracefully (auto-chains same-key writes).
+     */
+    supersedes?: string | null;
   }[],
   store: ProfileStore,
   maxPerCall: number,
@@ -298,10 +346,14 @@ function writeFacts(
   let written = 0;
   for (const fact of clamped) {
     try {
-      store.set(fact.key, fact.value, {
+      const opts: Parameters<ProfileStore["set"]>[2] = {
         pinned: fact.pinned,
         keywords: [...fact.keywords],
-      });
+      };
+      if (typeof fact.supersedes === "string" && fact.supersedes.length > 0) {
+        (opts as { supersedesKey?: string }).supersedesKey = fact.supersedes;
+      }
+      store.set(fact.key, fact.value, opts);
       written += 1;
     } catch (err) {
       if (err instanceof ProfileValidationError) {
@@ -370,4 +422,28 @@ function dedupeTags(tags: readonly string[]): string[] {
     if (!out.includes(tag)) out.push(tag);
   }
   return out;
+}
+
+/**
+ * Memory-v2 phase 3. Apply parsed EVOLVE directives via the
+ * `NeighborEvolver`. Returns the count of directives that actually
+ * landed (`applied` outcome). Skips entirely when no evolver was
+ * wired or the parser produced no directives.
+ */
+function applyEvolves(
+  evolves: readonly import("./reflection-parser.js").ReflectionEvolve[],
+  evolver: NeighborEvolver | undefined,
+  input: ReflectionInput,
+): number {
+  if (!evolver || evolves.length === 0) return 0;
+  const allowlist =
+    input.recalledMemoryIds && input.recalledMemoryIds.length > 0
+      ? new Set(input.recalledMemoryIds)
+      : undefined;
+  const report = evolver.apply({
+    sessionId: input.sessionId,
+    evolves,
+    ...(allowlist ? { allowlist } : {}),
+  });
+  return report.applied;
 }

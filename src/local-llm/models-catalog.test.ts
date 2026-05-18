@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_EMBEDDING_MODEL_ID,
   DEFAULT_LLAMACPP_MODEL_ID,
+  EMBEDDING_MODELS_CATALOG,
+  getEmbeddingModelDef,
   getLocalModelDef,
+  isKnownEmbeddingModelId,
   LOCAL_MODELS_CATALOG,
 } from "./models-catalog.js";
 
@@ -46,5 +50,46 @@ describe("models-catalog", () => {
         url.replace(/^https:\/\/huggingface\.co\//, "").split("/resolve/")[0];
       expect(repo(def.mmprojUrl)).toBe(repo(def.huggingFaceUrl));
     }
+  });
+});
+
+describe("models-catalog (embedding)", () => {
+  it("has unique embedding ids and at least one multilingual entry", () => {
+    const ids = new Set(EMBEDDING_MODELS_CATALOG.map((m) => m.id));
+    expect(ids.size).toBe(EMBEDDING_MODELS_CATALOG.length);
+    expect(EMBEDDING_MODELS_CATALOG.length).toBeGreaterThanOrEqual(2);
+    // bge-m3 is the load-bearing multilingual entry — Russian-speaking
+    // operators rely on it. Pin its presence by id so it can't be
+    // silently dropped during catalog edits.
+    expect(ids.has("bge-m3")).toBe(true);
+  });
+
+  it("validates every embedding entry's invariants", () => {
+    const validPoolings = new Set(["mean", "last", "cls", "rank"]);
+    for (const def of EMBEDDING_MODELS_CATALOG) {
+      expect(def.id).toBeTruthy();
+      expect(def.huggingFaceUrl).toMatch(/^https:\/\/huggingface\.co\//);
+      expect(def.huggingFaceUrl.endsWith(def.filename)).toBe(true);
+      expect(def.dim).toBeGreaterThan(0);
+      expect(validPoolings.has(def.pooling)).toBe(true);
+      expect(def.fileSizeGb).toBeGreaterThan(0);
+      expect(def.minRamGb).toBeGreaterThan(0);
+      expect(def.recommendedRamGb).toBeGreaterThanOrEqual(def.minRamGb);
+    }
+  });
+
+  it("default embedding model id resolves to a real catalog entry", () => {
+    expect(isKnownEmbeddingModelId(DEFAULT_EMBEDDING_MODEL_ID)).toBe(true);
+    expect(getEmbeddingModelDef(DEFAULT_EMBEDDING_MODEL_ID).id).toBe(
+      DEFAULT_EMBEDDING_MODEL_ID,
+    );
+  });
+
+  it("getEmbeddingModelDef throws on unknown ids", () => {
+    expect(() =>
+      getEmbeddingModelDef(
+        "not-an-embedding" as import("./models-catalog.js").EmbeddingModelId,
+      ),
+    ).toThrow(/unknown embedding model id/);
   });
 });

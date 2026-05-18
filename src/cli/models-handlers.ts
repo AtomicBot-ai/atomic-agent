@@ -4,10 +4,16 @@ import type { UserConfigFile } from "../config/config-schema.js";
 import {
   checkForBackendUpdate,
   downloadBackend,
+  downloadEmbeddingModel,
   downloadModel,
+  EMBEDDING_MODELS_CATALOG,
   getDaemonStatus,
+  getEmbeddingDaemonStatus,
+  getEmbeddingModelDef,
   getLocalModelDef,
   isBackendDownloaded,
+  isEmbeddingModelDownloaded,
+  isKnownEmbeddingModelId,
   isKnownLocalModelId,
   isMmprojDownloaded,
   isModelDownloaded,
@@ -16,8 +22,8 @@ import {
   removeModel,
   resolveChatTemplatePath,
   resolveMmprojFilePath,
-  startDaemon,
-  stopDaemon,
+  startChatAndEmbeddingDaemons,
+  stopChatAndEmbeddingDaemons,
 } from "../local-llm/index.js";
 
 export function readCliOption(args: string[], name: string): string | undefined {
@@ -189,13 +195,46 @@ export async function runLocalModelsStart(): Promise<number> {
     cfg.vision.enabled && m.supportsVision && m.mmprojFilename && isMmprojDownloaded(dataDir, m)
       ? resolveMmprojFilePath(dataDir, m.id, m.mmprojFilename)
       : undefined;
+
+  // Memory-v2 phase 1B. Decide whether to also bring the embedding
+  // daemon up. Atomicity contract: chat daemon is primary; embedding
+  // failure is non-fatal and surfaced as a warning so the runtime
+  // gracefully falls back to FTS5-only recall.
+  const embCfg = cfg.localModels.embeddings;
+  const embRequested =
+    embCfg.enabled &&
+    embCfg.modelId !== null &&
+    isKnownEmbeddingModelId(embCfg.modelId);
+  let embReady = false;
+  if (embRequested) {
+    const embModel = getEmbeddingModelDef(embCfg.modelId as never);
+    embReady = isEmbeddingModelDownloaded(dataDir, embModel);
+    if (!embReady) {
+      process.stderr.write(
+        `note: embedding model ${embCfg.modelId} not downloaded — skipping embedding daemon\n` +
+          `      run 'atomic-agent models pull-embedding ${embCfg.modelId}' to enable hybrid recall.\n`,
+      );
+    }
+  }
+
   try {
-    const { pid } = await startDaemon({
-      dataDir,
-      modelId: mid,
-      port: cfg.localModels.managed.port,
-      chatTemplateFile: tpl,
-      mmprojFile,
+    const result = await startChatAndEmbeddingDaemons({
+      chat: {
+        dataDir,
+        modelId: mid,
+        port: cfg.localModels.managed.port,
+        ...(tpl ? { chatTemplateFile: tpl } : {}),
+        ...(mmprojFile ? { mmprojFile } : {}),
+      },
+      ...(embRequested && embReady
+        ? {
+            embedding: {
+              dataDir,
+              modelId: embCfg.modelId as never,
+              port: embCfg.port,
+            },
+          }
+        : {}),
     });
     const visionLine = mmprojFile
       ? `, vision enabled (${m.mmprojFilename})`
@@ -203,8 +242,24 @@ export async function runLocalModelsStart(): Promise<number> {
         ? `, vision disabled (mmproj missing — download via TUI 'Local Models' panel)`
         : "";
     process.stdout.write(
-      `started pid ${pid}, healthy on port ${cfg.localModels.managed.port}${visionLine}\n`,
+      `chat: started pid ${result.chat.pid}, healthy on port ${cfg.localModels.managed.port}${visionLine}\n`,
     );
+    if ("pid" in result.embedding) {
+      process.stdout.write(
+        `embedding: started pid ${result.embedding.pid}, healthy on port ${embCfg.port} (${embCfg.modelId})\n`,
+      );
+    } else if ("error" in result.embedding) {
+      process.stderr.write(
+        `embedding: failed to start (${result.embedding.error}) — hybrid recall disabled, FTS5 still works\n`,
+      );
+    } else {
+      // skipped — either feature disabled or model missing
+      if (!embCfg.enabled) {
+        process.stdout.write(
+          "embedding: disabled (set localModels.embeddings.enabled = true in config.json to opt in)\n",
+        );
+      }
+    }
     return 0;
   } catch (e) {
     process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
@@ -213,8 +268,159 @@ export async function runLocalModelsStart(): Promise<number> {
 }
 
 export async function runLocalModelsStop(): Promise<number> {
-  await stopDaemon(getConfig().paths.localModelsDataDir);
+  await stopChatAndEmbeddingDaemons(getConfig().paths.localModelsDataDir);
   process.stdout.write("stopped\n");
+  return 0;
+}
+
+/**
+ * Memory-v2 phase 1B. Download an embedding GGUF from
+ * `EMBEDDING_MODELS_CATALOG`. Mirrors `runLocalModelsPull` but bound
+ * to the typed `EmbeddingModelId` union so the wrong catalog can't
+ * be hit by accident.
+ */
+export async function runLocalModelsPullEmbedding(
+  idArg: string | undefined,
+): Promise<number> {
+  if (!idArg || !isKnownEmbeddingModelId(idArg)) {
+    process.stderr.write(
+      `unknown embedding model id. Valid: ${EMBEDDING_MODELS_CATALOG.map((m) => m.id).join(", ")}\n`,
+    );
+    return 1;
+  }
+  const m = getEmbeddingModelDef(idArg);
+  const dataDir = getConfig().paths.localModelsDataDir;
+  const estTotal = Math.round(m.fileSizeGb * (1024 * 1024 * 1024));
+  const tty = process.stderr.isTTY;
+  let lastLine = "";
+  const onProgress = (
+    percent: number,
+    transferred: number,
+    total: number,
+  ): void => {
+    const line = renderPullProgress(
+      `${m.filename} (${m.sizeLabel})`,
+      percent,
+      transferred,
+      total > 0 ? total : estTotal,
+    );
+    if (tty) process.stderr.write(`\r${line.padEnd(79)}`);
+    else if (percent % 5 === 0 || percent === 100)
+      process.stderr.write(`${line}\n`);
+    lastLine = line;
+  };
+  try {
+    process.stderr.write(
+      `downloading embedding model ${m.id} (${m.filename}, ${m.sizeLabel})\n`,
+    );
+    await downloadEmbeddingModel(dataDir, m, { onProgress });
+    if (tty) process.stderr.write(`\n`);
+    else if (lastLine) process.stderr.write(`done: ${lastLine}\n`);
+    const path = `${dataDir}/models/${m.id}/${m.filename}`;
+    process.stdout.write(`done. embedding model saved to ${path}\n`);
+    return 0;
+  } catch (e) {
+    process.stderr.write(
+      `${e instanceof Error ? e.message : String(e)}\n`,
+    );
+    return 1;
+  }
+}
+
+/**
+ * Memory-v2 phase 1B. Enable/disable the embedding daemon and select
+ * its model. Writes through to `<stateDir>/config.json` so the choice
+ * survives restarts. Does not start/stop the daemon — operator runs
+ * `atomic-agent models start` afterwards.
+ *
+ * Usage:
+ *   atomic-agent models use-embedding <id>      # enable + select
+ *   atomic-agent models use-embedding --disable # turn off
+ */
+export async function runLocalModelsUseEmbedding(
+  arg: string | undefined,
+): Promise<number> {
+  const cfg = getConfig();
+  const existing = (ensureUserConfigFileSync(
+    cfg.paths.userConfigFile,
+  )) as UserConfigFile;
+  if (arg === "--disable" || arg === "off") {
+    const next: UserConfigFile = {
+      ...existing,
+      localModels: {
+        ...existing.localModels,
+        embeddings: {
+          ...existing.localModels.embeddings,
+          enabled: false,
+        },
+      },
+    };
+    writeUserConfigFileSync(cfg.paths.userConfigFile, next);
+    resetConfigCache();
+    process.stdout.write(
+      "embedding daemon disabled. run 'atomic-agent models start' to apply.\n",
+    );
+    return 0;
+  }
+  if (!arg || !isKnownEmbeddingModelId(arg)) {
+    process.stderr.write(
+      `unknown embedding model id. Valid: ${EMBEDDING_MODELS_CATALOG.map(
+        (m) => m.id,
+      ).join(", ")}\n` +
+        `       (or pass --disable to turn the embedding daemon off)\n`,
+    );
+    return 1;
+  }
+  const next: UserConfigFile = {
+    ...existing,
+    localModels: {
+      ...existing.localModels,
+      embeddings: {
+        ...existing.localModels.embeddings,
+        enabled: true,
+        modelId: arg,
+      },
+    },
+  };
+  writeUserConfigFileSync(cfg.paths.userConfigFile, next);
+  resetConfigCache();
+  process.stdout.write(
+    `embedding model set to ${arg}. run 'atomic-agent models start' to apply.\n`,
+  );
+  return 0;
+}
+
+/**
+ * Memory-v2 phase 1B. List embedding models in the catalog with
+ * download / enabled / active status. Mirrors `runLocalModelsList`
+ * with the embedding-specific columns.
+ */
+export async function runLocalModelsListEmbeddings(): Promise<number> {
+  const cfg = getConfig();
+  const dataDir = cfg.paths.localModelsDataDir;
+  process.stdout.write(
+    "ID                       | SIZE   | DIM | POOLING | DL  | ACTIVE\n",
+  );
+  for (const m of EMBEDDING_MODELS_CATALOG) {
+    const dl = isEmbeddingModelDownloaded(dataDir, m) ? "yes" : "no";
+    const active =
+      cfg.localModels.embeddings.modelId === m.id &&
+      cfg.localModels.embeddings.enabled
+        ? "*"
+        : " ";
+    process.stdout.write(
+      `${m.id.padEnd(24)} | ${m.sizeLabel.padEnd(6)} | ${String(m.dim).padEnd(3)} | ${m.pooling.padEnd(7)} | ${dl.padEnd(3)} | ${active}\n`,
+    );
+  }
+  // Surface daemon status too — operators expect a single command to
+  // confirm "is the embedding daemon up?" without an extra round-trip.
+  const embPort = cfg.localModels.embeddings.port;
+  const st = await getEmbeddingDaemonStatus(dataDir, embPort);
+  process.stdout.write(
+    `\nembedding daemon: ${st.running ? `running (pid ${st.pid})` : "stopped"} on port ${embPort}, health: ${
+      st.healthy ? "ok" : st.loading ? "loading" : "down"
+    }\n`,
+  );
   return 0;
 }
 
@@ -233,7 +439,7 @@ export async function runLocalModelsUpdate(): Promise<number> {
     }
     process.stdout.write(`current: ${currentTag ?? "none"} → latest: ${latestTag}\n`);
     const st = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
-    if (st.running) await stopDaemon(dataDir);
+    if (st.running) await stopChatAndEmbeddingDaemons(dataDir);
     const tty = process.stderr.isTTY;
     await downloadBackend(dataDir, {
       onProgress: (p, t, tot) => {

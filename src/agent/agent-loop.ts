@@ -577,6 +577,12 @@ export class AgentLoop {
           sessionId: state.id,
           userMessage: options.userMessage,
           assistantReply,
+          // Memory-v2 phase 2. Surfaced ids for this turn — the
+          // allowlist for the link-generator sub-call. Empty / undefined
+          // when memory.notes is disabled OR no recall was performed.
+          ...(state.recalledNotes && state.recalledNotes.length > 0
+            ? { recalledMemoryIds: state.recalledNotes.map((n) => n.id) }
+            : {}),
         });
       }
     }

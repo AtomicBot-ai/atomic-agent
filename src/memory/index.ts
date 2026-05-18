@@ -45,3 +45,21 @@ export {
 } from "./notes-renderer.js";
 export { createDefaultMemoryContextProvider } from "./memory-context-provider.js";
 export type { DefaultMemoryContextProviderOptions } from "./memory-context-provider.js";
+export {
+  EmbeddingStore,
+  EmbeddingUnavailableError,
+  EmbeddingWriter,
+  LlamaEmbeddingClient,
+  cosineSimilarity,
+  recallHybrid,
+} from "./embeddings/index.js";
+export type {
+  EmbeddingClient,
+  EmbedRequest,
+  EmbedResult,
+  EmbeddingRow,
+  HybridRecallDeps,
+  HybridRecallInputEntry,
+  HybridRecallOptions,
+  LlamaEmbeddingClientOptions,
+} from "./embeddings/index.js";

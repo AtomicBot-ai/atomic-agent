@@ -69,6 +69,12 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     argsSchema: "{}",
   },
   {
+    name: "memory.profile.history",
+    summary: "Return the bi-temporal history of one profile key (oldest first; active value last).",
+    argsSchema: "{ key: string }",
+    examples: ['{"key":"language"}'],
+  },
+  {
     name: "memory.notes.store",
     summary: "Store a durable note (triggers: remember, outcomes, preferences; before reply on non-trivial work).",
     argsSchema: "{ content: string /* max 4000 chars */, tags?: string[] /* 1–4 */ }",

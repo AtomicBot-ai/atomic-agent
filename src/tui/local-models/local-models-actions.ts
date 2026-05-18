@@ -1,6 +1,11 @@
-import type { LocalModelId } from "../../local-llm/index.js";
+import type {
+  EmbeddingModelId,
+  LocalModelId,
+} from "../../local-llm/index.js";
 import type {
   DaemonPhase,
+  EmbeddingDaemonInfo,
+  EmbeddingModelRow,
   LocalModelsBackendInfo,
   LocalModelsDaemonInfo,
   LocalModelRow,
@@ -19,9 +24,25 @@ export type LocalModelsAction =
       totalRamGb: number;
       dataDir: string;
       at: number;
+      /** Memory-v2 phase 1B. Embedding catalog rows. */
+      embeddingRows: readonly EmbeddingModelRow[];
+      /** Memory-v2 phase 1B. Embedding daemon snapshot + active model. */
+      embeddingDaemon: EmbeddingDaemonInfo;
     }
   | { type: "local_models_cursor_up" }
   | { type: "local_models_cursor_down" }
+  | {
+      type: "local_models_embedding_remove_confirm_opened";
+      id: EmbeddingModelId;
+    }
+  | { type: "local_models_embedding_remove_confirm_closed" }
+  | {
+      type: "local_models_embedding_onboarding_opened";
+      modelId: EmbeddingModelId;
+      name: string;
+      sizeLabel: string;
+    }
+  | { type: "local_models_embedding_onboarding_dismissed" }
   | { type: "local_models_pull_started"; pull: LocalModelsPullState }
   | {
       type: "local_models_pull_progress";

@@ -60,8 +60,6 @@ interface Harness {
 function makeHarness(): Harness {
   const dir = mkdtempSync(join(tmpdir(), "reflect-runner-"));
   const dbFile = join(dir, "memory.sqlite");
-  const store = new ProfileStore({ dbFile });
-  const notesStore = new MemoryStore({ dbFile, maxEntries: 100 });
   const metricEvents: MetricEntry[] = [];
   const collector = new MetricsCollector({
     sinks: [
@@ -74,6 +72,8 @@ function makeHarness(): Harness {
     ],
   });
   const metrics = new AgentMetrics(collector);
+  const store = new ProfileStore({ dbFile, metrics });
+  const notesStore = new MemoryStore({ dbFile, maxEntries: 100 });
   const logEvents: LogEntry[] = [];
   const logger = new StructuredLogger({
     level: "debug",
@@ -576,6 +576,45 @@ describe("createReflectionRunner", () => {
       (e) => e.name === "agent.memory.reflection",
     );
     expect(counters[0]!.tags?.outcome).toBe("none");
+  });
+
+  // Memory-v2 phase 4. Bi-temporal end-to-end: SET with the
+  // [valid_from=now; supersedes=KEY] marker flows from the parser
+  // through `writeFacts` into `ProfileStore.set`, preserving the
+  // previous active row as a superseded version of the chain.
+  it("scenario 4.A — SET with supersedes marker produces a bi-temporal chain", async () => {
+    // Seed an initial value.
+    h.store.set("language", "ru", 1_000);
+
+    const runner = createReflectionRunner({
+      llmComplete: async () =>
+        completion("SET language=en [valid_from=now; supersedes=language]\n"),
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "actually let's switch to English",
+      assistantReply: "Switched.",
+    });
+
+    // The active row is the new `en` write.
+    expect(h.store.get("language")?.value).toBe("en");
+    // The chain has both rows in temporal order.
+    const chain = h.store.history("language");
+    expect(chain.map((r) => r.value)).toEqual(["ru", "en"]);
+    expect(chain[0]?.supersededBy).toBe(chain[1]?.id);
+    // The supersession counter fired.
+    const superseded = h.metricEvents.filter(
+      (e) => e.name === "agent.memory.profile.superseded",
+    );
+    expect(superseded.length).toBeGreaterThanOrEqual(1);
+    expect(superseded[0]?.tags?.key).toBe("language");
   });
 
   it("abortPending() aborts the in-flight reflection", async () => {

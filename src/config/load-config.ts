@@ -150,6 +150,7 @@ export function loadConfig(): AtomicAgentConfig {
       ),
       mode: user.localModels.mode,
       managed: { ...user.localModels.managed },
+      embeddings: { ...user.localModels.embeddings },
     },
     paths: {
       stateDir,
@@ -315,6 +316,34 @@ export function loadConfig(): AtomicAgentConfig {
         limit: user.memory.index.limit,
         previewChars: user.memory.index.previewChars,
         maxTokens: user.memory.index.maxTokens,
+      },
+      dedup: {
+        enabled: user.memory.dedup.enabled,
+        fts5Threshold: user.memory.dedup.fts5Threshold,
+      },
+      eviction: {
+        utilityWeighted: user.memory.eviction.utilityWeighted,
+        maxAgeMs: user.memory.eviction.maxAgeMs,
+      },
+      embeddings: {
+        enabled: user.memory.embeddings.enabled,
+        fts5Weight: user.memory.embeddings.fts5Weight,
+        vectorWeight: user.memory.embeddings.vectorWeight,
+        bruteForceCeiling: user.memory.embeddings.bruteForceCeiling,
+      },
+      links: {
+        enabled: user.memory.links.enabled,
+        autoGenerate: user.memory.links.autoGenerate,
+        expansionDepth: user.memory.links.expansionDepth,
+        maxExpanded: user.memory.links.maxExpanded,
+        maxLinksPerCall: user.memory.links.maxLinksPerCall,
+        minCandidates: user.memory.links.minCandidates,
+        generatorTimeoutMs: user.memory.links.generatorTimeoutMs,
+      },
+      evolution: {
+        enabled: user.memory.evolution.enabled,
+        maxPerWrite: user.memory.evolution.maxPerWrite,
+        leaseMs: user.memory.evolution.leaseMs,
       },
     },
     webhooks: user.webhooks,

@@ -5,6 +5,7 @@ import type { ProfileStore } from "../../memory/profile-store.js";
 import { buildProfileSetTool } from "./profile-set.js";
 import { buildProfileRemoveTool } from "./profile-remove.js";
 import { buildProfileListTool } from "./profile-list.js";
+import { buildProfileHistoryTool } from "./profile-history.js";
 import { buildNotesStoreTool } from "./notes-store.js";
 import { buildNotesRecallTool } from "./notes-recall.js";
 import { buildNotesForgetTool } from "./notes-forget.js";
@@ -12,6 +13,7 @@ import { buildNotesForgetTool } from "./notes-forget.js";
 export { buildProfileSetTool } from "./profile-set.js";
 export { buildProfileRemoveTool } from "./profile-remove.js";
 export { buildProfileListTool } from "./profile-list.js";
+export { buildProfileHistoryTool } from "./profile-history.js";
 export { buildNotesStoreTool } from "./notes-store.js";
 export { buildNotesRecallTool } from "./notes-recall.js";
 export { buildNotesForgetTool } from "./notes-forget.js";
@@ -50,6 +52,7 @@ export function registerMemoryTools(
     registry.register(buildProfileSetTool({ store: options.profileStore }));
     registry.register(buildProfileRemoveTool({ store: options.profileStore }));
     registry.register(buildProfileListTool({ store: options.profileStore }));
+    registry.register(buildProfileHistoryTool({ store: options.profileStore }));
   }
   if (options.notesEnabled) {
     registry.register(

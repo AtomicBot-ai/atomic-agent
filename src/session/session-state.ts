@@ -128,6 +128,17 @@ export interface SessionState {
    * persistence rules as `recalledNotes`.
    */
   memoryIndex?: readonly MemoryIndexEntry[];
+  // TODO(memory-v2): cross-phase invariant 8 — every new prompt-only
+  // memory field added in v2 must be ephemeral (per-turn) and stripped
+  // by `stripEphemeral()` below before session-store persistence:
+  //   - phase 5 adds `recalledLessons?: readonly Lesson[]` (rendered as
+  //     `### lessons`).
+  //   - phase 7a adds `surfacedIds?: readonly { kind, id }[]` (consumed
+  //     by the vote-runner allowlist; never rendered).
+  //   - phase 7b adds `recalledProcedures?: readonly Procedure[]`
+  //     (rendered as `### procedures`).
+  // Each phase extends `stripEphemeral()` in this file and the
+  // `does not persist ephemeral …` test in `session-store.test.ts`.
 }
 
 export function createEmptySessionState(params: {

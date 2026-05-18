@@ -7,6 +7,8 @@ const pinnedFact = (key: string, value: string) => ({
   value,
   pinned: true,
   keywords: [],
+  supersedes: null,
+  validFrom: null,
 });
 
 describe("parseReflectionOutput", () => {
@@ -15,16 +17,19 @@ describe("parseReflectionOutput", () => {
       kind: "none",
       facts: [],
       notes: [],
+      evolves: [],
     });
     expect(parseReflectionOutput("NONE\n")).toEqual({
       kind: "none",
       facts: [],
       notes: [],
+      evolves: [],
     });
     expect(parseReflectionOutput("  NONE  \n")).toEqual({
       kind: "none",
       facts: [],
       notes: [],
+      evolves: [],
     });
   });
 
@@ -33,11 +38,13 @@ describe("parseReflectionOutput", () => {
       kind: "none",
       facts: [],
       notes: [],
+      evolves: [],
     });
     expect(parseReflectionOutput("   \n\n")).toEqual({
       kind: "none",
       facts: [],
       notes: [],
+      evolves: [],
     });
   });
 
@@ -47,6 +54,7 @@ describe("parseReflectionOutput", () => {
       kind: "facts",
       facts: [pinnedFact("name", "Alex")],
       notes: [],
+      evolves: [],
     });
   });
 
@@ -102,6 +110,8 @@ describe("parseReflectionOutput", () => {
         value: "pnpm run deploy",
         pinned: false,
         keywords: ["deploy", "release", "ship"],
+        supersedes: null,
+        validFrom: null,
       },
     ]);
   });
@@ -116,6 +126,8 @@ describe("parseReflectionOutput", () => {
         value: "pnpm run deploy",
         pinned: false,
         keywords: ["deploy"],
+        supersedes: null,
+        validFrom: null,
       },
     ]);
   });
@@ -132,7 +144,14 @@ describe("parseReflectionOutput", () => {
       "SET note=today [tags=foo]\n",
     );
     expect(result.facts).toEqual([
-      { key: "note", value: "today [tags=foo]", pinned: true, keywords: [] },
+      {
+        key: "note",
+        value: "today [tags=foo]",
+        pinned: true,
+        keywords: [],
+        supersedes: null,
+        validFrom: null,
+      },
     ]);
   });
 
@@ -141,6 +160,7 @@ describe("parseReflectionOutput", () => {
       kind: "none",
       facts: [],
       notes: [],
+      evolves: [],
     });
   });
 
@@ -157,6 +177,7 @@ describe("parseReflectionOutput", () => {
           tags: [],
         },
       ],
+      evolves: [],
     });
   });
 
@@ -226,6 +247,148 @@ describe("parseReflectionOutput", () => {
 
   it("skips a NOTE with empty body after tag marker is stripped", () => {
     const result = parseReflectionOutput("NOTE  [tags=a]\n");
-    expect(result).toEqual({ kind: "none", facts: [], notes: [] });
+    expect(result).toEqual({
+      kind: "none",
+      facts: [],
+      notes: [],
+      evolves: [],
+    });
+  });
+
+  // Memory-v2 phase 3. EVOLVE coverage.
+
+  it("parses a single EVOLVE line", () => {
+    const result = parseReflectionOutput(
+      "EVOLVE #42 [tags=browser,playwright,selectors]\n",
+    );
+    expect(result.kind).toBe("facts");
+    expect(result.evolves).toEqual([
+      { targetId: 42, addTags: ["browser", "playwright", "selectors"] },
+    ]);
+  });
+
+  it("dedupes EVOLVE entries by targetId (last writer wins)", () => {
+    const result = parseReflectionOutput(
+      [
+        "EVOLVE #5 [tags=alpha]",
+        "EVOLVE #5 [tags=beta,gamma]",
+      ].join("\n") + "\n",
+    );
+    expect(result.evolves).toEqual([
+      { targetId: 5, addTags: ["beta", "gamma"] },
+    ]);
+  });
+
+  it("drops EVOLVE with empty tag list", () => {
+    const result = parseReflectionOutput("EVOLVE #1 [tags=]\n");
+    expect(result.evolves).toEqual([]);
+  });
+
+  it("drops EVOLVE with non-positive id", () => {
+    const result = parseReflectionOutput("EVOLVE #0 [tags=a]\n");
+    expect(result.evolves).toEqual([]);
+  });
+
+  it("interleaves SET, NOTE, and EVOLVE preserving each channel", () => {
+    const result = parseReflectionOutput(
+      [
+        "SET name=Alex",
+        "NOTE trip planned",
+        "EVOLVE #7 [tags=routing]",
+        "SET tz=Europe/Lisbon",
+      ].join("\n") + "\n",
+    );
+    expect(result.facts).toHaveLength(2);
+    expect(result.notes).toHaveLength(1);
+    expect(result.evolves).toEqual([
+      { targetId: 7, addTags: ["routing"] },
+    ]);
+  });
+
+  it("lower-cases EVOLVE tags and drops invalid tokens", () => {
+    const result = parseReflectionOutput(
+      "EVOLVE #1 [tags=Browser,UPPER_OK,has space,toolong" +
+        "x".repeat(60) +
+        ",good-tag]\n",
+    );
+    expect(result.evolves[0]?.addTags).toEqual([
+      "browser",
+      "upper_ok",
+      "good-tag",
+    ]);
+  });
+
+  // Memory-v2 phase 4. SET marker extensions: [valid_from=now;
+  // supersedes=KEY] coexists with the existing [pinned=...;
+  // keywords=...] clauses.
+
+  it("parses a bare SET as a same-key auto-chain candidate (no supersedes)", () => {
+    const result = parseReflectionOutput("SET language=ru\n");
+    expect(result.facts).toEqual([
+      {
+        key: "language",
+        value: "ru",
+        pinned: true,
+        keywords: [],
+        supersedes: null,
+        validFrom: null,
+      },
+    ]);
+  });
+
+  it("parses SET with [valid_from=now; supersedes=key] marker", () => {
+    const result = parseReflectionOutput(
+      "SET language=en [valid_from=now; supersedes=language]\n",
+    );
+    expect(result.facts).toEqual([
+      {
+        key: "language",
+        value: "en",
+        pinned: true,
+        keywords: [],
+        supersedes: "language",
+        validFrom: "now",
+      },
+    ]);
+  });
+
+  it("parses cross-key supersedes hint", () => {
+    const result = parseReflectionOutput(
+      "SET full_name=Alex [supersedes=name]\n",
+    );
+    expect(result.facts[0]?.supersedes).toBe("name");
+    expect(result.facts[0]?.validFrom).toBeNull();
+  });
+
+  it("combines pinned/keywords/supersedes inside one marker", () => {
+    const result = parseReflectionOutput(
+      "SET deploy_cmd=pnpm ship [pinned=false; keywords=deploy,ship; supersedes=deploy_cmd]\n",
+    );
+    expect(result.facts).toEqual([
+      {
+        key: "deploy_cmd",
+        value: "pnpm ship",
+        pinned: false,
+        keywords: ["deploy", "ship"],
+        supersedes: "deploy_cmd",
+        validFrom: null,
+      },
+    ]);
+  });
+
+  it("drops a malformed supersedes RHS (rejects spaces and special chars)", () => {
+    const result = parseReflectionOutput(
+      "SET language=en [supersedes=not a valid key]\n",
+    );
+    expect(result.facts[0]?.supersedes).toBeNull();
+  });
+
+  it("drops a non-'now' valid_from RHS silently (runner always stamps the clock)", () => {
+    const result = parseReflectionOutput(
+      "SET language=en [valid_from=1970-01-01; supersedes=language]\n",
+    );
+    // valid_from rejected; supersedes still captured.
+    expect(result.facts[0]?.validFrom).toBeNull();
+    expect(result.facts[0]?.supersedes).toBe("language");
   });
 });

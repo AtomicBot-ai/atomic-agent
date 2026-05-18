@@ -22,6 +22,27 @@ export const METRIC_NAMES = {
   approvalDenied: "agent.approval.denied",
   memoryReflection: "agent.memory.reflection",
   memoryReflectionLatency: "agent.memory.reflection.latency_ms",
+  // memory-v2 phase 1A
+  memoryDedupMerged: "agent.memory.dedup.merged",
+  memoryDedupSkipped: "agent.memory.dedup.skipped",
+  memoryEvictionEvicted: "agent.memory.eviction.evicted",
+  memoryClockSkewDetected: "agent.memory.clock_skew_detected",
+  // memory-v2 phase 1B
+  memoryEmbeddingsGenerated: "agent.memory.embeddings.generated",
+  memoryEmbeddingsFallback: "agent.memory.embeddings.fallback_to_fts5",
+  memoryEmbeddingsBruteForceOverflow:
+    "agent.memory.embeddings.brute_force_overflow",
+  memoryEmbeddingsDaemonHealth: "agent.memory.embeddings.daemon_health",
+  // memory-v2 phase 2
+  memoryLinkGenerator: "agent.memory.link_generator",
+  memoryLinkGeneratorDuration: "agent.memory.link_generator.duration_ms",
+  memoryLinksWritten: "agent.memory.links_written",
+  memoryLinkExpansionHits: "agent.memory.link_expansion.hits",
+  // memory-v2 phase 3
+  memoryEvolutionApplied: "agent.memory.evolution.applied",
+  memoryEvolutionSkipped: "agent.memory.evolution.skipped",
+  // memory-v2 phase 4
+  memoryProfileSuperseded: "agent.memory.profile.superseded",
   tasksCreated: "agent.tasks.created",
   tasksStarted: "agent.tasks.started",
   tasksCompleted: "agent.tasks.completed",
@@ -117,6 +138,169 @@ export interface ReflectionMetricSample {
   sessionId: string;
   outcome: ReflectionOutcomeTag;
   durationMs: number;
+}
+
+/**
+ * Outcome taxonomy for pre-insert deduplication in `MemoryStore.store`
+ * (memory-v2 phase 1A). `merged` means an existing row absorbed the
+ * write (touched `updated_at`, bumped `recall_count`); `skipped` means
+ * dedup was considered but the candidate did not clear the similarity
+ * threshold or tag-superset rule, and the write proceeded as an INSERT.
+ * `disabled` is emitted when dedup is feature-flagged off — kept as a
+ * tag value so dashboards can distinguish "no dedup attempted" from
+ * "dedup attempted, no merge".
+ */
+export type MemoryDedupOutcomeTag = "merged" | "skipped" | "disabled";
+
+export interface MemoryDedupMetricSample {
+  outcome: MemoryDedupOutcomeTag;
+  /** Best Jaccard score observed when `outcome ∈ {merged, skipped}`. */
+  bestScore: number;
+  /** Existing row id for `merged`; for `skipped` the would-be neighbour. */
+  candidateId: number | null;
+}
+
+export interface MemoryEvictionMetricSample {
+  /**
+   * Path that triggered the delete. `overflow` is the per-write check
+   * (count > maxEntries); future phases add `age` (consolidator sweep).
+   */
+  reason: "overflow" | "age";
+  /** Row count removed in this single SQL statement. */
+  evicted: number;
+  /** Whether utility-weighted ordering was applied (false ⇒ legacy FIFO). */
+  utilityWeighted: boolean;
+}
+
+/**
+ * Tag space for clock-skew detection. Emitted whenever a temporal
+ * subtraction `(now - ts)` produces a negative value — cross-phase
+ * invariant 7 (§13.7.2 of the v2 plan). `site` identifies the caller
+ * so dashboards can isolate "is it dedup, eviction, or recall scoring".
+ */
+export type MemoryClockSkewSiteTag =
+  | "memory_store_recall"
+  | "memory_store_dedup"
+  | "memory_store_eviction";
+
+export interface MemoryClockSkewMetricSample {
+  site: MemoryClockSkewSiteTag;
+  /** `now - ts` value that triggered the detection (negative). */
+  deltaMs: number;
+}
+
+/**
+ * Memory-v2 phase 1B embedding-side samples. Kept narrow:
+ *   - `Generated` fires once per successful embedding write.
+ *   - `Fallback` fires once per recall that degraded to FTS5-only.
+ *   - `BruteForceOverflow` fires once per recall that skipped cosine
+ *     because the corpus is past the soft ceiling.
+ *   - `DaemonHealth` is bootstrap-only and snapshots whether the
+ *     second daemon is reachable.
+ */
+export interface MemoryEmbeddingsGeneratedSample {
+  model: string;
+  durationMs: number;
+}
+
+export type MemoryEmbeddingsFallbackReason =
+  | "embed_failed"
+  | "client_missing"
+  | "store_missing"
+  | "feature_disabled";
+
+export interface MemoryEmbeddingsFallbackSample {
+  reason: MemoryEmbeddingsFallbackReason;
+}
+
+export interface MemoryEmbeddingsBruteForceOverflowSample {
+  rows: number;
+  ceiling: number;
+}
+
+export interface MemoryEmbeddingsDaemonHealthSample {
+  outcome: "ok" | "unreachable" | "disabled";
+  model: string | null;
+}
+
+/**
+ * Memory-v2 phase 2. Link-generator + expansion samples.
+ *
+ *   - `LinkGenerator` is the outcome of one `link-generator` sub-call
+ *     (mirrors the reflection taxonomy: ok / none / aborted / timeout /
+ *     failed, plus `skipped` for "too few candidates to bother").
+ *   - `LinksWritten` is incremented once per persisted edge — useful
+ *     for plotting graph growth rate over time.
+ *   - `LinkExpansionHits` fires per recall turn that surfaced one or
+ *     more BFS-expanded ids, tagged by the resulting expansion count
+ *     bucket so dashboards can spot pathological depths.
+ */
+export type LinkGeneratorOutcomeTag =
+  | "ok"
+  | "none"
+  | "skipped"
+  | "aborted"
+  | "timeout"
+  | "failed";
+
+export interface MemoryLinkGeneratorSample {
+  sessionId: string;
+  outcome: LinkGeneratorOutcomeTag;
+  durationMs: number;
+  linksWritten?: number;
+}
+
+export interface MemoryLinksWrittenSample {
+  source: "link_generator" | "tool" | "reflection";
+  kind: string;
+}
+
+export interface MemoryLinkExpansionHitsSample {
+  /** Number of unique ids the BFS expanded into (excluding seeds). */
+  expanded: number;
+  depth: number;
+}
+
+/**
+ * Memory-v2 phase 3. Per-EVOLVE-directive outcome.
+ *
+ *  - `applied`                  — the row's tags actually grew.
+ *  - `skipped_lease_held`       — `consolidating_at` lease was fresh.
+ *  - `skipped_no_change`        — every proposed tag was already present.
+ *  - `skipped_not_in_allowlist` — target id not in the per-turn surfaced set.
+ *  - `skipped_cap_hit`          — `maxPerWrite` budget exhausted.
+ *  - `skipped_missing`          — target id no longer exists.
+ *  - `skipped_invalid`          — `MemoryValidationError` from the store
+ *                                 (empty tag list, oversized tag, …).
+ */
+export type MemoryEvolutionOutcomeTag =
+  | "applied"
+  | "skipped_lease_held"
+  | "skipped_no_change"
+  | "skipped_not_in_allowlist"
+  | "skipped_cap_hit"
+  | "skipped_missing"
+  | "skipped_invalid";
+
+export interface MemoryEvolutionSample {
+  sessionId: string;
+  outcome: MemoryEvolutionOutcomeTag;
+}
+
+/**
+ * Memory-v2 phase 4. A bi-temporal profile write that superseded an
+ * existing active row. The previous active row's `superseded_by`
+ * was flipped to the new row's id inside the same transaction.
+ *
+ * `key` is the profile key being versioned; `previousId` and
+ * `nextId` are the row ids on either side of the chain. Useful for
+ * postmortem of "did the LLM rewrite something I cared about" via
+ * `memory.profile.history`.
+ */
+export interface MemoryProfileSupersededSample {
+  key: string;
+  previousId: number;
+  nextId: number;
 }
 
 /**
@@ -320,6 +504,189 @@ export class AgentMetrics {
       sample.durationMs,
       tags,
     );
+  }
+
+  /**
+   * Record a pre-insert dedup decision in `MemoryStore.store`. Two
+   * separate counters so dashboards can compute merge ratio without
+   * scanning histograms. Emitted exactly once per write attempt.
+   */
+  recordMemoryDedup(sample: MemoryDedupMetricSample): void {
+    const tags = {
+      outcome: sample.outcome,
+      bestScore: sample.bestScore.toFixed(3),
+      ...(sample.candidateId !== null
+        ? { candidateId: String(sample.candidateId) }
+        : {}),
+    };
+    if (sample.outcome === "merged") {
+      this.collector.counter(METRIC_NAMES.memoryDedupMerged, 1, tags);
+    } else {
+      this.collector.counter(METRIC_NAMES.memoryDedupSkipped, 1, tags);
+    }
+  }
+
+  /**
+   * Record an overflow-eviction sweep. Counter bumped by `evicted`
+   * (the actual row count removed), not 1 — so the metric reflects
+   * deleted volume rather than tick count.
+   */
+  recordMemoryEviction(sample: MemoryEvictionMetricSample): void {
+    if (sample.evicted <= 0) return;
+    this.collector.counter(
+      METRIC_NAMES.memoryEvictionEvicted,
+      sample.evicted,
+      {
+        reason: sample.reason,
+        utilityWeighted: sample.utilityWeighted ? "true" : "false",
+      },
+    );
+  }
+
+  /**
+   * Record a clock-skew detection. Fire-and-forget signal: the caller
+   * has already clamped to the safe end and proceeded; this counter
+   * exists so persistent DB-clock drift is visible in dashboards.
+   */
+  recordMemoryClockSkew(sample: MemoryClockSkewMetricSample): void {
+    this.collector.counter(METRIC_NAMES.memoryClockSkewDetected, 1, {
+      site: sample.site,
+      deltaMs: String(sample.deltaMs),
+    });
+  }
+
+  /**
+   * Memory-v2 phase 1B. Record a successful embedding generation +
+   * persistence. `durationMs` includes both the HTTP round-trip and
+   * the `EmbeddingStore.upsert` call so the histogram surfaces the
+   * full write path latency.
+   */
+  recordMemoryEmbeddingsGenerated(
+    sample: MemoryEmbeddingsGeneratedSample,
+  ): void {
+    this.collector.counter(METRIC_NAMES.memoryEmbeddingsGenerated, 1, {
+      model: sample.model,
+    });
+  }
+
+  /**
+   * Memory-v2 phase 1B. Record a hybrid recall that degraded to
+   * FTS5-only. Tagged by reason so dashboards can distinguish a
+   * transient daemon outage (`embed_failed`) from a permanent
+   * deployment state (`feature_disabled`).
+   */
+  recordMemoryEmbeddingsFallback(
+    sample: MemoryEmbeddingsFallbackSample,
+  ): void {
+    this.collector.counter(METRIC_NAMES.memoryEmbeddingsFallback, 1, {
+      reason: sample.reason,
+    });
+  }
+
+  /**
+   * Memory-v2 phase 1B. Soft warning: corpus has outgrown the
+   * brute-force cosine path. Cosine is skipped; FTS5 still serves.
+   * Persistent emission of this metric is the signal to wire
+   * `sqlite-vec` or trim the corpus.
+   */
+  recordMemoryEmbeddingsBruteForceOverflow(
+    sample: MemoryEmbeddingsBruteForceOverflowSample,
+  ): void {
+    this.collector.counter(
+      METRIC_NAMES.memoryEmbeddingsBruteForceOverflow,
+      1,
+      {
+        rows: String(sample.rows),
+        ceiling: String(sample.ceiling),
+      },
+    );
+  }
+
+  /**
+   * Memory-v2 phase 1B. Snapshot the embedding daemon's reachability
+   * at bootstrap. One sample per runtime start; the `disabled` outcome
+   * is emitted when the feature flag is off so dashboards can
+   * distinguish "nobody asked for embeddings" from "embeddings asked
+   * but daemon down".
+   */
+  recordMemoryEmbeddingsDaemonHealth(
+    sample: MemoryEmbeddingsDaemonHealthSample,
+  ): void {
+    this.collector.counter(METRIC_NAMES.memoryEmbeddingsDaemonHealth, 1, {
+      outcome: sample.outcome,
+      ...(sample.model ? { model: sample.model } : {}),
+    });
+  }
+
+  /**
+   * Memory-v2 phase 2. Record a `link-generator` sub-call outcome.
+   * The histogram pairs with the counter so dashboards can compute
+   * both error rate and p95 latency from one set of samples.
+   */
+  recordLinkGenerator(sample: MemoryLinkGeneratorSample): void {
+    const tags: Record<string, string> = {
+      session_id: sample.sessionId,
+      outcome: sample.outcome,
+    };
+    this.collector.counter(METRIC_NAMES.memoryLinkGenerator, 1, tags);
+    this.collector.histogram(
+      METRIC_NAMES.memoryLinkGeneratorDuration,
+      sample.durationMs,
+      tags,
+    );
+    if (typeof sample.linksWritten === "number") {
+      this.collector.counter(
+        METRIC_NAMES.memoryLinksWritten,
+        sample.linksWritten,
+        {
+          source: "link_generator",
+          kind: "any",
+        },
+      );
+    }
+  }
+
+  /**
+   * Memory-v2 phase 3. Record one EVOLVE-directive outcome. Successful
+   * evolutions land on `agent.memory.evolution.applied`; every
+   * `skipped_*` flavour lands on `agent.memory.evolution.skipped`
+   * tagged by `reason` (the suffix after `skipped_`). The dual-
+   * counter shape matches the scorecard's §3.A.4 / §3.B.2 asserts.
+   */
+  recordMemoryEvolution(sample: MemoryEvolutionSample): void {
+    const tags: Record<string, string> = { session_id: sample.sessionId };
+    if (sample.outcome === "applied") {
+      this.collector.counter(METRIC_NAMES.memoryEvolutionApplied, 1, tags);
+      return;
+    }
+    this.collector.counter(METRIC_NAMES.memoryEvolutionSkipped, 1, {
+      ...tags,
+      reason: sample.outcome.replace(/^skipped_/, ""),
+    });
+  }
+
+  /**
+   * Memory-v2 phase 4. Record a bi-temporal profile supersession.
+   * One increment per row flipped — a cross-key supersession that
+   * touches two parents fires this twice with distinct `previousId`s.
+   */
+  recordProfileSuperseded(sample: MemoryProfileSupersededSample): void {
+    this.collector.counter(METRIC_NAMES.memoryProfileSuperseded, 1, {
+      key: sample.key,
+      previous_id: String(sample.previousId),
+      next_id: String(sample.nextId),
+    });
+  }
+
+  /**
+   * Memory-v2 phase 2. Record a recall turn that surfaced one or more
+   * link-expanded ids alongside the BM25/cosine hits.
+   */
+  recordMemoryLinkExpansion(sample: MemoryLinkExpansionHitsSample): void {
+    this.collector.counter(METRIC_NAMES.memoryLinkExpansionHits, 1, {
+      expanded: String(sample.expanded),
+      depth: String(sample.depth),
+    });
   }
 
   /**

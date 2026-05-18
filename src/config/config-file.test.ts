@@ -112,6 +112,205 @@ describe("user config file IO", () => {
     warn.mockRestore();
   });
 
+  it("ensureUserConfigFileSync migrates v13 → v14 by filling memory.evolution defaults", () => {
+    const path = getUserConfigPath(dir);
+    // Build a synthetic v13 by stripping the new `memory.evolution` block.
+    const memoryWithoutV14 = {
+      profile: USER_CONFIG_DEFAULTS.memory.profile,
+      reflection: USER_CONFIG_DEFAULTS.memory.reflection,
+      notes: USER_CONFIG_DEFAULTS.memory.notes,
+      recallInjection: USER_CONFIG_DEFAULTS.memory.recallInjection,
+      index: USER_CONFIG_DEFAULTS.memory.index,
+      dedup: USER_CONFIG_DEFAULTS.memory.dedup,
+      eviction: USER_CONFIG_DEFAULTS.memory.eviction,
+      embeddings: USER_CONFIG_DEFAULTS.memory.embeddings,
+      links: USER_CONFIG_DEFAULTS.memory.links,
+    };
+    const v13 = {
+      version: 13,
+      localModels: USER_CONFIG_DEFAULTS.localModels,
+      log: { level: "info" },
+      agent: USER_CONFIG_DEFAULTS.agent,
+      http: USER_CONFIG_DEFAULTS.http,
+      tracing: USER_CONFIG_DEFAULTS.tracing,
+      memory: memoryWithoutV14,
+      webhooks: {},
+      vision: USER_CONFIG_DEFAULTS.vision,
+      skills: { disabled: [] },
+      telegram: USER_CONFIG_DEFAULTS.telegram,
+    };
+    writeFileSync(path, JSON.stringify(v13, null, 2) + "\n", "utf8");
+
+    const warn = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const migrated = ensureUserConfigFileSync(path);
+
+    expect(migrated.version).toBe(USER_CONFIG_VERSION);
+    expect(migrated.memory.evolution).toEqual(
+      USER_CONFIG_DEFAULTS.memory.evolution,
+    );
+    expect(migrated.memory.evolution.enabled).toBe(false);
+
+    const onDisk = JSON.parse(readFileSync(path, "utf8"));
+    expect(onDisk.version).toBe(USER_CONFIG_VERSION);
+    expect(onDisk.memory.evolution).toEqual(
+      USER_CONFIG_DEFAULTS.memory.evolution,
+    );
+    warn.mockRestore();
+  });
+
+  it("ensureUserConfigFileSync migrates v12 → v13 by filling memory.links defaults", () => {
+    const path = getUserConfigPath(dir);
+    // Build a synthetic v12 by stripping the new `memory.links` block.
+    const memoryWithoutV13 = {
+      profile: USER_CONFIG_DEFAULTS.memory.profile,
+      reflection: USER_CONFIG_DEFAULTS.memory.reflection,
+      notes: USER_CONFIG_DEFAULTS.memory.notes,
+      recallInjection: USER_CONFIG_DEFAULTS.memory.recallInjection,
+      index: USER_CONFIG_DEFAULTS.memory.index,
+      dedup: USER_CONFIG_DEFAULTS.memory.dedup,
+      eviction: USER_CONFIG_DEFAULTS.memory.eviction,
+      embeddings: USER_CONFIG_DEFAULTS.memory.embeddings,
+    };
+    const v12 = {
+      version: 12,
+      localModels: USER_CONFIG_DEFAULTS.localModels,
+      log: { level: "info" },
+      agent: USER_CONFIG_DEFAULTS.agent,
+      http: USER_CONFIG_DEFAULTS.http,
+      tracing: USER_CONFIG_DEFAULTS.tracing,
+      memory: memoryWithoutV13,
+      webhooks: {},
+      vision: USER_CONFIG_DEFAULTS.vision,
+      skills: { disabled: [] },
+      telegram: USER_CONFIG_DEFAULTS.telegram,
+    };
+    writeFileSync(path, JSON.stringify(v12, null, 2) + "\n", "utf8");
+
+    const warn = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const migrated = ensureUserConfigFileSync(path);
+
+    expect(migrated.version).toBe(USER_CONFIG_VERSION);
+    expect(migrated.memory.links).toEqual(USER_CONFIG_DEFAULTS.memory.links);
+    expect(migrated.memory.links.enabled).toBe(false);
+
+    const onDisk = JSON.parse(readFileSync(path, "utf8"));
+    expect(onDisk.version).toBe(USER_CONFIG_VERSION);
+    expect(onDisk.memory.links).toEqual(USER_CONFIG_DEFAULTS.memory.links);
+    warn.mockRestore();
+  });
+
+  it("ensureUserConfigFileSync migrates v11 → v12 by filling memory.embeddings + localModels.embeddings defaults", () => {
+    const path = getUserConfigPath(dir);
+    // Build a synthetic v11 by stripping the new embedding blocks
+    // from both the memory and the localModels sections.
+    const localModelsWithoutV12 = {
+      url: USER_CONFIG_DEFAULTS.localModels.url,
+      mode: USER_CONFIG_DEFAULTS.localModels.mode,
+      completionMaxTokens:
+        USER_CONFIG_DEFAULTS.localModels.completionMaxTokens,
+      managed: USER_CONFIG_DEFAULTS.localModels.managed,
+    };
+    const memoryWithoutV12 = {
+      profile: USER_CONFIG_DEFAULTS.memory.profile,
+      reflection: USER_CONFIG_DEFAULTS.memory.reflection,
+      notes: USER_CONFIG_DEFAULTS.memory.notes,
+      recallInjection: USER_CONFIG_DEFAULTS.memory.recallInjection,
+      index: USER_CONFIG_DEFAULTS.memory.index,
+      dedup: USER_CONFIG_DEFAULTS.memory.dedup,
+      eviction: USER_CONFIG_DEFAULTS.memory.eviction,
+    };
+    const v11 = {
+      version: 11,
+      localModels: localModelsWithoutV12,
+      log: { level: "info" },
+      agent: USER_CONFIG_DEFAULTS.agent,
+      http: USER_CONFIG_DEFAULTS.http,
+      tracing: USER_CONFIG_DEFAULTS.tracing,
+      memory: memoryWithoutV12,
+      webhooks: {},
+      vision: USER_CONFIG_DEFAULTS.vision,
+      skills: { disabled: [] },
+      telegram: USER_CONFIG_DEFAULTS.telegram,
+    };
+    writeFileSync(path, JSON.stringify(v11, null, 2) + "\n", "utf8");
+
+    const warn = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const migrated = ensureUserConfigFileSync(path);
+
+    expect(migrated.version).toBe(USER_CONFIG_VERSION);
+    // Both new blocks default to disabled — the operator opts in via
+    // explicit `use-embedding <id>` + `embeddings.enabled=true`.
+    expect(migrated.memory.embeddings).toEqual(
+      USER_CONFIG_DEFAULTS.memory.embeddings,
+    );
+    expect(migrated.localModels.embeddings).toEqual(
+      USER_CONFIG_DEFAULTS.localModels.embeddings,
+    );
+    expect(migrated.memory.embeddings.enabled).toBe(false);
+    expect(migrated.localModels.embeddings.enabled).toBe(false);
+
+    const onDisk = JSON.parse(readFileSync(path, "utf8"));
+    expect(onDisk.version).toBe(USER_CONFIG_VERSION);
+    expect(onDisk.memory.embeddings).toEqual(
+      USER_CONFIG_DEFAULTS.memory.embeddings,
+    );
+    expect(onDisk.localModels.embeddings).toEqual(
+      USER_CONFIG_DEFAULTS.localModels.embeddings,
+    );
+    warn.mockRestore();
+  });
+
+  it("ensureUserConfigFileSync migrates v10 → v11 by filling memory.dedup / memory.eviction defaults", () => {
+    const path = getUserConfigPath(dir);
+    // Build a synthetic v10 by copying memory defaults minus the new
+    // dedup/eviction blocks. Casting through unknown so the partial
+    // memory shape compiles even though the v11 type now requires the
+    // two new blocks.
+    const memoryWithoutV11 = {
+      profile: USER_CONFIG_DEFAULTS.memory.profile,
+      reflection: USER_CONFIG_DEFAULTS.memory.reflection,
+      notes: USER_CONFIG_DEFAULTS.memory.notes,
+      recallInjection: USER_CONFIG_DEFAULTS.memory.recallInjection,
+      index: USER_CONFIG_DEFAULTS.memory.index,
+    };
+    const v10 = {
+      version: 10,
+      localModels: USER_CONFIG_DEFAULTS.localModels,
+      log: { level: "info" },
+      agent: USER_CONFIG_DEFAULTS.agent,
+      http: USER_CONFIG_DEFAULTS.http,
+      tracing: USER_CONFIG_DEFAULTS.tracing,
+      memory: memoryWithoutV11,
+      webhooks: {},
+      vision: USER_CONFIG_DEFAULTS.vision,
+      skills: { disabled: [] },
+      telegram: USER_CONFIG_DEFAULTS.telegram,
+    };
+    writeFileSync(path, JSON.stringify(v10, null, 2) + "\n", "utf8");
+
+    const warn = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    const migrated = ensureUserConfigFileSync(path);
+
+    expect(migrated.version).toBe(USER_CONFIG_VERSION);
+    expect(migrated.memory.dedup).toEqual(USER_CONFIG_DEFAULTS.memory.dedup);
+    expect(migrated.memory.eviction).toEqual(
+      USER_CONFIG_DEFAULTS.memory.eviction,
+    );
+
+    const onDisk = JSON.parse(readFileSync(path, "utf8"));
+    expect(onDisk.version).toBe(USER_CONFIG_VERSION);
+    expect(onDisk.memory.dedup).toEqual(USER_CONFIG_DEFAULTS.memory.dedup);
+    warn.mockRestore();
+  });
+
   it("ensureUserConfigFileSync migrates v8 → v9 by filling telegram defaults", () => {
     const path = getUserConfigPath(dir);
     const v8 = {

@@ -104,6 +104,33 @@ export interface TuiAppCallbacks {
   onLocalModelsDaemonStartRequested?(): void | Promise<void>;
   /** Ask the orchestrator to stop the llama-server daemon. */
   onLocalModelsDaemonStopRequested?(): void | Promise<void>;
+  /**
+   * Memory-v2 phase 1B. Pull an embedding model's GGUF, then mark it as
+   * the active embedding model. Does not (re)start the embedding
+   * daemon — the operator chains an explicit `s` for that.
+   */
+  onLocalModelsEmbeddingPullRequested?(
+    modelId: import("../local-llm/index.js").EmbeddingModelId,
+  ): void;
+  /** Memory-v2 phase 1B. Persist the embedding model selection. */
+  onLocalModelsEmbeddingSetActiveRequested?(
+    modelId: import("../local-llm/index.js").EmbeddingModelId,
+  ): void;
+  /** Memory-v2 phase 1B. Toggle `localModels.embeddings.enabled`. */
+  onLocalModelsEmbeddingToggleEnabledRequested?(): void;
+  /** Memory-v2 phase 1B. Delete an embedding model's GGUF. */
+  onLocalModelsEmbeddingRemoveConfirmed?(
+    modelId: import("../local-llm/index.js").EmbeddingModelId,
+  ): void;
+  /**
+   * Memory-v2 phase 1B onboarding. Resolution of the post-chat-pull
+   * yes/no modal that offers to download the default embedding model
+   * in the same flow. `accept=true` triggers
+   * `orchestrator.localModels.resolveEmbeddingOnboarding(true)` (pull
+   * embedding + start paired daemon); `accept=false` only starts the
+   * chat daemon.
+   */
+  onLocalModelsEmbeddingOnboardingResolved?(accept: boolean): void;
   /** Begin 1s tail polling of the llama-server log while the LLM logs tab is open. */
   onLocalLlmLogsAutoRefreshStart?(): void;
   /** Stop log-tail polling when the user navigates away from the logs tab. */

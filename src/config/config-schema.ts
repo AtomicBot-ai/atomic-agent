@@ -64,6 +64,14 @@ export interface AtomicAgentConfig {
     /** `external` uses `url`; `managed` overrides runtime `url` to localhost + `managed.port`. */
     mode: LocalLlmMode;
     managed: UserManagedLocalLlmConfig;
+    /**
+     * Memory-v2 phase 1B. Second managed daemon for `/embedding`.
+     * Mirrors `UserConfigFile.localModels.embeddings`. The runtime
+     * connects to `http://127.0.0.1:<embeddings.port>` for embedding
+     * requests when `embeddings.enabled` is true and the daemon is
+     * healthy. Disabled / unreachable ⇒ FTS5-only recall path.
+     */
+    embeddings: UserManagedEmbeddingLlmConfig;
   };
   paths: {
     stateDir: string;
@@ -334,6 +342,53 @@ export interface AtomicAgentConfig {
       /** Safety-net ceiling for the rendered `### memory-index` section. */
       maxTokens: number;
     };
+    /** Phase 1A: pre-insert near-match deduplication. See UserConfigFile.memory.dedup. */
+    dedup: {
+      enabled: boolean;
+      fts5Threshold: number;
+    };
+    /** Phase 1A: utility-weighted overflow eviction. See UserConfigFile.memory.eviction. */
+    eviction: {
+      utilityWeighted: boolean;
+      maxAgeMs: number;
+    };
+    /**
+     * Phase 1B: hybrid FTS5 + cosine recall. See
+     * UserConfigFile.memory.embeddings. Default **disabled** — the
+     * runtime only attempts to talk to the embedding daemon when this
+     * flag flips on AND a model is configured AND the daemon is
+     * reachable.
+     */
+    embeddings: {
+      enabled: boolean;
+      fts5Weight: number;
+      vectorWeight: number;
+      bruteForceCeiling: number;
+    };
+    /**
+     * Phase 2: reactive link graph. See UserConfigFile.memory.links.
+     * Default disabled — the link-generator LLM sub-call is opt-in,
+     * and recall-side expansion only fires when enabled is true.
+     */
+    links: {
+      enabled: boolean;
+      autoGenerate: boolean;
+      expansionDepth: number;
+      maxExpanded: number;
+      maxLinksPerCall: number;
+      minCandidates: number;
+      generatorTimeoutMs: number;
+    };
+    /**
+     * Phase 3: memory evolution (neighbor-evolver). Default disabled
+     * — without it the parser still recognises `EVOLVE` lines but
+     * silently drops them. See UserConfigFile.memory.evolution.
+     */
+    evolution: {
+      enabled: boolean;
+      maxPerWrite: number;
+      leaseMs: number;
+    };
   };
   /**
    * Webhook ingress bindings. Mirrors `UserConfigFile.webhooks` —
@@ -424,6 +479,30 @@ export interface UserManagedLocalLlmConfig {
 }
 
 /**
+ * Memory-v2 phase 1B. Second managed `llama-server` instance dedicated
+ * to `/embedding`. Lives next to the chat daemon in `<stateDir>/llamacpp/`
+ * but runs as a separate OS process on its own port. The reason is
+ * structural: `--embeddings` switches llama-server to pooling-only
+ * mode, so the same process cannot serve `/completion` and `/embedding`
+ * simultaneously.
+ *
+ * Lifecycle is tied to the chat daemon at the CLI level
+ * (`atomic-agent models start` brings both up, `models stop` brings
+ * both down) but failure isolation is preserved: if the embedding
+ * daemon refuses to start, the chat daemon still runs and the memory
+ * subsystem transparently falls back to FTS5-only recall.
+ *
+ * `enabled=false` (default) ⇒ no second daemon, no embedding writes,
+ * no hybrid recall — observably identical to phase 1A.
+ */
+export interface UserManagedEmbeddingLlmConfig {
+  enabled: boolean;
+  /** `EmbeddingModelId` from the catalog, or `null` when not chosen. */
+  modelId: string | null;
+  port: number;
+}
+
+/**
  * User-facing keys that live in `<stateDir>/config.json`. The file
  * format is versioned; bump `USER_CONFIG_VERSION` on breaking schema
  * changes and add a migration step in `parseUserConfigFile`.
@@ -442,6 +521,12 @@ export interface UserConfigFile {
      */
     completionMaxTokens: number;
     managed: UserManagedLocalLlmConfig;
+    /**
+     * Memory-v2 phase 1B. Optional second managed daemon for
+     * embeddings. Added in config v12; older files are upgraded with
+     * `{ enabled: false, modelId: null, port: 19092 }`.
+     */
+    embeddings: UserManagedEmbeddingLlmConfig;
   };
   log: { level: LogLevel };
   agent: {
@@ -496,6 +581,87 @@ export interface UserConfigFile {
       previewChars: number;
       maxTokens: number;
     };
+    /**
+     * Memory-v2 phase 1A: opt-in pre-insert dedup. Added in config v11;
+     * older files transparently upgraded with the defaults below.
+     */
+    dedup: {
+      enabled: boolean;
+      fts5Threshold: number;
+    };
+    /**
+     * Memory-v2 phase 1A: utility-weighted overflow eviction. Added in
+     * config v11.
+     */
+    eviction: {
+      utilityWeighted: boolean;
+      maxAgeMs: number;
+    };
+    /**
+     * Memory-v2 phase 1B: hybrid FTS5 + embedding recall. Added in
+     * config v12. Default **disabled** — the runtime won't try to
+     * embed anything until this flips on and a second daemon is
+     * available.
+     */
+    embeddings: {
+      enabled: boolean;
+      fts5Weight: number;
+      vectorWeight: number;
+      bruteForceCeiling: number;
+    };
+    /**
+     * Memory-v2 phase 2: reactive link graph. Added in config v13.
+     * Default **disabled** — the link-generator reflection sub-call
+     * (an extra LLM round-trip on the reflection slot at end of
+     * turn) is opt-in, and recall-side BFS expansion is gated on
+     * `enabled` as well so the legacy hybrid-recall path stays
+     * byte-stable.
+     *
+     *  - `enabled`            master switch (covers both recall
+     *                         expansion and link generation).
+     *  - `autoGenerate`       fire the `link-generator` sub-call
+     *                         after main reflection. Set to `false`
+     *                         to keep the schema + expansion
+     *                         machinery but never grow the graph
+     *                         automatically (manual `LinkStore.add`
+     *                         still works).
+     *  - `expansionDepth`     BFS depth on recall. Clamped to [1, 3].
+     *  - `maxExpanded`        Hard cap on expanded-id count per
+     *                         recall turn.
+     *  - `maxLinksPerCall`    Hard cap on persisted edges per
+     *                         link-generator call.
+     *  - `minCandidates`      Skip the LLM call when the surfaced
+     *                         set has fewer than this many ids
+     *                         (zero useful links possible).
+     *  - `generatorTimeoutMs` Hard timeout for the LLM call.
+     */
+    links: {
+      enabled: boolean;
+      autoGenerate: boolean;
+      expansionDepth: number;
+      maxExpanded: number;
+      maxLinksPerCall: number;
+      minCandidates: number;
+      generatorTimeoutMs: number;
+    };
+    /**
+     * Memory-v2 phase 3: neighbor-evolver. Added in config v14.
+     * Default **disabled** — when off the parser still recognises
+     * `EVOLVE` lines but the runner drops them silently. Flip on to
+     * let reflection refine `tags` on existing memories.
+     *
+     *  - `enabled`     master switch. Default `false`.
+     *  - `maxPerWrite` Hard cap on number of EVOLVE directives
+     *                  actually applied per reflection. Default `2`.
+     *  - `leaseMs`     B↔C lease window in ms. EVOLVE skips any
+     *                  target whose `consolidating_at` lies within
+     *                  `now - leaseMs`. Default `60000` (1 min).
+     */
+    evolution: {
+      enabled: boolean;
+      maxPerWrite: number;
+      leaseMs: number;
+    };
   };
   /**
    * Keyed map of webhook ingress bindings. Each entry is mounted at
@@ -532,7 +698,7 @@ export interface UserConfigFile {
   telegram: TelegramConfig;
 }
 
-export const USER_CONFIG_VERSION = 10 as const;
+export const USER_CONFIG_VERSION = 14 as const;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -545,11 +711,19 @@ export const USER_CONFIG_VERSION = 10 as const;
  * removing files from disk. v9 added the optional `telegram.*`
  * block so the Telegram remote-control channel can be enabled and
  * scoped to a single owner. v10 added `telegram.parseMode` so
- * agent replies render as Telegram HTML by default. Older files
- * are transparently upgraded by filling missing blocks/fields from
+ * agent replies render as Telegram HTML by default. v11 added
+ * `memory.dedup.*` and `memory.eviction.*` for memory-v2 phase 1A
+ * (utility-weighted eviction + FTS5 near-match dedup). v12 added
+ * `memory.embeddings.*` and `localModels.embeddings.*` for memory-v2
+ * phase 1B (hybrid recall via a second managed `llama-server`
+ * dedicated to `/embedding`). v13 added `memory.links.*` for memory-v2
+ * phase 2 (link graph + link-generator reflection sub-call). v14 added
+ * `memory.evolution.*` for memory-v2 phase 3 (neighbor-evolver +
+ * EVOLVE grammar branch + B↔C lease). Older files are transparently
+ * upgraded by filling missing blocks/fields from
  * `USER_CONFIG_DEFAULTS`. Anything older than v5 is not migrated:
- * this is active development, callers delete their `config.json`
- * and start over.
+ * this is active development, callers delete their `config.json` and
+ * start over.
  */
 const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   5,
@@ -557,6 +731,10 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   7,
   8,
   9,
+  10,
+  11,
+  12,
+  13,
   USER_CONFIG_VERSION,
 ];
 
@@ -571,6 +749,11 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       port: 19091,
       dataDirOverride: null,
       autoUpdate: false,
+    },
+    embeddings: {
+      enabled: false,
+      modelId: null,
+      port: 19092,
     },
   },
   log: { level: "info" },
@@ -625,6 +808,46 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       limit: 20,
       previewChars: 60,
       maxTokens: 300,
+    },
+    dedup: {
+      enabled: true,
+      fts5Threshold: 0.85,
+    },
+    eviction: {
+      utilityWeighted: true,
+      // 30 days. Declared here for v2 phase 5 (ConsolidatorJob sweep);
+      // phase 1A's overflow eviction does not consult `maxAgeMs`.
+      maxAgeMs: 2_592_000_000,
+    },
+    embeddings: {
+      enabled: false,
+      // Even split between BM25 and cosine — picked as the safe
+      // starting point; once we have telemetry from real corpora a
+      // follow-up will tune the ratio. The two MUST sum to ~1.0; the
+      // bootstrap pins this invariant in phase 1B onwards.
+      fts5Weight: 0.5,
+      vectorWeight: 0.5,
+      bruteForceCeiling: 200,
+    },
+    links: {
+      // Phase 2 defaults — disabled out of the box.  Flip to true to
+      // start growing the graph; expansion still costs zero LLM
+      // tokens on cold caches because the BFS happens in SQLite.
+      enabled: false,
+      autoGenerate: true,
+      expansionDepth: 1,
+      maxExpanded: 12,
+      maxLinksPerCall: 4,
+      minCandidates: 2,
+      generatorTimeoutMs: 8_000,
+    },
+    evolution: {
+      // Phase 3 defaults — disabled out of the box. Flip on to let
+      // reflection refine tags on existing memories. `content`
+      // remains append-only regardless.
+      enabled: false,
+      maxPerWrite: 2,
+      leaseMs: 60_000,
     },
   },
   webhooks: {},
@@ -787,6 +1010,30 @@ export function parseNonNegativeInt(raw: unknown, field: string): number {
     throw new ConfigValidationError(
       field,
       `expected non-negative integer, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Parse a number in the unit interval `[0, 1]`. Accepts JSON numbers
+ * (canonical) or stringified numbers (env / form-encoded). Used by
+ * memory-v2 thresholds (`memory.dedup.fts5Threshold`, future
+ * `memory.consolidation.similarityThreshold`, etc.) so similarity
+ * configs are bounded by the storage layer rather than each caller
+ * re-deriving the clamp.
+ */
+export function parseUnitInterval(raw: unknown, field: string): number {
+  const value =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string"
+        ? Number.parseFloat(raw)
+        : NaN;
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new ConfigValidationError(
+      field,
+      `expected number in [0, 1], got ${JSON.stringify(raw)}`,
     );
   }
   return value;
@@ -1067,6 +1314,16 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (memory.recallInjection as Record<string, unknown> | undefined) ?? {};
   const memoryIndex =
     (memory.index as Record<string, unknown> | undefined) ?? {};
+  const memoryDedup =
+    (memory.dedup as Record<string, unknown> | undefined) ?? {};
+  const memoryEviction =
+    (memory.eviction as Record<string, unknown> | undefined) ?? {};
+  const memoryEmbeddings =
+    (memory.embeddings as Record<string, unknown> | undefined) ?? {};
+  const memoryLinks =
+    (memory.links as Record<string, unknown> | undefined) ?? {};
+  const memoryEvolution =
+    (memory.evolution as Record<string, unknown> | undefined) ?? {};
   const webhooks = parseWebhookMap(obj.webhooks ?? {}, "webhooks");
   const vision = (obj.vision as Record<string, unknown> | undefined) ?? {};
   const skills = (obj.skills as Record<string, unknown> | undefined) ?? {};
@@ -1096,6 +1353,27 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     ),
   };
 
+  const rawEmbeddings =
+    (localModels.embeddings as Record<string, unknown> | undefined) ?? {};
+  const embeddingsDaemon: UserManagedEmbeddingLlmConfig = {
+    enabled: parseBool(
+      rawEmbeddings.enabled ??
+        USER_CONFIG_DEFAULTS.localModels.embeddings.enabled,
+      "localModels.embeddings.enabled",
+    ),
+    modelId:
+      rawEmbeddings.modelId === null || rawEmbeddings.modelId === undefined
+        ? null
+        : parseNonEmptyString(
+            rawEmbeddings.modelId,
+            "localModels.embeddings.modelId",
+          ),
+    port: parsePositiveInt(
+      rawEmbeddings.port ?? USER_CONFIG_DEFAULTS.localModels.embeddings.port,
+      "localModels.embeddings.port",
+    ),
+  };
+
   return {
     version: USER_CONFIG_VERSION,
     localModels: {
@@ -1115,6 +1393,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         131_072,
       ),
       managed,
+      embeddings: embeddingsDaemon,
     },
     log: {
       level: parseLogLevel(log.level ?? USER_CONFIG_DEFAULTS.log.level, "log.level"),
@@ -1286,6 +1565,104 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         maxTokens: parsePositiveInt(
           memoryIndex.maxTokens ?? USER_CONFIG_DEFAULTS.memory.index.maxTokens,
           "memory.index.maxTokens",
+        ),
+      },
+      dedup: {
+        enabled: parseBool(
+          memoryDedup.enabled ?? USER_CONFIG_DEFAULTS.memory.dedup.enabled,
+          "memory.dedup.enabled",
+        ),
+        fts5Threshold: parseUnitInterval(
+          memoryDedup.fts5Threshold ??
+            USER_CONFIG_DEFAULTS.memory.dedup.fts5Threshold,
+          "memory.dedup.fts5Threshold",
+        ),
+      },
+      eviction: {
+        utilityWeighted: parseBool(
+          memoryEviction.utilityWeighted ??
+            USER_CONFIG_DEFAULTS.memory.eviction.utilityWeighted,
+          "memory.eviction.utilityWeighted",
+        ),
+        maxAgeMs: parsePositiveInt(
+          memoryEviction.maxAgeMs ??
+            USER_CONFIG_DEFAULTS.memory.eviction.maxAgeMs,
+          "memory.eviction.maxAgeMs",
+        ),
+      },
+      embeddings: {
+        enabled: parseBool(
+          memoryEmbeddings.enabled ??
+            USER_CONFIG_DEFAULTS.memory.embeddings.enabled,
+          "memory.embeddings.enabled",
+        ),
+        fts5Weight: parseUnitInterval(
+          memoryEmbeddings.fts5Weight ??
+            USER_CONFIG_DEFAULTS.memory.embeddings.fts5Weight,
+          "memory.embeddings.fts5Weight",
+        ),
+        vectorWeight: parseUnitInterval(
+          memoryEmbeddings.vectorWeight ??
+            USER_CONFIG_DEFAULTS.memory.embeddings.vectorWeight,
+          "memory.embeddings.vectorWeight",
+        ),
+        bruteForceCeiling: parsePositiveInt(
+          memoryEmbeddings.bruteForceCeiling ??
+            USER_CONFIG_DEFAULTS.memory.embeddings.bruteForceCeiling,
+          "memory.embeddings.bruteForceCeiling",
+        ),
+      },
+      links: {
+        enabled: parseBool(
+          memoryLinks.enabled ?? USER_CONFIG_DEFAULTS.memory.links.enabled,
+          "memory.links.enabled",
+        ),
+        autoGenerate: parseBool(
+          memoryLinks.autoGenerate ??
+            USER_CONFIG_DEFAULTS.memory.links.autoGenerate,
+          "memory.links.autoGenerate",
+        ),
+        expansionDepth: parsePositiveInt(
+          memoryLinks.expansionDepth ??
+            USER_CONFIG_DEFAULTS.memory.links.expansionDepth,
+          "memory.links.expansionDepth",
+        ),
+        maxExpanded: parsePositiveInt(
+          memoryLinks.maxExpanded ??
+            USER_CONFIG_DEFAULTS.memory.links.maxExpanded,
+          "memory.links.maxExpanded",
+        ),
+        maxLinksPerCall: parsePositiveInt(
+          memoryLinks.maxLinksPerCall ??
+            USER_CONFIG_DEFAULTS.memory.links.maxLinksPerCall,
+          "memory.links.maxLinksPerCall",
+        ),
+        minCandidates: parsePositiveInt(
+          memoryLinks.minCandidates ??
+            USER_CONFIG_DEFAULTS.memory.links.minCandidates,
+          "memory.links.minCandidates",
+        ),
+        generatorTimeoutMs: parsePositiveInt(
+          memoryLinks.generatorTimeoutMs ??
+            USER_CONFIG_DEFAULTS.memory.links.generatorTimeoutMs,
+          "memory.links.generatorTimeoutMs",
+        ),
+      },
+      evolution: {
+        enabled: parseBool(
+          memoryEvolution.enabled ??
+            USER_CONFIG_DEFAULTS.memory.evolution.enabled,
+          "memory.evolution.enabled",
+        ),
+        maxPerWrite: parsePositiveInt(
+          memoryEvolution.maxPerWrite ??
+            USER_CONFIG_DEFAULTS.memory.evolution.maxPerWrite,
+          "memory.evolution.maxPerWrite",
+        ),
+        leaseMs: parsePositiveInt(
+          memoryEvolution.leaseMs ??
+            USER_CONFIG_DEFAULTS.memory.evolution.leaseMs,
+          "memory.evolution.leaseMs",
         ),
       },
     },
