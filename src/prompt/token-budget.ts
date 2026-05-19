@@ -93,6 +93,12 @@ export interface EffectiveConversationCapInput {
    */
   lessonsTokens?: number;
   /**
+   * Memory-v2 phase 7b. Tokens consumed by the `### procedures`
+   * pointer section. Subtracted from the effective conversation cap
+   * just like `lessonsTokens`. Omit when phase 7b is disabled.
+   */
+  proceduresTokens?: number;
+  /**
    * Tokens consumed by the `### loaded-tools` section (rare tool schemas).
    */
   loadedToolsTokens?: number;
@@ -137,6 +143,7 @@ export function computeEffectiveConversationCap(
     (input.recalledTokens ?? 0) -
     (input.memoryIndexTokens ?? 0) -
     (input.lessonsTokens ?? 0) -
+    (input.proceduresTokens ?? 0) -
     (input.loadedToolsTokens ?? 0) -
     input.completionMaxTokens -
     CONVERSATION_CAP_SAFETY_MARGIN;

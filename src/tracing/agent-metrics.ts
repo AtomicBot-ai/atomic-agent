@@ -57,6 +57,11 @@ export const METRIC_NAMES = {
   memoryVotingApplied: "agent.memory.voting.applied",
   memoryVotingRejected: "agent.memory.voting.rejected",
   memoryVotingDecayed: "agent.memory.voting.decayed",
+  // memory-v2 phase 7b
+  memoryProceduresCreated: "agent.memory.procedures.created",
+  memoryProceduresDeprecated: "agent.memory.procedures.deprecated",
+  memoryProceduresRecalled: "agent.memory.procedures.recalled",
+  memoryProceduresUsed: "agent.memory.procedures.used",
   tasksCreated: "agent.tasks.created",
   tasksStarted: "agent.tasks.started",
   tasksCompleted: "agent.tasks.completed",
@@ -333,6 +338,34 @@ export interface MemoryLessonRecalledSample {
 }
 
 /**
+ * Memory-v2 phase 7b. A procedure row landed in `ProcedureStore`.
+ * `parentLessonCount` / `parentMemoryCount` mirror the lesson sample
+ * and let dashboards correlate cluster size against template
+ * production.
+ */
+export interface MemoryProcedureCreatedSample {
+  procedureId: number;
+  source: "consolidator" | "manual";
+  parentLessonCount: number;
+  parentMemoryCount: number;
+}
+
+export interface MemoryProcedureDeprecatedSample {
+  procedureId: number;
+  reason: string;
+}
+
+export interface MemoryProcedureRecalledSample {
+  sessionId: string;
+  hits: number;
+}
+
+export interface MemoryProcedureUsedSample {
+  sessionId: string;
+  procedureId: number;
+}
+
+/**
  * Memory-v2 phase 5. A consolidator tick completed.
  *
  *  - `ok`     — at least one cluster was distilled and persisted.
@@ -346,6 +379,12 @@ export interface MemoryConsolidationRunSample {
   outcome: MemoryConsolidationOutcomeTag;
   clustersConsidered: number;
   lessonsCreated: number;
+  /**
+   * Memory-v2 phase 7b. Number of procedures persisted in the same
+   * tick. Always `<= lessonsCreated` because a procedure is always
+   * paired with a lesson (invariant 21).
+   */
+  proceduresCreated?: number;
 }
 
 /**
@@ -395,7 +434,7 @@ export interface MemoryVotingRunnerSample {
   rejected: number;
 }
 
-export type VotingKindTag = "memory" | "lesson" | "profile";
+export type VotingKindTag = "memory" | "lesson" | "profile" | "procedure";
 
 export interface MemoryVotingAppliedSample {
   sessionId: string;
@@ -830,6 +869,53 @@ export class AgentMetrics {
   recordLessonsRecalled(sample: MemoryLessonRecalledSample): void {
     this.collector.counter(METRIC_NAMES.memoryLessonsRecalled, sample.hits, {
       session_id: sample.sessionId,
+    });
+  }
+
+  /**
+   * Memory-v2 phase 7b. Record a new procedure created by the
+   * consolidator (or, eventually, a manual admin tool). Tagged by
+   * source so the operator can spot a regression where the LLM
+   * stopped producing procedure blocks entirely.
+   */
+  recordProcedureCreated(sample: MemoryProcedureCreatedSample): void {
+    this.collector.counter(METRIC_NAMES.memoryProceduresCreated, 1, {
+      procedure_id: String(sample.procedureId),
+      source: sample.source,
+      parent_lesson_count: String(sample.parentLessonCount),
+      parent_memory_count: String(sample.parentMemoryCount),
+    });
+  }
+
+  recordProcedureDeprecated(sample: MemoryProcedureDeprecatedSample): void {
+    this.collector.counter(METRIC_NAMES.memoryProceduresDeprecated, 1, {
+      procedure_id: String(sample.procedureId),
+      reason: sample.reason,
+    });
+  }
+
+  /**
+   * Memory-v2 phase 7b. Record a turn where one or more procedures
+   * actually landed in the `### procedures` prompt section
+   * (scenario 7b.C.6).
+   */
+  recordProceduresRecalled(sample: MemoryProcedureRecalledSample): void {
+    this.collector.counter(
+      METRIC_NAMES.memoryProceduresRecalled,
+      sample.hits,
+      { session_id: sample.sessionId },
+    );
+  }
+
+  /**
+   * Memory-v2 phase 7b. Bumped when the agent's executed tool-call
+   * chain closely matches a surfaced procedure's `steps[]` (scenario
+   * 7b.C.5). One observation per matched procedure.
+   */
+  recordProcedureUsed(sample: MemoryProcedureUsedSample): void {
+    this.collector.counter(METRIC_NAMES.memoryProceduresUsed, 1, {
+      session_id: sample.sessionId,
+      procedure_id: String(sample.procedureId),
     });
   }
 

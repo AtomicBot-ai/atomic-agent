@@ -22,7 +22,7 @@
  */
 
 export interface VoteCandidate {
-  kind: "memory" | "lesson" | "profile";
+  kind: "memory" | "lesson" | "profile" | "procedure";
   id: number;
   /** One-line preview (rendered by `buildSurfacedAllowlist`). */
   preview: string;
@@ -66,7 +66,7 @@ OUTPUT FORMAT (one line per vote, up to 8 lines):
   UPVOTE   <kind>:<id>
   DOWNVOTE <kind>:<id>
 
-<kind> ∈ { memory | lesson | profile }. <id> is the integer from the SURFACED list. Use ONLY the ids shown — never invent.
+<kind> ∈ { memory | lesson | profile | procedure }. <id> is the integer from the SURFACED list. Use ONLY the ids shown — never invent.
 
 WHEN TO UPVOTE (vote whenever ANY holds):
 - the reply directly uses a fact, command, or identifier from the item,

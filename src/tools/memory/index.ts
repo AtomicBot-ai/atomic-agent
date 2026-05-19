@@ -2,6 +2,7 @@ import type { ToolRegistry } from "../tool-registry.js";
 import type { MemoryStore } from "../../memory/memory-store.js";
 import type { ProfileStore } from "../../memory/profile-store.js";
 import type { LessonStore } from "../../memory/lessons/lesson-store.js";
+import type { ProcedureStore } from "../../memory/procedures/procedure-store.js";
 
 import { buildProfileSetTool } from "./profile-set.js";
 import { buildProfileRemoveTool } from "./profile-remove.js";
@@ -11,6 +12,7 @@ import { buildNotesStoreTool } from "./notes-store.js";
 import { buildNotesRecallTool } from "./notes-recall.js";
 import { buildNotesForgetTool } from "./notes-forget.js";
 import { buildLessonsRecallTool } from "./lessons-recall.js";
+import { buildProceduresRecallTool } from "./procedures-recall.js";
 
 export { buildProfileSetTool } from "./profile-set.js";
 export { buildProfileRemoveTool } from "./profile-remove.js";
@@ -20,6 +22,7 @@ export { buildNotesStoreTool } from "./notes-store.js";
 export { buildNotesRecallTool } from "./notes-recall.js";
 export { buildNotesForgetTool } from "./notes-forget.js";
 export { buildLessonsRecallTool } from "./lessons-recall.js";
+export { buildProceduresRecallTool } from "./procedures-recall.js";
 
 export interface RegisterMemoryToolsOptions {
   profileStore: ProfileStore;
@@ -43,6 +46,16 @@ export interface RegisterMemoryToolsOptions {
    */
   lessonStore?: LessonStore;
   lessonsEnabled?: boolean;
+  /**
+   * Memory-v2 phase 7b. `ProcedureStore` for
+   * `memory.procedures.recall`. Optional like `lessonStore`. When
+   * provided and `proceduresEnabled=true`, the read-only tool is
+   * registered. Read-only invariant 20 is enforced by the fact
+   * that the tool only returns `steps[]` text — the runtime never
+   * feeds those steps back through `toolRegistry.invoke`.
+   */
+  procedureStore?: ProcedureStore;
+  proceduresEnabled?: boolean;
 }
 
 /**
@@ -82,5 +95,10 @@ export function registerMemoryTools(
   }
   if (options.lessonsEnabled && options.lessonStore) {
     registry.register(buildLessonsRecallTool({ store: options.lessonStore }));
+  }
+  if (options.proceduresEnabled && options.procedureStore) {
+    registry.register(
+      buildProceduresRecallTool({ store: options.procedureStore }),
+    );
   }
 }

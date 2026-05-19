@@ -36,12 +36,13 @@ import type Database from "better-sqlite3";
  * the eviction sweep.
  */
 
-export type VoteKind = "memory" | "lesson" | "profile";
+export type VoteKind = "memory" | "lesson" | "profile" | "procedure";
 
 export const VOTE_KINDS: readonly VoteKind[] = [
   "memory",
   "lesson",
   "profile",
+  "procedure",
 ] as const;
 
 export function isVoteKind(raw: string): raw is VoteKind {
@@ -108,6 +109,9 @@ export interface DecayResult {
   memories: number;
   lessons: number;
   profileFacts: number;
+  /** Phase 7b — procedures decay rows. `0` when the schema is
+   * pre-v10 (procedures table missing). */
+  procedures: number;
 }
 
 export interface VoteStoreOptions {
@@ -126,6 +130,7 @@ export const TABLE_BY_KIND: Record<VoteKind, string> = {
   memory: "memories",
   lesson: "lessons",
   profile: "profile_facts",
+  procedure: "procedures",
 };
 
 export class VoteStore {
@@ -174,6 +179,9 @@ export class VoteStore {
       profile: this.db.prepare<{ id: number }>(
         `SELECT vote_score AS score FROM profile_facts WHERE id = @id`,
       ),
+      procedure: this.db.prepare<{ id: number }>(
+        `SELECT vote_score AS score FROM procedures WHERE id = @id`,
+      ),
     };
     this.updateScoreByKind = {
       memory: this.db.prepare<{ id: number; score: number }>(
@@ -185,6 +193,9 @@ export class VoteStore {
       profile: this.db.prepare<{ id: number; score: number }>(
         `UPDATE profile_facts SET vote_score = @score WHERE id = @id`,
       ),
+      procedure: this.db.prepare<{ id: number; score: number }>(
+        `UPDATE procedures SET vote_score = @score WHERE id = @id`,
+      ),
     };
     this.decayByKind = {
       memory: this.db.prepare<{ factor: number }>(
@@ -195,6 +206,9 @@ export class VoteStore {
       ),
       profile: this.db.prepare<{ factor: number }>(
         `UPDATE profile_facts SET vote_score = vote_score * @factor WHERE vote_score != 0`,
+      ),
+      procedure: this.db.prepare<{ factor: number }>(
+        `UPDATE procedures SET vote_score = vote_score * @factor WHERE vote_score != 0`,
       ),
     };
 
@@ -348,10 +362,12 @@ export class VoteStore {
       const memInfo = this.decayByKind.memory.run({ factor: clamped });
       const lessonInfo = this.decayByKind.lesson.run({ factor: clamped });
       const profileInfo = this.decayByKind.profile.run({ factor: clamped });
+      const procInfo = this.decayByKind.procedure.run({ factor: clamped });
       return {
         memories: memInfo.changes,
         lessons: lessonInfo.changes,
         profileFacts: profileInfo.changes,
+        procedures: procInfo.changes,
       };
     });
     return decay();

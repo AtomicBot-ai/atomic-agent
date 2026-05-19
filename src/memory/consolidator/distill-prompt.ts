@@ -88,20 +88,63 @@ durable lesson, emit the abstain sentinel (no tags):
   LESSON activation="(no consensus)"; principle="(no durable advice)"
 `;
 
+/**
+ * Memory-v2 phase 7b. Optional `PROCEDURE` doctrine appended after
+ * the lesson body. Used by the combined-grammar prompt only —
+ * `DISTILL_PROMPT_PREFIX` above stays unchanged so phase 5/6
+ * regressions remain byte-stable.
+ */
+export const DISTILL_PROCEDURE_DOCTRINE = `
+# Optional second line: PROCEDURE
+
+If — and only if — the cluster shows a **repeated tool-call shape**
+(at least 3 of the N episodes ran the same sequence of tools to
+resolve the same kind of task), add a second line:
+
+  PROCEDURE activation="<short trigger>"; steps="<step1>; <step2>; ..."[; tags=a,b,c]
+
+Rules:
+  - 2..8 steps separated by \`; \`. Each step is one short imperative
+    clause; append \`@<tool-name>\` when the cluster used a specific
+    tool for that step (e.g. \`glob TS files@os.fs.glob\`).
+  - If the cluster is conceptually related but procedurally
+    divergent (each episode used a different tool sequence), do
+    **not** emit a PROCEDURE line at all — drop it entirely.
+  - Procedure activation describes the same trigger as the lesson
+    activation but framed as a how-to ("when you need to do X").
+  - The procedure is **advisory text** the next agent reads — it
+    is never auto-executed. Steps that include \`@tool\` are hints
+    for the agent, not commands for the runtime.
+
+Examples:
+
+  PROCEDURE activation="extract exported function signatures from a TypeScript file"; steps="glob \`**/*.ts\`@os.fs.glob; grep \`^export (async )?function\`@os.fs.grep; reply with file:line list@reply"
+`;
+
 export const DISTILL_CONTENT_PREVIEW_CAP = 400;
 export const DISTILL_TAGS_PREVIEW_CAP = 6;
 
 export function buildDistillPrompt(input: {
   episodes: readonly MemoryEntry[];
   sharedTags: readonly string[];
+  /**
+   * Memory-v2 phase 7b. When `true`, append the optional
+   * `PROCEDURE` doctrine to the prompt. The grammar swap to
+   * `DISTILL_WITH_PROCEDURE_GRAMMAR` is the caller's
+   * responsibility (`DistillRunner` does both atomically).
+   */
+  withProcedure?: boolean;
 }): string {
   const lines = input.episodes.map((entry) => renderEpisodeLine(entry));
   const tagHint =
     input.sharedTags.length > 0
       ? `Shared tags across the cluster: ${input.sharedTags.join(", ")}.\n`
       : "";
-  return [
-    DISTILL_PROMPT_PREFIX,
+  const segments: string[] = [DISTILL_PROMPT_PREFIX];
+  if (input.withProcedure === true) {
+    segments.push(DISTILL_PROCEDURE_DOCTRINE);
+  }
+  segments.push(
     "",
     tagHint,
     "### cluster",
@@ -109,7 +152,8 @@ export function buildDistillPrompt(input: {
     "",
     "### output",
     "",
-  ].join("\n");
+  );
+  return segments.join("\n");
 }
 
 function renderEpisodeLine(entry: MemoryEntry): string {

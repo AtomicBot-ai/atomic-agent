@@ -41,7 +41,7 @@ export interface TraceRecorder {
    * defaults `turnIndex` / `stepIndex` to the last observed values.
    */
   recordVoteApplied(payload: {
-    kind: "memory" | "lesson" | "profile";
+    kind: "memory" | "lesson" | "profile" | "procedure";
     targetId: number;
     direction: 1 | -1;
     score: number;
@@ -54,7 +54,7 @@ export interface TraceRecorder {
    * rejection. One event per rejection.
    */
   recordVoteRejected(payload: {
-    kind: "memory" | "lesson" | "profile" | "unknown";
+    kind: "memory" | "lesson" | "profile" | "procedure" | "unknown";
     targetId: number | null;
     direction: 1 | -1 | null;
     reason: string;

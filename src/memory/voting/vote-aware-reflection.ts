@@ -1,5 +1,6 @@
 import type { LessonStore } from "../lessons/lesson-store.js";
 import type { MemoryStore } from "../memory-store.js";
+import type { ProcedureStore } from "../procedures/procedure-store.js";
 import type { ProfileStore } from "../profile-store.js";
 import type {
   ReflectionInput,
@@ -44,6 +45,8 @@ export function createVoteAwareReflectionRunner(args: {
   memoryStore: MemoryStore;
   lessonStore: LessonStore | null;
   profileStore: ProfileStore | null;
+  /** Phase 7b — optional store for procedure-kind allowlist hydration. */
+  procedureStore?: ProcedureStore | null;
   /** Per-preview character cap. Defaults to 80. */
   previewChars?: number;
 }): ReflectionRunner {
@@ -84,6 +87,7 @@ function hydrateCandidates(
     memoryStore: MemoryStore;
     lessonStore: LessonStore | null;
     profileStore: ProfileStore | null;
+    procedureStore?: ProcedureStore | null;
   },
   previewChars: number,
 ): VoteCandidate[] {
@@ -116,6 +120,17 @@ function hydrateCandidates(
         kind: "profile",
         id: fact.id,
         preview: trimPreview(`${fact.key}=${fact.value}`, previewChars),
+      });
+    }
+  }
+  if (args.procedureStore) {
+    for (const id of input.recalledProcedureIds ?? []) {
+      const proc = args.procedureStore.getById(id);
+      if (!proc) continue;
+      out.push({
+        kind: "procedure",
+        id: proc.id,
+        preview: trimPreview(proc.activation, previewChars),
       });
     }
   }

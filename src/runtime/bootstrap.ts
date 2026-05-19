@@ -50,6 +50,7 @@ import type { LlmProvider } from "../llm/provider/index.js";
 import { MemoryStore } from "../memory/memory-store.js";
 import { ProfileStore } from "../memory/profile-store.js";
 import { LessonStore } from "../memory/lessons/lesson-store.js";
+import { ProcedureStore } from "../memory/procedures/procedure-store.js";
 import { createLessonLifecycleHook } from "../memory/lessons/lesson-lifecycle-hook.js";
 import { createDefaultMemoryContextProvider } from "../memory/memory-context-provider.js";
 import {
@@ -250,6 +251,14 @@ export interface AgentRuntime {
    * close it cleanly.
    */
   readonly lessonStore: LessonStore;
+  /**
+   * Memory-v2 phase 7b. Procedure templates store. Always
+   * constructed (handle ownership) — the agent-facing tool is
+   * gated on `memory.procedures.enabled` and the consolidator
+   * persists procedures only when the runner is configured with
+   * `withProcedure=true`.
+   */
+  readonly procedureStore: ProcedureStore;
   /**
    * Memory-v2 phase 7a. Curation vote store. `null` when
    * `memory.voting.enabled` is `false`. Shares its SQLite handle
@@ -687,6 +696,18 @@ export async function createAgentRuntime(
     metrics,
   });
 
+  // Memory-v2 phase 7b. `ProcedureStore` shares the same SQLite handle
+  // as `MemoryStore`; the `procedures` table sits next to `memories`,
+  // `lessons`, and `profile_facts`. Always constructed when the schema
+  // (v10+) is present so the handle has one owner — the agent-facing
+  // tool registration + consolidator wiring are independently gated
+  // on `memory.procedures.enabled`.
+  const procedureStore = new ProcedureStore({
+    dbFile: config.paths.memoryDbFile,
+    maxEntries: config.memory.procedures.maxEntries,
+    metrics,
+  });
+
   // Memory-v2 phase 7a. `VoteStore` shares the same SQLite handle as
   // the `MemoryStore` (the `vote_score` columns live on the same
   // tables it owns), so there is no separate file to close in
@@ -717,6 +738,8 @@ export async function createAgentRuntime(
     notesMaxContentChars: config.memory.notes.maxContentChars,
     lessonStore,
     lessonsEnabled: config.memory.lessons.enabled,
+    procedureStore,
+    proceduresEnabled: config.memory.procedures.enabled,
   });
 
   // Vision provider wiring is deferred until after `profileManager` is
@@ -1014,6 +1037,7 @@ export async function createAgentRuntime(
       memoryStore: notesStore,
       lessonStore,
       profileStore,
+      procedureStore: config.memory.procedures.enabled ? procedureStore : null,
     });
   }
 
@@ -1057,6 +1081,18 @@ export async function createAgentRuntime(
                 enabled: true,
                 store: lessonStore,
                 k: config.memory.lessons.recallK,
+              },
+            }
+          : {}),
+        // Memory-v2 phase 7b. Surface advisory procedure pointers
+        // in `### procedures`. Same gating story as lessons —
+        // when disabled, the renderer omits the header.
+        ...(config.memory.procedures.enabled
+          ? {
+              procedures: {
+                enabled: true,
+                store: procedureStore,
+                k: config.memory.procedures.recallK,
               },
             }
           : {}),
@@ -1169,6 +1205,15 @@ export async function createAgentRuntime(
       // LinkStore — close before letting the process exit so WAL
       // checkpointing finishes cleanly.
       lessonStore.close();
+    } catch {
+      // already closed
+    }
+    try {
+      // Memory-v2 phase 7b. ProcedureStore owns its own SQLite
+      // handle on the same `memory.sqlite` file. Close it before
+      // notesStore so all derived stores release their connection
+      // pre-WAL checkpoint.
+      procedureStore.close();
     } catch {
       // already closed
     }
@@ -1370,6 +1415,13 @@ export async function createAgentRuntime(
       timeoutMs: config.memory.consolidation.distillTimeoutMs,
       logger,
       metrics,
+      // Memory-v2 phase 7b — emit a combined LESSON+PROCEDURE
+      // response when procedures are enabled. The grammar still
+      // permits the procedure half to be empty (conceptual
+      // clusters), so this stays the safe default-on once the
+      // feature is configured. Cross-phase invariant 21: this
+      // does **not** add a second LLM call.
+      withProcedure: config.memory.procedures.enabled,
     });
     consolidatorJob = new ConsolidatorJob(
       {
@@ -1398,6 +1450,14 @@ export async function createAgentRuntime(
         voteSignalDecay: config.memory.voting.enabled
           ? config.memory.voting.signalDecay
           : 0,
+        // Memory-v2 phase 7b — procedure age threshold and cascade
+        // hook live behind the procedures master switch.
+        ...(config.memory.procedures.enabled
+          ? {
+              procedureDeprecationAgeMs:
+                config.memory.procedures.deprecationAgeMs,
+            }
+          : {}),
       },
       {
         memoryStore: notesStore,
@@ -1406,6 +1466,7 @@ export async function createAgentRuntime(
         distillRunner,
         metrics,
         logger,
+        ...(config.memory.procedures.enabled ? { procedureStore } : {}),
         ...(voteStore ? { voteStore } : {}),
         // Memory-v2 phase 6. Bridge the sweep's per-lesson demotion
         // callback to the trace bus. The consolidator runs
@@ -1418,13 +1479,28 @@ export async function createAgentRuntime(
         // counters are recorder-owned, but the consolidator does
         // not run through a recorder.
         ...(traceBus
-          ? {
-              onLessonDeprecated: ((): ((event: {
+          ? ((): {
+              onLessonDeprecated: (event: {
                 lessonId: number;
                 reason: string;
-              }) => void) => {
-                let consolidatorSeq = 0;
-                return ({ lessonId, reason }) =>
+              }) => void;
+              onProcedureCreated?: (event: {
+                procedureId: number;
+                parentLessonIds: readonly number[];
+                parentMemoryIds: readonly number[];
+                source: "consolidator" | "manual";
+              }) => void;
+              onProcedureDeprecated?: (event: {
+                procedureId: number;
+                reason: string;
+              }) => void;
+            } => {
+              // One monotonic counter shared by every consolidator-
+              // origin trace event so the consolidator NDJSON stays
+              // ordered across all event types in the same tick.
+              let consolidatorSeq = 0;
+              return {
+                onLessonDeprecated: ({ lessonId, reason }) =>
                   traceBus.emit({
                     type: "lesson_deprecated",
                     sessionId: "consolidator",
@@ -1432,9 +1508,38 @@ export async function createAgentRuntime(
                     ts: Date.now(),
                     lessonId,
                     reason,
-                  });
-              })(),
-            }
+                  }),
+                ...(config.memory.procedures.enabled
+                  ? {
+                      onProcedureCreated: ({
+                        procedureId,
+                        parentLessonIds,
+                        parentMemoryIds,
+                        source,
+                      }) =>
+                        traceBus.emit({
+                          type: "procedure_created",
+                          sessionId: "consolidator",
+                          seq: consolidatorSeq++,
+                          ts: Date.now(),
+                          procedureId,
+                          parentLessonIds: [...parentLessonIds],
+                          parentMemoryIds: [...parentMemoryIds],
+                          source,
+                        }),
+                      onProcedureDeprecated: ({ procedureId, reason }) =>
+                        traceBus.emit({
+                          type: "procedure_deprecated",
+                          sessionId: "consolidator",
+                          seq: consolidatorSeq++,
+                          ts: Date.now(),
+                          procedureId,
+                          reason,
+                        }),
+                    }
+                  : {}),
+              };
+            })()
           : {}),
       },
     );
@@ -1453,6 +1558,7 @@ export async function createAgentRuntime(
     profileStore,
     notesStore,
     lessonStore,
+    procedureStore,
     voteStore,
     taskStore,
     taskRunner,

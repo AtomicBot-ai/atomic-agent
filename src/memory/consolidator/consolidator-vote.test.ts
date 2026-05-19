@@ -315,7 +315,7 @@ describe("ConsolidatorJob (phase 7a) — vote score decay (scorecard 7a.D)", () 
       (e) => e.name === "agent.memory.voting.decayed",
     );
     const byKind = new Set(decayEvents.map((e) => e.tags?.kind));
-    expect(byKind).toEqual(new Set(["memory", "lesson", "profile"]));
+    expect(byKind).toEqual(new Set(["memory", "lesson", "profile", "procedure"]));
   });
 
   it("decay is a no-op when voteStore dep is missing (graceful degradation)", async () => {

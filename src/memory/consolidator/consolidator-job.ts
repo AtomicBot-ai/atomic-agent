@@ -6,6 +6,7 @@ import type {
   MemoryEntry,
   MemoryStore,
 } from "../memory-store.js";
+import type { ProcedureStore } from "../procedures/procedure-store.js";
 
 import { clusterEpisodes, type MemoryCluster } from "./clustering.js";
 import { DistillRunner } from "./distill-runner.js";
@@ -89,6 +90,17 @@ export interface ConsolidatorTickResult {
    * could not construct a `VoteStore`.
    */
   voteDecayApplied: boolean;
+  /**
+   * Phase 7b. Count of procedures persisted in the same tick.
+   * Always `<= lessonsCreated` because every procedure is paired
+   * with a lesson (invariant 21). `0` when procedures are
+   * disabled.
+   */
+  proceduresCreated: number;
+  proceduresDeprecatedByCascade: number;
+  proceduresDeprecatedByAge: number;
+  proceduresDeprecatedByVote: number;
+  proceduresDeprecatedByOverflow: number;
 }
 
 export interface ConsolidatorJobOptions {
@@ -122,12 +134,28 @@ export interface ConsolidatorJobOptions {
    * sourced from `memory.voting.signalDecay`.
    */
   voteSignalDecay?: number;
+  /**
+   * Phase 7b — age threshold for demoting unused
+   * (`success_count == 0 AND use_count == 0`) procedures. `0`
+   * disables the age sweep. Wired from
+   * `memory.procedures.deprecationAgeMs`.
+   */
+  procedureDeprecationAgeMs?: number;
 }
 
 export interface ConsolidatorJobDeps {
   memoryStore: MemoryStore;
   linkStore: LinkStore;
   lessonStore: LessonStore;
+  /**
+   * Memory-v2 phase 7b. Optional `ProcedureStore`. When provided
+   * **and** the configured `distillRunner` was built with
+   * `withProcedure=true`, every successful distillation that
+   * carries a `procedure` half is persisted alongside its lesson.
+   * The two stores share the same SQLite handle so the writes
+   * are effectively transactional from the caller's perspective.
+   */
+  procedureStore?: ProcedureStore | null;
   distillRunner: DistillRunner;
   /**
    * Memory-v2 phase 7a — optional vote store. When present **and**
@@ -140,6 +168,7 @@ export interface ConsolidatorJobDeps {
       memories: number;
       lessons: number;
       profileFacts: number;
+      procedures?: number;
     };
   } | null;
   /** Default `Date.now`. Injectable for tests. */
@@ -154,6 +183,22 @@ export interface ConsolidatorJobDeps {
    */
   onLessonDeprecated?: (event: {
     lessonId: number;
+    reason: string;
+  }) => void;
+  /**
+   * Memory-v2 phase 7b. Optional trace bridges for procedures.
+   * `onProcedureCreated` fires once per persisted procedure;
+   * `onProcedureDeprecated` fires once per cascade / age / FIFO /
+   * vote demotion. Errors are swallowed.
+   */
+  onProcedureCreated?: (event: {
+    procedureId: number;
+    parentLessonIds: readonly number[];
+    parentMemoryIds: readonly number[];
+    source: "consolidator" | "manual";
+  }) => void;
+  onProcedureDeprecated?: (event: {
+    procedureId: number;
     reason: string;
   }) => void;
   /**
@@ -255,6 +300,10 @@ export class ConsolidatorJob {
           lessonsDeprecatedByOverflow: sweep.byOverflow,
           lessonsDeprecatedByVote: sweep.byVote,
           voteDecayApplied: decayApplied,
+          proceduresDeprecatedByCascade: sweep.proceduresByCascade,
+          proceduresDeprecatedByAge: sweep.proceduresByAge,
+          proceduresDeprecatedByVote: sweep.proceduresByVote,
+          proceduresDeprecatedByOverflow: sweep.proceduresByOverflow,
         };
       } catch (err) {
         this.deps.logger?.warn?.("consolidator.sweep.failed", {
@@ -267,6 +316,9 @@ export class ConsolidatorJob {
       outcome: result.outcome,
       clustersConsidered: result.clustersConsidered,
       lessonsCreated: result.lessonsCreated,
+      ...(result.proceduresCreated > 0
+        ? { proceduresCreated: result.proceduresCreated }
+        : {}),
     });
     return result;
   }
@@ -298,6 +350,7 @@ export class ConsolidatorJob {
     let lessonsCreated = 0;
     let lessonsAbstained = 0;
     let failures = 0;
+    let proceduresCreated = 0;
 
     for (const cluster of clusters) {
       if (signal.aborted) break;
@@ -308,14 +361,15 @@ export class ConsolidatorJob {
         continue;
       }
       try {
-        const ok = await this.distillAndPersist({
+        const persisted = await this.distillAndPersist({
           cluster,
           episodesById: byId,
           signal,
         });
-        if (ok === "ok") {
+        if (persisted.outcome === "ok") {
           lessonsCreated += 1;
-        } else if (ok === "none") {
+          if (persisted.procedureCreated) proceduresCreated += 1;
+        } else if (persisted.outcome === "none") {
           lessonsAbstained += 1;
         } else {
           failures += 1;
@@ -343,6 +397,11 @@ export class ConsolidatorJob {
       lessonsDeprecatedByOverflow: 0,
       lessonsDeprecatedByVote: 0,
       voteDecayApplied: false,
+      proceduresCreated,
+      proceduresDeprecatedByCascade: 0,
+      proceduresDeprecatedByAge: 0,
+      proceduresDeprecatedByVote: 0,
+      proceduresDeprecatedByOverflow: 0,
     };
   }
 
@@ -371,13 +430,54 @@ export class ConsolidatorJob {
     byAge: number;
     byOverflow: number;
     byVote: number;
+    proceduresByCascade: number;
+    proceduresByAge: number;
+    proceduresByVote: number;
+    proceduresByOverflow: number;
   } {
     const cap = Math.max(0, this.options.maxDeprecationsPerTick ?? 100);
-    if (cap === 0) return { byAge: 0, byOverflow: 0, byVote: 0 };
+    if (cap === 0) {
+      return {
+        byAge: 0,
+        byOverflow: 0,
+        byVote: 0,
+        proceduresByCascade: 0,
+        proceduresByAge: 0,
+        proceduresByVote: 0,
+        proceduresByOverflow: 0,
+      };
+    }
     let remaining = cap;
     let byAge = 0;
     let byOverflow = 0;
     let byVote = 0;
+    let proceduresByCascade = 0;
+    let proceduresByAge = 0;
+    let proceduresByVote = 0;
+    let proceduresByOverflow = 0;
+    const procStore = this.deps.procedureStore ?? null;
+    // Phase 7b — helper that cascades a single lesson deprecation
+    // into every procedure that lists it as a parent. Called from
+    // each demotion branch below so the cascade tracks regardless
+    // of the reason (downvote / aged / overflow).
+    const cascadeFromLesson = (lessonId: number): void => {
+      if (!procStore) return;
+      try {
+        const cascaded = procStore.deprecateByParentLesson(
+          lessonId,
+          "parent_deprecated",
+        );
+        for (const id of cascaded) {
+          proceduresByCascade += 1;
+          this.emitProcedureDeprecated(id, "parent_deprecated");
+        }
+      } catch (err) {
+        this.deps.logger?.warn?.("consolidator.cascade.failed", {
+          lessonId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    };
     // Phase 7a — vote-driven sweep runs **first** so highest-
     // confidence "this is bad" signals retire ahead of age-only
     // candidates when the per-tick cap binds. The predicate
@@ -395,6 +495,7 @@ export class ConsolidatorJob {
             byVote += 1;
             remaining -= 1;
             this.emitLessonDeprecated(id, "downvoted");
+            cascadeFromLesson(id);
           }
         } catch (err) {
           this.deps.logger?.warn?.("consolidator.sweep.vote.failed", {
@@ -418,6 +519,7 @@ export class ConsolidatorJob {
             byAge += 1;
             remaining -= 1;
             this.emitLessonDeprecated(id, "aged_out");
+            cascadeFromLesson(id);
           }
         } catch (err) {
           this.deps.logger?.warn?.("consolidator.sweep.age.failed", {
@@ -436,6 +538,7 @@ export class ConsolidatorJob {
             byOverflow += 1;
             remaining -= 1;
             this.emitLessonDeprecated(id, "overflow");
+            cascadeFromLesson(id);
           }
         } catch (err) {
           this.deps.logger?.warn?.("consolidator.sweep.overflow.failed", {
@@ -445,14 +548,111 @@ export class ConsolidatorJob {
         }
       }
     }
-    if (byAge > 0 || byOverflow > 0 || byVote > 0) {
+    // Phase 7b — procedure-side sweep. Mirrors the lesson sweep:
+    // vote first, then age, then FIFO overflow. Each demotion
+    // path is independent of cascade (cascade above demoted
+    // procedures because their parent lesson died; this branch
+    // demotes procedures on their own merits — downvotes, dormant
+    // age, or hard cap). Shares the same `remaining` budget so a
+    // single `maxDeprecationsPerTick` caps the whole tick.
+    if (procStore) {
+      if (
+        remaining > 0 &&
+        this.options.voteSignalDecay &&
+        this.options.voteSignalDecay > 0
+      ) {
+        const downvoted = procStore.pickVoteDeprecationCandidates({
+          limit: remaining,
+        });
+        for (const id of downvoted) {
+          if (remaining <= 0) break;
+          try {
+            if (procStore.markDeprecated(id, "downvoted")) {
+              proceduresByVote += 1;
+              remaining -= 1;
+              this.emitProcedureDeprecated(id, "downvoted");
+            }
+          } catch (err) {
+            this.deps.logger?.warn?.("consolidator.sweep.procedure.vote.failed", {
+              procedureId: id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      }
+      const procAgeMs = this.options.procedureDeprecationAgeMs ?? 0;
+      if (remaining > 0 && procAgeMs > 0) {
+        const aged = procStore.pickAgeDeprecationCandidates({
+          now,
+          deprecationAgeMs: procAgeMs,
+          limit: remaining,
+        });
+        for (const id of aged) {
+          if (remaining <= 0) break;
+          try {
+            if (procStore.markDeprecated(id, "aged_out")) {
+              proceduresByAge += 1;
+              remaining -= 1;
+              this.emitProcedureDeprecated(id, "aged_out");
+            }
+          } catch (err) {
+            this.deps.logger?.warn?.("consolidator.sweep.procedure.age.failed", {
+              procedureId: id,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      }
+      if (remaining > 0) {
+        const overflow = procStore.pickOverflowForDeprecation();
+        for (const id of overflow) {
+          if (remaining <= 0) break;
+          try {
+            if (procStore.markDeprecated(id, "overflow")) {
+              proceduresByOverflow += 1;
+              remaining -= 1;
+              this.emitProcedureDeprecated(id, "overflow");
+            }
+          } catch (err) {
+            this.deps.logger?.warn?.(
+              "consolidator.sweep.procedure.overflow.failed",
+              {
+                procedureId: id,
+                error: err instanceof Error ? err.message : String(err),
+              },
+            );
+          }
+        }
+      }
+    }
+    if (
+      byAge > 0 ||
+      byOverflow > 0 ||
+      byVote > 0 ||
+      proceduresByCascade > 0 ||
+      proceduresByAge > 0 ||
+      proceduresByVote > 0 ||
+      proceduresByOverflow > 0
+    ) {
       this.deps.logger?.info?.("consolidator.sweep.done", {
         byAge,
         byOverflow,
         byVote,
+        proceduresByCascade,
+        proceduresByAge,
+        proceduresByVote,
+        proceduresByOverflow,
       });
     }
-    return { byAge, byOverflow, byVote };
+    return {
+      byAge,
+      byOverflow,
+      byVote,
+      proceduresByCascade,
+      proceduresByAge,
+      proceduresByVote,
+      proceduresByOverflow,
+    };
   }
 
   /**
@@ -493,6 +693,13 @@ export class ConsolidatorJob {
           rows: result.profileFacts,
           factor,
         });
+        if (typeof result.procedures === "number") {
+          m.recordVotingDecayed({
+            kind: "procedure",
+            rows: result.procedures,
+            factor,
+          });
+        }
       }
       return true;
     } catch (err) {
@@ -577,31 +784,30 @@ export class ConsolidatorJob {
     cluster: MemoryCluster;
     episodesById: Map<number, MemoryEntry>;
     signal: AbortSignal;
-  }): Promise<"ok" | "none" | "failed"> {
+  }): Promise<{ outcome: "ok" | "none" | "failed"; procedureCreated: boolean }> {
     const episodes: MemoryEntry[] = [];
     for (const id of args.cluster.members) {
       const entry = args.episodesById.get(id);
       if (entry) episodes.push(entry);
     }
-    if (episodes.length < this.options.minClusterSize) return "failed";
+    if (episodes.length < this.options.minClusterSize) {
+      return { outcome: "failed", procedureCreated: false };
+    }
     const result = await this.deps.distillRunner.distill({
-      // `sessionId` is a correlation tag for trace lookups; the
-      // consolidator runs out-of-band so we use a stable
-      // namespace.
       sessionId: "consolidator",
       episodes,
       sharedTags: args.cluster.sharedTags,
       signal: args.signal,
     });
     if (result.kind === "ok") {
+      const workingDir =
+        args.cluster.members.length > 0 ? pickWorkingDir(episodes) : null;
       const lesson = this.deps.lessonStore.create({
         activation: result.lesson.activation,
         principle: result.lesson.principle,
         tags: result.lesson.tags,
         parentIds: episodes.map((e) => e.id),
-        ...(args.cluster.members.length > 0
-          ? { workingDir: pickWorkingDir(episodes) }
-          : {}),
+        ...(workingDir !== null ? { workingDir } : {}),
       });
       this.deps.memoryStore.archiveInto(
         episodes.map((e) => e.id),
@@ -612,12 +818,87 @@ export class ConsolidatorJob {
         lessonId: lesson.id,
         parentIds: episodes.map((e) => e.id),
       });
-      return "ok";
+      let procedureCreated = false;
+      // Phase 7b — persist the paired procedure when the runner
+      // produced one. Cross-phase invariant 21: this is the same
+      // single LLM call's output; we are not making a second
+      // round-trip here.
+      if (
+        result.procedure &&
+        this.deps.procedureStore &&
+        result.procedure.steps.length >= 2
+      ) {
+        try {
+          const proc = this.deps.procedureStore.create({
+            activation: result.procedure.activation,
+            steps: result.procedure.steps,
+            tags: result.procedure.tags,
+            parentLessonIds: [lesson.id],
+            parentMemoryIds: episodes.map((e) => e.id),
+            source: "consolidator",
+            ...(workingDir !== null ? { workingDir } : {}),
+          });
+          procedureCreated = true;
+          this.emitProcedureCreated({
+            procedureId: proc.id,
+            parentLessonIds: [lesson.id],
+            parentMemoryIds: episodes.map((e) => e.id),
+            source: "consolidator",
+          });
+          this.deps.logger?.info?.("consolidator.procedure.created", {
+            procedureId: proc.id,
+            lessonId: lesson.id,
+          });
+        } catch (err) {
+          // Failure isolation: a procedure validation error must
+          // not roll back the lesson. The lesson already persists
+          // value on its own; the procedure half is purely
+          // advisory.
+          this.deps.logger?.warn?.("consolidator.procedure.failed", {
+            lessonId: lesson.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      return { outcome: "ok", procedureCreated };
     }
     if (result.kind === "none") {
-      return "none";
+      return { outcome: "none", procedureCreated: false };
     }
-    return "failed";
+    return { outcome: "failed", procedureCreated: false };
+  }
+
+  /**
+   * Phase 7b — `procedure_created` trace bridge.
+   */
+  private emitProcedureCreated(event: {
+    procedureId: number;
+    parentLessonIds: readonly number[];
+    parentMemoryIds: readonly number[];
+    source: "consolidator" | "manual";
+  }): void {
+    if (!this.deps.onProcedureCreated) return;
+    try {
+      this.deps.onProcedureCreated(event);
+    } catch (err) {
+      this.deps.logger?.warn?.("consolidator.trace.procedure_created.failed", {
+        procedureId: event.procedureId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  private emitProcedureDeprecated(procedureId: number, reason: string): void {
+    if (!this.deps.onProcedureDeprecated) return;
+    try {
+      this.deps.onProcedureDeprecated({ procedureId, reason });
+    } catch (err) {
+      this.deps.logger?.warn?.("consolidator.trace.procedure_deprecated.failed", {
+        procedureId,
+        reason,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 }
 
@@ -633,6 +914,11 @@ function zeroSummary(): ConsolidatorTickResult {
     lessonsDeprecatedByOverflow: 0,
     lessonsDeprecatedByVote: 0,
     voteDecayApplied: false,
+    proceduresCreated: 0,
+    proceduresDeprecatedByCascade: 0,
+    proceduresDeprecatedByAge: 0,
+    proceduresDeprecatedByVote: 0,
+    proceduresDeprecatedByOverflow: 0,
   };
 }
 

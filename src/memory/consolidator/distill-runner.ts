@@ -3,11 +3,16 @@ import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { MemoryEntry } from "../memory-store.js";
 import type { ReflectionLlmComplete } from "../reflection/reflection-runner.js";
 
-import { DISTILL_GRAMMAR } from "./distill-grammar.js";
+import {
+  DISTILL_GRAMMAR,
+  DISTILL_WITH_PROCEDURE_GRAMMAR,
+} from "./distill-grammar.js";
 import {
   DistillParseError,
   parseDistillOutput,
+  parseDistillWithProcedureOutput,
   type ParsedDistill,
+  type ParsedProcedure,
 } from "./distill-parser.js";
 import { buildDistillPrompt } from "./distill-prompt.js";
 
@@ -28,7 +33,17 @@ import { buildDistillPrompt } from "./distill-prompt.js";
  *                 the next cluster.
  */
 export type DistillOutcome =
-  | { kind: "ok"; lesson: Extract<ParsedDistill, { kind: "lesson" }> }
+  | {
+      kind: "ok";
+      lesson: Extract<ParsedDistill, { kind: "lesson" }>;
+      /**
+       * Memory-v2 phase 7b. Populated only when the runner was
+       * configured with `withProcedure=true` and the model emitted
+       * a valid `PROCEDURE` line. `null` for conceptually-related
+       * but procedurally-divergent clusters (scenario 7b.B).
+       */
+      procedure: ParsedProcedure | null;
+    }
   | { kind: "none" }
   | { kind: "aborted" }
   | { kind: "timeout" }
@@ -45,6 +60,15 @@ export interface DistillRunnerDeps {
   slotId: number;
   /** Per-cluster wall-clock budget. */
   timeoutMs: number;
+  /**
+   * Memory-v2 phase 7b. When `true`, switch to the combined
+   * `DISTILL_WITH_PROCEDURE_GRAMMAR`, append the procedure
+   * doctrine to the prompt, and parse the response with
+   * `parseDistillWithProcedureOutput`. The total number of LLM
+   * calls **does not change** — invariant 21 (one inference per
+   * cluster). Default `false` keeps phase 5/6 wire behaviour.
+   */
+  withProcedure?: boolean;
   metrics?: AgentMetrics;
   logger?: StructuredLogger;
 }
@@ -67,10 +91,15 @@ export class DistillRunner {
     if (request.signal.aborted) {
       return { kind: "aborted" };
     }
+    const withProcedure = this.deps.withProcedure === true;
     const prompt = buildDistillPrompt({
       episodes: request.episodes,
       sharedTags: request.sharedTags,
+      withProcedure,
     });
+    const grammar = withProcedure
+      ? DISTILL_WITH_PROCEDURE_GRAMMAR
+      : DISTILL_GRAMMAR;
     const innerCtrl = new AbortController();
     const onAbort = () => innerCtrl.abort();
     request.signal.addEventListener("abort", onAbort, { once: true });
@@ -79,14 +108,17 @@ export class DistillRunner {
     try {
       const result = await this.deps.llmComplete({
         prompt,
-        grammar: DISTILL_GRAMMAR,
+        grammar,
         slotId: this.deps.slotId,
         sessionId: request.sessionId,
         signal: innerCtrl.signal,
       });
       const elapsed = Date.now() - startedAt;
       this.deps.metrics?.recordConsolidationDistillLatency(elapsed);
-      const parsed = parseDistillOutput(result.content ?? "");
+      const rawContent = result.content ?? "";
+      const parsed = withProcedure
+        ? parseDistillWithProcedureOutput(rawContent)
+        : parseDistillOutput(rawContent);
       if (parsed.kind === "none") {
         this.deps.logger?.info?.("consolidator.distill.none", {
           sessionId: request.sessionId,
@@ -94,12 +126,26 @@ export class DistillRunner {
         });
         return { kind: "none" };
       }
+      const procedure: ParsedProcedure | null =
+        withProcedure && "procedure" in parsed
+          ? ((parsed as { procedure: ParsedProcedure | null }).procedure ?? null)
+          : null;
       this.deps.logger?.info?.("consolidator.distill.ok", {
         sessionId: request.sessionId,
         parentIds: request.episodes.map((e) => e.id),
         elapsedMs: elapsed,
+        hasProcedure: procedure !== null,
       });
-      return { kind: "ok", lesson: parsed };
+      return {
+        kind: "ok",
+        lesson: {
+          kind: "lesson",
+          activation: parsed.activation,
+          principle: parsed.principle,
+          tags: parsed.tags,
+        },
+        procedure,
+      };
     } catch (err) {
       const elapsed = Date.now() - startedAt;
       this.deps.metrics?.recordConsolidationDistillLatency(elapsed);

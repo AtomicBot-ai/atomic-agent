@@ -59,6 +59,7 @@ export interface VoteAllowlist {
   memory: ReadonlySet<number>;
   lesson: ReadonlySet<number>;
   profile: ReadonlySet<number>;
+  procedure: ReadonlySet<number>;
 }
 
 export interface ParseVoteOptions {

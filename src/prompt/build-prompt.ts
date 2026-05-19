@@ -5,6 +5,7 @@ import {
   renderRecalledSection,
 } from "../memory/notes-renderer.js";
 import { renderLessonsSection } from "../memory/lessons/lessons-renderer.js";
+import { renderProceduresSection } from "../memory/procedures/procedures-renderer.js";
 import { packConversation } from "../session/conversation-turn.js";
 import {
   renderPackedConversation,
@@ -181,6 +182,19 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       : null;
   const lessonsTokens = lessons !== null ? estimateTokens(lessons) : 0;
 
+  const proceduresMaxTokens =
+    input.proceduresMaxTokens ?? config.memory.procedures.maxTokens;
+  const recalledProcedures = input.session.recalledProcedures;
+  const proceduresFull =
+    recalledProcedures !== undefined && recalledProcedures.length > 0
+      ? renderProceduresSection(recalledProcedures)
+      : null;
+  const procedures =
+    proceduresFull !== null
+      ? truncateToTokens(proceduresFull, proceduresMaxTokens)
+      : null;
+  const proceduresTokens = procedures !== null ? estimateTokens(procedures) : 0;
+
   const worldSnapshotFull = renderWorldSnapshotSection(input.session);
   const worldSnapshot = truncateToTokens(
     worldSnapshotFull,
@@ -200,6 +214,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     recalledTokens,
     memoryIndexTokens,
     lessonsTokens,
+    proceduresTokens,
     loadedToolsTokens,
     completionMaxTokens,
   });
@@ -225,6 +240,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   }
   if (lessons !== null) {
     tailParts.push("### lessons", lessons, ``);
+  }
+  if (procedures !== null) {
+    tailParts.push("### procedures", procedures, ``);
   }
   if (memoryIndex !== null) {
     tailParts.push("### memory-index", memoryIndex, ``);

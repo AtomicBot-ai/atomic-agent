@@ -93,7 +93,7 @@ export type VoteTraceEvent =
   | {
       type: "applied";
       sessionId: string;
-      kind: "memory" | "lesson" | "profile";
+      kind: "memory" | "lesson" | "profile" | "procedure";
       targetId: number;
       direction: 1 | -1;
       score: number;
@@ -102,7 +102,7 @@ export type VoteTraceEvent =
   | {
       type: "rejected";
       sessionId: string;
-      kind: "memory" | "lesson" | "profile" | "unknown";
+      kind: "memory" | "lesson" | "profile" | "procedure" | "unknown";
       targetId: number | null;
       direction: 1 | -1 | null;
       reason: string;
@@ -329,6 +329,7 @@ function buildAllowlist(
   const memory = new Set<number>();
   const lesson = new Set<number>();
   const profile = new Set<number>();
+  const procedure = new Set<number>();
   for (const c of candidates) {
     switch (c.kind) {
       case "memory":
@@ -340,9 +341,12 @@ function buildAllowlist(
       case "profile":
         profile.add(c.id);
         break;
+      case "procedure":
+        procedure.add(c.id);
+        break;
     }
   }
-  return { memory, lesson, profile };
+  return { memory, lesson, profile, procedure };
 }
 
 interface ApplyContext {

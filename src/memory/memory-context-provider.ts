@@ -14,6 +14,10 @@ import type {
   LessonIndexEntry,
   LessonStore,
 } from "./lessons/lesson-store.js";
+import type {
+  ProcedureIndexEntry,
+  ProcedureStore,
+} from "./procedures/procedure-store.js";
 
 /**
  * Configuration for the default memory context provider.
@@ -72,6 +76,21 @@ export interface DefaultMemoryContextProviderOptions {
     store: LessonStore;
     k: number;
   };
+  /**
+   * Memory-v2 phase 7b. Top-K procedures surfaced into
+   * `### procedures`. Mirrors `lessons.*` — empty array when
+   * `store` is undefined, `enabled=false`, or `k <= 0`. The
+   * recall query is the same `buildRecallQuery` output so a
+   * thematic hit against lessons usually surfaces the paired
+   * procedure too (scenarios 7b.A → 7b.C).
+   */
+  procedures?: {
+    enabled: boolean;
+    store: ProcedureStore;
+    k: number;
+    /** Optional vote-aware reranking blend; sourced from `memory.voting.scoreBlend`. */
+    scoreBlend?: number;
+  };
   /** Metrics sink for `agent.memory.link_expansion.hits`. */
   metrics?: AgentMetrics;
   /**
@@ -128,20 +147,68 @@ export function createDefaultMemoryContextProvider(
             excludeIds: recalledIds,
           })
         : [];
-      // Memory-v2 phase 5: only include `lessons` when the lessons
-      // surface is configured. Callers that pre-date the field still
-      // see byte-identical `{ recalled, index }` shape; phase-5
-      // consumers see a `lessons` array.
+      // Memory-v2 phase 5/7b: include `lessons` / `procedures`
+      // when their surfaces are configured. Callers that pre-date
+      // the fields still see the byte-identical `{ recalled, index }`
+      // shape; later consumers see additional arrays.
+      const out: MemoryContext = { recalled, index };
       if (opts.lessons && opts.lessons.enabled) {
-        const lessons = loadLessons({
+        out.lessons = loadLessons({
           lessons: opts.lessons,
           query: buildRecallQuery(input),
         });
-        return { recalled, index, lessons };
       }
-      return { recalled, index };
+      if (opts.procedures && opts.procedures.enabled) {
+        out.procedures = loadProcedures({
+          procedures: opts.procedures,
+          query: buildRecallQuery(input),
+        });
+      }
+      return out;
     },
   };
+}
+
+interface LoadProceduresArgs {
+  procedures: DefaultMemoryContextProviderOptions["procedures"];
+  query: string;
+}
+
+/**
+ * Memory-v2 phase 7b. Pre-fetch `### procedures` pointer rows.
+ *
+ * Mirrors `loadLessons`. The recall is fire-safe — any failure
+ * inside `ProcedureStore.recall` is swallowed so a corrupt FTS
+ * index never blocks the agent loop. When `scoreBlend` is set we
+ * widen the BM25 pool and re-sort by `combinedScore`, which lets
+ * a strongly downvoted procedure drop out of the top-K even when
+ * its keyword overlap would otherwise have surfaced it
+ * (scenario 7b.E.3).
+ */
+function loadProcedures(args: LoadProceduresArgs): readonly ProcedureIndexEntry[] {
+  const cfg = args.procedures;
+  if (!cfg || !cfg.enabled || cfg.k <= 0) return [];
+  const query = args.query.trim();
+  if (query.length === 0) return [];
+  try {
+    const recallOpts: { query: string; k: number; scoreBlend?: number } = {
+      query,
+      k: cfg.k,
+    };
+    if (typeof cfg.scoreBlend === "number") {
+      recallOpts.scoreBlend = cfg.scoreBlend;
+    }
+    const hits = cfg.store.recall(recallOpts);
+    return hits.map((p) => ({
+      id: p.id,
+      activation: p.activation,
+      tags: p.tags,
+      workingDir: p.workingDir,
+      updatedAt: p.updatedAt,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 interface LoadLessonsArgs {

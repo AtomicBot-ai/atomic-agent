@@ -42,6 +42,6 @@ none    ::= "NONE" "\\n"?
 entries ::= entry entry? entry? entry? entry? entry? entry? entry?
 entry   ::= verb " " kind ":" digit+ "\\n"
 verb    ::= "UPVOTE" | "DOWNVOTE"
-kind    ::= "memory" | "lesson" | "profile"
+kind    ::= "memory" | "lesson" | "profile" | "procedure"
 digit   ::= [0-9]
 `;

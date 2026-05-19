@@ -404,6 +404,21 @@ export interface AtomicAgentConfig {
       maxEntries: number;
       deprecationAgeMs: number;
     };
+    /**
+     * Phase 7b: MemP-style advisory procedures distilled alongside
+     * lessons. Default disabled — when off, the `### procedures`
+     * section is not rendered, `memory.procedures.recall` returns a
+     * `ProceduresDisabledError`, and the consolidator emits only the
+     * `LESSON` half of the combined grammar.
+     */
+    procedures: {
+      enabled: boolean;
+      recallK: number;
+      maxTokens: number;
+      indexLimit: number;
+      maxEntries: number;
+      deprecationAgeMs: number;
+    };
     consolidation: {
       enabled: boolean;
       intervalMs: number;
@@ -758,6 +773,33 @@ export interface UserConfigFile {
       maxEntries: number;
       deprecationAgeMs: number;
     };
+    /**
+     * Memory-v2 phase 7b. Procedures (MemP-style how-to templates)
+     * mirroring `lessons.*`:
+     *   - `enabled`           master switch. Default `false`.
+     *   - `recallK`           top-K procedures surfaced per turn
+     *                         via BM25 against the current user
+     *                         message. Default `2`.
+     *   - `maxTokens`         hard cap on the rendered `### procedures`
+     *                         block. Default `400`.
+     *   - `indexLimit`        row cap on `ProcedureStore.listIndex`.
+     *                         Default `20`.
+     *   - `maxEntries`        hard cap on active procedures. Default
+     *                         `500`. Overflow triggers FIFO eviction
+     *                         in the consolidator (scenario 7b.F.2).
+     *   - `deprecationAgeMs`  procedures with `success_count == 0`
+     *                         AND `use_count == 0` older than this
+     *                         are deprecated. Default `2_592_000_000`
+     *                         (30 days).
+     */
+    procedures: {
+      enabled: boolean;
+      recallK: number;
+      maxTokens: number;
+      indexLimit: number;
+      maxEntries: number;
+      deprecationAgeMs: number;
+    };
     consolidation: {
       enabled: boolean;
       intervalMs: number;
@@ -854,7 +896,7 @@ export interface UserConfigFile {
   telegram: TelegramConfig;
 }
 
-export const USER_CONFIG_VERSION = 16 as const;
+export const USER_CONFIG_VERSION = 17 as const;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -881,6 +923,9 @@ export const USER_CONFIG_VERSION = 16 as const;
  * v16 added `memory.voting.*` for memory-v2 phase 7a (ExpeL-style vote
  * curation — UPVOTE/DOWNVOTE sub-call on the reflection slot + decay
  * on the consolidator tick + utility-eviction + lesson recall reranker).
+ * v17 added `memory.procedures.*` for memory-v2 phase 7b (MemP-style
+ * advisory procedures distilled alongside lessons + second
+ * stable-prefix bump for `### procedures`).
  * Older files are transparently upgraded by filling missing
  * blocks/fields from `USER_CONFIG_DEFAULTS`. Anything older than v5
  * is not migrated: this is active development, callers delete their
@@ -898,6 +943,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   13,
   14,
   15,
+  16,
   USER_CONFIG_VERSION,
 ];
 
@@ -1019,6 +1065,18 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       enabled: false,
       recallK: 2,
       maxTokens: 300,
+      indexLimit: 20,
+      maxEntries: 500,
+      deprecationAgeMs: 2_592_000_000,
+    },
+    procedures: {
+      // Phase 7b defaults — disabled out of the box. Flipping on
+      // adds `### procedures` to the prompt tail (stable-prefix
+      // change #2) and switches the consolidator distill grammar
+      // to the combined lesson+procedure shape.
+      enabled: false,
+      recallK: 2,
+      maxTokens: 400,
       indexLimit: 20,
       maxEntries: 500,
       deprecationAgeMs: 2_592_000_000,
@@ -1554,6 +1612,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (memory.evolution as Record<string, unknown> | undefined) ?? {};
   const memoryLessons =
     (memory.lessons as Record<string, unknown> | undefined) ?? {};
+  const memoryProcedures =
+    (memory.procedures as Record<string, unknown> | undefined) ?? {};
   const memoryConsolidation =
     (memory.consolidation as Record<string, unknown> | undefined) ?? {};
   const memoryVoting =
@@ -1927,6 +1987,38 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           memoryLessons.deprecationAgeMs ??
             USER_CONFIG_DEFAULTS.memory.lessons.deprecationAgeMs,
           "memory.lessons.deprecationAgeMs",
+        ),
+      },
+      procedures: {
+        enabled: parseBool(
+          memoryProcedures.enabled ??
+            USER_CONFIG_DEFAULTS.memory.procedures.enabled,
+          "memory.procedures.enabled",
+        ),
+        recallK: parsePositiveInt(
+          memoryProcedures.recallK ??
+            USER_CONFIG_DEFAULTS.memory.procedures.recallK,
+          "memory.procedures.recallK",
+        ),
+        maxTokens: parsePositiveInt(
+          memoryProcedures.maxTokens ??
+            USER_CONFIG_DEFAULTS.memory.procedures.maxTokens,
+          "memory.procedures.maxTokens",
+        ),
+        indexLimit: parsePositiveInt(
+          memoryProcedures.indexLimit ??
+            USER_CONFIG_DEFAULTS.memory.procedures.indexLimit,
+          "memory.procedures.indexLimit",
+        ),
+        maxEntries: parsePositiveInt(
+          memoryProcedures.maxEntries ??
+            USER_CONFIG_DEFAULTS.memory.procedures.maxEntries,
+          "memory.procedures.maxEntries",
+        ),
+        deprecationAgeMs: parsePositiveInt(
+          memoryProcedures.deprecationAgeMs ??
+            USER_CONFIG_DEFAULTS.memory.procedures.deprecationAgeMs,
+          "memory.procedures.deprecationAgeMs",
         ),
       },
       consolidation: {

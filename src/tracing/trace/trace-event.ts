@@ -30,6 +30,8 @@ export type TraceEvent =
   | TraceLessonDeprecated
   | TraceVoteApplied
   | TraceVoteRejected
+  | TraceProcedureCreated
+  | TraceProcedureDeprecated
   | TraceError
   | TraceTruncated;
 
@@ -186,7 +188,7 @@ export interface TraceLessonDeprecated extends TraceEventBase {
  */
 export interface TraceVoteApplied extends TraceEventBase {
   type: "vote_applied";
-  kind: "memory" | "lesson" | "profile";
+  kind: "memory" | "lesson" | "profile" | "procedure";
   targetId: number;
   direction: 1 | -1;
   score: number;
@@ -204,9 +206,43 @@ export interface TraceVoteApplied extends TraceEventBase {
  */
 export interface TraceVoteRejected extends TraceEventBase {
   type: "vote_rejected";
-  kind: "memory" | "lesson" | "profile" | "unknown";
+  kind: "memory" | "lesson" | "profile" | "procedure" | "unknown";
   targetId: number | null;
   direction: 1 | -1 | null;
+  reason: string;
+}
+
+/**
+ * Memory-v2 phase 7b. The consolidator persisted a new advisory
+ * procedure (read-only "how-to" template) together with its parent
+ * lesson. One event per persisted procedure. Cross-phase invariant
+ * 21: still a single LLM call per cluster — this is the second
+ * write produced by that single completion. `parentLessonIds` is
+ * the materialised array (typically one entry — the lesson that
+ * came out of the same `LESSON+PROCEDURE` distillation), and
+ * `parentMemoryIds` is the cluster member set archived by the
+ * companion `archiveInto` call. `source` reflects whether the row
+ * came from the cold-path consolidator or, in the future, a
+ * manual / replay path.
+ */
+export interface TraceProcedureCreated extends TraceEventBase {
+  type: "procedure_created";
+  procedureId: number;
+  parentLessonIds: readonly number[];
+  parentMemoryIds: readonly number[];
+  source: "consolidator" | "manual";
+}
+
+/**
+ * Memory-v2 phase 7b. A procedure was demoted to
+ * `status='deprecated'`. `reason` is the same short tag the
+ * `agent.memory.procedures.deprecated` metric carries —
+ * `parent_deprecated` (cascade from lesson sweep), `aged_out`
+ * (age-based), `downvoted` (vote-driven), or `overflow` (FIFO cap).
+ */
+export interface TraceProcedureDeprecated extends TraceEventBase {
+  type: "procedure_deprecated";
+  procedureId: number;
   reason: string;
 }
 

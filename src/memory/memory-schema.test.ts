@@ -507,6 +507,80 @@ describe("applyMigrations", () => {
     expect(Number(version)).toBe(MEMORY_SCHEMA_VERSION);
   });
 
+  it("creates procedures table + procedures_fts + indexes on v10", () => {
+    applyMigrations(db);
+    const cols = db
+      .prepare(`PRAGMA table_info(procedures)`)
+      .all() as Array<{ name: string; type: string; notnull: number; pk: number }>;
+    const names = cols.map((c) => c.name);
+    expect(names).toEqual([
+      "id",
+      "activation",
+      "steps",
+      "tags",
+      "status",
+      "success_count",
+      "failure_count",
+      "use_count",
+      "vote_score",
+      "parent_lesson_ids",
+      "parent_memory_ids",
+      "source",
+      "working_dir",
+      "created_at",
+      "updated_at",
+      "deprecated_at",
+    ]);
+    expect(cols.find((c) => c.name === "activation")!.notnull).toBe(1);
+    expect(cols.find((c) => c.name === "steps")!.notnull).toBe(1);
+    expect(cols.find((c) => c.name === "parent_lesson_ids")!.notnull).toBe(1);
+    expect(cols.find((c) => c.name === "parent_memory_ids")!.notnull).toBe(1);
+    expect(cols.find((c) => c.name === "id")!.pk).toBe(1);
+
+    const ftsTables = db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='procedures_fts'`,
+      )
+      .all() as Array<{ name: string }>;
+    expect(ftsTables).toHaveLength(1);
+
+    const indexes = db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='procedures' ORDER BY name`,
+      )
+      .all() as Array<{ name: string }>;
+    const indexNames = indexes.map((i) => i.name);
+    expect(indexNames).toContain("idx_procedures_status");
+    expect(indexNames).toContain("idx_procedures_updated_at");
+    expect(indexNames).toContain("idx_procedures_vote_score");
+  });
+
+  it("migrates a v9 database to v10 leaving existing rows untouched", () => {
+    db.exec(`
+      CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE memories (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, source TEXT NOT NULL, vote_score REAL NOT NULL DEFAULT 0.0);
+      CREATE TABLE lessons (id INTEGER PRIMARY KEY AUTOINCREMENT, activation TEXT NOT NULL, principle TEXT NOT NULL, parent_ids TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', success_count INTEGER NOT NULL DEFAULT 0, failure_count INTEGER NOT NULL DEFAULT 0, vote_score REAL NOT NULL DEFAULT 0.0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, deprecated_at INTEGER);
+      INSERT INTO schema_meta(key, value) VALUES ('version', '9');
+      INSERT INTO memories (content, created_at, updated_at, source) VALUES ('legacy', 1, 1, 'agent');
+      INSERT INTO lessons (activation, principle, parent_ids, created_at, updated_at) VALUES ('a', 'p', '[1]', 1, 1);
+    `);
+    applyMigrations(db);
+    const mem = db.prepare(`SELECT content FROM memories`).get() as { content: string };
+    expect(mem.content).toBe("legacy");
+    const lesson = db.prepare(`SELECT activation FROM lessons`).get() as { activation: string };
+    expect(lesson.activation).toBe("a");
+    const procCount = db
+      .prepare(`SELECT COUNT(*) AS c FROM procedures`)
+      .get() as { c: number };
+    expect(procCount.c).toBe(0);
+    const version = (
+      db.prepare("SELECT value FROM schema_meta WHERE key='version'").get() as {
+        value: string;
+      }
+    ).value;
+    expect(Number(version)).toBe(MEMORY_SCHEMA_VERSION);
+  });
+
   it("refuses to downgrade from a newer version", () => {
     applyMigrations(db);
     db.prepare(

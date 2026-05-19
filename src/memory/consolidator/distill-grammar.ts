@@ -40,3 +40,43 @@ tagid ::= [a-z][a-z0-9\\-]{0,23}
 qstr ::= "\\"" qchar+ "\\""
 qchar ::= [\\t\\x20-\\x21] | [\\x23-\\x7e]
 `;
+
+/**
+ * Memory-v2 phase 7b. Combined grammar producing one mandatory
+ * `LESSON` line plus one **optional** `PROCEDURE` line, both
+ * emitted by a single distillation LLM call (invariant 21: still
+ * ONE inference per cluster, regardless of whether the model
+ * chooses to add a procedure or not).
+ *
+ * Shape:
+ *
+ *   LESSON activation="<text>"; principle="<text>"[; tags=a,b,c]\n
+ *   [PROCEDURE activation="<text>"; steps="<step1>; <step2>; ..."[; tags=...]\n]
+ *
+ * Decision: the procedure shares the same surface charset as the
+ * lesson. Steps are encoded as a single quoted string with `; `
+ * separators between 2..8 entries; each step is `description` or
+ * `description@toolhint`. The semicolon-and-space delimiter keeps
+ * GBNF tiny: a step body is plain `qchar` text with `@` allowed.
+ *
+ * The parser further normalises: trims whitespace, strips empty
+ * step entries, validates the `@toolhint` against the procedure
+ * store's `TOOL_HINT_PATTERN`, and rejects oversize step bodies.
+ * Same abstain sentinel as the lesson — if the model only emits
+ * the LESSON line, the parser returns `procedure: null`.
+ *
+ * **One inference per cluster.** This grammar is plugged into the
+ * existing `DistillRunner.distill(...)` codepath: the runner makes
+ * one `llmComplete` call, the response is parsed into both shapes
+ * together. There is no second LLM round-trip for the procedure
+ * (scenario 7b.A.6 / 7b.B.3 pin invariant 21).
+ */
+export const DISTILL_WITH_PROCEDURE_GRAMMAR = `root ::= lesson "\\n" opt-procedure
+lesson ::= "LESSON activation=" qstr "; principle=" qstr opt-tags
+opt-procedure ::= ("PROCEDURE activation=" qstr "; steps=" qstr opt-tags "\\n")?
+opt-tags ::= ("; tags=" taglist)?
+taglist ::= tagid ("," tagid){2,5}
+tagid ::= [a-z][a-z0-9\\-]{0,23}
+qstr ::= "\\"" qchar+ "\\""
+qchar ::= [\\t\\x20-\\x21] | [\\x23-\\x7e]
+`;

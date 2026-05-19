@@ -103,10 +103,12 @@ function buildAllowlist(candidates: ReadonlyArray<VoteCandidate>): VoteAllowlist
   const memory = new Set<number>();
   const lesson = new Set<number>();
   const profile = new Set<number>();
+  const procedure = new Set<number>();
   for (const c of candidates) {
     if (c.kind === "memory") memory.add(c.id);
     else if (c.kind === "lesson") lesson.add(c.id);
     else if (c.kind === "profile") profile.add(c.id);
+    else if ((c.kind as string) === "procedure") procedure.add(c.id);
   }
-  return { memory, lesson, profile };
+  return { memory, lesson, profile, procedure };
 }

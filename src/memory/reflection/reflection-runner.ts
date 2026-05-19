@@ -42,6 +42,13 @@ export interface ReflectionInput {
    */
   recalledProfileFactIds?: readonly number[];
   /**
+   * Memory-v2 phase 7b. Ids of procedures rendered into the
+   * `### procedures` section for this turn. Threaded into the
+   * vote-runner allowlist so the model can only vote on
+   * procedures it actually saw.
+   */
+  recalledProcedureIds?: readonly number[];
+  /**
    * Memory-v2 phase 7a. 0-based turn index within the session,
    * propagated into `vote_events.turn_index` for audit attribution.
    * Optional — when missing, the audit row stores `NULL`.

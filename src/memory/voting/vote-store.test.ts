@@ -271,7 +271,12 @@ describe("VoteStore", () => {
         maxVotePerItem: 50,
       });
       const result = f.store.decayAllScores(0.5);
-      expect(result).toEqual({ memories: 1, lessons: 1, profileFacts: 1 });
+      expect(result).toEqual({
+        memories: 1,
+        lessons: 1,
+        profileFacts: 1,
+        procedures: 0,
+      });
       expect(f.store.getScore("memory", memId)).toBeCloseTo(0.5);
       expect(f.store.getScore("lesson", lessonId)).toBeCloseTo(1);
       expect(f.store.getScore("profile", profileId)).toBeCloseTo(-0.5);

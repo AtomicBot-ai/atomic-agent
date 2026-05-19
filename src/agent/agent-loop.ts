@@ -35,6 +35,7 @@ import type {
   MemoryIndexEntry,
 } from "../memory/memory-store.js";
 import type { LessonIndexEntry } from "../memory/lessons/lesson-store.js";
+import type { ProcedureIndexEntry } from "../memory/procedures/procedure-store.js";
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { ReflectionRunner } from "../memory/reflection/index.js";
 import { executeStep } from "./step-executor.js";
@@ -164,6 +165,13 @@ export interface MemoryContext {
    * source-compatible — missing field is treated as "no lessons".
    */
   lessons?: readonly LessonIndexEntry[];
+  /**
+   * Memory-v2 phase 7b. Top-K pointer rows from `ProcedureStore`
+   * for the current turn. Optional so older providers stay
+   * source-compatible. Rendered as `### procedures` between
+   * `### lessons` and `### memory-index` in the variable tail.
+   */
+  procedures?: readonly ProcedureIndexEntry[];
 }
 
 export interface MemoryContextProvider {
@@ -333,6 +341,16 @@ export class AgentLoop {
       }
     };
     recordSurfacedLessons(state);
+    // Memory-v2 phase 7b — same accumulator, but for procedure ids.
+    // Surfaces into the vote-runner allowlist so the LLM can only
+    // vote on procedures it actually saw in `### procedures`.
+    const surfacedProcedureIds = new Set<number>();
+    const recordSurfacedProcedures = (s: SessionState): void => {
+      for (const p of s.recalledProcedures ?? []) {
+        surfacedProcedureIds.add(p.id);
+      }
+    };
+    recordSurfacedProcedures(state);
     // One-shot notice injected into the NEXT step's prompt only. Cleared
     // as soon as it is consumed so the stable tail does not carry stale
     // nudges across steps.
@@ -520,6 +538,7 @@ export class AgentLoop {
         }
         state = await refreshMemoryContext(this.deps, state, options);
         recordSurfacedLessons(state);
+        recordSurfacedProcedures(state);
       } catch (err) {
         runError = err instanceof Error ? err : new Error(String(err));
         const category = classifyFailure(err);
@@ -676,6 +695,9 @@ export class AgentLoop {
           ...(surfacedLessonIds.size > 0
             ? { recalledLessonIds: Array.from(surfacedLessonIds) }
             : {}),
+          ...(surfacedProcedureIds.size > 0
+            ? { recalledProcedureIds: Array.from(surfacedProcedureIds) }
+            : {}),
           ...(profileFacts.length > 0
             ? {
                 recalledProfileFactIds: profileFacts
@@ -749,11 +771,19 @@ async function refreshMemoryContext(
         hits: lessons.length,
       });
     }
+    const procedures = ctx.procedures ?? [];
+    if (procedures.length > 0) {
+      deps.metrics?.recordProceduresRecalled({
+        sessionId: state.id,
+        hits: procedures.length,
+      });
+    }
     return {
       ...state,
       recalledNotes: ctx.recalled,
       memoryIndex: ctx.index,
       recalledLessons: lessons,
+      recalledProcedures: procedures,
     };
   } catch (err) {
     deps.logger?.warn("memory context provider failed", {

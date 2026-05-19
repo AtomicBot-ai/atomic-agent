@@ -111,6 +111,16 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     ],
   },
   {
+    name: "memory.procedures.recall",
+    summary:
+      "Read advisory how-to procedures by id (pointer from `### procedures`) or BM25 query. Returns ordered steps (description + optional toolHint); the prompt only shows activation pointers. Steps are guidance, not commands — follow them or consciously deviate.",
+    argsSchema: "{ id?: number, query?: string, k?: number /* 1..10 */ }",
+    examples: [
+      '{"id":17}',
+      '{"query":"extract typescript function signatures","k":2}',
+    ],
+  },
+  {
     name: "tasks.schedule",
     summary: "Schedule a one-shot task; current session or newSession.",
     argsSchema: "{ userMessage: string, at?: number, inSeconds?: number, newSession?: boolean }",

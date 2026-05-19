@@ -14,7 +14,7 @@
  * `applyMigrations` with a new step. The `schema_meta` table records the
  * version actually present on disk so upgrades are idempotent.
  */
-export const MEMORY_SCHEMA_VERSION = 9 as const;
+export const MEMORY_SCHEMA_VERSION = 10 as const;
 
 const BASE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -418,6 +418,137 @@ CREATE INDEX idx_vote_events_created ON vote_events(created_at);
 CREATE INDEX idx_vote_events_target  ON vote_events(kind, target_id);
 `;
 
+// V10 introduces the **procedure templates layer** — memory-v2 phase 7b
+// (Path F, MemP-style). One new domain object joins the corpus:
+//
+//   `procedures` — read-only how-to templates derived **together with**
+//   a parent lesson from the same consolidator cluster (cross-phase
+//   invariant 21: distillation still emits ≤ 1 LLM call per cluster
+//   even when both lesson + procedure are produced). Procedures are
+//   **never** auto-executed by the runtime — they are advisory text
+//   the agent reads and either follows or consciously deviates from.
+//   This is cross-phase invariant 20: the runtime never feeds
+//   `procedures.steps` into `toolRegistry.invoke`. Pinned by
+//   `procedure-store.test.ts` scenario 7b.D.
+//
+// Column layout:
+//   - `id`                  autoincrement primary key.
+//   - `activation`          short user-facing trigger phrase (mirrors
+//                            `lessons.activation` shape).
+//   - `steps`               JSON array of 2..8 entries with at least
+//                            `{ description, toolHint? }`. Stored as
+//                            text because SQLite does not constrain
+//                            JSON arrays natively; the store validates
+//                            shape on read/write.
+//   - `tags`                JSON array of normalised tag strings.
+//   - `status`              `'active' | 'deprecated'` (mirrors lessons).
+//   - `success_count`       bumped when the agent's tool-call chain
+//                            closely matches `steps[]` after a
+//                            successful turn (scenario 7b.C.5).
+//   - `failure_count`       reserved for phase 8+ (failure attribution
+//                            requires the agent to surface "this
+//                            procedure was wrong" explicitly).
+//   - `use_count`           total times this procedure was surfaced
+//                            into a prompt regardless of outcome.
+//                            Drives the recall-aware ranking and the
+//                            FIFO eviction tiebreaker (scenario 7b.F.2).
+//   - `vote_score`          ExpeL-style curation score (clamped by
+//                            `memory.voting.maxVotePerItem`). New for
+//                            7b; the `procedures` kind is added to
+//                            `VoteStore` in the same phase.
+//   - `parent_lesson_ids`   JSON array referencing the lesson row(s)
+//                            this procedure was distilled alongside.
+//                            Soft pointer — when the parent lesson is
+//                            deprecated, the consolidator's cascade
+//                            sweep deprecates this procedure too (per
+//                            architectural decision 5 == A). Cross-FK
+//                            cascade is intentionally **not** used:
+//                            an admin who manually `markDeprecated`s
+//                            a lesson should still be able to inspect
+//                            the orphaned procedure for debugging.
+//   - `parent_memory_ids`   JSON array referencing the same archived
+//                            episodes as the parent lesson's
+//                            `parent_ids`. Stored separately so the
+//                            procedure stays auditable even after the
+//                            parent lesson is deleted.
+//   - `source`              `'consolidator'` for the cold-path
+//                            distillation, `'manual'` reserved for an
+//                            admin tool (deferred to phase 8+).
+//   - `working_dir`         per-project scoping mirror of the lesson
+//                            column. Inherited from the parent cluster.
+//   - `created_at`          wall-clock ms.
+//   - `updated_at`          wall-clock ms; bumped on every metadata
+//                            mutation (use_count, vote_score, status).
+//   - `deprecated_at`       NULL for active rows; set when
+//                            `markDeprecated` flips `status`.
+//
+// Indexes:
+//   - `idx_procedures_status` — recall filters out `deprecated`.
+//   - `idx_procedures_updated_at` — FIFO eviction baseline.
+//   - `idx_procedures_vote_score` — vote-score-aware ranking and
+//     downvote-driven deprecation predicate (scenario 7b.F.1).
+//
+// FTS5: `procedures_fts(activation, steps, tags)` for BM25 recall.
+// The `steps` JSON blob is searched verbatim — good enough for
+// keyword recall against tool names ("os.fs.glob"), free-form
+// descriptions, and tag tokens. The store sanitises JSON before
+// indexing so braces / colons do not break FTS5's tokenizer.
+//
+// **KV-cache invalidation.** This is the **second** of two planned
+// one-time main-slot KV-cache invalidations for memory-v2: phase 7b
+// adds `### procedures` to the persona / sections list in the
+// stable prefix. See [src/prompt/persona.ts] for the prefix bump
+// and the matching invalidation note in
+// [src/prompt/build-prompt.test.ts]. The schema migration itself
+// never touches the prefix; the cache flush is triggered by the
+// persona edit only.
+const V10_MIGRATION = `
+CREATE TABLE procedures (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  activation          TEXT NOT NULL,
+  steps               TEXT NOT NULL,
+  tags                TEXT,
+  status              TEXT NOT NULL DEFAULT 'active',
+  success_count       INTEGER NOT NULL DEFAULT 0,
+  failure_count       INTEGER NOT NULL DEFAULT 0,
+  use_count           INTEGER NOT NULL DEFAULT 0,
+  vote_score          REAL NOT NULL DEFAULT 0.0,
+  parent_lesson_ids   TEXT NOT NULL,
+  parent_memory_ids   TEXT NOT NULL,
+  source              TEXT NOT NULL DEFAULT 'consolidator',
+  working_dir         TEXT,
+  created_at          INTEGER NOT NULL,
+  updated_at          INTEGER NOT NULL,
+  deprecated_at       INTEGER
+);
+
+CREATE INDEX idx_procedures_status      ON procedures(status);
+CREATE INDEX idx_procedures_updated_at  ON procedures(updated_at);
+CREATE INDEX idx_procedures_vote_score  ON procedures(vote_score);
+
+CREATE VIRTUAL TABLE procedures_fts USING fts5(
+  activation, steps, tags,
+  content='procedures',
+  content_rowid='id',
+  tokenize='porter unicode61'
+);
+
+CREATE TRIGGER procedures_ai AFTER INSERT ON procedures BEGIN
+  INSERT INTO procedures_fts(rowid, activation, steps, tags)
+    VALUES (new.id, new.activation, new.steps, COALESCE(new.tags, ''));
+END;
+CREATE TRIGGER procedures_ad AFTER DELETE ON procedures BEGIN
+  INSERT INTO procedures_fts(procedures_fts, rowid, activation, steps, tags)
+    VALUES ('delete', old.id, old.activation, old.steps, COALESCE(old.tags, ''));
+END;
+CREATE TRIGGER procedures_au AFTER UPDATE ON procedures BEGIN
+  INSERT INTO procedures_fts(procedures_fts, rowid, activation, steps, tags)
+    VALUES ('delete', old.id, old.activation, old.steps, COALESCE(old.tags, ''));
+  INSERT INTO procedures_fts(rowid, activation, steps, tags)
+    VALUES (new.id, new.activation, new.steps, COALESCE(new.tags, ''));
+END;
+`;
+
 export interface MemoryDatabaseLike {
   exec(sql: string): unknown;
   prepare(sql: string): {
@@ -460,6 +591,9 @@ export function applyMigrations(db: MemoryDatabaseLike): void {
   }
   if (current < 9) {
     db.exec(V9_MIGRATION);
+  }
+  if (current < 10) {
+    db.exec(V10_MIGRATION);
   }
   if (current === MEMORY_SCHEMA_VERSION) return;
   db.prepare(

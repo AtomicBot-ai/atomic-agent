@@ -3,6 +3,7 @@ import type {
   MemoryIndexEntry,
 } from "../memory/memory-store.js";
 import type { LessonIndexEntry } from "../memory/lessons/lesson-store.js";
+import type { ProcedureIndexEntry } from "../memory/procedures/procedure-store.js";
 import {
   appendTurn,
   type ConversationTurn,
@@ -141,15 +142,18 @@ export interface SessionState {
    * persistence. Cross-phase invariant 8.
    */
   recalledLessons?: readonly LessonIndexEntry[];
-  // TODO(memory-v2): cross-phase invariant 8 — every new prompt-only
-  // memory field added in v2 must be ephemeral (per-turn) and stripped
-  // by `stripEphemeral()` below before session-store persistence:
-  //   - phase 7a adds `surfacedIds?: readonly { kind, id }[]` (consumed
-  //     by the vote-runner allowlist; never rendered).
-  //   - phase 7b adds `recalledProcedures?: readonly Procedure[]`
-  //     (rendered as `### procedures`).
-  // Each phase extends `stripEphemeral()` in this file and the
-  // `does not persist ephemeral …` test in `session-store.test.ts`.
+  /**
+   * Memory-v2 phase 7b. Pointer view of advisory procedures
+   * surfaced for the current turn. Populated by
+   * `memory-context-provider.buildMemoryContext` and rendered as
+   * `### procedures` between `### lessons` and `### memory-index`
+   * (scenario 7b.C.1). Carries only `ProcedureIndexEntry` fields
+   * — full `steps[]` is gated behind `memory.procedures.recall { id }`.
+   *
+   * Ephemeral: stripped by `stripEphemeral` below before
+   * `SessionStore` persistence. Cross-phase invariant 8.
+   */
+  recalledProcedures?: readonly ProcedureIndexEntry[];
 }
 
 export function createEmptySessionState(params: {
@@ -273,7 +277,8 @@ export function stripEphemeral(state: SessionState): SessionState {
   if (
     state.recalledNotes === undefined &&
     state.memoryIndex === undefined &&
-    state.recalledLessons === undefined
+    state.recalledLessons === undefined &&
+    state.recalledProcedures === undefined
   ) {
     return state;
   }
@@ -281,6 +286,7 @@ export function stripEphemeral(state: SessionState): SessionState {
     recalledNotes: _r,
     memoryIndex: _m,
     recalledLessons: _l,
+    recalledProcedures: _p,
     ...rest
   } = state;
   return rest;
