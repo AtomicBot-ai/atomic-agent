@@ -58,7 +58,12 @@ export async function runE2E1(opts: E2E1Options): Promise<E2E1Report> {
     ? null
     : mkdtempSync(join(tmpdir(), "atomic-eval-e2e1-"));
   const stateDir = opts.stateDir ?? join(ownedDir!, "state");
-  const workingDir = opts.stateDir ?? join(ownedDir!, "cwd");
+  // Same workingDir/stateDir aliasing bug as E2E-3/E2E-4 v1 — when
+  // an external `stateDir` is supplied, keep cwd as a sibling so
+  // CLI traces don't share the state-dir parent.
+  const workingDir = opts.stateDir
+    ? join(opts.stateDir, "..", "cwd")
+    : join(ownedDir!, "cwd");
 
   try {
     const scenario = E2E_1_SCENARIO;

@@ -67,7 +67,11 @@ export async function runE2E5(opts: E2E5Options): Promise<E2E5Report> {
     ? null
     : mkdtempSync(join(tmpdir(), "atomic-eval-e2e5-"));
   const stateDir = opts.stateDir ?? join(ownedDir!, "state");
-  const workingDir = opts.stateDir ?? join(ownedDir!, "cwd");
+  // Same workingDir/stateDir aliasing bug as E2E-3/E2E-4/E2E-1 v1 —
+  // when an external `stateDir` is supplied, keep cwd as a sibling.
+  const workingDir = opts.stateDir
+    ? join(opts.stateDir, "..", "cwd")
+    : join(ownedDir!, "cwd");
   const scenario = E2E_5_SCENARIO;
 
   try {
@@ -75,15 +79,32 @@ export async function runE2E5(opts: E2E5Options): Promise<E2E5Report> {
       stateDir,
       workingDir,
       llamaUrl: opts.llamaUrl,
+      // Phase 7a vote pipeline is ship-dark in production
+      // (`memory.voting.enabled=false` default). E2E-5 is the
+      // sole scenario that exercises it end-to-end.
+      votingEnabled: true,
       steps: [
+        // Phase 1 — deterministic fixture for the vote pipeline.
+        // The subject of E2E-5 is "user signal → vote_score moves",
+        // not "reflection extracts a noise note". Without seeding
+        // the noise row often went missing and gated the assertion
+        // on memory-creation variance unrelated to the test goal.
+        {
+          kind: "seed_memories",
+          label: "fixture: useful + noise memories",
+          entries: scenario.seedMemories.map((m) => ({
+            content: m.content,
+            ...(m.tags !== undefined ? { tags: m.tags } : {}),
+            source: "agent" as const,
+            sessionId: "e2e5-fixture",
+          })),
+        },
         {
           kind: "session",
-          label: "S1 (6 turns)",
+          label: "S1 (4 turns)",
           prompts: scenario.prompts,
-          maxSteps: opts.maxSteps ?? 8,
-          // Six turns × per-turn reflection + vote-runner is the heaviest
-          // single session in the E2E suite. Default 20-min cap.
-          timeoutMs: opts.perSessionTimeoutMs ?? 1_200_000,
+          maxSteps: opts.maxSteps ?? 6,
+          timeoutMs: opts.perSessionTimeoutMs ?? 600_000,
         },
         {
           kind: "consolidate",

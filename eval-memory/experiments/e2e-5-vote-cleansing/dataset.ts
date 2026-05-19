@@ -25,9 +25,21 @@
  * memories are also picked up by the vote sweep.
  */
 
+export interface E2E5SeedMemory {
+  content: string;
+  tags?: readonly string[];
+}
+
 export interface E2E5Scenario {
   id: "e2e-5-vote-cleansing";
   label: string;
+  /**
+   * Fixture memories written via `MemoryStore.store()` before the
+   * session runs. The vote pipeline can only react to rows that
+   * survive into `### recalled` — seeding deterministically removes
+   * memory-creation variance from the assertion.
+   */
+  seedMemories: readonly E2E5SeedMemory[];
   /** Single-session, multi-turn flow. Each entry is one user prompt. */
   prompts: readonly string[];
   /** When true the spec is satisfied if ANY vote_score > 0. */
@@ -40,19 +52,45 @@ export const E2E_5_SCENARIO: E2E5Scenario = {
   id: "e2e-5-vote-cleansing",
   label:
     "explicit user signal on useful/noise turns moves vote_score in both directions",
+  /**
+   * Memories seeded directly into MemoryStore via the driver's
+   * `seed_memories` step before the session starts. The subject of
+   * E2E-5 is the **vote pipeline**, not memory creation; the two
+   * fixture rows below are the equivalent of `linkSweepExample` in
+   * E2E-3 — deterministic setup so the assertion can focus on the
+   * downstream pipeline. See multi-session-driver `SeededMemory`.
+   */
+  seedMemories: [
+    {
+      content:
+        "CI fails on macOS runners with 'cannot connect to docker daemon'. Fix: restart Docker Desktop and re-run the workflow.",
+      tags: ["ci", "docker", "macos", "recipe"],
+    },
+    {
+      content:
+        "User is currently reading sci-fi novels by Le Guin, mostly The Dispossessed.",
+      tags: ["hobby", "books", "sci-fi"],
+    },
+  ],
   prompts: [
-    // 1. Seed the USEFUL memory.
-    "FYI for future reference: when our CI fails on macOS runners with the error 'cannot connect to docker daemon', the fix is to restart Docker Desktop and re-run. Please remember this for the next time I ask about CI.",
-    // 2. Seed the NOISE memory (declarative but off-topic).
-    "Side note that has nothing to do with engineering: I've been getting back into sci-fi novels this year, mostly Le Guin.",
-    // 3. Ask a follow-up that should re-surface the USEFUL memory.
-    "Our CI just failed on the macOS runner with the docker daemon error again. What was the fix you remembered?",
-    // 4. Explicit positive signal — the vote-runner observes this turn's reply + the freshly-surfaced memory.
-    "Perfect, that worked. Exactly the trick I needed.",
-    // 5. Ask a follow-up that should re-surface the NOISE memory.
-    "What sort of books did I mention being interested in lately?",
-    // 6. Explicit negative signal — vote-runner observes the surfaced noise memory and the reply that drifted off-task.
-    "Actually let's just disregard that reading-habits stuff entirely. It's noise relative to the work I want help with — please mark it as not useful.",
+    // 1. Re-surface the USEFUL memory by direct recall so it lands in
+    // `### recalled` / `### memory-index` (vote-runner allowlist).
+    "Call memory.notes.recall with query=\"docker daemon CI macOS fix\" and k=3. Then summarise the fix in one sentence.",
+    // 2. Explicit positive signal — vote-runner observes this reply +
+    // the freshly-surfaced CI memory. Plain text, no tool call.
+    "Perfect, that fix worked again. That note about restarting Docker Desktop was exactly what I needed — keep it, it's gold.",
+    // 3. Re-surface the NOISE memory by direct recall.
+    "Call memory.notes.recall with query=\"reading hobby books sci-fi Le Guin\" and k=3. Then tell me what I mentioned.",
+    // 4. Explicit negative signal — vote-runner observes the surfaced
+    // noise memory and the user's verdict. We do NOT want the agent
+    // to physically delete the row via `memory.notes.forget`: the
+    // vote pipeline is the system-of-record for "this is low value,
+    // demote it in future recall" and the assertion runs against
+    // `memories.vote_score`. Empirically the model interprets
+    // "disregard" as a forget directive on Gemma-4, so the prompt
+    // explicitly forbids forget here. Plain-text acknowledgement is
+    // enough — the vote-runner observes recall + reply on its own.
+    "That reading-habits note is low-priority noise for an engineering assistant. Please mark it as not useful for your future replies, but DO NOT call memory.notes.forget — keep the row, just stop bringing it up. Reply with a one-sentence acknowledgement, no tool calls.",
   ],
   expectPositiveVotes: true,
   expectNegativeVotes: true,

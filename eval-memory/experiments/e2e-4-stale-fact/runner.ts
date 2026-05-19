@@ -50,7 +50,13 @@ export async function runE2E4(opts: E2E4Options): Promise<E2E4Report> {
     ? null
     : mkdtempSync(join(tmpdir(), "atomic-eval-e2e4-"));
   const stateDir = opts.stateDir ?? join(ownedDir!, "state");
-  const workingDir = opts.stateDir ?? join(ownedDir!, "cwd");
+  // Same workingDir/stateDir aliasing bug as E2E-3 v1 — when an
+  // external `stateDir` is supplied, keep the cwd as a sibling so
+  // session traces / sqlite files do not share their parent with
+  // any per-scenario fixtures.
+  const workingDir = opts.stateDir
+    ? join(opts.stateDir, "..", "cwd")
+    : join(ownedDir!, "cwd");
   const scenario = E2E_4_SCENARIO;
 
   try {
@@ -147,13 +153,23 @@ function toSessionMetrics(s: MultiSessionStepResult): E2E4SessionMetrics {
   };
 }
 
+/**
+ * Read **active** profile_facts rows only. Memory-v2 phase 4 keeps
+ * superseded history alongside the live value (`superseded_by IS
+ * NOT NULL` marks historical rows — see `profile-store.ts` docs).
+ * The bi-temporal invariant for E2E-4 is "the LIVE row points to
+ * the new value", not "the database has no trace of the old one";
+ * the latter would defeat the whole supersession audit trail.
+ */
 function readProfileRows(stateDir: string): ReadonlyArray<{ key: string; value: string }> {
   const dbPath = resolve(stateDir, "memory.sqlite");
   try {
     const db = new Database(dbPath, { readonly: true });
     try {
       const rows = db
-        .prepare("SELECT key, value FROM profile_facts")
+        .prepare(
+          "SELECT key, value FROM profile_facts WHERE superseded_by IS NULL",
+        )
         .all() as Array<{ key: string; value: string }>;
       return rows;
     } finally {

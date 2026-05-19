@@ -51,6 +51,13 @@ export interface SeedConfigOptions {
    * default applies.
    */
   proceduresEnabled?: boolean;
+  /**
+   * Phase 7a override. The production default is
+   * `memory.voting.enabled=false` (ship-dark — adds an extra LLM
+   * sub-call to the reflection pipeline). E2E-5 exercises the vote
+   * surface and must flip this on; other scenarios leave it off.
+   */
+  votingEnabled?: boolean;
 }
 
 export function buildMemoryConfig(
@@ -173,6 +180,14 @@ export function buildMemoryConfig(
           procedures: {
             ...config.memory.procedures,
             enabled: opts.proceduresEnabled,
+          },
+        }
+      : {}),
+    ...(opts.votingEnabled !== undefined
+      ? {
+          voting: {
+            ...config.memory.voting,
+            enabled: opts.votingEnabled,
           },
         }
       : {}),

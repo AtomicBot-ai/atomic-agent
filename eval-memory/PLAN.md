@@ -151,6 +151,27 @@ Classify each produced vote against the gold (`correct_upvote`,
 turns", not "perfect first-shot". Allowlist breaches must be **0** —
 that's the load-bearing invariant 18 guard, not a soft target.
 
+### E6 — procedure distill audit (phase 7b specific) [shipped]
+
+**Question:** does `ConsolidatorJob` correctly choose between
+distilling a **lesson** (conceptual cluster) vs a **procedure**
+(repeated tool-call recipe), and is the resulting procedure body
+faithful to the seeded steps?
+
+**Method:** 6 synthetic clusters — 3 procedural (homogeneous tool
+sequences like `os.fs.glob → os.fs.grep`), 3 conceptual (heterogeneous
+remediation recipes). Each cluster runs through the isolated
+`distill-with-procedure-isolated.ts` harness which exercises the
+combined lesson + procedure grammar branch. Outputs are graded by
+LLM-judge against a fixture rubric.
+
+**Cost:** ~10 minutes per full run.
+
+**Decision boundary:** procedural clusters must produce a `Procedure`
+with a non-empty `tool_hints` set that matches the seeded tools (≥80%
+hit rate); conceptual clusters must NOT produce a procedure (zero
+false positives). Mirror of E4's contract for the lesson branch.
+
 ### E7 — lesson lifecycle bench (phase 6 + 7a, deterministic, no LLM) [shipped]
 
 **Question:** do the age-out sweep, vote-driven deprecation, and
@@ -174,28 +195,103 @@ vote_score)`, runs `ConsolidatorJob.runOnce()` once with a frozen
 is an architectural-correctness bench — any drop is a Phase 6/7a
 regression worth investigating, not a tuning question.
 
+### E8 — procedure lifecycle bench (phase 7b, deterministic, no LLM) [shipped]
+
+**Question:** mirror of E7 for the procedure surface — does the
+phase-7b lifecycle for procedures (vote-driven deprecation, age-out
+sweep, overflow eviction, score-blended recall reranking) behave as
+the contract says?
+
+**Method:** 3 deterministic scenarios seeding `procedures` with
+varying `(created_at, success_count, vote_score, application_count)`.
+`ConsolidatorJob.runOnce()` runs once with a frozen `now`; asserts
+on per-procedure final `status` + `(byVote, byAge, byOverflow)` tally
++ `procedureStore.recall(...)` rerank order.
+
+**Cost:** ~1 second total (pure SQL + no LLM).
+
+**Decision boundary:** same as E7 — all precisions = 1.0. Any drop is
+a Phase 7b regression, not a tuning question.
+
+### E2E — cross-session scenarios (full v2, LLM in the loop) [shipped]
+
+**Question:** end-to-end, can knowledge formed in session N influence
+session N+1 across the full v2 stack — profile facts, lessons,
+procedures, bi-temporal supersession, and vote curation?
+
+**Method:** five scenarios, each chaining 2–4 sequential CLI sessions
+against a SHARED `<stateDir>` via `multi-session-driver.ts`, with
+optional explicit `runConsolidatorTick` injections between sessions.
+Reports land in `eval-memory/reports/run-<ISO>/e2e-N-*/`.
+
+| Scenario | What it proves | Mechanism |
+|---|---|---|
+| **E2E-1** profile recall | A fact stated in S1 lands in `### profile` and is reused in S2 / S3 without re-asking | Reflection writes profile fact end-of-turn; next sessions read it from the tail |
+| **E2E-2** lesson application | A lesson distilled from S1's repeated remediation episodes is recalled and applied in S3 | `ConsolidatorJob` between S2 and S3 via `runConsolidatorTick` |
+| **E2E-3** procedure follow | A repeated tool-call sequence in S1–S3 yields a `Procedure` that S4 follows on a similar task | Consolidator with `proceduresEnabled=true`; scenario-specific `linkSweepExample` |
+| **E2E-4** stale fact (bi-temporal) | A fact corrected in S2 supersedes the S1 row; S3 uses only the new value | `ProfileStore` `superseded_by` chain — readers filter to `IS NULL` |
+| **E2E-5** vote cleansing | Explicit user "helpful" / "noise" signals move `vote_score` in both directions | Vote-aware reflection on the shared slot; `votingEnabled=true`; `seed_memories` fixture step |
+
+Two harness helpers are load-bearing for the E2E suite:
+
+- `multi-session-driver.ts` — flat ordered list of steps:
+  `{kind: "session" | "consolidate" | "seed_memories"}`. The
+  `seed_memories` step writes fixture rows directly into
+  `MemoryStore` so the assertion can target a downstream pipeline
+  (vote / consolidator) without being gated by reflection variance.
+  Canonical use: E2E-5, where the subject of test is vote curation
+  rather than memory creation.
+- `consolidator-tick.ts` — programmatic `ConsolidatorJob.runOnce()`
+  invocation, including the eval-only `link-sweep` step that forces
+  `cachePrompt: false` for the `LinkGeneratorRunner` and accepts a
+  per-scenario `linkSweepExample` so the prompt's embedded example
+  matches the cluster context (e.g. CSV vs `.eslintignore`).
+
+**Cost:** ~3–8 minutes per scenario, ~15 min for the full set.
+
+**Decision boundary:** every scenario's `passed` must be `true`. A
+red E2E means the integration story for v2 broke — debug before
+shipping.
+
+**Known flake (eval-only, deferred):** E2E-3 passes consistently in
+isolation (`npm run eval:memory:e2e -- -t "E2E-3"` ~65s), but fails
+deterministically when run inside the full E2E suite after E2E-1/2/4/5
+have warmed the reflection slot. The failure mode is a `Procedure`
+without `tool_hints` — the distill prompt drifts to a generic
+extraction shape under hot-cache bias. This is **not** a production
+risk: production sessions don't run 5 unrelated scenario families
+back-to-back on the same slot, and distill in production uses
+heterogeneous cluster content where the hot-slot bias does not
+trigger. Fix (planned, eval-harness only): mirror the existing
+`cachePrompt: false` carve-out from link-sweep into the distill call
+inside `consolidator-tick.ts`. Until then, run E2E-3 in isolation
+when the rest of the suite is also being run.
+
 ## Run order and gates
 
 Strict-gates ROI ordering — deterministic + cheapest LLM signal first:
 
-1. **E7** (deterministic, ~1 s) → answers the Phase 6/7a lifecycle
-   question. If lessons aren't deprecating / reranking correctly,
-   nothing downstream is trustworthy.
-2. **E1** (offline, ~5 min) → answers the embeddings question. If
-   negative, fix or disable phase 1B before continuing.
-3. **E3** (semi-auto, ~30 min + manual) → answers the reflection
-   question. If reflection is noisy, fixing prompt / parser comes
-   **before** E2 — otherwise we'd measure the noise, not the
-   feature.
-4. **E5** (~3 min) → answers the vote-quality question. A red E5
-   does not block E2/E4 (vote curation is emergent over many turns)
-   but informs whether E2's deltas can be attributed to voting.
-5. **E2** (~1–2 h LLM time) → the headline number. Pass / fail signal
-   for "memory ON helps the agent".
-6. **E4** (~15 min) → phase 5 internal QA.
+1. **E7** (deterministic, ~1 s) → Phase 6/7a lesson lifecycle. If
+   lessons aren't deprecating / reranking correctly, nothing
+   downstream is trustworthy.
+2. **E8** (deterministic, ~1 s) → Phase 7b procedure lifecycle.
+   Same category as E7.
+3. **E1** (offline, ~5 min) → embeddings question. If negative,
+   fix or disable phase 1B before continuing.
+4. **E3** (semi-auto, ~30 min + manual) → reflection question. If
+   reflection is noisy, fixing prompt / parser comes **before** E2.
+5. **E5** (~3 min) → vote-quality question. A red E5 does not block
+   E2/E4 but informs whether E2's deltas can be attributed to voting.
+6. **E2** (~1–2 h LLM time) → the headline number for "memory ON
+   helps the agent".
+7. **E4** (~15 min) → phase 5 lesson distillation QA.
+8. **E6** (~10 min) → phase 7b procedure distillation QA. Mirror of
+   E4 for the procedure branch.
+9. **E2E** (~15 min) → cross-session integration story (E2E-1..5).
 
-A red verdict on E7, E2, or E3 is a **stop-go** signal — debug before
-shipping further phases.
+A red verdict on E7, E8, E2, or E3 is a **stop-go** signal — debug
+before shipping further phases. E2E failures are also stop-go: they
+prove or disprove the entire v2 integration story.
 
 ## Running
 
@@ -211,28 +307,32 @@ cp eval-memory/.env.example eval-memory/.env
 Run a single experiment:
 
 ```bash
-npm run eval:memory:e7                   # lifecycle bench (deterministic, no LLM)
+npm run eval:memory:e7                   # lesson lifecycle bench (deterministic, no LLM)
+npm run eval:memory:e8                   # procedure lifecycle bench (deterministic, no LLM)
 npm run eval:memory:e1                   # recall precision (no LLM)
 npm run eval:memory:e1 -- --bm25-only       # offline-only subset
 npm run eval:memory:e3                   # reflection audit (LLM + judge)
 npm run eval:memory:e5                   # vote decision audit (LLM + judge)
 npm run eval:memory:e2                   # paired ON/OFF sessions (LLM + judge)
-npm run eval:memory:e4                   # distillation audit (LLM + judge)
+npm run eval:memory:e4                   # lesson distillation audit (LLM + judge)
+npm run eval:memory:e6                   # procedure distillation audit (LLM + judge)
+npm run eval:memory:e2e                  # cross-session scenarios (E2E-1..5)
+npm run eval:memory:e2e -- -t "E2E-2"    # single E2E scenario
+npm run eval:memory:smoke:link-sweep     # link-sweep + cluster + distill smoke
 ```
 
-Run the full campaign (E7 → E1 → E3 → E5 → E2 → E4):
+Run the full campaign (E7 → E8 → E1 → E3 → E5 → E2 → E4 → E6 → E2E):
 
 ```bash
 npm run eval:memory                      # full sweep, exits non-zero on red verdicts
 npm run eval:memory -- --skip e2,e4         # partial sweep
+npm run eval:memory -- --skip e2e           # skip the cross-session suite
 ```
 
 Reports land in `eval-memory/reports/run-<ISO>/`.
 
 ## Out of scope (deferred)
 
-- **Phase 7b evals** — wait until that phase lands. The harness
-  shape will accommodate them.
 - **Real-world journal** — multi-day memory drift / consolidation
   observation. Needs operator commitment, not scriptable.
 - **Cross-model comparison** — same scenarios across different chat
