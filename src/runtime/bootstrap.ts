@@ -89,6 +89,7 @@ import { buildSkillCatalog } from "../skills/skill-catalog.js";
 import { seedStarterSkillsIfMissing } from "../skills/seed-starter-skills.js";
 
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
+import { filterToolDescriptorsByConfig } from "./filter-disabled-tools.js";
 import { buildCapabilities } from "../prompt/capabilities.js";
 import type {
   CapabilitiesSummary,
@@ -802,10 +803,31 @@ export async function createAgentRuntime(
   // image work before mmproj is loaded, the tool surfaces a clear
   // `VisionUnsupportedError` instead of silently disappearing from
   // the toolset.
-  const effectiveToolDescriptors =
-    config.vision.enabled && visionProvider !== undefined
-      ? DEFAULT_TOOL_DESCRIPTORS
-      : DEFAULT_TOOL_DESCRIPTORS.filter((d) => d.name !== "vision.describe");
+  // Drop descriptors whose backing tool will not be registered at
+  // runtime under the current config gates. Without this filter the
+  // stable prefix advertises tools that the registry rejects on
+  // first invocation — see `filter-disabled-tools.ts` for the full
+  // mapping. The historical inline `vision.describe` filter is now
+  // one entry in that table; behaviour for vision is unchanged.
+  const effectiveToolDescriptors = filterToolDescriptorsByConfig(
+    DEFAULT_TOOL_DESCRIPTORS,
+    {
+      vision: {
+        enabled: config.vision.enabled,
+        providerAvailable: visionProvider !== undefined,
+      },
+      memory: {
+        profile: { enabled: config.memory.profile.enabled },
+        notes: { enabled: config.memory.notes.enabled },
+        lessons: { enabled: config.memory.lessons.enabled },
+        procedures: { enabled: config.memory.procedures.enabled },
+      },
+      tasks: {
+        agentToolsEnabled:
+          config.tasks.enabled && config.tasks.agentToolsEnabled,
+      },
+    },
+  );
   if (config.vision.enabled) {
     logger.info("vision provider configured", {
       provider: visionProvider?.name ?? "(none)",

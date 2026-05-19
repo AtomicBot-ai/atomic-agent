@@ -152,22 +152,12 @@ export function buildMemoryConfig(
       ...config.memory.consolidation,
       enabled: true,
     },
-    // Phase 7b — keep procedures aligned with lessons for the ON
-    // profile. The production default is `false`, but evals exercise
-    // the full v2 surface: when `procedures.enabled = false`, the
-    // `memory.procedures.recall` tool descriptor still ships in the
-    // stable prefix (see `default-tool-descriptors-b.ts`) but the
-    // tool is **not** registered. The model then tries to call it
-    // and the agent loop fails the turn with
-    // `tool not registered in this agent: memory.procedures.recall`.
-    // Tracked as a separate production-side bug (descriptor must be
-    // filtered out of `effectiveToolDescriptors` when the tool is
-    // gated off — same shape as the existing `vision.describe`
-    // filter in `bootstrap.ts`).
-    procedures: {
-      ...config.memory.procedures,
-      enabled: true,
-    },
+    // Phase 7b is OFF by default in the ON profile too — the
+    // production default is `procedures.enabled=false` and the
+    // descriptor catalog is now filtered to match (see
+    // `filter-disabled-tools.ts`), so the agent stops trying to
+    // call `memory.procedures.recall`. Scenarios that need the
+    // procedure surface (E6, E8) set their own override.
   };
   return config;
 }
