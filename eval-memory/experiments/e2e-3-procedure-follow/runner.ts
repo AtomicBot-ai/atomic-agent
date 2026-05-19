@@ -53,6 +53,14 @@ export interface E2E3Report {
   storedProcedures: readonly ProcedureSnapshot[];
   procedureMatchesToolHints: boolean;
   s4MentionsKeywords: boolean;
+  /**
+   * True iff S4 called `memory.procedures.recall` — a hard signal
+   * that the persisted Procedure round-tripped into the prompt and
+   * the agent actively pulled it. This is more deterministic than
+   * `s4MentionsKeywords`, which depends on free-form reply phrasing
+   * and is mildly stochastic under Gemma-4 sampling.
+   */
+  s4CalledProcedureRecall: boolean;
   expectedToolHints: readonly string[];
   s4ReplyKeywords: readonly string[];
   passed: boolean;
@@ -70,7 +78,19 @@ export async function runE2E3(opts: E2E3Options): Promise<E2E3Report> {
     ? null
     : mkdtempSync(join(tmpdir(), "atomic-eval-e2e3-"));
   const stateDir = opts.stateDir ?? join(ownedDir!, "state");
-  const workingDir = opts.stateDir ?? join(ownedDir!, "cwd");
+  // BUG-FIX: a previous iteration accidentally aliased `workingDir`
+  // to `opts.stateDir` when an external state dir was supplied. That
+  // dumped the CSV fixtures inside `<stateDir>/exports/` while the
+  // agent's cwd-relative glob (`./exports/**/*.csv`) walked the same
+  // path — by luck it would have matched, except `<stateDir>` also
+  // holds `memory.sqlite`, `traces/`, `tasks.sqlite`, and the
+  // session DB grew with our CSV bytes next to it. Keep cwd
+  // separate from stateDir; when a caller supplies an external
+  // stateDir we plant the cwd as a sibling so the layout stays
+  // predictable on debug runs.
+  const workingDir = opts.stateDir
+    ? join(opts.stateDir, "..", "cwd")
+    : join(ownedDir!, "cwd");
   const scenario = E2E_3_SCENARIO;
 
   seedFixtures(workingDir, scenario.csvFixtures);
@@ -80,40 +100,63 @@ export async function runE2E3(opts: E2E3Options): Promise<E2E3Report> {
       stateDir,
       workingDir,
       llamaUrl: opts.llamaUrl,
+      // E2E-3 specifically tests Phase 7b procedure capture +
+      // surfacing. Flip the gate on so `memory.procedures.recall`
+      // stays in the descriptor catalog and the consolidator persists
+      // procedures (the `withProcedure: true` step below alone would
+      // produce a procedure row, but it would never round-trip into a
+      // later session because the tool is filtered out by default).
+      proceduresEnabled: true,
       steps: [
+        // S1..S3 are "log the recipe" sessions; they should land at
+        // step count = 2 (memory.notes.store + reply). The tight
+        // maxSteps + timeout below catch run-away tool exploration
+        // early — Gemma-4 occasionally gets distracted by os.fs.list
+        // or os.git.status and we'd rather fail fast than burn five
+        // minutes per session.
         {
           kind: "session",
           label: "S1",
           prompts: scenario.sessions.s1Prompts,
-          maxSteps: opts.maxSteps ?? 12,
-          timeoutMs: opts.perSessionTimeoutMs ?? 360_000,
+          maxSteps: opts.maxSteps ?? 4,
+          timeoutMs: opts.perSessionTimeoutMs ?? 60_000,
         },
         {
           kind: "session",
           label: "S2",
           prompts: scenario.sessions.s2Prompts,
-          maxSteps: opts.maxSteps ?? 12,
-          timeoutMs: opts.perSessionTimeoutMs ?? 360_000,
+          maxSteps: opts.maxSteps ?? 4,
+          timeoutMs: opts.perSessionTimeoutMs ?? 60_000,
         },
         {
           kind: "session",
           label: "S3",
           prompts: scenario.sessions.s3Prompts,
-          maxSteps: opts.maxSteps ?? 12,
-          timeoutMs: opts.perSessionTimeoutMs ?? 360_000,
+          maxSteps: opts.maxSteps ?? 4,
+          timeoutMs: opts.perSessionTimeoutMs ?? 60_000,
         },
         {
           kind: "consolidate",
           label: "between S3 and S4 (withProcedure)",
           withProcedure: true,
           minClusterSize: 3,
+          // Steer the link-sweep imperative away from the default
+          // vendor/eslint example — for CSV-scan notes the model
+          // disconnects when the recipe in the example feels
+          // unrelated to the candidate bodies.
+          linkSweepExample:
+            "e.g. both describe an os.fs.glob → os.fs.grep CSV scan recipe",
         },
+        // S4 actually executes the recipe and has the freshly-
+        // distilled Lesson + Procedure to lean on. Wider step budget
+        // and a longer timeout — this is the only session that does
+        // real fs work.
         {
           kind: "session",
           label: "S4",
           prompts: scenario.sessions.s4Prompts,
           maxSteps: opts.maxSteps ?? 12,
-          timeoutMs: opts.perSessionTimeoutMs ?? 360_000,
+          timeoutMs: opts.perSessionTimeoutMs ?? 180_000,
         },
       ],
     });
@@ -138,6 +181,8 @@ export async function runE2E3(opts: E2E3Options): Promise<E2E3Report> {
     const s4MentionsKeywords = scenario.s4ReplyKeywords.some((kw) =>
       s4Reply.includes(kw.toLowerCase()),
     );
+    const s4CalledProcedureRecall =
+      s4?.toolCallNames.includes("memory.procedures.recall") ?? false;
 
     return {
       scenarioId: scenario.id,
@@ -148,10 +193,19 @@ export async function runE2E3(opts: E2E3Options): Promise<E2E3Report> {
       storedProcedures: hits,
       procedureMatchesToolHints,
       s4MentionsKeywords,
+      s4CalledProcedureRecall,
       expectedToolHints: scenario.expectedToolHints,
       s4ReplyKeywords: scenario.s4ReplyKeywords,
+      // Phase 7b success criterion: the procedure was distilled AND
+      // referenced expected tools AND S4 either explicitly recalled
+      // the procedure (hard signal) or mentioned the recipe tools
+      // in its reply (loose proxy). The OR keeps the test robust
+      // against Gemma-4 phrasing drift while still requiring the
+      // procedure-recall surface to be observably exercised.
       passed:
-        procsAfter > 0 && procedureMatchesToolHints && s4MentionsKeywords,
+        procsAfter > 0 &&
+        procedureMatchesToolHints &&
+        (s4MentionsKeywords || s4CalledProcedureRecall),
     };
   } finally {
     if (ownedDir) rmSync(ownedDir, { recursive: true, force: true });

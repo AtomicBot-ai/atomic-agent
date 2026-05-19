@@ -42,6 +42,8 @@ export type MultiSessionStep =
       withProcedure?: boolean;
       minClusterSize?: number;
       maxClustersPerTick?: number;
+      /** See `ConsolidatorTickInput.linkSweepExample`. */
+      linkSweepExample?: string;
     };
 
 export interface MultiSessionInput {
@@ -51,6 +53,14 @@ export interface MultiSessionInput {
   llamaUrl: string;
   steps: readonly MultiSessionStep[];
   env?: Readonly<Record<string, string>>;
+  /**
+   * Phase 7b — flip `memory.procedures.enabled` for the seeded
+   * `config.json`. Off by default (production-like). Scenarios that
+   * exercise the procedure surface (E2E-3) set this to `true` so
+   * both the tool descriptor stays in the prompt and the consolidator
+   * can persist procedures.
+   */
+  proceduresEnabled?: boolean;
 }
 
 export type MultiSessionStepResult =
@@ -75,7 +85,12 @@ export async function driveMultiSession(
   mkdirSync(input.stateDir, { recursive: true });
   mkdirSync(input.workingDir, { recursive: true });
   mkdirSync(join(input.stateDir, "traces"), { recursive: true });
-  seedConfigJson(input.stateDir, "on", { llamaUrl: input.llamaUrl });
+  seedConfigJson(input.stateDir, "on", {
+    llamaUrl: input.llamaUrl,
+    ...(input.proceduresEnabled !== undefined
+      ? { proceduresEnabled: input.proceduresEnabled }
+      : {}),
+  });
 
   const steps: MultiSessionStepResult[] = [];
   for (const step of input.steps) {
@@ -99,6 +114,9 @@ export async function driveMultiSession(
       ...(step.minClusterSize !== undefined ? { minClusterSize: step.minClusterSize } : {}),
       ...(step.maxClustersPerTick !== undefined
         ? { maxClustersPerTick: step.maxClustersPerTick }
+        : {}),
+      ...(step.linkSweepExample !== undefined
+        ? { linkSweepExample: step.linkSweepExample }
         : {}),
     };
     const outcome = await runConsolidatorTick(tickInput);

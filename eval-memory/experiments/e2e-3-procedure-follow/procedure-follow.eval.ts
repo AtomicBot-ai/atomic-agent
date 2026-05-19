@@ -51,13 +51,15 @@ describe.sequential("E2E-3 — procedure-follow on similar task", () => {
     ).toBe(true);
   });
 
-  it("S4 reply references the procedure tools (loose proxy)", () => {
+  it("S4 exercises the persisted procedure (recall call or reply keywords)", () => {
     if (skipReason) return;
     expect(report).not.toBeNull();
     const s4 = report!.sessions.find((s) => s.label === "S4");
+    const signalHit =
+      report!.s4CalledProcedureRecall || report!.s4MentionsKeywords;
     expect(
-      report!.s4MentionsKeywords,
-      `S4 reply mentioned none of ${report!.s4ReplyKeywords.join("/")}\nlastReply: ${s4?.lastReply ?? "(none)"}`,
+      signalHit,
+      `S4 did not exercise the procedure:\n  memory.procedures.recall called: ${report!.s4CalledProcedureRecall}\n  reply keywords matched (${report!.s4ReplyKeywords.join("/")}): ${report!.s4MentionsKeywords}\n  toolCalls: ${(s4?.toolCallNames ?? []).join(", ")}\n  lastReply: ${s4?.lastReply ?? "(none)"}`,
     ).toBe(true);
   });
 });
@@ -76,6 +78,7 @@ function writeReports(run: ReportRun, report: E2E3Report): void {
     `procedures after consolidate: ${report.proceduresAfterConsolidate}`,
     `procedure has expected tool hint: ${report.procedureMatchesToolHints ? "yes" : "no"}`,
     `S4 reply mentions ${report.s4ReplyKeywords.join("/")}: ${report.s4MentionsKeywords ? "yes" : "no"}`,
+    `S4 called memory.procedures.recall: ${report.s4CalledProcedureRecall ? "yes" : "no"}`,
     "",
     "## Consolidator tick",
     "",

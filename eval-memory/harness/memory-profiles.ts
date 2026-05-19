@@ -42,6 +42,15 @@ export interface SeedConfigOptions {
    * profile (useful for E1's BM25-only sub-experiment).
    */
   embeddings?: { enabled: boolean; modelId?: string };
+  /**
+   * Phase 7b override. The "on" profile leaves
+   * `memory.procedures.enabled` at the production default (`false`)
+   * so the E2E-2 path matches the out-of-the-box agent. Scenarios
+   * that exercise the procedure surface (E2E-3, E6, E8) set this to
+   * `true` explicitly. When omitted, the underlying config schema
+   * default applies.
+   */
+  proceduresEnabled?: boolean;
 }
 
 export function buildMemoryConfig(
@@ -157,7 +166,16 @@ export function buildMemoryConfig(
     // descriptor catalog is now filtered to match (see
     // `filter-disabled-tools.ts`), so the agent stops trying to
     // call `memory.procedures.recall`. Scenarios that need the
-    // procedure surface (E6, E8) set their own override.
+    // procedure surface (E6, E8, E2E-3) set their own override via
+    // `proceduresEnabled` on `SeedConfigOptions`.
+    ...(opts.proceduresEnabled !== undefined
+      ? {
+          procedures: {
+            ...config.memory.procedures,
+            enabled: opts.proceduresEnabled,
+          },
+        }
+      : {}),
   };
   return config;
 }

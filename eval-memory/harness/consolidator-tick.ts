@@ -73,6 +73,17 @@ export interface ConsolidatorTickInput {
   linkSweepChunkSize?: number;
   /** Per-chunk LLM timeout (ms) — bumped for cold sweeps. Default 45000. */
   linkSweepTimeoutMs?: number;
+  /**
+   * Domain-specific example for the link-sweep `userMessage`. The
+   * default fits the E2E-2 vendor/eslint scenario; scenarios that
+   * cluster other kinds of notes (e.g. E2E-3's CSV scan recipe)
+   * pass their own concrete example here to keep Gemma-4 from
+   * silently picking `NONE` because the embedded example feels
+   * unrelated to the candidate set. Keep it short (<= ~120 chars)
+   * and concrete — abstract phrasing ("the same workflow") has
+   * been observed to underperform a concrete recipe phrase.
+   */
+  linkSweepExample?: string;
 }
 
 export interface LinkSweepStats {
@@ -116,6 +127,9 @@ export async function runConsolidatorTick(
         llamaClient,
         chunkSize: input.linkSweepChunkSize ?? 6,
         timeoutMs: input.linkSweepTimeoutMs ?? 60_000,
+        ...(input.linkSweepExample !== undefined
+          ? { example: input.linkSweepExample }
+          : {}),
       });
     }
 
@@ -185,7 +199,16 @@ export interface LinkSweepDeps {
   llamaClient: LlamaServerClient;
   chunkSize: number;
   timeoutMs: number;
+  /**
+   * Optional concrete example substituted into the imperative
+   * `userMessage` prompt. Defaults to the E2E-2 vendor/eslint case.
+   * See `linkSweepExample` doc on `ConsolidatorTickInput`.
+   */
+  example?: string;
 }
+
+const DEFAULT_LINK_SWEEP_EXAMPLE =
+  "e.g. both add a vendor path to .eslintignore";
 
 /**
  * Hydrate every unconsolidated memory and feed it in chunks to the
@@ -262,8 +285,7 @@ export async function runLinkSweep(deps: LinkSweepDeps): Promise<LinkSweepStats>
     // v4 (imperative) → 4 LINK lines, same model, same candidates.
     linksWritten += await runner.generate({
       sessionId,
-      userMessage:
-        "Compare every pair of notes. For each pair that shares a remediation recipe (e.g. both add a vendor path to .eslintignore), emit LINK <a> <b> [kind=RELATES_TO]. Do not output NONE — at least three pairs are obviously connected.",
+      userMessage: `Compare every pair of notes. For each pair that shares a remediation recipe (${deps.example ?? DEFAULT_LINK_SWEEP_EXAMPLE}), emit LINK <a> <b> [kind=RELATES_TO]. Do not output NONE — at least three pairs are obviously connected.`,
       assistantReply: "(internal batch pass)",
       candidates: chunk.map((e) => ({ id: e.id, body: e.content })),
     });
