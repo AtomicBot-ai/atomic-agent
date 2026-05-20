@@ -308,6 +308,15 @@ export interface AtomicAgentConfig {
         triggerEveryTurns: number;
         windowTurns: number;
       };
+      /**
+       * Multi-party reflection mode (config v19+). See
+       * UserConfigFile.memory.reflection.anySpeaker for rationale.
+       * When `true`, the reflection prompt switches to a prefix
+       * that treats every speaker in the USER channel as a source
+       * worth extracting (e.g. third-party dialog dumps from
+       * LoCoMo / LongMemEval benchmarks). Default `false`.
+       */
+      anySpeaker: boolean;
     };
     notes: {
       enabled: boolean;
@@ -664,6 +673,24 @@ export interface UserConfigFile {
        * window is never lost. Default `enabled = false` preserves the
        * per-turn behaviour exactly.
        */
+      /**
+       * Multi-party / "any-speaker" reflection mode (config v19+).
+       * When `true`, the reflection prompt switches to
+       * `REFLECTION_STABLE_PREFIX_ANY_SPEAKER` so the extractor
+       * treats every named speaker in the USER channel — including
+       * third parties — as a valid source for SET / NOTE
+       * extraction. Designed for evaluation benchmarks (LoCoMo,
+       * LongMemEval) where the USER message is a dump of a
+       * multi-party dialog rather than the user's own statements.
+       *
+       * Default `false`. Production personal-assistant users keep
+       * the user-centric prefix that rejects "content not stated
+       * by the user". Flipping the flag invalidates the reflection
+       * slot's KV cache once on the next call; the main agent slot
+       * is unaffected. Wins over `typedNotes` because the
+       * any-speaker prefix already enforces typed NOTEs.
+       */
+      anySpeaker: boolean;
       segmentation: {
         enabled: boolean;
         /**
@@ -983,7 +1010,7 @@ export interface UserConfigFile {
   telegram: TelegramConfig;
 }
 
-export const USER_CONFIG_VERSION = 18 as const;
+export const USER_CONFIG_VERSION = 19 as const;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -1020,6 +1047,12 @@ export const USER_CONFIG_VERSION = 18 as const;
  * reflection segmentation), and `memory.retrieve.rewriter.*` (Phase
  * A — heuristic-gated query rewriter for recall). All three default
  * to disabled so v17 → v18 is a transparent migration.
+ * v19 added `memory.reflection.anySpeaker` for multi-party / dialog
+ * extraction mode (default `false` — production users keep the
+ * user-centric prefix, evaluation benchmarks like LoCoMo flip the
+ * flag to true so reflection can extract facts about third-party
+ * speakers in the USER channel). Flipping the flag invalidates the
+ * reflection slot's KV cache once on the next call.
  * Older files are transparently upgraded by filling missing
  * blocks/fields from `USER_CONFIG_DEFAULTS`. Anything older than v5
  * is not migrated: this is active development, callers delete their
@@ -1039,6 +1072,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   15,
   16,
   17,
+  18,
   USER_CONFIG_VERSION,
 ];
 
@@ -1101,6 +1135,12 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
         // next call. The main agent slot is untouched.
         enabled: false,
       },
+      // Multi-party reflection mode (v19). Off by default —
+      // production personal-assistant users keep the user-centric
+      // prefix. Evaluation benchmarks (LoCoMo, LongMemEval) flip
+      // this to true so reflection can extract third-party
+      // speakers from prefill conversation transcripts.
+      anySpeaker: false,
       segmentation: {
         // memU-inspired addition (v18). Off by default — when on,
         // reflection fires every `triggerEveryTurns` turns over the
@@ -1935,6 +1975,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             "memory.reflection.typedNotes.enabled",
           ),
         },
+        anySpeaker: parseBool(
+          memoryReflection.anySpeaker ??
+            USER_CONFIG_DEFAULTS.memory.reflection.anySpeaker,
+          "memory.reflection.anySpeaker",
+        ),
         segmentation: {
           enabled: parseBool(
             memoryReflectionSegmentation.enabled ??

@@ -1907,6 +1907,11 @@ function buildReflectionRunner(args: {
     // boolean dep so the runner can pick the typed reflection prefix
     // and the parser can project [type=X] into the `type:<X>` tag.
     typedNotes: memory.reflection.typedNotes.enabled,
+    // Multi-party reflection mode (config v19). When enabled, the
+    // runner switches to REFLECTION_STABLE_PREFIX_ANY_SPEAKER so
+    // third-party speakers in the USER channel become valid
+    // extraction sources. Wins over `typedNotes`.
+    anySpeaker: memory.reflection.anySpeaker,
     logger: args.logger,
     metrics: args.metrics,
   });

@@ -301,6 +301,7 @@ export function loadConfig(): AtomicAgentConfig {
         typedNotes: {
           enabled: user.memory.reflection.typedNotes.enabled,
         },
+        anySpeaker: user.memory.reflection.anySpeaker,
         segmentation: {
           enabled: user.memory.reflection.segmentation.enabled,
           triggerEveryTurns:

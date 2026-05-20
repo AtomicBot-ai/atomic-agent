@@ -136,7 +136,7 @@ const hasLlama = typeof LLAMA_URL === "string" && LLAMA_URL.length > 0;
               maxQuestions: MAX_QUESTIONS_PER_CONV,
               maxSessions: MAX_SESSIONS_PER_CONV,
               interPromptDrainMs: profile === "full_v2" ? 1500 : 0,
-              postLastReplyDrainMs: profile === "full_v2" ? 5000 : 0,
+              postLastReplyDrainMs: profile === "full_v2" ? 60_000 : 0,
               keepStateDir: KEEP_STATE,
             });
             allResults.push(result);

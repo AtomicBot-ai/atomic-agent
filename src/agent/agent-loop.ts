@@ -114,12 +114,16 @@ export interface AgentLoopDependencies {
    */
   memoryContextProvider?: MemoryContextProvider;
   /**
-   * Optional end-of-turn memory reflection. When present, the loop:
-   *  1. calls `abortPending()` at the start of every `runTurn` so stale
-   *     reflections from the previous turn cannot race the current one,
-   *  2. fires `reflect({ sessionId, userMessage, assistantReply })` in
-   *     the background once the reply is ready — never awaited, never
-   *     allowed to throw.
+   * Optional end-of-turn memory reflection. When present, the loop
+   * fires `reflect({ sessionId, userMessage, assistantReply })` in
+   * the background once the reply is ready — never awaited, never
+   * allowed to throw. Race protection between fires on the same
+   * session is enforced INSIDE `ReflectionRunner.runOne` (the new
+   * reflect call aborts the previous controller for the same
+   * sessionId before starting), so the agent loop does NOT call
+   * `abortPending` per turn — see commit message / [PR ref] for the
+   * abort-race fix. Shutdown still calls `abortPending()` with no
+   * sessionId to drain everything in flight.
    * The loop knows nothing about prompts, grammars, or slot IDs; all of
    * that lives in `src/memory/reflection/`.
    */
@@ -337,13 +341,28 @@ export class AgentLoop {
   ): Promise<RunTurnResult> {
     let state = session;
 
-    // Cancel any reflection still in flight from the previous turn on
-    // *this* session. Scoped per-session so a sibling session's
-    // reflection (Option 6 cross-session parallelism) is never aborted
-    // by a turn we are running here. Must run before the LLM produces
-    // its first completion so the dedicated reflection slot frees up
-    // quickly.
-    this.deps.reflectionRunner?.abortPending({ sessionId: state.id });
+    // NOTE: previously called `reflectionRunner.abortPending({ sessionId })`
+    // here on every turn to "free the reflection slot quickly". That
+    // was over-aggressive: reflection fires only every Nth turn under
+    // segmentation, but the abort fired on every turn — so reflection
+    // from turn K was reliably cancelled at the start of turn K+1
+    // (within ~5ms of being fired, before the LLM call could even
+    // respond). Net effect: in 75-turn LoCoMo runs, 0 reflection
+    // writes landed. Confirmed via debug instrumentation in
+    // `reflection-runner.ts` — see commit message / [PR ref] for the
+    // 6-prompt e2e probe that pinned the race.
+    //
+    // The race-prevention contract is already enforced INSIDE
+    // `ReflectionRunner.runOne`: when a NEW reflect() is about to
+    // start for the same session, it aborts the previous controller
+    // first (see `previous?.abort()` in `runOne`). Reflection writes
+    // are additive, so a late-landing write from turn K landing
+    // during turn K+2 is harmless — the next prompt-build sees the
+    // strictly larger memory set.
+    //
+    // Shutdown path still calls `abortPending()` with no sessionId
+    // to drain every in-flight reflection before the runtime tears
+    // down SQLite handles.
 
     if (options.userMessage !== undefined) {
       const text = options.userMessage;

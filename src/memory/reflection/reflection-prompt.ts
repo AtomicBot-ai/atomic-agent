@@ -84,6 +84,66 @@ Rules:
 `;
 
 /**
+ * Multi-party / "any speaker" reflection prefix (config v19+
+ * addition). Designed for evaluation benchmarks (LoCoMo,
+ * LongMemEval) and any deployment where the USER message is a
+ * dump of a third-party conversation transcript rather than the
+ * user's own statements. Differs from the default user-centric
+ * prefixes in three ways:
+ *
+ *  - Drops the "Only durable content explicitly stated by the
+ *    user" guardrail. The default prompt aggressively rejects
+ *    content "introduced only by the assistant and not explicitly
+ *    confirmed by the user" — correct for a personal assistant,
+ *    wrong when the USER channel carries a multi-speaker dialog
+ *    that the assistant is supposed to remember on the user's
+ *    behalf.
+ *  - Encourages SET keys prefixed with the participant name
+ *    (`caroline_career_goal`, `melanie_kids_count`) so the
+ *    profile fact namespace stays clean across many tracked
+ *    third parties.
+ *  - Always asks for a `[type=event|behavior|knowledge|skill]`
+ *    marker on every NOTE — typed-NOTE extraction is the
+ *    canonical mode for this prefix, no separate "typed variant"
+ *    needed.
+ *
+ * Selecting this prefix at runtime requires
+ * `memory.reflection.anySpeaker = true` in the user config.
+ * Default is `false`; flipping the flag invalidates the reflection
+ * slot's KV cache once on the next call (same one-shot pattern as
+ * `typedNotes`). The main agent slot is untouched.
+ *
+ * Pinned by [reflection-prompt.test.ts](src/memory/reflection/reflection-prompt.test.ts)
+ * "any-speaker prefix is byte-stable" + the probe runs in
+ * `eval-memory/scripts/probe-reflection.mjs` that confirmed
+ * 8/8 NONE → 7/7 SET+NOTE on Caroline/Melanie dialog fixtures.
+ */
+export const REFLECTION_STABLE_PREFIX_ANY_SPEAKER = `You are a memory extractor for an assistant that helps the user track multi-party conversations.
+Given the last USER and ASSISTANT messages, output durable things worth remembering across sessions about ANY participant mentioned (the user, named third parties, or shared context).
+
+Two output channels:
+- SET key=value    atomic key/value facts about ANY participant or topic (e.g. caroline_career_goal=mental_health_counseling, melanie_wedding_year=2018, current_project=adoption_research). Rendered into every future prompt, so keep them small and canonical.
+- NOTE [type=X] body  freeform observations worth recalling later. ALWAYS prefix the body with one of [type=event], [type=behavior], [type=knowledge], or [type=skill]. Stored but NOT auto-rendered; looked up on demand.
+
+NOTE types (pick exactly one per line):
+- [type=event]      a specific happening at a particular time, with participants/location when known.
+- [type=behavior]   a recurring pattern, routine, or established solution.
+- [type=knowledge]  static factual content (concepts, relationships, life circumstances).
+- [type=skill]      a replicable how-to with concrete tools, steps, and outcomes.
+
+Rules:
+- Treat ANY content in the USER message as content worth extracting, including dialog between third parties (e.g. "[session_N] Caroline: ...").
+- Extract concrete events, relationships, decisions, preferences, plans, and life circumstances for every named participant.
+- Use snake_case keys with the participant name as a prefix when the fact concerns a specific person (e.g. caroline_partner_status, melanie_kids_count).
+- Use SET for atomic single-valued facts. Use NOTE for narrative episodes, decisions, or multi-attribute context.
+- Keep each SET value under 200 characters and each NOTE body under 500 characters.
+- Skip pure pleasantries, weather, transient moods.
+- If a SET already captures the fact, do not also emit a NOTE repeating it.
+- If there is truly nothing concrete worth remembering, output exactly: NONE
+- Otherwise output up to six lines total.
+`;
+
+/**
  * Fixed reflection preamble. Changing this string invalidates the
  * reflection slot's KV cache on the next call — treat edits the same
  * way we treat edits to the main stable prefix.
@@ -128,6 +188,17 @@ export interface ReflectionPromptInput {
    */
   typedNotes?: boolean;
   /**
+   * Multi-party / "any-speaker" reflection mode (config v19+).
+   * When `true`, the prompt switches to
+   * `REFLECTION_STABLE_PREFIX_ANY_SPEAKER` regardless of
+   * `typedNotes` (the any-speaker prefix is type-aware by design,
+   * so `typedNotes` is ignored when `anySpeaker` is set). Default
+   * `false` — preserves the user-centric extraction path
+   * byte-stable. Flipping the flag invalidates the reflection
+   * slot's KV cache once on the next call.
+   */
+  anySpeaker?: boolean;
+  /**
    * memU-inspired sliding-window segmentation (Phase B). When
    * present and non-empty, the tail renders the full transcript as
    * numbered USER/ASSISTANT exchanges (`### turn 1`, `### turn 2`,
@@ -166,9 +237,14 @@ export interface ReflectionPromptInput {
  * omitted so legacy callers stay byte-stable.
  */
 export function buildReflectionPrompt(input: ReflectionPromptInput): string {
-  const prefix = input.typedNotes
-    ? REFLECTION_STABLE_PREFIX_TYPED
-    : REFLECTION_STABLE_PREFIX;
+  // `anySpeaker` wins over `typedNotes` — the any-speaker prefix
+  // already enforces typed NOTEs, so the typed variant would be
+  // redundant. Order: anySpeaker → typedNotes → default.
+  const prefix = input.anySpeaker
+    ? REFLECTION_STABLE_PREFIX_ANY_SPEAKER
+    : input.typedNotes
+      ? REFLECTION_STABLE_PREFIX_TYPED
+      : REFLECTION_STABLE_PREFIX;
   if (input.transcript && input.transcript.length > 0) {
     const blocks: string[] = [];
     for (let i = 0; i < input.transcript.length; i += 1) {

@@ -152,6 +152,16 @@ export interface ReflectionRunnerDeps {
    * never touched typed mode.
    */
   typedNotes?: boolean;
+  /**
+   * Multi-party / "any-speaker" reflection mode (config v19+).
+   * When `true`, the runner picks
+   * `REFLECTION_STABLE_PREFIX_ANY_SPEAKER` so the extractor
+   * treats every named speaker in the USER channel — including
+   * third parties — as a valid source for SET / NOTE extraction.
+   * Wins over `typedNotes` (the any-speaker prefix already
+   * enforces typed NOTEs). Default `false`.
+   */
+  anySpeaker?: boolean;
   logger?: StructuredLogger;
   metrics?: AgentMetrics;
   /** Injectable clock for deterministic tests. Defaults to `Date.now`. */
@@ -257,6 +267,7 @@ export function createReflectionRunner(
     const startedAt = now();
     deps.logger?.debug("reflection.fired", { sessionId: input.sessionId });
 
+
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
@@ -271,6 +282,7 @@ export function createReflectionRunner(
         userMessage: input.userMessage,
         assistantReply: input.assistantReply,
         ...(deps.typedNotes ? { typedNotes: true } : {}),
+        ...(deps.anySpeaker ? { anySpeaker: true } : {}),
         // memU-inspired addition (Phase B). When the agent loop
         // hands a multi-turn transcript window, the prompt renders
         // it instead of the single trailing pair.
@@ -311,6 +323,7 @@ export function createReflectionRunner(
         input.sessionId,
         deps.logger,
       );
+
       // Memory-v2 phase 3. Apply EVOLVE directives last. The evolver
       // is fire-safe and the allowlist (surfaced ids for this turn)
       // gates every write so a runaway completion can't pollute the

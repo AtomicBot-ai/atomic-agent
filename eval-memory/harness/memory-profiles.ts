@@ -94,8 +94,17 @@ export function buildMemoryConfig(
 ): UserConfigFile {
   const base = USER_CONFIG_DEFAULTS;
   const embeddingsEnabled = opts.embeddings?.enabled ?? profile === "on";
+  // Default embedding model for eval campaigns is `bge-base-en-v1.5` —
+  // matches the on-disk GGUF + the PROFILE_PROMPT_BUDGETS_MS comment
+  // ("calibrated against ... bge-base-en-v1.5 stack"). Product
+  // `USER_CONFIG_DEFAULTS.localModels.embeddings.modelId` is `null`
+  // because production users pick their own; eval needs a working
+  // default so the second daemon actually starts and hybrid recall
+  // is exercised end-to-end.
   const embeddingModelId =
-    opts.embeddings?.modelId ?? base.localModels.embeddings?.modelId;
+    opts.embeddings?.modelId ??
+    base.localModels.embeddings?.modelId ??
+    (embeddingsEnabled ? "bge-base-en-v1.5" : null);
 
   // Start from the defaults, then apply the profile delta.
   const config: UserConfigFile = JSON.parse(JSON.stringify(base));
@@ -234,30 +243,47 @@ export function buildMemoryConfig(
           },
         }
       : {}),
-    ...(opts.segmentationEnabled !== undefined ||
-    opts.typedNotesEnabled !== undefined
-      ? {
-          reflection: {
-            ...config.memory.reflection,
-            ...(opts.segmentationEnabled !== undefined
-              ? {
-                  segmentation: {
-                    ...config.memory.reflection.segmentation,
-                    enabled: opts.segmentationEnabled,
-                  },
-                }
-              : {}),
-            ...(opts.typedNotesEnabled !== undefined
-              ? {
-                  typedNotes: {
-                    ...config.memory.reflection.typedNotes,
-                    enabled: opts.typedNotesEnabled,
-                  },
-                }
-              : {}),
-          },
-        }
-      : {}),
+    // Eval-only reflection overrides on the "on" profile:
+    //  - `timeoutMs` bumped from product default 10s → 60s. Prefill
+    //    sessions in LoCoMo dump 4-5k-char transcripts into the
+    //    reflection prompt; on the slow qwen-3.6-35b stack the LLM
+    //    call routinely exceeds 10s and the runner aborts before
+    //    `finish()` writes anything to disk.
+    //  - `maxNotesPerCall` bumped from 2 → 5. Diagnostics on a
+    //    Caroline prefill turn showed the model emit 5 NOTE lines,
+    //    only 2 of which were stored (cap dropped the other 3).
+    //  - `anySpeaker: true` switches reflection to the multi-party
+    //    prefix. Probe runs (8/8 NONE → 7/7 SET+NOTE) proved that
+    //    the production user-centric prompt rejects third-party
+    //    dialog in the USER channel — exactly the shape of LoCoMo
+    //    / LongMemEval prefill turns. With this flag the extractor
+    //    treats every named speaker as a valid source.
+    //    These caps stay in product defaults because they are
+    //    legitimate guardrails against pathological reflection
+    //    output in interactive use; eval intentionally widens them
+    //    to measure the reflection pipeline at full fidelity.
+    reflection: {
+      ...config.memory.reflection,
+      timeoutMs: 60_000,
+      maxNotesPerCall: 5,
+      anySpeaker: true,
+      ...(opts.segmentationEnabled !== undefined
+        ? {
+            segmentation: {
+              ...config.memory.reflection.segmentation,
+              enabled: opts.segmentationEnabled,
+            },
+          }
+        : {}),
+      ...(opts.typedNotesEnabled !== undefined
+        ? {
+            typedNotes: {
+              ...config.memory.reflection.typedNotes,
+              enabled: opts.typedNotesEnabled,
+            },
+          }
+        : {}),
+    },
   };
   return config;
 }
