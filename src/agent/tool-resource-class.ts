@@ -23,7 +23,15 @@
  *                      `requireApproval` synchronously inside `run()`.
  *                      Forbidden inside a batch — the validator rejects
  *                      the parse and the model is asked to split.
- *  - `terminal`      — `reply` / `finish`. Forbidden inside a batch.
+ *  - `terminal`      — `reply` / `finish`. Allowed only as the LAST
+ *                      element of a multi-call batch; mid-batch or
+ *                      duplicated terminals are rejected. The executor
+ *                      runs the terminal call strictly after every
+ *                      non-terminal call has settled, so `[store, reply]`
+ *                      collapses into one inference whose transcript is
+ *                      `tool_call(store) → tool_result(store) →
+ *                      assistant_reply`. Solo terminal calls keep the
+ *                      legacy semantics (length-1 batch).
  *
  * Groups in distinct classes execute concurrently with each other; the
  * total step wall is `max(group durations)`.

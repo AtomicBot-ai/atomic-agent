@@ -391,4 +391,71 @@ describe("parseReflectionOutput", () => {
     expect(result.facts[0]?.validFrom).toBeNull();
     expect(result.facts[0]?.supersedes).toBe("language");
   });
+
+  // --------------------------------------------------------------------------
+  // Phase C: memU-inspired typed-NOTE extraction
+  // --------------------------------------------------------------------------
+
+  it("phase C: extracts [type=event] into a synthetic type:event tag", () => {
+    const result = parseReflectionOutput(
+      "NOTE [type=event] flew to Lisbon on 2025-12-12 for the offsite\n",
+    );
+    expect(result.notes).toEqual([
+      {
+        body: "flew to Lisbon on 2025-12-12 for the offsite",
+        tags: ["type:event"],
+      },
+    ]);
+  });
+
+  it("phase C: extracts [type=behavior] / knowledge / skill", () => {
+    const result = parseReflectionOutput(
+      [
+        "NOTE [type=behavior] deploys on Fridays via pnpm ship",
+        "NOTE [type=knowledge] kubernetes pods can have init containers",
+        "NOTE [type=skill] use ripgrep with --type ts to scope code search",
+      ].join("\n"),
+    );
+    expect(result.notes.map((n) => n.tags[0])).toEqual([
+      "type:behavior",
+      "type:knowledge",
+      "type:skill",
+    ]);
+  });
+
+  it("phase C: merges type tag with trailing [tags=...] marker", () => {
+    const result = parseReflectionOutput(
+      "NOTE [type=event] launched v2.5 [tags=release,prod]\n",
+    );
+    expect(result.notes[0]).toEqual({
+      body: "launched v2.5",
+      tags: ["type:event", "release", "prod"],
+    });
+  });
+
+  it("phase C: drops unknown [type=X] silently (body still kept)", () => {
+    // Defensive parser path: even if a grammar regression let an
+    // unknown type slip through (or a legacy session is replayed),
+    // the parser fails closed on the tag namespace but does NOT drop
+    // the body — the observation is still worth recalling.
+    const result = parseReflectionOutput("NOTE [type=garbage] something happened\n");
+    expect(result.notes).toEqual([
+      { body: "something happened", tags: [] },
+    ]);
+  });
+
+  it("phase C: legacy untyped NOTE keeps the existing behaviour (no type tag added)", () => {
+    const result = parseReflectionOutput("NOTE plain old observation\n");
+    expect(result.notes).toEqual([{ body: "plain old observation", tags: [] }]);
+  });
+
+  it("phase C: a malformed (no trailing space) marker degrades to body content", () => {
+    // The parser only recognises the marker when followed by
+    // whitespace (matches the grammar's `[type=X] ` production).
+    // A truncated marker without trailing space falls through to
+    // the body so the observation is not silently dropped — the
+    // grammar prevents this shape in typed mode anyway.
+    const result = parseReflectionOutput("NOTE [type=event]\n");
+    expect(result.notes).toEqual([{ body: "[type=event]", tags: [] }]);
+  });
 });

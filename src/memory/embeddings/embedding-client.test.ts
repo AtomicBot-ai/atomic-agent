@@ -97,6 +97,59 @@ describe("LlamaEmbeddingClient", () => {
     expect(Array.from(r.vector)).toEqual([0.5, 0.5, 0.5]);
   });
 
+  it("accepts current llama.cpp top-level array shape [{ index, embedding: [[...]] }]", async () => {
+    // Variant (D) from `extractEmbeddingArray`. Observed against live
+    // llama.cpp with --embeddings + a BGE GGUF: the response is a
+    // top-level array even for a single input, with embedding nested.
+    const fetchFn = makeFetch(
+      () =>
+        new Response(
+          JSON.stringify([{ index: 0, embedding: [[4, 5, 6]] }]),
+          { status: 200 },
+        ),
+    );
+    const c = new LlamaEmbeddingClient({
+      url: "http://x",
+      dim: 3,
+      model: "m",
+      fetch: fetchFn,
+    });
+    const r = await c.embed({ text: "x" });
+    expect(Array.from(r.vector)).toEqual([4, 5, 6]);
+  });
+
+  it("accepts top-level array with flat embedding [{ index, embedding: [...] }]", async () => {
+    // Defensive: same variant (D) but embedding is flat rather than nested.
+    const fetchFn = makeFetch(
+      () =>
+        new Response(
+          JSON.stringify([{ index: 0, embedding: [7, 8, 9] }]),
+          { status: 200 },
+        ),
+    );
+    const c = new LlamaEmbeddingClient({
+      url: "http://x",
+      dim: 3,
+      model: "m",
+      fetch: fetchFn,
+    });
+    const r = await c.embed({ text: "x" });
+    expect(Array.from(r.vector)).toEqual([7, 8, 9]);
+  });
+
+  it("rejects empty top-level array as unrecognised shape", async () => {
+    const fetchFn = makeFetch(
+      () => new Response(JSON.stringify([]), { status: 200 }),
+    );
+    const c = new LlamaEmbeddingClient({
+      url: "http://x",
+      dim: 3,
+      model: "m",
+      fetch: fetchFn,
+    });
+    await expect(c.embed({ text: "x" })).rejects.toThrow(/shape unrecognised/);
+  });
+
   it("throws EmbeddingUnavailableError on HTTP 5xx", async () => {
     const fetchFn = makeFetch(
       () => new Response("backend exploded", { status: 502 }),

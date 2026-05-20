@@ -521,4 +521,74 @@ describe("parseUserConfigFile", () => {
       }),
     ).toThrow(/memory\.voting\.eventLogMaxRows/);
   });
+
+  // --------------------------------------------------------------------------
+  // memU-inspired memory fabric additions (config v18)
+  // --------------------------------------------------------------------------
+
+  it("transparently migrates v17 → v18 with all three new blocks defaulting to disabled", () => {
+    const parsed = parseUserConfigFile({ version: 17 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.memory.reflection.typedNotes.enabled).toBe(false);
+    expect(parsed.memory.reflection.segmentation.enabled).toBe(false);
+    expect(parsed.memory.retrieve.rewriter.enabled).toBe(false);
+  });
+
+  it("parses memory.reflection.typedNotes.enabled", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      memory: { reflection: { typedNotes: { enabled: true } } },
+    });
+    expect(parsed.memory.reflection.typedNotes.enabled).toBe(true);
+  });
+
+  it("parses memory.reflection.segmentation block end-to-end", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      memory: {
+        reflection: {
+          segmentation: { enabled: true, triggerEveryTurns: 5, windowTurns: 8 },
+        },
+      },
+    });
+    expect(parsed.memory.reflection.segmentation).toEqual({
+      enabled: true,
+      triggerEveryTurns: 5,
+      windowTurns: 8,
+    });
+  });
+
+  it("rejects non-positive memory.reflection.segmentation.triggerEveryTurns", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { reflection: { segmentation: { triggerEveryTurns: 0 } } },
+      }),
+    ).toThrow(/triggerEveryTurns/);
+  });
+
+  it("parses memory.retrieve.rewriter block end-to-end", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      memory: {
+        retrieve: {
+          rewriter: { enabled: true, timeoutMs: 5_000, historyTurns: 2 },
+        },
+      },
+    });
+    expect(parsed.memory.retrieve.rewriter).toEqual({
+      enabled: true,
+      timeoutMs: 5_000,
+      historyTurns: 2,
+    });
+  });
+
+  it("rejects non-positive memory.retrieve.rewriter.timeoutMs", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { retrieve: { rewriter: { timeoutMs: 0 } } },
+      }),
+    ).toThrow(/timeoutMs/);
+  });
 });

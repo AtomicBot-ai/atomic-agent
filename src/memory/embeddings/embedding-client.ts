@@ -58,14 +58,23 @@ export interface EmbeddingClient {
   embed(req: EmbedRequest): Promise<EmbedResult>;
 }
 
-interface LlamaServerEmbeddingResponse {
-  /**
-   * llama-server `/embedding` returns either:
-   *   - `{ embedding: number[] }` for `--pooling` enabled servers, or
-   *   - `[{ embedding: number[] }]` (OpenAI-shape) on `/v1/embeddings`.
-   * We accept both shapes so the client survives a llama.cpp version
-   * bump without forcing the caller to know which API surface is live.
-   */
+/**
+ * Shapes the client knows how to parse. llama.cpp + OpenAI-compat
+ * surfaces have produced four observed variants:
+ *
+ *   (A) `{ embedding: number[] }`               — legacy `/embedding`, pooled
+ *   (B) `{ embedding: number[][] }`             — legacy `/embedding`, nested batch
+ *   (C) `{ data: [{ embedding: number[] }] }`   — OpenAI `/v1/embeddings`
+ *   (D) `[ { index, embedding: number[][] } ]`  — current llama.cpp `/embedding`
+ *                                                  (top-level array, nested batch)
+ *
+ * `extractEmbeddingArray` accepts an `unknown` body because (D) is a
+ * top-level array — the object-typed interface only describes
+ * variants (A)–(C). The interface is retained for documentation of
+ * the object-shaped variants; the actual dispatch happens by
+ * structural inspection at runtime.
+ */
+interface LlamaServerEmbeddingObject {
   embedding?: number[] | number[][];
   data?: Array<{ embedding: number[] }>;
 }
@@ -124,7 +133,7 @@ export class LlamaEmbeddingClient implements EmbeddingClient {
           `embedding daemon returned HTTP ${res.status}: ${txt.slice(0, 200)}`,
         );
       }
-      const body = (await res.json()) as LlamaServerEmbeddingResponse;
+      const body = (await res.json()) as unknown;
       const raw = extractEmbeddingArray(body);
       if (!raw) {
         throw new EmbeddingUnavailableError(
@@ -151,23 +160,43 @@ export class LlamaEmbeddingClient implements EmbeddingClient {
   }
 }
 
-function extractEmbeddingArray(
-  body: LlamaServerEmbeddingResponse,
-): number[] | null {
-  if (Array.isArray(body.embedding) && typeof body.embedding[0] === "number") {
-    return body.embedding as number[];
+function extractEmbeddingArray(body: unknown): number[] | null {
+  // Variant (D): top-level array shape `[{ index, embedding: [[...]] | [...] }]`.
+  // Current llama.cpp `/embedding` always wraps in an outer array, even
+  // for a single input — `embedding` itself may be flat or nested.
+  if (Array.isArray(body)) {
+    const first = body[0] as { embedding?: unknown } | undefined;
+    if (first && first.embedding !== undefined) {
+      return unwrapEmbeddingField(first.embedding);
+    }
+    return null;
   }
+
+  if (!body || typeof body !== "object") return null;
+  const obj = body as LlamaServerEmbeddingObject;
+
+  if (obj.embedding !== undefined) {
+    const unwrapped = unwrapEmbeddingField(obj.embedding);
+    if (unwrapped) return unwrapped;
+  }
+  if (Array.isArray(obj.data) && obj.data[0]?.embedding) {
+    return obj.data[0].embedding;
+  }
+  return null;
+}
+
+/**
+ * Accept either a flat `number[]` or a nested `number[][]` and return
+ * the first row. Returns `null` when the value matches neither shape.
+ */
+function unwrapEmbeddingField(value: unknown): number[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  if (typeof value[0] === "number") return value as number[];
   if (
-    Array.isArray(body.embedding) &&
-    Array.isArray(body.embedding[0]) &&
-    typeof body.embedding[0]?.[0] === "number"
+    Array.isArray(value[0]) &&
+    typeof (value[0] as unknown[])[0] === "number"
   ) {
-    // llama.cpp /embedding occasionally returns nested arrays when
-    // multiple sequences are batched. We always send one — take [0].
-    return body.embedding[0] as number[];
-  }
-  if (Array.isArray(body.data) && body.data[0]?.embedding) {
-    return body.data[0].embedding;
+    return value[0] as number[];
   }
   return null;
 }

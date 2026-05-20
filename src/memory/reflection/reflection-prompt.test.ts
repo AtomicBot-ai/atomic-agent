@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   REFLECTION_MESSAGE_CHAR_CAP,
   REFLECTION_STABLE_PREFIX,
+  REFLECTION_STABLE_PREFIX_TYPED,
   buildReflectionPrompt,
 } from "./reflection-prompt.js";
 
@@ -84,6 +85,153 @@ describe("buildReflectionPrompt", () => {
       - Otherwise output up to six lines total; each line is either "SET key=value" (optionally followed by a pinned/keywords marker) or "NOTE body".
       "
     `);
+  });
+
+  // --------------------------------------------------------------------------
+  // Phase C: memU-inspired typed-NOTE preamble
+  // --------------------------------------------------------------------------
+
+  it("phase C: picks REFLECTION_STABLE_PREFIX_TYPED when typedNotes=true", () => {
+    const prompt = buildReflectionPrompt({
+      userMessage: "hi",
+      assistantReply: "hello",
+      typedNotes: true,
+    });
+    expect(prompt.startsWith(REFLECTION_STABLE_PREFIX_TYPED)).toBe(true);
+    expect(prompt.startsWith(REFLECTION_STABLE_PREFIX)).toBe(false);
+  });
+
+  it("phase C: falls back to legacy REFLECTION_STABLE_PREFIX when typedNotes is false/absent", () => {
+    const a = buildReflectionPrompt({
+      userMessage: "hi",
+      assistantReply: "hello",
+    });
+    const b = buildReflectionPrompt({
+      userMessage: "hi",
+      assistantReply: "hello",
+      typedNotes: false,
+    });
+    expect(a.startsWith(REFLECTION_STABLE_PREFIX)).toBe(true);
+    expect(b.startsWith(REFLECTION_STABLE_PREFIX)).toBe(true);
+    expect(a).toEqual(b);
+  });
+
+  it("phase C: typed prefix advertises all four canonical NOTE types", () => {
+    for (const t of ["event", "behavior", "knowledge", "skill"]) {
+      expect(REFLECTION_STABLE_PREFIX_TYPED).toContain(`[type=${t}]`);
+    }
+  });
+
+  it("phase C: typed prefix lists per-type forbidden content", () => {
+    expect(REFLECTION_STABLE_PREFIX_TYPED).toContain("Forbidden in every NOTE");
+    expect(REFLECTION_STABLE_PREFIX_TYPED).toContain("NEVER use for a single one-off event");
+    expect(REFLECTION_STABLE_PREFIX_TYPED).toContain("NEVER use for events or behaviors");
+  });
+
+  it("phase C: typed prefix is byte-stable across calls (KV-cache hygiene)", () => {
+    const a = buildReflectionPrompt({
+      userMessage: "x",
+      assistantReply: "y",
+      typedNotes: true,
+    });
+    const b = buildReflectionPrompt({
+      userMessage: "different",
+      assistantReply: "tail",
+      typedNotes: true,
+    });
+    expect(a.slice(0, REFLECTION_STABLE_PREFIX_TYPED.length)).toEqual(
+      b.slice(0, REFLECTION_STABLE_PREFIX_TYPED.length),
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // Phase B: memU-inspired sliding-window segmentation
+  // --------------------------------------------------------------------------
+
+  it("phase B: renders numbered USER/ASSISTANT turns when transcript is provided", () => {
+    const prompt = buildReflectionPrompt({
+      userMessage: "ignored when transcript is present",
+      assistantReply: "ignored too",
+      transcript: [
+        { user: "I'm in Lisbon", assistant: "Got it." },
+        { user: "Plan a trip", assistant: "Sure, when?" },
+        { user: "Next week", assistant: "Will do." },
+      ],
+    });
+    expect(prompt).toContain("### turn 1\nUSER: I'm in Lisbon\nASSISTANT: Got it.");
+    expect(prompt).toContain("### turn 2\nUSER: Plan a trip\nASSISTANT: Sure, when?");
+    expect(prompt).toContain("### turn 3\nUSER: Next week\nASSISTANT: Will do.");
+    expect(prompt).not.toContain("USER: ignored when transcript is present");
+    expect(prompt.endsWith("### output\n")).toBe(true);
+  });
+
+  it("phase B: keeps the stable prefix byte-identical when transcript is present", () => {
+    const singlePair = buildReflectionPrompt({
+      userMessage: "x",
+      assistantReply: "y",
+    });
+    const windowed = buildReflectionPrompt({
+      userMessage: "x",
+      assistantReply: "y",
+      transcript: [{ user: "x", assistant: "y" }],
+    });
+    expect(singlePair.startsWith(REFLECTION_STABLE_PREFIX)).toBe(true);
+    expect(windowed.startsWith(REFLECTION_STABLE_PREFIX)).toBe(true);
+    expect(singlePair.slice(0, REFLECTION_STABLE_PREFIX.length)).toEqual(
+      windowed.slice(0, REFLECTION_STABLE_PREFIX.length),
+    );
+  });
+
+  it("phase B: empty transcript array falls back to legacy single-pair rendering", () => {
+    const legacy = buildReflectionPrompt({
+      userMessage: "hi",
+      assistantReply: "hello",
+    });
+    const empty = buildReflectionPrompt({
+      userMessage: "hi",
+      assistantReply: "hello",
+      transcript: [],
+    });
+    expect(legacy).toEqual(empty);
+    expect(empty).toContain("USER: hi");
+    expect(empty).not.toContain("### turn 1");
+  });
+
+  it("phase B: composes with typedNotes=true (typed prefix + multi-turn tail)", () => {
+    const prompt = buildReflectionPrompt({
+      userMessage: "x",
+      assistantReply: "y",
+      typedNotes: true,
+      transcript: [
+        { user: "alpha", assistant: "beta" },
+        { user: "gamma", assistant: "delta" },
+      ],
+    });
+    expect(prompt.startsWith(REFLECTION_STABLE_PREFIX_TYPED)).toBe(true);
+    expect(prompt).toContain("### turn 1\nUSER: alpha\nASSISTANT: beta");
+    expect(prompt).toContain("### turn 2\nUSER: gamma\nASSISTANT: delta");
+  });
+
+  it("phase B: clamps each turn in the transcript independently", () => {
+    const huge = "x".repeat(REFLECTION_MESSAGE_CHAR_CAP + 200);
+    const prompt = buildReflectionPrompt({
+      userMessage: "ignored",
+      assistantReply: "ignored",
+      transcript: [
+        { user: huge, assistant: "ok" },
+        { user: "short", assistant: huge },
+      ],
+    });
+    const userLines = prompt.match(/USER: (.+)/g) ?? [];
+    for (const line of userLines) {
+      const body = line.slice("USER: ".length);
+      expect(body.length).toBeLessThanOrEqual(REFLECTION_MESSAGE_CHAR_CAP);
+    }
+    const assistantLines = prompt.match(/ASSISTANT: (.+)/g) ?? [];
+    for (const line of assistantLines) {
+      const body = line.slice("ASSISTANT: ".length);
+      expect(body.length).toBeLessThanOrEqual(REFLECTION_MESSAGE_CHAR_CAP);
+    }
   });
 
   it("clamps oversized messages to the character cap", () => {

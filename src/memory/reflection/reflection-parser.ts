@@ -348,15 +348,37 @@ function parseKeywordList(raw: string): string[] {
 }
 
 /**
- * Recognise `NOTE body` with an optional trailing ` [tags=a,b,c]`.
- * The tag marker, when present, must be the last non-empty segment on
- * the line — we tear it off greedily so tags do not leak into the
- * stored content.
+ * Recognise `NOTE body` with an optional **leading** `[type=X] `
+ * marker and an optional **trailing** ` [tags=a,b,c]` marker.
+ *
+ * The leading `[type=X]` marker (memU-inspired typed-NOTE extraction)
+ * is projected into a synthetic tag of the form `type:event` /
+ * `type:behavior` / `type:knowledge` / `type:skill`. Unknown type
+ * values are silently dropped (the body is still kept) — the prompt +
+ * grammar already restrict acceptable values, the parser fails closed
+ * on anything else so a regression in the prompt cannot pollute the
+ * tag namespace. Legacy untyped NOTEs (no leading marker) keep the
+ * existing behaviour: no `type:*` tag is added.
+ *
+ * The trailing `[tags=...]` marker, when present, must be the last
+ * non-empty segment on the line — we tear it off greedily so tags do
+ * not leak into the stored content.
  */
 function parseNoteLine(line: string): ReflectionNote | null {
   if (!line.startsWith("NOTE ")) return null;
-  const payload = line.slice(5).trim();
+  let payload = line.slice(5).trim();
   if (payload.length === 0) return null;
+
+  let typeTag: string | null = null;
+  const typeMatch = payload.match(/^\[type=([a-z]+)\]\s+/);
+  if (typeMatch) {
+    const typeValue = typeMatch[1] ?? "";
+    if (NOTE_TYPE_ALLOWLIST.has(typeValue)) {
+      typeTag = `type:${typeValue}`;
+    }
+    payload = payload.slice(typeMatch[0].length).trim();
+    if (payload.length === 0) return null;
+  }
 
   let body = payload;
   let tags: string[] = [];
@@ -371,8 +393,30 @@ function parseNoteLine(line: string): ReflectionNote | null {
     body.length > NOTE_BODY_MAX_LENGTH
       ? body.slice(0, NOTE_BODY_MAX_LENGTH)
       : body;
+  if (typeTag !== null) {
+    const merged: string[] = [typeTag];
+    for (const tag of tags) {
+      if (!merged.includes(tag) && merged.length < NOTE_MAX_TAGS) {
+        merged.push(tag);
+      }
+    }
+    return { body: clampedBody, tags: merged };
+  }
   return { body: clampedBody, tags };
 }
+
+/**
+ * Canonical NOTE type values mirrored from `reflection-grammar.ts`
+ * `NOTE_TYPES`. Kept here as a `Set<string>` for O(1) membership; the
+ * source of truth is the grammar constant which the runner / prompt
+ * also consume. Tests pin the two to stay in sync.
+ */
+const NOTE_TYPE_ALLOWLIST: ReadonlySet<string> = new Set([
+  "event",
+  "behavior",
+  "knowledge",
+  "skill",
+]);
 
 function extractTags(raw: string): string[] {
   const parts = raw

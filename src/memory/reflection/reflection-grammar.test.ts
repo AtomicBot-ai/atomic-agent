@@ -41,4 +41,16 @@ describe("REFLECTION_GRAMMAR", () => {
       /key\s*::=\s*\[a-z\]\s*\[a-z0-9_\]\{0,31\}/,
     );
   });
+
+  it("phase C: accepts an optional [type=X] marker on NOTE", () => {
+    // Marker is optional (`typemark?`) so legacy untyped NOTEs from
+    // older sessions remain grammatically valid. The four canonical
+    // type values mirror `NOTE_TYPES` in reflection-grammar.ts.
+    expect(REFLECTION_GRAMMAR).toMatch(/typemark\?/);
+    expect(REFLECTION_GRAMMAR).toMatch(/typemark\s*::=\s*"\[type="/);
+    expect(REFLECTION_GRAMMAR).toMatch(/"event"/);
+    expect(REFLECTION_GRAMMAR).toMatch(/"behavior"/);
+    expect(REFLECTION_GRAMMAR).toMatch(/"knowledge"/);
+    expect(REFLECTION_GRAMMAR).toMatch(/"skill"/);
+  });
 });

@@ -50,6 +50,15 @@ export type MultiSessionStep =
       prompts: readonly string[];
       maxSteps: number;
       timeoutMs: number;
+      /**
+       * Forwarded to `MultiTurnOptions.postLastReplyDrainMs`. Set
+       * this when the scenario relies on rows written by the
+       * fire-and-forget reflection runner being present after the
+       * session exits. See the doc-comment in `multi-turn-driver.ts`.
+       */
+      postLastReplyDrainMs?: number;
+      /** Forwarded to `MultiTurnOptions.interPromptDrainMs`. */
+      interPromptDrainMs?: number;
     }
   | {
       kind: "consolidate";
@@ -101,6 +110,19 @@ export interface MultiSessionInput {
    * vote surface (E2E-5) can flip `memory.voting.enabled=true`.
    */
   votingEnabled?: boolean;
+  /** v2.5 Phase A — see SeedConfigOptions.rewriterEnabled. */
+  rewriterEnabled?: boolean;
+  /** v2.5 Phase B — see SeedConfigOptions.segmentationEnabled. */
+  segmentationEnabled?: boolean;
+  /** v2.5 Phase C — see SeedConfigOptions.typedNotesEnabled. */
+  typedNotesEnabled?: boolean;
+  /**
+   * v2.5 evals that count reflection fires from stderr need
+   * `"debug"` to capture `reflection.fired` events. Forwarded to
+   * `seedConfigJson`. Defaults to the user-config default
+   * (`"info"`).
+   */
+  logLevel?: "debug" | "info" | "warn" | "error";
 }
 
 export type MultiSessionStepResult =
@@ -134,6 +156,16 @@ export async function driveMultiSession(
     ...(input.votingEnabled !== undefined
       ? { votingEnabled: input.votingEnabled }
       : {}),
+    ...(input.rewriterEnabled !== undefined
+      ? { rewriterEnabled: input.rewriterEnabled }
+      : {}),
+    ...(input.segmentationEnabled !== undefined
+      ? { segmentationEnabled: input.segmentationEnabled }
+      : {}),
+    ...(input.typedNotesEnabled !== undefined
+      ? { typedNotesEnabled: input.typedNotesEnabled }
+      : {}),
+    ...(input.logLevel !== undefined ? { logLevel: input.logLevel } : {}),
   });
 
   const steps: MultiSessionStepResult[] = [];
@@ -146,6 +178,12 @@ export async function driveMultiSession(
         maxSteps: step.maxSteps,
         timeoutMs: step.timeoutMs,
         ...(input.env ? { env: input.env } : {}),
+        ...(step.postLastReplyDrainMs !== undefined
+          ? { postLastReplyDrainMs: step.postLastReplyDrainMs }
+          : {}),
+        ...(step.interPromptDrainMs !== undefined
+          ? { interPromptDrainMs: step.interPromptDrainMs }
+          : {}),
       };
       const result = await driveMultiTurn(opts);
       steps.push({ kind: "session", label: step.label, result });

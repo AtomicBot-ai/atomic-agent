@@ -298,6 +298,15 @@ export function loadConfig(): AtomicAgentConfig {
         maxFactsPerCall: user.memory.reflection.maxFactsPerCall,
         autoStoreNotes: user.memory.reflection.autoStoreNotes,
         maxNotesPerCall: user.memory.reflection.maxNotesPerCall,
+        typedNotes: {
+          enabled: user.memory.reflection.typedNotes.enabled,
+        },
+        segmentation: {
+          enabled: user.memory.reflection.segmentation.enabled,
+          triggerEveryTurns:
+            user.memory.reflection.segmentation.triggerEveryTurns,
+          windowTurns: user.memory.reflection.segmentation.windowTurns,
+        },
       },
       notes: {
         enabled: user.memory.notes.enabled,
@@ -377,6 +386,13 @@ export function loadConfig(): AtomicAgentConfig {
         scoreBlend: user.memory.voting.scoreBlend,
         eventLogMaxRows: user.memory.voting.eventLogMaxRows,
         profileFilterThreshold: user.memory.voting.profileFilterThreshold,
+      },
+      retrieve: {
+        rewriter: {
+          enabled: user.memory.retrieve.rewriter.enabled,
+          timeoutMs: user.memory.retrieve.rewriter.timeoutMs,
+          historyTurns: user.memory.retrieve.rewriter.historyTurns,
+        },
       },
     },
     webhooks: user.webhooks,

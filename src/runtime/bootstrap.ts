@@ -54,6 +54,11 @@ import { ProcedureStore } from "../memory/procedures/procedure-store.js";
 import { createLessonLifecycleHook } from "../memory/lessons/lesson-lifecycle-hook.js";
 import { createDefaultMemoryContextProvider } from "../memory/memory-context-provider.js";
 import {
+  type RewriterLlmComplete,
+  createQueryRewriterRunner,
+  createRewriterAwareMemoryContextProvider,
+} from "../memory/retrieve/index.js";
+import {
   EmbeddingStore,
   EmbeddingWriter,
   LlamaEmbeddingClient,
@@ -1067,7 +1072,7 @@ export async function createAgentRuntime(
   // memory-index pointer rendering. Wired only when `memory.notes` is
   // enabled — otherwise the runtime has nothing to read from and the
   // prompt tail skips both sections.
-  const memoryContextProvider = config.memory.notes.enabled
+  const baseMemoryContextProvider = config.memory.notes.enabled
     ? createDefaultMemoryContextProvider({
         store: notesStore,
         recall: {
@@ -1121,6 +1126,46 @@ export async function createAgentRuntime(
       })
     : undefined;
 
+  // memU-inspired heuristic-gated query rewriter (Phase A, config v18).
+  // When enabled, wrap the default provider with a decorator that
+  // rewrites referential follow-ups via an LLM call on `slotId=-1`
+  // before delegating recall. Disabled-by-default contract: when the
+  // flag is off, `memoryContextProvider` is byte-identical to the
+  // pre-v18 chain.
+  let memoryContextProvider = baseMemoryContextProvider;
+  if (baseMemoryContextProvider && config.memory.retrieve.rewriter.enabled) {
+    const rewriterLlmComplete: RewriterLlmComplete = async (params) => {
+      if (params.signal.aborted) {
+        throw new DOMException("aborted", "AbortError");
+      }
+      const abortPromise = new Promise<never>((_, reject) => {
+        params.signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("aborted", "AbortError")),
+          { once: true },
+        );
+      });
+      const completionPromise = llmComplete({
+        prompt: params.prompt,
+        grammar: params.grammar,
+        slotId: params.slotId,
+        sessionId: params.sessionId,
+      });
+      return Promise.race([completionPromise, abortPromise]);
+    };
+    const rewriterRunner = createQueryRewriterRunner({
+      llmComplete: rewriterLlmComplete,
+      timeoutMs: config.memory.retrieve.rewriter.timeoutMs,
+      logger,
+      metrics,
+    });
+    memoryContextProvider = createRewriterAwareMemoryContextProvider({
+      inner: baseMemoryContextProvider,
+      rewriter: rewriterRunner,
+      historyTurns: config.memory.retrieve.rewriter.historyTurns,
+    });
+  }
+
   // The `skillCatalog` is a getter so that `agent-loop` reads the current
   // value on every step — `refreshSkills()` then does not require tearing
   // down the loop.
@@ -1138,6 +1183,25 @@ export async function createAgentRuntime(
       ? { profileFactsProvider: () => profileStore.list() }
       : {}),
     ...(reflectionRunner ? { reflectionRunner } : {}),
+    // memU-inspired addition (Phase B). Sliding-window reflection
+    // segmentation. When `enabled`, the agent loop defers
+    // reflection to every Nth turn (with a final-flush on
+    // `finish`) and packs the last W user/assistant pairs into the
+    // reflection prompt. Disabled by default — legacy per-reply
+    // single-pair behaviour is byte-stable when the block is
+    // omitted.
+    ...(config.memory.reflection.segmentation.enabled &&
+    reflectionRunner !== undefined
+      ? {
+          reflectionSegmentation: {
+            enabled: true,
+            triggerEveryTurns:
+              config.memory.reflection.segmentation.triggerEveryTurns,
+            windowTurns:
+              config.memory.reflection.segmentation.windowTurns,
+          },
+        }
+      : {}),
     ...(memoryContextProvider ? { memoryContextProvider } : {}),
     // Memory-v2 phase 6 — lesson lifecycle hook. Bumps
     // `success_count` / `failure_count` on every surfaced lesson at
@@ -1839,6 +1903,10 @@ function buildReflectionRunner(args: {
     maxNotesPerCall: notesWriteEnabled
       ? memory.reflection.maxNotesPerCall
       : 0,
+    // memU-inspired typed-NOTE extraction (Phase C). Threaded as a
+    // boolean dep so the runner can pick the typed reflection prefix
+    // and the parser can project [type=X] into the `type:<X>` tag.
+    typedNotes: memory.reflection.typedNotes.enabled,
     logger: args.logger,
     metrics: args.metrics,
   });

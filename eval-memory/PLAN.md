@@ -267,6 +267,60 @@ trigger. Fix (planned, eval-harness only): mirror the existing
 inside `consolidator-tick.ts`. Until then, run E2E-3 in isolation
 when the rest of the suite is also being run.
 
+### v2.5 (memU-inspired additions) — opt-in integration suite [shipped]
+
+Companion to the base v2 suite above. Covers the three opt-in
+features from `MEMORY_FABRIC_V2.5_MEMU_ADDITIONS.md`. Wired through a
+**separate** entry point (`npm run eval:memory:v25`) so flipping the
+v2.5 flags on remains a deliberate operator action — they are
+decoupled from the v2 release gate. Each experiment lives under
+`eval-memory/experiments/e9..e12/`.
+
+- **E9 — Phase A (query rewriter)** — *isolated harness*, no CLI
+  spawn. Drives `createQueryRewriterRunner` directly against the
+  live daemon over 8 cases (referential / non-referential gate,
+  empty-history short-circuit, 1ms hard timeout, stub-injected
+  parser-rejection bodies). Asserts the runner's slot-pinning
+  invariant (`slot=-1`) and a soft pass-rate floor. Cheapest of
+  the four (~10 s of LLM time on a healthy daemon).
+- **E10 — Phase B (reflection segmentation)** — *CLI spawn*, two
+  scenarios with identical 6-turn prompt lists. Runs once with
+  `segmentation.enabled=false` (legacy: ~6 reflection fires) and
+  once with `segmentation.enabled=true, triggerEveryTurns=3` (~2
+  cadence-gated fires). Counts `reflection.fired` debug log lines
+  in the agent's stderr and asserts a cadence ratio of ≥1.6×. The
+  `finish`-flush branch is **not** re-tested here (pinned by
+  `agent-loop-segmentation.test.ts`; the CLI exits on stdin EOF,
+  not via the agent emitting `finish`).
+- **E11 — Phase C (typed notes)** — *CLI spawn*, three
+  sub-scenarios:
+  1. `typed-roundtrip` — event + behavior prompts produce
+     `type:event` and `type:behavior` tags in `memories.tags`.
+  2. `forbidden-soft` — 10 trivial one-off action/event prompts.
+     Allows up to 30% misfires to the forbidden type (Q2: small
+     models are noisy on prompt-encoded forbidden lists).
+  3. `legacy-compat` — first session with the flag off (legacy
+     untyped notes), second session with the flag on (typed
+     notes). Asserts both rows survive in the same `memory.sqlite`
+     without schema drift and that S2 added at least one typed
+     row.
+- **E12 — combined smoke** — *CLI spawn*, single 18-turn session
+  with all three flags on. Asserts the integration does not
+  explode and that each phase produces at least one observable
+  signal (reflection fire, rewriter attempt, type:* tag). This is
+  a "did the integration co-exist" check, not a quality bar — the
+  scorecard §6 precision claims belong on the operator's
+  subjective audit, not on automated CI.
+
+Costs (per run, against a managed 9B chat llama):
+
+| Experiment | LLM time | Notes |
+|---|---:|---|
+| E9 | ~10 s | Isolated; cases are short prompts on `slot=-1`. |
+| E10 | ~5–12 min | 2 sessions × 6 turns × ~15 s/turn. |
+| E11 | ~15–25 min | Round-trip + 10 forbidden cases + legacy compat. |
+| E12 | ~10–20 min | One 18-turn session, mixed prompts. |
+
 ## Run order and gates
 
 Strict-gates ROI ordering — deterministic + cheapest LLM signal first:
@@ -320,6 +374,28 @@ npm run eval:memory:e2e                  # cross-session scenarios (E2E-1..5)
 npm run eval:memory:e2e -- -t "E2E-2"    # single E2E scenario
 npm run eval:memory:smoke:link-sweep     # link-sweep + cluster + distill smoke
 ```
+
+Run the **v2.5 (memU-inspired) integration suite** (E9–E12). This is a
+separate entry point on purpose — v2.5 features are opt-in and
+decoupled from the base v2 release gate (see
+[`MEMORY_FABRIC_V2.5_MEMU_ADDITIONS.md`](../MEMORY_FABRIC_V2.5_MEMU_ADDITIONS.md)).
+
+```bash
+npm run eval:memory:v25                  # all four v2.5 experiments
+npm run eval:memory:e9                   # Phase A — query rewriter (isolated, fast)
+npm run eval:memory:e10                  # Phase B — reflection segmentation cadence
+npm run eval:memory:e11                  # Phase C — typed NOTE extraction round-trip
+npm run eval:memory:e12                  # all-three-on combined smoke
+```
+
+The v2.5 suite is intentionally NOT wired into `npm run eval:memory`
+so flipping the new flags on stays a deliberate operator action.
+
+v2.5 decision-boundary env knobs (all optional):
+- `ATOMIC_AGENT_E9_MIN_OUTCOME_MATCH` (default `0.75`)
+- `ATOMIC_AGENT_E9_MIN_PASS_RATE` (default `0.7`)
+- `ATOMIC_AGENT_E10_MIN_CADENCE_RATIO` (default `1.6`)
+- `ATOMIC_AGENT_E11_MAX_FORBIDDEN_SHARE` (default `0.3`)
 
 Run the full campaign (E7 → E8 → E1 → E3 → E5 → E2 → E4 → E6 → E2E):
 

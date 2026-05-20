@@ -54,6 +54,23 @@ export interface ReflectionInput {
    * Optional — when missing, the audit row stores `NULL`.
    */
   turnIndex?: number;
+  /**
+   * memU-inspired addition (Phase B — config v18). Multi-turn
+   * transcript window. When present, the reflection prompt renders
+   * the entire array as numbered USER/ASSISTANT exchanges (instead
+   * of the single `userMessage` + `assistantReply` pair). The runner
+   * still extracts facts/notes across the whole window — sliding-
+   * window segmentation lets long sessions amortise reflection cost
+   * (fire every N turns over the last W pairs) without losing
+   * cross-turn signal.
+   *
+   * When omitted, the runner falls back to the legacy single-pair
+   * prompt so callers that never opt into segmentation stay
+   * byte-stable. The trailing pair in `transcript[]` MUST mirror
+   * `userMessage` / `assistantReply` (or be a strict superset) —
+   * the runner trusts the agent loop to project consistently.
+   */
+  transcript?: readonly { user: string; assistant: string }[];
 }
 
 /**
@@ -125,6 +142,16 @@ export interface ReflectionRunnerDeps {
    * directives but the runner drops them silently).
    */
   neighborEvolver?: NeighborEvolver;
+  /**
+   * memU-inspired typed-NOTE extraction. When `true`, the runner
+   * picks `REFLECTION_STABLE_PREFIX_TYPED` and tells the model to
+   * prefix every NOTE body with `[type=event|behavior|knowledge|skill]`.
+   * The parser projects the marker into a synthetic `type:X` tag on
+   * the stored MemoryEntry without changing the schema. Default
+   * `false` — preserves byte-stable behaviour for callers that have
+   * never touched typed mode.
+   */
+  typedNotes?: boolean;
   logger?: StructuredLogger;
   metrics?: AgentMetrics;
   /** Injectable clock for deterministic tests. Defaults to `Date.now`. */
@@ -243,6 +270,13 @@ export function createReflectionRunner(
       const prompt = buildReflectionPrompt({
         userMessage: input.userMessage,
         assistantReply: input.assistantReply,
+        ...(deps.typedNotes ? { typedNotes: true } : {}),
+        // memU-inspired addition (Phase B). When the agent loop
+        // hands a multi-turn transcript window, the prompt renders
+        // it instead of the single trailing pair.
+        ...(input.transcript && input.transcript.length > 0
+          ? { transcript: input.transcript }
+          : {}),
       });
       const completion = await deps.llmComplete({
         prompt,

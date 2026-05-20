@@ -58,6 +58,34 @@ export interface SeedConfigOptions {
    * surface and must flip this on; other scenarios leave it off.
    */
   votingEnabled?: boolean;
+  /**
+   * v2.5 Phase A override (`memory.retrieve.rewriter.enabled`).
+   * Default `false`. E9 / E12 flip this on. When set, the recall
+   * provider chain wraps the inner provider with the
+   * rewriter-aware decorator (see `src/memory/retrieve/`).
+   */
+  rewriterEnabled?: boolean;
+  /**
+   * v2.5 Phase B override (`memory.reflection.segmentation.enabled`).
+   * Default `false`. E10 / E12 flip this on. When set, reflection
+   * fires every `triggerEveryTurns` user turns (default 3) and on
+   * `finish` as a final flush.
+   */
+  segmentationEnabled?: boolean;
+  /**
+   * v2.5 Phase C override (`memory.reflection.typedNotes.enabled`).
+   * Default `false`. E11 / E12 flip this on. When set, reflection
+   * uses the typed-NOTE stable prefix + grammar variant that
+   * encodes `event` / `behavior` / `knowledge` / `skill` markers
+   * in `memories.tags`.
+   */
+  typedNotesEnabled?: boolean;
+  /**
+   * Override `log.level`. v2.5 scenarios that count reflection fires
+   * from stderr need `"debug"` (the runner logs `reflection.fired`
+   * at debug level). Defaults to the user-config default (`"info"`).
+   */
+  logLevel?: "debug" | "info" | "warn" | "error";
 }
 
 export function buildMemoryConfig(
@@ -98,6 +126,10 @@ export function buildMemoryConfig(
       enabled: true,
     },
   };
+
+  if (opts.logLevel) {
+    config.log = { ...config.log, level: opts.logLevel };
+  }
 
   // Memory flag deltas — single source of truth for ON vs OFF.
   if (profile === "off") {
@@ -188,6 +220,41 @@ export function buildMemoryConfig(
           voting: {
             ...config.memory.voting,
             enabled: opts.votingEnabled,
+          },
+        }
+      : {}),
+    ...(opts.rewriterEnabled !== undefined
+      ? {
+          retrieve: {
+            ...config.memory.retrieve,
+            rewriter: {
+              ...config.memory.retrieve.rewriter,
+              enabled: opts.rewriterEnabled,
+            },
+          },
+        }
+      : {}),
+    ...(opts.segmentationEnabled !== undefined ||
+    opts.typedNotesEnabled !== undefined
+      ? {
+          reflection: {
+            ...config.memory.reflection,
+            ...(opts.segmentationEnabled !== undefined
+              ? {
+                  segmentation: {
+                    ...config.memory.reflection.segmentation,
+                    enabled: opts.segmentationEnabled,
+                  },
+                }
+              : {}),
+            ...(opts.typedNotesEnabled !== undefined
+              ? {
+                  typedNotes: {
+                    ...config.memory.reflection.typedNotes,
+                    enabled: opts.typedNotesEnabled,
+                  },
+                }
+              : {}),
           },
         }
       : {}),

@@ -125,6 +125,21 @@ export interface AgentLoopDependencies {
    */
   reflectionRunner?: ReflectionRunner;
   /**
+   * memU-inspired addition (Phase B — config v18). Sliding-window
+   * reflection segmentation. When present and `enabled`, the loop
+   * fires `reflectionRunner.reflect(...)` only every
+   * `triggerEveryTurns` turns (or unconditionally on `reason: "finish"`
+   * — the final-flush invariant). Each fire packs the last
+   * `windowTurns` user/assistant pairs into `ReflectionInput.transcript`
+   * so the model can extract durable signal across topic-cohesive
+   * episodes instead of per-pair micro-reflections.
+   *
+   * When absent or `enabled === false`, the loop falls back to the
+   * legacy per-reply trigger and the single-pair prompt (byte-stable
+   * with pre-config-v18 callers).
+   */
+  reflectionSegmentation?: ReflectionSegmentationConfig;
+  /**
    * Memory-v2 phase 6 — lesson lifecycle hook.
    *
    * Invoked exactly once at the end of every `runTurn` with the
@@ -149,11 +164,36 @@ export interface AgentLoopDependencies {
   logger?: StructuredLogger;
 }
 
+/**
+ * memU-inspired addition (Phase B — config v18). Runtime knobs for
+ * sliding-window reflection segmentation. `triggerEveryTurns` is the
+ * cadence (every Nth turn fires; the rest are deferred), `windowTurns`
+ * is the size of the user/assistant pair window packed into the
+ * reflection prompt. Both must be `>= 1`.
+ */
+export interface ReflectionSegmentationConfig {
+  enabled: boolean;
+  triggerEveryTurns: number;
+  windowTurns: number;
+}
+
 export interface MemoryContextProviderInput {
   sessionId: string;
   userMessage: string | null;
   toolResultSummaries?: readonly string[];
   signal: AbortSignal;
+  /**
+   * memU-inspired addition (Phase A — config v18). Trailing
+   * user/assistant exchanges projected from `SessionState.turns`,
+   * supplied by the agent loop. Decorators (e.g. the heuristic-gated
+   * query rewriter under `src/memory/retrieve/`) read this field to
+   * resolve referential follow-ups against the recent context.
+   *
+   * The default provider ignores this field — older callers stay
+   * byte-stable. The list does NOT include the just-arrived user
+   * message — that is in `userMessage` instead.
+   */
+  recentTurns?: readonly { role: "user" | "assistant"; text: string }[];
 }
 
 export interface MemoryContext {
@@ -659,54 +699,102 @@ export class AgentLoop {
       invokeLessonLifecycle(this.deps, state.id, surfacedLessonIds, "success");
     }
 
-    // Fire async memory reflection for turns that ended with a genuine
-    // assistant reply. Never awaited — the runner swallows its own
-    // errors; the loop stays decoupled from memory-formation latency.
+    // Fire async memory reflection. Never awaited — the runner
+    // swallows its own errors; the loop stays decoupled from
+    // memory-formation latency.
+    //
+    // Legacy (segmentation disabled): fire on `reason === "reply"`
+    // when a user message arrived this turn, using a single
+    // user/assistant pair.
+    //
+    // Segmentation enabled (memU-inspired Phase B):
+    //   - On `reply`: fire iff `state.turnCount % triggerEveryTurns
+    //     === 0` (cadence gate).
+    //   - On `finish`: fire unconditionally — final flush so the
+    //     trailing partial window is never lost.
+    //   - Pack the last `windowTurns` user/assistant pairs into
+    //     `ReflectionInput.transcript`. The trailing pair's content
+    //     is also mirrored into `userMessage`/`assistantReply` so
+    //     the runner contract stays satisfied.
     if (
       this.deps.reflectionRunner &&
-      options.userMessage !== undefined &&
-      reason === "reply"
+      (reason === "reply" || reason === "finish")
     ) {
-      const assistantReply = findLastAssistantReply(state);
-      if (assistantReply !== null) {
-        // Memory-v2 phase 7a. The allowlist for the vote-runner is
-        // the union of (notes recalled this turn) ∪ (lessons
-        // recalled across all steps of this turn) ∪ (profile
-        // facts currently active). Profile facts are not gated by
-        // recall — they're always candidates because the renderer
-        // already surfaces them whenever they pass the
-        // contextual-keyword gate. Sourcing them here keeps the
-        // decorator's hydration cheap.
-        const profileFacts =
-          this.deps.profileFactsProvider?.() ?? [];
-        void this.deps.reflectionRunner.reflect({
-          sessionId: state.id,
-          userMessage: options.userMessage,
-          assistantReply,
-          // Memory-v2 phase 2. Surfaced ids for this turn — the
-          // allowlist for the link-generator sub-call. Empty / undefined
-          // when memory.notes is disabled OR no recall was performed.
-          ...(state.recalledNotes && state.recalledNotes.length > 0
-            ? { recalledMemoryIds: state.recalledNotes.map((n) => n.id) }
-            : {}),
-          // Memory-v2 phase 7a. Allowlist for the vote-runner —
-          // every lesson surfaced through any step of this turn,
-          // every profile fact currently active.
-          ...(surfacedLessonIds.size > 0
-            ? { recalledLessonIds: Array.from(surfacedLessonIds) }
-            : {}),
-          ...(surfacedProcedureIds.size > 0
-            ? { recalledProcedureIds: Array.from(surfacedProcedureIds) }
-            : {}),
-          ...(profileFacts.length > 0
-            ? {
-                recalledProfileFactIds: profileFacts
-                  .map((f) => f.id)
-                  .filter((id): id is number => typeof id === "number"),
-              }
-            : {}),
-          turnIndex: state.turns.length,
-        });
+      const segmentation = this.deps.reflectionSegmentation;
+      const segmentationActive =
+        segmentation?.enabled === true &&
+        segmentation.triggerEveryTurns >= 1 &&
+        segmentation.windowTurns >= 1;
+      const shouldFire = segmentationActive
+        ? reason === "finish" ||
+          (reason === "reply" &&
+            state.turnCount > 0 &&
+            state.turnCount % segmentation!.triggerEveryTurns === 0)
+        : reason === "reply" && options.userMessage !== undefined;
+      if (shouldFire) {
+        const transcript = segmentationActive
+          ? collectLastUserAssistantPairs(state, segmentation!.windowTurns)
+          : [];
+        const trailingPair =
+          transcript.length > 0 ? transcript[transcript.length - 1] : null;
+        const userMessage = segmentationActive
+          ? (trailingPair?.user ?? options.userMessage ?? null)
+          : (options.userMessage ?? null);
+        const assistantReply = segmentationActive
+          ? (trailingPair?.assistant ?? findLastAssistantReply(state))
+          : findLastAssistantReply(state);
+        // Skip when we genuinely have nothing to extract from
+        // (e.g. a `finish`-only session without a user/assistant
+        // pair). The runner contract requires non-null
+        // `userMessage` / `assistantReply`.
+        if (userMessage !== null && assistantReply !== null) {
+          // Memory-v2 phase 7a. The allowlist for the vote-runner
+          // is the union of (notes recalled this turn) ∪ (lessons
+          // recalled across all steps of this turn) ∪ (profile
+          // facts currently active). Profile facts are not gated
+          // by recall — they're always candidates because the
+          // renderer already surfaces them whenever they pass the
+          // contextual-keyword gate. Sourcing them here keeps the
+          // decorator's hydration cheap.
+          const profileFacts =
+            this.deps.profileFactsProvider?.() ?? [];
+          void this.deps.reflectionRunner.reflect({
+            sessionId: state.id,
+            userMessage,
+            assistantReply,
+            // Memory-v2 phase 2. Surfaced ids for this turn — the
+            // allowlist for the link-generator sub-call. Empty /
+            // undefined when memory.notes is disabled OR no recall
+            // was performed.
+            ...(state.recalledNotes && state.recalledNotes.length > 0
+              ? { recalledMemoryIds: state.recalledNotes.map((n) => n.id) }
+              : {}),
+            // Memory-v2 phase 7a. Allowlist for the vote-runner —
+            // every lesson surfaced through any step of this turn,
+            // every profile fact currently active.
+            ...(surfacedLessonIds.size > 0
+              ? { recalledLessonIds: Array.from(surfacedLessonIds) }
+              : {}),
+            ...(surfacedProcedureIds.size > 0
+              ? { recalledProcedureIds: Array.from(surfacedProcedureIds) }
+              : {}),
+            ...(profileFacts.length > 0
+              ? {
+                  recalledProfileFactIds: profileFacts
+                    .map((f) => f.id)
+                    .filter((id): id is number => typeof id === "number"),
+                }
+              : {}),
+            turnIndex: state.turns.length,
+            // memU-inspired addition (Phase B). Multi-turn window
+            // is only attached when segmentation is active —
+            // otherwise the runner falls back to the byte-stable
+            // single-pair prompt.
+            ...(segmentationActive && transcript.length > 0
+              ? { transcript }
+              : {}),
+          });
+        }
       }
     }
 
@@ -762,6 +850,15 @@ async function refreshMemoryContext(
       sessionId: state.id,
       userMessage: options.userMessage ?? null,
       toolResultSummaries: collectRecentToolResultSummaries(state),
+      // memU-inspired addition (Phase A). Project the session's
+      // existing `user`/`assistant_reply` turns into the shape the
+      // rewriter decorator expects. The current user message lives
+      // in `userMessage` above, so we exclude it from this list to
+      // keep semantics clean: `recentTurns` is "history BEFORE this
+      // turn's user message". The agent loop has already appended
+      // the current user turn to `state.turns` at this point, so we
+      // drop the trailing user row whose `text` matches.
+      recentTurns: collectRecentUserAssistantTurns(state, options.userMessage),
       signal: options.signal,
     });
     const lessons = ctx.lessons ?? [];
@@ -805,4 +902,82 @@ function collectRecentToolResultSummaries(
     summaries.push(`${turn.tool}: ${turn.summary}`);
   }
   return summaries.reverse();
+}
+
+/**
+ * memU-inspired addition (Phase A). Walk the session backwards and
+ * collect the trailing `user` / `assistant_reply` rows in
+ * chronological order. Excludes the just-arrived user message
+ * (matched against `currentUserMessage`) so the rewriter's history
+ * never contains the message it is being asked to rewrite. The cap
+ * is intentionally generous so a long-context decorator (e.g. a
+ * future segmentation-aware rewriter) can use a wider window without
+ * a second pass.
+ */
+const RECENT_TURN_PROJECTION_CAP = 12;
+
+/**
+ * memU-inspired addition (Phase B). Walk the session backwards and
+ * collect the trailing user/assistant pairs in chronological order
+ * for the segmentation-aware reflection window. A "pair" is a `user`
+ * row followed by the next `assistant_reply` row in the conversation.
+ * Intervening tool calls / results are ignored — the reflection
+ * prompt only consumes the human/agent text.
+ *
+ * Returns up to `windowTurns` pairs in chronological order (oldest
+ * first). When the trailing turn has a `user` row without an
+ * `assistant_reply` (e.g. the model emitted `finish` before
+ * replying), that orphan pair is dropped so every entry in the
+ * window is complete.
+ */
+function collectLastUserAssistantPairs(
+  state: SessionState,
+  windowTurns: number,
+): { user: string; assistant: string }[] {
+  if (windowTurns <= 0) return [];
+  // Walk forward to produce stable pair boundaries: each `user` row
+  // owns the *next* `assistant_reply` row that follows it (if any).
+  const pairs: { user: string; assistant: string }[] = [];
+  let pendingUser: string | null = null;
+  for (const turn of state.turns) {
+    if (!turn) continue;
+    if (turn.kind === "user") {
+      pendingUser = turn.text;
+    } else if (turn.kind === "assistant_reply" && pendingUser !== null) {
+      pairs.push({ user: pendingUser, assistant: turn.text });
+      pendingUser = null;
+    }
+  }
+  if (pairs.length <= windowTurns) return pairs;
+  return pairs.slice(pairs.length - windowTurns);
+}
+
+function collectRecentUserAssistantTurns(
+  state: SessionState,
+  currentUserMessage: string | undefined,
+): { role: "user" | "assistant"; text: string }[] {
+  const rows: { role: "user" | "assistant"; text: string }[] = [];
+  for (
+    let i = state.turns.length - 1;
+    i >= 0 && rows.length < RECENT_TURN_PROJECTION_CAP;
+    i -= 1
+  ) {
+    const turn = state.turns[i];
+    if (!turn) continue;
+    if (turn.kind === "user") {
+      // Skip the trailing user row that mirrors `currentUserMessage`
+      // — the rewriter consumes that via `MemoryContextProviderInput.userMessage`.
+      if (
+        rows.length === 0 &&
+        currentUserMessage !== undefined &&
+        turn.text === currentUserMessage
+      ) {
+        continue;
+      }
+      rows.push({ role: "user", text: turn.text });
+    } else if (turn.kind === "assistant_reply") {
+      rows.push({ role: "assistant", text: turn.text });
+    }
+  }
+  return rows.reverse();
 }

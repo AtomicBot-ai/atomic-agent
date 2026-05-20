@@ -57,6 +57,40 @@ export interface MultiTurnOptions {
   timeoutMs: number;
   /** Additional env vars to inject. */
   env?: Readonly<Record<string, string>>;
+  /**
+   * Wait this many ms AFTER the last assistant reply before closing
+   * stdin. Workaround for the reflection-runner's fire-and-forget
+   * lifecycle: `runtime.shutdown()` calls `reflectionRunner.abortPending()`,
+   * which cancels any in-flight reflection that has not yet written
+   * to `memory.sqlite`. Set this to e.g. 15000 when the scenario
+   * depends on reflection-written rows being present after the
+   * session exits (E11 / E12). The drain wait races against
+   * `timeoutMs` so make sure the latter is large enough.
+   *
+   * Default `0` — preserves the legacy "close stdin immediately"
+   * behaviour for all callers that do not care about reflection
+   * completion (E2E-*, E2, etc.).
+   */
+  postLastReplyDrainMs?: number;
+  /**
+   * Sleep this many ms AFTER each assistant reply BEFORE sending the
+   * next user prompt. Same motivation as `postLastReplyDrainMs` but
+   * applies between turns within a session — the reflection runner
+   * aborts the prior reflection on every new turn, so a short
+   * inter-turn gap is sometimes the only way to let early-turn
+   * reflections commit before the next one starts.
+   *
+   * Default `0`.
+   */
+  interPromptDrainMs?: number;
+  /**
+   * Test seam — when set, replaces the auto-resolved CLI command
+   * with the provided `command` + `baseArgs`. The driver appends its
+   * own `--cwd / --no-approval / --max-steps` flags as usual; pass an
+   * empty array for `baseArgs` if the override does not need them.
+   * Production callers leave this undefined.
+   */
+  cliOverride?: { command: string; baseArgs: readonly string[]; appendDriverFlags?: boolean };
 }
 
 export interface TurnRecord {
@@ -89,6 +123,22 @@ export interface MultiTurnResult {
   turns: TurnRecord[];
   /** Raw stderr — useful for debugging when something exploded mid-run. */
   stderrTail: string;
+  /**
+   * Full raw stderr collected during the subprocess run. Used by
+   * v2.5 evals (E10 / E11 / E12) to count structured log events
+   * such as `reflection.fired` without having to plumb metrics
+   * through process boundaries. Kept distinct from `stderrTail`
+   * so existing callers that only need the last 4KB are unaffected.
+   */
+  stderrAll: string;
+  /**
+   * One entry per prompt: the exact line the driver received from
+   * stdout and used as that prompt's reply. Surfaced for postmortem
+   * + the prompt↔reply alignment test (`multi-turn-driver.test.ts`).
+   * Independent of `turns[i].assistantReply`, which is rebuilt from
+   * the trace file `tool_invocation` events.
+   */
+  replyLinesPerPrompt: (string | null)[];
 }
 
 export class MultiTurnDriverError extends Error {
@@ -119,18 +169,28 @@ export async function driveMultiTurn(opts: MultiTurnOptions): Promise<MultiTurnR
   if (opts.prompts.length === 0) {
     throw new MultiTurnDriverError("driveMultiTurn requires at least one prompt");
   }
-  const { command, baseArgs } = resolveCliCommand();
-  const args = [
-    ...baseArgs,
-    "run",
-    "--cwd",
-    opts.workingDir,
-    "--no-approval",
-    "--max-steps",
-    String(opts.maxSteps),
-  ];
+  const resolved = opts.cliOverride
+    ? { command: opts.cliOverride.command, baseArgs: [...opts.cliOverride.baseArgs] }
+    : resolveCliCommand();
+  const appendDriverFlags = opts.cliOverride?.appendDriverFlags ?? !opts.cliOverride;
+  const args = appendDriverFlags
+    ? [
+        ...resolved.baseArgs,
+        "run",
+        "--cwd",
+        opts.workingDir,
+        "--no-approval",
+        "--max-steps",
+        String(opts.maxSteps),
+      ]
+    : [...resolved.baseArgs];
+  const { command } = resolved;
 
   const startedAt = Date.now();
+  // Captured by the inner Promise body and returned alongside
+  // `MultiTurnResult.replyLinesPerPrompt`. Lives in the outer scope
+  // so it survives the Promise boundary.
+  const replyLinesPerPrompt: (string | null)[] = [];
   const childResult = await new Promise<{
     exitCode: number | null;
     signal: NodeJS.Signals | null;
@@ -154,7 +214,17 @@ export async function driveMultiTurn(opts: MultiTurnOptions): Promise<MultiTurnR
     let stderr = "";
     let timedOut = false;
     let pendingReplyResolver: ((line: string) => void) | null = null;
+    let pendingExitCleanup: (() => void) | null = null;
     let stdoutBacklog: string[] = [];
+    // Diagnostics counter — invariant breach if non-zero on a clean
+    // run (means stdout produced a line while a stale resolver was
+    // overwritten). Surfaced via `MultiTurnResult.stderrAll` for
+    // postmortem.
+    let resolverOverwriteCount = 0;
+    const driverDebug = process.env.ATOMIC_AGENT_DRIVER_DEBUG === "1";
+    const debugLog = (msg: string) => {
+      if (driverDebug) process.stderr.write(`[driver] ${msg}\n`);
+    };
 
     const killTimer = setTimeout(() => {
       timedOut = true;
@@ -168,6 +238,17 @@ export async function driveMultiTurn(opts: MultiTurnOptions): Promise<MultiTurnR
      * conceptually but the agent always writes it as one
      * `process.stdout.write(reply + "\n")` call, so the first
      * encountered newline on stdout always closes one turn.
+     *
+     * Listener-leak fix: the previous implementation registered
+     * `child.once("close", onExit)` on every wait but only removed it
+     * from inside `onExit` itself — i.e. only when the child exited.
+     * On the happy path (reply arrived through `pendingReplyResolver`),
+     * the listener leaked. After ~10 turns Node emitted
+     * `MaxListenersExceededWarning`; after ~100 turns the warning
+     * silently capped the leaked count but the EventEmitter still
+     * held references via closure. The fix is to **always** remove
+     * the listener after either resolution path — both `pendingReply`
+     * and `onExit` now go through one cleanup hook.
      */
     const waitForNextReplyLine = (): Promise<string | null> =>
       new Promise((resolveLine) => {
@@ -175,19 +256,38 @@ export async function driveMultiTurn(opts: MultiTurnOptions): Promise<MultiTurnR
           resolveLine(stdoutBacklog.shift()!);
           return;
         }
+        if (pendingReplyResolver !== null) {
+          // Caller invariant breach — every wait must be awaited
+          // before the next is started. Count it so postmortem can
+          // see it; resolve the prior wait with null so it does not
+          // hang forever, then proceed with the new one.
+          resolverOverwriteCount += 1;
+          debugLog(`pendingReplyResolver overwritten (count=${resolverOverwriteCount})`);
+          const stale = pendingReplyResolver;
+          pendingReplyResolver = null;
+          stale("");
+        }
+        const onExit = () => {
+          // Defensive — only fires if child closed before this wait
+          // resolved through stdout.
+          if (pendingExitCleanup) {
+            pendingExitCleanup();
+            pendingExitCleanup = null;
+          }
+          resolveLine(null);
+        };
         pendingReplyResolver = (line) => {
+          if (pendingExitCleanup) {
+            pendingExitCleanup();
+            pendingExitCleanup = null;
+          }
           pendingReplyResolver = null;
           resolveLine(line);
         };
-        // If the process exits while we're waiting, give up.
-        const onExit = () => {
-          if (pendingReplyResolver) {
-            pendingReplyResolver = null;
-            resolveLine(null);
-          }
+        child.once("close", onExit);
+        pendingExitCleanup = () => {
           child.off("close", onExit);
         };
-        child.once("close", onExit);
       });
 
     let stdoutBuffer = "";
@@ -216,24 +316,81 @@ export async function driveMultiTurn(opts: MultiTurnOptions): Promise<MultiTurnR
     });
     child.on("close", (code, signal) => {
       clearTimeout(killTimer);
+      // Pin stopReason synchronously: the inner async loop may not yet
+      // have observed `waitForNextReplyLine() === null` at this point
+      // (microtask queue), so its own `stopReason = "child_exited"`
+      // assignment lands too late to be captured by the summary line
+      // resolveSpawn snapshots. Production traces showed this race
+      // surface as a misleading `stopReason=loop_complete` on every
+      // child-exited shutdown.
+      if (stopReason === "loop_complete" && promptsSent < opts.prompts.length) {
+        stopReason = "child_exited";
+      }
+      const summary = `\n[driver] loop summary: stopReason=${stopReason}, promptsSent=${promptsSent}/${opts.prompts.length}, resolverOverwrites=${resolverOverwriteCount}, writeError=${writeErrorMessage ?? "-"}, exitCode=${code}, signal=${signal ?? "-"}\n`;
+      stderr += summary;
       resolveSpawn({ exitCode: code, signal, stdout, stderr, timedOut });
     });
 
     // Drive prompts one at a time, waiting for each reply before
-    // sending the next one. After the final reply, close stdin so the
-    // agent's chat loop exits.
+    // sending the next one. After the final reply, optionally wait
+    // `postLastReplyDrainMs` so the fire-and-forget reflection has a
+    // chance to commit its writes before `runtime.shutdown()` aborts
+    // any still-pending reflection. Then close stdin so the agent's
+    // chat loop exits.
+    // Diagnostics surfaced via stderrAll on the result. Recorded
+    // here (not inside the inner closure) so a thrown write inside
+    // the loop is still observable from the outside.
+    let stopReason: "loop_complete" | "stdin_not_writable" | "child_exited" | "write_threw" =
+      "loop_complete";
+    let promptsSent = 0;
+    let writeErrorMessage: string | null = null;
+
     (async () => {
+      const interMs = opts.interPromptDrainMs ?? 0;
       for (let i = 0; i < opts.prompts.length; i += 1) {
         const sanitized = (opts.prompts[i] ?? "").replace(/\r?\n/g, " ").trim();
-        if (!child.stdin.writable) break;
-        child.stdin.write(`${sanitized}\n`);
+        if (!child.stdin.writable) {
+          stopReason = "stdin_not_writable";
+          debugLog(`stdin not writable before prompt #${i}; child likely exited`);
+          break;
+        }
+        try {
+          child.stdin.write(`${sanitized}\n`);
+          promptsSent += 1;
+        } catch (err) {
+          stopReason = "write_threw";
+          writeErrorMessage = err instanceof Error ? err.message : String(err);
+          debugLog(`stdin.write threw on prompt #${i}: ${writeErrorMessage}`);
+          break;
+        }
         const line = await waitForNextReplyLine();
-        if (line === null) return; // child exited mid-turn — let trace parsing handle the partial state
+        replyLinesPerPrompt.push(line);
+        if (line === null) {
+          stopReason = "child_exited";
+          debugLog(`child exited after sending prompt #${i} (received ${promptsSent - 1} replies before exit)`);
+          return; // child exited mid-turn — let trace parsing handle the partial state
+        }
+        // Inter-prompt drain: lets the reflection runner finish
+        // before the next turn aborts it. Skipped after the last
+        // prompt — that case is handled by `postLastReplyDrainMs`.
+        if (interMs > 0 && i < opts.prompts.length - 1) {
+          await new Promise<void>((resolveWait) => setTimeout(resolveWait, interMs));
+        }
+      }
+      const drainMs = opts.postLastReplyDrainMs ?? 0;
+      if (drainMs > 0) {
+        await new Promise<void>((resolveWait) => setTimeout(resolveWait, drainMs));
       }
       if (child.stdin.writable) child.stdin.end();
-    })().catch(() => {
+    })().catch((err) => {
       // Swallow — the child's close handler will surface the exit code.
+      // But surface the cause in driver-debug logging for postmortem.
+      stopReason = stopReason === "loop_complete" ? "write_threw" : stopReason;
+      const msg = err instanceof Error ? err.message : String(err);
+      writeErrorMessage = writeErrorMessage ?? msg;
+      debugLog(`prompt loop rejected: ${msg}`);
     });
+
   });
 
   // Prefer the trace-file fallback over the stderr summary: the CLI
@@ -259,6 +416,8 @@ export async function driveMultiTurn(opts: MultiTurnOptions): Promise<MultiTurnR
     sessionId,
     turns,
     stderrTail: childResult.stderr.slice(-4000),
+    stderrAll: childResult.stderr,
+    replyLinesPerPrompt,
   };
 }
 

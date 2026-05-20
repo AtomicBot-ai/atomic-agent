@@ -298,6 +298,16 @@ export interface AtomicAgentConfig {
        * disables note extraction even when `autoStoreNotes` is true.
        */
       maxNotesPerCall: number;
+      /** memU-inspired typed-NOTE extraction. See UserConfigFile.memory.reflection.typedNotes. */
+      typedNotes: {
+        enabled: boolean;
+      };
+      /** memU-inspired sliding-window reflection segmentation. See UserConfigFile.memory.reflection.segmentation. */
+      segmentation: {
+        enabled: boolean;
+        triggerEveryTurns: number;
+        windowTurns: number;
+      };
     };
     notes: {
       enabled: boolean;
@@ -444,6 +454,19 @@ export interface AtomicAgentConfig {
       scoreBlend: number;
       eventLogMaxRows: number;
       profileFilterThreshold: number;
+    };
+    /**
+     * memU-inspired heuristic-gated query rewriter for recall. See
+     * UserConfigFile.memory.retrieve.rewriter for full doc. Default
+     * disabled — the provider chain is byte-identical to pre-v18
+     * behaviour when off.
+     */
+    retrieve: {
+      rewriter: {
+        enabled: boolean;
+        timeoutMs: number;
+        historyTurns: number;
+      };
     };
   };
   /**
@@ -618,6 +641,46 @@ export interface UserConfigFile {
       maxFactsPerCall: number;
       autoStoreNotes: boolean;
       maxNotesPerCall: number;
+      /**
+       * memU-inspired addition (config v18). Typed-NOTE extraction:
+       * when `enabled`, the reflection prompt forces every NOTE to
+       * carry a `[type=event|behavior|knowledge|skill]` marker that
+       * the parser projects into a synthetic `type:X` tag on the
+       * stored memory. Default `false` — legacy untyped NOTEs are
+       * byte-stable. Flipping the flag invalidates the reflection
+       * slot's KV cache once on the next call (the main agent slot
+       * is unaffected).
+       */
+      typedNotes: {
+        enabled: boolean;
+      };
+      /**
+       * memU-inspired addition (config v18). Sliding-window
+       * reflection segmentation: instead of firing reflection after
+       * every turn with only the last user/assistant pair, accumulate
+       * up to `windowTurns` exchanges and fire reflection once every
+       * `triggerEveryTurns` turns. Reflection still fires
+       * unconditionally on `reason: "finish"` so the trailing partial
+       * window is never lost. Default `enabled = false` preserves the
+       * per-turn behaviour exactly.
+       */
+      segmentation: {
+        enabled: boolean;
+        /**
+         * Trigger reflection every N turns. Must be a positive
+         * integer; `1` is functionally equivalent to disabled mode
+         * (reflection fires every turn).
+         */
+        triggerEveryTurns: number;
+        /**
+         * Number of trailing user/assistant pairs to feed into the
+         * reflection prompt. Bounded by `triggerEveryTurns` from
+         * below — the runtime clamps the slice to whatever is
+         * available so an early-session turn never blows past the
+         * existing transcript.
+         */
+        windowTurns: number;
+      };
     };
     notes: {
       enabled: boolean;
@@ -860,6 +923,30 @@ export interface UserConfigFile {
       eventLogMaxRows: number;
       profileFilterThreshold: number;
     };
+    /**
+     * memU-inspired memory fabric additions (config v18). Heuristic-
+     * gated query rewriter for recall. The rewriter runs as a
+     * decorator wrapped around `createDefaultMemoryContextProvider`:
+     * before BM25/cosine recall, if the current user message looks
+     * referential (short, pronouns, conjunction-starter), one LLM
+     * call rewrites it into a self-contained query using the last
+     * few turns of conversation; otherwise the raw message is used
+     * as today. The rewriter uses `slotId = -1` so the **main agent
+     * slot** and the **reflection slot** are both untouched.
+     *
+     * `retrieve.rewriter` keys:
+     *  - `enabled`       master switch. Default `false`.
+     *  - `timeoutMs`     hard per-call timeout. Default `3000`.
+     *  - `historyTurns`  trailing turns fed into the rewriter
+     *                    prompt. Default `3`.
+     */
+    retrieve: {
+      rewriter: {
+        enabled: boolean;
+        timeoutMs: number;
+        historyTurns: number;
+      };
+    };
   };
   /**
    * Keyed map of webhook ingress bindings. Each entry is mounted at
@@ -896,7 +983,7 @@ export interface UserConfigFile {
   telegram: TelegramConfig;
 }
 
-export const USER_CONFIG_VERSION = 17 as const;
+export const USER_CONFIG_VERSION = 18 as const;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -926,6 +1013,13 @@ export const USER_CONFIG_VERSION = 17 as const;
  * v17 added `memory.procedures.*` for memory-v2 phase 7b (MemP-style
  * advisory procedures distilled alongside lessons + second
  * stable-prefix bump for `### procedures`).
+ * v18 added three memU-inspired memory fabric additions:
+ * `memory.reflection.typedNotes.*` (Phase C — typed-NOTE extraction
+ * with per-type forbidden lists),
+ * `memory.reflection.segmentation.*` (Phase B — sliding-window
+ * reflection segmentation), and `memory.retrieve.rewriter.*` (Phase
+ * A — heuristic-gated query rewriter for recall). All three default
+ * to disabled so v17 → v18 is a transparent migration.
  * Older files are transparently upgraded by filling missing
  * blocks/fields from `USER_CONFIG_DEFAULTS`. Anything older than v5
  * is not migrated: this is active development, callers delete their
@@ -944,6 +1038,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   14,
   15,
   16,
+  17,
   USER_CONFIG_VERSION,
 ];
 
@@ -999,6 +1094,22 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       maxFactsPerCall: 3,
       autoStoreNotes: true,
       maxNotesPerCall: 2,
+      typedNotes: {
+        // memU-inspired addition (v18). Off by default — flipping it
+        // on switches the reflection prompt to the typed prefix and
+        // invalidates the reflection slot's KV cache once on the
+        // next call. The main agent slot is untouched.
+        enabled: false,
+      },
+      segmentation: {
+        // memU-inspired addition (v18). Off by default — when on,
+        // reflection fires every `triggerEveryTurns` turns over the
+        // last `windowTurns` exchanges instead of every turn. The
+        // final flush on `reason: "finish"` is unconditional.
+        enabled: false,
+        triggerEveryTurns: 3,
+        windowTurns: 5,
+      },
     },
     notes: {
       enabled: true,
@@ -1107,6 +1218,17 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       scoreBlend: 0.6,
       eventLogMaxRows: 50_000,
       profileFilterThreshold: 3,
+    },
+    retrieve: {
+      rewriter: {
+        // memU-inspired addition (v18). Off by default — flipping it
+        // on wraps `memoryContextProvider` with the heuristic-gated
+        // rewriter decorator. The rewriter LLM call uses `slotId=-1`
+        // so the main agent slot and reflection slot are untouched.
+        enabled: false,
+        timeoutMs: 3_000,
+        historyTurns: 3,
+      },
     },
   },
   webhooks: {},
@@ -1618,6 +1740,14 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (memory.consolidation as Record<string, unknown> | undefined) ?? {};
   const memoryVoting =
     (memory.voting as Record<string, unknown> | undefined) ?? {};
+  const memoryReflectionTypedNotes =
+    (memoryReflection.typedNotes as Record<string, unknown> | undefined) ?? {};
+  const memoryReflectionSegmentation =
+    (memoryReflection.segmentation as Record<string, unknown> | undefined) ?? {};
+  const memoryRetrieve =
+    (memory.retrieve as Record<string, unknown> | undefined) ?? {};
+  const memoryRetrieveRewriter =
+    (memoryRetrieve.rewriter as Record<string, unknown> | undefined) ?? {};
   const webhooks = parseWebhookMap(obj.webhooks ?? {}, "webhooks");
   const vision = (obj.vision as Record<string, unknown> | undefined) ?? {};
   const skills = (obj.skills as Record<string, unknown> | undefined) ?? {};
@@ -1798,6 +1928,31 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             USER_CONFIG_DEFAULTS.memory.reflection.maxNotesPerCall,
           "memory.reflection.maxNotesPerCall",
         ),
+        typedNotes: {
+          enabled: parseBool(
+            memoryReflectionTypedNotes.enabled ??
+              USER_CONFIG_DEFAULTS.memory.reflection.typedNotes.enabled,
+            "memory.reflection.typedNotes.enabled",
+          ),
+        },
+        segmentation: {
+          enabled: parseBool(
+            memoryReflectionSegmentation.enabled ??
+              USER_CONFIG_DEFAULTS.memory.reflection.segmentation.enabled,
+            "memory.reflection.segmentation.enabled",
+          ),
+          triggerEveryTurns: parsePositiveInt(
+            memoryReflectionSegmentation.triggerEveryTurns ??
+              USER_CONFIG_DEFAULTS.memory.reflection.segmentation
+                .triggerEveryTurns,
+            "memory.reflection.segmentation.triggerEveryTurns",
+          ),
+          windowTurns: parsePositiveInt(
+            memoryReflectionSegmentation.windowTurns ??
+              USER_CONFIG_DEFAULTS.memory.reflection.segmentation.windowTurns,
+            "memory.reflection.segmentation.windowTurns",
+          ),
+        },
       },
       notes: {
         enabled: parseBool(
@@ -2088,6 +2243,25 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             USER_CONFIG_DEFAULTS.memory.voting.profileFilterThreshold,
           "memory.voting.profileFilterThreshold",
         ),
+      },
+      retrieve: {
+        rewriter: {
+          enabled: parseBool(
+            memoryRetrieveRewriter.enabled ??
+              USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.enabled,
+            "memory.retrieve.rewriter.enabled",
+          ),
+          timeoutMs: parsePositiveInt(
+            memoryRetrieveRewriter.timeoutMs ??
+              USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.timeoutMs,
+            "memory.retrieve.rewriter.timeoutMs",
+          ),
+          historyTurns: parsePositiveInt(
+            memoryRetrieveRewriter.historyTurns ??
+              USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.historyTurns,
+            "memory.retrieve.rewriter.historyTurns",
+          ),
+        },
       },
     },
     webhooks,
