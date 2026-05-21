@@ -195,6 +195,31 @@ describe("LinkStore", () => {
     });
   });
 
+  it("listAll returns newest edges first and respects the limit cap", () => {
+    let nowMs = 1_000;
+    const clock = () => {
+      nowMs += 1_000;
+      return nowMs;
+    };
+    const clocked = new LinkStore({ db, now: clock });
+    const a = newId("a");
+    const b = newId("b");
+    const c = newId("c");
+    clocked.add({ fromId: a, toId: b, kind: "RELATES_TO" });
+    clocked.add({ fromId: b, toId: c, kind: "CAUSED_BY" });
+    const all = clocked.listAll({ limit: 10 });
+    expect(all).toHaveLength(2);
+    expect(all[0]!.fromId).toBe(b);
+    expect(all[0]!.toId).toBe(c);
+    expect(all[0]!.kind).toBe("CAUSED_BY");
+    expect(all[1]!.fromId).toBe(a);
+    const capped = clocked.listAll({ limit: 1 });
+    expect(capped).toHaveLength(1);
+    expect(capped[0]!.kind).toBe("CAUSED_BY");
+    const maxed = clocked.listAll({ limit: 9999 });
+    expect(maxed.length).toBeLessThanOrEqual(1000);
+  });
+
   it("remove() returns true when an edge existed, false otherwise", () => {
     const a = newId();
     const b = newId();

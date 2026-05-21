@@ -1027,7 +1027,15 @@ export interface UserConfigFile {
   telegram: TelegramConfig;
 }
 
-export const USER_CONFIG_VERSION = 20 as const;
+export const USER_CONFIG_VERSION = 22 as const;
+
+/**
+ * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
+ * from versions below v22 force `enabled: true` (and a default embedding
+ * model id when unset) so existing installs inherit product defaults;
+ * explicit overrides on v22+ files are still honoured.
+ */
+const MEMORY_V2_OPT_IN_DEFAULTS_VERSION = 22;
 
 export type RewriterGateMode = "heuristic" | "embedding" | "always";
 
@@ -1072,6 +1080,15 @@ export type RewriterGateMode = "heuristic" | "embedding" | "always";
  * flag to true so reflection can extract facts about third-party
  * speakers in the USER channel). Flipping the flag invalidates the
  * reflection slot's KV cache once on the next call.
+ * v21 enables memory-v2 advanced layers by default
+ * (`memory.evolution`, `memory.lessons`, `memory.procedures`,
+ * `memory.consolidation`, `memory.voting`, `memory.retrieve.rewriter`).
+ * Upgrades from v20 and below force those `enabled` flags to `true`.
+ * v22 also enables `memory.links` by default. Hybrid embedding recall
+ * (`memory.embeddings` + `localModels.embeddings`) stays off in the
+ * config file until the operator enables it from the TUI Models tab
+ * (download + start). Upgrades from v21 and below apply the v22
+ * switches for the advanced memory layers only.
  * Older files are transparently upgraded by filling missing
  * blocks/fields from `USER_CONFIG_DEFAULTS`. Anything older than v5
  * is not migrated: this is active development, callers delete their
@@ -1093,6 +1110,8 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   17,
   18,
   19,
+  20,
+  21,
   USER_CONFIG_VERSION,
 ];
 
@@ -1210,10 +1229,8 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       bruteForceCeiling: 200,
     },
     links: {
-      // Phase 2 defaults — disabled out of the box.  Flip to true to
-      // start growing the graph; expansion still costs zero LLM
-      // tokens on cold caches because the BFS happens in SQLite.
-      enabled: false,
+      // Phase 2 — reactive link graph + recall BFS expansion.
+      enabled: true,
       autoGenerate: true,
       expansionDepth: 1,
       maxExpanded: 12,
@@ -1222,18 +1239,17 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       generatorTimeoutMs: 8_000,
     },
     evolution: {
-      // Phase 3 defaults — disabled out of the box. Flip on to let
-      // reflection refine tags on existing memories. `content`
-      // remains append-only regardless.
-      enabled: false,
+      // Phase 3 — reflection refines tags on existing memories.
+      // `content` remains append-only regardless.
+      enabled: true,
       maxPerWrite: 2,
       leaseMs: 60_000,
     },
     lessons: {
-      // Phase 5 defaults — disabled out of the box. Flipping on
-      // adds `### lessons` to the prompt tail (stable-prefix
-      // change #1) and registers the consolidator timer.
-      enabled: false,
+      // Phase 5 — adds `### lessons` to the prompt tail (stable-prefix
+      // change #1) and registers the consolidator timer when
+      // `memory.consolidation.enabled` is also true.
+      enabled: true,
       recallK: 2,
       maxTokens: 300,
       indexLimit: 20,
@@ -1241,11 +1257,10 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       deprecationAgeMs: 2_592_000_000,
     },
     procedures: {
-      // Phase 7b defaults — disabled out of the box. Flipping on
-      // adds `### procedures` to the prompt tail (stable-prefix
+      // Phase 7b — adds `### procedures` to the prompt tail (stable-prefix
       // change #2) and switches the consolidator distill grammar
       // to the combined lesson+procedure shape.
-      enabled: false,
+      enabled: true,
       recallK: 2,
       maxTokens: 400,
       indexLimit: 20,
@@ -1253,12 +1268,8 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       deprecationAgeMs: 2_592_000_000,
     },
     consolidation: {
-      // Phase 5 defaults — disabled out of the box. The consolidator
-      // is a scoped periodic timer carve-out (like Telegram polling)
-      // and only ticks when this switch is on. When off, the schema
-      // is still present but `lessons` rows are never written by
-      // the runtime.
-      enabled: false,
+      // Phase 5 — scoped periodic timer carve-out (like Telegram polling).
+      enabled: true,
       intervalMs: 21_600_000,
       cooldownMs: 86_400_000,
       minClusterSize: 3,
@@ -1267,12 +1278,9 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       distillTimeoutMs: 45_000,
     },
     voting: {
-      // Phase 7a defaults — disabled out of the box. Flipping on
-      // adds an extra LLM sub-call to the reflection pipeline (on
-      // the shared reflection slot) and engages the cold-path
-      // decay on every consolidator tick. Costs scale with
-      // reflection traffic, so we ship dark.
-      enabled: false,
+      // Phase 7a — extra LLM sub-call on the reflection slot + cold-path
+      // decay on consolidator ticks.
+      enabled: true,
       maxVotePerItem: 50,
       signalDecay: 0.95,
       scoreBlend: 0.6,
@@ -1281,11 +1289,10 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     },
     retrieve: {
       rewriter: {
-        // v2.5 (v18). Off by default — flipping it
-        // on wraps `memoryContextProvider` with the heuristic-gated
-        // rewriter decorator. The rewriter LLM call uses `slotId=-1`
-        // so the main agent slot and reflection slot are untouched.
-        enabled: false,
+        // v2.5 (v18) — heuristic-gated query rewriter before recall.
+        // Uses `slotId=-1` so the main agent and reflection slots stay
+        // untouched.
+        enabled: true,
         timeoutMs: 3_000,
         historyTurns: 3,
         gateMode: "heuristic",
@@ -1523,6 +1530,28 @@ export function parseBool(raw: unknown, field: string): boolean {
     field,
     `expected boolean, got ${JSON.stringify(raw)}`,
   );
+}
+
+function parseMemoryV2FeatureEnabled(
+  inputVersion: number,
+  raw: unknown,
+  defaultEnabled: boolean,
+  field: string,
+): boolean {
+  if (inputVersion < MEMORY_V2_OPT_IN_DEFAULTS_VERSION) {
+    return true;
+  }
+  return parseBool(raw ?? defaultEnabled, field);
+}
+
+function resolveEmbeddingModelId(
+  _inputVersion: number,
+  raw: unknown,
+): string | null {
+  if (raw !== null && raw !== undefined) {
+    return parseNonEmptyString(raw, "localModels.embeddings.modelId");
+  }
+  return USER_CONFIG_DEFAULTS.localModels.embeddings.modelId;
 }
 
 /**
@@ -1867,13 +1896,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         USER_CONFIG_DEFAULTS.localModels.embeddings.enabled,
       "localModels.embeddings.enabled",
     ),
-    modelId:
-      rawEmbeddings.modelId === null || rawEmbeddings.modelId === undefined
-        ? null
-        : parseNonEmptyString(
-            rawEmbeddings.modelId,
-            "localModels.embeddings.modelId",
-          ),
+    modelId: resolveEmbeddingModelId(version, rawEmbeddings.modelId),
     port: parsePositiveInt(
       rawEmbeddings.port ?? USER_CONFIG_DEFAULTS.localModels.embeddings.port,
       "localModels.embeddings.port",
@@ -2149,8 +2172,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         ),
       },
       links: {
-        enabled: parseBool(
-          memoryLinks.enabled ?? USER_CONFIG_DEFAULTS.memory.links.enabled,
+        enabled: parseMemoryV2FeatureEnabled(
+          version,
+          memoryLinks.enabled,
+          USER_CONFIG_DEFAULTS.memory.links.enabled,
           "memory.links.enabled",
         ),
         autoGenerate: parseBool(
@@ -2185,9 +2210,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         ),
       },
       evolution: {
-        enabled: parseBool(
-          memoryEvolution.enabled ??
-            USER_CONFIG_DEFAULTS.memory.evolution.enabled,
+        enabled: parseMemoryV2FeatureEnabled(
+          version,
+          memoryEvolution.enabled,
+          USER_CONFIG_DEFAULTS.memory.evolution.enabled,
           "memory.evolution.enabled",
         ),
         maxPerWrite: parsePositiveInt(
@@ -2202,8 +2228,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         ),
       },
       lessons: {
-        enabled: parseBool(
-          memoryLessons.enabled ?? USER_CONFIG_DEFAULTS.memory.lessons.enabled,
+        enabled: parseMemoryV2FeatureEnabled(
+          version,
+          memoryLessons.enabled,
+          USER_CONFIG_DEFAULTS.memory.lessons.enabled,
           "memory.lessons.enabled",
         ),
         recallK: parsePositiveInt(
@@ -2232,9 +2260,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         ),
       },
       procedures: {
-        enabled: parseBool(
-          memoryProcedures.enabled ??
-            USER_CONFIG_DEFAULTS.memory.procedures.enabled,
+        enabled: parseMemoryV2FeatureEnabled(
+          version,
+          memoryProcedures.enabled,
+          USER_CONFIG_DEFAULTS.memory.procedures.enabled,
           "memory.procedures.enabled",
         ),
         recallK: parsePositiveInt(
@@ -2264,9 +2293,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         ),
       },
       consolidation: {
-        enabled: parseBool(
-          memoryConsolidation.enabled ??
-            USER_CONFIG_DEFAULTS.memory.consolidation.enabled,
+        enabled: parseMemoryV2FeatureEnabled(
+          version,
+          memoryConsolidation.enabled,
+          USER_CONFIG_DEFAULTS.memory.consolidation.enabled,
           "memory.consolidation.enabled",
         ),
         intervalMs: parsePositiveInt(
@@ -2301,8 +2331,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         ),
       },
       voting: {
-        enabled: parseBool(
-          memoryVoting.enabled ?? USER_CONFIG_DEFAULTS.memory.voting.enabled,
+        enabled: parseMemoryV2FeatureEnabled(
+          version,
+          memoryVoting.enabled,
+          USER_CONFIG_DEFAULTS.memory.voting.enabled,
           "memory.voting.enabled",
         ),
         maxVotePerItem: parsePositiveInt(
@@ -2333,9 +2365,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       },
       retrieve: {
         rewriter: {
-          enabled: parseBool(
-            memoryRetrieveRewriter.enabled ??
-              USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.enabled,
+          enabled: parseMemoryV2FeatureEnabled(
+            version,
+            memoryRetrieveRewriter.enabled,
+            USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.enabled,
             "memory.retrieve.rewriter.enabled",
           ),
           timeoutMs: parsePositiveInt(

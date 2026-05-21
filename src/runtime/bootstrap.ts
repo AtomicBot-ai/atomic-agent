@@ -272,6 +272,12 @@ export interface AgentRuntime {
    */
   readonly procedureStore: ProcedureStore;
   /**
+   * Memory-v2 phase 2. Typed link graph store. Always present (same
+   * SQLite file as `notesStore`); recall expansion and link-generator
+   * are gated on `memory.links.enabled`.
+   */
+  readonly linkStore: LinkStore;
+  /**
    * Memory-v2 phase 7a. Curation vote store. `null` when
    * `memory.voting.enabled` is `false`. Shares its SQLite handle
    * with `notesStore`, so no separate dispose is required.
@@ -1677,6 +1683,7 @@ export async function createAgentRuntime(
     notesStore,
     lessonStore,
     procedureStore,
+    linkStore,
     voteStore,
     taskStore,
     taskRunner,

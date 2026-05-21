@@ -202,7 +202,7 @@ A three-channel cross-session memory subsystem lives in [src/memory/](src/memory
 
 ### Memory-v2 phase 1B — hybrid FTS5 + embedding recall (opt-in)
 
-Lives in [src/memory/embeddings/](src/memory/embeddings/) and is **disabled by default**. When turned on, it adds a second `llama-server` process dedicated to `/embedding` requests and blends BM25 hits with cosine similarity over a `memory_embeddings` table (schema v5).
+Lives in [src/memory/embeddings/](src/memory/embeddings/) and is **off in config until the operator enables it from the TUI Models tab** (download + start embedding model). When turned on, it adds a second `llama-server` process dedicated to `/embedding` requests and blends BM25 hits with cosine similarity over a `memory_embeddings` table (schema v5).
 
 **Two-daemon lifecycle.** `llama-server` cannot serve `/completion` and `/embedding` from the same process — the `--embeddings` flag forces pooling-only mode. The CLI therefore manages two parallel daemons:
 
@@ -233,18 +233,18 @@ Lives in [src/memory/embeddings/](src/memory/embeddings/) and is **disabled by d
 
 **Configuration.** Added in user config v12 — older files transparently migrate with both blocks disabled.
 
-- `memory.embeddings.enabled` (default `false`).
+- `memory.embeddings.enabled` (default `false`; TUI sets `true` when the embedding daemon is running — see `persistEmbeddingHybridRecall` + `LocalModelsOrchestrator.reconcileHybridRecallFromDaemon`).
 - `memory.embeddings.fts5Weight` / `vectorWeight` (defaults `0.5` / `0.5`, both in `[0, 1]`).
 - `memory.embeddings.bruteForceCeiling` (default `200`).
-- `localModels.embeddings.enabled` (default `false`) — must be `true` for the second daemon to be considered at startup.
-- `localModels.embeddings.modelId` (default `null` — must be one of `EmbeddingModelId`).
+- `localModels.embeddings.enabled` (default `false`; flipped by TUI pull/activate/`E`) — must be `true` for the second daemon to be considered at startup.
+- `localModels.embeddings.modelId` (default `null` — must be one of `EmbeddingModelId` once chosen in TUI).
 - `localModels.embeddings.port` (default `19092`).
 
 **Out of scope (deferred to follow-up).** `sqlite-vec` virtual table integration (the JS brute force handles current corpus sizes; sqlite-vec graduates the schema without touching `EmbeddingStore` callers), ANN indexes, cross-model query embedding fallback (when the active model changes, the existing rows under a different `model` are simply skipped — there is no auto-reembed sweep yet), embedding-side reflection (the writer is only invoked by `MemoryStore.store`; reflection's own writes happen through the same path so they get embedded too, but there is no dedicated "embed everything" CLI command). All deferred items keep the wire-shape of `memory_embeddings` stable so no future migration is forced.
 
 ### Memory-v2 phase 2 — reactive link graph (opt-in)
 
-Lives in [src/memory/links/](src/memory/links/) and is **disabled by default** (`memory.links.enabled=false` in config v13). When turned on, it gives memories a typed, directed graph layer that is grown by an end-of-turn LLM sub-call (`link-generator`) and consumed by `MemoryContextProvider` as BFS expansion on top of the BM25/cosine hits.
+Lives in [src/memory/links/](src/memory/links/) and is **enabled by default** (`memory.links.enabled=true`, config v22). It gives memories a typed, directed graph layer that is grown by an end-of-turn LLM sub-call (`link-generator`) and consumed by `MemoryContextProvider` as BFS expansion on top of the BM25/cosine hits.
 
 **Storage.** Schema v6 adds:
 
@@ -284,7 +284,7 @@ Anti-feedback-loop guard (mirrors phase 7a invariant 18 from MEMORY_FABRIC_V2.md
 
 **Configuration.** Added in user config v13 — older files transparently migrate with `memory.links` populated from defaults (everything disabled).
 
-- `memory.links.enabled` (default `false`) — master switch for both recall expansion and link generation.
+- `memory.links.enabled` (default `true`, config v22) — master switch for both recall expansion and link generation.
 - `memory.links.autoGenerate` (default `true`) — fire the link-generator after reflection. Set to `false` to keep the schema + expansion machinery without the extra LLM round-trip.
 - `memory.links.expansionDepth` (default `1`) — BFS depth on recall. Clamped to `[1, 3]`.
 - `memory.links.maxExpanded` (default `12`) — hard cap on expanded-id count per recall turn.
@@ -353,7 +353,7 @@ No new LLM call. Phase 3 is pure post-parser bookkeeping on top of the same refl
 
 **Configuration.** Added in user config v14 — older files transparently migrate with `memory.evolution` populated from defaults (everything disabled).
 
-- `memory.evolution.enabled` (default `false`) — master switch. Off ⇒ no evolver constructed, EVOLVE lines parsed and dropped.
+- `memory.evolution.enabled` (default `true`, config v21) — master switch. Off ⇒ no evolver constructed, EVOLVE lines parsed and dropped.
 - `memory.evolution.maxPerWrite` (default `2`) — hard cap on applied directives per reflection turn.
 - `memory.evolution.leaseMs` (default `60000`) — B↔C lease window in ms.
 
@@ -539,13 +539,13 @@ Both passes share a `maxDeprecationsPerTick` cap (default `100`, hardcoded in bo
 
 ### Memory-v2 phase 7a — ExpeL-style vote curation
 
-Phase 7a adds an explicit operator-controlled curation signal across memories, lessons, and profile facts. The agent itself emits up- and down-votes through a new **reflection sub-call** (`vote-runner`) constrained by a GBNF grammar; the cold-path `ConsolidatorJob` decays the resulting scores once per tick and demotes targets that crossed into negative territory; the prompt renderer hides profile facts that fell past a configurable threshold. Vote curation is opt-in via `memory.voting.enabled` (default off in current configs; defaults flip when phase 7b lands).
+Phase 7a adds an explicit operator-controlled curation signal across memories, lessons, and profile facts. The agent itself emits up- and down-votes through a new **reflection sub-call** (`vote-runner`) constrained by a GBNF grammar; the cold-path `ConsolidatorJob` decays the resulting scores once per tick and demotes targets that crossed into negative territory; the prompt renderer hides profile facts that fell past a configurable threshold. Vote curation is on by default via `memory.voting.enabled` (default `true`, config v21); set `false` to skip the vote-runner and cold-path decay.
 
 **Schema (v8 → v9).** Idempotent migration in [memory-schema.ts](src/memory/memory-schema.ts): adds `vote_score REAL NOT NULL DEFAULT 0.0` columns to `memories`, `lessons`, and `profile_facts`; creates a new `vote_events (id PK, kind, target_id, direction, session_id, turn_index, created_at)` audit table with `idx_vote_events_created` (FIFO eviction) and `idx_vote_events_target` (postmortem lookups). Indexes `idx_memories_vote_score` and `idx_lessons_vote_score` accelerate the per-tick deprecation predicate. No data is rewritten — rows migrated from v8 inherit `vote_score = 0`.
 
 **Configuration (`memory.voting.*`).** User config v15 → v16 (transparent migration; see [config-schema.ts](src/config/config-schema.ts)):
 
-- `memory.voting.enabled` (default `false`) — master switch. When off, the `VoteStore` is not constructed, the reflection chain is not decorated, and the consolidator's vote decay + vote-deprecation passes are skipped.
+- `memory.voting.enabled` (default `true`, config v21) — master switch. When off, the `VoteStore` is not constructed, the reflection chain is not decorated, and the consolidator's vote decay + vote-deprecation passes are skipped.
 - `memory.voting.maxVotePerItem` (default `5`) — strictly-positive clamp on `|vote_score|`. Bootstrap fails fast on `≤ 0` (scenario 7a.C.3).
 - `memory.voting.signalDecay` (default `0.95`) — multiplicative decay factor in `(0, 1]`. `1.0` is identity (audit-only mode); `0` disables decay **and** vote-deprecation but is rejected by validation. Applied once per consolidator tick — never per turn (cross-phase invariant 23).
 - `memory.voting.scoreBlend` (default `0.4`) — weight in `[0, 1]` for the lesson rerank: `combinedScore = bm25 + scoreBlend × vote_score + (1 - scoreBlend) × (success - failure)`.
@@ -589,7 +589,7 @@ Wired in [bootstrap.ts](src/runtime/bootstrap.ts) when `memory.voting.enabled` i
 6. **Vote sweep precedes age sweep.** When both passes would fire and `maxDeprecationsPerTick` binds, the downvoted candidate retires first. Pinned by `consolidator-vote.test.ts` ("vote-sweep runs before age-sweep when both fire on the same tick").
 7. **Profile filter overrides pinning.** A pinned fact with `vote_score ≤ -threshold` is hidden from `### profile` (operators expect downvotes to override pinning). Pinned by `profile-renderer.test.ts` ("hides a pinned fact too when its vote_score is past the threshold").
 8. **Bootstrap fails fast on invalid clamp/decay.** `memory.voting.maxVotePerItem ≤ 0` or `signalDecay ∉ (0, 1]` rejects at config parse time **and** at bootstrap. Scenario 7a.C.3 in `scorecard-7a.test.ts`.
-9. **Vote curation is opt-in.** With `memory.voting.enabled = false`, `VoteStore` is not constructed, reflection is not decorated, the consolidator's vote pass degrades to a no-op (`voteDecayApplied = false`), and the eviction / rerank / renderer paths are byte-identical to phase 6.
+9. **Vote curation is opt-out (config v21).** With `memory.voting.enabled = false`, `VoteStore` is not constructed, reflection is not decorated, the consolidator's vote pass degrades to a no-op (`voteDecayApplied = false`), and the eviction / rerank / renderer paths are byte-identical to phase 6.
 10. **Trace `seq` is recorder-owned.** `vote_applied` / `vote_rejected` events flow through `TraceRecorder.recordVoteApplied` / `recordVoteRejected`, never directly through `traceBus.emit(...)`. Recorder lookup by `sessionId` in the closure; a missing recorder is a normal "tracing disabled" outcome, not an error. Pinned by `trace-recorder.test.ts` ("vote events share the same seq counter as agent events") and `vote-runner.test.ts` ("emits vote_applied via emitTrace for each successful write" + "swallows emitTrace failures without aborting vote application").
 
 **Out of scope (deferred to phase 7b).** Vote rendering inside the prompt tail (today votes are observability-only; the agent reads `vote_score` indirectly through rerank + deprecation but never sees the raw number). `EDIT` marker for memory mutation (deferred — phase 7a is up/down only). Cross-session vote aggregation (today every vote is per-(session × target); a procedural memory consumed by 10 sessions accrues 10 independent vote signals). Per-`workingDir` filter thresholds. MemP-style procedure curation rides on top of this layer.
@@ -783,7 +783,7 @@ When the gate returns `false`, the recall layer is byte-identical to v2: no LLM 
 
 **Configuration.** Added in user config v18; gate modes in v20 — older files transparently migrate with the block disabled / `gateMode: heuristic`.
 
-- `memory.retrieve.rewriter.enabled` (default `false`).
+- `memory.retrieve.rewriter.enabled` (default `true`, config v21).
 - `memory.retrieve.rewriter.timeoutMs` (default `3000`).
 - `memory.retrieve.rewriter.historyTurns` (default `3`).
 - `memory.retrieve.rewriter.gateMode` (default `"heuristic"`). Eval `on` profile in [eval-memory/harness/memory-profiles.ts](eval-memory/harness/memory-profiles.ts) defaults to `"embedding"`.
@@ -1172,6 +1172,29 @@ Pinned by [src/scheduler/scheduler.test.ts](src/scheduler/scheduler.test.ts), [s
 7. **`cron-parser` is isolated behind `task-schedule.ts`.** Future replacement touches one file.
 8. **`session.metadata.wakeReason` is audit-only.** Survives restart, never rendered into the prompt.
 9. **Agent tool validation errors are structured, not thrown.** Including nested errors from schedule parsing.
+
+### TUI surface (Memory tab)
+
+The `atomic-agent tui` Manage pane exposes read-only inspection of the memory fabric. State slice `state.memoryPanel` in [src/tui/tui-state.ts](src/tui/tui-state.ts) drives `list` / `detail` views across six channels: `profile`, `notes`, `lessons`, `procedures`, `links`, `votes`.
+
+Module map:
+
+- [src/tui/memory/memory-panel-state.ts](src/tui/memory/memory-panel-state.ts) — slice types + `MEMORY_CHANNEL_ORDER`.
+- [src/tui/memory/memory-orchestrator.ts](src/tui/memory/memory-orchestrator.ts) — the **only** TUI module that reads `runtime.profileStore`, `notesStore`, `lessonStore`, `procedureStore`, `linkStore`, and `voteStore`.
+- [src/tui/memory/memory-reducer.ts](src/tui/memory/memory-reducer.ts) — pure fold of `memory_*` actions.
+- [src/tui/components/memory-panel.tsx](src/tui/components/memory-panel.tsx) — list/detail router.
+
+`AgentRuntime` exposes `readonly linkStore: LinkStore` (always constructed; recall expansion and link-generator remain gated on `memory.links.enabled`). Operator inspection uses `LinkStore.listAll({ limit })` (default 500, hard cap 1000).
+
+Slash commands: `/memory` opens the tab; `/memory dump` keeps the legacy profile dump into chat (`ChatOrchestrator.dumpProfile()`).
+
+**Locked invariants** (pinned by [src/tui/memory/memory-reducer.test.ts](src/tui/memory/memory-reducer.test.ts), [src/tui/memory/memory-filter.test.ts](src/tui/memory/memory-filter.test.ts), [src/memory/links/link-store.test.ts](src/memory/links/link-store.test.ts), [src/tui/commands/slash-command-handler.test.ts](src/tui/commands/slash-command-handler.test.ts)):
+
+1. **`MemoryOrchestrator` is the only TUI module that touches memory stores.** Components dispatch actions; refresh runs via `memory_refresh_requested` on the event bus.
+2. **Read-only.** No delete / vote / write paths in the tab.
+3. **The editor is disabled on the Memory tab.** Single-char hotkeys (`j`/`k`/`r`/`f`/`[`/`]`/`g`) do not collide with typing.
+4. **Note detail exposes link neighbours when `memory.links.enabled`.** `g` runs `linkStore.expand`; Enter on a neighbour opens that note by id.
+5. **Config gates surface hints, not crashes.** Disabled channels show an empty list + `channelHint` string.
 
 ## Vision (multimodal input)
 

@@ -426,7 +426,7 @@ describe("parseUserConfigFile", () => {
   it("applies memory.voting defaults when the section is absent", () => {
     const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
     expect(parsed.memory.voting).toEqual(USER_CONFIG_DEFAULTS.memory.voting);
-    expect(parsed.memory.voting.enabled).toBe(false);
+    expect(parsed.memory.voting.enabled).toBe(true);
   });
 
   it("accepts user-supplied memory.voting overrides", () => {
@@ -526,12 +526,68 @@ describe("parseUserConfigFile", () => {
   // v2.5 memory fabric additions (config v18)
   // --------------------------------------------------------------------------
 
-  it("transparently migrates v17 → v18 with all three new blocks defaulting to disabled", () => {
+  it("transparently migrates v17 → v22 with advanced memory layers + links enabled", () => {
     const parsed = parseUserConfigFile({ version: 17 });
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.memory.evolution.enabled).toBe(true);
+    expect(parsed.memory.lessons.enabled).toBe(true);
+    expect(parsed.memory.procedures.enabled).toBe(true);
+    expect(parsed.memory.consolidation.enabled).toBe(true);
+    expect(parsed.memory.voting.enabled).toBe(true);
+    expect(parsed.memory.retrieve.rewriter.enabled).toBe(true);
+    expect(parsed.memory.links.enabled).toBe(true);
+    expect(parsed.memory.embeddings.enabled).toBe(false);
+    expect(parsed.localModels.embeddings.enabled).toBe(false);
     expect(parsed.memory.reflection.typedNotes.enabled).toBe(false);
     expect(parsed.memory.reflection.segmentation.enabled).toBe(false);
-    expect(parsed.memory.retrieve.rewriter.enabled).toBe(false);
+  });
+
+  it("migrates v20 → v22 enabling memory-v2 layers that were false on disk", () => {
+    const parsed = parseUserConfigFile({
+      version: 20,
+      memory: {
+        evolution: { enabled: false },
+        lessons: { enabled: false },
+        procedures: { enabled: false },
+        consolidation: { enabled: false },
+        voting: { enabled: false },
+        retrieve: { rewriter: { enabled: false } },
+      },
+    });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.memory.evolution.enabled).toBe(true);
+    expect(parsed.memory.lessons.enabled).toBe(true);
+    expect(parsed.memory.procedures.enabled).toBe(true);
+    expect(parsed.memory.consolidation.enabled).toBe(true);
+    expect(parsed.memory.voting.enabled).toBe(true);
+    expect(parsed.memory.retrieve.rewriter.enabled).toBe(true);
+    expect(parsed.memory.links.enabled).toBe(true);
+    expect(parsed.memory.embeddings.enabled).toBe(false);
+    expect(parsed.localModels.embeddings.enabled).toBe(false);
+  });
+
+  it("migrates v21 → v22 enabling links but leaving embeddings off by default", () => {
+    const parsed = parseUserConfigFile({
+      version: 21,
+      memory: {
+        links: { enabled: false },
+        embeddings: { enabled: false },
+      },
+      localModels: {
+        embeddings: { enabled: false, modelId: null },
+      },
+    });
+    expect(parsed.memory.links.enabled).toBe(true);
+    expect(parsed.memory.embeddings.enabled).toBe(false);
+    expect(parsed.localModels.embeddings.enabled).toBe(false);
+  });
+
+  it("v22 honours explicit memory.lessons.enabled=false", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      memory: { lessons: { enabled: false } },
+    });
+    expect(parsed.memory.lessons.enabled).toBe(false);
   });
 
   it("parses memory.reflection.typedNotes.enabled", () => {

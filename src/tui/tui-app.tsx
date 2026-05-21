@@ -39,6 +39,8 @@ import {
 import { handleLocalModelsTabKey } from "./local-models/local-models-key-bindings.js";
 import { handleTasksTabKey } from "./tasks/tasks-key-bindings.js";
 import { handleSkillsTabKey } from "./skills/skills-key-bindings.js";
+import { handleMemoryTabKey } from "./memory/memory-key-bindings.js";
+import type { MemorySummaryRow } from "./memory/memory-panel-state.js";
 import { handleTelegramTabKey } from "./telegram/telegram-key-bindings.js";
 
 export { makeTuiEventBus } from "./make-event-bus.js";
@@ -118,6 +120,11 @@ export interface TuiAppCallbacks {
   ): void;
   /** Memory-v2 phase 1B. Toggle `localModels.embeddings.enabled`. */
   onLocalModelsEmbeddingToggleEnabledRequested?(): void;
+  /**
+   * Memory-v2 phase 1B. Start or hot-swap the embedding daemon for the
+   * active `*` row (chat daemon must already be running).
+   */
+  onLocalModelsEmbeddingStartRequested?(): void;
   /** Memory-v2 phase 1B. Delete an embedding model's GGUF. */
   onLocalModelsEmbeddingRemoveConfirmed?(
     modelId: import("../local-llm/index.js").EmbeddingModelId,
@@ -149,6 +156,14 @@ export interface TuiAppCallbacks {
   onSkillDetailRequested?(name: string): void;
   /** Skills tab: flip the disabled bit and persist to `config.json`. */
   onSkillToggleRequested?(name: string): void;
+  /** Memory tab: start the 5s refresh loop on first entry. */
+  onMemoryAutoRefreshStart?(): void;
+  /** Memory tab: open detail for a list row. */
+  onMemoryDetailRequested?(row: MemorySummaryRow): void;
+  /** Memory tab: open a note by id (link navigation). */
+  onMemoryOpenNoteRequested?(noteId: number): void;
+  /** Memory tab: BFS-expand neighbors for the open note (`g`). */
+  onMemoryExpandNeighborsRequested?(noteId: number): void;
   /** Slash-command surface: enable a skill explicitly (`/skill enable <name>`). */
   onSkillEnableRequested?(name: string): void;
   /** Slash-command surface: disable a skill explicitly (`/skill disable <name>`). */
@@ -269,6 +284,12 @@ export function TuiApp({
   }, [state.uiMode, state.activeTab, callbacks]);
 
   useEffect(() => {
+    if (state.uiMode === "debug" && state.activeTab === "memory") {
+      callbacks.onMemoryAutoRefreshStart?.();
+    }
+  }, [state.uiMode, state.activeTab, callbacks]);
+
+  useEffect(() => {
     if (state.uiMode === "debug" && state.activeTab === "models") {
       callbacks.onLocalModelsAutoRefreshStart?.();
     }
@@ -296,6 +317,8 @@ export function TuiApp({
     state.uiMode === "debug" && state.activeTab === "tasks";
   const skillsTabActive =
     state.uiMode === "debug" && state.activeTab === "skills";
+  const memoryTabActive =
+    state.uiMode === "debug" && state.activeTab === "memory";
   const localModelsTabActive =
     state.uiMode === "debug" && state.activeTab === "models";
   const telegramTabActive =
@@ -308,6 +331,7 @@ export function TuiApp({
     !state.pendingApproval &&
     !tasksTabActive &&
     !skillsTabActive &&
+    !memoryTabActive &&
     !telegramTabActive &&
     !sidebarFocused &&
     !(
@@ -342,6 +366,10 @@ export function TuiApp({
     }
     if (skillsTabActive) {
       handleSkillsTabKey(input, key, { state, dispatch, callbacks });
+      return;
+    }
+    if (memoryTabActive) {
+      handleMemoryTabKey(input, key, { state, dispatch, callbacks });
       return;
     }
     if (localModelsTabActive) {

@@ -17,6 +17,7 @@ import { LocalLlmLogsPanel } from "./local-llm-logs-panel.js";
 import { LocalModelsPanel } from "./local-models-panel.js";
 import { TasksPanel } from "./tasks-panel.js";
 import { SkillsPanel } from "./skills-panel.js";
+import { MemoryPanel } from "./memory-panel.js";
 import { TelegramPanel } from "../telegram/components/telegram-panel.js";
 
 interface DebugPaneProps {
@@ -99,6 +100,7 @@ function buildManageTabs(state: TuiState): SubTab[] {
   return [
     { id: "tasks", label: `Tasks${suffix(state.tasksPanel.rows.length)}` },
     { id: "skills", label: `Skills${suffix(state.skillsPanel.rows.length)}` },
+    { id: "memory", label: `Memory${suffix(state.memoryPanel.rows.length)}` },
     { id: "models", label: "Local LLM" },
     { id: "telegram", label: telegramTabLabel(state) },
   ];
@@ -124,6 +126,8 @@ function ActiveDebugTab({
       return <TasksPanel panel={state.tasksPanel} now={Date.now()} />;
     case "skills":
       return <SkillsPanel panel={state.skillsPanel} />;
+    case "memory":
+      return <MemoryPanel panel={state.memoryPanel} />;
     case "models":
       return <LocalModelsPanel panel={state.localModelsPanel} />;
     case "llm-logs":

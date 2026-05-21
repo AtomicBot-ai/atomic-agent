@@ -44,6 +44,10 @@ import type {
   EmbeddingModelRow,
   MmprojStatus,
 } from "./local-models-panel-state.js";
+import {
+  persistEmbeddingHybridRecall,
+  persistMemoryEmbeddingsEnabled,
+} from "../persist-embedding-hybrid-recall.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
 import type { TuiEventBus } from "../tui-app.js";
 
@@ -60,6 +64,13 @@ const SNAPSHOT_POLL_MS = 5000;
  */
 const SNAPSHOT_POLL_MS_ACTIVE = 1000;
 
+export interface LocalModelsOrchestratorHooks {
+  /** Fired when the operator picks a managed chat model (before daemon I/O). */
+  onManagedModelSelected?: (modelId: LocalModelId) => void;
+  /** Fired after a successful chat daemon (re)start for the active model. */
+  onManagedDaemonRestarted?: () => void;
+}
+
 export class LocalModelsOrchestrator {
   private timer: ReturnType<typeof setInterval> | null = null;
   private logsTimer: ReturnType<typeof setInterval> | null = null;
@@ -74,7 +85,10 @@ export class LocalModelsOrchestrator {
    */
   private activePullAbort: AbortController | null = null;
 
-  constructor(private readonly bus: TuiEventBus & { emit(action: unknown): void }) {}
+  constructor(
+    private readonly bus: TuiEventBus & { emit(action: unknown): void },
+    private readonly hooks?: LocalModelsOrchestratorHooks,
+  ) {}
 
   startAutoRefresh(): void {
     if (this.timer) return;
@@ -154,6 +168,7 @@ export class LocalModelsOrchestrator {
         }));
       const embeddingDaemon: EmbeddingDaemonInfo =
         await this.collectEmbeddingDaemonInfo(dataDir, embeddingActiveId);
+      this.reconcileHybridRecallFromDaemon(embeddingDaemon);
       this.bus.emit({
         type: "local_models_snapshot_loaded",
         rows,
@@ -340,6 +355,7 @@ export class LocalModelsOrchestrator {
       });
       await this.pullEmbeddingModel(DEFAULT_EMBEDDING_MODEL_ID);
     } else {
+      persistEmbeddingHybridRecall({ enabled: false });
       this.bus.emit({
         type: "runtime_info",
         line: "local-llm: embedding model skipped — hybrid recall stays off (can be enabled later from this panel)",
@@ -471,6 +487,7 @@ export class LocalModelsOrchestrator {
     const dataDir = cfg.paths.localModelsDataDir;
     persistUserLocalModelsConfig({ mode: "managed", managed: { modelId: id } });
     resetConfigCache();
+    this.hooks?.onManagedModelSelected?.(id);
     await this.refresh();
     if (!isModelDownloaded(dataDir, getLocalModelDef(id))) {
       this.bus.emit({
@@ -485,9 +502,10 @@ export class LocalModelsOrchestrator {
         type: "runtime_info",
         line: `local-llm: restarting daemon for ${id}…`,
       });
-      await this.stopDaemon({ silent: true });
+      await this.stopProcessesForRestart({ silent: true });
     }
     if (await this.startDaemon()) {
+      this.hooks?.onManagedDaemonRestarted?.();
       this.bus.emit({ type: "ui_mode_set", mode: "chat" });
     }
   }
@@ -642,6 +660,35 @@ export class LocalModelsOrchestrator {
     }
   }
 
+  /**
+   * Stop chat + embedding processes without clearing the operator's
+   * embedding master switch. Used when swapping the active chat model.
+   */
+  private async stopProcessesForRestart(opts?: {
+    silent?: boolean;
+  }): Promise<void> {
+    const dataDir = getConfig().paths.localModelsDataDir;
+    this.bus.emit({ type: "local_models_daemon_phase_set", phase: "stopping" });
+    if (!opts?.silent) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: "local-llm: stopping daemon for model swap…",
+      });
+    }
+    this.beginActiveRefresh();
+    try {
+      await stopChatAndEmbeddingDaemons(dataDir);
+      this.daemonSupervised = false;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.bus.emit({ type: "local_models_daemon_error_set", message: msg });
+      this.bus.emit({ type: "runtime_info", line: `local-llm: stop failed — ${msg}` });
+    } finally {
+      this.endActiveRefresh();
+      await this.refresh();
+    }
+  }
+
   async stopDaemon(opts?: { silent?: boolean }): Promise<void> {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
@@ -656,8 +703,12 @@ export class LocalModelsOrchestrator {
       // are always about the chat daemon.
       await stopChatAndEmbeddingDaemons(dataDir);
       this.daemonSupervised = false;
+      persistMemoryEmbeddingsEnabled(false);
       if (!opts?.silent) {
-        this.bus.emit({ type: "runtime_info", line: "local-llm: daemon stopped" });
+        this.bus.emit({
+          type: "runtime_info",
+          line: "local-llm: daemons stopped — hybrid recall off (embedding switch unchanged)",
+        });
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -718,11 +769,13 @@ export class LocalModelsOrchestrator {
   ): void {
     if ("pid" in embedding) {
       const id = requested?.modelId ?? "embedding";
+      persistMemoryEmbeddingsEnabled(true);
       this.bus.emit({
         type: "runtime_info",
-        line: `local-llm: embedding daemon up (${id}, pid ${embedding.pid})`,
+        line: `local-llm: embedding daemon up (${id}, pid ${embedding.pid}) — hybrid recall on`,
       });
     } else if ("error" in embedding) {
+      persistMemoryEmbeddingsEnabled(false);
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: embedding daemon failed — hybrid recall disabled (${embedding.error})`,
@@ -795,6 +848,9 @@ export class LocalModelsOrchestrator {
           });
         }
       }
+      if (cfg.memory.embeddings.enabled) {
+        persistMemoryEmbeddingsEnabled(false);
+      }
       return;
     }
 
@@ -824,17 +880,40 @@ export class LocalModelsOrchestrator {
 
     try {
       const { pid } = await startEmbeddingDaemon(desired);
+      persistMemoryEmbeddingsEnabled(true);
       this.bus.emit({
         type: "runtime_info",
-        line: `local-llm: embedding daemon up (${desired.modelId}, pid ${pid})`,
+        line: `local-llm: embedding daemon up (${desired.modelId}, pid ${pid}) — hybrid recall on`,
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      persistMemoryEmbeddingsEnabled(false);
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: embedding daemon failed — hybrid recall disabled (${msg})`,
       });
     }
+  }
+
+  /**
+   * Keep `memory.embeddings.enabled` aligned with the live embedding
+   * daemon: on when the operator enabled embeddings, a model is on
+   * disk, and the daemon is running; off otherwise. Does not flip
+   * `localModels.embeddings.enabled` — that is the operator master
+   * switch (`E` hotkey).
+   */
+  private reconcileHybridRecallFromDaemon(emb: EmbeddingDaemonInfo): void {
+    const cfg = getConfig();
+    const dataDir = cfg.paths.localModelsDataDir;
+    const modelId = cfg.localModels.embeddings.modelId;
+    const hasModel =
+      modelId !== null &&
+      isKnownEmbeddingModelId(modelId) &&
+      isEmbeddingModelDownloaded(dataDir, getEmbeddingModelDef(modelId));
+    const shouldEnable =
+      cfg.localModels.embeddings.enabled && hasModel && emb.running;
+    if (cfg.memory.embeddings.enabled === shouldEnable) return;
+    persistMemoryEmbeddingsEnabled(shouldEnable);
   }
 
   /**
@@ -892,17 +971,13 @@ export class LocalModelsOrchestrator {
       });
       this.activePullAbort = null;
       this.bus.emit({ type: "local_models_pull_finished" });
-      persistUserLocalModelsConfig({
-        embeddings: { enabled: true, modelId: id },
-      });
-      resetConfigCache();
+      persistEmbeddingHybridRecall({ enabled: true, modelId: id });
       await this.refresh();
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: embedding model ${def.name} ready`,
       });
-      await this.ensureEmbeddingPaired({ hotSwap: true });
-      await this.refresh();
+      await this.startEmbeddingPairing();
     } catch (e) {
       if (isAbortError(e)) return;
       const msg = e instanceof Error ? e.message : String(e);
@@ -923,11 +998,8 @@ export class LocalModelsOrchestrator {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
     const def = getEmbeddingModelDef(id);
-    persistUserLocalModelsConfig({
-      embeddings: { enabled: true, modelId: id },
-    });
-    resetConfigCache();
     if (!isEmbeddingModelDownloaded(dataDir, def)) {
+      persistEmbeddingHybridRecall({ enabled: false, modelId: id });
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: embedding ${def.name} selected (Enter to pull)`,
@@ -935,13 +1007,13 @@ export class LocalModelsOrchestrator {
       await this.refresh();
       return;
     }
+    persistEmbeddingHybridRecall({ enabled: true, modelId: id });
     this.bus.emit({
       type: "runtime_info",
       line: `local-llm: embedding ${def.name} selected`,
     });
     await this.refresh();
-    await this.ensureEmbeddingPaired({ hotSwap: true });
-    await this.refresh();
+    await this.startEmbeddingPairing();
   }
 
   /**
@@ -950,18 +1022,69 @@ export class LocalModelsOrchestrator {
    * the embedding daemon up (when chat is alive + model is on disk),
    * disabling stops it. Chat daemon is never touched.
    */
+  /**
+   * Start (or hot-swap) the embedding daemon for the configured
+   * active model. No-op when chat is down — the operator must press
+   * `s` first so pairing can run.
+   */
+  async startEmbeddingPairing(): Promise<void> {
+    const cfg = getConfig();
+    const dataDir = cfg.paths.localModelsDataDir;
+    if (!cfg.localModels.embeddings.modelId) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: "local-llm: pick an embedding model first (j/k + Enter on a row)",
+      });
+      return;
+    }
+    if (!cfg.localModels.embeddings.enabled) {
+      persistUserLocalModelsConfig({
+        embeddings: {
+          enabled: true,
+          modelId: cfg.localModels.embeddings.modelId,
+        },
+      });
+      resetConfigCache();
+    }
+    const chat = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
+    if (!chat.running) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: "local-llm: chat daemon is down — press s to start chat+embedding together",
+      });
+      return;
+    }
+    await this.ensureEmbeddingPaired({ hotSwap: true });
+    await this.refresh();
+  }
+
   async toggleEmbeddingEnabled(): Promise<void> {
     const cfg = getConfig();
     const next = !cfg.localModels.embeddings.enabled;
-    persistUserLocalModelsConfig({ embeddings: { enabled: next } });
+    if (next) {
+      // Master switch on — hybrid recall flips on once the daemon is
+      // actually running (`reconcileHybridRecallFromDaemon`).
+      persistUserLocalModelsConfig({
+        embeddings: {
+          enabled: true,
+          modelId: cfg.localModels.embeddings.modelId,
+        },
+      });
+    } else {
+      persistEmbeddingHybridRecall({ enabled: false });
+    }
     resetConfigCache();
     this.bus.emit({
       type: "runtime_info",
       line: `local-llm: embeddings ${next ? "enabled" : "disabled"}`,
     });
     await this.refresh();
-    await this.ensureEmbeddingPaired();
-    await this.refresh();
+    if (next) {
+      await this.startEmbeddingPairing();
+    } else {
+      await this.ensureEmbeddingPaired();
+      await this.refresh();
+    }
   }
 
   /**

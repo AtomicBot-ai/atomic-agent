@@ -203,6 +203,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.skills.setSkillDisabled(name, false),
         onSkillDisableRequested: (name) =>
           void orchestrator.skills.setSkillDisabled(name, true),
+        onMemoryAutoRefreshStart: () => orchestrator.memory.startAutoRefresh(),
+        onMemoryDetailRequested: (row) => orchestrator.memory.openDetail(row),
+        onMemoryOpenNoteRequested: (noteId) =>
+          orchestrator.memory.openNoteById(noteId),
+        onMemoryExpandNeighborsRequested: (noteId) =>
+          orchestrator.memory.expandNoteNeighbors(noteId),
         onDebugBundleExportRequested: (state) =>
           orchestrator.exportDebugBundle(state),
         onLocalModelsAutoRefreshStart: () => orchestrator.localModels.startAutoRefresh(),
@@ -226,6 +232,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.localModels.setActiveEmbedding(id),
         onLocalModelsEmbeddingToggleEnabledRequested: () =>
           void orchestrator.localModels.toggleEmbeddingEnabled(),
+        onLocalModelsEmbeddingStartRequested: () =>
+          void orchestrator.localModels.startEmbeddingPairing(),
         onLocalModelsEmbeddingRemoveConfirmed: (id) =>
           void orchestrator.localModels.removeEmbeddingModel(id),
         onLocalModelsEmbeddingOnboardingResolved: (accept) =>

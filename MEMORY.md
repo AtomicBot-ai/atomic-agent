@@ -265,6 +265,25 @@ A real concern: every turn triggers reflection, which can write new facts and no
 
 Worst case under defaults: 1000 notes × ~80 chars/preview ≈ 80 KB cap on `memory.sqlite` for note bodies + a few KB for `profile_facts`. The prompt tail adds at most ~1200 tokens of memory regardless of how many entries are stored.
 
+## 9.1 Operator inspection (TUI)
+
+`atomic-agent tui` → Manage → **Memory** tab (or `/memory` from chat).
+
+Read-only browser over `<stateDir>/memory.sqlite`:
+
+| Channel     | What you see                                      |
+| ----------- | ------------------------------------------------- |
+| `profile`   | Active facts; Enter shows bi-temporal `history()` |
+| `notes`     | Index rows; Enter shows full `content` + links  |
+| `lessons`   | Pointer rows; Enter shows `principle` + parents   |
+| `procedures`| Pointer rows; Enter shows `steps[]`               |
+| `links`     | Edge table (`from → to`, kind)                    |
+| `votes`     | Audit tail when `memory.voting.enabled`           |
+
+Hotkeys: `j/k` move, Enter detail, `r` refresh, `a` auto-refresh (5s), `[/]` cycle channel, `1`–`6` jump channel, `f` cycle notes archive filter (active / archived / all). On note detail with links enabled: `g` expands the graph neighbourhood.
+
+Legacy: `/memory dump` still prints the active profile into the chat transcript.
+
 ## 10. Known limitations
 
 - **No content dedup in `MemoryStore`.** The same `NOTE` body can be written multiple times if reflection produces it across turns. FTS5 will then return clones in `### recalled`. Mitigation: `maxNotesPerCall=2` keeps the rate low; explicit `memory.notes.forget` removes duplicates.

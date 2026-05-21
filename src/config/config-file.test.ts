@@ -150,7 +150,7 @@ describe("user config file IO", () => {
 
     expect(migrated.version).toBe(USER_CONFIG_VERSION);
     expect(migrated.memory.voting).toEqual(USER_CONFIG_DEFAULTS.memory.voting);
-    expect(migrated.memory.voting.enabled).toBe(false);
+    expect(migrated.memory.voting.enabled).toBe(true);
     expect(migrated.memory.voting.maxVotePerItem).toBe(50);
     expect(migrated.memory.voting.signalDecay).toBeCloseTo(0.95);
     expect(migrated.memory.voting.scoreBlend).toBeCloseTo(0.6);
@@ -204,8 +204,8 @@ describe("user config file IO", () => {
     expect(migrated.memory.consolidation).toEqual(
       USER_CONFIG_DEFAULTS.memory.consolidation,
     );
-    expect(migrated.memory.lessons.enabled).toBe(false);
-    expect(migrated.memory.consolidation.enabled).toBe(false);
+    expect(migrated.memory.lessons.enabled).toBe(true);
+    expect(migrated.memory.consolidation.enabled).toBe(true);
 
     const onDisk = JSON.parse(readFileSync(path, "utf8"));
     expect(onDisk.version).toBe(USER_CONFIG_VERSION);
@@ -254,7 +254,7 @@ describe("user config file IO", () => {
     expect(migrated.memory.evolution).toEqual(
       USER_CONFIG_DEFAULTS.memory.evolution,
     );
-    expect(migrated.memory.evolution.enabled).toBe(false);
+    expect(migrated.memory.evolution.enabled).toBe(true);
 
     const onDisk = JSON.parse(readFileSync(path, "utf8"));
     expect(onDisk.version).toBe(USER_CONFIG_VERSION);
@@ -299,7 +299,7 @@ describe("user config file IO", () => {
 
     expect(migrated.version).toBe(USER_CONFIG_VERSION);
     expect(migrated.memory.links).toEqual(USER_CONFIG_DEFAULTS.memory.links);
-    expect(migrated.memory.links.enabled).toBe(false);
+    expect(migrated.memory.links.enabled).toBe(true);
 
     const onDisk = JSON.parse(readFileSync(path, "utf8"));
     expect(onDisk.version).toBe(USER_CONFIG_VERSION);
@@ -348,16 +348,14 @@ describe("user config file IO", () => {
     const migrated = ensureUserConfigFileSync(path);
 
     expect(migrated.version).toBe(USER_CONFIG_VERSION);
-    // Both new blocks default to disabled — the operator opts in via
-    // explicit `use-embedding <id>` + `embeddings.enabled=true`.
     expect(migrated.memory.embeddings).toEqual(
       USER_CONFIG_DEFAULTS.memory.embeddings,
     );
     expect(migrated.localModels.embeddings).toEqual(
       USER_CONFIG_DEFAULTS.localModels.embeddings,
     );
-    expect(migrated.memory.embeddings.enabled).toBe(false);
-    expect(migrated.localModels.embeddings.enabled).toBe(false);
+    expect(migrated.memory.embeddings.enabled).toBe(true);
+    expect(migrated.localModels.embeddings.enabled).toBe(true);
 
     const onDisk = JSON.parse(readFileSync(path, "utf8"));
     expect(onDisk.version).toBe(USER_CONFIG_VERSION);

@@ -110,8 +110,8 @@ function renderEmbeddingDaemonLine(
   }
   if (!info.running) {
     const hint = info.activeModelId
-      ? `stopped — ${info.activeModelId} configured`
-      : "stopped — no model selected";
+      ? `stopped — *${info.activeModelId} selected — Enter on row or s to start`
+      : "stopped — j/k + Enter on a row to select, then s";
     return <Text color="yellow">embeddings ⏸ {hint}</Text>;
   }
   if (info.loading) {
@@ -385,7 +385,7 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
           </Text>
         ) : null}
         <Text color={theme.colors.muted}>
-          j/k move · Enter pull/activate · g gguf only · i info · d remove · s start/stop (paired) · E toggle embeddings · B backend · r refresh · L logs
+          j/k move · Enter pull/activate (embedding: *row + Enter starts server) · g gguf · i info · d remove · s chat+embedding · E embeddings on/off · B · r · L
         </Text>
       </Box>
     </Box>

@@ -6,6 +6,7 @@ import {
   resolveRowAt,
   type EmbeddingModelRow,
   type LocalModelRow,
+  type LocalModelsPanelState,
 } from "./local-models-panel-state.js";
 
 export interface LocalModelsTabKeyContext {
@@ -80,7 +81,7 @@ export function handleLocalModelsTabKey(
       return true;
     }
     if (key.return && ref?.kind === "chat") {
-      triggerPrimaryAction(ref.row, callbacks);
+      triggerPrimaryAction(ref.row, panel, callbacks);
       dispatch({ type: "local_models_detail_closed" });
       return true;
     }
@@ -113,7 +114,7 @@ export function handleLocalModelsTabKey(
 
   if (ref?.kind === "chat") {
     if (key.return) {
-      triggerPrimaryAction(ref.row, callbacks);
+      triggerPrimaryAction(ref.row, panel, callbacks);
       return true;
     }
     if (input === "g") {
@@ -133,7 +134,7 @@ export function handleLocalModelsTabKey(
     }
   } else if (ref?.kind === "embedding") {
     if (key.return) {
-      triggerEmbeddingPrimaryAction(ref.row, callbacks);
+      triggerEmbeddingPrimaryAction(ref.row, panel, callbacks);
       return true;
     }
     if (input === "d" && ref.row.downloaded) {
@@ -178,11 +179,11 @@ export function handleLocalModelsTabKey(
  *   afterwards; the orchestrator emits a hint.
  * - GGUF present (text-only OR mmproj also present) but row not active
  *   → set the row as the active managed model.
- * - Already downloaded + active → no-op (operator should run
- *   `llama start` if the daemon is not yet up).
+ * - Already downloaded + active but daemon down → start chat daemon (`s`).
  */
 function triggerPrimaryAction(
   row: LocalModelRow,
+  panel: LocalModelsPanelState,
   callbacks: TuiAppCallbacks,
 ): void {
   if (!row.downloaded) {
@@ -195,6 +196,12 @@ function triggerPrimaryAction(
   }
   if (!row.active) {
     callbacks.onLocalModelsSetActiveRequested?.(row.id);
+    return;
+  }
+  const chatUp =
+    panel.daemon.running || panel.daemonPhase === "starting";
+  if (!chatUp) {
+    callbacks.onLocalModelsDaemonStartRequested?.();
   }
 }
 
@@ -214,12 +221,13 @@ function triggerGgufOnlyPull(
 
 /**
  * Memory-v2 phase 1B. Embedding-catalog Enter handler:
- * - Not downloaded → pull (the orchestrator also sets active + enables).
- * - Downloaded but not active → set active.
- * - Already active → no-op (operator should press `s` to (re)start the daemon).
+ * - Not downloaded → pull (orchestrator sets active + starts pairing when chat is up).
+ * - Downloaded but not active → set active (+ pairing when chat is up).
+ * - Already active (`*` prefix) but daemon down → enable/start embedding side.
  */
 function triggerEmbeddingPrimaryAction(
   row: EmbeddingModelRow,
+  panel: LocalModelsPanelState,
   callbacks: TuiAppCallbacks,
 ): void {
   if (!row.downloaded) {
@@ -228,5 +236,20 @@ function triggerEmbeddingPrimaryAction(
   }
   if (!row.active) {
     callbacks.onLocalModelsEmbeddingSetActiveRequested?.(row.id);
+    return;
+  }
+  const emb = panel.embeddingDaemon;
+  if (!emb?.enabled) {
+    callbacks.onLocalModelsEmbeddingToggleEnabledRequested?.();
+    return;
+  }
+  const chatUp =
+    panel.daemon.running || panel.daemonPhase === "starting";
+  if (!chatUp) {
+    callbacks.onLocalModelsDaemonStartRequested?.();
+    return;
+  }
+  if (!emb.running) {
+    callbacks.onLocalModelsEmbeddingStartRequested?.();
   }
 }

@@ -27,6 +27,10 @@ import {
   resolveServerBinPath,
 } from "../../local-llm/index.js";
 import { resolvePlatformAsset } from "../../local-llm/platform-assets.js";
+import {
+  getUserConfigPath,
+  readUserConfigFileSync,
+} from "../../config/config-file.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
 import { LocalModelsOrchestrator } from "./local-models-orchestrator.js";
 
@@ -82,7 +86,7 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
       expect.objectContaining({ modelId: "bge-m3", dataDir }),
     );
     expect(actions.map((a) => a.line).filter(Boolean)).toContain(
-      "local-llm: embedding daemon up (bge-m3, pid 4242)",
+      "local-llm: embedding daemon up (bge-m3, pid 4242) — hybrid recall on",
     );
   });
 
@@ -139,6 +143,9 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
 
     expect(vi.mocked(localLlm.stopEmbeddingDaemon)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(localLlm.startEmbeddingDaemon)).not.toHaveBeenCalled();
+    const onDisk = readUserConfigFileSync(getUserConfigPath(stateDir));
+    expect(onDisk.localModels.embeddings.enabled).toBe(false);
+    expect(onDisk.memory.embeddings.enabled).toBe(false);
   });
 
   it("autoStartIfReady adopts a running chat and pairs the embedding daemon", async () => {

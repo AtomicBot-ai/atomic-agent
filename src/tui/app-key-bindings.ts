@@ -109,6 +109,10 @@ export function handleAppKey(
     state.uiMode === "debug" &&
     state.activeTab === "skills" &&
     state.skillsPanel.mode === "detail";
+  const memoryTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "memory" &&
+    state.memoryPanel.mode === "detail";
   const localModelsTabBusy =
     state.uiMode === "debug" &&
     state.activeTab === "models" &&
@@ -123,7 +127,11 @@ export function handleAppKey(
     state.activeTab === "telegram" &&
     state.telegramPanel.mode !== "list";
   const debugTabBusy =
-    tasksTabBusy || skillsTabBusy || localModelsTabBusy || telegramTabBusy;
+    tasksTabBusy ||
+    skillsTabBusy ||
+    memoryTabBusy ||
+    localModelsTabBusy ||
+    telegramTabBusy;
   // Ctrl+B is the dedicated nav-cycle escape valve: it always advances
   // one nav slot forward regardless of where focus currently is. This
   // is the key power users press when they want to reach Observe /

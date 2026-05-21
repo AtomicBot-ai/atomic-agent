@@ -294,6 +294,50 @@ describe("handleAppKey", () => {
     });
   });
 
+  it("Tab on Memory list mode still cycles Manage tabs", () => {
+    const state = createInitialTuiState(stubSession());
+    state.uiMode = "debug";
+    state.activeTab = "memory";
+    state.memoryPanel.mode = "list";
+    const dispatch = vi.fn();
+    const handled = handleAppKey("\t", emptyKey({ tab: true }), {
+      state,
+      dispatch,
+      callbacks: {
+        onApprovalDecision: vi.fn(),
+        onAbort: vi.fn(),
+        onQuit: vi.fn(),
+      },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(true);
+    expect(dispatch).toHaveBeenCalledWith({ type: "tab_changed", tab: "models" });
+  });
+
+  it("Tab on Memory detail mode is blocked so Esc can close detail first", () => {
+    const state = createInitialTuiState(stubSession());
+    state.uiMode = "debug";
+    state.activeTab = "memory";
+    state.memoryPanel.mode = "detail";
+    const dispatch = vi.fn();
+    const handled = handleAppKey("\t", emptyKey({ tab: true }), {
+      state,
+      dispatch,
+      callbacks: {
+        onApprovalDecision: vi.fn(),
+        onAbort: vi.fn(),
+        onQuit: vi.fn(),
+      },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it("Enter on a sidebar Task fires onSidebarTaskActivated with the row id", () => {
     const state = createInitialTuiState(stubSession());
     state.chatFocus = "sidebar";

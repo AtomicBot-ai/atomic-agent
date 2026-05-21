@@ -74,6 +74,16 @@ export interface AddLinkInput {
   weight?: number;
 }
 
+export interface ListAllLinksOptions {
+  /** Default 500. Hard-capped at 1000. */
+  limit?: number;
+}
+
+/** Default row cap for operator inspection (`listAll`). */
+export const LINK_LIST_ALL_DEFAULT_LIMIT = 500;
+/** Hard ceiling for `listAll` — prevents unbounded TUI/CLI scans. */
+export const LINK_LIST_ALL_MAX_LIMIT = 1000;
+
 export interface ExpandOptions {
   /** Max BFS depth, ≥ 1. Default 1 (one hop). Clamped to 3. */
   depth?: number;
@@ -95,6 +105,7 @@ export class LinkStore {
   private readonly listOutgoingAllStmt: Database.Statement;
   private readonly listIncomingAllStmt: Database.Statement;
   private readonly countStmt: Database.Statement;
+  private readonly listAllStmt: Database.Statement;
   private readonly deleteStmt: Database.Statement;
   private readonly deleteAllForMemoryStmt: Database.Statement;
 
@@ -139,6 +150,12 @@ export class LinkStore {
     );
     this.countStmt = this.db.prepare(
       `SELECT COUNT(*) AS count FROM memory_links`,
+    );
+    this.listAllStmt = this.db.prepare(
+      `SELECT from_id, to_id, kind, weight, created_at
+         FROM memory_links
+        ORDER BY created_at DESC
+        LIMIT ?`,
     );
     this.deleteStmt = this.db.prepare(
       `DELETE FROM memory_links WHERE from_id = ? AND to_id = ? AND kind = ?`,
@@ -276,6 +293,26 @@ export class LinkStore {
   count(): number {
     const row = this.countStmt.get() as { count: number };
     return row.count;
+  }
+
+  /**
+   * Newest edges first — operator inspection for TUI/CLI graph tables.
+   * Does not dedupe; one row per `(from_id, to_id, kind)` triple.
+   */
+  listAll(opts: ListAllLinksOptions = {}): readonly LinkRow[] {
+    const raw = opts.limit ?? LINK_LIST_ALL_DEFAULT_LIMIT;
+    const limit = Math.min(
+      LINK_LIST_ALL_MAX_LIMIT,
+      Math.max(1, Math.floor(raw)),
+    );
+    const rows = this.listAllStmt.all(limit) as Array<{
+      from_id: number;
+      to_id: number;
+      kind: LinkKind;
+      weight: number;
+      created_at: number;
+    }>;
+    return rows.map(rowToLink);
   }
 
   /**

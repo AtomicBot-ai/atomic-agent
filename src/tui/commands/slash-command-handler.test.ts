@@ -86,8 +86,16 @@ describe("dispatchSlashCommand", () => {
     expect(result.triggerSessionPicker).toBe(false);
   });
 
-  it("signals triggerMemoryDump for /memory", () => {
+  it("opens the Memory tab for bare /memory", () => {
     const result = dispatchSlashCommand("/memory");
+    expect(result.triggerMemoryDump).toBe(false);
+    expect(result.actions[0]).toEqual({ type: "ui_mode_set", mode: "debug" });
+    expect(result.actions[1]).toEqual({ type: "tab_changed", tab: "memory" });
+    expect(result.clearBuffer).toBe(true);
+  });
+
+  it("signals triggerMemoryDump for /memory dump", () => {
+    const result = dispatchSlashCommand("/memory dump");
     expect(result.triggerMemoryDump).toBe(true);
     expect(result.actions).toEqual([]);
     expect(result.clearBuffer).toBe(true);
