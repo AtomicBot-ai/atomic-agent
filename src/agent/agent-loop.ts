@@ -129,7 +129,7 @@ export interface AgentLoopDependencies {
    */
   reflectionRunner?: ReflectionRunner;
   /**
-   * memU-inspired addition (Phase B — config v18). Sliding-window
+   * v2.5 (Phase B — config v18). Sliding-window
    * reflection segmentation. When present and `enabled`, the loop
    * fires `reflectionRunner.reflect(...)` only every
    * `triggerEveryTurns` turns (or unconditionally on `reason: "finish"`
@@ -169,7 +169,7 @@ export interface AgentLoopDependencies {
 }
 
 /**
- * memU-inspired addition (Phase B — config v18). Runtime knobs for
+ * v2.5 (Phase B — config v18). Runtime knobs for
  * sliding-window reflection segmentation. `triggerEveryTurns` is the
  * cadence (every Nth turn fires; the rest are deferred), `windowTurns`
  * is the size of the user/assistant pair window packed into the
@@ -187,7 +187,7 @@ export interface MemoryContextProviderInput {
   toolResultSummaries?: readonly string[];
   signal: AbortSignal;
   /**
-   * memU-inspired addition (Phase A — config v18). Trailing
+   * v2.5 (Phase A — config v18). Trailing
    * user/assistant exchanges projected from `SessionState.turns`,
    * supplied by the agent loop. Decorators (e.g. the heuristic-gated
    * query rewriter under `src/memory/retrieve/`) read this field to
@@ -726,7 +726,7 @@ export class AgentLoop {
     // when a user message arrived this turn, using a single
     // user/assistant pair.
     //
-    // Segmentation enabled (memU-inspired Phase B):
+    // Segmentation enabled (v2.5 Phase B):
     //   - On `reply`: fire iff `state.turnCount % triggerEveryTurns
     //     === 0` (cadence gate).
     //   - On `finish`: fire unconditionally — final flush so the
@@ -805,7 +805,7 @@ export class AgentLoop {
                 }
               : {}),
             turnIndex: state.turns.length,
-            // memU-inspired addition (Phase B). Multi-turn window
+            // v2.5 (Phase B). Multi-turn window
             // is only attached when segmentation is active —
             // otherwise the runner falls back to the byte-stable
             // single-pair prompt.
@@ -869,7 +869,7 @@ async function refreshMemoryContext(
       sessionId: state.id,
       userMessage: options.userMessage ?? null,
       toolResultSummaries: collectRecentToolResultSummaries(state),
-      // memU-inspired addition (Phase A). Project the session's
+      // v2.5 (Phase A). Project the session's
       // existing `user`/`assistant_reply` turns into the shape the
       // rewriter decorator expects. The current user message lives
       // in `userMessage` above, so we exclude it from this list to
@@ -924,7 +924,7 @@ function collectRecentToolResultSummaries(
 }
 
 /**
- * memU-inspired addition (Phase A). Walk the session backwards and
+ * v2.5 (Phase A). Walk the session backwards and
  * collect the trailing `user` / `assistant_reply` rows in
  * chronological order. Excludes the just-arrived user message
  * (matched against `currentUserMessage`) so the rewriter's history
@@ -936,7 +936,7 @@ function collectRecentToolResultSummaries(
 const RECENT_TURN_PROJECTION_CAP = 12;
 
 /**
- * memU-inspired addition (Phase B). Walk the session backwards and
+ * v2.5 (Phase B). Walk the session backwards and
  * collect the trailing user/assistant pairs in chronological order
  * for the segmentation-aware reflection window. A "pair" is a `user`
  * row followed by the next `assistant_reply` row in the conversation.

@@ -62,9 +62,14 @@ export const METRIC_NAMES = {
   memoryProceduresDeprecated: "agent.memory.procedures.deprecated",
   memoryProceduresRecalled: "agent.memory.procedures.recalled",
   memoryProceduresUsed: "agent.memory.procedures.used",
-  // memU-inspired addition (Phase A) — heuristic-gated query rewriter
+  // v2.5 (Phase A) — heuristic-gated query rewriter
   memoryRetrieveRewriter: "agent.memory.retrieve.rewriter",
   memoryRetrieveRewriterDuration: "agent.memory.retrieve.rewriter.duration_ms",
+  memoryRetrieveRewriterGateFired: "agent.memory.retrieve.rewriter.gate.fired",
+  memoryRetrieveRewriterGateSkipped:
+    "agent.memory.retrieve.rewriter.gate.skipped",
+  memoryRetrieveRewriterGateCosineScore:
+    "agent.memory.retrieve.rewriter.gate.cosine_score",
   tasksCreated: "agent.tasks.created",
   tasksStarted: "agent.tasks.started",
   tasksCompleted: "agent.tasks.completed",
@@ -284,7 +289,7 @@ export interface MemoryLinkExpansionHitsSample {
 }
 
 /**
- * memU-inspired addition (Phase A). Tag union mirrors
+ * v2.5 (Phase A). Tag union mirrors
  * `RewriterOutcome` in `src/memory/retrieve/query-rewriter-runner.ts`
  * verbatim — adding a new outcome there requires updating this type
  * (and the dashboards / scorecards that consume it).
@@ -301,6 +306,28 @@ export interface RetrieveRewriterMetricSample {
   outcome: RetrieveRewriterOutcomeTag;
   /** Wall-time including the heuristic gate evaluation (ms). */
   durationMs: number;
+}
+
+export type RetrieveRewriterGateModeTag = "heuristic" | "embedding" | "always";
+
+export type RetrieveRewriterGateSkipReason =
+  | "below_threshold"
+  | "no_history"
+  | "unavailable"
+  | "empty_message";
+
+export interface RetrieveRewriterGateFiredSample {
+  gateMode: RetrieveRewriterGateModeTag;
+}
+
+export interface RetrieveRewriterGateSkippedSample {
+  gateMode: RetrieveRewriterGateModeTag;
+  reason: RetrieveRewriterGateSkipReason;
+}
+
+export interface RetrieveRewriterGateCosineSample {
+  gateMode: "embedding";
+  score: number;
 }
 
 /**
@@ -1051,7 +1078,7 @@ export class AgentMetrics {
   }
 
   /**
-   * memU-inspired addition (Phase A) — record a single query rewriter
+   * v2.5 (Phase A) — record a single query rewriter
    * decision. The outcome union covers both the heuristic skip paths
    * (`skipped_not_referential`, `skipped_no_history`) and the LLM
    * outcomes (`ok`, `aborted`, `timeout`, `failed`). The duration
@@ -1065,6 +1092,33 @@ export class AgentMetrics {
       METRIC_NAMES.memoryRetrieveRewriterDuration,
       sample.durationMs,
       tags,
+    );
+  }
+
+  recordRetrieveRewriterGateFired(
+    sample: RetrieveRewriterGateFiredSample,
+  ): void {
+    this.collector.counter(METRIC_NAMES.memoryRetrieveRewriterGateFired, 1, {
+      gate_mode: sample.gateMode,
+    });
+  }
+
+  recordRetrieveRewriterGateSkipped(
+    sample: RetrieveRewriterGateSkippedSample,
+  ): void {
+    this.collector.counter(METRIC_NAMES.memoryRetrieveRewriterGateSkipped, 1, {
+      gate_mode: sample.gateMode,
+      reason: sample.reason,
+    });
+  }
+
+  recordRetrieveRewriterGateCosine(
+    sample: RetrieveRewriterGateCosineSample,
+  ): void {
+    this.collector.histogram(
+      METRIC_NAMES.memoryRetrieveRewriterGateCosineScore,
+      sample.score,
+      { gate_mode: sample.gateMode },
     );
   }
 

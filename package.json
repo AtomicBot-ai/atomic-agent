@@ -48,6 +48,7 @@
     "eval:memory:e11": "node eval-memory/scripts/run-v25.mjs -t \"E11 \"",
     "eval:memory:e12": "node eval-memory/scripts/run-v25.mjs -t \"E12 \"",
     "eval:memory:smoke:link-sweep": "node --import tsx eval-memory/scripts/smoke-link-sweep-distill.ts",
+    "probe:embedding-gate": "node --import tsx eval-memory/scripts/probe-embedding-gate.mts",
     "eval:memory:lock-env": "node --import tsx eval-memory/scripts/lock-environment.ts",
     "eval:memory:datasets": "node eval-memory/scripts/download-benchmark-datasets.mjs",
     "eval:memory:locomo": "node eval-memory/scripts/run-locomo.mjs",

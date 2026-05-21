@@ -9,7 +9,7 @@ import type {
 } from "./query-rewriter-runner.js";
 
 /**
- * memU-inspired query rewriter (Phase A) — provider decorator.
+ * v2.5 query rewriter (Phase A) — provider decorator.
  *
  * Wraps an inner {@link MemoryContextProvider} (typically the default
  * one produced by `createDefaultMemoryContextProvider`). On every

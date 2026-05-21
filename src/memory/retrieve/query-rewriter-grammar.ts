@@ -1,5 +1,5 @@
 /**
- * memU-inspired query rewriter (Phase A) — GBNF grammar.
+ * v2.5 query rewriter (Phase A) — GBNF grammar.
  *
  * Constrains the rewriter completion to a single
  * `<rewritten_query>...</rewritten_query>` envelope. The body is

@@ -88,7 +88,7 @@ describe("buildReflectionPrompt", () => {
   });
 
   // --------------------------------------------------------------------------
-  // Phase C: memU-inspired typed-NOTE preamble
+  // Phase C: v2.5 typed-NOTE preamble
   // --------------------------------------------------------------------------
 
   it("phase C: picks REFLECTION_STABLE_PREFIX_TYPED when typedNotes=true", () => {
@@ -145,7 +145,7 @@ describe("buildReflectionPrompt", () => {
   });
 
   // --------------------------------------------------------------------------
-  // Phase B: memU-inspired sliding-window segmentation
+  // Phase B: v2.5 sliding-window segmentation
   // --------------------------------------------------------------------------
 
   it("phase B: renders numbered USER/ASSISTANT turns when transcript is provided", () => {

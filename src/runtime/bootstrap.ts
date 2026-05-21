@@ -57,7 +57,13 @@ import {
   type RewriterLlmComplete,
   createQueryRewriterRunner,
   createRewriterAwareMemoryContextProvider,
+  createAlwaysGate,
+  createEmbeddingGate,
+  createHeuristicGate,
+  DEFAULT_REWRITER_EXEMPLARS,
+  type RewriterGate,
 } from "../memory/retrieve/index.js";
+import type { EmbeddingClient } from "../memory/embeddings/embedding-client.js";
 import {
   EmbeddingStore,
   EmbeddingWriter,
@@ -620,6 +626,7 @@ export async function createAgentRuntime(
   // timeout so a stale lockfile / stuck daemon cannot wedge the
   // entire startup. Failure is observability-only: we never throw.
   let embeddingHealth: "ok" | "unreachable" | "disabled" = "disabled";
+  let embeddingClient: EmbeddingClient | null = null;
   if (
     config.memory.embeddings.enabled &&
     config.localModels.embeddings.enabled &&
@@ -640,6 +647,7 @@ export async function createAgentRuntime(
           dim: embModelDef.dim,
           model: embModelDef.id,
         });
+        embeddingClient = client;
         const embStore = new EmbeddingStore({
           db: notesStore.getDatabaseHandleForEmbeddings(),
         });
@@ -1126,7 +1134,7 @@ export async function createAgentRuntime(
       })
     : undefined;
 
-  // memU-inspired heuristic-gated query rewriter (Phase A, config v18).
+  // v2.5 heuristic-gated query rewriter (Phase A, config v18).
   // When enabled, wrap the default provider with a decorator that
   // rewrites referential follow-ups via an LLM call on `slotId=-1`
   // before delegating recall. Disabled-by-default contract: when the
@@ -1153,9 +1161,33 @@ export async function createAgentRuntime(
       });
       return Promise.race([completionPromise, abortPromise]);
     };
+    const rewriterCfg = config.memory.retrieve.rewriter;
+    let gate: RewriterGate;
+    if (rewriterCfg.gateMode === "embedding") {
+      if (embeddingClient) {
+        gate = createEmbeddingGate({
+          embedder: embeddingClient,
+          exemplars:
+            rewriterCfg.embeddingGate.exemplars ?? DEFAULT_REWRITER_EXEMPLARS,
+          threshold: rewriterCfg.embeddingGate.threshold,
+          logger,
+          metrics,
+        });
+      } else {
+        logger.warn?.(
+          "rewriter.gateMode=embedding but no embeddingClient — falling back to heuristic",
+        );
+        gate = createHeuristicGate();
+      }
+    } else if (rewriterCfg.gateMode === "always") {
+      gate = createAlwaysGate();
+    } else {
+      gate = createHeuristicGate();
+    }
     const rewriterRunner = createQueryRewriterRunner({
       llmComplete: rewriterLlmComplete,
-      timeoutMs: config.memory.retrieve.rewriter.timeoutMs,
+      timeoutMs: rewriterCfg.timeoutMs,
+      gate,
       logger,
       metrics,
     });
@@ -1183,7 +1215,7 @@ export async function createAgentRuntime(
       ? { profileFactsProvider: () => profileStore.list() }
       : {}),
     ...(reflectionRunner ? { reflectionRunner } : {}),
-    // memU-inspired addition (Phase B). Sliding-window reflection
+    // v2.5 (Phase B). Sliding-window reflection
     // segmentation. When `enabled`, the agent loop defers
     // reflection to every Nth turn (with a final-flush on
     // `finish`) and packs the last W user/assistant pairs into the
@@ -1903,7 +1935,7 @@ function buildReflectionRunner(args: {
     maxNotesPerCall: notesWriteEnabled
       ? memory.reflection.maxNotesPerCall
       : 0,
-    // memU-inspired typed-NOTE extraction (Phase C). Threaded as a
+    // v2.5 typed-NOTE extraction (Phase C). Threaded as a
     // boolean dep so the runner can pick the typed reflection prefix
     // and the parser can project [type=X] into the `type:<X>` tag.
     typedNotes: memory.reflection.typedNotes.enabled,

@@ -351,7 +351,7 @@ function parseKeywordList(raw: string): string[] {
  * Recognise `NOTE body` with an optional **leading** `[type=X] `
  * marker and an optional **trailing** ` [tags=a,b,c]` marker.
  *
- * The leading `[type=X]` marker (memU-inspired typed-NOTE extraction)
+ * The leading `[type=X]` marker (v2.5 typed-NOTE extraction)
  * is projected into a synthetic tag of the form `type:event` /
  * `type:behavior` / `type:knowledge` / `type:skill`. Unknown type
  * values are silently dropped (the body is still kept) — the prompt +

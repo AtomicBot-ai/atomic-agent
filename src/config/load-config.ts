@@ -393,6 +393,11 @@ export function loadConfig(): AtomicAgentConfig {
           enabled: user.memory.retrieve.rewriter.enabled,
           timeoutMs: user.memory.retrieve.rewriter.timeoutMs,
           historyTurns: user.memory.retrieve.rewriter.historyTurns,
+          gateMode: user.memory.retrieve.rewriter.gateMode,
+          embeddingGate: {
+            threshold: user.memory.retrieve.rewriter.embeddingGate.threshold,
+            exemplars: user.memory.retrieve.rewriter.embeddingGate.exemplars,
+          },
         },
       },
     },

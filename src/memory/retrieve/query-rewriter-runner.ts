@@ -8,10 +8,13 @@ import {
   buildRewriterPrompt,
 } from "./query-rewriter-prompt.js";
 import { parseRewriterOutput } from "./query-rewriter-parser.js";
-import { isReferentialMessage } from "./referential-detector.js";
+import {
+  createHeuristicGate,
+  type RewriterGate,
+} from "./rewriter-gate.js";
 
 /**
- * memU-inspired query rewriter (Phase A) — runner.
+ * v2.5 query rewriter (Phase A) — runner.
  *
  * Single entry point — `maybeRewrite` — that decides whether to fire
  * the LLM call based on the heuristic gate, and folds every failure
@@ -55,6 +58,8 @@ export interface QueryRewriterRunnerDeps {
   llmComplete: RewriterLlmComplete;
   /** Hard cap per call (ms). */
   timeoutMs: number;
+  /** Referential gate. Defaults to {@link createHeuristicGate}. */
+  gate?: RewriterGate;
   logger?: StructuredLogger;
   metrics?: AgentMetrics;
   /** Injectable clock for deterministic tests. Defaults to `Date.now`. */
@@ -82,19 +87,23 @@ export function createQueryRewriterRunner(
   deps: QueryRewriterRunnerDeps,
 ): QueryRewriterRunner {
   const now = deps.now ?? (() => Date.now());
+  const gate = deps.gate ?? createHeuristicGate();
 
   return {
     async maybeRewrite(input): Promise<string> {
       const startedAt = now();
       const raw = input.userMessage;
 
-      // Heuristic gate first — cheap pure function, skips the LLM
-      // for self-contained / first-turn / long messages.
       if (input.history.length === 0) {
         record("skipped_no_history", startedAt);
         return raw;
       }
-      if (!isReferentialMessage(raw, input.history.length)) {
+      const referential = await gate.check({
+        message: raw,
+        historyTurnCount: input.history.length,
+        signal: input.signal,
+      });
+      if (!referential) {
         record("skipped_not_referential", startedAt);
         return raw;
       }

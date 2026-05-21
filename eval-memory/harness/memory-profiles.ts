@@ -66,6 +66,13 @@ export interface SeedConfigOptions {
    */
   rewriterEnabled?: boolean;
   /**
+   * v2.5 rewriter gate (`memory.retrieve.rewriter.gateMode`). Eval
+   * "on" profile defaults to `embedding` so LoCoMo Temporal questions
+   * benefit from multilingual cosine gating. Override to `heuristic`
+   * for A/B against the word-list gate.
+   */
+  rewriterGateMode?: "heuristic" | "embedding" | "always";
+  /**
    * v2.5 Phase B override (`memory.reflection.segmentation.enabled`).
    * Default `false`. E10 / E12 flip this on. When set, reflection
    * fires every `triggerEveryTurns` user turns (default 3) and on
@@ -261,17 +268,24 @@ export function buildMemoryConfig(
           },
         }
       : {}),
-    ...(opts.rewriterEnabled !== undefined
-      ? {
-          retrieve: {
-            ...config.memory.retrieve,
-            rewriter: {
-              ...config.memory.retrieve.rewriter,
-              enabled: opts.rewriterEnabled,
-            },
-          },
-        }
-      : {}),
+    retrieve: {
+      ...config.memory.retrieve,
+      rewriter: {
+        ...config.memory.retrieve.rewriter,
+        gateMode: opts.rewriterGateMode ?? "embedding",
+        embeddingGate: {
+          ...config.memory.retrieve.rewriter.embeddingGate,
+          // Eval-only: 0.65 misses long Temporal QA (cosine ~0.31–0.45 on
+          // bge/nomic with referential-only exemplars). 0.45 lets
+          // LoCoMo-style questions fire after the temporal exemplar bump.
+          threshold: 0.45,
+          exemplars: null,
+        },
+        ...(opts.rewriterEnabled !== undefined
+          ? { enabled: opts.rewriterEnabled }
+          : {}),
+      },
+    },
     // Eval-only reflection overrides on the "on" profile:
     //  - `timeoutMs` bumped from product default 10s → 60s. Prefill
     //    sessions in LoCoMo dump 4-5k-char transcripts into the

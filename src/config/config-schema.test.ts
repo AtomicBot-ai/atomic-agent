@@ -523,7 +523,7 @@ describe("parseUserConfigFile", () => {
   });
 
   // --------------------------------------------------------------------------
-  // memU-inspired memory fabric additions (config v18)
+  // v2.5 memory fabric additions (config v18)
   // --------------------------------------------------------------------------
 
   it("transparently migrates v17 → v18 with all three new blocks defaulting to disabled", () => {
@@ -567,12 +567,26 @@ describe("parseUserConfigFile", () => {
     ).toThrow(/triggerEveryTurns/);
   });
 
+  it("transparently migrates v19 → v20 with rewriter gate defaults", () => {
+    const parsed = parseUserConfigFile({ version: 19 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.memory.retrieve.rewriter.gateMode).toBe("heuristic");
+    expect(parsed.memory.retrieve.rewriter.embeddingGate.threshold).toBe(0.65);
+    expect(parsed.memory.retrieve.rewriter.embeddingGate.exemplars).toBeNull();
+  });
+
   it("parses memory.retrieve.rewriter block end-to-end", () => {
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,
       memory: {
         retrieve: {
-          rewriter: { enabled: true, timeoutMs: 5_000, historyTurns: 2 },
+          rewriter: {
+            enabled: true,
+            timeoutMs: 5_000,
+            historyTurns: 2,
+            gateMode: "embedding",
+            embeddingGate: { threshold: 0.7, exemplars: ["tell me more"] },
+          },
         },
       },
     });
@@ -580,7 +594,18 @@ describe("parseUserConfigFile", () => {
       enabled: true,
       timeoutMs: 5_000,
       historyTurns: 2,
+      gateMode: "embedding",
+      embeddingGate: { threshold: 0.7, exemplars: ["tell me more"] },
     });
+  });
+
+  it("rejects invalid memory.retrieve.rewriter.gateMode", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { retrieve: { rewriter: { gateMode: "magic" } } },
+      }),
+    ).toThrow(/gateMode/);
   });
 
   it("rejects non-positive memory.retrieve.rewriter.timeoutMs", () => {

@@ -2,9 +2,10 @@
 
 > **Status:** active campaign post-phase-5 (lessons + consolidator landed).
 > Companion to [`MEMORY_FABRIC_V2.md`](../MEMORY_FABRIC_V2.md) (the design plan)
-> and [`MEMORY_FABRIC_V2_SCORECARD.md`](../MEMORY_FABRIC_V2_SCORECARD.md)
-> (the human-in-the-loop scorecard). This document covers **slot 3** of the
-> scorecard — "is memory actually useful" — with reproducible scripts.
+> and [`MEMORY_FABRIC_V2.md`](../MEMORY_FABRIC_V2.md) §14 (acceptance criteria).
+> This document covers **slot 3** — "is memory actually useful" — with
+> reproducible scripts. v2.5 scenarios live in
+> [`MEMORY_FABRIC_V2.5.md`](../MEMORY_FABRIC_V2.5.md).
 
 ## Why this lives in `eval-memory/` and not `eval/`
 
@@ -267,10 +268,10 @@ trigger. Fix (planned, eval-harness only): mirror the existing
 inside `consolidator-tick.ts`. Until then, run E2E-3 in isolation
 when the rest of the suite is also being run.
 
-### v2.5 (memU-inspired additions) — opt-in integration suite [shipped]
+### v2.5 — opt-in integration suite [shipped]
 
 Companion to the base v2 suite above. Covers the three opt-in
-features from `MEMORY_FABRIC_V2.5_MEMU_ADDITIONS.md`. Wired through a
+features from [`MEMORY_FABRIC_V2.5.md`](../MEMORY_FABRIC_V2.5.md). Wired through a
 **separate** entry point (`npm run eval:memory:v25`) so flipping the
 v2.5 flags on remains a deliberate operator action — they are
 decoupled from the v2 release gate. Each experiment lives under
@@ -375,10 +376,9 @@ npm run eval:memory:e2e -- -t "E2E-2"    # single E2E scenario
 npm run eval:memory:smoke:link-sweep     # link-sweep + cluster + distill smoke
 ```
 
-Run the **v2.5 (memU-inspired) integration suite** (E9–E12). This is a
-separate entry point on purpose — v2.5 features are opt-in and
-decoupled from the base v2 release gate (see
-[`MEMORY_FABRIC_V2.5_MEMU_ADDITIONS.md`](../MEMORY_FABRIC_V2.5_MEMU_ADDITIONS.md)).
+Run the **v2.5 integration suite** (E9–E12). This is a separate entry point on
+purpose — v2.5 features are opt-in and decoupled from the base v2 release gate
+(see [`MEMORY_FABRIC_V2.5.md`](../MEMORY_FABRIC_V2.5.md)).
 
 ```bash
 npm run eval:memory:v25                  # all four v2.5 experiments

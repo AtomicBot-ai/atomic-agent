@@ -68,4 +68,28 @@ describe("isReferentialMessage", () => {
   it("pins the short-message word threshold for tests", () => {
     expect(SHORT_MESSAGE_WORD_THRESHOLD).toBe(5);
   });
+
+  // -------------------- multilingual (16 languages) --------------------
+
+  it.each([
+    ["es", "y eso también", true],
+    ["de", "und das auch", true],
+    ["fr", "et cela aussi", true],
+    ["pt", "e isso também", true],
+    ["it", "e ciò anche", true],
+    ["nl", "en dat ook", true],
+    ["pl", "i tamto samo", true],
+    ["tr", "ve bu konuda", true],
+    ["ar", "و ذلك أيضا", true],
+    ["he", "ו זה גם", true],
+    ["hi", "और यह भी", true],
+    ["vi", "và đó cũng", true],
+    ["id", "dan itu juga", true],
+    ["ko", "그리고 그것도", true],
+  ] as const)(
+    "fires on %s conjunction or pronoun markers",
+    (_lang, message, expected) => {
+      expect(isReferentialMessage(message, 3)).toBe(expected);
+    },
+  );
 });

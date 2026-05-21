@@ -14,7 +14,7 @@ import { renderProceduresSection } from "./procedures-renderer.js";
 
 /**
  * Memory-v2 phase 7b — scorecard pinning file. One `describe` per
- * scenario from `MEMORY_FABRIC_V2_SCORECARD.md §11`. The
+ * scenario from `MEMORY_FABRIC_V2.md §11`. The
  * underlying behaviour is covered by smaller unit tests
  * (`procedure-store.test.ts`, `distill-parser-procedure.test.ts`,
  * `procedures-recall.test.ts`, `procedures-renderer.test.ts`); this

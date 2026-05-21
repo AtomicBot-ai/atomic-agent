@@ -25,7 +25,7 @@ import { parseUserConfigFile } from "../../config/config-schema.js";
  * lands here regardless of which sub-module drifts.
  *
  * The pinning structure follows the "one scenario per describe"
- * convention from `MEMORY_FABRIC_V2_SCORECARD.md`.
+ * convention from `MEMORY_FABRIC_V2.md`.
  */
 
 interface Fixture {

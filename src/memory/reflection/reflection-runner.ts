@@ -55,7 +55,7 @@ export interface ReflectionInput {
    */
   turnIndex?: number;
   /**
-   * memU-inspired addition (Phase B — config v18). Multi-turn
+   * v2.5 (Phase B — config v18). Multi-turn
    * transcript window. When present, the reflection prompt renders
    * the entire array as numbered USER/ASSISTANT exchanges (instead
    * of the single `userMessage` + `assistantReply` pair). The runner
@@ -143,7 +143,7 @@ export interface ReflectionRunnerDeps {
    */
   neighborEvolver?: NeighborEvolver;
   /**
-   * memU-inspired typed-NOTE extraction. When `true`, the runner
+   * v2.5 typed-NOTE extraction. When `true`, the runner
    * picks `REFLECTION_STABLE_PREFIX_TYPED` and tells the model to
    * prefix every NOTE body with `[type=event|behavior|knowledge|skill]`.
    * The parser projects the marker into a synthetic `type:X` tag on
@@ -283,7 +283,7 @@ export function createReflectionRunner(
         assistantReply: input.assistantReply,
         ...(deps.typedNotes ? { typedNotes: true } : {}),
         ...(deps.anySpeaker ? { anySpeaker: true } : {}),
-        // memU-inspired addition (Phase B). When the agent loop
+        // v2.5 (Phase B). When the agent loop
         // hands a multi-turn transcript window, the prompt renders
         // it instead of the single trailing pair.
         ...(input.transcript && input.transcript.length > 0

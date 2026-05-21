@@ -298,11 +298,11 @@ export interface AtomicAgentConfig {
        * disables note extraction even when `autoStoreNotes` is true.
        */
       maxNotesPerCall: number;
-      /** memU-inspired typed-NOTE extraction. See UserConfigFile.memory.reflection.typedNotes. */
+      /** v2.5 typed-NOTE extraction. See UserConfigFile.memory.reflection.typedNotes. */
       typedNotes: {
         enabled: boolean;
       };
-      /** memU-inspired sliding-window reflection segmentation. See UserConfigFile.memory.reflection.segmentation. */
+      /** v2.5 sliding-window reflection segmentation. See UserConfigFile.memory.reflection.segmentation. */
       segmentation: {
         enabled: boolean;
         triggerEveryTurns: number;
@@ -465,7 +465,7 @@ export interface AtomicAgentConfig {
       profileFilterThreshold: number;
     };
     /**
-     * memU-inspired heuristic-gated query rewriter for recall. See
+     * v2.5 heuristic-gated query rewriter for recall. See
      * UserConfigFile.memory.retrieve.rewriter for full doc. Default
      * disabled — the provider chain is byte-identical to pre-v18
      * behaviour when off.
@@ -475,6 +475,11 @@ export interface AtomicAgentConfig {
         enabled: boolean;
         timeoutMs: number;
         historyTurns: number;
+        gateMode: RewriterGateMode;
+        embeddingGate: {
+          threshold: number;
+          exemplars: string[] | null;
+        };
       };
     };
   };
@@ -651,7 +656,7 @@ export interface UserConfigFile {
       autoStoreNotes: boolean;
       maxNotesPerCall: number;
       /**
-       * memU-inspired addition (config v18). Typed-NOTE extraction:
+       * v2.5 (config v18). Typed-NOTE extraction:
        * when `enabled`, the reflection prompt forces every NOTE to
        * carry a `[type=event|behavior|knowledge|skill]` marker that
        * the parser projects into a synthetic `type:X` tag on the
@@ -664,7 +669,7 @@ export interface UserConfigFile {
         enabled: boolean;
       };
       /**
-       * memU-inspired addition (config v18). Sliding-window
+       * v2.5 (config v18). Sliding-window
        * reflection segmentation: instead of firing reflection after
        * every turn with only the last user/assistant pair, accumulate
        * up to `windowTurns` exchanges and fire reflection once every
@@ -951,7 +956,7 @@ export interface UserConfigFile {
       profileFilterThreshold: number;
     };
     /**
-     * memU-inspired memory fabric additions (config v18). Heuristic-
+     * v2.5 memory fabric additions (config v18). Heuristic-
      * gated query rewriter for recall. The rewriter runs as a
      * decorator wrapped around `createDefaultMemoryContextProvider`:
      * before BM25/cosine recall, if the current user message looks
@@ -966,12 +971,24 @@ export interface UserConfigFile {
      *  - `timeoutMs`     hard per-call timeout. Default `3000`.
      *  - `historyTurns`  trailing turns fed into the rewriter
      *                    prompt. Default `3`.
+     *  - `gateMode`      `heuristic` | `embedding` | `always`.
+     *                    Default `heuristic`. Eval profiles often
+     *                    use `embedding` for multilingual recall.
+     *  - `embeddingGate.threshold` cosine floor when
+     *                    `gateMode=embedding`. Default `0.65`.
+     *  - `embeddingGate.exemplars` custom EN referential phrases;
+     *                    `null` uses built-in defaults.
      */
     retrieve: {
       rewriter: {
         enabled: boolean;
         timeoutMs: number;
         historyTurns: number;
+        gateMode: RewriterGateMode;
+        embeddingGate: {
+          threshold: number;
+          exemplars: string[] | null;
+        };
       };
     };
   };
@@ -1010,7 +1027,9 @@ export interface UserConfigFile {
   telegram: TelegramConfig;
 }
 
-export const USER_CONFIG_VERSION = 19 as const;
+export const USER_CONFIG_VERSION = 20 as const;
+
+export type RewriterGateMode = "heuristic" | "embedding" | "always";
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -1040,7 +1059,7 @@ export const USER_CONFIG_VERSION = 19 as const;
  * v17 added `memory.procedures.*` for memory-v2 phase 7b (MemP-style
  * advisory procedures distilled alongside lessons + second
  * stable-prefix bump for `### procedures`).
- * v18 added three memU-inspired memory fabric additions:
+ * v18 added three v2.5 memory fabric additions:
  * `memory.reflection.typedNotes.*` (Phase C — typed-NOTE extraction
  * with per-type forbidden lists),
  * `memory.reflection.segmentation.*` (Phase B — sliding-window
@@ -1073,6 +1092,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   16,
   17,
   18,
+  19,
   USER_CONFIG_VERSION,
 ];
 
@@ -1129,7 +1149,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       autoStoreNotes: true,
       maxNotesPerCall: 2,
       typedNotes: {
-        // memU-inspired addition (v18). Off by default — flipping it
+        // v2.5 (v18). Off by default — flipping it
         // on switches the reflection prompt to the typed prefix and
         // invalidates the reflection slot's KV cache once on the
         // next call. The main agent slot is untouched.
@@ -1142,7 +1162,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       // speakers from prefill conversation transcripts.
       anySpeaker: false,
       segmentation: {
-        // memU-inspired addition (v18). Off by default — when on,
+        // v2.5 (v18). Off by default — when on,
         // reflection fires every `triggerEveryTurns` turns over the
         // last `windowTurns` exchanges instead of every turn. The
         // final flush on `reason: "finish"` is unconditional.
@@ -1261,13 +1281,18 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     },
     retrieve: {
       rewriter: {
-        // memU-inspired addition (v18). Off by default — flipping it
+        // v2.5 (v18). Off by default — flipping it
         // on wraps `memoryContextProvider` with the heuristic-gated
         // rewriter decorator. The rewriter LLM call uses `slotId=-1`
         // so the main agent slot and reflection slot are untouched.
         enabled: false,
         timeoutMs: 3_000,
         historyTurns: 3,
+        gateMode: "heuristic",
+        embeddingGate: {
+          threshold: 0.65,
+          exemplars: null,
+        },
       },
     },
   },
@@ -1526,6 +1551,19 @@ export function parseHttpApprovalMode(
   throw new ConfigValidationError(
     field,
     `expected one of never|writes|always, got ${JSON.stringify(raw)}`,
+  );
+}
+
+export function parseRewriterGateMode(
+  raw: unknown,
+  field: string,
+): RewriterGateMode {
+  if (raw === "heuristic" || raw === "embedding" || raw === "always") {
+    return raw;
+  }
+  throw new ConfigValidationError(
+    field,
+    `expected one of heuristic|embedding|always, got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -1788,6 +1826,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (memory.retrieve as Record<string, unknown> | undefined) ?? {};
   const memoryRetrieveRewriter =
     (memoryRetrieve.rewriter as Record<string, unknown> | undefined) ?? {};
+  const memoryRetrieveRewriterEmbeddingGate =
+    (memoryRetrieveRewriter.embeddingGate as
+      | Record<string, unknown>
+      | undefined) ?? {};
   const webhooks = parseWebhookMap(obj.webhooks ?? {}, "webhooks");
   const vision = (obj.vision as Record<string, unknown> | undefined) ?? {};
   const skills = (obj.skills as Record<string, unknown> | undefined) ?? {};
@@ -2306,6 +2348,25 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
               USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.historyTurns,
             "memory.retrieve.rewriter.historyTurns",
           ),
+          gateMode: parseRewriterGateMode(
+            memoryRetrieveRewriter.gateMode ??
+              USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.gateMode,
+            "memory.retrieve.rewriter.gateMode",
+          ),
+          embeddingGate: {
+            threshold: parseUnitInterval(
+              memoryRetrieveRewriterEmbeddingGate.threshold ??
+                USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.embeddingGate
+                  .threshold,
+              "memory.retrieve.rewriter.embeddingGate.threshold",
+            ),
+            exemplars: parseStringArrayOrNull(
+              memoryRetrieveRewriterEmbeddingGate.exemplars ??
+                USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.embeddingGate
+                  .exemplars,
+              "memory.retrieve.rewriter.embeddingGate.exemplars",
+            ),
+          },
         },
       },
     },

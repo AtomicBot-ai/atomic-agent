@@ -19,7 +19,7 @@
  *    phase 2 introduced).
  *
  * NOTE body may carry an optional **leading** `[type=...]` marker
- * (memU-inspired typed-NOTE extraction, opt-in via
+ * (v2.5 typed-NOTE extraction, opt-in via
  * `memory.reflection.typedNotes.enabled`) and an optional **trailing**
  * ` [tags=a,b,c]` marker. Both are extracted by the parser post-hoc;
  * the grammar accepts the leading typemarker as an optional production

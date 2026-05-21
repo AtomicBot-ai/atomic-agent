@@ -7,6 +7,8 @@ import {
   type RewriterLlmComplete,
   createQueryRewriterRunner,
 } from "./query-rewriter-runner.js";
+import { createAlwaysGate } from "./rewriter-gate.js";
+import type { RewriterGate } from "./rewriter-gate.js";
 
 function completion(content: string): CompletionResult {
   return {
@@ -166,6 +168,53 @@ describe("createQueryRewriterRunner", () => {
       signal: ac.signal,
     });
     expect(out).toBe("и про это");
+    expect(llm).not.toHaveBeenCalled();
+  });
+
+  it("fires the LLM when an always gate is injected", async () => {
+    const llm = vi.fn(async () => completion(envelope("expanded query")));
+    const runner = createQueryRewriterRunner({
+      llmComplete: llm as unknown as RewriterLlmComplete,
+      timeoutMs: 1000,
+      gate: createAlwaysGate(),
+    });
+    const out = await runner.maybeRewrite({
+      sessionId: "s",
+      userMessage:
+        "please walk me through the BM25 ranking algorithm in detail",
+      history: [
+        { role: "user", text: "hi" },
+        { role: "assistant", text: "hello" },
+      ],
+      signal: new AbortController().signal,
+    });
+    expect(out).toBe("expanded query");
+    expect(llm).toHaveBeenCalledOnce();
+  });
+
+  it("skips when an injected gate returns false", async () => {
+    const neverGate: RewriterGate = {
+      name: "heuristic",
+      async check() {
+        return false;
+      },
+    };
+    const llm = vi.fn();
+    const runner = createQueryRewriterRunner({
+      llmComplete: llm as unknown as RewriterLlmComplete,
+      timeoutMs: 1000,
+      gate: neverGate,
+    });
+    const out = await runner.maybeRewrite({
+      sessionId: "s",
+      userMessage: "and what about it",
+      history: [
+        { role: "user", text: "u1" },
+        { role: "assistant", text: "a1" },
+      ],
+      signal: new AbortController().signal,
+    });
+    expect(out).toBe("and what about it");
     expect(llm).not.toHaveBeenCalled();
   });
 

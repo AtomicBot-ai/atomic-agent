@@ -1,12 +1,15 @@
 /**
- * memU-inspired retrieval pipeline additions (Phase A).
+ * v2.5 retrieval pipeline additions (Phase A).
  *
  * Currently ships one feature: a heuristic-gated query rewriter that
  * wraps the default memory context provider as a decorator. Opt-in
  * via `memory.retrieve.rewriter.enabled` (default `false`).
  *
  * Module layout follows the rest of `src/memory/*`:
- *  - `referential-detector` — pure heuristic gate.
+ *  - `referential-detector` — word-list heuristic (16 languages).
+ *  - `rewriter-gate` — gate interface + heuristic / always modes.
+ *  - `embedding-gate` — cosine gate via `EmbeddingClient`.
+ *  - `default-rewriter-exemplars` — EN referential corpus.
  *  - `query-rewriter-prompt` — prompt builder + stable prefix.
  *  - `query-rewriter-grammar` — GBNF envelope.
  *  - `query-rewriter-parser` — completion parser, fire-safe.
@@ -23,6 +26,15 @@ export {
   isReferentialMessage,
   SHORT_MESSAGE_WORD_THRESHOLD,
 } from "./referential-detector.js";
+export {
+  createAlwaysGate,
+  createHeuristicGate,
+  type RewriterGate,
+  type RewriterGateCheckInput,
+  type RewriterGateMode,
+} from "./rewriter-gate.js";
+export { createEmbeddingGate } from "./embedding-gate.js";
+export { DEFAULT_REWRITER_EXEMPLARS } from "./default-rewriter-exemplars.js";
 export {
   QUERY_REWRITER_GRAMMAR,
 } from "./query-rewriter-grammar.js";

@@ -1,8 +1,7 @@
 /**
- * memU-inspired query rewriter (Phase A) — prompt builder.
+ * v2.5 query rewriter (Phase A) — prompt builder.
  *
- * Adapted from memU's `prompts/retrieve/query_rewriter.py`. The
- * prompt is intentionally tiny (~200 tokens of stable prefix + up to
+ * The prompt is intentionally tiny (~200 tokens of stable prefix + up to
  * ~300 tokens of variable tail) so the rewriter call stays cheap
  * (~30-50ms cold on `slotId = -1`).
  *

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// v2.5 orchestrator — runs every Memory Fabric v2.5 (memU-inspired)
+// v2.5 orchestrator — runs Memory Fabric v2.5 experiments (E9–E12)
 // integration test (E9, E10, E11, E12) under a managed llama-server.
 //
 // Intentionally separate from `eval:memory` and `eval:memory:e2e`:

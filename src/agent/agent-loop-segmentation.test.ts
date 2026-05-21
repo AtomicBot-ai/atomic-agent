@@ -24,7 +24,7 @@ import type {
 } from "../memory/reflection/reflection-runner.js";
 
 /**
- * Phase B (memU-inspired) — sliding-window reflection segmentation.
+ * Phase B (v2.5) — sliding-window reflection segmentation.
  *
  * Pins:
  *   - Segmentation disabled → legacy per-reply trigger, no transcript

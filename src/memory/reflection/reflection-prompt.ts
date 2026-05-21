@@ -22,7 +22,7 @@
 export const REFLECTION_MESSAGE_CHAR_CAP = 1_000;
 
 /**
- * memU-inspired typed-NOTE preamble. Opt-in via
+ * v2.5 typed-NOTE preamble. Opt-in via
  * `memory.reflection.typedNotes.enabled` (default `false`). When the
  * config flag is on, the reflection runner picks **this** prefix
  * instead of `REFLECTION_STABLE_PREFIX`, and the model is told to tag
@@ -32,8 +32,8 @@ export const REFLECTION_MESSAGE_CHAR_CAP = 1_000;
  * untyped completion is still grammatically valid; the prompt is the
  * pressure that makes typed output canonical when the flag is on.
  *
- * Per-type forbidden lists are compressed adaptations of memU's
- * `prompts/memory_type/{event,behavior,knowledge,skill}.py`. The four
+ * Per-type forbidden lists steer the model away from category mistakes.
+ * The four
  * canonical buckets keep BM25 and lesson-clustering signals clean:
  *  - `event`     one-off happening with time/location/participants
  *  - `behavior`  recurring pattern, routine, or solution
@@ -179,7 +179,7 @@ export interface ReflectionPromptInput {
   userMessage: string;
   assistantReply: string;
   /**
-   * memU-inspired typed-NOTE extraction. When `true`, the prompt
+   * v2.5 typed-NOTE extraction. When `true`, the prompt
    * switches to `REFLECTION_STABLE_PREFIX_TYPED` and the model is
    * told to tag every NOTE with `[type=event|behavior|knowledge|skill]`.
    * Default `false` — preserves the legacy untyped behaviour exactly,
@@ -199,7 +199,7 @@ export interface ReflectionPromptInput {
    */
   anySpeaker?: boolean;
   /**
-   * memU-inspired sliding-window segmentation (Phase B). When
+   * v2.5 sliding-window segmentation (Phase B). When
    * present and non-empty, the tail renders the full transcript as
    * numbered USER/ASSISTANT exchanges (`### turn 1`, `### turn 2`,
    * …) instead of a single trailing pair. The legacy single-pair
@@ -216,7 +216,7 @@ export interface ReflectionPromptInput {
  * the tail varies. The caller feeds this through `llmComplete` with
  * the reflection grammar.
  *
- * `typedNotes=true` selects the memU-inspired typed-NOTE prefix
+ * `typedNotes=true` selects the v2.5 typed-NOTE prefix
  * (`REFLECTION_STABLE_PREFIX_TYPED`). Flipping the flag at runtime
  * invalidates the reflection slot's KV cache once on the next call —
  * the same one-shot pattern as phase 4's bi-temporal addition.

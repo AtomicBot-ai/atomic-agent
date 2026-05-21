@@ -393,7 +393,7 @@ describe("parseReflectionOutput", () => {
   });
 
   // --------------------------------------------------------------------------
-  // Phase C: memU-inspired typed-NOTE extraction
+  // Phase C: v2.5 typed-NOTE extraction
   // --------------------------------------------------------------------------
 
   it("phase C: extracts [type=event] into a synthetic type:event tag", () => {

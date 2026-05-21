@@ -1,5 +1,5 @@
 /**
- * memU-inspired heuristic gate for the query rewriter (Phase A).
+ * v2.5 heuristic gate for the query rewriter (Phase A).
  *
  * The detector is the cheap filter that decides whether to spend an
  * LLM call rewriting the current user message into a self-contained
@@ -15,14 +15,16 @@
  *     turns non-empty), AND
  *  2. Message length ≤ {@link SHORT_MESSAGE_WORD_THRESHOLD} words and
  *     does not contain a question word, OR
- *  3. Message contains a pronoun from the allowlist (English +
- *     Russian, lowercased word-boundary match), OR
+ *  3. Message contains a pronoun from the allowlist, OR
  *  4. Message begins with a conjunction starter from the allowlist.
  *
- * Otherwise returns `false` — the caller uses the raw message as the
- * recall query (same byte path as pre-v18). The exact word lists are
- * deliberately small and conservative; tuning them up is a separate
- * decision once we have production telemetry on rewriter hit rate.
+ * **Language coverage (16 languages, whitespace tokenization):**
+ * en, ru, es, de, fr, pt, it, nl, pl, tr, ar, he, hi, vi, id, ko.
+ *
+ * **Deferred:** CJK (zh, ja) and Thai — no inter-word spaces, so
+ * `split(/\s+/)` returns one token for the whole utterance. Use
+ * `memory.retrieve.rewriter.gateMode = "embedding"` for those scripts
+ * (`Intl.Segmenter` heuristic support is a follow-up).
  */
 export function isReferentialMessage(
   message: string,
@@ -44,24 +46,15 @@ export function isReferentialMessage(
 }
 
 /**
- * Short-message floor for the gate. Tuned to match memU's
+ * Short-message floor for the gate. Heuristic floor tuned for short follow-ups — matches
  * `pre_retrieval_decision` rule of thumb that messages with ≤ 5
  * meaningful words are usually anaphoric continuations of a prior
  * turn. Exposed so tests can pin the threshold.
  */
 export const SHORT_MESSAGE_WORD_THRESHOLD = 5;
 
-/**
- * Pronouns that strongly suggest a missing referent in the current
- * message — the rewriter resolves them against the prior turns.
- *
- * Kept minimal; expanding the list increases rewriter firing rate
- * (LLM cost) without obvious recall-quality wins on production
- * traces. Russian forms are included because the runtime ships
- * bilingual.
- */
 const PRONOUN_ALLOWLIST: ReadonlySet<string> = new Set([
-  // English
+  // en
   "it",
   "that",
   "they",
@@ -71,7 +64,7 @@ const PRONOUN_ALLOWLIST: ReadonlySet<string> = new Set([
   "these",
   "same",
   "more",
-  // Russian
+  // ru
   "он",
   "она",
   "оно",
@@ -82,36 +75,175 @@ const PRONOUN_ALLOWLIST: ReadonlySet<string> = new Set([
   "такая",
   "такие",
   "ещё",
+  // es
+  "eso",
+  "esto",
+  "ese",
+  "esa",
+  "él",
+  "ella",
+  "ellos",
+  "más",
+  // de
+  "das",
+  "es",
+  "sie",
+  "er",
+  "die",
+  "jene",
+  "mehr",
+  // fr
+  "ça",
+  "cela",
+  "il",
+  "elle",
+  "ils",
+  "celui",
+  "plus",
+  // pt
+  "isso",
+  "esse",
+  "ele",
+  "ela",
+  "eles",
+  "mais",
+  // it
+  "ciò",
+  "esso",
+  "lui",
+  "lei",
+  "loro",
+  "più",
+  // nl
+  "dat",
+  "het",
+  "hij",
+  "zij",
+  "ze",
+  "deze",
+  "meer",
+  // pl (omit bare "to" — collides with English preposition "to")
+  "tamto",
+  "tego",
+  "temu",
+  "on",
+  "ona",
+  "oni",
+  "więcej",
+  // tr
+  "bu",
+  "şu",
+  "o",
+  "onlar",
+  "daha",
+  // ar
+  "ذلك",
+  "هذا",
+  "هو",
+  "هي",
+  "هم",
+  "أكثر",
+  // he
+  "זה",
+  "זו",
+  "הוא",
+  "היא",
+  "הם",
+  "יותר",
+  // hi
+  "यह",
+  "वह",
+  "उसे",
+  "उन्हें",
+  // vi
+  "đó",
+  "này",
+  "anh",
+  "cô",
+  "họ",
+  "hơn",
+  // id
+  "itu",
+  "ini",
+  "dia",
+  "mereka",
+  "lagi",
+  // ko
+  "그",
+  "저",
+  "이",
+  "더",
 ]);
 
-/**
- * Conjunctions that suggest the message is a continuation of the
- * prior assistant turn ("and what about X?", "but why does..."). When
- * the very first word matches, we treat the message as referential.
- */
 const CONJUNCTION_STARTERS: ReadonlySet<string> = new Set([
-  // English
+  // en
   "and",
   "but",
   "also",
-  // Russian
+  // ru
   "а",
   "и",
   "но",
   "ещё",
   "или",
+  // es
+  "y",
+  "pero",
+  "también",
+  // de
+  "und",
+  "aber",
+  "auch",
+  // fr
+  "et",
+  "mais",
+  "aussi",
+  // pt
+  "e",
+  "mas",
+  "também",
+  // it
+  "ma",
+  "anche",
+  // nl
+  "en",
+  "maar",
+  "ook",
+  // pl
+  "ale",
+  "też",
+  // tr
+  "ve",
+  "ama",
+  "da",
+  // ar
+  "و",
+  "لكن",
+  "أيضا",
+  // he
+  "ו",
+  "אבל",
+  "גם",
+  // hi
+  "और",
+  "लेकिन",
+  "भी",
+  // vi
+  "và",
+  "nhưng",
+  "cũng",
+  // id
+  "dan",
+  "tapi",
+  "juga",
+  // ko
+  "그리고",
+  "하지만",
+  "또",
 ]);
 
-/**
- * Question words that DISAMBIGUATE a short message — when present we
- * assume the user is asking a concrete factual question rather than
- * referring back. Examples: "what is FTS5?" (5 words, has "what"),
- * "how does the rewriter work?" (6 words, would already fail the
- * length floor anyway). Conservative: better to skip rewriting a
- * short self-contained question than to skip it on a short pronoun
- * follow-up.
- */
 const QUESTION_WORDS: ReadonlySet<string> = new Set([
+  // en
   "what",
   "when",
   "where",
@@ -119,7 +251,7 @@ const QUESTION_WORDS: ReadonlySet<string> = new Set([
   "how",
   "who",
   "which",
-  // Russian
+  // ru
   "что",
   "когда",
   "где",
@@ -130,6 +262,114 @@ const QUESTION_WORDS: ReadonlySet<string> = new Set([
   "какой",
   "какая",
   "какие",
+  // es
+  "qué",
+  "dónde",
+  "cuándo",
+  "cómo",
+  "quién",
+  "cuál",
+  "por",
+  // de
+  "was",
+  "wo",
+  "wann",
+  "wie",
+  "warum",
+  "wer",
+  "welche",
+  // fr
+  "que",
+  "où",
+  "quand",
+  "comment",
+  "pourquoi",
+  "qui",
+  "quel",
+  // pt
+  "onde",
+  "porquê",
+  "quem",
+  "qual",
+  // it
+  "che",
+  "dove",
+  "quando",
+  "come",
+  "perché",
+  "chi",
+  "quale",
+  // nl
+  "wat",
+  "waar",
+  "wanneer",
+  "hoe",
+  "waarom",
+  "wie",
+  "welk",
+  // pl
+  "co",
+  "gdzie",
+  "kiedy",
+  "jak",
+  "dlaczego",
+  "kto",
+  "który",
+  // tr
+  "ne",
+  "nerede",
+  "nasıl",
+  "neden",
+  "kim",
+  "hangi",
+  // ar
+  "ما",
+  "ماذا",
+  "أين",
+  "متى",
+  "كيف",
+  "لماذا",
+  "من",
+  "أي",
+  // he
+  "מה",
+  "איפה",
+  "מתי",
+  "איך",
+  "למה",
+  "מי",
+  "איזה",
+  // hi
+  "क्या",
+  "कहाँ",
+  "कब",
+  "कैसे",
+  "क्यों",
+  "कौन",
+  "कौनसा",
+  // vi
+  "gì",
+  "đâu",
+  "sao",
+  "tại",
+  "ai",
+  "nào",
+  // id
+  "apa",
+  "di",
+  "kapan",
+  "bagaimana",
+  "mengapa",
+  "siapa",
+  "yang",
+  // ko
+  "뭐",
+  "어디",
+  "언제",
+  "어떻게",
+  "왜",
+  "누가",
+  "어느",
 ]);
 
 function hasQuestionWord(words: readonly string[]): boolean {
@@ -151,8 +391,5 @@ function hasConjunctionStarter(first: string): boolean {
 }
 
 function stripPunctuation(word: string): string {
-  // Strip leading/trailing common punctuation; keep internal
-  // characters (e.g. "a,b" → after split, just "a" and "b"; this
-  // belt-and-suspenders strips lingering `,` `.` `?` `!`).
   return word.replace(/^[.,!?;:"'`(]+|[.,!?;:"'`)]+$/g, "");
 }

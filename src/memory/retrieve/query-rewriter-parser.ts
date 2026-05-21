@@ -1,5 +1,5 @@
 /**
- * memU-inspired query rewriter (Phase A) — completion parser.
+ * v2.5 query rewriter (Phase A) — completion parser.
  *
  * Recognises the `<rewritten_query>...</rewritten_query>` envelope
  * emitted under {@link QUERY_REWRITER_GRAMMAR}. Returns the trimmed
