@@ -105,6 +105,14 @@ const JUDGE_CONCURRENCY = parseInt(
   10,
 );
 const KEEP_STATE = process.env.ATOMIC_AGENT_LOCOMO_KEEP_STATE === "1";
+// Whitelist by `sample_id` (comma-separated). Applied BEFORE
+// MAX_CONVS slicing so e.g. INCLUDE_IDS=conv-30 + MAX_CONVS=1
+// targets that specific conversation without reshuffling the
+// dataset. Empty / unset = no filter, fall back to dataset order.
+const INCLUDE_IDS = (process.env.ATOMIC_AGENT_LOCOMO_INCLUDE_IDS ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter((s) => s.length > 0);
 
 const hasDataset = existsSync(resolve(DATASET_PATH));
 const hasLlama = typeof LLAMA_URL === "string" && LLAMA_URL.length > 0;
@@ -116,7 +124,12 @@ const hasLlama = typeof LLAMA_URL === "string" && LLAMA_URL.length > 0;
     let report: ReturnType<typeof startReportRun>;
 
     it("loads and caps the dataset", () => {
-      dataset = loadLocomoDataset({ path: DATASET_PATH }).slice(0, MAX_CONVS);
+      const all = loadLocomoDataset({ path: DATASET_PATH });
+      const filtered =
+        INCLUDE_IDS.length > 0
+          ? all.filter((c) => INCLUDE_IDS.includes(c.sampleId))
+          : all;
+      dataset = filtered.slice(0, MAX_CONVS);
       report = startReportRun({ label: "locomo" });
       expect(dataset.length).toBeGreaterThan(0);
     });

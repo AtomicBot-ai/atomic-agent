@@ -408,6 +408,36 @@ export async function driveMultiTurn(opts: MultiTurnOptions): Promise<MultiTurnR
     ? readTurnsFromTrace(opts.stateDir, sessionId, opts.prompts)
     : [];
 
+  // Trace-truncation fallback. The trace recorder stops writing
+  // events once `tracing.trace.maxBytesPerSession` is hit (see
+  // AGENTS.md §"Traceability and replay"). On long LoCoMo /
+  // LongMemEval prefills this can fire mid-session and every later
+  // turn lands in the trace with no `tool_invocation` for `reply`,
+  // even though the agent really did reply on stdout. The driver
+  // captures every stdout newline into `replyLinesPerPrompt` for
+  // exactly this reason — it is the canonical "what the user would
+  // have seen" signal. When the trace-side path produced no
+  // assistantReply but the stdout-side did, fold the stdout line
+  // back so downstream scoring (substring match, judge) sees the
+  // real reply text. We also bump `stepCount` to at least 1 so the
+  // record is not mistaken for "agent never ran" by callers that
+  // gate on `stepCount > 0`. Token / duration counts stay at zero
+  // because the trace really did not capture them; metrics
+  // consumers should treat 0 in those fields as "unknown, not
+  // measured" rather than "really zero" when this fallback fires.
+  for (let i = 0; i < turns.length; i += 1) {
+    const turn = turns[i];
+    if (!turn) continue;
+    if (turn.assistantReply.length > 0) continue;
+    const stdoutLine = replyLinesPerPrompt[i] ?? null;
+    if (stdoutLine === null || stdoutLine.length === 0) continue;
+    turns[i] = {
+      ...turn,
+      assistantReply: stdoutLine,
+      stepCount: Math.max(turn.stepCount, 1),
+    };
+  }
+
   return {
     exitCode: childResult.exitCode,
     signal: childResult.signal,

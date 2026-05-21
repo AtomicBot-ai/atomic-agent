@@ -133,6 +133,20 @@ export function buildMemoryConfig(
     trace: {
       ...config.tracing.trace,
       enabled: true,
+      // Eval-only override. Production default is 10 MiB which is
+      // about ~55 turns on a reflection-heavy `full_v2` profile —
+      // enough for interactive use but not for LoCoMo / LongMemEval
+      // runs that feed 30+ session prefills then ask 100+ questions.
+      // When the cap is hit, `trace_truncated` fires and further
+      // events are silently dropped (see AGENTS.md §"Traceability and
+      // replay"). The harness reads `assistantReply` out of the trace,
+      // so post-truncation turns surface as `""` even when the agent
+      // really did reply on stdout — see `multi-turn-driver.ts`'s
+      // truncation-fallback for the read-side guard. Bumped here to
+      // 200 MiB so a full conv-44 (158 QA × 28 sessions ≈ 35 MiB of
+      // trace at full fidelity) leaves comfortable head-room.
+      // Pinned only by the eval surface — product code is unaffected.
+      maxBytesPerSession: 200 * 1024 * 1024,
     },
   };
 
@@ -208,6 +222,21 @@ export function buildMemoryConfig(
     consolidation: {
       ...config.memory.consolidation,
       enabled: true,
+      // Eval-only overrides on the "on" profile. Production defaults
+      // (intervalMs=6h, cooldownMs=24h, minClusterSize=3) are tuned
+      // for long-lived user sessions where memories accumulate over
+      // days. LoCoMo / LongMemEval runs are 30-90 min total — the
+      // production cadence guarantees `lessons=0` because the
+      // consolidator never tick'ит within the run window. Lowered
+      // here so the cold-path job actually exercises distillation
+      // and we can score lesson recall (phase 5 + 6) end-to-end.
+      // Pinned only by the eval surface — production agent loop is
+      // byte-identical because product code never reads these
+      // overrides.
+      intervalMs: 300_000, // 5 min — at least 6-12 ticks per conv
+      cooldownMs: 1, // schema requires positive int — effectively off
+      minClusterSize: 2, // pair-up clusters are valid for short runs
+      requireSharedTag: false,
     },
     // Phase 7b is OFF by default in the ON profile too — the
     // production default is `procedures.enabled=false` and the
