@@ -30,6 +30,8 @@ export const OBSERVE_TABS: readonly TuiTab[] = [
 export const MANAGE_TABS: readonly TuiTab[] = [
   "tasks",
   "skills",
+  "memory",
+  "mcp",
   "models",
   "telegram",
 ];

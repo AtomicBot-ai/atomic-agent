@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { buildLlamaServerArgs, type DaemonStartOptions } from "./daemon-lifecycle.js";
+import {
+  buildEmbeddingServerArgs,
+  buildLlamaServerArgs,
+  type DaemonStartOptions,
+  type EmbeddingDaemonStartOptions,
+} from "./daemon-lifecycle.js";
 
 const baseOpts: DaemonStartOptions = {
   dataDir: "/tmp/data",
@@ -103,5 +108,57 @@ describe("buildLlamaServerArgs", () => {
     expect(args).toContain("/tpl.jinja");
     expect(args).toContain("--mmproj");
     expect(args).toContain("/proj.gguf");
+  });
+});
+
+describe("buildEmbeddingServerArgs (memory-v2 phase 1B)", () => {
+  it("emits --embeddings + --pooling + the model alias", () => {
+    const opts: EmbeddingDaemonStartOptions = {
+      dataDir: "/tmp/data",
+      modelId: "nomic-embed-text-v1.5",
+      port: 19092,
+    };
+    const args = buildEmbeddingServerArgs(
+      opts,
+      "/tmp/data/models/nomic-embed-text-v1.5/nomic-embed-text-v1.5.Q4_K_M.gguf",
+    );
+    expect(args).toEqual([
+      "--no-webui",
+      "-m",
+      "/tmp/data/models/nomic-embed-text-v1.5/nomic-embed-text-v1.5.Q4_K_M.gguf",
+      "--port",
+      "19092",
+      "--host",
+      "127.0.0.1",
+      "-ngl",
+      "-1",
+      "--embeddings",
+      "--pooling",
+      "mean",
+      "--ctx-size",
+      "2048",
+      "-a",
+      "nomic-embed-text-v1.5",
+    ]);
+    // Critically: NO chat-only flags. `--embeddings` excludes the
+    // chat-template / flash-attn / cache-type / parallel knobs.
+    expect(args).not.toContain("--jinja");
+    expect(args).not.toContain("--flash-attn");
+    expect(args).not.toContain("--mmproj");
+    expect(args).not.toContain("--parallel");
+  });
+
+  it("threads the pooling kind from the catalog (bge -> cls)", () => {
+    const args = buildEmbeddingServerArgs(
+      {
+        dataDir: "/tmp",
+        modelId: "bge-small-en-v1.5",
+        port: 19092,
+      },
+      "/tmp/models/bge-small-en-v1.5/bge-small-en-v1.5-q8_0.gguf",
+    );
+    const idx = args.indexOf("--pooling");
+    expect(idx).toBeGreaterThan(-1);
+    expect(args[idx + 1]).toBe("cls");
   });
 });

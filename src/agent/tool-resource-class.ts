@@ -23,7 +23,15 @@
  *                      `requireApproval` synchronously inside `run()`.
  *                      Forbidden inside a batch — the validator rejects
  *                      the parse and the model is asked to split.
- *  - `terminal`      — `reply` / `finish`. Forbidden inside a batch.
+ *  - `terminal`      — `reply` / `finish`. Allowed only as the LAST
+ *                      element of a multi-call batch; mid-batch or
+ *                      duplicated terminals are rejected. The executor
+ *                      runs the terminal call strictly after every
+ *                      non-terminal call has settled, so `[store, reply]`
+ *                      collapses into one inference whose transcript is
+ *                      `tool_call(store) → tool_result(store) →
+ *                      assistant_reply`. Solo terminal calls keep the
+ *                      legacy semantics (length-1 batch).
  *
  * Groups in distinct classes execute concurrently with each other; the
  * total step wall is `max(group durations)`.
@@ -107,6 +115,9 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
 
   // memory.*
   "memory.profile.list": "pure_read",
+  "memory.profile.history": "pure_read",
+  "memory.lessons.recall": "pure_read",
+  "memory.procedures.recall": "pure_read",
   "memory.notes.recall": "pure_read",
   "memory.profile.set": "memory_write",
   "memory.profile.remove": "memory_write",
@@ -123,17 +134,59 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // vision
   "vision.describe": "vision",
 
+  // mcp.* discovery / read tools — pure_read regardless of per-server
+  // trust because they only inspect the local catalog or fetch
+  // declared resources/prompts. Per-server-tool calls go through
+  // `mcp.<server>.<name>` and are classified by the dynamic resolver.
+  "mcp.resource.list": "pure_read",
+  "mcp.resource.read": "pure_read",
+  "mcp.prompt.list": "pure_read",
+  "mcp.prompt.get": "pure_read",
+
   // terminal verbs
   reply: "terminal",
   finish: "terminal",
 };
 
 /**
+ * Optional resolver for tool names that are not in the static
+ * `TOOL_RESOURCE_CLASS` table. Set once at bootstrap by the MCP
+ * manager so MCP-namespaced tools (`mcp.<server>.<name>`) get a real
+ * class instead of falling through to `unknown` (which would forbid
+ * them from every batch — including length-1 batches). The resolver
+ * is consulted only when the static lookup misses, so it cannot
+ * override the built-in classes.
+ */
+let dynamicResourceClassResolver: ((toolName: string) => ResourceClass | null) | null = null;
+
+/**
+ * Install a dynamic resolver. Pass `null` to unregister (e.g. during
+ * runtime shutdown). The setter is intentionally narrow — the
+ * resolver is read on every `resourceClassFor` call and must be
+ * cheap (a Map lookup at the call site).
+ */
+export function setDynamicResourceClassResolver(
+  resolver: ((toolName: string) => ResourceClass | null) | null,
+): void {
+  dynamicResourceClassResolver = resolver;
+}
+
+/**
  * Lookup helper. Unknown tools land in `unknown` so the validator can
  * reject them from any batch — this is the fail-closed default.
+ *
+ * For names not in the static table, the dynamic resolver (if any)
+ * is consulted. This is the seam through which MCP-namespaced tools
+ * (`mcp.<server>.<name>`) get a non-`unknown` class.
  */
 export function resourceClassFor(toolName: string): ResourceClass {
-  return TOOL_RESOURCE_CLASS[toolName] ?? "unknown";
+  const builtin = TOOL_RESOURCE_CLASS[toolName];
+  if (builtin) return builtin;
+  if (dynamicResourceClassResolver) {
+    const resolved = dynamicResourceClassResolver(toolName);
+    if (resolved) return resolved;
+  }
+  return "unknown";
 }
 
 /** True when the class may run alongside other calls in a batch. */

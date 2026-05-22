@@ -27,6 +27,11 @@ export type TraceEvent =
   | TraceToolInvocation
   | TraceParseRetry
   | TraceLoopDetected
+  | TraceLessonDeprecated
+  | TraceVoteApplied
+  | TraceVoteRejected
+  | TraceProcedureCreated
+  | TraceProcedureDeprecated
   | TraceError
   | TraceTruncated;
 
@@ -158,6 +163,87 @@ export interface TraceLoopDetected extends TraceEventBase {
   stepIndex: number;
   tool: string;
   count: number;
+}
+
+/**
+ * Memory-v2 phase 6. Cold-path event emitted when the consolidator
+ * demotes a lesson. `reason ∈ {"aged_out", "overflow", ...}` —
+ * phase 7a will add `"downvoted"`. Lives outside any
+ * `turnIndex`/`stepIndex` context (the consolidator runs out-of-band
+ * via its own `setInterval`); `sessionId` carries the synthetic
+ * `consolidator` correlation tag set by `ConsolidatorJob`.
+ */
+export interface TraceLessonDeprecated extends TraceEventBase {
+  type: "lesson_deprecated";
+  lessonId: number;
+  reason: string;
+}
+
+/**
+ * Memory-v2 phase 7a. A single vote was applied to memory / lesson /
+ * profile via `VoteRunner`. One event per vote, fired by the
+ * reflection slot. The `score` field is the clamped post-write
+ * `vote_score` of the target so postmortems can reconstruct the
+ * decay curve without re-deriving it from `vote_events`.
+ */
+export interface TraceVoteApplied extends TraceEventBase {
+  type: "vote_applied";
+  kind: "memory" | "lesson" | "profile" | "procedure";
+  targetId: number;
+  direction: 1 | -1;
+  score: number;
+  /** `true` when the clamp pinned the score at the bound. */
+  clampHit: boolean;
+}
+
+/**
+ * Memory-v2 phase 7a. The LLM emitted a vote that was rejected
+ * before reaching the store — most commonly because the target was
+ * not in the per-turn allowlist (cross-phase invariant 18). The
+ * `reason` field is the same short tag the metrics counter uses
+ * (`out_of_allowlist`, `target_missing`, `malformed`, ...). One
+ * event per rejection.
+ */
+export interface TraceVoteRejected extends TraceEventBase {
+  type: "vote_rejected";
+  kind: "memory" | "lesson" | "profile" | "procedure" | "unknown";
+  targetId: number | null;
+  direction: 1 | -1 | null;
+  reason: string;
+}
+
+/**
+ * Memory-v2 phase 7b. The consolidator persisted a new advisory
+ * procedure (read-only "how-to" template) together with its parent
+ * lesson. One event per persisted procedure. Cross-phase invariant
+ * 21: still a single LLM call per cluster — this is the second
+ * write produced by that single completion. `parentLessonIds` is
+ * the materialised array (typically one entry — the lesson that
+ * came out of the same `LESSON+PROCEDURE` distillation), and
+ * `parentMemoryIds` is the cluster member set archived by the
+ * companion `archiveInto` call. `source` reflects whether the row
+ * came from the cold-path consolidator or, in the future, a
+ * manual / replay path.
+ */
+export interface TraceProcedureCreated extends TraceEventBase {
+  type: "procedure_created";
+  procedureId: number;
+  parentLessonIds: readonly number[];
+  parentMemoryIds: readonly number[];
+  source: "consolidator" | "manual";
+}
+
+/**
+ * Memory-v2 phase 7b. A procedure was demoted to
+ * `status='deprecated'`. `reason` is the same short tag the
+ * `agent.memory.procedures.deprecated` metric carries —
+ * `parent_deprecated` (cascade from lesson sweep), `aged_out`
+ * (age-based), `downvoted` (vote-driven), or `overflow` (FIFO cap).
+ */
+export interface TraceProcedureDeprecated extends TraceEventBase {
+  type: "procedure_deprecated";
+  procedureId: number;
+  reason: string;
 }
 
 export interface TraceError extends TraceEventBase {

@@ -69,6 +69,12 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     argsSchema: "{}",
   },
   {
+    name: "memory.profile.history",
+    summary: "Return the bi-temporal history of one profile key (oldest first; active value last).",
+    argsSchema: "{ key: string }",
+    examples: ['{"key":"language"}'],
+  },
+  {
     name: "memory.notes.store",
     summary: "Store a durable note (triggers: remember, outcomes, preferences; before reply on non-trivial work).",
     argsSchema: "{ content: string /* max 4000 chars */, tags?: string[] /* 1–4 */ }",
@@ -93,6 +99,26 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     summary: "Delete a note by id (user asked to forget or note obsolete).",
     argsSchema: "{ id: number }",
     tier: "rare",
+  },
+  {
+    name: "memory.lessons.recall",
+    summary:
+      "Read distilled lessons by id (pointer from `### lessons`) or BM25 query. Returns full principle bodies; the prompt only shows activation pointers.",
+    argsSchema: "{ id?: number, query?: string, k?: number /* 1..10 */ }",
+    examples: [
+      '{"id":42}',
+      '{"query":"pnpm install","k":2}',
+    ],
+  },
+  {
+    name: "memory.procedures.recall",
+    summary:
+      "Read advisory how-to procedures by id (pointer from `### procedures`) or BM25 query. Returns ordered steps (description + optional toolHint); the prompt only shows activation pointers. Steps are guidance, not commands — follow them or consciously deviate.",
+    argsSchema: "{ id?: number, query?: string, k?: number /* 1..10 */ }",
+    examples: [
+      '{"id":17}',
+      '{"query":"extract typescript function signatures","k":2}',
+    ],
   },
   {
     name: "tasks.schedule",
@@ -143,6 +169,38 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
       '{"path":"./screenshot.png","prompt":"What error is shown?"}',
       '{"paths":["a.png","b.png"],"prompt":"Compare these two diagrams"}',
     ],
+  },
+  {
+    // MCP discovery / resource / prompt tools. The actual MCP tool
+    // calls themselves come from the dynamic descriptor builder
+    // (see `mcp-descriptor-builder.ts`) and ship at tier `rare`.
+    name: "mcp.resource.list",
+    summary:
+      "List resources exposed by an MCP server. Pass `server` (one of the configured MCP server names) and optional `limit` (1..100, default 30).",
+    argsSchema: "{ server: string, limit?: number /* 1..100 */ }",
+    tier: "rare",
+  },
+  {
+    name: "mcp.resource.read",
+    summary:
+      "Read a resource exposed by an MCP server. Pass `server` and the exact `uri` returned by `mcp.resource.list`.",
+    argsSchema: "{ server: string, uri: string }",
+    tier: "rare",
+  },
+  {
+    name: "mcp.prompt.list",
+    summary:
+      "List prompt templates exposed by an MCP server. Pass `server` and optional `limit` (1..100, default 30).",
+    argsSchema: "{ server: string, limit?: number /* 1..100 */ }",
+    tier: "rare",
+  },
+  {
+    name: "mcp.prompt.get",
+    summary:
+      "Render a prompt template from an MCP server. Pass `server`, `name`, and optional `arguments` (object of string values for the template parameters).",
+    argsSchema:
+      "{ server: string, name: string, arguments?: Record<string,string> }",
+    tier: "rare",
   },
   {
     name: "reply",

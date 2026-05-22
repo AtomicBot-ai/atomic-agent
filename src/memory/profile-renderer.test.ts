@@ -7,12 +7,14 @@ const pinned = (
   key: string,
   value: string,
   updatedAt = 1,
+  voteScore = 0,
 ): ProfileFact => ({
   key,
   value,
   updatedAt,
   pinned: true,
   keywords: [],
+  voteScore,
 });
 
 const contextual = (
@@ -20,12 +22,14 @@ const contextual = (
   value: string,
   keywords: string[],
   updatedAt = 1,
+  voteScore = 0,
 ): ProfileFact => ({
   key,
   value,
   updatedAt,
   pinned: false,
   keywords,
+  voteScore,
 });
 
 describe("renderProfileSection", () => {
@@ -110,5 +114,68 @@ describe("renderProfileSection", () => {
     expect(out).toBe(
       ["- deploy_cmd: pnpm run deploy", "- language: ru"].join("\n"),
     );
+  });
+
+  // Phase 7a — vote-score suppression. The renderer hides facts the
+  // operator has actively downvoted past a configurable threshold,
+  // **regardless** of pinned/keyword status. The threshold is
+  // strictly positive; a value of 0 / undefined leaves the legacy
+  // behaviour intact.
+  it("hides a contextual fact whose vote_score is below the negative threshold", () => {
+    const out = renderProfileSection(
+      [
+        pinned("language", "ru"),
+        contextual("deploy_cmd", "pnpm run deploy", ["deploy"], 1, -3),
+      ],
+      {
+        userMessage: "How do I deploy this?",
+        profileFilterThreshold: 2,
+      },
+    );
+    expect(out).toBe("- language: ru");
+  });
+
+  it("hides a pinned fact too when its vote_score is past the threshold", () => {
+    const out = renderProfileSection(
+      [
+        pinned("language", "ru", 1, -5),
+        pinned("name", "Alex"),
+      ],
+      { profileFilterThreshold: 3 },
+    );
+    expect(out).toBe("- name: Alex");
+  });
+
+  it("uses strict <= for the threshold so the boundary value is also hidden", () => {
+    const out = renderProfileSection(
+      [pinned("language", "ru", 1, -2), pinned("name", "Alex")],
+      { profileFilterThreshold: 2 },
+    );
+    expect(out).toBe("- name: Alex");
+  });
+
+  it("renders facts above the threshold unchanged", () => {
+    const out = renderProfileSection(
+      [pinned("language", "ru", 1, -1), pinned("name", "Alex")],
+      { profileFilterThreshold: 3 },
+    );
+    expect(out).toBe(
+      ["- language: ru", "- name: Alex"].join("\n"),
+    );
+  });
+
+  it("threshold=0 disables the filter (back-compat)", () => {
+    const out = renderProfileSection(
+      [pinned("language", "ru", 1, -99)],
+      { profileFilterThreshold: 0 },
+    );
+    expect(out).toBe("- language: ru");
+  });
+
+  it("threshold=undefined disables the filter (back-compat)", () => {
+    const out = renderProfileSection([
+      pinned("language", "ru", 1, -99),
+    ]);
+    expect(out).toBe("- language: ru");
   });
 });

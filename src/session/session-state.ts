@@ -2,6 +2,8 @@ import type {
   MemoryEntry,
   MemoryIndexEntry,
 } from "../memory/memory-store.js";
+import type { LessonIndexEntry } from "../memory/lessons/lesson-store.js";
+import type { ProcedureIndexEntry } from "../memory/procedures/procedure-store.js";
 import {
   appendTurn,
   type ConversationTurn,
@@ -128,6 +130,30 @@ export interface SessionState {
    * persistence rules as `recalledNotes`.
    */
   memoryIndex?: readonly MemoryIndexEntry[];
+  /**
+   * Memory-v2 phase 5. Pointer view of distilled lessons surfaced for
+   * the current turn. Populated by `memory-context-provider.buildMemoryContext`
+   * and rendered as `### lessons` between `### profile` and
+   * `### memory-index` in the variable tail. Carries only the
+   * `LessonIndexEntry` fields — the full `principle` is gated behind
+   * `memory.lessons.recall { id }`.
+   *
+   * Ephemeral: stripped by `stripEphemeral` below before `SessionStore`
+   * persistence. Cross-phase invariant 8.
+   */
+  recalledLessons?: readonly LessonIndexEntry[];
+  /**
+   * Memory-v2 phase 7b. Pointer view of advisory procedures
+   * surfaced for the current turn. Populated by
+   * `memory-context-provider.buildMemoryContext` and rendered as
+   * `### procedures` between `### lessons` and `### memory-index`
+   * (scenario 7b.C.1). Carries only `ProcedureIndexEntry` fields
+   * — full `steps[]` is gated behind `memory.procedures.recall { id }`.
+   *
+   * Ephemeral: stripped by `stripEphemeral` below before
+   * `SessionStore` persistence. Cross-phase invariant 8.
+   */
+  recalledProcedures?: readonly ProcedureIndexEntry[];
 }
 
 export function createEmptySessionState(params: {
@@ -248,9 +274,20 @@ export function incrementTurnCount(state: SessionState): SessionState {
  * next turn begins.
  */
 export function stripEphemeral(state: SessionState): SessionState {
-  if (state.recalledNotes === undefined && state.memoryIndex === undefined) {
+  if (
+    state.recalledNotes === undefined &&
+    state.memoryIndex === undefined &&
+    state.recalledLessons === undefined &&
+    state.recalledProcedures === undefined
+  ) {
     return state;
   }
-  const { recalledNotes: _r, memoryIndex: _m, ...rest } = state;
+  const {
+    recalledNotes: _r,
+    memoryIndex: _m,
+    recalledLessons: _l,
+    recalledProcedures: _p,
+    ...rest
+  } = state;
   return rest;
 }

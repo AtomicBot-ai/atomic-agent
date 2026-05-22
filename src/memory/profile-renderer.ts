@@ -16,6 +16,14 @@ export interface RenderProfileOptions {
    * Defaults to `true`.
    */
   contextualKeywordGate?: boolean;
+  /**
+   * Memory-v2 phase 7a. Strictly-positive threshold for vote-score
+   * suppression. A fact with `voteScore <= -profileFilterThreshold`
+   * is hidden from the rendered output regardless of pinned/keyword
+   * status — operators downvoted it explicitly. `0` or `undefined`
+   * disables the filter entirely (back-compat).
+   */
+  profileFilterThreshold?: number;
 }
 
 /**
@@ -42,8 +50,15 @@ export function renderProfileSection(
 ): string {
   const gate = options.contextualKeywordGate ?? true;
   const message = (options.userMessage ?? "").toLowerCase();
+  // Phase 7a — vote-driven suppression. Applied **before** the
+  // contextual-keyword gate so a downvoted pinned fact disappears
+  // too (operators expect downvotes to override pinning).
+  const threshold = options.profileFilterThreshold ?? 0;
+  const voteHidden = (fact: ProfileFact): boolean =>
+    threshold > 0 && fact.voteScore <= -threshold;
 
   const filtered = facts.filter((fact) => {
+    if (voteHidden(fact)) return false;
     if (!gate) return true;
     if (fact.pinned) return true;
     if (!message) return false;

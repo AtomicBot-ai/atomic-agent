@@ -39,6 +39,9 @@ import {
 import { handleLocalModelsTabKey } from "./local-models/local-models-key-bindings.js";
 import { handleTasksTabKey } from "./tasks/tasks-key-bindings.js";
 import { handleSkillsTabKey } from "./skills/skills-key-bindings.js";
+import { handleMemoryTabKey } from "./memory/memory-key-bindings.js";
+import type { MemorySummaryRow } from "./memory/memory-panel-state.js";
+import { handleMcpTabKey } from "./mcp/mcp-key-bindings.js";
 import { handleTelegramTabKey } from "./telegram/telegram-key-bindings.js";
 
 export { makeTuiEventBus } from "./make-event-bus.js";
@@ -104,6 +107,38 @@ export interface TuiAppCallbacks {
   onLocalModelsDaemonStartRequested?(): void | Promise<void>;
   /** Ask the orchestrator to stop the llama-server daemon. */
   onLocalModelsDaemonStopRequested?(): void | Promise<void>;
+  /**
+   * Memory-v2 phase 1B. Pull an embedding model's GGUF, then mark it as
+   * the active embedding model. Does not (re)start the embedding
+   * daemon — the operator chains an explicit `s` for that.
+   */
+  onLocalModelsEmbeddingPullRequested?(
+    modelId: import("../local-llm/index.js").EmbeddingModelId,
+  ): void;
+  /** Memory-v2 phase 1B. Persist the embedding model selection. */
+  onLocalModelsEmbeddingSetActiveRequested?(
+    modelId: import("../local-llm/index.js").EmbeddingModelId,
+  ): void;
+  /** Memory-v2 phase 1B. Toggle `localModels.embeddings.enabled`. */
+  onLocalModelsEmbeddingToggleEnabledRequested?(): void;
+  /**
+   * Memory-v2 phase 1B. Start or hot-swap the embedding daemon for the
+   * active `*` row (chat daemon must already be running).
+   */
+  onLocalModelsEmbeddingStartRequested?(): void;
+  /** Memory-v2 phase 1B. Delete an embedding model's GGUF. */
+  onLocalModelsEmbeddingRemoveConfirmed?(
+    modelId: import("../local-llm/index.js").EmbeddingModelId,
+  ): void;
+  /**
+   * Memory-v2 phase 1B onboarding. Resolution of the post-chat-pull
+   * yes/no modal that offers to download the default embedding model
+   * in the same flow. `accept=true` triggers
+   * `orchestrator.localModels.resolveEmbeddingOnboarding(true)` (pull
+   * embedding + start paired daemon); `accept=false` only starts the
+   * chat daemon.
+   */
+  onLocalModelsEmbeddingOnboardingResolved?(accept: boolean): void;
   /** Begin 1s tail polling of the llama-server log while the LLM logs tab is open. */
   onLocalLlmLogsAutoRefreshStart?(): void;
   /** Stop log-tail polling when the user navigates away from the logs tab. */
@@ -122,6 +157,33 @@ export interface TuiAppCallbacks {
   onSkillDetailRequested?(name: string): void;
   /** Skills tab: flip the disabled bit and persist to `config.json`. */
   onSkillToggleRequested?(name: string): void;
+  /** Memory tab: start the 5s refresh loop on first entry. */
+  onMemoryAutoRefreshStart?(): void;
+  /** Memory tab: open detail for a list row. */
+  onMemoryDetailRequested?(row: MemorySummaryRow): void;
+  /** Memory tab: open a note by id (link navigation). */
+  onMemoryOpenNoteRequested?(noteId: number): void;
+  /** Memory tab: BFS-expand neighbors for the open note (`g`). */
+  onMemoryExpandNeighborsRequested?(noteId: number): void;
+  /** MCP tab: start the 5s refresh loop on first entry. */
+  onMcpAutoRefreshStart?(): void;
+  /** MCP tab: open detail view for a server by name. */
+  onMcpDetailRequested?(serverName: string): void;
+  /**
+   * MCP tab: persist a new server from a JSON-paste payload. The
+   * orchestrator validates + writes `<stateDir>/config.json` and
+   * emits one of `mcp_add_validation_failed` / `mcp_add_failed` /
+   * `mcp_add_succeeded`. The runtime must be restarted for the new
+   * server to actually connect — see `persistMcpServer`.
+   */
+  onMcpAddServerSubmit?(json: string): void;
+  /**
+   * MCP tab: remove an existing server by name from
+   * `<stateDir>/config.json`. Variant α: the live `McpManager` is NOT
+   * mutated — the operator restarts atomic-agent to drop the live
+   * connection. Failures fold into `mcp_remove_failed`.
+   */
+  onMcpRemoveServer?(name: string): void;
   /** Slash-command surface: enable a skill explicitly (`/skill enable <name>`). */
   onSkillEnableRequested?(name: string): void;
   /** Slash-command surface: disable a skill explicitly (`/skill disable <name>`). */
@@ -242,6 +304,18 @@ export function TuiApp({
   }, [state.uiMode, state.activeTab, callbacks]);
 
   useEffect(() => {
+    if (state.uiMode === "debug" && state.activeTab === "memory") {
+      callbacks.onMemoryAutoRefreshStart?.();
+    }
+  }, [state.uiMode, state.activeTab, callbacks]);
+
+  useEffect(() => {
+    if (state.uiMode === "debug" && state.activeTab === "mcp") {
+      callbacks.onMcpAutoRefreshStart?.();
+    }
+  }, [state.uiMode, state.activeTab, callbacks]);
+
+  useEffect(() => {
     if (state.uiMode === "debug" && state.activeTab === "models") {
       callbacks.onLocalModelsAutoRefreshStart?.();
     }
@@ -269,6 +343,10 @@ export function TuiApp({
     state.uiMode === "debug" && state.activeTab === "tasks";
   const skillsTabActive =
     state.uiMode === "debug" && state.activeTab === "skills";
+  const memoryTabActive =
+    state.uiMode === "debug" && state.activeTab === "memory";
+  const mcpTabActive =
+    state.uiMode === "debug" && state.activeTab === "mcp";
   const localModelsTabActive =
     state.uiMode === "debug" && state.activeTab === "models";
   const telegramTabActive =
@@ -281,6 +359,8 @@ export function TuiApp({
     !state.pendingApproval &&
     !tasksTabActive &&
     !skillsTabActive &&
+    !memoryTabActive &&
+    !mcpTabActive &&
     !telegramTabActive &&
     !sidebarFocused &&
     !(
@@ -315,6 +395,14 @@ export function TuiApp({
     }
     if (skillsTabActive) {
       handleSkillsTabKey(input, key, { state, dispatch, callbacks });
+      return;
+    }
+    if (memoryTabActive) {
+      handleMemoryTabKey(input, key, { state, dispatch, callbacks });
+      return;
+    }
+    if (mcpTabActive) {
+      handleMcpTabKey(input, key, { state, dispatch, callbacks });
       return;
     }
     if (localModelsTabActive) {
@@ -433,7 +521,19 @@ export function TuiApp({
             {state.uiMode === "chat" ? (
               <ChatLog state={state} dispatch={dispatch} />
             ) : (
-              <DebugPane state={state} maxVisible={maxVisibleRows} />
+              <DebugPane
+                state={state}
+                maxVisible={maxVisibleRows}
+                onMcpAddJsonChange={(json) =>
+                  dispatch({ type: "mcp_add_json_changed", json })
+                }
+                onMcpAddSubmit={(json) =>
+                  callbacks.onMcpAddServerSubmit?.(json)
+                }
+                onMcpAddCancel={() =>
+                  dispatch({ type: "mcp_add_modal_closed" })
+                }
+              />
             )}
           </Box>
           {state.pendingApproval ? (
@@ -474,6 +574,7 @@ export function TuiApp({
             onSubmit={submit}
             onEscape={onEscape}
             onTab={onTab}
+            onAutocomplete={onTab}
             onHistoryPrev={onHistoryPrev}
             onHistoryNext={onHistoryNext}
           />

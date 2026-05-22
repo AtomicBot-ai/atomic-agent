@@ -29,6 +29,14 @@ import {
   createInitialTelegramPanelState,
   type TelegramPanelState,
 } from "./telegram/telegram-panel-state.js";
+import {
+  createInitialMemoryPanelState,
+  type MemoryPanelState,
+} from "./memory/memory-panel-state.js";
+import {
+  createInitialMcpPanelState,
+  type McpPanelState,
+} from "./mcp/mcp-panel-state.js";
 
 /**
  * High-level lifecycle of the TUI. Mirrors the underlying `SessionState`
@@ -68,9 +76,11 @@ export type TuiTab =
   | "logs"
   | "tasks"
   | "skills"
+  | "memory"
   | "models"
   | "llm-logs"
-  | "telegram";
+  | "telegram"
+  | "mcp";
 
 /**
  * Top-level UI mode: `chat` is the default single-scroll openclaw-style
@@ -273,6 +283,10 @@ export interface TuiState {
   tasksPanel: TasksPanelState;
   /** State slice driving the Skills tab (enable / disable + detail view). */
   skillsPanel: SkillsPanelState;
+  /** State slice driving the Memory tab (read-only memory fabric inspection). */
+  memoryPanel: MemoryPanelState;
+  /** State slice driving the MCP tab (read-only MCP server / catalog inspection). */
+  mcpPanel: McpPanelState;
   /** Managed llama.cpp catalog + download UI (daemon lifecycle stays CLI-only). */
   localModelsPanel: LocalModelsPanelState;
   /** Tail of `<dataDir>/llama-server.log` driving the "LLM logs" tab. */
@@ -402,6 +416,8 @@ export function createInitialTuiState(
     ringBufferSize,
     tasksPanel: createInitialTasksPanelState(),
     skillsPanel: createInitialSkillsPanelState(),
+    memoryPanel: createInitialMemoryPanelState(),
+    mcpPanel: createInitialMcpPanelState(),
     localModelsPanel: createInitialLocalModelsPanelState(),
     localLlmLogs: createInitialLocalLlmLogsState(),
     llmHealth: createInitialLlmHealthState(),

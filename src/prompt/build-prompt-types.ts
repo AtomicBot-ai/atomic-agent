@@ -27,6 +27,16 @@ export interface BuildPromptInput {
   recallPreviewChars?: number;
   recallMaxTokens?: number;
   memoryIndexMaxTokens?: number;
+  /**
+   * Memory-v2 phase 5. Safety cap for the `### lessons` pointer
+   * section. Defaults to `config.memory.lessons.maxTokens` (300).
+   */
+  lessonsMaxTokens?: number;
+  /**
+   * Memory-v2 phase 7b. Safety cap for the `### procedures` pointer
+   * section. Defaults to `config.memory.procedures.maxTokens` (400).
+   */
+  proceduresMaxTokens?: number;
   /** Safety cap for `### loaded-tools` (defaults to `agent.loadedToolsMaxTokens`). */
   loadedToolsMaxTokens?: number;
 }

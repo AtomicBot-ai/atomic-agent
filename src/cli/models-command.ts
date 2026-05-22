@@ -1,13 +1,16 @@
 import { getConfig } from "../config/index.js";
 import {
   runLocalModelsList,
+  runLocalModelsListEmbeddings,
   runLocalModelsPull,
+  runLocalModelsPullEmbedding,
   runLocalModelsRemove,
   runLocalModelsStart,
   runLocalModelsStatus,
   runLocalModelsStop,
   runLocalModelsUpdate,
   runLocalModelsUse,
+  runLocalModelsUseEmbedding,
 } from "./models-handlers.js";
 
 const HELP =
@@ -27,10 +30,19 @@ const HELP =
     "                                (stops daemon first; does not auto-restart)",
     "  remove <id>                   Delete a downloaded model (refuses if active + daemon running)",
     "",
+    "Embedding subcommands (memory-v2 phase 1B — second daemon for /embedding):",
+    "  list-embeddings               Show embedding catalog + disk presence + daemon health",
+    "  pull-embedding <id>           Download an embedding GGUF",
+    "  use-embedding <id>|--disable  Enable + select an embedding model (or turn off)",
+    "                                Note: 'start' brings both chat and embedding up;",
+    "                                if the embedding daemon fails the chat one stays up.",
+    "",
     "Examples:",
     "  atomic-agent models list",
     "  atomic-agent models pull qwen-3.5-4b",
     "  atomic-agent models use qwen-3.5-4b",
+    "  atomic-agent models pull-embedding nomic-embed-text-v1.5",
+    "  atomic-agent models use-embedding nomic-embed-text-v1.5",
     "  atomic-agent models update",
     "  atomic-agent models start",
     "  atomic-agent models status",
@@ -61,6 +73,12 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return runLocalModelsUpdate();
       case "remove":
         return runLocalModelsRemove(args[1]);
+      case "list-embeddings":
+        return runLocalModelsListEmbeddings();
+      case "pull-embedding":
+        return runLocalModelsPullEmbedding(args[1]);
+      case "use-embedding":
+        return runLocalModelsUseEmbedding(args[1]);
       default:
         process.stderr.write(`unknown subcommand: ${sub}\n`);
         process.stderr.write(HELP);

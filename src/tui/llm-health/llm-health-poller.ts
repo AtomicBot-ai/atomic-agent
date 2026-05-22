@@ -29,9 +29,9 @@ export interface LlmHealthEmitter {
  * does a one-shot `/props` fetch to discover the active model alias /
  * file name. The result is emitted as `llm_model_updated` so the
  * StatusBar can show the operator which model the agent is talking to.
- * The probe is repeated only when the URL changes; mid-session model
- * hot-swaps land via the agent loop's own `ModelProfileManager` and
- * are out of scope here.
+ * The probe is repeated when the URL changes or when
+ * `refreshModelLabel()` is called after a managed daemon restart.
+ * Immediate tray updates on catalog selection use `notifyCatalogModel`.
  *
  * Lifecycle is explicit: the owner calls `start()` on boot and `stop()`
  * on shutdown. This keeps side effects out of the reducer and avoids the
@@ -84,6 +84,26 @@ export class LlmHealthPoller {
     this.modelFetchedForUrl = false;
     this.emitter.emit({ type: "llm_model_updated", model: null });
     if (!this.stopped) void this.tick();
+  }
+
+  /**
+   * Immediate label from the Models tab (managed catalog id). Does not
+   * block on `/props` — the tray should reflect the operator's choice
+   * before the daemon finishes restarting.
+   */
+  notifyCatalogModel(modelId: string): void {
+    if (this.stopped) return;
+    this.emitter.emit({ type: "llm_model_updated", model: modelId });
+  }
+
+  /**
+   * Re-read `/props` after a managed daemon restart or hot-swap so the
+   * tray can align with what llama-server reports (when fields exist).
+   */
+  async refreshModelLabel(): Promise<void> {
+    this.modelFetchedForUrl = false;
+    if (this.stopped) return;
+    await this.fetchModelLabel();
   }
 
   private async tick(): Promise<void> {

@@ -3,6 +3,8 @@ import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
 import {
   classifyRamFit,
+  resolveRowAt,
+  type EmbeddingDaemonInfo,
   type LocalModelRow,
   type LocalModelsPanelState,
   type RamFit,
@@ -86,6 +88,53 @@ function renderDaemonLine(panel: LocalModelsPanelState): ReactElement {
   );
 }
 
+/**
+ * Memory-v2 phase 1B. Embedding daemon status line. Separate from the
+ * chat-daemon line because the two report independently: chat can be
+ * up while embeddings are off, and vice versa.
+ */
+function renderEmbeddingDaemonLine(
+  info: EmbeddingDaemonInfo | null,
+): ReactElement {
+  if (!info) {
+    return (
+      <Text color={theme.colors.muted}>embeddings ? (probing…)</Text>
+    );
+  }
+  if (!info.enabled) {
+    return (
+      <Text color={theme.colors.muted}>
+        embeddings ✗ disabled — FTS5-only recall
+      </Text>
+    );
+  }
+  if (!info.running) {
+    const hint = info.activeModelId
+      ? `stopped — *${info.activeModelId} selected — Enter on row or s to start`
+      : "stopped — j/k + Enter on a row to select, then s";
+    return <Text color="yellow">embeddings ⏸ {hint}</Text>;
+  }
+  if (info.loading) {
+    return (
+      <Text color="yellow">embeddings ⟳ loading (pid {info.pid})</Text>
+    );
+  }
+  if (info.healthy) {
+    const id = info.activeModelId ?? "?";
+    return (
+      <Text color="green" bold>
+        embeddings ✓ running ({id}, pid {info.pid} on 127.0.0.1:
+        {info.port})
+      </Text>
+    );
+  }
+  return (
+    <Text color="yellow">
+      embeddings ! pid {info.pid} alive but /health unreachable
+    </Text>
+  );
+}
+
 function renderProgressBar(percent: number, width: number): string {
   const filled = Math.min(width, Math.round((percent / 100) * width));
   return "=".repeat(filled) + " ".repeat(Math.max(0, width - filled));
@@ -154,8 +203,13 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
     );
   }
   if (panel.mode === "detail") {
-    const row = panel.rows[panel.cursor];
-    if (!row) return <Text color={theme.colors.muted}>(no row)</Text>;
+    const ref = resolveRowAt(panel);
+    // Detail view is chat-only — embedding rows are intentionally
+    // text-only in the row list and have no extra info to surface.
+    if (!ref || ref.kind !== "chat") {
+      return <Text color={theme.colors.muted}>(no row)</Text>;
+    }
+    const row = ref.row;
     const m = row.def;
     const enterHint = !row.downloaded
       ? row.def.supportsVision
@@ -209,6 +263,37 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
   }
   return (
     <Box flexDirection="column">
+      {panel.embeddingOnboardingPrompt ? (
+        <Box
+          flexDirection="column"
+          borderStyle="round"
+          borderColor={theme.colors.accent}
+          paddingX={1}
+          marginBottom={1}
+        >
+          <Text bold color={theme.colors.accentSoft}>
+            ✦ Download embedding model for hybrid recall?
+          </Text>
+          <Text>
+            {panel.embeddingOnboardingPrompt.name}{" "}
+            <Text color={theme.colors.muted}>
+              ({panel.embeddingOnboardingPrompt.sizeLabel})
+            </Text>
+          </Text>
+          <Text color={theme.colors.muted}>
+            Improves memory recall by blending BM25 with vector search.
+            Runs as a paired daemon alongside chat — starts and stops
+            together. Can be configured later from this panel.
+          </Text>
+          <Text>
+            <Text bold color="green">
+              (y)
+            </Text>{" "}
+            download + enable ·{" "}
+            <Text bold>(n)</Text>/Esc skip for now
+          </Text>
+        </Box>
+      ) : null}
       {panel.removeConfirmId ? (
         <Box
           flexDirection="column"
@@ -238,55 +323,43 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
           </Text>
         </Box>
       ) : null}
+      {panel.embeddingRemoveConfirmId ? (
+        <Box
+          flexDirection="column"
+          borderStyle="round"
+          borderColor="red"
+          paddingX={1}
+          marginBottom={1}
+        >
+          <Text bold color="red">
+            ⚠ Delete embedding model: {panel.embeddingRemoveConfirmId}
+          </Text>
+          <Text color={theme.colors.muted}>
+            Removes the embedding GGUF from disk. If the embedding daemon
+            is serving this model it will be stopped first; chat stays
+            up.
+          </Text>
+          <Text>
+            <Text bold color="red">
+              (y)
+            </Text>{" "}
+            confirm ·{" "}
+            <Text bold>(n)</Text>/Esc cancel
+          </Text>
+        </Box>
+      ) : null}
       <Box flexDirection="column">
-        {panel.rows.map((r, i) => {
-          const downloading =
-            panel.pull !== null &&
-            panel.pull.modelId !== "_backend" &&
-            panel.pull.modelId === r.id;
-          const mini = downloading
-            ? renderProgressBar(panel.pull!.percent, 8)
-            : "";
-          const fit = classifyRamFit(r.def, panel.totalRamGb);
-          const rowColor = downloading
-            ? "yellow"
-            : i === panel.cursor
-              ? theme.colors.accentSoft
-              : fit === "insufficient"
-                ? theme.colors.muted
-                : undefined;
-          return (
-            <Box key={r.id} flexDirection="row" flexWrap="wrap">
-              <Text
-                color={rowColor}
-                bold={i === panel.cursor || downloading}
-                dimColor={fit === "insufficient" && i !== panel.cursor}
-              >
-                {r.active ? "* " : "  "}
-                {r.id} {r.def.sizeLabel}
-              </Text>
-              <Text color={r.downloaded ? "green" : theme.colors.muted}>
-                {" "}
-                [{renderRowAvailability(r)}]
-              </Text>
-              {r.def.tag ? (
-                <Text color={theme.colors.accent}> [{r.def.tag}]</Text>
-              ) : null}
-              {fit ? (
-                <Text color={ramFitColor(fit)}>
-                  {" "}
-                  {fit === "ok" ? "✓ RAM" : fit === "tight" ? "△ RAM" : "✗ RAM"}
-                </Text>
-              ) : null}
-              {downloading ? (
-                <Text color="yellow">
-                  {" "}
-                  [{mini}] {panel.pull!.percent}%
-                </Text>
-              ) : null}
-            </Box>
-          );
-        })}
+        <Text bold color={theme.colors.accentSoft}>
+          Chat models ({panel.rows.length})
+        </Text>
+        {renderChatRows(panel)}
+      </Box>
+      <Box flexDirection="column" marginTop={1}>
+        <Text bold color={theme.colors.accentSoft}>
+          Embedding models ({panel.embeddingRows.length})
+          <Text color={theme.colors.muted}> · paired with chat daemon</Text>
+        </Text>
+        {renderEmbeddingRows(panel)}
       </Box>
       <Box marginTop={1} flexDirection="column">
         <DownloadBanner panel={panel} />
@@ -301,6 +374,7 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
             : ""}
         </Text>
         {renderDaemonLine(panel)}
+        {renderEmbeddingDaemonLine(panel.embeddingDaemon)}
         {panel.daemonError ? (
           <Text color="red">daemon: {panel.daemonError}</Text>
         ) : null}
@@ -311,9 +385,132 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
           </Text>
         ) : null}
         <Text color={theme.colors.muted}>
-          j/k move · Enter download/activate (incl. mmproj) · g gguf only · s start/stop · i info · d remove · B backend · r refresh · L logs
+          j/k move · Enter pull/activate (embedding: *row + Enter starts server) · g gguf · i info · d remove · s chat+embedding · E embeddings on/off · B · r · L
         </Text>
       </Box>
     </Box>
   );
 }
+
+function renderChatRows(panel: LocalModelsPanelState): ReactElement {
+  if (panel.rows.length === 0) {
+    return (
+      <Text color={theme.colors.muted}>(no chat models in catalog)</Text>
+    );
+  }
+  return (
+    <Box flexDirection="column">
+      {panel.rows.map((r, i) => {
+        const downloading =
+          panel.pull !== null &&
+          panel.pull.modelId !== "_backend" &&
+          panel.pull.modelId === r.id;
+        const mini = downloading
+          ? renderProgressBar(panel.pull!.percent, 8)
+          : "";
+        const fit = classifyRamFit(r.def, panel.totalRamGb);
+        // Cursor is a combined index across chat+embedding rows;
+        // chat occupies [0..rows.length-1].
+        const isCursor = i === panel.cursor;
+        const rowColor = downloading
+          ? "yellow"
+          : isCursor
+            ? theme.colors.accentSoft
+            : fit === "insufficient"
+              ? theme.colors.muted
+              : undefined;
+        return (
+          <Box key={r.id} flexDirection="row" flexWrap="wrap">
+            <Text
+              color={rowColor}
+              bold={isCursor || downloading}
+              dimColor={fit === "insufficient" && !isCursor}
+            >
+              {isCursor ? "> " : "  "}
+              {r.active ? "* " : ""}
+              {r.id} {r.def.sizeLabel}
+            </Text>
+            <Text color={r.downloaded ? "green" : theme.colors.muted}>
+              {" "}
+              [{renderRowAvailability(r)}]
+            </Text>
+            {r.def.tag ? (
+              <Text color={theme.colors.accent}> [{r.def.tag}]</Text>
+            ) : null}
+            {fit ? (
+              <Text color={ramFitColor(fit)}>
+                {" "}
+                {fit === "ok" ? "✓ RAM" : fit === "tight" ? "△ RAM" : "✗ RAM"}
+              </Text>
+            ) : null}
+            {downloading ? (
+              <Text color="yellow">
+                {" "}
+                [{mini}] {panel.pull!.percent}%
+              </Text>
+            ) : null}
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}
+
+/**
+ * Memory-v2 phase 1B. One row per `EmbeddingModelRow`. Mirrors the
+ * chat rows but skips RAM-fit and mmproj — embedding models are tiny
+ * and text-only, so the noise is unwarranted.
+ */
+function renderEmbeddingRows(panel: LocalModelsPanelState): ReactElement {
+  if (panel.embeddingRows.length === 0) {
+    return (
+      <Text color={theme.colors.muted}>
+        (no embedding models in catalog)
+      </Text>
+    );
+  }
+  // Embedding rows occupy the upper half of the combined cursor space:
+  // indices [panel.rows.length .. panel.rows.length + emb.length - 1].
+  const embOffset = panel.rows.length;
+  return (
+    <Box flexDirection="column">
+      {panel.embeddingRows.map((r, i) => {
+        const downloading =
+          panel.pull !== null && panel.pull.modelId === r.id;
+        const mini = downloading
+          ? renderProgressBar(panel.pull!.percent, 8)
+          : "";
+        const isCursor = embOffset + i === panel.cursor;
+        const rowColor = downloading
+          ? "yellow"
+          : isCursor
+            ? theme.colors.accentSoft
+            : undefined;
+        return (
+          <Box key={r.id} flexDirection="row" flexWrap="wrap">
+            <Text color={rowColor} bold={isCursor || downloading}>
+              {isCursor ? "> " : "  "}
+              {r.active ? "* " : ""}
+              {r.id} {r.def.sizeLabel}
+            </Text>
+            <Text color={r.downloaded ? "green" : theme.colors.muted}>
+              {" "}
+              [{r.downloaded ? "gguf" : "remote"}]
+            </Text>
+            <Text color={theme.colors.muted}>
+              {" "}
+              dim {r.def.dim}
+            </Text>
+            {downloading ? (
+              <Text color="yellow">
+                {" "}
+                [{mini}] {panel.pull!.percent}%
+              </Text>
+            ) : null}
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}
+

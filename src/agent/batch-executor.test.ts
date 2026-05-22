@@ -247,6 +247,90 @@ describe("executeBatch", () => {
     expect(finished.sort()).toEqual([0, 1]);
   });
 
+  it(
+    "runs a terminal-tail call strictly AFTER every non-terminal call " +
+      "completes (tail-terminal barrier)",
+    async () => {
+      const order: string[] = [];
+      const registry = new ToolRegistry();
+      registry.register({
+        name: "memory.notes.store",
+        description: "store",
+        readonly: false,
+        run: async () => {
+          await new Promise((r) => setTimeout(r, 40));
+          order.push("store");
+          return okResult("memory.notes.store");
+        },
+      });
+      registry.register({
+        name: "reply",
+        description: "reply",
+        readonly: true,
+        run: async () => {
+          order.push("reply");
+          return okResult("reply", "ok");
+        },
+      });
+      const inputs = toBatchInputs([
+        { tool: "memory.notes.store", args: { content: "x" } },
+        { tool: "reply", args: { text: "done" } },
+      ]);
+      const out = await executeBatch(
+        inputs,
+        registry,
+        ctx(new AbortController().signal),
+      );
+      expect(out.results).toHaveLength(2);
+      expect(out.results.map((r) => r.batchIndex)).toEqual([0, 1]);
+      expect(out.results.every((r) => r.compressed?.status === "ok")).toBe(true);
+      // Barrier guarantee: even though the store is slow (40ms) and
+      // the reply is instant, the reply must observe the store finish
+      // before it starts.
+      expect(order).toEqual(["store", "reply"]);
+    },
+  );
+
+  it(
+    "fires the tail reply even when an earlier non-terminal call errors " +
+      "(non-terminal failure does not suppress the terminal)",
+    async () => {
+      const order: string[] = [];
+      const registry = new ToolRegistry();
+      registry.register({
+        name: "memory.notes.store",
+        description: "store",
+        readonly: false,
+        run: async () => {
+          order.push("store-attempt");
+          throw new Error("store boom");
+        },
+      });
+      registry.register({
+        name: "reply",
+        description: "reply",
+        readonly: true,
+        run: async () => {
+          order.push("reply");
+          return okResult("reply", "ok");
+        },
+      });
+      const inputs = toBatchInputs([
+        { tool: "memory.notes.store", args: { content: "x" } },
+        { tool: "reply", args: { text: "done despite error" } },
+      ]);
+      const out = await executeBatch(
+        inputs,
+        registry,
+        ctx(new AbortController().signal),
+      );
+      expect(out.results[0]!.compressed?.status).toBe("error");
+      expect(out.results[1]!.compressed?.status).toBe("ok");
+      expect(order).toEqual(["store-attempt", "reply"]);
+      expect(out.cancelled).toBe(false);
+    },
+  );
+
   it("marks tail calls as cancelled when the signal aborts mid-serialised-group", async () => {
     const ctrl = new AbortController();
     const registry = new ToolRegistry();

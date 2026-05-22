@@ -48,3 +48,20 @@ export function resolvePidFilePath(dataDir: string): string {
 export function resolveLogFilePath(dataDir: string): string {
   return join(dataDir, "llama-server.log");
 }
+
+/**
+ * Memory-v2 phase 1B. Pid file for the secondary `llama-server` instance
+ * dedicated to `/embedding` requests. Lives next to the chat daemon's
+ * pid file so a single `models stop` invocation can find and kill both.
+ *
+ * Naming intentionally avoids the legacy `llama-server.*` prefix so
+ * users grepping for "llama-server" in their state dir can spot the
+ * two roles independently.
+ */
+export function resolveEmbeddingPidFilePath(dataDir: string): string {
+  return join(dataDir, "llama-embed.pid");
+}
+
+export function resolveEmbeddingLogFilePath(dataDir: string): string {
+  return join(dataDir, "llama-embed.log");
+}

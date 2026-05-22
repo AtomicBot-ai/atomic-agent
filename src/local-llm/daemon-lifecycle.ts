@@ -8,8 +8,20 @@ import {
   writeFileSync,
 } from "node:fs";
 
-import { resolveLogFilePath, resolveModelFilePath, resolvePidFilePath, resolveServerBinPath } from "./backend-paths.js";
-import { getLocalModelDef, type LocalModelId } from "./models-catalog.js";
+import {
+  resolveEmbeddingLogFilePath,
+  resolveEmbeddingPidFilePath,
+  resolveLogFilePath,
+  resolveModelFilePath,
+  resolvePidFilePath,
+  resolveServerBinPath,
+} from "./backend-paths.js";
+import {
+  getEmbeddingModelDef,
+  getLocalModelDef,
+  type EmbeddingModelId,
+  type LocalModelId,
+} from "./models-catalog.js";
 import { resolvePlatformAsset } from "./platform-assets.js";
 
 export interface DaemonStartOptions {
@@ -117,8 +129,14 @@ export async function probeLlamaHealth(
   }
 }
 
-export function readRunningPid(dataDir: string): number | null {
-  const pidPath = resolvePidFilePath(dataDir);
+export function readRunningPid(
+  dataDir: string,
+  role: "chat" | "embedding" = "chat",
+): number | null {
+  const pidPath =
+    role === "embedding"
+      ? resolveEmbeddingPidFilePath(dataDir)
+      : resolvePidFilePath(dataDir);
   let raw: string;
   try {
     raw = readFileSync(pidPath, "utf-8").trim();
@@ -294,4 +312,280 @@ export async function getDaemonStatus(dataDir: string, port: number): Promise<Da
     healthy: h === "ok",
     loading: h === "loading",
   };
+}
+
+// ---------------------------------------------------------------------
+// Memory-v2 phase 1B. Second daemon dedicated to `/embedding`.
+//
+// We deliberately keep this as a parallel pair of functions rather
+// than parameterising `startDaemon` over a `DaemonRole` enum. The
+// flag set, model resolution, and pid/log file names diverge enough
+// that an `if (role === "embedding") ...` ladder inside `startDaemon`
+// would be more confusing than two narrow functions sharing the few
+// genuinely common helpers (`waitForHealthOkWithLog`, `probeLlamaHealth`).
+// ---------------------------------------------------------------------
+
+export interface EmbeddingDaemonStartOptions {
+  dataDir: string;
+  modelId: EmbeddingModelId;
+  port: number;
+}
+
+/**
+ * Build the argv for an embedding-only `llama-server`. The `--embeddings`
+ * flag plus `--pooling <kind>` are load-bearing — without `--pooling`
+ * llama.cpp returns per-token embeddings, which is not what callers of
+ * `/embedding` expect. `--ctx-size 2048` is plenty for the kind of
+ * short memory snippets the writer feeds in; raising it inflates
+ * RAM-per-slot without any quality win for sub-document inputs.
+ */
+export function buildEmbeddingServerArgs(
+  opts: EmbeddingDaemonStartOptions,
+  modelPath: string,
+): string[] {
+  const model = getEmbeddingModelDef(opts.modelId);
+  return [
+    "--no-webui",
+    "-m",
+    modelPath,
+    "--port",
+    String(opts.port),
+    "--host",
+    "127.0.0.1",
+    "-ngl",
+    "-1",
+    "--embeddings",
+    "--pooling",
+    model.pooling,
+    "--ctx-size",
+    "2048",
+    "-a",
+    model.id,
+  ];
+}
+
+export async function startEmbeddingDaemon(
+  opts: EmbeddingDaemonStartOptions,
+): Promise<{ pid: number }> {
+  const pidPath = resolveEmbeddingPidFilePath(opts.dataDir);
+  const existing = readRunningPid(opts.dataDir, "embedding");
+  if (existing !== null) {
+    throw new Error(`embedding daemon already running at pid ${existing}`);
+  }
+
+  const { binaryName } = resolvePlatformAsset();
+  const binPath = resolveServerBinPath(opts.dataDir, binaryName);
+  if (!existsSync(binPath)) {
+    throw new Error(
+      "backend not downloaded; run 'atomic-agent models update'",
+    );
+  }
+
+  const model = getEmbeddingModelDef(opts.modelId);
+  const modelPath = resolveModelFilePath(opts.dataDir, model.id, model.filename);
+  if (!existsSync(modelPath)) {
+    throw new Error(
+      `embedding model ${opts.modelId} not downloaded; run 'atomic-agent models pull-embedding ${opts.modelId}'`,
+    );
+  }
+
+  const args = buildEmbeddingServerArgs(opts, modelPath);
+
+  const logFd = openSync(resolveEmbeddingLogFilePath(opts.dataDir), "a");
+  try {
+    const child = spawn(binPath, args, {
+      stdio: ["ignore", logFd, logFd],
+      detached: true,
+      ...(process.platform === "win32" ? { windowsHide: true } : {}),
+      env: { ...process.env },
+    });
+    child.unref();
+    if (child.pid == null) {
+      throw new Error("spawn failed: no pid");
+    }
+    writeFileSync(pidPath, String(child.pid), "utf-8");
+    await waitForEmbeddingHealthOkWithLog(opts.dataDir, opts.port, 30_000);
+    return { pid: child.pid };
+  } finally {
+    closeSync(logFd);
+  }
+}
+
+async function waitForEmbeddingHealthOkWithLog(
+  dataDir: string,
+  port: number,
+  timeoutMs: number,
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const r = await probeLlamaHealth(port);
+    if (r === "ok") return;
+    await new Promise((r2) => setTimeout(r2, 500));
+  }
+  let tail = "";
+  try {
+    const logPath = resolveEmbeddingLogFilePath(dataDir);
+    const buf = readFileSync(logPath, "utf-8");
+    tail = buf.length > 4096 ? buf.slice(-4096) : buf;
+  } catch {
+    tail = "(no log)";
+  }
+  throw new Error(
+    `embedding llama-server did not become healthy within ${timeoutMs}ms. Log tail:\n${tail}`,
+  );
+}
+
+export async function stopEmbeddingDaemon(
+  dataDir: string,
+  opts?: { timeoutMs?: number },
+): Promise<void> {
+  const pidPath = resolveEmbeddingPidFilePath(dataDir);
+  let raw: string;
+  try {
+    raw = readFileSync(pidPath, "utf-8").trim();
+  } catch {
+    return;
+  }
+  const pid = Number(raw);
+  if (!Number.isFinite(pid) || pid <= 0) {
+    try {
+      unlinkSync(pidPath);
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
+
+  let alive = false;
+  try {
+    process.kill(pid, 0);
+    alive = true;
+  } catch {
+    /* dead */
+  }
+  if (!alive) {
+    try {
+      unlinkSync(pidPath);
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
+
+  const timeoutMs = opts?.timeoutMs ?? 3000;
+  if (process.platform === "win32") {
+    try {
+      execSync(`taskkill /PID ${pid} /T /F`, { timeout: 5000, stdio: "ignore" });
+    } catch {
+      /* ignore */
+    }
+  } else {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      /* ignore */
+    }
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    try {
+      process.kill(pid, 0);
+      process.kill(pid, "SIGKILL");
+    } catch {
+      /* already dead */
+    }
+  }
+
+  try {
+    unlinkSync(pidPath);
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function getEmbeddingDaemonStatus(
+  dataDir: string,
+  port: number,
+): Promise<DaemonStatus> {
+  const pid = readRunningPid(dataDir, "embedding");
+  const h = await probeLlamaHealth(port);
+  return {
+    running: pid !== null,
+    pid,
+    port,
+    healthy: h === "ok",
+    loading: h === "loading",
+  };
+}
+
+/**
+ * Memory-v2 phase 1B. Orchestrated start for both daemons.
+ *
+ * Atomicity contract (user requirement):
+ *   - Chat daemon is the **primary**. If it fails to start, the
+ *     embedding daemon is **not** attempted and the function rejects.
+ *   - Embedding daemon is the **optional secondary**. If it fails to
+ *     start (e.g. model missing on disk, port collision), the chat
+ *     daemon stays up and the function returns
+ *     `{ chat: { pid }, embedding: { error } }` so the CLI can warn
+ *     the operator. The runtime then falls back to FTS5-only recall
+ *     for the duration of the session.
+ *   - If `embedding` options are omitted, only the chat daemon is
+ *     started — observably identical to the legacy `startDaemon`
+ *     code path.
+ *
+ * Lifecycle pairing: `stopBoth` always tries to kill both pid files,
+ * regardless of which one is actually alive, so a half-broken state
+ * is recoverable with a single `atomic-agent models stop`.
+ */
+export interface StartBothResult {
+  chat: { pid: number };
+  embedding:
+    | { pid: number }
+    | { error: string }
+    | { skipped: true };
+}
+
+export async function startChatAndEmbeddingDaemons(opts: {
+  chat: DaemonStartOptions;
+  embedding?: EmbeddingDaemonStartOptions;
+}): Promise<StartBothResult> {
+  const chatResult = await startDaemon(opts.chat);
+  if (!opts.embedding) {
+    return {
+      chat: chatResult,
+      embedding: { skipped: true },
+    };
+  }
+  try {
+    const embResult = await startEmbeddingDaemon(opts.embedding);
+    return {
+      chat: chatResult,
+      embedding: embResult,
+    };
+  } catch (e) {
+    return {
+      chat: chatResult,
+      embedding: { error: e instanceof Error ? e.message : String(e) },
+    };
+  }
+}
+
+/**
+ * Stop both daemons. Always tries the embedding pid file first so a
+ * fast `models stop && models start` cycle doesn't leave the
+ * embedding pid stale.
+ */
+export async function stopChatAndEmbeddingDaemons(
+  dataDir: string,
+  opts?: { timeoutMs?: number },
+): Promise<void> {
+  await stopEmbeddingDaemon(dataDir, opts);
+  await stopDaemon(dataDir, opts);
 }

@@ -154,7 +154,25 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
     session = result.session;
     const reply = collector.getReply();
     if (reply !== null) {
-      process.stdout.write(`${reply}\n`);
+      // Collapse embedded newlines into spaces so the "exactly one
+      // stdout line per turn" invariant holds even when the model
+      // emits markdown bullet lists or other multi-line content. A
+      // line-synchronised driver (`eval-memory/harness/multi-turn-driver.ts`)
+      // splits stdout on `\n` and feeds extra lines into its backlog,
+      // which on the next prompt resolve *immediately* as fake replies
+      // and slide the prompt↔reply pairing by one slot per embedded
+      // newline. Reply text destined for analysis lives in the trace
+      // file (`tool_invocation.args.text`); stdout is purely a sync
+      // channel, so flattening newlines does not lose data.
+      const singleLine = reply.replace(/\r?\n/g, " ");
+      process.stdout.write(`${singleLine}\n`);
+    } else {
+      // No assistant_reply was emitted this turn (failed / cancelled /
+      // max_steps with no reply). Still write a single newline so the
+      // "exactly one stdout line per turn" invariant holds for any
+      // line-synchronised driver — the diagnostic detail already went
+      // to stderr via formatAgentEvent.
+      process.stdout.write("\n");
     }
   };
 

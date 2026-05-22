@@ -87,6 +87,18 @@ export interface EffectiveConversationCapInput {
   /** Tokens consumed by the `### memory-index` section. Same contract as `recalledTokens`. */
   memoryIndexTokens?: number;
   /**
+   * Memory-v2 phase 5. Tokens consumed by the `### lessons` pointer
+   * section. Subtracted from the effective conversation cap the
+   * same way `profileTokens` is. Omit when phase 5 is disabled.
+   */
+  lessonsTokens?: number;
+  /**
+   * Memory-v2 phase 7b. Tokens consumed by the `### procedures`
+   * pointer section. Subtracted from the effective conversation cap
+   * just like `lessonsTokens`. Omit when phase 7b is disabled.
+   */
+  proceduresTokens?: number;
+  /**
    * Tokens consumed by the `### loaded-tools` section (rare tool schemas).
    */
   loadedToolsTokens?: number;
@@ -130,6 +142,8 @@ export function computeEffectiveConversationCap(
     (input.profileTokens ?? 0) -
     (input.recalledTokens ?? 0) -
     (input.memoryIndexTokens ?? 0) -
+    (input.lessonsTokens ?? 0) -
+    (input.proceduresTokens ?? 0) -
     (input.loadedToolsTokens ?? 0) -
     input.completionMaxTokens -
     CONVERSATION_CAP_SAFETY_MARGIN;

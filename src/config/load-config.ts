@@ -150,6 +150,7 @@ export function loadConfig(): AtomicAgentConfig {
       ),
       mode: user.localModels.mode,
       managed: { ...user.localModels.managed },
+      embeddings: { ...user.localModels.embeddings },
     },
     paths: {
       stateDir,
@@ -297,6 +298,16 @@ export function loadConfig(): AtomicAgentConfig {
         maxFactsPerCall: user.memory.reflection.maxFactsPerCall,
         autoStoreNotes: user.memory.reflection.autoStoreNotes,
         maxNotesPerCall: user.memory.reflection.maxNotesPerCall,
+        typedNotes: {
+          enabled: user.memory.reflection.typedNotes.enabled,
+        },
+        anySpeaker: user.memory.reflection.anySpeaker,
+        segmentation: {
+          enabled: user.memory.reflection.segmentation.enabled,
+          triggerEveryTurns:
+            user.memory.reflection.segmentation.triggerEveryTurns,
+          windowTurns: user.memory.reflection.segmentation.windowTurns,
+        },
       },
       notes: {
         enabled: user.memory.notes.enabled,
@@ -316,6 +327,79 @@ export function loadConfig(): AtomicAgentConfig {
         previewChars: user.memory.index.previewChars,
         maxTokens: user.memory.index.maxTokens,
       },
+      dedup: {
+        enabled: user.memory.dedup.enabled,
+        fts5Threshold: user.memory.dedup.fts5Threshold,
+      },
+      eviction: {
+        utilityWeighted: user.memory.eviction.utilityWeighted,
+        maxAgeMs: user.memory.eviction.maxAgeMs,
+      },
+      embeddings: {
+        enabled: user.memory.embeddings.enabled,
+        fts5Weight: user.memory.embeddings.fts5Weight,
+        vectorWeight: user.memory.embeddings.vectorWeight,
+        bruteForceCeiling: user.memory.embeddings.bruteForceCeiling,
+      },
+      links: {
+        enabled: user.memory.links.enabled,
+        autoGenerate: user.memory.links.autoGenerate,
+        expansionDepth: user.memory.links.expansionDepth,
+        maxExpanded: user.memory.links.maxExpanded,
+        maxLinksPerCall: user.memory.links.maxLinksPerCall,
+        minCandidates: user.memory.links.minCandidates,
+        generatorTimeoutMs: user.memory.links.generatorTimeoutMs,
+      },
+      evolution: {
+        enabled: user.memory.evolution.enabled,
+        maxPerWrite: user.memory.evolution.maxPerWrite,
+        leaseMs: user.memory.evolution.leaseMs,
+      },
+      lessons: {
+        enabled: user.memory.lessons.enabled,
+        recallK: user.memory.lessons.recallK,
+        maxTokens: user.memory.lessons.maxTokens,
+        indexLimit: user.memory.lessons.indexLimit,
+        maxEntries: user.memory.lessons.maxEntries,
+        deprecationAgeMs: user.memory.lessons.deprecationAgeMs,
+      },
+      procedures: {
+        enabled: user.memory.procedures.enabled,
+        recallK: user.memory.procedures.recallK,
+        maxTokens: user.memory.procedures.maxTokens,
+        indexLimit: user.memory.procedures.indexLimit,
+        maxEntries: user.memory.procedures.maxEntries,
+        deprecationAgeMs: user.memory.procedures.deprecationAgeMs,
+      },
+      consolidation: {
+        enabled: user.memory.consolidation.enabled,
+        intervalMs: user.memory.consolidation.intervalMs,
+        cooldownMs: user.memory.consolidation.cooldownMs,
+        minClusterSize: user.memory.consolidation.minClusterSize,
+        maxClustersPerTick: user.memory.consolidation.maxClustersPerTick,
+        requireSharedTag: user.memory.consolidation.requireSharedTag,
+        distillTimeoutMs: user.memory.consolidation.distillTimeoutMs,
+      },
+      voting: {
+        enabled: user.memory.voting.enabled,
+        maxVotePerItem: user.memory.voting.maxVotePerItem,
+        signalDecay: user.memory.voting.signalDecay,
+        scoreBlend: user.memory.voting.scoreBlend,
+        eventLogMaxRows: user.memory.voting.eventLogMaxRows,
+        profileFilterThreshold: user.memory.voting.profileFilterThreshold,
+      },
+      retrieve: {
+        rewriter: {
+          enabled: user.memory.retrieve.rewriter.enabled,
+          timeoutMs: user.memory.retrieve.rewriter.timeoutMs,
+          historyTurns: user.memory.retrieve.rewriter.historyTurns,
+          gateMode: user.memory.retrieve.rewriter.gateMode,
+          embeddingGate: {
+            threshold: user.memory.retrieve.rewriter.embeddingGate.threshold,
+            exemplars: user.memory.retrieve.rewriter.embeddingGate.exemplars,
+          },
+        },
+      },
     },
     webhooks: user.webhooks,
     vision: {
@@ -328,6 +412,16 @@ export function loadConfig(): AtomicAgentConfig {
       enabled: user.telegram.enabled,
       ownerUserId: user.telegram.ownerUserId,
       parseMode: user.telegram.parseMode,
+    },
+    mcp: {
+      // Servers are owned by the user-config file. Deep clone the
+      // array so downstream mutations (e.g. TUI enable/disable
+      // writes) never leak back into the parsed config snapshot.
+      servers: user.mcp.servers.map((s) => ({
+        ...s,
+        ...(s.transport ? { transport: { ...s.transport } } : {}),
+        ...(s.env ? { env: { ...s.env } } : {}),
+      })),
     },
   };
 }

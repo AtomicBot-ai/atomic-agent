@@ -12,6 +12,19 @@ import type { ChannelStatus } from "./channel-status.js";
 import { TelegramChannel } from "../channels/telegram/index.js";
 import type { BotFactory } from "../channels/telegram/index.js";
 
+import {
+  McpManager,
+  buildMcpPromptGetTool,
+  buildMcpPromptListTool,
+  buildMcpResourceListTool,
+  buildMcpResourceReadTool,
+  buildMcpToolDescriptors,
+  createMcpSamplingHandler,
+  mergeMcpDescriptors,
+  applyMcpToolNameRule,
+  buildMcpToolNameRule,
+} from "../mcp/index.js";
+
 import { LlamaServerClient } from "../llm/llama-server-client.js";
 import type {
   CompletionResult,
@@ -49,18 +62,58 @@ import type { LlmProvider } from "../llm/provider/index.js";
 
 import { MemoryStore } from "../memory/memory-store.js";
 import { ProfileStore } from "../memory/profile-store.js";
+import { LessonStore } from "../memory/lessons/lesson-store.js";
+import { ProcedureStore } from "../memory/procedures/procedure-store.js";
+import { createLessonLifecycleHook } from "../memory/lessons/lesson-lifecycle-hook.js";
 import { createDefaultMemoryContextProvider } from "../memory/memory-context-provider.js";
+import {
+  type RewriterLlmComplete,
+  createQueryRewriterRunner,
+  createRewriterAwareMemoryContextProvider,
+  createAlwaysGate,
+  createEmbeddingGate,
+  createHeuristicGate,
+  DEFAULT_REWRITER_EXEMPLARS,
+  type RewriterGate,
+} from "../memory/retrieve/index.js";
+import type { EmbeddingClient } from "../memory/embeddings/embedding-client.js";
+import {
+  EmbeddingStore,
+  EmbeddingWriter,
+  LlamaEmbeddingClient,
+} from "../memory/embeddings/index.js";
+import {
+  getEmbeddingModelDef,
+  isKnownEmbeddingModelId,
+  probeLlamaHealth,
+} from "../local-llm/index.js";
 import {
   createReflectionRunner,
   type ReflectionLlmComplete,
   type ReflectionRunner,
 } from "../memory/reflection/index.js";
+import {
+  LinkStore,
+  createLinkGeneratorRunner,
+  createLinkAwareReflectionRunner,
+} from "../memory/links/index.js";
+import { NeighborEvolver } from "../memory/evolution/index.js";
+import {
+  ConsolidatorJob,
+  DistillRunner,
+} from "../memory/consolidator/index.js";
+import {
+  VoteStore,
+  createVoteRunner,
+  createVoteAwareReflectionRunner,
+} from "../memory/voting/index.js";
 
 import { SkillRegistry } from "../skills/skill-registry.js";
 import { buildSkillCatalog } from "../skills/skill-catalog.js";
 import { seedStarterSkillsIfMissing } from "../skills/seed-starter-skills.js";
 
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
+import { filterToolDescriptorsByConfig } from "./filter-disabled-tools.js";
 import { buildCapabilities } from "../prompt/capabilities.js";
 import type {
   CapabilitiesSummary,
@@ -216,6 +269,34 @@ export interface AgentRuntime {
    */
   readonly notesStore: MemoryStore;
   /**
+   * Memory-v2 phase 5. Distilled lesson store. Always present (lives
+   * alongside `notesStore` in `memory.sqlite`), regardless of
+   * `memory.lessons.enabled` — the agent-facing tool registration is
+   * gated, but the store itself is always open so `shutdown` can
+   * close it cleanly.
+   */
+  readonly lessonStore: LessonStore;
+  /**
+   * Memory-v2 phase 7b. Procedure templates store. Always
+   * constructed (handle ownership) — the agent-facing tool is
+   * gated on `memory.procedures.enabled` and the consolidator
+   * persists procedures only when the runner is configured with
+   * `withProcedure=true`.
+   */
+  readonly procedureStore: ProcedureStore;
+  /**
+   * Memory-v2 phase 2. Typed link graph store. Always present (same
+   * SQLite file as `notesStore`); recall expansion and link-generator
+   * are gated on `memory.links.enabled`.
+   */
+  readonly linkStore: LinkStore;
+  /**
+   * Memory-v2 phase 7a. Curation vote store. `null` when
+   * `memory.voting.enabled` is `false`. Shares its SQLite handle
+   * with `notesStore`, so no separate dispose is required.
+   */
+  readonly voteStore: VoteStore | null;
+  /**
    * Durable task queue. Always present, even when `tasks.enabled` is
    * false, because the store owns its SQLite connection and must be
    * disposed through `shutdown()`. Callers should respect the config
@@ -254,6 +335,19 @@ export interface AgentRuntime {
    * defensively check before calling.
    */
   readonly telegramChannel: TelegramChannel | null;
+  /**
+   * MCP client manager. **Always non-null** — constructed even when
+   * `config.mcp.servers[]` is empty so the live-control surface stays
+   * uniform with the Telegram channel pattern. When no servers are
+   * configured, this is a zero-cost no-op manager: `start()` returns
+   * immediately, `listStatuses()` is empty, no resolver is installed.
+   * Owns one `McpClient` per configured server and exposes the
+   * aggregated tool / resource / prompt catalogs through
+   * `runtime.mcpManager.listCatalogs()`. Shutdown is wired into the
+   * runtime `shutdown()` so closing the runtime tears every client
+   * down.
+   */
+  readonly mcpManager: McpManager;
   readonly capabilities: CapabilitiesSummary;
   readonly skillCatalog: readonly SkillCatalogEntry[];
   readonly toolDescriptors: readonly ToolDescriptor[];
@@ -310,6 +404,21 @@ export interface AgentRuntime {
   ): Promise<RunTurnResult>;
   /** Refresh the skill registry after install/uninstall and rebuild the catalog. */
   refreshSkills(): Promise<void>;
+  /**
+   * Rebuild the GBNF grammar and the `### tools` prompt catalog from
+   * the current `McpManager` state. Called by the TUI MCP panel after
+   * `mcpManager.addServerLive(...)` / `removeServerLive(...)` so the
+   * model can see (or stops seeing) the qualified MCP tool names on
+   * the next inference without a runtime restart. Mutates the
+   * `grammar` / `toolDescriptors` fields visible through the live
+   * AgentLoop closure; safe to call from any thread of control —
+   * `AgentLoop` reads both via late-binding getters set by bootstrap.
+   *
+   * KV-cache invalidation is intentional: the stable prefix changes
+   * the moment the tool catalog does. This is semantically equivalent
+   * to a runtime restart, just without the process churn.
+   */
+  refreshMcp(): Promise<void>;
   /**
    * Register `handler` as the approval sink for `sessionId`. Every
    * `ApprovalRequest` whose `sessionId` matches will be routed to
@@ -496,11 +605,181 @@ export async function createAgentRuntime(
     browserChannel: config.browser.channel,
   });
 
-  const profileStore = new ProfileStore({ dbFile: config.paths.memoryDbFile });
+  // Memory-v2 phase 7a — fail-fast clamp/decay validation. The
+  // config schema already enforces these ranges, but bootstrap
+  // re-asserts so a hand-edited `config.json` with a v16 marker but
+  // garbage values cannot smuggle invalid voting params past the
+  // runtime. Scenario 7a.C.3 ("bootstrap fails fast on invalid
+  // clamp") is pinned by `consolidator-vote.test.ts` indirectly via
+  // the schema test, but the explicit guard here covers the
+  // post-load codepath where `validateConfigFile` is bypassed.
+  if (config.memory.voting.enabled) {
+    if (
+      !Number.isInteger(config.memory.voting.maxVotePerItem) ||
+      config.memory.voting.maxVotePerItem <= 0
+    ) {
+      throw new Error(
+        `bootstrap: memory.voting.maxVotePerItem must be a positive integer (got ${config.memory.voting.maxVotePerItem})`,
+      );
+    }
+    const sd = config.memory.voting.signalDecay;
+    if (!(sd > 0 && sd <= 1)) {
+      throw new Error(
+        `bootstrap: memory.voting.signalDecay must be in (0, 1] (got ${sd})`,
+      );
+    }
+    const sb = config.memory.voting.scoreBlend;
+    if (!(sb >= 0 && sb <= 1)) {
+      throw new Error(
+        `bootstrap: memory.voting.scoreBlend must be in [0, 1] (got ${sb})`,
+      );
+    }
+  }
+  // TODO(memory-v2): cross-phase invariant 4 — the consolidator
+  // (phase 5) registers with the existing `Scheduler` here, not via a
+  // new `setInterval`. Bootstrap also gains a check from phase 5
+  // onwards: assert `memory.dedup.fts5Threshold ≤
+  // memory.consolidation.similarityThreshold` (§13.7.3 / invariant 14),
+  // fail-fast on violation.
+  const profileStore = new ProfileStore({
+    dbFile: config.paths.memoryDbFile,
+    metrics,
+  });
   const notesStore = new MemoryStore({
     dbFile: config.paths.memoryDbFile,
     maxEntries: config.memory.notes.maxEntries,
+    dedup: {
+      enabled: config.memory.dedup.enabled,
+      fts5Threshold: config.memory.dedup.fts5Threshold,
+    },
+    eviction: {
+      utilityWeighted: config.memory.eviction.utilityWeighted,
+      maxAgeMs: config.memory.eviction.maxAgeMs,
+    },
+    metrics,
   });
+
+  // Memory-v2 phase 1B. Embedding plumbing — opt-in, graceful
+  // degradation. Conditions to wire it up (in order):
+  //
+  //   1. Both feature flags on: `memory.embeddings.enabled` AND
+  //      `localModels.embeddings.enabled`. Either off ⇒ FTS5-only.
+  //   2. A valid embedding model id is configured.
+  //   3. Probe `localModels.embeddings.port` for `/health`. Daemon
+  //      down ⇒ FTS5-only (logged + counted as `disabled`, not as a
+  //      failure — runtime keeps booting).
+  //
+  // The probe runs in the bootstrap critical path with a short
+  // timeout so a stale lockfile / stuck daemon cannot wedge the
+  // entire startup. Failure is observability-only: we never throw.
+  let embeddingHealth: "ok" | "unreachable" | "disabled" = "disabled";
+  let embeddingClient: EmbeddingClient | null = null;
+  if (
+    config.memory.embeddings.enabled &&
+    config.localModels.embeddings.enabled &&
+    config.localModels.embeddings.modelId !== null &&
+    isKnownEmbeddingModelId(config.localModels.embeddings.modelId)
+  ) {
+    const embModelDef = getEmbeddingModelDef(
+      config.localModels.embeddings.modelId,
+    );
+    const embPort = config.localModels.embeddings.port;
+    const probe = await probeLlamaHealth(embPort).catch(
+      () => "down" as const,
+    );
+    if (probe === "ok") {
+      try {
+        const client = new LlamaEmbeddingClient({
+          url: `http://127.0.0.1:${embPort}`,
+          dim: embModelDef.dim,
+          model: embModelDef.id,
+        });
+        embeddingClient = client;
+        const embStore = new EmbeddingStore({
+          db: notesStore.getDatabaseHandleForEmbeddings(),
+        });
+        const writer = new EmbeddingWriter({
+          client,
+          store: embStore,
+          metrics,
+        });
+        notesStore.attachEmbeddings({ writer, store: embStore });
+        embeddingHealth = "ok";
+      } catch (e) {
+        // Construction errors here are pure programmer error
+        // (constructor validation): log + degrade, never throw.
+        process.stderr.write(
+          `memory-v2 phase 1B: failed to wire embedding client: ${
+            e instanceof Error ? e.message : String(e)
+          }\n`,
+        );
+        embeddingHealth = "unreachable";
+      }
+    } else {
+      embeddingHealth = "unreachable";
+      process.stderr.write(
+        `memory-v2 phase 1B: embedding daemon at port ${embPort} is ${probe}; ` +
+          `hybrid recall disabled, FTS5-only path active.\n`,
+      );
+    }
+    metrics.recordMemoryEmbeddingsDaemonHealth({
+      outcome: embeddingHealth,
+      model: embModelDef.id,
+    });
+  } else {
+    metrics.recordMemoryEmbeddingsDaemonHealth({
+      outcome: "disabled",
+      model: null,
+    });
+  }
+
+  // Memory-v2 phase 2. The link graph store rides the same memory.sqlite
+  // handle as `notesStore` — `MemoryStore` already enabled
+  // `foreign_keys = ON` so the cascade fires on `memories.remove(id)`.
+  // The store is always constructed (the table exists from schema v6
+  // onwards); the agent-facing recall expansion + link-generator
+  // sub-call are independently gated on `memory.links.enabled` /
+  // `memory.links.autoGenerate`.
+  const linkStore = new LinkStore({
+    db: notesStore.getDatabaseHandleForEmbeddings(),
+  });
+
+  // Memory-v2 phase 5. `LessonStore` is always constructed when the
+  // schema is present (v8+) — the agent-facing tool registration is
+  // gated on `memory.lessons.enabled`, and the consolidator is
+  // additionally gated on `memory.consolidation.enabled`. Keeping the
+  // handle open even when both switches are off is intentional: the
+  // SQLite connection lives next to `MemoryStore` / `ProfileStore` /
+  // `LinkStore` in the same file and must be closed in `shutdown`.
+  const lessonStore = new LessonStore({
+    dbFile: config.paths.memoryDbFile,
+    maxEntries: config.memory.lessons.maxEntries,
+    metrics,
+  });
+
+  // Memory-v2 phase 7b. `ProcedureStore` shares the same SQLite handle
+  // as `MemoryStore`; the `procedures` table sits next to `memories`,
+  // `lessons`, and `profile_facts`. Always constructed when the schema
+  // (v10+) is present so the handle has one owner — the agent-facing
+  // tool registration + consolidator wiring are independently gated
+  // on `memory.procedures.enabled`.
+  const procedureStore = new ProcedureStore({
+    dbFile: config.paths.memoryDbFile,
+    maxEntries: config.memory.procedures.maxEntries,
+    metrics,
+  });
+
+  // Memory-v2 phase 7a. `VoteStore` shares the same SQLite handle as
+  // the `MemoryStore` (the `vote_score` columns live on the same
+  // tables it owns), so there is no separate file to close in
+  // `shutdown`. It is always constructed when `memory.voting.enabled`
+  // is on; the rest of the wiring (reflection decorator, consolidator
+  // dep) is conditional on the same flag.
+  const voteStore: VoteStore | null = config.memory.voting.enabled
+    ? new VoteStore({
+        db: notesStore.getDatabaseHandleForEmbeddings(),
+      })
+    : null;
 
   const toolRegistry = new ToolRegistry();
   toolRegistry.register(finishTool);
@@ -518,6 +797,10 @@ export async function createAgentRuntime(
     notesEnabled: config.memory.notes.enabled,
     notesRecallDefaultK: config.memory.notes.recallDefaultK,
     notesMaxContentChars: config.memory.notes.maxContentChars,
+    lessonStore,
+    lessonsEnabled: config.memory.lessons.enabled,
+    procedureStore,
+    proceduresEnabled: config.memory.procedures.enabled,
   });
 
   // Vision provider wiring is deferred until after `profileManager` is
@@ -530,7 +813,7 @@ export async function createAgentRuntime(
     skillRegistry.list(),
   );
 
-  const grammar = await buildGrammar(profile, config.paths.grammarsDir);
+  let grammar = await buildGrammar(profile, config.paths.grammarsDir);
   const grammarViolations = checkProfileGrammarAligned(profile, grammar);
   if (grammarViolations.length > 0) {
     logger.warn("profile/grammar invariant violated", {
@@ -573,6 +856,78 @@ export async function createAgentRuntime(
     maxImagesPerCall: config.vision.maxImagesPerCall,
     maxImageBytes: config.vision.maxImageBytes,
   });
+  // MCP client subsystem. The manager is always constructed so the
+  // live-control surface (TUI panel, slash commands — planned) stays
+  // uniform with the Telegram channel pattern. An empty
+  // `config.mcp.servers[]` produces a zero-cost no-op manager.
+  //
+  // We start the manager **before** the descriptor filter + grammar
+  // rule application so the prompt + GBNF reflect the live catalog
+  // exactly. Each `McpClient` is bounded by a 15s connect timeout,
+  // and failures are isolated per-server — one broken config never
+  // blocks bootstrap. Catalog growth after this point (hot-add
+  // server) requires a rebuild of the stable prefix / grammar
+  // (currently a runtime restart — see AGENTS.md §"MCP client").
+  const mcpServerConfigs = config.mcp?.servers ?? [];
+  const mcpEnabled = mcpServerConfigs.length > 0;
+  const mcpManager = new McpManager(mcpServerConfigs, {
+    toolRegistry,
+    logger,
+    // Sampling handler is per-client; we install one for every
+    // connecting server so the SDK advertises the capability. Routes
+    // to LlamaServerClient with `slotId: -1` (invariant 1 in
+    // `mcp-sampling-handler.ts`).
+    samplingHandler: mcpEnabled
+      ? createMcpSamplingHandler({
+          llamaServerClient: llama,
+          server: "*",
+        })
+      : undefined,
+    ...(options.handlers?.onChannelStatus
+      ? {
+          onStatus: (status) =>
+            options.handlers!.onChannelStatus!({
+              channel: `mcp:${status.name}`,
+              state: status.state,
+              ...(status.lastError ? { lastError: status.lastError } : {}),
+            }),
+        }
+      : {}),
+  });
+  // The four meta-tools (`mcp.resources.{list,read}` /
+  // `mcp.prompts.{list,get}`) read aggregated state from `mcpManager`.
+  // They are safe to register even when zero servers are connected
+  // — the manager returns empty aggregates and the tools fail with a
+  // structured "no server" error if invoked. Registering them
+  // unconditionally lets the live-add path (variant γ) skip a
+  // first-server-only branch.
+  let mcpMetaToolsRegistered = false;
+  const registerMcpMetaToolsOnce = (): void => {
+    if (mcpMetaToolsRegistered) return;
+    toolRegistry.register(buildMcpResourceListTool(mcpManager));
+    toolRegistry.register(buildMcpResourceReadTool(mcpManager));
+    toolRegistry.register(buildMcpPromptListTool(mcpManager));
+    toolRegistry.register(buildMcpPromptGetTool(mcpManager));
+    mcpMetaToolsRegistered = true;
+  };
+  // Baseline grammar without MCP tool names — kept around so
+  // `refreshMcp()` can rebuild from the same starting point regardless
+  // of what the current MCP catalog looks like. `applyMcpToolNameRule`
+  // is purely additive on top of this baseline.
+  const baseGrammar = grammar;
+  if (mcpEnabled) {
+    await mcpManager.start();
+    registerMcpMetaToolsOnce();
+    const mcpToolMetas = mcpManager.listAllToolMeta();
+    const rule = buildMcpToolNameRule(mcpToolMetas);
+    grammar = applyMcpToolNameRule(baseGrammar, rule);
+    logger.info("mcp: manager started", {
+      configured: mcpServerConfigs.length,
+      connected: mcpManager.listStatuses().filter((s) => s.state === "up").length,
+      tools: mcpToolMetas.length,
+    });
+  }
+
   // The descriptor stays in the prompt whenever the operator wired a
   // vision provider — even before the profile probe lands. The
   // descriptor blurb already says "Only available when the active
@@ -580,10 +935,43 @@ export async function createAgentRuntime(
   // image work before mmproj is loaded, the tool surfaces a clear
   // `VisionUnsupportedError` instead of silently disappearing from
   // the toolset.
-  const effectiveToolDescriptors =
-    config.vision.enabled && visionProvider !== undefined
-      ? DEFAULT_TOOL_DESCRIPTORS
-      : DEFAULT_TOOL_DESCRIPTORS.filter((d) => d.name !== "vision.describe");
+  // Drop descriptors whose backing tool will not be registered at
+  // runtime under the current config gates. Without this filter the
+  // stable prefix advertises tools that the registry rejects on
+  // first invocation — see `filter-disabled-tools.ts` for the full
+  // mapping. The historical inline `vision.describe` filter is now
+  // one entry in that table; behaviour for vision is unchanged.
+  // Live-MCP support: every input that varies with the MCP catalog
+  // (descriptor list + grammar) is rebuildable via the helper below.
+  // The closure captures everything else (vision/memory/tasks gates,
+  // baseline grammar, etc.) so `refreshMcp()` can re-run it after a
+  // server is added or removed at runtime without touching the rest.
+  const rebuildToolDescriptorsFromMcp = (): readonly ToolDescriptor[] => {
+    const liveMcpEnabled = mcpManager.listServerNames().length > 0;
+    const base = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+      vision: {
+        enabled: config.vision.enabled,
+        providerAvailable: visionProvider !== undefined,
+      },
+      memory: {
+        profile: { enabled: config.memory.profile.enabled },
+        notes: { enabled: config.memory.notes.enabled },
+        lessons: { enabled: config.memory.lessons.enabled },
+        procedures: { enabled: config.memory.procedures.enabled },
+      },
+      tasks: {
+        agentToolsEnabled:
+          config.tasks.enabled && config.tasks.agentToolsEnabled,
+      },
+      mcp: { enabled: liveMcpEnabled },
+    });
+    if (!liveMcpEnabled) return base;
+    return mergeMcpDescriptors(
+      base,
+      buildMcpToolDescriptors(mcpManager.listAllToolMeta()),
+    );
+  };
+  let effectiveToolDescriptors = rebuildToolDescriptorsFromMcp();
   if (config.vision.enabled) {
     logger.info("vision provider configured", {
       provider: visionProvider?.name ?? "(none)",
@@ -642,7 +1030,22 @@ export async function createAgentRuntime(
     });
   }
 
-  const reflectionRunner = buildReflectionRunner({
+  // Memory-v2 phase 3. The neighbor-evolver writes parsed EVOLVE
+  // directives back into `MemoryStore` after notes are stored.
+  // Construction is unconditional but cheap; the runner is only
+  // **wired into reflection** when the feature flag is on, so the
+  // evolver itself is harmless when present-but-not-used.
+  const neighborEvolver = config.memory.evolution.enabled
+    ? new NeighborEvolver({
+        memoryStore: notesStore,
+        maxPerWrite: config.memory.evolution.maxPerWrite,
+        leaseMs: config.memory.evolution.leaseMs,
+        logger,
+        metrics,
+      })
+    : undefined;
+
+  const baseReflectionRunner = buildReflectionRunner({
     config,
     slotManager,
     llmComplete,
@@ -650,13 +1053,165 @@ export async function createAgentRuntime(
     notesStore,
     logger,
     metrics,
+    ...(neighborEvolver ? { neighborEvolver } : {}),
   });
+
+  // Memory-v2 phase 2. Compose the base reflection runner with the
+  // link-generator sub-call when the feature flag + auto-generation
+  // are both on. The wrapper keeps the agent-loop call site
+  // unchanged (it still calls `reflectionRunner.reflect(input)`); the
+  // link-generator fires after the base runner returns, using
+  // `input.recalledMemoryIds` as the allowlist.
+  //
+  // The link-generator rides the **same** `reflectionSlotId` as the
+  // base reflection (cross-phase invariant 2). When the base runner
+  // is absent (memory.reflection disabled), link-generation is also
+  // skipped — we never want to spawn an LLM call just for the graph.
+  let reflectionRunner: ReflectionRunner | undefined = baseReflectionRunner;
+  if (
+    baseReflectionRunner &&
+    config.memory.links.enabled &&
+    config.memory.links.autoGenerate
+  ) {
+    const reservedSlot = slotManager.reserveReflectionSlot();
+    const reflectionSlotId = reservedSlot ?? -1;
+    const linkGenLlmComplete = async (params: {
+      prompt: string;
+      grammar: string;
+      slotId: number;
+      sessionId: string;
+      signal: AbortSignal;
+    }) => {
+      if (params.signal.aborted) {
+        throw new DOMException("aborted", "AbortError");
+      }
+      const abortPromise = new Promise<never>((_, reject) => {
+        params.signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("aborted", "AbortError")),
+          { once: true },
+        );
+      });
+      const completionPromise = llmComplete({
+        prompt: params.prompt,
+        grammar: params.grammar,
+        slotId: params.slotId,
+        sessionId: params.sessionId,
+      });
+      return Promise.race([completionPromise, abortPromise]);
+    };
+    const linkGenerator = createLinkGeneratorRunner({
+      llmComplete: linkGenLlmComplete,
+      linkStore,
+      reflectionSlotId,
+      timeoutMs: config.memory.links.generatorTimeoutMs,
+      maxLinksPerCall: config.memory.links.maxLinksPerCall,
+      minCandidates: config.memory.links.minCandidates,
+      logger,
+      metrics,
+    });
+    reflectionRunner = createLinkAwareReflectionRunner({
+      reflection: baseReflectionRunner,
+      linkGenerator,
+      notesStore,
+      minCandidates: config.memory.links.minCandidates,
+    });
+  }
+
+  // Memory-v2 phase 7a. Decorate the reflection runner with the
+  // vote-runner sub-call so curation runs after `SET` / `NOTE` /
+  // link-gen / `EVOLVE`. The decorator is fire-safe: a failed
+  // vote-runner never breaks the reflection chain. Wiring only
+  // proceeds when:
+  //   - The base reflection chain is wired.
+  //   - `memory.voting.enabled` (carries the VoteStore).
+  // The vote-runner rides the **same** reflection slot as the
+  // upstream chain (cross-phase invariant 2). Allowlist is
+  // sourced from `ReflectionInput.{recalledIds, recalledLessonIds,
+  // recalledProfileFactIds}` populated by `agent-loop.runTurn`
+  // from `memory-context-provider` and `LessonStore.recall` —
+  // anti-feedback-loop guardrail (invariant 18).
+  if (reflectionRunner && voteStore) {
+    const reservedSlot = slotManager.reserveReflectionSlot();
+    const voteSlotId = reservedSlot ?? -1;
+    const voteLlmComplete = async (params: {
+      prompt: string;
+      grammar: string;
+      slotId: number;
+      sessionId: string;
+      signal: AbortSignal;
+    }) => {
+      if (params.signal.aborted) {
+        throw new DOMException("aborted", "AbortError");
+      }
+      const abortPromise = new Promise<never>((_, reject) => {
+        params.signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("aborted", "AbortError")),
+          { once: true },
+        );
+      });
+      const completionPromise = llmComplete({
+        prompt: params.prompt,
+        grammar: params.grammar,
+        slotId: params.slotId,
+        sessionId: params.sessionId,
+      });
+      return Promise.race([completionPromise, abortPromise]);
+    };
+    const voteRunner = createVoteRunner({
+      llmComplete: voteLlmComplete,
+      voteStore,
+      reflectionSlotId: voteSlotId,
+      timeoutMs: config.memory.reflection.timeoutMs,
+      maxVotePerItem: config.memory.voting.maxVotePerItem,
+      eventLogMaxRows: config.memory.voting.eventLogMaxRows,
+      logger,
+      metrics,
+      // Memory-v2 phase 7a — wire trace emission through the
+      // per-session recorder owned by the runtime. The recorder
+      // map (`recorders`) is keyed by sessionId; we resolve it
+      // lazily on every event so a session created after the
+      // runtime booted is still observable. Reflection runs
+      // fire-and-forget after `turn_finished`, so a missing
+      // recorder is a normal "tracing disabled for this session"
+      // outcome, not an error.
+      emitTrace: (event) => {
+        const recorder = recorders.get(event.sessionId);
+        if (!recorder) return;
+        if (event.type === "applied") {
+          recorder.recordVoteApplied({
+            kind: event.kind,
+            targetId: event.targetId,
+            direction: event.direction,
+            score: event.score,
+            clampHit: event.clampHit,
+          });
+        } else {
+          recorder.recordVoteRejected({
+            kind: event.kind,
+            targetId: event.targetId,
+            direction: event.direction,
+            reason: event.reason,
+          });
+        }
+      },
+    });
+    reflectionRunner = createVoteAwareReflectionRunner({
+      reflection: reflectionRunner,
+      voteRunner,
+      memoryStore: notesStore,
+      lessonStore,
+      profileStore,
+      procedureStore: config.memory.procedures.enabled ? procedureStore : null,
+    });
+  }
 
   // Read-side counterpart of reflection: pre-step recall injection and
   // memory-index pointer rendering. Wired only when `memory.notes` is
   // enabled — otherwise the runtime has nothing to read from and the
   // prompt tail skips both sections.
-  const memoryContextProvider = config.memory.notes.enabled
+  const baseMemoryContextProvider = config.memory.notes.enabled
     ? createDefaultMemoryContextProvider({
         store: notesStore,
         recall: {
@@ -668,8 +1223,111 @@ export async function createAgentRuntime(
           limit: config.memory.index.limit,
           previewChars: config.memory.index.previewChars,
         },
+        // Memory-v2 phase 2: read-side BFS expansion. Falls back to a
+        // no-op when the feature flag is off, so phase 1B callers stay
+        // byte-identical.
+        ...(config.memory.links.enabled
+          ? {
+              links: {
+                enabled: true,
+                store: linkStore,
+                depth: config.memory.links.expansionDepth,
+                maxExpanded: config.memory.links.maxExpanded,
+              },
+              metrics,
+            }
+          : {}),
+        // Memory-v2 phase 5: surface lesson pointers in `### lessons`.
+        // When `memory.lessons.enabled=false`, the provider skips the
+        // call entirely and `recalledLessons` stays empty — the prompt
+        // renderer then omits the section header.
+        ...(config.memory.lessons.enabled
+          ? {
+              lessons: {
+                enabled: true,
+                store: lessonStore,
+                k: config.memory.lessons.recallK,
+              },
+            }
+          : {}),
+        // Memory-v2 phase 7b. Surface advisory procedure pointers
+        // in `### procedures`. Same gating story as lessons —
+        // when disabled, the renderer omits the header.
+        ...(config.memory.procedures.enabled
+          ? {
+              procedures: {
+                enabled: true,
+                store: procedureStore,
+                k: config.memory.procedures.recallK,
+              },
+            }
+          : {}),
       })
     : undefined;
+
+  // v2.5 heuristic-gated query rewriter (Phase A, config v18).
+  // When enabled, wrap the default provider with a decorator that
+  // rewrites referential follow-ups via an LLM call on `slotId=-1`
+  // before delegating recall. Disabled-by-default contract: when the
+  // flag is off, `memoryContextProvider` is byte-identical to the
+  // pre-v18 chain.
+  let memoryContextProvider = baseMemoryContextProvider;
+  if (baseMemoryContextProvider && config.memory.retrieve.rewriter.enabled) {
+    const rewriterLlmComplete: RewriterLlmComplete = async (params) => {
+      if (params.signal.aborted) {
+        throw new DOMException("aborted", "AbortError");
+      }
+      const abortPromise = new Promise<never>((_, reject) => {
+        params.signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("aborted", "AbortError")),
+          { once: true },
+        );
+      });
+      const completionPromise = llmComplete({
+        prompt: params.prompt,
+        grammar: params.grammar,
+        slotId: params.slotId,
+        sessionId: params.sessionId,
+      });
+      return Promise.race([completionPromise, abortPromise]);
+    };
+    const rewriterCfg = config.memory.retrieve.rewriter;
+    let gate: RewriterGate;
+    if (rewriterCfg.gateMode === "embedding") {
+      if (embeddingClient) {
+        gate = createEmbeddingGate({
+          embedder: embeddingClient,
+          exemplars:
+            rewriterCfg.embeddingGate.exemplars ?? DEFAULT_REWRITER_EXEMPLARS,
+          threshold: rewriterCfg.embeddingGate.threshold,
+          logger,
+          metrics,
+        });
+      } else {
+        logger.warn?.(
+          "rewriter.gateMode=embedding but no embeddingClient — falling back to heuristic",
+        );
+        gate = createHeuristicGate();
+      }
+    } else if (rewriterCfg.gateMode === "always") {
+      gate = createAlwaysGate();
+    } else {
+      gate = createHeuristicGate();
+    }
+    const rewriterRunner = createQueryRewriterRunner({
+      llmComplete: rewriterLlmComplete,
+      timeoutMs: rewriterCfg.timeoutMs,
+      gate,
+      logger,
+      metrics,
+    });
+    memoryContextProvider = createRewriterAwareMemoryContextProvider({
+      inner: baseMemoryContextProvider,
+      rewriter: rewriterRunner,
+      historyTurns: config.memory.retrieve.rewriter.historyTurns,
+    });
+  }
 
   // The `skillCatalog` is a getter so that `agent-loop` reads the current
   // value on every step — `refreshSkills()` then does not require tearing
@@ -688,7 +1346,40 @@ export async function createAgentRuntime(
       ? { profileFactsProvider: () => profileStore.list() }
       : {}),
     ...(reflectionRunner ? { reflectionRunner } : {}),
+    // v2.5 (Phase B). Sliding-window reflection
+    // segmentation. When `enabled`, the agent loop defers
+    // reflection to every Nth turn (with a final-flush on
+    // `finish`) and packs the last W user/assistant pairs into the
+    // reflection prompt. Disabled by default — legacy per-reply
+    // single-pair behaviour is byte-stable when the block is
+    // omitted.
+    ...(config.memory.reflection.segmentation.enabled &&
+    reflectionRunner !== undefined
+      ? {
+          reflectionSegmentation: {
+            enabled: true,
+            triggerEveryTurns:
+              config.memory.reflection.segmentation.triggerEveryTurns,
+            windowTurns:
+              config.memory.reflection.segmentation.windowTurns,
+          },
+        }
+      : {}),
     ...(memoryContextProvider ? { memoryContextProvider } : {}),
+    // Memory-v2 phase 6 — lesson lifecycle hook. Bumps
+    // `success_count` / `failure_count` on every surfaced lesson at
+    // the end of each turn (reply/finish → success, failed →
+    // failure; cancelled/max_steps → skip). Gated on
+    // `memory.lessons.enabled` since a disabled lesson surface
+    // means there is nothing to bump.
+    ...(config.memory.lessons.enabled
+      ? {
+          lessonLifecycle: createLessonLifecycleHook({
+            lessonStore,
+            logger,
+          }),
+        }
+      : {}),
     onEvent: (event: AgentLoopEvent) => {
       // The loop has no awareness of which session it is currently
       // driving; resolve that from the per-turn ALS frame so two
@@ -709,8 +1400,25 @@ export async function createAgentRuntime(
     enumerable: true,
     get: () => skillCatalog,
   });
+  // Late-binding getters for the MCP-driven fields. `grammar` and
+  // `toolDescriptors` are recomputed by `runtime.refreshMcp()` after a
+  // server is live-added or live-removed via the TUI MCP panel. The
+  // AgentLoop reads both on every step so the rebuilt values land on
+  // the next inference without restarting the loop.
+  Object.defineProperty(loopDeps, "grammar", {
+    enumerable: true,
+    get: () => grammar,
+  });
+  Object.defineProperty(loopDeps, "toolDescriptors", {
+    enumerable: true,
+    get: () => effectiveToolDescriptors,
+  });
   const loop = new AgentLoop(
-    loopDeps as typeof loopDeps & { skillCatalog: readonly SkillCatalogEntry[] },
+    loopDeps as typeof loopDeps & {
+      skillCatalog: readonly SkillCatalogEntry[];
+      grammar: string;
+      toolDescriptors: readonly ToolDescriptor[];
+    },
   );
 
   // Forward declaration: the Telegram channel is constructed after the
@@ -741,6 +1449,17 @@ export async function createAgentRuntime(
       }
     }
     try {
+      // MCP manager closes every connected `McpClient` (transport
+      // + sampling handler) and clears the dynamic resource-class
+      // resolver. Best-effort: per-server close errors are
+      // swallowed inside the manager.
+      await mcpManager.shutdown();
+    } catch (err) {
+      logger.warn("mcp: shutdown failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    try {
       await browserBackend.shutdown();
     } catch (err) {
       logger.warn("browser shutdown failed", {
@@ -758,6 +1477,24 @@ export async function createAgentRuntime(
       // already closed
     }
     try {
+      // Memory-v2 phase 5. LessonStore owns its own SQLite handle on
+      // the same `memory.sqlite` file as MemoryStore / ProfileStore /
+      // LinkStore — close before letting the process exit so WAL
+      // checkpointing finishes cleanly.
+      lessonStore.close();
+    } catch {
+      // already closed
+    }
+    try {
+      // Memory-v2 phase 7b. ProcedureStore owns its own SQLite
+      // handle on the same `memory.sqlite` file. Close it before
+      // notesStore so all derived stores release their connection
+      // pre-WAL checkpoint.
+      procedureStore.close();
+    } catch {
+      // already closed
+    }
+    try {
       notesStore.close();
     } catch {
       // already closed
@@ -767,6 +1504,15 @@ export async function createAgentRuntime(
         await scheduler.stop();
       } catch (err) {
         logger.warn("scheduler stop failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    if (consolidatorJob) {
+      try {
+        await consolidatorJob.stop();
+      } catch (err) {
+        logger.warn("consolidator stop failed", {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -788,6 +1534,31 @@ export async function createAgentRuntime(
     }
     skillCatalog = buildSkillCatalog(skillRegistry.list());
     options.handlers?.onSkillRegistryChange?.([...skillCatalog]);
+  };
+
+  /**
+   * Rebuild the GBNF grammar and the prompt's `### tools` catalog from
+   * the live `mcpManager` state. Called by the TUI MCP orchestrator
+   * after `addServerLive` / `removeServerLive`. Idempotent — safe to
+   * call when nothing changed (just re-runs the same builders).
+   *
+   * If MCP has just transitioned from "no servers" to "≥1 server", we
+   * register the four MCP meta-tools on demand (they were skipped at
+   * bootstrap to keep the descriptor catalog clean).
+   */
+  const refreshMcp = async (): Promise<void> => {
+    const serverCount = mcpManager.listServerNames().length;
+    if (serverCount > 0) {
+      registerMcpMetaToolsOnce();
+    }
+    const metas = mcpManager.listAllToolMeta();
+    const rule = buildMcpToolNameRule(metas);
+    grammar = applyMcpToolNameRule(baseGrammar, rule);
+    effectiveToolDescriptors = rebuildToolDescriptorsFromMcp();
+    logger.info("mcp: catalog refreshed", {
+      servers: serverCount,
+      tools: metas.length,
+    });
   };
 
   const ensureRecorder = (session: SessionState): TraceRecorder | null => {
@@ -897,6 +1668,186 @@ export async function createAgentRuntime(
       : null;
   scheduler?.start();
 
+  // Memory-v2 phase 5: cold-path consolidator. Owns its own
+  // `setInterval` (scoped carve-out from "Scheduler is the only
+  // periodic timer" invariant — analogous to the Telegram polling
+  // carve-out). Started only when `memory.consolidation.enabled` is
+  // true AND a reflection-slot llmComplete is available. Distillation
+  // shares the reflection slot reserved above for link-generation;
+  // when no slot was reserved (memory.reflection disabled or only one
+  // llama-server slot) we fall back to slotId=-1 (no KV-cache reuse).
+  let consolidatorJob: ConsolidatorJob | null = null;
+  if (
+    config.memory.lessons.enabled &&
+    config.memory.consolidation.enabled
+  ) {
+    // Reserve (or piggy-back on) the reflection slot for the distill
+    // call. The slot is per-runtime, not per-job, so calling
+    // `reserveReflectionSlot` again here is idempotent — the slot
+    // manager returns the same id.
+    const distillSlot = slotManager.reserveReflectionSlot() ?? -1;
+    const distillLlmComplete = async (params: {
+      prompt: string;
+      grammar: string;
+      slotId: number;
+      sessionId: string;
+      signal: AbortSignal;
+    }) => {
+      if (params.signal.aborted) {
+        throw new DOMException("aborted", "AbortError");
+      }
+      const abortPromise = new Promise<never>((_, reject) => {
+        params.signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("aborted", "AbortError")),
+          { once: true },
+        );
+      });
+      const completionPromise = llmComplete({
+        prompt: params.prompt,
+        grammar: params.grammar,
+        slotId: params.slotId,
+        sessionId: params.sessionId,
+      });
+      return Promise.race([completionPromise, abortPromise]);
+    };
+    const distillRunner = new DistillRunner({
+      llmComplete: distillLlmComplete,
+      slotId: distillSlot,
+      timeoutMs: config.memory.consolidation.distillTimeoutMs,
+      logger,
+      metrics,
+      // Memory-v2 phase 7b — emit a combined LESSON+PROCEDURE
+      // response when procedures are enabled. The grammar still
+      // permits the procedure half to be empty (conceptual
+      // clusters), so this stays the safe default-on once the
+      // feature is configured. Cross-phase invariant 21: this
+      // does **not** add a second LLM call.
+      withProcedure: config.memory.procedures.enabled,
+    });
+    consolidatorJob = new ConsolidatorJob(
+      {
+        enabled: true,
+        intervalMs: config.memory.consolidation.intervalMs,
+        cooldownMs: config.memory.consolidation.cooldownMs,
+        minClusterSize: config.memory.consolidation.minClusterSize,
+        maxClustersPerTick:
+          config.memory.consolidation.maxClustersPerTick,
+        requireSharedTag: config.memory.consolidation.requireSharedTag,
+        consolidationLeaseMs: 60_000,
+        // Memory-v2 phase 6 — wire the age-based deprecation
+        // threshold and the per-tick deprecation cap. Both come
+        // from `memory.lessons.*` since they govern lesson rows.
+        // `maxEntries` is held inside the `LessonStore` itself
+        // (already passed via `LessonStoreOptions`) and surfaces
+        // through `pickOverflowForDeprecation()`.
+        deprecationAgeMs: config.memory.lessons.deprecationAgeMs,
+        maxDeprecationsPerTick: 100,
+        // Memory-v2 phase 7a — vote-driven decay runs once per
+        // tick (cross-phase invariant 23). `0` here disables both
+        // the decay pass and the vote-driven deprecation sweep
+        // even if the `voteStore` dep is present, so the master
+        // switch is honoured without re-checking `enabled` deep
+        // inside the job.
+        voteSignalDecay: config.memory.voting.enabled
+          ? config.memory.voting.signalDecay
+          : 0,
+        // Memory-v2 phase 7b — procedure age threshold and cascade
+        // hook live behind the procedures master switch.
+        ...(config.memory.procedures.enabled
+          ? {
+              procedureDeprecationAgeMs:
+                config.memory.procedures.deprecationAgeMs,
+            }
+          : {}),
+      },
+      {
+        memoryStore: notesStore,
+        linkStore,
+        lessonStore,
+        distillRunner,
+        metrics,
+        logger,
+        ...(config.memory.procedures.enabled ? { procedureStore } : {}),
+        ...(voteStore ? { voteStore } : {}),
+        // Memory-v2 phase 6. Bridge the sweep's per-lesson demotion
+        // callback to the trace bus. The consolidator runs
+        // out-of-band so we use the synthetic `consolidator`
+        // session id (matching the one the DistillRunner uses).
+        // The bus fans out to the NDJSON sink which writes to
+        // `<stateDir>/traces/consolidator.ndjson` — a dedicated
+        // cold-path log keyed by sessionId. A local `seq` counter
+        // keeps the file monotonically ordered; per-session
+        // counters are recorder-owned, but the consolidator does
+        // not run through a recorder.
+        ...(traceBus
+          ? ((): {
+              onLessonDeprecated: (event: {
+                lessonId: number;
+                reason: string;
+              }) => void;
+              onProcedureCreated?: (event: {
+                procedureId: number;
+                parentLessonIds: readonly number[];
+                parentMemoryIds: readonly number[];
+                source: "consolidator" | "manual";
+              }) => void;
+              onProcedureDeprecated?: (event: {
+                procedureId: number;
+                reason: string;
+              }) => void;
+            } => {
+              // One monotonic counter shared by every consolidator-
+              // origin trace event so the consolidator NDJSON stays
+              // ordered across all event types in the same tick.
+              let consolidatorSeq = 0;
+              return {
+                onLessonDeprecated: ({ lessonId, reason }) =>
+                  traceBus.emit({
+                    type: "lesson_deprecated",
+                    sessionId: "consolidator",
+                    seq: consolidatorSeq++,
+                    ts: Date.now(),
+                    lessonId,
+                    reason,
+                  }),
+                ...(config.memory.procedures.enabled
+                  ? {
+                      onProcedureCreated: ({
+                        procedureId,
+                        parentLessonIds,
+                        parentMemoryIds,
+                        source,
+                      }) =>
+                        traceBus.emit({
+                          type: "procedure_created",
+                          sessionId: "consolidator",
+                          seq: consolidatorSeq++,
+                          ts: Date.now(),
+                          procedureId,
+                          parentLessonIds: [...parentLessonIds],
+                          parentMemoryIds: [...parentMemoryIds],
+                          source,
+                        }),
+                      onProcedureDeprecated: ({ procedureId, reason }) =>
+                        traceBus.emit({
+                          type: "procedure_deprecated",
+                          sessionId: "consolidator",
+                          seq: consolidatorSeq++,
+                          ts: Date.now(),
+                          procedureId,
+                          reason,
+                        }),
+                    }
+                  : {}),
+              };
+            })()
+          : {}),
+      },
+    );
+    consolidatorJob.start();
+  }
+
   const runtime = {
     config,
     loop,
@@ -908,11 +1859,16 @@ export async function createAgentRuntime(
     turnController,
     profileStore,
     notesStore,
+    lessonStore,
+    procedureStore,
+    linkStore,
+    voteStore,
     taskStore,
     taskRunner,
     scheduler,
     webhookSessionStore,
     telegramChannel: null,
+    mcpManager,
     capabilities,
     toolDescriptors: effectiveToolDescriptors,
     grammar,
@@ -922,6 +1878,7 @@ export async function createAgentRuntime(
     runTurn,
     executeTurn,
     refreshSkills,
+    refreshMcp,
     setApprovalHandlerForSession: (sessionId, handler) =>
       approvalRouter.setForSession(sessionId, handler),
     shutdown,
@@ -1116,6 +2073,8 @@ function buildReflectionRunner(args: {
    * is silently dropped.
    */
   notesStore: MemoryStore;
+  /** Memory-v2 phase 3. Optional; when omitted EVOLVE is dropped. */
+  neighborEvolver?: NeighborEvolver;
   logger: StructuredLogger;
   metrics: AgentMetrics;
 }): ReflectionRunner | undefined {
@@ -1156,12 +2115,22 @@ function buildReflectionRunner(args: {
     llmComplete: reflectionLlmComplete,
     profileStore: args.profileStore,
     ...(notesWriteEnabled ? { memoryStore: args.notesStore } : {}),
+    ...(args.neighborEvolver ? { neighborEvolver: args.neighborEvolver } : {}),
     reflectionSlotId,
     timeoutMs: memory.reflection.timeoutMs,
     maxFactsPerCall: memory.reflection.maxFactsPerCall,
     maxNotesPerCall: notesWriteEnabled
       ? memory.reflection.maxNotesPerCall
       : 0,
+    // v2.5 typed-NOTE extraction (Phase C). Threaded as a
+    // boolean dep so the runner can pick the typed reflection prefix
+    // and the parser can project [type=X] into the `type:<X>` tag.
+    typedNotes: memory.reflection.typedNotes.enabled,
+    // Multi-party reflection mode (config v19). When enabled, the
+    // runner switches to REFLECTION_STABLE_PREFIX_ANY_SPEAKER so
+    // third-party speakers in the USER channel become valid
+    // extraction sources. Wins over `typedNotes`.
+    anySpeaker: memory.reflection.anySpeaker,
     logger: args.logger,
     metrics: args.metrics,
   });

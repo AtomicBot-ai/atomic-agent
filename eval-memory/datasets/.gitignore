@@ -1,0 +1,6 @@
+# External benchmark datasets are not shipped with the agent — they
+# are downloaded once per machine into per-benchmark subfolders.
+# Operators see the README inside each subfolder for what to fetch.
+*
+!.gitignore
+!*/README.md

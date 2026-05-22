@@ -160,10 +160,12 @@ export type StepTerminal = "turn" | "session" | null;
  * length 1; for a batched step both arrays have N entries in
  * batch-index order (the order the model emitted them).
  *
- * `terminal` is only set when the model emitted exactly one terminal
- * verb (`reply` or `finish`). Terminal verbs are forbidden inside
- * multi-call batches, so a `terminal !== null` outcome always implies
- * `toolCalls.length === 1`.
+ * `terminal` is set when the **last** call in the batch is a terminal
+ * verb (`reply` / `finish`) or returns a result that flags itself as
+ * final. Terminal verbs are allowed only at the tail of a multi-call
+ * batch (the validator rejects them anywhere else); a `terminal !==
+ * null` outcome means the loop should close the turn/session after
+ * this step.
  */
 export interface StepOutcome {
   toolCalls: ToolCallPayload[];
@@ -512,7 +514,6 @@ async function executeStepInner(
   }
   const batch = parsed.batch;
   const calls = batch.calls;
-  const isSolo = calls.length === 1;
   const batchSize = calls.length;
 
   // Registry membership: surfaces as `ToolExecutionError` (category
@@ -647,11 +648,16 @@ async function executeStepInner(
     nextSession = applyStateEffects(nextSession, result);
   }
 
-  // Terminal classification only meaningful for solo calls — terminal
-  // verbs are validated out of multi-call batches.
-  const terminal: StepTerminal = isSolo
-    ? classifyTerminal(calls[0]!, toolResults[0]!)
-    : null;
+  // Terminal classification looks at the **last** call of the batch:
+  // the validator guarantees a terminal verb can only appear at the
+  // tail, and the executor enforces a barrier so the terminal call
+  // runs after every other call. For solo steps `lastIdx === 0` and
+  // the behaviour is identical to the legacy path.
+  const lastIdx = calls.length - 1;
+  const terminal: StepTerminal = classifyTerminal(
+    calls[lastIdx]!,
+    toolResults[lastIdx]!,
+  );
 
   nextSession = appendBatchedTurns({
     state: nextSession,
@@ -801,6 +807,11 @@ interface BatchValidationFailure {
  *  - Single-call payloads always pass — they preserve the legacy
  *    solo path semantics for any tool, including approval-gated and
  *    terminal verbs.
+ *  - Terminal verbs (`reply` / `finish`) are allowed **only as the last
+ *    element** of a multi-call batch — the executor enforces a barrier
+ *    so the terminal call runs strictly after all non-terminal calls
+ *    have completed. Terminals anywhere else (mid-batch, duplicated)
+ *    are rejected with a structured per-call reason.
  */
 function validateBatch(
   batch: ToolCallBatch,
@@ -822,13 +833,20 @@ function validateBatch(
       const msg = `batch exceeds maxParallelToolCalls (${calls.length} > ${cap})`;
       firstError ??= msg;
     }
+    const lastIdx = calls.length - 1;
     for (let i = 0; i < calls.length; i += 1) {
       const call = calls[i]!;
       const cls = resourceClassFor(call.tool);
       if (cls === "terminal") {
-        const msg = `terminal verb '${call.tool}' is forbidden inside a batch; emit it as a single call`;
-        perCall[i] = msg;
-        firstError ??= msg;
+        // Terminal verbs are allowed only as the LAST call of the
+        // batch. Any earlier position (or duplicated terminal) is
+        // rejected — the runtime cannot keep firing tools after the
+        // turn has been closed.
+        if (i !== lastIdx) {
+          const msg = `terminal verb '${call.tool}' must be the last call in a batch; got it at index ${i} of ${calls.length}`;
+          perCall[i] = msg;
+          firstError ??= msg;
+        }
       } else if (cls === "approval_gated") {
         const msg = `approval-gated tool '${call.tool}' is forbidden inside a batch; emit it as a single call`;
         perCall[i] = msg;
@@ -1093,14 +1111,23 @@ async function consumeStream(
       : {}),
   });
   let accumulated = "";
-  let accumulatedReasoning = "";
+  // Channel A (server-side `reasoning_content` SSE deltas: QwQ /
+  // DeepSeek-R1 with `--reasoning-format deepseek`) is mutually exclusive
+  // with channel B (inline `<think>...</think>` / `<|channel>thought` text
+  // that the grammar-aware stream parser splits out client-side). We
+  // accumulate them separately so the legacy `/completion` path (where
+  // channel A is always empty) still ends up with a populated
+  // `reasoningContent` field for traces + `resolveReasoning` callers,
+  // without risking double-count when a server happens to emit both.
+  let channelAReasoning = "";
+  let parserReasoning = "";
   const emitParseEvents = (events: readonly StreamParseEvent[]): void => {
-    if (!onEvent) return;
     for (const ev of events) {
       if (ev.kind === "reasoning_delta") {
-        onEvent({ type: "reasoning_delta", stepIndex, text: ev.text });
+        parserReasoning += ev.text;
+        onEvent?.({ type: "reasoning_delta", stepIndex, text: ev.text });
       } else if (ev.kind === "reply_text_delta") {
-        onEvent({ type: "assistant_delta", text: ev.text });
+        onEvent?.({ type: "assistant_delta", text: ev.text });
       }
     }
   };
@@ -1117,7 +1144,7 @@ async function consumeStream(
     // these tokens never appear inside `<think>` or JSON, they come on a
     // separate SSE field and are already decoded.
     if (chunk.reasoningDelta && chunk.reasoningDelta.length > 0) {
-      accumulatedReasoning += chunk.reasoningDelta;
+      channelAReasoning += chunk.reasoningDelta;
       onEvent?.({
         type: "reasoning_delta",
         stepIndex,
@@ -1138,6 +1165,11 @@ async function consumeStream(
     }
   }
   emitParseEvents(parser.end());
+  // Prefer server-emitted channel A reasoning when present; otherwise
+  // fall back to the parser-derived stream (legacy `/completion`
+  // endpoint, which never sets `reasoning_content` server-side).
+  const accumulatedReasoning =
+    channelAReasoning.length > 0 ? channelAReasoning : parserReasoning;
   if (finalResult === null) {
     finalResult = {
       content: accumulated,
@@ -1216,15 +1248,18 @@ interface AppendBatchedTurnsParams {
 
 /**
  * Project the executed step (single or batched) into the conversation
- * transcript. The terminal `reply` verb is always solo (validated out
- * of multi-call batches) and is collapsed into a single
- * `assistant_reply` turn — no separate tool-call / tool-result pair —
- * so the chat reads naturally. For everything else (single non-
- * terminal call OR a multi-call batch), the canonical
- * `assistant_tool_call` + `tool_result` pairs are appended in
- * batch-index order. Reasoning is attached once on the first
- * `assistant_tool_call` of the batch (a single inference produces a
- * single `<think>` block regardless of `kind`).
+ * transcript. The terminal `reply` verb (`terminal === "turn"`) is
+ * collapsed into a single `assistant_reply` turn — no separate
+ * tool-call / tool-result pair — so the chat reads naturally. This
+ * collapse works both for a solo `[reply]` step and for a batched
+ * `[..., reply]` step: in the batched case, every non-terminal call
+ * is emitted as the canonical `assistant_tool_call` + `tool_result`
+ * pair first, then the tail `reply` collapses into `assistant_reply`
+ * at the end (reasoning attaches to the first non-terminal pair, or
+ * to the reply itself when there is no non-terminal portion).
+ * `terminal === "session"` (`finish`) keeps the legacy tool-call /
+ * tool-result projection — the agent loop interprets the `final`
+ * flag to close the session without any additional transcript magic.
  *
  * Per-batch char cap: when the combined summary text would exceed
  * `agent.batchToolResultCharCap`, oldest within-batch results get
@@ -1237,19 +1272,61 @@ function appendBatchedTurns(
 ): SessionState {
   const { state, calls, results, reasoning, terminal, onEvent } = params;
 
+  // `reply` collapses into `assistant_reply` regardless of batch
+  // size. For a batched step the terminal is guaranteed to be at the
+  // tail (validator invariant), so we emit non-terminal pairs first
+  // and then collapse the last call.
   if (terminal === "turn") {
-    const toolCall = calls[0]!;
-    const toolResult = results[0]!;
+    const terminalIdx = calls.length - 1;
+    const terminalCall = calls[terminalIdx]!;
+    const terminalResult = results[terminalIdx]!;
+    const hasNonTerminal = terminalIdx > 0;
+    let next = state;
+    if (hasNonTerminal) {
+      const nonTerminalSummaries = results
+        .slice(0, terminalIdx)
+        .map((r) => r.summary);
+      const renderedSummaries = capBatchSummaries(
+        nonTerminalSummaries,
+        getConfig().agent.batchToolResultCharCap,
+      );
+      for (let i = 0; i < terminalIdx; i += 1) {
+        const call = calls[i]!;
+        const result = results[i]!;
+        const cappedSummary = renderedSummaries[i]!;
+        const cappedTruncated = cappedSummary !== result.summary;
+        next = recordTurn(
+          next,
+          assistantToolCallTurn({
+            tool: call.tool,
+            args: call.args,
+            ...(i === 0 && reasoning.length > 0 ? { reasoning } : {}),
+          }),
+        );
+        next = recordTurn(
+          next,
+          toolResultTurn({
+            tool: result.tool,
+            status: result.status,
+            summary: cappedSummary,
+            ...(result.truncated || cappedTruncated ? { truncated: true } : {}),
+          }),
+        );
+      }
+    }
     const text =
-      typeof toolCall.args?.text === "string" && toolCall.args.text.length > 0
-        ? (toolCall.args.text as string)
-        : toolResult.summary;
+      typeof terminalCall.args?.text === "string" &&
+      terminalCall.args.text.length > 0
+        ? (terminalCall.args.text as string)
+        : terminalResult.summary;
     onEvent?.({ type: "assistant_reply", text });
     return recordTurn(
-      state,
+      next,
       assistantReplyTurn(
         text,
-        reasoning.length > 0 ? { reasoning } : undefined,
+        // Reasoning attaches to the first non-terminal pair when one
+        // exists; otherwise the reply itself owns the <think> block.
+        !hasNonTerminal && reasoning.length > 0 ? { reasoning } : undefined,
       ),
     );
   }

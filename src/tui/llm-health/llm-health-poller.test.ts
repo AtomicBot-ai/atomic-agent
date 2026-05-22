@@ -225,6 +225,52 @@ describe("LlmHealthPoller", () => {
     expect(fetchCalls[0]).toContain("/props");
   });
 
+  it("should emit notifyCatalogModel without waiting for /props", () => {
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(capture, "http://127.0.0.1:19091");
+    poller.notifyCatalogModel("gemma-4-e4b");
+    poller.stop();
+    expect(capture.actions).toContainEqual({
+      type: "llm_model_updated",
+      model: "gemma-4-e4b",
+    });
+  });
+
+  it("should re-fetch /props after refreshModelLabel", async () => {
+    spy.mockResolvedValue({
+      reachable: true,
+      status: 200,
+      error: null,
+      latencyMs: 1,
+    } satisfies HealthResult);
+    let propsCount = 0;
+    const fetchImpl: typeof fetch = () => {
+      propsCount += 1;
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ model_alias: "restarted-model" }),
+          { status: 200 },
+        ),
+      );
+    };
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://127.0.0.1:19091",
+      60_000,
+      fetchImpl,
+    );
+    poller.notifyCatalogModel("gemma-4-e4b");
+    await poller.refreshModelLabel();
+    poller.stop();
+    const labels = capture.actions
+      .filter((a) => a.type === "llm_model_updated")
+      .map((a) => (a as { model: string | null }).model);
+    expect(labels).toContain("gemma-4-e4b");
+    expect(labels).toContain("restarted-model");
+    expect(propsCount).toBe(1);
+  });
+
   it("should re-fetch the model label after updateUrl", async () => {
     spy.mockResolvedValue({
       reachable: true,

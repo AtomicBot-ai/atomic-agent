@@ -112,6 +112,13 @@ export function planBatch(
  *    once before the loop checks the signal again — those that already
  *    started run to completion (their tool implementations honour the
  *    signal cooperatively).
+ *  - Terminal-tail barrier: when the batch contains a `terminal` call
+ *    (the validator guarantees it is at the last position), every
+ *    non-terminal call completes first; the terminal call then runs
+ *    solo. A non-terminal failure does **not** suppress the terminal
+ *    (the model's intent "do tools, then reply OK" is preserved even
+ *    if one of the tools errored — the failure lands as a normal
+ *    `status: "error"` slot and the turn still closes).
  */
 export async function executeBatch(
   inputs: readonly BatchCallInput[],
@@ -130,7 +137,15 @@ export async function executeBatch(
     cancelled: false,
   }));
 
-  const groups = planBatch(inputs);
+  // Split off any tail terminal call so the non-terminal portion runs
+  // first as a normal grouped batch and the terminal runs strictly
+  // after the barrier. Validator pins the terminal to `lastIdx`.
+  const tailIsTerminal =
+    inputs.length > 1 &&
+    inputs[inputs.length - 1]!.resourceClass === "terminal";
+  const nonTerminalInputs = tailIsTerminal ? inputs.slice(0, -1) : inputs;
+  const terminalInput = tailIsTerminal ? inputs[inputs.length - 1]! : null;
+  const groups = planBatch(nonTerminalInputs);
 
   const runOne = async (input: BatchCallInput): Promise<void> => {
     if (ctx.signal.aborted) {
@@ -232,6 +247,31 @@ export async function executeBatch(
       cancelled = true;
     } else {
       throw err;
+    }
+  }
+
+  // Tail-terminal barrier: now that every non-terminal call has
+  // settled (success, error, or cancelled), run the terminal call
+  // solo. We deliberately attempt the terminal even when an earlier
+  // call errored — the model batched it as "do tools, then reply",
+  // and the reply text already encodes the model's intended close.
+  // Only an aborted signal short-circuits the terminal.
+  if (terminalInput !== null) {
+    if (ctx.signal.aborted) {
+      slots[terminalInput.batchIndex] = {
+        ...slots[terminalInput.batchIndex]!,
+        cancelled: true,
+      };
+    } else {
+      try {
+        await runOne(terminalInput);
+      } catch (err) {
+        if (err instanceof CancelledError) {
+          cancelled = true;
+        } else {
+          throw err;
+        }
+      }
     }
   }
 

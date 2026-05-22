@@ -27,25 +27,39 @@ describe("ProfileStore", () => {
   it("upserts and reads back a fact", () => {
     store.set("language", "ru", 1_000);
     const got = store.get("language");
-    expect(got).toEqual({
+    expect(got).toMatchObject({
       key: "language",
       value: "ru",
+      validFrom: 1_000,
       updatedAt: 1_000,
       pinned: true,
       keywords: [],
+      supersedes: null,
+      supersededBy: null,
     });
+    expect(got?.id).toBeGreaterThan(0);
   });
 
-  it("overwrites an existing key on set", () => {
+  it("auto-chains the active row on a same-key set (memory-v2 phase 4)", () => {
     store.set("timezone", "Europe/Moscow", 1_000);
     store.set("timezone", "UTC", 2_000);
-    expect(store.get("timezone")).toEqual({
+    const active = store.get("timezone");
+    expect(active).toMatchObject({
       key: "timezone",
       value: "UTC",
-      updatedAt: 2_000,
+      validFrom: 2_000,
       pinned: true,
       keywords: [],
+      supersededBy: null,
     });
+    // The second SET should supersede the first.
+    expect(active?.supersedes).not.toBeNull();
+    const chain = store.history("timezone");
+    expect(chain).toHaveLength(2);
+    expect(chain[0]?.value).toBe("Europe/Moscow");
+    expect(chain[0]?.supersededBy).toBe(active?.id);
+    expect(chain[1]?.value).toBe("UTC");
+    expect(chain[1]?.supersededBy).toBeNull();
   });
 
   it("persists pinned=false with keywords for contextual facts", () => {

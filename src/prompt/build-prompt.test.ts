@@ -60,6 +60,75 @@ const SKILLS: SkillCatalogEntry[] = [
 ];
 
 describe("buildPrompt", () => {
+  it("renders `### lessons` between `### profile` and `### memory-index` (phase 5)", () => {
+    const session = mkSession({
+      profileFacts: [],
+      recalledLessons: [
+        {
+          id: 42,
+          activation: "When asked about pnpm packages",
+          tags: ["tool"],
+          workingDir: null,
+          updatedAt: 1,
+        },
+      ],
+      memoryIndex: [
+        {
+          id: 7,
+          preview: "older episode",
+          tags: [],
+          updatedAt: 1,
+          workingDir: null,
+          sessionId: null,
+        },
+      ],
+    });
+    const { text } = buildPrompt({
+      session,
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(text).toMatch(/\n### lessons\n/);
+    expect(text).toContain("*42 [tool] When asked about pnpm packages");
+    // Section order: lessons tail header must precede the
+    // memory-index tail header, both must follow the stable prefix.
+    const lessonsIdx = text.indexOf("\n### lessons\n");
+    const indexIdx = text.indexOf("\n### memory-index\n");
+    expect(lessonsIdx).toBeGreaterThan(0);
+    expect(indexIdx).toBeGreaterThan(lessonsIdx);
+  });
+
+  it("omits the `### lessons` tail block when `recalledLessons` is undefined or empty (phase 5)", () => {
+    const session = mkSession({ recalledLessons: [] });
+    const { text } = buildPrompt({
+      session,
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    // The persona mentions `### lessons` once in the stable prefix
+    // (KV-cache change #1). The variable tail header `\n### lessons\n`
+    // must be absent when nothing is surfaced.
+    expect(text).not.toMatch(/\n### lessons\n/);
+  });
+
+  it("mentions `### lessons` in the persona stable prefix (KV-cache change #1)", () => {
+    const session = mkSession();
+    const { stablePrefix } = buildPrompt({
+      session,
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    // Phase 5 ships the first of two planned stable-prefix bumps for
+    // memory-v2. AGENTS.md "Memory fabric phase 5" documents the
+    // one-time KV-cache invalidation. The string below is the
+    // canary — moving it requires bumping the snapshot test in
+    // `stable-prefix.test.ts` and announcing the cache flush.
+    expect(stablePrefix).toContain("### lessons");
+  });
+
   it("places the stable prefix first and keeps it byte-stable for equal inputs", () => {
     const a = buildPrompt({
       session: mkSession(),

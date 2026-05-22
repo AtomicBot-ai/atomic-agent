@@ -1037,7 +1037,7 @@ describe("AgentLoop reflection hook", () => {
     });
   }
 
-  it("calls abortPending() at the start of runTurn and reflect() after a reply", async () => {
+  it("does NOT call abortPending() per turn (avoids abort race) but fires reflect() after a reply", async () => {
     const abortPending = vi.fn();
     const reflect = vi.fn().mockResolvedValue(undefined);
     const loop = makeReplyLoop({ reflect, abortPending });
@@ -1050,13 +1050,29 @@ describe("AgentLoop reflection hook", () => {
     });
 
     expect(result.reason).toBe("reply");
-    expect(abortPending).toHaveBeenCalledTimes(1);
+    // Per-turn abortPending was removed — it cancelled in-flight
+    // reflection LLM calls before they could write to memory in
+    // long-running scenarios (LoCoMo / LongMemEval), pinning 0
+    // reflection writes across 75+ turn runs. Race protection
+    // between fires on the same session is enforced inside
+    // `ReflectionRunner.runOne` (the new reflect() call aborts the
+    // previous controller before starting). Shutdown still calls
+    // `abortPending()` (no sessionId) to drain everything.
+    expect(abortPending).not.toHaveBeenCalled();
     expect(reflect).toHaveBeenCalledTimes(1);
-    expect(reflect).toHaveBeenCalledWith({
-      sessionId: "s-ref-1",
-      userMessage: "hi there",
-      assistantReply: "hello back",
-    });
+    // Phase 7a — `turnIndex` is threaded into `ReflectionInput` so
+    // the vote-runner can stamp `vote_events.turn_index`. The exact
+    // value tracks `state.turns.length` after the assistant reply
+    // lands; assertion uses `objectContaining` so subsequent
+    // phases can extend the input without re-breaking this test.
+    expect(reflect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "s-ref-1",
+        userMessage: "hi there",
+        assistantReply: "hello back",
+        turnIndex: expect.any(Number),
+      }),
+    );
   });
 
   it("does not fire reflect() when runTurn is resumed without a new user message", async () => {
@@ -1070,9 +1086,10 @@ describe("AgentLoop reflection hook", () => {
       signal: new AbortController().signal,
     });
 
-    // abortPending still runs at turn start (safe no-op), but reflection
-    // must not fire without a user message in this turn.
-    expect(abortPending).toHaveBeenCalledTimes(1);
+    // Per-turn abortPending was removed (see "does NOT call
+    // abortPending() per turn" test). Reflection still must not
+    // fire without a user message in this turn.
+    expect(abortPending).not.toHaveBeenCalled();
     expect(reflect).not.toHaveBeenCalled();
   });
 
@@ -1150,6 +1167,7 @@ describe("AgentLoop reflection hook", () => {
     });
     expect(result.reason).toBe("finish");
     expect(reflect).not.toHaveBeenCalled();
-    expect(abortPending).toHaveBeenCalledTimes(1);
+    // Per-turn abortPending removed — see top of describe block.
+    expect(abortPending).not.toHaveBeenCalled();
   });
 });

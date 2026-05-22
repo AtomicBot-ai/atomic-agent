@@ -2,7 +2,12 @@ import { existsSync, mkdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import type { LocalModelDef, LocalModelId } from "./models-catalog.js";
+import type {
+  EmbeddingModelDef,
+  EmbeddingModelId,
+  LocalModelDef,
+  LocalModelId,
+} from "./models-catalog.js";
 import {
   resolveModelDir,
   resolveModelFilePath,
@@ -76,6 +81,47 @@ export async function downloadMmproj(
 export async function removeModel(
   dataDir: string,
   modelId: LocalModelId,
+): Promise<void> {
+  await rm(resolveModelDir(dataDir, modelId), {
+    recursive: true,
+    force: true,
+  });
+}
+
+// ---------------------------------------------------------------------
+// Memory-v2 phase 1B. Embedding model installer.
+//
+// Embedding GGUFs live in the **same** per-model directory layout as
+// chat models — `<dataDir>/models/<id>/<filename>` — so existing CLI
+// surface (path resolution, disk-usage probe in TUI, etc.) keeps
+// working with the new ids. A separate `isEmbeddingModelDownloaded`
+// is exposed mainly for symmetry with `isModelDownloaded`; structural
+// duplication is justified by the typed-id wall (an `EmbeddingModelId`
+// MUST NOT be passed where a `LocalModelId` is expected and vice
+// versa — see `models-catalog.ts`).
+// ---------------------------------------------------------------------
+
+export function isEmbeddingModelDownloaded(
+  dataDir: string,
+  model: EmbeddingModelDef,
+): boolean {
+  return existsSync(resolveModelFilePath(dataDir, model.id, model.filename));
+}
+
+export async function downloadEmbeddingModel(
+  dataDir: string,
+  model: EmbeddingModelDef,
+  opts?: { onProgress?: DownloadProgressFn; signal?: AbortSignal },
+): Promise<void> {
+  const dest = resolveModelFilePath(dataDir, model.id, model.filename);
+  if (existsSync(dest)) return;
+  mkdirSync(dirname(dest), { recursive: true });
+  await downloadFile(model.huggingFaceUrl, dest, opts);
+}
+
+export async function removeEmbeddingModel(
+  dataDir: string,
+  modelId: EmbeddingModelId,
 ): Promise<void> {
   await rm(resolveModelDir(dataDir, modelId), {
     recursive: true,

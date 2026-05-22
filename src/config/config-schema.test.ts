@@ -422,4 +422,254 @@ describe("parseUserConfigFile", () => {
     });
     expect(parsed.telegram.parseMode).toBe("html");
   });
+
+  it("applies memory.voting defaults when the section is absent", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.memory.voting).toEqual(USER_CONFIG_DEFAULTS.memory.voting);
+    expect(parsed.memory.voting.enabled).toBe(true);
+  });
+
+  it("accepts user-supplied memory.voting overrides", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      memory: {
+        voting: {
+          enabled: true,
+          maxVotePerItem: 100,
+          signalDecay: 0.9,
+          scoreBlend: 0.5,
+          eventLogMaxRows: 10_000,
+          profileFilterThreshold: 5,
+        },
+      },
+    });
+    expect(parsed.memory.voting).toEqual({
+      enabled: true,
+      maxVotePerItem: 100,
+      signalDecay: 0.9,
+      scoreBlend: 0.5,
+      eventLogMaxRows: 10_000,
+      profileFilterThreshold: 5,
+    });
+  });
+
+  // Scorecard 7a.C.3 — bootstrap fails fast on a non-positive vote clamp.
+  it("rejects memory.voting.maxVotePerItem <= 0 (scorecard 7a.C.3)", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { voting: { maxVotePerItem: 0 } },
+      }),
+    ).toThrow(/memory\.voting\.maxVotePerItem/);
+  });
+
+  // Scorecard 7a.C.4 — bootstrap fails fast on a decay outside (0, 1].
+  it("rejects memory.voting.signalDecay > 1 (scorecard 7a.C.4)", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { voting: { signalDecay: 1.5 } },
+      }),
+    ).toThrow(/memory\.voting\.signalDecay/);
+  });
+
+  it("rejects memory.voting.signalDecay = 0", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { voting: { signalDecay: 0 } },
+      }),
+    ).toThrow(/memory\.voting\.signalDecay/);
+  });
+
+  it("accepts memory.voting.signalDecay = 1 (decay disabled)", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      memory: { voting: { signalDecay: 1 } },
+    });
+    expect(parsed.memory.voting.signalDecay).toBe(1);
+  });
+
+  it("rejects memory.voting.scoreBlend outside [0, 1]", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { voting: { scoreBlend: 1.2 } },
+      }),
+    ).toThrow(/memory\.voting\.scoreBlend/);
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { voting: { scoreBlend: -0.1 } },
+      }),
+    ).toThrow(/memory\.voting\.scoreBlend/);
+  });
+
+  it("accepts memory.voting.eventLogMaxRows = 0 (disables FIFO eviction)", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      memory: { voting: { eventLogMaxRows: 0 } },
+    });
+    expect(parsed.memory.voting.eventLogMaxRows).toBe(0);
+  });
+
+  it("rejects negative memory.voting.eventLogMaxRows", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { voting: { eventLogMaxRows: -1 } },
+      }),
+    ).toThrow(/memory\.voting\.eventLogMaxRows/);
+  });
+
+  // --------------------------------------------------------------------------
+  // v2.5 memory fabric additions (config v18)
+  // --------------------------------------------------------------------------
+
+  it("transparently migrates v17 → v22 with advanced memory layers + links enabled", () => {
+    const parsed = parseUserConfigFile({ version: 17 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.memory.evolution.enabled).toBe(true);
+    expect(parsed.memory.lessons.enabled).toBe(true);
+    expect(parsed.memory.procedures.enabled).toBe(true);
+    expect(parsed.memory.consolidation.enabled).toBe(true);
+    expect(parsed.memory.voting.enabled).toBe(true);
+    expect(parsed.memory.retrieve.rewriter.enabled).toBe(true);
+    expect(parsed.memory.links.enabled).toBe(true);
+    expect(parsed.memory.embeddings.enabled).toBe(false);
+    expect(parsed.localModels.embeddings.enabled).toBe(false);
+    expect(parsed.memory.reflection.typedNotes.enabled).toBe(false);
+    expect(parsed.memory.reflection.segmentation.enabled).toBe(false);
+  });
+
+  it("migrates v20 → v22 enabling memory-v2 layers that were false on disk", () => {
+    const parsed = parseUserConfigFile({
+      version: 20,
+      memory: {
+        evolution: { enabled: false },
+        lessons: { enabled: false },
+        procedures: { enabled: false },
+        consolidation: { enabled: false },
+        voting: { enabled: false },
+        retrieve: { rewriter: { enabled: false } },
+      },
+    });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.memory.evolution.enabled).toBe(true);
+    expect(parsed.memory.lessons.enabled).toBe(true);
+    expect(parsed.memory.procedures.enabled).toBe(true);
+    expect(parsed.memory.consolidation.enabled).toBe(true);
+    expect(parsed.memory.voting.enabled).toBe(true);
+    expect(parsed.memory.retrieve.rewriter.enabled).toBe(true);
+    expect(parsed.memory.links.enabled).toBe(true);
+    expect(parsed.memory.embeddings.enabled).toBe(false);
+    expect(parsed.localModels.embeddings.enabled).toBe(false);
+  });
+
+  it("migrates v21 → v22 enabling links but leaving embeddings off by default", () => {
+    const parsed = parseUserConfigFile({
+      version: 21,
+      memory: {
+        links: { enabled: false },
+        embeddings: { enabled: false },
+      },
+      localModels: {
+        embeddings: { enabled: false, modelId: null },
+      },
+    });
+    expect(parsed.memory.links.enabled).toBe(true);
+    expect(parsed.memory.embeddings.enabled).toBe(false);
+    expect(parsed.localModels.embeddings.enabled).toBe(false);
+  });
+
+  it("v22 honours explicit memory.lessons.enabled=false", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      memory: { lessons: { enabled: false } },
+    });
+    expect(parsed.memory.lessons.enabled).toBe(false);
+  });
+
+  it("parses memory.reflection.typedNotes.enabled", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      memory: { reflection: { typedNotes: { enabled: true } } },
+    });
+    expect(parsed.memory.reflection.typedNotes.enabled).toBe(true);
+  });
+
+  it("parses memory.reflection.segmentation block end-to-end", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      memory: {
+        reflection: {
+          segmentation: { enabled: true, triggerEveryTurns: 5, windowTurns: 8 },
+        },
+      },
+    });
+    expect(parsed.memory.reflection.segmentation).toEqual({
+      enabled: true,
+      triggerEveryTurns: 5,
+      windowTurns: 8,
+    });
+  });
+
+  it("rejects non-positive memory.reflection.segmentation.triggerEveryTurns", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { reflection: { segmentation: { triggerEveryTurns: 0 } } },
+      }),
+    ).toThrow(/triggerEveryTurns/);
+  });
+
+  it("transparently migrates v19 → v20 with rewriter gate defaults", () => {
+    const parsed = parseUserConfigFile({ version: 19 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.memory.retrieve.rewriter.gateMode).toBe("heuristic");
+    expect(parsed.memory.retrieve.rewriter.embeddingGate.threshold).toBe(0.65);
+    expect(parsed.memory.retrieve.rewriter.embeddingGate.exemplars).toBeNull();
+  });
+
+  it("parses memory.retrieve.rewriter block end-to-end", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      memory: {
+        retrieve: {
+          rewriter: {
+            enabled: true,
+            timeoutMs: 5_000,
+            historyTurns: 2,
+            gateMode: "embedding",
+            embeddingGate: { threshold: 0.7, exemplars: ["tell me more"] },
+          },
+        },
+      },
+    });
+    expect(parsed.memory.retrieve.rewriter).toEqual({
+      enabled: true,
+      timeoutMs: 5_000,
+      historyTurns: 2,
+      gateMode: "embedding",
+      embeddingGate: { threshold: 0.7, exemplars: ["tell me more"] },
+    });
+  });
+
+  it("rejects invalid memory.retrieve.rewriter.gateMode", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { retrieve: { rewriter: { gateMode: "magic" } } },
+      }),
+    ).toThrow(/gateMode/);
+  });
+
+  it("rejects non-positive memory.retrieve.rewriter.timeoutMs", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        memory: { retrieve: { rewriter: { timeoutMs: 0 } } },
+      }),
+    ).toThrow(/timeoutMs/);
+  });
 });

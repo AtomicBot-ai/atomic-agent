@@ -3,8 +3,14 @@ export {
   DEFAULT_LLAMACPP_MODEL_ID,
   getLocalModelDef,
   isKnownLocalModelId,
+  EMBEDDING_MODELS_CATALOG,
+  DEFAULT_EMBEDDING_MODEL_ID,
+  getEmbeddingModelDef,
+  isKnownEmbeddingModelId,
   type LocalModelId,
   type LocalModelDef,
+  type EmbeddingModelId,
+  type EmbeddingModelDef,
 } from "./models-catalog.js";
 
 export {
@@ -23,6 +29,8 @@ export {
   resolveVersionFilePath,
   resolvePidFilePath,
   resolveLogFilePath,
+  resolveEmbeddingPidFilePath,
+  resolveEmbeddingLogFilePath,
 } from "./backend-paths.js";
 
 export { downloadFile, type DownloadProgressFn } from "./download-file.js";
@@ -46,6 +54,9 @@ export {
   downloadModel,
   downloadMmproj,
   removeModel,
+  isEmbeddingModelDownloaded,
+  downloadEmbeddingModel,
+  removeEmbeddingModel,
 } from "./model-installer.js";
 export { resolveChatTemplatePath } from "./chat-templates.js";
 export {
@@ -55,7 +66,15 @@ export {
   readRunningPid,
   probeLlamaHealth,
   buildLlamaServerArgs,
+  startEmbeddingDaemon,
+  stopEmbeddingDaemon,
+  getEmbeddingDaemonStatus,
+  buildEmbeddingServerArgs,
+  startChatAndEmbeddingDaemons,
+  stopChatAndEmbeddingDaemons,
   type DaemonStartOptions,
   type DaemonStatus,
+  type EmbeddingDaemonStartOptions,
+  type StartBothResult,
 } from "./daemon-lifecycle.js";
 export { readLogTail, type LogTailResult } from "./log-tail.js";

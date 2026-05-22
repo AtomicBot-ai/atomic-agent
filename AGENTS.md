@@ -16,7 +16,7 @@ This is the source-of-truth for automated contributors (LLM agents, codegen, etc
 1. **Project ≠ Prompt.** Session state, compressed tool results, and world snapshots live outside the model; the prompt is always a small slice.
 2. **Stable prefix.** The prompt is `buildStablePrefix` (persona + `### rules` + skill catalog under `### skills` + `### tools` + `### capabilities` + `### instructions`) followed by a **variable tail** in mutability order: `### loaded-skills` (optional) → `### loaded-tools` (optional) → `### profile` (optional) → `### memory-index` (optional) → `### session-facts` (optional) → `### recalled` (optional) → `### world` → `### conversation` → optional `### notice` → `### respond` (+ optional reasoning prefill). Only the stable-prefix bytes must stay stable within a session for KV-cache — this is what `cache_prompt + slot_id` on `llama-server` relies on.
 3. **One inference per step.** No reasoning loops inside a single LLM call — the runtime drives the loop. A single inference always emits a JSON **array** of `1..N` tool calls (`[{tool, args}, ...]`); a "solo" step is just a length-1 array (`[{...}]`). `N` is capped by `agent.maxParallelToolCalls` (default 8, hard ceiling 16 in the grammar). See §"Parallel tool calls per step" for the rationale (GBNF first-token bias) and the executor pipeline.
-4. **Grammar-constrained tool calls.** The sidecar sends a GBNF grammar with every completion request that must produce a tool call. The root collapsed to **array-only** (`root ::= tool-call-array`) so the model cannot fall into the single-object form via first-token bias even when it only needs one call.
+4. **Grammar-constrained tool calls.** The sidecar sends a GBNF grammar with every completion request that must produce a tool call. The root collapsed to **array-only** (`root ::= tool-call-array`) so the model cannot fall into the single-object form via first-token bias even when it only needs one call. Reasoning-prelude profiles (`qwen-think`, `gemma4-think`) prepend a `<think>...</think>` / `<|channel>thought...<channel|>` block to the array; the seam between the close sentinel and the leading `[` of the array routes through a dedicated **bounded** `prelude-trail-ws ::= ( [ \t\n\r] ){0,8}` rule rather than the global unbounded `ws`. This is the structural anti-degenerate-loop guard — small reasoning-capable models (Gemma 4 26B-A4B in particular) used to slide into a whitespace-only tail after a long reasoning block because the sampler could keep emitting newlines indefinitely. Pinned by [src/llm/grammar/build-grammar.test.ts](src/llm/grammar/build-grammar.test.ts) "bounds the whitespace between the reasoning-close sentinel and the tool-call array".
 5. **No global singletons.** Dependencies are passed explicitly. `getConfig()` is the only exception.
 6. **Session is multi-turn chat only.** A session is a long-lived chat: `user message → 0..N tool steps → reply` is a macro-turn, multiple turns share one `SessionState.turns[]`. Two terminals exist — `reply` ends the turn, `finish` ends the whole session. All three frontends (CLI `run`, TUI, sidecar) go through `runtime.runTurn` only; there is no one-shot goal mode.
 
@@ -65,7 +65,7 @@ The change to the array-only root **invalidates KV-cache** for any session that 
 | `vision` | `vision.describe` | serial (bounds backend load) | parallel |
 | `fs_write` | reserved | serial | parallel |
 | `approval_gated` | `os.shell.run`, `os.fs.{write,edit,trash,patch,archive.extract}`, `os.proc.kill`, `os.http.request`, `skill.run_script` | **forbidden in batch** — must be solo | — |
-| `terminal` | `reply`, `finish` | **forbidden in batch** — always solo | — |
+| `terminal` | `reply`, `finish` | **allowed only as the LAST element** of a batch; runs after the non-terminal portion completes (tail-terminal barrier in `executeBatch`). Mid-batch or duplicated terminals are rejected by the validator. | — |
 | `unknown` | unregistered names | **forbidden in batch** (fail-closed) | — |
 
 Adding a new tool **requires** an entry in `TOOL_RESOURCE_CLASS`; pinned by [src/agent/tool-resource-class.test.ts](src/agent/tool-resource-class.test.ts) which iterates `DEFAULT_TOOL_DESCRIPTORS` and rejects any with `unknown` class.
@@ -75,19 +75,19 @@ Adding a new tool **requires** an entry in `TOOL_RESOURCE_CLASS`; pinned by [src
 [src/agent/batch-executor.ts](src/agent/batch-executor.ts) owns the planner. The flow inside [src/agent/step-executor.ts](src/agent/step-executor.ts) is:
 
 1. **Parse.** `parseToolCalls(...)` returns a `ToolCallBatch { kind: "single" | "batch", calls: ToolCallPayload[], reasoning? }`. Under the array-only production grammar `kind` is always `"batch"` (a solo step has `calls.length === 1`); the `"single"` branch only fires for legacy bare-object input from tests / replay traces.
-2. **Validate.** `validateBatch` rejects multi-call batches that contain a terminal verb, an approval-gated tool, an unknown class, or exceed `maxParallelToolCalls`. A failure is treated like a parse error: the executor triggers the existing one-shot LLM retry. After two failures it surfaces as `GrammarError` with the per-call reasons. Length-1 batches bypass these checks (legacy semantics for any tool, including `reply`/`finish`/approval-gated).
+2. **Validate.** `validateBatch` rejects multi-call batches that contain a terminal verb anywhere other than the **last** position (mid-batch or duplicated), an approval-gated tool, an unknown class, or exceed `maxParallelToolCalls`. A terminal verb at the tail (`[non-terminals..., reply]`) is **accepted** — see the tail-terminal barrier below. A failure is treated like a parse error: the executor triggers the existing one-shot LLM retry. After two failures it surfaces as `GrammarError` with the per-call reasons. Length-1 batches bypass these checks (legacy semantics for any tool, including `reply`/`finish`/approval-gated).
 3. **Registry check.** Missing tools throw `ToolExecutionError` (category `tool`) without retry — replaying the prompt would not change the registry.
-4. **Execute.** `executeBatch` plans groups, fans out, collects `BatchCallResult[]`. Failures of one call are folded into a synthetic `CompressedToolResult{status:"error"}` so siblings keep running. `signal.aborted` halts in-flight serial groups and marks the tail as `cancelled`.
+4. **Execute.** `executeBatch` plans groups, fans out, collects `BatchCallResult[]`. Failures of one call are folded into a synthetic `CompressedToolResult{status:"error"}` so siblings keep running. `signal.aborted` halts in-flight serial groups and marks the tail as `cancelled`. **Tail-terminal barrier:** when the batch ends in a `terminal` verb, the executor first awaits every non-terminal group, then runs the terminal call solo. A non-terminal failure does **not** suppress the terminal — the model's intent "do tools, then reply" is preserved even when one tool errored (the failure lands as a normal `status: "error"` slot).
 5. **Apply effects.** `applyStateEffects` is invoked per result in batch-index order; `recordLatestResult` is "last writer wins". World snapshot updates from multiple browser calls collapse to the last batch index.
 6. **Auto-expand on error.** Failed rare-tool calls trigger `autoExpandRareOnError` independently per batch index — each rare tool that errored gets its full descriptor injected into `### loaded-tools` for the next step.
-7. **Append turns.** `appendBatchedTurns` writes N `assistant_tool_call` + N `tool_result` pairs in batch-index order. Reasoning is attached once on the first `assistant_tool_call` (one inference ⇒ one `<think>` block). The new `agent.batchToolResultCharCap` (default `16000`, env `ATOMIC_AGENT_BATCH_TOOL_RESULT_CHAR_CAP`) trims oldest within-batch summaries first when the combined char total overflows.
+7. **Append turns.** `appendBatchedTurns` writes N `assistant_tool_call` + N `tool_result` pairs in batch-index order. For tail-terminal batches (`[..., reply]`) the trailing `reply` collapses into a single `assistant_reply` turn after the non-terminal tool-call / tool-result pairs — the transcript reads `tool_call → tool_result → assistant_reply` and `assistant_reply` is emitted exactly once. Reasoning is attached once on the first `assistant_tool_call` (one inference ⇒ one `<think>` block); when the batch is pure terminal (length-1 `reply`) the reasoning attaches to `assistant_reply` directly. The new `agent.batchToolResultCharCap` (default `16000`, env `ATOMIC_AGENT_BATCH_TOOL_RESULT_CHAR_CAP`) trims oldest within-batch summaries first when the combined char total overflows.
 
 ### Locked invariants (pinned by tests)
 
 Pinned by [src/agent/batch-executor.test.ts](src/agent/batch-executor.test.ts), [src/agent/step-executor.test.ts](src/agent/step-executor.test.ts), [src/agent/parallel-tool-calls.integration.test.ts](src/agent/parallel-tool-calls.integration.test.ts), [src/agent/loop-detector.test.ts](src/agent/loop-detector.test.ts), [src/llm/grammar/tool-call-grammar.test.ts](src/llm/grammar/tool-call-grammar.test.ts), [src/llm/grammar/build-grammar.test.ts](src/llm/grammar/build-grammar.test.ts), [src/tracing/trace/trace-recorder.test.ts](src/tracing/trace/trace-recorder.test.ts):
 
 1. **One inference per step.** Batches do not start a new LLM call — they execute multiple tools after one inference completes.
-2. **Terminal verbs and approval-gated tools are always solo.** Validator rejects them from any multi-call batch; one-shot retry asks the model to re-emit as a length-1 array (`[{...}]`).
+2. **Approval-gated tools are always solo. Terminal verbs are allowed only as the LAST element of a batch.** Validator rejects an approval-gated tool from any multi-call batch and rejects any terminal verb that appears mid-batch or is duplicated; one-shot retry asks the model to re-emit. A batch like `[memory.notes.store, reply]` is **valid** — `executeBatch` runs the store first, awaits it, then runs the `reply` solo (tail-terminal barrier). A non-terminal failure inside the batch does **not** suppress the tail terminal (the model's "do tools, then reply" intent survives one bad tool). Pinned by `executes a [tool, reply] tail-terminal batch in one inference` (step-executor), `runs a terminal-tail call strictly AFTER every non-terminal call completes` and `fires the tail reply even when an earlier non-terminal call errors` (batch-executor).
 3. **Result order matches batch-index order.** `toolResults[i]` corresponds to `toolCalls[i]` regardless of completion order. Pure-read fan-out reorders execution but not results.
 4. **Failures isolate.** A failed call never aborts siblings; it lands in `toolResults[i]` as `{status: "error", details}`. `loop_failed` only fires on infra failures (parse/grammar/cancel), not on tool-level errors.
 5. **Loop detector uses a composite hash for batches.** Two identical batches in a row count as a repeat; a permuted batch (same calls, different order) does **not** — the model may legitimately reorder a set after re-thinking. Synthetic label `<batch>` (`BATCH_LOOP_LABEL`).
@@ -145,6 +145,7 @@ Speculative batching (the runtime guessing that the model "should" have batched 
 | `src/tools/vision/` | `vision.describe` tool + `loadImageFile` helper. Registered whenever `config.vision.enabled` is true and a provider is constructed; the actual capability gate (`capabilities.vision`) is a dynamic getter that re-reads `ModelProfile` on every check, so vision availability tracks `ModelProfileManager` hot-swaps without a restart. See §"Vision (multimodal input)". |
 | `src/channels/telegram/` | `TelegramChannel` (lifecycle + live-control), `inbound-handler` (slash commands + dispatch into `runTurn`), `outbound-sender` (chunked replies + 429 retry), `approval-bridge` (inline-keyboard approvals with 8-min auto-deny), `pairing-mode` (60s window for first-DM owner claim), `telegram-settings` (`config.json` + `.env` persistence), `telegram-bot-factory` (grammy adapter). The **only** module that imports `grammy`. See §"Telegram remote-control channel". |
 | `src/tui/telegram/` | TUI "Telegram" tab: `telegram-panel-state` + `telegram-actions` + `telegram-panel-reducer` (pure UI state slice), `tui-telegram-orchestrator` (the only TUI module that touches `runtime.telegramChannel`), `telegram-key-bindings`, and the `telegram-panel` / `telegram-token-prompt` / `telegram-pairing-modal` components. See §"Telegram remote-control channel". |
+| `src/mcp/` | MCP (Model Context Protocol) **client** subsystem. `McpManager` (lifecycle for N `McpClient` instances), `mcp-client` (the **only** file that imports `@modelcontextprotocol/sdk` — together with `mcp-sampling-handler` for SDK type shapes), `mcp-tool-adapter` (`McpToolMeta` → `ToolDefinition`), `mcp-resource-class` (per-server trust → `ResourceClass` resolver), `mcp-descriptor-builder` (rare-tier descriptors), `mcp-grammar-builder` (dynamic `mcp-server-tool` GBNF fragment), `mcp-sampling-handler` (forwards `sampling/createMessage` to `LlamaServerClient` with `slotId: -1`), `mcp-resource-tools` + `mcp-prompt-tools` (aggregate read-only `mcp.{resource,prompt}.*` tools dispatching by `server` arg). See §"MCP client". |
 
 ## Secrets and process environment
 
@@ -198,7 +199,480 @@ There is currently no dedicated workspace-memory, retrieval, embeddings, or reso
 
 ## Memory fabric
 
-A three-channel cross-session memory subsystem lives in [src/memory/](src/memory/) and exposes itself to the agent via six tools in [src/tools/memory/](src/tools/memory/). The full description is in [MEMORY.md](MEMORY.md); this section is the engineering summary.
+A three-channel cross-session memory subsystem lives in [src/memory/](src/memory/) and exposes itself to the agent via six tools in [src/tools/memory/](src/tools/memory/). The full description is in [MEMORY.md](MEMORY.md); this section is the engineering summary. The v2 roadmap (paths B+C+E+P: reactive graph, periodic consolidation, vote curation, procedure templates) lives in [MEMORY_FABRIC_V2.md](MEMORY_FABRIC_V2.md) and rolls out in strict-gated phases. Plan-level deviation from doc §9 invariant 2: v2 pays the stable-prefix KV-cache invalidation **twice** (once when `### lessons` lands in phase 5, once when `### procedures` lands in phase 7b) instead of the doc's intended single combined release — the strict-gates rollout requires evaluation windows between the two prefix-touching phases.
+
+### Memory-v2 phase 1B — hybrid FTS5 + embedding recall (opt-in)
+
+Lives in [src/memory/embeddings/](src/memory/embeddings/) and is **off in config until the operator enables it from the TUI Models tab** (download + start embedding model). When turned on, it adds a second `llama-server` process dedicated to `/embedding` requests and blends BM25 hits with cosine similarity over a `memory_embeddings` table (schema v5).
+
+**Two-daemon lifecycle.** `llama-server` cannot serve `/completion` and `/embedding` from the same process — the `--embeddings` flag forces pooling-only mode. The CLI therefore manages two parallel daemons:
+
+- **Chat daemon** (primary): existing flow, port `localModels.managed.port` (default 19091), pid `<stateDir>/llamacpp/llama-server.pid`.
+- **Embedding daemon** (optional secondary): new flow, port `localModels.embeddings.port` (default 19092), pid `<stateDir>/llamacpp/llama-embed.pid`. Built by `buildEmbeddingServerArgs` with `--embeddings --pooling <kind> --ctx-size 2048` and a dedicated embedding model GGUF (`nomic-embed-text-v1.5` ~84 MB, `bge-small-en-v1.5` ~33 MB — both in `EMBEDDING_MODELS_CATALOG`).
+
+`atomic-agent models start` calls `startChatAndEmbeddingDaemons` which is **atomic in the chat-primary sense**: if the chat daemon fails to start, the function rejects and the embedding daemon is never spawned. If the embedding daemon fails (model missing, port collision, daemon refuses health) the chat daemon stays up and the call returns `{ embedding: { error } }` — the runtime then degrades to FTS5-only recall and logs a warning. `atomic-agent models stop` always tries to kill **both** pid files, so half-broken states resolve in a single command. New CLI subcommands: `models list-embeddings`, `models pull-embedding <id>`, `models use-embedding <id>|--disable`.
+
+**Graceful degradation contract.** Every layer that touches the embedding daemon is non-throwing:
+
+- `LlamaEmbeddingClient.embed` wraps every transport / shape / dim mismatch failure as a typed `EmbeddingUnavailableError` so callers can branch without sniffing messages.
+- `EmbeddingWriter.writeFor` returns `boolean` and **never throws** — failures land in the `agent.memory.embeddings.fallback_to_fts5` counter (tagged by `reason`) and the row stays FTS5-only-recallable.
+- `recallHybrid` short-circuits to BM25-only when the embedding client / store is null, when `embed()` fails, or when the corpus exceeds `memory.embeddings.bruteForceCeiling` (default 200). The overflow case emits `agent.memory.embeddings.brute_force_overflow` so dashboards spot when the JS-side brute-force cosine has outgrown its budget — sqlite-vec / ANN migration is the deferred follow-up.
+- Bootstrap probes the embedding daemon's `/health` once with a short timeout; failure flips the runtime to text-only without aborting startup. The probe outcome is recorded in `agent.memory.embeddings.daemon_health` (`ok | unreachable | disabled`).
+
+**Storage.** Schema v5 adds `memory_embeddings (memory_id, model, dim, embedding BLOB, created_at)` keyed by `(memory_id, model)` so a single corpus can host multiple model versions during an A/B rollout. `embedding` is raw Float32 little-endian (`dim * 4` bytes). `FOREIGN KEY ON DELETE CASCADE` from `memories(id)` cleans up automatically on `MemoryStore.remove` — `foreign_keys=ON` is set on the connection at construction time. Stores are wired in bootstrap via `MemoryStore.attachEmbeddings({ writer, store })`, which is intentionally late-bound: `MemoryStore` owns the SQLite handle, `EmbeddingStore` opens against the same handle once the daemon is confirmed healthy.
+
+**Read/write paths.** Synchronous `MemoryStore.store()` kicks off a fire-and-forget embedding write (zero latency penalty for existing callers); `MemoryStore.storeAsync()` is the awaited sibling for tests that need the row to be hybrid-recallable on the next turn. `MemoryStore.recallHybridAsync()` is the new public entry point — it always goes through `recallHybrid` and is observably identical to the legacy `recall()` when embeddings are not attached. `createDefaultMemoryContextProvider` was switched to the async variant; the `MemoryContextProvider` interface already accepted `Promise<MemoryContext>`.
+
+**Locked invariants.** Pinned by [src/memory/embeddings/embedding-client.test.ts](src/memory/embeddings/embedding-client.test.ts), [src/memory/embeddings/embedding-store.test.ts](src/memory/embeddings/embedding-store.test.ts), [src/memory/embeddings/hybrid-recall.test.ts](src/memory/embeddings/hybrid-recall.test.ts), [src/memory/memory-schema.test.ts](src/memory/memory-schema.test.ts), [src/local-llm/daemon-lifecycle.test.ts](src/local-llm/daemon-lifecycle.test.ts):
+
+1. **Two-daemon separation is structural, not optional.** `llama-server --embeddings` forces pooling-only mode; a single instance cannot serve both `/completion` and `/embedding`. Anyone adding embedding usage MUST go through the secondary daemon's URL.
+2. **Embedding writes never block the agent loop.** `MemoryStore.store()` is synchronous; the embedding write is fire-and-forget. Tests that need determinism call `storeAsync()`.
+3. **Failure paths are observability-only.** Bootstrap, recall, write — none of them throw on embedding-daemon outages. Every degradation is a metric counter, never a status-`failed` turn.
+4. **Cosine path skips on overflow.** When `countByModel(model) > bruteForceCeiling`, cosine is **not** computed; FTS5-only result returns and `brute_force_overflow` increments. This is the signal to wire `sqlite-vec` or trim the corpus.
+5. **FK cascade is load-bearing.** `memories.remove(id)` must wipe the matching `memory_embeddings` row in the same transaction; the test `cascades delete from memories -> memory_embeddings` pins this.
+6. **Config gates everything.** `memory.embeddings.enabled=false` OR `localModels.embeddings.enabled=false` OR `localModels.embeddings.modelId=null` ⇒ no second daemon, no embedding writes, no hybrid recall. Bootstrap never constructs an `EmbeddingClient` against an absent daemon.
+
+**Configuration.** Added in user config v12 — older files transparently migrate with both blocks disabled.
+
+- `memory.embeddings.enabled` (default `false`; TUI sets `true` when the embedding daemon is running — see `persistEmbeddingHybridRecall` + `LocalModelsOrchestrator.reconcileHybridRecallFromDaemon`).
+- `memory.embeddings.fts5Weight` / `vectorWeight` (defaults `0.5` / `0.5`, both in `[0, 1]`).
+- `memory.embeddings.bruteForceCeiling` (default `200`).
+- `localModels.embeddings.enabled` (default `false`; flipped by TUI pull/activate/`E`) — must be `true` for the second daemon to be considered at startup.
+- `localModels.embeddings.modelId` (default `null` — must be one of `EmbeddingModelId` once chosen in TUI).
+- `localModels.embeddings.port` (default `19092`).
+
+**Out of scope (deferred to follow-up).** `sqlite-vec` virtual table integration (the JS brute force handles current corpus sizes; sqlite-vec graduates the schema without touching `EmbeddingStore` callers), ANN indexes, cross-model query embedding fallback (when the active model changes, the existing rows under a different `model` are simply skipped — there is no auto-reembed sweep yet), embedding-side reflection (the writer is only invoked by `MemoryStore.store`; reflection's own writes happen through the same path so they get embedded too, but there is no dedicated "embed everything" CLI command). All deferred items keep the wire-shape of `memory_embeddings` stable so no future migration is forced.
+
+### Memory-v2 phase 2 — reactive link graph (opt-in)
+
+Lives in [src/memory/links/](src/memory/links/) and is **enabled by default** (`memory.links.enabled=true`, config v22). It gives memories a typed, directed graph layer that is grown by an end-of-turn LLM sub-call (`link-generator`) and consumed by `MemoryContextProvider` as BFS expansion on top of the BM25/cosine hits.
+
+**Storage.** Schema v6 adds:
+
+```
+memory_links (
+  from_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  to_id   INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  kind    TEXT NOT NULL,
+  weight  REAL NOT NULL DEFAULT 1.0,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (from_id, to_id, kind)
+)
+```
+
+Composite PK allows multiple link kinds between the same pair (a note can both `RELATES_TO` and `CONTRADICTS` another note). FK cascade fires on **either side**, so `MemoryStore.remove(id)` automatically wipes every edge touching the removed row — no orphan links. `kind` is bounded by `LINK_KINDS = { RELATES_TO, CAUSED_BY, REFERENCES, CONTRADICTS, DUPLICATES, SUPERSEDES }`; `LinkStore.add` and the parser both reject anything outside this set. Self-loops are rejected at insert time. Indexes `idx_memory_links_to` (reverse direction) and `idx_memory_links_kind` exist so BFS can walk in either direction in O(deg).
+
+**BFS expansion.** `LinkStore.expand(seedIds, { depth, maxExpanded, kinds? })` walks **outgoing + incoming** edges at each hop so the recall layer does not need the LLM to author symmetric edges. Returns ids in BFS order with seeds excluded; deduplicated. Depth is clamped to `[1, 3]` to bound BFS fan-out; `maxExpanded` (default 50, runtime-config default 12) hard-caps the result so a hot node cannot blow up the recall set. Empty seed ⇒ empty result.
+
+**link-generator reflection sub-call.** A standalone runner in [src/memory/links/link-generator-runner.ts](src/memory/links/link-generator-runner.ts) that fires **after** the main reflection runner returns. Composition is wrapped by `createLinkAwareReflectionRunner` — the agent loop still calls `reflectionRunner.reflect(input)`; the decorator runs base reflection first, then materialises `input.recalledMemoryIds` (added to `ReflectionInput` in phase 2 — populated from `state.recalledNotes` in `agent-loop`) into `{id, body}` candidates via `MemoryStore.get(id)` and fires the link-generator.
+
+Anti-feedback-loop guard (mirrors phase 7a invariant 18 from MEMORY_FABRIC_V2.md §13.7.4): the parser drops every LINK whose endpoints are not in the surfaced-id allowlist for this turn. Without it, a runaway model could connect arbitrary ids and pollute the graph permanently. Self-loops, malformed lines, unknown kinds, and duplicate triples are all silently filtered — one bad line never invalidates the rest of the batch.
+
+**Read-side integration.** `createDefaultMemoryContextProvider` takes an optional `links` block; when `memory.links.enabled=true` it calls `linkStore.expand(recalledBaseIds, …)`, hydrates the expanded ids via `MemoryStore.get`, and folds them into `recalled` after the base hits so BM25/cosine ranking is preserved at the head. The `### memory-index` section then dedupes against the expanded set. When `links` is omitted, the provider is byte-identical to phase 1B.
+
+**Slot affinity (cross-phase invariant 2).** `LinkGeneratorRunner` rides the **same** dedicated reflection slot (`slotManager.reserveReflectionSlot()`) as the base reflection runner. The main agent slot's KV cache is never touched. When only one slot is available, both runners fall back to `slotId: -1` (no cache reuse) — still safe because the main slot is untouched.
+
+**Locked invariants.** Pinned by [src/memory/links/link-store.test.ts](src/memory/links/link-store.test.ts), [src/memory/links/link-generator-parser.test.ts](src/memory/links/link-generator-parser.test.ts), [src/memory/links/link-generator-runner.test.ts](src/memory/links/link-generator-runner.test.ts), [src/memory/memory-schema.test.ts](src/memory/memory-schema.test.ts), [src/memory/memory-context-provider.test.ts](src/memory/memory-context-provider.test.ts):
+
+1. **FK cascade on both sides.** Deleting either endpoint memory wipes the link in the same transaction. No orphan rows possible.
+2. **Self-loops are rejected.** `LinkStore.add({fromId: a, toId: a, …})` throws `LinkValidationError`; the parser drops them silently. Self-loops add zero recall signal and break BFS termination guarantees.
+3. **`link-generator` rides the reflection slot.** Cross-phase invariant 2 — never the main agent slot. No new `setInterval`s introduced; the runner is fire-and-forget after the agent reply, identical pattern to `ReflectionRunner`.
+4. **Allowlist gates every persisted edge.** Parser drops links whose endpoints are not in the per-turn surfaced-id set. Without this guard the graph could grow edges between memories the LLM never saw — a feedback-loop hazard pinned ahead of phase 7a.
+5. **Recall stays byte-identical when `memory.links.enabled=false`.** `createDefaultMemoryContextProvider` short-circuits without touching `LinkStore` when the optional block is missing. Phase 1B test snapshots remain valid.
+6. **BFS is bounded.** Depth clamped to `[1, 3]`, `maxExpanded` caps the result, BFS expands both directions. Hot-node fan-out cannot blow up the recall set.
+7. **`autoGenerate=false` still allows manual graph growth.** With `enabled=true; autoGenerate=false`, recall expansion works but the link-generator LLM call is skipped — useful when external tooling (or a future `memory.links.add` tool, deferred) is the only graph writer.
+8. **Multi-hop demo lives in the test suite.** `src/memory/memory-context-provider.test.ts > "phase 2: expands recalled via link graph when enabled (multi-hop demo)"` pins the synthetic acceptance from the execution plan — only the seed matches the BM25 query, and `A → B → C` link traversal surfaces both downstream notes.
+
+**Configuration.** Added in user config v13 — older files transparently migrate with `memory.links` populated from defaults (everything disabled).
+
+- `memory.links.enabled` (default `true`, config v22) — master switch for both recall expansion and link generation.
+- `memory.links.autoGenerate` (default `true`) — fire the link-generator after reflection. Set to `false` to keep the schema + expansion machinery without the extra LLM round-trip.
+- `memory.links.expansionDepth` (default `1`) — BFS depth on recall. Clamped to `[1, 3]`.
+- `memory.links.maxExpanded` (default `12`) — hard cap on expanded-id count per recall turn.
+- `memory.links.maxLinksPerCall` (default `4`) — hard cap on persisted edges per link-generator call.
+- `memory.links.minCandidates` (default `2`) — skip the LLM call when the surfaced set has fewer than this many ids.
+- `memory.links.generatorTimeoutMs` (default `8000`) — hard timeout for the link-generator LLM call.
+
+**Metrics.** All env-only, exported from [src/tracing/agent-metrics.ts](src/tracing/agent-metrics.ts):
+
+- `agent.memory.link_generator` (counter, tagged by `outcome ∈ {ok, none, skipped, aborted, timeout, failed}`).
+- `agent.memory.link_generator.duration_ms` (histogram).
+- `agent.memory.links_written` (counter, tagged by `source ∈ {link_generator, tool, reflection}`).
+- `agent.memory.link_expansion.hits` (counter, tagged by `expanded` bucket + `depth`).
+
+**Out of scope (deferred).** Agent-facing `memory.links.add` / `memory.links.list` tools (the LLM can still grow the graph implicitly via the link-generator; explicit tool access is deferred until a use case actually demands it), weighted BFS ordering beyond the current weight-tiebreaker, graph-aware reflection (the link-generator currently consumes only `recalledMemoryIds`; consuming the **graph neighbourhood** of those ids during reflection extraction is a follow-up), and a CLI debugger (`atomic-agent memory links show`) for graph inspection. Neighbour-evolver landed in phase 3 (see below).
+
+### Memory-v2 phase 3 — neighbor-evolver (opt-in)
+
+A reactive metadata-refinement layer that lets a new reflection turn enrich the `tags` of **existing** memories without ever touching their `content`. Modules in [src/memory/evolution/](src/memory/evolution/) + the grammar/parser/runner pieces inside [src/memory/reflection/](src/memory/reflection/). Default disabled; opt in via `memory.evolution.enabled = true` after phase 2 is live in your config.
+
+**Grammar.** `REFLECTION_GRAMMAR` in [reflection-grammar.ts](src/memory/reflection/reflection-grammar.ts) gained an `evolve` alternative on `entry`:
+
+```
+entry  ::= set | note | evolve
+evolve ::= "EVOLVE #" digits " [tags=" taglist "]" "\n"
+```
+
+A bounded grammar shape (`digits = [0-9]+`, `taglist ::= tag ("," tag){0,9}`) keeps malformed completions cheap and the cap deterministic. Touching the grammar invalidates the **reflection slot's** KV cache for one call; the main agent slot is unaffected.
+
+**Parser.** [reflection-parser.ts](src/memory/reflection/reflection-parser.ts) extracts EVOLVE lines into `ReflectionEvolve { targetId, addTags }`. Hardened: empty tag lists are dropped, non-positive ids rejected, malformed lines silently skipped, duplicate EVOLVE entries for the same `targetId` collapse to last-writer-wins. Lower-cases tags, drops invalid tokens, caps tag count to 10.
+
+**Store-level surface.** `MemoryStore.evolveTags(id, addTags, { leaseMs, now? })` in [memory-store.ts](src/memory/memory-store.ts) is the single mutation entry point. The signature **does not accept** a content delta — the append-only invariant on `MemoryEntry.content` is defended at both the runner level (post-parser, content is not even extracted from the LLM line) and the store level (no SQL path can write `content`). Returns a discriminated `EvolveTagsResult`:
+
+- `applied`             — tags grew, `updated_at` bumped.
+- `skipped_lease_held`  — `consolidating_at` lease is fresh, B↔C contention guard fires.
+- `skipped_no_change`   — every proposed tag was already present, `updated_at` is **not** bumped (preserves legacy FIFO eviction ordering).
+- `missing`             — target row no longer exists.
+
+Companion lease helpers: `acquireConsolidationLease(id, leaseMs, now?)` (single-writer atomic check+stamp via SQL `WHERE consolidating_at IS NULL OR consolidating_at <= ?`), `releaseConsolidationLease(id)`, `getConsolidatingAt(id)`. Phase 5's consolidator will be the only `acquire` caller; phase 3 only **reads** the lease through `evolveTags`. The `consolidating_at` column itself landed dormant in v4 (phase 1A migration) so there is **no schema change** in phase 3.
+
+**Runner.** `NeighborEvolver` in [neighbor-evolver.ts](src/memory/evolution/neighbor-evolver.ts) is a non-LLM, fire-safe post-parser writer:
+
+- Enforces `maxPerWrite` (default `2`) as a hard cap; overflow → `skipped_cap_hit` (the dropped directives still record metrics).
+- Honours an optional `allowlist` (a `Set<number>` of surfaced ids for the current turn) — directives whose `targetId` is **not** in the set are dropped with `skipped_not_in_allowlist`. This is the anti-feedback guard (same idea as the link-generator phase 2's allowlist).
+- Wraps `MemoryStore.evolveTags` and folds `MemoryValidationError` → `skipped_invalid`. Throws nothing.
+- Emits one of seven structured outcomes per directive, each tagged through `AgentMetrics.recordMemoryEvolution`.
+
+**Reflection wiring.** `ReflectionRunnerDeps.neighborEvolver?` (optional) in [reflection-runner.ts](src/memory/reflection/reflection-runner.ts). When present, the runner applies parsed `EVOLVE` directives **after** SET + NOTE writes (so a NOTE created earlier in the same completion is never the target of its own EVOLVE — the surfaced-id allowlist already excludes brand-new rows). The runner reads `input.recalledMemoryIds` (already plumbed in phase 2) and turns it into the allowlist passed to the evolver. Sequencing inside `ReflectionRunner.runOne` is now:
+
+```
+parse  →  write SET  →  write NOTE  →  link-generator (phase 2)  →  neighbor-evolver (phase 3)
+```
+
+No new LLM call. Phase 3 is pure post-parser bookkeeping on top of the same reflection completion. Bootstrap constructs the evolver only when `memory.evolution.enabled === true` and threads it into `buildReflectionRunner`.
+
+**Locked invariants** (pinned by [src/memory/memory-store-evolve.test.ts](src/memory/memory-store-evolve.test.ts), [src/memory/evolution/neighbor-evolver.test.ts](src/memory/evolution/neighbor-evolver.test.ts), [src/memory/reflection/reflection-parser.test.ts](src/memory/reflection/reflection-parser.test.ts)):
+
+1. **`content` is byte-stable across N evolve calls.** Cross-phase invariant 5 from MEMORY_FABRIC_V2.md §13.7.7. Pinned by both `MemoryStore.evolveTags` (`preserves content byte-stable across N evolves`) and `NeighborEvolver` (`invariant 5 — content byte-stable across N evolve calls`). No SQL path on the evolve surface ever writes `content`; the LLM grammar never carries it either.
+2. **B↔C lease honoured.** `evolveTags` skips when `consolidating_at IS NOT NULL AND (now - consolidating_at) <= leaseMs`. Stale leases (`elapsed > leaseMs`) are ignored — the phase-5 consolidator is expected to release on success, but a crashed consolidator can never permanently freeze a row.
+3. **Allowlist filters before applyOne.** A directive whose `targetId` is not in `input.recalledMemoryIds` never reaches `MemoryStore`. Pinned by `filters by allowlist when provided`.
+4. **`maxPerWrite` cap is hard.** Directive `N+1` and beyond never call `evolveTags`. Excess is counted under `skipped_cap_hit` so dashboards can spot models that routinely propose more evolves than the budget allows.
+5. **Tag-cap overflow keeps existing tags.** When the target already has `MEMORY_MAX_TAGS` (16) tags, every proposed addition is dropped silently — the store returns `skipped_no_change` and existing tags win. Pinned by `does not write past MEMORY_MAX_TAGS`.
+6. **`updated_at` is not bumped on `skipped_no_change`.** Legacy FIFO eviction (`memory.eviction.utilityWeighted=false`) keeps its expected ordering when an evolve is a no-op.
+7. **`enabled=false` is the default.** Older configs auto-migrate to v14 with `memory.evolution.enabled = false`; parser still recognises EVOLVE but the runner silently drops directives because `neighborEvolver` is `undefined`. Flip the flag to opt in.
+8. **Schema unchanged.** Phase 3 reuses `consolidating_at` (added dormant in v4 / phase 1A). No new tables, no new migration step; `MEMORY_SCHEMA_VERSION` stays at `6`.
+
+**Configuration.** Added in user config v14 — older files transparently migrate with `memory.evolution` populated from defaults (everything disabled).
+
+- `memory.evolution.enabled` (default `true`, config v21) — master switch. Off ⇒ no evolver constructed, EVOLVE lines parsed and dropped.
+- `memory.evolution.maxPerWrite` (default `2`) — hard cap on applied directives per reflection turn.
+- `memory.evolution.leaseMs` (default `60000`) — B↔C lease window in ms.
+
+**Metrics.** Two counters in [src/tracing/agent-metrics.ts](src/tracing/agent-metrics.ts):
+
+- `agent.memory.evolution.applied` (counter, tagged by `session_id`).
+- `agent.memory.evolution.skipped` (counter, tagged by `session_id` + `reason ∈ {lease_held, no_change, not_in_allowlist, cap_hit, missing, invalid}`).
+
+The dual-counter shape matches the scorecard's §3.A.4 (`applied ≥ 1`) and §3.B.2 (`skipped{reason=lease_held} ≥ 1`) asserts.
+
+**Out of scope (deferred).** `context` column on `memories` (the doc's `EVOLVE [context=...]` branch — phase 3 sticks to tags-only, which is what the scorecard tests; adding `context` is a separate schema change), automatic neighbour discovery on writes (today the LLM proposes EVOLVE targets explicitly — discovery-driven evolution depends on phase 5's clustering pass), and an agent-facing `memory.notes.evolve` tool. The consolidator-side `acquireConsolidationLease` write path lands in phase 5; phase 3 only **reads** the lease.
+
+### Memory-v2 phase 4 — bi-temporal ProfileStore
+
+`profile_facts` no longer overwrites on conflict. Every `ProfileStore.set` produces a **new row** and the previous active row for the same key is flipped into the supersession chain inside one SQLite transaction. The renderer (`### profile`) keeps showing only the active row; the chain is exposed to the agent via the new `memory.profile.history` tool.
+
+**Schema v6 → v7** in [memory-schema.ts](src/memory/memory-schema.ts). The migration renames the legacy `profile_facts` to `profile_facts_legacy`, creates the v7 shape (`id INTEGER PRIMARY KEY AUTOINCREMENT`, `valid_from`, `superseded_by`, `supersedes`, `created_at`, `updated_at`), copies every legacy row into the v7 table with `valid_from = legacy.updated_at` and `superseded_by = NULL` (preserving `pinned` + `keywords`), then drops the legacy table. The migration is idempotent; restarting after a successful v7 boot is a no-op. Active-row uniqueness is enforced by the **partial unique index** `idx_profile_active_key ON profile_facts(key) WHERE superseded_by IS NULL` — the storage-layer guard for MEMORY_FABRIC_V2.md cross-phase invariant 6.
+
+**Store-level surface** ([profile-store.ts](src/memory/profile-store.ts)):
+
+- `set(key, value, opts?)` — always inserts a new row. When an active row for `key` exists it gets flipped in the same transaction. Because SQLite's partial unique index is **immediate, not deferred**, the writer first stamps the parent's `superseded_by` with a sentinel self-pointer (`= id`) so the partial index releases the active slot, then inserts the new row, then patches the parent's `superseded_by` to the real `newId`. The intermediate self-pointer is never visible outside the transaction. Returns a `ProfileFact` with `id`, `validFrom`, `supersedes`, `supersededBy` populated.
+- `get(key)` / `list()` — return active rows only (`superseded_by IS NULL`).
+- `getById(id)` — returns any row regardless of supersession (used by history walks).
+- `history(key)` — returns the full chain in `valid_from ASC, id ASC` order. The active row, when present, is the last entry. Cross-key supersession chains are **not** traversed automatically — `history` is per-key on purpose so the rendered timeline matches the column header the user sees in `### profile`.
+- `remove(key)` — deletes the **active** row only. Historical (superseded) rows are kept on disk so `history(key)` keeps working. The `superseded_by` self-pointer is a **soft pointer** (no FK constraint) precisely so this deletion never cascades into the historical chain.
+
+**Cross-key supersession.** When the LLM emits `SET full_name=Alex [supersedes=name]`, the parser captures `supersedes: "name"` on the `ReflectionFact`. The reflection runner threads this through as `set(...).supersedesKey`; the store then flips both the same-key active row (if any) **and** the cross-key `name` active row to the new row. Same-key supersession always wins for the `supersedes` back-pointer payload; cross-key parents become superseded but their `supersedes` column stays `NULL` (they were not themselves replacing anything). Pinned by `profile-store-bitemporal.test.ts` ("cross-key supersession via supersedesKey opt flips the source row").
+
+**Parser markers.** [reflection-parser.ts](src/memory/reflection/reflection-parser.ts) `extractSetMarker` was extended with two new clauses, both still semicolon-separated inside the existing trailing `[...]`:
+
+- `supersedes=KEY` — extracts a cross-key hint. Validated against the same `KEY_PATTERN` `ProfileStore` uses, so a malformed RHS (spaces, special chars, oversized) is dropped at parse time and never reaches the writer. Pinned by `drops a malformed supersedes RHS`.
+- `valid_from=now` — the only accepted literal. Any other RHS (explicit timestamp, future date, ISO string) is dropped silently. The runtime always stamps `valid_from` from the live clock so the LLM cannot rewrite past history. The field carries through to `ReflectionFact.validFrom` as `"now" | null` and is consumed by the metrics/audit path only — the store ignores it today.
+
+The GBNF reflection grammar itself is unchanged: `value ::= [^\n]{1,200}` already accepts the marker syntax. Parser-level validation drops malformed markers without re-prompting.
+
+**Reflection prompt.** [reflection-prompt.ts](src/memory/reflection/reflection-prompt.ts) `REFLECTION_STABLE_PREFIX` gained a "Bi-temporal versioning" paragraph teaching the LLM about the marker. This is the only prompt change in phase 4 — it invalidates the **reflection slot's** KV cache for one call. The main agent slot's stable prefix is untouched (none of phase 4's wiring leaks into `buildStablePrefix`).
+
+**Tool: `memory.profile.history { key }`** ([profile-history.ts](src/tools/memory/profile-history.ts)). Read-only. Returns the full chain in temporal order with an `active` flag on each row and a human-readable summary line (` * [#id] ISO-time: value (active)` / ` [#id] ISO-time: value → #N`). Registered alongside `memory.profile.{set,remove,list}` when `memory.profile.enabled` is true; resource class is `pure_read` so it fans out cleanly in parallel batches. Validation errors fold into a structured `status: "error"` tool result instead of throwing.
+
+**Reflection wiring.** `writeFacts` in [reflection-runner.ts](src/memory/reflection/reflection-runner.ts) now threads `fact.supersedes` (when present) into `ProfileStore.set` as `supersedesKey`. Same-key supersession does not need this — every same-key write auto-chains via the partial unique index path. The supersession hint is purely for cross-key cases. Sequence inside `ReflectionRunner.runOne` is unchanged:
+
+```
+parse  →  write SET  →  write NOTE  →  link-generator (phase 2)  →  neighbor-evolver (phase 3)
+```
+
+**Metrics.** New counter `agent.memory.profile.superseded` in [agent-metrics.ts](src/tracing/agent-metrics.ts), tagged by `key`, `previous_id`, `next_id`. Fires **once per parent flipped** — a cross-key supersession that touches two parents will fire twice with distinct `previous_id`s. (Today the writer fires it only on the structural same-key parent; cross-key supersession parents do not emit the metric — see `// TODO` below.)
+
+**Locked invariants** (pinned by [profile-store-bitemporal.test.ts](src/memory/profile-store-bitemporal.test.ts), [profile-history.test.ts](src/tools/memory/profile-history.test.ts), [reflection-parser.test.ts](src/memory/reflection/reflection-parser.test.ts) phase-4 cases, [reflection-runner.test.ts](src/memory/reflection/reflection-runner.test.ts) `scenario 4.A — SET with supersedes marker produces a bi-temporal chain`):
+
+1. **At most one active row per key.** Enforced by the partial unique index `idx_profile_active_key`. Pinned by `4.A.3 — partial unique index forbids two active rows for one key`.
+2. **Every SET preserves history.** Scenario 4.A: `ru → en` produces a 2-row chain with the `ru` row marked superseded. Pinned by `scenario 4.A — language change preserves history`.
+3. **`remove(key)` keeps the historical chain.** Only the active row is deleted. Pinned by `remove() deletes only the active row, history chain intact`.
+4. **Legacy v6 rows migrate transparently.** `valid_from = updated_at`, `superseded_by = NULL`, `pinned` + `keywords` preserved. Pinned by `legacy v3 row migrates to v7 with valid_from = updated_at and active state`.
+5. **Renderer untouched.** `### profile` filters via `list()` which already returns active-only rows. Stable-prefix bytes do not change because of phase 4.
+6. **Marker validation drops malformed RHS at parse time.** `supersedes=not a valid key` → `supersedes: null`. Pinned by `drops a malformed supersedes RHS`.
+7. **`valid_from` always stamped by the runtime clock.** The parser strips the literal `now`; the store reads it from `Date.now()` (or the injected `now` arg). Pinned by `drops a non-'now' valid_from RHS silently`.
+8. **No new top-level config.** Phase 4 is always-on once the v7 migration has run. No feature flag. Operators can still call `memory.profile.set` with `pinned=false; keywords=...` exactly as before — the new fields are additive.
+
+**Out of scope (deferred).** Cross-key history walks via `getById` (today `history(key)` is per-key; following `supersedes` / `supersededBy` across keys is left as a manual chain walk for the agent), `vote_score` column on `profile_facts` (phase 7a), per-parent metric emission on cross-key supersession (today only the same-key parent fires `agent.memory.profile.superseded`), an explicit `bitemporal.enabled` config flag (the schema migration is forward-only so a runtime toggle would have no on-disk effect), and `memory.profile.bitemporal.maxHistoryPerKey` capping (today the chain grows unbounded — practically bounded by reflection rate which is at most one SET per turn per key).
+
+### Memory-v2 phase 5 — lessons + cold-path consolidator (C-half)
+
+Phase 5 closes the read/write loop of the memory fabric: clusters of related episodes (notes linked via `memory_links`) are distilled into **`Lesson`** rows by an out-of-band cold-path consolidator, surfaced into the prompt as `### lessons` pointers, archived from `### memory-index` but kept fully readable by id, and recalled on demand through the new `memory.lessons.recall` tool. The agent never sees the full `principle` body in the stable prefix — the pointer-only surface keeps the variable tail bounded and the rare-tool model of `tool.view` applies verbatim.
+
+**Schema v7 → v8** in [memory-schema.ts](src/memory/memory-schema.ts). Two additive changes:
+
+- `ALTER TABLE memories ADD COLUMN consolidated_into INTEGER` + `CREATE INDEX idx_memories_consolidated`. A non-NULL value means the row has been folded into a lesson and is dropped from `### memory-index` (but `get(id)` still returns it — load-bearing for citation walks from lesson `parent_ids`).
+- `CREATE TABLE lessons` (`id PK`, `activation`, `principle`, `tags`, `status ∈ {"active","deprecated"}`, `success_count`, `failure_count`, `parent_ids JSON`, `working_dir`, `created_at`, `updated_at`, `deprecated_at`) + `lessons_fts` FTS5 virtual table (`porter unicode61` on `activation, principle, tags`) + INSERT/UPDATE/DELETE triggers keeping the FTS index in sync.
+
+Both migrations are idempotent — restarting after a successful v8 boot is a no-op. The legacy schema migration test was extended to seed a minimal `memories` table at v6 so the v8 ALTER finds its target on partial fixtures.
+
+**Stores.**
+
+- [memory-store.ts](src/memory/memory-store.ts) gained `archiveInto(parentIds, lessonId, now?)` (single atomic UPDATE that stamps `consolidated_into = lessonId` for every parent) and `getConsolidatedInto(id)`. `list({ excludeArchived: true })` and `listIndex({ excludeArchived: true })` filter `consolidated_into IS NULL`. Archived rows stay readable by `get(id)` so the agent can still inspect a lesson's parents via the `parent_ids` array returned by `memory.lessons.recall`.
+- [lessons/lesson-store.ts](src/memory/lessons/lesson-store.ts) is a self-contained store with `create`, `getById` (returns deprecated rows too — used for direct-id lookups from `### lessons`), `recall { query, k, includeDeprecated? }` (BM25 against `lessons_fts`; defaults to active-only), `listIndex { limit, workingDir? }` (compact pointer view for the `### lessons` section), `markDeprecated`, `bumpSuccess` / `bumpFailure`, `pickOverflowForDeprecation`, and `countAll`. All writes go through the same validators (`LESSON_ACTIVATION_MAX_LENGTH`, `LESSON_PRINCIPLE_MAX_LENGTH`, `LESSON_MAX_TAGS`, `LESSON_TAG_MAX_LENGTH`) — there is no second back door, identical to `ProfileStore` / `MemoryStore`.
+
+**Prompt surface.** The variable tail gained a `### lessons` section rendered by [lessons-renderer.ts](src/memory/lessons/lessons-renderer.ts) — one `*<id> [tags] activation` line per lesson, ordered as the recall returned them, capped at `memory.lessons.maxTokens` (default `400`) with a `[truncated]` marker. Placement is between `### profile` and `### memory-index` (mutability order in the tail). The renderer **never** emits the `principle` body — that requires an explicit `memory.lessons.recall { id }` call. Token cost is subtracted from the effective conversation cap in [token-budget.ts](src/prompt/token-budget.ts).
+
+**Stable-prefix change (KV-cache invalidation #1).** [stable-prefix.ts](src/prompt/stable-prefix.ts)'s persona text was extended to mention `### lessons` and how to materialise the full body via `memory.lessons.recall { id }`. This **invalidates the main agent slot's KV cache** for one cold start across the whole runtime — a planned one-time event for phase 5. The reflection slot is untouched (phase 4 already invalidated that one). There is no hot migration path; restart with a fresh session pool. Phase 7b is the second and final planned invalidation (`### procedures`).
+
+**Read-side wiring.** [memory-context-provider.ts](src/memory/memory-context-provider.ts) was extended with an optional `lessons` block. When configured AND a non-empty user message arrives, the provider calls `LessonStore.recall(userMessage)` for the top-K (default `5`) hits and stores them on the ephemeral `SessionState.recalledLessons` field. `stripEphemeral` in [session-state.ts](src/session/session-state.ts) drops `recalledLessons` before SQLite persistence — recomputed every turn against the live user message. When `lessons` is not configured the provider returns the byte-identical pre-phase-5 `{ recalled, index }` shape so older callers stay stable; phase-5 consumers see `{ recalled, index, lessons }`. The `### memory-index` rendering also flips to `excludeArchived: true` so consolidated parents disappear from the pointer surface (but stay readable by id).
+
+**Agent tool: `memory.lessons.recall { id?, query?, k? }`** ([tools/memory/lessons-recall.ts](src/tools/memory/lessons-recall.ts)). Read-only (`pure_read` resource class — fans out cleanly in parallel batches). `{ id }` returns one full lesson including deprecated rows (so the agent can resolve a stale pointer); `{ query }` does a BM25 search against active lessons only. Output is `{ id, activation, principle, tags, parentIds }`. Validation errors fold into structured `status: "error"` tool results instead of throwing. The GBNF grammar [tool-call.gbnf](grammars/tool-call.gbnf) was extended to accept `lessons.recall` alongside the existing `memory.*` tools; the prompt descriptor lives in [default-tool-descriptors-b.ts](src/prompt/default-tool-descriptors-b.ts) at tier `frequent` so the full `argsSchema` is always in the stable prefix.
+
+**Consolidator (cold path).** [consolidator/consolidator-job.ts](src/memory/consolidator/consolidator-job.ts) is the single orchestrator. One tick (`runOnce`) does:
+
+1. **Select candidates.** `MemoryStore.list({ excludeArchived: true, beforeCreatedAtMs: now - cooldownMs })` — rows that have aged beyond `memory.consolidation.cooldownMs` (default `0`; production deployments should bump this so freshly-written notes have time to attract `RELATES_TO` links).
+2. **Cluster.** [consolidator/clustering.ts](src/memory/consolidator/clustering.ts) — undirected BFS over `LinkStore.listOutgoing` + `listIncoming` to find connected components, filtered by `minClusterSize` (default `3`). When `requireSharedTag=true` (default `false`), each component is trimmed to the members sharing the **single most common tag**; components with no shared tag are dropped. The chosen algorithm is "CC + tag-intersection" — a deliberate tradeoff between recall (loose CC) and precision (strict tag intersection); pinned by [clustering.test.ts](src/memory/consolidator/clustering.test.ts) (eight cases including empty input, size floor, external edges, the trimming path, the `requireSharedTag` drop path, the `maxClusters` cap, and bidirectional traversal).
+3. **Acquire leases.** Per-member `MemoryStore.acquireConsolidationLease(id, leaseMs)`. If any member is already leased (phase 3 neighbour-evolver or a concurrent tick), the entire cluster is skipped and members released — clusters are atomic units. Lease TTL is hardcoded to `60_000` ms today; outliving the tick is fine because the next tick will re-acquire.
+4. **Distill.** [consolidator/distill-runner.ts](src/memory/consolidator/distill-runner.ts) — one LLM call per cluster on the reflection slot (so the main agent slot's KV cache is never disturbed by consolidation). Prompt + GBNF in [distill-prompt.ts](src/memory/consolidator/distill-prompt.ts) + [distill-grammar.ts](src/memory/consolidator/distill-grammar.ts) — the model must emit either `LESSON activation="..."; principle="..."[; tags=...]` **or** the explicit abstain sentinel `LESSON activation="(no consensus)"; principle="(no durable advice)"`. [distill-parser.ts](src/memory/consolidator/distill-parser.ts) recognises the sentinel as `kind: "none"`; the consolidator counts these in `lessonsAbstained` and leaves the parents un-archived (abstain ≠ archive — the cluster can be retried in a future tick when more episodes accumulate).
+5. **Persist + archive + rewire.** On `kind: "lesson"`, the consolidator calls `LessonStore.create(...)` then `MemoryStore.archiveInto(parentIds, lessonId)` in that order. Link rewiring is deliberately deferred — `memory_links` rows pointing at archived members stay intact (the BFS view still works for postmortem walks); a future "link compaction" pass can collapse them.
+6. **Release leases + record metrics.** Every member's lease is released even on failure. Per-cluster failures (LLM throw / parse error / timeout) are caught and logged; sibling clusters in the same tick keep running — the tick's outcome is `ok` if at least one lesson landed, `failed` only if every cluster errored, `none` otherwise.
+
+**Scheduler seam — scoped `setInterval` carve-out.** The consolidator owns its own `setInterval` with period `memory.consolidation.intervalMs` (default `300_000` = 5 min). This is the **second** carve-out from the §"Background autonomy" invariant that "`Scheduler` is the only periodic timer in the runtime" — the first was Telegram long-polling, the second is the consolidator. The carve-out is deliberate and bounded: the loop is owned by [consolidator-job.ts](src/memory/consolidator/consolidator-job.ts) only, every tick is wrapped in a try/catch with a `running` re-entry guard, and ticks never block — distillation runs on the reflection slot with its own timeout (`memory.consolidation.distillTimeoutMs`, default `45_000`). New cold-path jobs of this shape **must not** add a third timer without an analogous AGENTS.md review.
+
+**Bootstrap wiring.** [runtime/bootstrap.ts](src/runtime/bootstrap.ts) constructs `LessonStore` unconditionally (it owns a SQLite handle on the shared `memory.sqlite` file, must be closed by `shutdown`), wires it into `memory.lessons.recall` registration (gated by `memory.lessons.enabled`), and threads it into `createDefaultMemoryContextProvider`. The `ConsolidatorJob` is constructed and started **only** when `memory.lessons.enabled && memory.consolidation.enabled`; the distill runner shares the reflection slot reserved earlier for link-generation. `shutdown()` calls `consolidatorJob?.stop()` before `lessonStore.close()` so a final tick never touches a closed handle.
+
+**Configuration (`memory.lessons.*` and `memory.consolidation.*`).** User config v15; `parseUserConfigFile` transparently migrates v14 → v15 filling defaults. Keys:
+
+- `memory.lessons.enabled` (default `true`) — master switch. Controls `### lessons` rendering, `memory.lessons.recall` registration, and the consolidator.
+- `memory.lessons.recallK` (default `5`) — top-K for the read-side BM25 surface.
+- `memory.lessons.maxTokens` (default `400`) — token cap on the rendered `### lessons` block.
+- `memory.lessons.indexLimit` (default `20`) — cap on `LessonStore.listIndex` rows (today read by the recall path only — phase 6 will surface this as `### lessons-index` analogous to `### memory-index`).
+- `memory.lessons.maxEntries` (default `200`) — hard ceiling on active lesson rows; phase 6 enforces this via deprecation sweep.
+- `memory.lessons.deprecationAgeMs` (default `30 days`) — age threshold for the phase-6 deprecation sweep.
+- `memory.consolidation.enabled` (default `true`) — master switch for the cold-path job.
+- `memory.consolidation.intervalMs` (default `300_000` = 5 min) — period of the scoped `setInterval`.
+- `memory.consolidation.cooldownMs` (default `0`) — minimum age of an episode before it is eligible. Bump in production so freshly-written notes have time to attract links.
+- `memory.consolidation.minClusterSize` (default `3`) — size floor.
+- `memory.consolidation.maxClustersPerTick` (default `5`) — soft cap on clusters processed per tick.
+- `memory.consolidation.requireSharedTag` (default `false`) — when `true`, clusters are trimmed by the majority-tag rule (see clustering above).
+- `memory.consolidation.distillTimeoutMs` (default `45_000`) — per-cluster LLM timeout.
+
+**Metrics.** [agent-metrics.ts](src/tracing/agent-metrics.ts):
+
+- Counters: `agent.memory.lessons.{created,deprecated,recalled}`, `agent.memory.consolidation.run` (tagged by `outcome ∈ {"ok","none","failed"}`).
+- Histograms: `agent.memory.consolidation.distill_latency_ms`, `agent.memory.consolidation.clusters` (per-tick cluster count).
+
+**Locked invariants** (pinned by [consolidator-job.test.ts](src/memory/consolidator/consolidator-job.test.ts), [clustering.test.ts](src/memory/consolidator/clustering.test.ts), [distill-parser.test.ts](src/memory/consolidator/distill-parser.test.ts), [lesson-store.test.ts](src/memory/lessons/lesson-store.test.ts), [lessons-renderer.test.ts](src/memory/lessons/lessons-renderer.test.ts), [memory-store-archive.test.ts](src/memory/memory-store-archive.test.ts), [build-prompt.test.ts](src/prompt/build-prompt.test.ts)):
+
+1. **`### lessons` is pointer-only.** The renderer never emits `principle`. Full bodies require an explicit `memory.lessons.recall { id }` call. Pinned by `lessons-renderer.test.ts` ("does not leak principle").
+2. **Archived memories remain readable by id.** `MemoryStore.get(archivedId)` returns the row; only `list({ excludeArchived: true })` / `listIndex` drop it. Pinned by `memory-store-archive.test.ts`.
+3. **One LLM call per cluster, on the reflection slot.** The consolidator never touches the main agent slot. Distillation is **always serial within a tick** (one cluster → one call → next cluster); parallel cross-cluster fan-out is deferred.
+4. **Abstain ≠ archive.** When the model emits the `(no consensus)` sentinel, the cluster is recorded as abstained, parents stay active, leases are released. Pinned by `consolidator-job.test.ts` ("treats abstain output as 'none' and does not write a lesson").
+5. **Per-cluster failures isolate.** A throw / parse error / timeout on one cluster does not abort the tick — sibling clusters keep running. Pinned by `consolidator-job.test.ts` ("isolates per-cluster failures and lets a second cluster succeed").
+6. **Lease semantics are shared with phase 3.** Phase 3 (neighbour-evolver) **reads** the lease in `evolveTags`; phase 5 is the only **acquirer**. The B↔C boundary is the `consolidating_at` column landed dormant in the v4 migration. Pinned by `memory-store-evolve.test.ts` ("evolve respects consolidation lease").
+7. **Stable-prefix mention is one-time.** Adding the `### lessons` paragraph to the persona is **one** byte change. Pinned by `build-prompt.test.ts` ("stable prefix mentions ### lessons in the persona" + the existing hash-stability test for non-phase-5 mutations).
+8. **`recalledLessons` is ephemeral.** `stripEphemeral` removes it before persistence; recomputed every turn. Pinned by `session-state.test.ts`.
+9. **Re-entry guard.** Two concurrent `runOnce` calls collapse to one — the second returns a zero-summary. Pinned by `consolidator-job.test.ts` ("re-entry guard returns a zero-summary when another tick is in flight").
+10. **Idempotency across ticks.** A second tick with no new candidates is `{ outcome: "none", clustersConsidered: 0, lessonsCreated: 0 }`. Pinned by `consolidator-job.test.ts` ("is idempotent on a second tick").
+11. **Cooldown is enforced server-side.** Episodes younger than `memory.consolidation.cooldownMs` are filtered at the candidate-selection step, not by the cluster pass. Pinned by `consolidator-job.test.ts` ("respects cooldownMs").
+12. **Memory-context-provider shape stays backwards-compatible.** When the `lessons` block is not configured, the provider returns `{ recalled, index }` — no `lessons` key. Phase-5 callers see `{ recalled, index, lessons }`. Pinned by `memory-context-provider.test.ts`.
+
+**Out of scope (deferred to phase 6).** Lesson lifecycle bumps from agent-loop terminal verbs (`bumpSuccess` / `bumpFailure` on whether a surfaced lesson actually helped the turn), `maxEntries` FIFO deprecation sweep inside the consolidator tick, `deprecationAgeMs` enforcement. Phase 7a adds `vote_score` columns + ExpeL-style vote curation. Phase 7b adds the second stable-prefix change (`### procedures`) and the combined lesson-and-procedure grammar — invariant 3 ("one LLM call per cluster") survives that addition.
+
+### Memory-v2 phase 6 — lesson lifecycle and deprecation
+
+Phase 6 closes the lesson loop: lessons that demonstrably help turns earn `success_count` bumps, lessons that fail to do so age out, and the total active set stays bounded by a per-store `maxEntries` cap. Two new code paths land — one **hot** (agent-loop terminal-verb hook) and one **cold** (consolidator sweep) — sharing the existing `LessonStore` API. **No new schema change** (v8 already carries `success_count`, `failure_count`, `status`, `deprecated_at`); the work is purely behavioural.
+
+**Hot path — lesson lifecycle hook (agent-loop).** [agent-loop.ts](src/agent/agent-loop.ts) was extended with an optional `lessonLifecycle: LessonLifecycleHook` dep. Inside `runTurn`, a `surfacedLessonIds: Set<number>` accumulates the union of every `state.recalledLessons` snapshot the turn sees — once at the top of the turn (after the initial `refreshMemoryContext`) and once after every successful non-terminal step. At terminal time the hook fires **exactly once** with the deduplicated id set and a typed outcome:
+
+| Terminal reason | Hook fires? | Outcome |
+|---|---|---|
+| `reply` | yes | `success` |
+| `finish` | yes | `success` |
+| `failed` (thrown / categorised infra failure) | yes | `failure` |
+| `cancelled` (signal aborted, `CancelledError`, classified `cancelled`) | **no** | — |
+| `max_steps` (synthetic reply) | **no** | — |
+
+Cancelled and max-steps turns are deliberately filtered out because neither carries a clean success/failure signal — cancellation is operator-initiated, and `max_steps` is ambiguous (the lessons may have been useful right up until the budget ran out). Phase 7a may revisit `max_steps` as a soft-negative signal once vote scores land. The default hook implementation lives at [lesson-lifecycle-hook.ts](src/memory/lessons/lesson-lifecycle-hook.ts) and routes `success` → `LessonStore.bumpSuccess(id)` / `failure` → `LessonStore.bumpFailure(id)`. The hook is fire-safe (`try/catch` around each bump, errors logged at WARN); a sqlite hiccup on one id never aborts sibling bumps and never derails the turn-completion path.
+
+**Cold path — deprecation sweep (consolidator).** [consolidator-job.ts](src/memory/consolidator/consolidator-job.ts)'s `runOnce` was extended with a deprecation sweep that fires inside the existing `finally` block, **after** distillation and **regardless** of the tick's clustering outcome — including ticks where no clusters formed. This is load-bearing: most production ticks find no new clusters but still need to keep the active set bounded. The sweep runs in two passes:
+
+1. **Age sweep** — `LessonStore.pickAgeDeprecationCandidates({ now, deprecationAgeMs })` returns active rows with `success_count = 0` AND `created_at <= now - deprecationAgeMs`. Each is demoted via `markDeprecated(id, "aged_out")`. The "still unused" predicate is the load-bearing filter — a lesson that helped at least one turn (`success_count >= 1`) survives indefinitely on age alone; only the FIFO pass can demote it.
+2. **FIFO sweep** — `LessonStore.pickOverflowForDeprecation()` returns oldest-by-`updated_at, id` ids when `countActive() > maxEntries`. Each is demoted via `markDeprecated(id, "overflow")`. Even successful lessons can be evicted here, which is intentional: the cap is a hard ceiling on the rendered surface, not a popularity filter.
+
+Both passes share a `maxDeprecationsPerTick` cap (default `100`, hardcoded in bootstrap) so a misconfigured `deprecationAgeMs` cannot flatten the entire lesson set in one tick. Per-lesson failures (sqlite errors) are caught, logged, and skipped — sibling demotions keep flowing. The sweep adds two fields to `ConsolidatorTickResult`: `lessonsDeprecatedByAge` and `lessonsDeprecatedByOverflow`.
+
+**Trace event.** `lesson_deprecated { lessonId, reason }` lands in the trace union at [trace-event.ts](src/tracing/trace/trace-event.ts). The consolidator fires it via a new optional `onLessonDeprecated` callback in `ConsolidatorJobDeps`; bootstrap bridges the callback to `TraceBus.emit(...)` using a **synthetic `consolidator` sessionId** so cold-path events land in `<stateDir>/traces/consolidator.ndjson` — a dedicated file separate from per-session turn traces. A local `seq` counter (closure-captured in bootstrap) keeps the file monotonically ordered; per-session counters are recorder-owned and the consolidator does not run through a recorder. `reason` is intentionally a free-form string (`"aged_out" | "overflow"` today; phase 7a adds `"downvoted"`) so future demotion paths slot in without a schema bump.
+
+**Metrics.** Phase 6 reuses the existing `agent.memory.lessons.deprecated` counter (already wired in phase 5 via `LessonStore.markDeprecated`); the new contribution is the **`reason` tag** which now carries `aged_out | overflow` instead of phase 5's `unspecified`. `agent.memory.lessons.recalled` continues to fire from `memory-context-provider` once per turn. No new metric names.
+
+**Bootstrap wiring.** [runtime/bootstrap.ts](src/runtime/bootstrap.ts) threads `lessonLifecycle: createLessonLifecycleHook({ lessonStore, logger })` into `loopDeps` when `memory.lessons.enabled` is true, and passes `deprecationAgeMs: config.memory.lessons.deprecationAgeMs` + `maxDeprecationsPerTick: 100` into the existing `ConsolidatorJob` constructor. The `onLessonDeprecated` callback is only wired when `traceBus` is non-null (sidecar default is null) so non-tracing runtimes see byte-identical behaviour.
+
+**Configuration.** No new keys. Phase 6 consumes the existing `memory.lessons.{enabled, maxEntries, deprecationAgeMs}` introduced in phase 5 (config v15).
+
+**Locked invariants** (pinned by [lesson-store.test.ts](src/memory/lessons/lesson-store.test.ts) phase-6 cases, [lesson-lifecycle-hook.test.ts](src/memory/lessons/lesson-lifecycle-hook.test.ts), [agent-loop-lesson-lifecycle.test.ts](src/agent/agent-loop-lesson-lifecycle.test.ts), [consolidator-job.test.ts](src/memory/consolidator/consolidator-job.test.ts) phase-6 cases):
+
+1. **Once per turn per id.** Even if the same lesson surfaces across many step refreshes, `bumpSuccess` / `bumpFailure` fires exactly once. Pinned by `agent-loop-lesson-lifecycle.test.ts` ("deduplicates surfaced ids across multiple step refreshes").
+2. **No bump on `cancelled` or `max_steps`.** Pinned by `agent-loop-lesson-lifecycle.test.ts` ("does NOT fire the hook when the turn is cancelled"). The `max_steps` path is the natural fall-through in `runTurn` — the hook block guards `reason === "reply" || reason === "finish"`.
+3. **`failed` → `bumpFailure`.** Thrown / classified failures route through the early-return failed branch that fires the hook before `return`. Pinned by `agent-loop-lesson-lifecycle.test.ts` ("fires 'failure' for surfaced lessons when the loop fails").
+4. **Empty surfaced set → silent no-op.** No hook call when no lessons were surfaced. Pinned by `agent-loop-lesson-lifecycle.test.ts` ("is a no-op when no lessons surfaced this turn").
+5. **Hook is fire-safe.** Bump errors are caught per-id; the agent loop's return path is never disturbed. Pinned by `lesson-lifecycle-hook.test.ts` ("swallows bump errors and keeps processing siblings").
+6. **Age picker requires `success_count = 0`.** A lesson with `success_count >= 1` never falls out of `pickAgeDeprecationCandidates`, regardless of age. Pinned by `lesson-store.test.ts` ("pickAgeDeprecationCandidates picks active lessons with success_count==0 older than threshold").
+7. **FIFO order is `updated_at ASC, id ASC`.** Oldest-by-modification-time is demoted first; ties break by id. Pinned by `lesson-store.test.ts` ("pickOverflowForDeprecation respects maxEntries").
+8. **Sweep runs even on a "none" tick.** No clusters formed ≠ skip deprecation. Pinned by `consolidator-job.test.ts` ("deprecation sweep runs on every tick, including when no clusters form").
+9. **`maxDeprecationsPerTick` is a combined cap across both passes.** Age + overflow demotions cannot exceed the cap in a single tick. Pinned by `consolidator-job.test.ts` ("sweep respects maxDeprecationsPerTick across both passes").
+10. **Demoted rows stay readable by id.** `LessonStore.getById(id)` returns the row regardless of `status`; only `recall` / `listIndex` filter it out. Pinned by `consolidator-job.test.ts` ("deprecated lessons are excluded from recall but still readable by id"). Cross-phase invariant 9 from MEMORY_FABRIC_V2.md.
+11. **`lesson_deprecated` fires once per demoted lesson with the right reason.** Trace bridge is wired only when `traceBus` is non-null. Pinned by `consolidator-job.test.ts` ("emits onLessonDeprecated for every demoted lesson (age + overflow)").
+12. **No schema change.** Phase 6 is purely behavioural over v8. The next bump is phase 7a (`vote_score` columns).
+
+**Out of scope (deferred).** Failure-count demotion (`failure_count > N → deprecate`) — today only `success_count = 0 + age` and FIFO drive demotion; phase 7a adds `vote_score < 0`. Soft-negative signal from `max_steps` and `stalled` outcomes. Per-`workingDir` scoping of the FIFO cap (today it is global — a noisy project can squeeze a quiet one's lessons out). Re-promotion (`undeprecate`) of a deprecated lesson when a future recall would surface it — today deprecation is one-way; the consolidator can mint a fresh lesson from the same cluster but the old row stays demoted forever.
+
+### Memory-v2 phase 7a — ExpeL-style vote curation
+
+Phase 7a adds an explicit operator-controlled curation signal across memories, lessons, and profile facts. The agent itself emits up- and down-votes through a new **reflection sub-call** (`vote-runner`) constrained by a GBNF grammar; the cold-path `ConsolidatorJob` decays the resulting scores once per tick and demotes targets that crossed into negative territory; the prompt renderer hides profile facts that fell past a configurable threshold. Vote curation is on by default via `memory.voting.enabled` (default `true`, config v21); set `false` to skip the vote-runner and cold-path decay.
+
+**Schema (v8 → v9).** Idempotent migration in [memory-schema.ts](src/memory/memory-schema.ts): adds `vote_score REAL NOT NULL DEFAULT 0.0` columns to `memories`, `lessons`, and `profile_facts`; creates a new `vote_events (id PK, kind, target_id, direction, session_id, turn_index, created_at)` audit table with `idx_vote_events_created` (FIFO eviction) and `idx_vote_events_target` (postmortem lookups). Indexes `idx_memories_vote_score` and `idx_lessons_vote_score` accelerate the per-tick deprecation predicate. No data is rewritten — rows migrated from v8 inherit `vote_score = 0`.
+
+**Configuration (`memory.voting.*`).** User config v15 → v16 (transparent migration; see [config-schema.ts](src/config/config-schema.ts)):
+
+- `memory.voting.enabled` (default `true`, config v21) — master switch. When off, the `VoteStore` is not constructed, the reflection chain is not decorated, and the consolidator's vote decay + vote-deprecation passes are skipped.
+- `memory.voting.maxVotePerItem` (default `5`) — strictly-positive clamp on `|vote_score|`. Bootstrap fails fast on `≤ 0` (scenario 7a.C.3).
+- `memory.voting.signalDecay` (default `0.95`) — multiplicative decay factor in `(0, 1]`. `1.0` is identity (audit-only mode); `0` disables decay **and** vote-deprecation but is rejected by validation. Applied once per consolidator tick — never per turn (cross-phase invariant 23).
+- `memory.voting.scoreBlend` (default `0.4`) — weight in `[0, 1]` for the lesson rerank: `combinedScore = bm25 + scoreBlend × vote_score + (1 - scoreBlend) × (success - failure)`.
+- `memory.voting.eventLogMaxRows` (default `2000`) — FIFO cap on `vote_events`.
+- `memory.voting.profileFilterThreshold` (default `2`) — strictly-positive threshold; profile facts with `vote_score ≤ -profileFilterThreshold` are hidden from `### profile` regardless of pinned/keyword status. `0` disables the filter.
+
+**Hot path — `vote-runner` reflection sub-call.** [src/memory/voting/](src/memory/voting/) ships a self-contained sub-call:
+
+- **Grammar.** [vote-grammar.ts](src/memory/voting/vote-grammar.ts) — bounded to `NONE`, `UPVOTE <kind>:<id>`, `DOWNVOTE <kind>:<id>` (kind ∈ {memory, lesson, profile}), capped at 8 entries per call. The `EDIT` marker from the original ExpeL spec is **deferred** — phase 7a ships up/down only.
+- **Prompt.** [vote-prompt.ts](src/memory/voting/vote-prompt.ts) — micro-prompt with the same shape as the reflection prelude. Carries the `userMessage`, the assistant reply, and a `VoteCandidate[]` list (kind + id + truncated preview). Aggressive preview truncation keeps the prompt under budget when many items surfaced.
+- **Parser.** [vote-parser.ts](src/memory/voting/vote-parser.ts) — strictly rejects votes against ids that are **not** in the per-turn `VoteAllowlist` (cross-phase invariant 18). The allowlist is the union of {recalled memory ids, recalled lesson ids, active profile fact ids}; the parser also deduplicates votes and caps at `maxVotes`. Out-of-allowlist votes never reach the store — they are tagged `out_of_allowlist` and recorded on the rejected counter.
+- **Runner.** [vote-runner.ts](src/memory/voting/vote-runner.ts) — wraps the LLM call, parses, and applies each accepted vote through `VoteStore.applyVote`. Timeouts / abort signals / LLM errors are folded into `runner_outcome` tags (`ok | none | skipped | aborted | timeout | failed`) so observability never blocks reflection.
+- **Decorator.** [vote-aware-reflection.ts](src/memory/voting/vote-aware-reflection.ts) — composes on top of `createLinkAwareReflectionRunner` (or the base reflection runner when links are off). The vote-runner fires **after** SET/NOTE/link-gen/EVOLVE so all candidates produced this turn are eligible.
+
+Wired in [bootstrap.ts](src/runtime/bootstrap.ts) when `memory.voting.enabled` is on; the decorator inherits the reflection slot (cross-phase invariant 2). `agent-loop.ts` was extended to thread `recalledLessonIds`, `recalledProfileFactIds`, and `turnIndex` into `ReflectionInput` so the decorator can hydrate previews without re-querying.
+
+**Cold path — vote decay + vote-deprecation sweep.** [consolidator-job.ts](src/memory/consolidator/consolidator-job.ts)'s `runOnce` was extended (still **after** distillation, **inside** the `finally` block):
+
+1. **Decay pass.** `voteStore.decayAllScores(signalDecay)` scales every `vote_score` row by the configured factor in a single SQL statement per table (cross-phase invariant 17). Once per tick, never per turn (cross-phase invariant 23). Metric `agent.memory.voting.decayed` fires one sample per kind. Decay runs **before** the deprecation sweep so the latter sees up-to-date scores.
+2. **Vote-deprecation sweep.** `LessonStore.pickVoteDeprecationCandidates({ limit })` returns active rows with `success_count = 0 AND vote_score < 0`, ordered by `vote_score ASC` (most-negative first). Each is demoted via `markDeprecated(id, "downvoted")` and emits a `lesson_deprecated` trace event. This pass runs **before** the existing age + FIFO sweeps so the highest-confidence "this is bad" signals retire ahead of merely-aged candidates when `maxDeprecationsPerTick` binds.
+
+`ConsolidatorTickResult` gained two fields: `lessonsDeprecatedByVote` and `voteDecayApplied`. The vote sweep is gated by `voteSignalDecay > 0`; when the master switch is off the sweep degrades to a no-op without touching scores.
+
+**Memory eviction — vote priority.** [memory-store.ts](src/memory/memory-store.ts)'s utility-weighted overflow eviction now orders by `vote_score ASC, recall_count ASC, COALESCE(last_recalled_at, 0) ASC, updated_at ASC, id ASC`. A downvoted memory row evicts before any neutral row regardless of age or recall count (scorecard 7a.A.3). Legacy FIFO mode (`eviction.utilityWeighted = false`) is unchanged.
+
+**Lesson recall — combined-score rerank.** [lesson-store.ts](src/memory/lessons/lesson-store.ts)'s `recall` accepts an optional `scoreBlend` (and `rerankPoolMultiplier`) that switches from pure BM25 ordering to `computeLessonCombinedScore(bm25, vote_score, success_count, failure_count)`. The rerank fetches a wider pool (`k × rerankPoolMultiplier`) so a less-relevant but heavily-upvoted lesson can surface. `scoreBlend = 0` collapses to pure success/failure ranking; `scoreBlend = 1` collapses to pure vote ranking. The default `0.4` weights operator votes more than auto-feedback.
+
+**Profile rendering — vote filter.** [profile-renderer.ts](src/memory/profile-renderer.ts) accepts `profileFilterThreshold` and drops every fact with `voteScore ≤ -threshold` **before** the contextual-keyword gate runs. A downvoted pinned fact disappears too (operators expect votes to override pinning). `threshold = 0` is back-compat (filter disabled).
+
+**Trace events.** [trace-event.ts](src/tracing/trace/trace-event.ts) gained `vote_applied { kind, targetId, direction, score, clampHit }` and `vote_rejected { kind, targetId, direction, reason }` event types. Emission rides the **per-session `TraceRecorder`**: `TraceRecorder.recordVoteApplied(...)` / `recordVoteRejected(...)` own the monotonic `seq` counter so vote events interleave cleanly with the agent-loop stream even though `VoteRunner` fires after `turn_finished`. The bridge is wired in [bootstrap.ts](src/runtime/bootstrap.ts) via the optional `emitTrace` callback on `VoteRunnerDeps`, which resolves the recorder by `event.sessionId` from the same `recorders` map the loop uses. Sink failures are swallowed (`safeEmit` in `vote-runner.ts`) so a recorder hiccup never derails vote application. `clamp_hit` writes emit `vote_applied { clampHit: true }` (not `vote_rejected`) — the operator's curation intent reached the store, the score just saturated.
+
+**Metrics.** [agent-metrics.ts](src/tracing/agent-metrics.ts) gained `agent.memory.voting.{runner,runner_latency_ms,applied,rejected,decayed}`. Runner outcomes (`ok | none | skipped | aborted | timeout | failed`), apply kinds, rejection reasons, and decay-per-kind are tagged so dashboards can split production noise.
+
+**Locked invariants** (pinned by [vote-store.test.ts](src/memory/voting/vote-store.test.ts), [vote-parser.test.ts](src/memory/voting/vote-parser.test.ts), [vote-runner.test.ts](src/memory/voting/vote-runner.test.ts), [consolidator-vote.test.ts](src/memory/consolidator/consolidator-vote.test.ts), [lesson-store-rerank.test.ts](src/memory/lessons/lesson-store-rerank.test.ts), [memory-store-v2.test.ts](src/memory/memory-store-v2.test.ts), [profile-renderer.test.ts](src/memory/profile-renderer.test.ts), [scorecard-7a.test.ts](src/memory/voting/scorecard-7a.test.ts)):
+
+1. **One inference per turn for voting.** The vote-runner is a single LLM call piggy-backing on the reflection slot — no recursive loops. Pinned by `vote-runner.test.ts`.
+2. **Allowlist is load-bearing.** A vote against an id that was not surfaced this turn is dropped at parse time, regardless of grammar validity. Cross-phase invariant 18. Pinned by `vote-parser.test.ts` ("rejects vote against id not in allowlist") and `vote-runner.test.ts`.
+3. **Clamp is symmetric.** `|vote_score| ≤ maxVotePerItem` enforced on every write; the saturated write returns `clamp_hit` without touching the audit log. Scenario 7a.C.2 in `scorecard-7a.test.ts`.
+4. **Decay is per-tick, not per-turn.** Bulk SQL, one statement per table. Two consecutive ticks decay twice; two consecutive turns within the same tick window decay zero times. Scenario 7a.D in `consolidator-vote.test.ts` + `scorecard-7a.test.ts`.
+5. **Vote-deprecation requires `success_count = 0`.** A lesson that helped at least one turn survives a net-negative vote signal; the operator's last resort is `lessonStore.markDeprecated` directly. Cross-phase invariant 19. Pinned by `consolidator-vote.test.ts` ("survives downvote if the lesson has at least one success bump").
+6. **Vote sweep precedes age sweep.** When both passes would fire and `maxDeprecationsPerTick` binds, the downvoted candidate retires first. Pinned by `consolidator-vote.test.ts` ("vote-sweep runs before age-sweep when both fire on the same tick").
+7. **Profile filter overrides pinning.** A pinned fact with `vote_score ≤ -threshold` is hidden from `### profile` (operators expect downvotes to override pinning). Pinned by `profile-renderer.test.ts` ("hides a pinned fact too when its vote_score is past the threshold").
+8. **Bootstrap fails fast on invalid clamp/decay.** `memory.voting.maxVotePerItem ≤ 0` or `signalDecay ∉ (0, 1]` rejects at config parse time **and** at bootstrap. Scenario 7a.C.3 in `scorecard-7a.test.ts`.
+9. **Vote curation is opt-out (config v21).** With `memory.voting.enabled = false`, `VoteStore` is not constructed, reflection is not decorated, the consolidator's vote pass degrades to a no-op (`voteDecayApplied = false`), and the eviction / rerank / renderer paths are byte-identical to phase 6.
+10. **Trace `seq` is recorder-owned.** `vote_applied` / `vote_rejected` events flow through `TraceRecorder.recordVoteApplied` / `recordVoteRejected`, never directly through `traceBus.emit(...)`. Recorder lookup by `sessionId` in the closure; a missing recorder is a normal "tracing disabled" outcome, not an error. Pinned by `trace-recorder.test.ts` ("vote events share the same seq counter as agent events") and `vote-runner.test.ts` ("emits vote_applied via emitTrace for each successful write" + "swallows emitTrace failures without aborting vote application").
+
+**Out of scope (deferred to phase 7b).** Vote rendering inside the prompt tail (today votes are observability-only; the agent reads `vote_score` indirectly through rerank + deprecation but never sees the raw number). `EDIT` marker for memory mutation (deferred — phase 7a is up/down only). Cross-session vote aggregation (today every vote is per-(session × target); a procedural memory consumed by 10 sessions accrues 10 independent vote signals). Per-`workingDir` filter thresholds. MemP-style procedure curation rides on top of this layer.
+
+### Memory-v2 phase 7b — MemP-style advisory procedure templates
+
+Phase 7b extends the consolidator with a second domain object: **procedures** — read-only "how-to" templates distilled from the same clusters that already produce lessons. A procedure carries an `activation` cue, an ordered `steps[]` array (description + optional `toolHint`), tags, status, lifecycle counters (`successCount`, `failureCount`, `useCount`), `vote_score`, and parent pointers into the lesson + memory cluster that birthed it. The agent **never** auto-executes a procedure — it reads the steps as guidance and either follows them or consciously deviates. This is the load-bearing invariant 20 below.
+
+The phase ships the second (and final) stable-prefix change of the v2 rollout: persona text mentions `### procedures` and the new `memory.procedures.recall` tool. KV-cache for every session is invalidated once on first boot; subsequent boots reuse the new prefix.
+
+**Schema.** [memory-schema.ts](src/memory/memory-schema.ts) bumped to `MEMORY_SCHEMA_VERSION = 10`. `V10_MIGRATION` adds the `procedures` table (`id`, `activation`, `steps` JSON, `tags` JSON, `status`, `success_count`, `failure_count`, `use_count`, `vote_score`, `parent_lesson_ids` JSON, `parent_memory_ids` JSON, `source`, `working_dir`, `created_at`, `updated_at`, `deprecated_at`), three indexes (`idx_procedures_status`, `idx_procedures_updated_at`, `idx_procedures_vote_score`), and a `procedures_fts` virtual table with the standard INSERT/DELETE/UPDATE triggers (porter unicode61). The migration is idempotent and runs from any of the four connections opened against `<stateDir>/memory.sqlite` (the first writer wins; subsequent connections see a no-op).
+
+**ProcedureStore.** [procedure-store.ts](src/memory/procedures/procedure-store.ts) mirrors `LessonStore` shape-for-shape so the bootstrap wiring is symmetric. CRUD: `create()` (validates activation length, steps count + per-step length, tags, parent id arrays), `getById()`, `recall({ query?, id?, k?, scoreBlend? })`, `listIndex({ limit })`, `markDeprecated(id, reason)`, `bumpUse() / bumpSuccess() / bumpFailure()`, `deprecateByParentLesson(lessonId, reason)`, `pickAgeDeprecationCandidates() / pickVoteDeprecationCandidates() / pickOverflowForDeprecation()`. `recall` is vote-aware: when `scoreBlend > 0`, BM25 hits are reranked by `(1 - blend) * normalised_bm25 + blend * normalised_vote_score`, identical formula to `LessonStore.recall`.
+
+**Combined distillation (invariant 21).** [distill-grammar.ts](src/memory/consolidator/distill-grammar.ts) ships `DISTILL_WITH_PROCEDURE_GRAMMAR` — `root ::= lesson "\n" opt-procedure`. The procedure half is **optional** (zero or one occurrence): conceptual clusters emit just the `LESSON` line, procedural clusters emit both. Steps are encoded as a single quoted string with `; ` separators and an optional `@toolhint` suffix per step; [distill-parser.ts](src/memory/consolidator/distill-parser.ts) re-parses that envelope into `ProcedureStep[]`. **Critically, the consolidator still makes exactly one LLM call per cluster** — the procedure is the second slot in the same completion. Pinned by `consolidator-job.test.ts` ("h.llmCalls === 1") and `scorecard-7b.test.ts` ("7b.A — exactly one LLM call").
+
+Parser failure isolation: if the `LESSON` line is malformed, the cluster aborts as before; if the `PROCEDURE` line is malformed (too few/many steps, oversized step, missing semicolons, malformed `@toolhint`) the parser silently degrades to `procedure: null` and the lesson half still persists. Pinned by `distill-parser-procedure.test.ts`.
+
+**Prompt tail.** [build-prompt.ts](src/prompt/build-prompt.ts) renders `### procedures` between `### lessons` and `### memory-index`. Each row is `><id> [tags] activation` — pointer-only; the full `steps[]` body never appears in the prompt by design. Token budget: `memory.procedures.maxTokens` (default `400`) with a `[truncated]` marker on overflow; the bytes are subtracted from the effective conversation cap by [token-budget.ts](src/prompt/token-budget.ts). The renderer [procedures-renderer.ts](src/memory/procedures/procedures-renderer.ts) sorts by `vote_score DESC` so the highest-confidence items survive the clip first.
+
+**Recall tool.** `memory.procedures.recall { id? | query?, k? }` — pure read, resource class `pure_read`. By id: returns the full body (incl. `steps[]`) even for `deprecated` rows so postmortems remain possible. By query: BM25 over `activation + steps + tags`, active rows only, capped at `k` (default from `memory.procedures.recallK`). Implementation in [procedures-recall.ts](src/tools/memory/procedures-recall.ts); the response renders steps as `1. <description> [@toolhint]` text — explicitly **text**, never a structured tool-call descriptor, because (invariant 20) the runtime is never allowed to feed those hints into a dispatcher.
+
+**Vote curation.** `VoteStore` was extended with the `procedure` kind ([vote-store.ts](src/memory/voting/vote-store.ts) — fourth `readScoreByKind` / `updateScoreByKind` / `decayByKind` row, `TABLE_BY_KIND.procedure = "procedures"`). The vote grammar's `kind` rule now includes `procedure`; the parser's `VoteAllowlist` interface gained a `procedure: ReadonlySet<number>` field; the decorator's hydrator pulls the matching `ProcedureStore` row when `recalledProcedureIds` is non-empty. The consolidator's `runDeprecationSweep` runs a vote → age → FIFO pass for procedures **after** the analogous lesson sweep, sharing the same `maxDeprecationsPerTick` budget. Decay is uniform across the four kinds (`memory`, `lesson`, `profile`, `procedure`); the `DecayResult` interface gained a fourth `procedures` field, defaulting to `0` when the schema is pre-v10. Metric `agent.memory.voting.decayed{kind=procedure}` fires once per tick.
+
+**Cascade deprecation.** When the lesson sweep demotes a lesson (downvote / aged / overflow), the consolidator immediately calls `procedureStore.deprecateByParentLesson(lessonId, "parent_deprecated")` to demote every active procedure that lists the dying lesson as a parent. Cascade counts roll up into `proceduresDeprecatedByCascade` on the tick result and into the `procedure_deprecated` trace event with `reason: "parent_deprecated"`. Failure-isolated: cascade exceptions never roll back the lesson demotion.
+
+**Trace events.** [trace-event.ts](src/tracing/trace/trace-event.ts) gained `TraceProcedureCreated` (`{ procedureId, parentLessonIds[], parentMemoryIds[], source }`) and `TraceProcedureDeprecated` (`{ procedureId, reason }`); the `VoteApplied` / `VoteRejected` kind unions were widened with `procedure`. Both procedure events are emitted by `ConsolidatorJob` via the same `traceBus` bridge that already carries `lesson_deprecated`, sharing the monotonic `consolidatorSeq` counter so the `<stateDir>/traces/consolidator.ndjson` file stays totally ordered across event kinds within a tick.
+
+**Configuration (`memory.procedures.*`).** Added in user config v17 with idempotent v16→v17 migration. Defaults: `enabled=true`, `recallK=3`, `maxTokens=400`, `indexLimit=12`, `maxEntries=200`, `deprecationAgeMs=14*24*3600*1000` (14 days). Disabling the master switch turns off the prompt section, the consolidator's procedure persist, the recall tool, and the vote allowlist contribution in one move — the store handle stays open for clean shutdown.
+
+**Locked invariants (pinned by tests).**
+
+1. **Invariant 20 — runtime never auto-executes `Procedure.steps`.** The `toolHint` field is plain text guidance; the agent reads it through the `memory.procedures.recall` tool and decides what to do. Pinned by `scorecard-7b.test.ts` ("7b.D — no file in src/ feeds Procedure.steps into tool dispatch") via a static grep gate.
+2. **Invariant 21 — distillation still emits exactly one LLM call per cluster.** Procedure is the second slot in the same completion, not a follow-up call. Pinned by `scorecard-7b.test.ts` ("7b.A") and `distill-parser-procedure.test.ts`.
+3. **Stable-prefix change is one-shot.** Persona text in [stable-prefix.ts](src/prompt/stable-prefix.ts) mentions `### procedures` and `memory.procedures.recall` once. Mutating it again invalidates KV-cache for every session — never edit the persona block without bumping a planned-deprecation note in `MEMORY_FABRIC_V2.md`.
+4. **Pointer-only prompt rendering.** `### procedures` lists `><id> [tags] activation` rows; the `steps[]` body is **never** rendered in the prompt. Drill-down requires an explicit `memory.procedures.recall { id }` call. Pinned by `procedures-renderer.test.ts` and `build-prompt.test.ts`.
+5. **Cascade is best-effort, failure-isolated.** `deprecateByParentLesson` exceptions never roll back the parent lesson demotion. Pinned by `consolidator-job.test.ts` ("sweep cascades a downvoted lesson onto its child procedure").
+6. **Bounded growth.** `maxEntries` (default 200) + per-tick deprecation cap + vote-aware FIFO eviction order (`vote_score ASC, updated_at ASC, id ASC`) keep the table bounded under all input distributions. Pinned by `procedure-store.test.ts` ("FIFO overflow").
+7. **`deprecateByParentLesson(lessonId, reason)` always takes a reason string.** Internal cascade callers pass `"parent_deprecated"`; manual ops paths pass `"manual"`. The reason flows into the trace event and the metric tag. Pinned by `procedure-store.test.ts` ("cascade marks the reason on the trace event").
+8. **Vote allowlist is the union of all four kinds.** `VoteAllowlist.procedure` is a real set (possibly empty); the decorator only adds procedure candidates when `recalledProcedureIds` was non-empty on the `ReflectionInput`. Pinned by `vote-parser.test.ts` and `vote-runner.test.ts`.
+9. **Graceful parser degradation.** A malformed `PROCEDURE` line yields `procedure: null` — the `LESSON` half still persists. The consolidator records `proceduresCreated += 0` for that cluster without aborting the tick. Pinned by `distill-parser-procedure.test.ts` ("degrades to null when steps quoting is malformed").
+
+**Out of scope (deferred to a future phase, if any).** Multi-lesson procedures (today every procedure points at exactly one parent lesson — the consolidator never produces a single procedure from a multi-cluster merge). Per-`workingDir` procedure scoping (today every procedure is globally visible regardless of where it was distilled). `EDIT` marker for procedure mutation (procedures are append-only; supersession would require a new entity). `useCount` auto-bumping from observed tool-chain match against `steps[]` (today `bumpUse()` is only callable via direct API — agents never trigger it). Operator UI for procedure inspection in TUI (today inspection is via `atomic-agent` CLI + `memory.sqlite` queries).
+
+**TUI surface — single screen, paired daemons, opt-in onboarding.** The "Models" tab in `atomic-agent tui` renders **both** the chat catalog and the embedding catalog on the same screen, separated by a `Embedding models (N) · paired with chat daemon` header. There is **no** catalog-toggle hotkey (the earlier `e` switcher was removed in favour of a single combined cursor). Indices `[0..rows.length-1]` are chat rows; `[rows.length..rows.length+embeddingRows.length-1]` are embedding rows; the shared helper `resolveRowAt(panel, idx)` is the single source of truth for "which row is under the cursor" — both the panel component and the key-binding layer go through it.
+
+Hotkeys are row-type-aware (resolved per-keystroke against the cursor's `LocalModelsRowRef.kind`):
+
+- **j / k / ↑ / ↓** — move the shared cursor across the combined list.
+- **Enter** on a chat row — pull (GGUF + mmproj for vision rows), or set active if already downloaded.
+- **Enter** on an embedding row — pull the GGUF (auto-flips `localModels.embeddings.{enabled, modelId}` to the row), or set active if downloaded.
+- **g** — chat-only GGUF pull (no-op on embedding rows; embedding models are text-only).
+- **i** — chat-only info detail (no-op on embedding rows).
+- **d** on a chat row — chat-scoped red-bordered remove-confirm modal (`removeConfirmId`).
+- **d** on an embedding row — embedding-scoped remove-confirm modal (`embeddingRemoveConfirmId`). The two modals are mutually exclusive at the type level so a stray `y` in the chat modal can never delete an embedding GGUF, and vice versa.
+- **E** (shift+e) — toggles `localModels.embeddings.enabled` without restarting any daemon. Operator chains an explicit `s` to apply.
+- **s** — drives `startChatAndEmbeddingDaemons` / `stopChatAndEmbeddingDaemons` (paired start and stop — see §"Daemon pairing" below).
+- **B / r / L** — backend pull, refresh, jump to LLM Logs.
+
+**Embedding-model onboarding modal.** When a chat-model pull finishes successfully AND no embedding model is currently configured AND no embedding GGUF exists on disk, the orchestrator **defers** the daemon start and emits `local_models_embedding_onboarding_opened` with the default embedding model (`DEFAULT_EMBEDDING_MODEL_ID`, `nomic-embed-text-v1.5` today). The panel renders an accent-bordered yes/no modal:
+
+- **y** — `orchestrator.resolveEmbeddingOnboarding(true)` pulls the default embedding model (flipping `embeddings.enabled = true`) and then starts the paired daemon.
+- **n / Esc** — `orchestrator.resolveEmbeddingOnboarding(false)` skips the pull and starts only the chat daemon.
+
+Either branch closes the modal and routes the operator back to chat (`ui_mode_set: chat`) once the start succeeds. The modal is a one-shot detour — it never re-appears after a chat-model pull if an embedding model is already on disk, even if `embeddings.enabled === false` (the operator's explicit "later" choice is respected). Pinned by [src/tui/local-models/local-models-reducer.test.ts](src/tui/local-models/local-models-reducer.test.ts) ("opens and dismisses the embedding onboarding modal") and [src/tui/local-models/local-models-key-bindings.test.ts](src/tui/local-models/local-models-key-bindings.test.ts) (`y` / `n` resolution).
+
+**Daemon pairing on TUI start/stop.** Every TUI code path that touches the daemon flows through `LocalModelsOrchestrator.{startDaemon, stopDaemon, stopDaemonSilent}` and they are wired to the paired entry points:
+
+- `startDaemon` → `startChatAndEmbeddingDaemons({ chat, embedding? })` — chat is fatal-on-failure, embedding is fatal-on-`buildEmbeddingStartOptions=undefined`-only-then-skip (graceful degradation contract). The skip conditions are: `embeddings.enabled=false`, `embeddings.modelId=null`, an unknown id, or the model GGUF is not on disk.
+- `stopDaemon` / `stopDaemonSilent` (shutdown) → `stopChatAndEmbeddingDaemons(dataDir)` — always tries to kill both pid files. `stopDaemonSilent` is invoked from `LocalModelsOrchestrator.shutdown()` so closing the TUI tears down both daemons together.
+- `autoStartIfReady` (called once at TUI launch) reuses `startDaemon`, so a fresh TUI boot starts both daemons whenever an embedding model is configured + downloaded.
+
+**Pairing reconciliation (`ensureEmbeddingPaired`).** Beyond the symmetric start/stop path, every TUI mutation that touches embedding-side config or model files reconciles the embedding daemon to the pairing invariant — **if the chat daemon is alive, the embedding daemon must be alive iff `embeddings.enabled && modelId is a known catalog entry && GGUF is on disk`**. The helper `LocalModelsOrchestrator.ensureEmbeddingPaired({ hotSwap? })` is the single seam; it is called from:
+
+- `pullEmbeddingModel` after a successful GGUF download (`hotSwap: true` — the new model replaces whatever the daemon was last serving, including the same-name reload edge case).
+- `setActiveEmbedding` when the chosen model is already on disk (`hotSwap: true` — model id changed, possibly with a different dim).
+- `toggleEmbeddingEnabled` for both directions (no `hotSwap` — `enabled=true` starts when nothing is running, `enabled=false` stops when running).
+- `autoStartIfReady` after adopting an externally-started chat daemon (no `hotSwap` — only fills in a missing embedding side, never preempts a healthy one).
+
+When the chat daemon is not running, `ensureEmbeddingPaired` is a no-op: the next paired `startDaemon` call (or `autoStartIfReady` on a cold TUI) handles both sides atomically via `startChatAndEmbeddingDaemons`, which is the cheaper path. The helper uses `startEmbeddingDaemon` / `stopEmbeddingDaemon` (single-side primitives) rather than the paired orchestrator so chat is never inadvertently bounced mid-conversation. All failures degrade gracefully — the embedding side reports the error to the runtime feed and falls back to FTS5-only recall; chat keeps running. Pinned by [src/tui/local-models/local-models-orchestrator-pairing.test.ts](src/tui/local-models/local-models-orchestrator-pairing.test.ts) (five cases: start-when-paired, no-op-when-chat-down, hot-swap, master-switch-off, adoption-pairs).
+
+The "LLM Logs" tab tails `llama-embed.log` next to the chat log in the same viewport (separator: `── llama-embed.log ──`) when the file exists — a missing embedding log is silently skipped so chat-only operators see no difference. `LocalModelsOrchestrator` is the only TUI module that touches `getEmbeddingDaemonStatus` / `startChatAndEmbeddingDaemons` / `pullEmbeddingModel` / `resolveEmbeddingOnboarding` — the orchestrator-as-seam invariant from the chat side extends verbatim.
 
 The three channels share one SQLite file `<stateDir>/memory.sqlite` (separate from `sessions.sqlite`):
 
@@ -263,6 +737,159 @@ All keys under `memory.*` in the user config and [src/config/config-schema.ts](s
 ### Explicit out-of-scope
 
 Episodic summaries, `topic`/`expires_at` columns, embeddings / semantic search, importance scoring, content-based deduplication of notes, and secret redaction are deliberately deferred. See [MEMORY.md §10](MEMORY.md) for the known-limitations list.
+
+### Memory v2.5 — phase A heuristic-gated query rewriter (opt-in)
+
+A new module [src/memory/retrieve/](src/memory/retrieve/) adds an LLM-based **query rewriter** that runs **before** `MemoryStore.recallHybridAsync` whenever the current user message looks **referential** (short, pronoun-laden, conjunction-starter). The rewriter expands "did they mention it?" into a self-contained query using the trailing 2-3 conversation turns; non-referential messages bypass the rewriter entirely and use the raw query. The whole layer is wrapped as a **decorator** around `createDefaultMemoryContextProvider` so the byte-output is identical to v2 when the flag is off.
+
+**Rewriter gate (`gateMode`).** Config v20 adds a pluggable `RewriterGate` ([rewriter-gate.ts](src/memory/retrieve/rewriter-gate.ts)) selected by `memory.retrieve.rewriter.gateMode`:
+
+| Mode | Implementation | When to use |
+|---|---|---|
+| `heuristic` (product default) | `isReferentialMessage` word lists | Low latency, no embedding daemon required |
+| `embedding` | Cosine vs curated EN exemplars via `EmbeddingClient` | Multilingual / long self-contained questions (LoCoMo Temporal) |
+| `always` | Always fire when history is non-empty | Debug / eval only |
+
+**Heuristic gate.** `isReferentialMessage(msg, historyLen)` in [referential-detector.ts](src/memory/retrieve/referential-detector.ts) is a pure function — no I/O, no state. **16 whitespace-tokenized languages:** en, ru, es, de, fr, pt, it, nl, pl, tr, ar, he, hi, vi, id, ko. Returns `true` when any of:
+
+- Length ≤ 5 words AND no leading question word from the multilingual allowlist. A short message asking "what is X?" is **not** referential because it carries its own anchor.
+- Contains any pronoun from the allowlist (`it`, `they`, `eso`, `das`, `ça`, `то`, …).
+- Starts with a conjunction (`and`, `but`, `y`, `und`, `et`, `и`, `но`, …).
+
+**CJK / Thai deferred on heuristic.** Languages without inter-word spaces (zh, ja, th) do not tokenize under `split(/\s+/)` — use `gateMode: "embedding"` instead (`Intl.Segmenter` heuristic support is a follow-up).
+
+**Embedding gate.** [embedding-gate.ts](src/memory/retrieve/embedding-gate.ts) lazy-warms unit-normalized vectors for `DEFAULT_REWRITER_EXEMPLARS` (or `embeddingGate.exemplars`), embeds the user message, and fires when `max(cosine) >= embeddingGate.threshold` (default `0.65`). Fail-safe **B**: any warm or per-call `EmbeddingUnavailableError` → skip rewrite + `embedding_gate.unavailable` log (same outcome as `skipped_not_referential`). Requires the phase-1B embedding daemon; bootstrap falls back to heuristic + warns when `gateMode=embedding` but no `embeddingClient`.
+
+When the gate returns `false`, the recall layer is byte-identical to v2: no LLM call, no rewriter prompt, no rewriter slot reservation. When it returns `true`, the rewriter runner fires (see below).
+
+**Runner.** [query-rewriter-runner.ts](src/memory/retrieve/query-rewriter-runner.ts) orchestrates a single LLM call:
+
+- **Prompt** ([query-rewriter-prompt.ts](src/memory/retrieve/query-rewriter-prompt.ts)) — small stable prefix + variable tail with the last K turns and the current ambiguous message. The model is told to emit a single `<rewritten_query>...</rewritten_query>` envelope or the literal token `NONE` when no rewrite is possible.
+- **Grammar** ([query-rewriter-grammar.ts](src/memory/retrieve/query-rewriter-grammar.ts)) — `root ::= "<rewritten_query>" body "</rewritten_query>"` with `body ::= [^<]{1,400}`, plus a `NONE` alternative for explicit abstain.
+- **Parser** ([query-rewriter-parser.ts](src/memory/retrieve/query-rewriter-parser.ts)) — length-clamps the body, returns `null` on the `NONE` token, fails closed on malformed input (caller falls back to raw query).
+- **Slot.** `slotId: -1` always — see invariant 1 below.
+- **Timeout.** Hard cap `memory.retrieve.rewriter.timeoutMs` (default 3000ms). On timeout/abort/parse-failure, the runner returns the raw user message and the recall layer continues.
+
+**Decorator** [rewriter-aware-recall-provider.ts](src/memory/retrieve/rewriter-aware-recall-provider.ts) wraps an inner `MemoryContextProvider`. It intercepts `buildMemoryContext({ userMessage, recentTurns, ... })`, fires the rewriter when both (a) the gate matches and (b) `recentTurns.length > 0`, then forwards a (possibly) rewritten `userMessage` to the inner provider. Everything else (`### memory-index`, lesson recall, profile rendering) is untouched.
+
+**`MemoryContextProviderInput.recentTurns`.** The decorator needs trailing user/assistant context, but `MemoryContextProviderInput` did not carry it pre-v2.5. The interface was extended with an optional `recentTurns: readonly { role: "user" | "assistant"; text: string }[]` — populated by `agent-loop.refreshMemoryContext` via the new helper `collectRecentUserAssistantTurns(state, options.userMessage)`. Older providers that never read the field stay byte-stable; the default provider ignores it.
+
+**Locked invariants** (pinned by [referential-detector.test.ts](src/memory/retrieve/referential-detector.test.ts), [query-rewriter-parser.test.ts](src/memory/retrieve/query-rewriter-parser.test.ts), [query-rewriter-runner.test.ts](src/memory/retrieve/query-rewriter-runner.test.ts), [rewriter-aware-recall-provider.test.ts](src/memory/retrieve/rewriter-aware-recall-provider.test.ts)):
+
+1. **Rewriter always uses `slotId: -1`.** The main agent slot's KV cache is **never** touched by the rewriter call; the reflection slot is also untouched (the rewriter is a recall-side concern, not a reflection-side concern). Pinned by `query-rewriter-runner.test.ts` ("uses slotId -1 to keep the main agent and reflection slots untouched").
+2. **Fire-safe.** Any rewriter failure (timeout / abort / malformed completion / parser error) folds to "use the raw user message". The recall never blocks and never raises — pinned by `query-rewriter-runner.test.ts` (multiple cases) and the `outcome` taxonomy on `agent.memory.retrieve.rewriter`.
+3. **Disabled by default.** With `memory.retrieve.rewriter.enabled = false`, the bootstrap does not construct a rewriter runner; the inner `MemoryContextProvider` is returned as-is. The recall path is byte-identical to v2.
+4. **Heuristic gate is pure.** No I/O, no state — easy to assert across a matrix of inputs. Pinned by `referential-detector.test.ts`.
+5. **Empty history is a hard skip.** Even when the gate fires, the rewriter is not called if `recentTurns` is empty (nothing to anchor against) — outcome `skipped_no_history`, raw query is used. Pinned by `rewriter-aware-recall-provider.test.ts`.
+
+**Configuration.** Added in user config v18; gate modes in v20 — older files transparently migrate with the block disabled / `gateMode: heuristic`.
+
+- `memory.retrieve.rewriter.enabled` (default `true`, config v21).
+- `memory.retrieve.rewriter.timeoutMs` (default `3000`).
+- `memory.retrieve.rewriter.historyTurns` (default `3`).
+- `memory.retrieve.rewriter.gateMode` (default `"heuristic"`). Eval `on` profile in [eval-memory/harness/memory-profiles.ts](eval-memory/harness/memory-profiles.ts) defaults to `"embedding"`.
+- `memory.retrieve.rewriter.embeddingGate.threshold` (default `0.65`).
+- `memory.retrieve.rewriter.embeddingGate.exemplars` (default `null` → built-in EN list).
+
+**Metrics.** [agent-metrics.ts](src/tracing/agent-metrics.ts):
+
+- Counter `agent.memory.retrieve.rewriter` tagged by `outcome ∈ {ok, skipped_not_referential, skipped_no_history, aborted, timeout, failed}`.
+- Histogram `agent.memory.retrieve.rewriter.duration_ms`.
+- Counter `agent.memory.retrieve.rewriter.gate.fired` (tagged `gate_mode`).
+- Counter `agent.memory.retrieve.rewriter.gate.skipped` (tagged `gate_mode` + `reason ∈ {below_threshold, no_history, unavailable, empty_message}`).
+- Histogram `agent.memory.retrieve.rewriter.gate.cosine_score` (embedding mode only).
+
+### Memory v2.5 — phase B sliding-window reflection segmentation (opt-in)
+
+Instead of firing reflection after **every** turn (legacy behaviour), accumulate the last N user/assistant pairs and fire reflection over the whole window every K turns. Both K and W are config; the legacy per-pair micro-reflection comes back when the flag is off.
+
+**Trigger logic** in [src/agent/agent-loop.ts](src/agent/agent-loop.ts) (`runTurn` reflection block):
+
+- **Segmentation disabled (default).** Fire on `reason === "reply"` only when a user message arrived this turn. Single-pair prompt — byte-identical to v2.
+- **Segmentation enabled.**
+  - On `reply`: fire iff `state.turnCount > 0 && state.turnCount % triggerEveryTurns === 0`. Skip otherwise.
+  - On `finish`: **always** fire (final flush — see invariant 1 below). Skip silently when no user/assistant pair exists in the session yet.
+  - On every fire: pack the last `windowTurns` user/assistant pairs into `ReflectionInput.transcript` via `collectLastUserAssistantPairs(state, windowTurns)`. The trailing pair's `user` / `assistant` content is mirrored into the existing `userMessage` / `assistantReply` fields so the runner contract stays satisfied for downstream sub-calls (link-generator, vote-runner) that still read those scalar fields for the per-turn anchor.
+
+**Pair projection.** `collectLastUserAssistantPairs` walks `state.turns` forward, pairing each `user` row with the **next** `assistant_reply` row. Intervening tool calls / results are ignored — the reflection prompt only consumes the human/agent text. Orphan trailing `user` rows (no reply yet) are dropped so every entry in the window is complete.
+
+**Prompt rendering.** [src/memory/reflection/reflection-prompt.ts](src/memory/reflection/reflection-prompt.ts) `buildReflectionPrompt` accepts the new optional `transcript` field. When present and non-empty, the tail renders:
+
+```
+### turn 1
+USER: ...
+ASSISTANT: ...
+### turn 2
+USER: ...
+ASSISTANT: ...
+
+### output
+```
+
+When `transcript` is omitted (or empty), the legacy single-pair tail (`USER: ...\nASSISTANT: ...`) is byte-identical to v2. The **stable prefix** (`REFLECTION_STABLE_PREFIX` / `REFLECTION_STABLE_PREFIX_TYPED`) is unchanged — segmentation lives entirely in the variable tail.
+
+**Locked invariants** (pinned by [agent-loop-segmentation.test.ts](src/agent/agent-loop-segmentation.test.ts), [reflection-prompt.test.ts](src/memory/reflection/reflection-prompt.test.ts) phase-B cases):
+
+1. **Final flush on `finish`.** When `reason === "finish"` and segmentation is enabled, reflection fires unconditionally so the trailing partial cadence window is never lost. Pinned by `agent-loop-segmentation.test.ts > "'finish' always triggers the final flush even mid-cadence"`.
+2. **Disabled by default.** With `memory.reflection.segmentation.enabled = false`, the loop fires reflection once per `reason: "reply"` with a single-pair prompt and no `transcript` field on `ReflectionInput` — byte-stable with v2. Pinned by `agent-loop-segmentation.test.ts > "disabled (default): fires reflection on every reply without a transcript"`.
+3. **No new periodic timer.** Trigger is a per-turn check inside `agent-loop.runTurn` — not a `setInterval`. Respects the §"Background autonomy" carve-out invariant; the `Scheduler` and the consolidator's scoped `setInterval` remain the only periodic timers in the runtime.
+4. **Cross-session parallelism untouched.** The cadence counter is `state.turnCount` on the per-session `SessionState`; a fire on session A never influences session B's cadence. Pinned by `agent-loop-segmentation.test.ts > "cross-session reflections stay scoped to their own sessionId"`.
+5. **Stable-prefix bytes are not affected.** The transcript window lives in the tail; both `REFLECTION_STABLE_PREFIX` and `REFLECTION_STABLE_PREFIX_TYPED` are byte-identical between a single-pair and a windowed call. Pinned by `reflection-prompt.test.ts > "phase B: keeps the stable prefix byte-identical when transcript is present"`.
+6. **Pair completeness.** `collectLastUserAssistantPairs` only emits complete `{ user, assistant }` pairs — orphan trailing user rows are dropped. The transcript window is always chronological (oldest first).
+7. **`finish` on an empty session is a silent no-op.** No runtime error, no crash, no reflection fired (no pair to extract from). Pinned by `agent-loop-segmentation.test.ts > "a 'finish' on an empty session skips reflection"`.
+
+**Configuration.** Added in user config v18 — older files transparently migrate with the block disabled.
+
+- `memory.reflection.segmentation.enabled` (default `false`).
+- `memory.reflection.segmentation.triggerEveryTurns` (default `3`).
+- `memory.reflection.segmentation.windowTurns` (default `5`).
+
+**Out of scope.** No LLM-driven topic/judger segmentation on reflection — the counter-based gate plus final-flush invariant is sufficient for v2.5. No persistence of pending-window state beyond `SessionState.turns[]` (already there). No cross-session cadence aggregation.
+
+### Memory v2.5 — phase C typed NOTE extraction (opt-in)
+
+Force the reflection LLM to tag every `NOTE` with one of four semantic buckets (`event` / `behavior` / `knowledge` / `skill`) using a `[type=X]` marker immediately after `NOTE `. The marker is parsed into a synthetic `type:X` tag on the stored `MemoryEntry.tags` JSON array — **no schema change**, no migration, no new entity. FTS5 indexes the tag for free; phase 2 link-graph, phase 5 lessons, phase 7a votes all keep working unchanged.
+
+**Grammar.** [src/memory/reflection/reflection-grammar.ts](src/memory/reflection/reflection-grammar.ts) was extended:
+
+```
+note      ::= "NOTE " typemark? body "\n"
+typemark  ::= "[type=" notetype "] "
+notetype  ::= "event" | "behavior" | "knowledge" | "skill"
+```
+
+`typemark` is **optional** so legacy untyped completions emitted by older prompts still validate cleanly — the grammar accepts both shapes; the prompt is what makes the typed shape canonical when the flag is on. The marker requires a trailing space (mirrors the rule body) so a malformed `[type=event]body` line is treated as untyped — the body is preserved, no synthetic tag emitted.
+
+**Parser.** [src/memory/reflection/reflection-parser.ts](src/memory/reflection/reflection-parser.ts) recognises `[type=X] ` on `NOTE ` lines and projects `X` into a synthetic tag `type:event` / `type:behavior` / `type:knowledge` / `type:skill` (allowlist `NOTE_TYPE_ALLOWLIST`). Unknown types are dropped silently — the body still parses but no synthetic tag is emitted (fail-open on tag, never lose the observation). The synthetic tag is **prepended** to the parsed `[tags=...]` list so consumers can sort/filter by `type:*` prefix; cap is the shared `NOTE_MAX_TAGS = 10`.
+
+**Prompt.** Two stable prefixes coexist:
+
+- `REFLECTION_STABLE_PREFIX` — legacy v2 untyped prompt (untouched).
+- `REFLECTION_STABLE_PREFIX_TYPED` — typed prompt with per-type guidance and forbidden lists.
+
+`buildReflectionPrompt({ typedNotes: true })` picks the typed prefix; otherwise the legacy prefix. The two prefixes are byte-stable module-level constants so each owns its own KV cache slot on the reflection daemon — flipping the flag invalidates **the reflection slot's** KV cache once on the next call; the **main agent slot is unaffected** (the agent prompt never carries either reflection prefix). This is the same one-shot pattern phase 4 introduced for the bi-temporal prompt extension.
+
+**Per-type contracts:**
+
+- `[type=event]` — a specific happening at a particular time, with participants/location when known. Never a recurring routine.
+- `[type=behavior]` — a recurring pattern, routine, or established solution. **Never** a single one-off event.
+- `[type=knowledge]` — static factual content the user knows or works with (concepts, definitions, domain lore). **Never** events or behaviors.
+- `[type=skill]` — a replicable how-to with concrete tools, steps, and outcomes. **Never** trivial actions ("used Docker") or pure opinions.
+
+**Locked invariants** (pinned by [reflection-grammar.test.ts](src/memory/reflection/reflection-grammar.test.ts), [reflection-parser.test.ts](src/memory/reflection/reflection-parser.test.ts) phase-C cases, [reflection-prompt.test.ts](src/memory/reflection/reflection-prompt.test.ts) phase-C cases):
+
+1. **No schema migration.** `type` lives as a string tag on the existing `memories.tags` JSON column. FTS5 indexes it for free.
+2. **Backward compatible.** Legacy untyped NOTEs from older sessions still load and recall correctly — `type:*` tag is just absent. Pinned by `reflection-parser.test.ts > "phase C: parses a legacy untyped NOTE line without a type tag"`.
+3. **Unknown types fail open.** A `[type=foo] body` line drops the unknown marker silently and stores the body without a synthetic tag — never loses the observation. Pinned by `reflection-parser.test.ts > "phase C: drops an unknown type marker"`.
+4. **One-time KV cache invalidation on the reflection slot.** Flipping `memory.reflection.typedNotes.enabled` swaps the stable prefix between two module-level constants; each is byte-stable across calls. The **main agent slot is untouched** (the reflection prefix is never rendered into the agent prompt). Pinned by `reflection-prompt.test.ts > "phase C: typed prefix is byte-stable across calls (KV-cache hygiene)"`.
+5. **Phase B composes cleanly.** When both `typedNotes` and `transcript` are passed to `buildReflectionPrompt`, the typed prefix is used and the tail renders as numbered `### turn N` blocks. Pinned by `reflection-prompt.test.ts > "phase B: composes with typedNotes=true"`.
+6. **Existing v2 tests stay green.** All phase 1B / 2 / 3 / 5 / 7a / 7b tests continue passing because no entity shape changed — `type:*` is just another tag.
+
+**Configuration.** Added in user config v18 (bundled with phases A and B in a single version bump for atomic migration).
+
+- `memory.reflection.typedNotes.enabled` (default `false`).
+
+**Out of scope.** No `content` column on `MemoryEntry` to carry semantic type structure (the marker is in `tags` only). No automatic re-typing of legacy untyped rows. No agent-facing `memory.notes.recall { type: "event" }` shorthand (use `query: "type:event"` against FTS5 instead — same effect).
 
 ## Concurrency contract
 
@@ -547,6 +1174,29 @@ Pinned by [src/scheduler/scheduler.test.ts](src/scheduler/scheduler.test.ts), [s
 8. **`session.metadata.wakeReason` is audit-only.** Survives restart, never rendered into the prompt.
 9. **Agent tool validation errors are structured, not thrown.** Including nested errors from schedule parsing.
 
+### TUI surface (Memory tab)
+
+The `atomic-agent tui` Manage pane exposes read-only inspection of the memory fabric. State slice `state.memoryPanel` in [src/tui/tui-state.ts](src/tui/tui-state.ts) drives `list` / `detail` views across six channels: `profile`, `notes`, `lessons`, `procedures`, `links`, `votes`.
+
+Module map:
+
+- [src/tui/memory/memory-panel-state.ts](src/tui/memory/memory-panel-state.ts) — slice types + `MEMORY_CHANNEL_ORDER`.
+- [src/tui/memory/memory-orchestrator.ts](src/tui/memory/memory-orchestrator.ts) — the **only** TUI module that reads `runtime.profileStore`, `notesStore`, `lessonStore`, `procedureStore`, `linkStore`, and `voteStore`.
+- [src/tui/memory/memory-reducer.ts](src/tui/memory/memory-reducer.ts) — pure fold of `memory_*` actions.
+- [src/tui/components/memory-panel.tsx](src/tui/components/memory-panel.tsx) — list/detail router.
+
+`AgentRuntime` exposes `readonly linkStore: LinkStore` (always constructed; recall expansion and link-generator remain gated on `memory.links.enabled`). Operator inspection uses `LinkStore.listAll({ limit })` (default 500, hard cap 1000).
+
+Slash commands: `/memory` opens the tab; `/memory dump` keeps the legacy profile dump into chat (`ChatOrchestrator.dumpProfile()`).
+
+**Locked invariants** (pinned by [src/tui/memory/memory-reducer.test.ts](src/tui/memory/memory-reducer.test.ts), [src/tui/memory/memory-filter.test.ts](src/tui/memory/memory-filter.test.ts), [src/memory/links/link-store.test.ts](src/memory/links/link-store.test.ts), [src/tui/commands/slash-command-handler.test.ts](src/tui/commands/slash-command-handler.test.ts)):
+
+1. **`MemoryOrchestrator` is the only TUI module that touches memory stores.** Components dispatch actions; refresh runs via `memory_refresh_requested` on the event bus.
+2. **Read-only.** No delete / vote / write paths in the tab.
+3. **The editor is disabled on the Memory tab.** Single-char hotkeys (`j`/`k`/`r`/`f`/`[`/`]`/`g`) do not collide with typing.
+4. **Note detail exposes link neighbours when `memory.links.enabled`.** `g` runs `linkStore.expand`; Enter on a neighbour opens that note by id.
+5. **Config gates surface hints, not crashes.** Disabled channels show an empty list + `channelHint` string.
+
 ## Vision (multimodal input)
 
 Image recognition is an opt-in feature wired exclusively through the new provider abstraction in [src/llm/provider/](src/llm/provider/). The text agent loop is unchanged — vision lives outside the conversation transcript, exposed only via the `vision.describe` tool.
@@ -689,6 +1339,118 @@ Pinned by [src/runtime/bootstrap.test.ts](src/runtime/bootstrap.test.ts), [src/c
 
 Multi-user pairing flows, per-chat session isolation, MarkdownV2 rendering (the escape surface is too wide for typical LLM output and `parse_mode: "MarkdownV2"` rejects the whole message on a single stray reserved char — see §"Outbound formatting"), structured menu / command surfaces beyond plain text, message editing for streaming output, file uploads (image / document ingestion through Telegram), webhook ingress as a Telegram-specific endpoint (the generic `/api/webhooks/:name` path is the existing surface), and a generic `Channel` abstraction (Slack / WhatsApp adapters) are all deferred. The seam is `src/channels/<name>/`; only extract shared interfaces when a second concrete channel actually lands.
 
+## MCP client
+
+`atomic-agent` is an **MCP (Model Context Protocol) client** that connects to external MCP servers and surfaces their tools / resources / prompts to the agent through the existing `ToolRegistry`. The runtime never exposes an MCP server interface itself — atomic-agent is a consumer, not a producer. Code lives in [src/mcp/](src/mcp/); the cold-path wiring is in [src/runtime/bootstrap.ts](src/runtime/bootstrap.ts) right after vision + before the descriptor filter / grammar build.
+
+### Why MCP
+
+Every MCP server adds a bounded, declarative surface of capabilities (tools / resources / prompts) without forcing the runtime to grow another bespoke integration. The model picks them by **qualified name** (`mcp.<server>.<tool>`); per-server trust levels decide how the runtime batches and approves calls; tools are loaded into the prompt at tier `frequent` so the model sees their full `argsSchema` in the stable prefix and can call them on the first shot without an intervening `tool.view`. The historical `rare`-tier rendering surfaced only one-line stubs under `# extras`, which in practice meant smaller local models almost never invoked MCP tools at all — visible but practically unusable without a discovery hop the model rarely thought to take. The trade-off is paid as a one-time bump in stable-prefix tokens proportional to the connected MCP catalog; operators wiring up chatty / untrusted servers should weigh that explicitly.
+
+### Lifecycle
+
+`McpManager` is constructed unconditionally at bootstrap (mirrors the Telegram channel pattern) — even when `config.mcp.servers[]` is empty — so any future live-control surface stays uniform. An empty configuration produces a zero-cost no-op manager: `start()` returns immediately, no resolver is installed, no aggregate tools are registered.
+
+When at least one server is configured, bootstrap:
+
+1. Constructs the manager.
+2. Awaits `mcpManager.start()` — each `McpClient` opens its transport with a hard 15s connect timeout (`DEFAULT_CONNECT_TIMEOUT_MS` in `mcp-client.ts`), runs the MCP `initialize` handshake, installs the optional sampling handler, and refreshes the catalog. Failures are isolated per-server; one bad config never blocks bootstrap.
+3. Registers the aggregate `mcp.resource.{list,read}` and `mcp.prompt.{list,get}` tools — single per-runtime registration; the tools dispatch by the `server` arg rather than producing one tool per server (the prompt would explode).
+4. Builds `McpToolDescriptor[]` from every connected catalog and merges them into `effectiveToolDescriptors` via `mergeMcpDescriptors` — MCP descriptors land at the end of the prompt's `### tools` block at tier `frequent` (full `argsSchema` in `# common (full)`).
+5. Applies the dynamic `mcp-server-tool` GBNF rule via `applyMcpToolNameRule(grammar, buildMcpToolNameRule(metas))`. The static `grammars/tool-call.gbnf` file ships a permissive placeholder; the runtime replaces it with an alternation of the actual qualified names so the LLM can only emit tools that resolve to a registered `ToolDefinition`.
+
+`shutdown()` closes every `McpClient` (best-effort, errors swallowed), tears down every registered tool, and clears the dynamic resource-class resolver. The MCP shutdown step runs between Telegram channel shutdown and browser/SQLite teardown so in-flight sampling calls have a chance to drain before the LLM client is torn down.
+
+### Module map
+
+| File | Responsibility |
+|---|---|
+| [mcp-types.ts](src/mcp/mcp-types.ts) | Neutral type shapes: `McpServerConfig`, `McpToolMeta`, `McpResourceMeta`, `McpPromptMeta`, `McpServerStatus`, `McpTrustLevel`. No SDK objects leak out of `mcp-client.ts`. |
+| [mcp-errors.ts](src/mcp/mcp-errors.ts) | `McpError` / `McpConnectError` / `McpRequestError` hierarchy + `scrubErrorMessage`. Every user-facing surface (status badge, log, TUI label) goes through the scrubber. |
+| [mcp-resource-class.ts](src/mcp/mcp-resource-class.ts) | `qualifyMcpToolName` / `splitMcpToolName` + `createMcpResourceClassResolver` (the per-server trust → `ResourceClass` mapper). |
+| [mcp-client.ts](src/mcp/mcp-client.ts) | **The only file that imports `@modelcontextprotocol/sdk`.** Wraps `Client` + the three transports (stdio / streamable_http / sse). Owns connect / refresh / RPC / close. |
+| [mcp-sampling-handler.ts](src/mcp/mcp-sampling-handler.ts) | Routes `sampling/createMessage` from MCP servers to `LlamaServerClient.complete` with `slotId: -1` + `cachePrompt: false`. Also imports the SDK for the `CreateMessageRequest` / `CreateMessageResult` shapes; no other module needs them. |
+| [mcp-tool-adapter.ts](src/mcp/mcp-tool-adapter.ts) | `createMcpToolDefinition(meta, client)` — wraps an MCP tool as a `ToolDefinition` for the registry. Projects the heterogenous MCP response into a single `output` string + structured `details`; folds errors into `status: "error"` so siblings inside a batch keep running. |
+| [mcp-manager.ts](src/mcp/mcp-manager.ts) | One `McpClient` per server, lifecycle, status sink, tool register/unregister, dynamic resolver install/clear. |
+| [mcp-descriptor-builder.ts](src/mcp/mcp-descriptor-builder.ts) | `buildMcpToolDescriptor` + `buildMcpToolDescriptors` + `mergeMcpDescriptors`. Every MCP tool ships at tier `frequent` (full schema in the stable prefix — discoverability over prefix size). Server-then-tool alphabetical sort → deterministic stable-prefix bytes. |
+| [mcp-grammar-builder.ts](src/mcp/mcp-grammar-builder.ts) | `buildMcpToolNameRule` + `applyMcpToolNameRule`. Pure functions; deterministic sort + dedup ensure byte-stable output. |
+| [mcp-resource-tools.ts](src/mcp/mcp-resource-tools.ts) / [mcp-prompt-tools.ts](src/mcp/mcp-prompt-tools.ts) | Aggregate read-only tools (`mcp.resource.list`, `mcp.resource.read`, `mcp.prompt.list`, `mcp.prompt.get`). Dispatch by `server` arg. Resource class `pure_read`. |
+
+### Resource classification
+
+Every MCP-namespaced tool resolves to a `ResourceClass` through the dynamic resolver installed by `McpManager.ensureResolver()`. The resolver is the **only** non-static path through `resourceClassFor` (see `setDynamicResourceClassResolver` in [src/agent/tool-resource-class.ts](src/agent/tool-resource-class.ts)).
+
+| Trust level on `McpServerConfig` | Resolved class | Behaviour |
+|---|---|---|
+| (default / omitted) | `approval_gated` | Every call routes through the approval gate; cannot appear in multi-call batches. Safe for arbitrary third-party servers. |
+| `pure_read` | `pure_read` | Fans out in parallel inside batches alongside `os.fs.read` / `os.git.*`. **Opt-in only.** Use for servers you trust never to mutate any state. |
+
+The aggregate native tools (`mcp.resource.*`, `mcp.prompt.*`) are classified as `pure_read` in the static `TOOL_RESOURCE_CLASS` table — they never mutate state regardless of which server they dispatch to.
+
+### Sampling forwarding
+
+MCP servers can request the **client's** LLM to generate text on their behalf via `sampling/createMessage`. atomic-agent forwards those requests to the same `LlamaServerClient` that drives the agent loop — but always on `slotId: -1`. This is the load-bearing safety invariant: the main agent slot and the reflection slot are never touched by MCP traffic. A misbehaving MCP server cannot evict the agent's KV cache mid-turn.
+
+The handler is fire-safe — every error is folded into a thrown `Error` that the SDK converts into a JSON-RPC error sent back to the server. We never crash the client transport. No grammar is attached; MCP sampling is free-form text and the server owns any structure it expects.
+
+### Configuration (`config.mcp.servers[]`)
+
+User config v23. Older files transparently migrate by filling `mcp: { servers: [] }`. Per-server entries:
+
+```ts
+{
+  name: "github",                     // kebab-case, max 32 chars, MCP_SERVER_NAME_RE
+  description?: "GitHub API",         // free-form one-liner for TUI / logs
+  enabled: true,                      // disabled servers are constructed but never connected
+  transport: {                        // stdio / streamable_http / sse
+    kind: "stdio",
+    command: "npx",
+    args: ["-y", "@github/mcp-server"],
+    cwd?: "/optional"
+  },
+  trust?: "pure_read",                // default "approval_gated"
+  env?: { GITHUB_TOKEN: "..." }       // overlays process.env for stdio transports only
+}
+```
+
+Server name collisions are dropped at config parse time with a warning. Tool names from servers that fail `MCP_TOOL_NAME_RE` are silently dropped during catalog refresh — the agent never sees them.
+
+### Locked invariants
+
+Pinned by [mcp-client.test.ts](src/mcp/mcp-client.test.ts) (when added), [mcp-manager.test.ts](src/mcp/mcp-manager.test.ts), [mcp-resource-class.test.ts](src/mcp/mcp-resource-class.test.ts), [mcp-grammar-builder.test.ts](src/mcp/mcp-grammar-builder.test.ts), [mcp-descriptor-builder.test.ts](src/mcp/mcp-descriptor-builder.test.ts), [mcp-tool-adapter.test.ts](src/mcp/mcp-tool-adapter.test.ts), [mcp-sampling-handler.test.ts](src/mcp/mcp-sampling-handler.test.ts), [mcp-resource-tools.test.ts](src/mcp/mcp-resource-tools.test.ts), [mcp-prompt-tools.test.ts](src/mcp/mcp-prompt-tools.test.ts), and the bootstrap descriptor-filter test [filter-disabled-tools.test.ts](src/runtime/filter-disabled-tools.test.ts):
+
+1. **`@modelcontextprotocol/sdk` is imported from exactly two files** — [mcp-client.ts](src/mcp/mcp-client.ts) and [mcp-sampling-handler.ts](src/mcp/mcp-sampling-handler.ts) (the latter only for `CreateMessageRequest` / `CreateMessageResult` type shapes). Everything else operates on the neutral types in `mcp-types.ts`. Future replacement of the SDK touches these two files only.
+2. **Sampling always uses `slotId: -1`.** The main agent slot and the reflection slot are off-limits to MCP traffic. `cachePrompt: false` is set unconditionally. Pinned by `mcp-sampling-handler.test.ts > "INVARIANT 1 — always uses slotId: -1 and disables cache_prompt"`.
+3. **Tool failure isolation.** A failed MCP call lands as `CompressedToolResult { status: "error" }`. Never throws out of `ToolDefinition.run`. Per-call failures inside a batch never abort siblings.
+4. **Per-server failure isolation at connect.** One bad server config does not block bootstrap; its status flips to `down` and the rest keep running. Pinned by `mcp-manager.test.ts > "start() isolates per-server failures"`.
+5. **MCP tools are always tier `frequent`.** The full `argsSchema` is rendered into `# common (full)` of the stable prefix so the model can invoke them on the first shot without a `tool.view` round-trip. This inverts the historical `rare` rendering — see the module-level comment in `mcp-descriptor-builder.ts` for the trade-off (one-time stable-prefix token bump in exchange for actual MCP usability on small local models). The summary stays `[mcp:<server>] <description>` regardless of tier. Pinned by `mcp-descriptor-builder.test.ts > "ships every MCP tool as tier 'frequent' so the full schema lands in the stable prefix"`.
+6. **Deterministic descriptor and grammar ordering.** `buildMcpToolDescriptors` sorts by `(server, rawName)` and `buildMcpToolNameRule` sorts + dedups the qualified names. Same input → byte-identical output → KV-cache stability across runtime restarts with the same config.
+7. **Resource-class default is `approval_gated`.** Unknown servers and missing trust entries both resolve to `approval_gated` so a stale model-emitted MCP name lands in the safe lane and is rejected by `registry.invoke` rather than escaping into a `pure_read` batch. Pinned by `mcp-resource-class.test.ts > "returns approval_gated for unknown servers (safe default — never null)"`.
+8. **Dynamic resolver is installed by the manager and torn down on `shutdown()`.** Pinned by `mcp-manager.test.ts > "shutdown() closes all clients and clears the resolver"`.
+9. **Aggregate native tools (`mcp.resource.*`, `mcp.prompt.*`) are `pure_read` and dispatch by `server` arg.** Single per-runtime registration; never one tool per server. Filter gate `mcp: { enabled }` in `filter-disabled-tools.ts` drops the descriptors from the prompt when no servers are configured. Pinned by `filter-disabled-tools.test.ts > "drops every mcp.* aggregate descriptor when mcp is disabled"`.
+10. **GBNF placeholder fallback.** When `applyMcpToolNameRule` is called with a `null` rule (no MCP tools registered), the grammar is returned unchanged — the static permissive placeholder `mcp-server-tool ::= "\"mcp." [a-z0-9-]+ "." [a-zA-Z0-9._-]+ "\""` stays in place. The model will not generate such a name in practice (no descriptor advertises it), but the grammar fails open rather than fails closed.
+11. **`McpManager` is always constructed.** Bootstrap creates it even when `config.mcp.servers[]` is empty so the live-control surface (TUI MCP panel) can mutate without restarting the host. Empty configuration is a zero-cost no-op.
+12. **MCP `shutdown()` runs before browser / SQLite teardown.** Order: Telegram → MCP → browser → SQLite. In-flight sampling calls have a chance to drain before the LLM client is torn down.
+13. **Variant γ — live add / remove without restart.** `McpManager.addServerLive(config)` connects a new client, registers its tools into `ToolRegistry`, and returns the freshly-discovered tool metas. `McpManager.removeServerLive(name)` disconnects, unregisters tools, and drops the entry. Both are idempotent on the server name (duplicate add or absent remove short-circuit without error). The TUI MCP orchestrator pairs these calls with `runtime.refreshMcp()` so the GBNF grammar and the prompt's `### tools` catalog are rebuilt from the live manager state, and the model sees the new / dropped qualified names on the next inference. **KV-cache invalidation on the stable prefix is intentional and one-shot** — semantically equivalent to a runtime restart, just without the process churn. The four MCP meta-tools (`mcp.resources.{list,read}` / `mcp.prompts.{list,get}`) are registered on demand the first time a server lands so a zero-server cold start does not pollute the descriptor catalog. Pinned by `mcp-manager.test.ts > "variant γ — live add / remove"` (6 cases: brand-new connect + tool registration, duplicate-name short-circuit, connect failure isolation, disconnect + tool unregister, absent-name short-circuit, round-trip idempotency).
+
+### Out of scope (deferred)
+
+`notifications/tools/list_changed` subscriptions (the SDK supports them; current phase ships catalog snapshots only — `refreshMcp()` is the manual / TUI-driven equivalent). Per-tool ACL (today trust is server-level; finer-grained allowlisting of specific tools within a server is deferred). MCP `roots` capability (the agent does not declare a workspace root to servers — every stdio server inherits the agent's CWD via `McpStdioTransport.cwd`). MCP elicitation (interactive multi-turn prompts from servers — out of scope for this milestone). Live mutation of `mcp.servers[i].enabled` from the TUI without an `addServerLive` / `removeServerLive` round trip (today `setServerEnabled` is reachable on the manager but the TUI does not surface it — only persist-driven add / remove is wired). Sampling-handler reattachment on the first live-added server (today sampling capability is decided at construction time; a server added live in a fresh-start-with-zero-servers process has no sampling handler — operators who need sampling should configure at least one server up front, or accept a restart). Server-side MCP exposure (atomic-agent is client-only and will stay that way — the runtime's tool surface is too coupled to local file system / browser / approval gating to safely advertise over MCP to external clients).
+
+### TUI surface (Manage tab — Mcp panel)
+
+Lives under [src/tui/mcp/](src/tui/mcp/) and [src/tui/components/mcp-*.tsx](src/tui/components/). Architecture mirrors the existing `LocalModels` / `Tasks` / `Memory` / `Skills` panel pattern — pure state slice + reducer, an orchestrator that is the **only** TUI module that touches `runtime.mcpManager` / `runtime.refreshMcp` / `persistMcpServer` / `removeMcpServer`, dedicated key bindings.
+
+Hotkeys (list mode): `j`/`k` move cursor · Enter open detail · `n` add (JSON paste modal) · `d` remove (confirm modal) · `r` refresh · `a` toggle auto-refresh. Detail mode adds `1`/`2`/`3` tab switch, `[`/`]` cycle, `d` remove the open server. The add-server modal accepts both the bare `{name, transport: {...}}` shape and shortcut envelopes used by Claude Desktop / Cursor / Smithery / DeepWiki (`{mcpServers: {<name>: {command, args}}}` for stdio, `{url}` / `{serverUrl}` for HTTP, `{type: "sse"}` for SSE). Multi-line paste is auto-flattened by the reducer (`\n` / `\r` / `\t` → spaces) so the editor does not grow vertically. The remove-confirm modal claims `y`/Enter and `n`/Esc; the `submitting` flag guards against double-fire. Slash-command surface: `/mcp` opens the tab, `/mcp add` opens the add modal, `/mcp remove <name>` opens the remove confirm directly.
+
+Locked invariants (pinned by [src/tui/mcp/mcp-reducer.test.ts](src/tui/mcp/mcp-reducer.test.ts), [src/tui/persist-mcp-server.test.ts](src/tui/persist-mcp-server.test.ts)):
+
+1. **`McpOrchestrator` is the only TUI module that touches `runtime.mcpManager`, `runtime.refreshMcp`, `persistMcpServer`, `removeMcpServer`.** Components dispatch actions; the orchestrator owns the polling loop, snapshots manager state, drives variant γ live mutations, and emits typed actions onto the shared bus.
+2. **Live config reads via `getConfig()` — never `runtime.config`.** `runtime.config` is a frozen bootstrap snapshot; `persistMcpServer` / `removeMcpServer` call `resetConfigCache()` so the next `getConfig()` returns the fresh server list. The orchestrator's `buildRows` / `buildDetail` go through `readConfiguredServers()` so adds and removes appear in the panel immediately.
+3. **Persist before live mutation.** `addServerFromJson` writes `config.json` first, then calls `mcpManager.addServerLive` + `runtime.refreshMcp`. Live-connect failures degrade gracefully: the server stays in config and shows as `down`, the operator gets a `runtime_info` hint, and a restart will retry the connect. `removeServerFromJson` mirrors the symmetry — persist first, then `removeServerLive` + `refreshMcp`.
+4. **The editor is disabled on the MCP tab while a modal is open.** `mcpTabBusy` in `app-key-bindings.ts` covers both `addModal !== null` (lets the `MultiLineEditor` capture every keystroke) and `removeConfirm !== null` (claims the `y`/`n` confirmation keys against the global nav cycler).
+5. **Variant γ surface is opt-in but on by default.** Restarting the runtime is no longer required after add/remove — the prompt's `### tools` catalog and GBNF grammar are rebuilt on the next step. KV-cache for in-flight sessions is invalidated once per add/remove (the persona stays byte-stable; only the rendered tools block changes).
+
 ## LLM reliability policy
 
 Two narrow retry layers sit between the agent loop and `llama-server`. Both are deliberately bounded and never replay already-executed tool calls:
@@ -731,7 +1493,7 @@ Emitted `TraceEvent` types (see [src/tracing/trace/trace-event.ts](src/tracing/t
 - `turn_started` / `turn_finished` — per macro-turn, with `reason` / `stepCount` / `durationMs`.
 - `step_started` / `step_finished` — per inference step.
 - `prompt_captured` — `{ stablePrefixHash, tail, tokens: { total, stablePrefix, tail }, slotId, cacheReused }`. The stable prefix is stored only as its salted hash (via `hashPrefix` from [src/llm/slot-manager.ts](src/llm/slot-manager.ts)) so trace files stay compact across steps; the variable tail is stored verbatim.
-- `llm_completion` — full completion `content` + `reasoningContent` + `timing`, with `attempt: 1 | 2` (attempt 2 == parse retry).
+- `llm_completion` — full completion `content` + `reasoningContent` + `timing`, with `attempt: 1 | 2` (attempt 2 == parse retry). `reasoningContent` is sourced from two mutually-exclusive channels: **Channel A** is the dedicated `reasoning_content` SSE field (QwQ / DeepSeek-R1 with `--reasoning-format deepseek`); **Channel B** is the inline `<think>...</think>` / `<|channel>thought...<channel|>` block that the grammar-aware stream parser splits client-side. `consumeStream` accumulates both separately and prefers Channel A when both fire; the legacy `/completion` endpoint always falls back to Channel B because it never emits `reasoning_content`. Pinned by [src/agent/step-executor.test.ts](src/agent/step-executor.test.ts) "executeStep streaming reasoning accumulator".
 - `tool_invocation` — executed tool call with args, status, summary, and optional details.
 - `parse_retry`, `loop_detected`, `error`, `trace_truncated` — diagnostics.
 

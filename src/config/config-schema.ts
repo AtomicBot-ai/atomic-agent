@@ -1,5 +1,21 @@
 import type { TaskSchedule } from "../tasks/task-types.js";
 import { isKnownLocalModelId } from "../local-llm/models-catalog.js";
+import {
+  MCP_SERVER_NAME_MAX_LENGTH,
+  MCP_SERVER_NAME_RE,
+  type McpServerConfig,
+  type McpTransport,
+  type McpTrustLevel,
+} from "../mcp/mcp-types.js";
+
+export type {
+  McpServerConfig,
+  McpTransport,
+  McpTrustLevel,
+  McpStdioTransport,
+  McpStreamableHttpTransport,
+  McpSseTransport,
+} from "../mcp/mcp-types.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -64,6 +80,14 @@ export interface AtomicAgentConfig {
     /** `external` uses `url`; `managed` overrides runtime `url` to localhost + `managed.port`. */
     mode: LocalLlmMode;
     managed: UserManagedLocalLlmConfig;
+    /**
+     * Memory-v2 phase 1B. Second managed daemon for `/embedding`.
+     * Mirrors `UserConfigFile.localModels.embeddings`. The runtime
+     * connects to `http://127.0.0.1:<embeddings.port>` for embedding
+     * requests when `embeddings.enabled` is true and the daemon is
+     * healthy. Disabled / unreachable ⇒ FTS5-only recall path.
+     */
+    embeddings: UserManagedEmbeddingLlmConfig;
   };
   paths: {
     stateDir: string;
@@ -290,6 +314,25 @@ export interface AtomicAgentConfig {
        * disables note extraction even when `autoStoreNotes` is true.
        */
       maxNotesPerCall: number;
+      /** v2.5 typed-NOTE extraction. See UserConfigFile.memory.reflection.typedNotes. */
+      typedNotes: {
+        enabled: boolean;
+      };
+      /** v2.5 sliding-window reflection segmentation. See UserConfigFile.memory.reflection.segmentation. */
+      segmentation: {
+        enabled: boolean;
+        triggerEveryTurns: number;
+        windowTurns: number;
+      };
+      /**
+       * Multi-party reflection mode (config v19+). See
+       * UserConfigFile.memory.reflection.anySpeaker for rationale.
+       * When `true`, the reflection prompt switches to a prefix
+       * that treats every speaker in the USER channel as a source
+       * worth extracting (e.g. third-party dialog dumps from
+       * LoCoMo / LongMemEval benchmarks). Default `false`.
+       */
+      anySpeaker: boolean;
     };
     notes: {
       enabled: boolean;
@@ -334,6 +377,127 @@ export interface AtomicAgentConfig {
       /** Safety-net ceiling for the rendered `### memory-index` section. */
       maxTokens: number;
     };
+    /** Phase 1A: pre-insert near-match deduplication. See UserConfigFile.memory.dedup. */
+    dedup: {
+      enabled: boolean;
+      fts5Threshold: number;
+    };
+    /** Phase 1A: utility-weighted overflow eviction. See UserConfigFile.memory.eviction. */
+    eviction: {
+      utilityWeighted: boolean;
+      maxAgeMs: number;
+    };
+    /**
+     * Phase 1B: hybrid FTS5 + cosine recall. See
+     * UserConfigFile.memory.embeddings. Default **disabled** — the
+     * runtime only attempts to talk to the embedding daemon when this
+     * flag flips on AND a model is configured AND the daemon is
+     * reachable.
+     */
+    embeddings: {
+      enabled: boolean;
+      fts5Weight: number;
+      vectorWeight: number;
+      bruteForceCeiling: number;
+    };
+    /**
+     * Phase 2: reactive link graph. See UserConfigFile.memory.links.
+     * Default disabled — the link-generator LLM sub-call is opt-in,
+     * and recall-side expansion only fires when enabled is true.
+     */
+    links: {
+      enabled: boolean;
+      autoGenerate: boolean;
+      expansionDepth: number;
+      maxExpanded: number;
+      maxLinksPerCall: number;
+      minCandidates: number;
+      generatorTimeoutMs: number;
+    };
+    /**
+     * Phase 3: memory evolution (neighbor-evolver). Default disabled
+     * — without it the parser still recognises `EVOLVE` lines but
+     * silently drops them. See UserConfigFile.memory.evolution.
+     */
+    evolution: {
+      enabled: boolean;
+      maxPerWrite: number;
+      leaseMs: number;
+    };
+    /**
+     * Phase 5: distilled lessons + cold-path consolidator. See
+     * UserConfigFile.memory.lessons for full doc. Default disabled —
+     * with the master switch off, `### lessons` is not rendered,
+     * `memory.lessons.recall` returns `LessonsDisabledError`, and
+     * the consolidator never registers its periodic timer.
+     */
+    lessons: {
+      enabled: boolean;
+      recallK: number;
+      maxTokens: number;
+      indexLimit: number;
+      maxEntries: number;
+      deprecationAgeMs: number;
+    };
+    /**
+     * Phase 7b: MemP-style advisory procedures distilled alongside
+     * lessons. Default disabled — when off, the `### procedures`
+     * section is not rendered, `memory.procedures.recall` returns a
+     * `ProceduresDisabledError`, and the consolidator emits only the
+     * `LESSON` half of the combined grammar.
+     */
+    procedures: {
+      enabled: boolean;
+      recallK: number;
+      maxTokens: number;
+      indexLimit: number;
+      maxEntries: number;
+      deprecationAgeMs: number;
+    };
+    consolidation: {
+      enabled: boolean;
+      intervalMs: number;
+      cooldownMs: number;
+      minClusterSize: number;
+      maxClustersPerTick: number;
+      requireSharedTag: boolean;
+      distillTimeoutMs: number;
+    };
+    /**
+     * Phase 7a: ExpeL-style vote curation. The reflection slot grows
+     * one extra sub-call per turn (after link-generator and
+     * neighbor-evolver) that asks the model to UPVOTE/DOWNVOTE the
+     * items surfaced in this turn's variable tail. See
+     * `UserConfigFile.memory.voting` for full doc. Default disabled
+     * — flipping it on adds the extra LLM call on the shared
+     * reflection slot.
+     */
+    voting: {
+      enabled: boolean;
+      maxVotePerItem: number;
+      signalDecay: number;
+      scoreBlend: number;
+      eventLogMaxRows: number;
+      profileFilterThreshold: number;
+    };
+    /**
+     * v2.5 heuristic-gated query rewriter for recall. See
+     * UserConfigFile.memory.retrieve.rewriter for full doc. Default
+     * disabled — the provider chain is byte-identical to pre-v18
+     * behaviour when off.
+     */
+    retrieve: {
+      rewriter: {
+        enabled: boolean;
+        timeoutMs: number;
+        historyTurns: number;
+        gateMode: RewriterGateMode;
+        embeddingGate: {
+          threshold: number;
+          exemplars: string[] | null;
+        };
+      };
+    };
   };
   /**
    * Webhook ingress bindings. Mirrors `UserConfigFile.webhooks` —
@@ -370,6 +534,16 @@ export interface AtomicAgentConfig {
    * the master kill switch and the single-operator owner id.
    */
   telegram: TelegramConfig;
+  /**
+   * MCP (Model Context Protocol) client configuration. Mirrors
+   * `UserConfigFile.mcp`. Each entry in `servers[]` becomes a
+   * lifecycle-managed connection to an external MCP server. Tools
+   * are exposed through the regular `ToolRegistry` as
+   * `mcp.<server>.<tool>`. See AGENTS.md §"MCP client".
+   */
+  mcp: {
+    servers: McpServerConfig[];
+  };
 }
 
 /**
@@ -424,6 +598,30 @@ export interface UserManagedLocalLlmConfig {
 }
 
 /**
+ * Memory-v2 phase 1B. Second managed `llama-server` instance dedicated
+ * to `/embedding`. Lives next to the chat daemon in `<stateDir>/llamacpp/`
+ * but runs as a separate OS process on its own port. The reason is
+ * structural: `--embeddings` switches llama-server to pooling-only
+ * mode, so the same process cannot serve `/completion` and `/embedding`
+ * simultaneously.
+ *
+ * Lifecycle is tied to the chat daemon at the CLI level
+ * (`atomic-agent models start` brings both up, `models stop` brings
+ * both down) but failure isolation is preserved: if the embedding
+ * daemon refuses to start, the chat daemon still runs and the memory
+ * subsystem transparently falls back to FTS5-only recall.
+ *
+ * `enabled=false` (default) ⇒ no second daemon, no embedding writes,
+ * no hybrid recall — observably identical to phase 1A.
+ */
+export interface UserManagedEmbeddingLlmConfig {
+  enabled: boolean;
+  /** `EmbeddingModelId` from the catalog, or `null` when not chosen. */
+  modelId: string | null;
+  port: number;
+}
+
+/**
  * User-facing keys that live in `<stateDir>/config.json`. The file
  * format is versioned; bump `USER_CONFIG_VERSION` on breaking schema
  * changes and add a migration step in `parseUserConfigFile`.
@@ -442,6 +640,12 @@ export interface UserConfigFile {
      */
     completionMaxTokens: number;
     managed: UserManagedLocalLlmConfig;
+    /**
+     * Memory-v2 phase 1B. Optional second managed daemon for
+     * embeddings. Added in config v12; older files are upgraded with
+     * `{ enabled: false, modelId: null, port: 19092 }`.
+     */
+    embeddings: UserManagedEmbeddingLlmConfig;
   };
   log: { level: LogLevel };
   agent: {
@@ -477,6 +681,64 @@ export interface UserConfigFile {
       maxFactsPerCall: number;
       autoStoreNotes: boolean;
       maxNotesPerCall: number;
+      /**
+       * v2.5 (config v18). Typed-NOTE extraction:
+       * when `enabled`, the reflection prompt forces every NOTE to
+       * carry a `[type=event|behavior|knowledge|skill]` marker that
+       * the parser projects into a synthetic `type:X` tag on the
+       * stored memory. Default `false` — legacy untyped NOTEs are
+       * byte-stable. Flipping the flag invalidates the reflection
+       * slot's KV cache once on the next call (the main agent slot
+       * is unaffected).
+       */
+      typedNotes: {
+        enabled: boolean;
+      };
+      /**
+       * v2.5 (config v18). Sliding-window
+       * reflection segmentation: instead of firing reflection after
+       * every turn with only the last user/assistant pair, accumulate
+       * up to `windowTurns` exchanges and fire reflection once every
+       * `triggerEveryTurns` turns. Reflection still fires
+       * unconditionally on `reason: "finish"` so the trailing partial
+       * window is never lost. Default `enabled = false` preserves the
+       * per-turn behaviour exactly.
+       */
+      /**
+       * Multi-party / "any-speaker" reflection mode (config v19+).
+       * When `true`, the reflection prompt switches to
+       * `REFLECTION_STABLE_PREFIX_ANY_SPEAKER` so the extractor
+       * treats every named speaker in the USER channel — including
+       * third parties — as a valid source for SET / NOTE
+       * extraction. Designed for evaluation benchmarks (LoCoMo,
+       * LongMemEval) where the USER message is a dump of a
+       * multi-party dialog rather than the user's own statements.
+       *
+       * Default `false`. Production personal-assistant users keep
+       * the user-centric prefix that rejects "content not stated
+       * by the user". Flipping the flag invalidates the reflection
+       * slot's KV cache once on the next call; the main agent slot
+       * is unaffected. Wins over `typedNotes` because the
+       * any-speaker prefix already enforces typed NOTEs.
+       */
+      anySpeaker: boolean;
+      segmentation: {
+        enabled: boolean;
+        /**
+         * Trigger reflection every N turns. Must be a positive
+         * integer; `1` is functionally equivalent to disabled mode
+         * (reflection fires every turn).
+         */
+        triggerEveryTurns: number;
+        /**
+         * Number of trailing user/assistant pairs to feed into the
+         * reflection prompt. Bounded by `triggerEveryTurns` from
+         * below — the runtime clamps the slice to whatever is
+         * available so an early-session turn never blows past the
+         * existing transcript.
+         */
+        windowTurns: number;
+      };
     };
     notes: {
       enabled: boolean;
@@ -495,6 +757,265 @@ export interface UserConfigFile {
       limit: number;
       previewChars: number;
       maxTokens: number;
+    };
+    /**
+     * Memory-v2 phase 1A: opt-in pre-insert dedup. Added in config v11;
+     * older files transparently upgraded with the defaults below.
+     */
+    dedup: {
+      enabled: boolean;
+      fts5Threshold: number;
+    };
+    /**
+     * Memory-v2 phase 1A: utility-weighted overflow eviction. Added in
+     * config v11.
+     */
+    eviction: {
+      utilityWeighted: boolean;
+      maxAgeMs: number;
+    };
+    /**
+     * Memory-v2 phase 1B: hybrid FTS5 + embedding recall. Added in
+     * config v12. Default **disabled** — the runtime won't try to
+     * embed anything until this flips on and a second daemon is
+     * available.
+     */
+    embeddings: {
+      enabled: boolean;
+      fts5Weight: number;
+      vectorWeight: number;
+      bruteForceCeiling: number;
+    };
+    /**
+     * Memory-v2 phase 2: reactive link graph. Added in config v13.
+     * Default **disabled** — the link-generator reflection sub-call
+     * (an extra LLM round-trip on the reflection slot at end of
+     * turn) is opt-in, and recall-side BFS expansion is gated on
+     * `enabled` as well so the legacy hybrid-recall path stays
+     * byte-stable.
+     *
+     *  - `enabled`            master switch (covers both recall
+     *                         expansion and link generation).
+     *  - `autoGenerate`       fire the `link-generator` sub-call
+     *                         after main reflection. Set to `false`
+     *                         to keep the schema + expansion
+     *                         machinery but never grow the graph
+     *                         automatically (manual `LinkStore.add`
+     *                         still works).
+     *  - `expansionDepth`     BFS depth on recall. Clamped to [1, 3].
+     *  - `maxExpanded`        Hard cap on expanded-id count per
+     *                         recall turn.
+     *  - `maxLinksPerCall`    Hard cap on persisted edges per
+     *                         link-generator call.
+     *  - `minCandidates`      Skip the LLM call when the surfaced
+     *                         set has fewer than this many ids
+     *                         (zero useful links possible).
+     *  - `generatorTimeoutMs` Hard timeout for the LLM call.
+     */
+    links: {
+      enabled: boolean;
+      autoGenerate: boolean;
+      expansionDepth: number;
+      maxExpanded: number;
+      maxLinksPerCall: number;
+      minCandidates: number;
+      generatorTimeoutMs: number;
+    };
+    /**
+     * Memory-v2 phase 3: neighbor-evolver. Added in config v14.
+     * Default **disabled** — when off the parser still recognises
+     * `EVOLVE` lines but the runner drops them silently. Flip on to
+     * let reflection refine `tags` on existing memories.
+     *
+     *  - `enabled`     master switch. Default `false`.
+     *  - `maxPerWrite` Hard cap on number of EVOLVE directives
+     *                  actually applied per reflection. Default `2`.
+     *  - `leaseMs`     B↔C lease window in ms. EVOLVE skips any
+     *                  target whose `consolidating_at` lies within
+     *                  `now - leaseMs`. Default `60000` (1 min).
+     */
+    evolution: {
+      enabled: boolean;
+      maxPerWrite: number;
+      leaseMs: number;
+    };
+    /**
+     * Memory-v2 phase 5. Distilled lessons + cold-path consolidator.
+     * Default disabled because rolling phase 5 on flips the stable
+     * prefix bytes once (see AGENTS.md "Memory fabric phase 5"), so
+     * deployments choose an explicit upgrade window.
+     *
+     * `lessons` keys:
+     *   - `enabled`            master switch for `### lessons`
+     *                          rendering + `memory.lessons.recall` +
+     *                          `ConsolidatorJob.start`. Default
+     *                          `false`.
+     *   - `recallK`            top-K lessons surfaced per turn (BM25).
+     *                          Default `2`.
+     *   - `maxTokens`          hard cap on the rendered `### lessons`
+     *                          block. Default `300`.
+     *   - `indexLimit`         row cap on `LessonStore.listIndex`.
+     *                          Default `20`.
+     *   - `maxEntries`         hard cap on active lessons. Default
+     *                          `500`. Phase 6 owns the deprecation
+     *                          sweep — phase 5 plumbs it dormant.
+     *   - `deprecationAgeMs`   phase 6 hook (still wired in phase 5):
+     *                          lessons with `success_count == 0`
+     *                          older than this become deprecated.
+     *                          Default `2_592_000_000` (30 days).
+     *
+     * `consolidation` keys:
+     *   - `enabled`              master switch on the consolidator
+     *                            timer. Default `false`. Independent
+     *                            from `lessons.enabled` so the schema
+     *                            can be inspected without ticking.
+     *   - `intervalMs`           consolidator tick period. Default
+     *                            `21_600_000` (6 h).
+     *   - `cooldownMs`           episodes younger than this are
+     *                            ineligible (must "cool down" before
+     *                            distillation). Default `86_400_000`
+     *                            (24 h).
+     *   - `minClusterSize`       minimum cluster size to distill.
+     *                            Default `3`.
+     *   - `maxClustersPerTick`   throughput cap on a single tick.
+     *                            Default `5`.
+     *   - `requireSharedTag`     when `true`, every member of a CC
+     *                            must share at least one tag with
+     *                            every other member. Default `true`
+     *                            for semantic cohesion.
+     *   - `distillTimeoutMs`     per-cluster LLM timeout. Default
+     *                            `45_000` ms.
+     */
+    lessons: {
+      enabled: boolean;
+      recallK: number;
+      maxTokens: number;
+      indexLimit: number;
+      maxEntries: number;
+      deprecationAgeMs: number;
+    };
+    /**
+     * Memory-v2 phase 7b. Procedures (MemP-style how-to templates)
+     * mirroring `lessons.*`:
+     *   - `enabled`           master switch. Default `false`.
+     *   - `recallK`           top-K procedures surfaced per turn
+     *                         via BM25 against the current user
+     *                         message. Default `2`.
+     *   - `maxTokens`         hard cap on the rendered `### procedures`
+     *                         block. Default `400`.
+     *   - `indexLimit`        row cap on `ProcedureStore.listIndex`.
+     *                         Default `20`.
+     *   - `maxEntries`        hard cap on active procedures. Default
+     *                         `500`. Overflow triggers FIFO eviction
+     *                         in the consolidator (scenario 7b.F.2).
+     *   - `deprecationAgeMs`  procedures with `success_count == 0`
+     *                         AND `use_count == 0` older than this
+     *                         are deprecated. Default `2_592_000_000`
+     *                         (30 days).
+     */
+    procedures: {
+      enabled: boolean;
+      recallK: number;
+      maxTokens: number;
+      indexLimit: number;
+      maxEntries: number;
+      deprecationAgeMs: number;
+    };
+    consolidation: {
+      enabled: boolean;
+      intervalMs: number;
+      cooldownMs: number;
+      minClusterSize: number;
+      maxClustersPerTick: number;
+      requireSharedTag: boolean;
+      distillTimeoutMs: number;
+    };
+    /**
+     * Memory-v2 phase 7a. Vote curation (ExpeL-style). Adds a vote
+     * sub-call to the reflection pipeline that emits UPVOTE /
+     * DOWNVOTE markers against items surfaced in the current turn,
+     * plus a cold-path decay applied by `ConsolidatorJob`.
+     *
+     * `voting` keys:
+     *   - `enabled`               master switch. When `false` the
+     *                              vote sub-call is skipped, decay
+     *                              does not run, and the lesson
+     *                              recall reranker treats every
+     *                              row as if `vote_score = 0`.
+     *                              Default `false`.
+     *   - `maxVotePerItem`        clamp on `|vote_score|`. Each
+     *                              UPVOTE/DOWNVOTE is `+1`/`-1` and
+     *                              the row is pinned in
+     *                              `[-maxVotePerItem, +maxVotePerItem]`.
+     *                              Must be > 0; bootstrap rejects 0.
+     *                              Default `50`.
+     *   - `signalDecay`           per-tick scaling factor applied
+     *                              to every `vote_score` value on
+     *                              the consolidator tick. Range
+     *                              `(0, 1]`; `1.0` disables decay,
+     *                              `0.95` matches the spec default.
+     *                              Bootstrap rejects `<= 0` and
+     *                              `> 1`. Default `0.95`.
+     *   - `scoreBlend`            weight of `vote_score` in
+     *                              `combinedScore = scoreBlend *
+     *                              vote_score + (1 - scoreBlend) *
+     *                              (success_count - failure_count)`.
+     *                              Range `[0, 1]`. Default `0.6`.
+     *   - `eventLogMaxRows`       FIFO cap on the `vote_events`
+     *                              audit log. Default `50_000`;
+     *                              `0` disables eviction (the row
+     *                              count is then bounded only by
+     *                              disk space).
+     *   - `profileFilterThreshold` minimum `|vote_score|` at which a
+     *                              `profile_facts` row is hidden
+     *                              from `### profile`. Negative
+     *                              votes ≤ `-profileFilterThreshold`
+     *                              mute the fact; positive scores
+     *                              never hide a fact. Default `3`.
+     */
+    voting: {
+      enabled: boolean;
+      maxVotePerItem: number;
+      signalDecay: number;
+      scoreBlend: number;
+      eventLogMaxRows: number;
+      profileFilterThreshold: number;
+    };
+    /**
+     * v2.5 memory fabric additions (config v18). Heuristic-
+     * gated query rewriter for recall. The rewriter runs as a
+     * decorator wrapped around `createDefaultMemoryContextProvider`:
+     * before BM25/cosine recall, if the current user message looks
+     * referential (short, pronouns, conjunction-starter), one LLM
+     * call rewrites it into a self-contained query using the last
+     * few turns of conversation; otherwise the raw message is used
+     * as today. The rewriter uses `slotId = -1` so the **main agent
+     * slot** and the **reflection slot** are both untouched.
+     *
+     * `retrieve.rewriter` keys:
+     *  - `enabled`       master switch. Default `false`.
+     *  - `timeoutMs`     hard per-call timeout. Default `3000`.
+     *  - `historyTurns`  trailing turns fed into the rewriter
+     *                    prompt. Default `3`.
+     *  - `gateMode`      `heuristic` | `embedding` | `always`.
+     *                    Default `heuristic`. Eval profiles often
+     *                    use `embedding` for multilingual recall.
+     *  - `embeddingGate.threshold` cosine floor when
+     *                    `gateMode=embedding`. Default `0.65`.
+     *  - `embeddingGate.exemplars` custom EN referential phrases;
+     *                    `null` uses built-in defaults.
+     */
+    retrieve: {
+      rewriter: {
+        enabled: boolean;
+        timeoutMs: number;
+        historyTurns: number;
+        gateMode: RewriterGateMode;
+        embeddingGate: {
+          threshold: number;
+          exemplars: string[] | null;
+        };
+      };
     };
   };
   /**
@@ -530,9 +1051,29 @@ export interface UserConfigFile {
    * here — see `TelegramConfig` for rationale.
    */
   telegram: TelegramConfig;
+  /**
+   * MCP client servers. Added in config v23. Each entry declares one
+   * external MCP server the runtime will connect to at bootstrap and
+   * whose tools / resources / prompts will be exposed through the
+   * agent's tool registry (namespaced as `mcp.<server>.<tool>`).
+   * Older files are transparently upgraded with `mcp: { servers: [] }`.
+   */
+  mcp: {
+    servers: McpServerConfig[];
+  };
 }
 
-export const USER_CONFIG_VERSION = 10 as const;
+export const USER_CONFIG_VERSION = 23 as const;
+
+/**
+ * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
+ * from versions below v22 force `enabled: true` (and a default embedding
+ * model id when unset) so existing installs inherit product defaults;
+ * explicit overrides on v22+ files are still honoured.
+ */
+const MEMORY_V2_OPT_IN_DEFAULTS_VERSION = 22;
+
+export type RewriterGateMode = "heuristic" | "embedding" | "always";
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -545,11 +1086,52 @@ export const USER_CONFIG_VERSION = 10 as const;
  * removing files from disk. v9 added the optional `telegram.*`
  * block so the Telegram remote-control channel can be enabled and
  * scoped to a single owner. v10 added `telegram.parseMode` so
- * agent replies render as Telegram HTML by default. Older files
- * are transparently upgraded by filling missing blocks/fields from
- * `USER_CONFIG_DEFAULTS`. Anything older than v5 is not migrated:
- * this is active development, callers delete their `config.json`
- * and start over.
+ * agent replies render as Telegram HTML by default. v11 added
+ * `memory.dedup.*` and `memory.eviction.*` for memory-v2 phase 1A
+ * (utility-weighted eviction + FTS5 near-match dedup). v12 added
+ * `memory.embeddings.*` and `localModels.embeddings.*` for memory-v2
+ * phase 1B (hybrid recall via a second managed `llama-server`
+ * dedicated to `/embedding`). v13 added `memory.links.*` for memory-v2
+ * phase 2 (link graph + link-generator reflection sub-call). v14 added
+ * `memory.evolution.*` for memory-v2 phase 3 (neighbor-evolver +
+ * EVOLVE grammar branch + B↔C lease). v15 added `memory.lessons.*` and
+ * `memory.consolidation.*` for memory-v2 phase 5 (distilled lessons +
+ * cold-path consolidator + first stable-prefix bump for `### lessons`).
+ * v16 added `memory.voting.*` for memory-v2 phase 7a (ExpeL-style vote
+ * curation — UPVOTE/DOWNVOTE sub-call on the reflection slot + decay
+ * on the consolidator tick + utility-eviction + lesson recall reranker).
+ * v17 added `memory.procedures.*` for memory-v2 phase 7b (MemP-style
+ * advisory procedures distilled alongside lessons + second
+ * stable-prefix bump for `### procedures`).
+ * v18 added three v2.5 memory fabric additions:
+ * `memory.reflection.typedNotes.*` (Phase C — typed-NOTE extraction
+ * with per-type forbidden lists),
+ * `memory.reflection.segmentation.*` (Phase B — sliding-window
+ * reflection segmentation), and `memory.retrieve.rewriter.*` (Phase
+ * A — heuristic-gated query rewriter for recall). All three default
+ * to disabled so v17 → v18 is a transparent migration.
+ * v19 added `memory.reflection.anySpeaker` for multi-party / dialog
+ * extraction mode (default `false` — production users keep the
+ * user-centric prefix, evaluation benchmarks like LoCoMo flip the
+ * flag to true so reflection can extract facts about third-party
+ * speakers in the USER channel). Flipping the flag invalidates the
+ * reflection slot's KV cache once on the next call.
+ * v21 enables memory-v2 advanced layers by default
+ * (`memory.evolution`, `memory.lessons`, `memory.procedures`,
+ * `memory.consolidation`, `memory.voting`, `memory.retrieve.rewriter`).
+ * Upgrades from v20 and below force those `enabled` flags to `true`.
+ * v22 also enables `memory.links` by default. Hybrid embedding recall
+ * (`memory.embeddings` + `localModels.embeddings`) stays off in the
+ * config file until the operator enables it from the TUI Models tab
+ * (download + start). Upgrades from v21 and below apply the v22
+ * switches for the advanced memory layers only.
+ * v23 added the optional `mcp.*` block (MCP client). Upgrades from
+ * v22 and below get `mcp: { servers: [] }` — no connections are
+ * opened until the operator adds entries to the list.
+ * Older files are transparently upgraded by filling missing
+ * blocks/fields from `USER_CONFIG_DEFAULTS`. Anything older than v5
+ * is not migrated: this is active development, callers delete their
+ * `config.json` and start over.
  */
 const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   5,
@@ -557,6 +1139,19 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   7,
   8,
   9,
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  16,
+  17,
+  18,
+  19,
+  20,
+  21,
+  22,
   USER_CONFIG_VERSION,
 ];
 
@@ -571,6 +1166,11 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       port: 19091,
       dataDirOverride: null,
       autoUpdate: false,
+    },
+    embeddings: {
+      enabled: false,
+      modelId: null,
+      port: 19092,
     },
   },
   log: { level: "info" },
@@ -607,6 +1207,28 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       maxFactsPerCall: 3,
       autoStoreNotes: true,
       maxNotesPerCall: 2,
+      typedNotes: {
+        // v2.5 (v18). Off by default — flipping it
+        // on switches the reflection prompt to the typed prefix and
+        // invalidates the reflection slot's KV cache once on the
+        // next call. The main agent slot is untouched.
+        enabled: false,
+      },
+      // Multi-party reflection mode (v19). Off by default —
+      // production personal-assistant users keep the user-centric
+      // prefix. Evaluation benchmarks (LoCoMo, LongMemEval) flip
+      // this to true so reflection can extract third-party
+      // speakers from prefill conversation transcripts.
+      anySpeaker: false,
+      segmentation: {
+        // v2.5 (v18). Off by default — when on,
+        // reflection fires every `triggerEveryTurns` turns over the
+        // last `windowTurns` exchanges instead of every turn. The
+        // final flush on `reason: "finish"` is unconditional.
+        enabled: false,
+        triggerEveryTurns: 3,
+        windowTurns: 5,
+      },
     },
     notes: {
       enabled: true,
@@ -626,6 +1248,100 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       previewChars: 60,
       maxTokens: 300,
     },
+    dedup: {
+      enabled: true,
+      fts5Threshold: 0.85,
+    },
+    eviction: {
+      utilityWeighted: true,
+      // 30 days. Declared here for v2 phase 5 (ConsolidatorJob sweep);
+      // phase 1A's overflow eviction does not consult `maxAgeMs`.
+      maxAgeMs: 2_592_000_000,
+    },
+    embeddings: {
+      enabled: false,
+      // Even split between BM25 and cosine — picked as the safe
+      // starting point; once we have telemetry from real corpora a
+      // follow-up will tune the ratio. The two MUST sum to ~1.0; the
+      // bootstrap pins this invariant in phase 1B onwards.
+      fts5Weight: 0.5,
+      vectorWeight: 0.5,
+      bruteForceCeiling: 200,
+    },
+    links: {
+      // Phase 2 — reactive link graph + recall BFS expansion.
+      enabled: true,
+      autoGenerate: true,
+      expansionDepth: 1,
+      maxExpanded: 12,
+      maxLinksPerCall: 4,
+      minCandidates: 2,
+      generatorTimeoutMs: 8_000,
+    },
+    evolution: {
+      // Phase 3 — reflection refines tags on existing memories.
+      // `content` remains append-only regardless.
+      enabled: true,
+      maxPerWrite: 2,
+      leaseMs: 60_000,
+    },
+    lessons: {
+      // Phase 5 — adds `### lessons` to the prompt tail (stable-prefix
+      // change #1) and registers the consolidator timer when
+      // `memory.consolidation.enabled` is also true.
+      enabled: true,
+      recallK: 2,
+      maxTokens: 300,
+      indexLimit: 20,
+      maxEntries: 500,
+      deprecationAgeMs: 2_592_000_000,
+    },
+    procedures: {
+      // Phase 7b — adds `### procedures` to the prompt tail (stable-prefix
+      // change #2) and switches the consolidator distill grammar
+      // to the combined lesson+procedure shape.
+      enabled: true,
+      recallK: 2,
+      maxTokens: 400,
+      indexLimit: 20,
+      maxEntries: 500,
+      deprecationAgeMs: 2_592_000_000,
+    },
+    consolidation: {
+      // Phase 5 — scoped periodic timer carve-out (like Telegram polling).
+      enabled: true,
+      intervalMs: 21_600_000,
+      cooldownMs: 86_400_000,
+      minClusterSize: 3,
+      maxClustersPerTick: 5,
+      requireSharedTag: true,
+      distillTimeoutMs: 45_000,
+    },
+    voting: {
+      // Phase 7a — extra LLM sub-call on the reflection slot + cold-path
+      // decay on consolidator ticks.
+      enabled: true,
+      maxVotePerItem: 50,
+      signalDecay: 0.95,
+      scoreBlend: 0.6,
+      eventLogMaxRows: 50_000,
+      profileFilterThreshold: 3,
+    },
+    retrieve: {
+      rewriter: {
+        // v2.5 (v18) — heuristic-gated query rewriter before recall.
+        // Uses `slotId=-1` so the main agent and reflection slots stay
+        // untouched.
+        enabled: true,
+        timeoutMs: 3_000,
+        historyTurns: 3,
+        gateMode: "heuristic",
+        embeddingGate: {
+          threshold: 0.65,
+          exemplars: null,
+        },
+      },
+    },
   },
   webhooks: {},
   vision: {
@@ -641,6 +1357,12 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     enabled: false,
     ownerUserId: null,
     parseMode: "html",
+  },
+  mcp: {
+    // Added in v23. Empty by default — the operator declares MCP
+    // servers explicitly. The runtime opens no connections when the
+    // list is empty.
+    servers: [],
   },
 };
 
@@ -792,6 +1514,57 @@ export function parseNonNegativeInt(raw: unknown, field: string): number {
   return value;
 }
 
+/**
+ * Parse a number in the unit interval `[0, 1]`. Accepts JSON numbers
+ * (canonical) or stringified numbers (env / form-encoded). Used by
+ * memory-v2 thresholds (`memory.dedup.fts5Threshold`, future
+ * `memory.consolidation.similarityThreshold`, etc.) so similarity
+ * configs are bounded by the storage layer rather than each caller
+ * re-deriving the clamp.
+ */
+export function parseUnitInterval(raw: unknown, field: string): number {
+  const value =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string"
+        ? Number.parseFloat(raw)
+        : NaN;
+  if (!Number.isFinite(value) || value < 0 || value > 1) {
+    throw new ConfigValidationError(
+      field,
+      `expected number in [0, 1], got ${JSON.stringify(raw)}`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Parse a number in `(0, 1]` — strict positive lower bound,
+ * inclusive at `1`. Used by `memory.voting.signalDecay` where `0`
+ * is forbidden (a zero decay zeroes every score on the next tick,
+ * which trivially destroys all signal) but `1` is allowed (no
+ * decay at all, mostly useful for tests and offline replay).
+ */
+export function parseHalfOpenUnitInterval(
+  raw: unknown,
+  field: string,
+): number {
+  const value =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string"
+        ? Number.parseFloat(raw)
+        : NaN;
+  if (!Number.isFinite(value) || value <= 0 || value > 1) {
+    throw new ConfigValidationError(
+      field,
+      `expected number in (0, 1], got ${JSON.stringify(raw)}`,
+    );
+  }
+  return value;
+}
+
+
 export function parseBool(raw: unknown, field: string): boolean {
   if (typeof raw === "boolean") return raw;
   if (typeof raw === "string") {
@@ -803,6 +1576,28 @@ export function parseBool(raw: unknown, field: string): boolean {
     field,
     `expected boolean, got ${JSON.stringify(raw)}`,
   );
+}
+
+function parseMemoryV2FeatureEnabled(
+  inputVersion: number,
+  raw: unknown,
+  defaultEnabled: boolean,
+  field: string,
+): boolean {
+  if (inputVersion < MEMORY_V2_OPT_IN_DEFAULTS_VERSION) {
+    return true;
+  }
+  return parseBool(raw ?? defaultEnabled, field);
+}
+
+function resolveEmbeddingModelId(
+  _inputVersion: number,
+  raw: unknown,
+): string | null {
+  if (raw !== null && raw !== undefined) {
+    return parseNonEmptyString(raw, "localModels.embeddings.modelId");
+  }
+  return USER_CONFIG_DEFAULTS.localModels.embeddings.modelId;
 }
 
 /**
@@ -831,6 +1626,19 @@ export function parseHttpApprovalMode(
   throw new ConfigValidationError(
     field,
     `expected one of never|writes|always, got ${JSON.stringify(raw)}`,
+  );
+}
+
+export function parseRewriterGateMode(
+  raw: unknown,
+  field: string,
+): RewriterGateMode {
+  if (raw === "heuristic" || raw === "embedding" || raw === "always") {
+    return raw;
+  }
+  throw new ConfigValidationError(
+    field,
+    `expected one of heuristic|embedding|always, got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -1018,6 +1826,162 @@ export function parseUrl(raw: unknown, field: string): string {
   }
 }
 
+function parseMcpTrustLevel(raw: unknown, field: string): McpTrustLevel {
+  if (raw === "approval_gated" || raw === "pure_read") return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected one of approval_gated|pure_read, got ${JSON.stringify(raw)}`,
+  );
+}
+
+function parseMcpEnv(
+  raw: unknown,
+  field: string,
+): Record<string, string> | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, `expected object, got ${JSON.stringify(raw)}`);
+  }
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) {
+      throw new ConfigValidationError(
+        `${field}.${k}`,
+        "env var name must match [A-Za-z_][A-Za-z0-9_]*",
+      );
+    }
+    if (typeof v !== "string") {
+      throw new ConfigValidationError(`${field}.${k}`, "env value must be a string");
+    }
+    out[k] = v;
+  }
+  return out;
+}
+
+function parseMcpTransport(raw: unknown, field: string): McpTransport {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected transport object");
+  }
+  const obj = raw as Record<string, unknown>;
+  if (obj.kind === "stdio") {
+    const command = parseNonEmptyString(obj.command, `${field}.command`);
+    const args = obj.args === undefined ? undefined : parseStringArrayOrNull(obj.args, `${field}.args`);
+    const cwd =
+      obj.cwd === undefined || obj.cwd === null
+        ? undefined
+        : parseNonEmptyString(obj.cwd, `${field}.cwd`);
+    return {
+      kind: "stdio",
+      command,
+      ...(args ? { args } : {}),
+      ...(cwd ? { cwd } : {}),
+    };
+  }
+  if (obj.kind === "streamable_http") {
+    const url = parseUrl(obj.url, `${field}.url`);
+    const headers =
+      obj.headers === undefined || obj.headers === null
+        ? undefined
+        : parseMcpEnv(obj.headers, `${field}.headers`);
+    return {
+      kind: "streamable_http",
+      url,
+      ...(headers ? { headers } : {}),
+    };
+  }
+  if (obj.kind === "sse") {
+    const url = parseUrl(obj.url, `${field}.url`);
+    const headers =
+      obj.headers === undefined || obj.headers === null
+        ? undefined
+        : parseMcpEnv(obj.headers, `${field}.headers`);
+    return {
+      kind: "sse",
+      url,
+      ...(headers ? { headers } : {}),
+    };
+  }
+  throw new ConfigValidationError(
+    `${field}.kind`,
+    `expected stdio|streamable_http|sse, got ${JSON.stringify(obj.kind)}`,
+  );
+}
+
+/**
+ * Validate and normalise the `mcp.servers[]` list. Each entry is
+ * checked for a valid namespace name, an enabled flag, and a
+ * well-formed transport. Duplicate names are rejected — the
+ * namespace becomes the `mcp.<name>.<tool>` prefix and must be
+ * unique. Empty input is accepted.
+ */
+export function parseMcpServers(
+  raw: unknown,
+  field: string,
+): McpServerConfig[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(field, `expected array, got ${JSON.stringify(raw)}`);
+  }
+  const out: McpServerConfig[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new ConfigValidationError(
+        `${field}[${i}]`,
+        `expected object, got ${JSON.stringify(entry)}`,
+      );
+    }
+    const cfg = entry as Record<string, unknown>;
+    const name = parseNonEmptyString(cfg.name, `${field}[${i}].name`);
+    if (name.length > MCP_SERVER_NAME_MAX_LENGTH) {
+      throw new ConfigValidationError(
+        `${field}[${i}].name`,
+        `name exceeds ${MCP_SERVER_NAME_MAX_LENGTH} chars`,
+      );
+    }
+    if (!MCP_SERVER_NAME_RE.test(name)) {
+      throw new ConfigValidationError(
+        `${field}[${i}].name`,
+        `name must match ${MCP_SERVER_NAME_RE.source}`,
+      );
+    }
+    if (seen.has(name)) {
+      throw new ConfigValidationError(
+        `${field}[${i}].name`,
+        `duplicate server name ${JSON.stringify(name)}`,
+      );
+    }
+    seen.add(name);
+    const enabled = parseBool(
+      cfg.enabled === undefined ? true : cfg.enabled,
+      `${field}[${i}].enabled`,
+    );
+    const description =
+      cfg.description === undefined || cfg.description === null
+        ? undefined
+        : parseNonEmptyString(cfg.description, `${field}[${i}].description`);
+    const transport = parseMcpTransport(cfg.transport, `${field}[${i}].transport`);
+    const trust =
+      cfg.trust === undefined || cfg.trust === null
+        ? undefined
+        : parseMcpTrustLevel(cfg.trust, `${field}[${i}].trust`);
+    const env =
+      cfg.env === undefined || cfg.env === null
+        ? undefined
+        : parseMcpEnv(cfg.env, `${field}[${i}].env`);
+    out.push({
+      name,
+      enabled,
+      transport,
+      ...(description ? { description } : {}),
+      ...(trust ? { trust } : {}),
+      ...(env ? { env } : {}),
+    });
+  }
+  return out;
+}
+
 /**
  * Validate and normalise a raw JSON payload into a `UserConfigFile`.
  * Missing sub-keys are filled with defaults — this lets us add new
@@ -1067,10 +2031,41 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (memory.recallInjection as Record<string, unknown> | undefined) ?? {};
   const memoryIndex =
     (memory.index as Record<string, unknown> | undefined) ?? {};
+  const memoryDedup =
+    (memory.dedup as Record<string, unknown> | undefined) ?? {};
+  const memoryEviction =
+    (memory.eviction as Record<string, unknown> | undefined) ?? {};
+  const memoryEmbeddings =
+    (memory.embeddings as Record<string, unknown> | undefined) ?? {};
+  const memoryLinks =
+    (memory.links as Record<string, unknown> | undefined) ?? {};
+  const memoryEvolution =
+    (memory.evolution as Record<string, unknown> | undefined) ?? {};
+  const memoryLessons =
+    (memory.lessons as Record<string, unknown> | undefined) ?? {};
+  const memoryProcedures =
+    (memory.procedures as Record<string, unknown> | undefined) ?? {};
+  const memoryConsolidation =
+    (memory.consolidation as Record<string, unknown> | undefined) ?? {};
+  const memoryVoting =
+    (memory.voting as Record<string, unknown> | undefined) ?? {};
+  const memoryReflectionTypedNotes =
+    (memoryReflection.typedNotes as Record<string, unknown> | undefined) ?? {};
+  const memoryReflectionSegmentation =
+    (memoryReflection.segmentation as Record<string, unknown> | undefined) ?? {};
+  const memoryRetrieve =
+    (memory.retrieve as Record<string, unknown> | undefined) ?? {};
+  const memoryRetrieveRewriter =
+    (memoryRetrieve.rewriter as Record<string, unknown> | undefined) ?? {};
+  const memoryRetrieveRewriterEmbeddingGate =
+    (memoryRetrieveRewriter.embeddingGate as
+      | Record<string, unknown>
+      | undefined) ?? {};
   const webhooks = parseWebhookMap(obj.webhooks ?? {}, "webhooks");
   const vision = (obj.vision as Record<string, unknown> | undefined) ?? {};
   const skills = (obj.skills as Record<string, unknown> | undefined) ?? {};
   const telegram = (obj.telegram as Record<string, unknown> | undefined) ?? {};
+  const mcp = (obj.mcp as Record<string, unknown> | undefined) ?? {};
 
   const rawManaged =
     (localModels.managed as Record<string, unknown> | undefined) ?? {};
@@ -1096,6 +2091,21 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     ),
   };
 
+  const rawEmbeddings =
+    (localModels.embeddings as Record<string, unknown> | undefined) ?? {};
+  const embeddingsDaemon: UserManagedEmbeddingLlmConfig = {
+    enabled: parseBool(
+      rawEmbeddings.enabled ??
+        USER_CONFIG_DEFAULTS.localModels.embeddings.enabled,
+      "localModels.embeddings.enabled",
+    ),
+    modelId: resolveEmbeddingModelId(version, rawEmbeddings.modelId),
+    port: parsePositiveInt(
+      rawEmbeddings.port ?? USER_CONFIG_DEFAULTS.localModels.embeddings.port,
+      "localModels.embeddings.port",
+    ),
+  };
+
   return {
     version: USER_CONFIG_VERSION,
     localModels: {
@@ -1115,6 +2125,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         131_072,
       ),
       managed,
+      embeddings: embeddingsDaemon,
     },
     log: {
       level: parseLogLevel(log.level ?? USER_CONFIG_DEFAULTS.log.level, "log.level"),
@@ -1225,6 +2236,36 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             USER_CONFIG_DEFAULTS.memory.reflection.maxNotesPerCall,
           "memory.reflection.maxNotesPerCall",
         ),
+        typedNotes: {
+          enabled: parseBool(
+            memoryReflectionTypedNotes.enabled ??
+              USER_CONFIG_DEFAULTS.memory.reflection.typedNotes.enabled,
+            "memory.reflection.typedNotes.enabled",
+          ),
+        },
+        anySpeaker: parseBool(
+          memoryReflection.anySpeaker ??
+            USER_CONFIG_DEFAULTS.memory.reflection.anySpeaker,
+          "memory.reflection.anySpeaker",
+        ),
+        segmentation: {
+          enabled: parseBool(
+            memoryReflectionSegmentation.enabled ??
+              USER_CONFIG_DEFAULTS.memory.reflection.segmentation.enabled,
+            "memory.reflection.segmentation.enabled",
+          ),
+          triggerEveryTurns: parsePositiveInt(
+            memoryReflectionSegmentation.triggerEveryTurns ??
+              USER_CONFIG_DEFAULTS.memory.reflection.segmentation
+                .triggerEveryTurns,
+            "memory.reflection.segmentation.triggerEveryTurns",
+          ),
+          windowTurns: parsePositiveInt(
+            memoryReflectionSegmentation.windowTurns ??
+              USER_CONFIG_DEFAULTS.memory.reflection.segmentation.windowTurns,
+            "memory.reflection.segmentation.windowTurns",
+          ),
+        },
       },
       notes: {
         enabled: parseBool(
@@ -1288,6 +2329,282 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           "memory.index.maxTokens",
         ),
       },
+      dedup: {
+        enabled: parseBool(
+          memoryDedup.enabled ?? USER_CONFIG_DEFAULTS.memory.dedup.enabled,
+          "memory.dedup.enabled",
+        ),
+        fts5Threshold: parseUnitInterval(
+          memoryDedup.fts5Threshold ??
+            USER_CONFIG_DEFAULTS.memory.dedup.fts5Threshold,
+          "memory.dedup.fts5Threshold",
+        ),
+      },
+      eviction: {
+        utilityWeighted: parseBool(
+          memoryEviction.utilityWeighted ??
+            USER_CONFIG_DEFAULTS.memory.eviction.utilityWeighted,
+          "memory.eviction.utilityWeighted",
+        ),
+        maxAgeMs: parsePositiveInt(
+          memoryEviction.maxAgeMs ??
+            USER_CONFIG_DEFAULTS.memory.eviction.maxAgeMs,
+          "memory.eviction.maxAgeMs",
+        ),
+      },
+      embeddings: {
+        enabled: parseBool(
+          memoryEmbeddings.enabled ??
+            USER_CONFIG_DEFAULTS.memory.embeddings.enabled,
+          "memory.embeddings.enabled",
+        ),
+        fts5Weight: parseUnitInterval(
+          memoryEmbeddings.fts5Weight ??
+            USER_CONFIG_DEFAULTS.memory.embeddings.fts5Weight,
+          "memory.embeddings.fts5Weight",
+        ),
+        vectorWeight: parseUnitInterval(
+          memoryEmbeddings.vectorWeight ??
+            USER_CONFIG_DEFAULTS.memory.embeddings.vectorWeight,
+          "memory.embeddings.vectorWeight",
+        ),
+        bruteForceCeiling: parsePositiveInt(
+          memoryEmbeddings.bruteForceCeiling ??
+            USER_CONFIG_DEFAULTS.memory.embeddings.bruteForceCeiling,
+          "memory.embeddings.bruteForceCeiling",
+        ),
+      },
+      links: {
+        enabled: parseMemoryV2FeatureEnabled(
+          version,
+          memoryLinks.enabled,
+          USER_CONFIG_DEFAULTS.memory.links.enabled,
+          "memory.links.enabled",
+        ),
+        autoGenerate: parseBool(
+          memoryLinks.autoGenerate ??
+            USER_CONFIG_DEFAULTS.memory.links.autoGenerate,
+          "memory.links.autoGenerate",
+        ),
+        expansionDepth: parsePositiveInt(
+          memoryLinks.expansionDepth ??
+            USER_CONFIG_DEFAULTS.memory.links.expansionDepth,
+          "memory.links.expansionDepth",
+        ),
+        maxExpanded: parsePositiveInt(
+          memoryLinks.maxExpanded ??
+            USER_CONFIG_DEFAULTS.memory.links.maxExpanded,
+          "memory.links.maxExpanded",
+        ),
+        maxLinksPerCall: parsePositiveInt(
+          memoryLinks.maxLinksPerCall ??
+            USER_CONFIG_DEFAULTS.memory.links.maxLinksPerCall,
+          "memory.links.maxLinksPerCall",
+        ),
+        minCandidates: parsePositiveInt(
+          memoryLinks.minCandidates ??
+            USER_CONFIG_DEFAULTS.memory.links.minCandidates,
+          "memory.links.minCandidates",
+        ),
+        generatorTimeoutMs: parsePositiveInt(
+          memoryLinks.generatorTimeoutMs ??
+            USER_CONFIG_DEFAULTS.memory.links.generatorTimeoutMs,
+          "memory.links.generatorTimeoutMs",
+        ),
+      },
+      evolution: {
+        enabled: parseMemoryV2FeatureEnabled(
+          version,
+          memoryEvolution.enabled,
+          USER_CONFIG_DEFAULTS.memory.evolution.enabled,
+          "memory.evolution.enabled",
+        ),
+        maxPerWrite: parsePositiveInt(
+          memoryEvolution.maxPerWrite ??
+            USER_CONFIG_DEFAULTS.memory.evolution.maxPerWrite,
+          "memory.evolution.maxPerWrite",
+        ),
+        leaseMs: parsePositiveInt(
+          memoryEvolution.leaseMs ??
+            USER_CONFIG_DEFAULTS.memory.evolution.leaseMs,
+          "memory.evolution.leaseMs",
+        ),
+      },
+      lessons: {
+        enabled: parseMemoryV2FeatureEnabled(
+          version,
+          memoryLessons.enabled,
+          USER_CONFIG_DEFAULTS.memory.lessons.enabled,
+          "memory.lessons.enabled",
+        ),
+        recallK: parsePositiveInt(
+          memoryLessons.recallK ?? USER_CONFIG_DEFAULTS.memory.lessons.recallK,
+          "memory.lessons.recallK",
+        ),
+        maxTokens: parsePositiveInt(
+          memoryLessons.maxTokens ??
+            USER_CONFIG_DEFAULTS.memory.lessons.maxTokens,
+          "memory.lessons.maxTokens",
+        ),
+        indexLimit: parsePositiveInt(
+          memoryLessons.indexLimit ??
+            USER_CONFIG_DEFAULTS.memory.lessons.indexLimit,
+          "memory.lessons.indexLimit",
+        ),
+        maxEntries: parsePositiveInt(
+          memoryLessons.maxEntries ??
+            USER_CONFIG_DEFAULTS.memory.lessons.maxEntries,
+          "memory.lessons.maxEntries",
+        ),
+        deprecationAgeMs: parsePositiveInt(
+          memoryLessons.deprecationAgeMs ??
+            USER_CONFIG_DEFAULTS.memory.lessons.deprecationAgeMs,
+          "memory.lessons.deprecationAgeMs",
+        ),
+      },
+      procedures: {
+        enabled: parseMemoryV2FeatureEnabled(
+          version,
+          memoryProcedures.enabled,
+          USER_CONFIG_DEFAULTS.memory.procedures.enabled,
+          "memory.procedures.enabled",
+        ),
+        recallK: parsePositiveInt(
+          memoryProcedures.recallK ??
+            USER_CONFIG_DEFAULTS.memory.procedures.recallK,
+          "memory.procedures.recallK",
+        ),
+        maxTokens: parsePositiveInt(
+          memoryProcedures.maxTokens ??
+            USER_CONFIG_DEFAULTS.memory.procedures.maxTokens,
+          "memory.procedures.maxTokens",
+        ),
+        indexLimit: parsePositiveInt(
+          memoryProcedures.indexLimit ??
+            USER_CONFIG_DEFAULTS.memory.procedures.indexLimit,
+          "memory.procedures.indexLimit",
+        ),
+        maxEntries: parsePositiveInt(
+          memoryProcedures.maxEntries ??
+            USER_CONFIG_DEFAULTS.memory.procedures.maxEntries,
+          "memory.procedures.maxEntries",
+        ),
+        deprecationAgeMs: parsePositiveInt(
+          memoryProcedures.deprecationAgeMs ??
+            USER_CONFIG_DEFAULTS.memory.procedures.deprecationAgeMs,
+          "memory.procedures.deprecationAgeMs",
+        ),
+      },
+      consolidation: {
+        enabled: parseMemoryV2FeatureEnabled(
+          version,
+          memoryConsolidation.enabled,
+          USER_CONFIG_DEFAULTS.memory.consolidation.enabled,
+          "memory.consolidation.enabled",
+        ),
+        intervalMs: parsePositiveInt(
+          memoryConsolidation.intervalMs ??
+            USER_CONFIG_DEFAULTS.memory.consolidation.intervalMs,
+          "memory.consolidation.intervalMs",
+        ),
+        cooldownMs: parsePositiveInt(
+          memoryConsolidation.cooldownMs ??
+            USER_CONFIG_DEFAULTS.memory.consolidation.cooldownMs,
+          "memory.consolidation.cooldownMs",
+        ),
+        minClusterSize: parsePositiveInt(
+          memoryConsolidation.minClusterSize ??
+            USER_CONFIG_DEFAULTS.memory.consolidation.minClusterSize,
+          "memory.consolidation.minClusterSize",
+        ),
+        maxClustersPerTick: parsePositiveInt(
+          memoryConsolidation.maxClustersPerTick ??
+            USER_CONFIG_DEFAULTS.memory.consolidation.maxClustersPerTick,
+          "memory.consolidation.maxClustersPerTick",
+        ),
+        requireSharedTag: parseBool(
+          memoryConsolidation.requireSharedTag ??
+            USER_CONFIG_DEFAULTS.memory.consolidation.requireSharedTag,
+          "memory.consolidation.requireSharedTag",
+        ),
+        distillTimeoutMs: parsePositiveInt(
+          memoryConsolidation.distillTimeoutMs ??
+            USER_CONFIG_DEFAULTS.memory.consolidation.distillTimeoutMs,
+          "memory.consolidation.distillTimeoutMs",
+        ),
+      },
+      voting: {
+        enabled: parseMemoryV2FeatureEnabled(
+          version,
+          memoryVoting.enabled,
+          USER_CONFIG_DEFAULTS.memory.voting.enabled,
+          "memory.voting.enabled",
+        ),
+        maxVotePerItem: parsePositiveInt(
+          memoryVoting.maxVotePerItem ??
+            USER_CONFIG_DEFAULTS.memory.voting.maxVotePerItem,
+          "memory.voting.maxVotePerItem",
+        ),
+        signalDecay: parseHalfOpenUnitInterval(
+          memoryVoting.signalDecay ??
+            USER_CONFIG_DEFAULTS.memory.voting.signalDecay,
+          "memory.voting.signalDecay",
+        ),
+        scoreBlend: parseUnitInterval(
+          memoryVoting.scoreBlend ??
+            USER_CONFIG_DEFAULTS.memory.voting.scoreBlend,
+          "memory.voting.scoreBlend",
+        ),
+        eventLogMaxRows: parseNonNegativeInt(
+          memoryVoting.eventLogMaxRows ??
+            USER_CONFIG_DEFAULTS.memory.voting.eventLogMaxRows,
+          "memory.voting.eventLogMaxRows",
+        ),
+        profileFilterThreshold: parsePositiveInt(
+          memoryVoting.profileFilterThreshold ??
+            USER_CONFIG_DEFAULTS.memory.voting.profileFilterThreshold,
+          "memory.voting.profileFilterThreshold",
+        ),
+      },
+      retrieve: {
+        rewriter: {
+          enabled: parseMemoryV2FeatureEnabled(
+            version,
+            memoryRetrieveRewriter.enabled,
+            USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.enabled,
+            "memory.retrieve.rewriter.enabled",
+          ),
+          timeoutMs: parsePositiveInt(
+            memoryRetrieveRewriter.timeoutMs ??
+              USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.timeoutMs,
+            "memory.retrieve.rewriter.timeoutMs",
+          ),
+          historyTurns: parsePositiveInt(
+            memoryRetrieveRewriter.historyTurns ??
+              USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.historyTurns,
+            "memory.retrieve.rewriter.historyTurns",
+          ),
+          gateMode: parseRewriterGateMode(
+            memoryRetrieveRewriter.gateMode ??
+              USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.gateMode,
+            "memory.retrieve.rewriter.gateMode",
+          ),
+          embeddingGate: {
+            threshold: parseUnitInterval(
+              memoryRetrieveRewriterEmbeddingGate.threshold ??
+                USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.embeddingGate
+                  .threshold,
+              "memory.retrieve.rewriter.embeddingGate.threshold",
+            ),
+            exemplars: parseStringArrayOrNull(
+              memoryRetrieveRewriterEmbeddingGate.exemplars ??
+                USER_CONFIG_DEFAULTS.memory.retrieve.rewriter.embeddingGate
+                  .exemplars,
+              "memory.retrieve.rewriter.embeddingGate.exemplars",
+            ),
+          },
+        },
+      },
     },
     webhooks,
     vision: {
@@ -1327,6 +2644,9 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         telegram.parseMode ?? USER_CONFIG_DEFAULTS.telegram.parseMode,
         "telegram.parseMode",
       ),
+    },
+    mcp: {
+      servers: parseMcpServers(mcp.servers, "mcp.servers"),
     },
   };
 }

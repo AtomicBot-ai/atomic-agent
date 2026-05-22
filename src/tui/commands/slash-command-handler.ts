@@ -180,7 +180,9 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
     case "skill":
       return dispatchSkillSub(parsed.args);
     case "memory":
-      return pureActions([], { triggerMemoryDump: true });
+      return dispatchMemorySub(parsed.args);
+    case "mcp":
+      return dispatchMcpSub(parsed.args);
     case "models":
       return dispatchModelsSub(parsed.args);
     case "tasks":
@@ -331,6 +333,58 @@ function dispatchTaskSub(rawArgs: string): SlashDispatchResult {
  * preserved under `/skills dump` for users who want a flat text dump
  * piped through the chat transcript (e.g. agent-readable output).
  */
+function dispatchMemorySub(rawArgs: string): SlashDispatchResult {
+  const argPart = rawArgs.trim();
+  if (argPart.length === 0) {
+    return pureActions([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "memory" },
+      {
+        type: "memory_refresh_requested",
+        channel: "profile",
+        notesArchiveFilter: "active",
+        searchQuery: "",
+      },
+    ]);
+  }
+  if (argPart.toLowerCase() === "dump") {
+    return pureActions([], { triggerMemoryDump: true });
+  }
+  return pureActions([], {
+    systemMessage: "usage: /memory | /memory dump",
+  });
+}
+
+function dispatchMcpSub(rawArgs: string): SlashDispatchResult {
+  const argPart = rawArgs.trim();
+  if (argPart.length === 0) {
+    return pureActions([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "mcp" },
+      { type: "mcp_refresh_requested" },
+    ]);
+  }
+  if (argPart.toLowerCase() === "add") {
+    return pureActions([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "mcp" },
+      { type: "mcp_add_modal_opened" },
+    ]);
+  }
+  const removeMatch = argPart.match(/^remove\s+(\S+)\s*$/i);
+  if (removeMatch) {
+    const name = removeMatch[1]!;
+    return pureActions([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "mcp" },
+      { type: "mcp_remove_confirm_opened", name },
+    ]);
+  }
+  return pureActions([], {
+    systemMessage: "usage: /mcp | /mcp add | /mcp remove <name>",
+  });
+}
+
 function dispatchSkillsSub(rawArgs: string): SlashDispatchResult {
   const argPart = rawArgs.trim();
   if (argPart.length === 0) {

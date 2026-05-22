@@ -214,6 +214,117 @@ describe("handleLocalModelsTabKey — vision-aware Enter / g hotkey", () => {
     expect(onPull).not.toHaveBeenCalled();
   });
 
+  it("y on the embedding-onboarding modal resolves with accept=true", () => {
+    const onResolved = vi.fn();
+    const callbacks: TuiAppCallbacks = {
+      onApprovalDecision: vi.fn(),
+      onAbort: vi.fn(),
+      onQuit: vi.fn(),
+      onMessageSubmitted: vi.fn(),
+      onLocalModelsEmbeddingOnboardingResolved: onResolved,
+    };
+    const initial = createInitialTuiState(SESSION);
+    const state = {
+      ...initial,
+      uiMode: "debug" as const,
+      activeTab: "models" as const,
+      localModelsPanel: {
+        ...initial.localModelsPanel,
+        embeddingOnboardingPrompt: {
+          modelId: "nomic-embed-text-v1.5" as const,
+          name: "Nomic Embed Text v1.5",
+          sizeLabel: "~84 MB",
+        },
+      },
+    };
+    const handled = handleLocalModelsTabKey("y", emptyKey(), {
+      state,
+      dispatch: vi.fn(),
+      callbacks,
+    });
+    expect(handled).toBe(true);
+    expect(onResolved).toHaveBeenCalledWith(true);
+  });
+
+  it("n on the embedding-onboarding modal resolves with accept=false", () => {
+    const onResolved = vi.fn();
+    const callbacks: TuiAppCallbacks = {
+      onApprovalDecision: vi.fn(),
+      onAbort: vi.fn(),
+      onQuit: vi.fn(),
+      onMessageSubmitted: vi.fn(),
+      onLocalModelsEmbeddingOnboardingResolved: onResolved,
+    };
+    const initial = createInitialTuiState(SESSION);
+    const state = {
+      ...initial,
+      uiMode: "debug" as const,
+      activeTab: "models" as const,
+      localModelsPanel: {
+        ...initial.localModelsPanel,
+        embeddingOnboardingPrompt: {
+          modelId: "nomic-embed-text-v1.5" as const,
+          name: "Nomic Embed Text v1.5",
+          sizeLabel: "~84 MB",
+        },
+      },
+    };
+    handleLocalModelsTabKey("n", emptyKey(), {
+      state,
+      dispatch: vi.fn(),
+      callbacks,
+    });
+    expect(onResolved).toHaveBeenCalledWith(false);
+  });
+
+  it("Enter on an embedding row with downloaded=false triggers an embedding pull", () => {
+    const onEmbPull = vi.fn();
+    const callbacks: TuiAppCallbacks = {
+      onApprovalDecision: vi.fn(),
+      onAbort: vi.fn(),
+      onQuit: vi.fn(),
+      onMessageSubmitted: vi.fn(),
+      onLocalModelsEmbeddingPullRequested: onEmbPull,
+    };
+    const initial = createInitialTuiState(SESSION);
+    const state = {
+      ...initial,
+      uiMode: "debug" as const,
+      activeTab: "models" as const,
+      localModelsPanel: {
+        ...initial.localModelsPanel,
+        rows: [],
+        cursor: 0,
+        embeddingRows: [
+          {
+            id: "nomic-embed-text-v1.5" as const,
+            def: {
+              id: "nomic-embed-text-v1.5" as const,
+              name: "Nomic",
+              filename: "n.gguf",
+              huggingFaceUrl: "u",
+              fileSizeGb: 0.1,
+              sizeLabel: "100 MB",
+              description: "",
+              dim: 768,
+              pooling: "mean" as const,
+              minRamGb: 1,
+              recommendedRamGb: 1,
+            },
+            downloaded: false,
+            active: false,
+          },
+        ],
+      },
+    };
+    handleLocalModelsTabKey("", emptyKey({ return: true }), {
+      state,
+      dispatch: vi.fn(),
+      callbacks,
+    });
+    expect(onEmbPull).toHaveBeenCalledWith("nomic-embed-text-v1.5");
+  });
+
   it("Enter on a text-only Qwen row pulls GGUF (with-mmproj is harmless because mmprojStatus=n/a)", () => {
     const onPull = vi.fn();
     const callbacks: TuiAppCallbacks = {

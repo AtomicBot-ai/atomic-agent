@@ -4,6 +4,8 @@ import {
   renderMemoryIndexSection,
   renderRecalledSection,
 } from "../memory/notes-renderer.js";
+import { renderLessonsSection } from "../memory/lessons/lessons-renderer.js";
+import { renderProceduresSection } from "../memory/procedures/procedures-renderer.js";
 import { packConversation } from "../session/conversation-turn.js";
 import {
   renderPackedConversation,
@@ -31,6 +33,26 @@ export type {
   BuiltPrompt,
   BuiltPromptTruncationFlags,
 } from "./build-prompt-types.js";
+
+// TODO(memory-v2): cross-phase invariant 1 — the stable prefix bytes
+// must change exactly twice across the v2 rollout: once in phase 5
+// (adds `### lessons` to the variable tail + mentions it in the persona)
+// and once in phase 7b (adds `### procedures` + mentions it). Pinned by
+// hash test in `build-prompt.test.ts`. The expected gold hash moves once
+// per phase boundary and stays byte-stable otherwise. This is a
+// deliberate deviation from doc §9 invariant 2 (which expected one
+// combined release) — see AGENTS.md "Memory fabric" §2 for the rationale.
+//
+// TODO(memory-v2 phase 5): render `### lessons` between `### profile`
+// and `### recalled`. Source: ephemeral `SessionState.recalledLessons`
+// pre-fetched by `memory-context-provider`. Token budget
+// `memory.lessons.maxTokens` (default 300) subtracted from the effective
+// conversation cap in `token-budget.ts`.
+//
+// TODO(memory-v2 phase 7b): render `### procedures` between
+// `### lessons` and `### recalled`. Source: ephemeral
+// `SessionState.recalledProcedures`. Token budget
+// `memory.procedures.maxTokens` (default 400) likewise subtracted.
 
 /**
  * Assembles the prompt with the stable prefix at the top (persona + tools +
@@ -147,6 +169,32 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const memoryIndexTokens =
     memoryIndex !== null ? estimateTokens(memoryIndex) : 0;
 
+  const lessonsMaxTokens =
+    input.lessonsMaxTokens ?? config.memory.lessons.maxTokens;
+  const recalledLessons = input.session.recalledLessons;
+  const lessonsFull =
+    recalledLessons !== undefined && recalledLessons.length > 0
+      ? renderLessonsSection(recalledLessons)
+      : null;
+  const lessons =
+    lessonsFull !== null
+      ? truncateToTokens(lessonsFull, lessonsMaxTokens)
+      : null;
+  const lessonsTokens = lessons !== null ? estimateTokens(lessons) : 0;
+
+  const proceduresMaxTokens =
+    input.proceduresMaxTokens ?? config.memory.procedures.maxTokens;
+  const recalledProcedures = input.session.recalledProcedures;
+  const proceduresFull =
+    recalledProcedures !== undefined && recalledProcedures.length > 0
+      ? renderProceduresSection(recalledProcedures)
+      : null;
+  const procedures =
+    proceduresFull !== null
+      ? truncateToTokens(proceduresFull, proceduresMaxTokens)
+      : null;
+  const proceduresTokens = procedures !== null ? estimateTokens(procedures) : 0;
+
   const worldSnapshotFull = renderWorldSnapshotSection(input.session);
   const worldSnapshot = truncateToTokens(
     worldSnapshotFull,
@@ -165,6 +213,8 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     profileTokens,
     recalledTokens,
     memoryIndexTokens,
+    lessonsTokens,
+    proceduresTokens,
     loadedToolsTokens,
     completionMaxTokens,
   });
@@ -187,6 +237,12 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   }
   if (profile !== null) {
     tailParts.push("### profile", profile, ``);
+  }
+  if (lessons !== null) {
+    tailParts.push("### lessons", lessons, ``);
+  }
+  if (procedures !== null) {
+    tailParts.push("### procedures", procedures, ``);
   }
   if (memoryIndex !== null) {
     tailParts.push("### memory-index", memoryIndex, ``);

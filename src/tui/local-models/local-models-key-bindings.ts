@@ -2,7 +2,12 @@ import type { Key } from "ink";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
-import type { LocalModelRow } from "./local-models-panel-state.js";
+import {
+  resolveRowAt,
+  type EmbeddingModelRow,
+  type LocalModelRow,
+  type LocalModelsPanelState,
+} from "./local-models-panel-state.js";
 
 export interface LocalModelsTabKeyContext {
   state: TuiState;
@@ -18,8 +23,27 @@ export function handleLocalModelsTabKey(
   const { state, dispatch, callbacks } = ctx;
   if (state.uiMode !== "debug" || state.activeTab !== "models") return false;
   const panel = state.localModelsPanel;
-  const row = panel.rows[panel.cursor];
 
+  // Memory-v2 phase 1B onboarding modal takes precedence over all
+  // other keys — including the chat-remove modal — because it is
+  // pushed automatically right after a chat-model pull succeeds, when
+  // the operator has no other intent in flight.
+  if (panel.embeddingOnboardingPrompt) {
+    const lower = input.toLowerCase();
+    if (lower === "y") {
+      callbacks.onLocalModelsEmbeddingOnboardingResolved?.(true);
+      return true;
+    }
+    if (lower === "n" || key.escape) {
+      callbacks.onLocalModelsEmbeddingOnboardingResolved?.(false);
+      return true;
+    }
+    return true;
+  }
+
+  // Two confirm modals (chat vs embedding) — keep them strictly
+  // disjoint so a stray `y` in the chat modal can never delete an
+  // embedding GGUF, and vice versa.
   if (panel.removeConfirmId) {
     const lower = input.toLowerCase();
     if (lower === "y") {
@@ -33,14 +57,31 @@ export function handleLocalModelsTabKey(
     }
     return true;
   }
+  if (panel.embeddingRemoveConfirmId) {
+    const lower = input.toLowerCase();
+    if (lower === "y") {
+      callbacks.onLocalModelsEmbeddingRemoveConfirmed?.(
+        panel.embeddingRemoveConfirmId,
+      );
+      dispatch({ type: "local_models_embedding_remove_confirm_closed" });
+      return true;
+    }
+    if (lower === "n" || key.escape) {
+      dispatch({ type: "local_models_embedding_remove_confirm_closed" });
+      return true;
+    }
+    return true;
+  }
+
+  const ref = resolveRowAt(panel);
 
   if (panel.mode === "detail") {
     if (key.escape || input === "q") {
       dispatch({ type: "local_models_detail_closed" });
       return true;
     }
-    if (key.return && row) {
-      triggerPrimaryAction(row, callbacks);
+    if (key.return && ref?.kind === "chat") {
+      triggerPrimaryAction(ref.row, panel, callbacks);
       dispatch({ type: "local_models_detail_closed" });
       return true;
     }
@@ -61,22 +102,50 @@ export function handleLocalModelsTabKey(
     dispatch({ type: "local_models_cursor_up" });
     return true;
   }
-  if (key.return && row) {
-    triggerPrimaryAction(row, callbacks);
+
+  // `E` (uppercase) toggles the embedding master switch. Kept on
+  // shift to make the destructive-ish toggle deliberate; the cursor's
+  // row type is intentionally NOT consulted — the operator may want
+  // to flip the switch while parked on a chat row.
+  if (input === "E") {
+    callbacks.onLocalModelsEmbeddingToggleEnabledRequested?.();
     return true;
   }
-  if (input === "g" && row) {
-    triggerGgufOnlyPull(row, callbacks);
-    return true;
+
+  if (ref?.kind === "chat") {
+    if (key.return) {
+      triggerPrimaryAction(ref.row, panel, callbacks);
+      return true;
+    }
+    if (input === "g") {
+      triggerGgufOnlyPull(ref.row, callbacks);
+      return true;
+    }
+    if (input === "i") {
+      dispatch({ type: "local_models_mode_set", mode: "detail" });
+      return true;
+    }
+    if (input === "d" && ref.row.downloaded) {
+      dispatch({
+        type: "local_models_remove_confirm_opened",
+        id: ref.row.id,
+      });
+      return true;
+    }
+  } else if (ref?.kind === "embedding") {
+    if (key.return) {
+      triggerEmbeddingPrimaryAction(ref.row, panel, callbacks);
+      return true;
+    }
+    if (input === "d" && ref.row.downloaded) {
+      dispatch({
+        type: "local_models_embedding_remove_confirm_opened",
+        id: ref.row.id,
+      });
+      return true;
+    }
   }
-  if (input === "i" && row) {
-    dispatch({ type: "local_models_mode_set", mode: "detail" });
-    return true;
-  }
-  if (input === "d" && row?.downloaded) {
-    dispatch({ type: "local_models_remove_confirm_opened", id: row.id });
-    return true;
-  }
+
   if (input === "B") {
     callbacks.onLocalModelsBackendPullRequested?.();
     return true;
@@ -110,11 +179,11 @@ export function handleLocalModelsTabKey(
  *   afterwards; the orchestrator emits a hint.
  * - GGUF present (text-only OR mmproj also present) but row not active
  *   → set the row as the active managed model.
- * - Already downloaded + active → no-op (operator should run
- *   `llama start` if the daemon is not yet up).
+ * - Already downloaded + active but daemon down → start chat daemon (`s`).
  */
 function triggerPrimaryAction(
   row: LocalModelRow,
+  panel: LocalModelsPanelState,
   callbacks: TuiAppCallbacks,
 ): void {
   if (!row.downloaded) {
@@ -127,6 +196,12 @@ function triggerPrimaryAction(
   }
   if (!row.active) {
     callbacks.onLocalModelsSetActiveRequested?.(row.id);
+    return;
+  }
+  const chatUp =
+    panel.daemon.running || panel.daemonPhase === "starting";
+  if (!chatUp) {
+    callbacks.onLocalModelsDaemonStartRequested?.();
   }
 }
 
@@ -142,4 +217,39 @@ function triggerGgufOnlyPull(
 ): void {
   if (row.downloaded) return;
   callbacks.onLocalModelsPullRequested?.(row.id, "gguf-only");
+}
+
+/**
+ * Memory-v2 phase 1B. Embedding-catalog Enter handler:
+ * - Not downloaded → pull (orchestrator sets active + starts pairing when chat is up).
+ * - Downloaded but not active → set active (+ pairing when chat is up).
+ * - Already active (`*` prefix) but daemon down → enable/start embedding side.
+ */
+function triggerEmbeddingPrimaryAction(
+  row: EmbeddingModelRow,
+  panel: LocalModelsPanelState,
+  callbacks: TuiAppCallbacks,
+): void {
+  if (!row.downloaded) {
+    callbacks.onLocalModelsEmbeddingPullRequested?.(row.id);
+    return;
+  }
+  if (!row.active) {
+    callbacks.onLocalModelsEmbeddingSetActiveRequested?.(row.id);
+    return;
+  }
+  const emb = panel.embeddingDaemon;
+  if (!emb?.enabled) {
+    callbacks.onLocalModelsEmbeddingToggleEnabledRequested?.();
+    return;
+  }
+  const chatUp =
+    panel.daemon.running || panel.daemonPhase === "starting";
+  if (!chatUp) {
+    callbacks.onLocalModelsDaemonStartRequested?.();
+    return;
+  }
+  if (!emb.running) {
+    callbacks.onLocalModelsEmbeddingStartRequested?.();
+  }
 }

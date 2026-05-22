@@ -30,6 +30,35 @@ export interface TraceRecorder {
   beginSession(info: TraceRecorderBeginInfo): void;
   /** Transform and forward one `AgentLoopEvent` to the sink. */
   onAgentEvent(event: AgentLoopEvent): void;
+  /**
+   * Memory-v2 phase 7a. Emit a `vote_applied` trace event. Called
+   * from the reflection-slot `VoteRunner` after a vote landed in
+   * `VoteStore` successfully. The recorder owns the monotonic
+   * `seq` counter so per-session traces stay totally ordered even
+   * when reflection fires after `turn_finished`.
+   *
+   * Fire-safe: payload errors never propagate; the recorder
+   * defaults `turnIndex` / `stepIndex` to the last observed values.
+   */
+  recordVoteApplied(payload: {
+    kind: "memory" | "lesson" | "profile" | "procedure";
+    targetId: number;
+    direction: 1 | -1;
+    score: number;
+    clampHit: boolean;
+  }): void;
+  /**
+   * Memory-v2 phase 7a. Emit a `vote_rejected` trace event for any
+   * vote that failed before reaching (or after rejecting from) the
+   * store — out-of-allowlist, target missing, clamp hit, parser
+   * rejection. One event per rejection.
+   */
+  recordVoteRejected(payload: {
+    kind: "memory" | "lesson" | "profile" | "procedure" | "unknown";
+    targetId: number | null;
+    direction: 1 | -1 | null;
+    reason: string;
+  }): void;
 }
 
 /**
@@ -171,6 +200,31 @@ export function createTraceRecorder(
   };
 
   return {
+    recordVoteApplied(payload) {
+      push({
+        type: "vote_applied",
+        seq: nextSeq(),
+        sessionId,
+        ts: now(),
+        kind: payload.kind,
+        targetId: payload.targetId,
+        direction: payload.direction,
+        score: payload.score,
+        clampHit: payload.clampHit,
+      });
+    },
+    recordVoteRejected(payload) {
+      push({
+        type: "vote_rejected",
+        seq: nextSeq(),
+        sessionId,
+        ts: now(),
+        kind: payload.kind,
+        targetId: payload.targetId,
+        direction: payload.direction,
+        reason: payload.reason,
+      });
+    },
     beginSession(info) {
       push({
         type: "session_started",

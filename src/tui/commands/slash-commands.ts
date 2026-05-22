@@ -56,7 +56,16 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     description:
       "skill subcommand: `/skill enable <name>` | `/skill disable <name>`",
   },
-  { name: "memory", description: "dump the current user profile (cross-session facts)" },
+  {
+    name: "memory",
+    description:
+      "open Memory tab (profile, notes, lessons, …) · subcommand: `/memory dump` for profile in chat",
+  },
+  {
+    name: "mcp",
+    description:
+      "open MCP tab (configured servers + discovered tools / resources / prompts) · subcommands: `/mcp add` opens JSON-paste modal, `/mcp remove <name>` opens delete-confirm",
+  },
   {
     name: "models",
     description:

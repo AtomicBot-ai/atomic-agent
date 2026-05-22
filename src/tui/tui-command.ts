@@ -203,6 +203,17 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.skills.setSkillDisabled(name, false),
         onSkillDisableRequested: (name) =>
           void orchestrator.skills.setSkillDisabled(name, true),
+        onMemoryAutoRefreshStart: () => orchestrator.memory.startAutoRefresh(),
+        onMemoryDetailRequested: (row) => orchestrator.memory.openDetail(row),
+        onMemoryOpenNoteRequested: (noteId) =>
+          orchestrator.memory.openNoteById(noteId),
+        onMemoryExpandNeighborsRequested: (noteId) =>
+          orchestrator.memory.expandNoteNeighbors(noteId),
+        onMcpAutoRefreshStart: () => orchestrator.mcp.startAutoRefresh(),
+        onMcpDetailRequested: (serverName) =>
+          orchestrator.mcp.openDetail(serverName),
+        onMcpAddServerSubmit: (json) => orchestrator.mcp.addServerFromJson(json),
+        onMcpRemoveServer: (name) => orchestrator.mcp.removeServer(name),
         onDebugBundleExportRequested: (state) =>
           orchestrator.exportDebugBundle(state),
         onLocalModelsAutoRefreshStart: () => orchestrator.localModels.startAutoRefresh(),
@@ -220,6 +231,18 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.localModels.startDaemon(),
         onLocalModelsDaemonStopRequested: () =>
           void orchestrator.localModels.stopDaemon(),
+        onLocalModelsEmbeddingPullRequested: (id) =>
+          void orchestrator.localModels.pullEmbeddingModel(id),
+        onLocalModelsEmbeddingSetActiveRequested: (id) =>
+          void orchestrator.localModels.setActiveEmbedding(id),
+        onLocalModelsEmbeddingToggleEnabledRequested: () =>
+          void orchestrator.localModels.toggleEmbeddingEnabled(),
+        onLocalModelsEmbeddingStartRequested: () =>
+          void orchestrator.localModels.startEmbeddingPairing(),
+        onLocalModelsEmbeddingRemoveConfirmed: (id) =>
+          void orchestrator.localModels.removeEmbeddingModel(id),
+        onLocalModelsEmbeddingOnboardingResolved: (accept) =>
+          void orchestrator.localModels.resolveEmbeddingOnboarding(accept),
         onLocalLlmLogsAutoRefreshStart: () =>
           orchestrator.localModels.startLogsAutoRefresh(),
         onLocalLlmLogsAutoRefreshStop: () =>

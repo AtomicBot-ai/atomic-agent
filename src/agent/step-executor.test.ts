@@ -226,28 +226,68 @@ describe("executeStep batch handling", () => {
     expect(outcome.terminal).toBeNull();
   });
 
-  it("rejects a batch containing a terminal verb (forces solo via parser-retry)", async () => {
-    // Same body returned twice — both attempts fail validation, so the
-    // executor surfaces the validation error as a GrammarError after
-    // the one-shot retry.
+  it("rejects a batch with a terminal verb NOT at the last position", async () => {
+    // `reply` at index 0 of a 2-call batch is invalid: the runtime
+    // cannot keep firing tools after the turn has been closed. Same
+    // body returned twice — both attempts fail validation, so the
+    // executor surfaces the error as a GrammarError after the
+    // one-shot retry.
     const body = JSON.stringify([
-      { tool: "os.fs.read", args: { path: "a" } },
       { tool: "reply", args: { text: "done" } },
+      { tool: "os.fs.read", args: { path: "a" } },
     ]);
     await expect(runWithBody(body)).rejects.toThrow(
-      /terminal verb 'reply' is forbidden inside a batch/,
+      /terminal verb 'reply' must be the last call in a batch/,
     );
   });
+
+  it("executes a [tool, reply] tail-terminal batch in one inference", async () => {
+    // Validator allows `reply` as the last call of a batch; executor
+    // runs the read first, then the reply solo (terminal-tail
+    // barrier). Outcome is identical to a `reply`-only solo step:
+    // `terminal === "turn"` so the agent loop closes the turn.
+    const body = JSON.stringify([
+      { tool: "os.fs.read", args: { path: "a" } },
+      { tool: "reply", args: { text: "all done" } },
+    ]);
+    const outcome = await runWithBody(body);
+    expect(outcome.toolCalls).toHaveLength(2);
+    expect(outcome.toolCalls.map((c) => c.tool)).toEqual([
+      "os.fs.read",
+      "reply",
+    ]);
+    expect(outcome.toolResults).toHaveLength(2);
+    expect(outcome.toolResults[0]!.summary).toBe("read a");
+    expect(outcome.toolResults[1]!.status).toBe("ok");
+    expect(outcome.terminal).toBe("turn");
+    // Transcript: read's tool_call + tool_result pair, then a single
+    // assistant_reply that collapses the terminal call.
+    const turns = outcome.nextSession.turns;
+    const tail = turns.slice(-3);
+    expect(tail.map((t) => t.kind)).toEqual([
+      "assistant_tool_call",
+      "tool_result",
+      "assistant_reply",
+    ]);
+  });
+
+  // Note: the "tail reply fires even when an earlier non-terminal
+  // call errored" invariant is pinned directly on the executor in
+  // src/agent/batch-executor.test.ts — no need to duplicate it here
+  // via a thrown registry tool (which would surface as
+  // ToolExecutionError before the batch even runs).
 
   it("uses a structured repair prompt for validation retry", async () => {
     const registry = makeRegistry();
     const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
     const session = createEmptySessionState({ id: "s-repair", workingDir: "/w" });
     const prompts: string[] = [];
+    // Mid-batch terminal: invalid (`reply` must be last); the model is
+    // asked to re-emit. The repair attempt returns a clean solo reply.
     const bodies = [
       JSON.stringify([
-        { tool: "os.fs.read", args: { path: "a" } },
         { tool: "reply", args: { text: "done" } },
+        { tool: "os.fs.read", args: { path: "a" } },
       ]),
       JSON.stringify({ tool: "reply", args: { text: "done" } }),
     ];
@@ -292,7 +332,9 @@ describe("executeStep batch handling", () => {
     expect(outcome.terminal).toBe("turn");
     expect(prompts).toHaveLength(2);
     expect(prompts[1]).toContain("### tool-call-repair");
-    expect(prompts[1]).toContain("terminal verb 'reply' is forbidden inside a batch");
+    expect(prompts[1]).toContain(
+      "terminal verb 'reply' must be the last call in a batch",
+    );
     expect(prompts[1]).toContain("Use a length-1 array");
   });
 
@@ -314,10 +356,12 @@ describe("executeStep batch handling", () => {
       // emit the JSON body. The repair attempt has the same shape:
       // prompt ends with `<think>` (re-appended after strip), model
       // closes it and emits JSON.
+      // Mid-batch terminal: invalid (`reply` must be last); the model
+      // recovers with a clean solo reply on the repair attempt.
       const bodies = [
         `</think>${JSON.stringify([
-          { tool: "os.fs.read", args: { path: "a" } },
           { tool: "reply", args: { text: "done" } },
+          { tool: "os.fs.read", args: { path: "a" } },
         ])}`,
         `</think>${JSON.stringify({ tool: "reply", args: { text: "done" } })}`,
       ];
@@ -489,20 +533,20 @@ describe("executeStep batch handling", () => {
   );
 
   it(
-    "still routes a batch containing a terminal verb through the LLM " +
-      "repair path (terminal verbs are not trim-eligible)",
+    "still routes a batch with a mid-position terminal verb through the " +
+      "LLM repair path (mid-batch terminals are not trim-eligible)",
     async () => {
-      // `[read, reply]` mixes a batchable read with a terminal verb;
-      // the validator rejects both because `reply` is terminal, not
-      // because approval-gated, so the trim shortcut must NOT engage.
-      // Both attempts return the same offending body, surfacing the
-      // legacy GrammarError after the one-shot repair.
+      // `[reply, read]` puts the terminal verb at index 0 — invalid by
+      // the new tail-only rule. The trim shortcut only fires for
+      // approval-gated-only failures; a misplaced terminal goes
+      // through repair. Both attempts return the same offending body,
+      // surfacing the legacy GrammarError after the one-shot repair.
       const body = JSON.stringify([
-        { tool: "os.fs.read", args: { path: "a" } },
         { tool: "reply", args: { text: "done" } },
+        { tool: "os.fs.read", args: { path: "a" } },
       ]);
       await expect(runWithBody(body)).rejects.toThrow(
-        /terminal verb 'reply' is forbidden inside a batch/,
+        /terminal verb 'reply' must be the last call in a batch/,
       );
     },
   );
@@ -645,5 +689,139 @@ describe("executeStep batch handling", () => {
     ]);
     const outcome = await runWithBody(body);
     expect(outcome.terminal).toBe("turn");
+  });
+});
+
+describe("executeStep streaming reasoning accumulator", () => {
+  // Regression for the Fix B side of the "degenerate-loop + empty
+  // reasoningContent" investigation. Before the fix `consumeStream` only
+  // routed parser-derived `reasoning_delta` events to the UI sink and
+  // never accumulated them into `CompletionResult.reasoningContent`, so
+  // the legacy `/completion` endpoint (which never emits a dedicated
+  // `reasoning_content` SSE channel) left the field empty. Traces then
+  // showed `reasoning_len=0` everywhere even when the model genuinely
+  // produced a `<think>...</think>` / `<|channel>thought` block.
+  let grammarsDir: string;
+
+  beforeEach(() => {
+    grammarsDir = join(process.cwd(), "grammars");
+  });
+
+  async function runStreaming(args: {
+    chunks: Array<{ delta: string; reasoningDelta: string; done: boolean }>;
+    finalContent: string;
+    finalReasoning: string;
+  }): Promise<{ captured: import("../llm/llama-server-client.js").CompletionResult | null }> {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "reply",
+      description: "reply",
+      readonly: true,
+      async run(args) {
+        return compressToolResult({
+          tool: "reply",
+          status: "ok",
+          output: String(args.text ?? ""),
+        });
+      },
+    });
+    const grammar = await buildGrammar(QWEN_THINK_PROFILE, grammarsDir);
+    const session = createEmptySessionState({ id: "s-stream", workingDir: "/w" });
+    const finalCompletion = {
+      content: args.finalContent,
+      reasoningContent: args.finalReasoning,
+      stop: true,
+      truncated: false,
+      timing: {
+        promptMs: 1,
+        predictedMs: 1,
+        promptTokens: 10,
+        predictedTokens: 5,
+      },
+      cacheHitTokens: 0,
+      slotId: 0,
+      modelId: "mock",
+    } as const;
+    let captured: import("../llm/llama-server-client.js").CompletionResult | null =
+      null;
+    await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hi",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async () => finalCompletion,
+        llmCompleteStream: async function* () {
+          for (const chunk of args.chunks) yield chunk;
+          return finalCompletion;
+        },
+        grammar,
+        profile: QWEN_THINK_PROFILE,
+        onCompletion: (c) => {
+          captured = c;
+        },
+      },
+    );
+    return { captured };
+  }
+
+  it("falls back to parser-derived reasoning when channel A is empty", async () => {
+    const reasoningBody = "thinking about it for a moment";
+    const replyJson = '[{"tool":"reply","args":{"text":"hi"}}]';
+    const { captured } = await runStreaming({
+      chunks: [
+        { delta: reasoningBody, reasoningDelta: "", done: false },
+        { delta: "</think>\n", reasoningDelta: "", done: false },
+        { delta: replyJson, reasoningDelta: "", done: false },
+      ],
+      finalContent: `${reasoningBody}</think>\n${replyJson}`,
+      finalReasoning: "",
+    });
+    expect(captured).not.toBeNull();
+    expect(captured!.reasoningContent).toBe(reasoningBody);
+  });
+
+  it("prefers channel A reasoning when both sources emit", async () => {
+    // Hypothetical server that splits CoT into a dedicated SSE channel
+    // *and* echoes the same text inline (some forks do this). The
+    // accumulator must not double-count or pick the inline copy.
+    const replyJson = '[{"tool":"reply","args":{"text":"hi"}}]';
+    const channelABody = "channel-a reasoning";
+    const { captured } = await runStreaming({
+      chunks: [
+        { delta: "", reasoningDelta: channelABody, done: false },
+        { delta: "inline echo", reasoningDelta: "", done: false },
+        { delta: "</think>\n", reasoningDelta: "", done: false },
+        { delta: replyJson, reasoningDelta: "", done: false },
+      ],
+      finalContent: `inline echo</think>\n${replyJson}`,
+      finalReasoning: "",
+    });
+    expect(captured).not.toBeNull();
+    expect(captured!.reasoningContent).toBe(channelABody);
+  });
+
+  it("does not overwrite an already-populated server-side reasoningContent", async () => {
+    // When the server returned a non-empty `reasoning_content` on the
+    // final SSE done frame, we trust it and skip the patch entirely.
+    const replyJson = '[{"tool":"reply","args":{"text":"hi"}}]';
+    const { captured } = await runStreaming({
+      chunks: [
+        { delta: "inline body", reasoningDelta: "", done: false },
+        { delta: "</think>\n", reasoningDelta: "", done: false },
+        { delta: replyJson, reasoningDelta: "", done: false },
+      ],
+      finalContent: `inline body</think>\n${replyJson}`,
+      finalReasoning: "server-authoritative reasoning",
+    });
+    expect(captured).not.toBeNull();
+    expect(captured!.reasoningContent).toBe("server-authoritative reasoning");
   });
 });
