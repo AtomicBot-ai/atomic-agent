@@ -209,6 +209,11 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.memory.openNoteById(noteId),
         onMemoryExpandNeighborsRequested: (noteId) =>
           orchestrator.memory.expandNoteNeighbors(noteId),
+        onMcpAutoRefreshStart: () => orchestrator.mcp.startAutoRefresh(),
+        onMcpDetailRequested: (serverName) =>
+          orchestrator.mcp.openDetail(serverName),
+        onMcpAddServerSubmit: (json) => orchestrator.mcp.addServerFromJson(json),
+        onMcpRemoveServer: (name) => orchestrator.mcp.removeServer(name),
         onDebugBundleExportRequested: (state) =>
           orchestrator.exportDebugBundle(state),
         onLocalModelsAutoRefreshStart: () => orchestrator.localModels.startAutoRefresh(),

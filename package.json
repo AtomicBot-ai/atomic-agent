@@ -72,6 +72,7 @@
     "release:major": "bash scripts/release.sh major"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/marked": "^5.0.2",
     "better-sqlite3": "^12.9.0",
     "chokidar": "^5.0.0",

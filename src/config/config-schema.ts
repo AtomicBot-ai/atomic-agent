@@ -1,5 +1,21 @@
 import type { TaskSchedule } from "../tasks/task-types.js";
 import { isKnownLocalModelId } from "../local-llm/models-catalog.js";
+import {
+  MCP_SERVER_NAME_MAX_LENGTH,
+  MCP_SERVER_NAME_RE,
+  type McpServerConfig,
+  type McpTransport,
+  type McpTrustLevel,
+} from "../mcp/mcp-types.js";
+
+export type {
+  McpServerConfig,
+  McpTransport,
+  McpTrustLevel,
+  McpStdioTransport,
+  McpStreamableHttpTransport,
+  McpSseTransport,
+} from "../mcp/mcp-types.js";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -518,6 +534,16 @@ export interface AtomicAgentConfig {
    * the master kill switch and the single-operator owner id.
    */
   telegram: TelegramConfig;
+  /**
+   * MCP (Model Context Protocol) client configuration. Mirrors
+   * `UserConfigFile.mcp`. Each entry in `servers[]` becomes a
+   * lifecycle-managed connection to an external MCP server. Tools
+   * are exposed through the regular `ToolRegistry` as
+   * `mcp.<server>.<tool>`. See AGENTS.md §"MCP client".
+   */
+  mcp: {
+    servers: McpServerConfig[];
+  };
 }
 
 /**
@@ -1025,9 +1051,19 @@ export interface UserConfigFile {
    * here — see `TelegramConfig` for rationale.
    */
   telegram: TelegramConfig;
+  /**
+   * MCP client servers. Added in config v23. Each entry declares one
+   * external MCP server the runtime will connect to at bootstrap and
+   * whose tools / resources / prompts will be exposed through the
+   * agent's tool registry (namespaced as `mcp.<server>.<tool>`).
+   * Older files are transparently upgraded with `mcp: { servers: [] }`.
+   */
+  mcp: {
+    servers: McpServerConfig[];
+  };
 }
 
-export const USER_CONFIG_VERSION = 22 as const;
+export const USER_CONFIG_VERSION = 23 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1089,6 +1125,9 @@ export type RewriterGateMode = "heuristic" | "embedding" | "always";
  * config file until the operator enables it from the TUI Models tab
  * (download + start). Upgrades from v21 and below apply the v22
  * switches for the advanced memory layers only.
+ * v23 added the optional `mcp.*` block (MCP client). Upgrades from
+ * v22 and below get `mcp: { servers: [] }` — no connections are
+ * opened until the operator adds entries to the list.
  * Older files are transparently upgraded by filling missing
  * blocks/fields from `USER_CONFIG_DEFAULTS`. Anything older than v5
  * is not migrated: this is active development, callers delete their
@@ -1112,6 +1151,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   19,
   20,
   21,
+  22,
   USER_CONFIG_VERSION,
 ];
 
@@ -1317,6 +1357,12 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     enabled: false,
     ownerUserId: null,
     parseMode: "html",
+  },
+  mcp: {
+    // Added in v23. Empty by default — the operator declares MCP
+    // servers explicitly. The runtime opens no connections when the
+    // list is empty.
+    servers: [],
   },
 };
 
@@ -1780,6 +1826,162 @@ export function parseUrl(raw: unknown, field: string): string {
   }
 }
 
+function parseMcpTrustLevel(raw: unknown, field: string): McpTrustLevel {
+  if (raw === "approval_gated" || raw === "pure_read") return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected one of approval_gated|pure_read, got ${JSON.stringify(raw)}`,
+  );
+}
+
+function parseMcpEnv(
+  raw: unknown,
+  field: string,
+): Record<string, string> | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, `expected object, got ${JSON.stringify(raw)}`);
+  }
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) {
+      throw new ConfigValidationError(
+        `${field}.${k}`,
+        "env var name must match [A-Za-z_][A-Za-z0-9_]*",
+      );
+    }
+    if (typeof v !== "string") {
+      throw new ConfigValidationError(`${field}.${k}`, "env value must be a string");
+    }
+    out[k] = v;
+  }
+  return out;
+}
+
+function parseMcpTransport(raw: unknown, field: string): McpTransport {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected transport object");
+  }
+  const obj = raw as Record<string, unknown>;
+  if (obj.kind === "stdio") {
+    const command = parseNonEmptyString(obj.command, `${field}.command`);
+    const args = obj.args === undefined ? undefined : parseStringArrayOrNull(obj.args, `${field}.args`);
+    const cwd =
+      obj.cwd === undefined || obj.cwd === null
+        ? undefined
+        : parseNonEmptyString(obj.cwd, `${field}.cwd`);
+    return {
+      kind: "stdio",
+      command,
+      ...(args ? { args } : {}),
+      ...(cwd ? { cwd } : {}),
+    };
+  }
+  if (obj.kind === "streamable_http") {
+    const url = parseUrl(obj.url, `${field}.url`);
+    const headers =
+      obj.headers === undefined || obj.headers === null
+        ? undefined
+        : parseMcpEnv(obj.headers, `${field}.headers`);
+    return {
+      kind: "streamable_http",
+      url,
+      ...(headers ? { headers } : {}),
+    };
+  }
+  if (obj.kind === "sse") {
+    const url = parseUrl(obj.url, `${field}.url`);
+    const headers =
+      obj.headers === undefined || obj.headers === null
+        ? undefined
+        : parseMcpEnv(obj.headers, `${field}.headers`);
+    return {
+      kind: "sse",
+      url,
+      ...(headers ? { headers } : {}),
+    };
+  }
+  throw new ConfigValidationError(
+    `${field}.kind`,
+    `expected stdio|streamable_http|sse, got ${JSON.stringify(obj.kind)}`,
+  );
+}
+
+/**
+ * Validate and normalise the `mcp.servers[]` list. Each entry is
+ * checked for a valid namespace name, an enabled flag, and a
+ * well-formed transport. Duplicate names are rejected — the
+ * namespace becomes the `mcp.<name>.<tool>` prefix and must be
+ * unique. Empty input is accepted.
+ */
+export function parseMcpServers(
+  raw: unknown,
+  field: string,
+): McpServerConfig[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(field, `expected array, got ${JSON.stringify(raw)}`);
+  }
+  const out: McpServerConfig[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new ConfigValidationError(
+        `${field}[${i}]`,
+        `expected object, got ${JSON.stringify(entry)}`,
+      );
+    }
+    const cfg = entry as Record<string, unknown>;
+    const name = parseNonEmptyString(cfg.name, `${field}[${i}].name`);
+    if (name.length > MCP_SERVER_NAME_MAX_LENGTH) {
+      throw new ConfigValidationError(
+        `${field}[${i}].name`,
+        `name exceeds ${MCP_SERVER_NAME_MAX_LENGTH} chars`,
+      );
+    }
+    if (!MCP_SERVER_NAME_RE.test(name)) {
+      throw new ConfigValidationError(
+        `${field}[${i}].name`,
+        `name must match ${MCP_SERVER_NAME_RE.source}`,
+      );
+    }
+    if (seen.has(name)) {
+      throw new ConfigValidationError(
+        `${field}[${i}].name`,
+        `duplicate server name ${JSON.stringify(name)}`,
+      );
+    }
+    seen.add(name);
+    const enabled = parseBool(
+      cfg.enabled === undefined ? true : cfg.enabled,
+      `${field}[${i}].enabled`,
+    );
+    const description =
+      cfg.description === undefined || cfg.description === null
+        ? undefined
+        : parseNonEmptyString(cfg.description, `${field}[${i}].description`);
+    const transport = parseMcpTransport(cfg.transport, `${field}[${i}].transport`);
+    const trust =
+      cfg.trust === undefined || cfg.trust === null
+        ? undefined
+        : parseMcpTrustLevel(cfg.trust, `${field}[${i}].trust`);
+    const env =
+      cfg.env === undefined || cfg.env === null
+        ? undefined
+        : parseMcpEnv(cfg.env, `${field}[${i}].env`);
+    out.push({
+      name,
+      enabled,
+      transport,
+      ...(description ? { description } : {}),
+      ...(trust ? { trust } : {}),
+      ...(env ? { env } : {}),
+    });
+  }
+  return out;
+}
+
 /**
  * Validate and normalise a raw JSON payload into a `UserConfigFile`.
  * Missing sub-keys are filled with defaults — this lets us add new
@@ -1863,6 +2065,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const vision = (obj.vision as Record<string, unknown> | undefined) ?? {};
   const skills = (obj.skills as Record<string, unknown> | undefined) ?? {};
   const telegram = (obj.telegram as Record<string, unknown> | undefined) ?? {};
+  const mcp = (obj.mcp as Record<string, unknown> | undefined) ?? {};
 
   const rawManaged =
     (localModels.managed as Record<string, unknown> | undefined) ?? {};
@@ -2441,6 +2644,9 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         telegram.parseMode ?? USER_CONFIG_DEFAULTS.telegram.parseMode,
         "telegram.parseMode",
       ),
+    },
+    mcp: {
+      servers: parseMcpServers(mcp.servers, "mcp.servers"),
     },
   };
 }

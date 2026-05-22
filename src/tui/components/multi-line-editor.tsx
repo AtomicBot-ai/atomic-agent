@@ -33,6 +33,13 @@ export interface MultiLineEditorProps {
   /** Shift+Tab pressed — parent may use this for reverse navigation. */
   onShiftTab?: () => void;
   /**
+   * Right arrow pressed while the cursor is at the very end of the
+   * buffer. Parent may use this to accept an inline suggestion (e.g.
+   * the slash-palette completion). When omitted, the editor falls back
+   * to the default clamp (no-op past the end of the buffer).
+   */
+  onAutocomplete?: () => void;
+  /**
    * Suppress the editor's own rounded border + horizontal padding. The
    * caller takes ownership of the visual chrome — used by `PromptShell`
    * to draw the opencode-style left tail and meta-row around the bare
@@ -69,6 +76,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     onHistoryNext,
     onTab,
     onShiftTab,
+    onAutocomplete,
     bare = false,
   } = props;
   const [cursorPos, setCursorPos] = useState<number>(value.length);
@@ -100,6 +108,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
         onInterrupt,
         onTab,
         onShiftTab,
+        onAutocomplete,
         onHistoryPrev,
         onHistoryNext,
       });
@@ -141,6 +150,7 @@ interface KeyContext {
   onInterrupt?: () => void;
   onTab?: () => void;
   onShiftTab?: () => void;
+  onAutocomplete?: () => void;
   onHistoryPrev?: () => void;
   onHistoryNext?: () => void;
 }
@@ -202,6 +212,10 @@ function handleKey(ctx: KeyContext): void {
     return;
   }
   if (key.rightArrow) {
+    if (cursor >= value.length && ctx.onAutocomplete) {
+      ctx.onAutocomplete();
+      return;
+    }
     setBuffer(value, Math.min(value.length, cursor + 1));
     return;
   }

@@ -31,6 +31,12 @@ export interface ToolGateConfig {
     procedures: { enabled: boolean };
   };
   tasks: { agentToolsEnabled: boolean };
+  /**
+   * MCP gate. `enabled=false` (or zero configured servers) drops the
+   * aggregate `mcp.resource.*` and `mcp.prompt.*` descriptors from the
+   * stable prefix so the agent does not see tools it cannot exercise.
+   */
+  mcp: { enabled: boolean };
 }
 
 /**
@@ -62,6 +68,12 @@ const GATED_TOOLS = {
     "tasks.cancel",
     "tasks.show",
   ],
+  mcp: [
+    "mcp.resource.list",
+    "mcp.resource.read",
+    "mcp.prompt.list",
+    "mcp.prompt.get",
+  ],
 } as const;
 
 /**
@@ -91,6 +103,9 @@ export function filterToolDescriptorsByConfig(
   }
   if (!gates.tasks.agentToolsEnabled) {
     for (const name of GATED_TOOLS.tasks) disabled.add(name);
+  }
+  if (!gates.mcp.enabled) {
+    for (const name of GATED_TOOLS.mcp) disabled.add(name);
   }
 
   if (disabled.size === 0) return descriptors;

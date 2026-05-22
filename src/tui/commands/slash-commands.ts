@@ -62,6 +62,11 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
       "open Memory tab (profile, notes, lessons, …) · subcommand: `/memory dump` for profile in chat",
   },
   {
+    name: "mcp",
+    description:
+      "open MCP tab (configured servers + discovered tools / resources / prompts) · subcommands: `/mcp add` opens JSON-paste modal, `/mcp remove <name>` opens delete-confirm",
+  },
+  {
     name: "models",
     description:
       "local-models tab · subcommands: pull <id> | use <id> | status | <base-url>",

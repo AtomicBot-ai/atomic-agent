@@ -34,6 +34,16 @@ export class ToolRegistry {
     this.tools.set(definition.name, definition);
   }
 
+  /**
+   * Remove a tool by name. Returns `true` when a tool was actually
+   * unregistered, `false` when the name was not known. Used by the
+   * MCP manager to detach a server's tools cleanly on stop /
+   * restart — the static native tools never call this.
+   */
+  unregister(name: string): boolean {
+    return this.tools.delete(name);
+  }
+
   list(): ToolDefinition[] {
     return Array.from(this.tools.values());
   }

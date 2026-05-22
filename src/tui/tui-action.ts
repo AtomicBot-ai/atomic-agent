@@ -6,6 +6,7 @@ import type { LocalModelsAction } from "./local-models/local-models-actions.js";
 import type { TasksAction } from "./tasks/tasks-actions.js";
 import type { SkillsAction } from "./skills/skills-actions.js";
 import type { MemoryAction } from "./memory/memory-actions.js";
+import type { McpAction } from "./mcp/mcp-actions.js";
 import type { TelegramAction } from "./telegram/telegram-actions.js";
 import type { ChatMessage, SessionPickerEntry, TuiTab, TuiUiMode } from "./tui-state.js";
 
@@ -144,4 +145,5 @@ export type TuiAction =
   | TasksAction
   | SkillsAction
   | MemoryAction
+  | McpAction
   | TelegramAction;

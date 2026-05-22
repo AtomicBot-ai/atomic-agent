@@ -16,6 +16,7 @@ const ALL_OPEN: ToolGateConfig = {
     procedures: { enabled: true },
   },
   tasks: { agentToolsEnabled: true },
+  mcp: { enabled: true },
 };
 
 function nameSet(
@@ -99,6 +100,17 @@ describe("filterToolDescriptorsByConfig", () => {
     }
   });
 
+  it("drops every mcp.* aggregate descriptor when mcp is disabled", () => {
+    const filtered = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+      ...ALL_OPEN,
+      mcp: { enabled: false },
+    });
+    const names = nameSet(filtered);
+    for (const dropped of GATED_TOOL_NAMES.mcp) {
+      expect(names.has(dropped)).toBe(false);
+    }
+  });
+
   it("drops everything gated when every switch is off", () => {
     const filtered = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
       vision: { enabled: false, providerAvailable: false },
@@ -109,6 +121,7 @@ describe("filterToolDescriptorsByConfig", () => {
         procedures: { enabled: false },
       },
       tasks: { agentToolsEnabled: false },
+      mcp: { enabled: false },
     });
     const names = nameSet(filtered);
     const allGated = [
@@ -118,6 +131,7 @@ describe("filterToolDescriptorsByConfig", () => {
       ...GATED_TOOL_NAMES.memoryLessons,
       ...GATED_TOOL_NAMES.memoryProcedures,
       ...GATED_TOOL_NAMES.tasks,
+      ...GATED_TOOL_NAMES.mcp,
     ];
     for (const dropped of allGated) {
       expect(names.has(dropped)).toBe(false);
@@ -135,6 +149,7 @@ describe("filterToolDescriptorsByConfig", () => {
       ...GATED_TOOL_NAMES.memoryLessons,
       ...GATED_TOOL_NAMES.memoryProcedures,
       ...GATED_TOOL_NAMES.tasks,
+      ...GATED_TOOL_NAMES.mcp,
     ];
     for (const name of allGated) {
       expect(known.has(name)).toBe(true);

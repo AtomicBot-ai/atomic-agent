@@ -17,12 +17,16 @@ import { LocalLlmLogsPanel } from "./local-llm-logs-panel.js";
 import { LocalModelsPanel } from "./local-models-panel.js";
 import { TasksPanel } from "./tasks-panel.js";
 import { SkillsPanel } from "./skills-panel.js";
+import { McpPanel } from "./mcp-panel.js";
 import { MemoryPanel } from "./memory-panel.js";
 import { TelegramPanel } from "../telegram/components/telegram-panel.js";
 
 interface DebugPaneProps {
   state: TuiState;
   maxVisible: number;
+  onMcpAddJsonChange?: (json: string) => void;
+  onMcpAddSubmit?: (json: string) => void;
+  onMcpAddCancel?: () => void;
 }
 
 /**
@@ -34,13 +38,25 @@ interface DebugPaneProps {
  * existing slash commands (`/feed`, `/tasks`, …) keep working: each one
  * sets `activeTab`, which in turn implies which sub-tab strip is shown.
  */
-export function DebugPane({ state, maxVisible }: DebugPaneProps): ReactElement {
+export function DebugPane({
+  state,
+  maxVisible,
+  onMcpAddJsonChange,
+  onMcpAddSubmit,
+  onMcpAddCancel,
+}: DebugPaneProps): ReactElement {
   const section = getCurrentSection(state);
   return (
     <Box flexDirection="column" flexGrow={1}>
       <SubTabBar state={state} section={section} />
       <DebugDiagnosticsLine state={state} />
-      <ActiveDebugTab state={state} maxVisible={maxVisible} />
+      <ActiveDebugTab
+        state={state}
+        maxVisible={maxVisible}
+        onMcpAddJsonChange={onMcpAddJsonChange}
+        onMcpAddSubmit={onMcpAddSubmit}
+        onMcpAddCancel={onMcpAddCancel}
+      />
     </Box>
   );
 }
@@ -101,6 +117,7 @@ function buildManageTabs(state: TuiState): SubTab[] {
     { id: "tasks", label: `Tasks${suffix(state.tasksPanel.rows.length)}` },
     { id: "skills", label: `Skills${suffix(state.skillsPanel.rows.length)}` },
     { id: "memory", label: `Memory${suffix(state.memoryPanel.rows.length)}` },
+    { id: "mcp", label: `MCP${suffix(state.mcpPanel.rows.length)}` },
     { id: "models", label: "Local LLM" },
     { id: "telegram", label: telegramTabLabel(state) },
   ];
@@ -109,9 +126,15 @@ function buildManageTabs(state: TuiState): SubTab[] {
 function ActiveDebugTab({
   state,
   maxVisible,
+  onMcpAddJsonChange,
+  onMcpAddSubmit,
+  onMcpAddCancel,
 }: {
   state: TuiState;
   maxVisible: number;
+  onMcpAddJsonChange?: (json: string) => void;
+  onMcpAddSubmit?: (json: string) => void;
+  onMcpAddCancel?: () => void;
 }): ReactElement {
   switch (state.activeTab) {
     case "feed":
@@ -128,6 +151,15 @@ function ActiveDebugTab({
       return <SkillsPanel panel={state.skillsPanel} />;
     case "memory":
       return <MemoryPanel panel={state.memoryPanel} />;
+    case "mcp":
+      return (
+        <McpPanel
+          panel={state.mcpPanel}
+          onAddJsonChange={onMcpAddJsonChange}
+          onAddSubmit={onMcpAddSubmit}
+          onAddCancel={onMcpAddCancel}
+        />
+      );
     case "models":
       return <LocalModelsPanel panel={state.localModelsPanel} />;
     case "llm-logs":

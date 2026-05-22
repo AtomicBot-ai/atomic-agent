@@ -313,7 +313,7 @@ describe("handleAppKey", () => {
       sidebarVisible: false,
     });
     expect(handled).toBe(true);
-    expect(dispatch).toHaveBeenCalledWith({ type: "tab_changed", tab: "models" });
+    expect(dispatch).toHaveBeenCalledWith({ type: "tab_changed", tab: "mcp" });
   });
 
   it("Tab on Memory detail mode is blocked so Esc can close detail first", () => {

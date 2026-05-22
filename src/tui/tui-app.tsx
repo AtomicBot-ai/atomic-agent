@@ -41,6 +41,7 @@ import { handleTasksTabKey } from "./tasks/tasks-key-bindings.js";
 import { handleSkillsTabKey } from "./skills/skills-key-bindings.js";
 import { handleMemoryTabKey } from "./memory/memory-key-bindings.js";
 import type { MemorySummaryRow } from "./memory/memory-panel-state.js";
+import { handleMcpTabKey } from "./mcp/mcp-key-bindings.js";
 import { handleTelegramTabKey } from "./telegram/telegram-key-bindings.js";
 
 export { makeTuiEventBus } from "./make-event-bus.js";
@@ -164,6 +165,25 @@ export interface TuiAppCallbacks {
   onMemoryOpenNoteRequested?(noteId: number): void;
   /** Memory tab: BFS-expand neighbors for the open note (`g`). */
   onMemoryExpandNeighborsRequested?(noteId: number): void;
+  /** MCP tab: start the 5s refresh loop on first entry. */
+  onMcpAutoRefreshStart?(): void;
+  /** MCP tab: open detail view for a server by name. */
+  onMcpDetailRequested?(serverName: string): void;
+  /**
+   * MCP tab: persist a new server from a JSON-paste payload. The
+   * orchestrator validates + writes `<stateDir>/config.json` and
+   * emits one of `mcp_add_validation_failed` / `mcp_add_failed` /
+   * `mcp_add_succeeded`. The runtime must be restarted for the new
+   * server to actually connect — see `persistMcpServer`.
+   */
+  onMcpAddServerSubmit?(json: string): void;
+  /**
+   * MCP tab: remove an existing server by name from
+   * `<stateDir>/config.json`. Variant α: the live `McpManager` is NOT
+   * mutated — the operator restarts atomic-agent to drop the live
+   * connection. Failures fold into `mcp_remove_failed`.
+   */
+  onMcpRemoveServer?(name: string): void;
   /** Slash-command surface: enable a skill explicitly (`/skill enable <name>`). */
   onSkillEnableRequested?(name: string): void;
   /** Slash-command surface: disable a skill explicitly (`/skill disable <name>`). */
@@ -290,6 +310,12 @@ export function TuiApp({
   }, [state.uiMode, state.activeTab, callbacks]);
 
   useEffect(() => {
+    if (state.uiMode === "debug" && state.activeTab === "mcp") {
+      callbacks.onMcpAutoRefreshStart?.();
+    }
+  }, [state.uiMode, state.activeTab, callbacks]);
+
+  useEffect(() => {
     if (state.uiMode === "debug" && state.activeTab === "models") {
       callbacks.onLocalModelsAutoRefreshStart?.();
     }
@@ -319,6 +345,8 @@ export function TuiApp({
     state.uiMode === "debug" && state.activeTab === "skills";
   const memoryTabActive =
     state.uiMode === "debug" && state.activeTab === "memory";
+  const mcpTabActive =
+    state.uiMode === "debug" && state.activeTab === "mcp";
   const localModelsTabActive =
     state.uiMode === "debug" && state.activeTab === "models";
   const telegramTabActive =
@@ -332,6 +360,7 @@ export function TuiApp({
     !tasksTabActive &&
     !skillsTabActive &&
     !memoryTabActive &&
+    !mcpTabActive &&
     !telegramTabActive &&
     !sidebarFocused &&
     !(
@@ -370,6 +399,10 @@ export function TuiApp({
     }
     if (memoryTabActive) {
       handleMemoryTabKey(input, key, { state, dispatch, callbacks });
+      return;
+    }
+    if (mcpTabActive) {
+      handleMcpTabKey(input, key, { state, dispatch, callbacks });
       return;
     }
     if (localModelsTabActive) {
@@ -488,7 +521,19 @@ export function TuiApp({
             {state.uiMode === "chat" ? (
               <ChatLog state={state} dispatch={dispatch} />
             ) : (
-              <DebugPane state={state} maxVisible={maxVisibleRows} />
+              <DebugPane
+                state={state}
+                maxVisible={maxVisibleRows}
+                onMcpAddJsonChange={(json) =>
+                  dispatch({ type: "mcp_add_json_changed", json })
+                }
+                onMcpAddSubmit={(json) =>
+                  callbacks.onMcpAddServerSubmit?.(json)
+                }
+                onMcpAddCancel={() =>
+                  dispatch({ type: "mcp_add_modal_closed" })
+                }
+              />
             )}
           </Box>
           {state.pendingApproval ? (
@@ -529,6 +574,7 @@ export function TuiApp({
             onSubmit={submit}
             onEscape={onEscape}
             onTab={onTab}
+            onAutocomplete={onTab}
             onHistoryPrev={onHistoryPrev}
             onHistoryNext={onHistoryNext}
           />

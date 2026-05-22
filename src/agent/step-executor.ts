@@ -1111,14 +1111,23 @@ async function consumeStream(
       : {}),
   });
   let accumulated = "";
-  let accumulatedReasoning = "";
+  // Channel A (server-side `reasoning_content` SSE deltas: QwQ /
+  // DeepSeek-R1 with `--reasoning-format deepseek`) is mutually exclusive
+  // with channel B (inline `<think>...</think>` / `<|channel>thought` text
+  // that the grammar-aware stream parser splits out client-side). We
+  // accumulate them separately so the legacy `/completion` path (where
+  // channel A is always empty) still ends up with a populated
+  // `reasoningContent` field for traces + `resolveReasoning` callers,
+  // without risking double-count when a server happens to emit both.
+  let channelAReasoning = "";
+  let parserReasoning = "";
   const emitParseEvents = (events: readonly StreamParseEvent[]): void => {
-    if (!onEvent) return;
     for (const ev of events) {
       if (ev.kind === "reasoning_delta") {
-        onEvent({ type: "reasoning_delta", stepIndex, text: ev.text });
+        parserReasoning += ev.text;
+        onEvent?.({ type: "reasoning_delta", stepIndex, text: ev.text });
       } else if (ev.kind === "reply_text_delta") {
-        onEvent({ type: "assistant_delta", text: ev.text });
+        onEvent?.({ type: "assistant_delta", text: ev.text });
       }
     }
   };
@@ -1135,7 +1144,7 @@ async function consumeStream(
     // these tokens never appear inside `<think>` or JSON, they come on a
     // separate SSE field and are already decoded.
     if (chunk.reasoningDelta && chunk.reasoningDelta.length > 0) {
-      accumulatedReasoning += chunk.reasoningDelta;
+      channelAReasoning += chunk.reasoningDelta;
       onEvent?.({
         type: "reasoning_delta",
         stepIndex,
@@ -1156,6 +1165,11 @@ async function consumeStream(
     }
   }
   emitParseEvents(parser.end());
+  // Prefer server-emitted channel A reasoning when present; otherwise
+  // fall back to the parser-derived stream (legacy `/completion`
+  // endpoint, which never sets `reasoning_content` server-side).
+  const accumulatedReasoning =
+    channelAReasoning.length > 0 ? channelAReasoning : parserReasoning;
   if (finalResult === null) {
     finalResult = {
       content: accumulated,

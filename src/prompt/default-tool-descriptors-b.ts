@@ -171,6 +171,38 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     ],
   },
   {
+    // MCP discovery / resource / prompt tools. The actual MCP tool
+    // calls themselves come from the dynamic descriptor builder
+    // (see `mcp-descriptor-builder.ts`) and ship at tier `rare`.
+    name: "mcp.resource.list",
+    summary:
+      "List resources exposed by an MCP server. Pass `server` (one of the configured MCP server names) and optional `limit` (1..100, default 30).",
+    argsSchema: "{ server: string, limit?: number /* 1..100 */ }",
+    tier: "rare",
+  },
+  {
+    name: "mcp.resource.read",
+    summary:
+      "Read a resource exposed by an MCP server. Pass `server` and the exact `uri` returned by `mcp.resource.list`.",
+    argsSchema: "{ server: string, uri: string }",
+    tier: "rare",
+  },
+  {
+    name: "mcp.prompt.list",
+    summary:
+      "List prompt templates exposed by an MCP server. Pass `server` and optional `limit` (1..100, default 30).",
+    argsSchema: "{ server: string, limit?: number /* 1..100 */ }",
+    tier: "rare",
+  },
+  {
+    name: "mcp.prompt.get",
+    summary:
+      "Render a prompt template from an MCP server. Pass `server`, `name`, and optional `arguments` (object of string values for the template parameters).",
+    argsSchema:
+      "{ server: string, name: string, arguments?: Record<string,string> }",
+    tier: "rare",
+  },
+  {
     name: "reply",
     summary: "Final natural-language answer; ends the macro-turn. Never use to announce a pending action; keep text short (no huge dumps).",
     argsSchema: "{ text: string }",

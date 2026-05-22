@@ -691,3 +691,137 @@ describe("executeStep batch handling", () => {
     expect(outcome.terminal).toBe("turn");
   });
 });
+
+describe("executeStep streaming reasoning accumulator", () => {
+  // Regression for the Fix B side of the "degenerate-loop + empty
+  // reasoningContent" investigation. Before the fix `consumeStream` only
+  // routed parser-derived `reasoning_delta` events to the UI sink and
+  // never accumulated them into `CompletionResult.reasoningContent`, so
+  // the legacy `/completion` endpoint (which never emits a dedicated
+  // `reasoning_content` SSE channel) left the field empty. Traces then
+  // showed `reasoning_len=0` everywhere even when the model genuinely
+  // produced a `<think>...</think>` / `<|channel>thought` block.
+  let grammarsDir: string;
+
+  beforeEach(() => {
+    grammarsDir = join(process.cwd(), "grammars");
+  });
+
+  async function runStreaming(args: {
+    chunks: Array<{ delta: string; reasoningDelta: string; done: boolean }>;
+    finalContent: string;
+    finalReasoning: string;
+  }): Promise<{ captured: import("../llm/llama-server-client.js").CompletionResult | null }> {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "reply",
+      description: "reply",
+      readonly: true,
+      async run(args) {
+        return compressToolResult({
+          tool: "reply",
+          status: "ok",
+          output: String(args.text ?? ""),
+        });
+      },
+    });
+    const grammar = await buildGrammar(QWEN_THINK_PROFILE, grammarsDir);
+    const session = createEmptySessionState({ id: "s-stream", workingDir: "/w" });
+    const finalCompletion = {
+      content: args.finalContent,
+      reasoningContent: args.finalReasoning,
+      stop: true,
+      truncated: false,
+      timing: {
+        promptMs: 1,
+        predictedMs: 1,
+        promptTokens: 10,
+        predictedTokens: 5,
+      },
+      cacheHitTokens: 0,
+      slotId: 0,
+      modelId: "mock",
+    } as const;
+    let captured: import("../llm/llama-server-client.js").CompletionResult | null =
+      null;
+    await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hi",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async () => finalCompletion,
+        llmCompleteStream: async function* () {
+          for (const chunk of args.chunks) yield chunk;
+          return finalCompletion;
+        },
+        grammar,
+        profile: QWEN_THINK_PROFILE,
+        onCompletion: (c) => {
+          captured = c;
+        },
+      },
+    );
+    return { captured };
+  }
+
+  it("falls back to parser-derived reasoning when channel A is empty", async () => {
+    const reasoningBody = "thinking about it for a moment";
+    const replyJson = '[{"tool":"reply","args":{"text":"hi"}}]';
+    const { captured } = await runStreaming({
+      chunks: [
+        { delta: reasoningBody, reasoningDelta: "", done: false },
+        { delta: "</think>\n", reasoningDelta: "", done: false },
+        { delta: replyJson, reasoningDelta: "", done: false },
+      ],
+      finalContent: `${reasoningBody}</think>\n${replyJson}`,
+      finalReasoning: "",
+    });
+    expect(captured).not.toBeNull();
+    expect(captured!.reasoningContent).toBe(reasoningBody);
+  });
+
+  it("prefers channel A reasoning when both sources emit", async () => {
+    // Hypothetical server that splits CoT into a dedicated SSE channel
+    // *and* echoes the same text inline (some forks do this). The
+    // accumulator must not double-count or pick the inline copy.
+    const replyJson = '[{"tool":"reply","args":{"text":"hi"}}]';
+    const channelABody = "channel-a reasoning";
+    const { captured } = await runStreaming({
+      chunks: [
+        { delta: "", reasoningDelta: channelABody, done: false },
+        { delta: "inline echo", reasoningDelta: "", done: false },
+        { delta: "</think>\n", reasoningDelta: "", done: false },
+        { delta: replyJson, reasoningDelta: "", done: false },
+      ],
+      finalContent: `inline echo</think>\n${replyJson}`,
+      finalReasoning: "",
+    });
+    expect(captured).not.toBeNull();
+    expect(captured!.reasoningContent).toBe(channelABody);
+  });
+
+  it("does not overwrite an already-populated server-side reasoningContent", async () => {
+    // When the server returned a non-empty `reasoning_content` on the
+    // final SSE done frame, we trust it and skip the patch entirely.
+    const replyJson = '[{"tool":"reply","args":{"text":"hi"}}]';
+    const { captured } = await runStreaming({
+      chunks: [
+        { delta: "inline body", reasoningDelta: "", done: false },
+        { delta: "</think>\n", reasoningDelta: "", done: false },
+        { delta: replyJson, reasoningDelta: "", done: false },
+      ],
+      finalContent: `inline body</think>\n${replyJson}`,
+      finalReasoning: "server-authoritative reasoning",
+    });
+    expect(captured).not.toBeNull();
+    expect(captured!.reasoningContent).toBe("server-authoritative reasoning");
+  });
+});

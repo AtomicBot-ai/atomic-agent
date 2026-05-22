@@ -413,5 +413,15 @@ export function loadConfig(): AtomicAgentConfig {
       ownerUserId: user.telegram.ownerUserId,
       parseMode: user.telegram.parseMode,
     },
+    mcp: {
+      // Servers are owned by the user-config file. Deep clone the
+      // array so downstream mutations (e.g. TUI enable/disable
+      // writes) never leak back into the parsed config snapshot.
+      servers: user.mcp.servers.map((s) => ({
+        ...s,
+        ...(s.transport ? { transport: { ...s.transport } } : {}),
+        ...(s.env ? { env: { ...s.env } } : {}),
+      })),
+    },
   };
 }

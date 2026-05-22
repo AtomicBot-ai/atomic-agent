@@ -12,6 +12,7 @@ import { LocalModelsOrchestrator } from "./local-models/local-models-orchestrato
 import { TasksOrchestrator } from "./tasks/tasks-orchestrator.js";
 import { SkillsOrchestrator } from "./skills/skills-orchestrator.js";
 import { MemoryOrchestrator } from "./memory/memory-orchestrator.js";
+import { McpOrchestrator } from "./mcp/mcp-orchestrator.js";
 import { TuiTelegramOrchestrator } from "./telegram/tui-telegram-orchestrator.js";
 import type { TuiEventBus } from "./tui-app.js";
 import { turnsToMessages } from "./turns-to-messages.js";
@@ -73,6 +74,7 @@ export class ChatOrchestrator {
   public readonly tasks: TasksOrchestrator;
   public readonly skills: SkillsOrchestrator;
   public readonly memory: MemoryOrchestrator;
+  public readonly mcp: McpOrchestrator;
   public readonly localModels: LocalModelsOrchestrator;
   public readonly llmHealth: LlmHealthPoller;
   public readonly telegram: TuiTelegramOrchestrator;
@@ -88,6 +90,7 @@ export class ChatOrchestrator {
     });
     this.skills = new SkillsOrchestrator(runtime, bus);
     this.memory = new MemoryOrchestrator(runtime, bus);
+    this.mcp = new McpOrchestrator(runtime, bus);
     this.llmHealth = new LlmHealthPoller(bus, options.llamaUrl);
     this.localModels = new LocalModelsOrchestrator(bus, {
       onManagedModelSelected: (modelId) => {
@@ -395,6 +398,7 @@ export class ChatOrchestrator {
     this.tasks.shutdown();
     this.skills.shutdown();
     this.memory.shutdown();
+    this.mcp.shutdown();
     this.localModels.shutdown();
     this.llmHealth.stop();
     this.telegram.shutdown();

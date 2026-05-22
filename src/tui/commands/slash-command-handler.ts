@@ -181,6 +181,8 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return dispatchSkillSub(parsed.args);
     case "memory":
       return dispatchMemorySub(parsed.args);
+    case "mcp":
+      return dispatchMcpSub(parsed.args);
     case "models":
       return dispatchModelsSub(parsed.args);
     case "tasks":
@@ -350,6 +352,36 @@ function dispatchMemorySub(rawArgs: string): SlashDispatchResult {
   }
   return pureActions([], {
     systemMessage: "usage: /memory | /memory dump",
+  });
+}
+
+function dispatchMcpSub(rawArgs: string): SlashDispatchResult {
+  const argPart = rawArgs.trim();
+  if (argPart.length === 0) {
+    return pureActions([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "mcp" },
+      { type: "mcp_refresh_requested" },
+    ]);
+  }
+  if (argPart.toLowerCase() === "add") {
+    return pureActions([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "mcp" },
+      { type: "mcp_add_modal_opened" },
+    ]);
+  }
+  const removeMatch = argPart.match(/^remove\s+(\S+)\s*$/i);
+  if (removeMatch) {
+    const name = removeMatch[1]!;
+    return pureActions([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "mcp" },
+      { type: "mcp_remove_confirm_opened", name },
+    ]);
+  }
+  return pureActions([], {
+    systemMessage: "usage: /mcp | /mcp add | /mcp remove <name>",
   });
 }
 

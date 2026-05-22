@@ -12,6 +12,19 @@ import type { ChannelStatus } from "./channel-status.js";
 import { TelegramChannel } from "../channels/telegram/index.js";
 import type { BotFactory } from "../channels/telegram/index.js";
 
+import {
+  McpManager,
+  buildMcpPromptGetTool,
+  buildMcpPromptListTool,
+  buildMcpResourceListTool,
+  buildMcpResourceReadTool,
+  buildMcpToolDescriptors,
+  createMcpSamplingHandler,
+  mergeMcpDescriptors,
+  applyMcpToolNameRule,
+  buildMcpToolNameRule,
+} from "../mcp/index.js";
+
 import { LlamaServerClient } from "../llm/llama-server-client.js";
 import type {
   CompletionResult,
@@ -322,6 +335,19 @@ export interface AgentRuntime {
    * defensively check before calling.
    */
   readonly telegramChannel: TelegramChannel | null;
+  /**
+   * MCP client manager. **Always non-null** — constructed even when
+   * `config.mcp.servers[]` is empty so the live-control surface stays
+   * uniform with the Telegram channel pattern. When no servers are
+   * configured, this is a zero-cost no-op manager: `start()` returns
+   * immediately, `listStatuses()` is empty, no resolver is installed.
+   * Owns one `McpClient` per configured server and exposes the
+   * aggregated tool / resource / prompt catalogs through
+   * `runtime.mcpManager.listCatalogs()`. Shutdown is wired into the
+   * runtime `shutdown()` so closing the runtime tears every client
+   * down.
+   */
+  readonly mcpManager: McpManager;
   readonly capabilities: CapabilitiesSummary;
   readonly skillCatalog: readonly SkillCatalogEntry[];
   readonly toolDescriptors: readonly ToolDescriptor[];
@@ -378,6 +404,21 @@ export interface AgentRuntime {
   ): Promise<RunTurnResult>;
   /** Refresh the skill registry after install/uninstall and rebuild the catalog. */
   refreshSkills(): Promise<void>;
+  /**
+   * Rebuild the GBNF grammar and the `### tools` prompt catalog from
+   * the current `McpManager` state. Called by the TUI MCP panel after
+   * `mcpManager.addServerLive(...)` / `removeServerLive(...)` so the
+   * model can see (or stops seeing) the qualified MCP tool names on
+   * the next inference without a runtime restart. Mutates the
+   * `grammar` / `toolDescriptors` fields visible through the live
+   * AgentLoop closure; safe to call from any thread of control —
+   * `AgentLoop` reads both via late-binding getters set by bootstrap.
+   *
+   * KV-cache invalidation is intentional: the stable prefix changes
+   * the moment the tool catalog does. This is semantically equivalent
+   * to a runtime restart, just without the process churn.
+   */
+  refreshMcp(): Promise<void>;
   /**
    * Register `handler` as the approval sink for `sessionId`. Every
    * `ApprovalRequest` whose `sessionId` matches will be routed to
@@ -772,7 +813,7 @@ export async function createAgentRuntime(
     skillRegistry.list(),
   );
 
-  const grammar = await buildGrammar(profile, config.paths.grammarsDir);
+  let grammar = await buildGrammar(profile, config.paths.grammarsDir);
   const grammarViolations = checkProfileGrammarAligned(profile, grammar);
   if (grammarViolations.length > 0) {
     logger.warn("profile/grammar invariant violated", {
@@ -815,6 +856,78 @@ export async function createAgentRuntime(
     maxImagesPerCall: config.vision.maxImagesPerCall,
     maxImageBytes: config.vision.maxImageBytes,
   });
+  // MCP client subsystem. The manager is always constructed so the
+  // live-control surface (TUI panel, slash commands — planned) stays
+  // uniform with the Telegram channel pattern. An empty
+  // `config.mcp.servers[]` produces a zero-cost no-op manager.
+  //
+  // We start the manager **before** the descriptor filter + grammar
+  // rule application so the prompt + GBNF reflect the live catalog
+  // exactly. Each `McpClient` is bounded by a 15s connect timeout,
+  // and failures are isolated per-server — one broken config never
+  // blocks bootstrap. Catalog growth after this point (hot-add
+  // server) requires a rebuild of the stable prefix / grammar
+  // (currently a runtime restart — see AGENTS.md §"MCP client").
+  const mcpServerConfigs = config.mcp?.servers ?? [];
+  const mcpEnabled = mcpServerConfigs.length > 0;
+  const mcpManager = new McpManager(mcpServerConfigs, {
+    toolRegistry,
+    logger,
+    // Sampling handler is per-client; we install one for every
+    // connecting server so the SDK advertises the capability. Routes
+    // to LlamaServerClient with `slotId: -1` (invariant 1 in
+    // `mcp-sampling-handler.ts`).
+    samplingHandler: mcpEnabled
+      ? createMcpSamplingHandler({
+          llamaServerClient: llama,
+          server: "*",
+        })
+      : undefined,
+    ...(options.handlers?.onChannelStatus
+      ? {
+          onStatus: (status) =>
+            options.handlers!.onChannelStatus!({
+              channel: `mcp:${status.name}`,
+              state: status.state,
+              ...(status.lastError ? { lastError: status.lastError } : {}),
+            }),
+        }
+      : {}),
+  });
+  // The four meta-tools (`mcp.resources.{list,read}` /
+  // `mcp.prompts.{list,get}`) read aggregated state from `mcpManager`.
+  // They are safe to register even when zero servers are connected
+  // — the manager returns empty aggregates and the tools fail with a
+  // structured "no server" error if invoked. Registering them
+  // unconditionally lets the live-add path (variant γ) skip a
+  // first-server-only branch.
+  let mcpMetaToolsRegistered = false;
+  const registerMcpMetaToolsOnce = (): void => {
+    if (mcpMetaToolsRegistered) return;
+    toolRegistry.register(buildMcpResourceListTool(mcpManager));
+    toolRegistry.register(buildMcpResourceReadTool(mcpManager));
+    toolRegistry.register(buildMcpPromptListTool(mcpManager));
+    toolRegistry.register(buildMcpPromptGetTool(mcpManager));
+    mcpMetaToolsRegistered = true;
+  };
+  // Baseline grammar without MCP tool names — kept around so
+  // `refreshMcp()` can rebuild from the same starting point regardless
+  // of what the current MCP catalog looks like. `applyMcpToolNameRule`
+  // is purely additive on top of this baseline.
+  const baseGrammar = grammar;
+  if (mcpEnabled) {
+    await mcpManager.start();
+    registerMcpMetaToolsOnce();
+    const mcpToolMetas = mcpManager.listAllToolMeta();
+    const rule = buildMcpToolNameRule(mcpToolMetas);
+    grammar = applyMcpToolNameRule(baseGrammar, rule);
+    logger.info("mcp: manager started", {
+      configured: mcpServerConfigs.length,
+      connected: mcpManager.listStatuses().filter((s) => s.state === "up").length,
+      tools: mcpToolMetas.length,
+    });
+  }
+
   // The descriptor stays in the prompt whenever the operator wired a
   // vision provider — even before the profile probe lands. The
   // descriptor blurb already says "Only available when the active
@@ -828,9 +941,14 @@ export async function createAgentRuntime(
   // first invocation — see `filter-disabled-tools.ts` for the full
   // mapping. The historical inline `vision.describe` filter is now
   // one entry in that table; behaviour for vision is unchanged.
-  const effectiveToolDescriptors = filterToolDescriptorsByConfig(
-    DEFAULT_TOOL_DESCRIPTORS,
-    {
+  // Live-MCP support: every input that varies with the MCP catalog
+  // (descriptor list + grammar) is rebuildable via the helper below.
+  // The closure captures everything else (vision/memory/tasks gates,
+  // baseline grammar, etc.) so `refreshMcp()` can re-run it after a
+  // server is added or removed at runtime without touching the rest.
+  const rebuildToolDescriptorsFromMcp = (): readonly ToolDescriptor[] => {
+    const liveMcpEnabled = mcpManager.listServerNames().length > 0;
+    const base = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
       vision: {
         enabled: config.vision.enabled,
         providerAvailable: visionProvider !== undefined,
@@ -845,8 +963,15 @@ export async function createAgentRuntime(
         agentToolsEnabled:
           config.tasks.enabled && config.tasks.agentToolsEnabled,
       },
-    },
-  );
+      mcp: { enabled: liveMcpEnabled },
+    });
+    if (!liveMcpEnabled) return base;
+    return mergeMcpDescriptors(
+      base,
+      buildMcpToolDescriptors(mcpManager.listAllToolMeta()),
+    );
+  };
+  let effectiveToolDescriptors = rebuildToolDescriptorsFromMcp();
   if (config.vision.enabled) {
     logger.info("vision provider configured", {
       provider: visionProvider?.name ?? "(none)",
@@ -1275,8 +1400,25 @@ export async function createAgentRuntime(
     enumerable: true,
     get: () => skillCatalog,
   });
+  // Late-binding getters for the MCP-driven fields. `grammar` and
+  // `toolDescriptors` are recomputed by `runtime.refreshMcp()` after a
+  // server is live-added or live-removed via the TUI MCP panel. The
+  // AgentLoop reads both on every step so the rebuilt values land on
+  // the next inference without restarting the loop.
+  Object.defineProperty(loopDeps, "grammar", {
+    enumerable: true,
+    get: () => grammar,
+  });
+  Object.defineProperty(loopDeps, "toolDescriptors", {
+    enumerable: true,
+    get: () => effectiveToolDescriptors,
+  });
   const loop = new AgentLoop(
-    loopDeps as typeof loopDeps & { skillCatalog: readonly SkillCatalogEntry[] },
+    loopDeps as typeof loopDeps & {
+      skillCatalog: readonly SkillCatalogEntry[];
+      grammar: string;
+      toolDescriptors: readonly ToolDescriptor[];
+    },
   );
 
   // Forward declaration: the Telegram channel is constructed after the
@@ -1305,6 +1447,17 @@ export async function createAgentRuntime(
           error: err instanceof Error ? err.message : String(err),
         });
       }
+    }
+    try {
+      // MCP manager closes every connected `McpClient` (transport
+      // + sampling handler) and clears the dynamic resource-class
+      // resolver. Best-effort: per-server close errors are
+      // swallowed inside the manager.
+      await mcpManager.shutdown();
+    } catch (err) {
+      logger.warn("mcp: shutdown failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
     try {
       await browserBackend.shutdown();
@@ -1381,6 +1534,31 @@ export async function createAgentRuntime(
     }
     skillCatalog = buildSkillCatalog(skillRegistry.list());
     options.handlers?.onSkillRegistryChange?.([...skillCatalog]);
+  };
+
+  /**
+   * Rebuild the GBNF grammar and the prompt's `### tools` catalog from
+   * the live `mcpManager` state. Called by the TUI MCP orchestrator
+   * after `addServerLive` / `removeServerLive`. Idempotent — safe to
+   * call when nothing changed (just re-runs the same builders).
+   *
+   * If MCP has just transitioned from "no servers" to "≥1 server", we
+   * register the four MCP meta-tools on demand (they were skipped at
+   * bootstrap to keep the descriptor catalog clean).
+   */
+  const refreshMcp = async (): Promise<void> => {
+    const serverCount = mcpManager.listServerNames().length;
+    if (serverCount > 0) {
+      registerMcpMetaToolsOnce();
+    }
+    const metas = mcpManager.listAllToolMeta();
+    const rule = buildMcpToolNameRule(metas);
+    grammar = applyMcpToolNameRule(baseGrammar, rule);
+    effectiveToolDescriptors = rebuildToolDescriptorsFromMcp();
+    logger.info("mcp: catalog refreshed", {
+      servers: serverCount,
+      tools: metas.length,
+    });
   };
 
   const ensureRecorder = (session: SessionState): TraceRecorder | null => {
@@ -1690,6 +1868,7 @@ export async function createAgentRuntime(
     scheduler,
     webhookSessionStore,
     telegramChannel: null,
+    mcpManager,
     capabilities,
     toolDescriptors: effectiveToolDescriptors,
     grammar,
@@ -1699,6 +1878,7 @@ export async function createAgentRuntime(
     runTurn,
     executeTurn,
     refreshSkills,
+    refreshMcp,
     setApprovalHandlerForSession: (sessionId, handler) =>
       approvalRouter.setForSession(sessionId, handler),
     shutdown,

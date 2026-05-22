@@ -16,7 +16,7 @@ This is the source-of-truth for automated contributors (LLM agents, codegen, etc
 1. **Project ≠ Prompt.** Session state, compressed tool results, and world snapshots live outside the model; the prompt is always a small slice.
 2. **Stable prefix.** The prompt is `buildStablePrefix` (persona + `### rules` + skill catalog under `### skills` + `### tools` + `### capabilities` + `### instructions`) followed by a **variable tail** in mutability order: `### loaded-skills` (optional) → `### loaded-tools` (optional) → `### profile` (optional) → `### memory-index` (optional) → `### session-facts` (optional) → `### recalled` (optional) → `### world` → `### conversation` → optional `### notice` → `### respond` (+ optional reasoning prefill). Only the stable-prefix bytes must stay stable within a session for KV-cache — this is what `cache_prompt + slot_id` on `llama-server` relies on.
 3. **One inference per step.** No reasoning loops inside a single LLM call — the runtime drives the loop. A single inference always emits a JSON **array** of `1..N` tool calls (`[{tool, args}, ...]`); a "solo" step is just a length-1 array (`[{...}]`). `N` is capped by `agent.maxParallelToolCalls` (default 8, hard ceiling 16 in the grammar). See §"Parallel tool calls per step" for the rationale (GBNF first-token bias) and the executor pipeline.
-4. **Grammar-constrained tool calls.** The sidecar sends a GBNF grammar with every completion request that must produce a tool call. The root collapsed to **array-only** (`root ::= tool-call-array`) so the model cannot fall into the single-object form via first-token bias even when it only needs one call.
+4. **Grammar-constrained tool calls.** The sidecar sends a GBNF grammar with every completion request that must produce a tool call. The root collapsed to **array-only** (`root ::= tool-call-array`) so the model cannot fall into the single-object form via first-token bias even when it only needs one call. Reasoning-prelude profiles (`qwen-think`, `gemma4-think`) prepend a `<think>...</think>` / `<|channel>thought...<channel|>` block to the array; the seam between the close sentinel and the leading `[` of the array routes through a dedicated **bounded** `prelude-trail-ws ::= ( [ \t\n\r] ){0,8}` rule rather than the global unbounded `ws`. This is the structural anti-degenerate-loop guard — small reasoning-capable models (Gemma 4 26B-A4B in particular) used to slide into a whitespace-only tail after a long reasoning block because the sampler could keep emitting newlines indefinitely. Pinned by [src/llm/grammar/build-grammar.test.ts](src/llm/grammar/build-grammar.test.ts) "bounds the whitespace between the reasoning-close sentinel and the tool-call array".
 5. **No global singletons.** Dependencies are passed explicitly. `getConfig()` is the only exception.
 6. **Session is multi-turn chat only.** A session is a long-lived chat: `user message → 0..N tool steps → reply` is a macro-turn, multiple turns share one `SessionState.turns[]`. Two terminals exist — `reply` ends the turn, `finish` ends the whole session. All three frontends (CLI `run`, TUI, sidecar) go through `runtime.runTurn` only; there is no one-shot goal mode.
 
@@ -145,6 +145,7 @@ Speculative batching (the runtime guessing that the model "should" have batched 
 | `src/tools/vision/` | `vision.describe` tool + `loadImageFile` helper. Registered whenever `config.vision.enabled` is true and a provider is constructed; the actual capability gate (`capabilities.vision`) is a dynamic getter that re-reads `ModelProfile` on every check, so vision availability tracks `ModelProfileManager` hot-swaps without a restart. See §"Vision (multimodal input)". |
 | `src/channels/telegram/` | `TelegramChannel` (lifecycle + live-control), `inbound-handler` (slash commands + dispatch into `runTurn`), `outbound-sender` (chunked replies + 429 retry), `approval-bridge` (inline-keyboard approvals with 8-min auto-deny), `pairing-mode` (60s window for first-DM owner claim), `telegram-settings` (`config.json` + `.env` persistence), `telegram-bot-factory` (grammy adapter). The **only** module that imports `grammy`. See §"Telegram remote-control channel". |
 | `src/tui/telegram/` | TUI "Telegram" tab: `telegram-panel-state` + `telegram-actions` + `telegram-panel-reducer` (pure UI state slice), `tui-telegram-orchestrator` (the only TUI module that touches `runtime.telegramChannel`), `telegram-key-bindings`, and the `telegram-panel` / `telegram-token-prompt` / `telegram-pairing-modal` components. See §"Telegram remote-control channel". |
+| `src/mcp/` | MCP (Model Context Protocol) **client** subsystem. `McpManager` (lifecycle for N `McpClient` instances), `mcp-client` (the **only** file that imports `@modelcontextprotocol/sdk` — together with `mcp-sampling-handler` for SDK type shapes), `mcp-tool-adapter` (`McpToolMeta` → `ToolDefinition`), `mcp-resource-class` (per-server trust → `ResourceClass` resolver), `mcp-descriptor-builder` (rare-tier descriptors), `mcp-grammar-builder` (dynamic `mcp-server-tool` GBNF fragment), `mcp-sampling-handler` (forwards `sampling/createMessage` to `LlamaServerClient` with `slotId: -1`), `mcp-resource-tools` + `mcp-prompt-tools` (aggregate read-only `mcp.{resource,prompt}.*` tools dispatching by `server` arg). See §"MCP client". |
 
 ## Secrets and process environment
 
@@ -1338,6 +1339,118 @@ Pinned by [src/runtime/bootstrap.test.ts](src/runtime/bootstrap.test.ts), [src/c
 
 Multi-user pairing flows, per-chat session isolation, MarkdownV2 rendering (the escape surface is too wide for typical LLM output and `parse_mode: "MarkdownV2"` rejects the whole message on a single stray reserved char — see §"Outbound formatting"), structured menu / command surfaces beyond plain text, message editing for streaming output, file uploads (image / document ingestion through Telegram), webhook ingress as a Telegram-specific endpoint (the generic `/api/webhooks/:name` path is the existing surface), and a generic `Channel` abstraction (Slack / WhatsApp adapters) are all deferred. The seam is `src/channels/<name>/`; only extract shared interfaces when a second concrete channel actually lands.
 
+## MCP client
+
+`atomic-agent` is an **MCP (Model Context Protocol) client** that connects to external MCP servers and surfaces their tools / resources / prompts to the agent through the existing `ToolRegistry`. The runtime never exposes an MCP server interface itself — atomic-agent is a consumer, not a producer. Code lives in [src/mcp/](src/mcp/); the cold-path wiring is in [src/runtime/bootstrap.ts](src/runtime/bootstrap.ts) right after vision + before the descriptor filter / grammar build.
+
+### Why MCP
+
+Every MCP server adds a bounded, declarative surface of capabilities (tools / resources / prompts) without forcing the runtime to grow another bespoke integration. The model picks them by **qualified name** (`mcp.<server>.<tool>`); per-server trust levels decide how the runtime batches and approves calls; tools are loaded into the prompt at tier `frequent` so the model sees their full `argsSchema` in the stable prefix and can call them on the first shot without an intervening `tool.view`. The historical `rare`-tier rendering surfaced only one-line stubs under `# extras`, which in practice meant smaller local models almost never invoked MCP tools at all — visible but practically unusable without a discovery hop the model rarely thought to take. The trade-off is paid as a one-time bump in stable-prefix tokens proportional to the connected MCP catalog; operators wiring up chatty / untrusted servers should weigh that explicitly.
+
+### Lifecycle
+
+`McpManager` is constructed unconditionally at bootstrap (mirrors the Telegram channel pattern) — even when `config.mcp.servers[]` is empty — so any future live-control surface stays uniform. An empty configuration produces a zero-cost no-op manager: `start()` returns immediately, no resolver is installed, no aggregate tools are registered.
+
+When at least one server is configured, bootstrap:
+
+1. Constructs the manager.
+2. Awaits `mcpManager.start()` — each `McpClient` opens its transport with a hard 15s connect timeout (`DEFAULT_CONNECT_TIMEOUT_MS` in `mcp-client.ts`), runs the MCP `initialize` handshake, installs the optional sampling handler, and refreshes the catalog. Failures are isolated per-server; one bad config never blocks bootstrap.
+3. Registers the aggregate `mcp.resource.{list,read}` and `mcp.prompt.{list,get}` tools — single per-runtime registration; the tools dispatch by the `server` arg rather than producing one tool per server (the prompt would explode).
+4. Builds `McpToolDescriptor[]` from every connected catalog and merges them into `effectiveToolDescriptors` via `mergeMcpDescriptors` — MCP descriptors land at the end of the prompt's `### tools` block at tier `frequent` (full `argsSchema` in `# common (full)`).
+5. Applies the dynamic `mcp-server-tool` GBNF rule via `applyMcpToolNameRule(grammar, buildMcpToolNameRule(metas))`. The static `grammars/tool-call.gbnf` file ships a permissive placeholder; the runtime replaces it with an alternation of the actual qualified names so the LLM can only emit tools that resolve to a registered `ToolDefinition`.
+
+`shutdown()` closes every `McpClient` (best-effort, errors swallowed), tears down every registered tool, and clears the dynamic resource-class resolver. The MCP shutdown step runs between Telegram channel shutdown and browser/SQLite teardown so in-flight sampling calls have a chance to drain before the LLM client is torn down.
+
+### Module map
+
+| File | Responsibility |
+|---|---|
+| [mcp-types.ts](src/mcp/mcp-types.ts) | Neutral type shapes: `McpServerConfig`, `McpToolMeta`, `McpResourceMeta`, `McpPromptMeta`, `McpServerStatus`, `McpTrustLevel`. No SDK objects leak out of `mcp-client.ts`. |
+| [mcp-errors.ts](src/mcp/mcp-errors.ts) | `McpError` / `McpConnectError` / `McpRequestError` hierarchy + `scrubErrorMessage`. Every user-facing surface (status badge, log, TUI label) goes through the scrubber. |
+| [mcp-resource-class.ts](src/mcp/mcp-resource-class.ts) | `qualifyMcpToolName` / `splitMcpToolName` + `createMcpResourceClassResolver` (the per-server trust → `ResourceClass` mapper). |
+| [mcp-client.ts](src/mcp/mcp-client.ts) | **The only file that imports `@modelcontextprotocol/sdk`.** Wraps `Client` + the three transports (stdio / streamable_http / sse). Owns connect / refresh / RPC / close. |
+| [mcp-sampling-handler.ts](src/mcp/mcp-sampling-handler.ts) | Routes `sampling/createMessage` from MCP servers to `LlamaServerClient.complete` with `slotId: -1` + `cachePrompt: false`. Also imports the SDK for the `CreateMessageRequest` / `CreateMessageResult` shapes; no other module needs them. |
+| [mcp-tool-adapter.ts](src/mcp/mcp-tool-adapter.ts) | `createMcpToolDefinition(meta, client)` — wraps an MCP tool as a `ToolDefinition` for the registry. Projects the heterogenous MCP response into a single `output` string + structured `details`; folds errors into `status: "error"` so siblings inside a batch keep running. |
+| [mcp-manager.ts](src/mcp/mcp-manager.ts) | One `McpClient` per server, lifecycle, status sink, tool register/unregister, dynamic resolver install/clear. |
+| [mcp-descriptor-builder.ts](src/mcp/mcp-descriptor-builder.ts) | `buildMcpToolDescriptor` + `buildMcpToolDescriptors` + `mergeMcpDescriptors`. Every MCP tool ships at tier `frequent` (full schema in the stable prefix — discoverability over prefix size). Server-then-tool alphabetical sort → deterministic stable-prefix bytes. |
+| [mcp-grammar-builder.ts](src/mcp/mcp-grammar-builder.ts) | `buildMcpToolNameRule` + `applyMcpToolNameRule`. Pure functions; deterministic sort + dedup ensure byte-stable output. |
+| [mcp-resource-tools.ts](src/mcp/mcp-resource-tools.ts) / [mcp-prompt-tools.ts](src/mcp/mcp-prompt-tools.ts) | Aggregate read-only tools (`mcp.resource.list`, `mcp.resource.read`, `mcp.prompt.list`, `mcp.prompt.get`). Dispatch by `server` arg. Resource class `pure_read`. |
+
+### Resource classification
+
+Every MCP-namespaced tool resolves to a `ResourceClass` through the dynamic resolver installed by `McpManager.ensureResolver()`. The resolver is the **only** non-static path through `resourceClassFor` (see `setDynamicResourceClassResolver` in [src/agent/tool-resource-class.ts](src/agent/tool-resource-class.ts)).
+
+| Trust level on `McpServerConfig` | Resolved class | Behaviour |
+|---|---|---|
+| (default / omitted) | `approval_gated` | Every call routes through the approval gate; cannot appear in multi-call batches. Safe for arbitrary third-party servers. |
+| `pure_read` | `pure_read` | Fans out in parallel inside batches alongside `os.fs.read` / `os.git.*`. **Opt-in only.** Use for servers you trust never to mutate any state. |
+
+The aggregate native tools (`mcp.resource.*`, `mcp.prompt.*`) are classified as `pure_read` in the static `TOOL_RESOURCE_CLASS` table — they never mutate state regardless of which server they dispatch to.
+
+### Sampling forwarding
+
+MCP servers can request the **client's** LLM to generate text on their behalf via `sampling/createMessage`. atomic-agent forwards those requests to the same `LlamaServerClient` that drives the agent loop — but always on `slotId: -1`. This is the load-bearing safety invariant: the main agent slot and the reflection slot are never touched by MCP traffic. A misbehaving MCP server cannot evict the agent's KV cache mid-turn.
+
+The handler is fire-safe — every error is folded into a thrown `Error` that the SDK converts into a JSON-RPC error sent back to the server. We never crash the client transport. No grammar is attached; MCP sampling is free-form text and the server owns any structure it expects.
+
+### Configuration (`config.mcp.servers[]`)
+
+User config v23. Older files transparently migrate by filling `mcp: { servers: [] }`. Per-server entries:
+
+```ts
+{
+  name: "github",                     // kebab-case, max 32 chars, MCP_SERVER_NAME_RE
+  description?: "GitHub API",         // free-form one-liner for TUI / logs
+  enabled: true,                      // disabled servers are constructed but never connected
+  transport: {                        // stdio / streamable_http / sse
+    kind: "stdio",
+    command: "npx",
+    args: ["-y", "@github/mcp-server"],
+    cwd?: "/optional"
+  },
+  trust?: "pure_read",                // default "approval_gated"
+  env?: { GITHUB_TOKEN: "..." }       // overlays process.env for stdio transports only
+}
+```
+
+Server name collisions are dropped at config parse time with a warning. Tool names from servers that fail `MCP_TOOL_NAME_RE` are silently dropped during catalog refresh — the agent never sees them.
+
+### Locked invariants
+
+Pinned by [mcp-client.test.ts](src/mcp/mcp-client.test.ts) (when added), [mcp-manager.test.ts](src/mcp/mcp-manager.test.ts), [mcp-resource-class.test.ts](src/mcp/mcp-resource-class.test.ts), [mcp-grammar-builder.test.ts](src/mcp/mcp-grammar-builder.test.ts), [mcp-descriptor-builder.test.ts](src/mcp/mcp-descriptor-builder.test.ts), [mcp-tool-adapter.test.ts](src/mcp/mcp-tool-adapter.test.ts), [mcp-sampling-handler.test.ts](src/mcp/mcp-sampling-handler.test.ts), [mcp-resource-tools.test.ts](src/mcp/mcp-resource-tools.test.ts), [mcp-prompt-tools.test.ts](src/mcp/mcp-prompt-tools.test.ts), and the bootstrap descriptor-filter test [filter-disabled-tools.test.ts](src/runtime/filter-disabled-tools.test.ts):
+
+1. **`@modelcontextprotocol/sdk` is imported from exactly two files** — [mcp-client.ts](src/mcp/mcp-client.ts) and [mcp-sampling-handler.ts](src/mcp/mcp-sampling-handler.ts) (the latter only for `CreateMessageRequest` / `CreateMessageResult` type shapes). Everything else operates on the neutral types in `mcp-types.ts`. Future replacement of the SDK touches these two files only.
+2. **Sampling always uses `slotId: -1`.** The main agent slot and the reflection slot are off-limits to MCP traffic. `cachePrompt: false` is set unconditionally. Pinned by `mcp-sampling-handler.test.ts > "INVARIANT 1 — always uses slotId: -1 and disables cache_prompt"`.
+3. **Tool failure isolation.** A failed MCP call lands as `CompressedToolResult { status: "error" }`. Never throws out of `ToolDefinition.run`. Per-call failures inside a batch never abort siblings.
+4. **Per-server failure isolation at connect.** One bad server config does not block bootstrap; its status flips to `down` and the rest keep running. Pinned by `mcp-manager.test.ts > "start() isolates per-server failures"`.
+5. **MCP tools are always tier `frequent`.** The full `argsSchema` is rendered into `# common (full)` of the stable prefix so the model can invoke them on the first shot without a `tool.view` round-trip. This inverts the historical `rare` rendering — see the module-level comment in `mcp-descriptor-builder.ts` for the trade-off (one-time stable-prefix token bump in exchange for actual MCP usability on small local models). The summary stays `[mcp:<server>] <description>` regardless of tier. Pinned by `mcp-descriptor-builder.test.ts > "ships every MCP tool as tier 'frequent' so the full schema lands in the stable prefix"`.
+6. **Deterministic descriptor and grammar ordering.** `buildMcpToolDescriptors` sorts by `(server, rawName)` and `buildMcpToolNameRule` sorts + dedups the qualified names. Same input → byte-identical output → KV-cache stability across runtime restarts with the same config.
+7. **Resource-class default is `approval_gated`.** Unknown servers and missing trust entries both resolve to `approval_gated` so a stale model-emitted MCP name lands in the safe lane and is rejected by `registry.invoke` rather than escaping into a `pure_read` batch. Pinned by `mcp-resource-class.test.ts > "returns approval_gated for unknown servers (safe default — never null)"`.
+8. **Dynamic resolver is installed by the manager and torn down on `shutdown()`.** Pinned by `mcp-manager.test.ts > "shutdown() closes all clients and clears the resolver"`.
+9. **Aggregate native tools (`mcp.resource.*`, `mcp.prompt.*`) are `pure_read` and dispatch by `server` arg.** Single per-runtime registration; never one tool per server. Filter gate `mcp: { enabled }` in `filter-disabled-tools.ts` drops the descriptors from the prompt when no servers are configured. Pinned by `filter-disabled-tools.test.ts > "drops every mcp.* aggregate descriptor when mcp is disabled"`.
+10. **GBNF placeholder fallback.** When `applyMcpToolNameRule` is called with a `null` rule (no MCP tools registered), the grammar is returned unchanged — the static permissive placeholder `mcp-server-tool ::= "\"mcp." [a-z0-9-]+ "." [a-zA-Z0-9._-]+ "\""` stays in place. The model will not generate such a name in practice (no descriptor advertises it), but the grammar fails open rather than fails closed.
+11. **`McpManager` is always constructed.** Bootstrap creates it even when `config.mcp.servers[]` is empty so the live-control surface (TUI MCP panel) can mutate without restarting the host. Empty configuration is a zero-cost no-op.
+12. **MCP `shutdown()` runs before browser / SQLite teardown.** Order: Telegram → MCP → browser → SQLite. In-flight sampling calls have a chance to drain before the LLM client is torn down.
+13. **Variant γ — live add / remove without restart.** `McpManager.addServerLive(config)` connects a new client, registers its tools into `ToolRegistry`, and returns the freshly-discovered tool metas. `McpManager.removeServerLive(name)` disconnects, unregisters tools, and drops the entry. Both are idempotent on the server name (duplicate add or absent remove short-circuit without error). The TUI MCP orchestrator pairs these calls with `runtime.refreshMcp()` so the GBNF grammar and the prompt's `### tools` catalog are rebuilt from the live manager state, and the model sees the new / dropped qualified names on the next inference. **KV-cache invalidation on the stable prefix is intentional and one-shot** — semantically equivalent to a runtime restart, just without the process churn. The four MCP meta-tools (`mcp.resources.{list,read}` / `mcp.prompts.{list,get}`) are registered on demand the first time a server lands so a zero-server cold start does not pollute the descriptor catalog. Pinned by `mcp-manager.test.ts > "variant γ — live add / remove"` (6 cases: brand-new connect + tool registration, duplicate-name short-circuit, connect failure isolation, disconnect + tool unregister, absent-name short-circuit, round-trip idempotency).
+
+### Out of scope (deferred)
+
+`notifications/tools/list_changed` subscriptions (the SDK supports them; current phase ships catalog snapshots only — `refreshMcp()` is the manual / TUI-driven equivalent). Per-tool ACL (today trust is server-level; finer-grained allowlisting of specific tools within a server is deferred). MCP `roots` capability (the agent does not declare a workspace root to servers — every stdio server inherits the agent's CWD via `McpStdioTransport.cwd`). MCP elicitation (interactive multi-turn prompts from servers — out of scope for this milestone). Live mutation of `mcp.servers[i].enabled` from the TUI without an `addServerLive` / `removeServerLive` round trip (today `setServerEnabled` is reachable on the manager but the TUI does not surface it — only persist-driven add / remove is wired). Sampling-handler reattachment on the first live-added server (today sampling capability is decided at construction time; a server added live in a fresh-start-with-zero-servers process has no sampling handler — operators who need sampling should configure at least one server up front, or accept a restart). Server-side MCP exposure (atomic-agent is client-only and will stay that way — the runtime's tool surface is too coupled to local file system / browser / approval gating to safely advertise over MCP to external clients).
+
+### TUI surface (Manage tab — Mcp panel)
+
+Lives under [src/tui/mcp/](src/tui/mcp/) and [src/tui/components/mcp-*.tsx](src/tui/components/). Architecture mirrors the existing `LocalModels` / `Tasks` / `Memory` / `Skills` panel pattern — pure state slice + reducer, an orchestrator that is the **only** TUI module that touches `runtime.mcpManager` / `runtime.refreshMcp` / `persistMcpServer` / `removeMcpServer`, dedicated key bindings.
+
+Hotkeys (list mode): `j`/`k` move cursor · Enter open detail · `n` add (JSON paste modal) · `d` remove (confirm modal) · `r` refresh · `a` toggle auto-refresh. Detail mode adds `1`/`2`/`3` tab switch, `[`/`]` cycle, `d` remove the open server. The add-server modal accepts both the bare `{name, transport: {...}}` shape and shortcut envelopes used by Claude Desktop / Cursor / Smithery / DeepWiki (`{mcpServers: {<name>: {command, args}}}` for stdio, `{url}` / `{serverUrl}` for HTTP, `{type: "sse"}` for SSE). Multi-line paste is auto-flattened by the reducer (`\n` / `\r` / `\t` → spaces) so the editor does not grow vertically. The remove-confirm modal claims `y`/Enter and `n`/Esc; the `submitting` flag guards against double-fire. Slash-command surface: `/mcp` opens the tab, `/mcp add` opens the add modal, `/mcp remove <name>` opens the remove confirm directly.
+
+Locked invariants (pinned by [src/tui/mcp/mcp-reducer.test.ts](src/tui/mcp/mcp-reducer.test.ts), [src/tui/persist-mcp-server.test.ts](src/tui/persist-mcp-server.test.ts)):
+
+1. **`McpOrchestrator` is the only TUI module that touches `runtime.mcpManager`, `runtime.refreshMcp`, `persistMcpServer`, `removeMcpServer`.** Components dispatch actions; the orchestrator owns the polling loop, snapshots manager state, drives variant γ live mutations, and emits typed actions onto the shared bus.
+2. **Live config reads via `getConfig()` — never `runtime.config`.** `runtime.config` is a frozen bootstrap snapshot; `persistMcpServer` / `removeMcpServer` call `resetConfigCache()` so the next `getConfig()` returns the fresh server list. The orchestrator's `buildRows` / `buildDetail` go through `readConfiguredServers()` so adds and removes appear in the panel immediately.
+3. **Persist before live mutation.** `addServerFromJson` writes `config.json` first, then calls `mcpManager.addServerLive` + `runtime.refreshMcp`. Live-connect failures degrade gracefully: the server stays in config and shows as `down`, the operator gets a `runtime_info` hint, and a restart will retry the connect. `removeServerFromJson` mirrors the symmetry — persist first, then `removeServerLive` + `refreshMcp`.
+4. **The editor is disabled on the MCP tab while a modal is open.** `mcpTabBusy` in `app-key-bindings.ts` covers both `addModal !== null` (lets the `MultiLineEditor` capture every keystroke) and `removeConfirm !== null` (claims the `y`/`n` confirmation keys against the global nav cycler).
+5. **Variant γ surface is opt-in but on by default.** Restarting the runtime is no longer required after add/remove — the prompt's `### tools` catalog and GBNF grammar are rebuilt on the next step. KV-cache for in-flight sessions is invalidated once per add/remove (the persona stays byte-stable; only the rendered tools block changes).
+
 ## LLM reliability policy
 
 Two narrow retry layers sit between the agent loop and `llama-server`. Both are deliberately bounded and never replay already-executed tool calls:
@@ -1380,7 +1493,7 @@ Emitted `TraceEvent` types (see [src/tracing/trace/trace-event.ts](src/tracing/t
 - `turn_started` / `turn_finished` — per macro-turn, with `reason` / `stepCount` / `durationMs`.
 - `step_started` / `step_finished` — per inference step.
 - `prompt_captured` — `{ stablePrefixHash, tail, tokens: { total, stablePrefix, tail }, slotId, cacheReused }`. The stable prefix is stored only as its salted hash (via `hashPrefix` from [src/llm/slot-manager.ts](src/llm/slot-manager.ts)) so trace files stay compact across steps; the variable tail is stored verbatim.
-- `llm_completion` — full completion `content` + `reasoningContent` + `timing`, with `attempt: 1 | 2` (attempt 2 == parse retry).
+- `llm_completion` — full completion `content` + `reasoningContent` + `timing`, with `attempt: 1 | 2` (attempt 2 == parse retry). `reasoningContent` is sourced from two mutually-exclusive channels: **Channel A** is the dedicated `reasoning_content` SSE field (QwQ / DeepSeek-R1 with `--reasoning-format deepseek`); **Channel B** is the inline `<think>...</think>` / `<|channel>thought...<channel|>` block that the grammar-aware stream parser splits client-side. `consumeStream` accumulates both separately and prefers Channel A when both fire; the legacy `/completion` endpoint always falls back to Channel B because it never emits `reasoning_content`. Pinned by [src/agent/step-executor.test.ts](src/agent/step-executor.test.ts) "executeStep streaming reasoning accumulator".
 - `tool_invocation` — executed tool call with args, status, summary, and optional details.
 - `parse_retry`, `loop_detected`, `error`, `trace_truncated` — diagnostics.
 

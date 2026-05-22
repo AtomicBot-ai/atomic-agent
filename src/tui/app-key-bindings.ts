@@ -126,12 +126,21 @@ export function handleAppKey(
     state.uiMode === "debug" &&
     state.activeTab === "telegram" &&
     state.telegramPanel.mode !== "list";
+  // MCP tab is "busy" while a modal is open: the add-server modal
+  // owns its own MultiLineEditor and the panel must keep capturing
+  // letter/Tab keys; the remove-confirm modal claims `y`/`n` and Esc
+  // so the global nav cycler cannot eat the confirmation keystrokes.
+  const mcpTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "mcp" &&
+    (state.mcpPanel.addModal !== null || state.mcpPanel.removeConfirm !== null);
   const debugTabBusy =
     tasksTabBusy ||
     skillsTabBusy ||
     memoryTabBusy ||
     localModelsTabBusy ||
-    telegramTabBusy;
+    telegramTabBusy ||
+    mcpTabBusy;
   // Ctrl+B is the dedicated nav-cycle escape valve: it always advances
   // one nav slot forward regardless of where focus currently is. This
   // is the key power users press when they want to reach Observe /
