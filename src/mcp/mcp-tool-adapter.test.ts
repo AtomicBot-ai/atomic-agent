@@ -72,9 +72,43 @@ describe("projectMcpResponseToText", () => {
     );
   });
 
-  it("renders legacy `toolResult` shape as JSON", () => {
+  it("renders legacy `toolResult` shape as pretty-printed JSON", () => {
     const out = projectMcpResponseToText({ toolResult: { ok: true, count: 3 } });
-    expect(out).toBe('{"ok":true,"count":3}');
+    expect(out).toBe('{\n  "ok": true,\n  "count": 3\n}');
+  });
+
+  it("prefers structuredContent over content text blocks when both are present", () => {
+    // Per MCP spec, structuredContent matches the tool's declared
+    // outputSchema and is the canonical typed payload. The content
+    // text blocks are typically a human-readable mirror — preferring
+    // the typed form gives the agent line-structured JSON that the
+    // compressor can clip cleanly between records.
+    const out = projectMcpResponseToText({
+      content: [{ type: "text", text: "human-friendly mirror" }],
+      structuredContent: { hits: 3, items: ["a", "b"] },
+    });
+    expect(out).toContain('"hits": 3');
+    expect(out).toContain('"items"');
+    expect(out).not.toContain("human-friendly mirror");
+  });
+
+  it("falls back to content blocks when structuredContent is missing", () => {
+    const out = projectMcpResponseToText({
+      content: [{ type: "text", text: "no structured payload here" }],
+    });
+    expect(out).toBe("no structured payload here");
+  });
+
+  it("falls back to content blocks when structuredContent cannot be serialised", () => {
+    // Cyclic object — JSON.stringify throws; the projector must not
+    // crash and should surface the content text instead.
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const out = projectMcpResponseToText({
+      structuredContent: cyclic,
+      content: [{ type: "text", text: "fallback text" }],
+    });
+    expect(out).toBe("fallback text");
   });
 
   it("clips long text with a [truncated] marker", () => {
@@ -175,8 +209,79 @@ describe("createMcpToolDefinition", () => {
     );
     const result = await def.run({}, ctx);
     expect(result.status).toBe("ok");
-    expect(result.summary).toContain("result body");
+    // structuredContent wins over content text blocks (see
+    // projectMcpResponseToText invariant).
+    expect(result.summary).toContain('"hits": 3');
     expect(result.details?.structuredContent).toEqual({ hits: 3 });
+  });
+
+  it("returns a single-text-block result verbatim when no structuredContent", async () => {
+    const def = createMcpToolDefinition(
+      metaOf("docs", "search"),
+      fakeClient(async () => ({
+        content: [{ type: "text", text: "result body" }],
+      })),
+    );
+    const result = await def.run({}, ctx);
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("result body");
+    expect(result.truncated).toBe(false);
+  });
+
+  it("does NOT truncate a ~2K JSON payload at 400 chars (regression for the GitHub-MCP looping bug)", async () => {
+    // Session s-6b8f56ce-10b6-490f-94e0-b7502b384b64 reproduced this:
+    // mcp.github.list_issues returned a single-line JSON array of
+    // ~2-5K chars, the compressor's default 400-char cap clipped after
+    // the first issue, and the model looped 8 times calling the same
+    // tool with different filters trying to "find the rest". With the
+    // MCP-specific cap raised to MAX_PROJECTED_OUTPUT_CHARS (8K) and
+    // line-tail truncation disabled, the full payload reaches the
+    // agent intact.
+    const issues = Array.from({ length: 9 }, (_, i) => ({
+      number: i + 1,
+      title: `Issue #${i + 1}`,
+      body: "x".repeat(150),
+    }));
+    const def = createMcpToolDefinition(
+      metaOf("github", "list_issues"),
+      fakeClient(async () => ({
+        // Single-line JSON in the text channel (what github-mcp emits).
+        content: [{ type: "text", text: JSON.stringify({ issues }) }],
+      })),
+    );
+    const result = await def.run({}, ctx);
+    expect(result.status).toBe("ok");
+    expect(result.truncated).toBe(false);
+    // All nine issue numbers must be present in the summary.
+    for (let i = 1; i <= 9; i += 1) {
+      expect(result.summary).toContain(`"number":${i}`);
+    }
+    expect(result.summary.length).toBeGreaterThan(400);
+  });
+
+  it("clips MCP output at MAX_PROJECTED_OUTPUT_CHARS (~8K) and sets truncated=true", async () => {
+    // Beyond the 8K projector clip, structuredContent gets a
+    // [truncated] suffix from clipOutput; the compressor then sees
+    // the clipped string as still over its 8K char cap (equal, in
+    // practice) and may or may not flip truncated again. Either way
+    // the summary must stay bounded.
+    const def = createMcpToolDefinition(
+      metaOf("github", "search_code"),
+      fakeClient(async () => ({
+        structuredContent: {
+          items: Array.from({ length: 500 }, (_, i) => ({
+            id: i,
+            body: "y".repeat(40),
+          })),
+        },
+      })),
+    );
+    const result = await def.run({}, ctx);
+    expect(result.status).toBe("ok");
+    // Hard ceiling: 8K from the projector + at most a few chars from
+    // the compressor's own clip marker.
+    expect(result.summary.length).toBeLessThanOrEqual(8_100);
+    expect(result.summary).toContain("[truncated]");
   });
 
   it("folds McpRequestError into a status=error result (never throws)", async () => {
