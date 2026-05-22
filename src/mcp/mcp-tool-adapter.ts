@@ -26,6 +26,29 @@ import type { McpToolMeta } from "./mcp-types.js";
 /** Hard cap on the synthetic `output` string projected from an MCP response. */
 const MAX_PROJECTED_OUTPUT_CHARS = 8_000;
 
+/**
+ * Per-call compressor bounds for MCP results.
+ *
+ * The runtime-wide `compressToolResult` default is tuned for log-tail
+ * tools (`os.shell.run`, `os.fs.grep`) where a 400-char cap keeps the
+ * prompt lean. MCP tools, in contrast, routinely return structured
+ * JSON payloads (GitHub issues / PRs, Linear tickets, etc.) on a
+ * single line — 400 chars usually clips after the very first record
+ * and the model loops on the same call with different filters trying
+ * to "find the rest" (observed in session
+ * `s-6b8f56ce-10b6-490f-94e0-b7502b384b64`: nine repeated
+ * `mcp.github.list_issues` calls against a 9-issue repo).
+ *
+ * We bump the per-call cap to the same ceiling the projector pre-clips
+ * at, so the agent sees the full pre-clipped payload, and we disable
+ * line-based tail truncation (which keeps the LAST N lines — exactly
+ * the opposite of what we want for an ordered list of records).
+ */
+const MCP_COMPRESSOR_OPTIONS = {
+  maxSummaryLength: MAX_PROJECTED_OUTPUT_CHARS,
+  maxTailLines: Number.MAX_SAFE_INTEGER,
+} as const;
+
 export function createMcpToolDefinition(
   meta: McpToolMeta,
   client: McpClient,
@@ -45,22 +68,28 @@ export function createMcpToolDefinition(
     run: async (args, ctx): Promise<CompressedToolResult> => {
       try {
         const res = await client.callTool(meta.rawName, args, ctx.signal);
-        return compressToolResult({
-          tool: meta.qualifiedName,
-          status: "ok",
-          output: projectMcpResponseToText(res),
-          details: extractStructuredDetails(res),
-        });
-      } catch (err) {
-        return compressToolResult({
-          tool: meta.qualifiedName,
-          status: "error",
-          output: scrubErrorMessage(err),
-          details: {
-            server: meta.server,
-            rawName: meta.rawName,
+        return compressToolResult(
+          {
+            tool: meta.qualifiedName,
+            status: "ok",
+            output: projectMcpResponseToText(res),
+            details: extractStructuredDetails(res),
           },
-        });
+          MCP_COMPRESSOR_OPTIONS,
+        );
+      } catch (err) {
+        return compressToolResult(
+          {
+            tool: meta.qualifiedName,
+            status: "error",
+            output: scrubErrorMessage(err),
+            details: {
+              server: meta.server,
+              rawName: meta.rawName,
+            },
+          },
+          MCP_COMPRESSOR_OPTIONS,
+        );
       }
     },
   };
@@ -68,10 +97,23 @@ export function createMcpToolDefinition(
 
 /**
  * Project the MCP `tools/call` response into a single human/agent
- * readable text block. Concatenates text content; for image / audio
- * / resource blocks, emits a one-line marker that names the type
- * (the binary payload itself is not surfaced — the agent has the
- * MCP resource reader for that).
+ * readable text block.
+ *
+ * Resolution order:
+ *
+ *   1. Legacy SDK shape (`{ toolResult }` without `content`) →
+ *      pretty-printed JSON of the legacy field.
+ *   2. `structuredContent` when present → pretty-printed JSON. Per the
+ *      MCP spec `structuredContent` matches the tool's declared
+ *      `outputSchema`, so it is the canonical typed payload. The
+ *      content text blocks (when also present) are typically a
+ *      human-readable mirror of the same data; preferring the typed
+ *      form gives the agent line-structured JSON instead of a single
+ *      glued-together text blob — which in turn lets the compressor's
+ *      8K-char ceiling clip cleanly between records rather than
+ *      mid-field.
+ *   3. `content[]` text / image / audio / resource markers — the
+ *      legacy path, used when no structured payload is provided.
  *
  * Capped to `MAX_PROJECTED_OUTPUT_CHARS` with a `[truncated]`
  * suffix so a verbose MCP server cannot blow the compressor's
@@ -84,9 +126,18 @@ export function projectMcpResponseToText(res: unknown): string {
   // Legacy SDK shape: `{ toolResult: <anything> }`. Render JSON.
   if ("toolResult" in obj && !("content" in obj)) {
     try {
-      return clipOutput(JSON.stringify(obj.toolResult));
+      return clipOutput(JSON.stringify(obj.toolResult, null, 2));
     } catch {
       return clipOutput(String(obj.toolResult));
+    }
+  }
+
+  if (obj.structuredContent && typeof obj.structuredContent === "object") {
+    try {
+      return clipOutput(JSON.stringify(obj.structuredContent, null, 2));
+    } catch {
+      // Cyclic / unserialisable structuredContent — fall through to
+      // the content-blocks path so the agent still sees something.
     }
   }
 
