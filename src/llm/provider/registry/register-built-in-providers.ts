@@ -1,0 +1,67 @@
+import { getConfig } from "../../../config/index.js";
+import { LlamaServerClient } from "../../llama-server-client.js";
+import { LlamaServerProvider } from "../llama-server/llama-server-provider.js";
+import { OpenAiProvider } from "../openai/openai-provider.js";
+import { OpenRouterProvider } from "../openrouter/openrouter-provider.js";
+import { registerProviderKind } from "./provider-types.js";
+
+let registered = false;
+
+export function registerBuiltInProviderKinds(): void {
+  if (registered) return;
+  registered = true;
+
+  registerProviderKind("llama-server", (ctx) => {
+    const client = ctx.llamaClient ?? new LlamaServerClient();
+    const getProfile =
+      ctx.getProfile ??
+      (() => {
+        throw new Error("llama-server provider requires getProfile");
+      });
+    const config = getConfig();
+    return new LlamaServerProvider(client, {
+      id: ctx.entry.id,
+      getProfile,
+      visionEnabledByConfig: config.vision.enabled,
+      visionAutoDetect: config.vision.autoDetect,
+      maxImageBytes: config.vision.maxImageBytes,
+      maxImagesPerCall: config.vision.maxImagesPerCall,
+      baseUrlOverride: ctx.entry.url,
+    });
+  });
+
+  registerProviderKind("openai-compatible", (ctx) => {
+    const entry = ctx.entry;
+    if (!entry.baseUrl || !entry.defaultChatModel) {
+      throw new Error(
+        `openai-compatible provider "${entry.id}" requires baseUrl and defaultChatModel`,
+      );
+    }
+    return new OpenAiProvider({
+      id: entry.id,
+      baseUrl: entry.baseUrl,
+      apiKey: entry.apiKey ?? "",
+      defaultChatModel: entry.defaultChatModel,
+      headers: entry.headers,
+      supportsVision: entry.supportsVision ?? true,
+      supportsParallelTools: entry.supportsTools ?? true,
+      requestTimeoutMs: entry.requestTimeoutMs,
+    });
+  });
+
+  registerProviderKind("openrouter", (ctx) => {
+    const entry = ctx.entry;
+    return new OpenRouterProvider({
+      id: entry.id,
+      baseUrl: entry.baseUrl,
+      apiKey: entry.apiKey ?? "",
+      defaultChatModel: entry.defaultChatModel ?? "openrouter/auto",
+      headers: entry.headers,
+      supportsVision: entry.supportsVision ?? true,
+      supportsParallelTools: entry.supportsTools ?? true,
+      requestTimeoutMs: entry.requestTimeoutMs,
+      httpReferer: "https://github.com/AtomicBot-ai/atomic-agent",
+      xTitle: "atomic-agent",
+    });
+  });
+}

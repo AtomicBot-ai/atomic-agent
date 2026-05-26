@@ -134,13 +134,31 @@ export function handleAppKey(
     state.uiMode === "debug" &&
     state.activeTab === "mcp" &&
     (state.mcpPanel.addModal !== null || state.mcpPanel.removeConfirm !== null);
+  const providersTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "providers" &&
+    (state.providersPanel.wizard !== null ||
+      state.providersPanel.removeConfirm !== null);
+  const llmTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "llm" &&
+    (state.providersPanel.wizard !== null ||
+      state.providersPanel.removeConfirm !== null ||
+      state.localModelsPanel.mode === "backendUpdate" ||
+      state.localModelsPanel.pull !== null ||
+      state.localModelsPanel.removeConfirmId !== null ||
+      state.localModelsPanel.embeddingRemoveConfirmId !== null ||
+      state.localModelsPanel.embeddingOnboardingPrompt !== null ||
+      state.llmPanel.stopLocalDaemonsPrompt !== null);
   const debugTabBusy =
     tasksTabBusy ||
     skillsTabBusy ||
     memoryTabBusy ||
     localModelsTabBusy ||
     telegramTabBusy ||
-    mcpTabBusy;
+    mcpTabBusy ||
+    providersTabBusy ||
+    llmTabBusy;
   // Ctrl+B is the dedicated nav-cycle escape valve: it always advances
   // one nav slot forward regardless of where focus currently is. This
   // is the key power users press when they want to reach Observe /

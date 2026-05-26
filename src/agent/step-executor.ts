@@ -65,6 +65,9 @@ import {
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import { hashPrefix, type SlotManager } from "../llm/slot-manager.js";
 import type { ModelProfile } from "../llm/model-profile.js";
+import type { ToolCallTransport } from "../llm/provider/completion-types.js";
+import type { ToolCallAdapter } from "../llm/provider/adapters/tool-call-adapter.js";
+import { openAiToolCallAdapter } from "../llm/provider/openai/openai-tool-call-adapter.js";
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
@@ -83,6 +86,10 @@ export interface LlmStreamParams {
    * failure mode (see `REPAIR_MAX_TOKENS` and the call-site comment).
    */
   maxTokens?: number;
+  /** OpenAI tools payload — set when `toolTransport === "native_tools"`. */
+  tools?: ReadonlyArray<Record<string, unknown>>;
+  toolChoice?: unknown;
+  parallelToolCalls?: boolean;
 }
 
 export type LlmCompleteStream = (
@@ -103,6 +110,12 @@ export interface StepDependencies {
   llmCompleteStream?: LlmCompleteStream;
   grammar: string;
   profile: ModelProfile;
+  /** Effective transport for this runtime (grammar vs native OpenAI tools). */
+  toolTransport: ToolCallTransport;
+  /** Adapter for native_tools; null when grammar-only. */
+  toolCallAdapter: ToolCallAdapter | null;
+  /** When false, completions use slotId -1 (cloud providers). */
+  supportsSlotAffinity: boolean;
   /**
    * Invoked after every LLM completion (initial call and one-shot parse
    * retry alike). Used by the agent loop to feed the served `modelId`
@@ -246,7 +259,14 @@ async function executeStepInner(
       ? { userMessage: ctx.userMessage }
       : {}),
   });
-  const slot = deps.slotManager.acquire(ctx.session.id, prompt.stablePrefix);
+  const slot = deps.supportsSlotAffinity
+    ? deps.slotManager.acquire(ctx.session.id, prompt.stablePrefix)
+    : {
+        slotId: -1,
+        prefixHash: hashPrefix(prompt.stablePrefix),
+        firstSeenAt: Date.now(),
+        cacheReused: false,
+      };
   if (ctx.stepIndex === 0) {
     const promptViolations = checkProfilePromptAligned(deps.profile, prompt.text);
     if (promptViolations.length > 0) {
@@ -278,12 +298,13 @@ async function executeStepInner(
     promptTokens: prompt.tokens.total,
   });
 
-  const llmParams: LlmStreamParams = {
-    prompt: prompt.text,
-    grammar: deps.grammar,
+  const llmParams: LlmStreamParams = buildLlmStreamParams({
+    promptText: prompt.text,
+    deps,
     slotId: slot.slotId,
     sessionId: ctx.session.id,
-  };
+    toolDescriptors: ctx.toolDescriptors,
+  });
 
   const firstAttempt = await runInitialCompletion({
     ctx,
@@ -309,12 +330,15 @@ async function executeStepInner(
   }
 
   // Detect model-side defects before the parser wastes a retry on a
-  // fundamentally broken completion (truncated / empty / no_stop). A
-  // parser retry on the same prompt would repeat the same wall, so we
-  // short-circuit into `ModelError` which the agent loop surfaces
-  // without replaying the step.
+  // fundamentally broken completion (truncated / empty / no_stop). Native
+  // tool-call providers are the exception for reasoning-only empty bodies:
+  // the model may have thought but failed to emit a required tool call, and
+  // the existing repair path can recover with a stricter one-shot prompt.
   const initialModelFailure = detectModelFailure(completion);
-  if (initialModelFailure !== null) {
+  if (
+    initialModelFailure !== null &&
+    !isNativeToolsEmptyCompletionHandledByParser(deps, initialModelFailure.reason)
+  ) {
     deps.logger?.warn("model-side completion defect", {
       sessionId: ctx.session.id,
       stepIndex: ctx.stepIndex,
@@ -376,7 +400,7 @@ async function executeStepInner(
     };
   };
 
-  let parsed = tryParseToolCalls(completion, deps.profile);
+  let parsed = tryParseToolCalls(completion, deps.profile, deps);
   if (parsed.ok) {
     const validation = validateBatch(parsed.batch, deps.registry);
     if (!validation.ok) {
@@ -470,7 +494,13 @@ async function executeStepInner(
     // failure, not a grammar one — no point emitting `GrammarError` for
     // an empty body.
     const retryModelFailure = detectModelFailure(completion);
-    if (retryModelFailure !== null) {
+    if (
+      retryModelFailure !== null &&
+      !isNativeToolsEmptyCompletionHandledByParser(
+        deps,
+        retryModelFailure.reason,
+      )
+    ) {
       deps.logger?.warn("model-side completion defect on parse retry", {
         sessionId: ctx.session.id,
         stepIndex: ctx.stepIndex,
@@ -482,7 +512,7 @@ async function executeStepInner(
       );
     }
 
-    parsed = tryParseToolCalls(completion, deps.profile);
+    parsed = tryParseToolCalls(completion, deps.profile, deps);
     if (parsed.ok) {
       const validation = validateBatch(parsed.batch, deps.registry);
       if (!validation.ok) {
@@ -762,6 +792,16 @@ type ToolCallBatchParseResult =
   | { ok: true; batch: ToolCallBatch }
   | { ok: false; error: Error };
 
+function isNativeToolsEmptyCompletionHandledByParser(
+  deps: Pick<StepDependencies, "toolTransport">,
+  reason: string,
+): boolean {
+  return (
+    deps.toolTransport === "native_tools" &&
+    reason === "empty"
+  );
+}
+
 /**
  * Non-throwing parser wrapper. The step executor uses it to distinguish
  * a malformed first attempt (retryable) from any other error shape.
@@ -771,8 +811,25 @@ type ToolCallBatchParseResult =
 function tryParseToolCalls(
   completion: CompletionResult,
   profile: ModelProfile,
+  deps: Pick<StepDependencies, "toolTransport" | "toolCallAdapter">,
 ): ToolCallBatchParseResult {
   try {
+    if (
+      deps.toolTransport === "native_tools" &&
+      completion.toolCalls &&
+      completion.toolCalls.length > 0
+    ) {
+      const adapter = deps.toolCallAdapter ?? openAiToolCallAdapter;
+      const reasoning = resolveReasoning(completion, profile);
+      const batch = adapter.toolCallsToBatch(completion.toolCalls, reasoning);
+      if (batch.calls.length === 0) {
+        return {
+          ok: false,
+          error: new Error("native tool_calls array was empty after mapping"),
+        };
+      }
+      return { ok: true, batch };
+    }
     const batch = parseToolCalls(
       normalizeContent(completion, profile),
       getReasoningTagOptions(profile),
@@ -784,6 +841,35 @@ function tryParseToolCalls(
       error: err instanceof Error ? err : new Error(String(err)),
     };
   }
+}
+
+function buildLlmStreamParams(args: {
+  promptText: string;
+  deps: Pick<
+    StepDependencies,
+    "grammar" | "toolTransport" | "toolCallAdapter"
+  >;
+  slotId: number;
+  sessionId: string;
+  toolDescriptors: readonly ToolDescriptor[];
+}): LlmStreamParams {
+  const base: LlmStreamParams = {
+    prompt: args.promptText,
+    grammar: args.deps.grammar,
+    slotId: args.slotId,
+    sessionId: args.sessionId,
+  };
+  if (args.deps.toolTransport !== "native_tools") {
+    return base;
+  }
+  const adapter = args.deps.toolCallAdapter ?? openAiToolCallAdapter;
+  return {
+    ...base,
+    grammar: "",
+    tools: adapter.descriptorsToTools(args.toolDescriptors),
+    toolChoice: "required",
+    parallelToolCalls: true,
+  };
 }
 
 interface BatchValidation {
@@ -799,6 +885,10 @@ interface BatchValidationFailure {
  * Enforce batch invariants:
  *  - Every tool name resolves in the registry (defence in depth — the
  *    grammar already restricts this).
+ *  - Terminal `reply` calls carry a non-empty `text` string before they
+ *    can close the turn. This catches native-tools calls with `{}` args
+ *    and routes them through the repair prompt instead of surfacing the
+ *    reply tool's validation error as the assistant's final answer.
  *  - Every call has a known `ResourceClass`.
  *  - When `calls.length > 1`:
  *      * No `terminal` verbs (`reply` / `finish`) inside a batch.
@@ -827,6 +917,14 @@ function validateBatch(
   // agent loop's failure category is `tool`, not `grammar`. Replaying
   // the same prompt would not change the registry contents.
   void registry;
+  for (let i = 0; i < calls.length; i += 1) {
+    const call = calls[i]!;
+    const terminalArgsError = validateTerminalArgs(call);
+    if (terminalArgsError !== null) {
+      perCall[i] = terminalArgsError;
+      firstError ??= terminalArgsError;
+    }
+  }
   if (calls.length > 1) {
     const cap = getConfig().agent.maxParallelToolCalls;
     if (calls.length > cap) {
@@ -866,6 +964,13 @@ function validateBatch(
     };
   }
   return { ok: true };
+}
+
+function validateTerminalArgs(call: ToolCallPayload): string | null {
+  if (call.tool !== "reply") return null;
+  const text = call.args.text;
+  if (typeof text === "string" && text.trim().length > 0) return null;
+  return "reply tool requires args.text to be a non-empty string";
 }
 
 /**

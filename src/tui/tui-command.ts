@@ -59,13 +59,13 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // `ModelProfileManager` and the manager hot-swaps to the correct
   // profile on the first turn refresh.
   const deferRuntimeHealthProbe = true;
-  // After the wizard, land the user on the Models tab when managed
+  // After the wizard, land the user on the LLM tab when managed
   // mode is selected but nothing is ready on disk yet — they still
   // need to pick + pull a model before chat is useful. Fully-ready
   // managed setups and external-URL setups land in chat as usual.
   const initialLayout: InitialTuiLayoutOptions | undefined =
     startupGate === "saved_managed" && !isManagedModeReadyOnDisk()
-      ? { uiMode: "debug", activeTab: "models" }
+      ? { uiMode: "debug", activeTab: "llm" }
       : undefined;
   const config = getConfig();
   const approvalRequired = !parsed.noApproval && config.agent.approvalRequired;
@@ -210,6 +210,20 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onMemoryExpandNeighborsRequested: (noteId) =>
           orchestrator.memory.expandNoteNeighbors(noteId),
         onMcpAutoRefreshStart: () => orchestrator.mcp.startAutoRefresh(),
+        onProvidersTabRefresh: () =>
+          orchestrator.providers.refresh(),
+        onProvidersSetActiveText: (id) =>
+          void orchestrator.providers.setActiveText(id),
+        onProvidersSelectChatModel: (providerId, modelId) =>
+          void orchestrator.providers.selectChatModel(providerId, modelId),
+        onProvidersSetActiveEmbedding: (id) =>
+          void orchestrator.providers.setActiveEmbedding(id),
+        onProvidersSelectEmbeddingModel: (providerId, modelId) =>
+          void orchestrator.providers.selectEmbeddingModel(providerId, modelId),
+        onProvidersWizardSubmit: (wizard) =>
+          void orchestrator.providers.completeWizard(wizard),
+        onProvidersRemove: (id) =>
+          void orchestrator.providers.removeProviderById(id),
         onMcpDetailRequested: (serverName) =>
           orchestrator.mcp.openDetail(serverName),
         onMcpAddServerSubmit: (json) => orchestrator.mcp.addServerFromJson(json),
@@ -237,6 +251,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.localModels.setActiveEmbedding(id),
         onLocalModelsEmbeddingToggleEnabledRequested: () =>
           void orchestrator.localModels.toggleEmbeddingEnabled(),
+        onLocalModelsEmbeddingDisableRequested: () =>
+          void orchestrator.localModels.disableEmbedding(),
         onLocalModelsEmbeddingStartRequested: () =>
           void orchestrator.localModels.startEmbeddingPairing(),
         onLocalModelsEmbeddingRemoveConfirmed: (id) =>

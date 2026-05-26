@@ -30,6 +30,7 @@ import { resolvePlatformAsset } from "../../local-llm/platform-assets.js";
 import {
   getUserConfigPath,
   readUserConfigFileSync,
+  writeUserConfigFileSync,
 } from "../../config/config-file.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
 import { LocalModelsOrchestrator } from "./local-models-orchestrator.js";
@@ -172,6 +173,45 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     expect(vi.mocked(localLlm.startEmbeddingDaemon)).toHaveBeenCalledWith(
       expect.objectContaining({ modelId: "bge-m3" }),
     );
+  });
+
+  it("does not auto-start local daemons when a cloud text provider is active", async () => {
+    const dataDir = getConfig().paths.localModelsDataDir;
+    stubBackendInstalled(dataDir);
+    stubChatModelDownloaded(dataDir);
+    const file = readUserConfigFileSync(getUserConfigPath(stateDir));
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...file,
+      llm: {
+        activeTextProvider: "openrouter",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto",
+        providers: [
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            url: "http://127.0.0.1:19091",
+          },
+          {
+            id: "openrouter",
+            kind: "openrouter",
+            apiKey: "test",
+            defaultChatModel: "openai/gpt-5.5",
+          },
+        ],
+      },
+    });
+    resetConfigCache();
+
+    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    vi.spyOn(orchestrator, "startDaemon").mockResolvedValue(true);
+    vi.spyOn(orchestrator, "refresh").mockResolvedValue();
+
+    await orchestrator.autoStartIfReady();
+
+    expect(orchestrator.startDaemon).not.toHaveBeenCalled();
+    expect(vi.mocked(localLlm.getDaemonStatus)).not.toHaveBeenCalled();
+    expect(vi.mocked(localLlm.startEmbeddingDaemon)).not.toHaveBeenCalled();
   });
 });
 

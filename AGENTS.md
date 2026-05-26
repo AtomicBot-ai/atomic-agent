@@ -164,6 +164,39 @@ npm run build   # compile to dist/
 
 The CLI entry is `src/cli/index.ts`; the sidecar entry is `src/sidecar/main.ts`.
 
+## LLM provider abstraction
+
+Text completion, vision, embeddings, and sub-calls route through plugin-registered providers instead of calling `LlamaServerClient` directly from the agent loop.
+
+### Registry and transport
+
+- **`ProviderRegistry`** ([src/llm/provider/registry/provider-registry.ts](src/llm/provider/registry/provider-registry.ts)) — `registerProviderKind(kind, factory)` + `fromConfig(config)`. Built-in kinds self-register in [register-built-in-providers.ts](src/llm/provider/registry/register-built-in-providers.ts): `llama-server`, `openai-compatible`, `openrouter`.
+- **`LlmProvider`** ([src/llm/provider/llm-provider.ts](src/llm/provider/llm-provider.ts)) — `complete`, `completeStream`, `describeImage`, `health`, `close`, `capabilities`, optional `toolCallAdapter` + `streamConsumer`.
+- **`toolTransport`** — `grammar` (GBNF on llama-server) vs `native_tools` (OpenAI `tools` / `tool_calls`). Resolved by `resolveActiveToolTransport` from `config.llm.toolTransport` (`auto` follows the active provider).
+- **Name escape** — qualified tool names use `__` for dots (`os.fs.read` → `os__fs__read`) in [openai-tool-call-adapter.ts](src/llm/provider/openai/openai-tool-call-adapter.ts). `reply` / `finish` are synthetic OpenAI functions alongside registry tools.
+
+### Bootstrap wiring
+
+[src/runtime/bootstrap.ts](src/runtime/bootstrap.ts) constructs `providerRegistry`, wires `llmComplete` / `llmCompleteStream` through `providerRegistry.activeText`, and passes `toolTransport` + `toolCallAdapter` into `AgentLoop`. When `capabilities.supportsSlotAffinity === false` (cloud), step execution uses `slotId: -1`.
+
+Optional `config.llm` (v24) lists `providers[]`, `activeTextProvider`, `activeEmbeddingProvider`, `toolTransport`, `userModels[]`, `costTracking`. When omitted, `resolveLlmConfig` synthesizes a single `local-llama` entry from `localModels.*` — **local-only installs stay byte-stable**.
+
+### Hot-swap
+
+`ProviderRegistry.setActive(id)` / `swapActive(id)` closes the previous provider and switches the active text backend without process restart. TUI **Providers** tab ([src/tui/providers/](src/tui/providers/)) is the only surface that calls this seam.
+
+### Locked invariants
+
+1. **Local llama-server path unchanged when no cloud provider is active.** Grammar, slots, and GBNF tests remain the reference behaviour.
+2. **Stable prefix untouched.** Cloud providers receive the same monolithic prompt string; no chat-message refactor in v1.
+3. **One inference per step survives.** `toolCallsToBatch` produces the same `ToolCallBatch` shape as `parseToolCalls`.
+4. **`atomic-agent serve` never proxies upstream.** HTTP `/v1/chat/completions` always funnels into `runtime.runTurn`.
+5. **Plugin registration only.** New provider kinds call `registerProviderKind`; no central switch statements.
+
+### Embeddings
+
+Symmetric **`EmbeddingProviderRegistry`** ([src/memory/embeddings/embedding-provider-registry.ts](src/memory/embeddings/embedding-provider-registry.ts)) with `OpenAiEmbeddingProvider` / `OpenRouterEmbeddingProvider` for `POST /v1/embeddings`. Hybrid recall degradation contract unchanged.
+
 ## llama-server modes
 
 `atomic-agent` supports two modes for the llama-server backend (`config.llama.mode`):
@@ -1199,7 +1232,7 @@ Slash commands: `/memory` opens the tab; `/memory dump` keeps the legacy profile
 
 ## Vision (multimodal input)
 
-Image recognition is an opt-in feature wired exclusively through the new provider abstraction in [src/llm/provider/](src/llm/provider/). The text agent loop is unchanged — vision lives outside the conversation transcript, exposed only via the `vision.describe` tool.
+Image recognition is an opt-in feature wired through the active **`LlmProvider`** ([src/llm/provider/llm-provider.ts](src/llm/provider/llm-provider.ts)) — `LlamaServerProvider` for local `/v1/chat/completions`, `OpenAiProvider` / `OpenRouterProvider` for cloud. The text agent loop is unchanged — vision lives outside the conversation transcript, exposed only via the `vision.describe` tool.
 
 ### Surfaces
 
@@ -1207,7 +1240,7 @@ Image recognition is an opt-in feature wired exclusively through the new provide
 |---|---|---|
 | Detection | [src/llm/model-profile.ts](src/llm/model-profile.ts) `detectVisionSupport` | Inspects `/props` and stamps `ModelProfile.vision = { supported, source }`. Source priority: `modalities.vision` (current llama.cpp surface) → `has_multimodal` → `multimodal` → `mmproj` (legacy fallbacks). The first source that reports support wins; the resolved tag is surfaced through `ProviderCapabilities.visionSource` for diagnostics. |
 | Provider | [src/llm/provider/llm-provider.ts](src/llm/provider/llm-provider.ts) | `LlmProvider` interface — `name`, `capabilities`, `describeImage(request)`. Future non-llamacpp adapters implement this surface. |
-| Adapter | [src/llm/provider/llama-server-provider.ts](src/llm/provider/llama-server-provider.ts) | Speaks the OpenAI-compatible `/v1/chat/completions` endpoint with `messages: [{role:"user", content:[{type:"image_url", image_url:{url:"data:<mime>;base64,…"}}, {type:"text", text:prompt}]}]`. Sends `chat_template_kwargs: {enable_thinking: false}` + `reasoning_format: "none"` so Gemma-4 / other thinking-capable models do not park the answer in a separate `thinking` channel. Sniffs JPEG/PNG/WebP/GIF magic bytes for the `data:` MIME. **Does not pass `slot_id`** — chat-completions manages its own slots; the main agent slot and the reflection slot are not touched. `capabilities` is a getter (not a frozen field) that reads the live profile through `getProfile()`, so vision turns on the moment `ModelProfileManager` swaps to a multimodal profile (load-bearing for the TUI's `deferLlamaHealthCheck=true` cold start). |
+| Adapter | [src/llm/provider/llama-server/llama-server-provider.ts](src/llm/provider/llama-server/llama-server-provider.ts) | Speaks the OpenAI-compatible `/v1/chat/completions` endpoint with `messages: [{role:"user", content:[{type:"image_url", image_url:{url:"data:<mime>;base64,…"}}, {type:"text", text:prompt}]}]`. Sends `chat_template_kwargs: {enable_thinking: false}` + `reasoning_format: "none"` so Gemma-4 / other thinking-capable models do not park the answer in a separate `thinking` channel. Sniffs JPEG/PNG/WebP/GIF magic bytes for the `data:` MIME. **Does not pass `slot_id`** — chat-completions manages its own slots; the main agent slot and the reflection slot are not touched. `capabilities` is a getter (not a frozen field) that reads the live profile through `getProfile()`, so vision turns on the moment `ModelProfileManager` swaps to a multimodal profile (load-bearing for the TUI's `deferLlamaHealthCheck=true` cold start). |
 | Tool | [src/tools/vision/describe.ts](src/tools/vision/describe.ts) + [load-image.ts](src/tools/vision/load-image.ts) | `vision.describe { prompt, path? \| paths? }`. Loads images from disk (`png`/`jpg`/`jpeg`/`webp`/`gif`), enforces per-call and per-image caps, calls the provider, returns a `CompressedToolResult` like any other tool. |
 | Wiring | [src/runtime/bootstrap.ts](src/runtime/bootstrap.ts) | Constructs the `LlamaServerProvider` only when `config.vision.enabled === true`, threading a `getProfile` closure that resolves through `ModelProfileManager` (with the cold-start `profile` as fallback). When the provider is present, `vision.describe` stays in `effectiveToolDescriptors` for the entire session — capability is checked dynamically at call time, not at bootstrap. The descriptor is filtered out only when `config.vision.enabled === false`, so the prompt never advertises a tool the runtime cannot actually invoke. |
 | Catalog | [src/local-llm/models-catalog.ts](src/local-llm/models-catalog.ts) | `LocalModelDef.supportsVision` + `mmprojUrl` / `mmprojFilename` / `mmprojFileSizeGb` for downloads. |
@@ -1217,7 +1250,7 @@ Image recognition is an opt-in feature wired exclusively through the new provide
 
 ### Locked invariants
 
-1. **Vision calls never touch the main agent or reflection slots.** `LlamaServerProvider.describeImage` posts to `/v1/chat/completions` without a `slot_id` — chat-completions manages its own slots and never reuses the main agent slot or the reflection slot. The legacy `/completion` + `image_data` + `[img-N]` placeholder path is gone; sending a plain prompt without a chat template was load-bearing for the previous Gemma-4 hallucination bug. Pinned by [src/llm/provider/llama-server-provider.test.ts](src/llm/provider/llama-server-provider.test.ts) (asserts URL ends in `/v1/chat/completions`, body uses `image_url` content blocks, `chat_template_kwargs.enable_thinking === false`).
+1. **Vision calls never touch the main agent or reflection slots.** `LlamaServerProvider.describeImage` posts to `/v1/chat/completions` without a `slot_id` — chat-completions manages its own slots and never reuses the main agent slot or the reflection slot. The legacy `/completion` + `image_data` + `[img-N]` placeholder path is gone; sending a plain prompt without a chat template was load-bearing for the previous Gemma-4 hallucination bug. Pinned by [src/llm/provider/llama-server/llama-server-provider.test.ts](src/llm/provider/llama-server/llama-server-provider.test.ts) (asserts URL ends in `/v1/chat/completions`, body uses `image_url` content blocks, `chat_template_kwargs.enable_thinking === false`).
 2. **Vision lives outside the conversation transcript.** `vision.describe` returns a `CompressedToolResult`; no changes to `ConversationTurn` or the variable tail. The model receives the description as a normal `### latest-result` block.
 3. **Text completion bypasses the provider.** Only the vision verb goes through `LlmProvider`. The agent loop continues to call `LlamaServerClient.complete` / `completeStream` directly so llama.cpp-specific knobs (`slot_id`, `cache_prompt`, GBNF) stay first-class.
 4. **Vision tool registration is config-only; capability is dynamic.** `registerVisionTools` short-circuits on `config.vision.enabled === false` or on a missing provider, but **does not** check `capabilities.vision` at registration time — that check would freeze the wrong answer when the runtime starts before the first `/props` probe lands (the TUI's `deferLlamaHealthCheck=true` cold start). `LlamaServerProvider.describeImage` re-checks `this.capabilities.vision` on every call against the live profile and throws `VisionUnsupportedError` when the active model is text-only. The bootstrap filters the descriptor out of `DEFAULT_TOOL_DESCRIPTORS` only when no provider was constructed — so disabling vision via config still produces a clean prompt.

@@ -14,3 +14,4 @@ coverage/
 ARCHITECTURE.md
 CLAW-LOOT.md
 /logs/*
+/tmp/*

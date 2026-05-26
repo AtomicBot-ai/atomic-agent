@@ -189,17 +189,39 @@ describe("createAgentRuntime", () => {
           if (params.sessionId.startsWith("reflection:")) {
             return {
               content: "NONE\n",
-              timing: { promptTokens: 1, predictedTokens: 1 },
-              slotId: 0,
-              cacheReused: false,
+              reasoningContent: "",
+              stop: true,
+              truncated: false,
+              timing: { promptMs: 0, predictedMs: 0, promptTokens: 1, predictedTokens: 1 },
+              cacheHitTokens: 0,
+              slotId: params.slotId,
+              modelId: null,
+            };
+          }
+          // Sub-calls (query-rewriter, link-gen, …) use slotId -1 — do not
+          // consume the scripted agent reply queue.
+          if (params.slotId === -1) {
+            return {
+              content: "<rewritten_query>NONE</rewritten_query>\n",
+              reasoningContent: "",
+              stop: true,
+              truncated: false,
+              timing: { promptMs: 0, predictedMs: 0, promptTokens: 1, predictedTokens: 1 },
+              cacheHitTokens: 0,
+              slotId: -1,
+              modelId: null,
             };
           }
           const text = replies.shift() ?? "fallback";
           return {
             content: JSON.stringify({ tool: "reply", args: { text } }),
-            timing: { promptTokens: 5, predictedTokens: 3 },
-            slotId: 0,
-            cacheReused: false,
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: { promptMs: 0, predictedMs: 0, promptTokens: 5, predictedTokens: 3 },
+            cacheHitTokens: 0,
+            slotId: params.slotId,
+            modelId: null,
           };
         },
       },

@@ -37,6 +37,14 @@ import {
   createInitialMcpPanelState,
   type McpPanelState,
 } from "./mcp/mcp-panel-state.js";
+import {
+  createInitialProvidersPanelState,
+  type ProvidersPanelState,
+} from "./providers/providers-panel-state.js";
+import {
+  createInitialLlmPanelState,
+  type LlmPanelState,
+} from "./llm-panel/llm-panel-state.js";
 
 /**
  * High-level lifecycle of the TUI. Mirrors the underlying `SessionState`
@@ -77,10 +85,12 @@ export type TuiTab =
   | "tasks"
   | "skills"
   | "memory"
+  | "llm"
   | "models"
   | "llm-logs"
   | "telegram"
-  | "mcp";
+  | "mcp"
+  | "providers";
 
 /**
  * Top-level UI mode: `chat` is the default single-scroll openclaw-style
@@ -90,10 +100,14 @@ export type TuiTab =
  */
 export type TuiUiMode = "chat" | "debug";
 
+export type ChatMessageVariant = "normal" | "warn";
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
   text: string;
+  /** `warn` — failure / runtime error styling in {@link SystemBubble}. */
+  variant?: ChatMessageVariant;
   /** Number of tool steps the assistant ran inside this turn. */
   toolSteps?: number;
   /** Tool cards (call + result) attached to this assistant turn. */
@@ -287,6 +301,10 @@ export interface TuiState {
   memoryPanel: MemoryPanelState;
   /** State slice driving the MCP tab (read-only MCP server / catalog inspection). */
   mcpPanel: McpPanelState;
+  /** Cloud / local LLM provider registry (hot-swap active text provider). */
+  providersPanel: ProvidersPanelState;
+  /** Unified operator LLM panel combining provider routing and local daemon state. */
+  llmPanel: LlmPanelState;
   /** Managed llama.cpp catalog + download UI (daemon lifecycle stays CLI-only). */
   localModelsPanel: LocalModelsPanelState;
   /** Tail of `<dataDir>/llama-server.log` driving the "LLM logs" tab. */
@@ -366,6 +384,13 @@ export function createInitialTuiState(
   ringBufferSize: number = DEFAULT_RING_BUFFER_SIZE,
   layout?: InitialTuiLayoutOptions,
 ): TuiState {
+  const requestedTab = layout?.activeTab ?? "feed";
+  const activeTab = requestedTab === "models" || requestedTab === "providers"
+    ? "llm"
+    : requestedTab;
+  const llmPanel = createInitialLlmPanelState();
+  if (requestedTab === "models") llmPanel.syncModeToActiveRoute = true;
+  if (requestedTab === "providers") llmPanel.mode = "cloud";
   return {
     session,
     status: "idle",
@@ -399,7 +424,7 @@ export function createInitialTuiState(
     },
     logs: [],
     uiMode: layout?.uiMode ?? "chat",
-    activeTab: layout?.activeTab ?? "feed",
+    activeTab,
     lastRunStatus: null,
     runHistory: [],
     inputValue: "",
@@ -418,6 +443,8 @@ export function createInitialTuiState(
     skillsPanel: createInitialSkillsPanelState(),
     memoryPanel: createInitialMemoryPanelState(),
     mcpPanel: createInitialMcpPanelState(),
+    providersPanel: createInitialProvidersPanelState(),
+    llmPanel,
     localModelsPanel: createInitialLocalModelsPanelState(),
     localLlmLogs: createInitialLocalLlmLogsState(),
     llmHealth: createInitialLlmHealthState(),

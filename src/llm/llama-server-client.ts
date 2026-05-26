@@ -1,75 +1,16 @@
 import { getConfig } from "../config/index.js";
+import type {
+  CompletionRequest,
+  CompletionResult,
+  StreamChunk,
+} from "./provider/completion-types.js";
 
-export interface CompletionRequest {
-  prompt: string;
-  grammar?: string;
-  slotId?: number;
-  cachePrompt?: boolean;
-  stop?: string[];
-  temperature?: number;
-  topP?: number;
-  topK?: number;
-  maxTokens?: number;
-  seed?: number;
-  /**
-   * Anti-repetition penalty applied to tokens seen in the last
-   * `repeatLastN` positions. Defaults to 1.1 to defuse reasoning-mode
-   * repetition loops (e.g. "I will write the response. I will check
-   * the response.") without noticeably distorting JSON generation
-   * under a grammar. Pass `1` to disable.
-   */
-  repeatPenalty?: number;
-  /** How far back `repeatPenalty` looks. Defaults to 256 tokens. */
-  repeatLastN?: number;
-  /** Stable key hashed with the prefix so we always reuse the same slot. */
-  sessionId?: string;
-  /**
-   * Multimodal images attached to this completion. Each entry's `data`
-   * is the base64-encoded image body (no `data:` URI prefix); the
-   * prompt must reference each image by `[img-<id>]` for llama-server
-   * to splice it into the input embeddings. Used only by the vision
-   * provider — the main agent loop never sets this field, so the
-   * stable prefix and KV cache for text completions are unaffected.
-   */
-  imageData?: ReadonlyArray<{ id: number; data: string }>;
-}
-
-export interface CompletionTiming {
-  promptMs: number;
-  predictedMs: number;
-  promptTokens: number;
-  predictedTokens: number;
-}
-
-export interface CompletionResult {
-  content: string;
-  /**
-   * Optional reasoning stream, populated when llama-server exposes a
-   * dedicated `reasoning_content` field (e.g. QwQ, DeepSeek-R1 with
-   * `--reasoning-format deepseek`). Empty string for legacy builds or
-   * non-reasoning models — in that case the step executor still falls
-   * back to `<think>...</think>` extraction from `content`.
-   */
-  reasoningContent: string;
-  stop: boolean;
-  truncated: boolean;
-  timing: CompletionTiming;
-  cacheHitTokens: number;
-  slotId: number;
-  modelId: string | null;
-}
-
-export interface StreamChunk {
-  delta: string;
-  /**
-   * Incremental reasoning text from the same SSE frame. Non-empty only
-   * when the server chose to split CoT into its own `reasoning_content`
-   * channel; otherwise reasoning still arrives inline in `delta` as a
-   * `<think>...</think>` block and is recovered by the grammar parser.
-   */
-  reasoningDelta: string;
-  done: boolean;
-}
+export type {
+  CompletionRequest,
+  CompletionResult,
+  CompletionTiming,
+  StreamChunk,
+} from "./provider/completion-types.js";
 
 export class LlamaServerError extends Error {
   constructor(

@@ -56,6 +56,9 @@ describe("section nav model", () => {
       ...OBSERVE_TABS,
       ...MANAGE_TABS,
     ]);
+    expect(MANAGE_TABS).toContain("llm");
+    expect(MANAGE_TABS).not.toContain("providers");
+    expect(MANAGE_TABS).not.toContain("models");
   });
 
   it("cycles forward across sections starting from chat", () => {

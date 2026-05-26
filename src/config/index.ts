@@ -25,6 +25,13 @@ export {
 export { loadConfig } from "./load-config.js";
 export { getConfig, resetConfigCache } from "./config-cache.js";
 export { loadDotenvFromStateDir } from "./load-dotenv.js";
+export {
+  parseLlmProviderEntry,
+  parseLlmProviders,
+  parseUserLlmFileConfig,
+  type UserLlmFileConfig,
+  type UserLlmProviderEntry,
+} from "./llm-config.js";
 export type { DotenvLoadResult } from "./load-dotenv.js";
 export { DotenvWriterError, setDotenvKey } from "./dotenv-writer.js";
 export type { SetDotenvKeyResult } from "./dotenv-writer.js";

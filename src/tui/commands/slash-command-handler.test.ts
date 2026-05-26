@@ -145,19 +145,29 @@ describe("dispatchSlashCommand", () => {
     expect(result.systemMessage).toContain("debug bundle");
   });
 
-  it("opens the models tab for /models with no argument", () => {
+  it("opens the LLM panel on the active local/cloud route for /models", () => {
     const result = dispatchSlashCommand("/models");
     expect(result.actions).toEqual([
       { type: "ui_mode_set", mode: "debug" },
-      { type: "tab_changed", tab: "models" },
+      { type: "tab_changed", tab: "llm" },
+      { type: "llm_mode_set_to_active_route" },
     ]);
   });
 
-  it("supports /local as an alias for /models", () => {
+  it("supports /local as an alias for the local LLM panel", () => {
     const result = dispatchSlashCommand("/local");
     expect(result.actions).toEqual([
       { type: "ui_mode_set", mode: "debug" },
-      { type: "tab_changed", tab: "models" },
+      { type: "tab_changed", tab: "llm" },
+      { type: "llm_mode_set", mode: "local" },
+    ]);
+  });
+
+  it("opens the chat model picker for /model", () => {
+    const result = dispatchSlashCommand("/model");
+    expect(result.actions).toEqual([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "llm" },
     ]);
   });
 
@@ -178,13 +188,33 @@ describe("dispatchSlashCommand", () => {
     expect(result.localModelsPullModelId).toBe("qwen-3.5-4b");
     expect(result.actions).toEqual([
       { type: "ui_mode_set", mode: "debug" },
-      { type: "tab_changed", tab: "models" },
+      { type: "tab_changed", tab: "llm" },
+      { type: "llm_focus_set", focus: "local" },
     ]);
   });
 
   it("captures /models use <id> for orchestrator dispatch", () => {
     const result = dispatchSlashCommand("/models use qwen-3.5-4b");
     expect(result.localModelsUseModelId).toBe("qwen-3.5-4b");
+  });
+
+  it("opens the LLM panel for /llm without forcing the current mode", () => {
+    const result = dispatchSlashCommand("/llm");
+    expect(result.actions).toEqual([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "llm" },
+      { type: "providers_refresh_requested" },
+    ]);
+  });
+
+  it("switches text provider through the unified LLM tab", () => {
+    const result = dispatchSlashCommand("/llm provider openrouter");
+    expect(result.actions).toEqual([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "llm" },
+      { type: "llm_focus_set", focus: "cloud" },
+      { type: "providers_set_active_text", id: "openrouter" },
+    ]);
   });
 
   it("signals triggerLocalModelsStatus for /models status", () => {

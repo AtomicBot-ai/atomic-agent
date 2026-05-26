@@ -8,6 +8,8 @@ import type { SkillsAction } from "./skills/skills-actions.js";
 import type { MemoryAction } from "./memory/memory-actions.js";
 import type { McpAction } from "./mcp/mcp-actions.js";
 import type { TelegramAction } from "./telegram/telegram-actions.js";
+import type { ProvidersAction } from "./providers/providers-actions.js";
+import type { LlmPanelAction } from "./llm-panel/llm-panel-actions.js";
 import type { ChatMessage, SessionPickerEntry, TuiTab, TuiUiMode } from "./tui-state.js";
 
 /**
@@ -20,7 +22,7 @@ import type { ChatMessage, SessionPickerEntry, TuiTab, TuiUiMode } from "./tui-s
 export type TuiAction =
   | { type: "runtime_info"; line: string }
   /** Append a local system message directly into the chat transcript. */
-  | { type: "system_message"; text: string }
+  | { type: "system_message"; text: string; variant?: "normal" | "warn" }
   | { type: "agent_event"; event: AgentLoopEvent }
   | { type: "approval_requested"; request: ApprovalRequest }
   | { type: "approval_resolved"; approvalId: string; approved: boolean }
@@ -146,4 +148,6 @@ export type TuiAction =
   | SkillsAction
   | MemoryAction
   | McpAction
-  | TelegramAction;
+  | TelegramAction
+  | ProvidersAction
+  | LlmPanelAction;

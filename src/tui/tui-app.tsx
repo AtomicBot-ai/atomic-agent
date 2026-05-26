@@ -1,4 +1,4 @@
-import { Box, useApp, useInput } from "ink";
+import { Box, Text, useApp, useInput } from "ink";
 import {
   useCallback,
   useEffect,
@@ -37,11 +37,14 @@ import {
   type TuiState,
 } from "./tui-state.js";
 import { handleLocalModelsTabKey } from "./local-models/local-models-key-bindings.js";
+import { handleLlmPanelKey } from "./llm-panel/llm-panel-key-bindings.js";
+import { selectPromptLlmMeta } from "./llm-panel/llm-panel-selectors.js";
 import { handleTasksTabKey } from "./tasks/tasks-key-bindings.js";
 import { handleSkillsTabKey } from "./skills/skills-key-bindings.js";
 import { handleMemoryTabKey } from "./memory/memory-key-bindings.js";
 import type { MemorySummaryRow } from "./memory/memory-panel-state.js";
 import { handleMcpTabKey } from "./mcp/mcp-key-bindings.js";
+import { handleProvidersTabKey } from "./providers/providers-key-bindings.js";
 import { handleTelegramTabKey } from "./telegram/telegram-key-bindings.js";
 
 export { makeTuiEventBus } from "./make-event-bus.js";
@@ -121,6 +124,8 @@ export interface TuiAppCallbacks {
   ): void;
   /** Memory-v2 phase 1B. Toggle `localModels.embeddings.enabled`. */
   onLocalModelsEmbeddingToggleEnabledRequested?(): void;
+  /** Memory-v2 phase 1B. Disable local embedding daemon without toggling it on. */
+  onLocalModelsEmbeddingDisableRequested?(): void;
   /**
    * Memory-v2 phase 1B. Start or hot-swap the embedding daemon for the
    * active `*` row (chat daemon must already be running).
@@ -167,6 +172,16 @@ export interface TuiAppCallbacks {
   onMemoryExpandNeighborsRequested?(noteId: number): void;
   /** MCP tab: start the 5s refresh loop on first entry. */
   onMcpAutoRefreshStart?(): void;
+  /** Providers tab: refresh provider list on first entry. */
+  onProvidersTabRefresh?(): void;
+  /** Providers tab / LLM panel: switch the active text provider. */
+  onProvidersSetActiveText?(id: string): void;
+  /** Providers tab / LLM panel: select an exact chat model for a provider. */
+  onProvidersSelectChatModel?(providerId: string, modelId: string): void;
+  /** Providers tab / LLM panel: switch the active embedding provider. */
+  onProvidersSetActiveEmbedding?(id: string): void;
+  /** Providers tab / LLM panel: select an exact embedding model. */
+  onProvidersSelectEmbeddingModel?(providerId: string, modelId: string): void;
   /** MCP tab: open detail view for a server by name. */
   onMcpDetailRequested?(serverName: string): void;
   /**
@@ -184,6 +199,10 @@ export interface TuiAppCallbacks {
    * connection. Failures fold into `mcp_remove_failed`.
    */
   onMcpRemoveServer?(name: string): void;
+  /** Providers tab: finish the add/configure wizard. */
+  onProvidersWizardSubmit?(wizard: import("./providers/providers-wizard-state.js").ProvidersWizardState): void;
+  /** Providers tab: remove a provider by id from config + registry. */
+  onProvidersRemove?(id: string): void;
   /** Slash-command surface: enable a skill explicitly (`/skill enable <name>`). */
   onSkillEnableRequested?(name: string): void;
   /** Slash-command surface: disable a skill explicitly (`/skill disable <name>`). */
@@ -285,6 +304,10 @@ export function TuiApp({
   useEffect(() => bus.subscribe(dispatch), [bus]);
 
   useEffect(() => {
+    callbacks.onProvidersTabRefresh?.();
+  }, [callbacks]);
+
+  useEffect(() => {
     if (state.status === "quitting") {
       callbacks.onQuit();
       app.exit();
@@ -316,7 +339,19 @@ export function TuiApp({
   }, [state.uiMode, state.activeTab, callbacks]);
 
   useEffect(() => {
-    if (state.uiMode === "debug" && state.activeTab === "models") {
+    if (
+      state.uiMode === "debug" &&
+      (state.activeTab === "providers" || state.activeTab === "llm")
+    ) {
+      callbacks.onProvidersTabRefresh?.();
+    }
+  }, [state.uiMode, state.activeTab, callbacks]);
+
+  useEffect(() => {
+    if (
+      state.uiMode === "debug" &&
+      (state.activeTab === "models" || state.activeTab === "llm")
+    ) {
       callbacks.onLocalModelsAutoRefreshStart?.();
     }
   }, [state.uiMode, state.activeTab, callbacks]);
@@ -347,8 +382,11 @@ export function TuiApp({
     state.uiMode === "debug" && state.activeTab === "memory";
   const mcpTabActive =
     state.uiMode === "debug" && state.activeTab === "mcp";
+  const providersTabActive =
+    state.uiMode === "debug" && state.activeTab === "providers";
   const localModelsTabActive =
     state.uiMode === "debug" && state.activeTab === "models";
+  const llmTabActive = state.uiMode === "debug" && state.activeTab === "llm";
   const telegramTabActive =
     state.uiMode === "debug" && state.activeTab === "telegram";
   const terminalSize = useTerminalSize();
@@ -361,6 +399,8 @@ export function TuiApp({
     !skillsTabActive &&
     !memoryTabActive &&
     !mcpTabActive &&
+    !providersTabActive &&
+    !llmTabActive &&
     !telegramTabActive &&
     !sidebarFocused &&
     !(
@@ -403,6 +443,14 @@ export function TuiApp({
     }
     if (mcpTabActive) {
       handleMcpTabKey(input, key, { state, dispatch, callbacks });
+      return;
+    }
+    if (providersTabActive) {
+      handleProvidersTabKey(input, key, { state, dispatch, callbacks });
+      return;
+    }
+    if (llmTabActive) {
+      handleLlmPanelKey(input, key, { state, dispatch, callbacks });
       return;
     }
     if (localModelsTabActive) {
@@ -506,6 +554,18 @@ export function TuiApp({
   // pinned-input-at-bottom UX.
   const isTty = Boolean(process.stdout.isTTY);
   const rootHeight = isTty ? terminalSize.rows : undefined;
+  const promptLlm = selectPromptLlmMeta(state);
+  const promptLeftSlot = promptLlm.usesLocalHealth ? (
+    <LlmHealthBadge health={state.llmHealth} />
+  ) : (
+    <Text>
+      <Text color="green" bold>
+        ●
+      </Text>
+      <Text color="gray"> {promptLlm.cloudLabel ?? "cloud"}</Text>
+    </Text>
+  );
+
   return (
     <Box
       flexDirection="column"
@@ -565,9 +625,9 @@ export function TuiApp({
             value={state.inputValue}
             placeholder="Type a message or `/` for commands…"
             rotatingPlaceholders={PROMPT_PLACEHOLDERS}
-            model={state.llmHealth.model}
-            provider="llama.cpp"
-            leftSlot={<LlmHealthBadge health={state.llmHealth} />}
+            model={promptLlm.model}
+            provider={promptLlm.provider}
+            leftSlot={promptLeftSlot}
             focus={editorFocus}
             disabled={!canAcceptMessage(state)}
             onChange={onEditorChange}

@@ -183,8 +183,15 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return dispatchMemorySub(parsed.args);
     case "mcp":
       return dispatchMcpSub(parsed.args);
+    case "llm":
+      return dispatchLlmSub(parsed.args);
+    case "model":
+      return pureActions([
+        { type: "ui_mode_set", mode: "debug" },
+        { type: "tab_changed", tab: "llm" },
+      ]);
     case "models":
-      return dispatchModelsSub(parsed.args);
+      return dispatchModelsSub(parsed.args, parsed.name);
     case "tasks":
       return pureActions([
         { type: "ui_mode_set", mode: "debug" },
@@ -245,26 +252,30 @@ function pureActions(
 
 /**
  * Sub-dispatcher for `/models [verb] [args]`. Accepted shapes:
- *   - (bare)        — open the Models tab.
+ *   - (bare)        — open the LLM tab on the active local/cloud route.
  *   - `pull <id>`   — open the tab and kick off a pull for the given id.
  *   - `use <id>`    — open the tab and set the given id as active.
  *   - `status`      — emit the managed-runtime status line in the feed.
  *   - `<base-url>`  — persist the base URL for external mode (back-compat).
  */
-function dispatchModelsSub(rawArgs: string): SlashDispatchResult {
+function dispatchModelsSub(rawArgs: string, commandName: string): SlashDispatchResult {
   const argPart = rawArgs.trim();
   const bits = argPart.split(/\s+/).filter(Boolean);
   if (argPart.length === 0) {
     return pureActions([
       { type: "ui_mode_set", mode: "debug" },
-      { type: "tab_changed", tab: "models" },
+      { type: "tab_changed", tab: "llm" },
+      commandName === "local"
+        ? { type: "llm_mode_set", mode: "local" }
+        : { type: "llm_mode_set_to_active_route" },
     ]);
   }
   if (bits[0] === "pull" && bits[1]) {
     return {
       ...pureActions([
         { type: "ui_mode_set", mode: "debug" },
-        { type: "tab_changed", tab: "models" },
+        { type: "tab_changed", tab: "llm" },
+        { type: "llm_focus_set", focus: "local" },
       ]),
       localModelsPullModelId: bits[1],
     };
@@ -273,7 +284,8 @@ function dispatchModelsSub(rawArgs: string): SlashDispatchResult {
     return {
       ...pureActions([
         { type: "ui_mode_set", mode: "debug" },
-        { type: "tab_changed", tab: "models" },
+        { type: "tab_changed", tab: "llm" },
+        { type: "llm_focus_set", focus: "local" },
       ]),
       localModelsUseModelId: bits[1],
     };
@@ -382,6 +394,30 @@ function dispatchMcpSub(rawArgs: string): SlashDispatchResult {
   }
   return pureActions([], {
     systemMessage: "usage: /mcp | /mcp add | /mcp remove <name>",
+  });
+}
+
+function dispatchLlmSub(rawArgs: string): SlashDispatchResult {
+  const argPart = rawArgs.trim();
+  if (argPart.length === 0) {
+    return pureActions([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "llm" },
+      { type: "providers_refresh_requested" },
+    ]);
+  }
+  const providerMatch = argPart.match(/^provider\s+(\S+)\s*$/i);
+  if (providerMatch) {
+    const id = providerMatch[1]!;
+    return pureActions([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "llm" },
+      { type: "llm_focus_set", focus: "cloud" },
+      { type: "providers_set_active_text", id },
+    ]);
+  }
+  return pureActions([], {
+    systemMessage: "usage: /llm | /llm provider <id>",
   });
 }
 

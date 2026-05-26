@@ -114,10 +114,14 @@ export function extractReasoning(
   });
   if (openRe.test(body)) {
     const match = body.match(openRe);
-    const reasoning = body.slice((match?.index ?? 0) + (match?.[0].length ?? 0)).trim();
+    const prefix = body.slice(0, match?.index ?? 0).trim();
+    const tail = body.slice((match?.index ?? 0) + (match?.[0].length ?? 0)).trim();
+    const peeled = peelTrailingToolJson(tail);
+    const reasoningParts = [...collected];
+    if (peeled.prefix.length > 0) reasoningParts.push(peeled.prefix);
     return {
-      reasoning,
-      body: body.slice(0, match?.index ?? 0).trim(),
+      reasoning: reasoningParts.join("\n\n"),
+      body: peeled.jsonBody.length > 0 ? peeled.jsonBody : prefix,
     };
   }
   body = body.trim();
@@ -278,6 +282,34 @@ interface ExtractedRoot {
  * and `[...]` (batch) shapes; nested objects/arrays are bracket-counted
  * with proper string-escape awareness.
  */
+/**
+ * When the model never emits the reasoning-close sentinel but does emit
+ * a tool-call JSON tail (common on Gemma channel-think + array-only
+ * grammar), peel the JSON into `body` so `parseToolCalls` still runs.
+ */
+function peelTrailingToolJson(text: string): {
+  prefix: string;
+  jsonBody: string;
+} {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return { prefix: "", jsonBody: "" };
+  }
+  try {
+    const { jsonText } = extractJsonRoot(trimmed);
+    const start = trimmed.indexOf(jsonText);
+    if (start < 0) {
+      return { prefix: trimmed, jsonBody: "" };
+    }
+    return {
+      prefix: trimmed.slice(0, start).trim(),
+      jsonBody: jsonText,
+    };
+  } catch {
+    return { prefix: trimmed, jsonBody: "" };
+  }
+}
+
 function extractJsonRoot(raw: string): ExtractedRoot {
   const input = raw.trim();
   if (input.length === 0) {

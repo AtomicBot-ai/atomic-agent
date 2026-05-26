@@ -78,11 +78,11 @@ export function createStreamParser(options: StreamParserOptions = {}): StreamPar
 
       if (state === "preamble") {
         const openMatch = buffer.match(openRe);
-        const braceIdx = buffer.indexOf("{");
+        const jsonIdx = findJsonToolStart(buffer);
         if (
           openMatch &&
           openMatch.index !== undefined &&
-          (braceIdx === -1 || openMatch.index < braceIdx)
+          (jsonIdx === -1 || openMatch.index < jsonIdx)
         ) {
           buffer = buffer.slice(openMatch.index + openMatch[0].length);
           state = "inside_think";
@@ -90,8 +90,8 @@ export function createStreamParser(options: StreamParserOptions = {}): StreamPar
           keepGoing = true;
           continue;
         }
-        if (braceIdx !== -1) {
-          buffer = buffer.slice(braceIdx);
+        if (jsonIdx !== -1) {
+          buffer = buffer.slice(jsonIdx);
           state = "json_tool";
           keepGoing = true;
           continue;
@@ -110,6 +110,18 @@ export function createStreamParser(options: StreamParserOptions = {}): StreamPar
           out.push({ kind: "reasoning_close" });
           buffer = buffer.slice(closeMatch.index + closeMatch[0].length);
           state = "preamble";
+          keepGoing = true;
+          continue;
+        }
+        const jsonIdx = findJsonToolStart(buffer);
+        if (jsonIdx !== -1) {
+          const before = buffer.slice(0, jsonIdx);
+          if (before.length > 0) {
+            out.push({ kind: "reasoning_delta", text: before });
+          }
+          out.push({ kind: "reasoning_close" });
+          buffer = buffer.slice(jsonIdx);
+          state = "json_tool";
           keepGoing = true;
           continue;
         }
@@ -177,13 +189,26 @@ export function createStreamParser(options: StreamParserOptions = {}): StreamPar
     end(): StreamParseEvent[] {
       const out = advance();
       if (state === "inside_think") {
-        if (buffer.length > 0) {
-          out.push({ kind: "reasoning_delta", text: buffer });
-          buffer = "";
+        const jsonIdx = findJsonToolStart(buffer);
+        if (jsonIdx !== -1) {
+          const before = buffer.slice(0, jsonIdx);
+          if (before.length > 0) {
+            out.push({ kind: "reasoning_delta", text: before });
+          }
+          out.push({ kind: "reasoning_close" });
+          buffer = buffer.slice(jsonIdx);
+          state = "json_tool";
+          out.push(...advance());
+        } else {
+          if (buffer.length > 0) {
+            out.push({ kind: "reasoning_delta", text: buffer });
+            buffer = "";
+          }
+          out.push({ kind: "reasoning_close" });
+          state = "done";
         }
-        out.push({ kind: "reasoning_close" });
-        state = "done";
-      } else if (state === "reply_text") {
+      }
+      if (state === "reply_text") {
         if (buffer.length > 0) {
           out.push({ kind: "reply_text_delta", text: buffer });
           buffer = "";
@@ -302,6 +327,15 @@ function decodeSimpleEscape(c: string): string {
 
 function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Index of the first `[` or `{` that may start a grammar tool-call payload. */
+function findJsonToolStart(buffer: string): number {
+  const bracket = buffer.indexOf("[");
+  const brace = buffer.indexOf("{");
+  if (bracket === -1) return brace;
+  if (brace === -1) return bracket;
+  return Math.min(bracket, brace);
 }
 
 function holdPossibleTagStart(buffer: string, tag: string): string {

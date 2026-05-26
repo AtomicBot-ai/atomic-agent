@@ -323,6 +323,25 @@ first thought
     expect(extracted.reasoning).toBe("pending");
   });
 
+  it("peels array-only tool JSON from an unclosed channel-think block", () => {
+    const raw =
+      '<|channel>thought\n[{"tool":"reply","args":{"text":"Привет!"}}]';
+    const extracted = extractReasoning(raw, {
+      openTag: "<|channel>thought\n",
+      closeTag: "<channel|>",
+    });
+    expect(extracted.reasoning).toBe("");
+    expect(extracted.body).toBe(
+      '[{"tool":"reply","args":{"text":"Привет!"}}]',
+    );
+    const batch = parseToolCalls(raw, {
+      openTag: "<|channel>thought\n",
+      closeTag: "<channel|>",
+    });
+    expect(batch.calls[0]?.tool).toBe("reply");
+    expect(batch.calls[0]?.args).toEqual({ text: "Привет!" });
+  });
+
   it("tolerates surrounding whitespace", () => {
     const out = parseToolCall('  \n{"tool":"finish","args":{}}\n  ');
     expect(out.tool).toBe("finish");

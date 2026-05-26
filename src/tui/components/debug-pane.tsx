@@ -15,11 +15,13 @@ import type { TuiState, TuiTab } from "../tui-state.js";
 import { DebugDiagnosticsLine } from "./debug-diagnostics-line.js";
 import { LocalLlmLogsPanel } from "./local-llm-logs-panel.js";
 import { LocalModelsPanel } from "./local-models-panel.js";
+import { LlmPanel } from "./llm-panel.js";
 import { TasksPanel } from "./tasks-panel.js";
 import { SkillsPanel } from "./skills-panel.js";
 import { McpPanel } from "./mcp-panel.js";
 import { MemoryPanel } from "./memory-panel.js";
 import { TelegramPanel } from "../telegram/components/telegram-panel.js";
+import { ProvidersPanel } from "./providers-panel.js";
 
 interface DebugPaneProps {
   state: TuiState;
@@ -118,7 +120,7 @@ function buildManageTabs(state: TuiState): SubTab[] {
     { id: "skills", label: `Skills${suffix(state.skillsPanel.rows.length)}` },
     { id: "memory", label: `Memory${suffix(state.memoryPanel.rows.length)}` },
     { id: "mcp", label: `MCP${suffix(state.mcpPanel.rows.length)}` },
-    { id: "models", label: "Local LLM" },
+    { id: "llm", label: "LLM" },
     { id: "telegram", label: telegramTabLabel(state) },
   ];
 }
@@ -160,6 +162,10 @@ function ActiveDebugTab({
           onAddCancel={onMcpAddCancel}
         />
       );
+    case "providers":
+      return <ProvidersPanel panel={state.providersPanel} />;
+    case "llm":
+      return <LlmPanel state={state} />;
     case "models":
       return <LocalModelsPanel panel={state.localModelsPanel} />;
     case "llm-logs":

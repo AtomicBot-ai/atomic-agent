@@ -1087,6 +1087,25 @@ export class LocalModelsOrchestrator {
     }
   }
 
+  async disableEmbedding(): Promise<void> {
+    const cfg = getConfig();
+    const wasEnabled = cfg.localModels.embeddings.enabled;
+    const dataDir = cfg.paths.localModelsDataDir;
+    const status = await getEmbeddingDaemonStatus(
+      dataDir,
+      cfg.localModels.embeddings.port,
+    );
+    if (!wasEnabled && !status.running) return;
+    persistEmbeddingHybridRecall({ enabled: false });
+    resetConfigCache();
+    this.bus.emit({
+      type: "runtime_info",
+      line: "local-llm: local embeddings disabled for cloud embedding route",
+    });
+    await this.ensureEmbeddingPaired();
+    await this.refresh();
+  }
+
   /**
    * Memory-v2 phase 1B. Delete an embedding model's GGUF from disk.
    * If the deleted model is the one currently configured as active,
@@ -1177,6 +1196,9 @@ export class LocalModelsOrchestrator {
    */
   async autoStartIfReady(): Promise<void> {
     const cfg = getConfig();
+    if (cfg.llm?.activeTextProvider && cfg.llm.activeTextProvider !== "local-llama") {
+      return;
+    }
     if (cfg.localModels.mode !== "managed") return;
     const mid = cfg.localModels.managed.modelId;
     if (!mid || !isKnownLocalModelId(mid)) return;

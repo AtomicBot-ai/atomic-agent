@@ -582,6 +582,24 @@ describe("parseUserConfigFile", () => {
     expect(parsed.localModels.embeddings.enabled).toBe(false);
   });
 
+  it("transparently migrates v23 → v24 (MCP block preserved, version bumped)", () => {
+    const parsed = parseUserConfigFile({
+      version: 23,
+      mcp: {
+        servers: [
+          {
+            name: "github",
+            enabled: true,
+            transport: { kind: "stdio", command: "npx", args: ["-y", "mcp"] },
+          },
+        ],
+      },
+    });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.mcp.servers).toHaveLength(1);
+    expect(parsed.mcp.servers[0]?.name).toBe("github");
+  });
+
   it("v22 honours explicit memory.lessons.enabled=false", () => {
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,

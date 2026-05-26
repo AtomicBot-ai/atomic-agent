@@ -13,6 +13,8 @@ import {
   getUserConfigPath,
 } from "./config-file.js";
 import { loadDotenvFromStateDir } from "./load-dotenv.js";
+import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
+import type { UserLlmFileConfig } from "./llm-config.js";
 
 function readEnv(key: string): string | undefined {
   const value = process.env[key];
@@ -423,5 +425,23 @@ export function loadConfig(): AtomicAgentConfig {
         ...(s.env ? { env: { ...s.env } } : {}),
       })),
     },
+    llm: user.llm ? mapUserLlmToRuntime(user.llm) : undefined,
+  };
+}
+
+function mapUserLlmToRuntime(
+  llm: UserLlmFileConfig,
+): NonNullable<AtomicAgentConfig["llm"]> {
+  return {
+    activeTextProvider: llm.activeTextProvider,
+    activeEmbeddingProvider: llm.activeEmbeddingProvider,
+    toolTransport: llm.toolTransport,
+    providers: llm.providers.map((entry) => {
+      const apiKey = resolveLlmProviderApiKey(entry);
+      return {
+        ...entry,
+        ...(apiKey ? { apiKey } : {}),
+      };
+    }),
   };
 }

@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { LlamaServerClient } from "../llama-server-client.js";
-import { PLAIN_INSTRUCT_PROFILE } from "../model-profile.js";
-import type { ModelProfile } from "../model-profile.js";
+import type { LlamaServerClient } from "../../llama-server-client.js";
+import { PLAIN_INSTRUCT_PROFILE } from "../../model-profile.js";
+import type { ModelProfile } from "../../model-profile.js";
 import { LlamaServerProvider } from "./llama-server-provider.js";
-import { VisionUnsupportedError } from "./llm-provider.js";
+import { VisionUnsupportedError } from "../llm-provider.js";
 
 const VISION_PROFILE: ModelProfile = {
   ...PLAIN_INSTRUCT_PROFILE,
@@ -31,9 +31,10 @@ describe("LlamaServerProvider", () => {
       maxImageBytes: 1024,
       maxImagesPerCall: 2,
     });
-    expect(provider.capabilities).toEqual({
+    expect(provider.capabilities).toMatchObject({
       vision: true,
       visionSource: "has_multimodal",
+      toolTransport: "grammar",
     });
   });
 
@@ -45,7 +46,7 @@ describe("LlamaServerProvider", () => {
       maxImageBytes: 1024,
       maxImagesPerCall: 2,
     });
-    expect(provider.capabilities).toEqual({
+    expect(provider.capabilities).toMatchObject({
       vision: false,
       visionSource: "config-disabled",
     });
@@ -59,7 +60,7 @@ describe("LlamaServerProvider", () => {
       maxImageBytes: 1024,
       maxImagesPerCall: 2,
     });
-    expect(provider.capabilities).toEqual({
+    expect(provider.capabilities).toMatchObject({
       vision: true,
       visionSource: "auto-detect-disabled",
     });

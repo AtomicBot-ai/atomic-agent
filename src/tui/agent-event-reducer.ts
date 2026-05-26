@@ -1,4 +1,5 @@
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
 import { formatFeedLine } from "./format-event.js";
 import {
   appendChatMessage,
@@ -20,6 +21,8 @@ import { reduceTasksAction } from "./tasks/tasks-reducer.js";
 import { reduceSkillsAction } from "./skills/skills-reducer.js";
 import { reduceMemoryAction } from "./memory/memory-reducer.js";
 import { reduceMcpAction } from "./mcp/mcp-reducer.js";
+import { reduceProvidersPanel } from "./providers/providers-reducer.js";
+import { reduceLlmPanelAction } from "./llm-panel/llm-panel-reducer.js";
 import { reduceTelegramAction } from "./telegram/telegram-panel-reducer.js";
 import type { TuiAction } from "./tui-action.js";
 import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
@@ -37,6 +40,10 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (memoryHandled !== null) return memoryHandled;
   const mcpHandled = reduceMcpAction(state, action);
   if (mcpHandled !== null) return mcpHandled;
+  const providersHandled = reduceProvidersPanel(state, action);
+  if (providersHandled !== null) return providersHandled;
+  const llmPanelHandled = reduceLlmPanelAction(state, action);
+  if (llmPanelHandled !== null) return llmPanelHandled;
   const telegramHandled = reduceTelegramAction(state, action);
   if (telegramHandled !== null) return telegramHandled;
   const uiHandled = reduceUiAction(state, action);
@@ -50,7 +57,11 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         color: "blue",
       });
     case "system_message":
-      return appendChatMessage(state, { role: "system", text: action.text });
+      return appendChatMessage(state, {
+        role: "system",
+        text: action.text,
+        ...(action.variant ? { variant: action.variant } : {}),
+      });
     case "session_created":
       return { ...state, session: { ...state.session, sessionId: action.sessionId } };
     case "skill_count_changed":
@@ -71,6 +82,20 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
     case "log":
       return { ...state, logs: pushRing(state.logs, action.record, state.ringBufferSize) };
     case "tab_changed":
+      if (action.tab === "models") {
+        return {
+          ...state,
+          activeTab: "llm",
+          llmPanel: { ...state.llmPanel, mode: "local" },
+        };
+      }
+      if (action.tab === "providers") {
+        return {
+          ...state,
+          activeTab: "llm",
+          llmPanel: { ...state.llmPanel, mode: "cloud" },
+        };
+      }
       return { ...state, activeTab: action.tab };
     case "abort_requested":
       return { ...state, aborting: true };
@@ -163,27 +188,48 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
     case "llm_event":
       return reduceStepEvent(state, event.event);
     case "loop_completed": {
-      const outcome: RunOutcome = event.reason === "cancelled" ? "cancelled" : "completed";
-      const lastRunStatus = `completed: ${event.reason}`;
+      const outcome: RunOutcome =
+        event.reason === "cancelled"
+          ? "cancelled"
+          : event.reason === "failed"
+            ? "failed"
+            : "completed";
+      const lastRunStatus =
+        outcome === "completed"
+          ? `completed: ${event.reason}`
+          : `${outcome}: ${event.reason}`;
+      const feedColor =
+        event.reason === "cancelled"
+          ? "yellow"
+          : event.reason === "failed"
+            ? "red"
+            : "green";
       return finishRun(
         appendFeed(state, {
           kind: "loop_completed",
           stepIndex: null,
           line: `» ${lastRunStatus}`,
-          color: event.reason === "cancelled" ? "yellow" : "green",
+          color: feedColor,
         }),
         { outcome, reason: event.reason, lastRunStatus },
       );
     }
     case "loop_failed": {
       const lastRunStatus = `failed [${event.category}]: ${event.error.message}`;
+      const chatError = formatAgentErrorForChat(
+        event.category,
+        event.error.message,
+      );
       return finishRun(
-        appendFeed(state, {
-          kind: "loop_failed",
-          stepIndex: null,
-          line: `» ${lastRunStatus}`,
-          color: "red",
-        }),
+        appendChatMessage(
+          appendFeed(state, {
+            kind: "loop_failed",
+            stepIndex: null,
+            line: `» ${lastRunStatus}`,
+            color: "red",
+          }),
+          { role: "system", text: chatError, variant: "warn" },
+        ),
         { outcome: "failed", reason: event.error.message, lastRunStatus },
       );
     }

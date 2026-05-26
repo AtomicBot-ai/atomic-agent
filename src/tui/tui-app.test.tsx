@@ -238,4 +238,59 @@ describe("TuiApp (smoke)", () => {
     expect(text).not.toContain(".gguf");
     unmount();
   });
+
+  it("renders cloud active route in the prompt meta-row without local latency", async () => {
+    const bus = makeTuiEventBus();
+    const { lastFrame, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    bus.emit({
+      type: "llm_health_updated",
+      status: "healthy",
+      latencyMs: 12,
+      error: null,
+      checkedAt: Date.now(),
+    });
+    bus.emit({
+      type: "providers_refresh",
+      rows: [
+        {
+          id: "openrouter",
+          kind: "openrouter",
+          isActiveText: true,
+          isActiveEmbedding: false,
+          hasApiKey: true,
+          chatModel: "openai/gpt-4o-mini",
+          embeddingModel: null,
+        },
+      ],
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("cloud");
+    expect(text).toContain("openai/gpt-4o-mini");
+    expect(text).toContain("openrouter");
+    expect(text).not.toContain("healthy · 12 ms");
+    unmount();
+  });
+
+  it("shows the two-mode LLM panel", async () => {
+    const bus = makeTuiEventBus();
+    const { lastFrame, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    bus.emit({ type: "ui_mode_set", mode: "debug" });
+    bus.emit({ type: "tab_changed", tab: "llm" });
+    await new Promise((r) => setTimeout(r, 10));
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("Active chat route");
+    expect(text).toContain("Mode:");
+    expect(text).toContain("Local text models");
+    expect(text).toContain("Local embeddings");
+    expect(text).toContain("Press → to switch to Cloud");
+    expect(text).not.toContain("Local runtime");
+    unmount();
+  });
 });

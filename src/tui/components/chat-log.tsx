@@ -210,7 +210,12 @@ function FinalisedMessage({
       </Box>
     );
   }
-  return <SystemBubble text={message.text} />;
+  return (
+    <SystemBubble
+      text={message.text}
+      warn={message.variant === "warn"}
+    />
+  );
 }
 
 function StreamingTail({ state }: { state: TuiState }): ReactElement | null {

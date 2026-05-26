@@ -155,6 +155,20 @@ describe("createStreamParser", () => {
     expect(concatReply(events)).toBe("ok");
   });
 
+  it("streams array-only reply when think is pre-opened but close sentinel is missing", () => {
+    const events = feedAll(
+      ['[{"tool":"reply","args":{"text":"Привет!"}}]'],
+      {
+        preOpenedThink: true,
+        reasoningOpenTag: "<|channel>thought\n",
+        reasoningCloseTag: "<channel|>",
+      },
+    );
+    expect(concatReasoning(events)).toBe("");
+    expect(events.filter((e) => e.kind === "reasoning_close")).toHaveLength(1);
+    expect(concatReply(events)).toBe("Привет!");
+  });
+
   it("splits reply.args.text across chunks preserving backslash escapes", () => {
     const raw =
       '{"tool":"reply","args":{"text":"a\\\\b\\nc"}}';

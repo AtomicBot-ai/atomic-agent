@@ -1,0 +1,217 @@
+import type { Key } from "ink";
+import {
+  listOpenRouterChatModels,
+  listOpenRouterEmbeddingModels,
+} from "./providers-model-options.js";
+import type { ProvidersWizardPhase, ProvidersWizardState } from "./providers-wizard-state.js";
+
+const KIND_COUNT = 2;
+
+function nextPhaseAfterApiKey(
+  kind: NonNullable<ProvidersWizardState["kind"]>,
+): ProvidersWizardPhase {
+  if (kind === "openrouter") return "pick_chat_model";
+  return "base_url";
+}
+
+function advanceWizardPhase(
+  wizard: ProvidersWizardState,
+): ProvidersWizardState {
+  const { phase, kind } = wizard;
+  if (phase === "pick_kind" && kind) {
+    return { ...wizard, phase: "api_key", cursor: 0, error: null };
+  }
+  if (phase === "api_key" && kind) {
+    return {
+      ...wizard,
+      phase: nextPhaseAfterApiKey(kind),
+      cursor: 0,
+      error: null,
+    };
+  }
+  if (phase === "pick_chat_model" && kind === "openrouter") {
+    const models = listOpenRouterChatModels();
+    const picked = models[wizard.cursor]?.id ?? models[0]?.id ?? null;
+    return {
+      ...wizard,
+      phase: "pick_embedding",
+      cursor: 0,
+      selectedChatModelId: picked,
+      error: null,
+    };
+  }
+  if (phase === "base_url" && kind === "openai-compatible") {
+    return { ...wizard, phase: "chat_model_line", cursor: 0, error: null };
+  }
+  if (phase === "chat_model_line" && kind === "openai-compatible") {
+    return { ...wizard, phase: "embedding_model_line", cursor: 0, error: null };
+  }
+  return wizard;
+}
+
+function listLengthForPhase(phase: ProvidersWizardPhase): number {
+  if (phase === "pick_kind") return KIND_COUNT;
+  if (phase === "pick_chat_model") return listOpenRouterChatModels().length;
+  if (phase === "pick_embedding") return listOpenRouterEmbeddingModels().length;
+  return 0;
+}
+
+function isListPhase(phase: ProvidersWizardPhase): boolean {
+  return (
+    phase === "pick_kind" ||
+    phase === "pick_chat_model" ||
+    phase === "pick_embedding"
+  );
+}
+
+function isLinePhase(phase: ProvidersWizardPhase): boolean {
+  return (
+    phase === "base_url" ||
+    phase === "chat_model_line" ||
+    phase === "embedding_model_line"
+  );
+}
+
+export type ProvidersWizardKeyResult =
+  | { handled: true; wizard: ProvidersWizardState; submit?: false }
+  | { handled: true; wizard: ProvidersWizardState; submit: true }
+  | { handled: true; closed: true }
+  | { handled: false };
+
+export function handleProvidersWizardKey(
+  input: string,
+  key: Key,
+  wizard: ProvidersWizardState,
+): ProvidersWizardKeyResult {
+  if (wizard.submitting) {
+    return { handled: true, wizard };
+  }
+  if (key.escape) {
+    return { handled: true, closed: true };
+  }
+
+  if (wizard.phase === "api_key") {
+    if (key.return) {
+      return {
+        handled: true,
+        wizard: advanceWizardPhase(wizard),
+      };
+    }
+    if (key.backspace || key.delete) {
+      return {
+        handled: true,
+        wizard: {
+          ...wizard,
+          apiKeyBuffer: wizard.apiKeyBuffer.slice(0, -1),
+          error: null,
+        },
+      };
+    }
+    if (input && input.length > 0 && !key.ctrl && !key.meta) {
+      return {
+        handled: true,
+        wizard: {
+          ...wizard,
+          apiKeyBuffer: wizard.apiKeyBuffer + input,
+          error: null,
+        },
+      };
+    }
+    return { handled: true, wizard };
+  }
+
+  if (isLinePhase(wizard.phase)) {
+    const field =
+      wizard.phase === "base_url"
+        ? "baseUrlLine"
+        : wizard.phase === "chat_model_line"
+          ? "chatModelLine"
+          : "embeddingModelLine";
+    if (key.return) {
+      if (wizard.phase === "embedding_model_line") {
+        return { handled: true, wizard, submit: true };
+      }
+      return {
+        handled: true,
+        wizard: advanceWizardPhase(wizard),
+      };
+    }
+    if (key.backspace || key.delete) {
+      const line = wizard[field];
+      return {
+        handled: true,
+        wizard: {
+          ...wizard,
+          [field]: line.slice(0, -1),
+          error: null,
+        } as ProvidersWizardState,
+      };
+    }
+    if (input && input.length > 0 && !key.ctrl && !key.meta) {
+      const line = wizard[field];
+      return {
+        handled: true,
+        wizard: {
+          ...wizard,
+          [field]: line + input,
+          error: null,
+        } as ProvidersWizardState,
+      };
+    }
+    return { handled: true, wizard };
+  }
+
+  if (!isListPhase(wizard.phase)) {
+    return { handled: false };
+  }
+
+  const len = listLengthForPhase(wizard.phase);
+  if (len === 0) {
+    return { handled: true, wizard };
+  }
+
+  if (key.downArrow || input === "j") {
+    return {
+      handled: true,
+      wizard: { ...wizard, cursor: (wizard.cursor + 1) % len },
+    };
+  }
+  if (key.upArrow || input === "k") {
+    return {
+      handled: true,
+      wizard: {
+        ...wizard,
+        cursor: (wizard.cursor - 1 + len) % len,
+      },
+    };
+  }
+  if (key.return) {
+    if (wizard.phase === "pick_kind") {
+      const kind = wizard.cursor === 0 ? "openrouter" : "openai-compatible";
+      return {
+        handled: true,
+        wizard: advanceWizardPhase({
+          ...wizard,
+          kind,
+        }),
+      };
+    }
+    if (wizard.phase === "pick_embedding") {
+      const models = listOpenRouterEmbeddingModels();
+      const picked = models[wizard.cursor]?.id ?? models[0]?.id ?? null;
+      return {
+        handled: true,
+        wizard: {
+          ...wizard,
+          selectedEmbeddingChoiceId: picked,
+        },
+        submit: true,
+      };
+    }
+    return {
+      handled: true,
+      wizard: advanceWizardPhase(wizard),
+    };
+  }
+  return { handled: true, wizard };
+}

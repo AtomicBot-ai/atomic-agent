@@ -57,7 +57,7 @@ export function persistUserLocalModelsConfig(partial: {
     },
   };
   const draft = { ...prev, localModels: nextLocalModels };
-  const validated = parseUserConfigFile(draft);
+  const validated = parseUserConfigFile(syncLocalLlamaProviderUrl(draft));
   writeUserConfigFileSync(path, validated);
   resetConfigCache();
 }
@@ -68,4 +68,21 @@ export function persistUserLocalModelsConfig(partial: {
  */
 export function persistUserLocalLlmUrl(nextUrl: string): void {
   persistUserLocalModelsConfig({ url: nextUrl, mode: "external" });
+}
+
+function syncLocalLlamaProviderUrl(file: UserConfigFile): UserConfigFile {
+  if (!file.llm) return file;
+  const url =
+    file.localModels.mode === "managed"
+      ? `http://127.0.0.1:${file.localModels.managed.port}`
+      : file.localModels.url;
+  return {
+    ...file,
+    llm: {
+      ...file.llm,
+      providers: file.llm.providers.map((provider) =>
+        provider.id === "local-llama" ? { ...provider, url } : provider,
+      ),
+    },
+  };
 }

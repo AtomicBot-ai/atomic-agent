@@ -3,6 +3,8 @@ import type {
   StreamChunk,
 } from "../llm/llama-server-client.js";
 import type { SlotManager } from "../llm/slot-manager.js";
+import type { ToolCallTransport } from "../llm/provider/completion-types.js";
+import type { ToolCallAdapter } from "../llm/provider/adapters/tool-call-adapter.js";
 import {
   PLAIN_INSTRUCT_PROFILE,
   type ModelProfile,
@@ -39,7 +41,7 @@ import type { ProcedureIndexEntry } from "../memory/procedures/procedure-store.j
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { ReflectionRunner } from "../memory/reflection/index.js";
 import { executeStep } from "./step-executor.js";
-import type { StepEvent } from "./step-executor.js";
+import type { LlmStreamParams, StepEvent } from "./step-executor.js";
 import { LoopDetector, formatRepeatNotice } from "./loop-detector.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
@@ -48,33 +50,25 @@ export interface AgentLoopDependencies {
   registry: ToolRegistry;
   slotManager: SlotManager;
   grammar: string;
-  llmComplete: (params: {
-    prompt: string;
-    grammar: string;
-    slotId: number;
-    sessionId: string;
-    /** Optional `n_predict` cap (used by the repair retry path). */
-    maxTokens?: number;
-  }) => Promise<CompletionResult>;
+  llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
   /**
    * Optional streaming sibling of `llmComplete`. When wired, live
    * `reasoning_delta` and `assistant_delta` step events flow to
    * `onEvent` while the model is still generating.
    */
-  llmCompleteStream?: (params: {
-    prompt: string;
-    grammar: string;
-    slotId: number;
-    sessionId: string;
-    /** Optional `n_predict` cap (used by the repair retry path). */
-    maxTokens?: number;
-  }) => AsyncGenerator<StreamChunk, CompletionResult, void>;
+  llmCompleteStream?: (
+    params: LlmStreamParams,
+  ) => AsyncGenerator<StreamChunk, CompletionResult, void>;
   /** Stable tool catalog used in the prompt prefix. Pass the same array on every step. */
   toolDescriptors: readonly ToolDescriptor[];
   /** Stable capabilities summary, computed once at session start. */
   capabilities: CapabilitiesSummary;
   /** Model-specific reasoning behaviour derived from llama-server /props. */
   profile?: ModelProfile;
+  /** Defaults to `grammar` when omitted (test / legacy wiring). */
+  toolTransport?: ToolCallTransport;
+  toolCallAdapter?: ToolCallAdapter | null;
+  supportsSlotAffinity?: boolean;
   /**
    * Optional hot-swap supervisor. When provided, the loop re-probes
    * `/props` at the start of every turn and inspects the `modelId` of
@@ -466,6 +460,9 @@ export class AgentLoop {
             slotManager: this.deps.slotManager,
             grammar: activeGrammar,
             profile: activeProfile,
+            toolTransport: this.deps.toolTransport ?? "grammar",
+            toolCallAdapter: this.deps.toolCallAdapter ?? null,
+            supportsSlotAffinity: this.deps.supportsSlotAffinity ?? true,
             llmComplete: this.deps.llmComplete,
             ...(this.deps.llmCompleteStream
               ? { llmCompleteStream: this.deps.llmCompleteStream }

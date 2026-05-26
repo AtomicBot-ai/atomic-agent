@@ -7,7 +7,7 @@ import type { TuiState, TuiTab } from "./tui-state.js";
  *
  * - `run`     — chat and the live turn (default).
  * - `observe` — diagnostics: feed, world, reasoning, logs, llm-logs.
- * - `manage`  — operator tools: tasks, skills, models, telegram.
+ * - `manage`  — operator tools: tasks, skills, LLM, telegram.
  *
  * The section is **derived** from `uiMode` + `activeTab` rather than
  * stored separately. Keeping the underlying action surface unchanged
@@ -32,7 +32,7 @@ export const MANAGE_TABS: readonly TuiTab[] = [
   "skills",
   "memory",
   "mcp",
-  "models",
+  "llm",
   "telegram",
 ];
 

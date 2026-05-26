@@ -3,8 +3,9 @@ import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { AtomicAgentConfig } from "../config/index.js";
-import { getConfig } from "../config/index.js";
+import { getConfig, resetConfigCache } from "../config/index.js";
 
+import type { LlmStreamParams } from "../agent/step-executor.js";
 import { TurnController } from "./turn-controller.js";
 import type { TurnEventHook, TurnOrigin } from "./turn-controller.js";
 import type { ChannelStatus } from "./channel-status.js";
@@ -57,8 +58,13 @@ import { buildToolViewTool } from "../tools/tool-view/index.js";
 import { registerMemoryTools } from "../tools/memory/index.js";
 import { registerTaskTools } from "../tools/tasks/index.js";
 import { registerVisionTools } from "../tools/vision/index.js";
-import { LlamaServerProvider } from "../llm/provider/index.js";
-import type { LlmProvider } from "../llm/provider/index.js";
+import {
+  type LlmProvider,
+  ProviderRegistry,
+  resolveLlmConfig,
+} from "../llm/provider/index.js";
+import { resolveActiveToolTransport } from "../llm/provider/registry/resolve-tool-transport.js";
+import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
 
 import { MemoryStore } from "../memory/memory-store.js";
 import { ProfileStore } from "../memory/profile-store.js";
@@ -187,25 +193,15 @@ export interface CreateAgentRuntimeOptions {
   traceDefault?: boolean;
   /** Optional overrides — used by tests to inject fakes. */
   overrides?: {
-    llamaComplete?: (params: {
-      prompt: string;
-      grammar: string;
-      slotId: number;
-      sessionId: string;
-      maxTokens?: number;
-    }) => Promise<CompletionResult>;
+    llamaComplete?: (params: LlmStreamParams) => Promise<CompletionResult>;
     /**
      * Streaming counterpart of `llamaComplete`. Tests inject a fake SSE
      * generator here; production wiring always hands a real
      * `LlamaServerClient.completeStream` through.
      */
-    llamaCompleteStream?: (params: {
-      prompt: string;
-      grammar: string;
-      slotId: number;
-      sessionId: string;
-      maxTokens?: number;
-    }) => AsyncGenerator<StreamChunk, CompletionResult, void>;
+    llamaCompleteStream?: (
+      params: LlmStreamParams,
+    ) => AsyncGenerator<StreamChunk, CompletionResult, void>;
     /**
      * When true, skip wiring the streaming client at all. Useful for the
      * HTTP/sidecar tests that still exercise the unary path.
@@ -348,6 +344,11 @@ export interface AgentRuntime {
    * down.
    */
   readonly mcpManager: McpManager;
+  /**
+   * Text LLM provider registry (local llama-server and cloud backends).
+   * `activeText` is the provider wired into `llmComplete` / sub-calls.
+   */
+  readonly providerRegistry: ProviderRegistry;
   readonly capabilities: CapabilitiesSummary;
   readonly skillCatalog: readonly SkillCatalogEntry[];
   readonly toolDescriptors: readonly ToolDescriptor[];
@@ -419,6 +420,10 @@ export interface AgentRuntime {
    * to a runtime restart, just without the process churn.
    */
   refreshMcp(): Promise<void>;
+  /** Merge newly-added `config.llm.providers` entries into the registry. */
+  reloadLlmProviders(): Promise<void>;
+  /** Rebuild one provider from the current config (TUI configure flow). */
+  reloadLlmProvider(id: string): Promise<void>;
   /**
    * Register `handler` as the approval sink for `sessionId`. Every
    * `ApprovalRequest` whose `sessionId` matches will be routed to
@@ -837,18 +842,38 @@ export async function createAgentRuntime(
       })
     : undefined;
 
-  // Vision provider reads the live profile through a getter so its
-  // `capabilities.vision` flag tracks `ModelProfileManager` hot-swaps.
-  // Vision calls always use `slotId: -1` so the main agent + reflection
-  // slots are never touched.
+  const getLiveProfile = () => profileManager?.getProfile() ?? profile;
+
+  const providerRegistry = await ProviderRegistry.fromConfig(config, {
+    config,
+    llamaClient: llama,
+    getProfile: getLiveProfile,
+    logger,
+  });
+
+  /** Re-read on every inference so TUI `setActive` hot-swap takes effect. */
+  const resolveActiveLlmSlice = () => {
+    const fresh = getConfig();
+    const resolved = resolveLlmConfig(fresh);
+    const provider = providerRegistry.activeText;
+    return {
+      provider,
+      transport: resolveActiveToolTransport(resolved, provider),
+      adapter: provider.toolCallAdapter ?? null,
+      slotAffinity: provider.capabilities.supportsSlotAffinity,
+    };
+  };
+
+  const bootstrapLlmSlice = resolveActiveLlmSlice();
+  const textProvider = bootstrapLlmSlice.provider;
+  const costAccumulator =
+    config.llm?.costTracking?.enabled === true
+      ? new CostAccumulator(config.llm.costTracking.dailyResetHourUtc ?? 0)
+      : undefined;
+
+  // Vision reuses the active text provider when it exposes describeImage.
   const visionProvider: LlmProvider | undefined = config.vision.enabled
-    ? new LlamaServerProvider(llama, {
-        getProfile: () => profileManager?.getProfile() ?? profile,
-        visionEnabledByConfig: config.vision.enabled,
-        visionAutoDetect: config.vision.autoDetect,
-        maxImageBytes: config.vision.maxImageBytes,
-        maxImagesPerCall: config.vision.maxImagesPerCall,
-      })
+    ? textProvider
     : undefined;
   registerVisionTools(toolRegistry, {
     provider: visionProvider,
@@ -983,39 +1008,71 @@ export async function createAgentRuntime(
   const llmComplete =
     options.overrides?.llamaComplete ??
     (async (params) => {
-      return llama.complete({
+      const { provider, transport } = resolveActiveLlmSlice();
+      const base = {
         prompt: params.prompt,
-        grammar: params.grammar,
-        slotId: params.slotId,
         sessionId: params.sessionId,
-        cachePrompt: true,
-        // Forward an optional per-call `n_predict` cap. The agent-loop
-        // repair path uses this to bound runaway reasoning loops; the
-        // hot path leaves it undefined so the configured default
-        // applies.
         ...(typeof params.maxTokens === "number"
           ? { maxTokens: params.maxTokens }
           : {}),
-      });
+      };
+      const result =
+        transport === "native_tools"
+          ? await provider.complete({
+              ...base,
+              ...(params.tools ? { tools: params.tools } : {}),
+              ...(params.toolChoice !== undefined
+                ? { toolChoice: params.toolChoice }
+                : {}),
+              ...(params.parallelToolCalls !== undefined
+                ? { parallelToolCalls: params.parallelToolCalls }
+                : {}),
+            })
+          : await provider.complete({
+              ...base,
+              grammar: params.grammar,
+              slotId: params.slotId,
+              cachePrompt: params.slotId >= 0,
+            });
+      if (costAccumulator && result.usage) {
+        costAccumulator.recordTurn({
+          modelId: result.modelId,
+          usage: result.usage,
+        });
+      }
+      return result;
     });
 
-  // Streaming is wired to the real llama-server by default. Tests that
-  // inject a `llamaComplete` fake opt out of streaming implicitly unless
-  // they also pass an `llamaCompleteStream` fake — otherwise the agent
-  // would try to hit a non-existent server for every step.
   const llmCompleteStream = options.overrides?.disableStreaming
     ? undefined
     : options.overrides?.llamaCompleteStream ??
       (options.overrides?.llamaComplete
         ? undefined
-        : (params) =>
-            llama.completeStream({
+        : (params) => {
+            const { provider, transport } = resolveActiveLlmSlice();
+            const base = {
               prompt: params.prompt,
+              sessionId: params.sessionId,
+            };
+            if (transport === "native_tools") {
+              return provider.completeStream({
+                ...base,
+                ...(params.tools ? { tools: params.tools } : {}),
+                ...(params.toolChoice !== undefined
+                  ? { toolChoice: params.toolChoice }
+                  : {}),
+                ...(params.parallelToolCalls !== undefined
+                  ? { parallelToolCalls: params.parallelToolCalls }
+                  : {}),
+              });
+            }
+            return provider.completeStream({
+              ...base,
               grammar: params.grammar,
               slotId: params.slotId,
-              sessionId: params.sessionId,
-              cachePrompt: true,
-            }));
+              cachePrompt: params.slotId >= 0,
+            });
+          });
 
   const sessionStore = new SessionStore();
   const taskStore = new TaskStore({ dbFile: config.paths.tasksDbFile });
@@ -1049,6 +1106,7 @@ export async function createAgentRuntime(
     config,
     slotManager,
     llmComplete,
+    toolTransport: bootstrapLlmSlice.transport,
     profileStore,
     notesStore,
     logger,
@@ -1413,6 +1471,18 @@ export async function createAgentRuntime(
     enumerable: true,
     get: () => effectiveToolDescriptors,
   });
+  Object.defineProperty(loopDeps, "toolTransport", {
+    enumerable: true,
+    get: () => resolveActiveLlmSlice().transport,
+  });
+  Object.defineProperty(loopDeps, "toolCallAdapter", {
+    enumerable: true,
+    get: () => resolveActiveLlmSlice().adapter,
+  });
+  Object.defineProperty(loopDeps, "supportsSlotAffinity", {
+    enumerable: true,
+    get: () => resolveActiveLlmSlice().slotAffinity,
+  });
   const loop = new AgentLoop(
     loopDeps as typeof loopDeps & {
       skillCatalog: readonly SkillCatalogEntry[];
@@ -1559,6 +1629,41 @@ export async function createAgentRuntime(
       servers: serverCount,
       tools: metas.length,
     });
+  };
+
+  const llmProviderCtx = {
+    config: getConfig(),
+    llamaClient: llama,
+    getProfile: getLiveProfile,
+    logger,
+  };
+
+  const reloadLlmProviders = async (): Promise<void> => {
+    resetConfigCache();
+    const fresh = getConfig();
+    llmProviderCtx.config = fresh;
+    const added = await providerRegistry.mergeProvidersFromConfig(fresh, {
+      config: fresh,
+      llamaClient: llama,
+      getProfile: getLiveProfile,
+      logger,
+    });
+    if (added.length > 0) {
+      logger.info("llm: providers registered", { ids: added.join(",") });
+    }
+  };
+
+  const reloadLlmProvider = async (id: string): Promise<void> => {
+    resetConfigCache();
+    const fresh = getConfig();
+    llmProviderCtx.config = fresh;
+    await providerRegistry.replaceProviderFromConfig(id, fresh, {
+      config: fresh,
+      llamaClient: llama,
+      getProfile: getLiveProfile,
+      logger,
+    });
+    logger.info("llm: provider refreshed", { id });
   };
 
   const ensureRecorder = (session: SessionState): TraceRecorder | null => {
@@ -1869,6 +1974,7 @@ export async function createAgentRuntime(
     webhookSessionStore,
     telegramChannel: null,
     mcpManager,
+    providerRegistry,
     capabilities,
     toolDescriptors: effectiveToolDescriptors,
     grammar,
@@ -1879,6 +1985,8 @@ export async function createAgentRuntime(
     executeTurn,
     refreshSkills,
     refreshMcp,
+    reloadLlmProviders,
+    reloadLlmProvider,
     setApprovalHandlerForSession: (sessionId, handler) =>
       approvalRouter.setForSession(sessionId, handler),
     shutdown,
@@ -2059,12 +2167,8 @@ function resolveTraceEnabled(
 function buildReflectionRunner(args: {
   config: AtomicAgentConfig;
   slotManager: SlotManager;
-  llmComplete: (params: {
-    prompt: string;
-    grammar: string;
-    slotId: number;
-    sessionId: string;
-  }) => Promise<CompletionResult>;
+  llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
+  toolTransport?: import("../llm/provider/completion-types.js").ToolCallTransport;
   profileStore: ProfileStore;
   /**
    * Freeform notes store. Wired only when both `memory.notes.enabled`
@@ -2099,12 +2203,8 @@ function buildReflectionRunner(args: {
         { once: true },
       );
     });
-    const completionPromise = args.llmComplete({
-      prompt: params.prompt,
-      grammar: params.grammar,
-      slotId: params.slotId,
-      sessionId: params.sessionId,
-    });
+    const { signal: _signal, ...rest } = params;
+    const completionPromise = args.llmComplete(rest);
     return Promise.race([completionPromise, abortPromise]);
   };
   const notesWriteEnabled =
@@ -2113,6 +2213,7 @@ function buildReflectionRunner(args: {
     memory.reflection.maxNotesPerCall > 0;
   return createReflectionRunner({
     llmComplete: reflectionLlmComplete,
+    ...(args.toolTransport ? { toolTransport: args.toolTransport } : {}),
     profileStore: args.profileStore,
     ...(notesWriteEnabled ? { memoryStore: args.notesStore } : {}),
     ...(args.neighborEvolver ? { neighborEvolver: args.neighborEvolver } : {}),

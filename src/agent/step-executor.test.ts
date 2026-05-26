@@ -271,6 +271,170 @@ describe("executeStep batch handling", () => {
     ]);
   });
 
+  it("repairs a native-tools reasoning-only empty completion instead of failing the turn", async () => {
+    const registry = makeRegistry();
+    const session = createEmptySessionState({
+      id: "s-native-repair",
+      workingDir: "/w",
+    });
+    const events: Array<{ type: string }> = [];
+    const calls: unknown[] = [];
+
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "привет",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        async llmComplete(params) {
+          calls.push(params);
+          if (calls.length === 1) {
+            return {
+              content: "",
+              reasoningContent: "I should call reply.",
+              stop: true,
+              truncated: false,
+              timing: {
+                promptMs: 1,
+                predictedMs: 1,
+                promptTokens: 20,
+                predictedTokens: 5,
+              },
+              cacheHitTokens: 0,
+              slotId: -1,
+              modelId: "openai/gpt-5.5",
+            };
+          }
+          return {
+            content: "",
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
+            cacheHitTokens: 0,
+            slotId: -1,
+            modelId: "openai/gpt-5.5",
+            toolCalls: [
+              {
+                id: "call-1",
+                type: "function",
+                function: {
+                  name: "reply",
+                  arguments: JSON.stringify({ text: "Привет!" }),
+                },
+              },
+            ],
+          };
+        },
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+        onEvent(event) {
+          events.push({ type: event.type });
+        },
+      },
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(events.some((event) => event.type === "parse_retry")).toBe(true);
+    expect(outcome.terminal).toBe("turn");
+    expect(outcome.toolCalls).toEqual([
+      { tool: "reply", args: { text: "Привет!" } },
+    ]);
+    expect(outcome.nextSession.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "Привет!",
+    });
+  });
+
+  it("repairs a native-tools reply call with empty args before execution", async () => {
+    const registry = makeRegistry();
+    const session = createEmptySessionState({
+      id: "s-native-empty-reply",
+      workingDir: "/w",
+    });
+    const events: Array<{ type: string }> = [];
+    const calls: unknown[] = [];
+
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "привет",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        async llmComplete(params) {
+          calls.push(params);
+          return {
+            content: "",
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
+            cacheHitTokens: 0,
+            slotId: -1,
+            modelId: "openai/gpt-5.5",
+            toolCalls: [
+              {
+                id: `call-${calls.length}`,
+                type: "function",
+                function: {
+                  name: "reply",
+                  arguments:
+                    calls.length === 1
+                      ? "{}"
+                      : JSON.stringify({ text: "Привет!" }),
+                },
+              },
+            ],
+          };
+        },
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+        onEvent(event) {
+          events.push({ type: event.type });
+        },
+      },
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(events.some((event) => event.type === "parse_retry")).toBe(true);
+    expect(outcome.toolResults).toHaveLength(1);
+    expect(outcome.toolResults[0]?.status).toBe("ok");
+    expect(outcome.nextSession.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "Привет!",
+    });
+  });
+
   // Note: the "tail reply fires even when an earlier non-terminal
   // call errored" invariant is pinned directly on the executor in
   // src/agent/batch-executor.test.ts — no need to duplicate it here

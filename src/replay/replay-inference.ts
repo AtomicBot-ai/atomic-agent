@@ -1,12 +1,17 @@
-import type { LlamaServerClient } from "../llm/llama-server-client.js";
 import type { CompletionResult } from "../llm/llama-server-client.js";
+import type { CompletionRequest } from "../llm/provider/completion-types.js";
 
 import type { TraceEvent } from "../tracing/index.js";
 import { iterateTraceFile } from "../cli/trace-file-io.js";
 
+export interface TextCompletionReplayClient {
+  complete(request: CompletionRequest): Promise<CompletionResult>;
+}
+
 export interface ReplayInferenceOptions {
   path: string;
-  llama: LlamaServerClient;
+  /** Provider or legacy llama client implementing `complete`. */
+  llama: TextCompletionReplayClient;
   grammar: string;
   /** Replay only a specific step; when omitted, every recorded prompt is rerun. */
   stepIndex?: number;

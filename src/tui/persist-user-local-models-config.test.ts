@@ -9,6 +9,7 @@ import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
 import { getConfig } from "../config/index.js";
 import {
   normalizeLocalLlmBaseUrl,
+  persistUserLocalModelsConfig,
   persistUserLocalLlmUrl,
 } from "./persist-user-local-models-config.js";
 
@@ -56,5 +57,43 @@ describe("persistUserLocalLlmUrl", () => {
     expect(written.localModels.url).toBe("http://192.168.1.5:7777");
     expect(written.localModels.mode).toBe("external");
     expect(getConfig().localModels.url).toBe("http://192.168.1.5:7777");
+  });
+
+  it("keeps the local-llama provider URL synced to the managed port", () => {
+    const path = getUserConfigPath(stateDir);
+    writeUserConfigFileSync(path, {
+      ...USER_CONFIG_DEFAULTS,
+      llm: {
+        providers: [
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            url: "http://127.0.0.1:19091",
+          },
+          {
+            id: "openrouter",
+            kind: "openrouter",
+            apiKey: "test-key",
+            defaultChatModel: "openai/gpt-4o-mini",
+          },
+        ],
+        activeTextProvider: "local-llama",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto",
+      },
+    });
+    resetConfigCache();
+
+    persistUserLocalModelsConfig({
+      mode: "managed",
+      managed: { port: 20123 },
+    });
+
+    const written = JSON.parse(readFileSync(path, "utf8")) as {
+      llm: { providers: Array<{ id: string; url?: string }> };
+    };
+    expect(
+      written.llm.providers.find((provider) => provider.id === "local-llama")?.url,
+    ).toBe("http://127.0.0.1:20123");
   });
 });

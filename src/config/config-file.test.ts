@@ -354,8 +354,12 @@ describe("user config file IO", () => {
     expect(migrated.localModels.embeddings).toEqual(
       USER_CONFIG_DEFAULTS.localModels.embeddings,
     );
-    expect(migrated.memory.embeddings.enabled).toBe(true);
-    expect(migrated.localModels.embeddings.enabled).toBe(true);
+    expect(migrated.memory.embeddings.enabled).toBe(
+      USER_CONFIG_DEFAULTS.memory.embeddings.enabled,
+    );
+    expect(migrated.localModels.embeddings.enabled).toBe(
+      USER_CONFIG_DEFAULTS.localModels.embeddings.enabled,
+    );
 
     const onDisk = JSON.parse(readFileSync(path, "utf8"));
     expect(onDisk.version).toBe(USER_CONFIG_VERSION);

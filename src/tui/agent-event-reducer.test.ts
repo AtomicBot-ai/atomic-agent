@@ -159,6 +159,23 @@ describe("reduceTuiState", () => {
     expect(next.lastRunStatus).toBe("failed [tool]: boom");
     expect(next.runHistory[0]?.outcome).toBe("failed");
     expect(next.runHistory[0]?.reason).toBe("boom");
+    const errMsg = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(errMsg?.text).toBe("Turn failed [tool]: boom");
+  });
+
+  it("maps loop_completed reason failed to failed outcome", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: { type: "loop_completed", reason: "failed" },
+      },
+    ]);
+    expect(next.runHistory[0]?.outcome).toBe("failed");
+    expect(next.lastRunStatus).toBe("failed: failed");
   });
 
   it("should render step_error with the failure category tag", () => {

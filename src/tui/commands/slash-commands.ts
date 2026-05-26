@@ -35,7 +35,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   {
     name: "manage",
     description:
-      "switch to the Manage section (tasks / skills / local LLM / telegram)",
+      "switch to the Manage section (tasks / skills / LLM / telegram)",
   },
   { name: "feed", description: "jump to the Observe → Feed tab" },
   { name: "logs", description: "jump to the Observe → Logs tab" },
@@ -62,6 +62,15 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
       "open Memory tab (profile, notes, lessons, …) · subcommand: `/memory dump` for profile in chat",
   },
   {
+    name: "llm",
+    description:
+      "open LLM Local/Cloud panel · `/llm provider <id>` switch text provider",
+  },
+  {
+    name: "model",
+    description: "open the LLM Local/Cloud panel",
+  },
+  {
     name: "mcp",
     description:
       "open MCP tab (configured servers + discovered tools / resources / prompts) · subcommands: `/mcp add` opens JSON-paste modal, `/mcp remove <name>` opens delete-confirm",
@@ -69,7 +78,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   {
     name: "models",
     description:
-      "local-models tab · subcommands: pull <id> | use <id> | status | <base-url>",
+      "open chat model picker · subcommands: pull <id> | use <id> | status | <base-url>",
     aliases: ["local"],
   },
   { name: "tasks", description: "jump to the Tasks tab (Option 4 cron + ingress UI)" },

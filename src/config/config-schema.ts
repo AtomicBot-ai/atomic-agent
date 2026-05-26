@@ -1,4 +1,8 @@
 import type { TaskSchedule } from "../tasks/task-types.js";
+import {
+  parseUserLlmFileConfig,
+  type UserLlmFileConfig,
+} from "./llm-config.js";
 import { isKnownLocalModelId } from "../local-llm/models-catalog.js";
 import {
   MCP_SERVER_NAME_MAX_LENGTH,
@@ -544,6 +548,58 @@ export interface AtomicAgentConfig {
   mcp: {
     servers: McpServerConfig[];
   };
+  /**
+   * LLM provider registry (local llama-server + cloud). When omitted,
+   * the runtime synthesizes a single `local-llama` entry from
+   * `localModels.*`.
+   */
+  llm?: {
+    activeTextProvider: string;
+    activeEmbeddingProvider: string;
+    providers: ReadonlyArray<{
+      id: string;
+      kind: string;
+      url?: string;
+      apiKey?: string;
+      model?: string;
+      baseUrl?: string;
+      defaultChatModel?: string;
+      defaultEmbeddingModel?: string;
+      headers?: Record<string, string>;
+      supportsTools?: boolean;
+      supportsVision?: boolean;
+      requestTimeoutMs?: number;
+      promptCache?: "auto" | "off" | "explicit-markers";
+      providerPreferences?: Record<string, unknown>;
+      userModels?: ReadonlyArray<{
+        id: string;
+        kind: "chat" | "embedding";
+        contextWindow?: number;
+        dim?: number;
+        supportsVision?: boolean;
+        supportsTools?: "none" | "basic" | "parallel" | "strict";
+        supportsPromptCache?: boolean;
+        reasoningFormat?:
+          | "none"
+          | "delta_reasoning"
+          | "delta_thinking"
+          | "delta_reasoning_content";
+        pricing?: {
+          input: number;
+          output: number;
+          cacheRead?: number;
+          cacheWrite?: number;
+        };
+      }>;
+    }>;
+    toolTransport: "auto" | "grammar" | "native_tools";
+    allowCloudSampling?: boolean;
+    costTracking?: {
+      enabled: boolean;
+      showInStatusBar: boolean;
+      dailyResetHourUtc: number;
+    };
+  };
 }
 
 /**
@@ -1061,9 +1117,14 @@ export interface UserConfigFile {
   mcp: {
     servers: McpServerConfig[];
   };
+  /**
+   * LLM provider registry (v24). Optional — when absent the runtime
+   * synthesizes a single `local-llama` entry from `localModels.*`.
+   */
+  llm?: import("./llm-config.js").UserLlmFileConfig;
 }
 
-export const USER_CONFIG_VERSION = 23 as const;
+export const USER_CONFIG_VERSION = 24 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1128,6 +1189,9 @@ export type RewriterGateMode = "heuristic" | "embedding" | "always";
  * v23 added the optional `mcp.*` block (MCP client). Upgrades from
  * v22 and below get `mcp: { servers: [] }` — no connections are
  * opened until the operator adds entries to the list.
+ * v24 added the optional `llm.*` provider registry block. When
+ * absent, the runtime synthesizes `local-llama` from `localModels.*`
+ * (byte-stable for existing installs).
  * Older files are transparently upgraded by filling missing
  * blocks/fields from `USER_CONFIG_DEFAULTS`. Anything older than v5
  * is not migrated: this is active development, callers delete their
@@ -1152,6 +1216,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   20,
   21,
   22,
+  23,
   USER_CONFIG_VERSION,
 ];
 
@@ -1407,15 +1472,8 @@ export const ENV_DEFAULTS = {
   BATCH_TOOL_RESULT_CHAR_CAP: 16_000,
 };
 
-export class ConfigValidationError extends Error {
-  constructor(
-    public readonly field: string,
-    public readonly reason: string,
-  ) {
-    super(`invalid config: ${field}: ${reason}`);
-    this.name = "ConfigValidationError";
-  }
-}
+export { ConfigValidationError } from "./config-validation-error.js";
+import { ConfigValidationError } from "./config-validation-error.js";
 
 export function parseLogLevel(raw: unknown, field: string): LogLevel {
   if (raw === "debug" || raw === "info" || raw === "warn" || raw === "error") {
@@ -2106,17 +2164,38 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     ),
   };
 
+  const localModelsMode = parseLocalLlmMode(
+    localModels.mode ?? USER_CONFIG_DEFAULTS.localModels.mode,
+    "localModels.mode",
+  );
+  const localModelsUrl = parseUrl(
+    localModels.url ?? USER_CONFIG_DEFAULTS.localModels.url,
+    "localModels.url",
+  );
+  const llmBlock: UserLlmFileConfig | undefined =
+    obj.llm === undefined || obj.llm === null
+      ? undefined
+      : parseUserLlmFileConfig(obj.llm, {
+          activeTextProvider: "local-llama",
+          activeEmbeddingProvider: "local-llama",
+          toolTransport: "auto",
+          providers: [
+            {
+              id: "local-llama",
+              kind: "llama-server",
+              url:
+                localModelsMode === "managed"
+                  ? `http://127.0.0.1:${managed.port}`
+                  : localModelsUrl,
+            },
+          ],
+        });
+
   return {
     version: USER_CONFIG_VERSION,
     localModels: {
-      url: parseUrl(
-        localModels.url ?? USER_CONFIG_DEFAULTS.localModels.url,
-        "localModels.url",
-      ),
-      mode: parseLocalLlmMode(
-        localModels.mode ?? USER_CONFIG_DEFAULTS.localModels.mode,
-        "localModels.mode",
-      ),
+      url: localModelsUrl,
+      mode: localModelsMode,
       completionMaxTokens: parseBoundedPositiveInt(
         localModels.completionMaxTokens ??
           USER_CONFIG_DEFAULTS.localModels.completionMaxTokens,
@@ -2648,6 +2727,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     mcp: {
       servers: parseMcpServers(mcp.servers, "mcp.servers"),
     },
+    ...(llmBlock !== undefined ? { llm: llmBlock } : {}),
   };
 }
 

@@ -11,6 +11,9 @@ import {
 
 import { REFLECTION_GRAMMAR } from "./reflection-grammar.js";
 import { parseReflectionOutput } from "./reflection-parser.js";
+import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
+import { buildCloudSubcallRequest } from "../../llm/provider/cloud-subcall.js";
+import type { LlmStreamParams } from "../../agent/step-executor.js";
 import { buildReflectionPrompt } from "./reflection-prompt.js";
 
 export interface ReflectionInput {
@@ -98,16 +101,27 @@ export interface ReflectionRunner {
   abortPending(options?: { sessionId?: string }): void;
 }
 
-export type ReflectionLlmComplete = (params: {
-  prompt: string;
-  grammar: string;
-  slotId: number;
-  sessionId: string;
-  signal: AbortSignal;
-}) => Promise<CompletionResult>;
+export type ReflectionLlmComplete = (
+  params: LlmStreamParams & { signal: AbortSignal },
+) => Promise<CompletionResult>;
+
+const REFLECTION_EMIT_SCHEMA = {
+  type: "object",
+  properties: {
+    lines: {
+      type: "string",
+      description:
+        "Reflection output: NONE or newline-separated SET/NOTE/EVOLVE lines",
+    },
+  },
+  required: ["lines"],
+  additionalProperties: false,
+} as const;
 
 export interface ReflectionRunnerDeps {
   llmComplete: ReflectionLlmComplete;
+  /** When `native_tools`, reflection uses synthetic emit_reflection. */
+  toolTransport?: ToolCallTransport;
   profileStore: ProfileStore;
   /**
    * Freeform `MemoryStore`. When provided together with a non-zero
@@ -290,13 +304,27 @@ export function createReflectionRunner(
           ? { transcript: input.transcript }
           : {}),
       });
-      const completion = await deps.llmComplete({
-        prompt,
-        grammar: REFLECTION_GRAMMAR,
-        slotId: deps.reflectionSlotId,
-        sessionId: `reflection:${input.sessionId}`,
-        signal: controller.signal,
-      });
+      const completion =
+        deps.toolTransport === "native_tools"
+          ? await deps.llmComplete({
+              ...buildCloudSubcallRequest({
+                prompt,
+                emitFunctionName: "emit_reflection",
+                argsSchema: REFLECTION_EMIT_SCHEMA,
+                sessionId: `reflection:${input.sessionId}`,
+              }),
+              grammar: "",
+              slotId: -1,
+              sessionId: `reflection:${input.sessionId}`,
+              signal: controller.signal,
+            })
+          : await deps.llmComplete({
+              prompt,
+              grammar: REFLECTION_GRAMMAR,
+              slotId: deps.reflectionSlotId,
+              sessionId: `reflection:${input.sessionId}`,
+              signal: controller.signal,
+            });
       if (controller.signal.aborted) {
         finish(timedOut ? "timeout" : "aborted", {
           sessionId: input.sessionId,
@@ -304,7 +332,11 @@ export function createReflectionRunner(
         });
         return;
       }
-      const parsed = parseReflectionOutput(completion.content);
+      const rawText =
+        deps.toolTransport === "native_tools"
+          ? extractCloudSubcallText(completion)
+          : completion.content;
+      const parsed = parseReflectionOutput(rawText);
       if (parsed.kind === "none") {
         finish("none", { sessionId: input.sessionId, startedAt });
         return;
@@ -488,6 +520,18 @@ function writeNotes(
     }
   }
   return written;
+}
+
+function extractCloudSubcallText(completion: CompletionResult): string {
+  const tc = completion.toolCalls?.[0];
+  if (!tc?.function?.arguments) return completion.content;
+  try {
+    const parsed = JSON.parse(tc.function.arguments) as { lines?: string };
+    if (typeof parsed.lines === "string") return parsed.lines;
+  } catch {
+    // fall through
+  }
+  return completion.content;
 }
 
 function dedupeTags(tags: readonly string[]): string[] {
