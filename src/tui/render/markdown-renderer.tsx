@@ -164,10 +164,13 @@ function InlineToken({ token }: { token: Token }): ReactElement {
       );
     case "link": {
       const link = token as Tokens.Link;
-      const label = link.text ?? link.href ?? "";
+      const href = link.href ?? "";
+      const label = link.text ?? href;
+      const fallback = buildVisibleUrlFallback(label, href);
       return (
         <Text color={theme.colors.info} underline>
-          {wrapOsc8(label, link.href ?? "")}
+          {wrapOsc8(label, href)}
+          {fallback}
         </Text>
       );
     }
@@ -197,4 +200,10 @@ function InlineToken({ token }: { token: Token }): ReactElement {
         </Text>
       );
   }
+}
+
+function buildVisibleUrlFallback(label: string, href: string): string {
+  if (!href) return "";
+  if (label.trim() === href.trim()) return "";
+  return ` (${href})`;
 }

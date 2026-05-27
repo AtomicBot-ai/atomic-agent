@@ -20,7 +20,7 @@ export interface SeedStarterSkillsResult {
 }
 
 function markerPath(root: string): string {
-  return join(root, "duckduckgo-search", "SKILL.md");
+  return join(root, "skill-creator", "SKILL.md");
 }
 
 /**

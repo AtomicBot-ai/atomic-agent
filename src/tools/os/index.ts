@@ -64,6 +64,10 @@ export {
   osGitBranchTool,
 } from "./git/index.js";
 export { osProcListTool, buildOsProcKillTool } from "./proc/index.js";
+export {
+  isGogCommand,
+  shouldAutoApproveGogCommand,
+} from "./gog-command-policy.js";
 
 export interface RegisterOsToolsOptions extends DangerousToolOptions {
   config: Pick<AtomicAgentConfig, "http">;

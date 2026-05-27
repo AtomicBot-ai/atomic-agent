@@ -7,6 +7,11 @@ import {
   type DangerousToolOptions,
 } from "../../approval/dangerous-tool.js";
 
+const GOG_CHECK_COMPRESS_OPTIONS = {
+  maxSummaryLength: 16_000,
+  maxTailLines: 2_000,
+} as const;
+
 export function buildSkillRunScriptTool(
   registry: SkillRegistry,
   options: DangerousToolOptions,
@@ -42,17 +47,23 @@ export function buildSkillRunScriptTool(
         `args: ${scriptArgs.join(" ")}`,
       ].join("\n");
 
-      await requireApproval(
-        options,
-        {
-          sessionId: ctx.sessionId,
-          tool: "skill.run_script",
-          reason: `run ${record.manifest.name}/${scriptName}`,
-          preview,
-          affectedResources: [record.rootDir],
-        },
-        ctx.signal,
-      );
+      const autoApprovedGogCheck =
+        record.manifest.name === "gog-workspace" &&
+        scriptName === "check-gog.sh" &&
+        scriptArgs.length === 0;
+      if (!autoApprovedGogCheck) {
+        await requireApproval(
+          options,
+          {
+            sessionId: ctx.sessionId,
+            tool: "skill.run_script",
+            reason: `run ${record.manifest.name}/${scriptName}`,
+            preview,
+            affectedResources: [record.rootDir],
+          },
+          ctx.signal,
+        );
+      }
 
       const outcome = await runSkillScript(record, {
         script: scriptName,
@@ -66,21 +77,24 @@ export function buildSkillRunScriptTool(
       const body = [outcome.stdout, outcome.stderr]
         .filter((s) => s.trim().length > 0)
         .join("\n---\n");
-      return compressToolResult({
-        tool: "skill.run_script",
-        status,
-        output: `${header}\n${body}`,
-        details: {
-          skill: outcome.skill,
-          script: outcome.script,
-          scriptPath: outcome.scriptPath,
-          exitCode: outcome.exitCode,
-          signal: outcome.signal,
-          durationMs: outcome.durationMs,
-          timedOut: outcome.timedOut,
-          truncated: outcome.truncated,
+      return compressToolResult(
+        {
+          tool: "skill.run_script",
+          status,
+          output: `${header}\n${body}`,
+          details: {
+            skill: outcome.skill,
+            script: outcome.script,
+            scriptPath: outcome.scriptPath,
+            exitCode: outcome.exitCode,
+            signal: outcome.signal,
+            durationMs: outcome.durationMs,
+            timedOut: outcome.timedOut,
+            truncated: outcome.truncated,
+          },
         },
-      });
+        autoApprovedGogCheck ? GOG_CHECK_COMPRESS_OPTIONS : {},
+      );
     },
   };
 }

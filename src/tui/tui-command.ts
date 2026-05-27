@@ -7,9 +7,7 @@ import type { LogRecord, LogSink } from "../tracing/structured-logger.js";
 import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
 import { enterAltScreen } from "./alt-screen.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
-import { installMouseInput } from "./mouse-input.js";
 import { parseTuiArgs } from "./tui-args.js";
-import { createWheelAccelerator } from "./wheel-accelerator.js";
 import { persistUserLocalLlmUrl } from "./persist-user-local-models-config.js";
 import {
   isManagedModeReadyOnDisk,
@@ -17,19 +15,6 @@ import {
 } from "./run-local-models-config-wizard.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
 import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
-
-/**
- * Wheel notch tuning. `baseDelta` is in **terminal rows** per notch
- * (2 — slightly calmer than a browser default; the chat surface still
- * feels web-like but takes a few extra ticks to flick the screen).
- * The accelerator multiplies that delta when notches arrive in quick
- * succession, so a slow scroll stays line-precise but a fast flick
- * covers ground. See `wheel-accelerator.ts` for the math.
- */
-const WHEEL_BASE_DELTA = 2;
-const WHEEL_ACCEL_WINDOW_MS = 140;
-const WHEEL_ACCEL_STEP = 1.35;
-const WHEEL_ACCEL_MAX_MULTIPLIER = 5;
 
 /**
  * CLI entry for `atomic-agent tui`. Boots the full runtime once and stays
@@ -132,26 +117,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
 
-  // Switch into the alternate screen buffer + enable SGR mouse **before**
-  // mounting Ink so the proxy stdin returned by `installMouseInput` can
-  // be threaded into `render(...)`. Without this split the SGR escape
-  // sequences (`\x1b[<64;71;26M`, ...) leak into Ink's keypress parser
-  // and end up dumped into the editor as literal text. Both are no-ops
-  // when stdout is not a TTY (CI / piped output) so harness runs are
-  // unaffected.
+  // Keep terminal mouse handling disabled so native selection and OSC8
+  // hyperlink clicks keep working while the TUI is mounted.
   const altScreen = enterAltScreen({ stdout: process.stdout, hideCursor: false });
-  const wheelAccel = createWheelAccelerator({
-    baseDelta: WHEEL_BASE_DELTA,
-    accelWindowMs: WHEEL_ACCEL_WINDOW_MS,
-    accelStep: WHEEL_ACCEL_STEP,
-    maxMultiplier: WHEEL_ACCEL_MAX_MULTIPLIER,
-  });
-  const mouse = installMouseInput({
-    onEvent: (event) => {
-      const delta = wheelAccel.next(event.type === "wheel_up" ? 1 : -1);
-      bus.emit({ type: "chat_scrolled", delta });
-    },
-  });
 
   const ink = render(
     React.createElement(TuiApp, {
@@ -295,7 +263,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
       },
     }),
     {
-      stdin: mouse.stdin,
+      stdin: process.stdin,
       stdout: process.stdout,
       stderr: process.stderr,
       exitOnCtrlC: false,
@@ -320,7 +288,6 @@ export async function tuiCommand(args: string[]): Promise<number> {
   } finally {
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
-    mouse.stop();
     altScreen.restore();
     ink.clear();
     await orchestrator.shutdown();

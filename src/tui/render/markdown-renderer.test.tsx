@@ -4,7 +4,9 @@ import { MarkdownRenderer } from "./markdown-renderer.js";
 
 function strip(output: string): string {
   // strip ANSI escape codes for golden comparison
-  return output.replace(/\u001b\[[0-9;]*m/g, "").replace(/\u001b\]8;;[^\u0007]*\u0007/g, "");
+  return output
+    .replace(/\u001b\[[0-9;]*m/g, "")
+    .replace(/\u001b\]8;;[^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "");
 }
 
 describe("MarkdownRenderer", () => {
@@ -42,6 +44,16 @@ describe("MarkdownRenderer", () => {
     );
     const text = strip(lastFrame() ?? "");
     expect(text).toContain("cursor");
+    expect(text).toContain("https://cursor.com");
+  });
+
+  it("wraps markdown links in OSC8 while keeping the URL visible as a terminal fallback", () => {
+    const { lastFrame } = render(
+      <MarkdownRenderer text="[cursor](https://cursor.com)" />,
+    );
+    const text = lastFrame() ?? "";
+    expect(text).toContain("\u001b]8;;https://cursor.com\u001b\\cursor\u001b]8;;\u001b\\");
+    expect(text).toContain("(https://cursor.com)");
   });
 
   it("renders bulleted lists with a bullet glyph", () => {

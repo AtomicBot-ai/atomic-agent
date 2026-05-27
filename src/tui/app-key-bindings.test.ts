@@ -106,6 +106,50 @@ describe("handleAppKey", () => {
     expect(call?.delta).toBeLessThan(0);
   });
 
+  it("treats bare Up/Down arrows as chat scroll when the editor is empty", () => {
+    const state = createInitialTuiState(stubSession());
+    const dispatch = vi.fn();
+    const handled = handleAppKey("", emptyKey({ upArrow: true }), {
+      state,
+      dispatch,
+      callbacks: {
+        onApprovalDecision: vi.fn(),
+        onAbort: vi.fn(),
+        onQuit: vi.fn(),
+      },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(true);
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "chat_scrolled",
+      delta: expect.any(Number),
+    });
+    const call = dispatch.mock.calls[0]?.[0];
+    expect(call?.delta).toBeGreaterThan(0);
+  });
+
+  it("leaves Up/Down arrows for the editor when the input has content", () => {
+    const state = createInitialTuiState(stubSession());
+    state.inputValue = "draft";
+    const dispatch = vi.fn();
+    const handled = handleAppKey("", emptyKey({ upArrow: true }), {
+      state,
+      dispatch,
+      callbacks: {
+        onApprovalDecision: vi.fn(),
+        onAbort: vi.fn(),
+        onQuit: vi.fn(),
+      },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it("does not consume PageUp / PageDown when an approval is pending", () => {
     const state = createInitialTuiState(stubSession());
     state.pendingApproval = {

@@ -58,6 +58,33 @@ describe("skill tools", () => {
     return registry;
   }
 
+  async function installGogWorkspace(): Promise<SkillRegistry> {
+    const skillDir = join(global, "gog-workspace");
+    await mkdir(join(skillDir, "scripts"), { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: gog-workspace",
+        'description: "Google Workspace through gog"',
+        "version: 0.1.0",
+        "requires_scripts: [check-gog.sh]",
+        "---",
+        "",
+        "gog playbook body.",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      join(skillDir, "scripts", "check-gog.sh"),
+      "printf 'gog auth doctor succeeded.\\n'",
+      "utf8",
+    );
+    const registry = new SkillRegistry({ globalDir: global, projectDir: null });
+    await registry.refresh();
+    return registry;
+  }
+
   it("skill.view returns body and emits skillLoaded patch", async () => {
     const skills = await installEcho();
     const tool = buildSkillViewTool(skills);
@@ -81,6 +108,23 @@ describe("skill tools", () => {
     await expect(
       tool.run({ skill: "echo", script: "say.js" }, makeCtx(base)),
     ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+  });
+
+  it("skill.run_script auto-approves the read-only gog setup check", async () => {
+    const skills = await installGogWorkspace();
+    const gate = new ApprovalGate({
+      emit: (req) => gate.reject(req.approvalId, "denied"),
+    });
+    const tool = buildSkillRunScriptTool(skills, {
+      approvals: gate,
+      approvalRequired: true,
+    });
+    const result = await tool.run(
+      { skill: "gog-workspace", script: "check-gog.sh" },
+      makeCtx(base),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("gog auth doctor succeeded");
   });
 
   it("skill.run_script runs an allowed script after approval", async () => {

@@ -26,15 +26,15 @@ describe("seedStarterSkillsIfMissing", () => {
     const first = await seedStarterSkillsIfMissing({ globalSkillsDir: globalDir });
     expect(first.sourceDir).toBe(source);
     expect(first.installed.length).toBeGreaterThan(0);
-    expect(first.installed).toContain("duckduckgo-search");
+    expect(first.installed).toContain("skill-creator");
 
-    const hijack = join(globalDir, "duckduckgo-search", "SKILL.md");
+    const hijack = join(globalDir, "skill-creator", "SKILL.md");
     writeFileSync(hijack, "stale-content", "utf8");
     expect(readFileSync(hijack, "utf8")).toBe("stale-content");
 
     const second = await seedStarterSkillsIfMissing({ globalSkillsDir: globalDir });
     expect(second.installed.sort()).toEqual(first.installed.sort());
     expect(readFileSync(hijack, "utf8")).not.toBe("stale-content");
-    expect(readFileSync(hijack, "utf8")).toContain("duckduckgo-search");
+    expect(readFileSync(hijack, "utf8")).toContain("skill-creator");
   });
 });
