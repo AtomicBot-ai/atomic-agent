@@ -7,7 +7,10 @@ import {
 } from "../../approval/dangerous-tool.js";
 import { resolveUserPath } from "./expand-home.js";
 import { expandShellGlobArgs } from "./expand-shell-glob-args.js";
-import { isGogCommand, shouldAutoApproveGogCommand } from "./gog-command-policy.js";
+import {
+  checkShellCommandGuard,
+  isGogCommand,
+} from "./shell-command-guard/index.js";
 
 const GOG_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 const GOG_COMPRESS_OPTIONS = {
@@ -19,7 +22,7 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
   return {
     name: "os.shell.run",
     description:
-      "Run an OS command in the session working directory (argv globs `*`/`?` are expanded like a shell; no implicit subshell). Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Dangerous — always requires approval.",
+      "Run an OS command in the session working directory (argv globs `*`/`?` are expanded like a shell; no implicit subshell). Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution.",
     readonly: false,
     async run(rawArgs, ctx) {
       const cmd = rawArgs.cmd;
@@ -39,15 +42,36 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
           ? rawArgs.timeoutMs
           : 30_000;
 
+      const guardVerdict = checkShellCommandGuard({
+        cmd,
+        rawArgs: rawArgList,
+        cwd,
+      });
+      if (guardVerdict.action === "block") {
+        return compressToolResult({
+          tool: "os.shell.run",
+          status: "error",
+          output: `blocked by shell guard: ${guardVerdict.rule} - ${guardVerdict.reason}`,
+          details: {
+            cmd,
+            rawArgs: rawArgList,
+            cwd,
+            guardVerdict: guardVerdict.action,
+            guardRule: guardVerdict.rule,
+            guardReason: guardVerdict.reason,
+          },
+        });
+      }
+
       const args = expandShellGlobArgs(cmd, rawArgList, cwd);
       const commandLine = [cmd, ...args].join(" ");
-      if (!shouldAutoApproveGogCommand(cmd, args)) {
+      if (guardVerdict.action === "approval_required") {
         await requireApproval(
           options,
           {
             sessionId: ctx.sessionId,
             tool: "os.shell.run",
-            reason: `execute shell command in ${cwd}`,
+            reason: `${guardVerdict.reason} in ${cwd}`,
             preview: commandLine,
             affectedResources: [cwd],
           },
@@ -81,6 +105,9 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
             durationMs: result.durationMs,
             timedOut: result.timedOut,
             truncated: result.truncated,
+            guardVerdict: guardVerdict.action,
+            guardRule: guardVerdict.rule,
+            guardReason: guardVerdict.reason,
           },
         },
         isGogCommand(cmd) ? GOG_COMPRESS_OPTIONS : {},

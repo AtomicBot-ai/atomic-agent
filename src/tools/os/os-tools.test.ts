@@ -143,14 +143,30 @@ describe("os.shell.run", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  it("requires approval", async () => {
+  it("requires approval for commands that are not guard-allowed", async () => {
     const gate = new ApprovalGate({
       emit: (req) => gate.reject(req.approvalId, "no"),
     });
     const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
     await expect(
-      tool.run({ cmd: "echo", args: ["hi"] }, makeCtx(dir)),
+      tool.run({ cmd: "node", args: ["-e", "process.stdout.write('hi')"] }, makeCtx(dir)),
     ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+  });
+
+  it("skips approval for guard-allowed commands", async () => {
+    let approvals = 0;
+    const gate = new ApprovalGate({
+      emit: (req) => {
+        approvals += 1;
+        gate.reject(req.approvalId, "should not ask");
+      },
+    });
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+    const result = await tool.run({ cmd: "echo", args: ["hi"] }, makeCtx(dir));
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("hi");
+    expect(result.details.guardVerdict).toBe("allow");
+    expect(approvals).toBe(0);
   });
 
   it("executes echo and captures stdout when approved", async () => {
@@ -165,6 +181,24 @@ describe("os.shell.run", () => {
     expect(result.status).toBe("ok");
     expect(result.summary).toContain("hi");
     expect(result.details.exitCode).toBe(0);
+    expect(result.details.guardVerdict).toBe("approval_required");
+  });
+
+  it("blocks hardline commands without approval or execution", async () => {
+    let approvals = 0;
+    const gate = new ApprovalGate({
+      emit: (req) => {
+        approvals += 1;
+        gate.resolve({ approvalId: req.approvalId, approved: true });
+      },
+    });
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+    const result = await tool.run({ cmd: "rm", args: ["-rf", "/"] }, makeCtx(dir));
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("blocked by shell guard");
+    expect(result.details.guardVerdict).toBe("block");
+    expect(result.details.guardRule).toBe("hardline.rm_root");
+    expect(approvals).toBe(0);
   });
 
   it.skipIf(

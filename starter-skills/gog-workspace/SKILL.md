@@ -1,7 +1,7 @@
 ---
 name: gog-workspace
 description: Use the `gog` CLI for Google Workspace tasks across Gmail, Calendar, Drive, Docs, Sheets, Contacts, and related services. Use when the user asks to check email, search Gmail, inspect calendar events, find Drive files, read Docs or Sheets, or manage Google Workspace data through `gog`.
-version: 0.1.5
+version: 0.1.7
 requires_tools:
   - os.shell.run
   - skill.run_script
@@ -18,7 +18,7 @@ Use `gog` as the Google Workspace gateway. Prefer `gog` over raw Google APIs.
 
 For normal Gmail/Drive/Calendar reads, do not run setup/status/auth diagnostics first.
 
-1. Run the requested read command directly with safe `gog --no-input` flags.
+1. Run the requested read command directly with safe `gog --no-input` and `--enable-commands` flags.
 2. If that read succeeds, answer the user from the result.
 3. If that read fails with installation, auth, account, credentials, or keyring errors, then run the diagnostic check below or tell the user the exact auth action from the command error.
 
@@ -31,6 +31,8 @@ For unread Gmail, use this exact command shape. Do not invent flags:
 ```
 
 Gmail search syntax is a positional `<query>` argument. Do not use `--unread`; that flag does not exist. Prefer the canonical verb `gmail search` over the aliases `gmail list`, `gmail ls`, `gmail find`, or `gmail query` unless the user explicitly asks for an alias.
+
+Calendar event listing must use the canonical command `calendar events` with `--enable-commands calendar.events`. Do not use `calendar list`, `calendar ls`, or `--enable-commands calendar.list`; `gog` resolves those aliases to `calendar events` internally and rejects the call unless `calendar.events` is enabled.
 
 ## Diagnostics
 
@@ -100,6 +102,8 @@ Use safe global flags for agent reads:
 - `--gmail-no-send` unless the user explicitly asks to send or draft email.
 - `--enable-commands <csv>` to narrow the command surface for the task.
 
+Read commands that include `--no-input` plus a narrow read-only `--enable-commands` value run through the shell guard without an approval prompt. If you omit those flags or include write-capable commands, the shell guard will require approval.
+
 Ask for explicit approval before writes, sends, sharing changes, deletes, admin actions, or broad exports/backups. Use `--dry-run` when supported.
 
 ## Common Reads
@@ -120,6 +124,12 @@ List today's calendar events:
 
 ```json
 [{ "tool": "os.shell.run", "args": { "cmd": "gog", "args": ["--json", "--no-input", "--enable-commands", "calendar.events", "calendar", "events", "--today"] } }]
+```
+
+Read a specific calendar event after an events list returns an id:
+
+```json
+[{ "tool": "os.shell.run", "args": { "cmd": "gog", "args": ["--json", "--no-input", "--enable-commands", "calendar.event", "calendar", "event", "<eventId>"] } }]
 ```
 
 Search Drive metadata:
