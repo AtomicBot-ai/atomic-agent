@@ -20,7 +20,9 @@
 
 It is built for the OpenClaw / Hermes / OpenCUA class of operator agents, but tuned for local inference: `llama.cpp`, KV-cache reuse, grammar-constrained tool calls, small prompt tails, and inspectable state on your machine.
 
-**Active development:** APIs, commands, config, and behavior are still moving. Pin a release if you need a stable integration point.
+**Developer Preview / Active Development:** APIs, commands, config, and behavior are still moving. Expect sharp edges, and pin a release if you need a stable integration point.
+
+**Platform availability:** current releases are available for macOS. Linux and Windows builds are coming soon.
 
 ## Why Enthusiasts Care
 
