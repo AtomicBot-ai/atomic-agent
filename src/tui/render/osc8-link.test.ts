@@ -5,7 +5,7 @@ describe("wrapOsc8", () => {
   it("wraps text in OSC 8 open/close escapes with the url", () => {
     const wrapped = wrapOsc8("cursor.com", "https://cursor.com");
     expect(wrapped).toBe(
-      `${OSC8_CONSTANTS.open}https://cursor.com${OSC8_CONSTANTS.bel}cursor.com${OSC8_CONSTANTS.close}`,
+      `${OSC8_CONSTANTS.open}https://cursor.com${OSC8_CONSTANTS.terminator}cursor.com${OSC8_CONSTANTS.close}`,
     );
   });
 

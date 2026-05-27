@@ -136,6 +136,22 @@ describe("conversation-turn helpers", () => {
     expect(rendered).not.toContain("[rendering-truncated");
   });
 
+  it("gives fresh gog shell results a larger render budget", () => {
+    const body = "x".repeat(8_000);
+    const summary = `$ gog --json --no-input gmail search is:unread\n${body}`;
+    const rendered = renderTurnForPrompt(
+      toolResultTurn({
+        tool: "os.shell.run",
+        status: "ok",
+        summary,
+        at: 7,
+      }),
+      { inCurrentMacroTurn: true },
+    );
+    expect(rendered).toContain(body);
+    expect(rendered).not.toContain("[rendering-truncated");
+  });
+
   it("caps historical os.http.request results to ~400 chars", () => {
     const big = "x".repeat(10_000);
     const rendered = renderTurnForPrompt(

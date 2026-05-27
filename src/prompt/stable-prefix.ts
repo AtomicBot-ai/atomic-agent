@@ -10,8 +10,16 @@ export type ToolTier = "frequent" | "rare";
 export interface ToolDescriptor {
   name: string;
   summary: string;
+  /**
+   * Human-readable args sketch rendered into the stable prefix's
+   * `### tools` section and consumed by the GBNF + parser path. Stays
+   * authoritative for prompt rendering even when `argsJsonSchema` is
+   * also populated — the LLM reads it as part of the prompt.
+   */
   argsSchema: string;
-  /** Defaults to `frequent` when omitted. */
+  /**
+   * Defaults to `frequent` when omitted.
+   */
   tier?: ToolTier;
   /**
    * Optional few-shot argument examples rendered under the tool in the
@@ -20,6 +28,20 @@ export interface ToolDescriptor {
    * they live in the stable prefix and cost tokens on every turn.
    */
   examples?: readonly string[];
+  /**
+   * Optional structured JSON Schema for the tool's `args` object. Used
+   * exclusively by the cloud `native_tools` transport (OpenAI / OpenRouter
+   * `tool_calls`) to constrain the model's argument shape. When omitted
+   * the OpenAI adapter falls back to `{ type: "object",
+   * additionalProperties: true }` — i.e. anything goes, which is what we
+   * shipped before Memory-v2 phase 7b. Local llama-server with GBNF does
+   * **not** consume this field; the grammar there already constrains the
+   * shape and the prompt-side `argsSchema` text is what the model reads.
+   *
+   * For MCP-namespaced tools this field carries the server's
+   * `inputSchema` verbatim (see `mcp-descriptor-builder.ts`).
+   */
+  argsJsonSchema?: Record<string, unknown>;
 }
 
 export interface CapabilitiesSummary {

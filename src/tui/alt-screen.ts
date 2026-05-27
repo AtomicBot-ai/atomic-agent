@@ -12,6 +12,8 @@ import type { Writable } from "node:stream";
 
 const ENTER_ALT_SCREEN = "\u001B[?1049h";
 const LEAVE_ALT_SCREEN = "\u001B[?1049l";
+const ENABLE_ALT_SCROLL = "\u001B[?1007h";
+const DISABLE_ALT_SCROLL = "\u001B[?1007l";
 const HIDE_CURSOR = "\u001B[?25l";
 const SHOW_CURSOR = "\u001B[?25h";
 
@@ -39,12 +41,17 @@ export function enterAltScreen(options: AltScreenOptions = {}): AltScreenControl
     return { restore: () => {} };
   }
   stdout.write(ENTER_ALT_SCREEN);
+  // Let terminals that support xterm alternate-scroll turn the wheel
+  // into cursor-key input without enabling mouse reporting. Native text
+  // selection and OSC8 hyperlink clicks remain owned by the terminal.
+  stdout.write(ENABLE_ALT_SCROLL);
   if (hideCursor) stdout.write(HIDE_CURSOR);
   let restored = false;
   const restore = (): void => {
     if (restored) return;
     restored = true;
     if (hideCursor) stdout.write(SHOW_CURSOR);
+    stdout.write(DISABLE_ALT_SCROLL);
     stdout.write(LEAVE_ALT_SCREEN);
   };
   // Last-chance cleanup if the process dies without a clean teardown —

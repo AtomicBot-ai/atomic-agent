@@ -9,8 +9,8 @@ interface Osc8LinkProps {
 }
 
 const OSC8_OPEN = "\u001b]8;;";
-const OSC8_CLOSE = "\u001b]8;;\u0007";
-const BEL = "\u0007";
+const OSC8_TERMINATOR = "\u001b\\";
+const OSC8_CLOSE = `\u001b]8;;${OSC8_TERMINATOR}`;
 
 /**
  * Wraps text with ANSI OSC 8 escape sequences so terminals that support
@@ -31,11 +31,11 @@ export function Osc8Link({ url, label }: Osc8LinkProps): ReactElement {
 /** Pure helper exposed for tests: wrap any string in an OSC 8 hyperlink. */
 export function wrapOsc8(text: string, url: string): string {
   if (!url) return text;
-  return `${OSC8_OPEN}${url}${BEL}${text}${OSC8_CLOSE}`;
+  return `${OSC8_OPEN}${url}${OSC8_TERMINATOR}${text}${OSC8_CLOSE}`;
 }
 
 export const OSC8_CONSTANTS = {
   open: OSC8_OPEN,
   close: OSC8_CLOSE,
-  bel: BEL,
+  terminator: OSC8_TERMINATOR,
 } as const;

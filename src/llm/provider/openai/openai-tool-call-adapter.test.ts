@@ -49,6 +49,54 @@ describe("OpenAiToolCallAdapter", () => {
     expect(names).toContain("finish");
   });
 
+  it("propagates argsJsonSchema verbatim into function.parameters when present", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        cmd: { type: "string" },
+        args: { type: "array", items: { type: "string" } },
+      },
+      required: ["cmd", "args"],
+      additionalProperties: false,
+    } as const;
+    const tools = descriptorsToOpenAiTools([
+      {
+        name: "os.shell.run",
+        tier: "frequent",
+        summary: "shell",
+        argsSchema: "{ cmd, args }",
+        argsJsonSchema: schema as Record<string, unknown>,
+      },
+    ]);
+    const shell = tools.find(
+      (t) => (t as { function: { name: string } }).function.name === "os__shell__run",
+    ) as
+      | { function: { parameters: Record<string, unknown> } }
+      | undefined;
+    expect(shell?.function.parameters).toEqual(schema);
+  });
+
+  it("falls back to an open object schema when argsJsonSchema is absent", () => {
+    const tools = descriptorsToOpenAiTools([
+      {
+        name: "custom.tool",
+        tier: "frequent",
+        summary: "no schema",
+        argsSchema: "{ anything: any }",
+      },
+    ]);
+    const custom = tools.find(
+      (t) => (t as { function: { name: string } }).function.name === "custom__tool",
+    ) as
+      | { function: { parameters: Record<string, unknown> } }
+      | undefined;
+    expect(custom?.function.parameters).toEqual({
+      type: "object",
+      properties: {},
+      additionalProperties: true,
+    });
+  });
+
   it("marks reply.text as required in the OpenAI tool schema", () => {
     const tools = descriptorsToOpenAiTools([]);
     const reply = tools.find(

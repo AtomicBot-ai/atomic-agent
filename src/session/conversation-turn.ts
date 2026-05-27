@@ -104,6 +104,7 @@ export function assistantReplyTurn(
  * a short code file and matches the `maxTailLines` budget most tools use.
  */
 const TOOL_RESULT_RENDER_CAP_CHARS = 4000;
+const GOG_TOOL_RESULT_RENDER_CAP_CHARS = 16_000;
 
 /**
  * Tools whose `tool_result.summary` is rendered **uncapped** into
@@ -169,11 +170,25 @@ function renderToolResultBody(
   turn: Extract<ConversationTurn, { kind: "tool_result" }>,
   options: RenderTurnOptions,
 ): string {
+  if (isFreshGogShellResult(turn, options)) {
+    return capSummary(turn.summary, GOG_TOOL_RESULT_RENDER_CAP_CHARS);
+  }
   if (TOOLS_FULL_BODY_WHEN_FRESH.has(turn.tool)) {
     if (options.inCurrentMacroTurn === true) return turn.summary;
     return capSummary(turn.summary, TOOL_RESULT_HISTORY_CAP_CHARS);
   }
   return capSummary(turn.summary, TOOL_RESULT_RENDER_CAP_CHARS);
+}
+
+function isFreshGogShellResult(
+  turn: Extract<ConversationTurn, { kind: "tool_result" }>,
+  options: RenderTurnOptions,
+): boolean {
+  return (
+    options.inCurrentMacroTurn === true &&
+    turn.tool === "os.shell.run" &&
+    turn.summary.includes("$ gog ")
+  );
 }
 
 function capSummary(summary: string, capChars: number): string {

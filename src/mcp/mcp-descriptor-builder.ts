@@ -47,6 +47,9 @@ export function buildMcpToolDescriptor(meta: McpToolMeta): ToolDescriptor {
     summary: `[mcp:${meta.server}] ${summaryBody}`,
     argsSchema: renderArgsSchema(meta.inputSchema),
     tier: "frequent",
+    ...(meta.inputSchema
+      ? { argsJsonSchema: meta.inputSchema as Record<string, unknown> }
+      : {}),
   };
 }
 

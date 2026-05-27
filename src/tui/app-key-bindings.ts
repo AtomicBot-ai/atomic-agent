@@ -13,6 +13,7 @@ import type { TuiState } from "./tui-state.js";
  * value is harmless on short chats and feels right on long ones.
  */
 const CHAT_PAGE_DELTA = 8;
+const CHAT_WHEEL_ARROW_DELTA = 2;
 
 export interface AppKeyCallbacks {
   onApprovalDecision(approvalId: string, approved: boolean): void;
@@ -90,6 +91,13 @@ export function handleAppKey(
     !state.slashPaletteOpen &&
     !state.pendingApproval
   ) {
+    if (shouldTreatArrowAsChatScroll(input, key, state)) {
+      dispatch({
+        type: "chat_scrolled",
+        delta: key.upArrow ? CHAT_WHEEL_ARROW_DELTA : -CHAT_WHEEL_ARROW_DELTA,
+      });
+      return true;
+    }
     if (key.pageUp) {
       dispatch({ type: "chat_scrolled", delta: CHAT_PAGE_DELTA });
       return true;
@@ -214,6 +222,20 @@ export function handleAppKey(
     return true;
   }
   return false;
+}
+
+function shouldTreatArrowAsChatScroll(
+  input: string,
+  key: Key,
+  state: TuiState,
+): boolean {
+  if (!key.upArrow && !key.downArrow) return false;
+  if (input.length > 0) return false;
+  if (state.chatFocus !== "editor") return false;
+  if (state.sessionPickerOpen) return false;
+  if (state.inputValue.length > 0) return false;
+  if (state.inputHistoryCursor !== null) return false;
+  return true;
 }
 
 /**

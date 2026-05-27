@@ -21,6 +21,8 @@ function makeStdout(isTty: boolean): FakeStdout {
 
 const ENTER = "\u001B[?1049h";
 const LEAVE = "\u001B[?1049l";
+const ENABLE_ALT_SCROLL = "\u001B[?1007h";
+const DISABLE_ALT_SCROLL = "\u001B[?1007l";
 const HIDE = "\u001B[?25l";
 const SHOW = "\u001B[?25h";
 
@@ -28,7 +30,7 @@ describe("enterAltScreen", () => {
   it("writes the enter + hide-cursor sequences on a TTY", () => {
     const stdout = makeStdout(true);
     enterAltScreen({ stdout: stdout as unknown as NodeJS.WriteStream });
-    expect(stdout.writes).toEqual([ENTER, HIDE]);
+    expect(stdout.writes).toEqual([ENTER, ENABLE_ALT_SCROLL, HIDE]);
   });
 
   it("writes the leave + show-cursor sequences on restore", () => {
@@ -38,7 +40,7 @@ describe("enterAltScreen", () => {
     });
     stdout.writes.length = 0;
     controller.restore();
-    expect(stdout.writes).toEqual([SHOW, LEAVE]);
+    expect(stdout.writes).toEqual([SHOW, DISABLE_ALT_SCROLL, LEAVE]);
   });
 
   it("is idempotent — subsequent restores do nothing", () => {
@@ -67,9 +69,9 @@ describe("enterAltScreen", () => {
       stdout: stdout as unknown as NodeJS.WriteStream,
       hideCursor: false,
     });
-    expect(stdout.writes).toEqual([ENTER]);
+    expect(stdout.writes).toEqual([ENTER, ENABLE_ALT_SCROLL]);
     stdout.writes.length = 0;
     controller.restore();
-    expect(stdout.writes).toEqual([LEAVE]);
+    expect(stdout.writes).toEqual([DISABLE_ALT_SCROLL, LEAVE]);
   });
 });

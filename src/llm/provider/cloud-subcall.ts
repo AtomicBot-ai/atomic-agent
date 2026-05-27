@@ -3,7 +3,21 @@ import type { ToolCallTransport } from "./completion-types.js";
 
 /**
  * Build a cloud sub-call completion request with a single synthetic
- * `emit_*` function and `tool_choice: required`.
+ * `emit_*` function and `tool_choice: "auto"`.
+ *
+ * The legacy contract pinned `tool_choice` to the explicit `{ type:
+ * "function", function: { name } }` object form so the model would be
+ * forced to call that exact tool. Production deployments against
+ * Qwen-thinking via OpenRouter reject the object form (and the equivalent
+ * `"required"` literal) with `400 InvalidParameter` — Alibaba's gate does
+ * not allow forcing tool_choice while the model is in thinking mode.
+ *
+ * With `"auto"` the model still only sees one tool, so picking it is
+ * effectively the only useful choice. When a thinking model decides to
+ * answer in plain text instead, every sub-call's parser already falls
+ * back from `tool_calls[0].arguments` to `completion.content`
+ * (`extractCloudSubcallText` in `reflection-runner.ts` is the canonical
+ * example) so the sub-call still extracts useful output.
  */
 export function buildCloudSubcallRequest(params: {
   prompt: string;
@@ -27,10 +41,7 @@ export function buildCloudSubcallRequest(params: {
         },
       },
     ],
-    toolChoice: {
-      type: "function",
-      function: { name: params.emitFunctionName },
-    },
+    toolChoice: "auto",
     parallelToolCalls: false,
   };
 }

@@ -136,7 +136,7 @@ describe("OpenRouterProvider", () => {
           },
         },
       ],
-      toolChoice: "required",
+      toolChoice: "auto",
       maxTokens: 16,
       temperature: 0,
     });
@@ -153,7 +153,7 @@ describe("OpenRouterProvider", () => {
 
     expect(fetchImpl).toHaveBeenCalledOnce();
     expect(bodies[0]?.stream).toBe(true);
-    expect(bodies[0]?.tool_choice).toBe("required");
+    expect(bodies[0]?.tool_choice).toBe("auto");
     expect(deltas.join("")).toBe("hello");
     expect(final?.modelId).toBe("openai/gpt-5.5");
     expect(final?.finishReason).toBe("tool_calls");
