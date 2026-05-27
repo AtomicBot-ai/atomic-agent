@@ -46,6 +46,7 @@ export interface LocalModelRow {
 }
 
 export interface LocalModelsPullState {
+  kind: "chat" | "embedding" | "backend";
   modelId: LocalModelId | EmbeddingModelId | "_backend";
   label: string;
   percent: number;
@@ -119,6 +120,7 @@ export interface LocalModelsPanelState {
   configMode: "external" | "managed";
   activeModelId: LocalModelId | null;
   pull: LocalModelsPullState | null;
+  embeddingPull: LocalModelsPullState | null;
   lastRefreshedAt: number | null;
   loading: boolean;
   errorLine: string | null;
@@ -210,6 +212,7 @@ export function createInitialLocalModelsPanelState(): LocalModelsPanelState {
     configMode: "external",
     activeModelId: null,
     pull: null,
+    embeddingPull: null,
     lastRefreshedAt: null,
     loading: false,
     errorLine: null,

@@ -28,4 +28,20 @@ describe("buildProviderEntryFromWizard", () => {
     expect(built.activateEmbeddingProviderId).toBe("local-llama");
     expect(built.useLocalEmbedding).toBe(true);
   });
+
+  it("builds OpenAI-compatible entry with API root base URL", () => {
+    const built = buildProviderEntryFromWizard({
+      kind: "openai-compatible",
+      chatModelId: "openrouter/auto",
+      embeddingChoiceId: LOCAL_EMBEDDING_CHOICE_ID,
+      customChatModel: "gpt-5.4-mini",
+    });
+
+    expect(built.entry).toMatchObject({
+      id: "openai-compatible",
+      kind: "openai-compatible",
+      baseUrl: "https://api.openai.com",
+      defaultChatModel: "gpt-5.4-mini",
+    });
+  });
 });

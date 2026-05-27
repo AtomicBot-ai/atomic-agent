@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getConfig, resetConfigCache } from "../../config/index.js";
 import {
+  getEmbeddingModelDef,
   getLocalModelDef,
   resolveBackendDir,
   resolveModelFilePath,
@@ -136,6 +137,119 @@ describe("LocalModelsOrchestrator", () => {
     expect(existsSync(firstPath)).toBe(false);
     expect(existsSync(`${firstPath}.tmp`)).toBe(false);
     expect(existsSync(secondPath)).toBe(true);
+  });
+
+  it("downloads a missing model when setActive selects it", async () => {
+    const actions: EmittedAction[] = [];
+    const bus = {
+      emit(action: unknown) {
+        actions.push(action as EmittedAction);
+      },
+    };
+    const orchestrator = new LocalModelsOrchestrator(bus);
+    vi.spyOn(orchestrator, "refresh").mockResolvedValue();
+    const startDaemon = vi.spyOn(orchestrator, "startDaemon").mockResolvedValue(true);
+    stubBackendInstalled(getConfig().paths.localModelsDataDir);
+    globalThis.fetch = vi.fn(async () =>
+      new Response(Buffer.from("gguf"), {
+        status: 200,
+        headers: { "content-length": "4" },
+      }),
+    ) as typeof fetch;
+
+    await orchestrator.setActive("qwen-3.5-4b");
+
+    expect(startedPulls(actions)[0]).toBe("qwen-3.5-4b");
+    expect(actions.some((action) => action.type === "local_models_pull_finished")).toBe(
+      true,
+    );
+    expect(startDaemon).toHaveBeenCalledOnce();
+    const dataDir = getConfig().paths.localModelsDataDir;
+    const def = getLocalModelDef("qwen-3.5-4b");
+    expect(existsSync(resolveModelFilePath(dataDir, def.id, def.filename))).toBe(
+      true,
+    );
+  });
+
+  it("keeps chat and embedding downloads running independently", async () => {
+    const actions: EmittedAction[] = [];
+    const bus = {
+      emit(action: unknown) {
+        actions.push(action as EmittedAction);
+      },
+    };
+    const orchestrator = new LocalModelsOrchestrator(bus);
+    vi.spyOn(orchestrator, "refresh").mockResolvedValue();
+    const startDaemon = vi.spyOn(orchestrator, "startDaemon").mockResolvedValue();
+    const startEmbeddingPairing = vi
+      .spyOn(orchestrator, "startEmbeddingPairing")
+      .mockResolvedValue();
+    stubBackendInstalled(getConfig().paths.localModelsDataDir);
+
+    let fetchCount = 0;
+    let releaseChatBody: (() => void) | null = null;
+    globalThis.fetch = vi.fn(async () => {
+      if (fetchCount === 0) {
+        fetchCount += 1;
+        let chunkIndex = 0;
+        const slowBody = new ReadableStream({
+          async pull(controller) {
+            if (chunkIndex === 0) {
+              chunkIndex += 1;
+              controller.enqueue(Buffer.from("a"));
+              return;
+            }
+            await new Promise<void>((resolve) => {
+              releaseChatBody = resolve;
+            });
+            controller.enqueue(Buffer.from("b"));
+            controller.close();
+          },
+        });
+        return new Response(slowBody, {
+          status: 200,
+          headers: { "content-length": "2" },
+        });
+      }
+
+      fetchCount += 1;
+      return new Response(Buffer.from("ee"), {
+        status: 200,
+        headers: { "content-length": "2" },
+      });
+    }) as typeof fetch;
+
+    const chatPull = orchestrator.pullModel("qwen-3.5-4b");
+    await waitFor(() => startedPulls(actions).length === 1);
+    await waitFor(() => releaseChatBody !== null);
+
+    const embeddingPull = orchestrator.pullEmbeddingModel("nomic-embed-text-v1.5");
+    await waitFor(() => startedPulls(actions).length === 2);
+    releaseChatBody?.();
+
+    await Promise.all([chatPull, embeddingPull]);
+
+    expect(startedPulls(actions)).toEqual([
+      "qwen-3.5-4b",
+      "nomic-embed-text-v1.5",
+      // Qwen 3.5 4B is vision-capable, so the chat pull continues
+      // into its mmproj phase after the GGUF phase completes.
+      "qwen-3.5-4b",
+    ]);
+    expect(startDaemon).toHaveBeenCalledTimes(2);
+    expect(startEmbeddingPairing).not.toHaveBeenCalled();
+    expect(actions.filter((action) => action.type === "local_models_pull_failed")).toHaveLength(0);
+    expect(actions.filter((action) => action.type === "local_models_pull_finished")).toHaveLength(2);
+
+    const dataDir = getConfig().paths.localModelsDataDir;
+    const chatDef = getLocalModelDef("qwen-3.5-4b");
+    const embeddingDef = getEmbeddingModelDef("nomic-embed-text-v1.5");
+    expect(existsSync(resolveModelFilePath(dataDir, chatDef.id, chatDef.filename))).toBe(
+      true,
+    );
+    expect(
+      existsSync(resolveModelFilePath(dataDir, embeddingDef.id, embeddingDef.filename)),
+    ).toBe(true);
   });
 });
 

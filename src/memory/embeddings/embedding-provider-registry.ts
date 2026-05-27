@@ -60,7 +60,7 @@ export function resolveEmbeddingLlmConfig(
         id: "local-llama-embed",
         kind: "llama-server",
         baseUrl: config.localModels.embeddings.enabled
-          ? `http://127.0.0.1:${config.localModels.embeddings.port}`
+          ? config.localModels.embeddings.url
           : config.localModels.url,
       },
     ],

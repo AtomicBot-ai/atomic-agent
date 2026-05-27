@@ -162,9 +162,25 @@ function ramFitLabel(fit: RamFit, def: LocalModelDef): string {
   }
 }
 
-function DownloadBanner({ panel }: { panel: LocalModelsPanelState }): ReactElement | null {
-  const pull = panel.pull;
-  if (!pull) return null;
+function DownloadBanners({ panel }: { panel: LocalModelsPanelState }): ReactElement | null {
+  const pulls = [panel.pull, panel.embeddingPull].filter(
+    (pull): pull is NonNullable<typeof pull> => pull !== null,
+  );
+  if (pulls.length === 0) return null;
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      {pulls.map((pull) => (
+        <DownloadBanner key={`${pull.kind}:${pull.modelId}`} pull={pull} />
+      ))}
+    </Box>
+  );
+}
+
+function DownloadBanner({
+  pull,
+}: {
+  pull: NonNullable<LocalModelsPanelState["pull"]>;
+}): ReactElement {
   const w = 36;
   const bar = renderProgressBar(pull.percent, w);
   const total = pull.totalBytes > 0 ? pull.totalBytes : null;
@@ -174,7 +190,7 @@ function DownloadBanner({ panel }: { panel: LocalModelsPanelState }): ReactEleme
   const isModel = pull.modelId !== "_backend";
   const modelLine = isModel ? `model: ${pull.modelId}` : "target: backend zip";
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Box flexDirection="column">
       <Text bold color={theme.colors.accentSoft}>
         downloading — {pull.label}
       </Text>
@@ -362,7 +378,7 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
         {renderEmbeddingRows(panel)}
       </Box>
       <Box marginTop={1} flexDirection="column">
-        <DownloadBanner panel={panel} />
+        <DownloadBanners panel={panel} />
         {panel.errorLine ? (
           <Text color="red">{panel.errorLine}</Text>
         ) : null}
@@ -476,9 +492,9 @@ function renderEmbeddingRows(panel: LocalModelsPanelState): ReactElement {
     <Box flexDirection="column">
       {panel.embeddingRows.map((r, i) => {
         const downloading =
-          panel.pull !== null && panel.pull.modelId === r.id;
+          panel.embeddingPull !== null && panel.embeddingPull.modelId === r.id;
         const mini = downloading
-          ? renderProgressBar(panel.pull!.percent, 8)
+          ? renderProgressBar(panel.embeddingPull!.percent, 8)
           : "";
         const isCursor = embOffset + i === panel.cursor;
         const rowColor = downloading
@@ -504,7 +520,7 @@ function renderEmbeddingRows(panel: LocalModelsPanelState): ReactElement {
             {downloading ? (
               <Text color="yellow">
                 {" "}
-                [{mini}] {panel.pull!.percent}%
+                [{mini}] {panel.embeddingPull!.percent}%
               </Text>
             ) : null}
           </Box>

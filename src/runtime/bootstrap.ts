@@ -91,7 +91,6 @@ import {
 import {
   getEmbeddingModelDef,
   isKnownEmbeddingModelId,
-  probeLlamaHealth,
 } from "../local-llm/index.js";
 import {
   createReflectionRunner,
@@ -670,7 +669,7 @@ export async function createAgentRuntime(
   //   1. Both feature flags on: `memory.embeddings.enabled` AND
   //      `localModels.embeddings.enabled`. Either off ⇒ FTS5-only.
   //   2. A valid embedding model id is configured.
-  //   3. Probe `localModels.embeddings.port` for `/health`. Daemon
+  //   3. Probe `localModels.embeddings.url` for `/health`. Daemon
   //      down ⇒ FTS5-only (logged + counted as `disabled`, not as a
   //      failure — runtime keeps booting).
   //
@@ -688,14 +687,17 @@ export async function createAgentRuntime(
     const embModelDef = getEmbeddingModelDef(
       config.localModels.embeddings.modelId,
     );
-    const embPort = config.localModels.embeddings.port;
-    const probe = await probeLlamaHealth(embPort).catch(
-      () => "down" as const,
-    );
-    if (probe === "ok") {
+    const embUrl = config.localModels.embeddings.url;
+    const probe = await checkLlamaServer({
+      url: embUrl,
+      retries: 0,
+      backoffMs: 0,
+      timeoutMs: 2000,
+    }).catch(() => ({ reachable: false }));
+    if (probe.reachable) {
       try {
         const client = new LlamaEmbeddingClient({
-          url: `http://127.0.0.1:${embPort}`,
+          url: embUrl,
           dim: embModelDef.dim,
           model: embModelDef.id,
         });
@@ -723,7 +725,7 @@ export async function createAgentRuntime(
     } else {
       embeddingHealth = "unreachable";
       process.stderr.write(
-        `memory-v2 phase 1B: embedding daemon at port ${embPort} is ${probe}; ` +
+        `memory-v2 phase 1B: embedding daemon at ${embUrl} is unreachable; ` +
           `hybrid recall disabled, FTS5-only path active.\n`,
       );
     }

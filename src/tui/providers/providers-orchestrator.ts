@@ -9,16 +9,13 @@ import {
   setActiveTextProviderInConfig,
   setProviderDefaultChatModelInConfig,
   setProviderDefaultEmbeddingModelInConfig,
-  upsertLlmProvider,
   removeLlmProvider,
-  writeProviderApiKeyToDotenv,
   wrapLlmConfigError,
 } from "../persist-llm-provider.js";
-import { OPENROUTER_DEFAULT_CHAT_MODEL } from "./providers-model-options.js";
-import { buildProviderEntryFromWizard } from "./providers-wizard-build-entry.js";
 import { refreshOpenRouterChatCatalogFromApi } from "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
 import { isProvidersAction } from "./providers-actions.js";
 import type { ProviderRow } from "./providers-panel-state.js";
+import { saveProviderWizardToConfig } from "./save-provider-wizard.js";
 import type {
   ProvidersWizardKind,
   ProvidersWizardState,
@@ -183,38 +180,7 @@ export class ProvidersOrchestrator {
   async completeWizard(wizard: ProvidersWizardState): Promise<void> {
     this.bus.emit({ type: "providers_wizard_submit_started" });
     try {
-      const kind = wizard.kind;
-      if (!kind) {
-        throw new Error("wizard kind is missing");
-      }
-      if (wizard.apiKeyBuffer.trim().length > 0) {
-        writeProviderApiKeyToDotenv(kind, wizard.apiKeyBuffer);
-      } else {
-        const config = getConfig();
-        const id = wizard.providerId ?? (kind === "openrouter" ? "openrouter" : "openai-compatible");
-        const entry = config.llm?.providers.find((p) => p.id === id);
-        if (!entry || !resolveLlmProviderApiKey(entry)) {
-          throw new Error(
-            "API key is empty — paste a key or set it in .env first",
-          );
-        }
-      }
-
-      const built = buildProviderEntryFromWizard({
-        kind,
-        chatModelId:
-          wizard.selectedChatModelId ?? OPENROUTER_DEFAULT_CHAT_MODEL,
-        embeddingChoiceId:
-          wizard.selectedEmbeddingChoiceId ?? "__local_embedding__",
-        baseUrl: wizard.baseUrlLine,
-        customChatModel: wizard.chatModelLine,
-        customEmbeddingModel: wizard.embeddingModelLine,
-      });
-
-      upsertLlmProvider(built.entry, {
-        activateEmbeddingProviderId: built.activateEmbeddingProviderId,
-      });
-
+      const built = saveProviderWizardToConfig(wizard);
       const exists = this.runtime.providerRegistry
         .listIds()
         .includes(built.entry.id);

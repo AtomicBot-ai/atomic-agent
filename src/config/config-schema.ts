@@ -675,6 +675,8 @@ export interface UserManagedEmbeddingLlmConfig {
   /** `EmbeddingModelId` from the catalog, or `null` when not chosen. */
   modelId: string | null;
   port: number;
+  /** Base URL of the embedding-only llama-server. */
+  url: string;
 }
 
 /**
@@ -1236,6 +1238,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       enabled: false,
       modelId: null,
       port: 19092,
+      url: "http://127.0.0.1:19092",
     },
   },
   log: { level: "info" },
@@ -2151,6 +2154,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
 
   const rawEmbeddings =
     (localModels.embeddings as Record<string, unknown> | undefined) ?? {};
+  const embeddingsPort = parsePositiveInt(
+    rawEmbeddings.port ?? USER_CONFIG_DEFAULTS.localModels.embeddings.port,
+    "localModels.embeddings.port",
+  );
   const embeddingsDaemon: UserManagedEmbeddingLlmConfig = {
     enabled: parseBool(
       rawEmbeddings.enabled ??
@@ -2158,9 +2165,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       "localModels.embeddings.enabled",
     ),
     modelId: resolveEmbeddingModelId(version, rawEmbeddings.modelId),
-    port: parsePositiveInt(
-      rawEmbeddings.port ?? USER_CONFIG_DEFAULTS.localModels.embeddings.port,
-      "localModels.embeddings.port",
+    port: embeddingsPort,
+    url: parseUrl(
+      rawEmbeddings.url ?? `http://127.0.0.1:${embeddingsPort}`,
+      "localModels.embeddings.url",
     ),
   };
 
@@ -2187,6 +2195,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
                 localModelsMode === "managed"
                   ? `http://127.0.0.1:${managed.port}`
                   : localModelsUrl,
+              baseUrl: embeddingsDaemon.url,
             },
           ],
         });

@@ -11,6 +11,7 @@ import {
   normalizeLocalLlmBaseUrl,
   persistUserLocalModelsConfig,
   persistUserLocalLlmUrl,
+  persistUserRemoteLlmUrls,
 } from "./persist-user-local-models-config.js";
 
 describe("normalizeLocalLlmBaseUrl", () => {
@@ -90,10 +91,65 @@ describe("persistUserLocalLlmUrl", () => {
     });
 
     const written = JSON.parse(readFileSync(path, "utf8")) as {
-      llm: { providers: Array<{ id: string; url?: string }> };
+      llm: { providers: Array<{ id: string; url?: string; baseUrl?: string }> };
     };
-    expect(
-      written.llm.providers.find((provider) => provider.id === "local-llama")?.url,
-    ).toBe("http://127.0.0.1:20123");
+    const local = written.llm.providers.find(
+      (provider) => provider.id === "local-llama",
+    );
+    expect(local?.url).toBe("http://127.0.0.1:20123");
+    expect(local?.baseUrl).toBe("http://127.0.0.1:19092");
+  });
+
+  it("persists remote chat and embedding llama.cpp URLs", () => {
+    const path = getUserConfigPath(stateDir);
+    writeUserConfigFileSync(path, USER_CONFIG_DEFAULTS);
+    resetConfigCache();
+
+    persistUserRemoteLlmUrls({
+      chatUrl: "http://10.0.0.10:8080",
+      embeddingUrl: "http://10.0.0.11:19092",
+    });
+
+    const written = JSON.parse(readFileSync(path, "utf8")) as {
+      localModels: {
+        url: string;
+        mode: string;
+        embeddings: { enabled: boolean; modelId: string | null; url: string };
+      };
+      memory: { embeddings: { enabled: boolean } };
+    };
+
+    expect(written.localModels.mode).toBe("external");
+    expect(written.localModels.url).toBe("http://10.0.0.10:8080");
+    expect(written.localModels.embeddings.enabled).toBe(true);
+    expect(written.localModels.embeddings.modelId).toBe("nomic-embed-text-v1.5");
+    expect(written.localModels.embeddings.url).toBe("http://10.0.0.11:19092");
+    expect(written.memory.embeddings.enabled).toBe(true);
+    expect(getConfig().localModels.embeddings.url).toBe("http://10.0.0.11:19092");
+  });
+
+  it("persists remote chat URL without enabling optional embeddings", () => {
+    const path = getUserConfigPath(stateDir);
+    writeUserConfigFileSync(path, USER_CONFIG_DEFAULTS);
+    resetConfigCache();
+
+    persistUserRemoteLlmUrls({
+      chatUrl: "http://10.0.0.10:8080",
+    });
+
+    const written = JSON.parse(readFileSync(path, "utf8")) as {
+      localModels: {
+        url: string;
+        mode: string;
+        embeddings: { enabled: boolean; modelId: string | null };
+      };
+      memory: { embeddings: { enabled: boolean } };
+    };
+
+    expect(written.localModels.mode).toBe("external");
+    expect(written.localModels.url).toBe("http://10.0.0.10:8080");
+    expect(written.localModels.embeddings.enabled).toBe(false);
+    expect(written.localModels.embeddings.modelId).toBeNull();
+    expect(written.memory.embeddings.enabled).toBe(false);
   });
 });

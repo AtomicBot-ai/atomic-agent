@@ -6,6 +6,7 @@ import {
   writeUserConfigFileSync,
 } from "../config/index.js";
 import type { LocalLlmMode, UserConfigFile } from "../config/config-schema.js";
+import { DEFAULT_EMBEDDING_MODEL_ID } from "../local-llm/index.js";
 
 /**
  * Normalise a user-typed local LLM (llama-server) base URL: trim and add
@@ -43,6 +44,8 @@ export function persistUserLocalModelsConfig(partial: {
 }): void {
   const path = getConfig().paths.userConfigFile;
   const prev = ensureUserConfigFileSync(path);
+  const nextEmbeddingPort =
+    partial.embeddings?.port ?? prev.localModels.embeddings.port;
   const nextLocalModels = {
     ...prev.localModels,
     ...(partial.url !== undefined ? { url: partial.url } : {}),
@@ -54,6 +57,10 @@ export function persistUserLocalModelsConfig(partial: {
     embeddings: {
       ...prev.localModels.embeddings,
       ...(partial.embeddings ?? {}),
+      ...(partial.embeddings?.port !== undefined &&
+      partial.embeddings.url === undefined
+        ? { url: `http://127.0.0.1:${nextEmbeddingPort}` }
+        : {}),
     },
   };
   const draft = { ...prev, localModels: nextLocalModels };
@@ -70,18 +77,56 @@ export function persistUserLocalLlmUrl(nextUrl: string): void {
   persistUserLocalModelsConfig({ url: nextUrl, mode: "external" });
 }
 
+export function persistUserRemoteLlmUrls(options: {
+  chatUrl: string;
+  embeddingUrl?: string;
+}): void {
+  const path = getConfig().paths.userConfigFile;
+  const prev = ensureUserConfigFileSync(path);
+  const hasEmbeddingUrl = options.embeddingUrl !== undefined;
+  const draft: UserConfigFile = {
+    ...prev,
+    localModels: {
+      ...prev.localModels,
+      mode: "external",
+      url: options.chatUrl,
+      embeddings: {
+        ...prev.localModels.embeddings,
+        enabled: hasEmbeddingUrl,
+        modelId: hasEmbeddingUrl
+          ? (prev.localModels.embeddings.modelId ?? DEFAULT_EMBEDDING_MODEL_ID)
+          : null,
+        ...(hasEmbeddingUrl ? { url: options.embeddingUrl! } : {}),
+      },
+    },
+    memory: {
+      ...prev.memory,
+      embeddings: {
+        ...prev.memory.embeddings,
+        enabled: hasEmbeddingUrl,
+      },
+    },
+  };
+  const validated = parseUserConfigFile(syncLocalLlamaProviderUrl(draft));
+  writeUserConfigFileSync(path, validated);
+  resetConfigCache();
+}
+
 function syncLocalLlamaProviderUrl(file: UserConfigFile): UserConfigFile {
   if (!file.llm) return file;
   const url =
     file.localModels.mode === "managed"
       ? `http://127.0.0.1:${file.localModels.managed.port}`
       : file.localModels.url;
+  const embeddingUrl = file.localModels.embeddings.url;
   return {
     ...file,
     llm: {
       ...file.llm,
       providers: file.llm.providers.map((provider) =>
-        provider.id === "local-llama" ? { ...provider, url } : provider,
+        provider.id === "local-llama"
+          ? { ...provider, url, baseUrl: embeddingUrl }
+          : provider,
       ),
     },
   };

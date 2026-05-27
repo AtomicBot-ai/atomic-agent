@@ -1,6 +1,7 @@
 import { render } from "ink";
 import React from "react";
 import { getConfig } from "../config/index.js";
+import { resolveLlmProviderApiKey } from "../config/resolve-llm-api-key.js";
 import {
   getLocalModelDef,
   isBackendDownloaded,
@@ -16,7 +17,8 @@ import {
 export type LocalModelsStartupGateResult =
   | "ok"
   | "aborted"
-  | "saved_managed";
+  | "saved_managed"
+  | "saved_cloud";
 
 /**
  * When llama-server is down at TUI startup, run a small Ink wizard so the
@@ -41,6 +43,7 @@ export async function runLocalModelsStartupGateIfNeeded(options: {
   skipWizard: boolean;
 }): Promise<LocalModelsStartupGateResult> {
   if (options.skipWizard) return "ok";
+  if (isCloudTextProviderReady()) return "ok";
   const probe = await checkLlamaServer({ retries: 0, backoffMs: 0 });
   if (probe.reachable) return "ok";
   if (isManagedModeReadyOnDisk()) return "ok";
@@ -65,7 +68,16 @@ export async function runLocalModelsStartupGateIfNeeded(options: {
 
   if (outcome.value === "aborted") return "aborted";
   if (outcome.value === "saved_managed") return "saved_managed";
+  if (outcome.value === "saved_cloud") return "saved_cloud";
   return "ok";
+}
+
+export function isCloudTextProviderReady(): boolean {
+  const cfg = getConfig();
+  const active = cfg.llm?.activeTextProvider;
+  if (!active || active === "local-llama") return false;
+  const entry = cfg.llm?.providers.find((provider) => provider.id === active);
+  return Boolean(entry && resolveLlmProviderApiKey(entry));
 }
 
 /**

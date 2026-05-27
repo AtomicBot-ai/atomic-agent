@@ -92,6 +92,17 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
       };
     case "local_models_pull_started":
       // Keep list visible so the active row can show a live download indicator.
+      if (action.pull.kind === "embedding") {
+        return {
+          ...state,
+          localModelsPanel: {
+            ...p,
+            mode: "list",
+            embeddingPull: action.pull,
+            errorLine: null,
+          },
+        };
+      }
       return {
         ...state,
         localModelsPanel: {
@@ -102,6 +113,21 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
         },
       };
     case "local_models_pull_progress":
+      if (action.kind === "embedding") {
+        if (!p.embeddingPull) return state;
+        return {
+          ...state,
+          localModelsPanel: {
+            ...p,
+            embeddingPull: {
+              ...p.embeddingPull,
+              percent: action.percent,
+              transferredBytes: action.transferredBytes,
+              totalBytes: action.totalBytes,
+            },
+          },
+        };
+      }
       if (!p.pull) return state;
       return {
         ...state,
@@ -116,11 +142,34 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
         },
       };
     case "local_models_pull_finished":
+      if (action.kind === "embedding") {
+        return {
+          ...state,
+          localModelsPanel: {
+            ...p,
+            mode: "list",
+            embeddingPull: null,
+            loading: false,
+          },
+        };
+      }
       return {
         ...state,
         localModelsPanel: { ...p, mode: "list", pull: null, loading: false },
       };
     case "local_models_pull_failed":
+      if (action.kind === "embedding") {
+        return {
+          ...state,
+          localModelsPanel: {
+            ...p,
+            mode: "list",
+            embeddingPull: null,
+            loading: false,
+            errorLine: action.error,
+          },
+        };
+      }
       return {
         ...state,
         localModelsPanel: {

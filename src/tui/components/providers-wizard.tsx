@@ -108,7 +108,7 @@ export function ProvidersWizard(props: {
     const envHint =
       w.kind === "openrouter"
         ? "OPENROUTER_API_KEY"
-        : "OPENAI_API_KEY";
+        : "OPENAI_COMPAT_API_KEY";
     return (
       <Box
         flexDirection="column"

@@ -46,12 +46,17 @@ export type LocalModelsAction =
   | { type: "local_models_pull_started"; pull: LocalModelsPullState }
   | {
       type: "local_models_pull_progress";
+      kind?: LocalModelsPullState["kind"];
       percent: number;
       transferredBytes: number;
       totalBytes: number;
     }
-  | { type: "local_models_pull_finished" }
-  | { type: "local_models_pull_failed"; error: string }
+  | { type: "local_models_pull_finished"; kind?: LocalModelsPullState["kind"] }
+  | {
+      type: "local_models_pull_failed";
+      kind?: LocalModelsPullState["kind"];
+      error: string;
+    }
   | { type: "local_models_backend_check_started" }
   | {
       type: "local_models_backend_check_loaded";

@@ -12,7 +12,7 @@ export const LOCAL_EMBEDDING_CHOICE_ID = "__local_embedding__";
 
 export const OPENROUTER_DEFAULT_CHAT_MODEL = "openrouter/auto";
 
-export const OPENAI_COMPAT_DEFAULT_BASE_URL = "https://api.openai.com/v1";
+export const OPENAI_COMPAT_DEFAULT_BASE_URL = "https://api.openai.com";
 export const OPENAI_COMPAT_DEFAULT_CHAT_MODEL = "gpt-5.4-mini";
 
 export function listOpenRouterChatModels(): readonly ProviderModelOption[] {

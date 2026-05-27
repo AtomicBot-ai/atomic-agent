@@ -35,6 +35,7 @@ import {
   stopChatAndEmbeddingDaemons,
   stopEmbeddingDaemon,
   type EmbeddingDaemonStartOptions,
+  type EmbeddingModelDef,
   type EmbeddingModelId,
   type LocalModelDef,
   type LocalModelId,
@@ -78,12 +79,11 @@ export class LocalModelsOrchestrator {
   /** True while a daemon the TUI owns is running; used by `shutdown()`. */
   private daemonSupervised = false;
   /**
-   * In-flight model pull cancellation handle. When the user triggers a
-   * second `pullModel(...)` before the first has finished, the orchestrator
-   * aborts the running download (tmp file is cleaned up by the file
-   * writer's try/finally) and starts the new one.
+   * Chat and embedding pulls are independent channels: a new pull only
+   * aborts another pull of the same kind.
    */
-  private activePullAbort: AbortController | null = null;
+  private activeModelPullAbort: AbortController | null = null;
+  private activeEmbeddingPullAbort: AbortController | null = null;
 
   constructor(
     private readonly bus: TuiEventBus & { emit(action: unknown): void },
@@ -243,11 +243,11 @@ export class LocalModelsOrchestrator {
       if (!isBackendDownloaded(dataDir)) return;
     }
 
-    if (this.activePullAbort) {
-      this.activePullAbort.abort();
+    if (this.activeModelPullAbort) {
+      this.activeModelPullAbort.abort();
     }
     const controller = new AbortController();
-    this.activePullAbort = controller;
+    this.activeModelPullAbort = controller;
 
     try {
       const wantGguf = mode !== "mmproj-only";
@@ -263,8 +263,8 @@ export class LocalModelsOrchestrator {
         if (controller.signal.aborted) return;
       }
 
-      this.activePullAbort = null;
-      this.bus.emit({ type: "local_models_pull_finished" });
+      this.activeModelPullAbort = null;
+      this.bus.emit({ type: "local_models_pull_finished", kind: "chat" });
 
       if (mode === "mmproj-only") {
         await this.refresh();
@@ -281,10 +281,9 @@ export class LocalModelsOrchestrator {
 
       // Memory-v2 phase 1B onboarding: if the operator has just
       // pulled their first chat model and there is no embedding on
-      // disk yet, defer the daemon start and show a y/n prompt
-      // offering to download the default embedding model in the same
-      // flow. `resolveEmbeddingOnboarding` then continues the chain
-      // (pull embedding ⇒ start paired daemon ⇒ route to chat).
+      // disk yet, show a y/n prompt offering to download the default
+      // embedding model in the same flow. The chat daemon still starts
+      // immediately so the downloaded model is usable right away.
       if (this.shouldOfferEmbeddingOnboarding()) {
         const embDef = getEmbeddingModelDef(DEFAULT_EMBEDDING_MODEL_ID);
         this.bus.emit({
@@ -297,6 +296,7 @@ export class LocalModelsOrchestrator {
           type: "runtime_info",
           line: `local-llm: ${def.name} installed → offering embedding model for hybrid recall`,
         });
+        await this.startChatDaemonAfterPull(def);
         return;
       }
 
@@ -304,14 +304,16 @@ export class LocalModelsOrchestrator {
         type: "runtime_info",
         line: `local-llm: ${def.name} installed → starting daemon…`,
       });
-      if (await this.startDaemon()) {
+      if (await this.startChatDaemonAfterPull(def)) {
         this.bus.emit({ type: "ui_mode_set", mode: "chat" });
       }
     } catch (e) {
       if (isAbortError(e)) return;
       const msg = e instanceof Error ? e.message : String(e);
-      if (this.activePullAbort === controller) this.activePullAbort = null;
-      this.bus.emit({ type: "local_models_pull_failed", error: msg });
+      if (this.activeModelPullAbort === controller) {
+        this.activeModelPullAbort = null;
+      }
+      this.bus.emit({ type: "local_models_pull_failed", kind: "chat", error: msg });
     }
   }
 
@@ -354,6 +356,7 @@ export class LocalModelsOrchestrator {
         line: `local-llm: pulling default embedding model (${DEFAULT_EMBEDDING_MODEL_ID})…`,
       });
       await this.pullEmbeddingModel(DEFAULT_EMBEDDING_MODEL_ID);
+      return;
     } else {
       persistEmbeddingHybridRecall({ enabled: false });
       this.bus.emit({
@@ -361,6 +364,45 @@ export class LocalModelsOrchestrator {
         line: "local-llm: embedding model skipped — hybrid recall stays off (can be enabled later from this panel)",
       });
     }
+    if (await this.ensureChatDaemonRunningAfterOnboarding()) {
+      this.bus.emit({ type: "ui_mode_set", mode: "chat" });
+    }
+  }
+
+  private async ensureChatDaemonRunningAfterOnboarding(): Promise<boolean> {
+    const cfg = getConfig();
+    const dataDir = cfg.paths.localModelsDataDir;
+    const chat = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
+    if (chat.running) return true;
+    return this.startDaemon();
+  }
+
+  private async startChatDaemonAfterPull(def: LocalModelDef): Promise<boolean> {
+    const cfg = getConfig();
+    const dataDir = cfg.paths.localModelsDataDir;
+    const running = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
+    if (running.running) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: restarting daemon with ${def.name}…`,
+      });
+      await this.stopProcessesForRestart({ silent: true });
+    }
+    return this.startDaemon();
+  }
+
+  private async startEmbeddingDaemonAfterPull(def: EmbeddingModelDef): Promise<void> {
+    const cfg = getConfig();
+    const dataDir = cfg.paths.localModelsDataDir;
+    const chat = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
+    if (chat.running) {
+      await this.startEmbeddingPairing();
+      return;
+    }
+    this.bus.emit({
+      type: "runtime_info",
+      line: `local-llm: ${def.name} ready → starting chat+embedding daemons…`,
+    });
     if (await this.startDaemon()) {
       this.bus.emit({ type: "ui_mode_set", mode: "chat" });
     }
@@ -381,6 +423,7 @@ export class LocalModelsOrchestrator {
     this.bus.emit({
       type: "local_models_pull_started",
       pull: {
+        kind: "chat",
         modelId: def.id,
         label: `${def.name} (gguf)`,
         percent: 0,
@@ -394,6 +437,7 @@ export class LocalModelsOrchestrator {
       onProgress: (percent, transferred, total) => {
         this.bus.emit({
           type: "local_models_pull_progress",
+          kind: "chat",
           percent,
           transferredBytes: transferred,
           totalBytes: total > 0 ? total : est,
@@ -418,6 +462,7 @@ export class LocalModelsOrchestrator {
     this.bus.emit({
       type: "local_models_pull_started",
       pull: {
+        kind: "chat",
         modelId: def.id,
         label: `${def.name} (mmproj)`,
         percent: 0,
@@ -431,6 +476,7 @@ export class LocalModelsOrchestrator {
       onProgress: (percent, transferred, total) => {
         this.bus.emit({
           type: "local_models_pull_progress",
+          kind: "chat",
           percent,
           transferredBytes: transferred,
           totalBytes: total > 0 ? total : est,
@@ -444,6 +490,7 @@ export class LocalModelsOrchestrator {
     this.bus.emit({
       type: "local_models_pull_started",
       pull: {
+        kind: "backend",
         modelId: "_backend",
         label: "llama.cpp backend",
         percent: 0,
@@ -457,13 +504,14 @@ export class LocalModelsOrchestrator {
         onProgress: (percent, transferred, total) => {
           this.bus.emit({
             type: "local_models_pull_progress",
+            kind: "backend",
             percent,
             transferredBytes: transferred,
             totalBytes: total,
           });
         },
       });
-      this.bus.emit({ type: "local_models_pull_finished" });
+      this.bus.emit({ type: "local_models_pull_finished", kind: "backend" });
       await this.refresh();
     } catch (e) {
       const msg =
@@ -472,7 +520,7 @@ export class LocalModelsOrchestrator {
           : e instanceof Error
             ? e.message
             : String(e);
-      this.bus.emit({ type: "local_models_pull_failed", error: msg });
+      this.bus.emit({ type: "local_models_pull_failed", kind: "backend", error: msg });
     }
   }
 
@@ -492,8 +540,9 @@ export class LocalModelsOrchestrator {
     if (!isModelDownloaded(dataDir, getLocalModelDef(id))) {
       this.bus.emit({
         type: "runtime_info",
-        line: `local-llm: model ${id} not downloaded — press Enter to pull`,
+        line: `local-llm: model ${id} not downloaded — downloading now…`,
       });
+      await this.pullModel(id);
       return;
     }
     const running = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
@@ -939,16 +988,17 @@ export class LocalModelsOrchestrator {
       if (!isBackendDownloaded(dataDir)) return;
     }
 
-    if (this.activePullAbort) {
-      this.activePullAbort.abort();
+    if (this.activeEmbeddingPullAbort) {
+      this.activeEmbeddingPullAbort.abort();
     }
     const controller = new AbortController();
-    this.activePullAbort = controller;
+    this.activeEmbeddingPullAbort = controller;
 
     const est = Math.round(def.fileSizeGb * (1024 * 1024 * 1024));
     this.bus.emit({
       type: "local_models_pull_started",
       pull: {
+        kind: "embedding",
         modelId: def.id,
         label: `${def.name} (embedding)`,
         percent: 0,
@@ -963,26 +1013,33 @@ export class LocalModelsOrchestrator {
         onProgress: (percent, transferred, total) => {
           this.bus.emit({
             type: "local_models_pull_progress",
+            kind: "embedding",
             percent,
             transferredBytes: transferred,
             totalBytes: total > 0 ? total : est,
           });
         },
       });
-      this.activePullAbort = null;
-      this.bus.emit({ type: "local_models_pull_finished" });
+      this.activeEmbeddingPullAbort = null;
+      this.bus.emit({ type: "local_models_pull_finished", kind: "embedding" });
       persistEmbeddingHybridRecall({ enabled: true, modelId: id });
       await this.refresh();
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: embedding model ${def.name} ready`,
       });
-      await this.startEmbeddingPairing();
+      await this.startEmbeddingDaemonAfterPull(def);
     } catch (e) {
       if (isAbortError(e)) return;
       const msg = e instanceof Error ? e.message : String(e);
-      if (this.activePullAbort === controller) this.activePullAbort = null;
-      this.bus.emit({ type: "local_models_pull_failed", error: msg });
+      if (this.activeEmbeddingPullAbort === controller) {
+        this.activeEmbeddingPullAbort = null;
+      }
+      this.bus.emit({
+        type: "local_models_pull_failed",
+        kind: "embedding",
+        error: msg,
+      });
     }
   }
 

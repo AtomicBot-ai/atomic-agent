@@ -4,14 +4,16 @@ import { checkLlamaServer } from "../../llm/llama-server-health.js";
 import {
   normalizeLocalLlmBaseUrl,
   persistUserLocalModelsConfig,
-  persistUserLocalLlmUrl,
+  persistUserRemoteLlmUrls,
 } from "../persist-user-local-models-config.js";
 import { theme } from "../theme/theme.js";
+import { CloudProviderOnboarding } from "./cloud-provider-onboarding.js";
 import { MultiLineEditor } from "./multi-line-editor.js";
 
 export type LocalModelsWizardOutcome =
   | "saved_external"
   | "saved_managed"
+  | "saved_cloud"
   | "skipped"
   | "aborted";
 
@@ -21,24 +23,28 @@ export interface LocalModelsConfigWizardProps {
   onFinished(outcome: LocalModelsWizardOutcome): void;
 }
 
-type WizardPhase = "pick" | "url";
+type WizardPhase = "pick" | "remote-chat-url" | "remote-embedding-url" | "cloud";
 
 interface WizardOption {
   label: string;
-  action: "external" | "managed";
+  action: "cloud" | "external" | "managed";
 }
 
 const PICK_OPTIONS: readonly WizardOption[] = [
-  { label: "Enter external URL (current mode)", action: "external" },
   {
-    label: "Managed mode — pick a model in the Models tab to download",
+    label: "Local models (llama.cpp) — download and run locally",
     action: "managed",
+  },
+  { label: "Cloud models — configure API key and pick a model", action: "cloud" },
+  {
+    label: "Remote llama.cpp — enter an existing llama-server URL",
+    action: "external",
   },
 ];
 
 /**
  * First-run Ink screen when llama-server `/health` is unreachable.
- * Pick external URL flow or switch to managed mode, then exit.
+ * Pick a local, cloud, or remote llama.cpp flow, then exit.
  */
 export function LocalModelsConfigWizard({
   initialUrl,
@@ -48,7 +54,8 @@ export function LocalModelsConfigWizard({
   const app = useApp();
   const [phase, setPhase] = useState<WizardPhase>("pick");
   const [cursor, setCursor] = useState(0);
-  const [line, setLine] = useState(initialUrl);
+  const [chatUrlLine, setChatUrlLine] = useState(initialUrl);
+  const [embeddingUrlLine, setEmbeddingUrlLine] = useState("");
   const [busy, setBusy] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
 
@@ -62,8 +69,12 @@ export function LocalModelsConfigWizard({
 
   const commitPick = useCallback(
     (action: WizardOption["action"]) => {
+      if (action === "cloud") {
+        setPhase("cloud");
+        return;
+      }
       if (action === "external") {
-        setPhase("url");
+        setPhase("remote-chat-url");
         return;
       }
       persistUserLocalModelsConfig({ mode: "managed" });
@@ -96,7 +107,7 @@ export function LocalModelsConfigWizard({
         if (opt) commitPick(opt.action);
         return;
       }
-      if (input === "1" || input === "2") {
+      if (input === "1" || input === "2" || input === "3") {
         const idx = Number(input) - 1;
         const opt = PICK_OPTIONS[idx];
         if (opt) {
@@ -108,12 +119,12 @@ export function LocalModelsConfigWizard({
     { isActive: phase === "pick" },
   );
 
-  const trySave = useCallback(
+  const trySaveChatUrl = useCallback(
     async (bufferOverride?: string) => {
       if (busy) return;
       setBusy(true);
       setHint(null);
-      const source = bufferOverride ?? line;
+      const source = bufferOverride ?? chatUrlLine;
       try {
         const base = normalizeLocalLlmBaseUrl(source);
         const health = await checkLlamaServer({
@@ -126,7 +137,43 @@ export function LocalModelsConfigWizard({
           setHint(health.error ?? "health check failed");
           return;
         }
-        persistUserLocalLlmUrl(base);
+        setChatUrlLine(base);
+        setPhase("remote-embedding-url");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setHint(msg);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, chatUrlLine],
+  );
+
+  const trySaveEmbeddingUrl = useCallback(
+    async (bufferOverride?: string) => {
+      if (busy) return;
+      setBusy(true);
+      setHint(null);
+      const source = bufferOverride ?? embeddingUrlLine;
+      try {
+        const chatUrl = normalizeLocalLlmBaseUrl(chatUrlLine);
+        if (source.trim().length === 0) {
+          persistUserRemoteLlmUrls({ chatUrl });
+          finish("saved_external");
+          return;
+        }
+        const embeddingUrl = normalizeLocalLlmBaseUrl(source);
+        const health = await checkLlamaServer({
+          url: embeddingUrl,
+          retries: 0,
+          backoffMs: 0,
+          timeoutMs: 5000,
+        });
+        if (!health.reachable) {
+          setHint(health.error ?? "health check failed");
+          return;
+        }
+        persistUserRemoteLlmUrls({ chatUrl, embeddingUrl });
         finish("saved_external");
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -135,7 +182,7 @@ export function LocalModelsConfigWizard({
         setBusy(false);
       }
     },
-    [busy, finish, line],
+    [busy, chatUrlLine, embeddingUrlLine, finish],
   );
 
   if (phase === "pick") {
@@ -160,12 +207,28 @@ export function LocalModelsConfigWizard({
         </Box>
         <Box marginTop={1}>
           <Text color={theme.colors.muted}>
-            ↑/↓ (j/k) move · Enter select · 1-2 shortcut · Esc skip · Ctrl+C exit
+            ↑/↓ (j/k) move · Enter select · 1-3 shortcut · Esc skip · Ctrl+C exit
           </Text>
         </Box>
       </Box>
     );
   }
+
+  if (phase === "cloud") {
+    return (
+      <CloudProviderOnboarding
+        onFinished={finish}
+        onBack={() => {
+          setPhase("pick");
+        }}
+      />
+    );
+  }
+
+  const isEmbeddingStep = phase === "remote-embedding-url";
+  const editorValue = isEmbeddingStep ? embeddingUrlLine : chatUrlLine;
+  const setEditorValue = isEmbeddingStep ? setEmbeddingUrlLine : setChatUrlLine;
+  const submitEditor = isEmbeddingStep ? trySaveEmbeddingUrl : trySaveChatUrl;
 
   return (
     <Box flexDirection="column" padding={1}>
@@ -176,18 +239,27 @@ export function LocalModelsConfigWizard({
         <Text color={theme.colors.muted}>last error: {probeError}</Text>
       ) : null}
       <Text>
-        Set the HTTP base URL of your running{" "}
+        {isEmbeddingStep
+          ? "Set the HTTP base URL of your embedding-only "
+          : "Set the HTTP base URL of your chat "}
         <Text bold>llama-server</Text> (must answer GET /health).
       </Text>
+      {isEmbeddingStep ? (
+        <Text color={theme.colors.muted}>
+          Optional: leave empty to continue without hybrid embedding recall.
+        </Text>
+      ) : null}
       <Box marginTop={1}>
         <MultiLineEditor
-          value={line}
+          value={editorValue}
           focus={!busy}
           disabled={busy}
-          placeholder="http://127.0.0.1:8080"
-          onChange={setLine}
+          placeholder={
+            isEmbeddingStep ? "http://127.0.0.1:19092" : "http://127.0.0.1:8080"
+          }
+          onChange={setEditorValue}
           onSubmit={(buffer) => {
-            void trySave(buffer);
+            void submitEditor(buffer);
           }}
           onEscape={() => finish("skipped")}
           onInterrupt={() => {
@@ -199,7 +271,9 @@ export function LocalModelsConfigWizard({
       {hint ? <Text color="red">{hint}</Text> : null}
       <Box marginTop={1}>
         <Text color={theme.colors.muted}>
-          Enter: test & save to config · Esc: skip · Ctrl+C: exit
+          {isEmbeddingStep
+            ? "Enter: test & save, empty Enter skips embeddings · Esc: skip · Ctrl+C: exit"
+            : "Enter: test & continue to embedding URL · Esc: skip · Ctrl+C: exit"}
         </Text>
       </Box>
     </Box>

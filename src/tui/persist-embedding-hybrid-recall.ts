@@ -50,6 +50,9 @@ export function persistEmbeddingHybridRecall(partial: {
     ...prev.localModels.embeddings,
     enabled: partial.enabled,
     ...(partial.modelId !== undefined ? { modelId: partial.modelId } : {}),
+    ...(partial.enabled && partial.modelId !== undefined
+      ? { url: `http://127.0.0.1:${prev.localModels.embeddings.port}` }
+      : {}),
   };
   const draft: UserConfigFile = {
     ...prev,

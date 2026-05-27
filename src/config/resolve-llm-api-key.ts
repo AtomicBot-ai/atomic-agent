@@ -16,7 +16,9 @@ export function resolveLlmProviderApiKey(
   }
   if (entry.kind === "openai-compatible") {
     const key =
-      process.env.OPENAI_API_KEY ?? process.env.ATOMIC_AGENT_OPENAI_API_KEY;
+      process.env.OPENAI_COMPAT_API_KEY ??
+      process.env.OPENAI_API_KEY ??
+      process.env.ATOMIC_AGENT_OPENAI_API_KEY;
     return key && key.length > 0 ? key : undefined;
   }
   return undefined;

@@ -159,6 +159,7 @@ describe("reduceLocalModelsAction", () => {
     state = reduceTuiState(state, {
       type: "local_models_pull_started",
       pull: {
+        kind: "chat",
         modelId: "qwen-3.5-4b",
         label: "x",
         percent: 0,
@@ -178,6 +179,53 @@ describe("reduceLocalModelsAction", () => {
     state = reduceTuiState(state, { type: "local_models_pull_failed", error: "boom" });
     expect(state.localModelsPanel.mode).toBe("list");
     expect(state.localModelsPanel.errorLine).toBe("boom");
+  });
+
+  it("tracks chat and embedding pulls independently", () => {
+    let state = createInitialTuiState(SESSION);
+    state = reduceTuiState(state, {
+      type: "local_models_pull_started",
+      pull: {
+        kind: "chat",
+        modelId: "qwen-3.5-4b",
+        label: "chat",
+        percent: 0,
+        transferredBytes: 0,
+        totalBytes: 100,
+        error: null,
+      },
+    });
+    state = reduceTuiState(state, {
+      type: "local_models_pull_started",
+      pull: {
+        kind: "embedding",
+        modelId: "nomic-embed-text-v1.5",
+        label: "embed",
+        percent: 0,
+        transferredBytes: 0,
+        totalBytes: 200,
+        error: null,
+      },
+    });
+
+    state = reduceTuiState(state, {
+      type: "local_models_pull_progress",
+      kind: "embedding",
+      percent: 25,
+      transferredBytes: 50,
+      totalBytes: 200,
+    });
+
+    expect(state.localModelsPanel.pull?.percent).toBe(0);
+    expect(state.localModelsPanel.embeddingPull?.percent).toBe(25);
+
+    state = reduceTuiState(state, {
+      type: "local_models_pull_finished",
+      kind: "embedding",
+    });
+
+    expect(state.localModelsPanel.pull?.modelId).toBe("qwen-3.5-4b");
+    expect(state.localModelsPanel.embeddingPull).toBeNull();
   });
 
   it("tracks daemon start/stop phases", () => {
