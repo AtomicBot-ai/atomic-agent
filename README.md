@@ -24,6 +24,23 @@ It is built for the OpenClaw / Hermes / OpenCUA class of operator agents, but tu
 
 **Platform availability:** current releases are available for macOS. Linux and Windows builds are coming soon.
 
+## Quick Install/Update
+
+```bash
+curl -fsSL https://api.atomicbot.ai/agent-install | sh
+```
+
+The installer downloads the release archive, verifies the checksum, and installs the CLI plus runtime assets such as `grammars/`, native prebuilds, and bundled `ripgrep`.
+
+Optional overrides:
+
+```bash
+ATOMIC_AGENT_VERSION=v0.1.29       # pin a release
+ATOMIC_AGENT_INSTALL_DIR=/opt/bin  # choose install directory
+ATOMIC_AGENT_NO_PATH=1             # do not edit shell rc files
+ATOMIC_AGENT_REPO=owner/repo       # install from a fork
+```
+
 ## Why Enthusiasts Care
 
 Most agent products ask you to rent the control plane. Your files, browser context, prompts, traces, tool outputs, and usage patterns move through a hosted service, then the bill follows the token stream.
@@ -250,23 +267,6 @@ Egress is still explicit and real:
 - skills and shell commands inherit the runtime environment.
 
 The promise is not magic secrecy. The promise is that the agent control plane does not need to be remote.
-
-## Quick Install
-
-```bash
-curl -fsSL https://api.atomicbot.ai/agent-install | sh
-```
-
-The installer downloads the release archive, verifies the checksum, and installs the CLI plus runtime assets such as `grammars/`, native prebuilds, and bundled `ripgrep`.
-
-Optional overrides:
-
-```bash
-ATOMIC_AGENT_VERSION=v0.1.29       # pin a release
-ATOMIC_AGENT_INSTALL_DIR=/opt/bin  # choose install directory
-ATOMIC_AGENT_NO_PATH=1             # do not edit shell rc files
-ATOMIC_AGENT_REPO=owner/repo       # install from a fork
-```
 
 ## Requirements
 
