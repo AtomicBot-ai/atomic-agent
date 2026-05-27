@@ -1,6 +1,6 @@
 # atomic-agent
 
-**An OpenClaw/Hermes-style local operator agent for `llama.cpp`.**
+**A local-first operator agent runtime for people who want the machine on their desk, not in somebody else's cloud.**
 
 ![atomic-agent terminal demo](assets/demo.gif)
 
@@ -16,103 +16,109 @@
 ![llama.cpp](https://img.shields.io/badge/llama.cpp-supported-111827)
 ![Tauri sidecar](https://img.shields.io/badge/Tauri-sidecar-24C8DB?logo=tauri&logoColor=white)
 
-`atomic-agent` is a local agent that can operate a real desktop: browser, files, shell, documents, notes, memory, scheduled work, approvals, and traces. Think of it in the same product category as OpenClaw Operator and Hermes Agent, but shipped as a standalone SEA binary and tuned for local models so it can squeeze the most out of them instead of relying on a hosted control plane. Your data, traces, browser profile, memory, and model traffic stay on your machine by default.
+`atomic-agent` is a compact agent runtime that can operate a real desktop: browser, files, shell, documents, git, local memory, scheduled work, approvals, traces, Telegram, MCP servers, and Tauri sidecars.
 
-**Active development:** APIs, commands, configuration, and behavior may change while the runtime is still moving quickly. Pin a release if you need a stable integration point.
+It is built for the OpenClaw / Hermes / OpenCUA class of operator agents, but tuned for local inference: `llama.cpp`, KV-cache reuse, grammar-constrained tool calls, small prompt tails, and inspectable state on your machine.
 
-## Why This Exists
+**Active development:** APIs, commands, config, and behavior are still moving. Pin a release if you need a stable integration point.
 
-OpenClaw, Hermes, and OpenCUA showed the shape: an agent should act like an operator, not just answer like a chatbot. It needs to read the browser, call tools, follow task playbooks, ask for approval before dangerous actions, and keep enough state to finish multi-step work.
+## Why Enthusiasts Care
 
-Local models are good enough to operate software, but only if the runtime stops asking them to be a cloud-scale planner with an infinite context window.
+Most agent products ask you to rent the control plane. Your files, browser context, prompts, traces, tool outputs, and usage patterns move through a hosted service, then the bill follows the token stream.
 
-The usual failure mode is predictable: every step stuffs more state into the prompt, JSON tool calls drift, browser pages become token soup, and a 7B model spends more time re-reading history than doing work.
+`atomic-agent` takes the enthusiast route:
 
-`atomic-agent` goes the other way:
+- Run the agent loop locally.
+- Bring your own `llama-server`, or let the CLI manage one.
+- Keep sessions, memory, tasks, traces, skills, browser profile, and config under `<stateDir>`.
+- Inspect the prompt, replay trace drift, edit skills, and replace parts without waiting for a vendor.
+- Use cloud providers only when you deliberately configure them.
 
-- Keep durable state outside the prompt.
-- Keep the cache-hot prompt prefix byte-stable.
-- Force tool calls through a GBNF grammar.
-- Give the model compact browser and filesystem views.
-- Load detailed procedures only when a skill is actually needed.
-- Let the runtime execute independent read-only calls in parallel.
+This is for people who like local models, terminal UIs, SQLite files, trace logs, hackable runtimes, and software that can be understood all the way down.
 
-The result is an operator-agent loop that is small-model friendly, inspectable, and shippable.
+## The Core Idea
 
-## Lineage
+A local model can operate software if the runtime stops wasting its context.
 
-`atomic-agent` is informed by the same family of systems:
+`atomic-agent` does not treat the model like an infinite planner. One inference produces one JSON array of tool calls. The runtime executes those calls, compresses the results, updates durable state, and asks the model for the next move.
 
-- **OpenClaw-style desktop operation:** system browser control, compact terminal UI, persistent local profile, and a local-first product surface.
-- **Hermes-style tool discipline:** structured tool calls, OpenAI-compatible HTTP shapes where useful, and multi-call batches for independent work.
-- **OpenCUA-style browser state:** compact accessibility/ARIA snapshots instead of vision-heavy page screenshots for ordinary web operation.
-- **Local-first constraints:** keep the model, browser, files, traces, and long-lived state on the user's machine.
-
-It is not a fork of those projects and does not claim wire compatibility with their full runtimes. The goal is the same operator-agent class, tuned for `llama.cpp`, TypeScript, Tauri sidecars, and shippable local products.
-
-## Built For Local Inference
-
-`atomic-agent` is engineered around `llama.cpp` rather than treating it as a drop-in clone of a hosted API.
-
-- **Stable prompt prefix:** persona, rules, skill catalog, tool catalog, capabilities, and instructions stay byte-stable inside a session so `cache_prompt` and `slot_id` can reuse KV-cache instead of rebuilding the same context every step.
-- **Externalized state:** sessions, browser world snapshots, loaded skills, memory notes, task records, and traces live in SQLite or local files. The model receives a bounded slice, not the whole project history.
-- **Grammar-constrained calls:** every inference emits a JSON array of `1..N` tool calls. Even a solo action is `[{...}]`, which avoids the first-token bias that makes smaller models fall into the wrong shape.
-- **Parallel tool batches:** independent read-only calls can be emitted in the same inference and executed concurrently by resource class. Approval-gated tools and terminal replies stay solo.
-- **Bounded prompt tail:** conversation, memory, skills, and world state are rendered under caps. Older turns are folded instead of letting the context grow forever.
-- **Compact browser state:** browser automation uses ARIA snapshots from the installed system browser, which are far cheaper and more stable for local models than screenshots.
-- **Narrow retries:** transport and parser retries are bounded and never replay already-executed tool calls.
-
-This is runtime architecture, not prompt superstition.
-
-## What It Can Operate
-
-`atomic-agent` gives a local model a practical operator surface:
-
-- **Browser:** navigate, click, type, search, inspect tabs, and read compact ARIA snapshots through `playwright-core` against Chrome, Edge, or another Chromium-family executable.
-- **Host OS:** shell, filesystem reads/writes/patches, glob, grep, document extraction, archives, git inspection, process listing, clipboard, windows, notifications, and HTTP requests.
-- **Documents:** extract text from PDF, DOCX, DOC, XLSX, RTF, ODT, PPTX, archives, and plain text without sending files to a remote service.
-- **Skills:** local Markdown playbooks plus optional approved scripts. The stable prefix only lists skill names and descriptions; the full body is loaded with `skill.view` when the task matches.
-- **Memory:** profile facts, FTS5 note recall, pointer-style memory index, and async end-of-turn reflection that writes useful facts without blocking the user-visible reply.
-- **Tasks:** durable deferred turns, cron or interval schedules, webhook-triggered work, and agent self-scheduling.
-- **Vision:** optional `vision.describe` tool for multimodal `llama.cpp` models with an `mmproj` projector, kept outside the text conversation transcript.
-
-Dangerous actions go through approvals. Read-heavy inspection stays low-friction.
-
-## Privacy And Cost
-
-Most cloud agents have the same hidden tax: your prompts, files, browser context, tool outputs, and usage patterns must pass through somebody else's infrastructure. Even when the product is well-run, that is still remote telemetry, remote retention policy, and a bill that scales with tokens.
-
-`atomic-agent` keeps the control plane local:
-
-- **Private by default:** model calls go to your configured `llama-server`; sessions, memory, tasks, skills, browser profile, and traces live under `<stateDir>` on your machine.
-- **No SaaS meter:** once you have local hardware and model files, the runtime does not charge per prompt, per token, per tool call, or per seat.
-- **Inspectable artifacts:** traces are local NDJSON, state is local SQLite, and skills are local folders you can read and edit.
-- **Explicit egress:** network access happens only through configured model endpoints, browser navigation, HTTP tools, webhooks, or user-installed skills. Dangerous actions still pass through approvals.
-
-Local-first does not magically remove every privacy risk: if you point the runtime at a remote `llama-server`, browse to a website, call an API, or put secrets in skill scripts, those systems still see what you send. The difference is that `atomic-agent` does not require a hosted agent provider to sit in the middle of every step.
-
-## Quick Start
-
-### Install From Release
-
-```bash
-curl -fsSL https://api.atomicbot.ai/agent-install | sh
+```text
+user message
+  -> compact prompt
+  -> llama-server completion with tool-call grammar
+  -> JSON array of 1..N tool calls
+  -> resource-aware execution
+  -> compressed results and durable state
+  -> repeat until reply, finish, cancel, or max steps
 ```
 
-The installer downloads the matching archive, verifies the checksum, and installs the CLI plus runtime assets such as `grammars/`, `vendor/rg`, and native prebuilds.
+The model chooses actions. The runtime owns the loop, the state, the approvals, the traces, and the failure boundaries.
 
-Optional overrides:
+## What Makes It Different
+
+### Local-Model Native
+
+- **Stable prefix:** persona, rules, tools, skills, capabilities, and instructions stay byte-stable inside a session so `cache_prompt` and `slot_id` can reuse KV-cache.
+- **Bounded tail:** conversation, memory, world state, recalled notes, lessons, procedures, and loaded skill bodies are clipped into a predictable prompt budget.
+- **Externalized state:** sessions, memory, tasks, skills, traces, browser snapshots, and model config live outside the prompt.
+- **GBNF tool calls:** completions are constrained into a JSON array of tool calls, including the solo case `[{...}]`.
+- **Parallel read batches:** independent read-only calls can run concurrently after a single inference; dangerous actions remain approval-gated.
+- **Compact browser view:** ordinary web operation uses accessibility / ARIA snapshots instead of screenshot-heavy page dumps.
+
+This is architecture, not prompt superstition.
+
+### Real Operator Surface
+
+`atomic-agent` can work across the local machine:
+
+- **Browser:** navigate, click, type, inspect tabs, and read compact browser state through `playwright-core` against Chrome, Edge, or another Chromium-family browser.
+- **Filesystem and shell:** read, write, patch, glob, grep, archive, hash, inspect processes, use clipboard, send notifications, and run approved commands.
+- **Documents:** extract text from PDF, DOCX, DOC, XLSX, RTF, ODT, PPTX, archives, and plain text locally.
+- **Git:** status, log, diff, show, blame, and branch inspection.
+- **Skills:** Markdown playbooks with optional approved scripts; full skill bodies load only when needed.
+- **Memory:** profile facts, notes, hybrid recall, links, lessons, procedures, voting, reflection, and bounded prompt rendering.
+- **Tasks:** durable deferred turns, cron schedules, intervals, webhooks, and agent-created reminders.
+- **Vision:** optional `vision.describe` for multimodal models with `mmproj`, kept outside the normal text transcript.
+- **Providers:** local `llama-server` by default, plus OpenAI-compatible and OpenRouter-style providers for text or embeddings when configured.
+- **MCP:** connect external MCP servers and expose their tools, resources, and prompts through the same tool registry.
+- **Telegram:** single-user remote control with owner pairing and inline approval buttons.
+
+Dangerous actions are routed through approvals. Read-heavy exploration stays fast.
+
+## Memory That Feels More Human
+
+`atomic-agent` memory is not a giant chat log pasted back into the prompt. It is shaped more like human memory: durable identity, episodic notes, associations, distilled lessons, reusable procedures, and feedback from experience.
+
+People do not remember by replaying every second of their life. They remember facts about themselves, recall relevant episodes, connect related ideas, learn principles from repeated outcomes, and develop procedures for familiar work. The runtime mirrors that pattern in a bounded, inspectable way:
+
+- **Profile facts** render into `### profile` with contextual keyword gating.
+- **Notes** are stored in SQLite + FTS5, optionally paired with embeddings for hybrid recall.
+- **Links** connect related memories into a bounded graph.
+- **Lessons** distill repeated episodes into reusable principles.
+- **Procedures** distill how-to templates without auto-executing them.
+- **Voting** lets useful or harmful memories, lessons, procedures, and profile facts drift up or down.
+- **Reflection** runs after turns, off the main agent slot, and writes memory without blocking the user-visible reply.
+
+The prompt sees compact pointers, not the whole archive. Full bodies are recalled by tool call when the agent actually needs them, so memory can grow without turning every step into a token dump.
+
+## Product Surfaces
+
+### TUI And CLI
+
+Use the CLI for simple sessions, automation, and debugging. Use the TUI when you want a live operator console for approvals, logs, models, skills, tasks, memory, MCP, Telegram, and traces.
 
 ```bash
-ATOMIC_AGENT_VERSION=v0.1.3       # pin a release
-ATOMIC_AGENT_INSTALL_DIR=/opt/bin # choose install directory
-ATOMIC_AGENT_NO_PATH=1            # do not edit shell rc files
-ATOMIC_AGENT_REPO=owner/repo      # install from a fork
+atomic-agent run --cwd /path/to/work
+atomic-agent tui --cwd /path/to/work
+
+atomic-agent skill list
+atomic-agent task list
+atomic-agent trace list --limit 10
 ```
 
-### Use Managed Local Models
+### Managed Local Models
 
-If you want `atomic-agent` to manage the local `llama.cpp` backend and GGUF model files:
+The CLI can manage a paired `llama.cpp` setup for chat and embeddings:
 
 ```bash
 atomic-agent models update
@@ -124,11 +130,11 @@ atomic-agent models start
 atomic-agent tui --cwd /path/to/work
 ```
 
-The managed path handles backend download/update, model download/remove, active model selection, and detached `llama-server` lifecycle. The current catalog focuses on Qwen and Gemma families.
+Managed mode downloads the backend, pulls GGUF models, selects the active model, and starts detached chat / embedding daemons when configured.
 
-### Use Your Own `llama-server`
+### External `llama-server`
 
-If you already run `llama.cpp`, point the runtime at it:
+Already have your own `llama.cpp` process? Point `atomic-agent` at it:
 
 ```bash
 export ATOMIC_AGENT_LLAMA_URL=http://127.0.0.1:8080
@@ -142,57 +148,9 @@ export ATOMIC_AGENT_LLAMA_URL=http://127.0.0.1:8080
 atomic-agent tui --cwd /path/to/work
 ```
 
-Configuration lives in `<stateDir>/config.json` and can be inspected or replaced with:
-
-```bash
-atomic-agent config get
-atomic-agent config set '<full-json>'
-```
-
-## The Runtime Loop
-
-This is an agent, not a helper library. One user message becomes one macro-turn:
-
-```text
-user message
-  -> build compact prompt
-  -> llama-server completion with GBNF grammar
-  -> parse JSON tool-call array
-  -> execute tool calls by resource class
-  -> compress results into session state
-  -> repeat until reply, finish, cancel, or max steps
-```
-
-There is no hidden planner loop inside a single inference. The runtime owns the loop, the model chooses the next tool call, and every effect is recorded as conversation turns plus trace events.
-
-The prompt itself has two zones:
-
-- **Stable prefix:** system persona, rules, skill catalog, tool catalog, capabilities, and tool-call instructions. This is the cache target.
-- **Variable tail:** loaded skills, profile facts, memory pointers, recalled notes, world snapshot, conversation, notices, and the final response anchor. This is rebuilt every step and kept bounded.
-
-See [PROMPT.md](PROMPT.md) for the full anatomy.
-
-## Product Surfaces
-
-### TUI And CLI
-
-```bash
-atomic-agent run --cwd /path/to/work
-atomic-agent tui --cwd /path/to/work
-
-atomic-agent skill list
-atomic-agent skill install ./my-skill
-
-atomic-agent task list
-atomic-agent task create --message "hourly triage" --cron "0 * * * *"
-
-atomic-agent trace list --limit 10
-atomic-agent trace show <sessionId>
-```
-
-Use `run` for a simple terminal chat loop. Use `tui` for approvals, debug panes, local model management, skills, tasks, and long-lived operator sessions.
-
 ### OpenAI-Compatible HTTP
+
+Run `atomic-agent` as a local HTTP service:
 
 ```bash
 atomic-agent serve \
@@ -202,40 +160,11 @@ atomic-agent serve \
   --api-key "$ATOMIC_AGENT_API_KEY"
 ```
 
-The main chat surface is `POST /v1/chat/completions`. One request maps to one full macro-turn: `user -> 0..N tool steps -> reply`. Atomic-specific routes expose capabilities, config, sessions, approvals, tasks, webhooks, events, and traces.
-
-### Telegram Remote Control
-
-Optional. When enabled in `<stateDir>/config.json` (or via the TUI Telegram tab), `atomic-agent` connects your own bot to the same single-user runtime — Telegram is just another way to talk to the same sessions, share the same approvals, and observe the same world.
-
-```jsonc
-// <stateDir>/config.json
-{
-  "telegram": { "enabled": true, "ownerUserId": null }
-}
-```
-
-```bash
-# <stateDir>/.env  (file is created with mode 0600 when written from the TUI)
-TELEGRAM_BOT_TOKEN=123456789:AA-your-bot-token
-```
-
-Workflow:
-
-1. Create a bot with `@BotFather` and copy the token.
-2. Open `atomic-agent tui`, switch to the **Telegram** tab.
-3. Press `t` to paste the token (input is masked, never echoed back, written only into `<stateDir>/.env`).
-4. Press `e` to enable; the channel boots and reports `up` in the tab header.
-5. Press `o` to open a 60-second pairing window, then send any text from your phone — the first private DM claims `ownerUserId`. From that point only the owner can drive the bot.
-6. From your phone: send a normal message to drive a turn, `/cancel` to abort the running turn, `/new` to rotate the Telegram session, `/help` for the full command list.
-
-Approvals come back as inline-keyboard messages (Approve / Deny) directly in your DM, with an 8-minute auto-deny timeout. Slash commands (`/telegram enable|disable|restart|pair|token|clear-token|clear-owner`) are also available from the TUI chat. The Telegram session is persisted separately from the TUI session, so the two never collide.
-
-Telegram is intentionally single-user; multi-user flows are out of scope. See [AGENTS.md §"Telegram remote-control channel"](AGENTS.md) for the full architecture, polling carve-out, and locked invariants.
+`POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, traces, config, and capabilities.
 
 ### Tauri Sidecar
 
-The sidecar speaks newline-delimited JSON over stdio, which is easy to embed, tail, and debug from a desktop app.
+The sidecar speaks newline-delimited JSON over stdio, making it easy to embed in desktop apps:
 
 ```json
 {"kind":"request","id":"r-1","type":"start_session","payload":{"workingDir":"/home/me"}}
@@ -250,26 +179,101 @@ Events stream back as the turn runs:
 {"kind":"event","id":"e-3","type":"assistant_reply","correlationId":"r-2","payload":{"sessionId":"s-1","text":"You have 3 urgent threads."}}
 ```
 
+### Telegram Remote Control
+
+Enable a personal Telegram bot and drive the same runtime from your phone:
+
+```jsonc
+// <stateDir>/config.json
+{
+  "telegram": { "enabled": true, "ownerUserId": null }
+}
+```
+
+```bash
+# <stateDir>/.env
+TELEGRAM_BOT_TOKEN=123456789:AA-your-bot-token
+```
+
+The TUI can store the token, start the channel, open pairing mode, and show status. Approvals arrive as inline buttons in your DM. Telegram is intentionally single-user.
+
+### MCP Client
+
+Configure MCP servers in `config.json`, and their tools join the same registry as local tools. Trusted read-only servers can batch with other reads; untrusted servers default to approval-gated execution.
+
+```jsonc
+{
+  "mcp": {
+    "servers": [
+      {
+        "name": "docs",
+        "enabled": true,
+        "transport": {
+          "kind": "stdio",
+          "command": "npx",
+          "args": ["-y", "@example/mcp-server"]
+        },
+        "trust": "pure_read"
+      }
+    ]
+  }
+}
+```
+
+The TUI MCP panel supports live add / remove without restarting the runtime.
+
 ## Safety And Observability
 
-Local does not mean opaque. The runtime is built to be inspected.
+Local does not mean opaque. The runtime is built to be inspected and interrupted.
 
-- **Approval gate:** shell, filesystem writes, patches, archive extraction, process kill, HTTP requests, and skill scripts are gated according to policy.
-- **Append-only traces:** `run`, `tui`, and `serve` can emit NDJSON traces with prompts, completions, tool invocations, outcomes, and failure categories.
-- **Prompt drift replay:** `atomic-agent trace replay <sessionId>` compares current stable-prefix hashes against recorded traces to diagnose lost KV-cache wins.
-- **Failure taxonomy:** transport, grammar, model, tool, and cancellation failures are classified and propagated through events, traces, metrics, TUI, sidecar, and HTTP.
-- **Local state:** sessions, memory, tasks, skills, browser profile, and traces live under `<stateDir>` by default.
+- **Approval gates:** shell, filesystem writes, patches, archive extraction, process kill, HTTP requests, skill scripts, and untrusted MCP tools are gated by policy.
+- **Append-only traces:** prompts, completions, tool invocations, outcomes, failure categories, votes, lesson lifecycle events, and procedure events can be recorded as local NDJSON.
+- **Prompt drift replay:** `atomic-agent trace replay <sessionId>` compares current stable-prefix hashes against recorded traces.
+- **Failure taxonomy:** transport, grammar, model, tool, and cancellation failures are classified across events, traces, metrics, TUI, sidecar, and HTTP.
+- **Per-session FIFO:** every surface enters the same `TurnController`; one session stays ordered while different sessions can run concurrently.
+- **Explicit state:** sessions, memory, tasks, skills, browser profile, Telegram pointer, MCP config, and traces are ordinary local files or SQLite databases.
 
-Treat traces and `<stateDir>/.env` as sensitive local artifacts. Secret redaction and per-tool environment filtering are not implemented yet.
+Treat traces and `<stateDir>/.env` as sensitive local artifacts. Secret redaction and per-tool environment filtering are not complete isolation layers.
+
+## Privacy And Egress
+
+By default, the runtime does not require a hosted agent provider. Model calls go to your configured backend, and local artifacts stay under `<stateDir>`.
+
+Egress is still explicit and real:
+
+- browser navigation talks to websites;
+- HTTP tools talk to requested endpoints;
+- configured cloud LLM or embedding providers receive their requests;
+- MCP servers receive the tool calls you route to them;
+- skills and shell commands inherit the runtime environment.
+
+The promise is not magic secrecy. The promise is that the agent control plane does not need to be remote.
+
+## Quick Install
+
+```bash
+curl -fsSL https://api.atomicbot.ai/agent-install | sh
+```
+
+The installer downloads the release archive, verifies the checksum, and installs the CLI plus runtime assets such as `grammars/`, native prebuilds, and bundled `ripgrep`.
+
+Optional overrides:
+
+```bash
+ATOMIC_AGENT_VERSION=v0.1.29       # pin a release
+ATOMIC_AGENT_INSTALL_DIR=/opt/bin  # choose install directory
+ATOMIC_AGENT_NO_PATH=1             # do not edit shell rc files
+ATOMIC_AGENT_REPO=owner/repo       # install from a fork
+```
 
 ## Requirements
 
-- Node.js for development. The release bundle is a Node SEA binary.
+- Node.js for development; release bundles ship as Node SEA binaries.
 - A reachable `llama-server`, either managed by `atomic-agent models` or launched externally.
-- Google Chrome, Microsoft Edge, or another configured Chromium-family executable. Browser binaries are not bundled.
-- macOS users may need Accessibility, Screen Recording, Automation, or Reminders permissions depending on the workflow.
+- Chrome, Microsoft Edge, or another configured Chromium-family executable. Browser binaries are not bundled.
+- `git` for git tools.
+- macOS workflows may need Accessibility, Screen Recording, Automation, or Reminders permissions.
 - Linux window-control workflows work best with `wmctrl`.
-- External `git` is expected for git tools. The release bundle ships a pinned `ripgrep` for `os.fs.grep`.
 
 ## Configuration And Secrets
 
@@ -289,39 +293,28 @@ Useful environment variables:
 - `ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH`: explicit Chromium-family executable path.
 - `ATOMIC_AGENT_BROWSER_CDP_URL`: attach to an already-running browser via CDP.
 
-Secrets for skills belong in `<stateDir>/.env`, not in `config.json`:
+Secrets for skills and channels belong in `<stateDir>/.env`, not in `config.json`:
 
 ```text
 NOTION_API_KEY=ntn_xxxxxxxx
 GITHUB_TOKEN=ghp_xxxxxxxx
+TELEGRAM_BOT_TOKEN=123456789:AA-your-bot-token
 OBSIDIAN_VAULT_PATH=/Users/me/Documents/Obsidian Vault
 ```
 
-The dotenv parser is intentionally small: one `KEY=VALUE` per line, optional surrounding quotes, no interpolation, no `export`, no multiline values. Shell-exported variables win.
+Shell-exported variables win over `.env`. The built-in parser intentionally supports only simple `KEY=VALUE` lines.
 
-## Shipping Model
-
-`atomic-agent` is designed to ship as a compact local runtime:
-
-- Node SEA CLI binaries per target.
-- Runtime assets next to the binary: GBNF grammar, pinned `ripgrep`, native prebuilds, starter skills.
-- No bundled browser.
-- No bundled model weights in the runtime itself.
-- No forced hosted control plane.
-- Tauri-friendly sidecar protocol for desktop products.
-
-See [BUNDLING.md](BUNDLING.md) for packaging, signing, notarization, target matrix, and runtime asset details.
-
-## Non-Goals
+## What It Is Not
 
 - Not a cloud agent platform.
-- Not a full IDE coding-agent product.
+- Not a hosted IDE coding agent.
+- Not a browser distribution.
+- Not a model-weight distribution.
 - Not a giant-prompt framework.
 - Not a hidden multi-agent planner.
-- Not a browser or model distribution.
-- Not a secret-redaction or sandbox-isolation system yet.
+- Not a complete secret-redaction or sandbox-isolation system.
 
-That restraint is deliberate. The runtime stays small, explicit, local, and embeddable.
+The restraint is deliberate: small runtime, explicit state, local control, embeddable protocol.
 
 ## Development
 
@@ -334,12 +327,12 @@ npm run build
 
 Core docs:
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) for runtime topology and design rationale.
 - [PROMPT.md](PROMPT.md) for stable-prefix and variable-tail prompt anatomy.
-- [MEMORY.md](MEMORY.md) for profile facts, notes, and reflection.
+- [MEMORY.md](MEMORY.md) for profile facts, notes, reflection, and recall.
+- [MEMORY_FABRIC_V2.md](MEMORY_FABRIC_V2.md) and [MEMORY_FABRIC_V2.5.md](MEMORY_FABRIC_V2.5.md) for the memory roadmap.
 - [SKILLS.md](SKILLS.md) for the local skill format.
 - [BUNDLING.md](BUNDLING.md) for release packaging.
-- [AGENTS.md](AGENTS.md) for contributor invariants.
+- [AGENTS.md](AGENTS.md) for contributor invariants and runtime contracts.
 
 ## License
 
