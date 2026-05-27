@@ -337,7 +337,11 @@ async function executeStepInner(
   const initialModelFailure = detectModelFailure(completion);
   if (
     initialModelFailure !== null &&
-    !isNativeToolsEmptyCompletionHandledByParser(deps, initialModelFailure.reason)
+    !isNativeToolsEmptyCompletionHandledByParser(
+      deps,
+      initialModelFailure.reason,
+      completion,
+    )
   ) {
     deps.logger?.warn("model-side completion defect", {
       sessionId: ctx.session.id,
@@ -499,6 +503,7 @@ async function executeStepInner(
       !isNativeToolsEmptyCompletionHandledByParser(
         deps,
         retryModelFailure.reason,
+        completion,
       )
     ) {
       deps.logger?.warn("model-side completion defect on parse retry", {
@@ -795,11 +800,17 @@ type ToolCallBatchParseResult =
 function isNativeToolsEmptyCompletionHandledByParser(
   deps: Pick<StepDependencies, "toolTransport">,
   reason: string,
+  completion: CompletionResult,
 ): boolean {
-  return (
-    deps.toolTransport === "native_tools" &&
-    reason === "empty"
-  );
+  if (deps.toolTransport !== "native_tools" || reason !== "empty") {
+    return false;
+  }
+  // Empty `content` is OK only when the model still emitted at least one
+  // OpenAI `tool_call` — the parser can recover those. With BOTH content
+  // and tool_calls empty there is nothing left to parse; route through
+  // ModelError so the agent loop fails fast instead of replaying the same
+  // prompt against the same wall.
+  return completion.toolCalls !== undefined && completion.toolCalls.length > 0;
 }
 
 /**
@@ -814,21 +825,59 @@ function tryParseToolCalls(
   deps: Pick<StepDependencies, "toolTransport" | "toolCallAdapter">,
 ): ToolCallBatchParseResult {
   try {
-    if (
-      deps.toolTransport === "native_tools" &&
-      completion.toolCalls &&
-      completion.toolCalls.length > 0
-    ) {
-      const adapter = deps.toolCallAdapter ?? openAiToolCallAdapter;
-      const reasoning = resolveReasoning(completion, profile);
-      const batch = adapter.toolCallsToBatch(completion.toolCalls, reasoning);
-      if (batch.calls.length === 0) {
+    if (deps.toolTransport === "native_tools") {
+      if (completion.toolCalls && completion.toolCalls.length > 0) {
+        const adapter = deps.toolCallAdapter ?? openAiToolCallAdapter;
+        const reasoning = resolveReasoning(completion, profile);
+        const batch = adapter.toolCallsToBatch(
+          completion.toolCalls,
+          reasoning,
+        );
+        if (batch.calls.length === 0) {
+          return {
+            ok: false,
+            error: new Error(
+              "native tool_calls array was empty after mapping",
+            ),
+          };
+        }
+        return { ok: true, batch };
+      }
+      // No `tool_calls`, plain `content` — synthesise a length-1 `reply`
+      // batch so the one-inference-per-step contract holds. This is the
+      // companion of `tool_choice: "auto"` (see `buildLlmStreamParams`):
+      // when the model returns user-facing text without a tool wrapper
+      // (Qwen-thinking, GLM-5 prelude-only, any model that thought it
+      // could just talk) the runtime treats the text as the assistant's
+      // reply instead of falling through to the grammar parser, which
+      // would fail on non-JSON content and waste a `parse_retry` cycle.
+      // Empty content is *not* synthesised — that case is intentionally
+      // routed through `ModelError` by the outer caller because replaying
+      // the same prompt would reproduce the same empty wall.
+      const replyText = completion.content;
+      if (typeof replyText === "string" && replyText.trim().length > 0) {
+        const reasoning = resolveReasoning(completion, profile);
         return {
-          ok: false,
-          error: new Error("native tool_calls array was empty after mapping"),
+          ok: true,
+          batch: {
+            kind: "batch",
+            calls: [
+              {
+                tool: "reply",
+                args: { text: replyText },
+                ...(reasoning.length > 0 ? { reasoning } : {}),
+              },
+            ],
+            ...(reasoning.length > 0 ? { reasoning } : {}),
+          },
         };
       }
-      return { ok: true, batch };
+      return {
+        ok: false,
+        error: new Error(
+          "native completion carried neither tool_calls nor content",
+        ),
+      };
     }
     const batch = parseToolCalls(
       normalizeContent(completion, profile),
@@ -867,7 +916,22 @@ function buildLlmStreamParams(args: {
     ...base,
     grammar: "",
     tools: adapter.descriptorsToTools(args.toolDescriptors),
-    toolChoice: "required",
+    // `auto` instead of `required`. Three production-observed reasons:
+    //   * Qwen-thinking providers (Alibaba gate) reject `required` outright
+    //     with `<400> InvalidParameter: tool_choice does not support being
+    //     set to required or object in thinking mode`.
+    //   * GLM-5-thinking under `required` dumps the user-facing body into
+    //     `reasoning_content` and emits a hollow `reply { text: "<one-line
+    //     prelude>" }` just to satisfy the contract — the rest of the
+    //     answer is lost from the assistant turn.
+    //   * Weak non-thinking models (e.g. deepseek-v4-flash) hallucinate a
+    //     `memory.notes.recall {}` (or similar) just to "say something"
+    //     when `required` is on, and then loop on the validation error.
+    // Under `auto` the model can return plain `content` instead. The
+    // step-executor's `tryParseToolCalls` synthesises a `reply` call from
+    // that content (see invariant comment there), so the
+    // one-inference-per-step contract is preserved.
+    toolChoice: "auto",
     parallelToolCalls: true,
   };
 }

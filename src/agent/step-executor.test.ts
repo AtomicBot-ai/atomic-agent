@@ -271,31 +271,39 @@ describe("executeStep batch handling", () => {
     ]);
   });
 
-  it("repairs a native-tools reasoning-only empty completion instead of failing the turn", async () => {
+  it("native_tools: reasoning-only completion (empty content, no tool_calls) fails fast as ModelError", async () => {
+    // Pre-`tool_choice: "auto"` migration this case used to round-trip
+    // through a one-shot `parse_retry`. After the migration, a completion
+    // that carried `reasoningContent` but neither `content` nor
+    // `tool_calls` is treated as a model defect: replaying the same prompt
+    // would reproduce the same wall, so we fail fast with `ModelError`
+    // (category `model`) instead of burning a retry on it. The legacy
+    // "retry into a healthy tool_calls completion" path is no longer
+    // exercised because the runtime no longer rewards models that hide
+    // the answer in the reasoning channel.
     const registry = makeRegistry();
     const session = createEmptySessionState({
-      id: "s-native-repair",
+      id: "s-native-reasoning-only",
       workingDir: "/w",
     });
-    const events: Array<{ type: string }> = [];
-    const calls: unknown[] = [];
+    let llmCalls = 0;
 
-    const outcome = await executeStep(
-      {
-        session,
-        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
-        capabilities: CAPS,
-        skillCatalog: SKILLS,
-        stepIndex: 0,
-        signal: new AbortController().signal,
-        userMessage: "привет",
-      },
-      {
-        registry,
-        slotManager: new SlotManager(2),
-        async llmComplete(params) {
-          calls.push(params);
-          if (calls.length === 1) {
+    await expect(
+      executeStep(
+        {
+          session,
+          toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+          capabilities: CAPS,
+          skillCatalog: SKILLS,
+          stepIndex: 0,
+          signal: new AbortController().signal,
+          userMessage: "привет",
+        },
+        {
+          registry,
+          slotManager: new SlotManager(2),
+          async llmComplete() {
+            llmCalls += 1;
             return {
               content: "",
               reasoningContent: "I should call reply.",
@@ -311,54 +319,16 @@ describe("executeStep batch handling", () => {
               slotId: -1,
               modelId: "openai/gpt-5.5",
             };
-          }
-          return {
-            content: "",
-            reasoningContent: "",
-            stop: true,
-            truncated: false,
-            timing: {
-              promptMs: 1,
-              predictedMs: 1,
-              promptTokens: 20,
-              predictedTokens: 5,
-            },
-            cacheHitTokens: 0,
-            slotId: -1,
-            modelId: "openai/gpt-5.5",
-            toolCalls: [
-              {
-                id: "call-1",
-                type: "function",
-                function: {
-                  name: "reply",
-                  arguments: JSON.stringify({ text: "Привет!" }),
-                },
-              },
-            ],
-          };
+          },
+          grammar: "",
+          profile: PLAIN_INSTRUCT_PROFILE,
+          toolTransport: "native_tools",
+          toolCallAdapter: null,
+          supportsSlotAffinity: false,
         },
-        grammar: "",
-        profile: PLAIN_INSTRUCT_PROFILE,
-        toolTransport: "native_tools",
-        toolCallAdapter: null,
-        supportsSlotAffinity: false,
-        onEvent(event) {
-          events.push({ type: event.type });
-        },
-      },
-    );
-
-    expect(calls).toHaveLength(2);
-    expect(events.some((event) => event.type === "parse_retry")).toBe(true);
-    expect(outcome.terminal).toBe("turn");
-    expect(outcome.toolCalls).toEqual([
-      { tool: "reply", args: { text: "Привет!" } },
-    ]);
-    expect(outcome.nextSession.turns.at(-1)).toMatchObject({
-      kind: "assistant_reply",
-      text: "Привет!",
-    });
+      ),
+    ).rejects.toMatchObject({ name: "ModelError" });
+    expect(llmCalls).toBe(1);
   });
 
   it("repairs a native-tools reply call with empty args before execution", async () => {
@@ -433,6 +403,134 @@ describe("executeStep batch handling", () => {
       kind: "assistant_reply",
       text: "Привет!",
     });
+  });
+
+  it("native_tools: synthesises a reply from plain content when the model returned no tool_calls", async () => {
+    // Companion of `tool_choice: "auto"` (set in `buildLlmStreamParams`).
+    // When a cloud model (Qwen-thinking, GLM, OpenAI in `auto` mode) chooses
+    // to answer in plain text instead of wrapping the answer in a `reply`
+    // tool call, the executor must turn `completion.content` into a
+    // length-1 `[{tool:"reply", args:{text}}]` batch so the
+    // one-inference-per-step contract holds and the user sees the reply.
+    const registry = makeRegistry();
+    const session = createEmptySessionState({
+      id: "s-native-synth",
+      workingDir: "/w",
+    });
+    const events: Array<{ type: string }> = [];
+    let llmCalls = 0;
+
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "привет",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        async llmComplete() {
+          llmCalls += 1;
+          return {
+            content: "Привет, магос!",
+            reasoningContent: "user greeted me, answering in kind",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
+            cacheHitTokens: 0,
+            slotId: -1,
+            modelId: "qwen/qwen3.7-max",
+          };
+        },
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+        onEvent(event) {
+          events.push({ type: event.type });
+        },
+      },
+    );
+
+    expect(llmCalls).toBe(1);
+    expect(events.some((event) => event.type === "parse_retry")).toBe(false);
+    expect(outcome.terminal).toBe("turn");
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0]).toMatchObject({
+      tool: "reply",
+      args: { text: "Привет, магос!" },
+      // Reasoning carries through to the synthesised call so the rest of
+      // the trace recorder / step pipeline observes it the same way it
+      // would for a model-emitted tool_call.
+      reasoning: "user greeted me, answering in kind",
+    });
+    expect(outcome.nextSession.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "Привет, магос!",
+    });
+  });
+
+  it("native_tools: routes 'no tool_calls and no content' through ModelError, not parse_retry", async () => {
+    // A truly empty completion (no tool_calls + no content) has nothing
+    // for the synthesis branch to recover from, and replaying the same
+    // prompt would reproduce the same empty wall. The executor must
+    // surface this as a ModelError (category `model`) so the agent loop
+    // fails fast instead of burning a parse-retry cycle on it.
+    const registry = makeRegistry();
+    const session = createEmptySessionState({
+      id: "s-native-empty",
+      workingDir: "/w",
+    });
+
+    await expect(
+      executeStep(
+        {
+          session,
+          toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+          capabilities: CAPS,
+          skillCatalog: SKILLS,
+          stepIndex: 0,
+          signal: new AbortController().signal,
+          userMessage: "привет",
+        },
+        {
+          registry,
+          slotManager: new SlotManager(2),
+          async llmComplete() {
+            return {
+              content: "",
+              reasoningContent: "",
+              stop: true,
+              truncated: false,
+              timing: {
+                promptMs: 1,
+                predictedMs: 1,
+                promptTokens: 20,
+                predictedTokens: 0,
+              },
+              cacheHitTokens: 0,
+              slotId: -1,
+              modelId: "openai/gpt-5.5",
+            };
+          },
+          grammar: "",
+          profile: PLAIN_INSTRUCT_PROFILE,
+          toolTransport: "native_tools",
+          toolCallAdapter: null,
+          supportsSlotAffinity: false,
+        },
+      ),
+    ).rejects.toMatchObject({ name: "ModelError" });
   });
 
   // Note: the "tail reply fires even when an earlier non-terminal

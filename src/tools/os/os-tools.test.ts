@@ -201,6 +201,60 @@ describe("os.shell.run", () => {
     expect(approvals).toBe(0);
   });
 
+  it("recovers a JSON-stringified array `args` (cloud native_tools double-serialise bug)", async () => {
+    const gate = new ApprovalGate({
+      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+    });
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+    const result = await tool.run(
+      { cmd: "echo", args: "[\"hello\",\"world\"]" },
+      makeCtx(dir),
+    );
+    // The string is shaped like a JSON array — coerced back to
+    // ["hello","world"] so the call proceeds normally instead of
+    // silently dropping args.
+    expect(result.details.rawArgs).toEqual(["hello", "world"]);
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("hello world");
+  });
+
+  it("returns a structured error when `args` is an object", async () => {
+    const gate = new ApprovalGate({
+      emit: (req) => gate.reject(req.approvalId, "should not ask"),
+    });
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+    const result = await tool.run(
+      { cmd: "echo", args: { unexpected: "object" } },
+      makeCtx(dir),
+    );
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("`args` must be an array of strings");
+    expect(result.details.rawArgsType).toBe("object");
+  });
+
+  it("returns a structured error when `args` is a scalar string", async () => {
+    const gate = new ApprovalGate({
+      emit: (req) => gate.reject(req.approvalId, "should not ask"),
+    });
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+    const result = await tool.run(
+      { cmd: "echo", args: "hello world" },
+      makeCtx(dir),
+    );
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("`args` must be an array of strings");
+    expect(result.details.rawArgsType).toBe("string");
+  });
+
+  it("treats missing `args` as empty array (back-compat)", async () => {
+    const gate = new ApprovalGate({
+      emit: (req) => gate.reject(req.approvalId, "should not ask"),
+    });
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+    const result = await tool.run({ cmd: "echo" }, makeCtx(dir));
+    expect(result.details.rawArgs).toEqual([]);
+  });
+
   it.skipIf(
     process.platform === "win32",
     "expands *.png for rm and removes matched files",

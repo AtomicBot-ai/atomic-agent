@@ -65,6 +65,9 @@ function descriptorToJsonSchema(descriptor: ToolDescriptor): Record<string, unkn
       additionalProperties: false,
     };
   }
+  if (descriptor.argsJsonSchema) {
+    return descriptor.argsJsonSchema;
+  }
   return {
     type: "object",
     properties: {},

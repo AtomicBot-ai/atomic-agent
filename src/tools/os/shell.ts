@@ -18,6 +18,47 @@ const GOG_COMPRESS_OPTIONS = {
   maxTailLines: 10_000,
 } as const;
 
+/**
+ * Coerce the model-supplied `args` field into a string array. Returns
+ * the parsed list when the input is well-formed, or `null` when the
+ * input has the wrong shape so the caller can return a structured
+ * error to the model. Accepts:
+ *   - `undefined` / missing -> [] (no extra args)
+ *   - `string[]` -> coerced via String()
+ *   - JSON-stringified array literal (some cloud providers
+ *     double-serialise tool_call arguments) -> parsed + coerced
+ * Anything else (object, scalar string with no JSON shape, number,
+ * etc.) returns `null` and triggers the structured error path.
+ */
+function coerceShellArgs(value: unknown): string[] | null {
+  if (value === undefined || value === null) return [];
+  if (Array.isArray(value)) {
+    return value.map((v) => String(v));
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return [];
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (Array.isArray(parsed)) {
+          return parsed.map((v) => String(v));
+        }
+      } catch {
+        // fall through to error
+      }
+    }
+  }
+  return null;
+}
+
+function describeArgsShape(value: unknown): string {
+  if (value === undefined) return "undefined";
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
 export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition {
   return {
     name: "os.shell.run",
@@ -29,9 +70,26 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
       if (typeof cmd !== "string" || cmd.length === 0) {
         throw new Error("os.shell.run: `cmd` must be a non-empty string");
       }
-      const rawArgList = Array.isArray(rawArgs.args)
-        ? rawArgs.args.map((v) => String(v))
-        : [];
+      const rawArgList = coerceShellArgs(rawArgs.args);
+      if (rawArgList === null) {
+        // Some models (notably cloud `native_tools` providers under
+        // tool_choice="auto") double-serialise array arguments into a
+        // JSON string. Treating that as "no args" silently dropped the
+        // operator's intent; surfacing a structured error gives the
+        // model a chance to retry with the right shape instead.
+        return compressToolResult({
+          tool: "os.shell.run",
+          status: "error",
+          output:
+            "os.shell.run: `args` must be an array of strings (got " +
+            describeArgsShape(rawArgs.args) +
+            "). Pass arguments as JSON array literal, e.g. {\"cmd\":\"ls\",\"args\":[\"-la\",\"./src\"]}.",
+          details: {
+            cmd,
+            rawArgsType: describeArgsShape(rawArgs.args),
+          },
+        });
+      }
       const cwd =
         typeof rawArgs.cwd === "string" && rawArgs.cwd.length > 0
           ? resolveUserPath(rawArgs.cwd, ctx.workingDir)
