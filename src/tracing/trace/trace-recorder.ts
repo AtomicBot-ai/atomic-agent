@@ -59,6 +59,41 @@ export interface TraceRecorder {
     direction: 1 | -1 | null;
     reason: string;
   }): void;
+  /**
+   * Memory-v2. Emit a `reflection` trace event for the end-of-turn
+   * SET/NOTE/EVOLVE extraction sub-call. Fired fire-and-forget after
+   * `turn_finished`; the recorder owns the monotonic `seq`.
+   */
+  recordReflection(payload: {
+    outcome: "ok" | "none" | "aborted" | "timeout" | "failed";
+    factsWritten?: number;
+    notesWritten?: number;
+    reason?: string;
+  }): void;
+  /**
+   * Memory-v2 phase 2. Emit a `link_generator` trace event for the
+   * reactive link-graph generation sub-call.
+   */
+  recordLinkGenerator(payload: {
+    outcome: "ok" | "none" | "skipped" | "aborted" | "timeout" | "failed";
+    linksWritten?: number;
+    candidates?: number;
+    reason?: string;
+  }): void;
+  /**
+   * Memory v2.5 phase A. Emit a `query_rewriter` trace event for the
+   * recall-side rewriter sub-call.
+   */
+  recordQueryRewriter(payload: {
+    outcome:
+      | "ok"
+      | "skipped_not_referential"
+      | "skipped_no_history"
+      | "aborted"
+      | "timeout"
+      | "failed";
+    reason?: string;
+  }): void;
 }
 
 /**
@@ -223,6 +258,48 @@ export function createTraceRecorder(
         targetId: payload.targetId,
         direction: payload.direction,
         reason: payload.reason,
+      });
+    },
+    recordReflection(payload) {
+      push({
+        type: "reflection",
+        seq: nextSeq(),
+        sessionId,
+        ts: now(),
+        outcome: payload.outcome,
+        ...(typeof payload.factsWritten === "number"
+          ? { factsWritten: payload.factsWritten }
+          : {}),
+        ...(typeof payload.notesWritten === "number"
+          ? { notesWritten: payload.notesWritten }
+          : {}),
+        ...(payload.reason ? { reason: payload.reason } : {}),
+      });
+    },
+    recordLinkGenerator(payload) {
+      push({
+        type: "link_generator",
+        seq: nextSeq(),
+        sessionId,
+        ts: now(),
+        outcome: payload.outcome,
+        ...(typeof payload.linksWritten === "number"
+          ? { linksWritten: payload.linksWritten }
+          : {}),
+        ...(typeof payload.candidates === "number"
+          ? { candidates: payload.candidates }
+          : {}),
+        ...(payload.reason ? { reason: payload.reason } : {}),
+      });
+    },
+    recordQueryRewriter(payload) {
+      push({
+        type: "query_rewriter",
+        seq: nextSeq(),
+        sessionId,
+        ts: now(),
+        outcome: payload.outcome,
+        ...(payload.reason ? { reason: payload.reason } : {}),
       });
     },
     beginSession(info) {

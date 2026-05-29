@@ -50,6 +50,17 @@ export function parseLinkGeneratorOutput(
   if (trimmed.length === 0) return { kind: "none" };
   if (/^NONE\s*$/i.test(trimmed)) return { kind: "none" };
 
+  // Cloud providers driven by Structured Outputs (see
+  // `LINK_GENERATOR_RESPONSE_FORMAT`) emit JSON instead of the legacy
+  // text grammar. Try the JSON shape first when the body looks like
+  // JSON — on success we use those triples; on failure we fall through
+  // to the line-based grammar parser so the local llama path stays
+  // byte-identical.
+  if (looksLikeJson(trimmed)) {
+    const fromJson = parseJsonShape(trimmed, opts);
+    if (fromJson) return fromJson;
+  }
+
   const max = opts.maxLinks ?? 4;
   const seen = new Set<string>();
   const out: ParsedLink[] = [];
@@ -77,4 +88,76 @@ export function parseLinkGeneratorOutput(
 
   if (out.length === 0) return { kind: "none" };
   return { kind: "links", links: out };
+}
+
+function looksLikeJson(s: string): boolean {
+  return s.startsWith("{") || s.startsWith("[");
+}
+
+/**
+ * Parse the Structured Outputs JSON shape:
+ *   { "kind": "none" }
+ *   { "kind": "links", "links": [{ from_id, to_id, link_kind }] }
+ *
+ * Returns null on any structural / type mismatch so the caller can
+ * fall back to the legacy line grammar parser. The same allowlist /
+ * self-loop / max-links / dedup invariants apply as the text path —
+ * structural validity (Structured Outputs catches that on the server)
+ * never implies semantic legitimacy.
+ */
+function parseJsonShape(
+  raw: string,
+  opts: ParseOptions,
+): ParsedLinkGeneratorOutput | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  const obj = parsed as Record<string, unknown>;
+  const kindField = obj["kind"];
+  if (kindField === "none") {
+    return { kind: "none" };
+  }
+  if (kindField !== "links") {
+    return null;
+  }
+  const linksField = obj["links"];
+  if (!Array.isArray(linksField)) {
+    return null;
+  }
+  const max = opts.maxLinks ?? 4;
+  const seen = new Set<string>();
+  const out: ParsedLink[] = [];
+  for (const entry of linksField) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      continue;
+    }
+    const rec = entry as Record<string, unknown>;
+    const fromId = toPositiveInt(rec["from_id"]);
+    const toId = toPositiveInt(rec["to_id"]);
+    const kindRaw = typeof rec["link_kind"] === "string" ? rec["link_kind"] : "";
+    if (fromId === null || toId === null) continue;
+    if (fromId === toId) continue;
+    if (!isLinkKind(kindRaw)) continue;
+    if (!opts.allowlist.has(fromId)) continue;
+    if (!opts.allowlist.has(toId)) continue;
+    const dedupKey = `${fromId}->${toId}::${kindRaw}`;
+    if (seen.has(dedupKey)) continue;
+    seen.add(dedupKey);
+    out.push({ fromId, toId, kind: kindRaw });
+    if (out.length >= max) break;
+  }
+  if (out.length === 0) return { kind: "none" };
+  return { kind: "links", links: out };
+}
+
+function toPositiveInt(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  if (!Number.isInteger(value) || value <= 0) return null;
+  return value;
 }

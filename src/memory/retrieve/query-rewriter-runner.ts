@@ -3,6 +3,8 @@ import type { AgentMetrics } from "../../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import { QUERY_REWRITER_GRAMMAR } from "./query-rewriter-grammar.js";
+import { QUERY_REWRITER_RESPONSE_FORMAT } from "./query-rewriter-response-format.js";
+import type { ResponseFormatJsonSchema } from "../../llm/provider/completion-types.js";
 import {
   type RewriterHistoryTurn,
   buildRewriterPrompt,
@@ -41,6 +43,17 @@ export type RewriterOutcome =
   | "failed";
 
 /**
+ * Memory v2.5 phase A. Per-call trace event surfaced to the runtime's
+ * per-session `TraceRecorder` via the optional `emitTrace` dep. The
+ * bootstrap resolves the recorder by `sessionId`; a missing recorder
+ * is a normal "tracing disabled" outcome, never an error.
+ */
+export interface QueryRewriterTraceEvent {
+  sessionId: string;
+  outcome: RewriterOutcome;
+}
+
+/**
  * Single completion call. Mirrors `ReflectionLlmComplete` shape so
  * bootstrap can construct one with the same underlying llama-server
  * client. **Must always be called with `slotId = -1`** — pinned by
@@ -49,6 +62,12 @@ export type RewriterOutcome =
 export type RewriterLlmComplete = (params: {
   prompt: string;
   grammar: string;
+  /**
+   * Structured Outputs envelope for cloud providers — the cross-vendor
+   * equivalent of GBNF. The bootstrap `llmComplete` forwards it under
+   * `native_tools`; grammar-only providers (llama-server) ignore it.
+   */
+  responseFormat?: ResponseFormatJsonSchema;
   slotId: number;
   sessionId: string;
   signal: AbortSignal;
@@ -62,6 +81,12 @@ export interface QueryRewriterRunnerDeps {
   gate?: RewriterGate;
   logger?: StructuredLogger;
   metrics?: AgentMetrics;
+  /**
+   * Optional trace sink invoked once per `maybeRewrite` call with the
+   * canonical outcome. Bootstrap binds it to the per-session
+   * `TraceRecorder.recordQueryRewriter`. Fire-safe.
+   */
+  emitTrace?: (event: QueryRewriterTraceEvent) => void;
   /** Injectable clock for deterministic tests. Defaults to `Date.now`. */
   now?: () => number;
 }
@@ -95,7 +120,7 @@ export function createQueryRewriterRunner(
       const raw = input.userMessage;
 
       if (input.history.length === 0) {
-        record("skipped_no_history", startedAt);
+        record("skipped_no_history", startedAt, input.sessionId);
         return raw;
       }
       const referential = await gate.check({
@@ -104,14 +129,14 @@ export function createQueryRewriterRunner(
         signal: input.signal,
       });
       if (!referential) {
-        record("skipped_not_referential", startedAt);
+        record("skipped_not_referential", startedAt, input.sessionId);
         return raw;
       }
 
       // Abort fast-path so we do not even build the prompt when the
       // caller already cancelled.
       if (input.signal.aborted) {
-        record("aborted", startedAt);
+        record("aborted", startedAt, input.sessionId);
         return raw;
       }
 
@@ -142,6 +167,7 @@ export function createQueryRewriterRunner(
           deps.llmComplete({
             prompt,
             grammar: QUERY_REWRITER_GRAMMAR,
+            responseFormat: QUERY_REWRITER_RESPONSE_FORMAT,
             slotId: REWRITER_SLOT_ID,
             sessionId: input.sessionId,
             signal: ac.signal,
@@ -150,7 +176,7 @@ export function createQueryRewriterRunner(
         ]);
         const rewritten = parseRewriterOutput(completion.content);
         if (rewritten === null) {
-          record("failed", startedAt);
+          record("failed", startedAt, input.sessionId);
           return raw;
         }
         deps.logger?.debug?.("rewriter.ok", {
@@ -158,22 +184,22 @@ export function createQueryRewriterRunner(
           originalLength: raw.length,
           rewrittenLength: rewritten.length,
         });
-        record("ok", startedAt);
+        record("ok", startedAt, input.sessionId);
         return rewritten;
       } catch (err) {
         if (err instanceof TimeoutMarker) {
-          record("timeout", startedAt);
+          record("timeout", startedAt, input.sessionId);
           return raw;
         }
         if (input.signal.aborted) {
-          record("aborted", startedAt);
+          record("aborted", startedAt, input.sessionId);
           return raw;
         }
         deps.logger?.warn?.("rewriter.failed", {
           sessionId: input.sessionId,
           error: err instanceof Error ? err.message : String(err),
         });
-        record("failed", startedAt);
+        record("failed", startedAt, input.sessionId);
         return raw;
       } finally {
         if (timer) clearTimeout(timer);
@@ -182,11 +208,22 @@ export function createQueryRewriterRunner(
     },
   };
 
-  function record(outcome: RewriterOutcome, startedAt: number): void {
+  function record(
+    outcome: RewriterOutcome,
+    startedAt: number,
+    sessionId: string,
+  ): void {
     deps.metrics?.recordRetrieveRewriter?.({
       outcome,
       durationMs: now() - startedAt,
     });
+    if (deps.emitTrace) {
+      try {
+        deps.emitTrace({ sessionId, outcome });
+      } catch {
+        // A sink hiccup must never derail recall — swallow.
+      }
+    }
   }
 }
 

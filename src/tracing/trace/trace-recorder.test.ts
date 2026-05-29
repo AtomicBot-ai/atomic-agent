@@ -380,6 +380,74 @@ describe("createTraceRecorder", () => {
     ]);
   });
 
+  // Memory sub-call trace events — reflection / link_generator /
+  // query_rewriter ride the same per-session seq counter as the
+  // agent-loop stream even though they fire fire-and-forget.
+  it("emits reflection with outcome + write counts", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-refl", emit, now });
+    rec.recordReflection({ outcome: "ok", factsWritten: 2, notesWritten: 1 });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: "reflection",
+      sessionId: "s-refl",
+      seq: 0,
+      outcome: "ok",
+      factsWritten: 2,
+      notesWritten: 1,
+    });
+  });
+
+  it("omits reflection write counts when not provided", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-refl-none", emit, now });
+    rec.recordReflection({ outcome: "none" });
+    expect(events[0]).toMatchObject({ type: "reflection", outcome: "none" });
+    expect(events[0]).not.toHaveProperty("factsWritten");
+    expect(events[0]).not.toHaveProperty("notesWritten");
+  });
+
+  it("emits link_generator with linksWritten", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-link", emit, now });
+    rec.recordLinkGenerator({ outcome: "ok", linksWritten: 3 });
+    expect(events[0]).toMatchObject({
+      type: "link_generator",
+      sessionId: "s-link",
+      outcome: "ok",
+      linksWritten: 3,
+    });
+  });
+
+  it("emits query_rewriter with outcome only", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-rw", emit, now });
+    rec.recordQueryRewriter({ outcome: "skipped_not_referential" });
+    expect(events[0]).toMatchObject({
+      type: "query_rewriter",
+      sessionId: "s-rw",
+      outcome: "skipped_not_referential",
+    });
+  });
+
+  it("memory sub-call events share the agent-loop seq counter", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-mix2", emit, now });
+    rec.beginSession({ workingDir: "/w" });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.recordReflection({ outcome: "ok", factsWritten: 1 });
+    rec.recordLinkGenerator({ outcome: "none" });
+    rec.recordQueryRewriter({ outcome: "ok" });
+    expect(events.map((e) => e.seq)).toEqual([0, 1, 2, 3, 4]);
+    expect(events.map((e) => e.type)).toEqual([
+      "session_started",
+      "turn_started",
+      "reflection",
+      "link_generator",
+      "query_rewriter",
+    ]);
+  });
+
   it("assigns monotonic seq across events", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-9", emit, now });

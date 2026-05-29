@@ -161,6 +161,38 @@ describe("createLinkGeneratorRunner", () => {
     expect(ok).toBeDefined();
   });
 
+  it("emits an `ok` trace event with linksWritten via emitTrace", async () => {
+    const traced: Array<{
+      sessionId: string;
+      outcome: string;
+      linksWritten?: number;
+    }> = [];
+    const runner = createLinkGeneratorRunner({
+      llmComplete: async () =>
+        completion("LINK 1 2 [kind=RELATES_TO]\n"),
+      linkStore: h.linkStore,
+      reflectionSlotId: 7,
+      timeoutMs: 1_000,
+      metrics: h.metrics,
+      emitTrace: (event) => traced.push(event),
+    });
+    await runner.generate({
+      sessionId: "s1",
+      userMessage: "u",
+      assistantReply: "a",
+      candidates: [
+        { id: 1, body: "alpha" },
+        { id: 2, body: "beta" },
+      ],
+    });
+    expect(traced).toHaveLength(1);
+    expect(traced[0]).toMatchObject({
+      sessionId: "s1",
+      outcome: "ok",
+      linksWritten: 1,
+    });
+  });
+
   it("records `none` when the LLM emits NONE", async () => {
     const runner = createLinkGeneratorRunner({
       llmComplete: async () => completion("NONE\n"),

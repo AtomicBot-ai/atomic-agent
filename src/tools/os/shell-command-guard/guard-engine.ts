@@ -3,12 +3,16 @@ import { normaliseCommand } from "./normalise.js";
 import { hardlineRule } from "./rules-hardline.js";
 import { dangerousRule } from "./rules-dangerous.js";
 import { gogReadOnlyRule } from "./rules-trusted/gog.js";
+import { ghReadOnlyRule } from "./rules-trusted/gh.js";
+import { icalBuddyReadOnlyRule } from "./rules-trusted/ical-buddy.js";
 import { safeAllowRule } from "./rules-safe-allow.js";
 
 const DEFAULT_RULES: readonly Rule[] = [
   hardlineRule,
   dangerousRule,
   gogReadOnlyRule,
+  ghReadOnlyRule,
+  icalBuddyReadOnlyRule,
   safeAllowRule,
 ];
 

@@ -66,6 +66,42 @@ describe("createQueryRewriterRunner", () => {
     expect(llm).not.toHaveBeenCalled();
   });
 
+  it("emits a `skipped_no_history` trace event via emitTrace", async () => {
+    const traced: Array<{ sessionId: string; outcome: string }> = [];
+    const runner = createQueryRewriterRunner({
+      llmComplete: vi.fn() as unknown as RewriterLlmComplete,
+      timeoutMs: 1000,
+      emitTrace: (event) => traced.push(event),
+    });
+    await runner.maybeRewrite({
+      sessionId: "s-rw",
+      userMessage: "what about it",
+      history: [],
+      signal: new AbortController().signal,
+    });
+    expect(traced).toEqual([
+      { sessionId: "s-rw", outcome: "skipped_no_history" },
+    ]);
+  });
+
+  it("emits an `ok` trace event when the rewrite succeeds", async () => {
+    const traced: Array<{ sessionId: string; outcome: string }> = [];
+    const runner = createQueryRewriterRunner({
+      llmComplete: async () => completion(envelope("did they mention Redis")),
+      timeoutMs: 1000,
+      gate: createAlwaysGate(),
+      emitTrace: (event) => traced.push(event),
+    });
+    const out = await runner.maybeRewrite({
+      sessionId: "s-rw",
+      userMessage: "did they?",
+      history: [{ role: "user", text: "Redis vs memcached" }],
+      signal: new AbortController().signal,
+    });
+    expect(out).toBe("did they mention Redis");
+    expect(traced).toEqual([{ sessionId: "s-rw", outcome: "ok" }]);
+  });
+
   it("calls the LLM with slotId=-1 (load-bearing invariant)", async () => {
     let capturedSlot = NaN;
     const llm: RewriterLlmComplete = async (p) => {

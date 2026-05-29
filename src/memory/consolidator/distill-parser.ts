@@ -71,6 +71,15 @@ export function parseDistillOutput(raw: string): ParsedDistill {
   if (text.length === 0) {
     throw new DistillParseError("no_lesson_line", "empty distill output");
   }
+  // Cloud providers driven by Structured Outputs (see
+  // `DISTILL_RESPONSE_FORMAT`) emit JSON instead of the legacy text
+  // grammar. Try the JSON shape first when the body looks like JSON;
+  // on failure we fall through to the line-based parser so the local
+  // llama path stays byte-identical.
+  if (text.startsWith("{")) {
+    const fromJson = parseDistillJsonShape(text);
+    if (fromJson) return fromJson;
+  }
   const line = text
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -133,6 +142,86 @@ function parseTags(raw: string): string[] {
   const out: string[] = [];
   for (const token of raw.split(",")) {
     const trimmed = token.trim();
+    if (trimmed.length === 0) continue;
+    if (trimmed.length > LESSON_TAG_MAX_LENGTH) continue;
+    if (!TAG_TOKEN_RE.test(trimmed)) continue;
+    if (!out.includes(trimmed)) out.push(trimmed);
+    if (out.length >= LESSON_MAX_TAGS) break;
+  }
+  return out;
+}
+
+/**
+ * Parse the lesson-only Structured Outputs JSON shape:
+ *   { "kind": "none" }
+ *   { "kind": "lesson", "activation", "principle", "tags": [] }
+ *
+ * Returns `null` when the body is not parseable as JSON or does not
+ * match the schema — caller falls back to the legacy line-based
+ * parser. The same validation invariants (non-empty fields, length
+ * caps, tag charset) are enforced; violations throw the same
+ * `DistillParseError` as the line path so the runner's failure
+ * classification stays uniform.
+ */
+function parseDistillJsonShape(raw: string): ParsedDistill | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  const obj = parsed as Record<string, unknown>;
+  const kindField = obj["kind"];
+  if (kindField === "none") return { kind: "none" };
+  if (kindField !== "lesson") return null;
+
+  const activation =
+    typeof obj["activation"] === "string" ? (obj["activation"] as string).trim() : "";
+  const principle =
+    typeof obj["principle"] === "string" ? (obj["principle"] as string).trim() : "";
+  // Sentinel form ("(no consensus)" / "(no durable advice)") still
+  // wins on the JSON path so the model has a deterministic abstain
+  // even when the prompt routed it through Structured Outputs.
+  if (activation === NONE_ACTIVATION && principle === NONE_PRINCIPLE) {
+    return { kind: "none" };
+  }
+  if (activation.length === 0) {
+    throw new DistillParseError(
+      "missing_activation",
+      "activation must be non-empty",
+    );
+  }
+  if (principle.length === 0) {
+    throw new DistillParseError(
+      "missing_principle",
+      "principle must be non-empty",
+    );
+  }
+  if (activation.length > LESSON_ACTIVATION_MAX_LENGTH) {
+    throw new DistillParseError(
+      "oversized_activation",
+      `activation exceeds ${LESSON_ACTIVATION_MAX_LENGTH} chars`,
+    );
+  }
+  if (principle.length > LESSON_PRINCIPLE_MAX_LENGTH) {
+    throw new DistillParseError(
+      "oversized_principle",
+      `principle exceeds ${LESSON_PRINCIPLE_MAX_LENGTH} chars`,
+    );
+  }
+  const rawTags = Array.isArray(obj["tags"]) ? (obj["tags"] as unknown[]) : [];
+  const tags = normaliseTagArray(rawTags);
+  return { kind: "lesson", activation, principle, tags };
+}
+
+function normaliseTagArray(raw: readonly unknown[]): string[] {
+  const out: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string") continue;
+    const trimmed = entry.trim();
     if (trimmed.length === 0) continue;
     if (trimmed.length > LESSON_TAG_MAX_LENGTH) continue;
     if (!TAG_TOKEN_RE.test(trimmed)) continue;
@@ -208,9 +297,15 @@ export class ProcedureDistillParseError extends Error {
 export function parseDistillWithProcedureOutput(
   raw: string,
 ): ParsedDistillWithProcedure {
+  const text = (raw ?? "").trim();
+  // Cloud Structured Outputs JSON path. Includes the procedure half
+  // inline (or `null`) so we never have to re-scan the body.
+  if (text.startsWith("{")) {
+    const fromJson = parseDistillWithProcedureJsonShape(text);
+    if (fromJson) return fromJson;
+  }
   const base = parseDistillOutput(raw);
   if (base.kind === "none") return base;
-  const text = (raw ?? "").trim();
   const procLine = text
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -226,6 +321,145 @@ export function parseDistillWithProcedureOutput(
     // procedure half degrades to `null`. Caller logs the reason.
     return { ...base, procedure: null };
   }
+}
+
+/**
+ * Parse the combined Structured Outputs JSON shape. The lesson half
+ * delegates to `parseDistillJsonShape`; the procedure half is
+ * extracted from the `procedure` field (null ⇒ no procedure).
+ *
+ * Returns `null` on parse / schema failure so the caller can fall
+ * back to the legacy line-based path. Procedure-half validation
+ * errors are folded into `procedure: null` (failure isolation —
+ * scenario 7b.B.1) so the lesson always survives a malformed
+ * procedure block.
+ */
+function parseDistillWithProcedureJsonShape(
+  raw: string,
+): ParsedDistillWithProcedure | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  const obj = parsed as Record<string, unknown>;
+  const kindField = obj["kind"];
+  if (kindField === "none") return { kind: "none" };
+  if (kindField !== "lesson") return null;
+  const base = parseDistillJsonShape(raw);
+  if (!base || base.kind !== "lesson") return null;
+  const procField = obj["procedure"];
+  if (procField === null || procField === undefined) {
+    return { ...base, procedure: null };
+  }
+  try {
+    const procedure = parseProcedureJsonShape(procField);
+    return { ...base, procedure };
+  } catch {
+    return { ...base, procedure: null };
+  }
+}
+
+function parseProcedureJsonShape(raw: unknown): ParsedProcedure {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ProcedureDistillParseError(
+      "missing_activation",
+      "procedure must be an object",
+    );
+  }
+  const rec = raw as Record<string, unknown>;
+  const activation =
+    typeof rec["activation"] === "string"
+      ? (rec["activation"] as string).trim()
+      : "";
+  if (activation.length === 0) {
+    throw new ProcedureDistillParseError(
+      "missing_activation",
+      "PROCEDURE activation must be non-empty",
+    );
+  }
+  if (activation.length > PROCEDURE_ACTIVATION_MAX_LENGTH) {
+    throw new ProcedureDistillParseError(
+      "oversized_activation",
+      `procedure activation exceeds ${PROCEDURE_ACTIVATION_MAX_LENGTH} chars`,
+    );
+  }
+  const rawSteps = Array.isArray(rec["steps"]) ? (rec["steps"] as unknown[]) : [];
+  if (rawSteps.length < PROCEDURE_MIN_STEPS) {
+    throw new ProcedureDistillParseError(
+      "too_few_steps",
+      `procedure must have at least ${PROCEDURE_MIN_STEPS} steps`,
+    );
+  }
+  if (rawSteps.length > PROCEDURE_MAX_STEPS) {
+    throw new ProcedureDistillParseError(
+      "too_many_steps",
+      `procedure must have at most ${PROCEDURE_MAX_STEPS} steps`,
+    );
+  }
+  const steps: ProcedureStep[] = [];
+  for (const entry of rawSteps) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new ProcedureDistillParseError(
+        "missing_activation",
+        "step entry must be an object",
+      );
+    }
+    const stepRec = entry as Record<string, unknown>;
+    const description =
+      typeof stepRec["description"] === "string"
+        ? (stepRec["description"] as string).trim()
+        : "";
+    if (description.length === 0) continue;
+    if (description.length > PROCEDURE_DESCRIPTION_MAX_LENGTH) {
+      throw new ProcedureDistillParseError(
+        "oversized_step",
+        `step description exceeds ${PROCEDURE_DESCRIPTION_MAX_LENGTH} chars`,
+      );
+    }
+    let toolHint: string | null = null;
+    const hintField = stepRec["tool_hint"];
+    if (typeof hintField === "string") {
+      const candidate = hintField.trim();
+      if (candidate.length > 0) {
+        if (candidate.length > PROCEDURE_TOOL_HINT_MAX_LENGTH) {
+          throw new ProcedureDistillParseError(
+            "oversized_tool_hint",
+            `tool hint exceeds ${PROCEDURE_TOOL_HINT_MAX_LENGTH} chars`,
+          );
+        }
+        if (!TOOL_HINT_TOKEN_RE.test(candidate)) {
+          throw new ProcedureDistillParseError(
+            "malformed_tool_hint",
+            `tool hint must match ${TOOL_HINT_TOKEN_RE}`,
+          );
+        }
+        toolHint = candidate;
+      }
+    }
+    steps.push({ description, toolHint });
+  }
+  if (steps.length < PROCEDURE_MIN_STEPS) {
+    throw new ProcedureDistillParseError(
+      "too_few_steps",
+      `procedure must have at least ${PROCEDURE_MIN_STEPS} non-empty steps`,
+    );
+  }
+  const rawTags = Array.isArray(rec["tags"]) ? (rec["tags"] as unknown[]) : [];
+  const tags: string[] = [];
+  for (const entry of rawTags) {
+    if (typeof entry !== "string") continue;
+    const trimmed = entry.trim();
+    if (trimmed.length === 0) continue;
+    if (!PROC_TAG_TOKEN_RE.test(trimmed)) continue;
+    if (!tags.includes(trimmed)) tags.push(trimmed);
+    if (tags.length >= PROCEDURE_MAX_TAGS) break;
+  }
+  return { activation, steps, tags };
 }
 
 function parseProcedureLine(line: string): ParsedProcedure {

@@ -27,6 +27,11 @@ export interface CommandResult {
  * Both stdout and stderr are captured as UTF-8 strings; binary-only tools
  * are not part of the MVP scope. This runner is used by run_test as well
  * as by git plumbing inside the sandbox.
+ *
+ * Timeout semantics: when `timeoutMs` is omitted it falls back to 60s.
+ * A non-positive or non-finite `timeoutMs` (e.g. `0`) disables the timeout
+ * entirely — the command runs unbounded and is only stoppable via the abort
+ * signal. Long-running tools (e.g. `brew install`) rely on this.
  */
 export async function runCommand(
   command: string,
@@ -60,7 +65,10 @@ export async function runCommand(
       }
     };
 
-    const timer = setTimeout(() => killIt("timeout"), timeoutMs);
+    const timer =
+      timeoutMs > 0 && Number.isFinite(timeoutMs)
+        ? setTimeout(() => killIt("timeout"), timeoutMs)
+        : null;
     const onAbort = () => killIt("abort");
     options.signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -94,14 +102,14 @@ export async function runCommand(
     child.on("error", (err) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
       reject(err);
     });
     child.on("close", (code, signal) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
       resolve({
         command,

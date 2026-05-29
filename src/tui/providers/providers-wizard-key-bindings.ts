@@ -1,16 +1,53 @@
 import type { Key } from "ink";
 import {
+  listAimlapiChatModels,
+  listAimlapiEmbeddingModels,
   listOpenRouterChatModels,
   listOpenRouterEmbeddingModels,
 } from "./providers-model-options.js";
-import type { ProvidersWizardPhase, ProvidersWizardState } from "./providers-wizard-state.js";
+import type {
+  ProvidersWizardKind,
+  ProvidersWizardPhase,
+  ProvidersWizardState,
+} from "./providers-wizard-state.js";
 
-const KIND_COUNT = 2;
+const KIND_COUNT = 3;
+
+/** Maps the `pick_kind` cursor index to the actual kind. */
+const KIND_ORDER: readonly ProvidersWizardKind[] = [
+  "openrouter",
+  "aimlapi",
+  "openai-compatible",
+];
+
+function kindAtCursor(cursor: number): ProvidersWizardKind {
+  return KIND_ORDER[cursor] ?? "openrouter";
+}
+
+function isCuratedCatalogKind(
+  kind: NonNullable<ProvidersWizardState["kind"]>,
+): boolean {
+  return kind === "openrouter" || kind === "aimlapi";
+}
+
+function listChatModelsForKind(
+  kind: NonNullable<ProvidersWizardState["kind"]>,
+): ReturnType<typeof listOpenRouterChatModels> {
+  if (kind === "aimlapi") return listAimlapiChatModels();
+  return listOpenRouterChatModels();
+}
+
+function listEmbeddingModelsForKind(
+  kind: NonNullable<ProvidersWizardState["kind"]>,
+): ReturnType<typeof listOpenRouterEmbeddingModels> {
+  if (kind === "aimlapi") return listAimlapiEmbeddingModels();
+  return listOpenRouterEmbeddingModels();
+}
 
 function nextPhaseAfterApiKey(
   kind: NonNullable<ProvidersWizardState["kind"]>,
 ): ProvidersWizardPhase {
-  if (kind === "openrouter") return "pick_chat_model";
+  if (isCuratedCatalogKind(kind)) return "pick_chat_model";
   return "base_url";
 }
 
@@ -29,8 +66,8 @@ function advanceWizardPhase(
       error: null,
     };
   }
-  if (phase === "pick_chat_model" && kind === "openrouter") {
-    const models = listOpenRouterChatModels();
+  if (phase === "pick_chat_model" && kind && isCuratedCatalogKind(kind)) {
+    const models = listChatModelsForKind(kind);
     const picked = models[wizard.cursor]?.id ?? models[0]?.id ?? null;
     return {
       ...wizard,
@@ -49,10 +86,17 @@ function advanceWizardPhase(
   return wizard;
 }
 
-function listLengthForPhase(phase: ProvidersWizardPhase): number {
+function listLengthForPhase(
+  phase: ProvidersWizardPhase,
+  kind: ProvidersWizardState["kind"],
+): number {
   if (phase === "pick_kind") return KIND_COUNT;
-  if (phase === "pick_chat_model") return listOpenRouterChatModels().length;
-  if (phase === "pick_embedding") return listOpenRouterEmbeddingModels().length;
+  if (phase === "pick_chat_model" && kind && isCuratedCatalogKind(kind)) {
+    return listChatModelsForKind(kind).length;
+  }
+  if (phase === "pick_embedding" && kind && isCuratedCatalogKind(kind)) {
+    return listEmbeddingModelsForKind(kind).length;
+  }
   return 0;
 }
 
@@ -165,7 +209,7 @@ export function handleProvidersWizardKey(
     return { handled: false };
   }
 
-  const len = listLengthForPhase(wizard.phase);
+  const len = listLengthForPhase(wizard.phase, wizard.kind);
   if (len === 0) {
     return { handled: true, wizard };
   }
@@ -187,7 +231,7 @@ export function handleProvidersWizardKey(
   }
   if (key.return) {
     if (wizard.phase === "pick_kind") {
-      const kind = wizard.cursor === 0 ? "openrouter" : "openai-compatible";
+      const kind = kindAtCursor(wizard.cursor);
       return {
         handled: true,
         wizard: advanceWizardPhase({
@@ -196,8 +240,12 @@ export function handleProvidersWizardKey(
         }),
       };
     }
-    if (wizard.phase === "pick_embedding") {
-      const models = listOpenRouterEmbeddingModels();
+    if (
+      wizard.phase === "pick_embedding" &&
+      wizard.kind &&
+      isCuratedCatalogKind(wizard.kind)
+    ) {
+      const models = listEmbeddingModelsForKind(wizard.kind);
       const picked = models[wizard.cursor]?.id ?? models[0]?.id ?? null;
       return {
         handled: true,

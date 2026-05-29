@@ -395,20 +395,25 @@ export function TuiApp({
   const sidebarFocused = sidebarVisible && state.chatFocus === "sidebar";
   const editorFocus =
     !state.pendingApproval &&
-    !tasksTabActive &&
-    !skillsTabActive &&
-    !memoryTabActive &&
-    !mcpTabActive &&
-    !providersTabActive &&
-    !llmTabActive &&
-    !telegramTabActive &&
-    !sidebarFocused &&
-    !(
-      localModelsTabActive &&
-      (state.localModelsPanel.pull !== null ||
-        state.localModelsPanel.mode === "backendUpdate" ||
-        state.localModelsPanel.removeConfirmId !== null)
-    );
+    // When the slash-command palette is open the editor must hold focus
+    // regardless of the active debug tab so the operator can type the
+    // command and drive ↑↓ / tab / enter selection. Panels that open the
+    // palette explicitly (e.g. the LLM tab via `/`) rely on this.
+    (state.slashPaletteOpen ||
+      (!tasksTabActive &&
+        !skillsTabActive &&
+        !memoryTabActive &&
+        !mcpTabActive &&
+        !providersTabActive &&
+        !llmTabActive &&
+        !telegramTabActive &&
+        !sidebarFocused &&
+        !(
+          localModelsTabActive &&
+          (state.localModelsPanel.pull !== null ||
+            state.localModelsPanel.mode === "backendUpdate" ||
+            state.localModelsPanel.removeConfirmId !== null)
+        )));
 
   // When the sidebar collapses below the width threshold (terminal
   // resized smaller), focus must follow back to the editor so Tab does
@@ -429,6 +434,11 @@ export function TuiApp({
       sidebarVisible,
     });
     if (appHandled) return;
+    // While the slash-command palette is open, let the (now-focused)
+    // editor's own input hook own every keystroke — typing, ↑↓ palette
+    // navigation, tab completion, enter to run, esc to close. Routing to
+    // a debug-tab panel here would re-interpret letters as hotkeys.
+    if (state.slashPaletteOpen) return;
     if (tasksTabActive) {
       handleTasksTabKey(input, key, { state, dispatch, callbacks });
       return;

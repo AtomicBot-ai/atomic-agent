@@ -78,6 +78,17 @@ export function parseVoteOutput(
   if (trimmed.length === 0) return { kind: "none" };
   if (/^NONE\s*$/i.test(trimmed)) return { kind: "none" };
 
+  // Cloud providers driven by Structured Outputs (see
+  // `VOTE_RESPONSE_FORMAT`) emit JSON instead of the legacy text
+  // grammar. Try the JSON shape first when the body looks like JSON
+  // — on success we use those votes; on failure we fall through to
+  // the line-based grammar parser so the local llama path stays
+  // byte-identical.
+  if (trimmed.startsWith("{")) {
+    const fromJson = parseVoteJsonShape(trimmed, opts);
+    if (fromJson) return fromJson;
+  }
+
   const max = opts.maxVotes ?? 8;
   const seen = new Set<string>();
   const votes: ParsedVote[] = [];
@@ -137,6 +148,105 @@ export function parseVoteOutput(
       targetId,
       direction: verb === "UPVOTE" ? 1 : -1,
     });
+  }
+
+  if (votes.length === 0 && rejected.length === 0) return { kind: "none" };
+  return { kind: "votes", votes, rejected };
+}
+
+/**
+ * Parse the Structured Outputs JSON shape:
+ *
+ *   { "kind": "none" }
+ *   { "kind": "votes",
+ *     "votes": [
+ *       { target_kind, target_id, direction }, ...
+ *     ] }
+ *
+ * Returns `null` on any structural / type mismatch so the caller can
+ * fall back to the legacy text-grammar parser. The same allowlist /
+ * dedup / cap invariants apply as the line path — Structured Outputs
+ * catches schema mismatches server-side but never proves semantic
+ * legitimacy.
+ */
+function parseVoteJsonShape(
+  raw: string,
+  opts: ParseVoteOptions,
+): ParsedVoteOutput | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+  const obj = parsed as Record<string, unknown>;
+  const kindField = obj["kind"];
+  if (kindField === "none") return { kind: "none" };
+  if (kindField !== "votes") return null;
+  const votesField = obj["votes"];
+  if (!Array.isArray(votesField)) return null;
+
+  const max = opts.maxVotes ?? 8;
+  const seen = new Set<string>();
+  const votes: ParsedVote[] = [];
+  const rejected: ParseRejection[] = [];
+
+  for (const entry of votesField) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      rejected.push({ raw: JSON.stringify(entry), reason: "malformed" });
+      continue;
+    }
+    const rec = entry as Record<string, unknown>;
+    const rawKind =
+      typeof rec["target_kind"] === "string" ? rec["target_kind"] : "";
+    const targetId =
+      typeof rec["target_id"] === "number" &&
+      Number.isInteger(rec["target_id"]) &&
+      (rec["target_id"] as number) > 0
+        ? (rec["target_id"] as number)
+        : NaN;
+    const directionRaw = rec["direction"];
+    const direction: VoteDirection | null =
+      directionRaw === 1 ? 1 : directionRaw === -1 ? -1 : null;
+    const rawJson = JSON.stringify(entry);
+    if (!isVoteKind(rawKind) || !Number.isInteger(targetId) || direction === null) {
+      rejected.push({ raw: rawJson, reason: "malformed" });
+      continue;
+    }
+    const kind = rawKind;
+    if (!opts.allowlist[kind].has(targetId)) {
+      rejected.push({
+        raw: rawJson,
+        reason: "not_surfaced",
+        kind,
+        targetId,
+      });
+      continue;
+    }
+    const dedupKey = `${kind}:${targetId}`;
+    if (seen.has(dedupKey)) {
+      rejected.push({
+        raw: rawJson,
+        reason: "duplicate",
+        kind,
+        targetId,
+      });
+      continue;
+    }
+    if (votes.length >= max) {
+      rejected.push({
+        raw: rawJson,
+        reason: "cap_exceeded",
+        kind,
+        targetId,
+      });
+      continue;
+    }
+    seen.add(dedupKey);
+    votes.push({ kind, targetId, direction });
   }
 
   if (votes.length === 0 && rejected.length === 0) return { kind: "none" };

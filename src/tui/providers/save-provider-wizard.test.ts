@@ -15,6 +15,7 @@ describe("saveProviderWizardToConfig", () => {
     stateDir = mkdtempSync(join(tmpdir(), "provider-wizard-"));
     process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
     delete process.env.OPENROUTER_API_KEY;
+    delete process.env.AIMLAPI_API_KEY;
     delete process.env.OPENAI_COMPAT_API_KEY;
     delete process.env.OPENAI_API_KEY;
     resetConfigCache();
@@ -24,9 +25,33 @@ describe("saveProviderWizardToConfig", () => {
     rmSync(stateDir, { recursive: true, force: true });
     delete process.env.ATOMIC_AGENT_STATE_DIR;
     delete process.env.OPENROUTER_API_KEY;
+    delete process.env.AIMLAPI_API_KEY;
     delete process.env.OPENAI_COMPAT_API_KEY;
     delete process.env.OPENAI_API_KEY;
     resetConfigCache();
+  });
+
+  it("persists and activates an aimlapi text provider from onboarding", () => {
+    const wizard = {
+      ...createProvidersWizardState("add"),
+      kind: "aimlapi" as const,
+      phase: "pick_embedding" as const,
+      apiKeyBuffer: "ai-test",
+      selectedChatModelId: "openai/gpt-5-2",
+      selectedEmbeddingChoiceId: LOCAL_EMBEDDING_CHOICE_ID,
+    };
+
+    const built = saveProviderWizardToConfig(wizard);
+    const cfg = getConfig();
+
+    expect(built.entry.id).toBe("aimlapi");
+    expect(process.env.AIMLAPI_API_KEY).toBe("ai-test");
+    expect(cfg.llm?.activeTextProvider).toBe("aimlapi");
+    expect(cfg.llm?.activeEmbeddingProvider).toBe("local-llama");
+    expect(cfg.llm?.providers.find((p) => p.id === "aimlapi")).toMatchObject({
+      kind: "aimlapi",
+      defaultChatModel: "openai/gpt-5-2",
+    });
   });
 
   it("persists and activates an OpenRouter text provider from onboarding", () => {

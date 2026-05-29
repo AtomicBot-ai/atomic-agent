@@ -29,6 +29,31 @@ describe("buildProviderEntryFromWizard", () => {
     expect(built.useLocalEmbedding).toBe(true);
   });
 
+  it("builds an aimlapi entry with cloud embedding", () => {
+    const built = buildProviderEntryFromWizard({
+      kind: "aimlapi",
+      chatModelId: "openai/gpt-5-2",
+      embeddingChoiceId: "text-embedding-3-small",
+    });
+    expect(built.entry.id).toBe("aimlapi");
+    expect(built.entry.kind).toBe("aimlapi");
+    expect(built.entry.defaultChatModel).toBe("openai/gpt-5-2");
+    expect(built.entry.defaultEmbeddingModel).toBe("text-embedding-3-small");
+    expect(built.activateEmbeddingProviderId).toBe("aimlapi");
+    expect(built.useLocalEmbedding).toBe(false);
+  });
+
+  it("keeps embeddings on local llama for aimlapi when sentinel is chosen", () => {
+    const built = buildProviderEntryFromWizard({
+      kind: "aimlapi",
+      chatModelId: "openai/gpt-5-2",
+      embeddingChoiceId: LOCAL_EMBEDDING_CHOICE_ID,
+    });
+    expect(built.entry.defaultEmbeddingModel).toBeUndefined();
+    expect(built.activateEmbeddingProviderId).toBe("local-llama");
+    expect(built.useLocalEmbedding).toBe(true);
+  });
+
   it("builds OpenAI-compatible entry with API root base URL", () => {
     const built = buildProviderEntryFromWizard({
       kind: "openai-compatible",

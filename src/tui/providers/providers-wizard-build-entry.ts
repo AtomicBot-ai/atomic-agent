@@ -15,7 +15,13 @@ export type BuiltWizardProvider = {
 };
 
 export function providerIdForKind(kind: ProvidersWizardKind): string {
-  return kind === "openrouter" ? "openrouter" : "openai-compatible";
+  if (kind === "openrouter") return "openrouter";
+  if (kind === "aimlapi") return "aimlapi";
+  return "openai-compatible";
+}
+
+function isCuratedCatalogKind(kind: ProvidersWizardKind): boolean {
+  return kind === "openrouter" || kind === "aimlapi";
 }
 
 export function buildProviderEntryFromWizard(input: {
@@ -27,10 +33,9 @@ export function buildProviderEntryFromWizard(input: {
   customEmbeddingModel?: string;
 }): BuiltWizardProvider {
   const id = providerIdForKind(input.kind);
-  const chatModel =
-    input.kind === "openrouter"
-      ? input.chatModelId
-      : (input.customChatModel?.trim() || OPENAI_COMPAT_DEFAULT_CHAT_MODEL);
+  const chatModel = isCuratedCatalogKind(input.kind)
+    ? input.chatModelId
+    : (input.customChatModel?.trim() || OPENAI_COMPAT_DEFAULT_CHAT_MODEL);
   const useLocal =
     input.embeddingChoiceId === LOCAL_EMBEDDING_CHOICE_ID ||
     (input.kind === "openai-compatible" &&
@@ -38,10 +43,9 @@ export function buildProviderEntryFromWizard(input: {
 
   let defaultEmbeddingModel: string | undefined;
   if (!useLocal) {
-    defaultEmbeddingModel =
-      input.kind === "openrouter"
-        ? input.embeddingChoiceId
-        : input.customEmbeddingModel?.trim();
+    defaultEmbeddingModel = isCuratedCatalogKind(input.kind)
+      ? input.embeddingChoiceId
+      : input.customEmbeddingModel?.trim();
   }
 
   const entry: UserLlmProviderEntry = {

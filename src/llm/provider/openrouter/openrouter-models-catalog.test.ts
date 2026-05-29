@@ -12,6 +12,16 @@ describe("OPENROUTER_MODELS_CATALOG", () => {
     }
   });
 
+  it("does not list Gemini chat models", () => {
+    for (const [id, entry] of OPENROUTER_MODELS_CATALOG) {
+      if (entry.kind !== "chat") continue;
+      expect(/gemini/i.test(id)).toBe(false);
+    }
+    for (const id of OPENROUTER_CHAT_MODEL_ORDER) {
+      expect(/gemini/i.test(id)).toBe(false);
+    }
+  });
+
   it("orders TUI chat picks with openrouter/auto first", () => {
     expect(OPENROUTER_CHAT_MODEL_ORDER[0]).toBe("openrouter/auto");
     for (const id of OPENROUTER_CHAT_MODEL_ORDER) {
@@ -37,9 +47,7 @@ describe("OPENROUTER_MODELS_CATALOG", () => {
         "qwen/qwen3.7-max",
         "deepseek/deepseek-v4-flash",
         "deepseek/deepseek-v4-flash:free",
-        "google/gemini-3.1-flash-lite",
         "x-ai/grok-4.3",
-        "x-ai/grok-4.20",
         "mistralai/mistral-medium-3-5",
         "minimax/minimax-m2.7",
         "openai/gpt-5.5",

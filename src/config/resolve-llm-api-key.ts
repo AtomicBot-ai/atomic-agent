@@ -14,6 +14,10 @@ export function resolveLlmProviderApiKey(
     const key = process.env.OPENROUTER_API_KEY;
     return key && key.length > 0 ? key : undefined;
   }
+  if (entry.kind === "aimlapi") {
+    const key = process.env.AIMLAPI_API_KEY;
+    return key && key.length > 0 ? key : undefined;
+  }
   if (entry.kind === "openai-compatible") {
     const key =
       process.env.OPENAI_COMPAT_API_KEY ??

@@ -28,4 +28,31 @@ describe("llm-config", () => {
     expect(parsed.llm?.activeTextProvider).toBe("openrouter");
     expect(parsed.llm?.providers).toHaveLength(2);
   });
+
+  it("accepts aimlapi as a first-class provider kind", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      llm: {
+        activeTextProvider: "aimlapi",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto",
+        providers: [
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            url: "http://127.0.0.1:19091",
+          },
+          {
+            id: "aimlapi",
+            kind: "aimlapi",
+            defaultChatModel: "openai/gpt-5-2",
+          },
+        ],
+      },
+    });
+    expect(parsed.llm?.activeTextProvider).toBe("aimlapi");
+    expect(parsed.llm?.providers.find((p) => p.id === "aimlapi")).toMatchObject(
+      { kind: "aimlapi", defaultChatModel: "openai/gpt-5-2" },
+    );
+  });
 });

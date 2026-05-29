@@ -3,6 +3,8 @@ import type { AgentMetrics } from "../../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import { VOTE_GRAMMAR } from "./vote-grammar.js";
+import { VOTE_RESPONSE_FORMAT } from "./vote-response-format.js";
+import type { ResponseFormatJsonSchema } from "../../llm/provider/completion-types.js";
 import {
   buildVotePrompt,
   type VoteCandidate,
@@ -84,6 +86,12 @@ export interface VoteRunner {
 export type VoteRunnerLlmComplete = (params: {
   prompt: string;
   grammar: string;
+  /**
+   * Structured Outputs envelope for cloud providers — the cross-vendor
+   * equivalent of GBNF. The bootstrap `llmComplete` forwards it under
+   * `native_tools`; grammar-only providers (llama-server) ignore it.
+   */
+  responseFormat?: ResponseFormatJsonSchema;
   slotId: number;
   sessionId: string;
   signal: AbortSignal;
@@ -235,6 +243,7 @@ export function createVoteRunner(deps: VoteRunnerDeps): VoteRunner {
       const completion = await deps.llmComplete({
         prompt,
         grammar: VOTE_GRAMMAR,
+        responseFormat: VOTE_RESPONSE_FORMAT,
         slotId: deps.reflectionSlotId,
         sessionId: `vote:${input.sessionId}`,
         signal: controller.signal,

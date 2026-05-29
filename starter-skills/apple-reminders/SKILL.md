@@ -1,7 +1,7 @@
 ---
 name: apple-reminders
 description: Manage Apple Reminders via the `remindctl` CLI on macOS — list, add, complete, delete, manage lists.
-version: 1.1.0
+version: 1.2.0
 requires_tools:
   - os.shell.run
 dangerous: false
@@ -11,18 +11,14 @@ dangerous: false
 
 Drive Apple Reminders from the terminal via [`remindctl`](https://github.com/steipete/remindctl). Reminders sync across Apple devices through iCloud.
 
-## Setup health check (run first, every session)
+## Setup check (lazy — do NOT probe every turn)
 
-Before any operation, verify state with **one solo step**:
+Do **not** run a `remindctl status` probe before each request. Just run the
+`remindctl` command the user asked for directly. Only when a command
+**fails** map the error to a Setup playbook branch:
 
-```
-[{ "tool": "os.shell.run", "args": { "cmd": "remindctl", "args": ["status"] } }]
-```
-
-Outcome map:
-- `exit 0` and output contains `authorized` / `granted` → setup is healthy, proceed.
-- `exit != 0` and stderr contains `command not found: remindctl` → enter **Setup playbook → "remindctl is not installed"**.
-- `exit 0` but output says permission `denied` / `not determined` / `restricted` → enter **Setup playbook → "Reminders permission missing"**.
+- stderr contains `command not found: remindctl` → **Setup playbook → "remindctl is not installed"**.
+- output says permission `denied` / `not determined` / `restricted` → **Setup playbook → "Reminders permission missing"**.
 - macOS not detected → reply that this skill is macOS-only and stop. Do NOT try to install anything.
 
 If unsure which branch applies, capture stderr and ask the user before proceeding.
@@ -35,7 +31,7 @@ When a check fails, the agent's job is to OFFER concrete help and EXECUTE the fi
 2. Offer the most direct remediation the agent can perform via tools.
 3. Wait for the user's yes/no reply.
 4. On yes, execute the fix (the runtime approval gate will surface the command for confirmation).
-5. Re-run the health check; only then proceed with the original request.
+5. Retry the original request; only then proceed.
 
 ### remindctl is not installed
 
@@ -49,7 +45,7 @@ On yes:
 [{ "tool": "os.shell.run", "args": { "cmd": "brew", "args": ["install", "steipete/tap/remindctl"] } }]
 ```
 
-After install, re-run the health check.
+After install, retry the original command.
 
 If `brew` itself is missing, do NOT attempt to bootstrap Homebrew — reply: «У вас не установлен Homebrew. Поставьте его вручную с https://brew.sh/, потом я продолжу.»
 
