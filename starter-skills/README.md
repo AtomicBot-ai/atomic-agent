@@ -27,3 +27,10 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `notion/` | Notion REST API (pages, databases, blocks) | `NOTION_API_KEY` in `~/.atomic-agent/.env` + page sharing |
 | `gog-workspace/` | Google Workspace access through the `gog` CLI | `gog` installed + OAuth client JSON added with `gog auth credentials` / `gog auth add` |
 | `xurl/` | X (Twitter) API via the official `xurl` CLI | `xurl` installed + OAuth 2.0 set up by user out-of-band |
+| `pdf/` | Merge / split / extract / render / OCR PDFs | `brew install qpdf poppler` (`ocrmypdf` for OCR) |
+| `xlsx/` | Create / edit Excel workbooks (reads via `os.fs.read_document`) | `python3` + `openpyxl` |
+| `web-search/` | Key-less web search via the `ddgr` CLI (browser fallback) | `brew install ddgr` (optional) |
+| `pandoc/` | Convert documents between formats (md/docx/html/pdf/epub) | `brew install pandoc` (+ TeX engine for PDF) |
+| `ffmpeg/` | Audio / video transform: convert, trim, extract, resize, GIF | `brew install ffmpeg` |
+| `imagemagick/` | Image edit / convert: resize, crop, format, montage | `brew install imagemagick` |
+| `docker/` | Manage containers / images / Compose stacks via `docker` CLI | `docker` installed + daemon running |

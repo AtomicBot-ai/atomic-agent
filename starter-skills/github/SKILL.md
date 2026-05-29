@@ -1,7 +1,7 @@
 ---
 name: github
 description: Drive GitHub via the official `gh` CLI — repos, issues, pull requests, releases, gists, Actions runs, and raw REST through `gh api`. Use when the user asks to inspect or manage GitHub.
-version: 1.0.0
+version: 1.1.0
 requires_tools:
   - os.shell.run
 dangerous: true
@@ -14,18 +14,14 @@ Prefer `gh` over raw REST; fall back to `gh api <endpoint>` only when a verb is
 missing. `gh` already speaks the user's authenticated identity, so no tokens are
 handled in this skill.
 
-## Setup health check (run first, every session)
+## Setup check (lazy — do NOT probe every turn)
 
-Verify auth state with **one solo step**:
+Do **not** run `gh auth status` before each request. Just run the `gh`
+command the user asked for — reads go straight through. Only when a command
+**fails** map the error to a Setup playbook branch:
 
-```
-[{ "tool": "os.shell.run", "args": { "cmd": "gh", "args": ["auth", "status"] } }]
-```
-
-Outcome map:
-- `exit 0` + `Logged in to github.com as <user>` → healthy, proceed.
-- `exit != 0` and stderr contains `command not found: gh` → enter **Setup playbook → "gh is not installed"**.
-- `exit != 0` and stderr contains `not logged` / `gh auth login` → enter **Setup playbook → "not authenticated"**.
+- stderr contains `command not found: gh` → **Setup playbook → "gh is not installed"**.
+- stderr contains `not logged` / `gh auth login` → **Setup playbook → "not authenticated"**.
 
 If unsure which branch applies, capture stderr and ask the user before proceeding.
 
@@ -135,8 +131,8 @@ All examples invoke `os.shell.run` with `cmd: "gh"` and the `args` array shown.
 
 ## Rules
 
-1. Run `gh auth status` once per session before the first write; reads can go
-   straight through.
+1. Reads go straight through without any probe. On an auth error from any
+   command, enter the Setup playbook (do not pre-flight `gh auth status`).
 2. Always confirm content and target (repo, issue/PR number, branch) before any
    create / merge / close / delete / edit / release operation.
 3. Prefer `--json` for anything you need to parse; human output changes between

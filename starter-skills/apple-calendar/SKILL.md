@@ -1,7 +1,7 @@
 ---
 name: apple-calendar
 description: Read macOS Calendar events via the `icalBuddy` CLI and create events via AppleScript (osascript). Use to check the user's calendar, agenda, upcoming events, or add an event on macOS.
-version: 1.0.0
+version: 1.1.0
 requires_tools:
   - os.shell.run
 dangerous: false
@@ -13,18 +13,14 @@ Read Apple Calendar from the terminal via [`icalBuddy`](https://hasseg.org/icalB
 (read-only) and create events through `osascript` AppleScript against Calendar.app.
 Calendars sync across Apple devices through iCloud.
 
-## Setup health check (run first, every session)
+## Setup check (lazy — do NOT probe every turn)
 
-Verify state with **one solo step**:
+Do **not** run a `--version` probe before each request. Just run the
+calendar command the user asked for (e.g. `icalBuddy eventsToday`) directly.
+Only when a command **fails** map the error to a Setup playbook branch:
 
-```
-[{ "tool": "os.shell.run", "args": { "cmd": "icalBuddy", "args": ["--version"] } }]
-```
-
-Outcome map:
-- `exit 0` + version string → setup is healthy, proceed.
-- `exit != 0` and stderr mentions `command not found: icalBuddy` → enter **Setup playbook → "icalBuddy is not installed"**.
-- `exit 0` but first real read returns nothing and stderr mentions calendar access / not authorized → enter **Setup playbook → "Calendar permission missing"**.
+- stderr mentions `command not found: icalBuddy` → **Setup playbook → "icalBuddy is not installed"**.
+- a read returns nothing and stderr mentions calendar access / not authorized → **Setup playbook → "Calendar permission missing"**.
 - macOS not detected (e.g. `uname` returns `Linux`) → reply that this skill is macOS-only and stop. Do NOT try to install anything.
 
 If unsure which branch applies, capture stderr and ask the user before proceeding.
@@ -46,7 +42,7 @@ On yes:
 [{ "tool": "os.shell.run", "args": { "cmd": "brew", "args": ["install", "ical-buddy"] } }]
 ```
 
-After install, re-run the health check.
+After install, retry the original command.
 
 If `brew` itself is missing, do NOT bootstrap Homebrew automatically — reply:
 «У вас не установлен Homebrew. Поставьте его вручную с https://brew.sh/, потом я продолжу.»

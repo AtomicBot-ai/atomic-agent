@@ -1,7 +1,7 @@
 ---
 name: obsidian
 description: Read, search, and create Markdown notes inside an Obsidian vault on disk.
-version: 1.1.0
+version: 1.2.0
 requires_tools:
   - os.fs.read
   - os.fs.glob
@@ -16,24 +16,15 @@ dangerous: false
 
 Operate on the user's Obsidian vault as plain Markdown files. Obsidian itself does not need to be running — the vault is just a directory tree of `.md` files.
 
-## Setup health check (run first, every session)
+## Setup check (lazy — resolve path once, don't re-probe)
 
-The vault path is resolved in this order: `$OBSIDIAN_VAULT_PATH` env var → fallback `~/Documents/Obsidian Vault`. Verify with **two solo steps**:
+The vault path resolves as `$OBSIDIAN_VAULT_PATH` env var → fallback
+`~/Documents/Obsidian Vault`. Resolve it **once** when you first need it
+this conversation; do not re-probe `printenv` on every turn. Operate on the
+resolved path directly and map failures:
 
-```
-[{ "tool": "os.shell.run", "args": { "cmd": "printenv", "args": ["OBSIDIAN_VAULT_PATH"] } }]
-```
-
-Then list the resolved directory (use the env value if non-empty, otherwise the fallback):
-
-```
-[{ "tool": "os.fs.list", "args": { "path": "<resolved-vault-path>" } }]
-```
-
-Outcome map:
-- `os.fs.list` returns a directory listing with `.md` files → setup is healthy. Remember the resolved path for the rest of the session and use it as `cwd` / path prefix.
-- `os.fs.list` returns an empty result or only non-md files → enter **Setup playbook → "Resolved path is not a real vault"**.
-- `os.fs.list` errors with `ENOENT` / "no such file or directory" → enter **Setup playbook → "Vault path does not exist"**.
+- `os.fs.list` / read errors with `ENOENT` / "no such file or directory" → **Setup playbook → "Vault path does not exist"**.
+- the path exists but holds no `.md` files → **Setup playbook → "Resolved path is not a real vault"**.
 
 Vault paths often contain spaces — pass them through `os.fs.*` tools verbatim, no quoting needed.
 
@@ -45,7 +36,7 @@ When a check fails, the agent's job is to OFFER concrete help and EXECUTE the fi
 2. Offer the most direct remediation the agent can perform via tools.
 3. Wait for the user's reply.
 4. Execute the fix via tools.
-5. Re-run the health check; only then proceed.
+5. Retry the original command; only then proceed.
 
 ### Vault path does not exist
 

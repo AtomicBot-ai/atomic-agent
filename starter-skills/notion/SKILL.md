@@ -1,7 +1,7 @@
 ---
 name: notion
 description: Read and write Notion pages, databases (data sources), and blocks via the Notion REST API.
-version: 1.2.1
+version: 1.3.0
 requires_tools:
   - os.shell.run
   - os.http.request
@@ -63,18 +63,15 @@ To fetch N pages, emit **N consecutive solo steps**, each as `[{...}]`. Wait for
 
 `args.body` for POST must be a **JSON object** (the runtime serialises it). Do **not** wrap it in quotes and escape the braces — passing `body: "{\"key\":\"val\"}"` works but is fragile and is the #1 cause of `400 invalid_json` from Notion.
 
-## Setup health check (run first, every session)
+## Setup check (lazy — read the key once, don't re-probe)
 
-Before any HTTP call, verify state with **one solo step**:
+Read `NOTION_API_KEY` from the environment **once** when you first need it
+this conversation (`printenv NOTION_API_KEY`), then reuse the value in
+`Authorization: Bearer …` headers for the rest of the session. Do not
+re-probe before every HTTP call. Map failures:
 
-```
-[{ "tool": "os.shell.run", "args": { "cmd": "printenv", "args": ["NOTION_API_KEY"] } }]
-```
-
-Outcome map:
-- `stdout` matches `^ntn_…` or `^secret_…`, `exit 0` → setup is healthy. Capture the key value and reuse it in `Authorization: Bearer …` headers for the rest of the session.
-- `stdout` empty (printenv exits non-zero or prints nothing) → enter **Setup playbook → "NOTION_API_KEY is not set"**.
-- Any HTTP call later returns `404 object_not_found` → enter **Setup playbook → "Page not shared with the integration"**.
+- the key is empty / unset (printenv exits non-zero or prints nothing) → **Setup playbook → "NOTION_API_KEY is not set"**.
+- any HTTP call returns `404 object_not_found` → **Setup playbook → "Page not shared with the integration"**.
 
 ## Setup playbook (when prerequisites are missing)
 
@@ -84,7 +81,7 @@ When a check fails, the agent's job is to OFFER concrete help and EXECUTE the fi
 2. Offer the most direct remediation the agent can perform via tools.
 3. Wait for the user's reply (yes/no, or pasted secret).
 4. Execute the fix via tools (the runtime approval gate will surface writes for confirmation).
-5. Re-run the health check; only then proceed with the original request.
+5. Retry the original request; only then proceed.
 
 ### NOTION_API_KEY is not set
 
