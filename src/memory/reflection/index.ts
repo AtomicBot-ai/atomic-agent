@@ -21,4 +21,5 @@ export type {
   ReflectionRunner,
   ReflectionRunnerDeps,
   ReflectionLlmComplete,
+  ReflectionTraceEvent,
 } from "./reflection-runner.js";

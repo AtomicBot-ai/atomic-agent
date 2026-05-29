@@ -56,6 +56,19 @@ export type LinkGeneratorOutcome =
   | "timeout"
   | "failed";
 
+/**
+ * Memory-v2 phase 2. Per-call trace event surfaced to the runtime's
+ * per-session `TraceRecorder` via the optional `emitTrace` dep. The
+ * bootstrap resolves the recorder by `sessionId`; a missing recorder
+ * is a normal "tracing disabled" outcome, never an error.
+ */
+export interface LinkGeneratorTraceEvent {
+  sessionId: string;
+  outcome: LinkGeneratorOutcome;
+  linksWritten?: number;
+  reason?: string;
+}
+
 export interface LinkGeneratorRunner {
   /**
    * Fire-safe. Never throws. Returns the count of persisted links
@@ -97,6 +110,12 @@ export interface LinkGeneratorRunnerDeps {
   minCandidates?: number;
   logger?: StructuredLogger;
   metrics?: AgentMetrics;
+  /**
+   * Optional trace sink invoked once per generation call with the
+   * canonical outcome. Bootstrap binds it to the per-session
+   * `TraceRecorder.recordLinkGenerator`. Fire-safe.
+   */
+  emitTrace?: (event: LinkGeneratorTraceEvent) => void;
   /** Injectable clock for tests. */
   now?: () => number;
 }
@@ -127,6 +146,20 @@ export function createLinkGeneratorRunner(
         ? { linksWritten: context.linksWritten }
         : {}),
     });
+    if (deps.emitTrace) {
+      try {
+        deps.emitTrace({
+          sessionId: context.sessionId,
+          outcome,
+          ...(typeof context.linksWritten === "number"
+            ? { linksWritten: context.linksWritten }
+            : {}),
+          ...(context.reason ? { reason: context.reason } : {}),
+        });
+      } catch {
+        // A sink hiccup must never derail link generation — swallow.
+      }
+    }
     const logContext = {
       sessionId: context.sessionId,
       tookMs,

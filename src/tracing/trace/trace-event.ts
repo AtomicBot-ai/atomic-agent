@@ -32,6 +32,10 @@ export type TraceEvent =
   | TraceVoteRejected
   | TraceProcedureCreated
   | TraceProcedureDeprecated
+  | TraceReflection
+  | TraceLinkGenerator
+  | TraceDistill
+  | TraceQueryRewriter
   | TraceError
   | TraceTruncated;
 
@@ -244,6 +248,73 @@ export interface TraceProcedureDeprecated extends TraceEventBase {
   type: "procedure_deprecated";
   procedureId: number;
   reason: string;
+}
+
+/**
+ * Memory-v2. End-of-turn reflection sub-call outcome (SET/NOTE/EVOLVE
+ * extraction). Emitted once per `ReflectionRunner.reflect` call by the
+ * reflection slot. Reflection fires fire-and-forget after
+ * `turn_finished`, so the recorder owns the monotonic `seq` and the
+ * event interleaves into the same per-session NDJSON file. `outcome`
+ * mirrors `agent.memory.reflection` metric tags.
+ */
+export interface TraceReflection extends TraceEventBase {
+  type: "reflection";
+  outcome: "ok" | "none" | "aborted" | "timeout" | "failed";
+  factsWritten?: number;
+  notesWritten?: number;
+  reason?: string;
+}
+
+/**
+ * Memory-v2 phase 2. Reactive link-graph generation sub-call outcome.
+ * Emitted once per `LinkGeneratorRunner.generate` call. `outcome`
+ * mirrors `agent.memory.link_generator` metric tags; `linksWritten`
+ * is the count of edges persisted this turn.
+ */
+export interface TraceLinkGenerator extends TraceEventBase {
+  type: "link_generator";
+  outcome: "ok" | "none" | "skipped" | "aborted" | "timeout" | "failed";
+  linksWritten?: number;
+  candidates?: number;
+  reason?: string;
+}
+
+/**
+ * Memory-v2 phase 5/7b. Cold-path consolidator distillation outcome
+ * for one cluster. Lives outside any turn context (the consolidator
+ * runs out-of-band via its own `setInterval`); `sessionId` carries
+ * the synthetic `consolidator` correlation tag, sharing the
+ * `consolidator.ndjson` file + seq counter with `lesson_deprecated`
+ * and the `procedure_*` events. `hasProcedure` is `true` when the
+ * single combined LLM call also emitted a `PROCEDURE` half.
+ */
+export interface TraceDistill extends TraceEventBase {
+  type: "distill";
+  outcome: "ok" | "none" | "aborted" | "timeout" | "failed";
+  clusterSize?: number;
+  hasProcedure?: boolean;
+  reason?: string;
+}
+
+/**
+ * Memory v2.5 phase A. Recall-side query-rewriter sub-call outcome.
+ * Emitted once per `QueryRewriterRunner.maybeRewrite` call (the
+ * rewriter runs during `refreshMemoryContext` before the step loop).
+ * `outcome` mirrors `agent.memory.retrieve.rewriter` metric tags —
+ * `skipped_*` outcomes mean the heuristic / embedding gate declined
+ * to fire the LLM call.
+ */
+export interface TraceQueryRewriter extends TraceEventBase {
+  type: "query_rewriter";
+  outcome:
+    | "ok"
+    | "skipped_not_referential"
+    | "skipped_no_history"
+    | "aborted"
+    | "timeout"
+    | "failed";
+  reason?: string;
 }
 
 export interface TraceError extends TraceEventBase {

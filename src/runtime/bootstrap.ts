@@ -96,6 +96,7 @@ import {
   createReflectionRunner,
   type ReflectionLlmComplete,
   type ReflectionRunner,
+  type ReflectionTraceEvent,
 } from "../memory/reflection/index.js";
 import {
   LinkStore,
@@ -1126,6 +1127,24 @@ export async function createAgentRuntime(
     logger,
     metrics,
     ...(neighborEvolver ? { neighborEvolver } : {}),
+    // Per-session trace emission. The recorder map is keyed by
+    // sessionId; reflection fires fire-and-forget after
+    // `turn_finished`, so a missing recorder is a normal "tracing
+    // disabled for this session" outcome, not an error.
+    emitTrace: (event: ReflectionTraceEvent) => {
+      const recorder = recorders.get(event.sessionId);
+      if (!recorder) return;
+      recorder.recordReflection({
+        outcome: event.outcome,
+        ...(typeof event.factsWritten === "number"
+          ? { factsWritten: event.factsWritten }
+          : {}),
+        ...(typeof event.notesWritten === "number"
+          ? { notesWritten: event.notesWritten }
+          : {}),
+        ...(event.reason ? { reason: event.reason } : {}),
+      });
+    },
   });
 
   // Memory-v2 phase 2. Compose the base reflection runner with the
@@ -1178,6 +1197,19 @@ export async function createAgentRuntime(
       minCandidates: config.memory.links.minCandidates,
       logger,
       metrics,
+      // Per-session trace emission — same resolve-by-sessionId
+      // pattern as reflection / vote.
+      emitTrace: (event) => {
+        const recorder = recorders.get(event.sessionId);
+        if (!recorder) return;
+        recorder.recordLinkGenerator({
+          outcome: event.outcome,
+          ...(typeof event.linksWritten === "number"
+            ? { linksWritten: event.linksWritten }
+            : {}),
+          ...(event.reason ? { reason: event.reason } : {}),
+        });
+      },
     });
     reflectionRunner = createLinkAwareReflectionRunner({
       reflection: baseReflectionRunner,
@@ -1390,6 +1422,15 @@ export async function createAgentRuntime(
       gate,
       logger,
       metrics,
+      // Per-session trace emission — the rewriter runs during
+      // `refreshMemoryContext`, so the recorder for this session may
+      // not exist yet on the very first turn; a missing recorder is a
+      // normal "tracing disabled" outcome.
+      emitTrace: (event) => {
+        const recorder = recorders.get(event.sessionId);
+        if (!recorder) return;
+        recorder.recordQueryRewriter({ outcome: event.outcome });
+      },
     });
     memoryContextProvider = createRewriterAwareMemoryContextProvider({
       inner: baseMemoryContextProvider,
@@ -1797,6 +1838,12 @@ export async function createAgentRuntime(
     config.memory.lessons.enabled &&
     config.memory.consolidation.enabled
   ) {
+    // One monotonic counter shared by every consolidator-origin trace
+    // event (distill outcome + lesson/procedure deprecation) so the
+    // synthetic `consolidator.ndjson` file stays totally ordered across
+    // all event types within a tick. The consolidator does not run
+    // through a per-session recorder, so we own the `seq` here.
+    let consolidatorSeq = 0;
     // Reserve (or piggy-back on) the reflection slot for the distill
     // call. The slot is per-runtime, not per-job, so calling
     // `reserveReflectionSlot` again here is idempotent — the slot
@@ -1830,6 +1877,30 @@ export async function createAgentRuntime(
       timeoutMs: config.memory.consolidation.distillTimeoutMs,
       logger,
       metrics,
+      // Cold-path trace emission. The consolidator does not run through
+      // a per-session recorder, so we emit straight onto the bus with
+      // the synthetic `consolidator` sessionId and the shared cold-path
+      // `seq`. No-op when tracing is disabled.
+      ...(traceBus
+        ? {
+            emitTrace: (event) => {
+              traceBus.emit({
+                type: "distill",
+                sessionId: "consolidator",
+                seq: consolidatorSeq++,
+                ts: Date.now(),
+                outcome: event.outcome,
+                ...(typeof event.clusterSize === "number"
+                  ? { clusterSize: event.clusterSize }
+                  : {}),
+                ...(typeof event.hasProcedure === "boolean"
+                  ? { hasProcedure: event.hasProcedure }
+                  : {}),
+                ...(event.reason ? { reason: event.reason } : {}),
+              });
+            },
+          }
+        : {}),
       // Memory-v2 phase 7b — emit a combined LESSON+PROCEDURE
       // response when procedures are enabled. The grammar still
       // permits the procedure half to be empty (conceptual
@@ -1910,10 +1981,9 @@ export async function createAgentRuntime(
                 reason: string;
               }) => void;
             } => {
-              // One monotonic counter shared by every consolidator-
-              // origin trace event so the consolidator NDJSON stays
-              // ordered across all event types in the same tick.
-              let consolidatorSeq = 0;
+              // Shares the hoisted `consolidatorSeq` declared above so
+              // distill + lesson/procedure events stay ordered in the
+              // same cold-path NDJSON file.
               return {
                 onLessonDeprecated: ({ lessonId, reason }) =>
                   traceBus.emit({
@@ -2187,6 +2257,12 @@ function buildReflectionRunner(args: {
   notesStore: MemoryStore;
   /** Memory-v2 phase 3. Optional; when omitted EVOLVE is dropped. */
   neighborEvolver?: NeighborEvolver;
+  /**
+   * Optional per-call trace sink. Bootstrap resolves the per-session
+   * `TraceRecorder` by `event.sessionId` and forwards to
+   * `recordReflection`.
+   */
+  emitTrace?: (event: ReflectionTraceEvent) => void;
   logger: StructuredLogger;
   metrics: AgentMetrics;
 }): ReflectionRunner | undefined {
@@ -2225,6 +2301,7 @@ function buildReflectionRunner(args: {
     profileStore: args.profileStore,
     ...(notesWriteEnabled ? { memoryStore: args.notesStore } : {}),
     ...(args.neighborEvolver ? { neighborEvolver: args.neighborEvolver } : {}),
+    ...(args.emitTrace ? { emitTrace: args.emitTrace } : {}),
     reflectionSlotId,
     timeoutMs: memory.reflection.timeoutMs,
     maxFactsPerCall: memory.reflection.maxFactsPerCall,

@@ -161,6 +161,85 @@ describe("createReflectionRunner", () => {
     expect(h.logEvents.some((e) => e.message === "reflection.ok")).toBe(true);
   });
 
+  it("emits an `ok` trace event with write counts via emitTrace", async () => {
+    const traced: Array<{
+      sessionId: string;
+      outcome: string;
+      factsWritten?: number;
+      notesWritten?: number;
+    }> = [];
+    const runner = createReflectionRunner({
+      llmComplete: async () =>
+        completion("SET name=Alex\nSET timezone=Europe/Lisbon\n"),
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+      emitTrace: (event) => traced.push(event),
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "I am Alex in Lisbon",
+      assistantReply: "Noted!",
+    });
+
+    expect(traced).toHaveLength(1);
+    expect(traced[0]).toMatchObject({
+      sessionId: "s1",
+      outcome: "ok",
+      factsWritten: 2,
+    });
+  });
+
+  it("emits a `none` trace event when the model returns NONE", async () => {
+    const traced: Array<{ sessionId: string; outcome: string }> = [];
+    const runner = createReflectionRunner({
+      llmComplete: async () => completion("NONE\n"),
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+      emitTrace: (event) => traced.push(event),
+    });
+
+    await runner.reflect({
+      sessionId: "s1",
+      userMessage: "hi",
+      assistantReply: "hello",
+    });
+
+    expect(traced).toEqual([{ sessionId: "s1", outcome: "none" }]);
+  });
+
+  it("swallows an emitTrace failure without derailing reflection", async () => {
+    const runner = createReflectionRunner({
+      llmComplete: async () => completion("SET name=Alex\n"),
+      profileStore: h.store,
+      reflectionSlotId: 7,
+      timeoutMs: 5_000,
+      maxFactsPerCall: 3,
+      logger: h.logger,
+      metrics: h.metrics,
+      emitTrace: () => {
+        throw new Error("sink down");
+      },
+    });
+
+    await expect(
+      runner.reflect({
+        sessionId: "s1",
+        userMessage: "I am Alex",
+        assistantReply: "ok",
+      }),
+    ).resolves.toBeUndefined();
+    expect(h.store.list().map((f) => f.key)).toEqual(["name"]);
+  });
+
   it("records `none` when the model returns NONE", async () => {
     const runner = createReflectionRunner({
       llmComplete: async () => completion("NONE\n"),

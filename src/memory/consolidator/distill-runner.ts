@@ -36,6 +36,22 @@ import { buildDistillPrompt } from "./distill-prompt.js";
  *                 **not** abort the tick — the tick continues with
  *                 the next cluster.
  */
+/**
+ * Memory-v2 phase 5/7b. Per-cluster trace event surfaced to the
+ * cold-path consolidator trace bridge via the optional `emitTrace`
+ * dep. Unlike the per-session sub-calls, the consolidator runs
+ * out-of-band, so bootstrap emits this straight onto the `traceBus`
+ * with the synthetic `consolidator` sessionId and the shared
+ * cold-path `seq` counter. Fire-safe.
+ */
+export interface DistillTraceEvent {
+  sessionId: string;
+  outcome: "ok" | "none" | "aborted" | "timeout" | "failed";
+  clusterSize?: number;
+  hasProcedure?: boolean;
+  reason?: string;
+}
+
 export type DistillOutcome =
   | {
       kind: "ok";
@@ -75,6 +91,13 @@ export interface DistillRunnerDeps {
   withProcedure?: boolean;
   metrics?: AgentMetrics;
   logger?: StructuredLogger;
+  /**
+   * Optional trace sink invoked once per `distill` call with the
+   * canonical outcome. Bootstrap binds it to the consolidator trace
+   * bridge (synthetic `consolidator` sessionId on the shared cold-path
+   * `seq`). Fire-safe.
+   */
+  emitTrace?: (event: DistillTraceEvent) => void;
 }
 
 export interface DistillRequest {
@@ -89,10 +112,32 @@ export class DistillRunner {
   constructor(private readonly deps: DistillRunnerDeps) {}
 
   async distill(request: DistillRequest): Promise<DistillOutcome> {
-    if (request.episodes.length === 0) {
+    const clusterSize = request.episodes.length;
+    const emit = (
+      outcome: DistillTraceEvent["outcome"],
+      extra?: { hasProcedure?: boolean; reason?: string },
+    ): void => {
+      if (!this.deps.emitTrace) return;
+      try {
+        this.deps.emitTrace({
+          sessionId: request.sessionId,
+          outcome,
+          clusterSize,
+          ...(extra?.hasProcedure !== undefined
+            ? { hasProcedure: extra.hasProcedure }
+            : {}),
+          ...(extra?.reason ? { reason: extra.reason } : {}),
+        });
+      } catch {
+        // A sink hiccup must never derail the consolidator — swallow.
+      }
+    };
+    if (clusterSize === 0) {
+      emit("failed", { reason: "empty_cluster" });
       return { kind: "failed", reason: "empty_cluster" };
     }
     if (request.signal.aborted) {
+      emit("aborted");
       return { kind: "aborted" };
     }
     const withProcedure = this.deps.withProcedure === true;
@@ -132,6 +177,7 @@ export class DistillRunner {
           sessionId: request.sessionId,
           parentIds: request.episodes.map((e) => e.id),
         });
+        emit("none");
         return { kind: "none" };
       }
       const procedure: ParsedProcedure | null =
@@ -144,6 +190,7 @@ export class DistillRunner {
         elapsedMs: elapsed,
         hasProcedure: procedure !== null,
       });
+      emit("ok", { hasProcedure: procedure !== null });
       return {
         kind: "ok",
         lesson: {
@@ -161,6 +208,7 @@ export class DistillRunner {
         this.deps.logger?.warn?.("consolidator.distill.aborted", {
           sessionId: request.sessionId,
         });
+        emit("aborted");
         return { kind: "aborted" };
       }
       if (innerCtrl.signal.aborted) {
@@ -168,6 +216,7 @@ export class DistillRunner {
           sessionId: request.sessionId,
           timeoutMs: this.deps.timeoutMs,
         });
+        emit("timeout");
         return { kind: "timeout" };
       }
       const reason =
@@ -180,6 +229,7 @@ export class DistillRunner {
         sessionId: request.sessionId,
         reason,
       });
+      emit("failed", { reason });
       return { kind: "failed", reason };
     } finally {
       clearTimeout(timer);

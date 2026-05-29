@@ -88,6 +88,21 @@ export type ReflectionOutcome =
   | "timeout"
   | "failed";
 
+/**
+ * Memory-v2. Per-call trace event surfaced to the runtime's
+ * per-session `TraceRecorder` via the optional `emitTrace` dep. The
+ * bootstrap resolves the recorder by `sessionId` (reflection fires
+ * fire-and-forget after `turn_finished`, so a missing recorder is a
+ * normal "tracing disabled" outcome, never an error).
+ */
+export interface ReflectionTraceEvent {
+  sessionId: string;
+  outcome: ReflectionOutcome;
+  factsWritten?: number;
+  notesWritten?: number;
+  reason?: string;
+}
+
 export interface ReflectionRunner {
   /** Fire-safe. Never throws. Never awaited by the agent loop. */
   reflect(input: ReflectionInput): Promise<void>;
@@ -178,6 +193,13 @@ export interface ReflectionRunnerDeps {
   anySpeaker?: boolean;
   logger?: StructuredLogger;
   metrics?: AgentMetrics;
+  /**
+   * Optional trace sink invoked once per reflection call with the
+   * canonical outcome. Bootstrap binds it to the per-session
+   * `TraceRecorder.recordReflection`. Fire-safe: the runner swallows
+   * any sink error so a recorder hiccup never derails reflection.
+   */
+  emitTrace?: (event: ReflectionTraceEvent) => void;
   /** Injectable clock for deterministic tests. Defaults to `Date.now`. */
   now?: () => number;
 }
@@ -241,6 +263,23 @@ export function createReflectionRunner(
       outcome,
       durationMs: tookMs,
     });
+    if (deps.emitTrace) {
+      try {
+        deps.emitTrace({
+          sessionId: context.sessionId,
+          outcome,
+          ...(typeof context.factsWritten === "number"
+            ? { factsWritten: context.factsWritten }
+            : {}),
+          ...(typeof context.notesWritten === "number"
+            ? { notesWritten: context.notesWritten }
+            : {}),
+          ...(context.reason ? { reason: context.reason } : {}),
+        });
+      } catch {
+        // A sink hiccup must never derail reflection — swallow.
+      }
+    }
     const logContext = {
       sessionId: context.sessionId,
       tookMs,
