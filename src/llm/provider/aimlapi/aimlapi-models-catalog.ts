@@ -69,21 +69,14 @@ export const AIMLAPI_MODELS_CATALOG: ReadonlyMap<string, ModelCatalogEntry> =
   new Map<string, ModelCatalogEntry>([
     // OpenAI GPT-5 family (newest verified chat-completion ids)
     chatModel({
-      id: "openai/gpt-5-4",
+      id: "openai/gpt-5-2",
       contextWindow: 400_000,
       supportsVision: true,
-      supportsPromptCache: true,
     }),
     chatModel({
-      id: "openai/gpt-5-4-pro",
+      id: "openai/gpt-5-1",
       contextWindow: 400_000,
       supportsVision: true,
-      supportsPromptCache: true,
-    }),
-    chatModel({
-      id: "openai/gpt-5-3-codex",
-      contextWindow: 400_000,
-      supportsVision: false,
     }),
     chatModel({
       id: "openai/gpt-5-2-chat-latest",
@@ -183,9 +176,8 @@ export const AIMLAPI_MODELS_CATALOG: ReadonlyMap<string, ModelCatalogEntry> =
 
 /** TUI chat-picker order when offline. Verified ids only. */
 export const AIMLAPI_CHAT_MODEL_ORDER: readonly string[] = [
-  "openai/gpt-5-4",
-  "openai/gpt-5-4-pro",
-  "openai/gpt-5-3-codex",
+  "openai/gpt-5-2",
+  "openai/gpt-5-1",
   "openai/gpt-5-2-chat-latest",
   "openai/gpt-5-mini-2025-08-07",
   "openai/gpt-5-nano-2025-08-07",
@@ -201,7 +193,7 @@ export const AIMLAPI_CHAT_MODEL_ORDER: readonly string[] = [
 ];
 
 /**
- * Default chat model: `openai/gpt-5-4` — newest GPT-5.4 with 400k
+ * Default chat model: `openai/gpt-5-2` — newest GPT-5.2 with 400k
  * context, parallel tools + vision, available on `/v1/chat/completions`.
  */
-export const AIMLAPI_DEFAULT_CHAT_MODEL = "openai/gpt-5-4";
+export const AIMLAPI_DEFAULT_CHAT_MODEL = "openai/gpt-5-2";
