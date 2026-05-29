@@ -8,6 +8,10 @@ import {
   DISTILL_WITH_PROCEDURE_GRAMMAR,
 } from "./distill-grammar.js";
 import {
+  DISTILL_RESPONSE_FORMAT,
+  DISTILL_WITH_PROCEDURE_RESPONSE_FORMAT,
+} from "./distill-response-format.js";
+import {
   DistillParseError,
   parseDistillOutput,
   parseDistillWithProcedureOutput,
@@ -100,6 +104,9 @@ export class DistillRunner {
     const grammar = withProcedure
       ? DISTILL_WITH_PROCEDURE_GRAMMAR
       : DISTILL_GRAMMAR;
+    const responseFormat = withProcedure
+      ? DISTILL_WITH_PROCEDURE_RESPONSE_FORMAT
+      : DISTILL_RESPONSE_FORMAT;
     const innerCtrl = new AbortController();
     const onAbort = () => innerCtrl.abort();
     request.signal.addEventListener("abort", onAbort, { once: true });
@@ -109,6 +116,7 @@ export class DistillRunner {
       const result = await this.deps.llmComplete({
         prompt,
         grammar,
+        responseFormat,
         slotId: this.deps.slotId,
         sessionId: request.sessionId,
         signal: innerCtrl.signal,

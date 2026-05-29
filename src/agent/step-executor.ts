@@ -65,7 +65,10 @@ import {
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import { hashPrefix, type SlotManager } from "../llm/slot-manager.js";
 import type { ModelProfile } from "../llm/model-profile.js";
-import type { ToolCallTransport } from "../llm/provider/completion-types.js";
+import type {
+  ResponseFormatJsonSchema,
+  ToolCallTransport,
+} from "../llm/provider/completion-types.js";
 import type { ToolCallAdapter } from "../llm/provider/adapters/tool-call-adapter.js";
 import { openAiToolCallAdapter } from "../llm/provider/openai/openai-tool-call-adapter.js";
 import type { ProfileFact } from "../memory/profile-store.js";
@@ -90,6 +93,16 @@ export interface LlmStreamParams {
   tools?: ReadonlyArray<Record<string, unknown>>;
   toolChoice?: unknown;
   parallelToolCalls?: boolean;
+  /**
+   * OpenAI Structured Outputs envelope — the cross-vendor equivalent
+   * of `grammar` for cloud providers that cannot honour GBNF.
+   * Forwarded to `provider.complete` as `response_format: { type:
+   * "json_schema", json_schema: ... }`. Used by reflection / link-gen
+   * / vote / rewriter / distill sub-runners to keep cloud outputs
+   * parseable. Ignored on the grammar transport (llama-server already
+   * gets GBNF via `grammar`).
+   */
+  responseFormat?: ResponseFormatJsonSchema;
 }
 
 export type LlmCompleteStream = (
@@ -843,19 +856,37 @@ function tryParseToolCalls(
         }
         return { ok: true, batch };
       }
-      // No `tool_calls`, plain `content` — synthesise a length-1 `reply`
-      // batch so the one-inference-per-step contract holds. This is the
-      // companion of `tool_choice: "auto"` (see `buildLlmStreamParams`):
-      // when the model returns user-facing text without a tool wrapper
-      // (Qwen-thinking, GLM-5 prelude-only, any model that thought it
-      // could just talk) the runtime treats the text as the assistant's
-      // reply instead of falling through to the grammar parser, which
-      // would fail on non-JSON content and waste a `parse_retry` cycle.
+      // No `tool_calls`, plain `content`. Two recovery paths, in order:
+      //
+      // 1. The prompt persona instructs models to emit a GBNF-style
+      //    `[{tool, args}, ...]` array. Some cloud models (GPT-5 via
+      //    aimlapi, GLM-5 via openrouter) follow the persona literally
+      //    instead of using the OpenAI `tools` envelope — they put the
+      //    JSON array in `content` and leave `tool_calls` empty. Try the
+      //    grammar parser first; on success we keep the model's real
+      //    intent (multi-call batches, tool args, reasoning preludes)
+      //    instead of dumping the JSON literal into `reply.text`.
+      // 2. Fallback: wrap the text as a length-1 `reply` batch so the
+      //    one-inference-per-step contract holds. This is the companion
+      //    of `tool_choice: "auto"` — Qwen-thinking, GLM-5 prelude-only,
+      //    any model that thought it could just talk.
+      //
       // Empty content is *not* synthesised — that case is intentionally
       // routed through `ModelError` by the outer caller because replaying
       // the same prompt would reproduce the same empty wall.
       const replyText = completion.content;
       if (typeof replyText === "string" && replyText.trim().length > 0) {
+        try {
+          const grammarBatch = parseToolCalls(
+            normalizeContent(completion, profile),
+            getReasoningTagOptions(profile),
+          );
+          if (grammarBatch.calls.length > 0) {
+            return { ok: true, batch: grammarBatch };
+          }
+        } catch {
+          // Not a GBNF-shaped completion — fall through to the reply wrap.
+        }
         const reasoning = resolveReasoning(completion, profile);
         return {
           ok: true,

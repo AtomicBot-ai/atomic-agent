@@ -29,6 +29,16 @@ export { resolveModel, type ResolvedModel } from "./model-resolver.js";
 export { CostAccumulator, type CostAccumulatorSnapshot } from "./cost-accumulator.js";
 export { OpenAiProvider, type OpenAiProviderOptions } from "./openai/index.js";
 export { OpenRouterProvider } from "./openrouter/index.js";
+export {
+  AimlapiProvider,
+  type AimlapiProviderOptions,
+  AIMLAPI_CHAT_MODEL_ORDER,
+  AIMLAPI_DEFAULT_CHAT_MODEL,
+  AIMLAPI_MODELS_CATALOG,
+  listAimlapiChatPicks,
+  refreshAimlapiChatCatalogFromApi,
+  type AimlapiChatPick,
+} from "./aimlapi/index.js";
 export type { ToolCallAdapter } from "./adapters/tool-call-adapter.js";
 export type { StreamConsumer } from "./adapters/stream-consumer.js";
 export {

@@ -1,8 +1,10 @@
 import type { CompletionResult } from "../../llm/llama-server-client.js";
+import type { ResponseFormatJsonSchema } from "../../llm/provider/completion-types.js";
 import type { AgentMetrics } from "../../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import { LINK_GENERATOR_GRAMMAR } from "./link-generator-grammar.js";
+import { LINK_GENERATOR_RESPONSE_FORMAT } from "./link-generator-response-format.js";
 import {
   buildLinkGeneratorPrompt,
   type LinkGeneratorPromptInput,
@@ -71,6 +73,12 @@ export interface LinkGeneratorRunner {
 export type LinkGeneratorLlmComplete = (params: {
   prompt: string;
   grammar: string;
+  /**
+   * Structured Outputs envelope for cloud providers — the cross-vendor
+   * equivalent of GBNF. The bootstrap `llmComplete` forwards it under
+   * `native_tools`; grammar-only providers (llama-server) ignore it.
+   */
+  responseFormat?: ResponseFormatJsonSchema;
   slotId: number;
   sessionId: string;
   signal: AbortSignal;
@@ -182,6 +190,7 @@ export function createLinkGeneratorRunner(
       const completion = await deps.llmComplete({
         prompt,
         grammar: LINK_GENERATOR_GRAMMAR,
+        responseFormat: LINK_GENERATOR_RESPONSE_FORMAT,
         slotId: deps.reflectionSlotId,
         sessionId: `link-gen:${input.sessionId}`,
         signal: controller.signal,

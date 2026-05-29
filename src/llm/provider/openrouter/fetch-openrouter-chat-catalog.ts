@@ -39,6 +39,7 @@ function hasTools(m: OpenRouterApiModel): boolean {
 function scoreChat(m: OpenRouterApiModel): number {
   const id = m.id ?? "";
   if (!id || id.startsWith("anthropic/")) return -1;
+  if (/gemini/i.test(id)) return -1;
   if (/qwen3\.5/i.test(id)) return -1;
   if (/embed|rerank|moderation|ocr|tts|transcribe/i.test(id)) return -1;
   if (!hasTools(m)) return -1;
@@ -48,7 +49,6 @@ function scoreChat(m: OpenRouterApiModel): number {
   else if (ctx >= 200_000) s += 5;
   if (/qwen3\.7|qwen3\.6/i.test(id)) s += 20;
   if (/gpt-5\./i.test(id)) s += 15;
-  if (/gemini-3\.|gemini-2\.5/i.test(id)) s += 12;
   if (/deepseek.*v4|deepseek.*v3/i.test(id)) s += 10;
   if (/kimi-k2\.6/i.test(id)) s += 12;
   else if (/kimi-k2/i.test(id)) s += 8;

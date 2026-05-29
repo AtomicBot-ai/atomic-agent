@@ -1,4 +1,7 @@
-export type ProvidersWizardKind = "openrouter" | "openai-compatible";
+export type ProvidersWizardKind =
+  | "openrouter"
+  | "aimlapi"
+  | "openai-compatible";
 
 export type ProvidersWizardPhase =
   | "pick_kind"

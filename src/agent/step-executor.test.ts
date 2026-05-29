@@ -480,6 +480,81 @@ describe("executeStep batch handling", () => {
     });
   });
 
+  it("native_tools: recovers a GBNF-shaped JSON array emitted in `content` instead of `tool_calls`", async () => {
+    // Cloud models (GPT-5 via aimlapi, GLM-5 via openrouter) sometimes
+    // follow the persona's "emit [{tool, args}, ...] JSON array"
+    // instruction literally and put the array in `content` while
+    // leaving `tool_calls` empty. Before this fix the runtime would
+    // wrap the whole JSON literal into `reply { text: <raw JSON> }`,
+    // so the user saw `[{"tool":"reply","args":{"text":"..."}}]` in
+    // their chat. The recovery path must parse `content` as a GBNF
+    // batch first and fall back to the reply-wrap only when parsing
+    // fails.
+    const registry = makeRegistry();
+    const session = createEmptySessionState({
+      id: "s-native-gbnf-in-content",
+      workingDir: "/w",
+    });
+    const events: Array<{ type: string }> = [];
+    let llmCalls = 0;
+
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "привет",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        async llmComplete() {
+          llmCalls += 1;
+          return {
+            content:
+              '[{"tool":"reply","args":{"text":"Привет, инициат!"}}]',
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 12,
+            },
+            cacheHitTokens: 0,
+            slotId: -1,
+            modelId: "openai/gpt-5-2",
+          };
+        },
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+        onEvent(event) {
+          events.push({ type: event.type });
+        },
+      },
+    );
+
+    expect(llmCalls).toBe(1);
+    expect(events.some((event) => event.type === "parse_retry")).toBe(false);
+    expect(outcome.terminal).toBe("turn");
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0]).toMatchObject({
+      tool: "reply",
+      args: { text: "Привет, инициат!" },
+    });
+    expect(outcome.nextSession.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "Привет, инициат!",
+    });
+  });
+
   it("native_tools: routes 'no tool_calls and no content' through ModelError, not parse_retry", async () => {
     // A truly empty completion (no tool_calls + no content) has nothing
     // for the synthesis branch to recover from, and replaying the same

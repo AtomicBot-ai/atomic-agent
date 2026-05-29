@@ -34,9 +34,58 @@ const ABSTAIN_TOKEN = "NONE";
 const ENVELOPE_RE = /<rewritten_query>([^<]*)<\/rewritten_query>/i;
 
 export function parseRewriterOutput(raw: string): string | null {
+  // Cloud providers driven by Structured Outputs (see
+  // `QUERY_REWRITER_RESPONSE_FORMAT`) emit JSON instead of the legacy
+  // text envelope. Try the JSON shape first when the body looks like
+  // JSON — on failure we fall through to the envelope parser so the
+  // local llama path stays byte-identical.
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("{")) {
+    const fromJson = parseJsonShape(trimmed);
+    if (fromJson !== undefined) return fromJson;
+  }
+
   const match = ENVELOPE_RE.exec(raw);
   if (!match) return null;
   const inner = (match[1] ?? "").trim();
+  if (inner.length === 0) return null;
+  if (inner === ABSTAIN_TOKEN) return null;
+  if (inner.includes("\n")) return null;
+  return inner.length > REWRITTEN_QUERY_MAX_LENGTH
+    ? inner.slice(0, REWRITTEN_QUERY_MAX_LENGTH)
+    : inner;
+}
+
+/**
+ * Parse the Structured Outputs JSON shape:
+ *
+ *   { "rewritten_query": "..." }
+ *
+ * Returns:
+ *   - `string` — a usable rewritten query (clamped + NONE-filtered)
+ *   - `null`   — the model explicitly abstained or emitted whitespace
+ *   - `undefined` — not parseable as JSON / not our schema; caller
+ *     falls back to the legacy envelope parser
+ *
+ * The tri-state return is load-bearing: returning `null` from the JSON
+ * branch means "the cloud Structured Outputs path produced a
+ * deliberate abstain", which the caller must distinguish from "we
+ * could not understand what came back, please try the other parser".
+ */
+function parseJsonShape(raw: string): string | null | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return undefined;
+  }
+  const obj = parsed as Record<string, unknown>;
+  const field = obj["rewritten_query"];
+  if (typeof field !== "string") return undefined;
+  const inner = field.trim();
   if (inner.length === 0) return null;
   if (inner === ABSTAIN_TOKEN) return null;
   if (inner.includes("\n")) return null;

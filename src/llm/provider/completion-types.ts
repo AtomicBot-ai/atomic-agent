@@ -32,6 +32,40 @@ export interface CompletionRequest {
   tools?: ReadonlyArray<Record<string, unknown>>;
   toolChoice?: unknown;
   parallelToolCalls?: boolean;
+  /**
+   * OpenAI-compatible Structured Outputs envelope. When set, the
+   * provider attaches `response_format: { type: "json_schema", ... }`
+   * to the request so the model is forced to emit valid JSON matching
+   * `schema`. Used by reflection/link-gen/vote/rewriter/distill
+   * sub-runners on cloud providers — GBNF (`grammar`) cannot be
+   * enforced over OpenAI-compatible APIs, so this is the cross-vendor
+   * equivalent. Ignored by grammar-only providers (llama-server) —
+   * they rely on `grammar` instead.
+   */
+  responseFormat?: ResponseFormatJsonSchema;
+}
+
+/**
+ * OpenAI-compatible Structured Outputs descriptor. Mirrors the
+ * `response_format` payload accepted by chat-completions when
+ * `type === "json_schema"`. `strict: true` is the recommended
+ * default — it makes the provider validate against `schema` server-side
+ * and rejects malformed completions before they hit our parsers.
+ */
+export interface ResponseFormatJsonSchema {
+  /** Short identifier exposed to the provider (must match `^[a-zA-Z0-9_-]+$`). */
+  name: string;
+  /** Human-readable description of what the schema captures. Optional. */
+  description?: string;
+  /** JSON Schema object. Should be self-contained — no $ref. */
+  schema: Record<string, unknown>;
+  /**
+   * When true, the provider enforces strict adherence to `schema`
+   * (every property in `required`, no extra fields beyond what
+   * `additionalProperties: false` allows). Defaults to true at the
+   * provider adapter level.
+   */
+  strict?: boolean;
 }
 
 export interface CompletionTiming {

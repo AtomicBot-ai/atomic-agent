@@ -24,5 +24,29 @@ export function buildOpenAiChatBody(
       body.tool_choice = filtered.toolChoice;
     }
   }
+  // OpenAI Structured Outputs. Used by reflection/link-gen/vote/
+  // rewriter/distill sub-runners — GBNF cannot be enforced over
+  // OpenAI-compatible APIs, so this is the cross-vendor equivalent.
+  // We do NOT set `response_format` together with `tools`: when the
+  // model is calling a tool, the function's `parameters` schema is
+  // already the JSON contract. Combining the two confuses some
+  // providers (Azure rejects, OpenRouter degrades silently).
+  if (
+    filtered.responseFormat &&
+    !(filtered.tools && filtered.tools.length > 0)
+  ) {
+    const schemaName = filtered.responseFormat.name;
+    body.response_format = {
+      type: "json_schema",
+      json_schema: {
+        name: schemaName,
+        ...(filtered.responseFormat.description
+          ? { description: filtered.responseFormat.description }
+          : {}),
+        schema: filtered.responseFormat.schema,
+        strict: filtered.responseFormat.strict ?? true,
+      },
+    };
+  }
   return body;
 }

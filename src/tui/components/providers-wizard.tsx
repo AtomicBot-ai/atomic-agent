@@ -2,6 +2,8 @@ import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
 import {
+  listAimlapiChatModels,
+  listAimlapiEmbeddingModels,
   listOpenRouterChatModels,
   listOpenRouterEmbeddingModels,
   OPENAI_COMPAT_DEFAULT_BASE_URL,
@@ -12,10 +14,22 @@ import type { ProvidersWizardState } from "../providers/providers-wizard-state.j
 const KIND_OPTIONS = [
   { id: "openrouter" as const, label: "OpenRouter (cloud chat + optional cloud embed)" },
   {
+    id: "aimlapi" as const,
+    label: "AI/ML API (aimlapi.com — 500+ models, OpenAI-compatible)",
+  },
+  {
     id: "openai-compatible" as const,
     label: "OpenAI-compatible API (custom base URL)",
   },
 ];
+
+function envHintForKind(
+  kind: ProvidersWizardState["kind"],
+): string {
+  if (kind === "openrouter") return "OPENROUTER_API_KEY";
+  if (kind === "aimlapi") return "AIMLAPI_API_KEY";
+  return "OPENAI_COMPAT_API_KEY";
+}
 
 function maskedKey(buffer: string): string {
   const masked = "•".repeat(Math.min(buffer.length, 48));
@@ -105,10 +119,7 @@ export function ProvidersWizard(props: {
   }
 
   if (w.phase === "api_key") {
-    const envHint =
-      w.kind === "openrouter"
-        ? "OPENROUTER_API_KEY"
-        : "OPENAI_COMPAT_API_KEY";
+    const envHint = envHintForKind(w.kind);
     return (
       <Box
         flexDirection="column"
@@ -150,8 +161,28 @@ export function ProvidersWizard(props: {
     );
   }
 
+  if (w.phase === "pick_chat_model" && w.kind === "aimlapi") {
+    const models = listAimlapiChatModels();
+    return renderPickList(
+      "Chat model (AI/ML API)",
+      models,
+      w.cursor,
+      "j/k move · Enter select · Esc cancel",
+    );
+  }
+
   if (w.phase === "pick_embedding" && w.kind === "openrouter") {
     const models = listOpenRouterEmbeddingModels();
+    return renderPickList(
+      "Embedding backend",
+      models,
+      w.cursor,
+      "j/k move · Enter finish · Esc cancel",
+    );
+  }
+
+  if (w.phase === "pick_embedding" && w.kind === "aimlapi") {
+    const models = listAimlapiEmbeddingModels();
     return renderPickList(
       "Embedding backend",
       models,

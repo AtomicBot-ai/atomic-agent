@@ -1,5 +1,7 @@
 import { getConfig } from "../../../config/index.js";
 import { LlamaServerClient } from "../../llama-server-client.js";
+import { AimlapiProvider } from "../aimlapi/aimlapi-provider.js";
+import { AIMLAPI_DEFAULT_CHAT_MODEL } from "../aimlapi/aimlapi-models-catalog.js";
 import { LlamaServerProvider } from "../llama-server/llama-server-provider.js";
 import { OpenAiProvider } from "../openai/openai-provider.js";
 import { OpenRouterProvider } from "../openrouter/openrouter-provider.js";
@@ -62,6 +64,20 @@ export function registerBuiltInProviderKinds(): void {
       requestTimeoutMs: entry.requestTimeoutMs,
       httpReferer: "https://github.com/AtomicBot-ai/atomic-agent",
       xTitle: "atomic-agent",
+    });
+  });
+
+  registerProviderKind("aimlapi", (ctx) => {
+    const entry = ctx.entry;
+    return new AimlapiProvider({
+      id: entry.id,
+      baseUrl: entry.baseUrl,
+      apiKey: entry.apiKey ?? "",
+      defaultChatModel: entry.defaultChatModel ?? AIMLAPI_DEFAULT_CHAT_MODEL,
+      headers: entry.headers,
+      supportsVision: entry.supportsVision ?? true,
+      supportsParallelTools: entry.supportsTools ?? true,
+      requestTimeoutMs: entry.requestTimeoutMs,
     });
   });
 }

@@ -3,6 +3,8 @@ import type { AgentMetrics } from "../../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import { QUERY_REWRITER_GRAMMAR } from "./query-rewriter-grammar.js";
+import { QUERY_REWRITER_RESPONSE_FORMAT } from "./query-rewriter-response-format.js";
+import type { ResponseFormatJsonSchema } from "../../llm/provider/completion-types.js";
 import {
   type RewriterHistoryTurn,
   buildRewriterPrompt,
@@ -49,6 +51,12 @@ export type RewriterOutcome =
 export type RewriterLlmComplete = (params: {
   prompt: string;
   grammar: string;
+  /**
+   * Structured Outputs envelope for cloud providers — the cross-vendor
+   * equivalent of GBNF. The bootstrap `llmComplete` forwards it under
+   * `native_tools`; grammar-only providers (llama-server) ignore it.
+   */
+  responseFormat?: ResponseFormatJsonSchema;
   slotId: number;
   sessionId: string;
   signal: AbortSignal;
@@ -142,6 +150,7 @@ export function createQueryRewriterRunner(
           deps.llmComplete({
             prompt,
             grammar: QUERY_REWRITER_GRAMMAR,
+            responseFormat: QUERY_REWRITER_RESPONSE_FORMAT,
             slotId: REWRITER_SLOT_ID,
             sessionId: input.sessionId,
             signal: ac.signal,

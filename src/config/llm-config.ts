@@ -29,6 +29,7 @@ const PROVIDER_KINDS = new Set([
   "llama-server",
   "openai-compatible",
   "openrouter",
+  "aimlapi",
 ]);
 
 function parseProviderId(raw: unknown, field: string): string {

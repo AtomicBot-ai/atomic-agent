@@ -6,6 +6,7 @@ import {
   writeProviderApiKeyToDotenv,
 } from "../persist-llm-provider.js";
 import {
+  AIMLAPI_DEFAULT_CHAT_MODEL,
   LOCAL_EMBEDDING_CHOICE_ID,
   OPENROUTER_DEFAULT_CHAT_MODEL,
 } from "./providers-model-options.js";
@@ -14,7 +15,15 @@ import {
   providerIdForKind,
   type BuiltWizardProvider,
 } from "./providers-wizard-build-entry.js";
-import type { ProvidersWizardState } from "./providers-wizard-state.js";
+import type {
+  ProvidersWizardKind,
+  ProvidersWizardState,
+} from "./providers-wizard-state.js";
+
+function defaultChatModelForKind(kind: ProvidersWizardKind): string {
+  if (kind === "aimlapi") return AIMLAPI_DEFAULT_CHAT_MODEL;
+  return OPENROUTER_DEFAULT_CHAT_MODEL;
+}
 
 export function saveProviderWizardToConfig(
   wizard: ProvidersWizardState,
@@ -26,7 +35,8 @@ export function saveProviderWizardToConfig(
 
   const built = buildProviderEntryFromWizard({
     kind,
-    chatModelId: wizard.selectedChatModelId ?? OPENROUTER_DEFAULT_CHAT_MODEL,
+    chatModelId:
+      wizard.selectedChatModelId ?? defaultChatModelForKind(kind),
     embeddingChoiceId:
       wizard.selectedEmbeddingChoiceId ?? LOCAL_EMBEDDING_CHOICE_ID,
     baseUrl: wizard.baseUrlLine,

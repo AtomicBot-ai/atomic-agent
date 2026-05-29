@@ -88,4 +88,107 @@ describe("parseDistillWithProcedureOutput", () => {
       { description: "do the plan", toolHint: null },
     ]);
   });
+
+  describe("JSON shape (cloud Structured Outputs)", () => {
+    it("parses kind=none on the JSON path", () => {
+      const out = parseDistillWithProcedureOutput(
+        JSON.stringify({ kind: "none" }),
+      );
+      expect(out).toEqual({ kind: "none" });
+    });
+
+    it("parses lesson with procedure=null on the JSON path", () => {
+      const out = parseDistillWithProcedureOutput(
+        JSON.stringify({
+          kind: "lesson",
+          activation: "a",
+          principle: "p",
+          tags: ["foo"],
+          procedure: null,
+        }),
+      );
+      expect(out.kind).toBe("lesson");
+      if (out.kind !== "lesson") return;
+      expect(out.procedure).toBeNull();
+      expect(out.activation).toBe("a");
+      expect(out.principle).toBe("p");
+      expect(out.tags).toEqual(["foo"]);
+    });
+
+    it("parses lesson + procedure on the JSON path", () => {
+      const out = parseDistillWithProcedureOutput(
+        JSON.stringify({
+          kind: "lesson",
+          activation: "extract signatures",
+          principle: "glob then grep",
+          tags: ["typescript", "glob"],
+          procedure: {
+            activation: "want exported signatures",
+            steps: [
+              { description: "glob *.ts", tool_hint: "os.fs.glob" },
+              { description: "grep export", tool_hint: "os.fs.grep" },
+              { description: "summarise", tool_hint: null },
+            ],
+            tags: ["typescript"],
+          },
+        }),
+      );
+      expect(out.kind).toBe("lesson");
+      if (out.kind !== "lesson") return;
+      expect(out.activation).toBe("extract signatures");
+      expect(out.procedure).not.toBeNull();
+      expect(out.procedure!.activation).toBe("want exported signatures");
+      expect(out.procedure!.steps).toEqual([
+        { description: "glob *.ts", toolHint: "os.fs.glob" },
+        { description: "grep export", toolHint: "os.fs.grep" },
+        { description: "summarise", toolHint: null },
+      ]);
+      expect(out.procedure!.tags).toEqual(["typescript"]);
+    });
+
+    it("isolates a malformed procedure on the JSON path (lesson survives)", () => {
+      const out = parseDistillWithProcedureOutput(
+        JSON.stringify({
+          kind: "lesson",
+          activation: "a",
+          principle: "p",
+          tags: [],
+          procedure: {
+            activation: "act",
+            // Only one step — below PROCEDURE_MIN_STEPS = 2.
+            steps: [
+              { description: "single step", tool_hint: null },
+            ],
+            tags: [],
+          },
+        }),
+      );
+      expect(out.kind).toBe("lesson");
+      if (out.kind !== "lesson") return;
+      expect(out.activation).toBe("a");
+      expect(out.procedure).toBeNull();
+    });
+
+    it("rejects malformed tool_hint values into procedure=null", () => {
+      const out = parseDistillWithProcedureOutput(
+        JSON.stringify({
+          kind: "lesson",
+          activation: "a",
+          principle: "p",
+          tags: [],
+          procedure: {
+            activation: "act",
+            steps: [
+              { description: "ok step", tool_hint: "has spaces" },
+              { description: "another", tool_hint: null },
+            ],
+            tags: [],
+          },
+        }),
+      );
+      expect(out.kind).toBe("lesson");
+      if (out.kind !== "lesson") return;
+      expect(out.procedure).toBeNull();
+    });
+  });
 });

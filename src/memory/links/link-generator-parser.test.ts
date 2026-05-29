@@ -121,4 +121,118 @@ describe("parseLinkGeneratorOutput", () => {
     if (r.kind !== "links") throw new Error();
     expect(r.links).toHaveLength(2);
   });
+
+  describe("JSON shape (cloud Structured Outputs)", () => {
+    it("parses { kind: 'none' } as the abstain branch", () => {
+      const r = parseLinkGeneratorOutput(
+        JSON.stringify({ kind: "none" }),
+        { allowlist },
+      );
+      expect(r).toEqual({ kind: "none" });
+    });
+
+    it("parses a single { kind: 'links' } payload", () => {
+      const r = parseLinkGeneratorOutput(
+        JSON.stringify({
+          kind: "links",
+          links: [{ from_id: 1, to_id: 2, link_kind: "RELATES_TO" }],
+        }),
+        { allowlist },
+      );
+      expect(r.kind).toBe("links");
+      if (r.kind !== "links") throw new Error();
+      expect(r.links).toEqual([
+        { fromId: 1, toId: 2, kind: "RELATES_TO" },
+      ]);
+    });
+
+    it("applies the allowlist + self-loop filters on the JSON path too", () => {
+      const r = parseLinkGeneratorOutput(
+        JSON.stringify({
+          kind: "links",
+          links: [
+            { from_id: 1, to_id: 2, link_kind: "RELATES_TO" },
+            { from_id: 2, to_id: 2, link_kind: "RELATES_TO" }, // self-loop
+            { from_id: 1, to_id: 99, link_kind: "RELATES_TO" }, // not in allowlist
+            { from_id: 3, to_id: 4, link_kind: "TOTALLY_FAKE" }, // bad kind
+            { from_id: 3, to_id: 4, link_kind: "CAUSED_BY" },
+          ],
+        }),
+        { allowlist },
+      );
+      expect(r.kind).toBe("links");
+      if (r.kind !== "links") throw new Error();
+      expect(r.links).toEqual([
+        { fromId: 1, toId: 2, kind: "RELATES_TO" },
+        { fromId: 3, toId: 4, kind: "CAUSED_BY" },
+      ]);
+    });
+
+    it("respects maxLinks on the JSON path", () => {
+      const r = parseLinkGeneratorOutput(
+        JSON.stringify({
+          kind: "links",
+          links: [
+            { from_id: 1, to_id: 2, link_kind: "RELATES_TO" },
+            { from_id: 2, to_id: 3, link_kind: "RELATES_TO" },
+            { from_id: 3, to_id: 4, link_kind: "RELATES_TO" },
+          ],
+        }),
+        { allowlist, maxLinks: 2 },
+      );
+      expect(r.kind).toBe("links");
+      if (r.kind !== "links") throw new Error();
+      expect(r.links).toHaveLength(2);
+    });
+
+    it("dedupes identical triples on the JSON path", () => {
+      const r = parseLinkGeneratorOutput(
+        JSON.stringify({
+          kind: "links",
+          links: [
+            { from_id: 1, to_id: 2, link_kind: "RELATES_TO" },
+            { from_id: 1, to_id: 2, link_kind: "RELATES_TO" },
+            { from_id: 1, to_id: 2, link_kind: "CAUSED_BY" },
+          ],
+        }),
+        { allowlist },
+      );
+      expect(r.kind).toBe("links");
+      if (r.kind !== "links") throw new Error();
+      expect(r.links).toHaveLength(2);
+    });
+
+    it("falls back to the text grammar parser on malformed JSON", () => {
+      // A model that started with `{` but tripped halfway must not
+      // silently drop a perfectly valid trailing LINK line. The
+      // parser tries JSON first, fails, then sweeps the text grammar.
+      // Note: a body that starts with `{` is treated as a single
+      // (malformed) line by the line splitter — the text branch sees
+      // nothing parseable. The intent of this case is to assert "no
+      // crash, returns none", not "recovers everything".
+      const r = parseLinkGeneratorOutput("{ kind: 'lin", { allowlist });
+      expect(r).toEqual({ kind: "none" });
+    });
+
+    it("falls back to the text grammar parser when the body is JSON-looking but not our schema", () => {
+      const r = parseLinkGeneratorOutput(
+        JSON.stringify({ foo: "bar", baz: 1 }),
+        { allowlist },
+      );
+      expect(r).toEqual({ kind: "none" });
+    });
+
+    it("returns none when kind=links but the array is empty after filtering", () => {
+      const r = parseLinkGeneratorOutput(
+        JSON.stringify({
+          kind: "links",
+          links: [
+            { from_id: 99, to_id: 100, link_kind: "RELATES_TO" }, // both outside allowlist
+          ],
+        }),
+        { allowlist },
+      );
+      expect(r).toEqual({ kind: "none" });
+    });
+  });
 });

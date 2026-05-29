@@ -12,6 +12,7 @@ import {
   removeLlmProvider,
   wrapLlmConfigError,
 } from "../persist-llm-provider.js";
+import { refreshAimlapiChatCatalogFromApi } from "../../llm/provider/aimlapi/fetch-aimlapi-chat-catalog.js";
 import { refreshOpenRouterChatCatalogFromApi } from "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
 import { isProvidersAction } from "./providers-actions.js";
 import type { ProviderRow } from "./providers-panel-state.js";
@@ -48,13 +49,24 @@ export class ProvidersOrchestrator {
     });
   }
 
-  /** Refresh chat model list from OpenRouter (best-effort, cached 1h). */
+  /**
+   * Refresh chat model lists from cloud catalog endpoints (best-effort,
+   * cached 1h per provider). Today: OpenRouter + aimlapi.
+   */
   prefetchOpenRouterCatalog(): void {
     void refreshOpenRouterChatCatalogFromApi().then((ok) => {
       if (ok) {
         this.bus.emit({
           type: "providers_status",
           line: "OpenRouter model list updated from API",
+        });
+      }
+    });
+    void refreshAimlapiChatCatalogFromApi().then((ok) => {
+      if (ok) {
+        this.bus.emit({
+          type: "providers_status",
+          line: "AI/ML API model list updated from API",
         });
       }
     });
@@ -230,7 +242,9 @@ export class ProvidersOrchestrator {
 }
 
 export function isCloudProviderKind(kind: string): kind is ProvidersWizardKind {
-  return kind === "openrouter" || kind === "openai-compatible";
+  return (
+    kind === "openrouter" || kind === "aimlapi" || kind === "openai-compatible"
+  );
 }
 
 function listChatModelOptionsForEntry(

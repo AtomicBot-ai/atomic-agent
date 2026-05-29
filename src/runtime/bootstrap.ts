@@ -102,6 +102,7 @@ import {
   createLinkGeneratorRunner,
   createLinkAwareReflectionRunner,
 } from "../memory/links/index.js";
+import type { LinkGeneratorLlmComplete } from "../memory/links/index.js";
 import { NeighborEvolver } from "../memory/evolution/index.js";
 import {
   ConsolidatorJob,
@@ -112,6 +113,7 @@ import {
   createVoteRunner,
   createVoteAwareReflectionRunner,
 } from "../memory/voting/index.js";
+import type { VoteRunnerLlmComplete } from "../memory/voting/index.js";
 
 import { SkillRegistry } from "../skills/skill-registry.js";
 import { buildSkillCatalog } from "../skills/skill-catalog.js";
@@ -1029,6 +1031,16 @@ export async function createAgentRuntime(
               ...(params.parallelToolCalls !== undefined
                 ? { parallelToolCalls: params.parallelToolCalls }
                 : {}),
+              // Cloud sub-runners (reflection / link-gen / vote /
+              // rewriter / distill) cannot rely on GBNF — OpenAI-
+              // compatible APIs do not understand it. They pass a
+              // `responseFormat` JSON-Schema envelope which we
+              // forward verbatim. The main agent loop never sets
+              // `responseFormat` (it uses `tools` instead), so this
+              // branch is a no-op there.
+              ...(params.responseFormat
+                ? { responseFormat: params.responseFormat }
+                : {}),
             })
           : await provider.complete({
               ...base,
@@ -1135,13 +1147,7 @@ export async function createAgentRuntime(
   ) {
     const reservedSlot = slotManager.reserveReflectionSlot();
     const reflectionSlotId = reservedSlot ?? -1;
-    const linkGenLlmComplete = async (params: {
-      prompt: string;
-      grammar: string;
-      slotId: number;
-      sessionId: string;
-      signal: AbortSignal;
-    }) => {
+    const linkGenLlmComplete: LinkGeneratorLlmComplete = async (params) => {
       if (params.signal.aborted) {
         throw new DOMException("aborted", "AbortError");
       }
@@ -1157,6 +1163,9 @@ export async function createAgentRuntime(
         grammar: params.grammar,
         slotId: params.slotId,
         sessionId: params.sessionId,
+        ...(params.responseFormat
+          ? { responseFormat: params.responseFormat }
+          : {}),
       });
       return Promise.race([completionPromise, abortPromise]);
     };
@@ -1194,13 +1203,7 @@ export async function createAgentRuntime(
   if (reflectionRunner && voteStore) {
     const reservedSlot = slotManager.reserveReflectionSlot();
     const voteSlotId = reservedSlot ?? -1;
-    const voteLlmComplete = async (params: {
-      prompt: string;
-      grammar: string;
-      slotId: number;
-      sessionId: string;
-      signal: AbortSignal;
-    }) => {
+    const voteLlmComplete: VoteRunnerLlmComplete = async (params) => {
       if (params.signal.aborted) {
         throw new DOMException("aborted", "AbortError");
       }
@@ -1216,6 +1219,9 @@ export async function createAgentRuntime(
         grammar: params.grammar,
         slotId: params.slotId,
         sessionId: params.sessionId,
+        ...(params.responseFormat
+          ? { responseFormat: params.responseFormat }
+          : {}),
       });
       return Promise.race([completionPromise, abortPromise]);
     };
@@ -1349,6 +1355,9 @@ export async function createAgentRuntime(
         grammar: params.grammar,
         slotId: params.slotId,
         sessionId: params.sessionId,
+        ...(params.responseFormat
+          ? { responseFormat: params.responseFormat }
+          : {}),
       });
       return Promise.race([completionPromise, abortPromise]);
     };
@@ -1793,13 +1802,7 @@ export async function createAgentRuntime(
     // `reserveReflectionSlot` again here is idempotent — the slot
     // manager returns the same id.
     const distillSlot = slotManager.reserveReflectionSlot() ?? -1;
-    const distillLlmComplete = async (params: {
-      prompt: string;
-      grammar: string;
-      slotId: number;
-      sessionId: string;
-      signal: AbortSignal;
-    }) => {
+    const distillLlmComplete: ReflectionLlmComplete = async (params) => {
       if (params.signal.aborted) {
         throw new DOMException("aborted", "AbortError");
       }
@@ -1815,6 +1818,9 @@ export async function createAgentRuntime(
         grammar: params.grammar,
         slotId: params.slotId,
         sessionId: params.sessionId,
+        ...(params.responseFormat
+          ? { responseFormat: params.responseFormat }
+          : {}),
       });
       return Promise.race([completionPromise, abortPromise]);
     };

@@ -4,8 +4,12 @@ import type {
 } from "../local-models/local-models-panel-state.js";
 import type { ProviderRow } from "../providers/providers-panel-state.js";
 import {
+  formatAimlapiChatModelDetails,
+  formatAimlapiEmbeddingModelDetails,
   formatOpenRouterChatModelDetails,
   formatOpenRouterEmbeddingModelDetails,
+  listAimlapiChatModels,
+  listAimlapiEmbeddingModels,
   listOpenRouterEmbeddingModels,
   listOpenRouterChatModels,
   OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
@@ -225,6 +229,10 @@ function cloudChatEnterEffect(
     const details = formatOpenRouterChatModelDetails(modelId);
     return active ? `Current · ${details}` : details;
   }
+  if (provider.kind === "aimlapi") {
+    const details = formatAimlapiChatModelDetails(modelId);
+    return active ? `Current · ${details}` : details;
+  }
   return active ? `Current: ${provider.id}/${modelId}` : `Enter: use ${provider.id}/${modelId}`;
 }
 
@@ -238,6 +246,10 @@ function cloudEmbeddingEnterEffect(
     const details = formatOpenRouterEmbeddingModelDetails(modelId);
     return active ? `Current embedding · ${details}` : details;
   }
+  if (provider.kind === "aimlapi") {
+    const details = formatAimlapiEmbeddingModelDetails(modelId);
+    return active ? `Current embedding · ${details}` : details;
+  }
   return active
     ? `Current embedding: ${provider.id}/${modelId}`
     : `Enter: use embedding ${provider.id}/${modelId}`;
@@ -249,6 +261,8 @@ function chatModelsForProvider(provider: ProviderRow): readonly string[] {
   if (provider.chatModel) out.add(provider.chatModel);
   if (provider.kind === "openrouter") {
     for (const option of listOpenRouterChatModels()) out.add(option.id);
+  } else if (provider.kind === "aimlapi") {
+    for (const option of listAimlapiChatModels()) out.add(option.id);
   } else if (provider.kind === "openai-compatible" && out.size === 0) {
     out.add(OPENAI_COMPAT_DEFAULT_CHAT_MODEL);
   }
@@ -260,6 +274,10 @@ function embeddingModelsForProvider(provider: ProviderRow): readonly string[] {
   if (provider.embeddingModel) out.add(provider.embeddingModel);
   if (provider.kind === "openrouter") {
     for (const option of listOpenRouterEmbeddingModels()) {
+      if (option.id !== "__local_embedding__") out.add(option.id);
+    }
+  } else if (provider.kind === "aimlapi") {
+    for (const option of listAimlapiEmbeddingModels()) {
       if (option.id !== "__local_embedding__") out.add(option.id);
     }
   }
