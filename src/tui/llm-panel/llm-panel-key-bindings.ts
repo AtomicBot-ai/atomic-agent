@@ -30,6 +30,17 @@ export function handleLlmPanelKey(
   const modalHandled = handleLlmModalKey(input, key, ctx);
   if (modalHandled !== null) return modalHandled;
 
+  // `/` bootstraps the global slash-command palette. The LLM tab keeps
+  // the editor unfocused so single letters act as panel hotkeys, which
+  // means typing `/` never reaches the editor's onChange. Seed the input
+  // buffer and open the palette explicitly; `tui-app` re-focuses the
+  // editor while the palette is open so the operator can finish typing.
+  if (input === "/") {
+    dispatch({ type: "input_changed", value: "/" });
+    dispatch({ type: "slash_palette_opened", query: "" });
+    return true;
+  }
+
   if (key.downArrow || input === "j") {
     const cursor = clampLlmCursor(state, activeCursor(state) + 1);
     dispatch({ type: "llm_cursor_set", cursor });

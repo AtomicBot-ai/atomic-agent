@@ -174,6 +174,21 @@ describe("handleLlmPanelKey", () => {
     expect(dispatched).not.toContainEqual({ type: "llm_dashboard_opened" });
   });
 
+  it("opens the slash-command palette when `/` is pressed", () => {
+    const state = seededState();
+    const dispatched: TuiAction[] = [];
+    const handled = handleLlmPanelKey("/", emptyKey(), {
+      state,
+      dispatch: (action) => dispatched.push(action),
+      callbacks: callbacks(),
+    });
+    expect(handled).toBe(true);
+    expect(dispatched).toEqual([
+      { type: "input_changed", value: "/" },
+      { type: "slash_palette_opened", query: "" },
+    ]);
+  });
+
   it("captures provider wizard keys while the LLM tab is active", () => {
     const state = {
       ...seededState(),
