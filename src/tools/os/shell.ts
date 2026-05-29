@@ -63,7 +63,7 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
   return {
     name: "os.shell.run",
     description:
-      "Run an OS command in the session working directory (argv globs `*`/`?` are expanded like a shell; no implicit subshell). Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution.",
+      "Run an OS command in the session working directory (argv globs `*`/`?` are expanded like a shell; no implicit subshell). Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution. By default there is no timeout (the command runs until it exits or the turn is cancelled); pass `timeoutMs` to set an explicit limit.",
     readonly: false,
     async run(rawArgs, ctx) {
       const cmd = rawArgs.cmd;
@@ -94,11 +94,15 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
         typeof rawArgs.cwd === "string" && rawArgs.cwd.length > 0
           ? resolveUserPath(rawArgs.cwd, ctx.workingDir)
           : ctx.workingDir;
+      // No default timeout: when the model does not pass `timeoutMs`
+      // explicitly the command runs unbounded (long installs like
+      // `brew install` need this). `0` signals "no timeout" to the
+      // command runner; the turn's abort signal stays the safety valve.
       const timeoutMs =
         typeof rawArgs.timeoutMs === "number" &&
         Number.isFinite(rawArgs.timeoutMs)
           ? rawArgs.timeoutMs
-          : 30_000;
+          : 0;
 
       const guardVerdict = checkShellCommandGuard({
         cmd,
