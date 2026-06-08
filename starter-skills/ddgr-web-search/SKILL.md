@@ -1,48 +1,64 @@
 ---
-name: web-search
+name: ddgr-web-search
 description: Fast key-less web search via the `ddgr` (DuckDuckGo) CLI with JSON output. Use for quick lookups, current info, and finding URLs without opening a full browser.
-version: 1.0.0
+version: 1.1.0
 requires_tools:
   - os.shell.run
   - browser.search
 dangerous: false
 ---
 
-# web-search
+# ddgr-web-search
 
 Run quick web searches from the terminal with [`ddgr`](https://github.com/jarun/ddgr)
 (DuckDuckGo, no API key). Prefer this over driving a full browser when you only
 need result titles, URLs, and snippets. For pages that must be rendered or
 interacted with, fall back to the `browser.*` tools.
 
-## Setup health check (run first, every session)
+## How to run a search
 
-Verify with **one solo step**:
+Run the search **directly** — do NOT probe `ddgr --version` first. Installation is
+checked implicitly by the call itself; only fall into the setup playbook when a
+real search call fails because the binary is missing.
 
 ```
-[{ "tool": "os.shell.run", "args": { "cmd": "ddgr", "args": ["--version"] } }]
+[{ "tool": "os.shell.run", "args": { "cmd": "ddgr", "args": ["--json", "-n", "8", "<query>"] } }]
 ```
 
 Outcome map:
-- `exit 0` + version → ready, proceed.
-- `command not found: ddgr` → enter **Setup playbook → "ddgr missing"** OR fall
-  back to `browser.search` for this turn.
+- `exit 0` + JSON results → use them (cite the `url`s).
+- Tool error reporting a missing binary (`spawn ddgr ENOENT`, `command not found:
+  ddgr`, or similar) → `ddgr` is not installed. **STOP. Do NOT silently fall back
+  to the browser.** Enter **Setup playbook → "ddgr missing"**.
+- Non-zero exit for any other reason (bad flags, network) → fix the arguments or
+  report the error; do **not** assume `ddgr` is missing.
+
+Once a search has succeeded in this session, assume `ddgr` is present — do not
+re-check on later searches.
 
 ## Setup playbook (when prerequisites are missing)
 
 ### ddgr missing
 
-Reply (solo `reply` step):
+The ddgr-web-search skill **cannot work without `ddgr`** — do not pretend otherwise.
+Reply (solo `reply` step) and ask before installing:
 
-> «Утилита поиска `ddgr` не установлена. Могу поставить: `brew install ddgr` (или `pipx install ddgr`). Поставить? Пока могу искать через браузер.»
+> «Утилита поиска `ddgr` не установлена — без неё веб-поиск работать не будет.
+> Поставить её? macOS: `brew install ddgr`; Linux: `pipx install ddgr` (или
+> `apt-get install ddgr`); Windows: `pipx install ddgr` (или `scoop install ddgr`).
+> Если откажешься — искать смогу только через браузер.»
 
-On yes:
+On yes (macOS):
 
 ```
 [{ "tool": "os.shell.run", "args": { "cmd": "brew", "args": ["install", "ddgr"] } }]
 ```
 
-On Linux use `apt-get install ddgr` or `pipx install ddgr`.
+- Linux: `apt-get install ddgr` or `pipx install ddgr`.
+- Windows: `pipx install ddgr` (or `scoop install ddgr`); needs Python 3.6+.
+
+After a successful install, retry the original search directly. Fall back to
+`browser.search` **only** if the user declined the install or the install failed.
 
 ## When to use
 

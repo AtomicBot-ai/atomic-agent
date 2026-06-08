@@ -100,6 +100,9 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // os.http.*
   "os.http.request": "approval_gated",
 
+  // os.web.* — read-only fetch + extract; SSRF-guarded, no mutation
+  "os.web.fetch": "pure_read",
+
   // os.clipboard / window / notify — small mutating side effects on
   // shared OS resources; safest to serialise.
   "os.clipboard.read": "pure_read",

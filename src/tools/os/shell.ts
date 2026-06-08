@@ -10,6 +10,7 @@ import { expandShellGlobArgs } from "./expand-shell-glob-args.js";
 import {
   checkShellCommandGuard,
   isGogCommand,
+  isDdgrCommand,
 } from "./shell-command-guard/index.js";
 
 const GOG_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
@@ -172,7 +173,7 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
             guardReason: guardVerdict.reason,
           },
         },
-        isGogCommand(cmd) ? GOG_COMPRESS_OPTIONS : {},
+        isGogCommand(cmd) || isDdgrCommand(cmd) ? GOG_COMPRESS_OPTIONS : {},
       );
     },
   };

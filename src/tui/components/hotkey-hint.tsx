@@ -14,6 +14,13 @@ interface HotkeyChip {
   readonly label: string;
 }
 
+/** Terminal mouse tracking is on — hold Shift to drag-select or click OSC8 links. */
+const SHIFT_SELECT_CHIP: HotkeyChip = { key: "shift", label: "select" };
+
+function withShiftSelect(chips: readonly HotkeyChip[]): HotkeyChip[] {
+  return [...chips, SHIFT_SELECT_CHIP];
+}
+
 /**
  * Bottom hint strip: surfaces the keybindings that are meaningful in
  * the current state so the user never has to guess. We cap to ~6 chips
@@ -59,16 +66,16 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
     ];
   }
   if (state.status === "running") {
-    return [
+    return withShiftSelect([
       { key: "esc", label: "abort" },
       {
         key: "ctrl+c",
         label: ctrlCArmed ? "press again to quit" : "abort",
       },
-    ];
+    ]);
   }
   if (state.uiMode === "debug") {
-    return [
+    return withShiftSelect([
       { key: "tab", label: "next panel" },
       { key: "shift+tab", label: "prev panel" },
       { key: "ctrl+b", label: "next panel" },
@@ -77,10 +84,10 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
         key: "ctrl+c",
         label: ctrlCArmed ? "press again to quit" : "quit",
       },
-    ];
+    ]);
   }
   if (state.chatFocus === "sidebar") {
-    return [
+    return withShiftSelect([
       { key: "↑↓", label: "select" },
       { key: "enter", label: "open" },
       { key: "tab", label: "next pane" },
@@ -89,9 +96,9 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
         key: "ctrl+c",
         label: ctrlCArmed ? "press again to quit" : "quit",
       },
-    ];
+    ]);
   }
-  return [
+  return withShiftSelect([
     { key: "enter", label: "send" },
     { key: "alt+enter", label: "newline" },
     { key: "tab", label: "sidebar" },
@@ -101,5 +108,5 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
       key: "ctrl+c",
       label: ctrlCArmed ? "press again to quit" : "quit",
     },
-  ];
+  ]);
 }

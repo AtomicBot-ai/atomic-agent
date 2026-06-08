@@ -7,7 +7,7 @@ export function buildBrowserSearchTool(backend: BrowserBackend): ToolDefinition 
   return {
     name: "browser.search",
     description:
-      "Open a search-engine results page for the given query. Engine defaults to google.",
+      "Run a web search in the live browser: opens the engine's results page and refreshes the world snapshot. Engine defaults to google. Use only when the user explicitly asks to search via the browser, or when you then need to click/scroll/read the live results page.",
     readonly: false,
     async run(rawArgs) {
       const query = rawArgs.query;

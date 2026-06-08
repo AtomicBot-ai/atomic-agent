@@ -73,6 +73,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@mozilla/readability": "^0.6.0",
     "@types/marked": "^5.0.2",
     "better-sqlite3": "^12.9.0",
     "chokidar": "^5.0.0",
@@ -88,6 +89,7 @@
     "html-to-text": "^10.0.0",
     "ink": "^7.0.1",
     "jszip": "^3.10.1",
+    "linkedom": "^0.18.12",
     "mammoth": "^1.12.0",
     "marked": "^18.0.2",
     "node-notifier": "^10.0.1",
@@ -96,6 +98,7 @@
     "react": "^19.2.5",
     "react-devtools-core": "^6.1.2",
     "tar-stream": "^3.1.8",
+    "turndown": "^7.2.4",
     "word-extractor": "^1.0.4",
     "yaml": "^2.8.3"
   },
@@ -106,6 +109,7 @@
     "@types/node-notifier": "^8.0.5",
     "@types/react": "^19.2.14",
     "@types/tar-stream": "^3.1.4",
+    "@types/turndown": "^5.0.6",
     "docx": "^9.6.1",
     "esbuild": "^0.25.0",
     "ink-testing-library": "^4.0.0",

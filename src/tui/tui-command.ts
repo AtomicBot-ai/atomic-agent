@@ -7,6 +7,8 @@ import type { LogRecord, LogSink } from "../tracing/structured-logger.js";
 import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
 import { enterAltScreen } from "./alt-screen.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
+import { installMouseInput } from "./mouse-input.js";
+import { createWheelAccelerator } from "./wheel-accelerator.js";
 import { parseTuiArgs } from "./tui-args.js";
 import { persistUserLocalLlmUrl } from "./persist-user-local-models-config.js";
 import {
@@ -117,9 +119,23 @@ export async function tuiCommand(args: string[]): Promise<number> {
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
 
-  // Keep terminal mouse handling disabled so native selection and OSC8
-  // hyperlink clicks keep working while the TUI is mounted.
   const altScreen = enterAltScreen({ stdout: process.stdout, hideCursor: false });
+
+  // Mouse-wheel scroll for the chat log. Enabling terminal mouse
+  // tracking (SGR 1000 + 1006) means native click-drag text selection
+  // and OSC8 link clicks now require holding Shift (Option on iTerm2) —
+  // an accepted trade-off so the wheel can drive `chat_scrolled`. The
+  // listener forks stdin: mouse escape sequences are consumed here and
+  // never leak into the editor; everything else flows to Ink via
+  // `mouse.stdin`. No-op on a non-TTY (stdin falls back unchanged).
+  const wheelAccelerator = createWheelAccelerator();
+  const mouse = installMouseInput({
+    stdout: process.stdout,
+    onEvent: (event) => {
+      const direction = event.type === "wheel_up" ? 1 : -1;
+      bus.emit({ type: "chat_scrolled", delta: wheelAccelerator.next(direction) });
+    },
+  });
 
   const ink = render(
     React.createElement(TuiApp, {
@@ -263,7 +279,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
       },
     }),
     {
-      stdin: process.stdin,
+      stdin: mouse.stdin,
       stdout: process.stdout,
       stderr: process.stderr,
       exitOnCtrlC: false,
@@ -288,6 +304,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
   } finally {
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
+    mouse.stop();
     altScreen.restore();
     ink.clear();
     await orchestrator.shutdown();

@@ -376,6 +376,7 @@ describe("registerOsTools", () => {
         "os.proc.kill",
         "os.proc.list",
         "os.shell.run",
+        "os.web.fetch",
         "os.window.focus",
         "os.window.list",
       ].sort(),

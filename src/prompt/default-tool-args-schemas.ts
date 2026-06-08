@@ -434,6 +434,19 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     ),
   ],
 
+  // ── os.web ───────────────────────────────────────────────────────────────
+  [
+    "os.web.fetch",
+    obj(
+      {
+        url: stringSchema,
+        extractMode: { type: "string", enum: ["markdown", "text"] },
+        maxChars: numberSchema,
+      },
+      ["url"],
+    ),
+  ],
+
   // ── os.clipboard / os.window / os.notify ─────────────────────────────────
   ["os.clipboard.read", obj({})],
   ["os.clipboard.write", obj({ value: stringSchema }, ["value"])],

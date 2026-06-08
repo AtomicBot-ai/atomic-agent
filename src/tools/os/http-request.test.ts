@@ -336,15 +336,12 @@ describe("os.http.request", () => {
     expect(result.details.exitCode).toBe(6);
   });
 
-  it("strips HTML to plain text when content-type is text/html", async () => {
+  it("returns the HTML body verbatim (extraction is os.web.fetch's job)", async () => {
     const html = [
       "<!doctype html>",
-      "<html><head><title>T</title><style>.x{color:red}</style></head>",
-      "<body>",
-      "<script>alert('x')</script>",
-      "<h1>Hello</h1>",
+      "<html><head><title>T</title></head>",
+      "<body><h1>Hello</h1>",
       "<p>This is <a href='https://x.test'>a link</a> in a paragraph.</p>",
-      "<ul><li>one</li><li>two</li></ul>",
       "</body></html>",
     ].join("\n");
     const tool = buildOsHttpRequestTool({
@@ -360,19 +357,13 @@ describe("os.http.request", () => {
       makeCtx(),
     );
     expect(result.status).toBe("ok");
-    expect(result.details.htmlStripped).toBe(true);
-    expect(result.summary).not.toMatch(/<\/?(html|body|h1|p|ul|li|a)\b/i);
-    expect(result.summary).not.toContain("alert('x')");
-    expect(result.summary).not.toContain(".x{color:red}");
-    // html-to-text uppercases <h1> headings by default — fine for LLMs.
-    expect(result.summary.toLowerCase()).toContain("hello");
-    expect(result.summary).toContain("a link");
-    expect(result.summary).toContain("one");
-    expect(result.summary).toContain("two");
+    expect(result.details.htmlStripped).toBeUndefined();
+    expect(result.summary).toContain("<h1>Hello</h1>");
+    expect(result.summary).toContain("<a href='https://x.test'>a link</a>");
     expect(result.truncated).toBe(false);
   });
 
-  it("leaves JSON responses intact and does not flag htmlStripped", async () => {
+  it("leaves JSON responses intact", async () => {
     const json = JSON.stringify({
       items: [{ id: 1, name: "a" }, { id: 2, name: "b" }],
       cursor: "abc",
@@ -390,13 +381,13 @@ describe("os.http.request", () => {
       makeCtx(),
     );
     expect(result.status).toBe("ok");
-    expect(result.details.htmlStripped).toBe(false);
+    expect(result.details.htmlStripped).toBeUndefined();
     expect(result.summary).toContain('"cursor":"abc"');
     expect(result.summary).toContain('"name":"b"');
     expect(result.truncated).toBe(false);
   });
 
-  it("sniffs HTML body when content-type is missing", async () => {
+  it("returns an HTML-looking body unchanged when content-type is missing", async () => {
     const html = "<!doctype html><html><body><p>Sniffed</p></body></html>";
     const tool = buildOsHttpRequestTool({
       approvals: approveAll(),
@@ -410,12 +401,11 @@ describe("os.http.request", () => {
       { url: "https://example.com" },
       makeCtx(),
     );
-    expect(result.details.htmlStripped).toBe(true);
-    expect(result.summary).toContain("Sniffed");
-    expect(result.summary).not.toMatch(/<\/?(html|body|p)\b/i);
+    expect(result.details.htmlStripped).toBeUndefined();
+    expect(result.summary).toContain("<p>Sniffed</p>");
   });
 
-  it("does not strip plain-text responses that happen to contain '<'", async () => {
+  it("returns plain-text responses verbatim", async () => {
     const body = "if (a < b) return true; else return false;";
     const tool = buildOsHttpRequestTool({
       approvals: approveAll(),
@@ -429,7 +419,7 @@ describe("os.http.request", () => {
       { url: "https://example.com" },
       makeCtx(),
     );
-    expect(result.details.htmlStripped).toBe(false);
+    expect(result.details.htmlStripped).toBeUndefined();
     expect(result.summary).toContain("a < b");
   });
 

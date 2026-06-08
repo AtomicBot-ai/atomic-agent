@@ -24,7 +24,8 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   },
   {
     name: "browser.search",
-    summary: "Run a high-level web search; refreshes the world snapshot.",
+    summary:
+      "Web search in the live browser (opens the SERP, refreshes the world snapshot). Use only when the user asks to search via the browser, or you then need to click/read the live results",
     argsSchema: "{ query: string, engine?: string }",
   },
   {
@@ -185,8 +186,19 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   },
   {
     name: "os.http.request",
-    summary: "HTTP GET/POST via curl; host allowlist and approval from config.http.",
+    summary:
+      "Raw HTTP GET/POST via curl for APIs/JSON; returns the body verbatim (no HTML extraction). Host allowlist + approval from config.http. To read a web page, use os.web.fetch.",
     argsSchema:
       "{ url: string, method?: 'GET' | 'POST', headers?: Record<string, string>, body?: string | object, timeoutMs?: number, followRedirects?: boolean }",
+  },
+  {
+    name: "os.web.fetch",
+    summary:
+      "Read a web page as readable markdown/text (cf-markdown → Readability → basic). GET only, no JS, no auth; SSRF-guarded; read-only. For raw API/JSON or POST, use os.http.request.",
+    argsSchema: `{ url: string, extractMode?: "markdown" | "text", maxChars?: number }`,
+    examples: [
+      '{"url":"https://example.com/article"}',
+      '{"url":"https://docs.example.com/guide","extractMode":"text","maxChars":20000}',
+    ],
   },
 ];

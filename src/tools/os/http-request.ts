@@ -12,7 +12,6 @@ import type {
   HttpApprovalMode,
 } from "../../config/index.js";
 import type { ToolDefinition } from "../tool-registry.js";
-import { convertHtmlToText, looksLikeHtml } from "./html-to-text.js";
 
 /**
  * Marker we append to curl stdout via `-w` so we can split the response
@@ -46,7 +45,7 @@ export function buildOsHttpRequestTool(
   return {
     name: "os.http.request",
     description:
-      "Perform an HTTP GET or POST via the system `curl` binary. Host allowlist and approval policy come from `config.http`. Returns status, content-type, size, and body. Body is capped at `config.http.maxResponseBytes`.",
+      "Raw HTTP GET or POST via the system `curl` binary for APIs and machine-readable endpoints (JSON, XML, plain text). Returns the response body verbatim — no HTML extraction or cleanup. To read a human web page as markdown/text, use `os.web.fetch` instead. Host allowlist and approval policy come from `config.http`. Body is capped at `config.http.maxResponseBytes`.",
     readonly: false,
     async run(rawArgs, ctx) {
       const httpCfg = options.config.http;
@@ -101,18 +100,17 @@ export function buildOsHttpRequestTool(
 
       const parsed = parseCurlOutput(commandResult.stdout);
       const truncated = commandResult.truncated;
-      const htmlStripped = looksLikeHtml(parsed.contentType, parsed.body);
-      const body = htmlStripped ? convertHtmlToText(parsed.body) : parsed.body;
-      // Lift compressor caps so HTML→text conversion (and small JSON
-      // payloads that would otherwise be cropped to 400 chars / 12 lines)
-      // survive intact for the LLM. The body is already bounded by curl
-      // via `maxResponseBytes`; the downstream rendering layer applies
-      // its own per-turn cap.
+      // Return the body verbatim — this tool is the raw-HTTP surface. HTML
+      // extraction (markdown/text) is the job of `os.web.fetch`. Lift the
+      // compressor caps so small JSON payloads that would otherwise be
+      // cropped to 400 chars / 12 lines survive intact for the LLM. The
+      // body is already bounded by curl via `maxResponseBytes`; the
+      // downstream rendering layer applies its own per-turn cap.
       return compressToolResult(
         {
           tool: "os.http.request",
           status: "ok",
-          output: body,
+          output: parsed.body,
           details: {
             url: args.url,
             method: args.method,
@@ -121,7 +119,6 @@ export function buildOsHttpRequestTool(
             sizeDownload: parsed.sizeDownload,
             timeTotalSeconds: parsed.timeTotal,
             truncated,
-            htmlStripped,
             command: ["curl", ...curlArgs],
           },
         },

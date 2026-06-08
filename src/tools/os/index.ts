@@ -16,6 +16,7 @@ import {
   buildOsFsArchiveExtractTool,
 } from "./archive/index.js";
 import { buildOsHttpRequestTool } from "./http-request.js";
+import { buildOsWebFetchTool } from "./web-fetch.js";
 import { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 import { osWindowListTool, osWindowFocusTool } from "./window.js";
 import { osNotifyTool } from "./notify.js";
@@ -48,6 +49,7 @@ export {
   buildOsFsArchiveExtractTool,
 } from "./archive/index.js";
 export { buildOsHttpRequestTool } from "./http-request.js";
+export { buildOsWebFetchTool } from "./web-fetch.js";
 export { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 export { osWindowListTool, osWindowFocusTool } from "./window.js";
 export { osNotifyTool } from "./notify.js";
@@ -98,6 +100,7 @@ export function registerOsTools(
       config: options.config,
     }),
   );
+  registry.register(buildOsWebFetchTool());
   registry.register(osClipboardReadTool);
   registry.register(osClipboardWriteTool);
   registry.register(osWindowListTool);

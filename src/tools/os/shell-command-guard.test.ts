@@ -162,6 +162,17 @@ describe("checkShellCommandGuard", () => {
     });
   });
 
+  it.each([
+    [["--json", "-n", "8", "atomic agent runtime"]],
+    [["--version"]],
+    [["-r", "us-en", "-t", "y", "llama.cpp grammar"]],
+  ])("allows read-only ddgr web search %j", (rawArgs) => {
+    expect(guard("ddgr", rawArgs)).toMatchObject({
+      action: "allow",
+      rule: "ddgr.read_only",
+    });
+  });
+
   it("keeps osascript Calendar writes behind the approval gate", () => {
     expect(
       guard("osascript", [
