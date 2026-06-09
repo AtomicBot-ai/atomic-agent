@@ -3,8 +3,9 @@ import { Lexer } from "marked";
 import type { Token, Tokens } from "marked";
 import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
+import { renderInline } from "./markdown-inline.js";
+import { TableBlock } from "./markdown-table.js";
 import { highlightCodeBlock } from "./syntax-highlight.js";
-import { wrapOsc8 } from "./osc8-link.js";
 
 interface MarkdownRendererProps {
   text: string;
@@ -42,6 +43,8 @@ function renderBlockToken(token: Token, key: number): ReactElement | null {
       return <ParagraphBlock key={key} token={token as Tokens.Paragraph} />;
     case "code":
       return <CodeBlock key={key} token={token as Tokens.Code} />;
+    case "table":
+      return <TableBlock key={key} token={token as Tokens.Table} />;
     case "list":
       return <ListBlock key={key} token={token as Tokens.List} />;
     case "blockquote":
@@ -71,11 +74,17 @@ function renderBlockToken(token: Token, key: number): ReactElement | null {
   }
 }
 
+/**
+ * Headings render as bold accent text — no literal `#` markers and no
+ * underline (underline under Cyrillic + spaces renders ragged on most
+ * terminals). The `marked` lexer already emits a `space` token for the
+ * blank line before a heading, so no extra top margin is added here to
+ * avoid stacking two blank rows.
+ */
 function HeadingBlock({ token }: { token: Tokens.Heading }): ReactElement {
-  const prefix = "#".repeat(Math.min(6, Math.max(1, token.depth)));
   return (
     <Text bold color={theme.colors.accentSoft}>
-      {prefix} {renderInline(token.tokens ?? [])}
+      {renderInline(token.tokens ?? [])}
     </Text>
   );
 }
@@ -103,107 +112,91 @@ function CodeBlock({ token }: { token: Tokens.Code }): ReactElement {
 
 function BlockquoteBlock({ token }: { token: Tokens.Blockquote }): ReactElement {
   return (
+    <Box
+      flexDirection="column"
+      borderStyle="single"
+      borderTop={false}
+      borderRight={false}
+      borderBottom={false}
+      borderLeft
+      borderColor={theme.colors.muted}
+      paddingLeft={1}
+    >
+      {(token.tokens ?? []).map((inner, idx) => renderBlockToken(inner, idx))}
+    </Box>
+  );
+}
+
+function ListBlock({
+  token,
+  depth = 0,
+}: {
+  token: Tokens.List;
+  depth?: number;
+}): ReactElement {
+  const start = Number(token.start ?? 1);
+  return (
     <Box flexDirection="column">
-      {(token.tokens ?? []).map((inner, idx) => (
-        <Text key={idx} color={theme.colors.muted}>
-          {"> "}
-          {inner.type === "paragraph"
-            ? renderInline((inner as Tokens.Paragraph).tokens ?? [])
-            : (inner as { raw?: string }).raw ?? ""}
-        </Text>
+      {token.items.map((item, idx) => (
+        <ListItem
+          key={idx}
+          item={item}
+          ordered={token.ordered}
+          marker={token.ordered ? `${start + idx}.` : theme.glyphs.bullet}
+          depth={depth}
+        />
       ))}
     </Box>
   );
 }
 
-function ListBlock({ token }: { token: Tokens.List }): ReactElement {
+function ListItem({
+  item,
+  marker,
+  depth,
+}: {
+  item: Tokens.ListItem;
+  ordered: boolean;
+  marker: string;
+  depth: number;
+}): ReactElement {
+  const tokens = item.tokens ?? [];
+  const nestedLists = tokens.filter(
+    (t): t is Tokens.List => t.type === "list",
+  );
+  const inlineTokens = tokens.filter((t) => t.type !== "list");
+  const indent = "  ".repeat(depth);
   return (
     <Box flexDirection="column">
-      {token.items.map((item, idx) => {
-        const bullet = token.ordered
-          ? `${Number(token.start ?? 1) + idx}.`
-          : theme.glyphs.bullet;
-        return (
-          <Text key={idx}>
-            <Text color={theme.colors.muted}>{bullet} </Text>
-            {renderInline(item.tokens ?? [])}
-          </Text>
-        );
-      })}
+      <Text>
+        {indent}
+        <Text color={theme.colors.muted}>{marker} </Text>
+        {renderListItemInline(inlineTokens)}
+      </Text>
+      {nestedLists.map((nested, idx) => (
+        <ListBlock key={idx} token={nested} depth={depth + 1} />
+      ))}
     </Box>
   );
 }
 
-function renderInline(tokens: readonly Token[]): ReactElement[] {
-  return tokens.map((t, idx) => (
-    <InlineToken key={idx} token={t} />
-  ));
-}
-
-function InlineToken({ token }: { token: Token }): ReactElement {
-  switch (token.type) {
-    case "strong":
-      return (
-        <Text bold>{renderInline((token as Tokens.Strong).tokens ?? [])}</Text>
-      );
-    case "em":
-      return (
-        <Text italic>{renderInline((token as Tokens.Em).tokens ?? [])}</Text>
-      );
-    case "codespan":
-      return (
-        <Text color={theme.colors.info} inverse>
-          {(token as Tokens.Codespan).text}
-        </Text>
-      );
-    case "del":
-      return (
-        <Text strikethrough>
-          {renderInline((token as Tokens.Del).tokens ?? [])}
-        </Text>
-      );
-    case "link": {
-      const link = token as Tokens.Link;
-      const href = link.href ?? "";
-      const label = link.text ?? href;
-      const fallback = buildVisibleUrlFallback(label, href);
-      return (
-        <Text color={theme.colors.info} underline>
-          {wrapOsc8(label, href)}
-          {fallback}
-        </Text>
-      );
-    }
-    case "image": {
-      const img = token as Tokens.Image;
-      return (
-        <Text color={theme.colors.muted}>
-          [image: {img.text ?? img.href ?? ""}]
-        </Text>
-      );
-    }
-    case "br":
-      return <Text>{"\n"}</Text>;
-    case "text": {
-      const textTok = token as Tokens.Text;
-      if (textTok.tokens && textTok.tokens.length > 0) {
-        return <Text>{renderInline(textTok.tokens)}</Text>;
+/**
+ * List item bodies arrive as `text` (tight lists) or `paragraph`
+ * (loose lists) tokens wrapping the actual inline spans. Unwrap one
+ * level so bold/links/code inside a bullet render instead of dumping
+ * the wrapper's raw text.
+ */
+function renderListItemInline(tokens: readonly Token[]): ReactElement[] {
+  const inline: Token[] = [];
+  for (const token of tokens) {
+    if (token.type === "paragraph" || token.type === "text") {
+      const inner = (token as { tokens?: Token[] }).tokens;
+      if (inner && inner.length > 0) {
+        inline.push(...inner);
+        continue;
       }
-      return <Text>{textTok.text}</Text>;
     }
-    default:
-      return (
-        <Text>
-          {(token as { raw?: string; text?: string }).text ??
-            (token as { raw?: string }).raw ??
-            ""}
-        </Text>
-      );
+    inline.push(token);
   }
-}
-
-function buildVisibleUrlFallback(label: string, href: string): string {
-  if (!href) return "";
-  if (label.trim() === href.trim()) return "";
-  return ` (${href})`;
+  return renderInline(inline);
 }

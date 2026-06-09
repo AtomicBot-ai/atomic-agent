@@ -20,12 +20,13 @@ describe("MarkdownRenderer", () => {
     expect(text).toContain("code");
   });
 
-  it("renders headings with prefixed hashes", () => {
+  it("renders headings without literal hash markers", () => {
     const { lastFrame } = render(
       <MarkdownRenderer text={"# Title\n\nbody"} />,
     );
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("# Title");
+    expect(text).toContain("Title");
+    expect(text).not.toContain("# Title");
     expect(text).toContain("body");
   });
 
@@ -63,5 +64,35 @@ describe("MarkdownRenderer", () => {
     const text = strip(lastFrame() ?? "");
     expect(text).toContain("first");
     expect(text).toContain("second");
+  });
+
+  it("renders nested lists indented under their parent item", () => {
+    const { lastFrame } = render(
+      <MarkdownRenderer text={"- parent\n  - child"} />,
+    );
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("parent");
+    expect(text).toContain("child");
+    const childLine = text.split("\n").find((l) => l.includes("child")) ?? "";
+    const parentLine = text.split("\n").find((l) => l.includes("parent")) ?? "";
+    expect(childLine.indexOf("child")).toBeGreaterThan(
+      parentLine.indexOf("parent"),
+    );
+  });
+
+  it("renders a GFM table as an aligned grid instead of raw pipes", () => {
+    const { lastFrame } = render(
+      <MarkdownRenderer
+        text={"| Metric | 2026 |\n|--------|------|\n| GDP | 0.9 |"}
+      />,
+    );
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("Metric");
+    expect(text).toContain("GDP");
+    expect(text).toContain("0.9");
+    // Column divider is the box-drawing glyph, not the raw markdown
+    // separator row.
+    expect(text).toContain("│");
+    expect(text).not.toContain("|--------|");
   });
 });
