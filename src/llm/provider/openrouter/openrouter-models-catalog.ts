@@ -137,6 +137,12 @@ export const OPENROUTER_MODELS_CATALOG: ReadonlyMap<string, ModelCatalogEntry> =
       pricing: { input: 1.5, output: 7.5 },
     }),
     chatModel({
+      id: "minimax/minimax-m3",
+      contextWindow: 1_000_000,
+      supportsVision: true,
+      pricing: { input: 0.3, output: 1.2 },
+    }),
+    chatModel({
       id: "minimax/minimax-m2.7",
       contextWindow: 204_800,
       supportsVision: false,
@@ -185,6 +191,7 @@ export const OPENROUTER_CHAT_MODEL_ORDER: readonly string[] = [
   "deepseek/deepseek-v4-flash",
   "moonshotai/kimi-k2.6",
   "mistralai/mistral-medium-3-5",
+  "minimax/minimax-m3",
   "minimax/minimax-m2.7",
   "z-ai/glm-4.7-flash",
   "z-ai/glm-5",

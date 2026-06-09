@@ -10,6 +10,7 @@ export type LocalModelId =
   | "qwen-3.6-27b"
   | "qwen-3.6-35b-a3b"
   | "gemma-4-e4b"
+  | "gemma-4-12b"
   | "gemma-4-26b-a4b"
   | "gemma-4-31b";
 
@@ -62,33 +63,74 @@ export interface LocalModelDef {
 export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
   {
     id: "gemma-4-e4b",
-    name: "Gemma 4 E4B GGUF",
-    filename: "gemma-4-E4B-it-Q4_K_M.gguf",
+    name: "Gemma 4 E4B QAT GGUF",
+    filename: "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
     huggingFaceUrl:
-      "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q4_K_M.gguf",
-    fileSizeGb: 4.98,
-    sizeLabel: "5 GB",
-    description: "Compact multimodal reasoning",
+      "https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
+    fileSizeGb: 4.22,
+    sizeLabel: "4.2 GB",
+    description: "Compact multimodal reasoning (QAT)",
     maxContextLength: 131_072,
     contextLabel: "128K",
-    minRamGb: 8,
-    recommendedRamGb: 10,
+    minRamGb: 6,
+    recommendedRamGb: 8,
     family: "gemma",
     supportsVision: true,
     mmprojUrl:
-      "https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/mmproj-F16.gguf",
-    mmprojFilename: "mmproj-F16.gguf",
+      "https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/mmproj-BF16.gguf",
+    mmprojFilename: "mmproj-BF16.gguf",
     mmprojFileSizeGb: 0.99,
   },
   {
-    id: "gemma-4-26b-a4b",
-    name: "Gemma 4 26B-A4B GGUF",
-    filename: "gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
+    id: "gemma-4-12b",
+    name: "Gemma 4 12B QAT GGUF",
+    filename: "gemma-4-12B-it-qat-UD-Q4_K_XL.gguf",
     huggingFaceUrl:
-      "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-Q4_K_XL.gguf",
-    fileSizeGb: 17.1,
-    sizeLabel: "17.1 GB",
-    description: "Fast MoE with 256K context",
+      "https://huggingface.co/unsloth/gemma-4-12B-it-qat-GGUF/resolve/main/gemma-4-12B-it-qat-UD-Q4_K_XL.gguf",
+    fileSizeGb: 6.72,
+    sizeLabel: "6.7 GB",
+    description: "Mid-size dense multimodal reasoning (QAT)",
+    maxContextLength: 262_144,
+    contextLabel: "256K",
+    minRamGb: 8,
+    recommendedRamGb: 12,
+    family: "gemma",
+    supportsVision: true,
+    mmprojUrl:
+      "https://huggingface.co/unsloth/gemma-4-12B-it-qat-GGUF/resolve/main/mmproj-BF16.gguf",
+    mmprojFilename: "mmproj-BF16.gguf",
+    mmprojFileSizeGb: 0.175,
+  },
+  {
+    id: "gemma-4-26b-a4b",
+    name: "Gemma 4 26B-A4B QAT GGUF",
+    filename: "gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+    huggingFaceUrl:
+      "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF/resolve/main/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+    fileSizeGb: 14.25,
+    sizeLabel: "14.2 GB",
+    description: "Fast MoE with 256K context (QAT)",
+    maxContextLength: 262_144,
+    contextLabel: "256K",
+    minRamGb: 16,
+    recommendedRamGb: 20,
+    family: "gemma",
+    tag: "High Performance",
+    supportsVision: true,
+    mmprojUrl:
+      "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF/resolve/main/mmproj-BF16.gguf",
+    mmprojFilename: "mmproj-BF16.gguf",
+    mmprojFileSizeGb: 1.19,
+  },
+  {
+    id: "gemma-4-31b",
+    name: "Gemma 4 31B QAT GGUF",
+    filename: "gemma-4-31B-it-qat-UD-Q4_K_XL.gguf",
+    huggingFaceUrl:
+      "https://huggingface.co/unsloth/gemma-4-31B-it-qat-GGUF/resolve/main/gemma-4-31B-it-qat-UD-Q4_K_XL.gguf",
+    fileSizeGb: 17.29,
+    sizeLabel: "17.3 GB",
+    description: "Top-tier dense reasoning (QAT)",
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 20,
@@ -97,29 +139,8 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     tag: "High Performance",
     supportsVision: true,
     mmprojUrl:
-      "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/mmproj-F16.gguf",
-    mmprojFilename: "mmproj-F16.gguf",
-    mmprojFileSizeGb: 1.19,
-  },
-  {
-    id: "gemma-4-31b",
-    name: "Gemma 4 31B GGUF",
-    filename: "gemma-4-31B-it-Q4_K_M.gguf",
-    huggingFaceUrl:
-      "https://huggingface.co/unsloth/gemma-4-31B-it-GGUF/resolve/main/gemma-4-31B-it-Q4_K_M.gguf",
-    fileSizeGb: 19.0,
-    sizeLabel: "19 GB",
-    description: "Top-tier dense reasoning",
-    maxContextLength: 262_144,
-    contextLabel: "256K",
-    minRamGb: 24,
-    recommendedRamGb: 32,
-    family: "gemma",
-    tag: "High Performance",
-    supportsVision: true,
-    mmprojUrl:
-      "https://huggingface.co/unsloth/gemma-4-31B-it-GGUF/resolve/main/mmproj-F16.gguf",
-    mmprojFilename: "mmproj-F16.gguf",
+      "https://huggingface.co/unsloth/gemma-4-31B-it-qat-GGUF/resolve/main/mmproj-BF16.gguf",
+    mmprojFilename: "mmproj-BF16.gguf",
     mmprojFileSizeGb: 1.20,
   },
   {

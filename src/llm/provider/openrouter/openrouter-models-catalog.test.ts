@@ -49,6 +49,7 @@ describe("OPENROUTER_MODELS_CATALOG", () => {
         "deepseek/deepseek-v4-flash:free",
         "x-ai/grok-4.3",
         "mistralai/mistral-medium-3-5",
+        "minimax/minimax-m3",
         "minimax/minimax-m2.7",
         "openai/gpt-5.5",
         "openai/gpt-5.4-nano",
