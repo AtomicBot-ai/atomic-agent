@@ -5,7 +5,6 @@ import { dangerousRule } from "./rules-dangerous.js";
 import { gogReadOnlyRule } from "./rules-trusted/gog.js";
 import { ghReadOnlyRule } from "./rules-trusted/gh.js";
 import { icalBuddyReadOnlyRule } from "./rules-trusted/ical-buddy.js";
-import { ddgrReadOnlyRule } from "./rules-trusted/ddgr.js";
 import { safeAllowRule } from "./rules-safe-allow.js";
 
 const DEFAULT_RULES: readonly Rule[] = [
@@ -14,7 +13,6 @@ const DEFAULT_RULES: readonly Rule[] = [
   gogReadOnlyRule,
   ghReadOnlyRule,
   icalBuddyReadOnlyRule,
-  ddgrReadOnlyRule,
   safeAllowRule,
 ];
 

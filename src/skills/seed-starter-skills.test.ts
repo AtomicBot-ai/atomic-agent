@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+  readFileSync,
+  mkdirSync,
+  existsSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -36,5 +43,18 @@ describe("seedStarterSkillsIfMissing", () => {
     expect(second.installed.sort()).toEqual(first.installed.sort());
     expect(readFileSync(hijack, "utf8")).not.toBe("stale-content");
     expect(readFileSync(hijack, "utf8")).toContain("skill-creator");
+  });
+
+  it("prunes a tombstoned starter skill (ddgr-web-search) and is idempotent", async () => {
+    const stalePath = join(globalDir, "ddgr-web-search");
+    mkdirSync(stalePath, { recursive: true });
+    writeFileSync(join(stalePath, "SKILL.md"), "old ddgr skill", "utf8");
+
+    const first = await seedStarterSkillsIfMissing({ globalSkillsDir: globalDir });
+    expect(first.removed).toContain("ddgr-web-search");
+    expect(existsSync(stalePath)).toBe(false);
+
+    const second = await seedStarterSkillsIfMissing({ globalSkillsDir: globalDir });
+    expect(second.removed).not.toContain("ddgr-web-search");
   });
 });

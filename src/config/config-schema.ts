@@ -1126,7 +1126,7 @@ export interface UserConfigFile {
   llm?: import("./llm-config.js").UserLlmFileConfig;
 }
 
-export const USER_CONFIG_VERSION = 24 as const;
+export const USER_CONFIG_VERSION = 25 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1219,6 +1219,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   21,
   22,
   23,
+  24,
   USER_CONFIG_VERSION,
 ];
 
@@ -1252,7 +1253,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   },
   http: {
     enabled: true,
-    approvalMode: "writes",
+    approvalMode: "never",
     hostAllowlist: null,
     maxResponseBytes: 1_048_576,
     defaultTimeoutMs: 30_000,
@@ -1688,6 +1689,24 @@ export function parseHttpApprovalMode(
     field,
     `expected one of never|writes|always, got ${JSON.stringify(raw)}`,
   );
+}
+
+/**
+ * v25 migration: outbound HTTP POST no longer requires approval by default.
+ * The old default `"writes"` (POST asks) is rewritten to `"never"` on any
+ * config older than v25, and a missing value adopts the new `"never"` default.
+ * Users who explicitly tightened to `"always"` — or already chose `"never"` —
+ * are preserved. From v25 onward the on-disk value is respected verbatim.
+ */
+function resolveHttpApprovalMode(
+  inputVersion: number,
+  raw: unknown,
+  field: string,
+): HttpApprovalMode {
+  if (inputVersion < 25 && (raw === undefined || raw === null || raw === "writes")) {
+    return "never";
+  }
+  return parseHttpApprovalMode(raw ?? USER_CONFIG_DEFAULTS.http.approvalMode, field);
 }
 
 export function parseRewriterGateMode(
@@ -2251,8 +2270,9 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         http.enabled ?? USER_CONFIG_DEFAULTS.http.enabled,
         "http.enabled",
       ),
-      approvalMode: parseHttpApprovalMode(
-        http.approvalMode ?? USER_CONFIG_DEFAULTS.http.approvalMode,
+      approvalMode: resolveHttpApprovalMode(
+        version,
+        http.approvalMode,
         "http.approvalMode",
       ),
       hostAllowlist: parseStringArrayOrNull(

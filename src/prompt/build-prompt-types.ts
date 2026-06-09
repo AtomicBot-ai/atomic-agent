@@ -14,6 +14,13 @@ export interface BuildPromptInput {
   capabilities: CapabilitiesSummary;
   skillCatalog: readonly SkillCatalogEntry[];
   systemPersona?: string;
+  /**
+   * Pre-formatted current date (see `formatCurrentDate`) rendered as a
+   * `CURRENT DATE:` line in the variable tail just before `### respond`.
+   * Lives in the tail, not the stable prefix, so it never affects
+   * KV-cache reuse. When omitted the line is not rendered.
+   */
+  currentDate?: string;
   tokenBudget?: number;
   conversationMaxTokens?: number;
   worldSnapshotMaxTokens?: number;

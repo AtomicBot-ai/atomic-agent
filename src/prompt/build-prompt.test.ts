@@ -129,6 +129,46 @@ describe("buildPrompt", () => {
     expect(stablePrefix).toContain("### lessons");
   });
 
+  it("renders `currentDate` in the variable tail just before `### respond`", () => {
+    const { stablePrefix, tail, text } = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      currentDate: "2026-06-09 (Tuesday)",
+    });
+    expect(tail).toContain(
+      "CURRENT DATE: 2026-06-09 (Tuesday) — this is today.",
+    );
+    // The date must live in the tail, NOT the stable prefix (KV-cache).
+    expect(stablePrefix).not.toContain("CURRENT DATE:");
+    // It must sit immediately before the respond anchor.
+    const dateIdx = text.indexOf("CURRENT DATE:");
+    const respondIdx = text.indexOf("### respond");
+    expect(dateIdx).toBeGreaterThan(0);
+    expect(respondIdx).toBeGreaterThan(dateIdx);
+  });
+
+  it("omits the date line when `currentDate` is not provided, leaving the prefix byte-stable", () => {
+    const withDate = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      currentDate: "2026-06-09 (Tuesday)",
+    });
+    const withoutDate = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    expect(withoutDate.text).not.toContain("CURRENT DATE:");
+    // Date is tail-only, so the stable prefix is identical either way.
+    expect(withDate.stablePrefix).toBe(withoutDate.stablePrefix);
+    expect(withDate.tail).not.toBe(withoutDate.tail);
+  });
+
   it("places the stable prefix first and keeps it byte-stable for equal inputs", () => {
     const a = buildPrompt({
       session: mkSession(),

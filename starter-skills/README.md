@@ -29,7 +29,7 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `xurl/` | X (Twitter) API via the official `xurl` CLI | `xurl` installed + OAuth 2.0 set up by user out-of-band |
 | `pdf/` | Merge / split / extract / render / OCR PDFs | `brew install qpdf poppler` (`ocrmypdf` for OCR) |
 | `xlsx/` | Create / edit Excel workbooks (reads via `os.fs.read_document`) | `python3` + `openpyxl` |
-| `ddgr-web-search/` | Key-less web search via the `ddgr` CLI (browser fallback) | `brew install ddgr` (optional) |
+| `exa-web-search/` | Key-less web search via the hosted Exa MCP endpoint over HTTP (browser fallback) | none |
 | `pandoc/` | Convert documents between formats (md/docx/html/pdf/epub) | `brew install pandoc` (+ TeX engine for PDF) |
 | `ffmpeg/` | Audio / video transform: convert, trim, extract, resize, GIF | `brew install ffmpeg` |
 | `imagemagick/` | Image edit / convert: resize, crop, format, montage | `brew install imagemagick` |

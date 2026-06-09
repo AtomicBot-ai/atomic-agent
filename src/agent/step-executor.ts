@@ -36,6 +36,7 @@ import {
 } from "../prompt/tool-descriptors.js";
 import { buildPrompt } from "../prompt/build-prompt.js";
 import type { BuiltPrompt } from "../prompt/build-prompt.js";
+import { formatCurrentDate } from "../prompt/current-date.js";
 import type {
   CapabilitiesSummary,
   SkillCatalogEntry,
@@ -261,6 +262,7 @@ async function executeStepInner(
     toolDescriptors: ctx.toolDescriptors,
     capabilities: ctx.capabilities,
     skillCatalog: ctx.skillCatalog,
+    currentDate: formatCurrentDate(new Date()),
     profile: deps.profile,
     ...(ctx.transientNotice !== undefined
       ? { transientNotice: ctx.transientNotice }
@@ -882,7 +884,17 @@ function tryParseToolCalls(
             getReasoningTagOptions(profile),
           );
           if (grammarBatch.calls.length > 0) {
-            return { ok: true, batch: grammarBatch };
+            // The model copied the escaped function names from the OpenAI
+            // `tools` schema (e.g. `skill__view`) into a GBNF-style content
+            // array. Un-escape each name back to the dotted registry id so
+            // `registry.has(...)` resolves — `nameUnescape` is a no-op for
+            // names that are already dotted, so this is idempotent.
+            const adapter = deps.toolCallAdapter ?? openAiToolCallAdapter;
+            const calls = grammarBatch.calls.map((call) => ({
+              ...call,
+              tool: adapter.nameUnescape(call.tool),
+            }));
+            return { ok: true, batch: { ...grammarBatch, calls } };
           }
         } catch {
           // Not a GBNF-shaped completion — fall through to the reply wrap.

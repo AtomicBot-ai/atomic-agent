@@ -555,6 +555,68 @@ describe("executeStep batch handling", () => {
     });
   });
 
+  it("native_tools: un-escapes `__` tool names emitted in a GBNF-shaped `content` array", async () => {
+    // When a cloud model emits the tool call as text in `content` (instead
+    // of the structured `tool_calls` envelope) it copies the *escaped*
+    // function name from the OpenAI `tools` schema, e.g. `os__fs__read`.
+    // The recovery parser must un-escape it back to the dotted registry id
+    // `os.fs.read` — otherwise `registry.has(...)` rejects the call with
+    // `tool not registered in this agent: os__fs__read`.
+    const registry = makeRegistry();
+    const session = createEmptySessionState({
+      id: "s-native-escaped-name",
+      workingDir: "/w",
+    });
+    let llmCalls = 0;
+
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "read it",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        async llmComplete() {
+          llmCalls += 1;
+          return {
+            content: '[{"tool":"os__fs__read","args":{"path":"/w/a"}}]',
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 12,
+            },
+            cacheHitTokens: 0,
+            slotId: -1,
+            modelId: "openai/gpt-5-2",
+          };
+        },
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+      },
+    );
+
+    expect(llmCalls).toBe(1);
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0]).toMatchObject({
+      tool: "os.fs.read",
+      args: { path: "/w/a" },
+    });
+    expect(outcome.toolResults[0]!.status).toBe("ok");
+  });
+
   it("native_tools: routes 'no tool_calls and no content' through ModelError, not parse_retry", async () => {
     // A truly empty completion (no tool_calls + no content) has nothing
     // for the synthesis branch to recover from, and replaying the same

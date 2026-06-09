@@ -267,6 +267,17 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   if (input.transientNotice && input.transientNotice.length > 0) {
     tailParts.push(`### notice`, input.transientNotice, ``);
   }
+  // Current date lives in the variable tail (not the stable prefix) so it
+  // sits close to the generation point where the model actually attends to
+  // it — empirically the stable-prefix placement was too far upstream and
+  // the model kept anchoring on its training-era year. Rendered as a bold
+  // standalone line so it stands out. Omitted when not provided.
+  if (input.currentDate) {
+    tailParts.push(
+      `CURRENT DATE: ${input.currentDate} — this is today. Use it for any time-relative reasoning; never assume an earlier year.`,
+      ``,
+    );
+  }
   // Static 2-line emit anchor right before the (optional) reasoning prefill.
   // Kept out of the stable prefix so it sits as close as possible to the
   // generation point, which empirically prevents reasoning-mode repetition

@@ -17,7 +17,19 @@ export interface SeedStarterSkillsResult {
   sourceDir: string | null;
   /** Skill folder names copied from the starter pack this run (replaces any existing dir). */
   installed: string[];
+  /** Tombstoned starter-skill folders pruned from `globalSkillsDir` this run. */
+  removed: string[];
 }
+
+/**
+ * Starter-skill folder names that were once bundled but have since been
+ * dropped. The seeder is otherwise additive (copy + replace same-name), so a
+ * removed starter would linger in every existing `<stateDir>/skills/` forever.
+ * Each name here is deleted from `globalSkillsDir` on boot if present. Safe
+ * because starter-skill names are reserved by contract — users must not reuse
+ * them for custom work (they are replaced on every boot anyway).
+ */
+const REMOVED_STARTER_SKILLS: readonly string[] = ["ddgr-web-search"];
 
 function markerPath(root: string): string {
   return join(root, "skill-creator", "SKILL.md");
@@ -71,10 +83,14 @@ export async function seedStarterSkillsIfMissing(
   const logger = options.logger;
   const sourceDir = resolveStarterSkillsSourceDir();
   const installed: string[] = [];
+  const removed = await pruneRemovedStarterSkills(
+    options.globalSkillsDir,
+    logger,
+  );
 
   if (sourceDir === null) {
     logger?.debug("starter-skills: source tree not found; skipping seed", {});
-    return { sourceDir: null, installed };
+    return { sourceDir: null, installed, removed };
   }
 
   let names: string[];
@@ -84,7 +100,7 @@ export async function seedStarterSkillsIfMissing(
     logger?.debug("starter-skills: cannot read source dir; skipping seed", {
       error: err instanceof Error ? err.message : String(err),
     });
-    return { sourceDir, installed };
+    return { sourceDir, installed, removed };
   }
 
   await mkdir(options.globalSkillsDir, { recursive: true });
@@ -117,5 +133,36 @@ export async function seedStarterSkillsIfMissing(
     });
   }
 
-  return { sourceDir, installed };
+  return { sourceDir, installed, removed };
+}
+
+/**
+ * Delete tombstoned starter-skill folders from `globalSkillsDir`. Returns the
+ * names actually removed this run. A missing folder is a silent no-op so the
+ * prune is idempotent across boots.
+ */
+async function pruneRemovedStarterSkills(
+  globalSkillsDir: string,
+  logger?: SeedStarterSkillsLogger,
+): Promise<string[]> {
+  const removed: string[] = [];
+  for (const name of REMOVED_STARTER_SKILLS) {
+    const destPath = join(globalSkillsDir, name);
+    if (!existsSync(destPath)) continue;
+    try {
+      await rm(destPath, { recursive: true, force: true });
+      removed.push(name);
+    } catch (err) {
+      logger?.debug("starter-skills: failed to prune removed skill", {
+        skill: name,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  if (removed.length > 0) {
+    logger?.info("starter-skills: pruned removed global skills", {
+      skills: removed,
+    });
+  }
+  return removed;
 }
