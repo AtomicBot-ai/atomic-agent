@@ -4,7 +4,8 @@ import type { ToolDescriptor } from "./stable-prefix.js";
 export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "browser.navigate",
-    summary: "Open a URL in the controlled browser tab.",
+    summary:
+      "Open a URL in the controlled browser tab. LAST RESORT — do NOT use this to read a page (use os.web.fetch) or to search (use the exa-web-search skill). Allowed ONLY when the user explicitly asks for the browser, or the page truly needs JS/login/clicks that os.web.fetch cannot deliver.",
     argsSchema: "{ url: string }",
   },
   {
@@ -25,7 +26,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "browser.search",
     summary:
-      "Web search in the live browser (opens the SERP, refreshes the world snapshot). Use only when the user asks to search via the browser, or you then need to click/read the live results",
+      "Web search in the live browser (opens the SERP, refreshes the world snapshot). LAST RESORT — to search the web use the exa-web-search skill instead. Allowed ONLY when the user explicitly asks to search via the browser, or you must then click/read the live results.",
     argsSchema: "{ query: string, engine?: string }",
   },
   {
