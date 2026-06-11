@@ -104,6 +104,41 @@ This is architecture, not prompt superstition.
 
 Dangerous actions are routed through approvals. Read-heavy exploration stays fast.
 
+## Benchmarks
+
+![GAIA Level 1 benchmark — atomic-agent 69.8% vs Hermes 58.5%](assets/gaia-l1-benchmark.png)
+
+On the public **GAIA validation Level 1** split (53 tasks), `atomic-agent` and
+`Hermes` drove the **same** local `qwen-3.6-35b-a3b` (`llama-server`, UD-Q4_K_XL),
+with the same step budget and timeout. The only variable is the agent runtime.
+
+```mermaid
+xychart-beta
+    title "GAIA L1 accuracy — higher is better (%)"
+    x-axis ["atomic-agent", "Hermes"]
+    y-axis "Accuracy (%)" 0 --> 100
+    bar [69.8, 58.5]
+```
+
+```mermaid
+xychart-beta
+    title "Avg wall time per task — lower is better (s)"
+    x-axis ["atomic-agent", "Hermes"]
+    y-axis "Seconds / task" 0 --> 400
+    bar [217, 351]
+```
+
+| Metric | atomic-agent | Hermes |
+|---|---|---|
+| **Accuracy** | **37/53 = 69.8%** | 31/53 = 58.5% |
+| Avg wall / task | **~217 s** | ~351 s |
+| Head-to-head wins | **+15 atomic-only** | +9 Hermes-only |
+
+**atomic-agent: +11.3 pp more accurate, ~1.6× faster per task.**
+
+Full reproducible write-up: [`eval-agents/docs/GAIA-L1-EXPERIMENT.md`](eval-agents/docs/GAIA-L1-EXPERIMENT.md).
+Raw artifacts (matrices, NDJSON traces, logs): [gaia-l1-eval-2026-06-11 release](https://github.com/AtomicBot-ai/atomic-agent/releases/tag/gaia-l1-eval-2026-06-11).
+
 ## Memory That Feels More Human
 
 `atomic-agent` memory is not a giant chat log pasted back into the prompt. It is shaped more like human memory: durable identity, episodic notes, associations, distilled lessons, reusable procedures, and feedback from experience.

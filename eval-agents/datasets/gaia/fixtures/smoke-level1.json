@@ -1,0 +1,46 @@
+[
+  {
+    "task_id": "smoke-001",
+    "Question": "What is 17 + 25? Reply with the number only.",
+    "Level": 1,
+    "Final answer": "42",
+    "file_name": "",
+    "file_path": ""
+  },
+  {
+    "task_id": "smoke-002",
+    "Question": "Read the file budget.txt in the workspace. What is the total budget in dollars (number only)?",
+    "Level": 1,
+    "Final answer": "1250",
+    "file_name": "budget.txt",
+    "file_path": "budget.txt",
+    "fixture_file_text": "Department budget for Q1: $1,250 approved."
+  },
+  {
+    "task_id": "smoke-003",
+    "Question": "Using the attached notes.txt, what city is listed as the headquarters? One word answer.",
+    "Level": 1,
+    "Final answer": "Oslo",
+    "file_name": "notes.txt",
+    "file_path": "notes.txt",
+    "fixture_file_text": "HQ: Oslo\nFounded: 2019"
+  },
+  {
+    "task_id": "smoke-004",
+    "Question": "From inventory.csv, how many units of item A are in stock? Reply with the integer only.",
+    "Level": 1,
+    "Final answer": "7",
+    "file_name": "inventory.csv",
+    "file_path": "inventory.csv",
+    "fixture_file_text": "item,units\nA,7\nB,3"
+  },
+  {
+    "task_id": "smoke-005",
+    "Question": "What are the two colors mentioned in colors.txt? Reply as a comma-separated list in the order they appear.",
+    "Level": 1,
+    "Final answer": "red, blue",
+    "file_name": "colors.txt",
+    "file_path": "colors.txt",
+    "fixture_file_text": "Primary colors used: red, blue"
+  }
+]

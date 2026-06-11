@@ -1,0 +1,21 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "types": ["node", "vitest/globals"]
+  },
+  "include": [
+    "**/*.ts",
+    "../eval/harness/spawn-agent.ts",
+    "../eval/harness/parse-cli-output.ts",
+    "../eval/harness/parse-trace-metrics.ts",
+    "../eval-memory/config/environment.ts",
+    "../eval-memory/harness/memory-profiles.ts",
+    "../src/config/config-schema.ts"
+  ],
+  "exclude": ["node_modules", "reports", "datasets/gaia/hf"]
+}

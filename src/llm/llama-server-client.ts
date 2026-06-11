@@ -12,6 +12,31 @@ export type {
   StreamChunk,
 } from "./provider/completion-types.js";
 
+/**
+ * Eval/ops-only sampling overrides read from the environment at load time.
+ * Production defaults are unchanged (temperature 0.2 / top_p 0.95 / top_k 40,
+ * no seed); these take effect only when the matching env var is set, and an
+ * explicit per-request value still wins over the env. The benchmark harness
+ * sets these to pin greedy, reproducible decoding (temperature 0 + fixed
+ * seed) so a prompt-version comparison is not confounded by sampling noise.
+ */
+function parseFloatEnv(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function parseIntEnv(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+const ENV_TEMPERATURE = parseFloatEnv(process.env.ATOMIC_AGENT_LLAMA_TEMPERATURE);
+const ENV_TOP_P = parseFloatEnv(process.env.ATOMIC_AGENT_LLAMA_TOP_P);
+const ENV_TOP_K = parseIntEnv(process.env.ATOMIC_AGENT_LLAMA_TOP_K);
+const ENV_SEED = parseIntEnv(process.env.ATOMIC_AGENT_LLAMA_SEED);
+
 export class LlamaServerError extends Error {
   constructor(
     message: string,
@@ -272,16 +297,18 @@ export class LlamaServerClient {
       prompt: request.prompt,
       stream,
       cache_prompt: request.cachePrompt ?? true,
-      temperature: request.temperature ?? 0.2,
-      top_p: request.topP ?? 0.95,
-      top_k: request.topK ?? 40,
+      temperature: request.temperature ?? ENV_TEMPERATURE ?? 0.2,
+      top_p: request.topP ?? ENV_TOP_P ?? 0.95,
+      top_k: request.topK ?? ENV_TOP_K ?? 40,
       n_predict: request.maxTokens ?? config.localModels.completionMaxTokens,
       repeat_penalty: request.repeatPenalty ?? 1.1,
       repeat_last_n: request.repeatLastN ?? 256,
     };
     if (request.grammar) payload.grammar = request.grammar;
     if (request.stop) payload.stop = request.stop;
-    if (typeof request.seed === "number") payload.seed = request.seed;
+    const resolvedSeed =
+      typeof request.seed === "number" ? request.seed : ENV_SEED;
+    if (typeof resolvedSeed === "number") payload.seed = resolvedSeed;
     if (typeof request.slotId === "number") {
       payload.slot_id = request.slotId;
       payload.id_slot = request.slotId;

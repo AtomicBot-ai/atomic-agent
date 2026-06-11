@@ -17,6 +17,14 @@ export interface SpawnAgentOptions {
   maxSteps: number;
   /** Hard wall-clock cap; aborts the child on overrun. */
   timeoutMs: number;
+  /**
+   * Pin the launch to the built `dist/cli/index.js` and refuse to fall
+   * back to `tsx src`. Use this when the agent under test MUST be the
+   * `npm run build` output (e.g. eval-agents benchmarking a prompt
+   * change) rather than whatever the source tree currently holds.
+   * Defaults to `false` — the dev-friendly dist-then-tsx resolution.
+   */
+  requireDist?: boolean;
 }
 
 export interface SpawnAgentResult {
@@ -44,7 +52,18 @@ export interface SpawnAgentResult {
  */
 export function spawnAgentRun(opts: SpawnAgentOptions): Promise<SpawnAgentResult> {
   return new Promise((resolveResult, rejectResult) => {
-    const usingDist = existsSync(DIST_CLI);
+    const distExists = existsSync(DIST_CLI);
+
+    if (opts.requireDist && !distExists) {
+      rejectResult(
+        new Error(
+          `requireDist: ${DIST_CLI} is missing. The agent under test must be the build output — run \`npm run build\` first.`,
+        ),
+      );
+      return;
+    }
+
+    const usingDist = distExists;
     const command = usingDist ? process.execPath : TSX_BIN;
     const args = usingDist
       ? [DIST_CLI, "run", "--cwd", opts.workingDir, "--no-approval", "--max-steps", String(opts.maxSteps)]
