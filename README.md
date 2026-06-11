@@ -1,6 +1,6 @@
 # atomic-agent
 
-**A local-first operator agent runtime for people who want the machine on their desk, not in somebody else's cloud.**
+**A local-first operator agent runtime that squeezes the maximum out of models on your own machine — turboquant `llama.cpp`, curated quants, and a runtime engineered for local inference. The machine on your desk, not in somebody else's cloud.**
 
 ![atomic-agent terminal demo](assets/demo.gif)
 
@@ -18,11 +18,60 @@
 
 `atomic-agent` is a compact agent runtime that can operate a real desktop: browser, files, shell, documents, git, local memory, scheduled work, approvals, traces, Telegram, MCP servers, and Tauri sidecars.
 
-It is built for the OpenClaw / Hermes / OpenCUA class of operator agents, but tuned for local inference: `llama.cpp`, KV-cache reuse, grammar-constrained tool calls, small prompt tails, and inspectable state on your machine.
+It is built for the OpenClaw / Hermes / OpenCUA class of operator agents, but every layer is engineered to **squeeze the maximum out of local models running on your own machine**. In managed mode it ships **turboquant** — a purpose-built `llama.cpp` backend ([`AtomicBot-ai/atomic-llama-cpp-turboquant`](https://github.com/AtomicBot-ai/atomic-llama-cpp-turboquant)) paired with curated quantized GGUF weights — and the whole runtime is tuned around it: KV-cache reuse via a byte-stable prompt prefix, grammar-constrained tool calls, small bounded prompt tails, resource-aware parallel read batches, and fully inspectable local state. The payoff is concrete: on the same hardware, a small quantized model behaves like a capable operator instead of a toy — see [Benchmarks](#benchmarks).
 
 **Developer Preview / Active Development:** APIs, commands, config, and behavior are still moving. Expect sharp edges, and pin a release if you need a stable integration point.
 
 **Platform availability:** current releases are available for macOS. Linux and Windows builds are coming soon.
+
+## Benchmarks
+
+![GAIA Level 1 benchmark — atomic-agent 69.8% vs Hermes 58.5%](assets/gaia-l1-benchmark.png)
+
+On the public **GAIA validation Level 1** split (53 tasks), `atomic-agent` and
+`Hermes` drove the **same** local `qwen-3.6-35b-a3b` (`llama-server`, UD-Q4_K_XL),
+with the same step budget and timeout. The only variable is the agent runtime.
+
+| Metric | atomic-agent | Hermes |
+|---|---|---|
+| **Accuracy** | **37/53 = 69.8%** | 31/53 = 58.5% |
+| Avg wall / task | **~217 s** | ~351 s |
+| Head-to-head wins | **+15 atomic-only** | +9 Hermes-only |
+
+**atomic-agent: +11.3 pp more accurate, ~1.6× faster per task** — same hardware, same model, same budget.
+
+<details>
+<summary>Charts (accuracy &amp; speed)</summary>
+
+```mermaid
+xychart-beta
+    title "GAIA L1 accuracy — higher is better (%)"
+    x-axis ["atomic-agent", "Hermes"]
+    y-axis "Accuracy (%)" 0 --> 100
+    bar [69.8, 58.5]
+```
+
+```mermaid
+xychart-beta
+    title "Avg wall time per task — lower is better (s)"
+    x-axis ["atomic-agent", "Hermes"]
+    y-axis "Seconds / task" 0 --> 400
+    bar [217, 351]
+```
+
+</details>
+
+Full reproducible write-up: [`eval-agents/docs/GAIA-L1-EXPERIMENT.md`](eval-agents/docs/GAIA-L1-EXPERIMENT.md).
+Raw artifacts (matrices, NDJSON traces, logs): [gaia-l1-eval-2026-06-11 release](https://github.com/AtomicBot-ai/atomic-agent/releases/tag/gaia-l1-eval-2026-06-11).
+
+## Why It Maxes Out Local Models
+
+Everything is tuned to get the most out of a model running on *your* hardware:
+
+- **turboquant `llama.cpp`** — a purpose-built backend ([`AtomicBot-ai/atomic-llama-cpp-turboquant`](https://github.com/AtomicBot-ai/atomic-llama-cpp-turboquant)) shipped in managed mode, tuned for throughput on consumer machines.
+- **Curated quantized models** — hand-picked GGUF quants (UD-Q4_K_XL and friends) that keep quality high while fitting real VRAM budgets.
+- **KV-cache reuse** — a byte-stable prompt prefix plus slot affinity reuse the cache across steps instead of re-encoding the world every turn.
+- **Grammar + bounded prompts** — GBNF tool-call grammar, small bounded prompt tails, and resource-aware parallel read batches keep every inference cheap and valid.
 
 ## Quick Install/Update
 
@@ -32,13 +81,10 @@ curl -fsSL https://api.atomicbot.ai/agent-install | sh
 
 The installer downloads the release archive, verifies the checksum, and installs the CLI plus runtime assets such as `grammars/`, native prebuilds, and bundled `ripgrep`.
 
-Optional overrides:
+## Run
 
 ```bash
-ATOMIC_AGENT_VERSION=v0.1.29       # pin a release
-ATOMIC_AGENT_INSTALL_DIR=/opt/bin  # choose install directory
-ATOMIC_AGENT_NO_PATH=1             # do not edit shell rc files
-ATOMIC_AGENT_REPO=owner/repo       # install from a fork
+atomic-agent
 ```
 
 ## Why Enthusiasts Care
@@ -103,41 +149,6 @@ This is architecture, not prompt superstition.
 - **Telegram:** single-user remote control with owner pairing and inline approval buttons.
 
 Dangerous actions are routed through approvals. Read-heavy exploration stays fast.
-
-## Benchmarks
-
-![GAIA Level 1 benchmark — atomic-agent 69.8% vs Hermes 58.5%](assets/gaia-l1-benchmark.png)
-
-On the public **GAIA validation Level 1** split (53 tasks), `atomic-agent` and
-`Hermes` drove the **same** local `qwen-3.6-35b-a3b` (`llama-server`, UD-Q4_K_XL),
-with the same step budget and timeout. The only variable is the agent runtime.
-
-```mermaid
-xychart-beta
-    title "GAIA L1 accuracy — higher is better (%)"
-    x-axis ["atomic-agent", "Hermes"]
-    y-axis "Accuracy (%)" 0 --> 100
-    bar [69.8, 58.5]
-```
-
-```mermaid
-xychart-beta
-    title "Avg wall time per task — lower is better (s)"
-    x-axis ["atomic-agent", "Hermes"]
-    y-axis "Seconds / task" 0 --> 400
-    bar [217, 351]
-```
-
-| Metric | atomic-agent | Hermes |
-|---|---|---|
-| **Accuracy** | **37/53 = 69.8%** | 31/53 = 58.5% |
-| Avg wall / task | **~217 s** | ~351 s |
-| Head-to-head wins | **+15 atomic-only** | +9 Hermes-only |
-
-**atomic-agent: +11.3 pp more accurate, ~1.6× faster per task.**
-
-Full reproducible write-up: [`eval-agents/docs/GAIA-L1-EXPERIMENT.md`](eval-agents/docs/GAIA-L1-EXPERIMENT.md).
-Raw artifacts (matrices, NDJSON traces, logs): [gaia-l1-eval-2026-06-11 release](https://github.com/AtomicBot-ai/atomic-agent/releases/tag/gaia-l1-eval-2026-06-11).
 
 ## Memory That Feels More Human
 
