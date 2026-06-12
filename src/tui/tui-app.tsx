@@ -23,6 +23,7 @@ import { SlashPalette } from "./components/slash-palette.js";
 import { StatusBar } from "./components/status-bar.js";
 import { TasksCancelModal } from "./components/tasks-cancel-modal.js";
 import { UpdateModal } from "./components/update-modal.js";
+import { UpdateIndicator } from "./components/update-indicator.js";
 import { useTerminalSize } from "./hooks/use-terminal-size.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { slashPrefix } from "./commands/slash-command-parser.js";
@@ -643,6 +644,11 @@ export function TuiApp({
                 current={state.updatePrompt.current}
                 latest={state.updatePrompt.latest}
               />
+            </Box>
+          ) : null}
+          {state.updateStatus === "running" ? (
+            <Box flexShrink={0}>
+              <UpdateIndicator />
             </Box>
           ) : null}
           <PromptShell
