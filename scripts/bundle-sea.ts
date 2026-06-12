@@ -6,7 +6,7 @@
  * injected script as ESM. A top-of-file banner exposes `require` via
  * `createRequire` for dependencies that still use dynamic `require()`.
  */
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { exit, stderr, stdout } from "node:process";
@@ -17,8 +17,19 @@ const OUT_DIR = join(ROOT, "dist-sea");
 const OUT_FILE = join(OUT_DIR, "cli.mjs");
 const ENTRY = join(ROOT, "src", "cli", "index.ts");
 
+async function readPackageVersion(): Promise<string> {
+  const raw = await readFile(join(ROOT, "package.json"), "utf-8");
+  const parsed = JSON.parse(raw) as { version?: unknown };
+  if (typeof parsed.version !== "string") {
+    throw new Error("package.json is missing a string `version` field");
+  }
+  return parsed.version;
+}
+
 async function main(): Promise<number> {
   await mkdir(OUT_DIR, { recursive: true });
+
+  const version = await readPackageVersion();
 
   await esbuild.build({
     absWorkingDir: ROOT,
@@ -44,6 +55,11 @@ async function main(): Promise<number> {
     // tool runs. Externalise the package and ship its `node_modules/` tree
     // next to the binary (see `scripts/package-bundle.ts`).
     external: ["better-sqlite3", "playwright-core"],
+    // Bake the published version into the binary so `getAppVersion()`
+    // (see src/version.ts) resolves without a shipped package.json.
+    define: {
+      __ATOMIC_AGENT_VERSION__: JSON.stringify(version),
+    },
     loader: { ".node": "file" },
     // CJS dependencies use `require("events")`, `__dirname`, and `__filename`. The ESM output must
     // polyfill all three: `createRequire(import.meta.url)` for `require`, and
@@ -63,7 +79,9 @@ const __dirname = __dirnameForSea(__filename);
   });
 
   const st = await stat(OUT_FILE);
-  stdout.write(`bundle-sea: wrote ${OUT_FILE} (${st.size} bytes)\n`);
+  stdout.write(
+    `bundle-sea: wrote ${OUT_FILE} (${st.size} bytes, version ${version})\n`,
+  );
   return 0;
 }
 

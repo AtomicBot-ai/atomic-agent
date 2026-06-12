@@ -5,6 +5,7 @@ import type { ProfileFact } from "../memory/profile-store.js";
 import type { SkillCatalogEntry } from "../prompt/stable-prefix.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { SessionState } from "../session/session-state.js";
+import { checkForAppUpdate, runAppUpdate, canSelfUpdate } from "../update/index.js";
 import { clearTtyScreen } from "./clear-tty-screen.js";
 import { captureAndWriteDebugBundle } from "./debug-bundle/index.js";
 import { LlmHealthPoller } from "./llm-health/llm-health-poller.js";
@@ -71,6 +72,8 @@ export class ChatOrchestrator {
   private currentController: AbortController | null = null;
   private quitting = false;
   private started = false;
+  /** Latest release version captured by `checkForUpdate`, used by `runUpdate`. */
+  private pendingUpdateVersion: string | null = null;
   private readonly queue: string[] = [];
   public exitCode = 0;
   public readonly tasks: TasksOrchestrator;
@@ -145,6 +148,61 @@ export class ChatOrchestrator {
   /** Update the llama-server URL tracked by the footer health poller. */
   updateLlamaUrl(nextUrl: string): void {
     this.llmHealth.updateUrl(nextUrl);
+  }
+
+  /**
+   * Fire-and-forget startup version check. When GitHub Releases report a
+   * newer version (and the running binary can self-update), emit
+   * `update_available` so the TUI can offer the in-app update. Any
+   * failure (offline, rate-limited, dev build) is swallowed — the check
+   * must never disturb a normal launch.
+   */
+  async checkForUpdate(): Promise<void> {
+    if (!this.runtime.config.update.checkOnStartup) return;
+    if (!canSelfUpdate()) return;
+    try {
+      const result = await checkForAppUpdate({
+        repo: this.runtime.config.update.repo,
+      });
+      if (!result.updateAvailable) return;
+      this.pendingUpdateVersion = result.latestVersion;
+      this.bus.emit({
+        type: "update_available",
+        current: result.currentVersion,
+        latest: result.latestVersion,
+      });
+    } catch {
+      // Silent: a failed update check is never user-facing noise.
+    }
+  }
+
+  /**
+   * Run the canonical `install.sh` to upgrade the installed binary in
+   * place. Streams installer output to the feed and emits
+   * `update_finished` when it settles. The running process is not
+   * restarted — the reducer's success message asks the user to relaunch.
+   */
+  runUpdate(): void {
+    this.bus.emit({ type: "update_started" });
+    void (async () => {
+      try {
+        await runAppUpdate({
+          repo: this.runtime.config.update.repo,
+          onLine: (line) =>
+            this.bus.emit({ type: "runtime_info", line: `[update] ${line}` }),
+        });
+        this.bus.emit({
+          type: "update_finished",
+          ok: true,
+          ...(this.pendingUpdateVersion
+            ? { version: this.pendingUpdateVersion }
+            : {}),
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.bus.emit({ type: "update_finished", ok: false, error: message });
+      }
+    })();
   }
 
   openSessionPicker(): void {

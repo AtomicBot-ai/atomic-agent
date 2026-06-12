@@ -139,6 +139,38 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         ...state,
         llmHealth: { ...state.llmHealth, model: action.model },
       };
+    case "update_available":
+      // Never override an in-flight or finished update with a new offer.
+      if (state.updateStatus !== "idle") return state;
+      return {
+        ...state,
+        updatePrompt: { current: action.current, latest: action.latest },
+      };
+    case "update_dismissed":
+      return { ...state, updatePrompt: null };
+    case "update_started":
+      return appendFeed(
+        { ...state, updatePrompt: null, updateStatus: "running" },
+        {
+          kind: "runtime_info",
+          stepIndex: null,
+          line: "[update] starting…",
+          color: "yellow",
+        },
+      );
+    case "update_finished": {
+      const next: TuiState = {
+        ...state,
+        updateStatus: action.ok ? "done" : "failed",
+      };
+      return appendChatMessage(next, {
+        role: "system",
+        text: action.ok
+          ? `updated to v${action.version ?? "?"} — restart atomic-agent to apply`
+          : `update failed: ${action.error ?? "unknown error"}`,
+        variant: action.ok ? "normal" : "warn",
+      });
+    }
     default:
       return state;
   }

@@ -27,6 +27,8 @@ export interface AppKeyCallbacks {
    * the detail view for `taskId`.
    */
   onSidebarTaskActivated?(taskId: string): void;
+  /** Optional — called when the user accepts the startup update offer. */
+  onUpdateConfirmed?(): void;
 }
 
 export interface AppKeyContext {
@@ -63,6 +65,11 @@ export function handleAppKey(
   const { state, dispatch, callbacks, ctrlCArmed, setCtrlCArmed } = ctx;
   if (state.pendingApproval) {
     return handleApprovalKey(input, key, state.pendingApproval, ctx);
+  }
+  // The update offer claims only y / n / Esc; anything else (Ctrl+C in
+  // particular) falls through to the normal handlers below.
+  if (state.updatePrompt && handleUpdateKey(input, key, ctx)) {
+    return true;
   }
   if (
     ctx.sidebarVisible &&
@@ -323,6 +330,23 @@ function applyNavSlot(
   }
   dispatch({ type: "ui_mode_set", mode: "debug" });
   dispatch({ type: "tab_changed", tab: slot.tab });
+}
+
+function handleUpdateKey(
+  input: string,
+  key: Key,
+  ctx: AppKeyContext,
+): boolean {
+  const lower = input.toLowerCase();
+  if (lower === "y") {
+    ctx.callbacks.onUpdateConfirmed?.();
+    return true;
+  }
+  if (lower === "n" || key.escape) {
+    ctx.dispatch({ type: "update_dismissed" });
+    return true;
+  }
+  return false;
 }
 
 function handleApprovalKey(

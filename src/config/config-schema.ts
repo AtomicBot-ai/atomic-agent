@@ -273,6 +273,25 @@ export interface AtomicAgentConfig {
     minIntervalMs: number;
   };
   /**
+   * Self-update controls. Env-only operational tuning (not user-config
+   * file material). The TUI checks GitHub Releases on startup and, when
+   * a newer version is published, offers an in-app update that re-runs
+   * the canonical `install.sh`.
+   */
+  update: {
+    /**
+     * Fire the startup version check in the TUI. Env-only:
+     * `ATOMIC_AGENT_UPDATE_CHECK_ON_STARTUP`. Set to `false` to disable
+     * the network call and the update prompt entirely.
+     */
+    checkOnStartup: boolean;
+    /**
+     * GitHub `owner/repo` queried for the latest release and used as the
+     * `install.sh` source. Env-only: `ATOMIC_AGENT_REPO`.
+     */
+    repo: string;
+  };
+  /**
    * Cross-session memory fabric. The profile store is a durable SQLite
    * key/value table rendered into the prompt tail on every turn. The
    * reflection layer runs at the end of every turn (fire-and-forget) to
@@ -1464,6 +1483,10 @@ export const ENV_DEFAULTS = {
   TASKS_SCHEDULER_BATCH: 10,
   TASKS_AGENT_TOOLS_ENABLED: true,
   TASKS_MIN_INTERVAL_MS: 1_000,
+  /** Fire the TUI startup version check against GitHub Releases. */
+  UPDATE_CHECK_ON_STARTUP: true,
+  /** GitHub `owner/repo` for self-update release lookups + install.sh. */
+  UPDATE_REPO: "AtomicBot-ai/atomic-agent",
   /** Max rare-tool schema entries kept in `session.loadedTools` (LRU). */
   LOADED_TOOLS_CAP: 8,
   /** Safety cap (estimated tokens) for the `### loaded-tools` section. */

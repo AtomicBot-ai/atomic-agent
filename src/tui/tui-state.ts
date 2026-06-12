@@ -291,6 +291,18 @@ export interface TuiState {
   sessionPickerCursor: number;
   /** User-initiated abort in flight. */
   aborting: boolean;
+  /**
+   * Pending self-update offer surfaced at startup when GitHub Releases
+   * report a newer version. `null` when no update is offered (or the
+   * offer was dismissed / accepted). Drives the {@link UpdateModal}.
+   */
+  updatePrompt: { current: string; latest: string } | null;
+  /**
+   * Lifecycle of an accepted self-update. `running` while `install.sh`
+   * executes; `done` / `failed` after it settles. Purely informational —
+   * the user must relaunch to pick up a `done` update.
+   */
+  updateStatus: "idle" | "running" | "done" | "failed";
   /** Max feed/log/history ring-buffer size — protects against runaway memory. */
   ringBufferSize: number;
   /** State slice driving the Tasks tab (Option 4 background autonomy UI). */
@@ -438,6 +450,8 @@ export function createInitialTuiState(
     sessionPickerList: [],
     sessionPickerCursor: 0,
     aborting: false,
+    updatePrompt: null,
+    updateStatus: "idle",
     ringBufferSize,
     tasksPanel: createInitialTasksPanelState(),
     skillsPanel: createInitialSkillsPanelState(),

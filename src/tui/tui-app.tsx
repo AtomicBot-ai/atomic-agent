@@ -22,6 +22,7 @@ import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import { SlashPalette } from "./components/slash-palette.js";
 import { StatusBar } from "./components/status-bar.js";
 import { TasksCancelModal } from "./components/tasks-cancel-modal.js";
+import { UpdateModal } from "./components/update-modal.js";
 import { useTerminalSize } from "./hooks/use-terminal-size.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { slashPrefix } from "./commands/slash-command-parser.js";
@@ -250,6 +251,8 @@ export interface TuiAppCallbacks {
   onTelegramAdvanceConnectRequested?(): void | Promise<void>;
   /** Telegram tab: toggle the inline advanced controls. */
   onTelegramAdvancedToggleRequested?(): void;
+  /** Startup self-update: user accepted the offer — run `install.sh`. */
+  onUpdateConfirmed?(): void;
 }
 
 export interface TuiAppProps {
@@ -395,6 +398,9 @@ export function TuiApp({
   const sidebarFocused = sidebarVisible && state.chatFocus === "sidebar";
   const editorFocus =
     !state.pendingApproval &&
+    // The update offer claims y / n / Esc; keep the editor unfocused so
+    // those keystrokes never leak into the input buffer.
+    !state.updatePrompt &&
     // When the slash-command palette is open the editor must hold focus
     // regardless of the active debug tab so the operator can type the
     // command and drive ↑↓ / tab / enter selection. Panels that open the
@@ -629,6 +635,14 @@ export function TuiApp({
           {state.tasksPanel.cancelConfirm ? (
             <Box flexShrink={0}>
               <TasksCancelModal confirm={state.tasksPanel.cancelConfirm} />
+            </Box>
+          ) : null}
+          {state.updatePrompt ? (
+            <Box flexShrink={0}>
+              <UpdateModal
+                current={state.updatePrompt.current}
+                latest={state.updatePrompt.latest}
+              />
             </Box>
           ) : null}
           <PromptShell

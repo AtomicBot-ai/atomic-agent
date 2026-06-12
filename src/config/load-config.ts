@@ -281,6 +281,13 @@ export function loadConfig(): AtomicAgentConfig {
         ENV_DEFAULTS.TASKS_MIN_INTERVAL_MS,
       ),
     },
+    update: {
+      checkOnStartup: readBool(
+        "ATOMIC_AGENT_UPDATE_CHECK_ON_STARTUP",
+        ENV_DEFAULTS.UPDATE_CHECK_ON_STARTUP,
+      ),
+      repo: readEnv("ATOMIC_AGENT_REPO") ?? ENV_DEFAULTS.UPDATE_REPO,
+    },
     tracing: {
       trace: {
         enabled: user.tracing.trace.enabled,

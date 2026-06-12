@@ -143,6 +143,14 @@ export type TuiAction =
   | { type: "chat_scrolled"; delta: number }
   /** Snap the chat scroll back to the bottom (newest message). */
   | { type: "chat_scroll_reset" }
+  /** A newer release was detected at startup; offer the in-app update. */
+  | { type: "update_available"; current: string; latest: string }
+  /** User declined the update offer (or it was otherwise cleared). */
+  | { type: "update_dismissed" }
+  /** User accepted: the install script is now running. */
+  | { type: "update_started" }
+  /** The install script settled. */
+  | { type: "update_finished"; ok: boolean; version?: string; error?: string }
   | LocalModelsAction
   | TasksAction
   | SkillsAction

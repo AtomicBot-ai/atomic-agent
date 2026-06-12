@@ -276,6 +276,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.telegram.advanceConnect(),
         onTelegramAdvancedToggleRequested: () =>
           orchestrator.telegram.toggleAdvanced(),
+        onUpdateConfirmed: () => orchestrator.runUpdate(),
       },
     }),
     {
@@ -298,6 +299,11 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // "run this command in another terminal" step. No-op in external
   // mode or when the prerequisites are missing.
   void orchestrator.localModels.autoStartIfReady();
+
+  // Fire-and-forget startup version check. Surfaces an in-app update
+  // offer when a newer release is published; silently no-ops when
+  // disabled, offline, rate-limited, or running a dev build.
+  void orchestrator.checkForUpdate();
 
   try {
     await ink.waitUntilExit();
