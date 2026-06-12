@@ -8,6 +8,7 @@ import {
 } from "../section.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
+import { getAppVersion } from "../../version.js";
 
 interface StatusBarProps {
   state: TuiState;
@@ -34,6 +35,7 @@ export function StatusBar({ state }: StatusBarProps): ReactElement {
       <Text color={theme.colors.accentSoft} bold>
         atomic-agent
       </Text>
+      <Text color={theme.colors.muted}> v{getAppVersion()}</Text>
       <Sep />
       <SectionPills active={section} />
       <SessionTag sessionId={state.session.sessionId} />
