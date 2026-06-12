@@ -213,4 +213,5 @@ fi
 
 echo
 echo "installed atomic-agent to ${INSTALL_DIR}/atomic-agent"
-echo "try: ${INSTALL_DIR}/atomic-agent tui --cwd /path/to/work"
+echo "to run:"
+echo "atomic-agent"
