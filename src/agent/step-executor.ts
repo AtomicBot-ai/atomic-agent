@@ -104,6 +104,13 @@ export interface LlmStreamParams {
    * gets GBNF via `grammar`).
    */
   responseFormat?: ResponseFormatJsonSchema;
+  /**
+   * Abort signal for the in-flight completion. Forwarded down to the
+   * provider's HTTP request so a user-triggered cancel (Ctrl+C in the
+   * TUI, `signal` on `runTurn`) interrupts the LLM call mid-generation
+   * instead of waiting for the current step to finish on its own.
+   */
+  signal?: AbortSignal;
 }
 
 export type LlmCompleteStream = (
@@ -319,6 +326,7 @@ async function executeStepInner(
     slotId: slot.slotId,
     sessionId: ctx.session.id,
     toolDescriptors: ctx.toolDescriptors,
+    signal: ctx.signal,
   });
 
   const firstAttempt = await runInitialCompletion({
@@ -944,12 +952,14 @@ function buildLlmStreamParams(args: {
   slotId: number;
   sessionId: string;
   toolDescriptors: readonly ToolDescriptor[];
+  signal?: AbortSignal;
 }): LlmStreamParams {
   const base: LlmStreamParams = {
     prompt: args.promptText,
     grammar: args.deps.grammar,
     slotId: args.slotId,
     sessionId: args.sessionId,
+    ...(args.signal ? { signal: args.signal } : {}),
   };
   if (args.deps.toolTransport !== "native_tools") {
     return base;

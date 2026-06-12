@@ -24,9 +24,9 @@ describe("AIMLAPI_MODELS_CATALOG", () => {
   it("includes the verified flagship picks across vendors", () => {
     expect(AIMLAPI_CHAT_MODEL_ORDER).toEqual(
       expect.arrayContaining([
-        "openai/gpt-5-2",
-        "x-ai/grok-4-1-fast-reasoning",
-        "moonshot/kimi-k2-6",
+        "openai/gpt-5.5-2026-04-23",
+        "x-ai/grok-4-3",
+        "moonshot/kimi-k2-7-code",
         "deepseek/deepseek-v4-pro",
       ]),
     );

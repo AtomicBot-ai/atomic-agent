@@ -35,10 +35,10 @@ describe("OPENROUTER_MODELS_CATALOG", () => {
     expect(OPENROUTER_MODELS_CATALOG.has("qwen/qwen3.5-flash-02-23")).toBe(false);
   });
 
-  it("includes Kimi K2.6 and GLM picks", () => {
-    expect(OPENROUTER_CHAT_MODEL_ORDER).toContain("moonshotai/kimi-k2.6");
+  it("includes Kimi K2.7 and GLM picks", () => {
+    expect(OPENROUTER_CHAT_MODEL_ORDER).toContain("moonshotai/kimi-k2.7-code");
     expect(OPENROUTER_CHAT_MODEL_ORDER).toContain("z-ai/glm-4.7-flash");
-    expect(OPENROUTER_CHAT_MODEL_ORDER).toContain("z-ai/glm-5");
+    expect(OPENROUTER_CHAT_MODEL_ORDER).toContain("z-ai/glm-5.1");
   });
 
   it("includes the latest OpenRouter fallback picks", () => {
@@ -46,7 +46,7 @@ describe("OPENROUTER_MODELS_CATALOG", () => {
       expect.arrayContaining([
         "qwen/qwen3.7-max",
         "deepseek/deepseek-v4-flash",
-        "deepseek/deepseek-v4-flash:free",
+        "deepseek/deepseek-v4-pro",
         "x-ai/grok-4.3",
         "mistralai/mistral-medium-3-5",
         "minimax/minimax-m3",

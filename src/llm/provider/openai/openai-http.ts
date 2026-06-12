@@ -54,10 +54,14 @@ export async function openAiFetch(
 ): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), deps.requestTimeoutMs);
-  if (request.signal) {
-    request.signal.addEventListener("abort", () => controller.abort(), {
-      once: true,
-    });
+  const externalSignal = request.signal;
+  const onAbort = (): void => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener("abort", onAbort, { once: true });
+    }
   }
   try {
     return await deps.fetchImpl(`${deps.baseUrl}${path}`, {
@@ -68,5 +72,6 @@ export async function openAiFetch(
     });
   } finally {
     clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", onAbort);
   }
 }

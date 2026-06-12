@@ -132,36 +132,38 @@ export class LlamaServerClient {
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const { url, headers, body } = this.prepareRequest(request, false);
-    return this.runWithRetry(url, async () => {
-      const controller = new AbortController();
-      const timer = setTimeout(
-        () => controller.abort(),
-        this.requestTimeoutMs,
-      );
-      try {
-        const response = await this.fetchImpl(url, {
-          method: "POST",
-          headers,
-          body,
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          throw new LlamaServerError(
-            `llama-server returned http ${response.status}`,
-            response.status,
-            url,
-          );
+    return this.runWithRetry(
+      url,
+      async () => {
+        const { controller, cleanup } = this.createRequestController(
+          request.signal,
+        );
+        try {
+          const response = await this.fetchImpl(url, {
+            method: "POST",
+            headers,
+            body,
+            signal: controller.signal,
+          });
+          if (!response.ok) {
+            throw new LlamaServerError(
+              `llama-server returned http ${response.status}`,
+              response.status,
+              url,
+            );
+          }
+          const json = (await response.json()) as Record<string, unknown>;
+          return normaliseCompletionResponse(json);
+        } catch (err) {
+          if (err instanceof LlamaServerError) throw err;
+          const message = err instanceof Error ? err.message : String(err);
+          throw new LlamaServerError(message, null, url);
+        } finally {
+          cleanup();
         }
-        const json = (await response.json()) as Record<string, unknown>;
-        return normaliseCompletionResponse(json);
-      } catch (err) {
-        if (err instanceof LlamaServerError) throw err;
-        const message = err instanceof Error ? err.message : String(err);
-        throw new LlamaServerError(message, null, url);
-      } finally {
-        clearTimeout(timer);
-      }
-    });
+      },
+      request.signal,
+    );
   }
 
   async *completeStream(
@@ -174,43 +176,45 @@ export class LlamaServerClient {
     let opened: {
       response: Response;
       controller: AbortController;
-      timer: ReturnType<typeof setTimeout>;
+      cleanup: () => void;
     };
     try {
-      opened = await this.runWithRetry(url, async () => {
-        const controller = new AbortController();
-        const timer = setTimeout(
-          () => controller.abort(),
-          this.requestTimeoutMs,
-        );
-        try {
-          const response = await this.fetchImpl(url, {
-            method: "POST",
-            headers,
-            body,
-            signal: controller.signal,
-          });
-          if (!response.ok || !response.body) {
-            throw new LlamaServerError(
-              `llama-server returned http ${response.status}`,
-              response.status,
-              url,
-            );
+      opened = await this.runWithRetry(
+        url,
+        async () => {
+          const { controller, cleanup } = this.createRequestController(
+            request.signal,
+          );
+          try {
+            const response = await this.fetchImpl(url, {
+              method: "POST",
+              headers,
+              body,
+              signal: controller.signal,
+            });
+            if (!response.ok || !response.body) {
+              throw new LlamaServerError(
+                `llama-server returned http ${response.status}`,
+                response.status,
+                url,
+              );
+            }
+            return { response, controller, cleanup };
+          } catch (err) {
+            cleanup();
+            if (err instanceof LlamaServerError) throw err;
+            const message = err instanceof Error ? err.message : String(err);
+            throw new LlamaServerError(message, null, url);
           }
-          return { response, controller, timer };
-        } catch (err) {
-          clearTimeout(timer);
-          if (err instanceof LlamaServerError) throw err;
-          const message = err instanceof Error ? err.message : String(err);
-          throw new LlamaServerError(message, null, url);
-        }
-      });
+        },
+        request.signal,
+      );
     } catch (err) {
       if (err instanceof LlamaServerError) throw err;
       const message = err instanceof Error ? err.message : String(err);
       throw new LlamaServerError(message, null, url);
     }
-    const { response, timer } = opened;
+    const { response, cleanup } = opened;
     let finalResult: CompletionResult = {
       content: "",
       reasoningContent: "",
@@ -281,8 +285,40 @@ export class LlamaServerClient {
       const message = err instanceof Error ? err.message : String(err);
       throw new LlamaServerError(message, null, url);
     } finally {
-      clearTimeout(timer);
+      cleanup();
     }
+  }
+
+  /**
+   * Build an `AbortController` for a single completion request that
+   * fires on **either** the per-request timeout **or** the caller's
+   * external abort signal (Ctrl+C in the TUI, `runTurn({ signal })`).
+   * The returned `cleanup` clears the timeout and detaches the external
+   * listener — call it in `finally` so a long-lived stream does not leak
+   * the listener.
+   */
+  private createRequestController(externalSignal?: AbortSignal): {
+    controller: AbortController;
+    cleanup: () => void;
+  } {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    if (!externalSignal) {
+      return { controller, cleanup: () => clearTimeout(timer) };
+    }
+    if (externalSignal.aborted) {
+      controller.abort();
+      return { controller, cleanup: () => clearTimeout(timer) };
+    }
+    const onAbort = (): void => controller.abort();
+    externalSignal.addEventListener("abort", onAbort, { once: true });
+    return {
+      controller,
+      cleanup: () => {
+        clearTimeout(timer);
+        externalSignal.removeEventListener("abort", onAbort);
+      },
+    };
   }
 
   private prepareRequest(
@@ -355,14 +391,22 @@ export class LlamaServerClient {
   private async runWithRetry<T>(
     url: string,
     attempt: () => Promise<T>,
+    signal?: AbortSignal,
   ): Promise<T> {
     const { maxAttempts, backoffMs } = this.resolveRetryParams();
     let lastError: unknown;
     for (let i = 1; i <= maxAttempts; i += 1) {
+      if (signal?.aborted) {
+        throw new LlamaServerError("completion aborted by caller", null, url);
+      }
       try {
         return await attempt();
       } catch (err) {
         lastError = err;
+        // A caller-triggered abort is never retryable — the AbortError
+        // surfaces as a `status === null` LlamaServerError which would
+        // otherwise be treated as a transient network failure.
+        if (signal?.aborted) throw err;
         if (!isRetryableLlamaError(err) || i >= maxAttempts) throw err;
         await this.sleep(computeBackoffMs(backoffMs, i));
       }

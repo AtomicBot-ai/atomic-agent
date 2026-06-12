@@ -1020,6 +1020,7 @@ export async function createAgentRuntime(
         ...(typeof params.maxTokens === "number"
           ? { maxTokens: params.maxTokens }
           : {}),
+        ...(params.signal ? { signal: params.signal } : {}),
       };
       const result =
         transport === "native_tools"
@@ -1068,6 +1069,7 @@ export async function createAgentRuntime(
             const base = {
               prompt: params.prompt,
               sessionId: params.sessionId,
+              ...(params.signal ? { signal: params.signal } : {}),
             };
             if (transport === "native_tools") {
               return provider.completeStream({

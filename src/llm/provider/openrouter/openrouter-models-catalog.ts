@@ -64,7 +64,7 @@ export const OPENROUTER_MODELS_CATALOG: ReadonlyMap<string, ModelCatalogEntry> =
       id: "qwen/qwen3.7-max",
       contextWindow: 1_000_000,
       supportsVision: false,
-      pricing: { input: 2.5, output: 7.5 },
+      pricing: { input: 1.25, output: 3.75 },
     }),
     chatModel({
       id: "qwen/qwen3.6-35b-a3b",
@@ -113,22 +113,22 @@ export const OPENROUTER_MODELS_CATALOG: ReadonlyMap<string, ModelCatalogEntry> =
       pricing: { input: 1.25, output: 2.5 },
     }),
     chatModel({
-      id: "deepseek/deepseek-v4-flash:free",
-      contextWindow: 1_048_576,
-      supportsVision: false,
-      pricing: { input: 0, output: 0 },
-    }),
-    chatModel({
       id: "deepseek/deepseek-v4-flash",
       contextWindow: 1_048_576,
       supportsVision: false,
       pricing: { input: 0.1, output: 0.2 },
     }),
     chatModel({
-      id: "moonshotai/kimi-k2.6",
+      id: "deepseek/deepseek-v4-pro",
+      contextWindow: 1_048_576,
+      supportsVision: false,
+      pricing: { input: 0.43, output: 0.87 },
+    }),
+    chatModel({
+      id: "moonshotai/kimi-k2.7-code",
       contextWindow: 262_144,
       supportsVision: true,
-      pricing: { input: 0.73, output: 3.49 },
+      pricing: { input: 0.95, output: 4.0 },
     }),
     chatModel({
       id: "mistralai/mistral-medium-3-5",
@@ -138,7 +138,7 @@ export const OPENROUTER_MODELS_CATALOG: ReadonlyMap<string, ModelCatalogEntry> =
     }),
     chatModel({
       id: "minimax/minimax-m3",
-      contextWindow: 1_000_000,
+      contextWindow: 1_048_576,
       supportsVision: true,
       pricing: { input: 0.3, output: 1.2 },
     }),
@@ -155,10 +155,10 @@ export const OPENROUTER_MODELS_CATALOG: ReadonlyMap<string, ModelCatalogEntry> =
       pricing: { input: 0.06, output: 0.4 },
     }),
     chatModel({
-      id: "z-ai/glm-5",
+      id: "z-ai/glm-5.1",
       contextWindow: 202_752,
       supportsVision: false,
-      pricing: { input: 0.6, output: 1.92 },
+      pricing: { input: 0.98, output: 3.08 },
     }),
     embeddingModel({
       id: "openai/text-embedding-3-small",
@@ -187,12 +187,12 @@ export const OPENROUTER_CHAT_MODEL_ORDER: readonly string[] = [
   "openai/gpt-5.4-mini",
   "openai/gpt-5.4-nano",
   "x-ai/grok-4.3",
-  "deepseek/deepseek-v4-flash:free",
   "deepseek/deepseek-v4-flash",
-  "moonshotai/kimi-k2.6",
+  "deepseek/deepseek-v4-pro",
+  "moonshotai/kimi-k2.7-code",
   "mistralai/mistral-medium-3-5",
   "minimax/minimax-m3",
   "minimax/minimax-m2.7",
   "z-ai/glm-4.7-flash",
-  "z-ai/glm-5",
+  "z-ai/glm-5.1",
 ];
