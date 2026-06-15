@@ -26,6 +26,7 @@ From `eval-agents/reports/run-2026-06-11T07-29-11-112Z/environment.json`:
 |---|---|
 | atomic-agent version | `0.1.36` |
 | git sha | `cc5c7d4` (branch `main`, dirty: harness `taskIds` filter only) |
+| Hardware | Apple M4 Max (40-core GPU) |
 | Node | `v25.7.0`, `darwin`, `arm64` |
 | Chat model | `Qwen3.6-35B-A3B-UD-Q4_K_XL` (GGUF, UD-Q4_K_XL quant) |
 | Chat context window | `262144` tokens (`n_ctx`) |
