@@ -379,6 +379,10 @@ export function createTraceRecorder(
             stepIndex: event.stepIndex,
             tool: event.tool,
             count: event.count,
+            ...(event.level !== undefined ? { level: event.level } : {}),
+            ...(event.detector !== undefined
+              ? { detector: event.detector }
+              : {}),
           });
           return;
         case "loop_failed":

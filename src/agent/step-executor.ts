@@ -10,7 +10,9 @@ import type {
 import {
   executeBatch,
   toBatchInputs,
+  type BatchLoopSignal,
 } from "./batch-executor.js";
+import type { ToolLoopTracker } from "./loop-detector.js";
 import {
   isBatchable,
   resourceClassFor,
@@ -146,6 +148,12 @@ export interface StepDependencies {
   onEvent?: (event: StepEvent) => void;
   metrics?: AgentMetrics;
   logger?: StructuredLogger;
+  /**
+   * Per-turn loop tracker. Threaded into `executeBatch` so the
+   * synchronous loop gate can veto no-progress calls before dispatch.
+   * Absent ⇒ loop detection disabled for this step.
+   */
+  tracker?: ToolLoopTracker;
 }
 
 export interface StepContext {
@@ -208,6 +216,13 @@ export interface StepOutcome {
   prompt: BuiltPrompt;
   nextSession: SessionState;
   terminal: StepTerminal;
+  /**
+   * Loop-detection signals raised by the batch executor's synchronous
+   * gate this step (warn / critical / breaker). Empty when no tracker
+   * was supplied or no loop was detected. The agent loop consumes these
+   * to inject notices and trigger the graceful breaker termination.
+   */
+  loopSignals: BatchLoopSignal[];
   /**
    * Set when the step's parsed batch failed validation purely because
    * it contained approval-gated tools. The runtime auto-split the batch
@@ -607,6 +622,7 @@ async function executeStepInner(
     sessionId: ctx.session.id,
     stepIndex: ctx.stepIndex,
     signal: ctx.signal,
+    ...(deps.tracker ? { tracker: deps.tracker } : {}),
     onCallFinished: ({ batchIndex, result, durationMs }) => {
       deps.onEvent?.({
         type: "tool_call_executed",
@@ -737,6 +753,7 @@ async function executeStepInner(
     prompt,
     nextSession,
     terminal,
+    loopSignals: batchOutcome.loopSignals,
     ...(trimmedBatchNotice !== undefined ? { trimmedBatchNotice } : {}),
   };
 }

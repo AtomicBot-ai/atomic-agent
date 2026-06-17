@@ -14,7 +14,6 @@ import type { ToolRegistry } from "../tools/tool-registry.js";
 import {
   CancelledError,
   LlmFailure,
-  ModelError,
   classifyFailure,
 } from "../llm/index.js";
 import type { LlmFailureCategory } from "../llm/index.js";
@@ -42,7 +41,14 @@ import type { ProfileFact } from "../memory/profile-store.js";
 import type { ReflectionRunner } from "../memory/reflection/index.js";
 import { executeStep } from "./step-executor.js";
 import type { LlmStreamParams, StepEvent } from "./step-executor.js";
-import { LoopDetector, formatRepeatNotice } from "./loop-detector.js";
+import {
+  ToolLoopTracker,
+  formatRepeatNotice,
+  formatWanderingRedirect,
+  formatForcedLoopReply,
+} from "./loop-detector.js";
+import type { BatchLoopSignal } from "./batch-executor.js";
+import { getConfig } from "../config/index.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 
@@ -256,17 +262,6 @@ export type AgentLoopReason =
   | "cancelled"
   | "failed";
 
-/**
- * Hard upper bound on the number of `loop_detected` notices we tolerate
- * in a single turn before aborting. The first hint injects a `### notice`
- * and gives the model a fresh step to break the loop; further hints
- * indicate the model is genuinely stuck and additional iterations would
- * just burn daemon slot time. With the default detector threshold of 3
- * consecutive identical observations, `2` corresponds to ~6 wasted steps
- * before the turn is cut.
- */
-const LOOP_ABORT_AFTER_HINTS = 2;
-
 export type AgentLoopEvent =
   | { type: "user_message"; text: string }
   | { type: "turn_started"; turnIndex: number }
@@ -296,6 +291,10 @@ export type AgentLoopEvent =
       tool: string;
       count: number;
       stepIndex: number;
+      /** Graduated severity from the `ToolLoopTracker`. */
+      level?: "warn" | "critical" | "breaker";
+      /** Which sub-detector fired. */
+      detector?: "generic_repeat" | "no_progress" | "wandering";
     }
   | {
       type: "loop_completed";
@@ -381,7 +380,20 @@ export class AgentLoop {
     let reason: AgentLoopReason = "max_steps";
     let stepsTaken = 0;
     let runError: Error | null = null;
-    const loopDetector = new LoopDetector();
+    // Per-turn no-progress loop tracker (OpenClaw-style). Threaded into
+    // `executeStep` so the synchronous batch gate can veto looping calls
+    // before they are dispatched; the agent loop consumes the resulting
+    // `loopSignals` after each step to inject notices and trigger the
+    // graceful breaker termination.
+    const agentCfg = getConfig().agent;
+    const loopTracker = new ToolLoopTracker({
+      warningThreshold: agentCfg.loopWarningThreshold,
+      criticalThreshold: agentCfg.loopCriticalThreshold,
+      breakerVetoStreak: agentCfg.loopBreakerVetoStreak,
+      historySize: agentCfg.loopHistorySize,
+      wanderingThreshold: agentCfg.loopWanderingThreshold,
+      wanderingEscalation: agentCfg.loopWanderingEscalation,
+    });
     // Memory-v2 phase 6 — accumulate the union of lesson ids surfaced
     // across every step of this turn. `refreshMemoryContext` may
     // recompute `state.recalledLessons` per step; we record each new
@@ -408,11 +420,6 @@ export class AgentLoop {
     // as soon as it is consumed so the stable tail does not carry stale
     // nudges across steps.
     let pendingNotice: string | undefined;
-    // Number of times the loop detector has fired in this turn. The first
-    // fire injects a `### notice` and lets the model try to break out;
-    // subsequent fires escalate (see `LOOP_ABORT_AFTER_HINTS`). Reset only
-    // when a non-repeat observation breaks the run inside the detector.
-    let loopHintCount = 0;
 
     state = { ...state, status: "running" };
 
@@ -479,6 +486,7 @@ export class AgentLoop {
               this.deps.onEvent?.({ type: "llm_event", event }),
             ...(this.deps.metrics ? { metrics: this.deps.metrics } : {}),
             ...(this.deps.logger ? { logger: this.deps.logger } : {}),
+            tracker: loopTracker,
           },
         );
         const durationMs = Date.now() - started;
@@ -528,69 +536,122 @@ export class AgentLoop {
         // A trimmed-batch step (auto-split: approval-gated solo) seeds
         // the next step's `pendingNotice` so the model sees which calls
         // were dropped and can retry them as length-1 arrays. The
-        // loop-detector path below may overwrite this with a repeat
+        // loop-signal path below may overwrite this with a repeat
         // notice — that is intentional: a loop hint outranks a trim
         // hint since the loop indicates the model failed to make
         // progress over multiple steps.
         if (outcome.trimmedBatchNotice !== undefined) {
           pendingNotice = outcome.trimmedBatchNotice;
         }
-        // Feed the detector AFTER terminal checks so `reply`/`finish` never
-        // trigger a hint (those steps legitimately look identical to the
-        // previous tool output). Batched steps feed the composite hash
-        // path so two identical batches in a row are detected, but a
-        // permuted batch is not.
-        const verdict =
-          outcome.toolCalls.length > 1
-            ? loopDetector.observe({
-                tool: "<batch>",
-                args: undefined,
-                resultSummary: "",
-                worldDigest: state.worldSnapshot?.digest ?? null,
-                batchCalls: outcome.toolCalls.map((call, idx) => ({
-                  tool: call.tool,
-                  args: call.args,
-                  resultSummary: outcome.toolResults[idx]!.summary,
-                })),
-              })
-            : loopDetector.observe({
-                tool: outcome.toolCalls[0]!.tool,
-                args: outcome.toolCalls[0]!.args,
-                resultSummary: outcome.toolResults[0]!.summary,
-                worldDigest: state.worldSnapshot?.digest ?? null,
-              });
-        if (verdict.kind === "repeat") {
-          pendingNotice = formatRepeatNotice(verdict);
-          loopHintCount += 1;
-          this.deps.logger?.warn("no-progress loop detected", {
-            sessionId: state.id,
-            stepIndex: i,
-            tool: verdict.tool,
-            count: verdict.count,
-            hintCount: loopHintCount,
+
+        // The synchronous batch gate (inside `executeStep`) already
+        // produced graduated loop signals for this step. Terminal verbs
+        // are never gated, so `reply`/`finish` steps carry no signals.
+        // Additionally feed a composite-batch observation for multi-call
+        // steps so two identical batches in a row (whose individual calls
+        // each have unique args and therefore never trip the per-call
+        // gate) are still flagged — a permuted batch is not (the hash is
+        // order-sensitive). Composite hits are advisory only (notice),
+        // never a veto: the calls already executed.
+        const loopSignals: BatchLoopSignal[] = [...outcome.loopSignals];
+        if (outcome.toolCalls.length > 1) {
+          const composite = loopTracker.observeBatchComposite(
+            outcome.toolCalls.map((call) => ({
+              tool: call.tool,
+              args: call.args,
+            })),
+            outcome.toolResults,
+          );
+          if (composite.level !== "ok") {
+            loopSignals.push({
+              kind: "warn",
+              tool: composite.tool,
+              count: composite.count,
+              detector: composite.detector,
+              warningKey: composite.warningKey,
+            });
+          }
+        }
+
+        // Breaker: the model ignored repeated vetoes of the same call.
+        // Force a graceful synthetic reply (NOT a `loop_failed` — the
+        // turn ends with a best-effort answer, the session stays usable).
+        const breaker = loopSignals.find((s) => s.kind === "breaker");
+        if (breaker) {
+          const replyText = formatForcedLoopReply(breaker.tool, breaker.count);
+          state = recordTurn(state, assistantReplyTurn(replyText));
+          this.deps.onEvent?.({
+            type: "llm_event",
+            event: { type: "assistant_reply", text: replyText },
           });
           this.deps.onEvent?.({
             type: "loop_detected",
-            tool: verdict.tool,
-            count: verdict.count,
+            tool: breaker.tool,
+            count: breaker.count,
             stepIndex: i,
+            level: "breaker",
+            detector: breaker.detector,
           });
-          if (loopHintCount >= LOOP_ABORT_AFTER_HINTS) {
-            // The detector has fired `LOOP_ABORT_AFTER_HINTS` times in
-            // this turn without the model changing behaviour. Each fire
-            // already injected a `### notice` and gave the model a fresh
-            // step to react, so further iterations would just burn
-            // daemon slot time and step budget without progress. Throw a
-            // `ModelError` ("no_stop" — the model failed to terminate
-            // its sequence) so the existing failure path emits
-            // `loop_failed`, marks the session `failed`, frees the slot
-            // immediately, and lets the eval harness / CLI surface a
-            // clean exit instead of a 15+-step disaster.
-            throw new ModelError(
-              "no_stop",
-              `no-progress loop: \`${verdict.tool}\` repeated identically across ${loopHintCount} hint cycles (${verdict.count} consecutive observations in the latest run); abandoning turn.`,
-            );
+          this.deps.logger?.warn(
+            "no-progress loop breaker tripped; forcing graceful reply",
+            {
+              sessionId: state.id,
+              stepIndex: i,
+              tool: breaker.tool,
+              count: breaker.count,
+            },
+          );
+          reason = "reply";
+          break;
+        }
+
+        // Critical vetoes: the synthetic veto result already carries the
+        // instruction in the transcript. Surface the event so UIs/traces
+        // flag it; no extra notice needed.
+        for (const sig of loopSignals) {
+          if (sig.kind !== "critical") continue;
+          this.deps.onEvent?.({
+            type: "loop_detected",
+            tool: sig.tool,
+            count: sig.count,
+            stepIndex: i,
+            level: "critical",
+            detector: sig.detector,
+          });
+          this.deps.logger?.warn("no-progress loop: call vetoed", {
+            sessionId: state.id,
+            stepIndex: i,
+            tool: sig.tool,
+            count: sig.count,
+          });
+        }
+
+        // Warn repeats: inject a one-shot `### notice` for the next step,
+        // de-duplicated per `warningKey` so the same nudge is not
+        // re-injected on every subsequent identical step.
+        for (const sig of loopSignals) {
+          if (sig.kind !== "warn") continue;
+          if (!loopTracker.shouldEmitWarning(sig.warningKey, sig.count)) {
+            continue;
           }
+          pendingNotice =
+            sig.detector === "wandering"
+              ? formatWanderingRedirect(sig.tool, sig.count)
+              : formatRepeatNotice(sig);
+          this.deps.onEvent?.({
+            type: "loop_detected",
+            tool: sig.tool,
+            count: sig.count,
+            stepIndex: i,
+            level: "warn",
+            detector: sig.detector,
+          });
+          this.deps.logger?.warn("no-progress loop detected", {
+            sessionId: state.id,
+            stepIndex: i,
+            tool: sig.tool,
+            count: sig.count,
+          });
         }
         state = await refreshMemoryContext(this.deps, state, options);
         recordSurfacedLessons(state);

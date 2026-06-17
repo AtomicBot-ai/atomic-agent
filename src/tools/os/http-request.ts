@@ -100,6 +100,13 @@ export function buildOsHttpRequestTool(
 
       const parsed = parseCurlOutput(commandResult.stdout);
       const truncated = commandResult.truncated;
+      // An HTTP status >= 400 is a real failure signal. Returning
+      // `status:"ok"` here masked erroring endpoints from the model and
+      // from the loop detector's semantic result hash, letting the agent
+      // hammer the same dead endpoint indefinitely. Surface it as an
+      // error while keeping the response body in `details.body` so the
+      // model can still inspect any error payload.
+      const isHttpError = parsed.status >= 400;
       // Return the body verbatim — this tool is the raw-HTTP surface. HTML
       // extraction (markdown/text) is the job of `os.web.fetch`. Lift the
       // compressor caps so small JSON payloads that would otherwise be
@@ -109,8 +116,10 @@ export function buildOsHttpRequestTool(
       return compressToolResult(
         {
           tool: "os.http.request",
-          status: "ok",
-          output: parsed.body,
+          status: isHttpError ? "error" : "ok",
+          output: isHttpError
+            ? `HTTP ${parsed.status} ${args.method} ${args.url}`
+            : parsed.body,
           details: {
             url: args.url,
             method: args.method,
@@ -120,6 +129,7 @@ export function buildOsHttpRequestTool(
             timeTotalSeconds: parsed.timeTotal,
             truncated,
             command: ["curl", ...curlArgs],
+            ...(isHttpError ? { body: parsed.body } : {}),
           },
         },
         {
@@ -185,6 +195,15 @@ function parseArgs(
       }
       headers[key] = value;
     }
+  }
+
+  // Default a permissive Accept that satisfies both plain JSON APIs and
+  // MCP-over-HTTP endpoints that reply with Server-Sent Events (e.g. the
+  // Exa search endpoint, which returns HTTP 406 when `text/event-stream`
+  // is absent from Accept). An explicit `Accept` from the model always
+  // wins; this only fills the gap when none was provided.
+  if (!hasHeader(headers, "accept")) {
+    headers["Accept"] = "application/json, text/event-stream";
   }
 
   let body: string | undefined;

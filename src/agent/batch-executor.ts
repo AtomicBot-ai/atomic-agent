@@ -10,6 +10,29 @@ import {
   resourceClassFor,
   type ResourceClass,
 } from "./tool-resource-class.js";
+import {
+  formatVetoInstruction,
+  LOOP_VETO_DENIED_REASON,
+  type LoopCheckVerdict,
+  type ToolLoopTracker,
+} from "./loop-detector.js";
+
+/**
+ * Loop-detection signal surfaced upward from a batch execution. The
+ * agent loop consumes these after the step completes:
+ *  - `warn`: a no-progress repeat was observed; inject a `### notice`.
+ *  - `critical`: a call was vetoed (not executed); the synthetic result
+ *    already carries the veto instruction.
+ *  - `breaker`: the model ignored repeated vetoes — force a graceful
+ *    reply to end the turn.
+ */
+export interface BatchLoopSignal {
+  kind: "warn" | "critical" | "breaker";
+  tool: string;
+  count: number;
+  detector: LoopCheckVerdict["detector"];
+  warningKey: string;
+}
 
 /**
  * Static info about one call inside a batch. Carried verbatim back into
@@ -43,6 +66,14 @@ export interface BatchExecutionContext {
     result: CompressedToolResult;
     durationMs: number;
   }) => void;
+  /**
+   * Per-turn loop tracker. When present, every non-terminal call is run
+   * through the synchronous loop gate (`check` → `recordCall`) before it
+   * is dispatched, and its outcome is recorded after execution. Vetoed
+   * calls never reach the registry. Absent ⇒ loop detection is disabled
+   * for this step (legacy behaviour).
+   */
+  tracker?: ToolLoopTracker;
 }
 
 export interface BatchExecutionResult {
@@ -62,6 +93,12 @@ export interface BatchExecutionResult {
    * caller throws `CancelledError`.
    */
   cancelled: boolean;
+  /**
+   * Loop-detection signals raised by the synchronous gate (warn /
+   * critical / breaker), in observation order. Empty when no tracker was
+   * supplied or no loop was detected.
+   */
+  loopSignals: BatchLoopSignal[];
 }
 
 export interface BatchCallResult {
@@ -127,7 +164,7 @@ export async function executeBatch(
 ): Promise<BatchExecutionResult> {
   const batchSize = inputs.length;
   if (batchSize === 0) {
-    return { results: [], cancelled: false };
+    return { results: [], cancelled: false, loopSignals: [] };
   }
   const slots: BatchCallResult[] = inputs.map((input) => ({
     batchIndex: input.batchIndex,
@@ -136,6 +173,7 @@ export async function executeBatch(
     durationMs: 0,
     cancelled: false,
   }));
+  const loopSignals: BatchLoopSignal[] = [];
 
   // Split off any tail terminal call so the non-terminal portion runs
   // first as a normal grouped batch and the terminal runs strictly
@@ -145,9 +183,43 @@ export async function executeBatch(
     inputs[inputs.length - 1]!.resourceClass === "terminal";
   const nonTerminalInputs = tailIsTerminal ? inputs.slice(0, -1) : inputs;
   const terminalInput = tailIsTerminal ? inputs[inputs.length - 1]! : null;
-  const groups = planBatch(nonTerminalInputs);
 
-  const runOne = async (input: BatchCallInput): Promise<void> => {
+  // Phase 1 (synchronous): run the loop gate for every non-terminal call
+  // in batch-index order BEFORE any tool is dispatched. Because the gate
+  // mutates the tracker synchronously, a duplicate call later in the same
+  // parallel batch observes the `recordCall` of its earlier sibling, so
+  // dup-within-batch loops are caught even though the invokes fan out.
+  // Terminal verbs are NEVER gated (the model's intent to close the turn
+  // must always survive). Vetoed calls fill their slot here and never
+  // reach the registry.
+  const toInvoke: BatchCallInput[] = [];
+  for (const input of nonTerminalInputs) {
+    if (ctx.signal.aborted) {
+      slots[input.batchIndex] = { ...slots[input.batchIndex]!, cancelled: true };
+      continue;
+    }
+    const gate = runSyncLoopGate(input, ctx, loopSignals);
+    if (!gate.proceed && gate.vetoResult) {
+      ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
+      slots[input.batchIndex] = {
+        ...slots[input.batchIndex]!,
+        compressed: gate.vetoResult,
+        durationMs: 0,
+      };
+      ctx.onCallFinished?.({
+        batchIndex: input.batchIndex,
+        batchSize,
+        result: gate.vetoResult,
+        durationMs: 0,
+      });
+      continue;
+    }
+    toInvoke.push(input);
+  }
+
+  const groups = planBatch(toInvoke);
+
+  const invokeOne = async (input: BatchCallInput): Promise<void> => {
     if (ctx.signal.aborted) {
       slots[input.batchIndex] = {
         ...slots[input.batchIndex]!,
@@ -191,6 +263,11 @@ export async function executeBatch(
       compressed,
       durationMs,
     };
+    // Record the real outcome so the next step's gate sees a completed
+    // (args + result) entry. Terminal verbs are not tracked.
+    if (ctx.tracker && input.resourceClass !== "terminal") {
+      ctx.tracker.recordOutcome(input.call.tool, input.call.args, compressed);
+    }
     ctx.onCallFinished?.({
       batchIndex: input.batchIndex,
       batchSize,
@@ -207,7 +284,7 @@ export async function executeBatch(
       // matches the legacy single-call path.
       groupTasks.push(
         (async (): Promise<void> => {
-          await Promise.allSettled(calls.map(runOne));
+          await Promise.allSettled(calls.map(invokeOne));
         })(),
       );
       continue;
@@ -225,13 +302,13 @@ export async function executeBatch(
             continue;
           }
           try {
-            await runOne(call);
+            await invokeOne(call);
           } catch (err) {
             // CancelledError: stop the rest of this group and re-throw
             // upward so the agent loop's outer catch picks it up.
             if (err instanceof CancelledError) throw err;
             // Any other thrown value would already have been folded into
-            // an error result inside `runOne`; defensive rethrow.
+            // an error result inside `invokeOne`; defensive rethrow.
             throw err;
           }
         }
@@ -264,7 +341,7 @@ export async function executeBatch(
       };
     } else {
       try {
-        await runOne(terminalInput);
+        await invokeOne(terminalInput);
       } catch (err) {
         if (err instanceof CancelledError) {
           cancelled = true;
@@ -282,7 +359,74 @@ export async function executeBatch(
       slot.cancelled = true;
     }
   }
-  return { results: slots, cancelled: cancelled || ctx.signal.aborted };
+  return {
+    results: slots,
+    cancelled: cancelled || ctx.signal.aborted,
+    loopSignals,
+  };
+}
+
+/**
+ * Synchronous loop gate. Runs `check` → `recordCall` against the tracker
+ * BEFORE the call is dispatched. A `critical` verdict (or a tripped
+ * breaker) produces a synthetic veto result that replaces the real
+ * invocation; the veto outcome is recorded so it is excluded from the
+ * no-progress streak (the streak then plateaus at `criticalThreshold`).
+ * Terminal verbs and tracker-less steps always proceed unchanged.
+ */
+function runSyncLoopGate(
+  input: BatchCallInput,
+  ctx: BatchExecutionContext,
+  loopSignals: BatchLoopSignal[],
+): { proceed: boolean; vetoResult?: CompressedToolResult } {
+  if (input.resourceClass === "terminal" || !ctx.tracker) {
+    return { proceed: true };
+  }
+  const { tool, args } = input.call;
+  const breakerTripped = ctx.tracker.isBreakerTripped(tool, args);
+  // A wandering loop that crossed the escalation spread also ends the
+  // turn gracefully (the redirect notice did not land). It rides the same
+  // breaker path as the consecutive-veto streak.
+  const wanderingEscalated = ctx.tracker.isWanderingEscalated(tool, args);
+  const verdict = ctx.tracker.check(tool, args);
+  ctx.tracker.recordCall(tool, args);
+
+  if (verdict.level === "critical" || breakerTripped || wanderingEscalated) {
+    const forceBreaker = breakerTripped || wanderingEscalated;
+    const count = breakerTripped
+      ? Math.max(verdict.count, ctx.tracker.breakerThreshold)
+      : verdict.count;
+    const vetoResult = compressToolResult({
+      tool,
+      status: "error",
+      output: formatVetoInstruction({ tool, count }),
+      details: {
+        deniedReason: LOOP_VETO_DENIED_REASON,
+        loopCount: count,
+        detector: verdict.detector,
+      },
+    });
+    ctx.tracker.recordOutcome(tool, args, vetoResult);
+    loopSignals.push({
+      kind: forceBreaker ? "breaker" : "critical",
+      tool,
+      count,
+      detector: verdict.detector,
+      warningKey: verdict.warningKey,
+    });
+    return { proceed: false, vetoResult };
+  }
+
+  if (verdict.level === "warn") {
+    loopSignals.push({
+      kind: "warn",
+      tool,
+      count: verdict.count,
+      detector: verdict.detector,
+      warningKey: verdict.warningKey,
+    });
+  }
+  return { proceed: true };
 }
 
 /**

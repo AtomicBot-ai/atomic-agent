@@ -164,6 +164,29 @@ export interface AtomicAgentConfig {
      * `ATOMIC_AGENT_BATCH_TOOL_RESULT_CHAR_CAP`.
      */
     batchToolResultCharCap: number;
+    /**
+     * No-progress loop detection (OpenClaw-style `ToolLoopTracker`).
+     * `loopWarningThreshold` — args-only repeat count that injects a
+     * `### notice` (env `ATOMIC_AGENT_LOOP_WARNING_THRESHOLD`).
+     * `loopCriticalThreshold` — identical args+result streak that vetoes
+     * the call before dispatch (env `ATOMIC_AGENT_LOOP_CRITICAL_THRESHOLD`).
+     * `loopBreakerVetoStreak` — consecutive vetoes of one signature that
+     * force a graceful reply (env `ATOMIC_AGENT_LOOP_BREAKER_VETO_STREAK`).
+     * `loopHistorySize` — sliding window size for the tracker's history
+     * ring (env `ATOMIC_AGENT_LOOP_HISTORY_SIZE`).
+     * `loopWanderingThreshold` — distinct-args spread on a wandering-prone
+     * tool (web/http/browser) that injects an actionable redirect notice
+     * (env `ATOMIC_AGENT_LOOP_WANDERING_THRESHOLD`).
+     * `loopWanderingEscalation` — distinct-args spread that escalates to a
+     * forced graceful reply (env `ATOMIC_AGENT_LOOP_WANDERING_ESCALATION`).
+     * All env-only.
+     */
+    loopWarningThreshold: number;
+    loopCriticalThreshold: number;
+    loopBreakerVetoStreak: number;
+    loopHistorySize: number;
+    loopWanderingThreshold: number;
+    loopWanderingEscalation: number;
   };
   browser: {
     channel: BrowserChannel;
@@ -1497,6 +1520,18 @@ export const ENV_DEFAULTS = {
   MAX_PARALLEL_TOOL_CALLS: 8,
   /** Soft cap on combined chars across all tool_result summaries in one batched step. */
   BATCH_TOOL_RESULT_CHAR_CAP: 16_000,
+  /** Args-only repeat count that injects a no-progress `### notice`. */
+  LOOP_WARNING_THRESHOLD: 3,
+  /** Identical args+result streak that vetoes a call before dispatch. */
+  LOOP_CRITICAL_THRESHOLD: 5,
+  /** Consecutive vetoes of one signature that force a graceful reply. */
+  LOOP_BREAKER_VETO_STREAK: 3,
+  /** Sliding window size for the loop tracker's history ring. */
+  LOOP_HISTORY_SIZE: 30,
+  /** Distinct-args spread on a wandering-prone tool that redirects. */
+  LOOP_WANDERING_THRESHOLD: 6,
+  /** Distinct-args spread that escalates a wandering loop to graceful reply. */
+  LOOP_WANDERING_ESCALATION: 12,
 };
 
 export { ConfigValidationError } from "./config-validation-error.js";

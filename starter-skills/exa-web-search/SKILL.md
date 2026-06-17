@@ -28,6 +28,12 @@ The endpoint speaks **MCP over HTTP** as a single stateless JSON-RPC `POST` — 
 **approval-gated** in atomic-agent, so every search MUST be a **solo step** (a
 length-1 array, never combined with another tool in the same step).
 
+> CRITICAL: the `Accept: application/json, text/event-stream` header is
+> **mandatory**. The endpoint replies with Server-Sent Events and returns
+> **HTTP 406 Not Acceptable** if `text/event-stream` is missing from `Accept`.
+> `os.http.request` now injects this default when you omit `headers`, but if
+> you pass a custom `headers` object you MUST keep the `Accept` value above.
+
 DO — solo step:
 
 ```

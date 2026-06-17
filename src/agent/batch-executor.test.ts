@@ -9,6 +9,10 @@ import {
   planBatch,
   toBatchInputs,
 } from "./batch-executor.js";
+import {
+  LOOP_VETO_DENIED_REASON,
+  ToolLoopTracker,
+} from "./loop-detector.js";
 
 function ctx(signal: AbortSignal) {
   return {
@@ -40,6 +44,25 @@ function buildRegistry(
 
 function okResult(name: string, summary = "ok"): CompressedToolResult {
   return compressToolResult({ tool: name, status: "ok", output: summary });
+}
+
+/**
+ * Drive `n` identical completed cycles through the tracker so a
+ * subsequent `check(tool, args)` returns `critical`. Uses the same
+ * `check → recordCall → recordOutcome` order as the production gate.
+ */
+function seedCriticalStreak(
+  tracker: ToolLoopTracker,
+  tool: string,
+  args: unknown,
+  n: number,
+): void {
+  const result = okResult(tool, "same");
+  for (let i = 0; i < n; i += 1) {
+    tracker.check(tool, args);
+    tracker.recordCall(tool, args);
+    tracker.recordOutcome(tool, args, result);
+  }
 }
 
 describe("planBatch", () => {
@@ -330,6 +353,149 @@ describe("executeBatch", () => {
       expect(out.cancelled).toBe(false);
     },
   );
+
+  it("vetoes a critically-looping single call without invoking the tool", async () => {
+    const fn = vi.fn(async () => okResult("os.fs.read"));
+    const registry = buildRegistry({ "os.fs.read": fn });
+    const tracker = new ToolLoopTracker({
+      warningThreshold: 2,
+      criticalThreshold: 2,
+    });
+    seedCriticalStreak(tracker, "os.fs.read", { path: "a" }, 2);
+    const inputs = toBatchInputs([{ tool: "os.fs.read", args: { path: "a" } }]);
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      tracker,
+    });
+    expect(fn).not.toHaveBeenCalled();
+    expect(out.results[0]!.compressed?.status).toBe("error");
+    expect(out.results[0]!.compressed?.details.deniedReason).toBe(
+      LOOP_VETO_DENIED_REASON,
+    );
+    expect(out.loopSignals.some((s) => s.kind === "critical")).toBe(true);
+  });
+
+  it("vetoes the looping call but lets fresh siblings run", async () => {
+    const fn = vi.fn(async (args: Record<string, unknown>) =>
+      okResult("os.fs.read", `read-${String(args.path)}`),
+    );
+    const registry = buildRegistry({ "os.fs.read": fn });
+    const tracker = new ToolLoopTracker({
+      warningThreshold: 2,
+      criticalThreshold: 2,
+    });
+    seedCriticalStreak(tracker, "os.fs.read", { path: "a" }, 2);
+    const inputs = toBatchInputs([
+      { tool: "os.fs.read", args: { path: "a" } }, // looping → vetoed
+      { tool: "os.fs.read", args: { path: "b" } }, // fresh → runs
+    ]);
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      tracker,
+    });
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(out.results[0]!.compressed?.status).toBe("error");
+    expect(out.results[0]!.compressed?.details.deniedReason).toBe(
+      LOOP_VETO_DENIED_REASON,
+    );
+    expect(out.results[1]!.compressed?.status).toBe("ok");
+    expect(out.results[1]!.compressed?.summary).toContain("read-b");
+  });
+
+  it("never vetoes a terminal verb even when its signature loops", async () => {
+    const fn = vi.fn(async () => okResult("reply", "done"));
+    const registry = buildRegistry({ reply: fn });
+    const tracker = new ToolLoopTracker({
+      warningThreshold: 2,
+      criticalThreshold: 2,
+    });
+    // Seed the tracker directly (bypassing the terminal-skipping gate) so
+    // `reply` WOULD be critical if it were ever checked.
+    seedCriticalStreak(tracker, "reply", { text: "x" }, 2);
+    const inputs = toBatchInputs([{ tool: "reply", args: { text: "x" } }]);
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      tracker,
+    });
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(out.results[0]!.compressed?.status).toBe("ok");
+    expect(out.loopSignals.length).toBe(0);
+  });
+
+  it("escalates to a breaker signal after consecutive vetoes", async () => {
+    const fn = vi.fn(async () => okResult("os.fs.read"));
+    const registry = buildRegistry({ "os.fs.read": fn });
+    const tracker = new ToolLoopTracker({
+      warningThreshold: 2,
+      criticalThreshold: 2,
+      breakerVetoStreak: 2,
+    });
+    seedCriticalStreak(tracker, "os.fs.read", { path: "a" }, 2);
+    const inputs = toBatchInputs([{ tool: "os.fs.read", args: { path: "a" } }]);
+    const run = () =>
+      executeBatch(inputs, registry, {
+        ...ctx(new AbortController().signal),
+        tracker,
+      });
+    expect((await run()).loopSignals[0]!.kind).toBe("critical"); // veto #1
+    expect((await run()).loopSignals[0]!.kind).toBe("critical"); // veto #2
+    expect((await run()).loopSignals[0]!.kind).toBe("breaker"); // tripped
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("emits a wandering warn without vetoing the unique call", async () => {
+    const fn = vi.fn(async () => okResult("os.web.fetch"));
+    const registry = buildRegistry({ "os.web.fetch": fn });
+    const tracker = new ToolLoopTracker({
+      wanderingThreshold: 2,
+      wanderingEscalation: 5,
+    });
+    tracker.check("os.web.fetch", { url: "u1" });
+    tracker.recordCall("os.web.fetch", { url: "u1" });
+    tracker.recordOutcome(
+      "os.web.fetch",
+      { url: "u1" },
+      okResult("os.web.fetch", "u1"),
+    );
+    const inputs = toBatchInputs([
+      { tool: "os.web.fetch", args: { url: "u2" } },
+    ]);
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      tracker,
+    });
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(out.loopSignals[0]!.kind).toBe("warn");
+    expect(out.loopSignals[0]!.detector).toBe("wandering");
+  });
+
+  it("escalates a wandering loop to a breaker signal and vetoes the call", async () => {
+    const fn = vi.fn(async () => okResult("os.web.fetch"));
+    const registry = buildRegistry({ "os.web.fetch": fn });
+    const tracker = new ToolLoopTracker({
+      wanderingThreshold: 2,
+      wanderingEscalation: 3,
+    });
+    for (const url of ["u1", "u2"]) {
+      tracker.check("os.web.fetch", { url });
+      tracker.recordCall("os.web.fetch", { url });
+      tracker.recordOutcome(
+        "os.web.fetch",
+        { url },
+        okResult("os.web.fetch", url),
+      );
+    }
+    const inputs = toBatchInputs([
+      { tool: "os.web.fetch", args: { url: "u3" } },
+    ]);
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      tracker,
+    });
+    expect(fn).not.toHaveBeenCalled();
+    expect(out.loopSignals[0]!.kind).toBe("breaker");
+    expect(out.loopSignals[0]!.detector).toBe("wandering");
+  });
 
   it("marks tail calls as cancelled when the signal aborts mid-serialised-group", async () => {
     const ctrl = new AbortController();

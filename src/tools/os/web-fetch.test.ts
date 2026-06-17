@@ -153,4 +153,40 @@ describe("os.web.fetch tool", () => {
     const tool = buildOsWebFetchTool({ lookup: publicLookup });
     await expect(tool.run({ url: "" }, ctx())).rejects.toThrow();
   });
+
+  it("returns status:error for a 404 while keeping details", async () => {
+    const tool = buildOsWebFetchTool({
+      runCommand: makeRunCommand(() => ({
+        stdout: curlStdout({
+          body: "<html><body>not found</body></html>",
+          status: 404,
+          contentType: "text/html",
+        }),
+      })),
+      lookup: publicLookup,
+    });
+    const result = await tool.run({ url: "https://example.com/missing" }, ctx());
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("HTTP 404");
+    expect(result.details.status).toBe(404);
+    expect(result.details.finalUrl).toBe("https://example.com/missing");
+    expect(typeof result.details.extractedText).toBe("string");
+  });
+
+  it("returns status:error for a 500", async () => {
+    const tool = buildOsWebFetchTool({
+      runCommand: makeRunCommand(() => ({
+        stdout: curlStdout({
+          body: "<html><body>boom</body></html>",
+          status: 500,
+          contentType: "text/html",
+        }),
+      })),
+      lookup: publicLookup,
+    });
+    const result = await tool.run({ url: "https://example.com/boom" }, ctx());
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("HTTP 500");
+    expect(result.details.status).toBe(500);
+  });
 });

@@ -8,7 +8,7 @@ import { ToolRegistry, type ToolContext } from "../tool-registry.js";
 import { osFsReadTool } from "./fs-read.js";
 import { osFsListTool } from "./fs-list.js";
 import { buildOsFsWriteTool } from "./fs-write.js";
-import { buildOsShellTool } from "./shell.js";
+import { buildOsShellTool, needsShellInterpretation } from "./shell.js";
 import { buildOsFsTrashTool } from "./fs-trash.js";
 import { runCommand } from "../../sandbox/command-runner.js";
 import { registerOsTools } from "./index.js";
@@ -129,6 +129,33 @@ describe("os.fs tools", () => {
     expect(result.status).toBe("ok");
     const written = await readFile(join(dir, "out.txt"), "utf8");
     expect(written).toBe("hello");
+  });
+});
+
+describe("needsShellInterpretation", () => {
+  it("routes shell metacharacters to a subshell", () => {
+    expect(needsShellInterpretation("a | b", [])).toBe(true);
+    expect(needsShellInterpretation("a && b", [])).toBe(true);
+    expect(needsShellInterpretation("a; b", [])).toBe(true);
+    expect(needsShellInterpretation("echo $HOME", [])).toBe(true);
+    expect(needsShellInterpretation("cat > out.txt", [])).toBe(true);
+  });
+
+  it("routes a pre-joined command line (whitespace, no args) to a subshell", () => {
+    expect(needsShellInterpretation("ffprobe -v quiet f.mp3", [])).toBe(true);
+  });
+
+  it("keeps the argv path for a structured call", () => {
+    expect(needsShellInterpretation("ffprobe", ["-v", "quiet", "f.mp3"])).toBe(
+      false,
+    );
+    expect(needsShellInterpretation("ls", ["-la"])).toBe(false);
+  });
+
+  it("does not treat a bare argv glob as needing a subshell", () => {
+    // `*`/`?` are handled by expandShellGlobArgs on the argv path.
+    expect(needsShellInterpretation("rm", ["-f", "*.png"])).toBe(false);
+    expect(needsShellInterpretation("ls", ["*.png"])).toBe(false);
   });
 });
 
@@ -274,6 +301,67 @@ describe("os.shell.run", () => {
       expect(existsSync(join(dir, "y.png"))).toBe(false);
     },
   );
+
+  it("runs a piped command line via a subshell", async () => {
+    if (process.platform === "win32") return;
+    const gate = new ApprovalGate({
+      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+    });
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+    const result = await tool.run(
+      { cmd: "printf 'a\\nb\\na\\n' | sort | uniq | wc -l" },
+      makeCtx(dir),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.details.shell).toBe(true);
+    // 2 distinct lines (a, b) -> uniq -> wc -l == 2.
+    expect(result.summary.replace(/\s+/g, " ")).toContain("2");
+  });
+
+  it("expands an env var via a subshell", async () => {
+    if (process.platform === "win32") return;
+    const gate = new ApprovalGate({
+      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+    });
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+    const result = await tool.run({ cmd: 'echo "$HOME"' }, makeCtx(dir));
+    expect(result.status).toBe("ok");
+    expect(result.details.shell).toBe(true);
+    expect(result.summary).toContain(process.env.HOME ?? "");
+  });
+
+  it("treats a pre-joined command line in `cmd` as a subshell command", async () => {
+    if (process.platform === "win32") return;
+    const gate = new ApprovalGate({
+      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+    });
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+    const result = await tool.run({ cmd: "echo hello world" }, makeCtx(dir));
+    expect(result.status).toBe("ok");
+    expect(result.details.shell).toBe(true);
+    expect(result.summary).toContain("hello world");
+  });
+
+  it("keeps the direct argv path for a structured command", async () => {
+    const gate = new ApprovalGate({
+      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+    });
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+    const result = await tool.run({ cmd: "echo", args: ["hi"] }, makeCtx(dir));
+    expect(result.status).toBe("ok");
+    expect(result.details.shell).toBe(false);
+    expect(result.summary).toContain("hi");
+  });
+
+  it("still blocks a catastrophic command line routed through the subshell", async () => {
+    const gate = new ApprovalGate({
+      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+    });
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+    const result = await tool.run({ cmd: "rm -rf / --no-preserve-root" }, makeCtx(dir));
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("blocked by shell guard");
+  });
 });
 
 describe("os.fs.trash", () => {

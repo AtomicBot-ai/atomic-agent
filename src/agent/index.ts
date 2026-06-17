@@ -13,9 +13,20 @@ export type {
   StepEvent,
   StepOutcome,
 } from "./step-executor.js";
-export { LoopDetector, formatRepeatNotice } from "./loop-detector.js";
+export {
+  ToolLoopTracker,
+  isLoopVetoResult,
+  hashToolCall,
+  hashToolOutcome,
+  formatRepeatNotice,
+  formatVetoInstruction,
+  formatForcedLoopReply,
+  BATCH_LOOP_LABEL,
+  LOOP_VETO_DENIED_REASON,
+  LOOP_WARNING_BUCKET_SIZE,
+} from "./loop-detector.js";
 export type {
-  LoopDetectorOptions,
-  LoopObservation,
-  LoopVerdict,
+  ToolLoopTrackerOptions,
+  LoopCheckVerdict,
+  LoopCheckLevel,
 } from "./loop-detector.js";

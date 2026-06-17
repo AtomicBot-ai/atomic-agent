@@ -110,22 +110,34 @@ export function buildOsWebFetchTool(
         ? `${extracted.text.slice(0, args.maxChars)}\n… [truncated]`
         : extracted.text;
 
+      // HTTP-error status (>= 400) is a real failure signal. Returning
+      // `status:"ok"` here masked dead/erroring URLs from the model and
+      // from the loop detector's semantic result hash, letting the agent
+      // re-fetch the same 404 indefinitely. Surface it as an error while
+      // keeping the extracted body in `details.extractedText` so the
+      // model can still inspect any error page content.
+      const isHttpError = outcome.status >= 400;
+      const details = {
+        url: args.url,
+        finalUrl: outcome.finalUrl,
+        status: outcome.status,
+        contentType: outcome.contentType,
+        extractor: extracted.extractor,
+        title: extracted.title,
+        redirectChain: outcome.redirectChain,
+        extractMode: args.mode,
+        truncated: outcome.truncated || capped,
+        ...(isHttpError ? { extractedText: text } : {}),
+      };
+
       return compressToolResult(
         {
           tool: TOOL_NAME,
-          status: "ok",
-          output: text,
-          details: {
-            url: args.url,
-            finalUrl: outcome.finalUrl,
-            status: outcome.status,
-            contentType: outcome.contentType,
-            extractor: extracted.extractor,
-            title: extracted.title,
-            redirectChain: outcome.redirectChain,
-            extractMode: args.mode,
-            truncated: outcome.truncated || capped,
-          },
+          status: isHttpError ? "error" : "ok",
+          output: isHttpError
+            ? `HTTP ${outcome.status} for ${outcome.finalUrl}`
+            : text,
+          details,
         },
         {
           maxSummaryLength: args.maxChars,

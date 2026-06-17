@@ -365,7 +365,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     // The phrase "### notice" appears in the system persona regardless,
     // so we detect the notice by its body text which is only present
     // when the detector fired.
-    const NOTICE_MARK = /same arguments \d+ times in a row/;
+    const NOTICE_MARK = /same arguments \d+ times/;
     expect(NOTICE_MARK.test(prompts[0]!)).toBe(false);
     expect(NOTICE_MARK.test(prompts[1]!)).toBe(false);
     expect(prompts.some((p) => NOTICE_MARK.test(p))).toBe(true);
@@ -374,13 +374,15 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(events[0]?.count).toBeGreaterThanOrEqual(3);
   });
 
-  it("aborts the turn with a `loop_failed` after the detector fires twice in a row", async () => {
+  it("ends the turn with a graceful reply (not loop_failed) when the breaker trips", async () => {
     const registry = buildDefaultToolRegistry();
+    let runCount = 0;
     registry.register({
       name: "noop",
       description: "no-op",
       readonly: true,
       async run() {
+        runCount += 1;
         return {
           tool: "noop",
           status: "ok",
@@ -390,7 +392,10 @@ describe("AgentLoop end-to-end with mock LLM", () => {
         };
       },
     });
-    const detectedEvents: Array<{ count: number }> = [];
+    const detectedEvents: Array<{
+      count: number;
+      level?: string;
+    }> = [];
     const failedEvents: Array<{ category: string; message: string }> = [];
     const loop = new AgentLoop({
       registry,
@@ -403,7 +408,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       skillCatalog: SKILLS,
       onEvent: (event) => {
         if (event.type === "loop_detected") {
-          detectedEvents.push({ count: event.count });
+          detectedEvents.push({ count: event.count, level: event.level });
         } else if (event.type === "loop_failed") {
           failedEvents.push({
             category: event.category,
@@ -413,23 +418,31 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       },
     });
     const session = createEmptySessionState({
-      id: "s-loop-abort",
+      id: "s-loop-breaker",
       workingDir,
     });
-    // maxSteps=7 lets the detector fire twice (steps 0..2 → fire 1, steps 3..5
-    // → fire 2 → abort returned from step 5 as `reason: "failed"`).
+    // Default thresholds: warn=3, critical=5, breaker=3. The streak hits
+    // critical at step 5 (vetoes start), and after 3 consecutive vetoes
+    // the breaker trips and forces a graceful reply.
     const result = await loop.runTurn(session, {
       userMessage: "stuck",
-      maxSteps: 7,
+      maxSteps: 12,
       signal: new AbortController().signal,
     });
-    expect(result.reason).toBe("failed");
-    expect(result.session.status).toBe("failed");
-    expect(result.session.lastError).toMatch(/no-progress loop/);
-    expect(detectedEvents.length).toBe(2);
-    expect(failedEvents.length).toBe(1);
-    expect(failedEvents[0]!.category).toBe("model");
-    expect(failedEvents[0]!.message).toMatch(/no-progress loop/);
+    // Graceful termination: reply, NOT failed.
+    expect(result.reason).toBe("reply");
+    expect(result.session.status).toBe("pending");
+    expect(failedEvents.length).toBe(0);
+    // The last turn is the forced synthetic reply.
+    expect(result.session.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: expect.stringMatching(/no-progress loop/),
+    });
+    // A breaker-level loop_detected event was surfaced.
+    expect(detectedEvents.some((e) => e.level === "breaker")).toBe(true);
+    // Critical vetoes prevented the tool from running every step — the
+    // veto plateau means `noop` ran far fewer times than the step budget.
+    expect(runCount).toBeLessThan(12);
   });
 
   it("refreshes memory context between non-terminal tool steps", async () => {
@@ -542,7 +555,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       maxSteps: 8,
       signal: new AbortController().signal,
     });
-    const NOTICE_MARK = /same arguments \d+ times in a row/;
+    const NOTICE_MARK = /same arguments \d+ times/;
     expect(prompts.every((p) => !NOTICE_MARK.test(p))).toBe(true);
   });
 

@@ -167,6 +167,16 @@ export interface TraceLoopDetected extends TraceEventBase {
   stepIndex: number;
   tool: string;
   count: number;
+  /**
+   * Graduated severity from the `ToolLoopTracker`:
+   *  - `warn`: args-only repeat — a `### notice` was injected.
+   *  - `critical`: identical args+result streak — the call was vetoed.
+   *  - `breaker`: repeated vetoes ignored — a graceful reply was forced.
+   * Optional for back-compat with traces recorded before phase 7.
+   */
+  level?: "warn" | "critical" | "breaker";
+  /** Which sub-detector fired. Optional for back-compat. */
+  detector?: "generic_repeat" | "no_progress" | "wandering";
 }
 
 /**

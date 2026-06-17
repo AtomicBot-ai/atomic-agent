@@ -178,6 +178,39 @@ describe("os.http.request", () => {
     expect(capture.args).not.toContain("-X");
   });
 
+  it("returns status:error for a 404 while keeping the body in details", async () => {
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
+    const tool = buildOsHttpRequestTool({
+      approvals: approveAll(),
+      approvalRequired: false,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun(capture, {
+        stdout: 'not found\n__ATOMIC_CURL_META__404|text/plain|9|0.01',
+      }),
+    });
+    const result = await tool.run({ url: "https://example.com/missing" }, makeCtx());
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("HTTP 404");
+    expect(result.details.status).toBe(404);
+    expect(result.details.body).toBe("not found");
+  });
+
+  it("returns status:error for a 500", async () => {
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
+    const tool = buildOsHttpRequestTool({
+      approvals: approveAll(),
+      approvalRequired: false,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun(capture, {
+        stdout: 'boom\n__ATOMIC_CURL_META__500|text/plain|4|0.01',
+      }),
+    });
+    const result = await tool.run({ url: "https://example.com/boom" }, makeCtx());
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("HTTP 500");
+    expect(result.details.status).toBe(500);
+  });
+
   it("requires approval for POST when approvalMode=writes", async () => {
     const tool = buildOsHttpRequestTool({
       approvals: denyAll(),
@@ -282,6 +315,44 @@ describe("os.http.request", () => {
       a.toLowerCase().startsWith("content-type:"),
     );
     expect(ctOccurrences).toHaveLength(1);
+  });
+
+  it("injects a default Accept header when none is provided", async () => {
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
+    const tool = buildOsHttpRequestTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun(capture, {
+        stdout: 'ok\n__ATOMIC_CURL_META__200|text/plain|2|0.01',
+      }),
+    });
+    await tool.run({ url: "https://mcp.exa.ai/mcp" }, makeCtx());
+    expect(capture.args).toContain("Accept: application/json, text/event-stream");
+  });
+
+  it("does not override an explicit Accept header", async () => {
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
+    const tool = buildOsHttpRequestTool({
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun(capture, {
+        stdout: 'ok\n__ATOMIC_CURL_META__200|application/json|2|0.01',
+      }),
+    });
+    await tool.run(
+      {
+        url: "https://api.example.com",
+        headers: { Accept: "application/xml" },
+      },
+      makeCtx(),
+    );
+    expect(capture.args).toContain("Accept: application/xml");
+    const acceptOccurrences = capture.args!.filter((a) =>
+      a.toLowerCase().startsWith("accept:"),
+    );
+    expect(acceptOccurrences).toHaveLength(1);
   });
 
   it("rejects headers containing CR/LF to prevent injection", async () => {

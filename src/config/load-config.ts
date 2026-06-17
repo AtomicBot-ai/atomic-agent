@@ -205,6 +205,42 @@ export function loadConfig(): AtomicAgentConfig {
         1_000,
         1_000_000,
       ),
+      loopWarningThreshold: readBoundedPositiveInt(
+        "ATOMIC_AGENT_LOOP_WARNING_THRESHOLD",
+        ENV_DEFAULTS.LOOP_WARNING_THRESHOLD,
+        2,
+        100,
+      ),
+      loopCriticalThreshold: readBoundedPositiveInt(
+        "ATOMIC_AGENT_LOOP_CRITICAL_THRESHOLD",
+        ENV_DEFAULTS.LOOP_CRITICAL_THRESHOLD,
+        3,
+        100,
+      ),
+      loopBreakerVetoStreak: readBoundedPositiveInt(
+        "ATOMIC_AGENT_LOOP_BREAKER_VETO_STREAK",
+        ENV_DEFAULTS.LOOP_BREAKER_VETO_STREAK,
+        1,
+        100,
+      ),
+      loopHistorySize: readBoundedPositiveInt(
+        "ATOMIC_AGENT_LOOP_HISTORY_SIZE",
+        ENV_DEFAULTS.LOOP_HISTORY_SIZE,
+        5,
+        1_000,
+      ),
+      loopWanderingThreshold: readBoundedPositiveInt(
+        "ATOMIC_AGENT_LOOP_WANDERING_THRESHOLD",
+        ENV_DEFAULTS.LOOP_WANDERING_THRESHOLD,
+        2,
+        100,
+      ),
+      loopWanderingEscalation: readBoundedPositiveInt(
+        "ATOMIC_AGENT_LOOP_WANDERING_ESCALATION",
+        ENV_DEFAULTS.LOOP_WANDERING_ESCALATION,
+        2,
+        1_000,
+      ),
     },
     browser: {
       channel: browserChannel,
