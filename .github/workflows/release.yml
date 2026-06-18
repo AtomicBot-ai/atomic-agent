@@ -28,9 +28,9 @@ jobs:
       matrix:
         include:
           - { slug: darwin-arm64, os: macos-14 }
+          - { slug: linux-x64, os: ubuntu-22.04 }
           # Temporarily disabled while Windows path bug in scripts is under investigation:
           # - { slug: darwin-x64, os: macos-13 }
-          # - { slug: linux-x64, os: ubuntu-22.04 }
           # - { slug: linux-arm64, os: ubuntu-24.04-arm }
           # - { slug: win32-x64, os: windows-2022 }
     runs-on: ${{ matrix.os }}
