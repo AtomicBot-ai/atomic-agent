@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { activeCursor, selectLlmPanelRows, type LlmPanelRow } from "../llm-panel/llm-panel-selectors.js";
-import { classifyVramFit } from "../local-models/local-models-panel-state.js";
+import { classifyRamFit, classifyVramFit } from "../local-models/local-models-panel-state.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 
@@ -90,22 +90,35 @@ function Row({ row, state }: { row: LlmPanelRow; state: TuiState }): ReactElemen
   const idx = rows.findIndex((candidate) => candidate.id === row.id);
   const selected = idx === activeCursor(state);
   const mark = "active" in row && row.active ? "*" : selected ? ">" : " ";
-  // A text model that does not fit the GPU memory budget is greyed out
-  // (still selectable/downloadable) and gets an orange informational
-  // badge. The nested badge sets its own colour so it stays bright.
-  const insufficientVram =
-    row.kind === "localTextModel" &&
-    classifyVramFit(row.model.def, state.localModelsPanel.gpuBudgetGb) ===
-      "insufficient";
+  // Fit badges for local text models. RAM fit is always computable
+  // (host RAM is known up front), so it shows immediately — even before
+  // anything is downloaded. VRAM fit needs a GPU budget that is only
+  // available once the llama.cpp backend is on disk (Linux reads it from
+  // `--list-devices`), so it stays silent until then. Both badges are
+  // purely informational: the row is greyed but stays selectable and
+  // downloadable. Each nested badge sets its own colour so it stays bright.
+  const isLocalText = row.kind === "localTextModel";
+  const ramFit = isLocalText
+    ? classifyRamFit(row.model.def, state.localModelsPanel.totalRamGb)
+    : null;
+  const vramFit = isLocalText
+    ? classifyVramFit(row.model.def, state.localModelsPanel.gpuBudgetGb)
+    : null;
+  const insufficient = ramFit === "insufficient" || vramFit === "insufficient";
   const baseColor = selected
     ? theme.colors.accentSoft
-    : insufficientVram
+    : insufficient
       ? theme.colors.muted
       : undefined;
   return (
     <Text color={baseColor} bold={selected}>
       {mark} {renderRowText(row, state)}
-      {insufficientVram ? (
+      {ramFit === "insufficient" ? (
+        <Text color="red"> Not enough RAM</Text>
+      ) : ramFit === "tight" ? (
+        <Text color="yellow"> RAM tight</Text>
+      ) : null}
+      {vramFit === "insufficient" ? (
         <Text color={theme.colors.warnStrong}> Not enough VRAM</Text>
       ) : null}
       <Text color={theme.colors.muted}> · {row.enterEffect}</Text>
