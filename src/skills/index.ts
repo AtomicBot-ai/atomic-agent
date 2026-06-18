@@ -1,10 +1,15 @@
 export {
   parseSkillFile,
   SkillManifestError,
+  SKILL_PLATFORMS,
 } from "./skill-manifest.js";
-export type { SkillManifest, ParsedSkillFile } from "./skill-manifest.js";
+export type {
+  SkillManifest,
+  ParsedSkillFile,
+  SkillPlatform,
+} from "./skill-manifest.js";
 
-export { loadSkills } from "./skill-loader.js";
+export { loadSkills, isSkillEligibleForPlatform } from "./skill-loader.js";
 export type {
   SkillRecord,
   SkillSource,

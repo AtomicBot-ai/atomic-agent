@@ -22,7 +22,7 @@ It is built for the OpenClaw / Hermes / OpenCUA class of operator agents, but ev
 
 **Developer Preview / Active Development:** APIs, commands, config, and behavior are still moving. Expect sharp edges, and pin a release if you need a stable integration point.
 
-**Platform availability:** current releases are available for macOS. Linux and Windows builds are coming soon.
+**Platform availability:** current releases are available for macOS and Linux x64. Windows builds are coming soon.
 
 ## Benchmarks
 
@@ -321,7 +321,20 @@ The promise is not magic secrecy. The promise is that the agent control plane do
 - Chrome, Microsoft Edge, or another configured Chromium-family executable. Browser binaries are not bundled.
 - `git` for git tools.
 - macOS workflows may need Accessibility, Screen Recording, Automation, or Reminders permissions.
-- Linux window-control workflows work best with `wmctrl`.
+
+### Linux notes
+
+- **Runtime tools** (install via your package manager for full capability coverage):
+  - `ripgrep` — file search (`fs.grep`). A bundled binary is used when present.
+  - `xclip` / `xsel` (X11) or `wl-clipboard` (Wayland) — clipboard tools.
+  - `libnotify-bin` (provides `notify-send`) — desktop notifications.
+  - `wmctrl` — window control. Does **not** work on pure Wayland sessions (X11 / XWayland only).
+  - `gio` (glib2) or `trash-cli` — move-to-trash for `fs.trash`.
+- **Browser:** Chromium-family sandboxing can fail under some Linux setups (containers, certain kernels). If Chrome refuses to launch, run it with `--no-sandbox` (set the browser channel / executable accordingly).
+- **GPU acceleration (managed mode):** the managed `llama.cpp` backend always starts — it falls back to CPU when no GPU driver is available. For GPU offload install a Vulkan driver:
+  - Intel / AMD: `mesa-vulkan-drivers` (plus `vulkan-loader` / `libvulkan1`).
+  - NVIDIA: the stock proprietary driver bundles its Vulkan ICD.
+  The device is auto-selected at start (best discrete GPU); override with `atomic-agent models use-device <auto|cpu|Vulkan0>`, inspect with `atomic-agent models devices`, or press `G` in the TUI Models tab.
 
 ## Configuration And Secrets
 

@@ -304,6 +304,25 @@ describe("parseUserConfigFile", () => {
     ).toThrow(/localModels.managed.modelId/);
   });
 
+  it("defaults localModels.managed.device to 'auto'", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.localModels.managed.device).toBe("auto");
+  });
+
+  it("preserves an explicit localModels.managed.device override", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { managed: { device: "Vulkan0" } },
+    });
+    expect(parsed.localModels.managed.device).toBe("Vulkan0");
+  });
+
+  it("migrates a v25 file by filling localModels.managed.device='auto'", () => {
+    const parsed = parseUserConfigFile({ version: 25 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.localModels.managed.device).toBe("auto");
+  });
+
   it("applies skills defaults when the section is absent", () => {
     const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
     expect(parsed.skills).toEqual(USER_CONFIG_DEFAULTS.skills);

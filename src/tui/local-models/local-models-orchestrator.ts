@@ -21,6 +21,7 @@ import {
   isKnownLocalModelId,
   isMmprojDownloaded,
   isModelDownloaded,
+  listVulkanDevices,
   LOCAL_MODELS_CATALOG,
   readBackendVersion,
   readLogTail,
@@ -28,8 +29,12 @@ import {
   removeModel,
   resolveChatTemplatePath,
   resolveEmbeddingLogFilePath,
+  resolveGpuBudgetGb,
   resolveLogFilePath,
+  resolveManagedDevice,
   resolveMmprojFilePath,
+  resolvePlatformAsset,
+  resolveServerBinPath,
   startChatAndEmbeddingDaemons,
   startEmbeddingDaemon,
   stopChatAndEmbeddingDaemons,
@@ -37,13 +42,16 @@ import {
   type EmbeddingDaemonStartOptions,
   type EmbeddingModelDef,
   type EmbeddingModelId,
+  type GpuDevice,
   type LocalModelDef,
   type LocalModelId,
 } from "../../local-llm/index.js";
-import type {
-  EmbeddingDaemonInfo,
-  EmbeddingModelRow,
-  MmprojStatus,
+import {
+  classifyVramFit,
+  estimateModelVramNeedGb,
+  type EmbeddingDaemonInfo,
+  type EmbeddingModelRow,
+  type MmprojStatus,
 } from "./local-models-panel-state.js";
 import {
   persistEmbeddingHybridRecall,
@@ -51,6 +59,23 @@ import {
 } from "../persist-embedding-hybrid-recall.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
 import type { TuiEventBus } from "../tui-app.js";
+
+/**
+ * Human-readable summary of how the configured device preference
+ * resolved. `configured` is the raw config value (`auto` / `cpu` / a
+ * device id); `resolved` is what `resolveManagedDevice` returned
+ * (`undefined` ⇒ no GPU picked → llama.cpp default / CPU fallback).
+ */
+function describeDeviceChoice(
+  configured: string,
+  resolved: string | undefined,
+): string {
+  if (configured === "cpu") return "cpu (forced)";
+  if (configured === "auto") {
+    return resolved ? `auto → ${resolved}` : "auto → CPU (no GPU detected)";
+  }
+  return resolved ?? configured;
+}
 
 /** Log-tail poll cadence while the LLM logs tab is active. */
 const LOGS_POLL_MS = 1000;
@@ -84,6 +109,14 @@ export class LocalModelsOrchestrator {
    */
   private activeModelPullAbort: AbortController | null = null;
   private activeEmbeddingPullAbort: AbortController | null = null;
+  /**
+   * Devices enumerated via `llama-server --list-devices`, cached for the
+   * process lifetime. `null` until a successful enumeration with the
+   * backend present — the device table does not change at runtime, so we
+   * avoid spawning the binary on every 5s snapshot refresh. macOS never
+   * populates this (its GPU budget comes from unified RAM, no spawn).
+   */
+  private cachedDevices: GpuDevice[] | null = null;
 
   constructor(
     private readonly bus: TuiEventBus & { emit(action: unknown): void },
@@ -109,7 +142,7 @@ export class LocalModelsOrchestrator {
     this.logsTimer = null;
   }
 
-  shutdown(): void {
+  async shutdown(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     if (this.activeTimer) clearInterval(this.activeTimer);
@@ -118,9 +151,15 @@ export class LocalModelsOrchestrator {
     // Best-effort tear down the daemon we started. Anything the user
     // launched via `atomic-agent models start` in another terminal has
     // its own pid file and is not our responsibility.
+    //
+    // Awaited (not fire-and-forget): the daemon is spawned `detached`, so
+    // it has its own process group and never receives the terminal SIGINT
+    // on Ctrl+C — the only thing that stops it is this explicit kill. If we
+    // do not wait for it, the host process exits before the kill lands and
+    // llama-server is orphaned in the background.
     if (this.daemonSupervised) {
       this.daemonSupervised = false;
-      void this.stopDaemonSilent();
+      await this.stopDaemonSilent();
     }
   }
 
@@ -169,6 +208,7 @@ export class LocalModelsOrchestrator {
       const embeddingDaemon: EmbeddingDaemonInfo =
         await this.collectEmbeddingDaemonInfo(dataDir, embeddingActiveId);
       this.reconcileHybridRecallFromDaemon(embeddingDaemon);
+      const gpuBudgetGb = await this.resolveGpuBudget(cfg, dataDir);
       this.bus.emit({
         type: "local_models_snapshot_loaded",
         rows,
@@ -187,6 +227,7 @@ export class LocalModelsOrchestrator {
         configMode: cfg.localModels.mode,
         activeModelId,
         totalRamGb: detectHostRamGb(),
+        gpuBudgetGb,
         dataDir,
         embeddingRows,
         embeddingDaemon,
@@ -618,6 +659,67 @@ export class LocalModelsOrchestrator {
    *
    * @returns Whether the managed daemon was started successfully (pid acquired).
    */
+  /**
+   * Cycle the managed daemon's GPU preference through
+   * `auto → <each enumerated device> → cpu → auto`, persisting the
+   * choice to `config.json`. Enumeration is best-effort: when the
+   * backend is missing or reports no devices the cycle collapses to
+   * `auto → cpu → auto`. Does not restart the daemon — the operator
+   * presses `s` to apply.
+   */
+  async cycleManagedDevice(): Promise<void> {
+    const cfg = getConfig();
+    const dataDir = cfg.paths.localModelsDataDir;
+    let ids: string[] = [];
+    if (isBackendDownloaded(dataDir)) {
+      const { binaryName } = resolvePlatformAsset();
+      const binPath = resolveServerBinPath(dataDir, binaryName);
+      ids = (await listVulkanDevices(binPath)).map((d) => d.id);
+    }
+    const order = ["auto", ...ids, "cpu"];
+    const current = cfg.localModels.managed.device;
+    const idx = order.indexOf(current);
+    const next = order[(idx + 1) % order.length];
+    persistUserLocalModelsConfig({ managed: { device: next } });
+    resetConfigCache();
+    this.bus.emit({
+      type: "runtime_info",
+      line: `local-llm: device → ${next} (press 's' to restart and apply)`,
+    });
+    await this.refresh();
+  }
+
+  /**
+   * Resolve the GPU memory budget (decimal GB) the active model would
+   * have to fit into, or `null` when there is no meaningful budget (CPU
+   * forced, no GPU, unsupported platform). On macOS the budget comes
+   * from unified RAM without spawning anything; on Linux/Windows it
+   * reads the chosen device's VRAM from a cached `--list-devices`
+   * enumeration so the 5s refresh never re-spawns the binary.
+   */
+  private async resolveGpuBudget(
+    cfg: ReturnType<typeof getConfig>,
+    dataDir: string,
+  ): Promise<number | null> {
+    const platform = process.platform;
+    const configuredDevice = cfg.localModels.managed.device;
+    if (platform !== "darwin") {
+      // No discrete GPU offload when forced to CPU; skip enumeration.
+      if (configuredDevice === "cpu") return null;
+      if (this.cachedDevices === null && isBackendDownloaded(dataDir)) {
+        const { binaryName } = resolvePlatformAsset();
+        const binPath = resolveServerBinPath(dataDir, binaryName);
+        this.cachedDevices = await listVulkanDevices(binPath);
+      }
+    }
+    return resolveGpuBudgetGb({
+      platform,
+      totalRamBytes: totalmem(),
+      devices: this.cachedDevices ?? [],
+      configuredDevice,
+    });
+  }
+
   async startDaemon(): Promise<boolean> {
     const cfg = getConfig();
     if (cfg.localModels.mode !== "managed") {
@@ -673,6 +775,26 @@ export class LocalModelsOrchestrator {
       // an info line so the operator sees what happened, while the
       // chat side stays the source of truth for `daemonPhase`.
       const embedding = this.buildEmbeddingStartOptions(cfg, dataDir);
+      // Resolve the GPU preference once so chat + embedding land on the
+      // same device and the operator sees which one was picked.
+      const { binaryName } = resolvePlatformAsset();
+      const binPath = resolveServerBinPath(dataDir, binaryName);
+      const device = await resolveManagedDevice(
+        binPath,
+        cfg.localModels.managed.device,
+      );
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: device ${describeDeviceChoice(cfg.localModels.managed.device, device)}`,
+      });
+      const gpuBudgetGb = await this.resolveGpuBudget(cfg, dataDir);
+      if (classifyVramFit(def, gpuBudgetGb) === "insufficient") {
+        const needGb = estimateModelVramNeedGb(def);
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: ${def.name} needs ~${needGb.toFixed(1)} GB but GPU budget ~${gpuBudgetGb!.toFixed(1)} GB — may fail to load / OOM`,
+        });
+      }
       const result = await startChatAndEmbeddingDaemons({
         chat: {
           dataDir,
@@ -680,8 +802,11 @@ export class LocalModelsOrchestrator {
           port: cfg.localModels.managed.port,
           chatTemplateFile: tpl,
           mmprojFile,
+          ...(device ? { device } : {}),
         },
-        embedding,
+        embedding: embedding
+          ? { ...embedding, ...(device ? { device } : {}) }
+          : embedding,
       });
       this.daemonSupervised = true;
       this.bus.emit({
@@ -747,9 +872,10 @@ export class LocalModelsOrchestrator {
     }
     this.beginActiveRefresh();
     try {
-      // Stops both chat and embedding daemons; embedding side never
-      // throws (see `stopChatAndEmbeddingDaemons`), so failures here
-      // are always about the chat daemon.
+      // Stops both chat and embedding daemons. Either side may raise a
+      // `ForeignDaemonError` (cross-user daemon we cannot signal);
+      // `stopChatAndEmbeddingDaemons` still stops the other side and
+      // re-throws the combined message, surfaced via the bus below.
       await stopChatAndEmbeddingDaemons(dataDir);
       this.daemonSupervised = false;
       persistMemoryEmbeddingsEnabled(false);

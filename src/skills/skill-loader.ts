@@ -1,9 +1,11 @@
+import { platform as osPlatform } from "node:os";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import {
   parseSkillFile,
   SkillManifestError,
   type SkillManifest,
+  type SkillPlatform,
 } from "./skill-manifest.js";
 
 export type SkillSource = "global" | "project";
@@ -20,6 +22,24 @@ export interface SkillRecord {
 export interface LoadSkillsOptions {
   globalDir: string;
   projectDir: string | null;
+  /**
+   * OS to gate skills against (matched against each manifest's optional
+   * `platforms` allowlist). Defaults to the live `os.platform()`;
+   * injectable so tests can exercise the filter deterministically.
+   */
+  platform?: NodeJS.Platform;
+}
+
+/**
+ * A skill is eligible when it declares no `platforms` allowlist (cross-
+ * platform) or when the allowlist includes the current OS.
+ */
+export function isSkillEligibleForPlatform(
+  manifest: SkillManifest,
+  platform: NodeJS.Platform,
+): boolean {
+  if (manifest.platforms === undefined) return true;
+  return manifest.platforms.includes(platform as SkillPlatform);
 }
 
 export interface LoadSkillsResult {
@@ -37,14 +57,23 @@ export async function loadSkills(
   options: LoadSkillsOptions,
 ): Promise<LoadSkillsResult> {
   const errors: Array<{ path: string; error: string }> = [];
+  const platform = options.platform ?? osPlatform();
   const globalSkills = await loadFromDir(options.globalDir, "global", errors);
   const projectSkills = options.projectDir
     ? await loadFromDir(options.projectDir, "project", errors)
     : [];
 
   const merged = new Map<string, SkillRecord>();
-  for (const s of globalSkills) merged.set(s.manifest.name, s);
-  for (const s of projectSkills) merged.set(s.manifest.name, s);
+  for (const s of globalSkills) {
+    if (isSkillEligibleForPlatform(s.manifest, platform)) {
+      merged.set(s.manifest.name, s);
+    }
+  }
+  for (const s of projectSkills) {
+    if (isSkillEligibleForPlatform(s.manifest, platform)) {
+      merged.set(s.manifest.name, s);
+    }
+  }
 
   return {
     skills: Array.from(merged.values()).sort((a, b) =>

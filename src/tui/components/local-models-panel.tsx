@@ -3,6 +3,8 @@ import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
 import {
   classifyRamFit,
+  classifyVramFit,
+  estimateModelVramNeedGb,
   resolveRowAt,
   type EmbeddingDaemonInfo,
   type LocalModelRow,
@@ -237,6 +239,7 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
           ? "Enter — set active"
           : "Enter — already active";
     const fit = classifyRamFit(m, panel.totalRamGb);
+    const vramFit = classifyVramFit(m, panel.gpuBudgetGb);
     return (
       <Box flexDirection="column">
         <Text bold color={theme.colors.accentSoft}>
@@ -269,6 +272,12 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
         {fit && panel.totalRamGb !== null ? (
           <Text color={ramFitColor(fit)}>
             host RAM {panel.totalRamGb} GB — {ramFitLabel(fit, m)}
+          </Text>
+        ) : null}
+        {vramFit === "insufficient" && panel.gpuBudgetGb !== null ? (
+          <Text color={theme.colors.warnStrong}>
+            Not enough VRAM — needs ~{estimateModelVramNeedGb(m).toFixed(1)} GB,
+            GPU ~{panel.gpuBudgetGb.toFixed(1)} GB — may fail to load / crash
           </Text>
         ) : null}
         <Text color={theme.colors.muted}>
@@ -401,7 +410,7 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
           </Text>
         ) : null}
         <Text color={theme.colors.muted}>
-          j/k move · Enter pull/activate (embedding: *row + Enter starts server) · g gguf · i info · d remove · s chat+embedding · E embeddings on/off · B · r · L
+          j/k move · Enter pull/activate (embedding: *row + Enter starts server) · g gguf · i info · d remove · s chat+embedding · E embeddings on/off · G gpu · B · r · L
         </Text>
       </Box>
     </Box>
@@ -425,6 +434,11 @@ function renderChatRows(panel: LocalModelsPanelState): ReactElement {
           ? renderProgressBar(panel.pull!.percent, 8)
           : "";
         const fit = classifyRamFit(r.def, panel.totalRamGb);
+        const vramFit = classifyVramFit(r.def, panel.gpuBudgetGb);
+        // A row that does not fit in RAM or VRAM is greyed out — but it
+        // stays selectable and downloadable; the badge is informational.
+        const insufficient =
+          fit === "insufficient" || vramFit === "insufficient";
         // Cursor is a combined index across chat+embedding rows;
         // chat occupies [0..rows.length-1].
         const isCursor = i === panel.cursor;
@@ -432,7 +446,7 @@ function renderChatRows(panel: LocalModelsPanelState): ReactElement {
           ? "yellow"
           : isCursor
             ? theme.colors.accentSoft
-            : fit === "insufficient"
+            : insufficient
               ? theme.colors.muted
               : undefined;
         return (
@@ -440,7 +454,7 @@ function renderChatRows(panel: LocalModelsPanelState): ReactElement {
             <Text
               color={rowColor}
               bold={isCursor || downloading}
-              dimColor={fit === "insufficient" && !isCursor}
+              dimColor={insufficient && !isCursor}
             >
               {isCursor ? "> " : "  "}
               {r.active ? "* " : ""}
@@ -458,6 +472,9 @@ function renderChatRows(panel: LocalModelsPanelState): ReactElement {
                 {" "}
                 {fit === "ok" ? "✓ RAM" : fit === "tight" ? "△ RAM" : "✗ RAM"}
               </Text>
+            ) : null}
+            {vramFit === "insufficient" ? (
+              <Text color={theme.colors.warnStrong}> Not enough VRAM</Text>
             ) : null}
             {downloading ? (
               <Text color="yellow">

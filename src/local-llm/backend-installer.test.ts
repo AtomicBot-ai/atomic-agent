@@ -32,17 +32,28 @@ describe("backend-installer", () => {
 
     globalThis.fetch = vi.fn(async (url: string | URL) => {
       const u = String(url);
-      if (u.includes("/releases/latest")) {
+      if (u.includes("/releases")) {
         return new Response(
-          JSON.stringify({
-            tag_name: "turboquant-test-1",
-            assets: [
-              {
-                name: "llama-turboquant-macos-arm64.zip",
-                browser_download_url: "https://example.com/asset.zip",
-              },
-            ],
-          }),
+          JSON.stringify([
+            {
+              tag_name: "turboquant-windows-9",
+              assets: [
+                {
+                  name: "llama-turboquant-windows-x64.zip",
+                  browser_download_url: "https://example.com/win.zip",
+                },
+              ],
+            },
+            {
+              tag_name: "turboquant-test-1",
+              assets: [
+                {
+                  name: "llama-turboquant-macos-arm64.zip",
+                  browser_download_url: "https://example.com/asset.zip",
+                },
+              ],
+            },
+          ]),
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
@@ -80,17 +91,19 @@ describe("backend-installer", () => {
 
     globalThis.fetch = vi.fn(async (url: string | URL) => {
       const u = String(url);
-      if (u.includes("/releases/latest")) {
+      if (u.includes("/releases")) {
         return new Response(
-          JSON.stringify({
-            tag_name: "turboquant-nested-1",
-            assets: [
-              {
-                name: "llama-turboquant-macos-arm64.zip",
-                browser_download_url: "https://example.com/nested.zip",
-              },
-            ],
-          }),
+          JSON.stringify([
+            {
+              tag_name: "turboquant-nested-1",
+              assets: [
+                {
+                  name: "llama-turboquant-macos-arm64.zip",
+                  browser_download_url: "https://example.com/nested.zip",
+                },
+              ],
+            },
+          ]),
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
@@ -131,17 +144,19 @@ describe("backend-installer", () => {
 
     globalThis.fetch = vi.fn(async (url: string | URL) => {
       const u = String(url);
-      if (u.includes("/releases/latest")) {
+      if (u.includes("/releases")) {
         return new Response(
-          JSON.stringify({
-            tag_name: "turboquant-flat-1",
-            assets: [
-              {
-                name: "llama-turboquant-macos-arm64.zip",
-                browser_download_url: "https://example.com/flat.zip",
-              },
-            ],
-          }),
+          JSON.stringify([
+            {
+              tag_name: "turboquant-flat-1",
+              assets: [
+                {
+                  name: "llama-turboquant-macos-arm64.zip",
+                  browser_download_url: "https://example.com/flat.zip",
+                },
+              ],
+            },
+          ]),
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
@@ -165,13 +180,16 @@ describe("backend-installer", () => {
     }
   });
 
-  it("isBackendDownloaded is false on unsupported platform", () => {
-    const orig = process.platform;
-    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+  it("isBackendDownloaded is false on unsupported platform (darwin x64)", () => {
+    const platformSpy = vi
+      .spyOn(process, "platform", "get")
+      .mockReturnValue("darwin");
+    const archSpy = vi.spyOn(process, "arch", "get").mockReturnValue("x64");
     try {
       expect(isBackendDownloaded(dir)).toBe(false);
     } finally {
-      Object.defineProperty(process, "platform", { value: orig, configurable: true });
+      platformSpy.mockRestore();
+      archSpy.mockRestore();
     }
   });
 });

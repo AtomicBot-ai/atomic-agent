@@ -150,6 +150,13 @@ export function handleLocalModelsTabKey(
     callbacks.onLocalModelsBackendPullRequested?.();
     return true;
   }
+  // `G` (uppercase) cycles the managed daemon's GPU preference. On shift
+  // so it does not collide with the `g` GGUF-only pull on chat rows; the
+  // cursor's row type is intentionally not consulted.
+  if (input === "G") {
+    callbacks.onLocalModelsDeviceCycleRequested?.();
+    return true;
+  }
   if (input === "r") {
     callbacks.onLocalModelsRefreshRequested?.();
     return true;

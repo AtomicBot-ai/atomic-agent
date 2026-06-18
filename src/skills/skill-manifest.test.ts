@@ -72,4 +72,55 @@ describe("parseSkillFile", () => {
     ].join("\n");
     expect(() => parseSkillFile(content)).toThrow(/requires_tools/);
   });
+
+  it("omits `platforms` entirely when the frontmatter has no platforms key", () => {
+    const content = [
+      "---",
+      "name: cross-platform",
+      'description: "x"',
+      "version: 0.1.0",
+      "---",
+      "body",
+    ].join("\n");
+    const result = parseSkillFile(content);
+    expect("platforms" in result.manifest).toBe(false);
+  });
+
+  it("parses a valid platforms allowlist", () => {
+    const content = [
+      "---",
+      "name: mac-only",
+      'description: "x"',
+      "version: 0.1.0",
+      "platforms: [darwin]",
+      "---",
+      "body",
+    ].join("\n");
+    const result = parseSkillFile(content);
+    expect(result.manifest.platforms).toEqual(["darwin"]);
+  });
+
+  it("rejects an unknown platform value", () => {
+    const content = [
+      "---",
+      "name: bad-platform",
+      'description: "x"',
+      "version: 0.1.0",
+      "platforms: [solaris]",
+      "---",
+    ].join("\n");
+    expect(() => parseSkillFile(content)).toThrow(/platforms/);
+  });
+
+  it("rejects a non-array platforms value", () => {
+    const content = [
+      "---",
+      "name: bad-platform",
+      'description: "x"',
+      "version: 1",
+      "platforms: darwin",
+      "---",
+    ].join("\n");
+    expect(() => parseSkillFile(content)).toThrow(/platforms/);
+  });
 });

@@ -60,10 +60,24 @@ export {
 } from "./model-installer.js";
 export { resolveChatTemplatePath } from "./chat-templates.js";
 export {
+  parseListDevices,
+  pickBestDevice,
+  listVulkanDevices,
+  resolveManagedDevice,
+  type GpuDevice,
+} from "./gpu-devices.js";
+export {
+  resolveGpuBudgetGb,
+  MAC_UNIFIED_GPU_FRACTION,
+  type ResolveGpuBudgetInput,
+} from "./gpu-memory-budget.js";
+export {
   startDaemon,
   stopDaemon,
   getDaemonStatus,
   readRunningPid,
+  classifyPidLiveness,
+  ForeignDaemonError,
   probeLlamaHealth,
   buildLlamaServerArgs,
   startEmbeddingDaemon,

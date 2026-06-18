@@ -22,6 +22,8 @@ export type LocalModelsAction =
       configMode: "external" | "managed";
       activeModelId: LocalModelId | null;
       totalRamGb: number;
+      /** GPU memory budget (decimal GB) or `null` when not applicable. */
+      gpuBudgetGb: number | null;
       dataDir: string;
       at: number;
       /** Memory-v2 phase 1B. Embedding catalog rows. */

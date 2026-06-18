@@ -45,6 +45,27 @@ describe("seedStarterSkillsIfMissing", () => {
     expect(readFileSync(hijack, "utf8")).toContain("skill-creator");
   });
 
+  it("skips apple-* starters on linux but keeps cross-platform ones", async () => {
+    const result = await seedStarterSkillsIfMissing({
+      globalSkillsDir: globalDir,
+      platform: "linux",
+    });
+    expect(result.installed).toContain("skill-creator");
+    expect(result.installed).not.toContain("apple-notes");
+    expect(result.installed).not.toContain("apple-reminders");
+    expect(result.installed).not.toContain("apple-calendar");
+    expect(existsSync(join(globalDir, "apple-notes"))).toBe(false);
+  });
+
+  it("seeds apple-* starters on darwin", async () => {
+    const result = await seedStarterSkillsIfMissing({
+      globalSkillsDir: globalDir,
+      platform: "darwin",
+    });
+    expect(result.installed).toContain("apple-notes");
+    expect(existsSync(join(globalDir, "apple-notes", "SKILL.md"))).toBe(true);
+  });
+
   it("prunes a tombstoned starter skill (ddgr-web-search) and is idempotent", async () => {
     const stalePath = join(globalDir, "ddgr-web-search");
     mkdirSync(stalePath, { recursive: true });

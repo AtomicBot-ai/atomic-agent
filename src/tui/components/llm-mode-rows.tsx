@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { activeCursor, selectLlmPanelRows, type LlmPanelRow } from "../llm-panel/llm-panel-selectors.js";
+import { classifyVramFit } from "../local-models/local-models-panel-state.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 
@@ -89,9 +90,24 @@ function Row({ row, state }: { row: LlmPanelRow; state: TuiState }): ReactElemen
   const idx = rows.findIndex((candidate) => candidate.id === row.id);
   const selected = idx === activeCursor(state);
   const mark = "active" in row && row.active ? "*" : selected ? ">" : " ";
+  // A text model that does not fit the GPU memory budget is greyed out
+  // (still selectable/downloadable) and gets an orange informational
+  // badge. The nested badge sets its own colour so it stays bright.
+  const insufficientVram =
+    row.kind === "localTextModel" &&
+    classifyVramFit(row.model.def, state.localModelsPanel.gpuBudgetGb) ===
+      "insufficient";
+  const baseColor = selected
+    ? theme.colors.accentSoft
+    : insufficientVram
+      ? theme.colors.muted
+      : undefined;
   return (
-    <Text color={selected ? theme.colors.accentSoft : undefined} bold={selected}>
+    <Text color={baseColor} bold={selected}>
       {mark} {renderRowText(row, state)}
+      {insufficientVram ? (
+        <Text color={theme.colors.warnStrong}> Not enough VRAM</Text>
+      ) : null}
       <Text color={theme.colors.muted}> · {row.enterEffect}</Text>
     </Text>
   );

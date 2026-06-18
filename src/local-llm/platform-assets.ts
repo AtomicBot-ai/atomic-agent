@@ -4,7 +4,7 @@ export class UnsupportedPlatformError extends Error {
     public readonly arch: string,
   ) {
     super(
-      `managed llama.cpp backend is only built for darwin-arm64 and win32-x64; ` +
+      `managed llama.cpp backend is only built for darwin-arm64, linux-x64, and win32-x64; ` +
         `got ${platform}-${arch}. Use external mode instead.`,
     );
     this.name = "UnsupportedPlatformError";
@@ -12,7 +12,7 @@ export class UnsupportedPlatformError extends Error {
 }
 
 export interface PlatformAsset {
-  platform: "darwin" | "win32";
+  platform: "darwin" | "linux" | "win32";
   arch: "arm64" | "x64";
   assetName: string;
   binaryName: string;
@@ -27,6 +27,14 @@ export function resolvePlatformAsset(
       platform,
       arch,
       assetName: "llama-turboquant-macos-arm64.zip",
+      binaryName: "llama-server",
+    };
+  }
+  if (platform === "linux" && arch === "x64") {
+    return {
+      platform,
+      arch,
+      assetName: "llama-turboquant-linux-x64-vulkan.zip",
       binaryName: "llama-server",
     };
   }

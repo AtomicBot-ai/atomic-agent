@@ -68,6 +68,7 @@ describe("reduceLocalModelsAction", () => {
       configMode: "managed",
       activeModelId: null,
       totalRamGb: 32,
+      gpuBudgetGb: null,
       dataDir: "/tmp/data",
       at: 42,
       embeddingRows: EMPTY_EMBEDDING_ROWS,
@@ -78,6 +79,32 @@ describe("reduceLocalModelsAction", () => {
     expect(state.localModelsPanel.dataDir).toBe("/tmp/data");
     expect(state.localModelsPanel.embeddingDaemon).toEqual(DEFAULT_EMBEDDING_DAEMON);
     expect(state.localModelsPanel.embeddingRows).toEqual([]);
+  });
+
+  it("persists the GPU memory budget from the snapshot", () => {
+    let state = createInitialTuiState(SESSION);
+    expect(state.localModelsPanel.gpuBudgetGb).toBeNull();
+    state = reduceTuiState(state, {
+      type: "local_models_snapshot_loaded",
+      rows: [],
+      backend: { currentTag: null, latestTag: null, updateAvailable: null },
+      daemon: {
+        running: false,
+        healthy: false,
+        loading: false,
+        pid: null,
+        port: 19091,
+      },
+      configMode: "managed",
+      activeModelId: null,
+      totalRamGb: 32,
+      gpuBudgetGb: 8,
+      dataDir: "/tmp/data",
+      at: 5,
+      embeddingRows: EMPTY_EMBEDDING_ROWS,
+      embeddingDaemon: DEFAULT_EMBEDDING_DAEMON,
+    });
+    expect(state.localModelsPanel.gpuBudgetGb).toBe(8);
   });
 
   it("moves cursor up and down with clamp", () => {
@@ -139,6 +166,7 @@ describe("reduceLocalModelsAction", () => {
       configMode: "managed",
       activeModelId: "qwen-3.5-4b",
       totalRamGb: 32,
+      gpuBudgetGb: null,
       dataDir: "/tmp/data",
       at: 1,
       embeddingRows: EMPTY_EMBEDDING_ROWS,
@@ -263,6 +291,7 @@ describe("reduceLocalModelsAction", () => {
       configMode: "managed",
       activeModelId: "qwen-3.5-4b",
       totalRamGb: 32,
+      gpuBudgetGb: null,
       dataDir: "/tmp/data",
       at: 100,
       embeddingRows: EMPTY_EMBEDDING_ROWS,
@@ -309,6 +338,7 @@ describe("reduceLocalModelsAction", () => {
       configMode: "managed",
       activeModelId: "qwen-3.5-4b",
       totalRamGb: 32,
+      gpuBudgetGb: null,
       dataDir: "/tmp/data",
       at: 1,
       embeddingRows: [

@@ -22,6 +22,8 @@ export interface TuiColors {
   readonly muted: string;
   readonly error: string;
   readonly warn: string;
+  /** Stronger warn accent (orange) for high-visibility badges. */
+  readonly warnStrong: string;
   readonly success: string;
   readonly info: string;
 }
@@ -78,6 +80,7 @@ const COLORS: TuiColors = {
   muted: "gray",
   error: "red",
   warn: "yellow",
+  warnStrong: "#FF8800",
   success: "greenBright",
   info: "blueBright",
 };

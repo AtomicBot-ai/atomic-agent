@@ -112,6 +112,31 @@ describe("handleLocalModelsTabKey — vision-aware Enter / g hotkey", () => {
     expect(onPull).toHaveBeenCalledWith("gemma-4-e4b", "with-mmproj");
   });
 
+  it("'G' cycles the managed GPU device regardless of the cursor row type", () => {
+    const onCycle = vi.fn();
+    const callbacks: TuiAppCallbacks = {
+      onApprovalDecision: vi.fn(),
+      onAbort: vi.fn(),
+      onQuit: vi.fn(),
+      onMessageSubmitted: vi.fn(),
+      onLocalModelsDeviceCycleRequested: onCycle,
+    };
+    const state = stateWithRow(
+      makeRow("gemma-4-e4b", {
+        supportsVision: true,
+        downloaded: true,
+        mmprojStatus: "downloaded",
+      }),
+    );
+    const handled = handleLocalModelsTabKey("G", emptyKey({ shift: true }), {
+      state,
+      dispatch: vi.fn(),
+      callbacks,
+    });
+    expect(handled).toBe(true);
+    expect(onCycle).toHaveBeenCalledTimes(1);
+  });
+
   it("Enter on a downloaded GGUF + missing mmproj row triggers mmproj-only pull", () => {
     const onPull = vi.fn();
     const callbacks: TuiAppCallbacks = {

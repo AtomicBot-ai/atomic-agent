@@ -466,7 +466,7 @@ export class ChatOrchestrator {
     this.skills.shutdown();
     this.memory.shutdown();
     this.mcp.shutdown();
-    this.localModels.shutdown();
+    await this.localModels.shutdown();
     this.llmHealth.stop();
     this.telegram.shutdown();
     await this.runtime.shutdown();

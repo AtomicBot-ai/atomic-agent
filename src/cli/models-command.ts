@@ -1,5 +1,6 @@
 import { getConfig } from "../config/index.js";
 import {
+  runLocalModelsDevices,
   runLocalModelsList,
   runLocalModelsListEmbeddings,
   runLocalModelsPull,
@@ -10,6 +11,7 @@ import {
   runLocalModelsStop,
   runLocalModelsUpdate,
   runLocalModelsUse,
+  runLocalModelsUseDevice,
   runLocalModelsUseEmbedding,
 } from "./models-handlers.js";
 
@@ -29,6 +31,10 @@ const HELP =
     "  update                        Download latest backend from GitHub Releases",
     "                                (stops daemon first; does not auto-restart)",
     "  remove <id>                   Delete a downloaded model (refuses if active + daemon running)",
+    "",
+    "GPU subcommands:",
+    "  devices                       List GPU devices (llama-server --list-devices); active marked with *",
+    "  use-device <auto|cpu|Vulkan0> Set the managed daemon's GPU (auto-picks best discrete by default)",
     "",
     "Embedding subcommands (memory-v2 phase 1B — second daemon for /embedding):",
     "  list-embeddings               Show embedding catalog + disk presence + daemon health",
@@ -73,6 +79,10 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return runLocalModelsUpdate();
       case "remove":
         return runLocalModelsRemove(args[1]);
+      case "devices":
+        return runLocalModelsDevices();
+      case "use-device":
+        return runLocalModelsUseDevice(args[1]);
       case "list-embeddings":
         return runLocalModelsListEmbeddings();
       case "pull-embedding":

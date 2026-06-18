@@ -9,20 +9,18 @@ async function writeSkill(
   name: string,
   description: string,
   version = "0.1.0",
+  platforms?: string[],
 ): Promise<void> {
   await mkdir(join(root, name), { recursive: true });
-  await writeFile(
-    join(root, name, "SKILL.md"),
-    [
-      "---",
-      `name: ${name}`,
-      `description: "${description}"`,
-      `version: ${version}`,
-      "---",
-      "body",
-    ].join("\n"),
-    "utf8",
-  );
+  const lines = [
+    "---",
+    `name: ${name}`,
+    `description: "${description}"`,
+    `version: ${version}`,
+  ];
+  if (platforms) lines.push(`platforms: [${platforms.join(", ")}]`);
+  lines.push("---", "body");
+  await writeFile(join(root, name, "SKILL.md"), lines.join("\n"), "utf8");
 }
 
 describe("loadSkills", () => {
@@ -71,5 +69,27 @@ describe("loadSkills", () => {
     expect(result.skills).toEqual([]);
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]!.path).toContain("broken");
+  });
+
+  it("excludes a skill whose platforms allowlist omits the current OS", async () => {
+    await writeSkill(global, "mac-only", "darwin skill", "0.1.0", ["darwin"]);
+    await writeSkill(global, "everywhere", "cross-platform", "0.1.0");
+    const result = await loadSkills({
+      globalDir: global,
+      projectDir: null,
+      platform: "linux",
+    });
+    expect(result.skills.map((s) => s.manifest.name)).toEqual(["everywhere"]);
+  });
+
+  it("includes a platform-gated skill on a matching OS", async () => {
+    await writeSkill(global, "mac-only", "darwin skill", "0.1.0", ["darwin"]);
+    const result = await loadSkills({
+      globalDir: global,
+      projectDir: null,
+      platform: "darwin",
+    });
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0]!.manifest.name).toBe("mac-only");
   });
 });

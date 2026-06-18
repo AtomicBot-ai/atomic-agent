@@ -30,6 +30,16 @@ const GITHUB_REPO = "AtomicBot-ai/atomic-llama-cpp-turboquant";
  */
 const RELEASE_CACHE_TTL_MS = 10 * 60_000;
 
+/**
+ * How many releases to scan when looking for the newest one that ships
+ * our platform asset. The turboquant repo publishes a separate release
+ * per platform, so `/releases/latest` (a single global "latest") is
+ * unreliable — a Windows release can be newest while the Linux asset
+ * lives an older release back. Scanning the list and matching on asset
+ * name is robust to that.
+ */
+const RELEASES_PER_PAGE = 30;
+
 export type ReleaseAsset = { name: string; browser_download_url: string };
 
 export interface LatestReleaseInfo {
@@ -42,24 +52,32 @@ interface ReleaseCacheEntry {
   release: LatestReleaseInfo;
 }
 
-let releaseCache: ReleaseCacheEntry | null = null;
+/**
+ * Cache keyed by platform asset name. Each platform resolves to a
+ * different newest release, so a single global slot would thrash when
+ * the Models tab and an install run from different platforms share a
+ * process (and keeps the cache correct under test platform mocking).
+ */
+const releaseCache = new Map<string, ReleaseCacheEntry>();
 
 /** Test/utility helper to clear the in-memory release cache. */
 export function resetLatestReleaseCache(): void {
-  releaseCache = null;
+  releaseCache.clear();
 }
 
 export async function fetchLatestRelease(opts?: {
   force?: boolean;
 }): Promise<LatestReleaseInfo> {
+  const { assetName } = resolvePlatformAsset();
+  const cached = releaseCache.get(assetName);
   if (
     !opts?.force &&
-    releaseCache &&
-    Date.now() - releaseCache.fetchedAt < RELEASE_CACHE_TTL_MS
+    cached &&
+    Date.now() - cached.fetchedAt < RELEASE_CACHE_TTL_MS
   ) {
-    return releaseCache.release;
+    return cached.release;
   }
-  const url = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
+  const url = `https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=${RELEASES_PER_PAGE}`;
   const headers: Record<string, string> = {
     "User-Agent": "atomic-agent/local-llm-backend",
     Accept: "application/vnd.github+json",
@@ -72,17 +90,28 @@ export async function fetchLatestRelease(opts?: {
     if (res.status === 403 || res.status === 429) {
       throw new GithubRateLimitedError(res.status);
     }
-    throw new Error(`Failed to fetch latest release: HTTP ${res.status}`);
+    throw new Error(`Failed to fetch releases: HTTP ${res.status}`);
   }
-  const data = (await res.json()) as {
+  const data = (await res.json()) as Array<{
     tag_name: string;
+    draft?: boolean;
     assets: Array<{ name: string; browser_download_url: string }>;
-  };
+  }>;
+  // GitHub lists releases newest-first; pick the first (non-draft) whose
+  // assets include the asset for the current platform.
+  const match = (Array.isArray(data) ? data : []).find(
+    (r) => !r.draft && (r.assets ?? []).some((a) => a.name === assetName),
+  );
+  if (!match) {
+    throw new Error(
+      `No release found containing asset ${assetName} (scanned ${RELEASES_PER_PAGE} releases)`,
+    );
+  }
   const release: LatestReleaseInfo = {
-    tag: data.tag_name,
-    assets: data.assets ?? [],
+    tag: match.tag_name,
+    assets: match.assets ?? [],
   };
-  releaseCache = { fetchedAt: Date.now(), release };
+  releaseCache.set(assetName, { fetchedAt: Date.now(), release });
   return release;
 }
 

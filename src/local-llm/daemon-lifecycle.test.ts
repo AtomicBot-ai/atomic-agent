@@ -1,8 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { resolveEmbeddingPidFilePath, resolvePidFilePath } from "./backend-paths.js";
 import {
   buildEmbeddingServerArgs,
   buildLlamaServerArgs,
+  ForeignDaemonError,
+  readRunningPid,
+  stopDaemon,
+  stopEmbeddingDaemon,
   type DaemonStartOptions,
   type EmbeddingDaemonStartOptions,
 } from "./daemon-lifecycle.js";
@@ -94,6 +102,34 @@ describe("buildLlamaServerArgs", () => {
     expect(args).not.toContain("--batch-size");
   });
 
+  it("appends --device when a concrete device id is set, keeping -ngl -1", () => {
+    const args = buildLlamaServerArgs(
+      { ...baseOpts, device: "Vulkan0" },
+      "/m.gguf",
+      "alias",
+    );
+    const idx = args.indexOf("--device");
+    expect(idx).toBeGreaterThan(-1);
+    expect(args[idx + 1]).toBe("Vulkan0");
+    expect(args[args.indexOf("-ngl") + 1]).toBe("-1");
+  });
+
+  it("forces -ngl 0 and emits no --device when device is 'cpu'", () => {
+    const args = buildLlamaServerArgs(
+      { ...baseOpts, device: "cpu" },
+      "/m.gguf",
+      "alias",
+    );
+    expect(args[args.indexOf("-ngl") + 1]).toBe("0");
+    expect(args).not.toContain("--device");
+  });
+
+  it("does NOT emit --device when device is undefined", () => {
+    const args = buildLlamaServerArgs(baseOpts, "/m.gguf", "alias");
+    expect(args).not.toContain("--device");
+    expect(args[args.indexOf("-ngl") + 1]).toBe("-1");
+  });
+
   it("emits both --chat-template-file and --mmproj together", () => {
     const args = buildLlamaServerArgs(
       {
@@ -160,5 +196,154 @@ describe("buildEmbeddingServerArgs (memory-v2 phase 1B)", () => {
     const idx = args.indexOf("--pooling");
     expect(idx).toBeGreaterThan(-1);
     expect(args[idx + 1]).toBe("cls");
+  });
+
+  it("appends --device for a concrete device id", () => {
+    const args = buildEmbeddingServerArgs(
+      {
+        dataDir: "/tmp",
+        modelId: "nomic-embed-text-v1.5",
+        port: 19092,
+        device: "Vulkan0",
+      },
+      "/tmp/m.gguf",
+    );
+    const idx = args.indexOf("--device");
+    expect(idx).toBeGreaterThan(-1);
+    expect(args[idx + 1]).toBe("Vulkan0");
+  });
+
+  it("forces -ngl 0 for device 'cpu'", () => {
+    const args = buildEmbeddingServerArgs(
+      {
+        dataDir: "/tmp",
+        modelId: "nomic-embed-text-v1.5",
+        port: 19092,
+        device: "cpu",
+      },
+      "/tmp/m.gguf",
+    );
+    expect(args[args.indexOf("-ngl") + 1]).toBe("0");
+    expect(args).not.toContain("--device");
+  });
+});
+
+describe("readRunningPid (cross-user ownership)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function withTempDataDir(fn: (dataDir: string) => void): void {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-pid-`);
+    try {
+      fn(dataDir);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }
+
+  it("treats EPERM (process owned by another user) as alive and keeps the pid file", () => {
+    withTempDataDir((dataDir) => {
+      const pidPath = resolvePidFilePath(dataDir);
+      writeFileSync(pidPath, "4242", "utf-8");
+      vi.spyOn(process, "kill").mockImplementation(() => {
+        const err = new Error("operation not permitted") as NodeJS.ErrnoException;
+        err.code = "EPERM";
+        throw err;
+      });
+
+      expect(readRunningPid(dataDir, "chat")).toBe(4242);
+      expect(existsSync(pidPath)).toBe(true);
+    });
+  });
+
+  it("treats ESRCH (no such process) as dead and removes the pid file", () => {
+    withTempDataDir((dataDir) => {
+      const pidPath = resolvePidFilePath(dataDir);
+      writeFileSync(pidPath, "4242", "utf-8");
+      vi.spyOn(process, "kill").mockImplementation(() => {
+        const err = new Error("no such process") as NodeJS.ErrnoException;
+        err.code = "ESRCH";
+        throw err;
+      });
+
+      expect(readRunningPid(dataDir, "chat")).toBeNull();
+      expect(existsSync(pidPath)).toBe(false);
+    });
+  });
+
+  it("applies the same EPERM handling to the embedding pid file", () => {
+    withTempDataDir((dataDir) => {
+      const pidPath = resolveEmbeddingPidFilePath(dataDir);
+      writeFileSync(pidPath, "7777", "utf-8");
+      vi.spyOn(process, "kill").mockImplementation(() => {
+        const err = new Error("operation not permitted") as NodeJS.ErrnoException;
+        err.code = "EPERM";
+        throw err;
+      });
+
+      expect(readRunningPid(dataDir, "embedding")).toBe(7777);
+      expect(existsSync(pidPath)).toBe(true);
+    });
+  });
+});
+
+describe("stopDaemon / stopEmbeddingDaemon (cross-user ownership)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  async function withTempDataDir(fn: (dataDir: string) => Promise<void>): Promise<void> {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-stop-`);
+    try {
+      await fn(dataDir);
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }
+
+  function mockKillEperm(): void {
+    vi.spyOn(process, "kill").mockImplementation(() => {
+      const err = new Error("operation not permitted") as NodeJS.ErrnoException;
+      err.code = "EPERM";
+      throw err;
+    });
+  }
+
+  it("throws ForeignDaemonError and keeps the pid file for a foreign chat daemon", async () => {
+    await withTempDataDir(async (dataDir) => {
+      const pidPath = resolvePidFilePath(dataDir);
+      writeFileSync(pidPath, "4242", "utf-8");
+      mockKillEperm();
+
+      await expect(stopDaemon(dataDir)).rejects.toBeInstanceOf(ForeignDaemonError);
+      expect(existsSync(pidPath)).toBe(true);
+    });
+  });
+
+  it("removes the pid file for a dead chat daemon (ESRCH)", async () => {
+    await withTempDataDir(async (dataDir) => {
+      const pidPath = resolvePidFilePath(dataDir);
+      writeFileSync(pidPath, "4242", "utf-8");
+      vi.spyOn(process, "kill").mockImplementation(() => {
+        const err = new Error("no such process") as NodeJS.ErrnoException;
+        err.code = "ESRCH";
+        throw err;
+      });
+
+      await stopDaemon(dataDir);
+      expect(existsSync(pidPath)).toBe(false);
+    });
+  });
+
+  it("throws ForeignDaemonError and keeps the pid file for a foreign embedding daemon", async () => {
+    await withTempDataDir(async (dataDir) => {
+      const pidPath = resolveEmbeddingPidFilePath(dataDir);
+      writeFileSync(pidPath, "7777", "utf-8");
+      mockKillEperm();
+
+      await expect(stopEmbeddingDaemon(dataDir)).rejects.toBeInstanceOf(ForeignDaemonError);
+      expect(existsSync(pidPath)).toBe(true);
+    });
   });
 });

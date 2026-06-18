@@ -1,7 +1,11 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
+import { platform as osPlatform } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { isSkillEligibleForPlatform } from "./skill-loader.js";
+import { parseSkillFile } from "./skill-manifest.js";
 
 export interface SeedStarterSkillsLogger {
   debug(message: string, context?: Record<string, unknown>): void;
@@ -11,6 +15,12 @@ export interface SeedStarterSkillsLogger {
 export interface SeedStarterSkillsOptions {
   globalSkillsDir: string;
   logger?: SeedStarterSkillsLogger;
+  /**
+   * OS to gate starter skills against. Defaults to the live
+   * `os.platform()`; injectable for tests. A starter whose SKILL.md
+   * declares a `platforms` allowlist excluding this OS is skipped.
+   */
+  platform?: NodeJS.Platform;
 }
 
 export interface SeedStarterSkillsResult {
@@ -81,6 +91,7 @@ export async function seedStarterSkillsIfMissing(
   options: SeedStarterSkillsOptions,
 ): Promise<SeedStarterSkillsResult> {
   const logger = options.logger;
+  const platform = options.platform ?? osPlatform();
   const sourceDir = resolveStarterSkillsSourceDir();
   const installed: string[] = [];
   const removed = await pruneRemovedStarterSkills(
@@ -115,7 +126,20 @@ export async function seedStarterSkillsIfMissing(
       continue;
     }
     if (!st.isDirectory()) continue;
-    if (!existsSync(join(srcPath, "SKILL.md"))) continue;
+    const manifestPath = join(srcPath, "SKILL.md");
+    if (!existsSync(manifestPath)) continue;
+
+    // Skip starters whose manifest excludes the current OS (e.g. the
+    // apple-* skills on Linux). A manifest that fails to parse is left
+    // to the loader to report; here we fall through and copy it so the
+    // failure surfaces consistently.
+    if (!isStarterEligible(manifestPath, platform)) {
+      logger?.debug("starter-skills: skipping platform-mismatched starter", {
+        skill: name,
+        platform,
+      });
+      continue;
+    }
 
     const destPath = join(options.globalSkillsDir, name);
     if (existsSync(destPath)) {
@@ -134,6 +158,25 @@ export async function seedStarterSkillsIfMissing(
   }
 
   return { sourceDir, installed, removed };
+}
+
+/**
+ * Decide whether a starter skill should be seeded on `platform` by
+ * reading its SKILL.md `platforms` allowlist. A manifest that cannot be
+ * read or parsed is treated as eligible (fail-open) so the loader is the
+ * single place that reports a malformed manifest.
+ */
+function isStarterEligible(
+  manifestPath: string,
+  platform: NodeJS.Platform,
+): boolean {
+  try {
+    const content = readFileSync(manifestPath, "utf8");
+    const parsed = parseSkillFile(content);
+    return isSkillEligibleForPlatform(parsed.manifest, platform);
+  } catch {
+    return true;
+  }
 }
 
 /**

@@ -1,10 +1,12 @@
 ---
 name: apple-notes
 description: Manage Apple Notes via the `memo` CLI on macOS — create, view, search, edit, export.
-version: 1.2.0
+version: 1.2.1
 requires_tools:
   - os.shell.run
 dangerous: false
+platforms:
+  - darwin
 ---
 
 # apple-notes

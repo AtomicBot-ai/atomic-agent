@@ -703,6 +703,16 @@ export interface UserManagedLocalLlmConfig {
   port: number;
   dataDirOverride: string | null;
   autoUpdate: boolean;
+  /**
+   * Compute-device preference for the managed llama.cpp daemon:
+   *   - `"auto"` (default) — enumerate via `llama-server --list-devices`
+   *     at start and pick the best discrete GPU; CPU fallback when none.
+   *   - a concrete backend device id (e.g. `"Vulkan0"`) — pin offload to
+   *     that device.
+   *   - `"cpu"` — force CPU-only (`-ngl 0`).
+   * Resolved in `startDaemon` via `resolveManagedDevice`.
+   */
+  device: string;
 }
 
 /**
@@ -1178,7 +1188,7 @@ export interface UserConfigFile {
   llm?: import("./llm-config.js").UserLlmFileConfig;
 }
 
-export const USER_CONFIG_VERSION = 25 as const;
+export const USER_CONFIG_VERSION = 26 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1246,6 +1256,9 @@ export type RewriterGateMode = "heuristic" | "embedding" | "always";
  * v24 added the optional `llm.*` provider registry block. When
  * absent, the runtime synthesizes `local-llama` from `localModels.*`
  * (byte-stable for existing installs).
+ * v25→v26 added `localModels.managed.device` (default `"auto"`) so the
+ * managed daemon auto-picks the best GPU at start; older files inherit
+ * `"auto"` transparently.
  * Older files are transparently upgraded by filling missing
  * blocks/fields from `USER_CONFIG_DEFAULTS`. Anything older than v5
  * is not migrated: this is active development, callers delete their
@@ -1272,6 +1285,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   22,
   23,
   24,
+  25,
   USER_CONFIG_VERSION,
 ];
 
@@ -1286,6 +1300,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       port: 19091,
       dataDirOverride: null,
       autoUpdate: false,
+      device: "auto",
     },
     embeddings: {
       enabled: false,
@@ -2237,6 +2252,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     autoUpdate: parseBool(
       rawManaged.autoUpdate ?? USER_CONFIG_DEFAULTS.localModels.managed.autoUpdate,
       "localModels.managed.autoUpdate",
+    ),
+    device: parseNonEmptyString(
+      rawManaged.device ?? USER_CONFIG_DEFAULTS.localModels.managed.device,
+      "localModels.managed.device",
     ),
   };
 

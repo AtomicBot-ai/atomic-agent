@@ -17,11 +17,15 @@ import {
   isKnownLocalModelId,
   isMmprojDownloaded,
   isModelDownloaded,
+  listVulkanDevices,
   LOCAL_MODELS_CATALOG,
   readBackendVersion,
   removeModel,
   resolveChatTemplatePath,
+  resolveManagedDevice,
   resolveMmprojFilePath,
+  resolvePlatformAsset,
+  resolveServerBinPath,
   startChatAndEmbeddingDaemons,
   stopChatAndEmbeddingDaemons,
 } from "../local-llm/index.js";
@@ -217,6 +221,15 @@ export async function runLocalModelsStart(): Promise<number> {
     }
   }
 
+  // Resolve the GPU preference once so both daemons land on the same
+  // device and we can name the chosen device in the start output.
+  const { binaryName } = resolvePlatformAsset();
+  const binPath = resolveServerBinPath(dataDir, binaryName);
+  const device = await resolveManagedDevice(binPath, cfg.localModels.managed.device);
+  process.stdout.write(
+    `device:         ${describeDeviceChoice(cfg.localModels.managed.device, device)}\n`,
+  );
+
   try {
     const result = await startChatAndEmbeddingDaemons({
       chat: {
@@ -225,6 +238,7 @@ export async function runLocalModelsStart(): Promise<number> {
         port: cfg.localModels.managed.port,
         ...(tpl ? { chatTemplateFile: tpl } : {}),
         ...(mmprojFile ? { mmprojFile } : {}),
+        ...(device ? { device } : {}),
       },
       ...(embRequested && embReady
         ? {
@@ -232,6 +246,7 @@ export async function runLocalModelsStart(): Promise<number> {
               dataDir,
               modelId: embCfg.modelId as never,
               port: embCfg.port,
+              ...(device ? { device } : {}),
             },
           }
         : {}),
@@ -268,8 +283,113 @@ export async function runLocalModelsStart(): Promise<number> {
 }
 
 export async function runLocalModelsStop(): Promise<number> {
-  await stopChatAndEmbeddingDaemons(getConfig().paths.localModelsDataDir);
+  try {
+    await stopChatAndEmbeddingDaemons(getConfig().paths.localModelsDataDir);
+  } catch (e) {
+    process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
+    return 1;
+  }
   process.stdout.write("stopped\n");
+  return 0;
+}
+
+/**
+ * Human-readable summary of how the configured device preference
+ * resolved at start. `configured` is the raw config value (`auto` /
+ * `cpu` / a device id); `resolved` is what `resolveManagedDevice`
+ * returned (`undefined` means no GPU was picked → llama.cpp default /
+ * CPU fallback).
+ */
+function describeDeviceChoice(
+  configured: string,
+  resolved: string | undefined,
+): string {
+  if (configured === "cpu") return "cpu (forced, -ngl 0)";
+  if (configured === "auto") {
+    return resolved ? `auto → ${resolved}` : "auto → CPU (no GPU detected)";
+  }
+  return resolved ?? configured;
+}
+
+const DEVICE_ID_RE = /^[A-Za-z]+\d+$/;
+
+/**
+ * List compute devices reported by `llama-server --list-devices`. The
+ * device the current config would offload to is marked with `*`.
+ */
+export async function runLocalModelsDevices(): Promise<number> {
+  const cfg = getConfig();
+  const dataDir = cfg.paths.localModelsDataDir;
+  if (!isBackendDownloaded(dataDir)) {
+    process.stderr.write(
+      "backend not downloaded; run 'atomic-agent models update' first\n",
+    );
+    return 1;
+  }
+  const { binaryName } = resolvePlatformAsset();
+  const binPath = resolveServerBinPath(dataDir, binaryName);
+  const configured = cfg.localModels.managed.device;
+  const devices = await listVulkanDevices(binPath);
+  const resolved = await resolveManagedDevice(binPath, configured);
+
+  process.stdout.write(`configured device: ${configured}\n`);
+  process.stdout.write(
+    `effective device:  ${describeDeviceChoice(configured, resolved)}\n\n`,
+  );
+  if (devices.length === 0) {
+    process.stdout.write(
+      "no GPU devices reported (will run on CPU). Install a Vulkan driver for GPU acceleration.\n",
+    );
+    return 0;
+  }
+  process.stdout.write("ID         | VRAM        | DEVICE\n");
+  for (const d of devices) {
+    const active = d.id === resolved ? "*" : " ";
+    const vram = d.totalMemMiB > 0 ? `${d.totalMemMiB} MiB` : "n/a";
+    process.stdout.write(
+      `${active} ${d.id.padEnd(8)} | ${vram.padEnd(11)} | ${d.description}\n`,
+    );
+  }
+  return 0;
+}
+
+/**
+ * Set the managed daemon's device preference (`auto` / `cpu` / a device
+ * id like `Vulkan0`). Persists to `config.json`; the operator restarts
+ * the daemon to apply.
+ */
+export async function runLocalModelsUseDevice(
+  arg: string | undefined,
+): Promise<number> {
+  const value = arg?.trim();
+  if (!value) {
+    process.stderr.write(
+      "usage: atomic-agent models use-device <auto|cpu|Vulkan0>\n",
+    );
+    return 1;
+  }
+  if (value !== "auto" && value !== "cpu" && !DEVICE_ID_RE.test(value)) {
+    process.stderr.write(
+      `invalid device ${JSON.stringify(value)}. Expected 'auto', 'cpu', or a device id ` +
+        "(e.g. Vulkan0 — see 'atomic-agent models devices').\n",
+    );
+    return 1;
+  }
+  const cfg = getConfig();
+  const path = cfg.paths.userConfigFile;
+  const user = ensureUserConfigFileSync(path);
+  const next: UserConfigFile = {
+    ...user,
+    localModels: {
+      ...user.localModels,
+      managed: { ...user.localModels.managed, device: value },
+    },
+  };
+  writeUserConfigFileSync(path, next);
+  resetConfigCache();
+  process.stdout.write(
+    `device set to ${value}. run 'atomic-agent models start' (or restart) to apply.\n`,
+  );
   return 0;
 }
 

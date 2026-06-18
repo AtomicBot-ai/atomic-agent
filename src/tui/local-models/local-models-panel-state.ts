@@ -137,6 +137,14 @@ export interface LocalModelsPanelState {
    * what the host can realistically load.
    */
   totalRamGb: number | null;
+  /**
+   * GPU memory budget (decimal GB) the active model would have to fit
+   * into: unified-memory fraction on macOS, discrete VRAM of the chosen
+   * device on Linux/Windows. `null` when there is no meaningful budget
+   * to compare against (external mode / CPU-forced / no GPU / unknown),
+   * in which case the VRAM badge is suppressed.
+   */
+  gpuBudgetGb: number | null;
   /** Rows for the embedding catalog. Empty while the snapshot has not landed. */
   embeddingRows: readonly EmbeddingModelRow[];
   /** Embedding daemon snapshot. `null` until the first refresh resolves. */
@@ -219,6 +227,7 @@ export function createInitialLocalModelsPanelState(): LocalModelsPanelState {
     removeConfirmId: null,
     dataDir: null,
     totalRamGb: null,
+    gpuBudgetGb: null,
     embeddingRows: [],
     embeddingDaemon: null,
     embeddingRemoveConfirmId: null,
@@ -241,4 +250,37 @@ export function classifyRamFit(
   if (totalRamGb < def.minRamGb) return "insufficient";
   if (totalRamGb < def.recommendedRamGb) return "tight";
   return "ok";
+}
+
+/**
+ * Headroom multiplier on the raw GGUF weight size to approximate the
+ * runtime GPU memory footprint (KV-cache, compute buffers, projector).
+ * Deliberately coarse — the badge only needs to catch the clear "won't
+ * fit" cases, not predict the exact allocation.
+ */
+export const MODEL_VRAM_HEADROOM = 1.2;
+
+/**
+ * Estimated GPU memory (decimal GB) a chat model needs to load fully:
+ * the GGUF weight size plus a fixed headroom factor.
+ */
+export function estimateModelVramNeedGb(def: LocalModelDef): number {
+  return def.fileSizeGb * MODEL_VRAM_HEADROOM;
+}
+
+export type VramFit = "ok" | "insufficient";
+
+/**
+ * Classify a model against the detected GPU memory budget. `null` means
+ * the budget is not known (external mode / CPU-forced / no GPU / first
+ * snapshot pending) — the UI then suppresses the VRAM badge entirely.
+ * Mirrors `classifyRamFit` but binary: only the negative case is
+ * surfaced to the operator.
+ */
+export function classifyVramFit(
+  def: LocalModelDef,
+  gpuBudgetGb: number | null,
+): VramFit | null {
+  if (gpuBudgetGb === null) return null;
+  return estimateModelVramNeedGb(def) > gpuBudgetGb ? "insufficient" : "ok";
 }

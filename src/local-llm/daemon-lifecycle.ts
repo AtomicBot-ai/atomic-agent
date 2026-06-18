@@ -16,6 +16,7 @@ import {
   resolvePidFilePath,
   resolveServerBinPath,
 } from "./backend-paths.js";
+import { resolveManagedDevice } from "./gpu-devices.js";
 import {
   getEmbeddingModelDef,
   getLocalModelDef,
@@ -38,6 +39,16 @@ export interface DaemonStartOptions {
    * undefined for text-only operation.
    */
   mmprojFile?: string;
+  /**
+   * Resolved compute device for offloading. A concrete backend device
+   * id (e.g. `Vulkan0`) appends `--device <id>`; the literal `"cpu"`
+   * forces CPU-only by overriding `-ngl` to `0`; `undefined` leaves the
+   * llama.cpp default device selection in place (legacy behavior).
+   * `startDaemon` resolves the configured preference (`auto` / id /
+   * `cpu`) through `resolveManagedDevice` before building args, so a
+   * value passed here is treated as an explicit override.
+   */
+  device?: string;
 }
 
 /**
@@ -62,7 +73,7 @@ export function buildLlamaServerArgs(
     "--host",
     "127.0.0.1",
     "-ngl",
-    "-1",
+    opts.device === "cpu" ? "0" : "-1",
     "--flash-attn",
     "auto",
     "--cache-type-k",
@@ -75,6 +86,9 @@ export function buildLlamaServerArgs(
     "-a",
     modelAlias,
   ];
+  if (opts.device && opts.device !== "cpu") {
+    args.push("--device", opts.device);
+  }
   if (opts.chatTemplateFile) {
     args.push("--chat-template-file", opts.chatTemplateFile);
   }
@@ -129,6 +143,41 @@ export async function probeLlamaHealth(
   }
 }
 
+/**
+ * Thrown by `stopDaemon` / `stopEmbeddingDaemon` when the recorded pid
+ * belongs to a live process owned by another user (e.g. the daemon was
+ * started via sudo/root and the stop call now runs as a regular user).
+ * We cannot signal such a process, and silently dropping its pid file
+ * would orphan a live GPU process while making the status indicator
+ * report it as stopped — so the stop path surfaces this instead.
+ */
+export class ForeignDaemonError extends Error {
+  constructor(public readonly pid: number) {
+    super(
+      `cannot stop llama-server pid ${pid}: process is owned by another user — ` +
+        `re-run as that user (or with sudo), or stop it manually`,
+    );
+    this.name = "ForeignDaemonError";
+  }
+}
+
+/**
+ * Classify a recorded pid via signal 0. `process.kill(pid, 0)` throws
+ * ESRCH when the process is gone and EPERM when it is alive but owned
+ * by another user, so the two failure modes must not be conflated:
+ *   - `alive`   — the process exists and we can signal it.
+ *   - `foreign` — the process exists but is owned by another user.
+ *   - `dead`    — no such process (or any other probe failure).
+ */
+export function classifyPidLiveness(pid: number): "alive" | "foreign" | "dead" {
+  try {
+    process.kill(pid, 0);
+    return "alive";
+  } catch (err) {
+    return (err as NodeJS.ErrnoException | null)?.code === "EPERM" ? "foreign" : "dead";
+  }
+}
+
 export function readRunningPid(
   dataDir: string,
   role: "chat" | "embedding" = "chat",
@@ -152,9 +201,11 @@ export function readRunningPid(
     }
     return null;
   }
-  try {
-    process.kill(pid, 0);
-  } catch {
+  // Only ESRCH ("dead") drops the pid file. A `foreign` process (alive,
+  // owned by another user) is still running, so its tracking must stay —
+  // otherwise the status indicator would report a healthy daemon as
+  // stopped (we also have no right to unlink its pid file).
+  if (classifyPidLiveness(pid) === "dead") {
     try {
       unlinkSync(pidPath);
     } catch {
@@ -206,7 +257,8 @@ export async function startDaemon(opts: DaemonStartOptions): Promise<{ pid: numb
     );
   }
 
-  const args = buildLlamaServerArgs(opts, modelPath, model.id);
+  const device = await resolveManagedDevice(binPath, opts.device);
+  const args = buildLlamaServerArgs({ ...opts, device }, modelPath, model.id);
 
   const logFd = openSync(resolveLogFilePath(opts.dataDir), "a");
   try {
@@ -249,20 +301,17 @@ export async function stopDaemon(
     return;
   }
 
-  let alive = false;
-  try {
-    process.kill(pid, 0);
-    alive = true;
-  } catch {
-    /* dead */
-  }
-  if (!alive) {
+  const liveness = classifyPidLiveness(pid);
+  if (liveness === "dead") {
     try {
       unlinkSync(pidPath);
     } catch {
       /* ignore */
     }
     return;
+  }
+  if (liveness === "foreign") {
+    throw new ForeignDaemonError(pid);
   }
 
   const timeoutMs = opts?.timeoutMs ?? 3000;
@@ -329,6 +378,14 @@ export interface EmbeddingDaemonStartOptions {
   dataDir: string;
   modelId: EmbeddingModelId;
   port: number;
+  /**
+   * Resolved compute device for the embedding daemon. Same semantics as
+   * `DaemonStartOptions.device` — a concrete id appends `--device`,
+   * `"cpu"` forces `-ngl 0`, `undefined` keeps the llama.cpp default.
+   * `startEmbeddingDaemon` resolves the configured preference so both
+   * daemons land on the same chosen GPU.
+   */
+  device?: string;
 }
 
 /**
@@ -344,7 +401,7 @@ export function buildEmbeddingServerArgs(
   modelPath: string,
 ): string[] {
   const model = getEmbeddingModelDef(opts.modelId);
-  return [
+  const args = [
     "--no-webui",
     "-m",
     modelPath,
@@ -353,7 +410,7 @@ export function buildEmbeddingServerArgs(
     "--host",
     "127.0.0.1",
     "-ngl",
-    "-1",
+    opts.device === "cpu" ? "0" : "-1",
     "--embeddings",
     "--pooling",
     model.pooling,
@@ -362,6 +419,10 @@ export function buildEmbeddingServerArgs(
     "-a",
     model.id,
   ];
+  if (opts.device && opts.device !== "cpu") {
+    args.push("--device", opts.device);
+  }
+  return args;
 }
 
 export async function startEmbeddingDaemon(
@@ -389,7 +450,8 @@ export async function startEmbeddingDaemon(
     );
   }
 
-  const args = buildEmbeddingServerArgs(opts, modelPath);
+  const device = await resolveManagedDevice(binPath, opts.device);
+  const args = buildEmbeddingServerArgs({ ...opts, device }, modelPath);
 
   const logFd = openSync(resolveEmbeddingLogFilePath(opts.dataDir), "a");
   try {
@@ -456,20 +518,17 @@ export async function stopEmbeddingDaemon(
     return;
   }
 
-  let alive = false;
-  try {
-    process.kill(pid, 0);
-    alive = true;
-  } catch {
-    /* dead */
-  }
-  if (!alive) {
+  const liveness = classifyPidLiveness(pid);
+  if (liveness === "dead") {
     try {
       unlinkSync(pidPath);
     } catch {
       /* ignore */
     }
     return;
+  }
+  if (liveness === "foreign") {
+    throw new ForeignDaemonError(pid);
   }
 
   const timeoutMs = opts?.timeoutMs ?? 3000;
@@ -586,6 +645,24 @@ export async function stopChatAndEmbeddingDaemons(
   dataDir: string,
   opts?: { timeoutMs?: number },
 ): Promise<void> {
-  await stopEmbeddingDaemon(dataDir, opts);
-  await stopDaemon(dataDir, opts);
+  // Stop both sides independently: a failure on one (e.g. a foreign,
+  // cross-user daemon raising `ForeignDaemonError`) must not prevent the
+  // other from being stopped. Collected errors are re-thrown afterwards so
+  // callers still learn that the stop was not fully successful.
+  const errors: unknown[] = [];
+  try {
+    await stopEmbeddingDaemon(dataDir, opts);
+  } catch (e) {
+    errors.push(e);
+  }
+  try {
+    await stopDaemon(dataDir, opts);
+  } catch (e) {
+    errors.push(e);
+  }
+  if (errors.length > 0) {
+    throw new Error(
+      errors.map((e) => (e instanceof Error ? e.message : String(e))).join("; "),
+    );
+  }
 }

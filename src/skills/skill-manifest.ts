@@ -1,5 +1,13 @@
 import { parse as parseYaml } from "yaml";
 
+export type SkillPlatform = "darwin" | "linux" | "win32";
+
+export const SKILL_PLATFORMS: readonly SkillPlatform[] = [
+  "darwin",
+  "linux",
+  "win32",
+];
+
 export interface SkillManifest {
   name: string;
   description: string;
@@ -7,6 +15,13 @@ export interface SkillManifest {
   requiresTools: string[];
   requiresScripts: string[];
   dangerous: boolean;
+  /**
+   * OS allowlist. When present, the skill is only loaded/seeded on the
+   * listed platforms (matched against `process.platform`). Omitted
+   * entirely when the frontmatter has no `platforms` key, so a
+   * cross-platform skill's manifest stays byte-identical to before.
+   */
+  platforms?: SkillPlatform[];
 }
 
 export interface ParsedSkillFile {
@@ -101,6 +116,8 @@ function validateManifest(raw: unknown): SkillManifest {
   const dangerous =
     typeof obj.dangerous === "boolean" ? obj.dangerous : false;
 
+  const platforms = normalisePlatformList(obj.platforms, issues);
+
   if (issues.length > 0) {
     throw new SkillManifestError(
       `invalid SKILL.md frontmatter: ${issues.join("; ")}`,
@@ -108,7 +125,7 @@ function validateManifest(raw: unknown): SkillManifest {
     );
   }
 
-  return {
+  const manifest: SkillManifest = {
     name,
     description,
     version,
@@ -116,6 +133,42 @@ function validateManifest(raw: unknown): SkillManifest {
     requiresScripts,
     dangerous,
   };
+  // Only attach `platforms` when the frontmatter declared it so a
+  // cross-platform manifest stays `{...}` without the key (keeps strict
+  // `toEqual` snapshots green).
+  if (platforms !== undefined) manifest.platforms = platforms;
+  return manifest;
+}
+
+/**
+ * Parse the optional `platforms` frontmatter key. Returns `undefined`
+ * when the key is absent, an empty array `[]` when present-but-empty
+ * (treated as "no platforms" → loader will exclude everywhere), or the
+ * validated allowlist otherwise. Unknown values push an issue.
+ */
+function normalisePlatformList(
+  value: unknown,
+  issues: string[],
+): SkillPlatform[] | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value)) {
+    issues.push("`platforms` must be a list of strings (darwin/linux/win32)");
+    return undefined;
+  }
+  const out: SkillPlatform[] = [];
+  for (const entry of value) {
+    if (
+      typeof entry !== "string" ||
+      !SKILL_PLATFORMS.includes(entry as SkillPlatform)
+    ) {
+      issues.push(
+        `\`platforms\` entries must be one of ${SKILL_PLATFORMS.join(", ")}`,
+      );
+      continue;
+    }
+    if (!out.includes(entry as SkillPlatform)) out.push(entry as SkillPlatform);
+  }
+  return out;
 }
 
 function normaliseStringList(

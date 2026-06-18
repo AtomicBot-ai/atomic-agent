@@ -15,11 +15,19 @@ describe("platform-assets", () => {
     expect(a.binaryName).toBe("llama-server.exe");
   });
 
-  it("throws on linux", () => {
-    expect(() => resolvePlatformAsset("linux", "x64")).toThrow(UnsupportedPlatformError);
+  it("resolves linux x64 to the Vulkan asset", () => {
+    const a = resolvePlatformAsset("linux", "x64");
+    expect(a.assetName).toBe("llama-turboquant-linux-x64-vulkan.zip");
+    expect(a.binaryName).toBe("llama-server");
   });
 
   it("throws on darwin x64 (Intel)", () => {
     expect(() => resolvePlatformAsset("darwin", "x64")).toThrow(UnsupportedPlatformError);
+  });
+
+  it("throws on linux arm64", () => {
+    expect(() => resolvePlatformAsset("linux", "arm64")).toThrow(
+      UnsupportedPlatformError,
+    );
   });
 });

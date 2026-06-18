@@ -23,6 +23,7 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
         configMode: action.configMode,
         activeModelId: action.activeModelId,
         totalRamGb: action.totalRamGb,
+        gpuBudgetGb: action.gpuBudgetGb,
         dataDir: action.dataDir,
         embeddingRows: action.embeddingRows,
         embeddingDaemon: action.embeddingDaemon,

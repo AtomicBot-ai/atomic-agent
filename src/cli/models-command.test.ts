@@ -49,12 +49,12 @@ describe("modelsCommand", () => {
     expect(stdout()).toMatch(/models list/);
   });
 
-  it("list prints 8 model rows", async () => {
+  it("list prints all catalog model rows", async () => {
     const code = await modelsCommand(["list"]);
     expect(code).toBe(0);
     const out = stdout();
     expect(out.split("\n").filter((l) => l.includes("qwen-") || l.includes("gemma-"))).toHaveLength(
-      8,
+      9,
     );
   });
 
@@ -83,5 +83,43 @@ describe("modelsCommand", () => {
       localModels: { mode: string };
     };
     expect(raw.localModels.mode).toBe("managed");
+  });
+
+  it("devices exits 1 when the backend is not downloaded", async () => {
+    const code = await modelsCommand(["devices"]);
+    expect(code).toBe(1);
+    expect(stderrChunks.join("")).toMatch(/backend not downloaded/);
+  });
+
+  it("use-device with no arg exits 1", async () => {
+    const code = await modelsCommand(["use-device"]);
+    expect(code).toBe(1);
+    expect(stderrChunks.join("")).toMatch(/usage:/);
+  });
+
+  it("use-device rejects an invalid device value", async () => {
+    const code = await modelsCommand(["use-device", "not a device"]);
+    expect(code).toBe(1);
+    expect(stderrChunks.join("")).toMatch(/invalid device/);
+  });
+
+  it("use-device persists the device preference in config", async () => {
+    const path = getUserConfigPath(stateDir);
+    writeUserConfigFileSync(path, USER_CONFIG_DEFAULTS);
+    resetConfigCache();
+    const code = await modelsCommand(["use-device", "Vulkan0"]);
+    expect(code).toBe(0);
+    resetConfigCache();
+    expect(getConfig().localModels.managed.device).toBe("Vulkan0");
+  });
+
+  it("use-device accepts the cpu sentinel", async () => {
+    const path = getUserConfigPath(stateDir);
+    writeUserConfigFileSync(path, USER_CONFIG_DEFAULTS);
+    resetConfigCache();
+    const code = await modelsCommand(["use-device", "cpu"]);
+    expect(code).toBe(0);
+    resetConfigCache();
+    expect(getConfig().localModels.managed.device).toBe("cpu");
   });
 });
