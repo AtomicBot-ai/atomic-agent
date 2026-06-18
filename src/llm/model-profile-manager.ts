@@ -19,6 +19,13 @@ export interface ModelProfileManagerOptions {
    */
   initialModelId: string | null;
   grammarsDir?: string;
+  /**
+   * Mirrors `config.browser.enabled`. Threaded into every grammar rebuild
+   * on hot-swap so a disabled browser surface stays structurally forbidden
+   * after the model changes — without it, a swap would silently re-admit
+   * `browser.*` into the `tool-name` rule. Default `true`.
+   */
+  browserEnabled?: boolean;
   logger?: StructuredLogger;
 }
 
@@ -57,6 +64,7 @@ export class ModelProfileManager {
   private stale = false;
   private readonly llama: LlamaServerClient;
   private readonly grammarsDir: string | undefined;
+  private readonly browserEnabled: boolean;
   private readonly logger: StructuredLogger | undefined;
 
   constructor(options: ModelProfileManagerOptions) {
@@ -65,6 +73,7 @@ export class ModelProfileManager {
     this.modelId = normaliseId(options.initialModelId);
     this.llama = options.llama;
     this.grammarsDir = options.grammarsDir;
+    this.browserEnabled = options.browserEnabled ?? true;
     this.logger = options.logger;
   }
 
@@ -128,7 +137,9 @@ export class ModelProfileManager {
       );
       const profileChanged = nextProfile.id !== this.profile.id;
       if (profileChanged) {
-        const nextGrammar = await buildGrammar(nextProfile, this.grammarsDir);
+        const nextGrammar = await buildGrammar(nextProfile, this.grammarsDir, {
+          browserEnabled: this.browserEnabled,
+        });
         const violations = checkProfileGrammarAligned(nextProfile, nextGrammar);
         if (violations.length > 0) {
           this.logger?.warn("refreshed profile/grammar invariant violated", {

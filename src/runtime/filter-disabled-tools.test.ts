@@ -8,6 +8,7 @@ import {
 } from "./filter-disabled-tools.js";
 
 const ALL_OPEN: ToolGateConfig = {
+  browser: { enabled: true },
   vision: { enabled: true, providerAvailable: true },
   memory: {
     profile: { enabled: true },
@@ -32,6 +33,19 @@ describe("filterToolDescriptorsByConfig", () => {
       ALL_OPEN,
     );
     expect(filtered).toBe(DEFAULT_TOOL_DESCRIPTORS);
+  });
+
+  it("drops every browser.* descriptor when the browser is disabled", () => {
+    const filtered = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+      ...ALL_OPEN,
+      browser: { enabled: false },
+    });
+    const names = nameSet(filtered);
+    for (const dropped of GATED_TOOL_NAMES.browser) {
+      expect(names.has(dropped)).toBe(false);
+    }
+    // non-browser web tools survive so the model still has os.web.fetch
+    expect(names.has("os.web.fetch")).toBe(true);
   });
 
   it("drops vision.describe when vision is disabled", () => {
@@ -113,6 +127,7 @@ describe("filterToolDescriptorsByConfig", () => {
 
   it("drops everything gated when every switch is off", () => {
     const filtered = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+      browser: { enabled: false },
       vision: { enabled: false, providerAvailable: false },
       memory: {
         profile: { enabled: false },
@@ -125,6 +140,7 @@ describe("filterToolDescriptorsByConfig", () => {
     });
     const names = nameSet(filtered);
     const allGated = [
+      ...GATED_TOOL_NAMES.browser,
       ...GATED_TOOL_NAMES.vision,
       ...GATED_TOOL_NAMES.memoryProfile,
       ...GATED_TOOL_NAMES.memoryNotes,
@@ -143,6 +159,7 @@ describe("filterToolDescriptorsByConfig", () => {
   it("every gated tool name exists in DEFAULT_TOOL_DESCRIPTORS", () => {
     const known = new Set(DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name));
     const allGated = [
+      ...GATED_TOOL_NAMES.browser,
       ...GATED_TOOL_NAMES.vision,
       ...GATED_TOOL_NAMES.memoryProfile,
       ...GATED_TOOL_NAMES.memoryNotes,

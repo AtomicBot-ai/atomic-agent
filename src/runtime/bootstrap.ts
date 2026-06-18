@@ -794,8 +794,10 @@ export async function createAgentRuntime(
   const toolRegistry = new ToolRegistry();
   toolRegistry.register(finishTool);
   toolRegistry.register(replyTool);
-  for (const tool of buildBrowserTools(browserBackend, dangerous)) {
-    toolRegistry.register(tool);
+  if (config.browser.enabled) {
+    for (const tool of buildBrowserTools(browserBackend, dangerous)) {
+      toolRegistry.register(tool);
+    }
   }
   registerOsTools(toolRegistry, { ...dangerous, config: { http: config.http } });
   registerSkillTools(toolRegistry, skillRegistry, dangerous);
@@ -823,7 +825,9 @@ export async function createAgentRuntime(
     skillRegistry.list(),
   );
 
-  let grammar = await buildGrammar(profile, config.paths.grammarsDir);
+  let grammar = await buildGrammar(profile, config.paths.grammarsDir, {
+    browserEnabled: config.browser.enabled,
+  });
   const grammarViolations = checkProfileGrammarAligned(profile, grammar);
   if (grammarViolations.length > 0) {
     logger.warn("profile/grammar invariant violated", {
@@ -843,6 +847,7 @@ export async function createAgentRuntime(
         initialGrammar: grammar,
         initialModelId: modelAlias,
         grammarsDir: config.paths.grammarsDir,
+        browserEnabled: config.browser.enabled,
         logger,
       })
     : undefined;
@@ -979,6 +984,7 @@ export async function createAgentRuntime(
   const rebuildToolDescriptorsFromMcp = (): readonly ToolDescriptor[] => {
     const liveMcpEnabled = mcpManager.listServerNames().length > 0;
     const base = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+      browser: { enabled: config.browser.enabled },
       vision: {
         enabled: config.vision.enabled,
         providerAvailable: visionProvider !== undefined,

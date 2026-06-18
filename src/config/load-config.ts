@@ -243,6 +243,10 @@ export function loadConfig(): AtomicAgentConfig {
       ),
     },
     browser: {
+      enabled: readBool(
+        "ATOMIC_AGENT_BROWSER_ENABLED",
+        ENV_DEFAULTS.BROWSER_ENABLED,
+      ),
       channel: browserChannel,
       headless: readBool(
         "ATOMIC_AGENT_BROWSER_HEADLESS",

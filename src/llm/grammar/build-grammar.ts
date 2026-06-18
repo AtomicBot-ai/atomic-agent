@@ -28,6 +28,16 @@ export interface BuildGrammarOptions {
    * list of MCP tool names actually changed.
    */
   mcpToolNameRule?: string | null;
+  /**
+   * Master switch for the interactive `browser.*` tool surface. When
+   * `false`, the `browser-tool` alternative is structurally removed from
+   * the `tool-name` rule so the constrained sampler can never emit a
+   * `browser.*` call — the live browser is unreachable even if a stale
+   * descriptor or persona line still names it. Mirrors
+   * `config.browser.enabled`; default `true` keeps the static grammar
+   * untouched (byte-stable KV cache).
+   */
+  browserEnabled?: boolean;
 }
 
 export async function buildGrammar(
@@ -36,7 +46,11 @@ export async function buildGrammar(
   options: BuildGrammarOptions = {},
 ): Promise<string> {
   const baseGrammar = await readFile(join(grammarsDir, "tool-call.gbnf"), "utf8");
-  const withMcp = applyMcpToolNameRule(baseGrammar, options.mcpToolNameRule ?? null);
+  const withBrowser =
+    options.browserEnabled === false
+      ? removeBrowserToolRule(baseGrammar)
+      : baseGrammar;
+  const withMcp = applyMcpToolNameRule(withBrowser, options.mcpToolNameRule ?? null);
   if (!profile.allowThinkPrelude || profile.reasoningStyle === "none") return withMcp;
   const ruleStem = profile.id === "gemma4-think" ? "channel" : "think";
   // After thinking, the model emits the array-only form (always `[`).
@@ -90,6 +104,23 @@ function buildUntilSentinelRules(
     `${fragmentRule} ::= ${fragments.join(" | ")}`,
     `prelude-trail-ws ::= ( [ \\t\\n\\r] ){0,8}`,
   ].join("\n");
+}
+
+/**
+ * Drop the `browser-tool` alternative from the `tool-name ::= ...` rule so the
+ * constrained sampler can never emit a `browser.*` call. The `browser-tool ::=`
+ * definition line is left in place (an unreferenced rule is harmless in GBNF)
+ * to keep the diff minimal and the rest of the file byte-stable.
+ */
+function removeBrowserToolRule(grammar: string): string {
+  return grammar.replace(/^(tool-name ::= ).*$/m, (line, prefix: string) => {
+    const alternatives = line
+      .slice(prefix.length)
+      .split("|")
+      .map((alt) => alt.trim())
+      .filter((alt) => alt.length > 0 && alt !== "browser-tool");
+    return `${prefix}${alternatives.join(" | ")}`;
+  });
 }
 
 function quoteGbnf(text: string): string {

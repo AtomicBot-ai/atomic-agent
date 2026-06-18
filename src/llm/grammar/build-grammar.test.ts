@@ -57,4 +57,24 @@ describe("buildGrammar", () => {
     const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
     expect(grammar).not.toContain("prelude-trail-ws");
   });
+
+  it("keeps browser-tool in the tool-name rule by default", async () => {
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    expect(grammar).toMatch(/^tool-name ::= .*\bbrowser-tool\b/m);
+  });
+
+  it("strips browser-tool from the tool-name rule when browserEnabled is false", async () => {
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, undefined, {
+      browserEnabled: false,
+    });
+    const toolNameLine = grammar
+      .split("\n")
+      .find((line) => line.startsWith("tool-name ::="));
+    expect(toolNameLine).toBeDefined();
+    expect(toolNameLine).not.toContain("browser-tool");
+    // Sibling alternatives survive and the alternation stays well-formed.
+    expect(toolNameLine).toContain("os-tool");
+    expect(toolNameLine).not.toMatch(/\|\s*\|/);
+    expect(toolNameLine).not.toMatch(/::=\s*\|/);
+  });
 });

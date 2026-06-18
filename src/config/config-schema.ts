@@ -189,6 +189,16 @@ export interface AtomicAgentConfig {
     loopWanderingEscalation: number;
   };
   browser: {
+    /**
+     * Master switch for the interactive `browser.*` tool surface. When
+     * `false`, every `browser.*` descriptor is dropped from the stable
+     * prefix via `filterToolDescriptorsByConfig` so the model never sees
+     * (and therefore never reaches for) the live browser — web work is
+     * funnelled to `os.web.fetch` + the `exa-web-search` skill. The tools
+     * stay registered and grammar-valid so an explicit skill fallback can
+     * still drive them. Env `ATOMIC_AGENT_BROWSER_ENABLED`, default `true`.
+     */
+    enabled: boolean;
     channel: BrowserChannel;
     headless: boolean;
     cdpUrl: string | null;
@@ -1488,6 +1498,7 @@ export const ENV_DEFAULTS = {
   COMPLETION_RETRY_BACKOFF_MS: 150,
   DEFAULT_SLOT_ID: 0,
   STABLE_PREFIX_SALT: "atomic-agent-v1",
+  BROWSER_ENABLED: true,
   BROWSER_CHANNEL: "chrome" as BrowserChannel,
   BROWSER_HEADLESS: false,
   BROWSER_NO_SANDBOX: false,

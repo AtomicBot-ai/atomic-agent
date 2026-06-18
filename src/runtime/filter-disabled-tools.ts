@@ -23,6 +23,14 @@ import type { ToolDescriptor } from "../prompt/stable-prefix.js";
  * as the documented mapping for downstream readers.
  */
 export interface ToolGateConfig {
+  /**
+   * Browser gate. `enabled=false` drops the entire interactive
+   * `browser.*` surface (navigate / click / type / read_aria / search /
+   * tabs / scroll) from the stable prefix so the model never reaches for
+   * the live browser; web work falls back to `os.web.fetch` + the
+   * `exa-web-search` skill. The tools stay registered and grammar-valid.
+   */
+  browser: { enabled: boolean };
   vision: { enabled: boolean; providerAvailable: boolean };
   memory: {
     profile: { enabled: boolean };
@@ -47,6 +55,15 @@ export interface ToolGateConfig {
  * `filter-disabled-tools.test.ts`.
  */
 const GATED_TOOLS = {
+  browser: [
+    "browser.navigate",
+    "browser.click",
+    "browser.type",
+    "browser.read_aria",
+    "browser.search",
+    "browser.tabs",
+    "browser.scroll",
+  ],
   vision: ["vision.describe"],
   memoryProfile: [
     "memory.profile.set",
@@ -86,6 +103,9 @@ export function filterToolDescriptorsByConfig(
 ): readonly ToolDescriptor[] {
   const disabled = new Set<string>();
 
+  if (!gates.browser.enabled) {
+    for (const name of GATED_TOOLS.browser) disabled.add(name);
+  }
   if (!gates.vision.enabled || !gates.vision.providerAvailable) {
     for (const name of GATED_TOOLS.vision) disabled.add(name);
   }
