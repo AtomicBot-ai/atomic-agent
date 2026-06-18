@@ -380,7 +380,7 @@ describe("buildPrompt", () => {
     expect(prompt.tail.endsWith("<think>\n")).toBe(true);
   });
 
-  it("injects gemma reasoning tokens into the stable prefix and tail", () => {
+  it("turn-frames the gemma prompt: think token at the top of the system turn, model-turn opener at the end", () => {
     const prompt = buildPrompt({
       session: mkSession(),
       toolDescriptors: TOOLS,
@@ -388,8 +388,14 @@ describe("buildPrompt", () => {
       skillCatalog: SKILLS,
       profile: GEMMA4_THINK_PROFILE,
     });
-    expect(prompt.stablePrefix.startsWith("### system\n<|think|>")).toBe(true);
-    expect(prompt.tail.endsWith("<|channel>thought\n")).toBe(true);
+    // System turn opens first with the reasoning token at the very top.
+    expect(prompt.stablePrefix.startsWith("<|turn>system\n<|think|>\n### system")).toBe(
+      true,
+    );
+    // Prompt ends at the model-turn opener — NOT a prefilled channel block
+    // (a prefilled `<|channel>thought\n` reads as thinking-disabled on Gemma).
+    expect(prompt.tail.endsWith("<turn|>\n<|turn>model\n")).toBe(true);
+    expect(prompt.tail).not.toContain("<|channel>thought");
   });
 
   it("does not append a think prelude for plain profiles", () => {

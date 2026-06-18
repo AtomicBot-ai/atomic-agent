@@ -24,11 +24,13 @@ describe("buildGrammar", () => {
     expect(grammar).toContain('think-fragment ::= [^<]+ | "<" [^/]');
   });
 
-  it("builds a gemma 4 grammar with a channel prelude routed into the array", async () => {
+  it("builds a gemma 4 grammar with a channel prelude that forces the model-emitted open tag", async () => {
     const grammar = await buildGrammar(GEMMA4_THINK_PROFILE);
     expect(grammar).toContain("root ::= channel-prelude tool-call-array");
+    // The model emits its own `<|channel>thought\n` opener (no prompt
+    // prefill), so the prelude leads with the open sentinel literal.
     expect(grammar).toContain(
-      'channel-prelude ::= channel-body "<channel|>" prelude-trail-ws',
+      'channel-prelude ::= "<|channel>thought\\n" channel-body "<channel|>" prelude-trail-ws',
     );
     expect(grammar).toContain('channel-fragment ::= [^<]+ | "<" [^c]');
   });

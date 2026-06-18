@@ -3,7 +3,10 @@ import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { ModelProfile } from "../model-profile.js";
+import {
+  reasoningOpenEmittedByModel,
+  type ModelProfile,
+} from "../model-profile.js";
 import { applyMcpToolNameRule } from "../../mcp/mcp-grammar-builder.js";
 
 function resolveDefaultGrammarsDir(): string {
@@ -41,15 +44,30 @@ export async function buildGrammar(
   // exhibit even when their `<think>` block reasoned about parallelism.
   const rootRule = `root ::= ${ruleStem}-prelude tool-call-array`;
   const withPreludeRoot = withMcp.replace(/^root ::= .*$/m, rootRule);
-  const preludeRules = buildUntilSentinelRules(ruleStem, profile.reasoningCloseTag);
+  // When the model emits its own reasoning open tag (Gemma 4 turn-framing),
+  // the prelude must force that opener — the prompt no longer prefills it.
+  const openSentinel = reasoningOpenEmittedByModel(profile)
+    ? profile.reasoningOpenTag
+    : undefined;
+  const preludeRules = buildUntilSentinelRules(
+    ruleStem,
+    profile.reasoningCloseTag,
+    openSentinel,
+  );
   return `${withPreludeRoot.trimEnd()}\n${preludeRules}\n`;
 }
 
-function buildUntilSentinelRules(ruleStem: string, sentinel: string): string {
+function buildUntilSentinelRules(
+  ruleStem: string,
+  sentinel: string,
+  openSentinel?: string,
+): string {
   const preludeRule = `${ruleStem}-prelude`;
   const bodyRule = `${ruleStem}-body`;
   const fragmentRule = `${ruleStem}-fragment`;
   const fragments = [`[^${escapeCharClass(sentinel[0]!)}]+`];
+  const openLiteral =
+    openSentinel !== undefined ? `${quoteGbnf(openSentinel)} ` : "";
 
   for (let idx = 0; idx < sentinel.length - 1; idx += 1) {
     const prefix = sentinel.slice(0, idx + 1);
@@ -67,7 +85,7 @@ function buildUntilSentinelRules(ruleStem: string, sentinel: string): string {
   // enough for any natural " " / "\n" / "  " gap and short enough to
   // bound the failure mode.
   return [
-    `${preludeRule} ::= ${bodyRule} ${quoteGbnf(sentinel)} prelude-trail-ws`,
+    `${preludeRule} ::= ${openLiteral}${bodyRule} ${quoteGbnf(sentinel)} prelude-trail-ws`,
     `${bodyRule} ::= ${fragmentRule}*`,
     `${fragmentRule} ::= ${fragments.join(" | ")}`,
     `prelude-trail-ws ::= ( [ \\t\\n\\r] ){0,8}`,

@@ -1,6 +1,7 @@
 import {
   GEMMA4_THINK_PROFILE,
   QWEN_THINK_PROFILE,
+  getReasoningTurnFraming,
   type ModelProfile,
 } from "./model-profile.js";
 
@@ -48,6 +49,18 @@ export function checkProfilePromptAligned(
     const leakedPrefix = getKnownReasoningOpenTags().find((tag) => trimmed.endsWith(tag));
     if (leakedPrefix) {
       violations.push("plain profile prompt must not end with a reasoning prelude");
+    }
+    return violations;
+  }
+
+  const framing = getReasoningTurnFraming(profile);
+  if (framing) {
+    // Turn-framed profiles (Gemma 4) end at the model-turn opener; the model
+    // emits its own reasoning open tag, so the prompt must NOT end with it.
+    if (!trimmed.endsWith(framing.assistantOpen.trimEnd())) {
+      violations.push(
+        "turn-framed reasoning profile prompt must end with the model-turn opener",
+      );
     }
     return violations;
   }

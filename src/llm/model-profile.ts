@@ -46,15 +46,68 @@ export interface PlainModelProfile extends BaseModelProfile {
   reasoningSystemToken?: undefined;
 }
 
+/**
+ * Native turn-token framing for templates (e.g. Gemma 4) whose reasoning
+ * channel only activates when the `<|think|>` token sits inside a real
+ * `<|turn>system>` block and the prompt ends at the model-turn opener.
+ */
+export interface ReasoningTurnFraming {
+  /** Opens the system turn, e.g. `"<|turn>system\n"`. */
+  systemOpen: string;
+  /** Closes a turn, e.g. `"<turn|>\n"`. */
+  turnClose: string;
+  /** Opens the assistant/model turn at the generation point, e.g. `"<|turn>model\n"`. */
+  assistantOpen: string;
+}
+
 export interface TaggedReasoningModelProfile extends BaseModelProfile {
   id: "qwen-think" | "gemma4-think";
   reasoningStyle: "think-tags" | "channel-tags";
   reasoningOpenTag: string;
   reasoningCloseTag: string;
   reasoningSystemToken?: string;
+  /**
+   * When `true`, the model emits its OWN reasoning open tag in the
+   * completion: the prompt does NOT prefill it and the grammar's prelude
+   * includes the open sentinel. When `false`/omitted, the open tag is
+   * prefilled at the end of the prompt (legacy qwen behaviour) and
+   * stripped from the completion before parsing.
+   *
+   * Gemma 4's QAT template treats a prefilled `<|channel>thought\n` as
+   * the *thinking-disabled* marker and closes the channel immediately,
+   * dumping its reasoning into the reply. Letting the model emit the open
+   * tag itself (paired with `turnFraming`) is what actually activates the
+   * channel.
+   */
+  reasoningEmittedByModel?: boolean;
+  /**
+   * Native turn-token framing for the prompt. When present, the prompt is
+   * wrapped as one system turn (`systemOpen ... turnClose`) and ends with
+   * `assistantOpen` at the generation point instead of a trailing
+   * reasoning-open prefill.
+   */
+  turnFraming?: ReasoningTurnFraming;
 }
 
 export type ModelProfile = PlainModelProfile | TaggedReasoningModelProfile;
+
+/**
+ * True when the model emits its own reasoning open tag (so the runtime
+ * must not prefill it, must not prepend it before parsing, and the
+ * grammar prelude includes the open sentinel).
+ */
+export function reasoningOpenEmittedByModel(profile: ModelProfile): boolean {
+  return (
+    profile.reasoningStyle !== "none" && profile.reasoningEmittedByModel === true
+  );
+}
+
+/** Turn-token framing for the prompt, when the profile requires it. */
+export function getReasoningTurnFraming(
+  profile: ModelProfile,
+): ReasoningTurnFraming | undefined {
+  return profile.reasoningStyle !== "none" ? profile.turnFraming : undefined;
+}
 
 /** Default vision snapshot for hand-built profile constants — overwritten by `detectModelProfile`. */
 const VISION_ABSENT: VisionCapability = { supported: false, source: "absent" };
@@ -85,6 +138,15 @@ export const GEMMA4_THINK_PROFILE: TaggedReasoningModelProfile = {
   reasoningSystemToken: "<|think|>\n",
   requiresPromptThinkPrefix: true,
   allowThinkPrelude: true,
+  // Gemma 4 only reasons when `<|think|>` sits inside a real `<|turn>system>`
+  // block and the prompt ends at `<|turn>model\n` (no channel prefill); the
+  // model then opens its own `<|channel>thought` block. See AGENTS.md.
+  reasoningEmittedByModel: true,
+  turnFraming: {
+    systemOpen: "<|turn>system\n",
+    turnClose: "<turn|>\n",
+    assistantOpen: "<|turn>model\n",
+  },
   vision: VISION_ABSENT,
 };
 

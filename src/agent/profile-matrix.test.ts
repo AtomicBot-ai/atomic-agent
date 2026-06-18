@@ -37,9 +37,14 @@ describe("profile matrix", () => {
   });
 
   it("streams gemma 4 channel reasoning through the full agent loop", async () => {
+    // Turn-framed gemma: the model emits its OWN `<|channel>thought\n` opener
+    // (the prompt no longer prefills it), reasons, then closes with
+    // `<channel|>` before the tool-call array.
     await expectScenario({
       props: GEMMA4_PROPS,
-      chunks: ['inner thought<channel|>{"tool":"reply","args":{"text":"ok"}}'],
+      chunks: [
+        '<|channel>thought\ninner thought<channel|>{"tool":"reply","args":{"text":"ok"}}',
+      ],
       expectReasoning: true,
     });
   });

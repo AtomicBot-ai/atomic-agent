@@ -62,10 +62,10 @@ describe("checkProfilePromptAligned", () => {
     );
   });
 
-  it("flags a gemma prompt without a trailing channel prelude", () => {
+  it("flags a gemma prompt without a trailing model-turn opener", () => {
     const prompt = "### response\nEmit one JSON tool call now.\n";
     expect(checkProfilePromptAligned(GEMMA4_THINK_PROFILE, prompt)).toContain(
-      "reasoning profile prompt must end with the configured open tag",
+      "turn-framed reasoning profile prompt must end with the model-turn opener",
     );
   });
 
@@ -92,7 +92,7 @@ describe("checkProfilePromptAligned", () => {
     expect(
       checkProfilePromptAligned(
         GEMMA4_THINK_PROFILE,
-        "### response\nEmit one JSON tool call now.\n<|channel>thought\n",
+        "### response\nEmit one JSON tool call now.\n<turn|>\n<|turn>model\n",
       ),
     ).toEqual([]);
   });

@@ -67,7 +67,11 @@ import {
 } from "../session/conversation-turn.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import { hashPrefix, type SlotManager } from "../llm/slot-manager.js";
-import type { ModelProfile } from "../llm/model-profile.js";
+import {
+  getReasoningTurnFraming,
+  reasoningOpenEmittedByModel,
+  type ModelProfile,
+} from "../llm/model-profile.js";
 import type {
   ResponseFormatJsonSchema,
   ToolCallTransport,
@@ -1259,6 +1263,21 @@ function stripTrailingReasoningPrefill(
 ): string {
   if (!profile || !profile.requiresPromptThinkPrefix) return promptText;
   if (profile.reasoningStyle === "none") return promptText;
+  const framing = getReasoningTurnFraming(profile);
+  if (framing) {
+    // Gemma 4 turn-framing: strip the trailing `<turn|>\n<|turn>model` so the
+    // repair instructions land back inside the open system turn.
+    let trimmed = promptText.trimEnd();
+    const assistantOpen = framing.assistantOpen.trimEnd();
+    if (trimmed.endsWith(assistantOpen)) {
+      trimmed = trimmed.slice(0, trimmed.length - assistantOpen.length).trimEnd();
+    }
+    const turnClose = framing.turnClose.trimEnd();
+    if (trimmed.endsWith(turnClose)) {
+      trimmed = trimmed.slice(0, trimmed.length - turnClose.length).trimEnd();
+    }
+    return trimmed;
+  }
   const openTag = profile.reasoningOpenTag.trimEnd();
   const trimmed = promptText.trimEnd();
   if (trimmed.endsWith(openTag)) {
@@ -1277,6 +1296,12 @@ function stripTrailingReasoningPrefill(
 function renderOpenReasoningBlock(profile: ModelProfile | undefined): string {
   if (!profile || !profile.requiresPromptThinkPrefix) return "";
   if (profile.reasoningStyle === "none") return "";
+  const framing = getReasoningTurnFraming(profile);
+  if (framing) {
+    // Re-close the system turn and re-open the model turn so the model emits
+    // its own `<|channel>thought` block (no prefilled open tag).
+    return `${framing.turnClose.trimEnd()}\n${framing.assistantOpen.trimEnd()}`;
+  }
   return profile.reasoningOpenTag.trimEnd();
 }
 
@@ -1341,7 +1366,12 @@ async function consumeStream(
   onEvent?: (event: StepEvent) => void,
 ): Promise<CompletionResult> {
   const parser = createStreamParser({
-    preOpenedThink: profile.requiresPromptThinkPrefix,
+    // Pre-opened only when the open tag is prefilled in the prompt. With
+    // model-emitted reasoning (Gemma 4 turn-framing) the parser must detect
+    // the open tag live in the stream instead.
+    preOpenedThink:
+      profile.requiresPromptThinkPrefix &&
+      !reasoningOpenEmittedByModel(profile),
     ...(profile.reasoningStyle !== "none"
       ? {
           reasoningOpenTag: profile.reasoningOpenTag,
@@ -1445,7 +1475,12 @@ async function consumeStream(
 }
 
 function getReasoningOpenTagPrefix(profile: ModelProfile): string {
-  return profile.reasoningStyle === "none" ? "" : profile.reasoningOpenTag;
+  if (profile.reasoningStyle === "none") return "";
+  // When the model emits its own open tag (Gemma 4 turn-framing) the tag is
+  // already present in `completion.content` — prepending it would duplicate
+  // it, so `normalizeContent` must add nothing.
+  if (reasoningOpenEmittedByModel(profile)) return "";
+  return profile.reasoningOpenTag;
 }
 
 function getReasoningTagOptions(profile: ModelProfile): {

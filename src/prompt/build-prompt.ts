@@ -1,4 +1,5 @@
 import { getConfig } from "../config/index.js";
+import { getReasoningTurnFraming } from "../llm/model-profile.js";
 import { renderProfileSection } from "../memory/profile-renderer.js";
 import {
   renderMemoryIndexSection,
@@ -91,12 +92,20 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     worldSnapshot: worldSnapshotMaxTokens,
   });
 
+  const turnFraming =
+    input.profile !== undefined
+      ? getReasoningTurnFraming(input.profile)
+      : undefined;
+
   const stablePrefix = buildStablePrefix({
     toolDescriptors: input.toolDescriptors,
     capabilities: input.capabilities,
     skillCatalog: input.skillCatalog,
     reasoningSystemToken: input.profile?.reasoningSystemToken,
     maxParallelToolCalls: config.agent.maxParallelToolCalls,
+    ...(turnFraming !== undefined
+      ? { turnSystemOpen: turnFraming.systemOpen }
+      : {}),
     ...(input.systemPersona !== undefined
       ? { systemPersona: input.systemPersona }
       : {}),
@@ -285,7 +294,17 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   // observed when the only trailing directive lived ~13k tokens upstream).
   // Byte-stable and short, so it does not meaningfully hurt cache reuse.
   tailParts.push(`### respond`, `Respond now.`, ``);
-  if (
+  if (turnFraming !== undefined) {
+    // Gemma 4 turn-framing: close the system turn and open the model turn.
+    // The model emits its own `<|channel>thought` block — we do NOT prefill
+    // the reasoning open tag (a prefilled `<|channel>thought\n` reads as the
+    // template's *thinking-disabled* marker and suppresses reasoning).
+    tailParts.push(
+      turnFraming.turnClose.trimEnd(),
+      turnFraming.assistantOpen.trimEnd(),
+      ``,
+    );
+  } else if (
     input.profile?.requiresPromptThinkPrefix &&
     input.profile.reasoningStyle !== "none"
   ) {

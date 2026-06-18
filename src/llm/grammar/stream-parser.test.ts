@@ -137,6 +137,23 @@ describe("createStreamParser", () => {
     expect(concatReply(events)).toBe("ok");
   });
 
+  it("detects a model-emitted gemma channel open tag (turn-framing, not pre-opened)", () => {
+    const events = feedAll(
+      [
+        '<|channel>thought\ninner reasoning<channel|>{"tool":"reply","args":{"text":"ok"}}',
+      ],
+      {
+        preOpenedThink: false,
+        reasoningOpenTag: "<|channel>thought\n",
+        reasoningCloseTag: "<channel|>",
+      },
+    );
+    expect(events.filter((e) => e.kind === "reasoning_open")).toHaveLength(1);
+    expect(concatReasoning(events)).toBe("inner reasoning");
+    expect(events.filter((e) => e.kind === "reasoning_close")).toHaveLength(1);
+    expect(concatReply(events)).toBe("ok");
+  });
+
   it("flushes remaining reply text on stream end if closing quote missing", () => {
     const events = feedAll(['{"tool":"reply","args":{"text":"partial']);
     expect(concatReply(events)).toBe("partial");

@@ -66,6 +66,14 @@ export interface StablePrefixInput {
   skillCatalog: readonly SkillCatalogEntry[];
   systemPersona?: string;
   reasoningSystemToken?: string;
+  /**
+   * When set, the stable prefix opens with this native turn token (e.g.
+   * `"<|turn>system\n"`) and the `reasoningSystemToken` is placed at the
+   * very top of the system turn (before `### system`) — required by Gemma 4
+   * to activate its reasoning channel. When omitted, the prefix keeps the
+   * legacy monolithic head (`### system` first) and is byte-identical.
+   */
+  turnSystemOpen?: string;
   maxParallelToolCalls?: number;
 }
 
@@ -104,9 +112,26 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     input.skillCatalog.length > 0
       ? input.skillCatalog.map(formatSkillCatalogLine).join("\n")
       : "(none installed)";
+  // Head ordering. With `turnSystemOpen` (Gemma 4 turn-framing) the system
+  // turn opens first and the reasoning token sits at the very top of it,
+  // before `### system`. Otherwise the legacy monolithic head is preserved
+  // byte-for-byte so qwen/plain KV-cache is untouched.
+  const head = input.turnSystemOpen
+    ? [
+        input.turnSystemOpen.trimEnd(),
+        ...(input.reasoningSystemToken
+          ? [input.reasoningSystemToken.trimEnd()]
+          : []),
+        `### system`,
+      ]
+    : [
+        `### system`,
+        ...(input.reasoningSystemToken
+          ? [input.reasoningSystemToken.trimEnd()]
+          : []),
+      ];
   return [
-    `### system`,
-    ...(input.reasoningSystemToken ? [input.reasoningSystemToken.trimEnd()] : []),
+    ...head,
     persona,
     ``,
     `### rules`,
