@@ -23,6 +23,7 @@ import {
   isModelDownloaded,
   listVulkanDevices,
   LOCAL_MODELS_CATALOG,
+  probeNvidiaVramMiB,
   readBackendVersion,
   readLogTail,
   removeEmbeddingModel as removeEmbeddingModelFiles,
@@ -117,6 +118,16 @@ export class LocalModelsOrchestrator {
    * populates this (its GPU budget comes from unified RAM, no spawn).
    */
   private cachedDevices: GpuDevice[] | null = null;
+  /**
+   * Pre-download NVIDIA VRAM fallback (MiB), cached for the process
+   * lifetime. `undefined` until the first probe; `null` once probed and
+   * no NVIDIA GPU / `nvidia-smi` was found. Only consulted on
+   * Linux/Windows when the backend is not yet on disk so the onboarding
+   * model list can still flag oversized models without first downloading
+   * llama.cpp. Once the backend lands, `cachedDevices` (Vulkan
+   * enumeration, all vendors) takes over and this is ignored.
+   */
+  private cachedNvidiaVramMiB: number | null | undefined = undefined;
 
   constructor(
     private readonly bus: TuiEventBus & { emit(action: unknown): void },
@@ -703,20 +714,52 @@ export class LocalModelsOrchestrator {
   ): Promise<number | null> {
     const platform = process.platform;
     const configuredDevice = cfg.localModels.managed.device;
-    if (platform !== "darwin") {
-      // No discrete GPU offload when forced to CPU; skip enumeration.
-      if (configuredDevice === "cpu") return null;
-      if (this.cachedDevices === null && isBackendDownloaded(dataDir)) {
-        const { binaryName } = resolvePlatformAsset();
-        const binPath = resolveServerBinPath(dataDir, binaryName);
-        this.cachedDevices = await listVulkanDevices(binPath);
-      }
+    // macOS budget comes from unified RAM — no enumeration, no fallback.
+    if (platform === "darwin") {
+      return resolveGpuBudgetGb({
+        platform,
+        totalRamBytes: totalmem(),
+        devices: [],
+        configuredDevice,
+      });
     }
-    return resolveGpuBudgetGb({
+    // No discrete GPU offload when forced to CPU; skip enumeration.
+    if (configuredDevice === "cpu") return null;
+    // Preferred source: Vulkan devices reported by the backend
+    // (covers NVIDIA / AMD / Intel). Requires the binary on disk.
+    if (this.cachedDevices === null && isBackendDownloaded(dataDir)) {
+      const { binaryName } = resolvePlatformAsset();
+      const binPath = resolveServerBinPath(dataDir, binaryName);
+      this.cachedDevices = await listVulkanDevices(binPath);
+    }
+    const budget = resolveGpuBudgetGb({
       platform,
       totalRamBytes: totalmem(),
       devices: this.cachedDevices ?? [],
       configuredDevice,
+    });
+    if (budget !== null) return budget;
+    // Fallback before the backend exists (onboarding): probe NVIDIA
+    // VRAM directly via nvidia-smi so the model list can flag oversized
+    // models without first downloading llama.cpp. NVIDIA-only; other
+    // vendors stay null until the backend lands. Routed through the same
+    // `resolveGpuBudgetGb` (as a synthetic discrete device, `auto` pick)
+    // so the MiB -> decimal-GB conversion matches the backend path.
+    if (this.cachedNvidiaVramMiB === undefined) {
+      this.cachedNvidiaVramMiB = await probeNvidiaVramMiB();
+    }
+    if (this.cachedNvidiaVramMiB === null) return null;
+    return resolveGpuBudgetGb({
+      platform,
+      totalRamBytes: totalmem(),
+      devices: [
+        {
+          id: "nvidia-smi",
+          description: "NVIDIA (nvidia-smi)",
+          totalMemMiB: this.cachedNvidiaVramMiB,
+        },
+      ],
+      configuredDevice: "auto",
     });
   }
 
