@@ -120,6 +120,13 @@ fi
 if [ -d "$STAGE/grammars" ]; then
   cp -R "$STAGE/grammars" "$INSTALL_DIR/"
 fi
+# Built-in starter skills. The runtime resolves them next to the binary
+# (see resolveStarterSkillsSourceDir / seedStarterSkillsIfMissing) and
+# copies them into the stateDir on each boot. Without this the skills
+# folder is never created on first launch.
+if [ -d "$STAGE/starter-skills" ]; then
+  cp -R "$STAGE/starter-skills" "$INSTALL_DIR/"
+fi
 if [ -d "$STAGE/assets" ]; then
   cp -R "$STAGE/assets" "$INSTALL_DIR/"
 fi
