@@ -37,3 +37,28 @@ export type {
   SecretKey,
   SelectedSecret,
 } from "./hermes/index.js";
+
+// OpenClaw source.
+export {
+  OpenclawImporter,
+  OpenclawSource,
+  OpenclawSourceError,
+  OpenclawOptionError,
+  OPENCLAW_DEFAULT_AGENT,
+  OPENCLAW_IMPORT_OPTIONS,
+  OPENCLAW_SESSION_ID_PREFIX,
+  resolveOpenclawOptions,
+  mapOpenclawSession,
+  mapOpenclawCronJob,
+} from "./openclaw/index.js";
+export type {
+  OpenclawBlock,
+  OpenclawCronJob,
+  OpenclawImporterDeps,
+  OpenclawMessage,
+  OpenclawOptionId,
+  OpenclawOptionMeta,
+  OpenclawRunOptions,
+  OpenclawSessionMeta,
+  ResolveOpenclawOptionsInput,
+} from "./openclaw/index.js";

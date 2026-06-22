@@ -9,6 +9,7 @@ import { theme } from "../theme/theme.js";
 import type {
   ImportFormState,
   ImportPanelState,
+  ImportSourceId,
 } from "../import/import-panel-state.js";
 
 export interface ImportPanelProps {
@@ -24,10 +25,11 @@ export interface ImportPanelProps {
  */
 export function ImportPanel(props: ImportPanelProps): ReactElement {
   const { panel, maxRows = 12 } = props;
+  const sourceLabel = panel.form.source === "openclaw" ? "OpenClaw" : "Hermes";
   return (
     <Box flexDirection="column">
       <Text bold color={theme.colors.accentSoft}>
-        Import · Hermes {theme.glyphs.arrowRight} atomic-agent
+        Import · {sourceLabel} {theme.glyphs.arrowRight} atomic-agent
       </Text>
       {panel.notice ? (
         <Box marginTop={1}>
@@ -58,20 +60,23 @@ function ConfigureForm({ form }: { form: ImportFormState }): ReactElement {
       borderColor={theme.colors.accent}
       paddingX={1}
     >
+      <SourceRow source={form.source} focused={form.focus === "sourceType"} />
       <TextRow
         label="source"
         value={form.sourceDir}
-        placeholder="~/.hermes"
+        placeholder={form.source === "openclaw" ? "~/.openclaw" : "~/.hermes"}
         focused={form.focus === "source"}
       />
       <ToggleRow label="sessions" on={form.sessions} focused={form.focus === "sessions"} />
       <ToggleRow label="cron" on={form.cron} focused={form.focus === "cron"} />
-      <ToggleRow
-        label="secrets"
-        on={form.secrets}
-        focused={form.focus === "secrets"}
-        hint="OPENROUTER_API_KEY / AIMLAPI_API_KEY"
-      />
+      {form.source === "hermes" ? (
+        <ToggleRow
+          label="secrets"
+          on={form.secrets}
+          focused={form.focus === "secrets"}
+          hint="OPENROUTER_API_KEY / AIMLAPI_API_KEY"
+        />
+      ) : null}
       <ToggleRow
         label="overwrite"
         on={form.overwrite}
@@ -87,11 +92,42 @@ function ConfigureForm({ form }: { form: ImportFormState }): ReactElement {
       <RunRow focused={form.focus === "run"} />
       <Box marginTop={1}>
         <Text color={theme.colors.muted}>
-          ↑↓ move · space toggle · type to edit · Enter on Run = preview ·
-          Ctrl+Enter preview
+          ↑↓ move · ←/→ switch source · space toggle · type to edit · Enter on
+          Run = preview · Ctrl+Enter preview
         </Text>
       </Box>
     </Box>
+  );
+}
+
+function SourceRow({
+  source,
+  focused,
+}: {
+  source: ImportSourceId;
+  focused: boolean;
+}): ReactElement {
+  return (
+    <Box>
+      <Text color={theme.colors.muted}>{labelPrefix("source-of", focused)}</Text>
+      <SourceChoice label="hermes" active={source === "hermes"} />
+      <Text color={theme.colors.muted}> / </Text>
+      <SourceChoice label="openclaw" active={source === "openclaw"} />
+    </Box>
+  );
+}
+
+function SourceChoice({
+  label,
+  active,
+}: {
+  label: string;
+  active: boolean;
+}): ReactElement {
+  return (
+    <Text color={active ? theme.colors.success : theme.colors.muted} bold={active}>
+      {active ? `‹${label}›` : ` ${label} `}
+    </Text>
   );
 }
 

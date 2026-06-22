@@ -4,7 +4,12 @@ import {
   HermesSource,
   ImportOptionError,
   resolveSelectedOptions,
+  OpenclawImporter,
+  OpenclawSource,
+  OPENCLAW_DEFAULT_AGENT,
+  resolveOpenclawOptions,
   type ImportOptionId,
+  type OpenclawOptionId,
   type ImportReport,
 } from "../../import/index.js";
 import type { TuiEventBus } from "../tui-app.js";
@@ -52,15 +57,41 @@ export class ImportOrchestrator {
    * the synchronous SQLite work begins.
    */
   private async runImport(form: ImportFormState, execute: boolean): Promise<void> {
-    let options: ImportOptionId[];
     let limit: number | undefined;
     try {
-      options = this.resolveOptions(form);
       limit = parseLimit(form.limit);
     } catch (err) {
       this.bus.emit({ type: "import_failed", error: errorMessage(err) });
       return;
     }
+
+    // Let the `running` frame paint before the synchronous import runs.
+    await Promise.resolve();
+
+    try {
+      if (form.source === "openclaw") {
+        this.runOpenclaw(form, execute, limit);
+      } else {
+        this.runHermes(form, execute, limit);
+      }
+    } catch (err) {
+      this.bus.emit({ type: "import_failed", error: errorMessage(err) });
+    }
+  }
+
+  private runHermes(
+    form: ImportFormState,
+    execute: boolean,
+    limit: number | undefined,
+  ): void {
+    const exclude: string[] = [];
+    if (!form.sessions) exclude.push("sessions");
+    if (!form.cron) exclude.push("cron");
+    const options: ImportOptionId[] = resolveSelectedOptions({
+      preset: "default",
+      exclude,
+      migrateSecrets: form.secrets,
+    });
     if (options.length === 0) {
       this.bus.emit({
         type: "import_failed",
@@ -68,10 +99,6 @@ export class ImportOrchestrator {
       });
       return;
     }
-
-    // Let the `running` frame paint before the synchronous import runs.
-    await Promise.resolve();
-
     const source = new HermesSource(form.sourceDir.trim());
     try {
       const importer = new HermesImporter({
@@ -82,45 +109,80 @@ export class ImportOrchestrator {
         maxAttempts: this.runtime.config.tasks.maxAttempts,
         workingDirFallback: process.cwd(),
       });
-      const report: ImportReport = importer.run({
+      const report = importer.run({
         options,
         execute,
         overwrite: form.overwrite,
         ...(limit !== undefined ? { limit } : {}),
       });
-      if (execute) {
-        this.bus.emit({ type: "import_execute_done", report });
-        this.bus.emit({
-          type: "runtime_info",
-          line: `import done: ${formatSummary(report)}`,
-        });
-        // Cron import may have created scheduled tasks — refresh the tab.
-        if (options.includes("cron")) this.deps.refreshTasks?.();
-      } else {
-        this.bus.emit({ type: "import_preview_ready", report });
-      }
-    } catch (err) {
-      this.bus.emit({ type: "import_failed", error: errorMessage(err) });
+      this.emitResult(report, execute, options);
     } finally {
       source.close();
     }
   }
 
-  /** Map the form toggles onto the canonical resolver (secrets stays gated). */
-  private resolveOptions(form: ImportFormState): ImportOptionId[] {
+  private runOpenclaw(
+    form: ImportFormState,
+    execute: boolean,
+    limit: number | undefined,
+  ): void {
     const exclude: string[] = [];
     if (!form.sessions) exclude.push("sessions");
     if (!form.cron) exclude.push("cron");
-    return resolveSelectedOptions({
-      preset: "default",
-      exclude,
-      migrateSecrets: form.secrets,
-    });
+    const options: OpenclawOptionId[] = resolveOpenclawOptions({ exclude });
+    if (options.length === 0) {
+      this.bus.emit({
+        type: "import_failed",
+        error: "nothing selected to import — enable sessions or cron",
+      });
+      return;
+    }
+    const source = new OpenclawSource(
+      form.sourceDir.trim(),
+      OPENCLAW_DEFAULT_AGENT,
+    );
+    try {
+      const importer = new OpenclawImporter({
+        source,
+        sessionStore: this.runtime.sessionStore,
+        taskStore: this.runtime.taskStore,
+        maxAttempts: this.runtime.config.tasks.maxAttempts,
+        workingDirFallback: process.cwd(),
+      });
+      const report = importer.run({
+        options,
+        execute,
+        overwrite: form.overwrite,
+        ...(limit !== undefined ? { limit } : {}),
+      });
+      this.emitResult(report, execute, options);
+    } finally {
+      source.close();
+    }
+  }
+
+  /** Emit the ready/done action shared by every source. */
+  private emitResult(
+    report: ImportReport,
+    execute: boolean,
+    options: readonly string[],
+  ): void {
+    if (execute) {
+      this.bus.emit({ type: "import_execute_done", report });
+      this.bus.emit({
+        type: "runtime_info",
+        line: `import done: ${formatSummary(report)}`,
+      });
+      // Cron import may have created scheduled tasks — refresh the tab.
+      if (options.includes("cron")) this.deps.refreshTasks?.();
+    } else {
+      this.bus.emit({ type: "import_preview_ready", report });
+    }
   }
 
   shutdown(): void {
-    // No timers or open handles to release — the per-run HermesSource is
-    // always closed inside `runImport`'s finally. Present for symmetry
+    // No timers or open handles to release — the per-run source is always
+    // closed inside the runHermes/runOpenclaw finally. Present for symmetry
     // with the other tab orchestrators.
   }
 }

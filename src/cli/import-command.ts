@@ -10,7 +10,13 @@ import {
   HermesSource,
   ImportOptionError,
   resolveSelectedOptions,
+  OpenclawImporter,
+  OpenclawSource,
+  OpenclawOptionError,
+  OPENCLAW_DEFAULT_AGENT,
+  resolveOpenclawOptions,
   type ImportOptionId,
+  type OpenclawOptionId,
   type ImportReport,
 } from "../import/index.js";
 
@@ -20,6 +26,7 @@ const HELP =
     "",
     "Subcommands:",
     "  hermes [options]          Import conversation history + cron jobs from ~/.hermes",
+    "  openclaw [options]        Import conversation history + cron jobs from ~/.openclaw",
     "",
     "Options (import hermes):",
     "  --source <dir>            Hermes state dir (default ~/.hermes, env HERMES_STATE_DIR)",
@@ -32,10 +39,22 @@ const HELP =
     "  --dry-run                 Preview only; never write",
     "  --yes                     Skip the interactive confirmation",
     "",
+    "Options (import openclaw):",
+    "  --source <dir>            OpenClaw state dir (default ~/.openclaw, env OPENCLAW_STATE_DIR)",
+    "  --agent <name>            OpenClaw agent whose sessions to import (default main)",
+    "  --include a,b             Add options (sessions,cron)",
+    "  --exclude a,b             Remove options",
+    "  --limit N                 Cap the number of sessions imported",
+    "  --overwrite               Overwrite destinations that differ (default: flag as conflict)",
+    "  --dry-run                 Preview only; never write",
+    "  --yes                     Skip the interactive confirmation",
+    "",
     "Examples:",
     "  atomic-agent import hermes --dry-run",
     "  atomic-agent import hermes --yes",
     "  atomic-agent import hermes --migrate-secrets --overwrite",
+    "  atomic-agent import openclaw --dry-run",
+    "  atomic-agent import openclaw --agent main --yes",
   ].join("\n") + "\n";
 
 export async function importCommand(args: string[]): Promise<number> {
@@ -46,6 +65,9 @@ export async function importCommand(args: string[]): Promise<number> {
   }
   if (sub === "hermes") {
     return importHermes(args.slice(1));
+  }
+  if (sub === "openclaw") {
+    return importOpenclaw(args.slice(1));
   }
   process.stderr.write(`unknown import source: ${sub}\n`);
   process.stderr.write(HELP);
@@ -114,6 +136,106 @@ async function importHermes(args: string[]): Promise<number> {
     });
 
     process.stdout.write(`Source: ${sourceDir}\n`);
+    process.stdout.write(`Selected: ${options.join(", ")}\n\n`);
+
+    // Phase 1: preview.
+    const preview = importer.run({ options, execute: false, overwrite, limit });
+    process.stdout.write("Preview:\n");
+    process.stdout.write(`${formatReport(preview)}\n`);
+
+    if (dryRun) {
+      process.stdout.write("\nDry-run: nothing was written.\n");
+      return 0;
+    }
+
+    const actionable =
+      preview.summary.migrated + preview.summary.conflict > 0;
+    if (!actionable) {
+      process.stdout.write("\nNothing to import.\n");
+      return 0;
+    }
+
+    if (!yes) {
+      if (!process.stdin.isTTY) {
+        process.stdout.write(
+          "\nNon-interactive: re-run with --yes to apply, or --dry-run to preview only.\n",
+        );
+        return 0;
+      }
+      const confirmed = await confirm("\nApply this import? [y/N] ");
+      if (!confirmed) {
+        process.stdout.write("Aborted.\n");
+        return 0;
+      }
+    }
+
+    // Phase 2: execute.
+    const final = importer.run({ options, execute: true, overwrite, limit });
+    process.stdout.write("\nResult:\n");
+    process.stdout.write(`${formatReport(final)}\n`);
+    return final.summary.error > 0 ? 1 : 0;
+  } finally {
+    source.close();
+    sessionStore.close();
+    taskStore.close();
+  }
+}
+
+async function importOpenclaw(args: string[]): Promise<number> {
+  const sourceDir =
+    readOption(args, "--source") ??
+    process.env.OPENCLAW_STATE_DIR ??
+    join(homedir(), ".openclaw");
+  const agent = readOption(args, "--agent") ?? OPENCLAW_DEFAULT_AGENT;
+  const include = parseCsv(readOption(args, "--include"));
+  const exclude = parseCsv(readOption(args, "--exclude"));
+  const overwrite = args.includes("--overwrite");
+  const dryRun = args.includes("--dry-run");
+  const yes = args.includes("--yes");
+  const limitRaw = readOption(args, "--limit");
+
+  let limit: number | undefined;
+  if (limitRaw !== undefined) {
+    limit = Number.parseInt(limitRaw, 10);
+    if (!Number.isFinite(limit) || limit < 0) {
+      process.stderr.write("--limit must be a non-negative integer\n");
+      return 1;
+    }
+  }
+
+  let options: OpenclawOptionId[];
+  try {
+    options = resolveOpenclawOptions({ include, exclude });
+  } catch (err) {
+    if (err instanceof OpenclawOptionError) {
+      process.stderr.write(`${err.message}\n`);
+      return 1;
+    }
+    throw err;
+  }
+
+  if (options.length === 0) {
+    process.stderr.write("nothing selected to import\n");
+    return 1;
+  }
+
+  const config = getConfig();
+  const sessionStore = new SessionStore({
+    dbFile: config.paths.sessionsDbFile,
+  });
+  const taskStore = new TaskStore({ dbFile: config.paths.tasksDbFile });
+  const source = new OpenclawSource(sourceDir, agent);
+
+  try {
+    const importer = new OpenclawImporter({
+      source,
+      sessionStore,
+      taskStore,
+      maxAttempts: config.tasks.maxAttempts,
+      workingDirFallback: process.cwd(),
+    });
+
+    process.stdout.write(`Source: ${sourceDir} (agent: ${agent})\n`);
     process.stdout.write(`Selected: ${options.join(", ")}\n\n`);
 
     // Phase 1: preview.

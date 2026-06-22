@@ -22,8 +22,12 @@ import type { ImportReport } from "../../import/import-report.js";
  */
 export type ImportPanelMode = "configure" | "preview" | "running" | "done";
 
+/** Migration source. Each maps to a distinct importer + default dir. */
+export type ImportSourceId = "hermes" | "openclaw";
+
 /** Which field has keyboard focus inside the configure form. */
 export type ImportFormFocus =
+  | "sourceType"
   | "source"
   | "sessions"
   | "cron"
@@ -42,23 +46,25 @@ export const IMPORT_TOGGLE_FIELDS = [
 
 export type ImportToggleField = (typeof IMPORT_TOGGLE_FIELDS)[number];
 
-/** Cycle order for keyboard ↑/↓ navigation across the form fields. */
-export const IMPORT_FOCUS_ORDER: readonly ImportFormFocus[] = [
-  "source",
-  "sessions",
-  "cron",
-  "secrets",
-  "overwrite",
-  "limit",
-  "run",
-];
+/**
+ * Cycle order for keyboard ↑/↓ navigation across the form fields. The
+ * `secrets` row only exists for Hermes — OpenClaw v1 does not migrate
+ * provider keys — so the order is source-dependent.
+ */
+export function importFocusOrder(source: ImportSourceId): ImportFormFocus[] {
+  const order: ImportFormFocus[] = ["sourceType", "source", "sessions", "cron"];
+  if (source === "hermes") order.push("secrets");
+  order.push("overwrite", "limit", "run");
+  return order;
+}
 
 /**
  * All user input buffers for the configure form. `secrets` mirrors the
  * CLI `--migrate-secrets` flag and defaults to `false` so credentials
- * never migrate without an explicit operator opt-in.
+ * never migrate without an explicit operator opt-in (Hermes only).
  */
 export interface ImportFormState {
+  source: ImportSourceId;
   sourceDir: string;
   sessions: boolean;
   cron: boolean;
@@ -81,20 +87,24 @@ export interface ImportPanelState {
   notice: string | null;
 }
 
-/** Resolve the default Hermes state dir, mirroring the CLI default. */
-function defaultHermesDir(): string {
+/** Resolve the default state dir for a source, mirroring the CLI defaults. */
+export function defaultSourceDir(source: ImportSourceId): string {
+  if (source === "openclaw") {
+    return process.env.OPENCLAW_STATE_DIR ?? join(homedir(), ".openclaw");
+  }
   return process.env.HERMES_STATE_DIR ?? join(homedir(), ".hermes");
 }
 
 export function createInitialImportFormState(): ImportFormState {
   return {
-    sourceDir: defaultHermesDir(),
+    source: "hermes",
+    sourceDir: defaultSourceDir("hermes"),
     sessions: true,
     cron: true,
     secrets: false,
     overwrite: false,
     limit: "",
-    focus: "source",
+    focus: "sourceType",
   };
 }
 

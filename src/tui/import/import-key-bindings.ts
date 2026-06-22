@@ -3,7 +3,7 @@ import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
 import {
-  IMPORT_FOCUS_ORDER,
+  importFocusOrder,
   IMPORT_TOGGLE_FIELDS,
   type ImportFormFocus,
   type ImportFormState,
@@ -53,11 +53,11 @@ function handleConfigureKey(
     return true;
   }
   if (key.downArrow) {
-    dispatch({ type: "import_focus_set", focus: focusAfter(form.focus, 1) });
+    dispatch({ type: "import_focus_set", focus: focusAfter(form, 1) });
     return true;
   }
   if (key.upArrow) {
-    dispatch({ type: "import_focus_set", focus: focusAfter(form.focus, -1) });
+    dispatch({ type: "import_focus_set", focus: focusAfter(form, -1) });
     return true;
   }
   if (key.return) {
@@ -65,12 +65,23 @@ function handleConfigureKey(
       callbacks.onImportPreview?.(form);
       return true;
     }
+    if (form.focus === "sourceType") {
+      dispatch({ type: "import_source_set", source: otherSource(form) });
+      return true;
+    }
     if (isToggleFocus(form.focus)) {
       dispatch({ type: "import_toggled", field: form.focus });
       return true;
     }
-    dispatch({ type: "import_focus_set", focus: focusAfter(form.focus, 1) });
+    dispatch({ type: "import_focus_set", focus: focusAfter(form, 1) });
     return true;
+  }
+  if (form.focus === "sourceType") {
+    if (input === " " || key.leftArrow || key.rightArrow) {
+      dispatch({ type: "import_source_set", source: otherSource(form) });
+      return true;
+    }
+    return true; // swallow stray letters on the source-type row
   }
   if (isToggleFocus(form.focus)) {
     if (input === " " || key.leftArrow || key.rightArrow) {
@@ -138,10 +149,14 @@ function isToggleFocus(focus: ImportFormFocus): focus is ImportToggleField {
   return (IMPORT_TOGGLE_FIELDS as readonly string[]).includes(focus);
 }
 
-function focusAfter(focus: ImportFormFocus, delta: 1 | -1): ImportFormFocus {
-  const idx = IMPORT_FOCUS_ORDER.indexOf(focus);
+function otherSource(form: ImportFormState): ImportFormState["source"] {
+  return form.source === "hermes" ? "openclaw" : "hermes";
+}
+
+function focusAfter(form: ImportFormState, delta: 1 | -1): ImportFormFocus {
+  const order = importFocusOrder(form.source);
+  const idx = order.indexOf(form.focus);
   const safe = idx === -1 ? 0 : idx;
-  const next =
-    (safe + delta + IMPORT_FOCUS_ORDER.length) % IMPORT_FOCUS_ORDER.length;
-  return IMPORT_FOCUS_ORDER[next] ?? "source";
+  const next = (safe + delta + order.length) % order.length;
+  return order[next] ?? "sourceType";
 }

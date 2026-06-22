@@ -1,6 +1,9 @@
 import type { TuiState } from "../tui-state.js";
 import { isImportAction, type ImportAction } from "./import-actions.js";
-import type { ImportPanelState } from "./import-panel-state.js";
+import {
+  defaultSourceDir,
+  type ImportPanelState,
+} from "./import-panel-state.js";
 
 /**
  * Reducer slice for `state.importPanel`. Returns an updated `TuiState`
@@ -36,6 +39,20 @@ function reducePanel(
         ...panel,
         form: { ...panel.form, [action.field]: !panel.form[action.field] },
       };
+    case "import_source_set": {
+      if (action.source === panel.form.source) return panel;
+      return {
+        ...panel,
+        form: {
+          ...panel.form,
+          source: action.source,
+          sourceDir: defaultSourceDir(action.source),
+          // OpenClaw v1 has no secrets migration; clear the flag on switch.
+          secrets: action.source === "hermes" ? panel.form.secrets : false,
+          focus: "sourceType",
+        },
+      };
+    }
     case "import_preview_started":
     case "import_execute_started":
       return {

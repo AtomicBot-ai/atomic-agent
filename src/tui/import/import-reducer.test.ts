@@ -38,6 +38,36 @@ describe("reduceImportAction", () => {
     expect(next!.importPanel.mode).toBe("configure");
   });
 
+  it("defaults to the hermes source with sourceType focus", () => {
+    const state = createInitialTuiState(SESSION);
+    expect(state.importPanel.form.source).toBe("hermes");
+    expect(state.importPanel.form.focus).toBe("sourceType");
+  });
+
+  it("switches the source to openclaw and resets the default dir + clears secrets", () => {
+    const base = createInitialTuiState(SESSION);
+    base.importPanel.form.secrets = true;
+    base.importPanel.form.focus = "limit";
+    const next = reduceImportAction(base, {
+      type: "import_source_set",
+      source: "openclaw",
+    });
+    expect(next!.importPanel.form.source).toBe("openclaw");
+    expect(next!.importPanel.form.sourceDir).toMatch(/\.openclaw$/);
+    expect(next!.importPanel.form.secrets).toBe(false);
+    expect(next!.importPanel.form.focus).toBe("sourceType");
+  });
+
+  it("is a no-op when switching to the already-active source", () => {
+    const state = createInitialTuiState(SESSION);
+    const next = reduceImportAction(state, {
+      type: "import_source_set",
+      source: "hermes",
+    });
+    // Same source -> reducer returns the unchanged state object.
+    expect(next).toBe(state);
+  });
+
   it("toggles a boolean field", () => {
     const state = createInitialTuiState(SESSION);
     const next = reduceImportAction(state, {

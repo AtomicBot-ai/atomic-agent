@@ -2,6 +2,7 @@ import type { ImportReport } from "../../import/import-report.js";
 import type {
   ImportFormFocus,
   ImportFormState,
+  ImportSourceId,
   ImportToggleField,
 } from "./import-panel-state.js";
 
@@ -15,6 +16,8 @@ export type ImportAction =
   | { type: "import_form_field_changed"; patch: Partial<ImportFormState> }
   | { type: "import_focus_set"; focus: ImportFormFocus }
   | { type: "import_toggled"; field: ImportToggleField }
+  /** Switch the migration source; resets the default source dir. */
+  | { type: "import_source_set"; source: ImportSourceId }
   /** A preview / execute op started — clear the prior notice. */
   | { type: "import_preview_started" }
   | { type: "import_execute_started" }
