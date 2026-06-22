@@ -155,6 +155,12 @@ export const OPENROUTER_MODELS_CATALOG: ReadonlyMap<string, ModelCatalogEntry> =
       pricing: { input: 0.06, output: 0.4 },
     }),
     chatModel({
+      id: "z-ai/glm-5.2",
+      contextWindow: 1_048_576,
+      supportsVision: false,
+      pricing: { input: 1, output: 4 },
+    }),
+    chatModel({
       id: "z-ai/glm-5.1",
       contextWindow: 202_752,
       supportsVision: false,
@@ -194,5 +200,6 @@ export const OPENROUTER_CHAT_MODEL_ORDER: readonly string[] = [
   "minimax/minimax-m3",
   "minimax/minimax-m2.7",
   "z-ai/glm-4.7-flash",
+  "z-ai/glm-5.2",
   "z-ai/glm-5.1",
 ];

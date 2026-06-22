@@ -39,6 +39,7 @@ describe("OPENROUTER_MODELS_CATALOG", () => {
     expect(OPENROUTER_CHAT_MODEL_ORDER).toContain("moonshotai/kimi-k2.7-code");
     expect(OPENROUTER_CHAT_MODEL_ORDER).toContain("z-ai/glm-4.7-flash");
     expect(OPENROUTER_CHAT_MODEL_ORDER).toContain("z-ai/glm-5.1");
+    expect(OPENROUTER_CHAT_MODEL_ORDER).toContain("z-ai/glm-5.2");
   });
 
   it("includes the latest OpenRouter fallback picks", () => {
