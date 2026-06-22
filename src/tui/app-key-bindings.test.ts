@@ -291,8 +291,8 @@ describe("handleAppKey", () => {
     });
     expect(handled).toBe(true);
     expect(dispatch).toHaveBeenCalledWith({ type: "ui_mode_set", mode: "debug" });
-    // Shift+Tab from chat wraps to the last Manage tab (Telegram).
-    expect(dispatch).toHaveBeenCalledWith({ type: "tab_changed", tab: "telegram" });
+    // Shift+Tab from chat wraps to the last Manage tab (Import).
+    expect(dispatch).toHaveBeenCalledWith({ type: "tab_changed", tab: "import" });
   });
 
   it("Ctrl+B always cycles nav slots forward (escape valve)", () => {

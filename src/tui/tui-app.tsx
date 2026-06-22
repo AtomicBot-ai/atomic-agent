@@ -46,6 +46,8 @@ import { handleSkillsTabKey } from "./skills/skills-key-bindings.js";
 import { handleMemoryTabKey } from "./memory/memory-key-bindings.js";
 import type { MemorySummaryRow } from "./memory/memory-panel-state.js";
 import { handleMcpTabKey } from "./mcp/mcp-key-bindings.js";
+import { handleImportTabKey } from "./import/import-key-bindings.js";
+import type { ImportFormState } from "./import/import-panel-state.js";
 import { handleProvidersTabKey } from "./providers/providers-key-bindings.js";
 import { handleTelegramTabKey } from "./telegram/telegram-key-bindings.js";
 
@@ -254,6 +256,10 @@ export interface TuiAppCallbacks {
   onTelegramAdvanceConnectRequested?(): void | Promise<void>;
   /** Telegram tab: toggle the inline advanced controls. */
   onTelegramAdvancedToggleRequested?(): void;
+  /** Import tab: run a dry-run preview of the Hermes import. */
+  onImportPreview?(form: ImportFormState): void;
+  /** Import tab: execute the import (write sessions / tasks / secrets). */
+  onImportExecute?(form: ImportFormState): void;
   /** Startup self-update: user accepted the offer — run `install.sh`. */
   onUpdateConfirmed?(): void;
 }
@@ -395,6 +401,8 @@ export function TuiApp({
   const llmTabActive = state.uiMode === "debug" && state.activeTab === "llm";
   const telegramTabActive =
     state.uiMode === "debug" && state.activeTab === "telegram";
+  const importTabActive =
+    state.uiMode === "debug" && state.activeTab === "import";
   const terminalSize = useTerminalSize();
   const sidebarVisible =
     state.uiMode === "chat" && terminalSize.columns >= SIDEBAR_MIN_COLUMNS;
@@ -416,6 +424,7 @@ export function TuiApp({
         !providersTabActive &&
         !llmTabActive &&
         !telegramTabActive &&
+        !importTabActive &&
         !sidebarFocused &&
         !(
           localModelsTabActive &&
@@ -478,6 +487,10 @@ export function TuiApp({
     }
     if (telegramTabActive) {
       handleTelegramTabKey(input, key, { state, dispatch, callbacks });
+      return;
+    }
+    if (importTabActive) {
+      handleImportTabKey(input, key, { state, dispatch, callbacks });
       return;
     }
   });

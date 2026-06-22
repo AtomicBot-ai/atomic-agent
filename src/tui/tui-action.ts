@@ -7,6 +7,7 @@ import type { TasksAction } from "./tasks/tasks-actions.js";
 import type { SkillsAction } from "./skills/skills-actions.js";
 import type { MemoryAction } from "./memory/memory-actions.js";
 import type { McpAction } from "./mcp/mcp-actions.js";
+import type { ImportAction } from "./import/import-actions.js";
 import type { TelegramAction } from "./telegram/telegram-actions.js";
 import type { ProvidersAction } from "./providers/providers-actions.js";
 import type { LlmPanelAction } from "./llm-panel/llm-panel-actions.js";
@@ -158,4 +159,5 @@ export type TuiAction =
   | McpAction
   | TelegramAction
   | ProvidersAction
-  | LlmPanelAction;
+  | LlmPanelAction
+  | ImportAction;

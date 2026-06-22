@@ -21,6 +21,7 @@ import { reduceTasksAction } from "./tasks/tasks-reducer.js";
 import { reduceSkillsAction } from "./skills/skills-reducer.js";
 import { reduceMemoryAction } from "./memory/memory-reducer.js";
 import { reduceMcpAction } from "./mcp/mcp-reducer.js";
+import { reduceImportAction } from "./import/import-reducer.js";
 import { reduceProvidersPanel } from "./providers/providers-reducer.js";
 import { reduceLlmPanelAction } from "./llm-panel/llm-panel-reducer.js";
 import { reduceTelegramAction } from "./telegram/telegram-panel-reducer.js";
@@ -40,6 +41,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (memoryHandled !== null) return memoryHandled;
   const mcpHandled = reduceMcpAction(state, action);
   if (mcpHandled !== null) return mcpHandled;
+  const importHandled = reduceImportAction(state, action);
+  if (importHandled !== null) return importHandled;
   const providersHandled = reduceProvidersPanel(state, action);
   if (providersHandled !== null) return providersHandled;
   const llmPanelHandled = reduceLlmPanelAction(state, action);

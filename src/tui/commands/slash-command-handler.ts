@@ -201,6 +201,11 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return dispatchTaskSub(parsed.args);
     case "telegram":
       return dispatchTelegramSub(parsed.args);
+    case "import":
+      return pureActions([
+        { type: "ui_mode_set", mode: "debug" },
+        { type: "tab_changed", tab: "import" },
+      ]);
     default:
       return pureActions([], {
         systemMessage: `command /${resolved.name} not yet implemented`,

@@ -208,6 +208,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.providers.completeWizard(wizard),
         onProvidersRemove: (id) =>
           void orchestrator.providers.removeProviderById(id),
+        onImportPreview: (form) => orchestrator.import.preview(form),
+        onImportExecute: (form) => orchestrator.import.execute(form),
         onMcpDetailRequested: (serverName) =>
           orchestrator.mcp.openDetail(serverName),
         onMcpAddServerSubmit: (json) => orchestrator.mcp.addServerFromJson(json),

@@ -230,6 +230,14 @@ describe("dispatchSlashCommand", () => {
     ]);
   });
 
+  it("jumps to the Import tab for /import", () => {
+    const result = dispatchSlashCommand("/import");
+    expect(result.actions).toEqual([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "import" },
+    ]);
+  });
+
   it("opens the create form for /task new", () => {
     const result = dispatchSlashCommand("/task new");
     expect(result.actions).toEqual([

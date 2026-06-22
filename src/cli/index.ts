@@ -9,6 +9,7 @@ import { serveCommand } from "./serve-command.js";
 import { traceCommand } from "./trace-command.js";
 import { taskCommand } from "./task-command.js";
 import { modelsCommand } from "./models-command.js";
+import { importCommand } from "./import-command.js";
 import { tuiCommand } from "../tui/index.js";
 
 interface CommandDescriptor {
@@ -63,6 +64,11 @@ const COMMANDS: CommandDescriptor[] = [
     summary:
       "Manage the local-LLM runtime + GGUF models (list|pull|use|status|start|stop|update|remove)",
     run: modelsCommand,
+  },
+  {
+    name: "import",
+    summary: "Import conversation history + cron jobs from another agent (hermes)",
+    run: importCommand,
   },
 ];
 

@@ -92,6 +92,10 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     description:
       "telegram tab · subcommands: enable | disable | start | stop | restart | pair | token",
   },
+  {
+    name: "import",
+    description: "open the Import tab (one-shot Hermes -> atomic-agent migration)",
+  },
 ];
 
 /**

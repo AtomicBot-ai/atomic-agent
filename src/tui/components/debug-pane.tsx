@@ -20,6 +20,7 @@ import { TasksPanel } from "./tasks-panel.js";
 import { SkillsPanel } from "./skills-panel.js";
 import { McpPanel } from "./mcp-panel.js";
 import { MemoryPanel } from "./memory-panel.js";
+import { ImportPanel } from "./import-panel.js";
 import { TelegramPanel } from "../telegram/components/telegram-panel.js";
 import { ProvidersPanel } from "./providers-panel.js";
 
@@ -122,6 +123,7 @@ function buildManageTabs(state: TuiState): SubTab[] {
     { id: "mcp", label: `MCP${suffix(state.mcpPanel.rows.length)}` },
     { id: "llm", label: "LLM" },
     { id: "telegram", label: telegramTabLabel(state) },
+    { id: "import", label: "Import" },
   ];
 }
 
@@ -172,6 +174,8 @@ function ActiveDebugTab({
       return <LocalLlmLogsPanel logs={state.localLlmLogs} maxLines={maxVisible} />;
     case "telegram":
       return <TelegramPanel panel={state.telegramPanel} />;
+    case "import":
+      return <ImportPanel panel={state.importPanel} />;
     default:
       return <EventFeed state={state} maxVisible={maxVisible} />;
   }

@@ -14,6 +14,7 @@ import { TasksOrchestrator } from "./tasks/tasks-orchestrator.js";
 import { SkillsOrchestrator } from "./skills/skills-orchestrator.js";
 import { MemoryOrchestrator } from "./memory/memory-orchestrator.js";
 import { McpOrchestrator } from "./mcp/mcp-orchestrator.js";
+import { ImportOrchestrator } from "./import/import-orchestrator.js";
 import { ProvidersOrchestrator } from "./providers/providers-orchestrator.js";
 import { TuiTelegramOrchestrator } from "./telegram/tui-telegram-orchestrator.js";
 import type { TuiEventBus } from "./tui-app.js";
@@ -80,6 +81,7 @@ export class ChatOrchestrator {
   public readonly skills: SkillsOrchestrator;
   public readonly memory: MemoryOrchestrator;
   public readonly mcp: McpOrchestrator;
+  public readonly import: ImportOrchestrator;
   public readonly providers: ProvidersOrchestrator;
   public readonly localModels: LocalModelsOrchestrator;
   public readonly llmHealth: LlmHealthPoller;
@@ -97,6 +99,9 @@ export class ChatOrchestrator {
     this.skills = new SkillsOrchestrator(runtime, bus);
     this.memory = new MemoryOrchestrator(runtime, bus);
     this.mcp = new McpOrchestrator(runtime, bus);
+    this.import = new ImportOrchestrator(runtime, bus, {
+      refreshTasks: () => this.tasks.refresh(),
+    });
     this.providers = new ProvidersOrchestrator(runtime, bus);
     this.llmHealth = new LlmHealthPoller(bus, options.llamaUrl);
     this.localModels = new LocalModelsOrchestrator(bus, {
@@ -466,6 +471,7 @@ export class ChatOrchestrator {
     this.skills.shutdown();
     this.memory.shutdown();
     this.mcp.shutdown();
+    this.import.shutdown();
     await this.localModels.shutdown();
     this.llmHealth.stop();
     this.telegram.shutdown();

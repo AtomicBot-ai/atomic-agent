@@ -38,6 +38,10 @@ import {
   type McpPanelState,
 } from "./mcp/mcp-panel-state.js";
 import {
+  createInitialImportPanelState,
+  type ImportPanelState,
+} from "./import/import-panel-state.js";
+import {
   createInitialProvidersPanelState,
   type ProvidersPanelState,
 } from "./providers/providers-panel-state.js";
@@ -90,7 +94,8 @@ export type TuiTab =
   | "llm-logs"
   | "telegram"
   | "mcp"
-  | "providers";
+  | "providers"
+  | "import";
 
 /**
  * Top-level UI mode: `chat` is the default single-scroll openclaw-style
@@ -313,6 +318,8 @@ export interface TuiState {
   memoryPanel: MemoryPanelState;
   /** State slice driving the MCP tab (read-only MCP server / catalog inspection). */
   mcpPanel: McpPanelState;
+  /** State slice driving the Import tab (one-shot Hermes -> atomic-agent migration). */
+  importPanel: ImportPanelState;
   /** Cloud / local LLM provider registry (hot-swap active text provider). */
   providersPanel: ProvidersPanelState;
   /** Unified operator LLM panel combining provider routing and local daemon state. */
@@ -457,6 +464,7 @@ export function createInitialTuiState(
     skillsPanel: createInitialSkillsPanelState(),
     memoryPanel: createInitialMemoryPanelState(),
     mcpPanel: createInitialMcpPanelState(),
+    importPanel: createInitialImportPanelState(),
     providersPanel: createInitialProvidersPanelState(),
     llmPanel,
     localModelsPanel: createInitialLocalModelsPanelState(),
