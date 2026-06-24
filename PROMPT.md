@@ -97,7 +97,7 @@ Keep a call solo (length-1 array) when: it is `reply`/`finish`, may need approva
 | `### system` | Persona text from `DEFAULT_SYSTEM_PERSONA` (or override via `BuildPromptInput.systemPersona`). | Persona is fixed for the whole runtime. |
 | `### rules` | Short policy text (approval, `tool.view`, fs hygiene, **skill-first when `### skills` matches**). | Static literal. |
 | `### skills` | Catalog of available skills (name + description), not their bodies. Placed **before** `### tools` so the model sees playbooks before the full tool wall. | Catalog is read once at bootstrap. |
-| `### tools` | One bullet per tool, formatted by `formatTool`. Includes optional `examples[]`. | Tool registry is fixed at bootstrap. |
+| `### tools` | One bullet per tool, formatted by `formatTool`. Includes optional `examples[]`. Web search is first-class via `os.web.search` (provider from `web.search.*` config), while `os.web.fetch` reads a chosen URL as markdown/text. | Tool registry is fixed at bootstrap. |
 | `### capabilities` | OS, browser channel, cwd, capability flags. | Computed once at session start. |
 | `### instructions` | The array-only contract: always start with `[`, length-1 for solo, length-N for parallel independent actions. Three worked examples (solo, batch, reply) anchor the shape, and an explicit "keep solo when" list pins terminal verbs / approval-gated tools / data-dependent chains to length-1 batches. | Static literal — the array-only contract, the examples, and the solo list are part of the byte-stable prefix so the model sees them every step without invalidating the cache. |
 

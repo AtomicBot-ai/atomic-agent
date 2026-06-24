@@ -66,16 +66,22 @@ describe("seedStarterSkillsIfMissing", () => {
     expect(existsSync(join(globalDir, "apple-notes", "SKILL.md"))).toBe(true);
   });
 
-  it("prunes a tombstoned starter skill (ddgr-web-search) and is idempotent", async () => {
-    const stalePath = join(globalDir, "ddgr-web-search");
-    mkdirSync(stalePath, { recursive: true });
-    writeFileSync(join(stalePath, "SKILL.md"), "old ddgr skill", "utf8");
+  it("prunes tombstoned starter skills and is idempotent", async () => {
+    const staleDdgrPath = join(globalDir, "ddgr-web-search");
+    const staleExaPath = join(globalDir, "exa-web-search");
+    mkdirSync(staleDdgrPath, { recursive: true });
+    mkdirSync(staleExaPath, { recursive: true });
+    writeFileSync(join(staleDdgrPath, "SKILL.md"), "old ddgr skill", "utf8");
+    writeFileSync(join(staleExaPath, "SKILL.md"), "old exa skill", "utf8");
 
     const first = await seedStarterSkillsIfMissing({ globalSkillsDir: globalDir });
     expect(first.removed).toContain("ddgr-web-search");
-    expect(existsSync(stalePath)).toBe(false);
+    expect(first.removed).toContain("exa-web-search");
+    expect(existsSync(staleDdgrPath)).toBe(false);
+    expect(existsSync(staleExaPath)).toBe(false);
 
     const second = await seedStarterSkillsIfMissing({ globalSkillsDir: globalDir });
     expect(second.removed).not.toContain("ddgr-web-search");
+    expect(second.removed).not.toContain("exa-web-search");
   });
 });

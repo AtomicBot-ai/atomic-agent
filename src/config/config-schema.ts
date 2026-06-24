@@ -25,6 +25,40 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export type BrowserChannel = "chrome" | "msedge" | "chromium";
 
+export type WebSearchProviderName = "duckduckgo" | "searxng" | "exa" | "brave";
+
+export interface WebSearchConfig {
+  enabled: boolean;
+  provider: WebSearchProviderName;
+  maxResults: number;
+  timeoutMs: number;
+  /**
+   * Per-runtime result cache TTL in minutes. `0` disables caching. The cache
+   * is the primary defence against provider rate-limiting on repeated queries.
+   */
+  cacheTtlMinutes: number;
+  /**
+   * Ordered fallback providers tried (after the primary) when a search is
+   * blocked / empty / throws. Default `["duckduckgo"]` — the keyless Exa
+   * primary degrades to DuckDuckGo's keyless HTML endpoint. Both are
+   * config-free; `searxng` (needs `instanceUrl`) and `brave` (needs an API
+   * key) are skipped by the orchestrator until configured. Set to `[]` to
+   * disable fallback entirely. The primary is always deduped out of this list.
+   */
+  fallback: WebSearchProviderName[];
+  searxng: {
+    instanceUrl: string | null;
+  };
+  exa: {
+    endpoint: string;
+    apiEndpoint: string;
+    apiKeyEnv: string;
+  };
+  brave: {
+    apiKeyEnv: string;
+  };
+}
+
 /**
  * Declarative binding between an inbound webhook URL path and the task
  * it materialises. Per-webhook config lets operators point external
@@ -194,8 +228,8 @@ export interface AtomicAgentConfig {
      * `false`, every `browser.*` descriptor is dropped from the stable
      * prefix via `filterToolDescriptorsByConfig` so the model never sees
      * (and therefore never reaches for) the live browser — web work is
-     * funnelled to `os.web.fetch` + the `exa-web-search` skill. The tools
-     * stay registered and grammar-valid so an explicit skill fallback can
+     * funnelled to `os.web.search` + `os.web.fetch`. The tools
+     * stay registered and grammar-valid so an explicit fallback can
      * still drive them. Env `ATOMIC_AGENT_BROWSER_ENABLED`, default `true`.
      */
     enabled: boolean;
@@ -224,6 +258,9 @@ export interface AtomicAgentConfig {
     hostAllowlist: string[] | null;
     maxResponseBytes: number;
     defaultTimeoutMs: number;
+  };
+  web: {
+    search: WebSearchConfig;
   };
   log: {
     level: LogLevel;
@@ -783,6 +820,9 @@ export interface UserConfigFile {
     maxResponseBytes: number;
     defaultTimeoutMs: number;
   };
+  web: {
+    search: WebSearchConfig;
+  };
   tracing: {
     trace: {
       enabled: boolean | null;
@@ -1188,7 +1228,11 @@ export interface UserConfigFile {
   llm?: import("./llm-config.js").UserLlmFileConfig;
 }
 
-export const USER_CONFIG_VERSION = 26 as const;
+// v28: web.search gains `cacheTtlMinutes` (result cache TTL) and `fallback`
+// (provider chain). Older files transparently inherit the defaults
+// (cacheTtlMinutes: 15, provider: "exa", fallback: ["duckduckgo"] — the keyless
+// Exa→DDG degrade path).
+export const USER_CONFIG_VERSION = 28 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1258,7 +1302,8 @@ export type RewriterGateMode = "heuristic" | "embedding" | "always";
  * (byte-stable for existing installs).
  * v25→v26 added `localModels.managed.device` (default `"auto"`) so the
  * managed daemon auto-picks the best GPU at start; older files inherit
- * `"auto"` transparently.
+ * `"auto"` transparently. v27 added `web.search.*` for the native
+ * keyless-first `os.web.search` tool and provider selection.
  * Older files are transparently upgraded by filling missing
  * blocks/fields from `USER_CONFIG_DEFAULTS`. Anything older than v5
  * is not migrated: this is active development, callers delete their
@@ -1286,6 +1331,8 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   23,
   24,
   25,
+  26,
+  27,
   USER_CONFIG_VERSION,
 ];
 
@@ -1324,6 +1371,27 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     hostAllowlist: null,
     maxResponseBytes: 1_048_576,
     defaultTimeoutMs: 30_000,
+  },
+  web: {
+    search: {
+      enabled: true,
+      provider: "exa",
+      maxResults: 8,
+      timeoutMs: 15_000,
+      cacheTtlMinutes: 15,
+      fallback: ["duckduckgo"],
+      searxng: {
+        instanceUrl: null,
+      },
+      exa: {
+        endpoint: "https://mcp.exa.ai/mcp",
+        apiEndpoint: "https://api.exa.ai/search",
+        apiKeyEnv: "EXA_API_KEY",
+      },
+      brave: {
+        apiKeyEnv: "BRAVE_SEARCH_API_KEY",
+      },
+    },
   },
   tracing: {
     trace: {
@@ -1601,6 +1669,47 @@ export function parseBrowserChannel(raw: unknown, field: string): BrowserChannel
   );
 }
 
+export function parseWebSearchProviderName(
+  raw: unknown,
+  field: string,
+): WebSearchProviderName {
+  if (raw === "duckduckgo" || raw === "searxng" || raw === "exa" || raw === "brave") {
+    return raw;
+  }
+  throw new ConfigValidationError(
+    field,
+    `expected one of duckduckgo|searxng|exa|brave, got ${JSON.stringify(raw)}`,
+  );
+}
+
+/**
+ * Parse the opt-in fallback chain: each entry must be a valid provider name,
+ * the list is deduped, and the primary provider is dropped (it always runs
+ * first). A non-array value is rejected.
+ */
+export function parseWebSearchFallback(
+  raw: unknown,
+  primary: WebSearchProviderName,
+  field: string,
+): WebSearchProviderName[] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      field,
+      `expected an array of provider names, got ${JSON.stringify(raw)}`,
+    );
+  }
+  const seen = new Set<WebSearchProviderName>([primary]);
+  const out: WebSearchProviderName[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const name = parseWebSearchProviderName(raw[i], `${field}[${i}]`);
+    if (seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+  }
+  return out;
+}
+
 export function parsePositiveInt(raw: unknown, field: string): number {
   const value =
     typeof raw === "number"
@@ -1655,6 +1764,27 @@ export function parseNonNegativeInt(raw: unknown, field: string): number {
     throw new ConfigValidationError(
       field,
       `expected non-negative integer, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Parse a non-negative integer constrained to `[min, max]`. Unlike
+ * {@link parseBoundedPositiveInt}, `min` may be `0` (e.g. a TTL where `0`
+ * disables caching).
+ */
+export function parseNonNegativeBoundedInt(
+  raw: unknown,
+  field: string,
+  min: number,
+  max: number,
+): number {
+  const value = parseNonNegativeInt(raw, field);
+  if (value < min || value > max) {
+    throw new ConfigValidationError(
+      field,
+      `expected integer in [${min}, ${max}], got ${value}`,
     );
   }
   return value;
@@ -2173,6 +2303,18 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const log = (obj.log as Record<string, unknown> | undefined) ?? {};
   const agent = (obj.agent as Record<string, unknown> | undefined) ?? {};
   const http = (obj.http as Record<string, unknown> | undefined) ?? {};
+  const web = (obj.web as Record<string, unknown> | undefined) ?? {};
+  const webSearch = (web.search as Record<string, unknown> | undefined) ?? {};
+  const webSearchProvider = parseWebSearchProviderName(
+    webSearch.provider ?? USER_CONFIG_DEFAULTS.web.search.provider,
+    "web.search.provider",
+  );
+  const webSearchSearxng =
+    (webSearch.searxng as Record<string, unknown> | undefined) ?? {};
+  const webSearchExa =
+    (webSearch.exa as Record<string, unknown> | undefined) ?? {};
+  const webSearchBrave =
+    (webSearch.brave as Record<string, unknown> | undefined) ?? {};
   const legacyTelemetry =
     (obj.telemetry as Record<string, unknown> | undefined) ?? {};
   const tracing = (obj.tracing as Record<string, unknown> | undefined) ?? {};
@@ -2375,6 +2517,69 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         http.defaultTimeoutMs ?? USER_CONFIG_DEFAULTS.http.defaultTimeoutMs,
         "http.defaultTimeoutMs",
       ),
+    },
+    web: {
+      search: {
+        enabled: parseBool(
+          webSearch.enabled ?? USER_CONFIG_DEFAULTS.web.search.enabled,
+          "web.search.enabled",
+        ),
+        provider: webSearchProvider,
+        maxResults: parseBoundedPositiveInt(
+          webSearch.maxResults ?? USER_CONFIG_DEFAULTS.web.search.maxResults,
+          "web.search.maxResults",
+          1,
+          20,
+        ),
+        timeoutMs: parsePositiveInt(
+          webSearch.timeoutMs ?? USER_CONFIG_DEFAULTS.web.search.timeoutMs,
+          "web.search.timeoutMs",
+        ),
+        cacheTtlMinutes: parseNonNegativeBoundedInt(
+          webSearch.cacheTtlMinutes ??
+            USER_CONFIG_DEFAULTS.web.search.cacheTtlMinutes,
+          "web.search.cacheTtlMinutes",
+          0,
+          1440,
+        ),
+        fallback: parseWebSearchFallback(
+          webSearch.fallback ?? USER_CONFIG_DEFAULTS.web.search.fallback,
+          webSearchProvider,
+          "web.search.fallback",
+        ),
+        searxng: {
+          instanceUrl:
+            webSearchSearxng.instanceUrl === null ||
+            webSearchSearxng.instanceUrl === undefined
+              ? null
+              : parseNonEmptyString(
+                  webSearchSearxng.instanceUrl,
+                  "web.search.searxng.instanceUrl",
+                ),
+        },
+        exa: {
+          endpoint: parseNonEmptyString(
+            webSearchExa.endpoint ?? USER_CONFIG_DEFAULTS.web.search.exa.endpoint,
+            "web.search.exa.endpoint",
+          ),
+          apiEndpoint: parseNonEmptyString(
+            webSearchExa.apiEndpoint ??
+              USER_CONFIG_DEFAULTS.web.search.exa.apiEndpoint,
+            "web.search.exa.apiEndpoint",
+          ),
+          apiKeyEnv: parseNonEmptyString(
+            webSearchExa.apiKeyEnv ?? USER_CONFIG_DEFAULTS.web.search.exa.apiKeyEnv,
+            "web.search.exa.apiKeyEnv",
+          ),
+        },
+        brave: {
+          apiKeyEnv: parseNonEmptyString(
+            webSearchBrave.apiKeyEnv ??
+              USER_CONFIG_DEFAULTS.web.search.brave.apiKeyEnv,
+            "web.search.brave.apiKeyEnv",
+          ),
+        },
+      },
     },
     tracing: {
       trace: {

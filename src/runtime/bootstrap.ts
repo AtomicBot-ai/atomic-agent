@@ -799,7 +799,10 @@ export async function createAgentRuntime(
       toolRegistry.register(tool);
     }
   }
-  registerOsTools(toolRegistry, { ...dangerous, config: { http: config.http } });
+  registerOsTools(toolRegistry, {
+    ...dangerous,
+    config: { http: config.http, web: config.web },
+  });
   registerSkillTools(toolRegistry, skillRegistry, dangerous);
   toolRegistry.register(buildToolViewTool());
   registerMemoryTools(toolRegistry, {
@@ -985,6 +988,7 @@ export async function createAgentRuntime(
     const liveMcpEnabled = mcpManager.listServerNames().length > 0;
     const base = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
       browser: { enabled: config.browser.enabled },
+      web: { search: { enabled: config.web.search.enabled } },
       vision: {
         enabled: config.vision.enabled,
         providerAvailable: visionProvider !== undefined,

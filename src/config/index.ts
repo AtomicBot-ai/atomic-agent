@@ -8,6 +8,8 @@ export type {
   TelegramParseMode,
   UserConfigFile,
   UserManagedLocalLlmConfig,
+  WebSearchConfig,
+  WebSearchProviderName,
   WebhookConfig,
 } from "./config-schema.js";
 export {

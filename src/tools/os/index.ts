@@ -17,6 +17,7 @@ import {
 } from "./archive/index.js";
 import { buildOsHttpRequestTool } from "./http-request.js";
 import { buildOsWebFetchTool } from "./web-fetch.js";
+import { buildOsWebSearchTool } from "./web-search/index.js";
 import { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 import { osWindowListTool, osWindowFocusTool } from "./window.js";
 import { osNotifyTool } from "./notify.js";
@@ -50,6 +51,7 @@ export {
 } from "./archive/index.js";
 export { buildOsHttpRequestTool } from "./http-request.js";
 export { buildOsWebFetchTool } from "./web-fetch.js";
+export { buildOsWebSearchTool } from "./web-search/index.js";
 export { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 export { osWindowListTool, osWindowFocusTool } from "./window.js";
 export { osNotifyTool } from "./notify.js";
@@ -69,7 +71,7 @@ export { osProcListTool, buildOsProcKillTool } from "./proc/index.js";
 export { isGogCommand } from "./shell-command-guard/index.js";
 
 export interface RegisterOsToolsOptions extends DangerousToolOptions {
-  config: Pick<AtomicAgentConfig, "http">;
+  config: Pick<AtomicAgentConfig, "http" | "web">;
 }
 
 export function registerOsTools(
@@ -100,6 +102,7 @@ export function registerOsTools(
       config: options.config,
     }),
   );
+  registry.register(buildOsWebSearchTool({ config: options.config }));
   registry.register(buildOsWebFetchTool());
   registry.register(osClipboardReadTool);
   registry.register(osClipboardWriteTool);

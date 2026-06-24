@@ -436,6 +436,16 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
 
   // ── os.web ───────────────────────────────────────────────────────────────
   [
+    "os.web.search",
+    obj(
+      {
+        query: stringSchema,
+        maxResults: numberSchema,
+      },
+      ["query"],
+    ),
+  ],
+  [
     "os.web.fetch",
     obj(
       {

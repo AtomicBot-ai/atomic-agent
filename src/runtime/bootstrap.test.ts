@@ -304,11 +304,9 @@ describe("createAgentRuntime", () => {
     });
     try {
       const names = runtime.skillCatalog.map((e) => e.name).sort();
-      expect(names).toEqual([
-        "duckduckgo-search",
-        "skill-creator",
-        "wttr-weather",
-      ]);
+      expect(names).toContain("skill-creator");
+      expect(names).toContain("wttr-weather");
+      expect(names).not.toContain("exa-web-search");
       await runtime.refreshSkills();
       expect(notified.map((e) => e.name).sort()).toEqual(names);
     } finally {

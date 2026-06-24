@@ -592,7 +592,7 @@ export function formatWanderingRedirect(tool: string, spread: number): string {
   ];
   if (tool === "os.web.fetch" || tool === "os.http.request") {
     lines.push(
-      "- Run a web search first (the `exa-web-search` skill) to find the right page, then fetch that one URL — do not keep guessing URLs.",
+      "- Run `os.web.search` first to find the right page, then fetch that one URL — do not keep guessing URLs.",
     );
   } else if (tool.startsWith("browser.")) {
     lines.push(

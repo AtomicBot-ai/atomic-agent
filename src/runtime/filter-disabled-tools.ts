@@ -27,10 +27,11 @@ export interface ToolGateConfig {
    * Browser gate. `enabled=false` drops the entire interactive
    * `browser.*` surface (navigate / click / type / read_aria / search /
    * tabs / scroll) from the stable prefix so the model never reaches for
-   * the live browser; web work falls back to `os.web.fetch` + the
-   * `exa-web-search` skill. The tools stay registered and grammar-valid.
+   * the live browser; web work falls back to `os.web.search` +
+   * `os.web.fetch`. The tools stay registered and grammar-valid.
    */
   browser: { enabled: boolean };
+  web: { search: { enabled: boolean } };
   vision: { enabled: boolean; providerAvailable: boolean };
   memory: {
     profile: { enabled: boolean };
@@ -64,6 +65,7 @@ const GATED_TOOLS = {
     "browser.tabs",
     "browser.scroll",
   ],
+  webSearch: ["os.web.search"],
   vision: ["vision.describe"],
   memoryProfile: [
     "memory.profile.set",
@@ -105,6 +107,9 @@ export function filterToolDescriptorsByConfig(
 
   if (!gates.browser.enabled) {
     for (const name of GATED_TOOLS.browser) disabled.add(name);
+  }
+  if (!gates.web.search.enabled) {
+    for (const name of GATED_TOOLS.webSearch) disabled.add(name);
   }
   if (!gates.vision.enabled || !gates.vision.providerAvailable) {
     for (const name of GATED_TOOLS.vision) disabled.add(name);

@@ -9,6 +9,7 @@ import {
 
 const ALL_OPEN: ToolGateConfig = {
   browser: { enabled: true },
+  web: { search: { enabled: true } },
   vision: { enabled: true, providerAvailable: true },
   memory: {
     profile: { enabled: true },
@@ -44,8 +45,18 @@ describe("filterToolDescriptorsByConfig", () => {
     for (const dropped of GATED_TOOL_NAMES.browser) {
       expect(names.has(dropped)).toBe(false);
     }
-    // non-browser web tools survive so the model still has os.web.fetch
+    // non-browser web tools survive so the model still has os.web.search/fetch
+    expect(names.has("os.web.search")).toBe(true);
     expect(names.has("os.web.fetch")).toBe(true);
+  });
+
+  it("drops os.web.search when native web search is disabled", () => {
+    const filtered = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+      ...ALL_OPEN,
+      web: { search: { enabled: false } },
+    });
+    expect(nameSet(filtered).has("os.web.search")).toBe(false);
+    expect(nameSet(filtered).has("os.web.fetch")).toBe(true);
   });
 
   it("drops vision.describe when vision is disabled", () => {
@@ -128,6 +139,7 @@ describe("filterToolDescriptorsByConfig", () => {
   it("drops everything gated when every switch is off", () => {
     const filtered = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
       browser: { enabled: false },
+      web: { search: { enabled: false } },
       vision: { enabled: false, providerAvailable: false },
       memory: {
         profile: { enabled: false },
@@ -141,6 +153,7 @@ describe("filterToolDescriptorsByConfig", () => {
     const names = nameSet(filtered);
     const allGated = [
       ...GATED_TOOL_NAMES.browser,
+      ...GATED_TOOL_NAMES.webSearch,
       ...GATED_TOOL_NAMES.vision,
       ...GATED_TOOL_NAMES.memoryProfile,
       ...GATED_TOOL_NAMES.memoryNotes,
@@ -160,6 +173,7 @@ describe("filterToolDescriptorsByConfig", () => {
     const known = new Set(DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name));
     const allGated = [
       ...GATED_TOOL_NAMES.browser,
+      ...GATED_TOOL_NAMES.webSearch,
       ...GATED_TOOL_NAMES.vision,
       ...GATED_TOOL_NAMES.memoryProfile,
       ...GATED_TOOL_NAMES.memoryNotes,
