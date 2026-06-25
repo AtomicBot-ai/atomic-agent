@@ -1,5 +1,6 @@
 import type { TuiAction } from "../tui-action.js";
 import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";
+import { isThemeName, THEME_NAMES } from "../theme/theme.js";
 import { parseSlashCommand } from "./slash-command-parser.js";
 import { resolveSlashCommand, SLASH_COMMANDS } from "./slash-commands.js";
 
@@ -47,6 +48,11 @@ export interface SlashDispatchResult {
   readonly localModelsPullModelId?: string;
   readonly localModelsUseModelId?: string;
   readonly triggerLocalModelsStatus?: boolean;
+  /**
+   * Theme name the caller should activate via `setActiveTheme` before
+   * dispatching the `theme_set` re-render action (`/theme <name>`).
+   */
+  readonly setThemeName?: string;
   /**
    * `/telegram <verb>` side-effect requested by the user. Each verb
    * maps to a single orchestrator method; the caller (submit-handler)
@@ -115,6 +121,8 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return pureActions([], {
         systemMessage: formatSlashCommandHelp(),
       });
+    case "theme":
+      return dispatchThemeSub(parsed.args);
     case "clear":
       return pureActions([{ type: "chat_cleared" }], {
         systemMessage: "chat cleared",
@@ -250,9 +258,38 @@ function pureActions(
     localModelsPullModelId: undefined,
     localModelsUseModelId: undefined,
     triggerLocalModelsStatus: false,
+    setThemeName: undefined,
     telegramVerb: undefined,
     ...overrides,
   };
+}
+
+/**
+ * Sub-dispatcher for `/theme [name|list]`. Bare `/theme` opens the
+ * interactive picker (arrow-key live preview, Enter applies). `/theme list`
+ * prints the available names into the chat. `/theme <name>` validates against
+ * the registry and, on success, asks the caller to swap + persist + re-render.
+ * Unknown names surface a usage hint instead of switching.
+ */
+function dispatchThemeSub(rawArgs: string): SlashDispatchResult {
+  const arg = rawArgs.trim().toLowerCase();
+  if (arg.length === 0) {
+    return pureActions([{ type: "theme_picker_opened" }]);
+  }
+  if (arg === "list") {
+    return pureActions([], {
+      systemMessage: `available themes:\n  ${THEME_NAMES.join("\n  ")}`,
+    });
+  }
+  if (!isThemeName(arg)) {
+    return pureActions([], {
+      systemMessage: `unknown theme: ${arg}\navailable: ${THEME_NAMES.join(", ")}`,
+    });
+  }
+  return pureActions([{ type: "theme_set", name: arg }], {
+    setThemeName: arg,
+    systemMessage: `theme set to ${arg}`,
+  });
 }
 
 /**

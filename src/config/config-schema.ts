@@ -620,6 +620,14 @@ export interface AtomicAgentConfig {
     maxImagesPerCall: number;
   };
   /**
+   * TUI appearance. Mirrors `UserConfigFile.tui`. `theme` is `"auto"`
+   * (OSC 11 autodetect) or a registered theme name. Consumed by the TUI
+   * startup path; the rest of the runtime ignores it.
+   */
+  tui: {
+    theme: string;
+  };
+  /**
    * Telegram remote-control channel. Mirrors `UserConfigFile.telegram`.
    * The bot token is **not** stored here — it lives in
    * `<stateDir>/.env` as `TELEGRAM_BOT_TOKEN` and is loaded at
@@ -1205,6 +1213,16 @@ export interface UserConfigFile {
     disabled: string[];
   };
   /**
+   * TUI appearance. Added in config v29. `theme` is either the literal
+   * `"auto"` (default — detect the terminal background via OSC 11 and pick
+   * the matching GitHub theme) or a registered theme name (e.g. `dracula`,
+   * `nord`). Persisted from the in-app `/theme` picker. Older files are
+   * transparently upgraded with `tui: { theme: "auto" }`.
+   */
+  tui: {
+    theme: string;
+  };
+  /**
    * Telegram remote-control channel. Added in config v9. Older files
    * are transparently upgraded with `telegram: { enabled: false,
    * ownerUserId: null }`. The bot token is intentionally not stored
@@ -1232,7 +1250,7 @@ export interface UserConfigFile {
 // (provider chain). Older files transparently inherit the defaults
 // (cacheTtlMinutes: 15, provider: "exa", fallback: ["duckduckgo"] — the keyless
 // Exa→DDG degrade path).
-export const USER_CONFIG_VERSION = 28 as const;
+export const USER_CONFIG_VERSION = 29 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1333,6 +1351,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   25,
   26,
   27,
+  28,
   USER_CONFIG_VERSION,
 ];
 
@@ -1556,6 +1575,9 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   },
   skills: {
     disabled: [],
+  },
+  tui: {
+    theme: "auto",
   },
   telegram: {
     enabled: false,
@@ -2371,6 +2393,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const vision = (obj.vision as Record<string, unknown> | undefined) ?? {};
   const skills = (obj.skills as Record<string, unknown> | undefined) ?? {};
   const telegram = (obj.telegram as Record<string, unknown> | undefined) ?? {};
+  const tui = (obj.tui as Record<string, unknown> | undefined) ?? {};
   const mcp = (obj.mcp as Record<string, unknown> | undefined) ?? {};
 
   const rawManaged =
@@ -3032,6 +3055,12 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         "skills.disabled",
       ),
     },
+    tui: {
+      theme: parseThemeName(
+        tui.theme ?? USER_CONFIG_DEFAULTS.tui.theme,
+        "tui.theme",
+      ),
+    },
     telegram: {
       enabled: parseBool(
         telegram.enabled ?? USER_CONFIG_DEFAULTS.telegram.enabled,
@@ -3051,6 +3080,24 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     },
     ...(llmBlock !== undefined ? { llm: llmBlock } : {}),
   };
+}
+
+/**
+ * Parse `tui.theme`. Accepts the literal `"auto"` or any non-empty,
+ * trimmed string (a theme name). The set of valid theme names lives in
+ * the TUI layer (`isThemeName`); the config layer stays decoupled and
+ * only enforces the string shape — an unknown name falls back to the
+ * autodetect path at startup, never crashes. Anything non-string throws.
+ */
+export function parseThemeName(raw: unknown, field: string): string {
+  if (typeof raw !== "string") {
+    throw new ConfigValidationError(
+      field,
+      `expected a string, got ${JSON.stringify(raw)}`,
+    );
+  }
+  const trimmed = raw.trim();
+  return trimmed.length === 0 ? "auto" : trimmed;
 }
 
 /**

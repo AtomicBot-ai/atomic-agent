@@ -14,7 +14,7 @@ describe("Logo", () => {
     const frame = strip(lastFrame() ?? "");
     expect(frame).toContain("::::::::::::::::::::::::::::::::::");
     expect(frame).toContain("▄▀█ ▀█▀ █▀█");
-    expect(frame).toContain("local operator agent");
+    expect(frame).toContain("Local AI-First Agent");
   });
 
   it("hides the wordmark in compact mode", () => {
@@ -22,6 +22,6 @@ describe("Logo", () => {
     const frame = strip(lastFrame() ?? "");
     expect(frame).toContain("::::::::::::::::::::::::::::::::::");
     expect(frame).not.toContain("▄▀█ ▀█▀ █▀█");
-    expect(frame).not.toContain("local operator agent");
+    expect(frame).not.toContain("Local AI-First Agent");
   });
 });

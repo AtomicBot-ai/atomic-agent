@@ -268,4 +268,33 @@ describe("dispatchSlashCommand", () => {
     const result = dispatchSlashCommand("/task cancel");
     expect(result.systemMessage).toContain("usage: /task cancel");
   });
+
+  it("opens the interactive picker for bare /theme", () => {
+    const result = dispatchSlashCommand("/theme");
+    expect(result.actions).toEqual([{ type: "theme_picker_opened" }]);
+    expect(result.setThemeName).toBeUndefined();
+    expect(result.systemMessage).toBeUndefined();
+  });
+
+  it("lists available themes for /theme list", () => {
+    const result = dispatchSlashCommand("/theme list");
+    expect(result.systemMessage).toContain("available themes:");
+    expect(result.systemMessage).toContain("dracula");
+    expect(result.setThemeName).toBeUndefined();
+    expect(result.actions).toEqual([]);
+  });
+
+  it("switches the theme for a known /theme <name>", () => {
+    const result = dispatchSlashCommand("/theme dracula");
+    expect(result.setThemeName).toBe("dracula");
+    expect(result.actions).toEqual([{ type: "theme_set", name: "dracula" }]);
+    expect(result.systemMessage).toContain("theme set to dracula");
+  });
+
+  it("rejects an unknown /theme <name> without switching", () => {
+    const result = dispatchSlashCommand("/theme not-a-theme");
+    expect(result.setThemeName).toBeUndefined();
+    expect(result.actions).toEqual([]);
+    expect(result.systemMessage).toContain("unknown theme");
+  });
 });

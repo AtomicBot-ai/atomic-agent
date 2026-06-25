@@ -17,7 +17,7 @@ describe("SplashBanner", () => {
     // Both halves of the `ATOMIC AGENT` half-block wordmark.
     expect(frame).toContain("▄▀█ ▀█▀ █▀█");
     expect(frame).toContain("▄▀█ █▀▀ █▀▀");
-    expect(frame).toContain("local operator agent");
+    expect(frame).toContain("Local AI-First Agent");
   });
 
   it("advertises the core slash commands and hotkeys", () => {

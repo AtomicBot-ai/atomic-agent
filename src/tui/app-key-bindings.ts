@@ -240,6 +240,7 @@ function shouldTreatArrowAsChatScroll(
   if (input.length > 0) return false;
   if (state.chatFocus !== "editor") return false;
   if (state.sessionPickerOpen) return false;
+  if (state.themePickerOpen) return false;
   if (state.inputValue.length > 0) return false;
   if (state.inputHistoryCursor !== null) return false;
   return true;

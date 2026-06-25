@@ -44,7 +44,7 @@ describe("TuiApp (smoke)", () => {
     expect(text).toContain("Run");
     expect(text).toContain("Observe");
     expect(text).toContain("Manage");
-    expect(text).toContain("local operator agent");
+    expect(text).toContain("Local AI-First Agent");
     expect(text).toContain("commands");
     unmount();
   });

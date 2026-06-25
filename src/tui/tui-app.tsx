@@ -17,6 +17,13 @@ import { HotkeyHint } from "./components/hotkey-hint.js";
 import { LlmHealthBadge } from "./components/llm-health-badge.js";
 import { PromptShell } from "./components/prompt-shell.js";
 import { SessionPicker } from "./components/session-picker.js";
+import { ThemePicker } from "./components/theme-picker.js";
+import {
+  isThemeName,
+  setActiveTheme,
+  THEME_NAMES,
+  THEMES,
+} from "./theme/theme.js";
 import { Sidebar } from "./components/sidebar.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import { SlashPalette } from "./components/slash-palette.js";
@@ -74,6 +81,8 @@ export interface TuiAppCallbacks {
   onSkillCatalogRequested?(): void;
   /** Persist a new llama-server base URL after `/llama` (async health + disk write). */
   onPersistLlamaUrl?(url: string): void;
+  /** Persist the chosen TUI theme name into the user config (`/theme`). */
+  onThemePersistRequested?(themeName: string): void;
   /** Start the Tasks-tab auto-refresh loop (first entry only). */
   onTasksAutoRefreshStart?(): void;
   /** Perform a one-shot refresh of the tasks list. */
@@ -514,6 +523,14 @@ export function TuiApp({
   );
 
   const onEscape = useCallback(() => {
+    if (state.themePickerOpen) {
+      // Cancel: revert the live-preview swap to the theme active on open.
+      if (isThemeName(state.themePickerOriginal)) {
+        setActiveTheme(THEMES[state.themePickerOriginal]);
+      }
+      dispatch({ type: "theme_picker_closed" });
+      return;
+    }
     if (state.sessionPickerOpen) {
       dispatch({ type: "session_picker_closed" });
       return;
@@ -554,7 +571,22 @@ export function TuiApp({
     dispatch({ type: "slash_palette_closed" });
   }, [state.slashPaletteOpen, state.slashQuery, state.slashPaletteCursor]);
 
+  // Live-preview: swap the active palette to the theme at `cursor` (clamped)
+  // so the whole UI repaints as the operator moves through the list. The
+  // reducer clamps identically when it folds the cursor move.
+  const previewThemeAt = useCallback((cursor: number) => {
+    const max = THEME_NAMES.length - 1;
+    const clamped = Math.min(max, Math.max(0, cursor));
+    const name = THEME_NAMES[clamped];
+    if (name) setActiveTheme(THEMES[name]);
+  }, []);
+
   const onHistoryPrev = useCallback(() => {
+    if (state.themePickerOpen) {
+      previewThemeAt(state.themePickerCursor - 1);
+      dispatch({ type: "theme_picker_cursor_moved", delta: -1 });
+      return;
+    }
     if (state.sessionPickerOpen) {
       dispatch({ type: "session_picker_cursor_moved", delta: -1 });
       return;
@@ -564,9 +596,14 @@ export function TuiApp({
       return;
     }
     dispatch({ type: "input_history_navigated", delta: -1 });
-  }, [state.slashPaletteOpen, state.sessionPickerOpen]);
+  }, [state.slashPaletteOpen, state.sessionPickerOpen, state.themePickerOpen, state.themePickerCursor]);
 
   const onHistoryNext = useCallback(() => {
+    if (state.themePickerOpen) {
+      previewThemeAt(state.themePickerCursor + 1);
+      dispatch({ type: "theme_picker_cursor_moved", delta: 1 });
+      return;
+    }
     if (state.sessionPickerOpen) {
       dispatch({ type: "session_picker_cursor_moved", delta: 1 });
       return;
@@ -576,7 +613,7 @@ export function TuiApp({
       return;
     }
     dispatch({ type: "input_history_navigated", delta: 1 });
-  }, [state.slashPaletteOpen, state.sessionPickerOpen]);
+  }, [state.slashPaletteOpen, state.sessionPickerOpen, state.themePickerOpen, state.themePickerCursor]);
 
   // Pin the layout to the live terminal height **only** under a real
   // TTY. ink-testing-library's mock stdout reports a fake `rows` value
@@ -639,6 +676,14 @@ export function TuiApp({
                 sessions={state.sessionPickerList}
                 cursor={state.sessionPickerCursor}
                 currentSessionId={state.session.sessionId}
+              />
+            </Box>
+          ) : null}
+          {state.themePickerOpen ? (
+            <Box flexShrink={0}>
+              <ThemePicker
+                cursor={state.themePickerCursor}
+                original={state.themePickerOriginal}
               />
             </Box>
           ) : null}

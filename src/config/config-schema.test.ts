@@ -108,6 +108,37 @@ describe("parseUserConfigFile", () => {
     expect(parsed.web.search.fallback).toEqual(["duckduckgo"]);
   });
 
+  it("fills tui.theme default 'auto' when migrating from v28", () => {
+    const parsed = parseUserConfigFile({ version: 28 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.tui.theme).toBe("auto");
+  });
+
+  it("preserves an explicit tui.theme name", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { theme: "dracula" },
+    });
+    expect(parsed.tui.theme).toBe("dracula");
+  });
+
+  it("normalises a blank tui.theme back to 'auto'", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { theme: "   " },
+    });
+    expect(parsed.tui.theme).toBe("auto");
+  });
+
+  it("rejects a non-string tui.theme", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tui: { theme: 42 },
+      }),
+    ).toThrow(/tui.theme/);
+  });
+
   it("keeps an explicit empty fallback (disables the default Exa->DDG degrade)", () => {
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,

@@ -1,5 +1,6 @@
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
+import { THEME_NAMES } from "./theme/theme.js";
 import type { TuiAction } from "./tui-action.js";
 import type { TuiState } from "./tui-state.js";
 
@@ -21,6 +22,28 @@ export function reduceUiAction(
       return { ...state, uiMode: state.uiMode === "chat" ? "debug" : "chat" };
     case "ui_mode_set":
       return { ...state, uiMode: action.mode };
+    case "theme_set":
+      return { ...state, themeName: action.name };
+    case "theme_picker_opened": {
+      const idx = (THEME_NAMES as readonly string[]).indexOf(state.themeName);
+      return {
+        ...state,
+        themePickerOpen: true,
+        themePickerCursor: idx >= 0 ? idx : 0,
+        themePickerOriginal: state.themeName,
+      };
+    }
+    case "theme_picker_closed":
+      return { ...state, themePickerOpen: false, themePickerOriginal: "" };
+    case "theme_picker_cursor_moved": {
+      if (!state.themePickerOpen) return state;
+      const max = THEME_NAMES.length - 1;
+      const next = Math.min(
+        max,
+        Math.max(0, state.themePickerCursor + action.delta),
+      );
+      return { ...state, themePickerCursor: next };
+    }
     case "tool_expand_toggled": {
       const current = state.toolsExpandedById[action.toolCardId] ?? false;
       return {

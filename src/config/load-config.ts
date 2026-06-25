@@ -460,6 +460,9 @@ export function loadConfig(): AtomicAgentConfig {
       maxImageBytes: user.vision.maxImageBytes,
       maxImagesPerCall: user.vision.maxImagesPerCall,
     },
+    tui: {
+      theme: user.tui.theme,
+    },
     telegram: {
       enabled: user.telegram.enabled,
       ownerUserId: user.telegram.ownerUserId,

@@ -11,11 +11,17 @@ import { installMouseInput } from "./mouse-input.js";
 import { createWheelAccelerator } from "./wheel-accelerator.js";
 import { parseTuiArgs } from "./tui-args.js";
 import { persistUserLocalLlmUrl } from "./persist-user-local-models-config.js";
+import { persistUserTuiTheme } from "./persist-user-tui-config.js";
 import {
   isManagedModeReadyOnDisk,
   runLocalModelsStartupGateIfNeeded,
 } from "./run-local-models-config-wizard.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
+import {
+  detectTerminalBackground,
+  resolveStartupTheme,
+} from "./theme/detect-terminal-background.js";
+import { isThemeName, setActiveTheme, THEMES } from "./theme/theme.js";
 import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
 
 /**
@@ -31,7 +37,19 @@ export async function tuiCommand(args: string[]): Promise<number> {
     process.stderr.write(`${parsed.error}\n`);
     return 2;
   }
-  getConfig();
+  // Theme selection BEFORE any Ink render or stdin listener (the startup-gate
+  // wizard, installMouseInput, and the main render). An explicit
+  // `tui.theme` (a registered name) wins; otherwise `"auto"` (or an unknown
+  // name) falls back to OSC 11 terminal-background autodetection. Running the
+  // probe here means its reply is never swallowed by another stdin consumer,
+  // and both the optional wizard and the main TUI are themed. Autodetect
+  // falls back to dark on any failure (non-TTY, no reply, timeout).
+  const configuredTheme = getConfig().tui.theme;
+  if (isThemeName(configuredTheme)) {
+    setActiveTheme(THEMES[configuredTheme]);
+  } else {
+    setActiveTheme(resolveStartupTheme(await detectTerminalBackground()));
+  }
   const skipLlamaWizard =
     parsed.skipLlamaSetup || process.env.ATOMIC_AGENT_TUI_SKIP_LLAMA_SETUP === "1";
   const startupGate = await runLocalModelsStartupGateIfNeeded({
@@ -159,6 +177,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onMemoryDumpRequested: () => orchestrator.dumpProfile(),
         onSkillCatalogRequested: () => orchestrator.dumpSkillCatalog(),
         onPersistLlamaUrl: (nextUrl) => persistLlamaUrl(nextUrl, bus, orchestrator),
+        onThemePersistRequested: (themeName) => persistThemeChoice(themeName, bus),
         onTasksAutoRefreshStart: () => orchestrator.tasks.startAutoRefresh(),
         onTasksRefreshRequested: () => orchestrator.tasks.refresh(),
         onTaskDetailRequested: (taskId) => orchestrator.tasks.openDetail(taskId),
@@ -320,6 +339,19 @@ export async function tuiCommand(args: string[]): Promise<number> {
     await orchestrator.shutdown();
   }
   return orchestrator.exitCode;
+}
+
+function persistThemeChoice(
+  themeName: string,
+  bus: ReturnType<typeof makeTuiEventBus>,
+): void {
+  try {
+    persistUserTuiTheme(themeName);
+    bus.emit({ type: "runtime_info", line: `theme saved: ${themeName}` });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    bus.emit({ type: "runtime_info", line: `theme not saved: ${msg}` });
+  }
 }
 
 function persistLlamaUrl(

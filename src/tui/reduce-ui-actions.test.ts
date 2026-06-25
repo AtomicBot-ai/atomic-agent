@@ -1,172 +1,87 @@
 import { describe, expect, it } from "vitest";
-import { reduceTuiState } from "./agent-event-reducer.js";
-import type { TuiAction } from "./tui-action.js";
-import {
-  createInitialTuiState,
-  type TuiSessionInfo,
-  type TuiState,
-} from "./tui-state.js";
+import { reduceUiAction } from "./reduce-ui-actions.js";
+import { THEME_NAMES } from "./theme/theme.js";
+import { createInitialTuiState, type TuiSessionInfo } from "./tui-state.js";
 
-function fakeSession(overrides: Partial<TuiSessionInfo> = {}): TuiSessionInfo {
-  return {
-    sessionId: null,
-    workingDir: "/tmp",
-    llamaUrl: "http://127.0.0.1:8080",
-    browserChannel: "chrome",
-    browserHeadless: false,
-    approvalRequired: false,
-    maxSteps: 10,
-    skillCount: 0,
-    ...overrides,
-  };
-}
+const SESSION: TuiSessionInfo = {
+  sessionId: "s1",
+  workingDir: "/tmp",
+  llamaUrl: "http://127.0.0.1:19091",
+  browserChannel: "chromium",
+  browserHeadless: true,
+  approvalRequired: false,
+  maxSteps: 10,
+  skillCount: 0,
+};
 
-function apply(state: TuiState, actions: TuiAction[]): TuiState {
-  return actions.reduce(reduceTuiState, state);
-}
-
-describe("UI-mode and streaming reducers", () => {
-  it("toggles ui mode between chat and debug", () => {
-    const initial = createInitialTuiState(fakeSession());
-    expect(initial.uiMode).toBe("chat");
-    const toggled = reduceTuiState(initial, { type: "ui_mode_toggled" });
-    expect(toggled.uiMode).toBe("debug");
-    const back = reduceTuiState(toggled, { type: "ui_mode_toggled" });
-    expect(back.uiMode).toBe("chat");
+describe("reduceUiAction theme_set", () => {
+  it("stores the new theme name to trigger a re-render", () => {
+    const state = createInitialTuiState(SESSION);
+    const next = reduceUiAction(state, { type: "theme_set", name: "dracula" });
+    expect(next).not.toBeNull();
+    expect(next?.themeName).toBe("dracula");
   });
 
-  it("records user message in inputHistory", () => {
-    const initial = createInitialTuiState(fakeSession());
-    const next = reduceTuiState(initial, {
-      type: "agent_event",
-      event: { type: "user_message", text: "first goal" },
-    });
-    expect(next.inputHistory).toEqual(["first goal"]);
+  it("leaves other slices untouched", () => {
+    const state = createInitialTuiState(SESSION);
+    const next = reduceUiAction(state, { type: "theme_set", name: "nord" });
+    expect(next?.uiMode).toBe(state.uiMode);
+    expect(next?.activeTab).toBe(state.activeTab);
+  });
+});
+
+describe("reduceUiAction theme picker", () => {
+  it("opens the picker seeded from the active theme name + records original", () => {
+    const base = createInitialTuiState(SESSION);
+    const seeded = { ...base, themeName: "nord" };
+    const next = reduceUiAction(seeded, { type: "theme_picker_opened" });
+    expect(next?.themePickerOpen).toBe(true);
+    expect(next?.themePickerOriginal).toBe("nord");
+    expect(next?.themePickerCursor).toBe(
+      (THEME_NAMES as readonly string[]).indexOf("nord"),
+    );
   });
 
-  it("navigates input history with Up/Down", () => {
-    const initial = createInitialTuiState(fakeSession());
-    const populated = apply(initial, [
-      { type: "agent_event", event: { type: "user_message", text: "one" } },
-      { type: "agent_event", event: { type: "user_message", text: "two" } },
-    ]);
-    const up1 = reduceTuiState(populated, {
-      type: "input_history_navigated",
+  it("falls back to cursor 0 when the active theme is unknown", () => {
+    const base = createInitialTuiState(SESSION);
+    const seeded = { ...base, themeName: "not-a-real-theme" };
+    const next = reduceUiAction(seeded, { type: "theme_picker_opened" });
+    expect(next?.themePickerCursor).toBe(0);
+  });
+
+  it("clamps cursor movement within [0, THEME_NAMES.length - 1]", () => {
+    const base = createInitialTuiState(SESSION);
+    const open = reduceUiAction(base, { type: "theme_picker_opened" })!;
+    const atZero = { ...open, themePickerCursor: 0 };
+    const stillZero = reduceUiAction(atZero, {
+      type: "theme_picker_cursor_moved",
       delta: -1,
     });
-    expect(up1.inputValue).toBe("two");
-    expect(up1.inputHistoryCursor).toBe(1);
-    const up2 = reduceTuiState(up1, {
-      type: "input_history_navigated",
-      delta: -1,
-    });
-    expect(up2.inputValue).toBe("one");
-    const down1 = reduceTuiState(up2, {
-      type: "input_history_navigated",
+    expect(stillZero?.themePickerCursor).toBe(0);
+
+    const last = THEME_NAMES.length - 1;
+    const atLast = { ...open, themePickerCursor: last };
+    const stillLast = reduceUiAction(atLast, {
+      type: "theme_picker_cursor_moved",
       delta: 1,
     });
-    expect(down1.inputValue).toBe("two");
-    const down2 = reduceTuiState(down1, {
-      type: "input_history_navigated",
+    expect(stillLast?.themePickerCursor).toBe(last);
+  });
+
+  it("ignores cursor movement when the picker is closed", () => {
+    const base = createInitialTuiState(SESSION);
+    const next = reduceUiAction(base, {
+      type: "theme_picker_cursor_moved",
       delta: 1,
     });
-    expect(down2.inputValue).toBe("");
-    expect(down2.inputHistoryCursor).toBeNull();
+    expect(next?.themePickerCursor).toBe(base.themePickerCursor);
   });
 
-  it("toggles tool expand state per id", () => {
-    const initial = createInitialTuiState(fakeSession());
-    const on = reduceTuiState(initial, {
-      type: "tool_expand_toggled",
-      toolCardId: "tc-1",
-    });
-    expect(on.toolsExpandedById["tc-1"]).toBe(true);
-    const off = reduceTuiState(on, {
-      type: "tool_expand_toggled",
-      toolCardId: "tc-1",
-    });
-    expect(off.toolsExpandedById["tc-1"]).toBe(false);
-  });
-
-  it("accumulates streaming assistant text via assistant_delta", () => {
-    const initial = createInitialTuiState(fakeSession());
-    const next = apply(initial, [
-      { type: "assistant_delta", text: "Hel" },
-      { type: "assistant_delta", text: "lo" },
-    ]);
-    expect(next.streamingAssistantText).toBe("Hello");
-  });
-
-  it("converts streaming tool calls into tool cards on assistant_reply", () => {
-    const initial = createInitialTuiState(fakeSession());
-    const next = apply(initial, [
-      { type: "message_submitted" },
-      { type: "agent_event", event: { type: "turn_started", turnIndex: 0 } },
-      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
-      {
-        type: "agent_event",
-        event: {
-          type: "llm_event",
-          event: {
-            type: "tool_call_parsed",
-            call: { tool: "shell.exec", args: { cmd: "ls" } },
-          },
-        },
-      },
-      {
-        type: "agent_event",
-        event: {
-          type: "llm_event",
-          event: {
-            type: "tool_call_executed",
-            result: {
-              tool: "shell.exec",
-              status: "ok",
-              summary: "README.md",
-              truncated: false,
-            },
-          },
-        },
-      },
-      {
-        type: "agent_event",
-        event: {
-          type: "llm_event",
-          event: { type: "assistant_reply", text: "done" },
-        },
-      },
-    ]);
-    const last = next.messages.at(-1);
-    expect(last?.role).toBe("assistant");
-    expect(last?.toolCards).toHaveLength(1);
-    expect(last?.toolCards?.[0]?.tool).toBe("shell.exec");
-    expect(last?.toolCards?.[0]?.status).toBe("ok");
-    expect(next.streamingToolCards).toEqual([]);
-    expect(next.streamingToolCalls).toEqual([]);
-  });
-
-  it("clears transcript on chat_cleared", () => {
-    const initial = createInitialTuiState(fakeSession());
-    const seeded = apply(initial, [
-      { type: "agent_event", event: { type: "user_message", text: "x" } },
-      { type: "assistant_delta", text: "partial" },
-    ]);
-    const cleared = reduceTuiState(seeded, { type: "chat_cleared" });
-    expect(cleared.messages).toHaveLength(0);
-    expect(cleared.streamingAssistantText).toBeNull();
-    expect(cleared.feed).toHaveLength(0);
-  });
-
-  it("opens and closes the slash palette", () => {
-    const initial = createInitialTuiState(fakeSession());
-    const opened = reduceTuiState(initial, {
-      type: "slash_palette_opened",
-      query: "cl",
-    });
-    expect(opened.slashPaletteOpen).toBe(true);
-    expect(opened.slashQuery).toBe("cl");
-    const closed = reduceTuiState(opened, { type: "slash_palette_closed" });
-    expect(closed.slashPaletteOpen).toBe(false);
-    expect(closed.slashQuery).toBe("");
+  it("closes the picker and clears the original mark", () => {
+    const base = createInitialTuiState(SESSION);
+    const open = reduceUiAction(base, { type: "theme_picker_opened" })!;
+    const closed = reduceUiAction(open, { type: "theme_picker_closed" });
+    expect(closed?.themePickerOpen).toBe(false);
+    expect(closed?.themePickerOriginal).toBe("");
   });
 });

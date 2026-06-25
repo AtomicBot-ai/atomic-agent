@@ -33,5 +33,17 @@ export {
   SECTION_ORDER,
 } from "./section.js";
 export type { TuiSection } from "./section.js";
-export { theme } from "./theme/theme.js";
-export type { TuiTheme } from "./theme/theme.js";
+export {
+  theme,
+  setActiveTheme,
+  getActiveThemeName,
+  isThemeName,
+  THEMES,
+  THEME_NAMES,
+} from "./theme/theme.js";
+export type { TuiTheme, ThemeName } from "./theme/theme.js";
+export {
+  detectTerminalBackground,
+  resolveStartupTheme,
+} from "./theme/detect-terminal-background.js";
+export type { TerminalBackgroundMode } from "./theme/detect-terminal-background.js";

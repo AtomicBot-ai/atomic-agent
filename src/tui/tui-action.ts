@@ -34,6 +34,13 @@ export type TuiAction =
   | { type: "tab_changed"; tab: TuiTab }
   | { type: "ui_mode_toggled" }
   | { type: "ui_mode_set"; mode: TuiUiMode }
+  /**
+   * Record the active theme name so the app re-renders after a runtime
+   * `/theme <name>` switch. The actual palette swap (`setActiveTheme`) is a
+   * side effect performed by the submit handler before this action lands;
+   * the reducer only stores the name to trigger the re-render.
+   */
+  | { type: "theme_set"; name: string }
   | { type: "abort_requested" }
   | { type: "input_changed"; value: string }
   /**
@@ -95,6 +102,16 @@ export type TuiAction =
   | { type: "session_picker_closed" }
   /** Move the highlight in the open session picker by delta rows. */
   | { type: "session_picker_cursor_moved"; delta: 1 | -1 }
+  /**
+   * Open the interactive theme picker. The reducer seeds the cursor from the
+   * current `themeName` and records it in `themePickerOriginal` so Esc can
+   * revert the live preview.
+   */
+  | { type: "theme_picker_opened" }
+  /** Close the theme picker (cancel). Caller reverts the preview palette. */
+  | { type: "theme_picker_closed" }
+  /** Move the theme picker highlight by delta rows (clamped). */
+  | { type: "theme_picker_cursor_moved"; delta: 1 | -1 }
   /**
    * Hard-switch the TUI transcript to an already-loaded session. The
    * orchestrator performs the SessionStore load + swap, then dispatches

@@ -9,6 +9,7 @@ import {
 } from "./commands/slash-commands.js";
 import type { TuiAction } from "./tui-action.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
+import { isThemeName, setActiveTheme, THEME_NAMES, THEMES } from "./theme/theme.js";
 import type { TuiAppCallbacks } from "./tui-app.js";
 import { canAcceptMessage, type TuiState } from "./tui-state.js";
 
@@ -27,6 +28,11 @@ export function handleEditorSubmit(
   dispatch: Dispatch,
   callbacks: TuiAppCallbacks,
 ): void {
+  if (state.themePickerOpen) {
+    handleThemePickerSubmit(state, dispatch, callbacks);
+    return;
+  }
+
   if (state.sessionPickerOpen) {
     handleSessionPickerSubmit(state, dispatch, callbacks);
     return;
@@ -79,6 +85,27 @@ export function handleEditorSubmit(
   callbacks.onMessageSubmitted(trimmed);
 }
 
+/**
+ * Commit the highlighted theme from the interactive picker: the palette was
+ * already live-previewed by the arrow handlers, so here we just persist the
+ * choice, store the name (re-render), and close the overlay. Esc handling
+ * (revert) lives in the app shell's `onEscape`.
+ */
+function handleThemePickerSubmit(
+  state: TuiState,
+  dispatch: Dispatch,
+  callbacks: TuiAppCallbacks,
+): void {
+  const name = THEME_NAMES[state.themePickerCursor];
+  if (name) {
+    setActiveTheme(THEMES[name]);
+    callbacks.onThemePersistRequested?.(name);
+    dispatch({ type: "theme_set", name });
+  }
+  dispatch({ type: "theme_picker_closed" });
+  dispatch({ type: "input_changed", value: "" });
+}
+
 function handleSessionPickerSubmit(
   state: TuiState,
   dispatch: Dispatch,
@@ -102,6 +129,13 @@ export function runSlashCommand(
   const result: SlashDispatchResult = dispatchSlashCommand(raw);
   if (result.triggerDebugBundleDump) {
     callbacks.onDebugBundleExportRequested?.(state);
+  }
+  // Swap the active palette before dispatching `theme_set` so the forced
+  // re-render reads the new colours through the theme proxy, then persist the
+  // choice to the user config (`/theme <name>` direct path).
+  if (result.setThemeName && isThemeName(result.setThemeName)) {
+    setActiveTheme(THEMES[result.setThemeName]);
+    callbacks.onThemePersistRequested?.(result.setThemeName);
   }
   for (const action of result.actions) dispatch(action);
   if (result.systemMessage) {

@@ -5,6 +5,7 @@ import type {
   WorldSnapshot,
 } from "../session/session-state.js";
 import type { LogRecord } from "../tracing/structured-logger.js";
+import { getActiveThemeName } from "./theme/theme.js";
 import {
   createInitialLlmHealthState,
   type LlmHealthState,
@@ -261,6 +262,11 @@ export interface TuiState {
   logs: LogRecord[];
   /** Top-level UI mode (chat vs debug). */
   uiMode: TuiUiMode;
+  /**
+   * Active theme name. Stored so a runtime `/theme <name>` switch triggers a
+   * re-render; the palette swap itself is done via `setActiveTheme`.
+   */
+  themeName: string;
   /** Inner tab of the debug pane; ignored in chat mode. */
   activeTab: TuiTab;
   /** Status line text for the last finished run, e.g. "completed: finish". */
@@ -294,6 +300,15 @@ export interface TuiState {
   sessionPickerList: readonly SessionPickerEntry[];
   /** Highlighted row in the picker. */
   sessionPickerCursor: number;
+  /** Theme picker overlay open (interactive `/theme` selection). */
+  themePickerOpen: boolean;
+  /** Highlighted row in the theme picker (index into `THEME_NAMES`). */
+  themePickerCursor: number;
+  /**
+   * Theme name active when the picker was opened. Used to revert the
+   * live-preview swap on Esc (cancel). Empty string when no picker session.
+   */
+  themePickerOriginal: string;
   /** User-initiated abort in flight. */
   aborting: boolean;
   /**
@@ -443,6 +458,7 @@ export function createInitialTuiState(
     },
     logs: [],
     uiMode: layout?.uiMode ?? "chat",
+    themeName: getActiveThemeName(),
     activeTab,
     lastRunStatus: null,
     runHistory: [],
@@ -456,6 +472,9 @@ export function createInitialTuiState(
     sessionPickerOpen: false,
     sessionPickerList: [],
     sessionPickerCursor: 0,
+    themePickerOpen: false,
+    themePickerCursor: 0,
+    themePickerOriginal: "",
     aborting: false,
     updatePrompt: null,
     updateStatus: "idle",

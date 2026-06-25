@@ -24,7 +24,7 @@ export function Logo({ compact = false }: LogoProps): ReactElement {
           <WordMark />
           <Box marginTop={1}>
             <Text color={theme.colors.muted}>
-              local operator agent — Ink + llama.cpp
+              Local AI-First Agent
             </Text>
           </Box>
         </Box>
@@ -61,7 +61,7 @@ function LogoMark(): ReactElement {
   return (
     <Box flexDirection="column">
       {rows.map((row, idx) => (
-        <Text key={idx} color={theme.colors.warn} bold>
+        <Text key={idx} color={theme.colors.system} bold>
           {row}
         </Text>
       ))}

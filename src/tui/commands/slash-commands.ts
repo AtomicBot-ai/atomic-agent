@@ -22,6 +22,11 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
       "write debug zip (TUI snapshot + recent trace NDJSON) to ~/Documents/atomic-agent-debug",
   },
   { name: "help", description: "list available slash commands" },
+  {
+    name: "theme",
+    description:
+      "switch the UI theme: `/theme <name>` | `/theme list` (github, catppuccin, dracula, nord, …)",
+  },
   { name: "clear", description: "clear chat transcript (keeps session)" },
   { name: "abort", description: "abort the running turn" },
   { name: "quit", description: "exit atomic-agent", aliases: ["exit"] },
