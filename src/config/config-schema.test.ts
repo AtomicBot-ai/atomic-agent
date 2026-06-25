@@ -65,6 +65,108 @@ describe("parseUserConfigFile", () => {
     expect(parsed.vision).toEqual(USER_CONFIG_DEFAULTS.vision);
   });
 
+  it("fills web.search defaults when migrating from v26", () => {
+    const parsed = parseUserConfigFile({ version: 26 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.web.search).toEqual(USER_CONFIG_DEFAULTS.web.search);
+  });
+
+  it("accepts user-supplied web search provider overrides", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      web: {
+        search: {
+          provider: "searxng",
+          maxResults: 6,
+          timeoutMs: 12_000,
+          searxng: { instanceUrl: "https://search.example.com" },
+        },
+      },
+    });
+    expect(parsed.web.search.provider).toBe("searxng");
+    expect(parsed.web.search.maxResults).toBe(6);
+    expect(parsed.web.search.timeoutMs).toBe(12_000);
+    expect(parsed.web.search.searxng.instanceUrl).toBe(
+      "https://search.example.com",
+    );
+  });
+
+  it("rejects an unknown web search provider", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        web: { search: { provider: "google" } },
+      }),
+    ).toThrow(/web.search.provider/);
+  });
+
+  it("fills cacheTtlMinutes/fallback defaults when migrating from v27", () => {
+    const parsed = parseUserConfigFile({ version: 27 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.web.search.cacheTtlMinutes).toBe(15);
+    expect(parsed.web.search.provider).toBe("exa");
+    expect(parsed.web.search.fallback).toEqual(["duckduckgo"]);
+  });
+
+  it("keeps an explicit empty fallback (disables the default Exa->DDG degrade)", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      web: { search: { provider: "exa", fallback: [] } },
+    });
+    expect(parsed.web.search.fallback).toEqual([]);
+  });
+
+  it("accepts cacheTtlMinutes and a deduped fallback chain (dropping the primary)", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      web: {
+        search: {
+          provider: "duckduckgo",
+          cacheTtlMinutes: 30,
+          fallback: ["exa", "duckduckgo", "exa", "searxng"],
+        },
+      },
+    });
+    expect(parsed.web.search.cacheTtlMinutes).toBe(30);
+    // primary (duckduckgo) dropped, duplicate exa collapsed
+    expect(parsed.web.search.fallback).toEqual(["exa", "searxng"]);
+  });
+
+  it("allows cacheTtlMinutes = 0 (cache disabled)", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      web: { search: { cacheTtlMinutes: 0 } },
+    });
+    expect(parsed.web.search.cacheTtlMinutes).toBe(0);
+  });
+
+  it("rejects an out-of-range cacheTtlMinutes", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        web: { search: { cacheTtlMinutes: 5000 } },
+      }),
+    ).toThrow(/web.search.cacheTtlMinutes/);
+  });
+
+  it("rejects an invalid fallback entry", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        web: { search: { fallback: ["exa", "google"] } },
+      }),
+    ).toThrow(/web.search.fallback/);
+  });
+
+  it("rejects a non-array fallback", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        web: { search: { fallback: "exa" } },
+      }),
+    ).toThrow(/web.search.fallback/);
+  });
+
   it("accepts user-supplied vision overrides", () => {
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,

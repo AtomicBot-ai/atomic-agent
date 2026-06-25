@@ -277,6 +277,9 @@ export function loadConfig(): AtomicAgentConfig {
       maxResponseBytes: user.http.maxResponseBytes,
       defaultTimeoutMs: user.http.defaultTimeoutMs,
     },
+    web: {
+      search: { ...user.web.search },
+    },
     log: { level: logLevel },
     tasks: {
       enabled: readBool("ATOMIC_AGENT_TASKS_ENABLED", ENV_DEFAULTS.TASKS_ENABLED),

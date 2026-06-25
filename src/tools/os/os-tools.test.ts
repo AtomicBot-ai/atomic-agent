@@ -431,6 +431,23 @@ describe("registerOsTools", () => {
           maxResponseBytes: 1_048_576,
           defaultTimeoutMs: 30_000,
         },
+        web: {
+          search: {
+            enabled: true,
+            provider: "duckduckgo",
+            maxResults: 8,
+            timeoutMs: 15_000,
+            cacheTtlMinutes: 15,
+            fallback: [],
+            searxng: { instanceUrl: null },
+            exa: {
+              endpoint: "https://mcp.exa.ai/mcp",
+              apiEndpoint: "https://api.exa.ai/search",
+              apiKeyEnv: "EXA_API_KEY",
+            },
+            brave: { apiKeyEnv: "BRAVE_SEARCH_API_KEY" },
+          },
+        },
       },
     });
     const names = registry.list().map((t) => t.name).sort();
@@ -464,6 +481,7 @@ describe("registerOsTools", () => {
         "os.proc.kill",
         "os.proc.list",
         "os.shell.run",
+        "os.web.search",
         "os.web.fetch",
         "os.window.focus",
         "os.window.list",

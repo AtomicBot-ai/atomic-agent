@@ -204,7 +204,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
   },
   {
     name: "reply",
-    summary: "Final natural-language answer; ends the macro-turn. Never use to announce a pending action; keep text short (no huge dumps).",
+    summary: "Final natural-language answer; ends the macro-turn. Never use to announce a pending action; keep text short (no huge dumps). If the task requires an exact answer format or marker, `text` must be ONLY that bare value or marker line — no preamble or commentary.",
     argsSchema: "{ text: string }",
   },
   {

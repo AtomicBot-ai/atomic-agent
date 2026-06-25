@@ -5,7 +5,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "browser.navigate",
     summary:
-      "Open a URL in the controlled browser tab. LAST RESORT — do NOT use this to read a page (use os.web.fetch) or to search (use the exa-web-search skill). Allowed ONLY when the user explicitly asks for the browser, or the page truly needs JS/login/clicks that os.web.fetch cannot deliver.",
+      "Open a URL in the controlled browser tab. LAST RESORT — do NOT use this to read a page (use os.web.fetch) or to search (use os.web.search). Allowed ONLY when the user explicitly asks for the browser, or the page truly needs JS/login/clicks that os.web.fetch cannot deliver.",
     argsSchema: "{ url: string }",
   },
   {
@@ -26,7 +26,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "browser.search",
     summary:
-      "Web search in the live browser (opens the SERP, refreshes the world snapshot). LAST RESORT — to search the web use the exa-web-search skill instead. Allowed ONLY when the user explicitly asks to search via the browser, or you must then click/read the live results.",
+      "Web search in the live browser (opens the SERP, refreshes the world snapshot). LAST RESORT — to search the web use os.web.search instead. Allowed ONLY when the user explicitly asks to search via the browser, or you must then click/read the live results.",
     argsSchema: "{ query: string, engine?: string }",
   },
   {
@@ -191,6 +191,16 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
       "Raw HTTP GET/POST via curl for APIs/JSON; returns the body verbatim (no HTML extraction). Host allowlist + approval from config.http. To read a web page, use os.web.fetch.",
     argsSchema:
       "{ url: string, method?: 'GET' | 'POST', headers?: Record<string, string>, body?: string | object, timeoutMs?: number, followRedirects?: boolean }",
+  },
+  {
+    name: "os.web.search",
+    summary:
+      "Search the web via the configured provider (Exa by default with a DuckDuckGo fallback; SearXNG/Brave configurable; Exa/Brave can use env API keys). Returns compact title/url/snippet results. Use os.web.fetch to read a chosen result.",
+    argsSchema: `{ query: string, maxResults?: number }`,
+    examples: [
+      '{"query":"atomic agent local operator runtime","maxResults":5}',
+      '{"query":"latest llama.cpp server grammar cache_prompt slot_id"}',
+    ],
   },
   {
     name: "os.web.fetch",

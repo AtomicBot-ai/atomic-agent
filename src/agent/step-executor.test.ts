@@ -1224,3 +1224,77 @@ describe("executeStep streaming reasoning accumulator", () => {
     expect(captured!.reasoningContent).toBe("server-authoritative reasoning");
   });
 });
+
+describe("executeStep skill.view short-circuit", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  it("short-circuits a skill.view for an already-loaded skill without invoking the tool", async () => {
+    let viewCalls = 0;
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "skill.view",
+      description: "view",
+      readonly: true,
+      async run() {
+        viewCalls += 1;
+        return compressToolResult({
+          tool: "skill.view",
+          status: "ok",
+          output: "FULL SKILL BODY",
+          details: { skillLoaded: { name: "exa", version: "1", body: "body" } },
+        });
+      },
+    });
+
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const base = createEmptySessionState({ id: "s-skill", workingDir: "/w" });
+    const session = {
+      ...base,
+      loadedSkills: [
+        { name: "exa", version: "1", body: "body", loadedAt: Date.now() },
+      ],
+    };
+    const completionBody = JSON.stringify({
+      tool: "skill.view",
+      args: { name: "exa" },
+    });
+
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async () => ({
+          content: completionBody,
+          reasoningContent: "",
+          stop: true,
+          truncated: false,
+          timing: {
+            promptMs: 1,
+            predictedMs: 1,
+            promptTokens: 20,
+            predictedTokens: 5,
+          },
+          cacheHitTokens: 0,
+          slotId: 0,
+          modelId: "mock",
+        }),
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+      },
+    );
+
+    expect(viewCalls).toBe(0);
+    expect(outcome.toolResults).toHaveLength(1);
+    expect(outcome.toolResults[0]!.status).toBe("ok");
+    expect(outcome.toolResults[0]!.summary).toContain("already loaded");
+  });
+});

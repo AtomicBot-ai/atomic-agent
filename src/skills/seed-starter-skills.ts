@@ -39,7 +39,10 @@ export interface SeedStarterSkillsResult {
  * because starter-skill names are reserved by contract — users must not reuse
  * them for custom work (they are replaced on every boot anyway).
  */
-const REMOVED_STARTER_SKILLS: readonly string[] = ["ddgr-web-search"];
+const REMOVED_STARTER_SKILLS: readonly string[] = [
+  "ddgr-web-search",
+  "exa-web-search",
+];
 
 function markerPath(root: string): string {
   return join(root, "skill-creator", "SKILL.md");

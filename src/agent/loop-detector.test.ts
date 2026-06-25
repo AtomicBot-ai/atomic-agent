@@ -356,8 +356,23 @@ describe("ToolLoopTracker wandering detector", () => {
     expect(tracker.isWanderingEscalated("os.fs.read", { path: "z" })).toBe(false);
   });
 
-  it("isWanderingProneTool covers web / http / browser only", () => {
+  it("flags a wandering loop on distinct web searches (query spam)", () => {
+    const tracker = new ToolLoopTracker({
+      wanderingThreshold: 3,
+      wanderingEscalation: 9,
+    });
+    cycle(tracker, "os.web.search", { query: "q1" }, mkResult({ summary: "r1" }));
+    cycle(tracker, "os.web.search", { query: "q2" }, mkResult({ summary: "r2" }));
+    const verdict = tracker.check("os.web.search", { query: "q3" });
+    expect(verdict.level).toBe("warn");
+    expect(verdict.detector).toBe("wandering");
+    expect(verdict.count).toBe(3);
+    expect(verdict.warningKey).toBe("wandering:os.web.search");
+  });
+
+  it("isWanderingProneTool covers web search / fetch / http / browser only", () => {
     expect(isWanderingProneTool("os.web.fetch")).toBe(true);
+    expect(isWanderingProneTool("os.web.search")).toBe(true);
     expect(isWanderingProneTool("os.http.request")).toBe(true);
     expect(isWanderingProneTool("browser.click")).toBe(true);
     expect(isWanderingProneTool("os.fs.read")).toBe(false);
