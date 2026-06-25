@@ -74,6 +74,14 @@ export interface BatchExecutionContext {
    * for this step (legacy behaviour).
    */
   tracker?: ToolLoopTracker;
+  /**
+   * Names of skills already present in `SessionState.loadedSkills`. A
+   * `skill.view` call targeting one of these is short-circuited with a
+   * terse "already loaded" result instead of re-reading and re-dumping
+   * the body (which bloats context and feeds the re-view loop). The tool
+   * is never invoked for such calls. Absent ⇒ no short-circuit.
+   */
+  loadedSkillNames?: ReadonlySet<string>;
 }
 
 export interface BatchExecutionResult {
@@ -210,6 +218,34 @@ export async function executeBatch(
         batchIndex: input.batchIndex,
         batchSize,
         result: gate.vetoResult,
+        durationMs: 0,
+      });
+      continue;
+    }
+    // Short-circuit a `skill.view` for an already-loaded skill: return a
+    // terse pointer instead of re-reading + re-dumping the body. The tool
+    // is never invoked. The synthetic outcome is recorded so persistent
+    // re-views still feed the no-progress streak (deterministic result ⇒
+    // the existing loop veto eventually fires on spam).
+    const alreadyLoaded = skillAlreadyLoadedResult(input, ctx);
+    if (alreadyLoaded) {
+      ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
+      slots[input.batchIndex] = {
+        ...slots[input.batchIndex]!,
+        compressed: alreadyLoaded,
+        durationMs: 0,
+      };
+      if (ctx.tracker) {
+        ctx.tracker.recordOutcome(
+          input.call.tool,
+          input.call.args,
+          alreadyLoaded,
+        );
+      }
+      ctx.onCallFinished?.({
+        batchIndex: input.batchIndex,
+        batchSize,
+        result: alreadyLoaded,
         durationMs: 0,
       });
       continue;
@@ -364,6 +400,30 @@ export async function executeBatch(
     cancelled: cancelled || ctx.signal.aborted,
     loopSignals,
   };
+}
+
+/**
+ * If `input` is a `skill.view` whose target name is already present in
+ * `ctx.loadedSkillNames`, return a terse synthetic result so the executor
+ * can skip the real invocation. The result carries NO `skillLoaded`
+ * detail, so `applyStateEffects` does not re-record or re-dump the body.
+ * Returns `null` when the call is not an already-loaded `skill.view`.
+ */
+function skillAlreadyLoadedResult(
+  input: BatchCallInput,
+  ctx: BatchExecutionContext,
+): CompressedToolResult | null {
+  if (input.call.tool !== "skill.view" || !ctx.loadedSkillNames) return null;
+  const rawName = (input.call.args as Record<string, unknown> | undefined)
+    ?.name;
+  if (typeof rawName !== "string" || rawName.length === 0) return null;
+  if (!ctx.loadedSkillNames.has(rawName)) return null;
+  return compressToolResult({
+    tool: "skill.view",
+    status: "ok",
+    output: `skill "${rawName}" is already loaded — see ### loaded-skills; proceed without re-viewing.`,
+    details: { skillAlreadyLoaded: rawName },
+  });
 }
 
 /**

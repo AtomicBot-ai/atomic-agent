@@ -70,10 +70,17 @@ export interface LoopCheckVerdict {
  * without converging). Bulk reads over distinct files (`os.fs.read`) are
  * deliberately excluded — scanning many files is legitimate work, not a
  * loop.
+ *
+ * `os.web.search` is included: GAIA traces show small models burn an entire
+ * step budget re-formulating ~35 distinct search queries (different quotes /
+ * keywords / versions) while barely fetching the pages they already found.
+ * Each query is unique, so the args-only and no-progress streaks never fire —
+ * only the distinct-spread wandering detector can bound that token burn.
  */
 export function isWanderingProneTool(tool: string): boolean {
   return (
     tool === "os.web.fetch" ||
+    tool === "os.web.search" ||
     tool === "os.http.request" ||
     tool.startsWith("browser.")
   );

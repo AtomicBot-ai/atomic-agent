@@ -524,3 +524,81 @@ describe("executeBatch", () => {
     expect(out.results[2]!.cancelled).toBe(true);
   });
 });
+
+describe("executeBatch — skill.view short-circuit", () => {
+  it("short-circuits skill.view for an already-loaded skill without invoking the registry", async () => {
+    const fn = vi.fn(
+      async (_args: Record<string, unknown>): Promise<CompressedToolResult> =>
+        compressToolResult({
+          tool: "skill.view",
+          status: "ok",
+          output: "FULL SKILL BODY",
+          details: { skillLoaded: { name: "exa", version: "1", body: "..." } },
+        }),
+    );
+    const registry = buildRegistry({ "skill.view": fn });
+    const inputs = toBatchInputs([
+      { tool: "skill.view", args: { name: "exa" } },
+    ]);
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      loadedSkillNames: new Set(["exa"]),
+    });
+    expect(fn).not.toHaveBeenCalled();
+    const result = out.results[0]!.compressed!;
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("already loaded");
+    // No skillLoaded detail ⇒ applyStateEffects will not re-dump the body.
+    expect(
+      (result.details as Record<string, unknown> | undefined)?.skillLoaded,
+    ).toBeUndefined();
+    expect(
+      (result.details as Record<string, unknown> | undefined)
+        ?.skillAlreadyLoaded,
+    ).toBe("exa");
+  });
+
+  it("invokes the registry for a skill.view that is not already loaded", async () => {
+    const fn = vi.fn(
+      async (_args: Record<string, unknown>): Promise<CompressedToolResult> =>
+        compressToolResult({
+          tool: "skill.view",
+          status: "ok",
+          output: "FULL SKILL BODY",
+        }),
+    );
+    const registry = buildRegistry({ "skill.view": fn });
+    const inputs = toBatchInputs([
+      { tool: "skill.view", args: { name: "other" } },
+    ]);
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      loadedSkillNames: new Set(["exa"]),
+    });
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(out.results[0]!.compressed?.summary).toContain("FULL SKILL BODY");
+  });
+
+  it("records the short-circuit outcome so repeated re-views feed the loop veto", async () => {
+    const fn = vi.fn(
+      async (_args: Record<string, unknown>): Promise<CompressedToolResult> =>
+        okResult("skill.view"),
+    );
+    const registry = buildRegistry({ "skill.view": fn });
+    const tracker = new ToolLoopTracker();
+    // Drive enough identical short-circuited re-views to cross the
+    // no-progress critical threshold; the next check must veto.
+    for (let i = 0; i < 6; i += 1) {
+      const inputs = toBatchInputs([
+        { tool: "skill.view", args: { name: "exa" } },
+      ]);
+      await executeBatch(inputs, registry, {
+        ...ctx(new AbortController().signal),
+        loadedSkillNames: new Set(["exa"]),
+        tracker,
+      });
+    }
+    expect(fn).not.toHaveBeenCalled();
+    expect(tracker.check("skill.view", { name: "exa" }).level).toBe("critical");
+  });
+});

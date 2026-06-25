@@ -621,12 +621,19 @@ async function executeStepInner(
 
   const stepStartedAt = Date.now();
   const inputs = toBatchInputs(calls);
+  // Names of skills already loaded this session: a `skill.view` for any of
+  // these is short-circuited inside `executeBatch` with a terse pointer
+  // instead of re-reading and re-dumping the body.
+  const loadedSkillNames = new Set(
+    ctx.session.loadedSkills.map((s) => s.name),
+  );
   const batchOutcome = await executeBatch(inputs, deps.registry, {
     workingDir: ctx.session.workingDir,
     sessionId: ctx.session.id,
     stepIndex: ctx.stepIndex,
     signal: ctx.signal,
     ...(deps.tracker ? { tracker: deps.tracker } : {}),
+    ...(loadedSkillNames.size > 0 ? { loadedSkillNames } : {}),
     onCallFinished: ({ batchIndex, result, durationMs }) => {
       deps.onEvent?.({
         type: "tool_call_executed",

@@ -310,6 +310,23 @@ describe("buildPrompt", () => {
     expect(prompt.tail).not.toContain("Emit a JSON ARRAY of tool calls now");
   });
 
+  it("pins the bare-value final-answer discipline in the persona stable prefix", () => {
+    const prompt = buildPrompt({
+      session: mkSession(),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    // When an exact format/marker is requested, `reply` must be the bare
+    // value only — no preamble/essay. Recovers GAIA `FINAL ANSWER:` tasks.
+    expect(prompt.stablePrefix).toContain(
+      "the `reply` text MUST be ONLY that",
+    );
+    expect(prompt.stablePrefix).toContain(
+      "emit exactly that line as the entire reply",
+    );
+  });
+
   it("pins a short `### respond` anchor at the end of the tail (anti-loop)", () => {
     const prompt = buildPrompt({
       session: mkSession(),
