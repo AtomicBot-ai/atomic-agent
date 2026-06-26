@@ -106,42 +106,68 @@ fi
 
 mkdir -p "$INSTALL_DIR"
 
-# Install binary, grammars, native prebuilds, and vendor/ next to the binary
+# Atomically replace a directory next to the binary. Copies the fresh tree
+# into a temp sibling, removes the old tree (unlinked inodes survive for any
+# running process that still maps them), then rename(2)s the new tree in.
+# Never overwrites individual files in place under a live process.
+replace_dir() {
+  _rd_src="$1"
+  _rd_dst="$2"
+  [ -d "$_rd_src" ] || return 0
+  _rd_tmp="${_rd_dst}.tmp.$$"
+  rm -rf "$_rd_tmp"
+  cp -R "$_rd_src" "$_rd_tmp"
+  rm -rf "$_rd_dst"
+  mv -f "$_rd_tmp" "$_rd_dst"
+}
+
+# Install binary, grammars, native prebuilds, and vendor/ next to the binary.
+#
+# The binary is written atomically: copy into a temp sibling, then rename(2)
+# the new inode over the old name. An in-place `cp -f` would truncate and
+# rewrite the SAME inode the running process is still executing from, which
+# corrupts the mmap'd code pages — the kernel then faults a page whose content
+# no longer matches the (valid) code signature and kills the process with
+# SIGKILL in the CODESIGNING namespace ("invalid signature (code or signature
+# have been modified)" / "Invalid Page"). A self-update never restarts the
+# process, so the live binary MUST keep its own inode.
 if [ -f "$STAGE/atomic-agent" ]; then
-  cp -f "$STAGE/atomic-agent" "$INSTALL_DIR/atomic-agent"
-  chmod 755 "$INSTALL_DIR/atomic-agent" 2>/dev/null || true
+  _tmp_bin="$INSTALL_DIR/.atomic-agent.tmp.$$"
+  cp -f "$STAGE/atomic-agent" "$_tmp_bin"
+  chmod 755 "$_tmp_bin" 2>/dev/null || true
+  # Verify the signed binary before swapping it in (macOS). A failed --strict
+  # check means the downloaded bytes do not match the embedded signature, so
+  # launching it would SIGKILL anyway — abort instead of installing it.
+  if [ "$OS_NAME" = "Darwin" ] && command -v codesign >/dev/null 2>&1; then
+    if ! codesign --verify --strict "$_tmp_bin" 2>/dev/null; then
+      echo "error: downloaded binary failed 'codesign --verify --strict'; aborting" >&2
+      rm -f "$_tmp_bin"
+      exit 1
+    fi
+  fi
+  mv -f "$_tmp_bin" "$INSTALL_DIR/atomic-agent"
 elif [ -f "$STAGE/atomic-agent.exe" ]; then
-  cp -f "$STAGE/atomic-agent.exe" "$INSTALL_DIR/atomic-agent.exe"
+  _tmp_bin="$INSTALL_DIR/.atomic-agent.exe.tmp.$$"
+  cp -f "$STAGE/atomic-agent.exe" "$_tmp_bin"
+  mv -f "$_tmp_bin" "$INSTALL_DIR/atomic-agent.exe"
 else
   echo "binary not found in archive under $STAGE" >&2
   exit 1
 fi
 
-if [ -d "$STAGE/grammars" ]; then
-  cp -R "$STAGE/grammars" "$INSTALL_DIR/"
-fi
+replace_dir "$STAGE/grammars" "$INSTALL_DIR/grammars"
 # Built-in starter skills. The runtime resolves them next to the binary
 # (see resolveStarterSkillsSourceDir / seedStarterSkillsIfMissing) and
 # copies them into the stateDir on each boot. Without this the skills
 # folder is never created on first launch.
-if [ -d "$STAGE/starter-skills" ]; then
-  cp -R "$STAGE/starter-skills" "$INSTALL_DIR/"
-fi
-if [ -d "$STAGE/assets" ]; then
-  cp -R "$STAGE/assets" "$INSTALL_DIR/"
-fi
-if [ -d "$STAGE/vendor" ]; then
-  cp -R "$STAGE/vendor" "$INSTALL_DIR/"
-fi
-if [ -d "$STAGE/prebuilds" ]; then
-  cp -R "$STAGE/prebuilds" "$INSTALL_DIR/"
-fi
+replace_dir "$STAGE/starter-skills" "$INSTALL_DIR/starter-skills"
+replace_dir "$STAGE/assets" "$INSTALL_DIR/assets"
+replace_dir "$STAGE/vendor" "$INSTALL_DIR/vendor"
+replace_dir "$STAGE/prebuilds" "$INSTALL_DIR/prebuilds"
 # better-sqlite3 (+ bindings + file-uri-to-path) runtime tree. The SEA
 # binary's `createRequire` resolver (see src/native/load-better-sqlite3.ts)
 # looks these up under `node_modules/` next to the binary.
-if [ -d "$STAGE/node_modules" ]; then
-  cp -R "$STAGE/node_modules" "$INSTALL_DIR/"
-fi
+replace_dir "$STAGE/node_modules" "$INSTALL_DIR/node_modules"
 
 add_to_path() {
   _dir="$1"

@@ -71,8 +71,8 @@ function LogoMark(): ReactElement {
 
 function WordMark(): ReactElement {
   const rows: readonly string[] = [
-    "▄▀█ ▀█▀ █▀█ █▀▄▀█ █ █▀▀   ▄▀█ █▀▀ █▀▀ █▄░█ ▀█▀",
-    "█▀█ ░█░ █▄█ █░▀░█ █ █▄▄   █▀█ █▄█ ██▄ █░▀█ ░█░",
+    "▄▀█ ▀█▀ █▀█ █▀▄▀█ █ █▀▀   ▄▀█ █▀▀ █▀▀ █▄ █ ▀█▀",
+    "█▀█  █  █▄█ █ ▀ █ █ █▄▄   █▀█ █▄█ ██▄ █ ▀█  █ ",
   ];
   return (
     <Box flexDirection="column">
