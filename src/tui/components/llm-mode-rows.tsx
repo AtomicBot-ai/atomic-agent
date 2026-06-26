@@ -113,13 +113,10 @@ function Row({ row, state }: { row: LlmPanelRow; state: TuiState }): ReactElemen
   return (
     <Text color={baseColor} bold={selected}>
       {mark} {renderRowText(row, state)}
-      {ramFit === "insufficient" ? (
-        <Text color="red"> Not enough RAM</Text>
+      {insufficient ? (
+        <Text color={theme.colors.warn}> Not enough VRAM</Text>
       ) : ramFit === "tight" ? (
-        <Text color="yellow"> RAM tight</Text>
-      ) : null}
-      {vramFit === "insufficient" ? (
-        <Text color={theme.colors.warnStrong}> Not enough VRAM</Text>
+        <Text color={theme.colors.warn}> RAM tight</Text>
       ) : null}
       <Text color={theme.colors.muted}> · {row.enterEffect}</Text>
     </Text>

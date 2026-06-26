@@ -51,7 +51,7 @@ function localTextRow(state: TuiState, model: LocalModelRow): LlmPanelRow {
   const daemonWorks = state.localModelsPanel.daemon.healthy;
   const active = localActive && model.active && daemonWorks;
   if (!model.downloaded) {
-    return buildLocalTextRow(model, active, false, "download", `Enter: download ${model.id}`);
+    return buildLocalTextRow(model, active, false, "download", "Enter: download");
   }
   if (model.def.supportsVision && model.mmprojStatus === "missing") {
     return buildLocalTextRow(
@@ -109,7 +109,7 @@ function localEmbeddingRow(state: TuiState, model: EmbeddingModelRow): LlmPanelR
       active,
       false,
       "download",
-      `Enter: download embedding model ${model.id}`,
+      "Enter: download",
     );
   }
   if (!localEmbeddingActive || !model.active) {
