@@ -57,6 +57,16 @@ describe("MarkdownRenderer", () => {
     expect(text).toContain("(https://cursor.com)");
   });
 
+  it("wraps a bare URL in OSC8 so it is clickable across terminals", () => {
+    const { lastFrame } = render(
+      <MarkdownRenderer text="see https://cursor.com for docs" />,
+    );
+    const text = lastFrame() ?? "";
+    expect(text).toContain(
+      "\u001b]8;;https://cursor.com\u001b\\https://cursor.com\u001b]8;;\u001b\\",
+    );
+  });
+
   it("renders bulleted lists with a bullet glyph", () => {
     const { lastFrame } = render(
       <MarkdownRenderer text={"- first\n- second"} />,

@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { LinkifiedText } from "../render/linkify-text.js";
 import { theme } from "../theme/theme.js";
 
 interface SystemBubbleProps {
@@ -28,7 +29,7 @@ export function SystemBubble({ text, warn }: SystemBubbleProps): ReactElement {
     >
       {lines.map((line, i) => (
         <Text key={i} color={color}>
-          {theme.glyphs.systemMarker} {line}
+          {theme.glyphs.systemMarker} <LinkifiedText text={line} />
         </Text>
       ))}
     </Box>

@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { LinkifiedText } from "../render/linkify-text.js";
 import { theme } from "../theme/theme.js";
 
 interface UserBubbleProps {
@@ -34,7 +35,9 @@ export function UserBubble({ text }: UserBubbleProps): ReactElement {
         flexDirection="column"
       >
         {splitLines(text).map((line, idx) => (
-          <Text key={idx}>{line}</Text>
+          <Text key={idx}>
+            <LinkifiedText text={line} />
+          </Text>
         ))}
       </Box>
     </Box>
