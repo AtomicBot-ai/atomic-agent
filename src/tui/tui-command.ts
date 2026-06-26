@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { render } from "ink";
 import React from "react";
 import { getConfig } from "../config/index.js";
@@ -76,6 +77,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
   const approvalRequired = !parsed.noApproval && config.agent.approvalRequired;
   const maxSteps = parsed.maxSteps ?? config.agent.maxSteps;
   const bus = makeTuiEventBus();
+  // Set when the user presses a key on the post-self-update restart prompt.
+  // Honoured after the Ink app unmounts and the runtime shuts down: we
+  // re-exec the freshly-installed binary in place (see end of this function).
+  let restartRequested = false;
 
   const logSink: LogSink = (record: LogRecord) => bus.emitLog(record);
   const metricSink: MetricSink = (sample: MetricSample) => bus.emitMetric(sample);
@@ -300,6 +305,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onTelegramAdvancedToggleRequested: () =>
           orchestrator.telegram.toggleAdvanced(),
         onUpdateConfirmed: () => orchestrator.runUpdate(),
+        onUpdateRestart: () => {
+          restartRequested = true;
+        },
       },
     }),
     {
@@ -337,6 +345,21 @@ export async function tuiCommand(args: string[]): Promise<number> {
     altScreen.restore();
     ink.clear();
     await orchestrator.shutdown();
+  }
+
+  // Self-update restart handoff. The runtime is fully shut down and the
+  // terminal restored, so re-exec the (atomically-replaced) binary in place.
+  // `process.execPath` keeps the same path after the installer's `mv`, but now
+  // resolves to the new inode. `spawnSync` with inherited stdio hands the TTY
+  // to the child and blocks until it exits, then we propagate its exit code —
+  // a seamless restart without a detached-process race for the terminal.
+  if (restartRequested) {
+    process.stdout.write("restarting atomic-agent…\n");
+    const result = spawnSync(process.execPath, process.argv.slice(1), {
+      stdio: "inherit",
+    });
+    if (typeof result.status === "number") return result.status;
+    return orchestrator.exitCode;
   }
   return orchestrator.exitCode;
 }

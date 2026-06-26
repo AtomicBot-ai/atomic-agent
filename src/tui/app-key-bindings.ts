@@ -29,6 +29,13 @@ export interface AppKeyCallbacks {
   onSidebarTaskActivated?(taskId: string): void;
   /** Optional — called when the user accepts the startup update offer. */
   onUpdateConfirmed?(): void;
+  /**
+   * Optional — called when the user presses any key after a self-update
+   * settled (`updateStatus === "done"`) to re-exec the freshly-installed
+   * binary. The handler is expected to arrange the process restart; the
+   * key binding additionally dispatches `quit_requested` so Ink unmounts.
+   */
+  onUpdateRestart?(): void;
 }
 
 export interface AppKeyContext {
@@ -65,6 +72,14 @@ export function handleAppKey(
   const { state, dispatch, callbacks, ctrlCArmed, setCtrlCArmed } = ctx;
   if (state.pendingApproval) {
     return handleApprovalKey(input, key, state.pendingApproval, ctx);
+  }
+  // A settled successful self-update parks the UI on a "press any key to
+  // restart" prompt. The first keystroke (whatever it is) re-execs the new
+  // binary; `quit_requested` then unmounts Ink so the restart handoff runs.
+  if (state.updateStatus === "done") {
+    callbacks.onUpdateRestart?.();
+    dispatch({ type: "quit_requested" });
+    return true;
   }
   // The update offer claims only y / n / Esc; anything else (Ctrl+C in
   // particular) falls through to the normal handlers below.

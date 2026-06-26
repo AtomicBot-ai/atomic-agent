@@ -31,6 +31,7 @@ import { StatusBar } from "./components/status-bar.js";
 import { TasksCancelModal } from "./components/tasks-cancel-modal.js";
 import { UpdateModal } from "./components/update-modal.js";
 import { UpdateIndicator } from "./components/update-indicator.js";
+import { UpdateRestartPrompt } from "./components/update-restart-prompt.js";
 import { useTerminalSize } from "./hooks/use-terminal-size.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { slashPrefix } from "./commands/slash-command-parser.js";
@@ -271,6 +272,8 @@ export interface TuiAppCallbacks {
   onImportExecute?(form: ImportFormState): void;
   /** Startup self-update: user accepted the offer — run `install.sh`. */
   onUpdateConfirmed?(): void;
+  /** Self-update settled: user pressed a key to re-exec the new binary. */
+  onUpdateRestart?(): void;
 }
 
 export interface TuiAppProps {
@@ -419,8 +422,10 @@ export function TuiApp({
   const editorFocus =
     !state.pendingApproval &&
     // The update offer claims y / n / Esc; keep the editor unfocused so
-    // those keystrokes never leak into the input buffer.
+    // those keystrokes never leak into the input buffer. The post-update
+    // "press any key to restart" prompt claims every key for the same reason.
     !state.updatePrompt &&
+    state.updateStatus !== "done" &&
     // When the slash-command palette is open the editor must hold focus
     // regardless of the active debug tab so the operator can type the
     // command and drive ↑↓ / tab / enter selection. Panels that open the
@@ -709,6 +714,11 @@ export function TuiApp({
           {state.updateStatus === "running" ? (
             <Box flexShrink={0}>
               <UpdateIndicator />
+            </Box>
+          ) : null}
+          {state.updateStatus === "done" ? (
+            <Box flexShrink={0}>
+              <UpdateRestartPrompt />
             </Box>
           ) : null}
           <PromptShell

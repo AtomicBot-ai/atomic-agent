@@ -169,7 +169,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       return appendChatMessage(next, {
         role: "system",
         text: action.ok
-          ? `updated to v${action.version ?? "?"} — restart atomic-agent to apply`
+          ? `updated to v${action.version ?? "?"} — press any key to restart`
           : `update failed: ${action.error ?? "unknown error"}`,
         variant: action.ok ? "normal" : "warn",
       });
