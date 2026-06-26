@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { useTerminalSize } from "../hooks/use-terminal-size.js";
 import { EventFeed } from "../event-feed.js";
 import { LogsTab } from "../logs-tab.js";
 import { ReasoningTab } from "../reasoning-tab.js";
@@ -127,6 +128,52 @@ function buildManageTabs(state: TuiState): SubTab[] {
   ];
 }
 
+/**
+ * Height consumed by the always-on app frame OUTSIDE the debug pane:
+ * the top `StatusBar` (1 row) + the `PromptShell` (≈6 rows: top margin,
+ * padding, the editor line, the meta-row, and the `╹` cap) + the
+ * `HotkeyHint` (1 row). Ink 7 does NOT clip a frame taller than the
+ * terminal — it overlaps/garbles earlier lines instead (verified) — so
+ * the per-tab budget must subtract this accurately and err generous.
+ */
+const APP_CHROME_ROWS = 9;
+/**
+ * Height consumed INSIDE the debug pane above the active tab: the
+ * `SubTabBar` (1 row) + the `DebugDiagnosticsLine`. The diagnostics line
+ * is a single long `<Text>` (cwd · llama url · llm/step · kv · tools ·
+ * approval · skills) that Ink **wraps to 2 rows** at typical widths
+ * (~100 cols) — confirmed by runtime logs where the full panel
+ * overflowed by exactly one row at the budget boundary. Count it as 2.
+ */
+const DEBUG_TAB_CHROME_ROWS = 3;
+/**
+ * Extra cushion absorbed off the budget. The diagnostics line and the
+ * bottom `HotkeyHint` both wrap on narrower terminals, so the exact
+ * chrome height is width-dependent; reserving one spare row keeps the
+ * windowed panel from overflowing (and garbling the section headers)
+ * when a wrap adds a line we did not predict.
+ */
+const RENDER_SAFETY_ROWS = 1;
+/**
+ * Fixed chrome of the compact filter-bar manage panels (Tasks / Skills
+ * / Memory / MCP): the one-line filter bar plus an optional status /
+ * error line, with a small margin.
+ */
+const COMPACT_PANEL_HEADER_ROWS = 3;
+/** Never window below this many rows — keeps a usable slice on tiny terminals. */
+const MIN_LIST_ROWS = 3;
+
+/**
+ * Total number of rows available for an active tab's own content
+ * (panel chrome + its list), derived from the live terminal height.
+ */
+function tabContentBudget(terminalRows: number): number {
+  return Math.max(
+    MIN_LIST_ROWS,
+    terminalRows - APP_CHROME_ROWS - DEBUG_TAB_CHROME_ROWS - RENDER_SAFETY_ROWS,
+  );
+}
+
 function ActiveDebugTab({
   state,
   maxVisible,
@@ -140,6 +187,16 @@ function ActiveDebugTab({
   onMcpAddSubmit?: (json: string) => void;
   onMcpAddCancel?: () => void;
 }): ReactElement {
+  const { rows: terminalRows } = useTerminalSize();
+  const tabBudget = tabContentBudget(terminalRows);
+  // Compact panels have a tiny fixed header, so they get the list slice
+  // directly. LLM / Models own large fixed chrome (RouteCard / status
+  // footer) that they collapse themselves, so they receive the full
+  // tab budget and split it internally.
+  const compactRows = Math.max(
+    MIN_LIST_ROWS,
+    tabBudget - COMPACT_PANEL_HEADER_ROWS,
+  );
   switch (state.activeTab) {
     case "feed":
       return <EventFeed state={state} maxVisible={maxVisible} />;
@@ -150,15 +207,18 @@ function ActiveDebugTab({
     case "logs":
       return <LogsTab state={state} maxVisible={maxVisible} />;
     case "tasks":
-      return <TasksPanel panel={state.tasksPanel} now={Date.now()} />;
+      return (
+        <TasksPanel panel={state.tasksPanel} now={Date.now()} maxRows={compactRows} />
+      );
     case "skills":
-      return <SkillsPanel panel={state.skillsPanel} />;
+      return <SkillsPanel panel={state.skillsPanel} maxRows={compactRows} />;
     case "memory":
-      return <MemoryPanel panel={state.memoryPanel} />;
+      return <MemoryPanel panel={state.memoryPanel} maxRows={compactRows} />;
     case "mcp":
       return (
         <McpPanel
           panel={state.mcpPanel}
+          maxRows={compactRows}
           onAddJsonChange={onMcpAddJsonChange}
           onAddSubmit={onMcpAddSubmit}
           onAddCancel={onMcpAddCancel}
@@ -167,9 +227,9 @@ function ActiveDebugTab({
     case "providers":
       return <ProvidersPanel panel={state.providersPanel} />;
     case "llm":
-      return <LlmPanel state={state} />;
+      return <LlmPanel state={state} maxRows={tabBudget} />;
     case "models":
-      return <LocalModelsPanel panel={state.localModelsPanel} />;
+      return <LocalModelsPanel panel={state.localModelsPanel} maxRows={tabBudget} />;
     case "llm-logs":
       return <LocalLlmLogsPanel logs={state.localLlmLogs} maxLines={maxVisible} />;
     case "telegram":
@@ -212,3 +272,4 @@ export const DEBUG_TAB_ORDER: readonly TuiTab[] = [
   ...OBSERVE_TABS,
   ...MANAGE_TABS,
 ];
+

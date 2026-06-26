@@ -1,12 +1,14 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
+import { computeRowWindow } from "../row-window.js";
 import {
   classifyRamFit,
   classifyVramFit,
   estimateModelVramNeedGb,
   resolveRowAt,
   type EmbeddingDaemonInfo,
+  type EmbeddingModelRow,
   type LocalModelRow,
   type LocalModelsPanelState,
   type RamFit,
@@ -72,7 +74,20 @@ function renderDaemonStatus(panel: LocalModelsPanelState): DaemonStatusRender {
 
 interface LocalModelsPanelProps {
   panel: LocalModelsPanelState;
+  maxRows?: number;
 }
+
+/**
+ * Rows consumed by the full status footer (top margin + mode line +
+ * chat daemon + embedding daemon + data-dir + hotkey hint). Collapsed to
+ * a 1-line daemon status + short hint when the window is short — Ink
+ * garbles a frame taller than the terminal, it does not clip it.
+ */
+const FULL_FOOTER_ROWS = 7;
+/** Rows consumed by the collapsed footer: daemon line + short hint. */
+const COMPACT_FOOTER_ROWS = 3;
+/** Minimum list rows we want before bothering to keep the full footer. */
+const FULL_FOOTER_MIN_LIST = 5;
 
 function formatDownloadBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -212,7 +227,10 @@ function DownloadBanner({
   );
 }
 
-export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement {
+export function LocalModelsPanel({
+  panel,
+  maxRows = 12,
+}: LocalModelsPanelProps): ReactElement {
   if (panel.mode === "backendUpdate") {
     return (
       <Box flexDirection="column">
@@ -286,6 +304,17 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
       </Box>
     );
   }
+  // `maxRows` is the TOTAL budget for the tab content. Split it between
+  // the (possibly open) modals, the status footer, and the windowed
+  // list. Ink garbles a frame taller than the terminal instead of
+  // clipping it, so the footer collapses when the window is short.
+  const useFullFooter = maxRows >= FULL_FOOTER_ROWS + FULL_FOOTER_MIN_LIST;
+  const footerRows = useFullFooter ? FULL_FOOTER_ROWS : COMPACT_FOOTER_ROWS;
+  const modalRows =
+    (panel.embeddingOnboardingPrompt ? 6 : 0) +
+    (panel.removeConfirmId ? 5 : 0) +
+    (panel.embeddingRemoveConfirmId ? 5 : 0);
+  const listBudget = Math.max(3, maxRows - footerRows - modalRows);
   return (
     <Box flexDirection="column">
       {panel.embeddingOnboardingPrompt ? (
@@ -373,6 +402,74 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
           </Text>
         </Box>
       ) : null}
+      {renderModelLists(panel, listBudget)}
+      {useFullFooter ? (
+        <Box marginTop={1} flexDirection="column">
+          <DownloadBanners panel={panel} />
+          {panel.errorLine ? (
+            <Text color="red">{panel.errorLine}</Text>
+          ) : null}
+          <Text color={theme.colors.muted}>
+            mode: {panel.configMode}
+            {panel.totalRamGb !== null ? ` · host RAM ${panel.totalRamGb} GB` : ""}
+            {panel.lastRefreshedAt
+              ? ` · refreshed ${new Date(panel.lastRefreshedAt).toLocaleTimeString()}`
+              : ""}
+          </Text>
+          {renderDaemonLine(panel)}
+          {renderEmbeddingDaemonLine(panel.embeddingDaemon)}
+          {panel.daemonError ? (
+            <Text color="red">daemon: {panel.daemonError}</Text>
+          ) : null}
+          {panel.dataDir ? (
+            <Text color={theme.colors.muted}>
+              data dir: {panel.dataDir} · backend{" "}
+              {panel.backend.currentTag ?? "—"}
+              {panel.backend.updateAvailable === true ? " (update available)" : ""}
+            </Text>
+          ) : null}
+          <Text color={theme.colors.muted}>
+            j/k move · Enter pull/activate (embedding: *row + Enter starts server) · g gguf · i info · d remove · s chat+embedding · E embeddings on/off · G gpu · B · r · L
+          </Text>
+        </Box>
+      ) : (
+        <Box flexDirection="column">
+          <DownloadBanners panel={panel} />
+          {panel.errorLine ? (
+            <Text color="red">{panel.errorLine}</Text>
+          ) : null}
+          {renderDaemonLine(panel)}
+          <Text color={theme.colors.muted}>
+            j/k · Enter · d remove · s start · r
+          </Text>
+        </Box>
+      )}
+    </Box>
+  );
+}
+
+/**
+ * Choose between the full two-section view and a cursor-windowed
+ * combined view. When the chat + embedding lists overflow the available
+ * height, Ink would otherwise render a frame taller than the terminal
+ * and overlap earlier lines; the windowed view keeps the selected row
+ * visible and surfaces hidden counts while preserving the section
+ * headers inline.
+ */
+function renderModelLists(
+  panel: LocalModelsPanelState,
+  maxRows: number,
+): ReactElement {
+  const total = panel.rows.length + panel.embeddingRows.length;
+  // The full two-section view also emits two headers plus a margin
+  // between the sections, so the fit check counts that overhead — not
+  // just the row total — to avoid overflowing the budget by a few lines.
+  const fullViewHeight = total + 3;
+  if (fullViewHeight > maxRows) {
+    return <WindowedModelRows panel={panel} maxRows={maxRows} />;
+  }
+  return (
+    <>
       <Box flexDirection="column">
         <Text bold color={theme.colors.accentSoft}>
           Chat models ({panel.rows.length})
@@ -386,33 +483,53 @@ export function LocalModelsPanel({ panel }: LocalModelsPanelProps): ReactElement
         </Text>
         {renderEmbeddingRows(panel)}
       </Box>
-      <Box marginTop={1} flexDirection="column">
-        <DownloadBanners panel={panel} />
-        {panel.errorLine ? (
-          <Text color="red">{panel.errorLine}</Text>
-        ) : null}
-        <Text color={theme.colors.muted}>
-          mode: {panel.configMode}
-          {panel.totalRamGb !== null ? ` · host RAM ${panel.totalRamGb} GB` : ""}
-          {panel.lastRefreshedAt
-            ? ` · refreshed ${new Date(panel.lastRefreshedAt).toLocaleTimeString()}`
-            : ""}
+    </>
+  );
+}
+
+function WindowedModelRows({
+  panel,
+  maxRows,
+}: {
+  panel: LocalModelsPanelState;
+  maxRows: number;
+}): ReactElement {
+  const embOffset = panel.rows.length;
+  const total = panel.rows.length + panel.embeddingRows.length;
+  // Two section headers (Chat / Embedding) plus the ↑/↓ markers consume
+  // lines; the data slice gets the remainder. Both headers are ALWAYS
+  // rendered so the operator never loses the catalog structure on a
+  // small window.
+  const dataBudget = Math.max(1, maxRows - 2 - 2);
+  const win = computeRowWindow(total, panel.cursor, dataBudget);
+  const windowEnd = win.start + win.count;
+  const chatVisible = panel.rows
+    .map((row, i) => ({ row, i }))
+    .filter(({ i }) => i >= win.start && i < windowEnd);
+  const embeddingVisible = panel.embeddingRows
+    .map((row, i) => ({ row, absIndex: embOffset + i, i }))
+    .filter(({ absIndex }) => absIndex >= win.start && absIndex < windowEnd);
+  return (
+    <Box flexDirection="column">
+      {win.hiddenBefore > 0 ? (
+        <Text color={theme.colors.muted}>↑ {win.hiddenBefore} above</Text>
+      ) : null}
+      <Box flexDirection="column">
+        <Text bold color={theme.colors.accentSoft}>
+          Chat models ({panel.rows.length})
         </Text>
-        {renderDaemonLine(panel)}
-        {renderEmbeddingDaemonLine(panel.embeddingDaemon)}
-        {panel.daemonError ? (
-          <Text color="red">daemon: {panel.daemonError}</Text>
-        ) : null}
-        {panel.dataDir ? (
-          <Text color={theme.colors.muted}>
-            data dir: {panel.dataDir} · backend {panel.backend.currentTag ?? "—"}
-            {panel.backend.updateAvailable === true ? " (update available)" : ""}
-          </Text>
-        ) : null}
-        <Text color={theme.colors.muted}>
-          j/k move · Enter pull/activate (embedding: *row + Enter starts server) · g gguf · i info · d remove · s chat+embedding · E embeddings on/off · G gpu · B · r · L
-        </Text>
+        {chatVisible.map(({ row, i }) => renderChatRow(panel, row, i))}
       </Box>
+      <Box flexDirection="column">
+        <Text bold color={theme.colors.accentSoft}>
+          Embedding models ({panel.embeddingRows.length})
+          <Text color={theme.colors.muted}> · paired with chat daemon</Text>
+        </Text>
+        {embeddingVisible.map(({ row, i }) => renderEmbeddingRow(panel, row, i))}
+      </Box>
+      {win.hiddenAfter > 0 ? (
+        <Text color={theme.colors.muted}>↓ {win.hiddenAfter} below</Text>
+      ) : null}
     </Box>
   );
 }
@@ -425,66 +542,70 @@ function renderChatRows(panel: LocalModelsPanelState): ReactElement {
   }
   return (
     <Box flexDirection="column">
-      {panel.rows.map((r, i) => {
-        const downloading =
-          panel.pull !== null &&
-          panel.pull.modelId !== "_backend" &&
-          panel.pull.modelId === r.id;
-        const mini = downloading
-          ? renderProgressBar(panel.pull!.percent, 8)
-          : "";
-        const fit = classifyRamFit(r.def, panel.totalRamGb);
-        const vramFit = classifyVramFit(r.def, panel.gpuBudgetGb);
-        // A row that does not fit in RAM or VRAM is greyed out — but it
-        // stays selectable and downloadable; the badge is informational.
-        const insufficient =
-          fit === "insufficient" || vramFit === "insufficient";
-        // Cursor is a combined index across chat+embedding rows;
-        // chat occupies [0..rows.length-1].
-        const isCursor = i === panel.cursor;
-        const rowColor = downloading
-          ? "yellow"
-          : isCursor
-            ? theme.colors.accentSoft
-            : insufficient
-              ? theme.colors.muted
-              : undefined;
-        return (
-          <Box key={r.id} flexDirection="row" flexWrap="wrap">
-            <Text
-              color={rowColor}
-              bold={isCursor || downloading}
-              dimColor={insufficient && !isCursor}
-            >
-              {isCursor ? "> " : "  "}
-              {r.active ? "* " : ""}
-              {r.id} {r.def.sizeLabel}
-            </Text>
-            <Text color={r.downloaded ? "green" : theme.colors.muted}>
-              {" "}
-              [{renderRowAvailability(r)}]
-            </Text>
-            {r.def.tag ? (
-              <Text color={theme.colors.accent}> [{r.def.tag}]</Text>
-            ) : null}
-            {fit ? (
-              <Text color={ramFitColor(fit)}>
-                {" "}
-                {fit === "ok" ? "✓ RAM" : fit === "tight" ? "△ RAM" : "✗ RAM"}
-              </Text>
-            ) : null}
-            {vramFit === "insufficient" ? (
-              <Text color={theme.colors.warnStrong}> Not enough VRAM</Text>
-            ) : null}
-            {downloading ? (
-              <Text color="yellow">
-                {" "}
-                [{mini}] {panel.pull!.percent}%
-              </Text>
-            ) : null}
-          </Box>
-        );
-      })}
+      {panel.rows.map((r, i) => renderChatRow(panel, r, i))}
+    </Box>
+  );
+}
+
+/** Single chat-model row. `index` is the row's position in `panel.rows`. */
+function renderChatRow(
+  panel: LocalModelsPanelState,
+  r: LocalModelRow,
+  index: number,
+): ReactElement {
+  const downloading =
+    panel.pull !== null &&
+    panel.pull.modelId !== "_backend" &&
+    panel.pull.modelId === r.id;
+  const mini = downloading ? renderProgressBar(panel.pull!.percent, 8) : "";
+  const fit = classifyRamFit(r.def, panel.totalRamGb);
+  const vramFit = classifyVramFit(r.def, panel.gpuBudgetGb);
+  // A row that does not fit in RAM or VRAM is greyed out — but it
+  // stays selectable and downloadable; the badge is informational.
+  const insufficient = fit === "insufficient" || vramFit === "insufficient";
+  // Cursor is a combined index across chat+embedding rows;
+  // chat occupies [0..rows.length-1].
+  const isCursor = index === panel.cursor;
+  const rowColor = downloading
+    ? "yellow"
+    : isCursor
+      ? theme.colors.accentSoft
+      : insufficient
+        ? theme.colors.muted
+        : undefined;
+  return (
+    <Box key={r.id} flexDirection="row" flexWrap="wrap">
+      <Text
+        color={rowColor}
+        bold={isCursor || downloading}
+        dimColor={insufficient && !isCursor}
+      >
+        {isCursor ? "> " : "  "}
+        {r.active ? "* " : ""}
+        {r.id} {r.def.sizeLabel}
+      </Text>
+      <Text color={r.downloaded ? "green" : theme.colors.muted}>
+        {" "}
+        [{renderRowAvailability(r)}]
+      </Text>
+      {r.def.tag ? (
+        <Text color={theme.colors.accent}> [{r.def.tag}]</Text>
+      ) : null}
+      {fit ? (
+        <Text color={ramFitColor(fit)}>
+          {" "}
+          {fit === "ok" ? "✓ RAM" : fit === "tight" ? "△ RAM" : "✗ RAM"}
+        </Text>
+      ) : null}
+      {vramFit === "insufficient" ? (
+        <Text color={theme.colors.warnStrong}> Not enough VRAM</Text>
+      ) : null}
+      {downloading ? (
+        <Text color="yellow">
+          {" "}
+          [{mini}] {panel.pull!.percent}%
+        </Text>
+      ) : null}
     </Box>
   );
 }
@@ -502,48 +623,58 @@ function renderEmbeddingRows(panel: LocalModelsPanelState): ReactElement {
       </Text>
     );
   }
-  // Embedding rows occupy the upper half of the combined cursor space:
-  // indices [panel.rows.length .. panel.rows.length + emb.length - 1].
-  const embOffset = panel.rows.length;
   return (
     <Box flexDirection="column">
-      {panel.embeddingRows.map((r, i) => {
-        const downloading =
-          panel.embeddingPull !== null && panel.embeddingPull.modelId === r.id;
-        const mini = downloading
-          ? renderProgressBar(panel.embeddingPull!.percent, 8)
-          : "";
-        const isCursor = embOffset + i === panel.cursor;
-        const rowColor = downloading
-          ? "yellow"
-          : isCursor
-            ? theme.colors.accentSoft
-            : undefined;
-        return (
-          <Box key={r.id} flexDirection="row" flexWrap="wrap">
-            <Text color={rowColor} bold={isCursor || downloading}>
-              {isCursor ? "> " : "  "}
-              {r.active ? "* " : ""}
-              {r.id} {r.def.sizeLabel}
-            </Text>
-            <Text color={r.downloaded ? "green" : theme.colors.muted}>
-              {" "}
-              [{r.downloaded ? "gguf" : "remote"}]
-            </Text>
-            <Text color={theme.colors.muted}>
-              {" "}
-              dim {r.def.dim}
-            </Text>
-            {downloading ? (
-              <Text color="yellow">
-                {" "}
-                [{mini}] {panel.embeddingPull!.percent}%
-              </Text>
-            ) : null}
-          </Box>
-        );
-      })}
+      {panel.embeddingRows.map((r, i) => renderEmbeddingRow(panel, r, i))}
     </Box>
   );
 }
+
+/**
+ * Single embedding-model row. `index` is the row's position in
+ * `panel.embeddingRows`; the combined cursor places embedding rows at
+ * `[panel.rows.length .. panel.rows.length + emb.length - 1]`.
+ */
+function renderEmbeddingRow(
+  panel: LocalModelsPanelState,
+  r: EmbeddingModelRow,
+  index: number,
+): ReactElement {
+  const embOffset = panel.rows.length;
+  const downloading =
+    panel.embeddingPull !== null && panel.embeddingPull.modelId === r.id;
+  const mini = downloading
+    ? renderProgressBar(panel.embeddingPull!.percent, 8)
+    : "";
+  const isCursor = embOffset + index === panel.cursor;
+  const rowColor = downloading
+    ? "yellow"
+    : isCursor
+      ? theme.colors.accentSoft
+      : undefined;
+  return (
+    <Box key={r.id} flexDirection="row" flexWrap="wrap">
+      <Text color={rowColor} bold={isCursor || downloading}>
+        {isCursor ? "> " : "  "}
+        {r.active ? "* " : ""}
+        {r.id} {r.def.sizeLabel}
+      </Text>
+      <Text color={r.downloaded ? "green" : theme.colors.muted}>
+        {" "}
+        [{r.downloaded ? "gguf" : "remote"}]
+      </Text>
+      <Text color={theme.colors.muted}>
+        {" "}
+        dim {r.def.dim}
+      </Text>
+      {downloading ? (
+        <Text color="yellow">
+          {" "}
+          [{mini}] {panel.embeddingPull!.percent}%
+        </Text>
+      ) : null}
+    </Box>
+  );
+}
+
 

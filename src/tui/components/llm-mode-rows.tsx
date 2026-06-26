@@ -2,20 +2,116 @@ import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { activeCursor, selectLlmPanelRows, type LlmPanelRow } from "../llm-panel/llm-panel-selectors.js";
 import { classifyRamFit, classifyVramFit } from "../local-models/local-models-panel-state.js";
+import { computeRowWindow } from "../row-window.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 
 export function LlmModeRows({
   rows,
   state,
+  maxRows = 12,
 }: {
   rows: readonly LlmPanelRow[];
   state: TuiState;
+  maxRows?: number;
 }): ReactElement {
+  // When the catalog overflows the available height, switch to a
+  // cursor-windowed flat view so the rendered frame never exceeds the
+  // terminal (Ink overlaps/garbles lines when it does — it does NOT
+  // clip). The full sectioned view also emits a header + bottom margin
+  // per section, so the fit check must count that overhead, not just the
+  // row count. Below the threshold we keep the richer sectioned view,
+  // which also surfaces per-section empty hints.
+  const sections = buildSections(rows);
+  const fullViewHeight = rows.length + sections.length * 2;
+  if (fullViewHeight > maxRows) {
+    return <WindowedRows rows={rows} state={state} maxRows={maxRows} />;
+  }
   return state.llmPanel.mode === "local" ? (
     <LocalRows rows={rows} state={state} />
   ) : (
     <CloudRows rows={rows} state={state} />
+  );
+}
+
+/** Human-readable section title for a row, used by the windowed view. */
+function sectionTitle(kind: LlmPanelRow["kind"]): string {
+  switch (kind) {
+    case "localTextModel":
+      return "Local text models";
+    case "localEmbeddingModel":
+      return "Local embeddings";
+    case "cloudProvider":
+      return "Cloud providers";
+    case "cloudChatModel":
+      return "Cloud text models";
+    case "cloudEmbeddingModel":
+      return "Cloud embeddings";
+    case "localDaemon":
+    case "localBackend":
+      return "Local runtime";
+  }
+}
+
+interface RowSection {
+  title: string;
+  /** Rows in this section paired with their index in the flat list. */
+  items: { row: LlmPanelRow; index: number }[];
+}
+
+function buildSections(rows: readonly LlmPanelRow[]): RowSection[] {
+  const sections: RowSection[] = [];
+  rows.forEach((row, index) => {
+    const title = sectionTitle(row.kind);
+    const last = sections[sections.length - 1];
+    if (last && last.title === title) {
+      last.items.push({ row, index });
+    } else {
+      sections.push({ title, items: [{ row, index }] });
+    }
+  });
+  return sections;
+}
+
+function WindowedRows({
+  rows,
+  state,
+  maxRows,
+}: {
+  rows: readonly LlmPanelRow[];
+  state: TuiState;
+  maxRows: number;
+}): ReactElement {
+  const sections = buildSections(rows);
+  const cursor = activeCursor(state);
+  // Section headers and the ↑/↓ markers consume lines too, so the data
+  // slice gets the remaining budget. Headers are ALWAYS rendered (even
+  // for sections whose rows are currently scrolled out of view) so the
+  // operator never loses the catalog structure on a small window.
+  const dataBudget = Math.max(1, maxRows - sections.length - 2);
+  const win = computeRowWindow(rows.length, cursor, dataBudget);
+  const windowEnd = win.start + win.count;
+  return (
+    <Box flexDirection="column">
+      {win.hiddenBefore > 0 ? (
+        <Text color={theme.colors.muted}>↑ {win.hiddenBefore} above</Text>
+      ) : null}
+      {sections.map((section) => (
+        <Box key={section.title} flexDirection="column">
+          <Text bold color={theme.colors.accentSoft}>
+            {section.title}
+          </Text>
+          {section.items
+            .filter(({ index }) => index >= win.start && index < windowEnd)
+            .map(({ row }) => (
+              <Row key={row.id} row={row} state={state} />
+            ))}
+        </Box>
+      ))}
+      {win.hiddenAfter > 0 ? (
+        <Text color={theme.colors.muted}>↓ {win.hiddenAfter} below</Text>
+      ) : null}
+    </Box>
   );
 }
 
@@ -160,3 +256,4 @@ function formatDaemon(state: TuiState): string {
   }
   return `pid ${panel.daemon.pid} health unreachable`;
 }
+

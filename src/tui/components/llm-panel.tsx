@@ -10,26 +10,98 @@ import type { LocalModelsPanelState } from "../local-models/local-models-panel-s
 import { LlmModeRows } from "./llm-mode-rows.js";
 import { LlmPanelModals } from "./llm-panel-modals.js";
 
-export function LlmPanel({ state }: { state: TuiState }): ReactElement {
+/**
+ * Rows consumed by the full fixed chrome: RouteCard (~7) + ModeHeader (3)
+ * + StatusLines (2) + footer (2). Used to decide whether the full header
+ * fits; below the threshold we collapse to a 1-line route summary so the
+ * list (and its section headers) still fit without overflowing the
+ * terminal — Ink garbles, it does not clip, when content is too tall.
+ */
+const FULL_HEADER_ROWS = 13;
+/** Rows consumed by the collapsed header: route (1) + status (1) + footer (1). */
+const COMPACT_HEADER_ROWS = 3;
+/**
+ * Minimum list rows required before we keep the full header. The windowed
+ * list always renders both section headers plus a hidden-count marker, so
+ * it needs a few rows of room — committing to the verbose RouteCard with
+ * less than this would push the section headers off the budget (Ink then
+ * garbles the frame). Below the threshold we collapse to `CompactHeader`.
+ */
+const FULL_HEADER_MIN_LIST = 3;
+
+export function LlmPanel({
+  state,
+  maxRows = 12,
+}: {
+  state: TuiState;
+  maxRows?: number;
+}): ReactElement {
   const rows = selectLlmPanelRows(state);
   const summary = selectLlmActiveRouteSummary(state);
+  const starting =
+    state.llmPanel.mode === "local" && isDaemonStarting(state.localModelsPanel);
+  // `maxRows` is the TOTAL budget for the tab content. Split it between
+  // the fixed header and the (windowed) list, collapsing the verbose
+  // RouteCard when the terminal is too short to afford it.
+  const useFull = maxRows >= FULL_HEADER_ROWS + FULL_HEADER_MIN_LIST;
+  const headerRows = useFull ? FULL_HEADER_ROWS : COMPACT_HEADER_ROWS;
+  const listBudget = Math.max(1, maxRows - headerRows);
   return (
     <Box flexDirection="column" width="100%">
       <LlmPanelModals state={state} />
-      <RouteCard state={state} summary={summary} />
-      <ModeHeader mode={state.llmPanel.mode} />
-      <StatusLines state={state} />
+      {/* The starting banner and active-download banners are important
+          feedback — keep them visible regardless of the compact/full
+          header decision. */}
+      {starting ? <StartingBanner /> : null}
       {state.llmPanel.mode === "local" ? (
         <DownloadBanners panel={state.localModelsPanel} />
       ) : null}
+      {useFull ? (
+        <>
+          <RouteCard state={state} summary={summary} />
+          <ModeHeader mode={state.llmPanel.mode} />
+          <StatusLines state={state} />
+        </>
+      ) : (
+        <CompactHeader state={state} summary={summary} />
+      )}
       <Box flexDirection="column">
-        <LlmModeRows rows={rows} state={state} />
+        <LlmModeRows rows={rows} state={state} maxRows={listBudget} />
       </Box>
-      <Box marginTop={1} flexDirection="column">
+      <Box marginTop={useFull ? 1 : 0} flexDirection="column">
         <Text color={theme.colors.muted}>
-          j/k move · Enter selected action · ←/→ switch Local/Cloud · n add provider · c configure · r refresh
+          {useFull
+            ? "j/k move · Enter selected action · ←/→ switch Local/Cloud · n add provider · c configure · r refresh"
+            : "j/k · Enter · ←/→ mode · r"}
         </Text>
       </Box>
+    </Box>
+  );
+}
+
+/**
+ * One-line route + status header used when the terminal is too short to
+ * fit the full RouteCard without garbling the frame.
+ */
+function CompactHeader({
+  state,
+  summary,
+}: {
+  state: TuiState;
+  summary: ReturnType<typeof selectLlmActiveRouteSummary>;
+}): ReactElement {
+  return (
+    <Box flexDirection="column">
+      <Text>
+        <Text bold color={theme.colors.accentSoft}>
+          {summary.providerLabel}
+        </Text>
+        {summary.textModel ? (
+          <Text color={theme.colors.muted}> / {summary.textModel}</Text>
+        ) : null}
+        <Text color={theme.colors.muted}> · {state.llmPanel.mode}</Text>
+      </Text>
+      <StatusLines state={state} compact />
     </Box>
   );
 }
@@ -98,10 +170,25 @@ function ModeHeader({ mode }: { mode: "local" | "cloud" }): ReactElement {
   );
 }
 
-function StatusLines({ state }: { state: TuiState }): ReactElement | null {
+function StatusLines({
+  state,
+  compact = false,
+}: {
+  state: TuiState;
+  compact?: boolean;
+}): ReactElement | null {
   const lines: string[] = [];
   if (state.llmPanel.mode === "local") {
-    if (state.localModelsPanel.loading) lines.push("local catalog: loading");
+    // Only surface "loading" on the very first catalog fetch (no snapshot
+    // yet). Background/active-cadence refreshes toggle `loading` true→false
+    // constantly; gating on `lastRefreshedAt === null` stops the status line
+    // from flickering between "loading" and "ready" after a download.
+    if (
+      state.localModelsPanel.loading &&
+      state.localModelsPanel.lastRefreshedAt === null
+    ) {
+      lines.push("local catalog: loading");
+    }
     if (state.localModelsPanel.errorLine) {
       lines.push(`local catalog: ${state.localModelsPanel.errorLine}`);
     }
@@ -115,8 +202,39 @@ function StatusLines({ state }: { state: TuiState }): ReactElement | null {
     }
   }
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Box flexDirection="column" marginBottom={compact ? 0 : 1}>
       <Text color={theme.colors.muted}>{lines[0] ?? "status: ready"}</Text>
+    </Box>
+  );
+}
+
+/**
+ * True for the window between "model downloaded" and "llama-server is
+ * answering /health": the orchestrator stamps `daemonPhase = "starting"`
+ * before the blocking start, then the process comes up with
+ * `daemon.loading` set while it loads the weights into memory. During
+ * this window the panel inputs are paused, so we surface a big banner.
+ */
+function isDaemonStarting(panel: LocalModelsPanelState): boolean {
+  if (panel.daemonPhase === "starting") return true;
+  return panel.daemon.running && panel.daemon.loading;
+}
+
+function StartingBanner(): ReactElement {
+  return (
+    <Box
+      flexDirection="column"
+      marginBottom={1}
+      borderStyle="round"
+      borderColor={theme.colors.success}
+      paddingX={1}
+    >
+      <Text bold color={theme.colors.success}>
+        ⟳ Model is starting — please stand by
+      </Text>
+      <Text color={theme.colors.muted}>
+        Loading the model into llama-server. Inputs are paused until it is ready.
+      </Text>
     </Box>
   );
 }

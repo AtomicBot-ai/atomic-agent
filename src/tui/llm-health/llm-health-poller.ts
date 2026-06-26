@@ -22,8 +22,9 @@ export interface LlmHealthEmitter {
  * StatusBar indicator. Runs exactly one probe in flight at a time and
  * survives URL changes via `updateUrl` — the orchestrator calls it from
  * the `llama_url_changed` handler so the indicator follows `/llama`.
- * While the last result was healthy, repeat polls omit the transient
- * `probing` emit so the badge does not flicker between glyphs every interval.
+ * After the first settled result for a URL (healthy OR down/error),
+ * repeat polls omit the transient `probing` emit so the badge does not
+ * flicker between `probing` and the settled status every interval.
  *
  * After the first healthy `/health` for a given URL the poller also
  * does a one-shot `/props` fetch to discover the active model alias /
@@ -42,11 +43,15 @@ export class LlmHealthPoller {
   private probing = false;
   private stopped = false;
   /**
-   * After a successful `/health`, follow-up polls skip the transient
-   * `probing` emit so the StatusBar glyph does not flicker ●→◐→● every
-   * interval. Cleared on URL change or any non-healthy outcome.
+   * Once any terminal result (healthy / unreachable / error) has been
+   * emitted for the current URL, follow-up polls skip the transient
+   * `probing` emit so the badge does not flicker between `probing` and
+   * the settled status every interval — this applies to a **down**
+   * daemon too (probing→down→probing→down was the visible jitter), not
+   * just a healthy one. Reset on URL change so a hot-swap shows `probing`
+   * once before the first result lands.
    */
-  private steadyHealthy = false;
+  private hasSettledResult = false;
   /**
    * Set once the model label was emitted for the current URL. Reset on
    * `updateUrl` so a hot-swap of the base URL re-discovers the model.
@@ -80,7 +85,7 @@ export class LlmHealthPoller {
   updateUrl(nextUrl: string): void {
     if (nextUrl === this.url) return;
     this.url = nextUrl;
-    this.steadyHealthy = false;
+    this.hasSettledResult = false;
     this.modelFetchedForUrl = false;
     this.emitter.emit({ type: "llm_model_updated", model: null });
     if (!this.stopped) void this.tick();
@@ -109,7 +114,7 @@ export class LlmHealthPoller {
   private async tick(): Promise<void> {
     if (this.probing || this.stopped) return;
     this.probing = true;
-    if (!this.steadyHealthy) {
+    if (!this.hasSettledResult) {
       this.emitter.emit({
         type: "llm_health_updated",
         status: "probing",
@@ -127,7 +132,7 @@ export class LlmHealthPoller {
       });
       if (this.stopped) return;
       if (result.reachable) {
-        this.steadyHealthy = true;
+        this.hasSettledResult = true;
         this.emitter.emit({
           type: "llm_health_updated",
           status: "healthy",
@@ -139,7 +144,7 @@ export class LlmHealthPoller {
           await this.fetchModelLabel();
         }
       } else {
-        this.steadyHealthy = false;
+        this.hasSettledResult = true;
         this.emitter.emit({
           type: "llm_health_updated",
           status: "unreachable",
@@ -150,7 +155,7 @@ export class LlmHealthPoller {
       }
     } catch (err) {
       if (this.stopped) return;
-      this.steadyHealthy = false;
+      this.hasSettledResult = true;
       const message = err instanceof Error ? err.message : String(err);
       this.emitter.emit({
         type: "llm_health_updated",

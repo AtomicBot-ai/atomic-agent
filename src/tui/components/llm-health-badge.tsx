@@ -12,19 +12,13 @@ import { theme } from "../theme/theme.js";
  * one icon style into another.
  *
  * The badge renders the literal status word (no "llm" prefix) — the
- * surrounding meta-row context already implies it. An optional latency
- * suffix (`12 ms`) is appended in muted grey when known.
+ * surrounding meta-row context already implies it.
  */
 export interface LlmHealthBadgeProps {
   health: LlmHealthState;
-  /** Show the trailing `12 ms` latency suffix when available. */
-  showLatency?: boolean;
 }
 
-export function LlmHealthBadge({
-  health,
-  showLatency = true,
-}: LlmHealthBadgeProps): ReactElement {
+export function LlmHealthBadge({ health }: LlmHealthBadgeProps): ReactElement {
   const { color, glyph, label } = resolveBadge(health);
   return (
     <Text>
@@ -32,9 +26,6 @@ export function LlmHealthBadge({
         {glyph}
       </Text>
       <Text color={theme.colors.muted}> {label}</Text>
-      {showLatency && health.latencyMs !== null ? (
-        <Text color={theme.colors.muted}> · {health.latencyMs} ms</Text>
-      ) : null}
     </Text>
   );
 }

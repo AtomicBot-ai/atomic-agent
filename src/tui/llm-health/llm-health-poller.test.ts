@@ -88,6 +88,28 @@ describe("LlmHealthPoller", () => {
     expect(healthies.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("should not emit probing on later ticks while the server stays down", async () => {
+    spy.mockResolvedValue({
+      reachable: false,
+      status: null,
+      error: "connect ECONNREFUSED",
+      latencyMs: 3,
+    } satisfies HealthResult);
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(capture, "http://127.0.0.1:19091", 250);
+    poller.start();
+    // First tick (immediate) + one interval tick → two unreachable emissions,
+    // but only the very first tick may show the transient `probing` glyph.
+    await sleep(450);
+    poller.stop();
+
+    const health = capture.actions.filter((a) => a.type === "llm_health_updated");
+    const probings = health.filter((a) => a.status === "probing");
+    const downs = health.filter((a) => a.status === "unreachable");
+    expect(probings).toHaveLength(1);
+    expect(downs.length).toBeGreaterThanOrEqual(2);
+  });
+
   it("should emit probing again after updateUrl even when previously steady-healthy", async () => {
     spy
       .mockResolvedValueOnce({
