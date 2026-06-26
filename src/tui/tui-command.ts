@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { isSea } from "node:sea";
 import { render } from "ink";
 import React from "react";
 import { getConfig } from "../config/index.js";
@@ -349,7 +350,15 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // a seamless restart without a detached-process race for the terminal.
   if (restartRequested) {
     process.stdout.write("restarting atomic-agent…\n");
-    const result = spawnSync(process.execPath, process.argv.slice(1), {
+    // SEA prepends an extra argv slot, so the real user args start at index 2
+    // (see userArgsFromArgv in cli/index.ts). Re-using process.argv.slice(1)
+    // here re-injects the invoke-path slot and the relaunched SEA process reads
+    // it as the command name ("unknown command: atomic-agent"). Plain node keeps
+    // the script path at index 1, so slice(1) stays correct there.
+    const relaunchArgs = isSea()
+      ? process.argv.slice(2)
+      : process.argv.slice(1);
+    const result = spawnSync(process.execPath, relaunchArgs, {
       stdio: "inherit",
     });
     if (typeof result.status === "number") return result.status;
