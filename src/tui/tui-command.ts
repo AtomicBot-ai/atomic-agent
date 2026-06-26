@@ -8,8 +8,6 @@ import type { LogRecord, LogSink } from "../tracing/structured-logger.js";
 import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
 import { enterAltScreen } from "./alt-screen.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
-import { installMouseInput } from "./mouse-input.js";
-import { createWheelAccelerator } from "./wheel-accelerator.js";
 import { parseTuiArgs } from "./tui-args.js";
 import { persistUserLocalLlmUrl } from "./persist-user-local-models-config.js";
 import { persistUserTuiTheme } from "./persist-user-tui-config.js";
@@ -39,7 +37,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
     return 2;
   }
   // Theme selection BEFORE any Ink render or stdin listener (the startup-gate
-  // wizard, installMouseInput, and the main render). An explicit
+  // wizard and the main render). An explicit
   // `tui.theme` (a registered name) wins; otherwise `"auto"` (or an unknown
   // name) falls back to OSC 11 terminal-background autodetection. Running the
   // probe here means its reply is never swallowed by another stdin consumer,
@@ -144,21 +142,18 @@ export async function tuiCommand(args: string[]): Promise<number> {
 
   const altScreen = enterAltScreen({ stdout: process.stdout, hideCursor: false });
 
-  // Mouse-wheel scroll for the chat log. Enabling terminal mouse
-  // tracking (SGR 1000 + 1006) means native click-drag text selection
-  // and OSC8 link clicks now require holding Shift (Option on iTerm2) —
-  // an accepted trade-off so the wheel can drive `chat_scrolled`. The
-  // listener forks stdin: mouse escape sequences are consumed here and
-  // never leak into the editor; everything else flows to Ink via
-  // `mouse.stdin`. No-op on a non-TTY (stdin falls back unchanged).
-  const wheelAccelerator = createWheelAccelerator();
-  const mouse = installMouseInput({
-    stdout: process.stdout,
-    onEvent: (event) => {
-      const direction = event.type === "wheel_up" ? 1 : -1;
-      bus.emit({ type: "chat_scrolled", delta: wheelAccelerator.next(direction) });
-    },
-  });
+  // Mouse-wheel scroll relies on the terminal's alternate-scroll mode
+  // (`\x1b[?1007h`, enabled by `enterAltScreen`): while the alt screen
+  // is active the wheel is translated by the terminal into cursor
+  // up/down keys, which `handleAppKey.shouldTreatArrowAsChatScroll`
+  // routes into `chat_scrolled`. Crucially we do NOT enable SGR mouse
+  // tracking (1000 + 1006) — doing so would hand every click/drag to
+  // the app and disable the terminal's native text selection (broken
+  // entirely in Apple Terminal, which has no Shift-bypass). Keeping
+  // capture off means drag-to-copy works natively everywhere, matching
+  // opencode's default. The wheel only drives chat scroll while the
+  // editor is focused and empty — an accepted trade-off for native
+  // selection.
 
   const ink = render(
     React.createElement(TuiApp, {
@@ -311,7 +306,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
       },
     }),
     {
-      stdin: mouse.stdin,
+      stdin: process.stdin,
       stdout: process.stdout,
       stderr: process.stderr,
       exitOnCtrlC: false,
@@ -341,7 +336,6 @@ export async function tuiCommand(args: string[]): Promise<number> {
   } finally {
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
-    mouse.stop();
     altScreen.restore();
     ink.clear();
     await orchestrator.shutdown();
