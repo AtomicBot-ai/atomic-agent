@@ -49,6 +49,31 @@ function markerPath(root: string): string {
 }
 
 /**
+ * Names of the bundled starter skills. Used to warn the operator that
+ * deleting one only lasts until the next boot — the seeder re-copies it
+ * (see {@link seedStarterSkillsIfMissing}). Returns an empty set when the
+ * starter tree cannot be resolved (e.g. a packaging edge case); callers
+ * treat that as "nothing is a starter" and proceed without the warning.
+ */
+export async function listStarterSkillNames(): Promise<ReadonlySet<string>> {
+  const sourceDir = resolveStarterSkillsSourceDir();
+  if (sourceDir === null) return new Set();
+  let entries: string[];
+  try {
+    entries = await readdir(sourceDir);
+  } catch {
+    return new Set();
+  }
+  const names = new Set<string>();
+  for (const name of entries) {
+    if (name === "README.md") continue;
+    if (!existsSync(join(sourceDir, name, "SKILL.md"))) continue;
+    names.add(name);
+  }
+  return names;
+}
+
+/**
  * Resolve the packaged `starter-skills/` tree.
  *
  * Node SEA: `import.meta.url` is a `file:` URL for **process.execPath** (the

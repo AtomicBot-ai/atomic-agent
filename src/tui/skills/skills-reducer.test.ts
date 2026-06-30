@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createInitialTuiState, type TuiSessionInfo } from "../tui-state.js";
 import { reduceSkillsAction } from "./skills-reducer.js";
-import type { SkillSummaryRow } from "./skills-panel-state.js";
+import type { HubSkillRow, SkillSummaryRow } from "./skills-panel-state.js";
 
 const SESSION: TuiSessionInfo = {
   sessionId: null,
@@ -150,5 +150,135 @@ describe("reduceSkillsAction", () => {
       error: null,
     })!;
     expect(state.skillsPanel.lastError).toBeNull();
+  });
+
+  const HUB_ROWS: readonly HubSkillRow[] = [
+    {
+      identifier: "anthropics/skills/pdf",
+      name: "pdf",
+      description: "Work with PDFs",
+      version: "1.0.0",
+      repo: "anthropics/skills",
+    },
+    {
+      identifier: "openai/skills/csv",
+      name: "csv",
+      description: "Work with CSVs",
+      version: "2.0.0",
+      repo: "openai/skills",
+    },
+  ];
+
+  it("switches into hub mode and resets the hub cursor", () => {
+    let state = createInitialTuiState(SESSION);
+    state = reduceSkillsAction(state, { type: "skills_hub_opened" })!;
+    expect(state.skillsPanel.mode).toBe("hub");
+    expect(state.skillsPanel.hubCursor).toBe(0);
+    expect(state.skillsPanel.hubSearchEditing).toBe(false);
+  });
+
+  it("folds hub results and clamps the hub cursor down to the new range", () => {
+    let state = createInitialTuiState(SESSION);
+    state = reduceSkillsAction(state, { type: "skills_hub_opened" })!;
+    state = reduceSkillsAction(state, {
+      type: "skills_hub_results",
+      rows: HUB_ROWS,
+      error: null,
+    })!;
+    state = reduceSkillsAction(state, {
+      type: "skills_hub_cursor_moved",
+      delta: 1,
+    })!;
+    expect(state.skillsPanel.hubCursor).toBe(1);
+    // A narrower result set re-clamps the cursor into range.
+    state = reduceSkillsAction(state, {
+      type: "skills_hub_results",
+      rows: [HUB_ROWS[0]!],
+      error: null,
+    })!;
+    expect(state.skillsPanel.hubRows).toHaveLength(1);
+    expect(state.skillsPanel.hubLoading).toBe(false);
+    expect(state.skillsPanel.hubCursor).toBe(0);
+  });
+
+  it("tracks the hub search query and edit focus", () => {
+    let state = createInitialTuiState(SESSION);
+    state = reduceSkillsAction(state, {
+      type: "skills_hub_search_focus",
+      editing: true,
+    })!;
+    expect(state.skillsPanel.hubSearchEditing).toBe(true);
+    state = reduceSkillsAction(state, {
+      type: "skills_hub_query_changed",
+      query: "pdf",
+    })!;
+    expect(state.skillsPanel.hubQuery).toBe("pdf");
+  });
+
+  it("opens and closes the install confirmation modal", () => {
+    let state = createInitialTuiState(SESSION);
+    state = reduceSkillsAction(state, {
+      type: "skills_install_confirm_opened",
+      confirm: {
+        identifier: "anthropics/skills/pdf",
+        verdict: "caution",
+        findings: [],
+      },
+    })!;
+    expect(state.skillsPanel.installConfirm?.identifier).toBe(
+      "anthropics/skills/pdf",
+    );
+    expect(state.skillsPanel.installing).toBe(false);
+    state = reduceSkillsAction(state, {
+      type: "skills_install_confirm_closed",
+    })!;
+    expect(state.skillsPanel.installConfirm).toBeNull();
+  });
+
+  it("closes hub mode and clears the install confirmation", () => {
+    let state = createInitialTuiState(SESSION);
+    state = reduceSkillsAction(state, { type: "skills_hub_opened" })!;
+    state = reduceSkillsAction(state, {
+      type: "skills_install_confirm_opened",
+      confirm: {
+        identifier: "openai/skills/csv",
+        verdict: "dangerous",
+        findings: [],
+      },
+    })!;
+    state = reduceSkillsAction(state, { type: "skills_hub_closed" })!;
+    expect(state.skillsPanel.mode).toBe("list");
+    expect(state.skillsPanel.installConfirm).toBeNull();
+  });
+
+  it("opens, flags submitting, fails, and closes the remove confirmation", () => {
+    let state = createInitialTuiState(SESSION);
+    state = reduceSkillsAction(state, {
+      type: "skills_remove_confirm_opened",
+      confirm: {
+        name: "alpha",
+        source: "global",
+        isStarter: true,
+        submitting: false,
+        error: null,
+      },
+    })!;
+    expect(state.skillsPanel.removeConfirm?.name).toBe("alpha");
+    expect(state.skillsPanel.removeConfirm?.isStarter).toBe(true);
+
+    state = reduceSkillsAction(state, { type: "skills_remove_submitting" })!;
+    expect(state.skillsPanel.removeConfirm?.submitting).toBe(true);
+
+    state = reduceSkillsAction(state, {
+      type: "skills_remove_failed",
+      error: "boom",
+    })!;
+    expect(state.skillsPanel.removeConfirm?.submitting).toBe(false);
+    expect(state.skillsPanel.removeConfirm?.error).toBe("boom");
+
+    state = reduceSkillsAction(state, {
+      type: "skills_remove_confirm_closed",
+    })!;
+    expect(state.skillsPanel.removeConfirm).toBeNull();
   });
 });

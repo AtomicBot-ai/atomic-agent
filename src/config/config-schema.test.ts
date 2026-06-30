@@ -496,6 +496,41 @@ describe("parseUserConfigFile", () => {
     ).toThrow(/skills.disabled/);
   });
 
+  it("fills skills.taps defaults on a v29 file (transparent v29 -> v30)", () => {
+    const parsed = parseUserConfigFile({
+      version: 29,
+      skills: { disabled: [] },
+    });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.skills.taps).toEqual(USER_CONFIG_DEFAULTS.skills.taps);
+  });
+
+  it("preserves a custom skills.taps list and dedupes duplicates", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      skills: {
+        disabled: [],
+        taps: ["my-org/skills", "my-org/skills", "openai/skills"],
+      },
+    });
+    expect(parsed.skills.taps).toEqual(["my-org/skills", "openai/skills"]);
+  });
+
+  it("rejects invalid skills.taps entries", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        skills: { disabled: [], taps: ["not-a-repo"] },
+      }),
+    ).toThrow(/skills.taps\[0\]/);
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        skills: { disabled: [], taps: "openai/skills" },
+      }),
+    ).toThrow(/skills.taps/);
+  });
+
   it("applies telegram defaults when the section is absent", () => {
     const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
     expect(parsed.telegram).toEqual(USER_CONFIG_DEFAULTS.telegram);

@@ -44,6 +44,22 @@ describe("parseSkillFile", () => {
     expect(result.manifest.dangerous).toBe(false);
   });
 
+  it("defaults version to 0.0.0 when the frontmatter omits it", () => {
+    // Mirrors the community SKILL.md shape (anthropics/skills,
+    // openai/skills): name + description only, no version field.
+    const content = [
+      "---",
+      "name: algorithmic-art",
+      'description: "Creating algorithmic art"',
+      "license: see LICENSE.txt",
+      "---",
+      "body",
+    ].join("\n");
+    const result = parseSkillFile(content);
+    expect(result.manifest.name).toBe("algorithmic-art");
+    expect(result.manifest.version).toBe("0.0.0");
+  });
+
   it("rejects missing frontmatter", () => {
     expect(() => parseSkillFile("no frontmatter here")).toThrow(
       SkillManifestError,

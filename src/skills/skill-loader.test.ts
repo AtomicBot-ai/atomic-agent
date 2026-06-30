@@ -62,6 +62,22 @@ describe("loadSkills", () => {
     expect(winner.source).toBe("project");
   });
 
+  it("keeps source 'global' when projectDir resolves to the same path as globalDir", async () => {
+    // A relative `ATOMIC_AGENT_STATE_DIR=.atomic-agent` run from the repo
+    // root collapses globalDir and projectDir onto the same absolute path.
+    // The project scan must be skipped so the skill is not relabelled
+    // "project" (which would block global-only uninstall).
+    await writeSkill(global, "alpha", "Alpha skill");
+    const sameButUnnormalised = join(global, ".", "..", "global");
+    const result = await loadSkills({
+      globalDir: global,
+      projectDir: sameButUnnormalised,
+    });
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0]!.manifest.name).toBe("alpha");
+    expect(result.skills[0]!.source).toBe("global");
+  });
+
   it("collects errors for broken SKILL.md", async () => {
     await mkdir(join(global, "broken"), { recursive: true });
     await writeFile(join(global, "broken", "SKILL.md"), "no frontmatter", "utf8");

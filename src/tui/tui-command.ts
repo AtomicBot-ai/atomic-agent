@@ -203,10 +203,25 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.skills.openDetail(name),
         onSkillToggleRequested: (name) =>
           void orchestrator.skills.toggleSkill(name),
+        onSkillRemoveRequested: (name) =>
+          void orchestrator.skills.requestRemove(name),
+        onSkillRemoveConfirmed: (name) =>
+          void orchestrator.skills.confirmRemove(name),
         onSkillEnableRequested: (name) =>
           void orchestrator.skills.setSkillDisabled(name, false),
         onSkillDisableRequested: (name) =>
           void orchestrator.skills.setSkillDisabled(name, true),
+        onSkillHubOpen: () => void orchestrator.skills.openHub(),
+        onSkillHubRefresh: () => void orchestrator.skills.refreshHub(),
+        onSkillHubSearch: (query) =>
+          void orchestrator.skills.searchHub(query),
+        onSkillHubCardOpen: (row) => void orchestrator.skills.openHubCard(row),
+        onSkillHubInstall: (identifier, source) =>
+          void orchestrator.skills.installFromHub(identifier, source),
+        onSkillInstallConfirmed: (identifier) =>
+          void orchestrator.skills.confirmInstall(identifier),
+        onSkillInstallCancelled: (identifier) =>
+          void orchestrator.skills.cancelInstall(identifier),
         onMemoryAutoRefreshStart: () => orchestrator.memory.startAutoRefresh(),
         onMemoryDetailRequested: (row) => orchestrator.memory.openDetail(row),
         onMemoryOpenNoteRequested: (noteId) =>

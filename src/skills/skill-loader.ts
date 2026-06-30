@@ -59,9 +59,20 @@ export async function loadSkills(
   const errors: Array<{ path: string; error: string }> = [];
   const platform = options.platform ?? osPlatform();
   const globalSkills = await loadFromDir(options.globalDir, "global", errors);
-  const projectSkills = options.projectDir
-    ? await loadFromDir(options.projectDir, "project", errors)
-    : [];
+  // When `projectDir` resolves to the exact same absolute path as
+  // `globalDir` (e.g. a relative `ATOMIC_AGENT_STATE_DIR=.atomic-agent`
+  // run from the repo root makes both `<cwd>/.atomic-agent/skills`), the
+  // project scan would re-load every global skill and relabel it
+  // `source: "project"` in the merge below — which then blocks global-only
+  // operations like uninstall. There is no genuine project skill in that
+  // case, so skip the redundant scan and keep the "global" classification.
+  const projectIsGlobal =
+    !!options.projectDir &&
+    resolve(options.projectDir) === resolve(options.globalDir);
+  const projectSkills =
+    options.projectDir && !projectIsGlobal
+      ? await loadFromDir(options.projectDir, "project", errors)
+      : [];
 
   const merged = new Map<string, SkillRecord>();
   for (const s of globalSkills) {

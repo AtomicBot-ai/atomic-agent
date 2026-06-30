@@ -45,6 +45,12 @@ export interface SlashDispatchResult {
   readonly skillEnableName?: string;
   /** Skill name to disable via the orchestrator (`/skill disable <name>`). */
   readonly skillDisableName?: string;
+  /** When true, browse the skill hub (`/skills browse`). */
+  readonly skillHubBrowse?: boolean;
+  /** Hub search query (`/skills search <query>`). */
+  readonly skillHubSearchQuery?: string;
+  /** Hub install identifier (`/skills install <owner/repo[/path]>`). */
+  readonly skillHubInstallId?: string;
   readonly localModelsPullModelId?: string;
   readonly localModelsUseModelId?: string;
   readonly triggerLocalModelsStatus?: boolean;
@@ -474,8 +480,32 @@ function dispatchSkillsSub(rawArgs: string): SlashDispatchResult {
   if (argPart.toLowerCase() === "dump") {
     return pureActions([], { triggerSkillCatalogDump: true });
   }
+  const [verb, ...rest] = argPart.split(/\s+/);
+  const verbLower = (verb ?? "").toLowerCase();
+  const openSkillsTab: TuiAction[] = [
+    { type: "ui_mode_set", mode: "debug" },
+    { type: "tab_changed", tab: "skills" },
+  ];
+  if (verbLower === "browse") {
+    return pureActions(openSkillsTab, { skillHubBrowse: true });
+  }
+  if (verbLower === "search") {
+    return pureActions(openSkillsTab, {
+      skillHubSearchQuery: rest.join(" ").trim(),
+    });
+  }
+  if (verbLower === "install") {
+    const id = rest.join(" ").trim();
+    if (id.length === 0) {
+      return pureActions([], {
+        systemMessage: "usage: /skills install <owner/repo[/path]>",
+      });
+    }
+    return pureActions(openSkillsTab, { skillHubInstallId: id });
+  }
   return pureActions([], {
-    systemMessage: "usage: /skills | /skills dump",
+    systemMessage:
+      "usage: /skills | /skills dump | /skills browse | /skills search <q> | /skills install <id>",
   });
 }
 

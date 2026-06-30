@@ -160,6 +160,11 @@ export function runSlashCommand(
   if (result.taskRunId) callbacks.onTaskRunNowRequested?.(result.taskRunId);
   if (result.skillEnableName) callbacks.onSkillEnableRequested?.(result.skillEnableName);
   if (result.skillDisableName) callbacks.onSkillDisableRequested?.(result.skillDisableName);
+  if (result.skillHubBrowse) callbacks.onSkillHubOpen?.();
+  if (result.skillHubSearchQuery !== undefined) {
+    callbacks.onSkillHubSearch?.(result.skillHubSearchQuery);
+  }
+  if (result.skillHubInstallId) callbacks.onSkillHubInstall?.(result.skillHubInstallId);
   if (
     result.localModelsPullModelId &&
     isKnownLocalModelId(result.localModelsPullModelId)

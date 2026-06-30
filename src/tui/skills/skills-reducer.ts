@@ -1,6 +1,6 @@
 import type { TuiState } from "../tui-state.js";
 import { cycleSkillsFilter, selectVisibleSkillRows } from "./skills-filter.js";
-import type { SkillsPanelState } from "./skills-panel-state.js";
+import { HUB_CARD_BODY_WINDOW, type SkillsPanelState } from "./skills-panel-state.js";
 import { isSkillsAction, type SkillsAction } from "./skills-actions.js";
 
 /**
@@ -87,6 +87,95 @@ function reducePanel(
     }
     case "skills_error_set":
       return { ...panel, lastError: action.error };
+    case "skills_hub_opened":
+      return {
+        ...panel,
+        mode: "hub",
+        hubCursor: 0,
+        hubError: null,
+        hubSearchEditing: false,
+      };
+    case "skills_hub_closed":
+      return {
+        ...panel,
+        mode: "list",
+        hubSearchEditing: false,
+        installConfirm: null,
+        hubCard: null,
+        hubCardLoading: false,
+        cardScroll: 0,
+      };
+    case "skills_hub_loading":
+      return {
+        ...panel,
+        hubLoading: action.loading,
+        ...(action.loading ? { hubError: null } : {}),
+      };
+    case "skills_hub_results":
+      return {
+        ...panel,
+        hubRows: action.rows,
+        hubError: action.error,
+        hubLoading: false,
+        hubCursor: clampCursor(panel.hubCursor, action.rows.length),
+      };
+    case "skills_hub_cursor_moved": {
+      const total = panel.hubRows.length;
+      const nextCursor = Math.max(
+        0,
+        Math.min(total - 1, panel.hubCursor + action.delta),
+      );
+      return { ...panel, hubCursor: nextCursor };
+    }
+    case "skills_hub_search_focus":
+      return { ...panel, hubSearchEditing: action.editing };
+    case "skills_hub_query_changed":
+      return { ...panel, hubQuery: action.query };
+    case "skills_install_loading":
+      return { ...panel, installing: action.loading };
+    case "skills_install_confirm_opened":
+      return { ...panel, installConfirm: action.confirm, installing: false };
+    case "skills_install_confirm_closed":
+      return { ...panel, installConfirm: null, installing: false };
+    case "skills_hub_card_loading":
+      return { ...panel, hubCardLoading: action.loading };
+    case "skills_hub_card_opened":
+      return { ...panel, hubCard: action.card, hubCardLoading: false, cardScroll: 0 };
+    case "skills_hub_card_closed":
+      return { ...panel, hubCard: null, hubCardLoading: false, cardScroll: 0 };
+    case "skills_hub_card_scrolled": {
+      if (!panel.hubCard) return panel;
+      const lineCount = panel.hubCard.body ? panel.hubCard.body.split("\n").length : 0;
+      const maxStart = Math.max(0, lineCount - HUB_CARD_BODY_WINDOW);
+      const next = Math.max(0, Math.min(maxStart, panel.cardScroll + action.delta));
+      return next === panel.cardScroll ? panel : { ...panel, cardScroll: next };
+    }
+    case "skills_remove_confirm_opened":
+      return { ...panel, removeConfirm: action.confirm };
+    case "skills_remove_confirm_closed":
+      return { ...panel, removeConfirm: null };
+    case "skills_remove_submitting":
+      return panel.removeConfirm
+        ? {
+            ...panel,
+            removeConfirm: {
+              ...panel.removeConfirm,
+              submitting: true,
+              error: null,
+            },
+          }
+        : panel;
+    case "skills_remove_failed":
+      return panel.removeConfirm
+        ? {
+            ...panel,
+            removeConfirm: {
+              ...panel.removeConfirm,
+              submitting: false,
+              error: action.error,
+            },
+          }
+        : panel;
   }
 }
 

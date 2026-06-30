@@ -33,6 +33,7 @@ export type {
 } from "./skill-script-runner.js";
 
 export {
+  listStarterSkillNames,
   seedStarterSkillsIfMissing,
   resolveStarterSkillsSourceDir,
 } from "./seed-starter-skills.js";
@@ -51,3 +52,69 @@ export type {
   InstallSkillOptions,
   InstallSkillResult,
 } from "./skill-installer.js";
+
+export {
+  browseHub,
+  browseTap,
+  commitStagedInstall,
+  DEFAULT_TAPS,
+  filterHubEntries,
+  discardStagedInstall,
+  formatSkillIdentifier,
+  GithubSkillClient,
+  GithubSkillError,
+  installSkillFromHub,
+  looksLikeHubIdentifier,
+  parseSkillIdentifier,
+  parseTapRepo,
+  scanSkillFiles,
+  searchHub,
+  SkillHubInstallError,
+  SkillIdentifierError,
+  stageSkillFromHub,
+  summarizeScan,
+} from "./hub/index.js";
+export type {
+  DownloadedSkillFile,
+  GithubSkillClientOptions,
+  HubSkillEntry,
+  InstallFromHubOptions,
+  InstallFromHubResult,
+  RemoteSkillManifestRef,
+  ScannableFile,
+  SkillHubClient,
+  SkillIdentifier,
+  SkillScanFinding,
+  SkillScanResult,
+  SkillScanVerdict,
+  SkillTap,
+  StagedSkillInstall,
+} from "./hub/index.js";
+
+export {
+  browseClawHub,
+  ClawHubClient,
+  ClawHubError,
+  ClawHubIdentifierError,
+  formatClawHubIdentifier,
+  installSkillRouted,
+  looksLikeClawHubIdentifier,
+  mergeRegistryVerdict,
+  parseClawHubIdentifier,
+  resolveSkillSource,
+  searchClawHub,
+  stageSkill,
+  stageSkillFromClawHub,
+} from "./clawhub/index.js";
+export type {
+  ClawHubBrowseOptions,
+  ClawHubClientOptions,
+  ClawHubScanStatus,
+  ClawHubSkillDetail,
+  ClawHubSkillRef,
+  ClawHubSkillSort,
+  ClawHubSkillSummary,
+  InstallSkillRoutedOptions,
+  SkillSourceKind,
+  StageSkillOptions,
+} from "./clawhub/index.js";

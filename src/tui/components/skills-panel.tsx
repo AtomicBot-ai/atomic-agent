@@ -12,6 +12,10 @@ import type {
 } from "../skills/skills-panel-state.js";
 import { SkillsList } from "./skills-list.js";
 import { SkillsDetail } from "./skills-detail.js";
+import { SkillsHubList } from "./skills-hub-list.js";
+import { SkillsHubCard } from "./skills-hub-card.js";
+import { SkillsInstallConfirm } from "./skills-install-confirm.js";
+import { SkillsRemoveConfirm } from "./skills-remove-confirm.js";
 
 export interface SkillsPanelProps {
   panel: SkillsPanelState;
@@ -32,6 +36,36 @@ export function SkillsPanel(props: SkillsPanelProps): ReactElement {
   );
   const enabledCount = panel.rows.filter((r) => !r.disabled).length;
   const disabledCount = panel.rows.length - enabledCount;
+  if (panel.installConfirm) {
+    return (
+      <SkillsInstallConfirm
+        confirm={panel.installConfirm}
+        installing={panel.installing}
+      />
+    );
+  }
+  if (panel.removeConfirm) {
+    return <SkillsRemoveConfirm confirm={panel.removeConfirm} />;
+  }
+  if (panel.hubCard) {
+    return (
+      <SkillsHubCard
+        card={panel.hubCard}
+        installing={panel.installing}
+        scroll={panel.cardScroll}
+      />
+    );
+  }
+  if (panel.mode === "hub") {
+    if (panel.hubCardLoading) {
+      return (
+        <Box paddingY={1}>
+          <Text color={theme.colors.muted}>loading skill card…</Text>
+        </Box>
+      );
+    }
+    return <SkillsHubList panel={panel} />;
+  }
   return (
     <Box flexDirection="column">
       <FilterBar

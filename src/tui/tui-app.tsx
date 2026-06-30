@@ -51,6 +51,8 @@ import { handleLlmPanelKey } from "./llm-panel/llm-panel-key-bindings.js";
 import { selectPromptLlmMeta } from "./llm-panel/llm-panel-selectors.js";
 import { handleTasksTabKey } from "./tasks/tasks-key-bindings.js";
 import { handleSkillsTabKey } from "./skills/skills-key-bindings.js";
+import type { SkillSourceKind } from "../skills/index.js";
+import type { HubSkillRow } from "./skills/skills-panel-state.js";
 import { handleMemoryTabKey } from "./memory/memory-key-bindings.js";
 import type { MemorySummaryRow } from "./memory/memory-panel-state.js";
 import { handleMcpTabKey } from "./mcp/mcp-key-bindings.js";
@@ -178,6 +180,24 @@ export interface TuiAppCallbacks {
   onSkillDetailRequested?(name: string): void;
   /** Skills tab: flip the disabled bit and persist to `config.json`. */
   onSkillToggleRequested?(name: string): void;
+  /** Skills tab: open the uninstall confirmation for a global skill. */
+  onSkillRemoveRequested?(name: string): void;
+  /** Skills tab: delete the skill directory after confirmation. */
+  onSkillRemoveConfirmed?(name: string): void;
+  /** Skills hub: open the hub view and browse the configured taps. */
+  onSkillHubOpen?(): void;
+  /** Skills hub: re-browse the configured taps (clears the query). */
+  onSkillHubRefresh?(): void;
+  /** Skills hub: search the configured taps for a query. */
+  onSkillHubSearch?(query: string): void;
+  /** Skills hub: open the pre-install card for a row (fetches SKILL.md). */
+  onSkillHubCardOpen?(row: HubSkillRow): void;
+  /** Skills hub: stage + install the skill at `identifier`. */
+  onSkillHubInstall?(identifier: string, source?: SkillSourceKind): void;
+  /** Skills hub: commit a staged install awaiting confirmation. */
+  onSkillInstallConfirmed?(identifier: string): void;
+  /** Skills hub: discard a staged install awaiting confirmation. */
+  onSkillInstallCancelled?(identifier: string): void;
   /** Memory tab: start the 5s refresh loop on first entry. */
   onMemoryAutoRefreshStart?(): void;
   /** Memory tab: open detail for a list row. */

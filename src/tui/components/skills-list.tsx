@@ -55,6 +55,31 @@ export function SkillsList(props: SkillsListProps): ReactElement {
         <Text color={theme.colors.muted}>↓ {hiddenAfter} below</Text>
       ) : null}
       <HintsRow />
+      <HubCta />
+    </Box>
+  );
+}
+
+/**
+ * Standalone call-to-action banner for the Skills Hub. Kept separate from
+ * the inline hint row so the "browse & install" entry point is visually
+ * distinct from the per-row navigation keys.
+ */
+function HubCta(): ReactElement {
+  return (
+    <Box
+      marginTop={1}
+      borderStyle="round"
+      borderColor={theme.colors.accent}
+      paddingX={1}
+    >
+      <Text color={theme.colors.accent} bold>
+        i
+      </Text>
+      <Text color={theme.colors.accent}> · Skills Hub</Text>
+      <Text color={theme.colors.muted}>
+        {"  "}browse &amp; install skills from ClawHub
+      </Text>
     </Box>
   );
 }
@@ -73,7 +98,8 @@ function HintsRow(): ReactElement {
   return (
     <Box marginTop={1}>
       <Text color={theme.colors.muted}>
-        j/k move · Enter detail · e toggle · r refresh · a auto · f filter
+        j/k move · Enter detail · e toggle · d remove · r refresh · a auto · f
+        filter
       </Text>
     </Box>
   );

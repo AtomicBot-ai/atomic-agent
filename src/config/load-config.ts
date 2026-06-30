@@ -269,6 +269,8 @@ export function loadConfig(): AtomicAgentConfig {
         ENV_DEFAULTS.SKILLS_CATALOG_BUDGET,
       ),
       disabled: user.skills.disabled,
+      taps: user.skills.taps,
+      clawhub: user.skills.clawhub,
     },
     http: {
       enabled: user.http.enabled,

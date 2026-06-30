@@ -138,7 +138,10 @@ export function handleAppKey(
   const skillsTabBusy =
     state.uiMode === "debug" &&
     state.activeTab === "skills" &&
-    state.skillsPanel.mode === "detail";
+    (state.skillsPanel.mode === "detail" ||
+      state.skillsPanel.mode === "hub" ||
+      state.skillsPanel.installConfirm !== null ||
+      state.skillsPanel.removeConfirm !== null);
   const memoryTabBusy =
     state.uiMode === "debug" &&
     state.activeTab === "memory" &&

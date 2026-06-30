@@ -1,4 +1,8 @@
 import type {
+  HubCardState,
+  HubSkillRow,
+  SkillInstallConfirmState,
+  SkillRemoveConfirmState,
   SkillSummaryRow,
   SkillsFilterStatus,
 } from "./skills-panel-state.js";
@@ -25,7 +29,33 @@ export type SkillsAction =
   | { type: "skills_detail_opened"; name: string; body: string }
   | { type: "skills_detail_closed" }
   | { type: "skills_toggle_settled"; name: string; disabled: boolean }
-  | { type: "skills_error_set"; error: string | null };
+  | { type: "skills_error_set"; error: string | null }
+  // --- hub ---
+  | { type: "skills_hub_opened" }
+  | { type: "skills_hub_closed" }
+  | { type: "skills_hub_loading"; loading: boolean }
+  | {
+      type: "skills_hub_results";
+      rows: readonly HubSkillRow[];
+      error: string | null;
+    }
+  | { type: "skills_hub_cursor_moved"; delta: 1 | -1 | number }
+  | { type: "skills_hub_search_focus"; editing: boolean }
+  | { type: "skills_hub_query_changed"; query: string }
+  | { type: "skills_install_loading"; loading: boolean }
+  | {
+      type: "skills_install_confirm_opened";
+      confirm: SkillInstallConfirmState;
+    }
+  | { type: "skills_install_confirm_closed" }
+  | { type: "skills_hub_card_loading"; loading: boolean }
+  | { type: "skills_hub_card_opened"; card: HubCardState }
+  | { type: "skills_hub_card_closed" }
+  | { type: "skills_hub_card_scrolled"; delta: number }
+  | { type: "skills_remove_confirm_opened"; confirm: SkillRemoveConfirmState }
+  | { type: "skills_remove_confirm_closed" }
+  | { type: "skills_remove_submitting" }
+  | { type: "skills_remove_failed"; error: string };
 
 /** Narrow runtime guard used by the root reducer to dispatch. */
 export function isSkillsAction(action: { type: string }): action is SkillsAction {

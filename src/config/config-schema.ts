@@ -251,6 +251,21 @@ export interface AtomicAgentConfig {
      * KV-cache once because the stable prefix changes.
      */
     disabled: string[];
+    /**
+     * GitHub `owner/repo` repositories the skill hub browses for
+     * installable SKILL.md skills. Mirrors `UserConfigFile.skills.taps`.
+     */
+    taps: string[];
+    /**
+     * ClawHub registry (https://clawhub.ai) — the primary skill
+     * marketplace. Mirrors `UserConfigFile.skills.clawhub`.
+     */
+    clawhub: {
+      enabled: boolean;
+      apiBase: string;
+      browseLimit: number;
+      nonSuspiciousOnly: boolean;
+    };
   };
   http: {
     enabled: boolean;
@@ -1208,9 +1223,26 @@ export interface UserConfigFile {
    * turned off without removing their files from disk. `disabled`
    * holds kebab-case skill names; older files are transparently
    * upgraded with `skills: { disabled: [] }`.
+   *
+   * `taps` (added in config v30) holds GitHub `owner/repo`
+   * repositories the skill hub browses for installable SKILL.md
+   * skills. Older files are upgraded with the default tap set
+   * (`anthropics/skills`, `openai/skills`, `vercel-labs/agent-skills`).
+   *
+   * `clawhub` (added in config v31) configures the ClawHub registry
+   * (https://clawhub.ai) — the primary skill marketplace, browsed and
+   * searched server-side. Older files are upgraded with it enabled,
+   * pointed at the public registry, hiding suspicious skills by default.
    */
   skills: {
     disabled: string[];
+    taps: string[];
+    clawhub: {
+      enabled: boolean;
+      apiBase: string;
+      browseLimit: number;
+      nonSuspiciousOnly: boolean;
+    };
   };
   /**
    * TUI appearance. Added in config v29. `theme` is either the literal
@@ -1250,7 +1282,12 @@ export interface UserConfigFile {
 // (provider chain). Older files transparently inherit the defaults
 // (cacheTtlMinutes: 15, provider: "exa", fallback: ["duckduckgo"] — the keyless
 // Exa→DDG degrade path).
-export const USER_CONFIG_VERSION = 29 as const;
+// v30: skills gains `taps` (GitHub owner/repo repositories browsed by the
+// skill hub). Older files inherit the default tap set.
+// v31: skills gains `clawhub` (ClawHub registry — the primary skill
+// marketplace). Older files inherit it enabled against the public registry
+// with suspicious skills hidden.
+export const USER_CONFIG_VERSION = 31 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1352,6 +1389,8 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   26,
   27,
   28,
+  29,
+  30,
   USER_CONFIG_VERSION,
 ];
 
@@ -1575,6 +1614,13 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   },
   skills: {
     disabled: [],
+    taps: ["anthropics/skills", "openai/skills", "vercel-labs/agent-skills"],
+    clawhub: {
+      enabled: true,
+      apiBase: "https://clawhub.ai",
+      browseLimit: 100,
+      nonSuspiciousOnly: true,
+    },
   },
   tui: {
     theme: "auto",
@@ -2020,6 +2066,81 @@ export function parseSkillNameArray(raw: unknown, field: string): string[] {
     result.push(entry);
   }
   return result;
+}
+
+const TAP_REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
+
+/**
+ * Parse the skill hub `taps` list — GitHub `owner/repo` repository
+ * strings. Empty input is accepted. Duplicates are deduped so the
+ * on-disk representation stays canonical.
+ */
+export function parseSkillTapArray(raw: unknown, field: string): string[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      field,
+      `expected string[], got ${JSON.stringify(raw)}`,
+    );
+  }
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const entry = raw[i];
+    if (typeof entry !== "string" || entry.length === 0) {
+      throw new ConfigValidationError(
+        `${field}[${i}]`,
+        `expected non-empty string, got ${JSON.stringify(entry)}`,
+      );
+    }
+    if (!TAP_REPO_RE.test(entry)) {
+      throw new ConfigValidationError(
+        `${field}[${i}]`,
+        `expected GitHub owner/repo, got ${JSON.stringify(entry)}`,
+      );
+    }
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    result.push(entry);
+  }
+  return result;
+}
+
+/**
+ * Parse the `skills.clawhub` block (config v31). Missing / partial input
+ * is filled from {@link USER_CONFIG_DEFAULTS} so older config files
+ * transparently inherit the public-registry defaults.
+ */
+export function parseClawHubConfig(
+  raw: unknown,
+): AtomicAgentConfig["skills"]["clawhub"] {
+  const defaults = USER_CONFIG_DEFAULTS.skills.clawhub;
+  if (raw === undefined || raw === null) return { ...defaults };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      "skills.clawhub",
+      `expected object, got ${JSON.stringify(raw)}`,
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+  return {
+    enabled: parseBool(
+      obj.enabled ?? defaults.enabled,
+      "skills.clawhub.enabled",
+    ),
+    apiBase: parseUrl(
+      obj.apiBase ?? defaults.apiBase,
+      "skills.clawhub.apiBase",
+    ),
+    browseLimit: parsePositiveInt(
+      obj.browseLimit ?? defaults.browseLimit,
+      "skills.clawhub.browseLimit",
+    ),
+    nonSuspiciousOnly: parseBool(
+      obj.nonSuspiciousOnly ?? defaults.nonSuspiciousOnly,
+      "skills.clawhub.nonSuspiciousOnly",
+    ),
+  };
 }
 
 /**
@@ -3054,6 +3175,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         skills.disabled ?? USER_CONFIG_DEFAULTS.skills.disabled,
         "skills.disabled",
       ),
+      taps: parseSkillTapArray(
+        skills.taps ?? USER_CONFIG_DEFAULTS.skills.taps,
+        "skills.taps",
+      ),
+      clawhub: parseClawHubConfig(skills.clawhub),
     },
     tui: {
       theme: parseThemeName(

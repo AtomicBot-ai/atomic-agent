@@ -163,6 +163,31 @@ describe("skillCommand", () => {
     expect(stdout).toContain("[missing]");
   });
 
+  it("uninstall removes the global skill dir and prunes the disabled entry", async () => {
+    writeSkill(globalSkillsDir, "alpha");
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      skills: { disabled: ["alpha", "beta"] },
+    });
+    resetConfigCache();
+
+    const code = await skillCommand(["uninstall", "alpha"]);
+    expect(code).toBe(0);
+    expect(stdout).toContain("removed ");
+
+    // Directory is gone and the stale disable entry is dropped (beta stays).
+    const listCode = await skillCommand(["list"]);
+    expect(listCode).toBe(0);
+    const file = readUserConfigFileSync(getUserConfigPath(stateDir));
+    expect(file?.skills.disabled).toEqual(["beta"]);
+  });
+
+  it("uninstall on a skill not installed globally returns 2", async () => {
+    const code = await skillCommand(["uninstall", "ghost-skill"]);
+    expect(code).toBe(2);
+    expect(stderr).toContain("not installed globally: ghost-skill");
+  });
+
   it("enable/disable is idempotent across repeated invocations", async () => {
     writeSkill(globalSkillsDir, "alpha");
     await skillCommand(["disable", "alpha"]);

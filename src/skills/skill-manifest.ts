@@ -47,15 +47,16 @@ export class SkillManifestError extends Error {
  *   ---
  *   name: my-skill
  *   description: "..."
- *   version: 0.1.0
+ *   version: 0.1.0           # optional — defaults to "0.0.0" when absent
  *   requires_tools: [browser.navigate]
  *   requires_scripts: [fetch.sh]
  *   dangerous: true
  *   ---
  *   # markdown body
  *
- * The manifest is validated strictly. The body is returned verbatim so it
- * can be streamed into the prompt when the agent calls `skill.view`.
+ * `name` and `description` are required; `version` is optional (the shared
+ * agentskills.io standard does not mandate it). The body is returned
+ * verbatim so it can be streamed into the prompt on `skill.view`.
  */
 export function parseSkillFile(content: string): ParsedSkillFile {
   const normalised = content.replace(/\r\n/g, "\n");
@@ -102,9 +103,12 @@ function validateManifest(raw: unknown): SkillManifest {
   if (!description)
     issues.push("`description` is required and must be a non-empty string");
 
-  const version = typeof obj.version === "string" ? obj.version.trim() : "";
-  if (!version)
-    issues.push("`version` is required and must be a non-empty string");
+  // `version` is optional per the shared agentskills.io SKILL.md
+  // standard — community skills (anthropics/skills, openai/skills) ship
+  // only `name` + `description`. Default to "0.0.0" when absent so those
+  // manifests parse and install instead of being silently dropped.
+  const versionRaw = typeof obj.version === "string" ? obj.version.trim() : "";
+  const version = versionRaw.length > 0 ? versionRaw : "0.0.0";
 
   const requiresTools = normaliseStringList(obj.requires_tools, issues, "requires_tools");
   const requiresScripts = normaliseStringList(
