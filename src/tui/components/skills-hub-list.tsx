@@ -32,6 +32,13 @@ export function SkillsHubList(props: SkillsHubListProps): ReactElement {
           <Text color={theme.colors.error}>! {panel.hubError}</Text>
         </Box>
       ) : null}
+      {panel.installError ? (
+        <Box>
+          <Text color={theme.colors.error}>
+            ! install failed: {panel.installError}
+          </Text>
+        </Box>
+      ) : null}
       {renderBody(panel, maxRows)}
       <HintsRow />
     </Box>

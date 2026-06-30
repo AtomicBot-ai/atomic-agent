@@ -53,6 +53,7 @@ export function SkillsPanel(props: SkillsPanelProps): ReactElement {
         card={panel.hubCard}
         installing={panel.installing}
         scroll={panel.cardScroll}
+        installError={panel.installError}
       />
     );
   }

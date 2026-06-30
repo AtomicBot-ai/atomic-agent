@@ -94,6 +94,7 @@ function reducePanel(
         hubCursor: 0,
         hubError: null,
         hubSearchEditing: false,
+        installError: null,
       };
     case "skills_hub_closed":
       return {
@@ -104,6 +105,7 @@ function reducePanel(
         hubCard: null,
         hubCardLoading: false,
         cardScroll: 0,
+        installError: null,
       };
     case "skills_hub_loading":
       return {
@@ -132,17 +134,41 @@ function reducePanel(
     case "skills_hub_query_changed":
       return { ...panel, hubQuery: action.query };
     case "skills_install_loading":
-      return { ...panel, installing: action.loading };
+      // Clear any prior install error when a fresh install begins.
+      return {
+        ...panel,
+        installing: action.loading,
+        ...(action.loading ? { installError: null } : {}),
+      };
+    case "skills_install_failed":
+      return { ...panel, installError: action.error, installing: false };
     case "skills_install_confirm_opened":
-      return { ...panel, installConfirm: action.confirm, installing: false };
+      return {
+        ...panel,
+        installConfirm: action.confirm,
+        installing: false,
+        installError: null,
+      };
     case "skills_install_confirm_closed":
       return { ...panel, installConfirm: null, installing: false };
     case "skills_hub_card_loading":
       return { ...panel, hubCardLoading: action.loading };
     case "skills_hub_card_opened":
-      return { ...panel, hubCard: action.card, hubCardLoading: false, cardScroll: 0 };
+      return {
+        ...panel,
+        hubCard: action.card,
+        hubCardLoading: false,
+        cardScroll: 0,
+        installError: null,
+      };
     case "skills_hub_card_closed":
-      return { ...panel, hubCard: null, hubCardLoading: false, cardScroll: 0 };
+      return {
+        ...panel,
+        hubCard: null,
+        hubCardLoading: false,
+        cardScroll: 0,
+        installError: null,
+      };
     case "skills_hub_card_scrolled": {
       if (!panel.hubCard) return panel;
       const lineCount = panel.hubCard.body ? panel.hubCard.body.split("\n").length : 0;

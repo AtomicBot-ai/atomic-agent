@@ -1,9 +1,13 @@
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { DEFAULT_EXTRACT_LIMITS } from "../../tools/os/archive/archive-types.js";
 import { ZipBackend } from "../../tools/os/archive/zip-backend.js";
-import { parseSkillFile } from "../skill-manifest.js";
+import {
+  isValidSkillName,
+  parseSkillFile,
+  SkillManifestError,
+} from "../skill-manifest.js";
 import {
   scanSkillFiles,
   type ScannableFile,
@@ -81,7 +85,28 @@ export async function stageSkillFromClawHub(
         "manifest_missing",
       );
     }
-    const { manifest } = parseSkillFile(manifestFile.content);
+
+    let manifest;
+    try {
+      ({ manifest } = parseSkillFile(manifestFile.content));
+    } catch (err) {
+      if (!(err instanceof SkillManifestError)) throw err;
+      // ClawHub manifests often carry a human-readable display `name`
+      // ("Powerpoint / PPTX") that fails the kebab-case manifest rule.
+      // Coerce it to a kebab name derived from the registry slug so the
+      // skill installs — and later loads — cleanly. The on-disk SKILL.md
+      // is rewritten so the commit re-parse and the loader both agree.
+      const kebab = isValidSkillName(ref.slug)
+        ? ref.slug
+        : deriveKebabName(ref.slug);
+      const rewritten = kebab
+        ? rewriteManifestName(manifestFile.content, kebab)
+        : null;
+      if (!rewritten) throw err;
+      ({ manifest } = parseSkillFile(rewritten));
+      await writeFile(join(sourceDir, "SKILL.md"), rewritten, "utf8");
+      manifestFile.content = rewritten;
+    }
 
     const heuristic = scanSkillFiles(files);
     const registry = await client.getScanStatus({
@@ -140,6 +165,50 @@ export function mergeRegistryVerdict(
     verdict,
     findings: [finding, ...heuristic.findings],
   };
+}
+
+/**
+ * Slugify an arbitrary string into a kebab-case skill name (a-z, 0-9,
+ * '-'), clamped to 64 chars and trimmed of leading/trailing dashes.
+ * Returns null when nothing usable (>= 2 chars) survives.
+ */
+export function deriveKebabName(raw: string): string | null {
+  const slug = raw
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64)
+    .replace(/-+$/g, "");
+  return slug.length >= 2 ? slug : null;
+}
+
+/**
+ * Rewrite the first `name:` line in a SKILL.md YAML frontmatter block
+ * with `kebab`. Returns null when the frontmatter is missing/unclosed or
+ * carries no `name:` line, so the caller can fall back to the original
+ * validation error.
+ */
+export function rewriteManifestName(
+  content: string,
+  kebab: string,
+): string | null {
+  const normalised = content.replace(/\r\n/g, "\n");
+  if (!normalised.startsWith("---\n")) return null;
+  const closingIndex = normalised.indexOf("\n---", 4);
+  if (closingIndex === -1) return null;
+  const frontmatter = normalised.slice(4, closingIndex);
+  const rest = normalised.slice(closingIndex);
+  let replaced = false;
+  const lines = frontmatter.split("\n").map((line) => {
+    if (!replaced && /^name\s*:/.test(line)) {
+      replaced = true;
+      return `name: ${kebab}`;
+    }
+    return line;
+  });
+  if (!replaced) return null;
+  return `---\n${lines.join("\n")}${rest}`;
 }
 
 async function collectScannableFiles(root: string): Promise<ScannableFile[]> {

@@ -31,6 +31,16 @@ export interface ParsedSkillFile {
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/;
 
+/**
+ * Whether `name` satisfies the kebab-case manifest rule (a-z, 0-9, '-',
+ * 2-64 chars, not starting/ending with '-'). Exposed so install pipelines
+ * that ingest registry manifests with human-readable display names can
+ * detect the mismatch and coerce a valid name before committing.
+ */
+export function isValidSkillName(name: string): boolean {
+  return NAME_RE.test(name.trim());
+}
+
 export class SkillManifestError extends Error {
   constructor(
     message: string,

@@ -43,6 +43,7 @@ export type SkillsAction =
   | { type: "skills_hub_search_focus"; editing: boolean }
   | { type: "skills_hub_query_changed"; query: string }
   | { type: "skills_install_loading"; loading: boolean }
+  | { type: "skills_install_failed"; error: string }
   | {
       type: "skills_install_confirm_opened";
       confirm: SkillInstallConfirmState;

@@ -134,6 +134,8 @@ export interface SkillsPanelState {
   hubError: string | null;
   /** True while an install is committing. */
   installing: boolean;
+  /** Last hub install error, surfaced on the card/hub view (not the chat feed). */
+  installError: string | null;
   /** Open install confirmation modal, or null. */
   installConfirm: SkillInstallConfirmState | null;
   /** Open pre-install skill card, or null. */
@@ -165,6 +167,7 @@ export function createInitialSkillsPanelState(): SkillsPanelState {
     hubLoading: false,
     hubError: null,
     installing: false,
+    installError: null,
     installConfirm: null,
     hubCard: null,
     hubCardLoading: false,

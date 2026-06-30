@@ -502,7 +502,10 @@ export class SkillsOrchestrator {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.bus.emit({ type: "skills_install_loading", loading: false });
+      // Surface the failure on the Skills tab itself (the card/hub view)
+      // — emitting only a `runtime_info` chat line left the operator with
+      // no feedback while on the Skills tab.
+      this.bus.emit({ type: "skills_install_failed", error: msg });
       this.bus.emit({
         type: "runtime_info",
         line: `install ${identifier} failed: ${msg}`,

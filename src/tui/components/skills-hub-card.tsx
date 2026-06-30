@@ -12,6 +12,8 @@ export interface SkillsHubCardProps {
   installing: boolean;
   /** First visible SKILL.md line (scroll offset, clamped by the reducer). */
   scroll: number;
+  /** Last install error, surfaced under the card body. */
+  installError?: string | null;
   maxBodyLines?: number;
 }
 
@@ -23,7 +25,13 @@ export interface SkillsHubCardProps {
  * list.
  */
 export function SkillsHubCard(props: SkillsHubCardProps): ReactElement {
-  const { card, installing, scroll, maxBodyLines = HUB_CARD_BODY_WINDOW } = props;
+  const {
+    card,
+    installing,
+    scroll,
+    installError = null,
+    maxBodyLines = HUB_CARD_BODY_WINDOW,
+  } = props;
   const badge = card.source === "clawhub" ? "claw" : "gh";
   const badgeColor =
     card.source === "clawhub" ? theme.colors.accent : theme.colors.muted;
@@ -56,6 +64,11 @@ export function SkillsHubCard(props: SkillsHubCardProps): ReactElement {
       <Box marginTop={1} flexDirection="column">
         {renderBody(card, scroll, maxBodyLines)}
       </Box>
+      {installError ? (
+        <Box marginTop={1}>
+          <Text color={theme.colors.error}>! install failed: {installError}</Text>
+        </Box>
+      ) : null}
       <Box marginTop={1}>
         {installing ? (
           <Text color={theme.colors.muted}>installing…</Text>
