@@ -1,6 +1,6 @@
 # atomic-agent
 
-**Local First Ai Agent. Optimised for Local Ai Models. Turboquant for long context window. Proper tools calling. No cloud. Fully Private.**
+**Local First Ai Agent. Optimised for Local Ai Models. Turboquant for long context window. Proper tools calling. No cloud. Fully Private. Runs on your local device even offline**
 
 ![atomic-agent terminal demo](assets/demo.gif)
 
