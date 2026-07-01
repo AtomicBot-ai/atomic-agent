@@ -1,6 +1,6 @@
 # atomic-agent
 
-**A general-purpose AI agent that runs on your own machine: browser, files, shell, documents, memory, scheduled work, MCP, Telegram, and Tauri sidecars, powered by local models by default.**
+**Local First Ai Agent. Optimised for Local Ai Models. Turboquant for long context window. Proper tools calling. No cloud. Fully Private.**
 
 ![atomic-agent terminal demo](assets/demo.gif)
 
