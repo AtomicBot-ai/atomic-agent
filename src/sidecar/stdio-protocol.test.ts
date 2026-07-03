@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { PassThrough } from "node:stream";
 import { StdioProtocol } from "./stdio-protocol.js";
-import type { HostRequest } from "./sidecar-events.js";
+import type { HostRequest } from "./protocol/index.js";
 
 function createProtocol() {
   const input = new PassThrough();
@@ -65,7 +65,7 @@ describe("StdioProtocol", () => {
     const received: HostRequest[] = [];
     protocol.onRequest((req) => received.push(req));
     const a: HostRequest = { kind: "request", id: "a", type: "ping", payload: {} };
-    const b: HostRequest = { kind: "request", id: "b", type: "cancel", payload: { sessionId: "s1" } };
+    const b: HostRequest = { kind: "request", id: "b", type: "chat.cancel", payload: { sessionId: "s1" } };
     input.write(`${JSON.stringify(a)}\n${JSON.stringify(b)}\n`);
     await new Promise((r) => setImmediate(r));
     expect(received.map((m) => m.id)).toEqual(["a", "b"]);

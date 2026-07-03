@@ -5,7 +5,7 @@ import type {
   SidecarEvent,
   LogPayload,
   MetricPayload,
-} from "../sidecar/sidecar-events.js";
+} from "../sidecar/index.js";
 import type { TraceSink, TraceEvent } from "./trace/index.js";
 
 export type SidecarEventEmitter = (event: SidecarEvent) => void;

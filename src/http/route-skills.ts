@@ -1,11 +1,9 @@
-import { join } from "node:path";
-
 import {
-  installSkill,
-  SkillInstallError,
-  SkillNotFoundError,
-  uninstallSkill,
-} from "../skills/index.js";
+  installSkillFromPath,
+  listSkills,
+  uninstallSkillByName,
+} from "../runtime-api/index.js";
+import { SkillNotFoundError } from "../skills/index.js";
 
 import { openaiError } from "./openai-errors.js";
 import {
@@ -14,6 +12,7 @@ import {
   sendJson,
   type HttpHandler,
 } from "./request-context.js";
+import { sendRuntimeApiError } from "./runtime-api-http.js";
 
 interface InstallBody {
   sourcePath?: string;
@@ -28,25 +27,24 @@ interface UninstallBody {
 
 /**
  * `GET /api/skills` — list installed skills with their source (global
- * vs project-local). Mirrors the catalog used by the prompt prefix so
- * an admin surface shows exactly what the model will see.
+ * vs project-local) and enabled/disabled state via the shared facade.
  */
 export function createListSkillsHandler(): HttpHandler {
   return async (_req, res, ctx) => {
-    const { runtime } = ctx;
-    const records = runtime.skillRegistry.list();
+    const { skills, errors } = listSkills(ctx.runtime);
     sendJson(res, 200, {
-      skills: records.map((r) => ({
-        name: r.manifest.name,
-        description: r.manifest.description,
-        version: r.manifest.version,
-        source: r.source,
-        rootDir: r.rootDir,
-        dangerous: r.manifest.dangerous,
-        requiresTools: r.manifest.requiresTools,
-        requiresScripts: r.manifest.requiresScripts,
+      skills: skills.map((s) => ({
+        name: s.name,
+        description: s.description,
+        version: s.version,
+        source: s.source,
+        rootDir: s.rootDir,
+        dangerous: s.dangerous,
+        requiresTools: s.requiresTools,
+        requiresScripts: s.requiresScripts,
+        disabled: s.disabled,
       })),
-      errors: runtime.skillRegistry.errors(),
+      errors,
     });
   };
 }
@@ -99,32 +97,19 @@ export function createInstallSkillHandler(): HttpHandler {
       sendError(res, 400, openaiError(`Invalid JSON: ${message}`));
       return;
     }
-    if (!body.sourcePath || typeof body.sourcePath !== "string") {
-      sendError(res, 400, openaiError("sourcePath is required"));
-      return;
-    }
-    const targetRoot = resolveSkillsTarget(ctx, body.source ?? "global");
     try {
-      const result = await installSkill({
-        sourceDir: body.sourcePath,
-        targetRoot,
+      const result = await installSkillFromPath(ctx.runtime, {
+        sourcePath: body.sourcePath ?? "",
+        source: body.source ?? "global",
         ...(body.force ? { force: true } : {}),
       });
-      await ctx.runtime.refreshSkills();
       sendJson(res, 200, {
         installed: true,
         manifest: result.manifest,
         installedAt: result.installedAt,
       });
     } catch (err) {
-      if (err instanceof SkillInstallError) {
-        sendError(
-          res,
-          err.code === "already_installed" ? 409 : 400,
-          openaiError(err.message, "invalid_request_error", null, err.code),
-        );
-        return;
-      }
+      if (sendRuntimeApiError(res, err)) return;
       throw err;
     }
   };
@@ -145,29 +130,15 @@ export function createUninstallSkillHandler(): HttpHandler {
       sendError(res, 400, openaiError(`Invalid JSON: ${message}`));
       return;
     }
-    if (!body.name || typeof body.name !== "string") {
-      sendError(res, 400, openaiError("name is required"));
-      return;
+    try {
+      const outcome = await uninstallSkillByName(ctx.runtime, {
+        name: body.name ?? "",
+        source: body.source ?? "global",
+      });
+      sendJson(res, 200, { removed: outcome.removed, path: outcome.path });
+    } catch (err) {
+      if (sendRuntimeApiError(res, err)) return;
+      throw err;
     }
-    const targetRoot = resolveSkillsTarget(ctx, body.source ?? "global");
-    const outcome = await uninstallSkill(targetRoot, body.name);
-    await ctx.runtime.refreshSkills();
-    sendJson(res, 200, {
-      removed: outcome.removed,
-      path: outcome.path,
-    });
   };
-}
-
-function resolveSkillsTarget(
-  ctx: { runtime: { config: { paths: { globalSkillsDir: string; projectSkillsDirName: string } }; capabilities: { workingDir: string } } },
-  source: "global" | "project",
-): string {
-  if (source === "project") {
-    return join(
-      ctx.runtime.capabilities.workingDir,
-      ctx.runtime.config.paths.projectSkillsDirName,
-    );
-  }
-  return ctx.runtime.config.paths.globalSkillsDir;
 }

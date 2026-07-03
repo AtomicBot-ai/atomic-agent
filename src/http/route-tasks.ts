@@ -1,3 +1,14 @@
+import {
+  cancelTask,
+  createTask,
+  drainTasks,
+  getTask,
+  listTasks,
+  parseTaskStatusFilter,
+  runTask,
+  serializeTask,
+} from "../runtime-api/index.js";
+
 import { openaiError } from "./openai-errors.js";
 import {
   readJsonBody,
@@ -5,12 +16,7 @@ import {
   sendJson,
   type HttpHandler,
 } from "./request-context.js";
-import {
-  TaskStateError,
-  TaskValidationError,
-  type TaskRecord,
-  type TaskStatus,
-} from "../tasks/index.js";
+import { sendRuntimeApiError } from "./runtime-api-http.js";
 
 /**
  * `POST /api/tasks` — persist a new task. Body shape:
@@ -20,16 +26,11 @@ import {
  *  ```
  *
  * `maxAttempts` defaults to `config.tasks.maxAttempts` when omitted.
- * Auto-drain (when `tasks.runOnCreate` is enabled) is fire-and-forget;
- * the response always returns 201 with the freshly persisted row,
- * never the post-drain status.
+ * Delegates to the shared runtime-facade so the sidecar and HTTP stay in
+ * lockstep.
  */
 export function createCreateTaskHandler(): HttpHandler {
   return async (req, res, ctx) => {
-    if (!ctx.runtime.config.tasks.enabled) {
-      sendError(res, 404, openaiError("tasks subsystem disabled"));
-      return;
-    }
     let body: Record<string, unknown>;
     try {
       body = await readJsonBody<Record<string, unknown>>(req);
@@ -41,36 +42,23 @@ export function createCreateTaskHandler(): HttpHandler {
       );
       return;
     }
-    const sessionId = body.sessionId;
-    const userMessage = body.userMessage;
-    const maxAttempts =
-      typeof body.maxAttempts === "number"
-        ? body.maxAttempts
-        : ctx.runtime.config.tasks.maxAttempts;
-    const maxSteps =
-      typeof body.maxSteps === "number" ? body.maxSteps : null;
-    if (typeof sessionId !== "string" || typeof userMessage !== "string") {
-      sendError(
-        res,
-        400,
-        openaiError("sessionId and userMessage are required strings"),
-      );
+    if (typeof body.sessionId !== "string") {
+      sendError(res, 400, openaiError("sessionId is required"));
       return;
     }
     try {
-      const created = ctx.runtime.taskRunner.create({
-        sessionId,
-        userMessage,
+      const created = createTask(ctx.runtime, {
+        sessionId: body.sessionId,
+        userMessage: typeof body.userMessage === "string" ? body.userMessage : "",
         origin: "http",
-        maxAttempts,
-        maxSteps,
+        ...(typeof body.maxAttempts === "number"
+          ? { maxAttempts: body.maxAttempts }
+          : {}),
+        maxSteps: typeof body.maxSteps === "number" ? body.maxSteps : null,
       });
-      sendJson(res, 201, recordToJson(created));
+      sendJson(res, 201, serializeTask(created));
     } catch (err) {
-      if (err instanceof TaskValidationError) {
-        sendError(res, 400, openaiError(err.message, "invalid_request_error", err.field));
-        return;
-      }
+      if (sendRuntimeApiError(res, err)) return;
       throw err;
     }
   };
@@ -83,34 +71,25 @@ export function createCreateTaskHandler(): HttpHandler {
  */
 export function createListTasksHandler(): HttpHandler {
   return async (req, res, ctx) => {
-    if (!ctx.runtime.config.tasks.enabled) {
-      sendError(res, 404, openaiError("tasks subsystem disabled"));
-      return;
-    }
     const url = new URL(req.url ?? "/", "http://localhost");
     const sessionId = url.searchParams.get("session");
-    const statusParam = url.searchParams.get("status");
     const limitParam = url.searchParams.get("limit");
-    let limit = 50;
+    let limit: number | undefined;
     if (limitParam !== null) {
-      const parsed = Number.parseInt(limitParam, 10);
-      if (!Number.isFinite(parsed) || parsed <= 0) {
-        sendError(res, 400, openaiError("limit must be a positive integer"));
-        return;
-      }
-      limit = Math.min(parsed, 500);
+      limit = Number.parseInt(limitParam, 10);
     }
-    const status = parseStatusParam(statusParam);
-    if (status === "invalid") {
-      sendError(res, 400, openaiError(`unknown task status: ${statusParam}`));
-      return;
+    try {
+      const status = parseTaskStatusFilter(url.searchParams.get("status"));
+      const tasks = listTasks(ctx.runtime, {
+        ...(sessionId ? { sessionId } : {}),
+        ...(status ? { status } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      });
+      sendJson(res, 200, { tasks: tasks.map(serializeTask) });
+    } catch (err) {
+      if (sendRuntimeApiError(res, err)) return;
+      throw err;
     }
-    const tasks = ctx.runtime.taskStore.list({
-      ...(sessionId ? { sessionId } : {}),
-      ...(status ? { status } : {}),
-      limit,
-    });
-    sendJson(res, 200, { tasks: tasks.map(recordToJson) });
   };
 }
 
@@ -120,47 +99,38 @@ export function createListTasksHandler(): HttpHandler {
  */
 export function createGetTaskHandler(): HttpHandler {
   return async (_req, res, ctx) => {
-    if (!ctx.runtime.config.tasks.enabled) {
-      sendError(res, 404, openaiError("tasks subsystem disabled"));
-      return;
-    }
     const id = ctx.params.id;
     if (!id) {
       sendError(res, 400, openaiError("task id is required"));
       return;
     }
-    const record = ctx.runtime.taskStore.get(id);
-    if (!record) {
-      sendError(res, 404, openaiError(`task not found: ${id}`));
-      return;
+    try {
+      sendJson(res, 200, serializeTask(getTask(ctx.runtime, id)));
+    } catch (err) {
+      if (sendRuntimeApiError(res, err)) return;
+      throw err;
     }
-    sendJson(res, 200, recordToJson(record));
   };
 }
 
 /**
  * `DELETE /api/tasks/:id` — cancel the task. Idempotent on already-
  * terminal rows: returns the existing record unchanged. 404 when the
- * row is unknown so callers can distinguish "missing" from "already
- * cancelled".
+ * row is unknown.
  */
 export function createCancelTaskHandler(): HttpHandler {
   return async (_req, res, ctx) => {
-    if (!ctx.runtime.config.tasks.enabled) {
-      sendError(res, 404, openaiError("tasks subsystem disabled"));
-      return;
-    }
     const id = ctx.params.id;
     if (!id) {
       sendError(res, 400, openaiError("task id is required"));
       return;
     }
-    const cancelled = ctx.runtime.taskStore.cancel(id);
-    if (!cancelled) {
-      sendError(res, 404, openaiError(`task not found: ${id}`));
-      return;
+    try {
+      sendJson(res, 200, serializeTask(cancelTask(ctx.runtime, id)));
+    } catch (err) {
+      if (sendRuntimeApiError(res, err)) return;
+      throw err;
     }
-    sendJson(res, 200, recordToJson(cancelled));
   };
 }
 
@@ -171,30 +141,16 @@ export function createCancelTaskHandler(): HttpHandler {
  */
 export function createRunTaskHandler(): HttpHandler {
   return async (_req, res, ctx) => {
-    if (!ctx.runtime.config.tasks.enabled) {
-      sendError(res, 404, openaiError("tasks subsystem disabled"));
-      return;
-    }
     const id = ctx.params.id;
     if (!id) {
       sendError(res, 400, openaiError("task id is required"));
       return;
     }
-    const existing = ctx.runtime.taskStore.get(id);
-    if (!existing) {
-      sendError(res, 404, openaiError(`task not found: ${id}`));
-      return;
-    }
     try {
-      const result = await ctx.runtime.taskRunner.runOne(id);
-      sendJson(res, 200, {
-        task: result ? recordToJson(result) : null,
-      });
+      const result = await runTask(ctx.runtime, id);
+      sendJson(res, 200, { task: result ? serializeTask(result) : null });
     } catch (err) {
-      if (err instanceof TaskStateError) {
-        sendError(res, 409, openaiError(err.message));
-        return;
-      }
+      if (sendRuntimeApiError(res, err)) return;
       throw err;
     }
   };
@@ -202,64 +158,21 @@ export function createRunTaskHandler(): HttpHandler {
 
 /**
  * `POST /api/tasks/drain` — drain every pending task. Optional
- * `?session=` query restricts the drain to one session. Resolves once
- * all in-scope work has settled into a non-`pending` state (or hit
- * the per-task max-attempt budget).
+ * `?session=` query restricts the drain to one session.
  */
 export function createDrainTasksHandler(): HttpHandler {
   return async (req, res, ctx) => {
-    if (!ctx.runtime.config.tasks.enabled) {
-      sendError(res, 404, openaiError("tasks subsystem disabled"));
-      return;
-    }
     const url = new URL(req.url ?? "/", "http://localhost");
     const sessionId = url.searchParams.get("session");
-    const outcome = await ctx.runtime.taskRunner.drainPending(
-      sessionId ? { sessionId } : {},
-    );
-    sendJson(res, 200, outcome);
-  };
-}
-
-function parseStatusParam(
-  raw: string | null,
-): TaskStatus[] | undefined | "invalid" {
-  if (raw === null || raw === "") return undefined;
-  const allowed: TaskStatus[] = [
-    "pending",
-    "running",
-    "completed",
-    "failed",
-    "blocked",
-    "cancelled",
-  ];
-  const parts = raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
-  for (const part of parts) {
-    if (!allowed.includes(part as TaskStatus)) return "invalid";
-  }
-  return parts as TaskStatus[];
-}
-
-function recordToJson(record: TaskRecord): Record<string, unknown> {
-  return {
-    id: record.id,
-    sessionId: record.sessionId,
-    userMessage: record.userMessage,
-    maxSteps: record.maxSteps,
-    status: record.status,
-    origin: record.origin,
-    attempts: record.attempts,
-    maxAttempts: record.maxAttempts,
-    lastError: record.lastError,
-    lastErrorCategory: record.lastErrorCategory,
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt,
-    startedAt: record.startedAt,
-    completedAt: record.completedAt,
-    schedule: record.schedule,
-    scheduledFor: record.scheduledFor,
-    recurring: record.recurring,
-    lastScheduledAt: record.lastScheduledAt,
-    triggerSource: record.triggerSource,
+    try {
+      const outcome = await drainTasks(
+        ctx.runtime,
+        sessionId ? { sessionId } : {},
+      );
+      sendJson(res, 200, outcome);
+    } catch (err) {
+      if (sendRuntimeApiError(res, err)) return;
+      throw err;
+    }
   };
 }

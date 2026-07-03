@@ -8,51 +8,46 @@ import type { CompletionResult } from "../llm/llama-server-client.js";
 import { resetConfigCache } from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
-import type { SessionState } from "../session/index.js";
+import { SessionPool } from "./session-pool.js";
 import { FakeBrowserBackend } from "../http/test-harness.js";
 
-interface ActiveSession {
-  session: SessionState;
-}
-
 /**
- * Mirrors the production `send_message` handler in `src/sidecar/main.ts`.
+ * Mirrors the production `chat.send` handler in `src/sidecar/main.ts`.
  * The handler enqueues through `runtime.turnController` so that two
- * rapid NDJSON messages on the same session serialise FIFO, and re-reads
- * the latest `active.session` inside the queued callback so the second
- * turn does not start from stale state captured at enqueue time.
+ * rapid NDJSON messages on the same session serialise FIFO, mints a fresh
+ * abort controller per send, and re-reads the latest pooled `SessionState`
+ * inside the queued callback so the second turn does not start from stale
+ * state captured at enqueue time.
  */
-function makeSendMessageHandler(
-  runtime: AgentRuntime,
-  active: ActiveSession,
-  controller: AbortController,
-) {
+function makeSendMessageHandler(runtime: AgentRuntime, pool: SessionPool) {
   return async (sessionId: string, text: string, maxSteps?: number) => {
-    if (active.session.id !== sessionId) {
+    if (!pool.has(sessionId)) {
       throw new Error(`no active session with id ${sessionId}`);
     }
+    const controller = pool.resetController(sessionId);
     const result = await runtime.turnController.enqueue({
       sessionId,
       origin: "sidecar",
       signal: controller.signal,
       run: async () => {
-        if (active.session.id !== sessionId) {
+        const current = pool.get(sessionId);
+        if (!current) {
           throw new Error(
-            `active session changed during queued send_message for ${sessionId}`,
+            `session evicted during queued chat.send for ${sessionId}`,
           );
         }
-        return runtime.executeTurn(active.session, text, {
+        return runtime.executeTurn(current.session, text, {
           maxSteps: maxSteps ?? runtime.config.agent.maxSteps,
           signal: controller.signal,
         });
       },
     });
-    active.session = result.session;
+    pool.setSession(result.session);
     return result;
   };
 }
 
-describe("sidecar send_message concurrency", () => {
+describe("sidecar chat.send concurrency", () => {
   let stateDir: string;
   let workingDir: string;
   let runtime: AgentRuntime;
@@ -77,16 +72,23 @@ describe("sidecar send_message concurrency", () => {
     resetConfigCache();
   });
 
-  it("serialises two rapid send_message calls FIFO without crossing state", async () => {
+  it("serialises two rapid chat.send calls FIFO without crossing state", async () => {
     const enters: string[] = [];
     const leaves: string[] = [];
     let blockFirst: (() => void) | null = null;
     let userCallCount = 0;
     const llamaComplete = async (params: {
       sessionId: string;
+      grammar: string;
     }): Promise<CompletionResult> => {
-      // Reflection completes immediately; only block on user turns.
-      if (params.sessionId.startsWith("reflection:")) {
+      // Reflection (and its link/vote sub-calls) run on a
+      // `reflection:`-prefixed session id; the recall-side query rewriter
+      // rides the real session id but is identifiable by its grammar.
+      // Neither is a user turn, so neither should count against FIFO order.
+      if (
+        params.sessionId.startsWith("reflection:") ||
+        params.grammar.includes("rewritten_query")
+      ) {
         return reply("ignored");
       }
       userCallCount += 1;
@@ -112,9 +114,9 @@ describe("sidecar send_message concurrency", () => {
     });
 
     const session = runtime.createSession({ metadata: { source: "sidecar-test" } });
-    const active: ActiveSession = { session };
-    const controller = new AbortController();
-    const sendMessage = makeSendMessageHandler(runtime, active, controller);
+    const pool = new SessionPool();
+    pool.register(session);
+    const sendMessage = makeSendMessageHandler(runtime, pool);
 
     const promise1 = sendMessage(session.id, "first");
     const promise2 = sendMessage(session.id, "second");
@@ -144,7 +146,7 @@ describe("sidecar send_message concurrency", () => {
     // of operating on the snapshot captured at enqueue time.
     expect(result1.session.turnCount).toBe(1);
     expect(result2.session.turnCount).toBe(2);
-    expect(active.session.turnCount).toBe(2);
+    expect(pool.get(session.id)?.session.turnCount).toBe(2);
   });
 });
 

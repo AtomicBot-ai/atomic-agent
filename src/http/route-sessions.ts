@@ -1,43 +1,48 @@
+import {
+  deleteSession,
+  getSession,
+  listSessions,
+} from "../runtime-api/index.js";
+
 import { openaiError } from "./openai-errors.js";
 import { sendError, sendJson, type HttpHandler } from "./request-context.js";
+import { sendRuntimeApiError } from "./runtime-api-http.js";
 
 /**
  * `GET /api/sessions` — list recent sessions in the current working
  * directory. `limit` (query string) caps the number of rows, default
- * 25, max 200. Payload mirrors `SessionState` minus the heavy
- * transcript by default — callers fetch the full state via
- * `/api/sessions/{id}` when they need it.
+ * 25, max 200.
  */
 export function createListSessionsHandler(): HttpHandler {
   return async (req, res, ctx) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const rawLimit = url.searchParams.get("limit");
-    let limit = 25;
+    let limit: number | undefined;
     if (rawLimit !== null) {
-      const parsed = Number.parseInt(rawLimit, 10);
-      if (!Number.isFinite(parsed) || parsed <= 0) {
-        sendError(res, 400, openaiError("limit must be a positive integer"));
-        return;
-      }
-      limit = Math.min(parsed, 200);
+      limit = Number.parseInt(rawLimit, 10);
     }
     const workingDir = ctx.runtime.capabilities.workingDir;
-    const sessions = ctx.runtime.sessionStore.listByWorkingDir(
-      workingDir,
-      limit,
-    );
-    sendJson(res, 200, {
-      sessions: sessions.map((s) => ({
-        id: s.id,
-        workingDir: s.workingDir,
-        status: s.status,
-        turnCount: s.turnCount,
-        stepCount: s.stepCount,
-        createdAt: s.createdAt,
-        updatedAt: s.updatedAt,
-        lastError: s.lastError,
-      })),
-    });
+    try {
+      const sessions = listSessions(ctx.runtime, {
+        workingDir,
+        ...(limit !== undefined ? { limit } : {}),
+      });
+      sendJson(res, 200, {
+        sessions: sessions.map((s) => ({
+          id: s.id,
+          workingDir: s.workingDir,
+          status: s.status,
+          turnCount: s.turnCount,
+          stepCount: s.stepCount,
+          createdAt: s.createdAt,
+          updatedAt: s.updatedAt,
+          lastError: s.lastError,
+        })),
+      });
+    } catch (err) {
+      if (sendRuntimeApiError(res, err)) return;
+      throw err;
+    }
   };
 }
 
@@ -52,19 +57,18 @@ export function createGetSessionHandler(): HttpHandler {
       sendError(res, 400, openaiError("session id is required"));
       return;
     }
-    const state = ctx.runtime.sessionStore.load(id);
-    if (!state) {
-      sendError(res, 404, openaiError(`session not found: ${id}`));
-      return;
+    try {
+      sendJson(res, 200, getSession(ctx.runtime, id));
+    } catch (err) {
+      if (sendRuntimeApiError(res, err)) return;
+      throw err;
     }
-    sendJson(res, 200, state);
   };
 }
 
 /**
  * `DELETE /api/sessions/{id}` — purge the session row. Idempotent:
- * returns 200 whether or not the row existed so orchestrators can
- * blindly retry.
+ * returns 200 whether or not the row existed.
  */
 export function createDeleteSessionHandler(): HttpHandler {
   return async (_req, res, ctx) => {
@@ -73,7 +77,7 @@ export function createDeleteSessionHandler(): HttpHandler {
       sendError(res, 400, openaiError("session id is required"));
       return;
     }
-    ctx.runtime.sessionStore.delete(id);
+    deleteSession(ctx.runtime, id);
     sendJson(res, 200, { deleted: true, id });
   };
 }

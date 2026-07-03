@@ -12,6 +12,12 @@ export interface BundleTarget {
   slug: string;
   executableName: string;
   archiveExt: "tar.gz" | "zip";
+  /**
+   * Rust target triple. Tauri names sidecar binaries
+   * `binaries/<name>-<rustTriple>[.exe]` and appends the host triple at build
+   * time (see `scripts/build-tauri-sidecar.ts`).
+   */
+  rustTriple: string;
 }
 
 export const BUNDLE_TARGETS: readonly BundleTarget[] = [
@@ -21,6 +27,7 @@ export const BUNDLE_TARGETS: readonly BundleTarget[] = [
     slug: "darwin-arm64",
     executableName: "atomic-agent",
     archiveExt: "tar.gz",
+    rustTriple: "aarch64-apple-darwin",
   },
   {
     platform: "darwin",
@@ -28,6 +35,7 @@ export const BUNDLE_TARGETS: readonly BundleTarget[] = [
     slug: "darwin-x64",
     executableName: "atomic-agent",
     archiveExt: "tar.gz",
+    rustTriple: "x86_64-apple-darwin",
   },
   {
     platform: "linux",
@@ -35,6 +43,7 @@ export const BUNDLE_TARGETS: readonly BundleTarget[] = [
     slug: "linux-x64",
     executableName: "atomic-agent",
     archiveExt: "tar.gz",
+    rustTriple: "x86_64-unknown-linux-gnu",
   },
   {
     platform: "linux",
@@ -42,6 +51,7 @@ export const BUNDLE_TARGETS: readonly BundleTarget[] = [
     slug: "linux-arm64",
     executableName: "atomic-agent",
     archiveExt: "tar.gz",
+    rustTriple: "aarch64-unknown-linux-gnu",
   },
   {
     platform: "win32",
@@ -49,6 +59,7 @@ export const BUNDLE_TARGETS: readonly BundleTarget[] = [
     slug: "win32-x64",
     executableName: "atomic-agent.exe",
     archiveExt: "zip",
+    rustTriple: "x86_64-pc-windows-msvc",
   },
 ];
 

@@ -1,3 +1,5 @@
+import { resolveApproval } from "../runtime-api/index.js";
+
 import { openaiError } from "./openai-errors.js";
 import {
   beginSse,
@@ -6,6 +8,7 @@ import {
   sendJson,
   type HttpHandler,
 } from "./request-context.js";
+import { sendRuntimeApiError } from "./runtime-api-http.js";
 
 interface ResolveBody {
   approvalId?: string;
@@ -47,18 +50,15 @@ export function createResolveApprovalHandler(): HttpHandler {
       );
       return;
     }
-    const resolved = ctx.runtime.approvals.resolve({
-      approvalId,
-      approved,
-      ...(body.reason ? { reason: body.reason } : {}),
-    });
-    if (!resolved) {
-      sendError(
-        res,
-        404,
-        openaiError(`approvalId not pending: ${approvalId}`),
-      );
-      return;
+    try {
+      resolveApproval(ctx.runtime, {
+        approvalId,
+        approved,
+        ...(body.reason ? { reason: body.reason } : {}),
+      });
+    } catch (err) {
+      if (sendRuntimeApiError(res, err)) return;
+      throw err;
     }
     ctx.approvalBus.resolved(approvalId);
     sendJson(res, 200, { resolved: true, approvalId, approved });

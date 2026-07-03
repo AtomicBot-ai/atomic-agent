@@ -1,0 +1,11 @@
+{
+  "main": "dist-sea/sidecar.mjs",
+  "output": "bundle/sea-prep-sidecar.blob",
+  "mainFormat": "module",
+  "disableExperimentalSEAWarning": true,
+  "useSnapshot": false,
+  "useCodeCache": false,
+  "assets": {
+    "tool-call.gbnf": "grammars/tool-call.gbnf"
+  }
+}

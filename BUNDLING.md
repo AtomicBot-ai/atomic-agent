@@ -137,6 +137,33 @@ On macOS you can run the same shell scripts the workflow uses, or produce
 an unsigned binary with `npm run bundle:build-binary` and
 `npm run bundle:package` only. Windows code signing is not automated here.
 
+## Tauri sidecar binary
+
+The Tauri host embeds the agent as a **sidecar** child process speaking the
+NDJSON protocol over stdin/stdout (see [SIDECAR.md](SIDECAR.md)). It reuses the
+same SEA pipeline as the CLI, but embeds the sidecar entry
+(`src/sidecar/main.ts` → `dist-sea/sidecar.mjs`) and follows Tauri's
+`externalBin` naming: `src-tauri/binaries/atomic-agent-sidecar-<rustTriple>[.exe]`.
+
+```bash
+npm run build              # produces dist/
+npm run bundle:sidecar-sea # esbuild → dist-sea/sidecar.mjs
+npm run bundle:tauri-sidecar # SEA blob + postject → src-tauri/binaries/
+```
+
+The Rust target triple per host is the `rustTriple` field of
+[`scripts/bundle-targets.ts`](../scripts/bundle-targets.ts)
+(e.g. `aarch64-apple-darwin`, `x86_64-unknown-linux-gnu`,
+`x86_64-pc-windows-msvc`). SEA has no cross-compilation — build on each target
+host, exactly like the CLI binary. Reference it from `tauri.conf.json` as
+`externalBin: ["binaries/atomic-agent-sidecar"]`; Tauri appends the host triple
+automatically. The Rust shell / `tauri.conf.json` themselves live in the Tauri
+app repo and are out of scope here.
+
+The protocol request/event types are exported from the package root
+(`src/sidecar/index.ts`) so the Tauri front-end can import them as the single
+source of truth for the wire contract.
+
 ## What the bundle contains
 
 ```

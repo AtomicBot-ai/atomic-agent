@@ -3,7 +3,7 @@ import { StructuredLogger } from "./structured-logger.js";
 import { MetricsCollector } from "./metrics-collector.js";
 import { AgentMetrics, METRIC_NAMES } from "./agent-metrics.js";
 import { createLogNdjsonSink, createMetricNdjsonSink } from "./ndjson-sinks.js";
-import type { SidecarEvent, LogPayload, MetricPayload } from "../sidecar/sidecar-events.js";
+import type { SidecarEvent, LogPayload, MetricPayload } from "../sidecar/index.js";
 
 describe("StructuredLogger", () => {
   it("respects the configured level threshold", () => {

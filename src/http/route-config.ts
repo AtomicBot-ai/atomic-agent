@@ -1,11 +1,4 @@
-import {
-  ConfigValidationError,
-  ensureUserConfigFileSync,
-  getConfig,
-  parseUserConfigFile,
-  resetConfigCache,
-  writeUserConfigFileSync,
-} from "../config/index.js";
+import { getConfigFile, patchConfigFile } from "../runtime-api/index.js";
 import type { UserConfigFile } from "../config/index.js";
 
 import { openaiError } from "./openai-errors.js";
@@ -15,6 +8,7 @@ import {
   sendJson,
   type HttpHandler,
 } from "./request-context.js";
+import { sendRuntimeApiError } from "./runtime-api-http.js";
 
 /**
  * `GET /api/config` — return the current user config file contents,
@@ -22,18 +16,14 @@ import {
  */
 export function createGetConfigHandler(): HttpHandler {
   return async (_req, res) => {
-    const path = getConfig().paths.userConfigFile;
-    const file = ensureUserConfigFileSync(path);
-    sendJson(res, 200, { path, config: file });
+    const { path, config } = getConfigFile();
+    sendJson(res, 200, { path, config });
   };
 }
 
 /**
  * `PATCH /api/config` — shallow-merge the request body into the user
- * config file and persist atomically. The merged payload is revalidated
- * through `parseUserConfigFile` so misconfigured values never land on
- * disk. We call `resetConfigCache()` so subsequent reads see the new
- * values; in-flight agent loops still use the previously-loaded config.
+ * config file and persist atomically via the shared runtime-facade.
  */
 export function createPatchConfigHandler(): HttpHandler {
   return async (req, res) => {
@@ -45,33 +35,12 @@ export function createPatchConfigHandler(): HttpHandler {
       sendError(res, 400, openaiError(`Invalid JSON: ${message}`));
       return;
     }
-    const path = getConfig().paths.userConfigFile;
-    const current = ensureUserConfigFileSync(path);
-    const merged = mergeUserConfig(current, body);
-    let next: UserConfigFile;
     try {
-      next = parseUserConfigFile(merged);
+      const { path, config } = patchConfigFile(body);
+      sendJson(res, 200, { path, config });
     } catch (err) {
-      if (err instanceof ConfigValidationError) {
-        sendError(res, 400, openaiError(err.message));
-        return;
-      }
+      if (sendRuntimeApiError(res, err)) return;
       throw err;
     }
-    writeUserConfigFileSync(path, next);
-    resetConfigCache();
-    sendJson(res, 200, { path, config: next });
-  };
-}
-
-function mergeUserConfig(
-  current: UserConfigFile,
-  patch: Partial<UserConfigFile>,
-): Record<string, unknown> {
-  return {
-    version: current.version,
-    localModels: { ...current.localModels, ...(patch.localModels ?? {}) },
-    log: { ...current.log, ...(patch.log ?? {}) },
-    agent: { ...current.agent, ...(patch.agent ?? {}) },
   };
 }

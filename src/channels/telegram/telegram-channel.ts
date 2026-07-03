@@ -144,6 +144,14 @@ export class TelegramChannel {
     return this.currentBotIdentity;
   }
 
+  /**
+   * Whether a bot token is currently present. The token value itself never
+   * leaves the channel — only this boolean is exposed to status surfaces.
+   */
+  hasToken(): boolean {
+    return Boolean(this.currentToken);
+  }
+
   pairingState(): PairingStateSnapshot {
     return {
       active: this.pairing.isActive(),

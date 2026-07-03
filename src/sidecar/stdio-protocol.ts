@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
 import type {
+  EventType,
   HostRequest,
+  SidecarError,
   SidecarEvent,
-  SidecarEventType,
   SidecarMessage,
   SidecarResponse,
-} from "./sidecar-events.js";
-import { isHostRequest } from "./sidecar-events.js";
+} from "./protocol/index.js";
+import { isHostRequest } from "./protocol/index.js";
 
 export interface StdioProtocolOptions {
   input: Readable;
@@ -41,11 +42,11 @@ export class StdioProtocol {
   }
 
   emitEvent<TPayload>(
-    type: SidecarEventType,
+    type: EventType,
     payload: TPayload,
     correlationId?: string,
-  ): SidecarEvent<SidecarEventType, TPayload> {
-    const event: SidecarEvent<SidecarEventType, TPayload> = {
+  ): SidecarEvent<EventType, TPayload> {
+    const event: SidecarEvent<EventType, TPayload> = {
       kind: "event",
       id: randomUUID(),
       type,
@@ -60,7 +61,7 @@ export class StdioProtocol {
     correlationId: string,
     payload: TPayload,
     ok = true,
-    error?: { message: string; code?: string },
+    error?: SidecarError,
   ): SidecarResponse<TPayload> {
     const response: SidecarResponse<TPayload> = {
       kind: "response",
