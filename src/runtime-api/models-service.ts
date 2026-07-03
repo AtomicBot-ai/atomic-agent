@@ -5,21 +5,32 @@ import type {
 
 /**
  * Read-only status of the active LLM backend for the sidecar `models.status`
- * command. The runtime never starts a llama-server — this only probes the
- * active text provider's health and reports its resolved config + live
- * capabilities. Health probing is injected so the facade stays transport-free
- * and testable.
+ * command. The runtime never starts a llama-server — this only probes
+ * reachability and reports the resolved config + live model profile.
+ * Every source is injected so the facade stays transport-free and testable.
  */
 export interface ModelsServiceDeps {
-  /** Probe the active text provider (`providerRegistry.activeText.health()`). */
+  /**
+   * Reachability probe against the llama-server `/health` endpoint
+   * (`checkLlamaServer()` per SIDECAR.md §290). Shares the
+   * `{reachable, status, error, latencyMs}` shape with the provider
+   * adapter's `ProviderHealthResult`.
+   */
   health: () => Promise<ProviderHealthResult>;
   /** `config.localModels.url`. */
   url: string;
   /** `config.localModels.mode`. */
   mode: "external" | "managed";
-  /** Active model id (config-derived / `ModelProfileManager.getModelId()`). */
+  /**
+   * Active model id — `ModelProfileManager.getModelId()` (the real loaded
+   * model), with a config-derived fallback for external mode or a stubbed
+   * profile manager.
+   */
   activeModelId: string | null;
-  /** `ProviderCapabilities.contextWindow` of the active text provider. */
+  /**
+   * Context window — `ModelProfileManager.getProfile().contextWindow` (read
+   * from `/props`), falling back to the active provider's capability value.
+   */
   contextWindow: number | null;
   /** Live capabilities of the active text provider. */
   capabilities: ProviderCapabilities;

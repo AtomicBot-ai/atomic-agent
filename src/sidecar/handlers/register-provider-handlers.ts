@@ -1,6 +1,7 @@
 import { getConfig } from "../../config/index.js";
 import type { UserLlmProviderEntry } from "../../config/index.js";
 import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
+import { checkLlamaServer } from "../../llm/llama-server-health.js";
 import { resolveLlmConfig } from "../../llm/provider/registry/index.js";
 import {
   getModelsStatus,
@@ -88,11 +89,20 @@ export function registerProviderHandlers(ctx: SidecarHandlerContext): void {
       const provider = runtime.providerRegistry.activeText;
       const config = getConfig();
       const deps: ModelsServiceDeps = {
-        health: () => provider.health(),
+        // Contract: reachability probes the llama-server `/health` endpoint
+        // (SIDECAR.md §290), not the provider adapter.
+        health: () => checkLlamaServer(),
         url: config.localModels.url,
         mode: config.localModels.mode,
-        activeModelId: resolveActiveModelId(provider.id),
-        contextWindow: provider.capabilities.contextWindow,
+        // Prefer the live model profile (real loaded id + `/props`
+        // context window); fall back to config for external mode or when
+        // the profile manager is stubbed out.
+        activeModelId:
+          runtime.profileManager?.getModelId() ??
+          resolveActiveModelId(provider.id),
+        contextWindow:
+          runtime.profileManager?.getProfile().contextWindow ??
+          provider.capabilities.contextWindow,
         capabilities: provider.capabilities,
       };
       return { status: await getModelsStatus(deps) };

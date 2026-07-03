@@ -20,6 +20,7 @@ import { getConfig } from "../config/index.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
+import { getAppVersion } from "../version.js";
 
 /**
  * Sidecar entry (v2 protocol). One long-lived `AgentRuntime` hosts N
@@ -141,7 +142,7 @@ export async function bootstrapSidecar(): Promise<{
     ok: true,
     llamaUrl: config.localModels.url,
     stateDir: config.paths.stateDir,
-    version: "0.1.0",
+    version: getAppVersion(),
     protocolVersion: PROTOCOL_VERSION,
   }));
 

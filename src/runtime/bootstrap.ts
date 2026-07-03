@@ -351,6 +351,13 @@ export interface AgentRuntime {
    * `activeText` is the provider wired into `llmComplete` / sub-calls.
    */
   readonly providerRegistry: ProviderRegistry;
+  /**
+   * Live model profile manager (loaded model id + `contextWindow` read
+   * from llama-server `/props`). Absent when the HTTP layer is stubbed
+   * with static profile/grammar overrides (see `shouldInstallProfileManager`).
+   * Consumed read-only by the sidecar `models.status` handler.
+   */
+  readonly profileManager?: ModelProfileManager;
   readonly capabilities: CapabilitiesSummary;
   readonly skillCatalog: readonly SkillCatalogEntry[];
   readonly toolDescriptors: readonly ToolDescriptor[];
