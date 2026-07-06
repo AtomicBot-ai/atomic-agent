@@ -332,7 +332,7 @@ The promise is not magic secrecy. The promise is that the agent control plane do
 ## Requirements
 
 - Node.js for development; release bundles ship as Node SEA binaries.
-- A reachable `llama-server`, either managed by `Atomic Agent models` or launched externally.
+- A reachable `llama-server`, either managed by `atomic-agent models` or launched externally.
 - Chrome, Microsoft Edge, or another configured Chromium-family executable. Browser binaries are not bundled.
 - `git` for git tools.
 - macOS workflows may need Accessibility, Screen Recording, Automation, or Reminders permissions.
@@ -349,7 +349,7 @@ The promise is not magic secrecy. The promise is that the agent control plane do
 - **GPU acceleration (managed mode):** the managed `llama.cpp` backend always starts — it falls back to CPU when no GPU driver is available. For GPU offload install a Vulkan driver:
   - Intel / AMD: `mesa-vulkan-drivers` (plus `vulkan-loader` / `libvulkan1`).
   - NVIDIA: the stock proprietary driver bundles its Vulkan ICD.
-  The device is auto-selected at start (best discrete GPU); override with `Atomic Agent models use-device <auto|cpu|Vulkan0>`, inspect with `Atomic Agent models devices`, or press `G` in the TUI Models tab.
+  The device is auto-selected at start (best discrete GPU); override with `atomic-agent models use-device <auto|cpu|Vulkan0>`, inspect with `atomic-agent models devices`, or press `G` in the TUI Models tab.
 
 ## Configuration And Secrets
 
