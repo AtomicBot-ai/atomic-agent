@@ -1,4 +1,4 @@
-# atomic-agent
+# Atomic Agent
 
 **Local First Ai Agent. Optimised for Local Ai Models. Turboquant for long context window. Proper tools calling. No cloud. Fully Private. Runs on your local device even offline**
 
@@ -16,7 +16,7 @@
 ![llama.cpp](https://img.shields.io/badge/llama.cpp-supported-111827)
 ![Tauri sidecar](https://img.shields.io/badge/Tauri-sidecar-24C8DB?logo=tauri&logoColor=white)
 
-`atomic-agent` is built for real desktop work, not chat-window demos. It can browse, read and edit files, run approved commands, inspect documents, remember useful context, schedule follow-ups, drive tools through MCP, and embed into apps through HTTP or a Tauri sidecar.
+`Atomic Agent` is built for real desktop work, not chat-window demos. It can browse, read and edit files, run approved commands, inspect documents, remember useful context, schedule follow-ups, drive tools through MCP, and embed into apps through HTTP or a Tauri sidecar.
 
 The promise is simple: keep the agent control loop and state local, use `llama.cpp` first, and make small quantized models useful for long, multi-step desktop work on consumer hardware. Under the hood, `atomic-agent` is a compact local runtime for prompts, tool calls, approvals, state, traces, and failure boundaries. On the surface, it is a general-purpose AI agent you can run, inspect, interrupt, and embed.
 
@@ -32,13 +32,13 @@ On the public **GAIA validation Level 1** split (53 tasks), `atomic-agent` and
 `Hermes` drove the **same** local `qwen-3.6-35b-a3b` (`llama-server`, UD-Q4_K_XL),
 with the same step budget and timeout. The only variable is the agent loop.
 
-| Metric | atomic-agent | Hermes |
+| Metric | Atomic Agent | Hermes |
 |---|---|---|
 | **Accuracy** | **37/53 = 69.8%** | 31/53 = 58.5% |
 | Avg wall / task | **~217 s** | ~351 s |
 | Head-to-head wins | **+15 atomic-only** | +9 Hermes-only |
 
-**atomic-agent: +11.3 pp more accurate, ~1.6× faster per task** — same hardware, same model, same budget.
+**Atomic Agent: +11.3 pp more accurate, ~1.6× faster per task** — same hardware, same model, same budget.
 
 <details>
 <summary>Charts (accuracy &amp; speed)</summary>
@@ -304,11 +304,11 @@ The TUI MCP panel supports live add / remove without restarting the process.
 
 ## Safety And Observability
 
-Local does not mean opaque. `atomic-agent` is built to be inspected and interrupted.
+Local does not mean opaque. `Atomic Agent` is built to be inspected and interrupted.
 
 - **Approval gates:** shell, filesystem writes, patches, archive extraction, process kill, HTTP requests, skill scripts, and untrusted MCP tools are gated by policy.
 - **Append-only traces:** prompts, completions, tool invocations, outcomes, failure categories, votes, lesson lifecycle events, and procedure events can be recorded as local NDJSON.
-- **Prompt drift replay:** `atomic-agent trace replay <sessionId>` compares current stable-prefix hashes against recorded traces.
+- **Prompt drift replay:** `Atomic Agent trace replay <sessionId>` compares current stable-prefix hashes against recorded traces.
 - **Failure taxonomy:** transport, grammar, model, tool, and cancellation failures are classified across events, traces, metrics, TUI, sidecar, and HTTP.
 - **Per-session FIFO:** every surface enters the same `TurnController`; one session stays ordered while different sessions can run concurrently.
 - **Explicit state:** sessions, memory, tasks, skills, browser profile, Telegram pointer, MCP config, and traces are ordinary local files or SQLite databases.
@@ -317,7 +317,7 @@ Treat traces and `<stateDir>/.env` as sensitive local artifacts. Secret redactio
 
 ## Privacy And Egress
 
-By default, `atomic-agent` does not require a hosted agent provider. Model calls go to your configured backend, and local artifacts stay under `<stateDir>`.
+By default, `Atomic Agent` does not require a hosted agent provider. Model calls go to your configured backend, and local artifacts stay under `<stateDir>`.
 
 Egress is still explicit and real:
 
@@ -332,7 +332,7 @@ The promise is not magic secrecy. The promise is that the agent control plane do
 ## Requirements
 
 - Node.js for development; release bundles ship as Node SEA binaries.
-- A reachable `llama-server`, either managed by `atomic-agent models` or launched externally.
+- A reachable `llama-server`, either managed by `Atomic Agent models` or launched externally.
 - Chrome, Microsoft Edge, or another configured Chromium-family executable. Browser binaries are not bundled.
 - `git` for git tools.
 - macOS workflows may need Accessibility, Screen Recording, Automation, or Reminders permissions.
@@ -349,7 +349,7 @@ The promise is not magic secrecy. The promise is that the agent control plane do
 - **GPU acceleration (managed mode):** the managed `llama.cpp` backend always starts — it falls back to CPU when no GPU driver is available. For GPU offload install a Vulkan driver:
   - Intel / AMD: `mesa-vulkan-drivers` (plus `vulkan-loader` / `libvulkan1`).
   - NVIDIA: the stock proprietary driver bundles its Vulkan ICD.
-  The device is auto-selected at start (best discrete GPU); override with `atomic-agent models use-device <auto|cpu|Vulkan0>`, inspect with `atomic-agent models devices`, or press `G` in the TUI Models tab.
+  The device is auto-selected at start (best discrete GPU); override with `Atomic Agent models use-device <auto|cpu|Vulkan0>`, inspect with `Atomic Agent models devices`, or press `G` in the TUI Models tab.
 
 ## Configuration And Secrets
 
