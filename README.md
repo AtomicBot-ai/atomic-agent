@@ -61,6 +61,21 @@ xychart-beta
 
 </details>
 
+### Model scaling
+
+The same agent loop holds up as the local model shrinks. Same GAIA L1 split
+(53 tasks), same harness, same step budget — only the chat model changes
+(`atomic-agent` alone, no competitor):
+
+| Chat model | Accuracy | Avg wall / task |
+|---|---|---|
+| `qwen-3.6-35b-a3b` (UD-Q4_K_XL) | **37/53 = 69.8%** | ~217 s |
+| `qwen-3.5-9b` (Q4_K_M) | **28/53 = 52.8%** | ~152 s |
+| `gemma-4-12b` (it-qat UD-Q4_K_XL) | **24/53 = 45.3%** | ~423 s |
+
+Even a 9B model clears half of GAIA L1 through the same context-frugal loop.
+(Different `atomic-agent` versions per row — see the write-up for provenance.)
+
 Full reproducible write-up: [`eval-agents/docs/GAIA-L1-EXPERIMENT.md`](eval-agents/docs/GAIA-L1-EXPERIMENT.md).
 Raw artifacts (matrices, NDJSON traces, logs): [gaia-l1-eval-2026-06-11 release](https://github.com/AtomicBot-ai/atomic-agent/releases/tag/gaia-l1-eval-2026-06-11).
 

@@ -180,6 +180,38 @@ Hermes report: `run-2026-06-10T22-02-07-267Z/`
 Net: atomic-agent is **+11.3 pp** more accurate (+6 tasks) and **~1.6× faster**
 per task.
 
+### 7.3 Smaller local models (atomic-agent only)
+
+The same loop, harness, dataset, and budget — only the chat model shrinks. These
+are **single-agent** runs (no Hermes head-to-head); the point is graceful
+degradation as the local model gets smaller, not a competitor comparison.
+
+```mermaid
+xychart-beta
+    title "atomic-agent GAIA L1 accuracy by chat model (%)"
+    x-axis ["qwen-3.6-35b-a3b", "qwen-3.5-9b", "gemma-4-12b"]
+    y-axis "Accuracy (%)" 0 --> 100
+    bar [69.8, 52.8, 45.3]
+```
+
+| Chat model | Accuracy | Avg wall / task | Avg steps / task | agent ver | Report |
+|---|---|---|---|---|---|
+| `Qwen3.6-35B-A3B-UD-Q4_K_XL` | **37/53 = 69.8%** | ~217 s | ~7.5 | `0.1.36` | `run-2026-06-11T07-29-11-112Z/` |
+| `Qwen3.5-9B-Q4_K_M` | **28/53 = 52.8%** | ~152 s | ~7.2 | `0.1.47` | `run-2026-06-24T22-04-19-046Z/` |
+| `gemma-4-12B-it-qat-UD-Q4_K_XL` | **24/53 = 45.3%** | ~423 s | ~3.0 | `0.1.41` | `run-2026-06-17T19-40-33-622Z/` |
+
+Notes:
+- Each row is the **best** full-L1 (53-task) run for that model; partial /
+  smoke runs (1–14 tasks) are excluded.
+- `qwen-3.5-9b` clears more than half of L1 while running faster per task than
+  the 35B model — the context-frugal loop keeps a small model on-task.
+- `gemma-4-12b` bails early on many tasks (avg ~3 steps, high empty-answer rate),
+  which both caps its accuracy and inflates avg wall time on the tasks it does
+  attempt — a model-behavior signal, not a harness difference.
+- **Cross-version caveat:** these runs span `atomic-agent` `0.1.36`–`0.1.47`, so
+  they are indicative model-scaling data points, not a controlled single-version
+  sweep. The atomic-vs-Hermes comparison in §7.1 is the controlled result.
+
 ---
 
 ## 8. Caveats / threats to validity
@@ -206,6 +238,8 @@ All artifacts below are bundled in `gaia-l1-eval.tar.gz` on the
 Reports (`eval-agents/reports/`):
 - `run-2026-06-11T07-29-11-112Z/` — atomic-agent, full L1 (53), **primary**.
 - `run-2026-06-10T22-02-07-267Z/` — Hermes, full L1 (53).
+- `run-2026-06-24T22-04-19-046Z/` — atomic-agent on `qwen-3.5-9b`, full L1 (§7.3).
+- `run-2026-06-17T19-40-33-622Z/` — atomic-agent on `gemma-4-12b`, full L1 (§7.3).
 
 Logs (`eval-agents/docs/logs/`):
 - `atomic-l1.log` — atomic-agent full L1 run stdout.
