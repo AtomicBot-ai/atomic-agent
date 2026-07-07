@@ -55,9 +55,20 @@ function isAtLeast(
   return true;
 }
 
+// On Windows `npm` / `npx` are `.cmd` shims that `spawn` cannot resolve
+// without a shell — a bare `spawn("npx", …)` throws `ENOENT`. Rewrite them
+// to their `.cmd` name so `shell: false` keeps working (avoids the
+// shell-quoting hazard for paths containing spaces).
+function resolveCommand(command: string): string {
+  if (platform !== "win32") return command;
+  if (command === "npm" || command === "npx") return `${command}.cmd`;
+  return command;
+}
+
 async function run(command: string, args: string[], cwd: string): Promise<void> {
+  const resolved = resolveCommand(command);
   await new Promise<void>((resolveRun, reject) => {
-    const child = spawn(command, args, { cwd, stdio: "inherit", shell: false });
+    const child = spawn(resolved, args, { cwd, stdio: "inherit", shell: false });
     child.once("error", reject);
     child.once("exit", (code) => {
       if (code === 0) resolveRun();
