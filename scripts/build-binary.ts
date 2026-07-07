@@ -55,20 +55,33 @@ function isAtLeast(
   return true;
 }
 
-// On Windows `npm` / `npx` are `.cmd` shims that `spawn` cannot resolve
-// without a shell — a bare `spawn("npx", …)` throws `ENOENT`. Rewrite them
-// to their `.cmd` name so `shell: false` keeps working (avoids the
-// shell-quoting hazard for paths containing spaces).
-function resolveCommand(command: string): string {
-  if (platform !== "win32") return command;
-  if (command === "npm" || command === "npx") return `${command}.cmd`;
-  return command;
+// On Windows `npm` / `npx` are `.cmd` shims. A bare `spawn("npx", …)` throws
+// `ENOENT` (no PATHEXT resolution), and pointing at `npx.cmd` with
+// `shell: false` throws `EINVAL` on modern Node (CVE-2024-27980 forbids
+// spawning batch files without a shell). The portable fix is to run these
+// through a shell on Windows.
+function needsWindowsShell(command: string): boolean {
+  return platform === "win32" && (command === "npm" || command === "npx");
+}
+
+// `shell: true` performs no per-argument escaping, so quote defensively when
+// an argument is empty or contains whitespace / cmd.exe metacharacters.
+function quoteWindowsArg(arg: string): string {
+  if (arg.length === 0 || /[\s"&|<>^()%!]/.test(arg)) {
+    return `"${arg.replace(/"/g, '""')}"`;
+  }
+  return arg;
 }
 
 async function run(command: string, args: string[], cwd: string): Promise<void> {
-  const resolved = resolveCommand(command);
+  const useShell = needsWindowsShell(command);
+  const spawnArgs = useShell ? args.map(quoteWindowsArg) : args;
   await new Promise<void>((resolveRun, reject) => {
-    const child = spawn(resolved, args, { cwd, stdio: "inherit", shell: false });
+    const child = spawn(command, spawnArgs, {
+      cwd,
+      stdio: "inherit",
+      shell: useShell,
+    });
     child.once("error", reject);
     child.once("exit", (code) => {
       if (code === 0) resolveRun();
