@@ -2310,6 +2310,35 @@ function parseMcpEnv(
   return out;
 }
 
+// HTTP header field names are RFC 7230 tokens, not env-var names — they
+// routinely contain hyphens (`X-CMC-MCP-API-KEY`). Validate against the token
+// grammar instead of the `[A-Za-z_][A-Za-z0-9_]*` pattern used for stdio `env`.
+const HTTP_HEADER_NAME_RE = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
+
+function parseMcpHeaders(
+  raw: unknown,
+  field: string,
+): Record<string, string> | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, `expected object, got ${JSON.stringify(raw)}`);
+  }
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!HTTP_HEADER_NAME_RE.test(k)) {
+      throw new ConfigValidationError(
+        `${field}.${k}`,
+        "http header name must be a valid RFC 7230 token",
+      );
+    }
+    if (typeof v !== "string") {
+      throw new ConfigValidationError(`${field}.${k}`, "http header value must be a string");
+    }
+    out[k] = v;
+  }
+  return out;
+}
+
 function parseMcpTransport(raw: unknown, field: string): McpTransport {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw new ConfigValidationError(field, "expected transport object");
@@ -2334,7 +2363,7 @@ function parseMcpTransport(raw: unknown, field: string): McpTransport {
     const headers =
       obj.headers === undefined || obj.headers === null
         ? undefined
-        : parseMcpEnv(obj.headers, `${field}.headers`);
+        : parseMcpHeaders(obj.headers, `${field}.headers`);
     return {
       kind: "streamable_http",
       url,
@@ -2346,7 +2375,7 @@ function parseMcpTransport(raw: unknown, field: string): McpTransport {
     const headers =
       obj.headers === undefined || obj.headers === null
         ? undefined
-        : parseMcpEnv(obj.headers, `${field}.headers`);
+        : parseMcpHeaders(obj.headers, `${field}.headers`);
     return {
       kind: "sse",
       url,
