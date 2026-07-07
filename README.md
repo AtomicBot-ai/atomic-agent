@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo.png" alt="Atomic Agent" width="120" />
+<img src="assets/logo.svg" alt="Atomic Agent" width="120" />
 
 # Atomic Agent
 
@@ -439,10 +439,6 @@ Core docs:
 - [SKILLS.md](SKILLS.md): skill format
 - [BUNDLING.md](BUNDLING.md): release packaging
 - [AGENTS.md](AGENTS.md): contributor invariants
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=AtomicBot-ai/atomic-agent&type=Date)](https://star-history.com/#AtomicBot-ai/atomic-agent&Date)
 
 ## Acknowledgements
 
