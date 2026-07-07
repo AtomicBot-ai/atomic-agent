@@ -111,6 +111,15 @@ export class LocalModelsOrchestrator {
   private activeModelPullAbort: AbortController | null = null;
   private activeEmbeddingPullAbort: AbortController | null = null;
   /**
+   * Single-flight guard for the backend download. Both `pullModel` and
+   * `pullEmbeddingModel` `await this.pullBackend()` when the backend is
+   * missing; without this a chat pull and an embedding pull started at the
+   * same time would launch two concurrent `downloadBackend()` calls that
+   * wipe + extract into the same `<dataDir>/backend/` directory, corrupting
+   * the install. Concurrent callers share the same in-flight promise.
+   */
+  private backendPullInFlight: Promise<void> | null = null;
+  /**
    * Devices enumerated via `llama-server --list-devices`, cached for the
    * process lifetime. `null` until a successful enumeration with the
    * backend present — the device table does not change at runtime, so we
@@ -538,6 +547,21 @@ export class LocalModelsOrchestrator {
   }
 
   async pullBackend(): Promise<void> {
+    // Coalesce concurrent callers onto one download. If a backend pull is
+    // already running (e.g. a chat pull triggered it and an embedding pull
+    // arrives while it is in flight), both await the same promise instead of
+    // racing two `downloadBackend()` calls on the same directory.
+    if (this.backendPullInFlight) {
+      return this.backendPullInFlight;
+    }
+    const inFlight = this.runBackendPull().finally(() => {
+      this.backendPullInFlight = null;
+    });
+    this.backendPullInFlight = inFlight;
+    return inFlight;
+  }
+
+  private async runBackendPull(): Promise<void> {
     const dataDir = getConfig().paths.localModelsDataDir;
     this.bus.emit({
       type: "local_models_pull_started",
