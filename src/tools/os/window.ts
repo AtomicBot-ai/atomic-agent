@@ -40,7 +40,7 @@ export const osWindowListTool: ToolDefinition = {
       tool: "os.window.list",
       status: "ok",
       output: result.stdout.trim(),
-      details: { platform: os, lines: result.stdout.split("\n").length },
+      details: { platform: os, lines: result.stdout.split(/\r?\n/).length },
     });
   },
 };
@@ -124,15 +124,37 @@ function focusScript(
     case "win32":
       return {
         cmd: "powershell.exe",
-        args: [
-          "-NoProfile",
-          "-Command",
-          `(Get-Process | Where-Object { $_.MainWindowTitle -like '*${escapePowerShell(title)}*' } | Select-Object -First 1).MainWindowHandle | ForEach-Object { [void][Microsoft.VisualBasic.Interaction]::AppActivate((Get-Process -Id $_).Id) }`,
-        ],
+        args: ["-NoProfile", "-Command", buildWindowsFocusScript(title)],
       };
     default:
       return null;
   }
+}
+
+/**
+ * PowerShell script that activates the first window whose title matches.
+ * Uses a P/Invoke `SetForegroundWindow` (via `Add-Type`) on the process'
+ * `MainWindowHandle` — the previous `AppActivate` approach confused PID with
+ * window handle and required the VisualBasic assembly. `ShowWindow(9)` is
+ * `SW_RESTORE` so a minimised window is un-minimised before it is raised.
+ */
+function buildWindowsFocusScript(title: string): string {
+  const needle = escapePowerShell(title);
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    "Add-Type @\"",
+    "using System;",
+    "using System.Runtime.InteropServices;",
+    "public class AtomicWin32 {",
+    '  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);',
+    '  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);',
+    "}",
+    "\"@",
+    `$p = Get-Process | Where-Object { $_.MainWindowTitle -like '*${needle}*' } | Select-Object -First 1`,
+    "if (-not $p) { Write-Error 'no matching window'; exit 1 }",
+    "[void][AtomicWin32]::ShowWindow($p.MainWindowHandle, 9)",
+    "[void][AtomicWin32]::SetForegroundWindow($p.MainWindowHandle)",
+  ].join("\n");
 }
 
 function escapeAppleScript(input: string): string {

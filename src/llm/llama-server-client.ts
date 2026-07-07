@@ -48,6 +48,68 @@ export class LlamaServerError extends Error {
   }
 }
 
+/** Cap on how much of a server error body we fold into the message. */
+const LLAMA_ERROR_DETAIL_MAX_LEN = 300;
+
+/**
+ * Pull a human-readable detail out of a llama-server error response
+ * body. llama.cpp emits either `{"error":{"message":"..."}}`,
+ * `{"error":"..."}`, or plain text. Returns a trimmed, length-capped
+ * string (empty when nothing useful is present). Pure — never throws.
+ */
+export function extractLlamaErrorDetail(rawBody: string): string {
+  const trimmed = rawBody.trim();
+  if (trimmed.length === 0) return "";
+  let detail = trimmed;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (parsed && typeof parsed === "object") {
+      const errField = (parsed as Record<string, unknown>)["error"];
+      if (typeof errField === "string") {
+        detail = errField;
+      } else if (errField && typeof errField === "object") {
+        const msg = (errField as Record<string, unknown>)["message"];
+        if (typeof msg === "string") detail = msg;
+      } else {
+        const topMsg = (parsed as Record<string, unknown>)["message"];
+        if (typeof topMsg === "string") detail = topMsg;
+      }
+    }
+  } catch {
+    // Not JSON — fall back to the raw text.
+  }
+  detail = detail.trim().replace(/\s+/g, " ");
+  if (detail.length > LLAMA_ERROR_DETAIL_MAX_LEN) {
+    detail = `${detail.slice(0, LLAMA_ERROR_DETAIL_MAX_LEN - 1)}…`;
+  }
+  return detail;
+}
+
+/**
+ * Build a `LlamaServerError` for a non-OK HTTP response, folding the
+ * server's error body into the message so callers surface the actual
+ * cause (e.g. "request (5369 tokens) exceeds the available context size
+ * (4096 tokens)") instead of a bare status code. Reading the body is
+ * best-effort — a read failure degrades to the status-only message.
+ */
+async function buildHttpError(
+  response: Response,
+  url: string,
+): Promise<LlamaServerError> {
+  let detail = "";
+  try {
+    detail = extractLlamaErrorDetail(await response.text());
+  } catch {
+    // Body already consumed / unreadable — keep the status-only message.
+  }
+  const base = `llama-server returned http ${response.status}`;
+  return new LlamaServerError(
+    detail ? `${base}: ${detail}` : base,
+    response.status,
+    url,
+  );
+}
+
 export interface LlamaServerClientOptions {
   baseUrl?: string;
   apiKey?: string | null;
@@ -114,11 +176,7 @@ export class LlamaServerClient {
         signal: controller.signal,
       });
       if (!response.ok) {
-        throw new LlamaServerError(
-          `llama-server returned http ${response.status}`,
-          response.status,
-          url,
-        );
+        throw await buildHttpError(response, url);
       }
       return (await response.json()) as LlamaServerProps;
     } catch (err) {
@@ -146,11 +204,7 @@ export class LlamaServerClient {
             signal: controller.signal,
           });
           if (!response.ok) {
-            throw new LlamaServerError(
-              `llama-server returned http ${response.status}`,
-              response.status,
-              url,
-            );
+            throw await buildHttpError(response, url);
           }
           const json = (await response.json()) as Record<string, unknown>;
           return normaliseCompletionResponse(json);
@@ -193,11 +247,7 @@ export class LlamaServerClient {
               signal: controller.signal,
             });
             if (!response.ok || !response.body) {
-              throw new LlamaServerError(
-                `llama-server returned http ${response.status}`,
-                response.status,
-                url,
-              );
+              throw await buildHttpError(response, url);
             }
             return { response, controller, cleanup };
           } catch (err) {

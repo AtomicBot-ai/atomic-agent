@@ -232,7 +232,7 @@ interface RgSubmatch {
  */
 export function parseRipgrepJson(stdout: string): RgFileRecord[] {
   const files = new Map<string, RgFileRecord>();
-  const lines = stdout.split("\n");
+  const lines = stdout.split(/\r?\n/);
   for (const rawLine of lines) {
     if (rawLine.length === 0) continue;
     let envelope: RgJsonEnvelope;

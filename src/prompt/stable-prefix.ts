@@ -96,6 +96,19 @@ export const DEFAULT_SYSTEM_PERSONA = [
   "Memory: persist with `memory.profile.*` and `memory.notes.*` as needed. Use `### lessons` (pointer view of distilled rules from past episodes — call `memory.lessons.recall { id }` to read the full principle), `### procedures` (pointer view of advisory how-to templates — call `memory.procedures.recall { id }` to read the `steps[]`; templates are guidance, not law — follow them or consciously deviate), `### recalled` / `### memory-index` and `memory.notes.recall` for past context. Store distilled facts, not full dumps. `### notice` in the tail is a hard nudge to change strategy.",
 ].join("\n");
 
+/**
+ * Windows-only nudge appended after the persona. The default persona and
+ * examples are POSIX-flavoured (`grep`/`cat`/`rm`), so on Windows the model
+ * needs an explicit steer toward native `cmd.exe` equivalents. Rendered only
+ * when `capabilities.platform === "win32"`; other platforms keep the stable
+ * prefix byte-identical. Platform is fixed for the lifetime of a session, so
+ * this stays KV-cache stable within a session.
+ */
+export const WINDOWS_PLATFORM_HINT = [
+  "Windows environment: `os.shell.run` uses a `cmd.exe` subshell. Prefer native Windows commands — `findstr` (not grep), `where` (not which), `type` (not cat), `dir` (not `ls -la`), `copy`/`move`/`ren`, `del`/`rmdir` semantics. Reference environment variables as `%VAR%` and use backslash `\\` path separators (e.g. `C:\\Users\\me\\file.txt`). Chain commands with `&&`, `||`, and pipe with `|`.",
+  "Deletion still goes through `os.fs.trash`, never `del`/`rmdir`, unless the user explicitly demands a permanent shell delete.",
+].join("\n");
+
 export function buildStablePrefix(input: StablePrefixInput): string {
   const persona = input.systemPersona ?? DEFAULT_SYSTEM_PERSONA;
   const maxParallelToolCalls = input.maxParallelToolCalls ?? 8;
@@ -133,6 +146,9 @@ export function buildStablePrefix(input: StablePrefixInput): string {
   return [
     ...head,
     persona,
+    ...(input.capabilities.platform === "win32"
+      ? [``, WINDOWS_PLATFORM_HINT]
+      : []),
     ``,
     `### rules`,
     `One tool-call array per step (including \`skill.view\`); a solo action is a length-1 array. Destructive or privileged tools may require user approval. If \`### skills\` lists a playbook that fits the user goal, call \`skill.view\` first unless that skill is already under \`### loaded-skills\`; do not act on a catalog stub — the body has the procedure. This holds for every skill (text replies included), not just browser/shell shortcuts. Summaries in \`# extras\` list rare tools; call \`tool.view\` to load the full \`args\` schema into \`### loaded-tools\` before use. Large trees: narrow with \`os.fs.list\` filters or \`os.fs.glob\` before reading content; do not use \`os.fs.grep\` with broad binary globs (e.g. every \`*.pdf\`) across huge folders—use tight globs then \`os.fs.read_document\` on candidates.`,

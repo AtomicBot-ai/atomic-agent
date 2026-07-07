@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 
+const IS_WINDOWS = process.platform === "win32";
+
 export interface CommandOptions {
   cwd: string;
   timeoutMs?: number;
@@ -47,6 +49,9 @@ export async function runCommand(
       env: options.env ?? process.env,
       shell: options.shell ?? false,
       stdio: ["pipe", "pipe", "pipe"],
+      // Prevent a console window flashing when the runtime is launched
+      // from a GUI/TUI host on Windows.
+      ...(IS_WINDOWS ? { windowsHide: true } : {}),
     });
     const chunks = { stdout: [] as Buffer[], stderr: [] as Buffer[] };
     let stdoutBytes = 0;
@@ -58,6 +63,27 @@ export async function runCommand(
     const killIt = (reason: "timeout" | "abort") => {
       if (settled) return;
       timedOut = reason === "timeout";
+      // On Windows `child.kill` only targets the direct child, leaving a
+      // subshell's descendants (cmd.exe -> foo.exe) running. `taskkill /T`
+      // walks the whole process tree; fall back to SIGKILL if the pid is
+      // gone or taskkill itself cannot be spawned.
+      if (IS_WINDOWS && typeof child.pid === "number") {
+        try {
+          spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+            stdio: "ignore",
+            windowsHide: true,
+          }).on("error", () => {
+            try {
+              child.kill("SIGKILL");
+            } catch {
+              // process already exited
+            }
+          });
+          return;
+        } catch {
+          // fall through to the POSIX-style kill below
+        }
+      }
       try {
         child.kill("SIGKILL");
       } catch {

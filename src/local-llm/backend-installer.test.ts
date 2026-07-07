@@ -39,7 +39,7 @@ describe("backend-installer", () => {
               tag_name: "turboquant-windows-9",
               assets: [
                 {
-                  name: "llama-turboquant-windows-x64.zip",
+                  name: "llama-turboquant-windows-x64-vulkan.zip",
                   browser_download_url: "https://example.com/win.zip",
                 },
               ],

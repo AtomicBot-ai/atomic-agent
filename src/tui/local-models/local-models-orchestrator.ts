@@ -757,6 +757,7 @@ export class LocalModelsOrchestrator {
           id: "nvidia-smi",
           description: "NVIDIA (nvidia-smi)",
           totalMemMiB: this.cachedNvidiaVramMiB,
+          freeMemMiB: this.cachedNvidiaVramMiB,
         },
       ],
       configuredDevice: "auto",
@@ -845,6 +846,7 @@ export class LocalModelsOrchestrator {
           port: cfg.localModels.managed.port,
           chatTemplateFile: tpl,
           mmprojFile,
+          contextSize: cfg.localModels.managed.contextSize,
           ...(device ? { device } : {}),
         },
         embedding: embedding

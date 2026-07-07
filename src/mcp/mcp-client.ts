@@ -402,9 +402,14 @@ export class McpClient {
         if (typeof v === "string") env[k] = v;
       }
       if (this.config.env) Object.assign(env, this.config.env);
+      // On Windows a bare shim name like `npx` / `npm` is `npx.cmd`, which a
+      // no-shell `spawn` cannot resolve (ENOENT). Route bare commands through
+      // `cmd.exe /c` so PATHEXT resolution kicks in; absolute paths and
+      // commands with an explicit extension are spawned directly.
+      const resolved = resolveStdioCommand(t.command, t.args ?? []);
       return new StdioClientTransport({
-        command: t.command,
-        args: t.args ?? [],
+        command: resolved.command,
+        args: resolved.args,
         env,
         ...(t.cwd ? { cwd: t.cwd } : {}),
         stderr: "pipe",
@@ -430,6 +435,32 @@ export class McpClient {
       },
     );
   }
+}
+
+/**
+ * Resolve a stdio transport command for the current platform. On Windows a
+ * bare command name (`npx`, `npm`, `uvx`) is a `.cmd` shim that a no-shell
+ * `spawn` cannot find; route it through `cmd.exe /c` so PATHEXT resolution
+ * applies. Absolute paths and commands with an explicit extension (`.exe`,
+ * `.cmd`) are passed through unchanged. POSIX is always a no-op.
+ */
+export function resolveStdioCommand(
+  command: string,
+  args: readonly string[],
+): { command: string; args: string[] } {
+  if (process.platform !== "win32") {
+    return { command, args: [...args] };
+  }
+  const hasExtension = /\.[a-z0-9]+$/i.test(command);
+  const hasSeparator = command.includes("\\") || command.includes("/");
+  if (hasExtension || hasSeparator) {
+    return { command, args: [...args] };
+  }
+  const comSpec =
+    typeof process.env.ComSpec === "string" && process.env.ComSpec.length > 0
+      ? process.env.ComSpec
+      : "cmd.exe";
+  return { command: comSpec, args: ["/d", "/s", "/c", command, ...args] };
 }
 
 /** Race a promise against a manual timeout + optional abort signal. */

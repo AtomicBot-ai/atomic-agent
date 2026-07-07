@@ -773,6 +773,15 @@ export interface UserManagedLocalLlmConfig {
    * Resolved in `startDaemon` via `resolveManagedDevice`.
    */
   device: string;
+  /**
+   * llama-server context window (`--ctx-size`) for the managed chat
+   * daemon.
+   *   - `0` (default) — auto: fit the context to the target device's
+   *     free VRAM at start (see `estimateContextSize`).
+   *   - a positive value — pin `--ctx-size` exactly, clamped only to the
+   *     model's trained context ceiling.
+   */
+  contextSize: number;
 }
 
 /**
@@ -1287,7 +1296,7 @@ export interface UserConfigFile {
 // v31: skills gains `clawhub` (ClawHub registry — the primary skill
 // marketplace). Older files inherit it enabled against the public registry
 // with suspicious skills hidden.
-export const USER_CONFIG_VERSION = 31 as const;
+export const USER_CONFIG_VERSION = 32 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1359,6 +1368,10 @@ export type RewriterGateMode = "heuristic" | "embedding" | "always";
  * managed daemon auto-picks the best GPU at start; older files inherit
  * `"auto"` transparently. v27 added `web.search.*` for the native
  * keyless-first `os.web.search` tool and provider selection.
+ * v31→v32 added `localModels.managed.contextSize` (default `0` = auto):
+ * the managed chat daemon fits `--ctx-size` to the target device's free
+ * VRAM at start; a positive value pins the context explicitly. Older
+ * files inherit `0` transparently.
  * Older files are transparently upgraded by filling missing
  * blocks/fields from `USER_CONFIG_DEFAULTS`. Anything older than v5
  * is not migrated: this is active development, callers delete their
@@ -1391,6 +1404,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   28,
   29,
   30,
+  31,
   USER_CONFIG_VERSION,
 ];
 
@@ -1406,6 +1420,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       dataDirOverride: null,
       autoUpdate: false,
       device: "auto",
+      contextSize: 0,
     },
     embeddings: {
       enabled: false,
@@ -2542,6 +2557,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     device: parseNonEmptyString(
       rawManaged.device ?? USER_CONFIG_DEFAULTS.localModels.managed.device,
       "localModels.managed.device",
+    ),
+    contextSize: parseNonNegativeInt(
+      rawManaged.contextSize ??
+        USER_CONFIG_DEFAULTS.localModels.managed.contextSize,
+      "localModels.managed.contextSize",
     ),
   };
 

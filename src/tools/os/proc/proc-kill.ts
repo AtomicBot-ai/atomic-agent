@@ -48,7 +48,7 @@ export function buildOsProcKillTool(
         ctx.signal,
       );
 
-      const sent = sendSignal(args.pid, args.signal);
+      const sent = await sendSignal(args.pid, args.signal);
       return compressToolResult({
         tool: "os.proc.kill",
         status: sent.ok ? "ok" : "error",
@@ -114,10 +114,34 @@ async function describeTarget(
   }
 }
 
-function sendSignal(
+type SendResult = { ok: true; error: null } | { ok: false; error: string };
+
+async function sendSignal(
   pid: number,
   signal: KillSignal,
-): { ok: true; error: null } | { ok: false; error: string } {
+): Promise<SendResult> {
+  // Windows `process.kill` cannot deliver POSIX signals to arbitrary
+  // processes (SIGHUP throws EINVAL). Map onto `taskkill`: SIGKILL forces
+  // termination (`/F`), the softer signals request a graceful close.
+  if (process.platform === "win32") {
+    const force = signal === "SIGKILL";
+    const taskkillArgs = force
+      ? ["/PID", String(pid), "/F"]
+      : ["/PID", String(pid)];
+    try {
+      const res = await runCommand("taskkill", taskkillArgs, {
+        cwd: process.cwd(),
+        timeoutMs: 5_000,
+      });
+      if (res.exitCode === 0) return { ok: true, error: null };
+      return {
+        ok: false,
+        error: res.stderr.trim() || `taskkill exited with ${res.exitCode}`,
+      };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    }
+  }
   try {
     process.kill(pid, signal);
     return { ok: true, error: null };

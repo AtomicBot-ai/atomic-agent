@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { LlamaServerClient, LlamaServerError } from "./llama-server-client.js";
+import {
+  LlamaServerClient,
+  LlamaServerError,
+  extractLlamaErrorDetail,
+} from "./llama-server-client.js";
 
 type Handler = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -172,6 +176,31 @@ describe("LlamaServerClient.complete", () => {
       status: 400,
     });
     expect(calls).toBe(1);
+  });
+
+  it("folds the server error body into the LlamaServerError message", async () => {
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(
+        async () =>
+          new Response(
+            JSON.stringify({
+              error: {
+                code: 400,
+                message:
+                  "the request exceeds the available context size, try increasing it",
+              },
+            }),
+            { status: 400, headers: { "content-type": "application/json" } },
+          ),
+      ),
+      completionRetries: 1,
+    });
+    await expect(client.complete({ prompt: "hi" })).rejects.toMatchObject({
+      status: 400,
+      message:
+        "llama-server returned http 400: the request exceeds the available context size, try increasing it",
+    });
   });
 
   it("exhausts the retry budget and throws when all attempts fail", async () => {
@@ -357,5 +386,42 @@ describe("LlamaServerClient.completeStream", () => {
     });
     const result = await client.complete({ prompt: "x" });
     expect(result.reasoningContent).toBe("the plan");
+  });
+});
+
+describe("extractLlamaErrorDetail", () => {
+  it("pulls the message from { error: { message } }", () => {
+    expect(
+      extractLlamaErrorDetail(
+        JSON.stringify({ error: { code: 400, message: "context too small" } }),
+      ),
+    ).toBe("context too small");
+  });
+
+  it("pulls a string error field", () => {
+    expect(
+      extractLlamaErrorDetail(JSON.stringify({ error: "bad grammar" })),
+    ).toBe("bad grammar");
+  });
+
+  it("falls back to a top-level message field", () => {
+    expect(
+      extractLlamaErrorDetail(JSON.stringify({ message: "boom" })),
+    ).toBe("boom");
+  });
+
+  it("returns trimmed raw text when the body is not JSON", () => {
+    expect(extractLlamaErrorDetail("  plain error  ")).toBe("plain error");
+  });
+
+  it("returns an empty string for an empty body", () => {
+    expect(extractLlamaErrorDetail("   ")).toBe("");
+  });
+
+  it("collapses whitespace and caps the length", () => {
+    const long = "x".repeat(500);
+    const out = extractLlamaErrorDetail(long);
+    expect(out.length).toBe(300);
+    expect(out.endsWith("…")).toBe(true);
   });
 });

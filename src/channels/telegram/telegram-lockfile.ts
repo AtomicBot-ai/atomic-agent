@@ -66,6 +66,9 @@ function isAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "EPERM";
+    // `EPERM` (POSIX) / `EACCES` (Windows) both mean the process exists but
+    // is owned by someone else — i.e. still alive. Only `ESRCH` means dead.
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === "EPERM" || code === "EACCES";
   }
 }

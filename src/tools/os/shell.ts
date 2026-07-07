@@ -2,6 +2,10 @@ import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { runCommand } from "../../sandbox/command-runner.js";
 import {
+  buildSubshellInvocation,
+  quoteCmdArg,
+} from "../../sandbox/shell-invocation.js";
+import {
   requireApproval,
   type DangerousToolOptions,
 } from "../../approval/dangerous-tool.js";
@@ -69,19 +73,88 @@ function describeArgsShape(value: unknown): string {
 const SHELL_METACHAR_RE = /[|&;<>$`(){}]/;
 
 /**
- * Decide whether `cmd` must be run through `sh -c` instead of a direct
- * `spawn(cmd, args)`. Models routinely emit a full shell command line in
- * the `cmd` field (e.g. `"ffprobe -v quiet ... f.mp3"` or
- * `"pip3 list | grep foo"`). With a direct exec that string is treated as
- * a literal executable name and fails with ENOENT. We route to a subshell
- * when `cmd` carries shell metacharacters, or when it looks like a
- * pre-joined command line (whitespace present and no separate `args`).
+ * `cmd.exe` internal commands that have no standalone executable on PATH.
+ * A direct `spawn("echo", …)` fails with ENOENT on Windows because these
+ * only exist inside the command interpreter — they must be routed through
+ * the `cmd.exe` subshell. Real executables (`where.exe`, `find.exe`,
+ * `sort.exe`, `more.com`) are intentionally excluded so they keep their
+ * direct-exec argv semantics.
+ */
+const WINDOWS_CMD_BUILTINS: ReadonlySet<string> = new Set([
+  "assoc",
+  "call",
+  "cd",
+  "chdir",
+  "cls",
+  "color",
+  "copy",
+  "date",
+  "del",
+  "dir",
+  "echo",
+  "erase",
+  "ftype",
+  "md",
+  "mkdir",
+  "mklink",
+  "move",
+  "path",
+  "pause",
+  "popd",
+  "prompt",
+  "pushd",
+  "rd",
+  "rem",
+  "ren",
+  "rename",
+  "rmdir",
+  "set",
+  "start",
+  "time",
+  "title",
+  "type",
+  "ver",
+  "verify",
+  "vol",
+]);
+
+function isWindowsCmdBuiltin(cmd: string): boolean {
+  // Builtins are never invoked by path, so a direct lowercase lookup is
+  // sufficient — no basename stripping needed.
+  return WINDOWS_CMD_BUILTINS.has(cmd.trim().toLowerCase());
+}
+
+/**
+ * Decide whether `cmd` must be run through the OS subshell (`sh -c` /
+ * `cmd.exe /c`) instead of a direct `spawn(cmd, args)`. Models routinely
+ * emit a full shell command line in the `cmd` field (e.g.
+ * `"ffprobe -v quiet ... f.mp3"` or `"pip3 list | grep foo"`). With a
+ * direct exec that string is treated as a literal executable name and
+ * fails with ENOENT. We route to a subshell when `cmd` carries shell
+ * metacharacters, when it looks like a pre-joined command line (whitespace
+ * present and no separate `args`), or — on Windows — when `cmd` is a
+ * `cmd.exe` builtin (`echo`, `dir`, `type`, …) that has no standalone
+ * executable to spawn directly.
  */
 export function needsShellInterpretation(
   cmd: string,
   args: readonly string[],
 ): boolean {
   if (SHELL_METACHAR_RE.test(cmd)) return true;
+  // On Windows the model may emit `%VAR%` expansion, which only means
+  // something inside a `cmd.exe` subshell. `$` (POSIX) is already covered
+  // by SHELL_METACHAR_RE above.
+  if (process.platform === "win32" && /%[^%\s]+%/.test(cmd)) return true;
+  // A bare cmd.exe builtin must go through the interpreter or `spawn`
+  // ENOENTs. `cmd` here is a single token (metachar/pre-joined cases are
+  // handled above), so a straight builtin lookup is safe.
+  if (
+    process.platform === "win32" &&
+    !/\s/.test(cmd.trim()) &&
+    isWindowsCmdBuiltin(cmd)
+  ) {
+    return true;
+  }
   if (args.length === 0 && /\s/.test(cmd.trim())) return true;
   return false;
 }
@@ -90,7 +163,7 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
   return {
     name: "os.shell.run",
     description:
-      "Run an OS command in the session working directory. Prefer the structured form `{cmd, args:[...]}` (argv globs `*`/`?` are expanded). Shell metacharacters (`|`, `&&`, `;`, `>`, `<`, `$`, backticks) are interpreted via a `sh -c` subshell — a full command line passed as `cmd` (e.g. `\"ffprobe -v quiet … f.mp3\"` or `\"pip3 list | grep foo\"`) runs as written. Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution. By default there is no timeout (the command runs until it exits or the turn is cancelled); pass `timeoutMs` to set an explicit limit.",
+      "Run an OS command in the session working directory. Prefer the structured form `{cmd, args:[...]}` (argv globs `*`/`?` are expanded). Shell metacharacters (`|`, `&&`, `;`, `>`, `<`, `$`, backticks) are interpreted via the OS subshell (`sh -c` on macOS/Linux, `cmd.exe /c` on Windows) — a full command line passed as `cmd` (e.g. `\"ffprobe -v quiet … f.mp3\"` or `\"pip3 list | grep foo\"`) runs as written. Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution. By default there is no timeout (the command runs until it exits or the turn is cancelled); pass `timeoutMs` to set an explicit limit.",
     readonly: false,
     async run(rawArgs, ctx) {
       const cmd = rawArgs.cmd;
@@ -183,8 +256,18 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
         );
       }
 
+      // For the subshell path we hand a single command line to the OS
+      // shell (`sh -c` / `cmd.exe /c`). When the model supplied separate
+      // argv tokens alongside a shell-bearing `cmd`, quote them on Windows
+      // so paths with spaces survive `cmd.exe` parsing. POSIX keeps the
+      // legacy raw join for byte-identical behaviour.
+      const subshellCommandLine =
+        execArgs.length > 0 && process.platform === "win32"
+          ? [cmd, ...execArgs.map(quoteCmdArg)].join(" ")
+          : commandLine;
+      const subshell = buildSubshellInvocation(subshellCommandLine);
       const result = useShell
-        ? await runCommand("sh", ["-c", commandLine], {
+        ? await runCommand(subshell.command, subshell.args, {
             cwd,
             timeoutMs,
             signal: ctx.signal,

@@ -44,23 +44,27 @@ describe("os.proc.kill", () => {
   });
 
   function spawnVictim(): ChildProcess {
-    // Long-lived subprocess we can safely send signals to. `sleep`
-    // exists on all POSIX systems; on Windows we'd need a different
-    // fixture, but the test suite is POSIX-only today.
-    const c = spawn("sleep", ["60"], { stdio: "ignore" });
+    // Long-lived subprocess we can safely send signals to. `sleep 60` on
+    // POSIX, `ping -n 61 127.0.0.1` (~60s) on Windows.
+    const c =
+      process.platform === "win32"
+        ? spawn("ping", ["-n", "61", "127.0.0.1"], { stdio: "ignore" })
+        : spawn("sleep", ["60"], { stdio: "ignore" });
     child = c;
     return c;
   }
 
-  it("sends SIGTERM and process dies", async () => {
-    if (process.platform === "win32") return;
+  it("kills a live process and it dies", async () => {
     const victim = spawnVictim();
     await new Promise((r) => setTimeout(r, 50));
     const tool = buildOsProcKillTool({
       approvals: approveAll(),
       approvalRequired: true,
     });
-    const result = await tool.run({ pid: victim.pid! }, makeCtx());
+    // On Windows a graceful close is unreliable for console apps, so force
+    // (SIGKILL → `taskkill /F`); POSIX SIGTERM is enough for `sleep`.
+    const signal = process.platform === "win32" ? "SIGKILL" : "SIGTERM";
+    const result = await tool.run({ pid: victim.pid!, signal }, makeCtx());
     expect(result.status).toBe("ok");
     expect(result.details.success).toBe(true);
     await new Promise<void>((resolve) => {
@@ -71,7 +75,6 @@ describe("os.proc.kill", () => {
   });
 
   it("refuses when approval is denied", async () => {
-    if (process.platform === "win32") return;
     const victim = spawnVictim();
     await new Promise((r) => setTimeout(r, 50));
     const tool = buildOsProcKillTool({

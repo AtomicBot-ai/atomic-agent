@@ -3,14 +3,15 @@ import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { TarBackend } from "./tar-backend.js";
 import { DEFAULT_EXTRACT_LIMITS } from "./archive-types.js";
 
 const TAR_FIXTURE = resolve(
-  new URL("../test-fixtures/sample.tar", import.meta.url).pathname,
+  fileURLToPath(new URL("../test-fixtures/sample.tar", import.meta.url)),
 );
 const TGZ_FIXTURE = resolve(
-  new URL("../test-fixtures/sample.tar.gz", import.meta.url).pathname,
+  fileURLToPath(new URL("../test-fixtures/sample.tar.gz", import.meta.url)),
 );
 
 function withTmp<T>(fn: (dir: string) => Promise<T>): Promise<T> {

@@ -140,7 +140,17 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
     case "llm_model_updated":
       return {
         ...state,
-        llmHealth: { ...state.llmHealth, model: action.model },
+        llmHealth: {
+          ...state.llmHealth,
+          model: action.model,
+          // Only overwrite the context window when the update carries one
+          // (an optimistic catalog-label update omits it — keep the last
+          // known `/props` value instead of blanking the tray).
+          contextWindow:
+            action.contextWindow === undefined
+              ? state.llmHealth.contextWindow
+              : action.contextWindow,
+        },
       };
     case "update_available":
       // Never override an in-flight or finished update with a new offer.

@@ -18,6 +18,7 @@ import { resolveBackendDir, resolveServerBinPath } from "./backend-paths.js";
 import { downloadFile } from "./download-file.js";
 import { readBackendVersion, writeBackendVersion } from "./backend-version.js";
 import { resolvePlatformAsset, UnsupportedPlatformError } from "./platform-assets.js";
+import { resolveDownloadAsset } from "./windows-backend-variant.js";
 
 const GITHUB_REPO = "AtomicBot-ai/atomic-llama-cpp-turboquant";
 
@@ -68,7 +69,7 @@ export function resetLatestReleaseCache(): void {
 export async function fetchLatestRelease(opts?: {
   force?: boolean;
 }): Promise<LatestReleaseInfo> {
-  const { assetName } = resolvePlatformAsset();
+  const { assetName } = resolveDownloadAsset();
   const cached = releaseCache.get(assetName);
   if (
     !opts?.force &&
@@ -219,7 +220,9 @@ function moveContentsFlat(from: string, to: string): void {
  */
 function topLevelWrapper(backendRoot: string, fileInside: string): string | null {
   const rel = relative(backendRoot, fileInside);
-  const firstSep = rel.indexOf("/");
+  // `relative` yields platform-native separators: `/` on POSIX, `\` on
+  // Windows. Match either so the wrapper dir is cleaned up on both.
+  const firstSep = rel.search(/[/\\]/);
   if (firstSep < 0) return null;
   return join(backendRoot, rel.slice(0, firstSep));
 }
@@ -240,7 +243,7 @@ export async function downloadBackend(
     signal?: AbortSignal;
   },
 ): Promise<{ ok: true; tag: string }> {
-  const { assetName, binaryName } = resolvePlatformAsset();
+  const { assetName, binaryName } = resolveDownloadAsset();
   // Always hit GitHub for an actual install so we don't grab a stale
   // tag from the snapshot cache.
   const release = await fetchLatestRelease({ force: true });

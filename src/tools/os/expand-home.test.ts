@@ -51,11 +51,35 @@ describe("resolveUserPath", () => {
     expect(resolveUserPath("~", workingDir)).toBe(homedir());
   });
 
-  it("returns already-absolute paths unchanged", () => {
-    expect(resolveUserPath("/var/log/system.log", workingDir)).toBe(
-      "/var/log/system.log",
-    );
-  });
+  it.skipIf(process.platform === "win32")(
+    "returns already-absolute paths unchanged (POSIX)",
+    () => {
+      expect(resolveUserPath("/var/log/system.log", workingDir)).toBe(
+        "/var/log/system.log",
+      );
+    },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "throws on a Unix-absolute path (win32)",
+    () => {
+      expect(() => resolveUserPath("/var/log/system.log", workingDir)).toThrow(
+        /ambiguous on Windows/,
+      );
+      expect(() => resolveUserPath("/tmp/x", workingDir)).toThrow(
+        /ambiguous on Windows/,
+      );
+    },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "returns a drive-qualified path unchanged (win32)",
+    () => {
+      expect(resolveUserPath("C:\\Users\\me\\file.txt", "C:\\work")).toBe(
+        "C:\\Users\\me\\file.txt",
+      );
+    },
+  );
 
   it("resolves relative paths against the working directory", () => {
     expect(resolveUserPath("src/index.ts", workingDir)).toBe(

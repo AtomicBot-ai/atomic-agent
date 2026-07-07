@@ -20,7 +20,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-starter-skills.mjs",
     "build:watch": "tsc -p tsconfig.json --watch",
-    "clean": "rm -rf dist",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc -p tsconfig.json --noEmit",

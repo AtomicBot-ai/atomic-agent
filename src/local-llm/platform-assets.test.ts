@@ -9,9 +9,9 @@ describe("platform-assets", () => {
     expect(a.binaryName).toBe("llama-server");
   });
 
-  it("resolves win32 x64", () => {
+  it("resolves win32 x64 to the Vulkan asset", () => {
     const a = resolvePlatformAsset("win32", "x64");
-    expect(a.assetName).toBe("llama-turboquant-windows-x64.zip");
+    expect(a.assetName).toBe("llama-turboquant-windows-x64-vulkan.zip");
     expect(a.binaryName).toBe("llama-server.exe");
   });
 

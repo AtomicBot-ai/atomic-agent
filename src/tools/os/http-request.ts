@@ -12,6 +12,7 @@ import type {
   HttpApprovalMode,
 } from "../../config/index.js";
 import type { ToolDefinition } from "../tool-registry.js";
+import { CurlUnavailableError, isCurlMissingError } from "./ensure-curl.js";
 
 /**
  * Marker we append to curl stdout via `-w` so we can split the response
@@ -75,13 +76,26 @@ export function buildOsHttpRequestTool(
       }
 
       const curlArgs = buildCurlArgs(args);
-      const commandResult = await runCommand("curl", curlArgs, {
-        cwd: ctx.workingDir,
-        timeoutMs: args.timeoutMs + 2_000,
-        signal: ctx.signal,
-        maxOutputBytes: httpCfg.maxResponseBytes + 1024,
-        input: args.body,
-      });
+      let commandResult: CommandResult;
+      try {
+        commandResult = await runCommand("curl", curlArgs, {
+          cwd: ctx.workingDir,
+          timeoutMs: args.timeoutMs + 2_000,
+          signal: ctx.signal,
+          maxOutputBytes: httpCfg.maxResponseBytes + 1024,
+          input: args.body,
+        });
+      } catch (err) {
+        if (isCurlMissingError(err)) {
+          return compressToolResult({
+            tool: "os.http.request",
+            status: "error",
+            output: new CurlUnavailableError().message,
+            details: { url: args.url, method: args.method },
+          });
+        }
+        throw err;
+      }
 
       if (commandResult.exitCode !== 0) {
         return compressToolResult({

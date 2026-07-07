@@ -22,7 +22,7 @@ The promise is simple: keep the agent control loop and state local, use `llama.c
 
 **Developer Preview / Active Development:** APIs, commands, config, and behavior are still moving. Expect sharp edges, and pin a release if you need a stable integration point.
 
-**Platform availability:** current releases are available for macOS and Linux x64. Windows builds are coming soon.
+**Platform availability:** current releases are available for macOS, Linux x64, and Windows x64.
 
 ## Benchmarks
 
@@ -90,11 +90,17 @@ Local models need more than a prompt. They need a loop that spends context caref
 
 ## Quick Install/Update
 
+macOS / Linux:
+
 ```bash
 curl -fsSL https://api.atomicbot.ai/agent-install | sh
 ```
 
-The installer downloads the release archive, verifies the checksum, and installs the CLI plus support assets such as `grammars/`, native prebuilds, and bundled `ripgrep`.
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/AtomicBot-ai/atomic-agent/main/scripts/install.ps1 | iex
+```
 
 ## Run
 

@@ -21,6 +21,7 @@ import { ThemePicker } from "./components/theme-picker.js";
 import {
   isThemeName,
   setActiveTheme,
+  theme,
   THEME_NAMES,
   THEMES,
 } from "./theme/theme.js";
@@ -659,6 +660,12 @@ export function TuiApp({
       <Text color="gray"> {promptLlm.cloudLabel ?? "cloud"}</Text>
     </Text>
   );
+  const promptRightSlot =
+    state.llmHealth.contextWindow !== null ? (
+      <Text color={theme.colors.muted}>
+        ctx {state.llmHealth.contextWindow}
+      </Text>
+    ) : null;
 
   return (
     <Box
@@ -748,6 +755,7 @@ export function TuiApp({
             model={promptLlm.model}
             provider={promptLlm.provider}
             leftSlot={promptLeftSlot}
+            rightSlot={promptRightSlot}
             focus={editorFocus}
             disabled={!canAcceptMessage(state)}
             onChange={onEditorChange}

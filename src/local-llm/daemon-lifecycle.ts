@@ -16,7 +16,11 @@ import {
   resolvePidFilePath,
   resolveServerBinPath,
 } from "./backend-paths.js";
-import { resolveManagedDevice } from "./gpu-devices.js";
+import {
+  estimateContextSize,
+  resolveDeviceFreeVramMiB,
+} from "./context-size.js";
+import { listVulkanDevices, resolveManagedDevice } from "./gpu-devices.js";
 import {
   getEmbeddingModelDef,
   getLocalModelDef,
@@ -49,6 +53,14 @@ export interface DaemonStartOptions {
    * value passed here is treated as an explicit override.
    */
   device?: string;
+  /**
+   * Operator override for the llama-server context window
+   * (`localModels.managed.contextSize`). `0` / `undefined` means
+   * auto-size: `startDaemon` fits the context to the target device's
+   * free VRAM (see `estimateContextSize`). A positive value pins
+   * `--ctx-size` exactly (clamped to the model's trained ceiling).
+   */
+  contextSize?: number;
 }
 
 /**
@@ -62,6 +74,7 @@ export function buildLlamaServerArgs(
   opts: DaemonStartOptions,
   modelPath: string,
   modelAlias: string,
+  effectiveContextSize?: number,
 ): string[] {
   const args = [
     "--no-webui",
@@ -86,6 +99,9 @@ export function buildLlamaServerArgs(
     "-a",
     modelAlias,
   ];
+  if (effectiveContextSize && effectiveContextSize > 0) {
+    args.push("--ctx-size", String(effectiveContextSize));
+  }
   if (opts.device && opts.device !== "cpu") {
     args.push("--device", opts.device);
   }
@@ -116,6 +132,34 @@ export function buildLlamaServerArgs(
     );
   }
   return args;
+}
+
+/**
+ * Resolve the effective `--ctx-size` for a chat daemon launch. Impure
+ * glue around the pure `estimateContextSize`: when auto-sizing on a GPU
+ * device it enumerates `--list-devices` to read the target device's free
+ * VRAM. Best-effort — any enumeration failure degrades to the no-VRAM
+ * default. Skips the probe entirely when the operator pinned a value or
+ * offload is CPU-only.
+ */
+async function resolveEffectiveContextSize(
+  binPath: string,
+  device: string | undefined,
+  model: { fileSizeGb: number; maxContextLength: number; mmprojFileSizeGb?: number },
+  opts: { configured: number; hasMmproj: boolean },
+): Promise<number> {
+  let freeVramMiB: number | null = null;
+  if (opts.configured <= 0 && device && device !== "cpu") {
+    const devices = await listVulkanDevices(binPath);
+    freeVramMiB = resolveDeviceFreeVramMiB(devices, device);
+  }
+  return estimateContextSize({
+    freeVramMiB,
+    modelSizeGb: model.fileSizeGb,
+    mmprojSizeGb: opts.hasMmproj ? (model.mmprojFileSizeGb ?? 0) : 0,
+    maxContextLength: model.maxContextLength,
+    configuredContextSize: opts.configured,
+  });
 }
 
 export interface DaemonStatus {
@@ -258,7 +302,16 @@ export async function startDaemon(opts: DaemonStartOptions): Promise<{ pid: numb
   }
 
   const device = await resolveManagedDevice(binPath, opts.device);
-  const args = buildLlamaServerArgs({ ...opts, device }, modelPath, model.id);
+  const contextSize = await resolveEffectiveContextSize(binPath, device, model, {
+    configured: opts.contextSize ?? 0,
+    hasMmproj: Boolean(opts.mmprojFile),
+  });
+  const args = buildLlamaServerArgs(
+    { ...opts, device },
+    modelPath,
+    model.id,
+    contextSize,
+  );
 
   const logFd = openSync(resolveLogFilePath(opts.dataDir), "a");
   try {

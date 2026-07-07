@@ -42,7 +42,7 @@ export function resolvePlatformAsset(
     return {
       platform,
       arch,
-      assetName: "llama-turboquant-windows-x64.zip",
+      assetName: "llama-turboquant-windows-x64-vulkan.zip",
       binaryName: "llama-server.exe",
     };
   }

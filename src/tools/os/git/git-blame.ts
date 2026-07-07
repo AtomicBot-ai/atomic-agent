@@ -104,7 +104,7 @@ interface BlameCommit {
 }
 
 function parsePorcelainBlame(stdout: string): GitBlameLine[] {
-  const lines = stdout.split("\n");
+  const lines = stdout.split(/\r?\n/);
   const commits = new Map<string, BlameCommit>();
   const entries: GitBlameLine[] = [];
   let i = 0;

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ToolContext } from "../../tool-registry.js";
 import { buildOsFsArchiveListTool } from "./list-tool.js";
 
@@ -13,7 +14,7 @@ function makeCtx(workingDir: string): ToolContext {
 }
 
 const FIXTURES = resolve(
-  new URL("../test-fixtures", import.meta.url).pathname,
+  fileURLToPath(new URL("../test-fixtures", import.meta.url)),
 );
 
 describe("os.fs.archive.list", () => {

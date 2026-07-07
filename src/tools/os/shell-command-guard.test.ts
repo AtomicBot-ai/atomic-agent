@@ -198,6 +198,43 @@ describe("checkShellCommandGuard", () => {
     });
   });
 
+  it.each([
+    ["del", ["/s", "/q", "."], "dangerous.win_del_recursive"],
+    ["rmdir", ["/s", "build"], "dangerous.win_rmdir_recursive"],
+    ["Remove-Item", ["-Recurse", "node_modules"], "dangerous.win_remove_item_recurse"],
+    ["Remove-Item", ["-Force", "x.txt"], "dangerous.win_remove_item_force"],
+    ["reg", ["delete", "HKLM\\Software\\X"], "dangerous.win_reg_delete"],
+    ["takeown", ["/f", "C:\\Windows"], "dangerous.win_takeown"],
+    ["icacls", ["C:\\x", "/grant", "user:F"], "dangerous.win_icacls_grant"],
+    ["net", ["user", "hacker", "pw", "/add"], "dangerous.win_net_user"],
+  ])("requires approval for risky Windows command %s %j", (cmd, rawArgs, rule) => {
+    expect(guard(cmd, rawArgs)).toMatchObject({
+      action: "approval_required",
+      rule,
+    });
+  });
+
+  it.each([
+    ["format", ["c:"], "hardline.win_format"],
+    ["diskpart", [], "hardline.win_diskpart"],
+    ["Stop-Computer", ["-Force"], "hardline.win_power"],
+    ["del", ["C:\\Windows\\System32\\x"], "hardline.win_del_windows"],
+    ["cipher", ["/w:c"], "hardline.win_cipher_wipe"],
+  ])("blocks catastrophic Windows command %s %j", (cmd, rawArgs, rule) => {
+    expect(guard(cmd, rawArgs)).toMatchObject({
+      action: "block",
+      rule,
+    });
+  });
+
+  it.each([
+    ["where", ["node"]],
+    ["where.exe", ["git"]],
+    ["ver", []],
+  ])("allows safe Windows probe %s %j", (cmd, rawArgs) => {
+    expect(guard(cmd, rawArgs).action).toBe("allow");
+  });
+
   it("normalises unicode and ansi obfuscation before matching", () => {
     expect(guard("ｒｍ", ["-rf", "/"])).toMatchObject({
       action: "block",
