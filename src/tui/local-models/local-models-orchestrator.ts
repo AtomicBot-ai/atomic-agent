@@ -630,7 +630,8 @@ export class LocalModelsOrchestrator {
       await this.stopProcessesForRestart({ silent: true });
     }
     if (await this.startDaemon()) {
-      this.hooks?.onManagedDaemonRestarted?.();
+      // Tray refresh (optimistic id + `/props` re-read) is now fired by
+      // `startDaemon` on success, so no explicit hook call is needed here.
       this.bus.emit({ type: "ui_mode_set", mode: "chat" });
     }
   }
@@ -891,6 +892,15 @@ export class LocalModelsOrchestrator {
         });
       }
       this.reportEmbeddingStartOutcome(result.embedding, embedding);
+      // Refresh the tray / prompt model label for EVERY start path
+      // (pull auto-start, `s`, autoStart, setActive). The health poller
+      // caches the model name per URL (`modelFetchedForUrl`) and would
+      // otherwise keep showing the previous model after an in-place
+      // restart on the same URL. `onManagedModelSelected` updates the
+      // tray optimistically with the catalog id; `onManagedDaemonRestarted`
+      // re-reads `/props` so it aligns with what llama-server reports.
+      this.hooks?.onManagedModelSelected?.(mid);
+      this.hooks?.onManagedDaemonRestarted?.();
       return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
