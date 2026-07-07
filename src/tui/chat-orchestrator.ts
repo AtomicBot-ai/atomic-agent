@@ -182,10 +182,11 @@ export class ChatOrchestrator {
   }
 
   /**
-   * Run the canonical `install.sh` to upgrade the installed binary in
-   * place. Streams installer output to the feed and emits
-   * `update_finished` when it settles. The running process is not
-   * restarted — the reducer's success message asks the user to relaunch.
+   * Run the canonical installer (`install.sh` on POSIX, `install.ps1` on
+   * Windows) to upgrade the installed binary in place. Streams installer
+   * output to the feed and emits `update_finished` when it settles. The
+   * running process is not restarted — the reducer's success message asks
+   * the user to relaunch.
    */
   runUpdate(): void {
     this.bus.emit({ type: "update_started" });

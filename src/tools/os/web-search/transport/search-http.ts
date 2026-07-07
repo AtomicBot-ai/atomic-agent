@@ -7,6 +7,7 @@ import {
   parseHttpUrl,
   type HostLookup,
 } from "../../web-fetch-ssrf-guard.js";
+import { CurlUnavailableError, isCurlMissingError } from "../../ensure-curl.js";
 
 const CURL_META_MARKER = "__ATOMIC_WEB_SEARCH_META__";
 const DEFAULT_MAX_RESPONSE_BYTES = 1_000_000;
@@ -69,13 +70,20 @@ export async function searchHttp(
       hasBody: request.body !== undefined,
       timeoutMs: request.timeoutMs,
     });
-    const result = await runCommand("curl", curlArgs, {
-      cwd: request.cwd,
-      timeoutMs: request.timeoutMs + 2_000,
-      signal: request.signal,
-      input: request.body,
-      maxOutputBytes: (request.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES) + 1024,
-    });
+    let result: CommandResult;
+    try {
+      result = await runCommand("curl", curlArgs, {
+        cwd: request.cwd,
+        timeoutMs: request.timeoutMs + 2_000,
+        signal: request.signal,
+        input: request.body,
+        maxOutputBytes:
+          (request.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES) + 1024,
+      });
+    } catch (err) {
+      if (isCurlMissingError(err)) throw new CurlUnavailableError();
+      throw err;
+    }
     if (result.exitCode !== 0) {
       throw new Error(formatCurlError(result));
     }

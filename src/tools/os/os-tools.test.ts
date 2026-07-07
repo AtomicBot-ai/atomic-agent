@@ -342,12 +342,58 @@ describe("os.shell.run", () => {
     expect(result.summary).toContain("hello world");
   });
 
+  it("runs a piped command line via a cmd.exe subshell (win32)", async () => {
+    if (process.platform !== "win32") return;
+    const gate = new ApprovalGate({
+      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+    });
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+    const result = await tool.run(
+      { cmd: "echo hello| findstr hello" },
+      makeCtx(dir),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.details.shell).toBe(true);
+    expect(result.summary).toContain("hello");
+  });
+
+  it("expands a %VAR% via a cmd.exe subshell (win32)", async () => {
+    if (process.platform !== "win32") return;
+    const gate = new ApprovalGate({
+      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+    });
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+    const result = await tool.run({ cmd: "echo %USERPROFILE%" }, makeCtx(dir));
+    expect(result.status).toBe("ok");
+    expect(result.details.shell).toBe(true);
+    expect(result.summary).toContain(process.env.USERPROFILE ?? "");
+  });
+
+  it("chains commands with && via a cmd.exe subshell (win32)", async () => {
+    if (process.platform !== "win32") return;
+    const gate = new ApprovalGate({
+      emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
+    });
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+    const result = await tool.run({ cmd: "echo a && echo b" }, makeCtx(dir));
+    expect(result.status).toBe("ok");
+    expect(result.details.shell).toBe(true);
+    expect(result.summary).toContain("a");
+    expect(result.summary).toContain("b");
+  });
+
   it("keeps the direct argv path for a structured command", async () => {
     const gate = new ApprovalGate({
       emit: (req) => gate.resolve({ approvalId: req.approvalId, approved: true }),
     });
     const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
-    const result = await tool.run({ cmd: "echo", args: ["hi"] }, makeCtx(dir));
+    // Use a real executable (not a cmd.exe builtin) so the direct-exec
+    // argv path is exercised on Windows too — `echo` is a builtin there
+    // and is deliberately routed through the subshell.
+    const result = await tool.run(
+      { cmd: "node", args: ["-e", "process.stdout.write('hi')"] },
+      makeCtx(dir),
+    );
     expect(result.status).toBe("ok");
     expect(result.details.shell).toBe(false);
     expect(result.summary).toContain("hi");

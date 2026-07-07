@@ -33,14 +33,22 @@ A local-first AI agent that runs the control loop and all state on your machine.
 
 ## Quick Install
 
+macOS / Linux:
+
 ```bash
 curl -fsSL https://api.atomicbot.ai/agent-install | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/AtomicBot-ai/atomic-agent/main/scripts/install.ps1 | iex
 ```
 
 The installer downloads the release archive, verifies the checksum, and installs the CLI plus support assets (`grammars/`, native prebuilds, and bundled `ripgrep`). Atomic Agent updates itself in place; after an update the TUI prompts you to restart.
 
 > [!NOTE]
-> Developer preview. APIs, commands, config, and behavior are still moving, so pin a release if you need a stable integration point. Current builds: macOS and Linux x64. Windows is coming soon.
+> Developer preview. APIs, commands, config, and behavior are still moving, so pin a release if you need a stable integration point. Current builds: macOS, Linux x64, and Windows x64.
 
 ### Run
 

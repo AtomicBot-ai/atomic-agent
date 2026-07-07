@@ -64,7 +64,10 @@ describe("resolveRipgrepPath", () => {
     expect(result).toBe(devBin);
   });
 
-  it("falls back to PATH lookup on posix", () => {
+  // The PATH-scan branch splits/joins with the host's `node:path` semantics
+  // (`:` vs `;`, `/` vs `\`), so a POSIX-style PATH fixture only resolves on
+  // a POSIX host. The Windows bundled-lookup path is covered above.
+  it.skipIf(process.platform === "win32")("falls back to PATH lookup on posix", () => {
     const systemBin = "/opt/homebrew/bin/rg";
     const result = resolveRipgrepPath({
       env: { PATH: "/opt/homebrew/bin:/usr/bin" },
@@ -98,15 +101,18 @@ describe("resolveRipgrepPath", () => {
     expect(result).toBeNull();
   });
 
-  it("ignores override when the file does not exist and continues the chain", () => {
-    const systemBin = "/usr/bin/rg";
-    const result = resolveRipgrepPath({
-      env: { ATOMIC_AGENT_RG_PATH: "/does/not/exist", PATH: "/usr/bin" },
-      execPath: "/usr/local/bin/node",
-      cwd: "/repo",
-      platform: "linux",
-      fileExists: (p) => p === systemBin,
-    });
-    expect(result).toBe(systemBin);
-  });
+  it.skipIf(process.platform === "win32")(
+    "ignores override when the file does not exist and continues the chain",
+    () => {
+      const systemBin = "/usr/bin/rg";
+      const result = resolveRipgrepPath({
+        env: { ATOMIC_AGENT_RG_PATH: "/does/not/exist", PATH: "/usr/bin" },
+        execPath: "/usr/local/bin/node",
+        cwd: "/repo",
+        platform: "linux",
+        fileExists: (p) => p === systemBin,
+      });
+      expect(result).toBe(systemBin);
+    },
+  );
 });

@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { osFsGlobTool } from "./fs-glob.js";
 
-describe("real-world: find Sibiliainen CV", () => {
+// Developer-machine real-world smoke: hardcoded to a macOS home path, so it
+// only runs on darwin. On other platforms `resolveUserPath` rejects the Unix
+// path anyway, so gate the whole suite to darwin.
+describe.runIf(process.platform === "darwin")("real-world: find Sibiliainen CV", () => {
   it("scope=$HOME, narrower pattern", async () => {
     const result = await osFsGlobTool.run(
       {

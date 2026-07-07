@@ -8,6 +8,8 @@ const ZERO_ARG_SAFE: ReadonlySet<string> = new Set([
   "tty",
   "uptime",
   "whoami",
+  // Windows read-only builtins.
+  "ver",
 ]);
 
 const VERSION_SAFE_COMMANDS: ReadonlySet<string> = new Set([
@@ -39,6 +41,7 @@ export const safeAllowRule: Rule = {
       matchZeroArg(input) ??
       matchVersionProbe(input) ??
       matchWhichProbe(input) ??
+      matchWhereProbe(input) ??
       matchCommandProbe(input) ??
       matchEchoLiteral(input)
     );
@@ -71,6 +74,18 @@ function matchWhichProbe(input: NormalisedCommand): GuardVerdict | null {
     action: "allow",
     rule: "safe.which_probe",
     reason: "which command probe",
+  };
+}
+
+function matchWhereProbe(input: NormalisedCommand): GuardVerdict | null {
+  // Windows analogue of `which`. `where node` locates an executable and is
+  // read-only; without this every `where` probe would hit approval.
+  if (input.cmd !== "where" && input.cmd !== "where.exe") return null;
+  if (input.args.length !== 1 || hasShellMetachar(input.args[0] ?? "")) return null;
+  return {
+    action: "allow",
+    rule: "safe.where_probe",
+    reason: "where command probe",
   };
 }
 

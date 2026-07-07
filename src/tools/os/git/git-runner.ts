@@ -33,8 +33,10 @@ const DEFAULT_MAX_OUTPUT_BYTES = 512 * 1024;
 
 /**
  * Shared shell-out helper for every `os.git.*` tool. Enforces:
- *  - `GIT_PAGER=cat` + `GIT_TERMINAL_PROMPT=0` so git never blocks on a
- *    pager or credential prompt inside the agent.
+ *  - `--no-pager` + empty `GIT_PAGER` + `GIT_TERMINAL_PROMPT=0` so git never
+ *    blocks on a pager or credential prompt inside the agent. `GIT_PAGER=cat`
+ *    would fail on native Windows where `cat` is not on PATH; an empty pager
+ *    plus `--no-pager` is cross-platform.
  *  - Timeout + output-size cap inherited from `runCommand`.
  *  - Repo root resolution — the repo is always validated before git runs
  *    so we fail loudly if the path is outside any repo.
@@ -44,17 +46,27 @@ export async function runGit(options: GitRunOptions): Promise<GitRunResult> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     ...options.env,
-    GIT_PAGER: "cat",
+    GIT_PAGER: "",
     GIT_TERMINAL_PROMPT: "0",
     LC_ALL: "C",
   };
-  const result = await runCommand("git", options.args, {
-    cwd: repoRoot,
-    env,
-    timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    maxOutputBytes: options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
-    signal: options.signal,
-  });
+  let result: CommandResult;
+  try {
+    result = await runCommand("git", ["--no-pager", ...options.args], {
+      cwd: repoRoot,
+      env,
+      timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      maxOutputBytes: options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
+      signal: options.signal,
+    });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") {
+      throw new Error(
+        "os.git: git was not found on PATH. Install Git and ensure it is on PATH.",
+      );
+    }
+    throw err;
+  }
   return { ...result, repoRoot };
 }
 

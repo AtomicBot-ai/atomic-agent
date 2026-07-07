@@ -115,7 +115,7 @@ function parseMeta(stdout: string): GitShowMeta {
 
 function parseNumstat(stdout: string): GitShowFileChange[] {
   const out: GitShowFileChange[] = [];
-  for (const raw of stdout.split("\n")) {
+  for (const raw of stdout.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line) continue;
     const parts = line.split("\t");

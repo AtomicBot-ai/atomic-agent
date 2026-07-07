@@ -21,10 +21,13 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { createGzip } from "node:zlib";
 import { join, resolve, dirname, basename } from "node:path";
 import { argv, exit, stdout, stderr } from "node:process";
+import { fileURLToPath } from "node:url";
 import { pipeline } from "node:stream/promises";
 import { BUNDLE_TARGETS, currentTarget, BundleTarget } from "./bundle-targets.js";
 
-const ROOT = resolve(new URL("..", import.meta.url).pathname);
+// `new URL(...).pathname` yields `/C:/...` on Windows; `fileURLToPath`
+// returns a native path so bundle staging works cross-platform.
+const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const BUNDLE_ROOT = join(ROOT, "bundle");
 
 async function pathExists(p: string): Promise<boolean> {
@@ -153,7 +156,7 @@ async function archiveTarGz(sourceDir: string, destFile: string): Promise<void> 
   await new Promise<void>((resolveTar, reject) => {
     const child = spawn(
       "tar",
-      ["-cf", intermediate, "-C", dirname(sourceDir), join(".", sourceDir.split("/").pop() ?? "")],
+      ["-cf", intermediate, "-C", dirname(sourceDir), join(".", basename(sourceDir))],
       { stdio: "inherit" },
     );
     child.once("error", reject);

@@ -111,10 +111,16 @@ describe("OpenclawImporter", () => {
   let stateDir: string;
   let sessionStore: SessionStore;
   let taskStore: TaskStore;
+  // Track every source so we can close its (readonly) SQLite handle in
+  // teardown; on Windows an open handle keeps the source db locked and
+  // rmSync fails with EPERM.
+  let sources: OpenclawSource[] = [];
 
   function buildImporter(): OpenclawImporter {
+    const source = new OpenclawSource(sourceDir, "main");
+    sources.push(source);
     return new OpenclawImporter({
-      source: new OpenclawSource(sourceDir, "main"),
+      source,
       sessionStore,
       taskStore,
       maxAttempts: 3,
@@ -124,6 +130,7 @@ describe("OpenclawImporter", () => {
   }
 
   beforeEach(() => {
+    sources = [];
     sourceDir = mkdtempSync(join(tmpdir(), "oc-src-"));
     stateDir = mkdtempSync(join(tmpdir(), "oc-dst-"));
     sessionStore = new SessionStore({ dbFile: join(stateDir, "sessions.sqlite") });
@@ -133,8 +140,9 @@ describe("OpenclawImporter", () => {
   afterEach(() => {
     sessionStore.close();
     taskStore.close();
-    rmSync(sourceDir, { recursive: true, force: true });
-    rmSync(stateDir, { recursive: true, force: true });
+    for (const source of sources) source.close();
+    rmSync(sourceDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    rmSync(stateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it("imports sessions and cron jobs", () => {

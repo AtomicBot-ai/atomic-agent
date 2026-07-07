@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { getConfig, resetConfigCache } from "../config/index.js";
 import { ensureUserConfigFileSync, writeUserConfigFileSync } from "../config/config-file.js";
 import type { UserConfigFile } from "../config/config-schema.js";
@@ -104,8 +105,8 @@ export async function runLocalModelsPull(idArg: string | undefined): Promise<num
     await downloadModel(dataDir, m, { onProgress });
     if (tty) process.stderr.write(`\n`);
     else if (lastLine) process.stderr.write(`done: ${lastLine}\n`);
-    const path = `${dataDir}/models/${m.id}/${m.filename}`;
-    process.stdout.write(`done. model saved to ${path}\n`);
+    const savedPath = join(dataDir, "models", m.id, m.filename);
+    process.stdout.write(`done. model saved to ${savedPath}\n`);
     return 0;
   } catch (e) {
     if (tty) process.stderr.write(`\n`);
@@ -236,6 +237,7 @@ export async function runLocalModelsStart(): Promise<number> {
         dataDir,
         modelId: mid,
         port: cfg.localModels.managed.port,
+        contextSize: cfg.localModels.managed.contextSize,
         ...(tpl ? { chatTemplateFile: tpl } : {}),
         ...(mmprojFile ? { mmprojFile } : {}),
         ...(device ? { device } : {}),
@@ -436,8 +438,8 @@ export async function runLocalModelsPullEmbedding(
     await downloadEmbeddingModel(dataDir, m, { onProgress });
     if (tty) process.stderr.write(`\n`);
     else if (lastLine) process.stderr.write(`done: ${lastLine}\n`);
-    const path = `${dataDir}/models/${m.id}/${m.filename}`;
-    process.stdout.write(`done. embedding model saved to ${path}\n`);
+    const savedPath = join(dataDir, "models", m.id, m.filename);
+    process.stdout.write(`done. embedding model saved to ${savedPath}\n`);
     return 0;
   } catch (e) {
     process.stderr.write(

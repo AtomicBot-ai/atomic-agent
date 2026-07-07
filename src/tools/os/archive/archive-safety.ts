@@ -48,14 +48,20 @@ export function sanitizeEntryPath(
   if (rawPath.includes("\0")) {
     return { ok: false, error: { reason: "null_byte" } };
   }
-  if (rawPath.includes("\\")) {
+  // On Windows the backslash is a path separator, so a backslash-bearing
+  // entry (produced by non-conformant Windows zip tools) is normalised to
+  // `/` and re-vetted for traversal below. On POSIX the backslash is a legal
+  // filename character, so its presence is almost always a Windows-path
+  // injection attempt and is rejected outright.
+  if (process.platform !== "win32" && rawPath.includes("\\")) {
     return { ok: false, error: { reason: "backslash_in_path" } };
   }
-  if (rawPath.startsWith("/") || /^[A-Za-z]:/.test(rawPath)) {
+  const unified = rawPath.replace(/\\/g, "/");
+  if (unified.startsWith("/") || /^[A-Za-z]:/.test(unified)) {
     return { ok: false, error: { reason: "absolute_path" } };
   }
   // Strip trailing `/` (common for directory entries); drop `./` prefix.
-  let normalised = rawPath.replace(/\/+$/, "");
+  let normalised = unified.replace(/\/+$/, "");
   if (normalised.startsWith("./")) normalised = normalised.slice(2);
   if (normalised === "." || normalised.length === 0) {
     return { ok: false, error: { reason: "empty_path" } };

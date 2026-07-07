@@ -98,10 +98,16 @@ describe("HermesImporter", () => {
   let stateDir: string;
   let sessionStore: SessionStore;
   let taskStore: TaskStore;
+  // Track every source so we can close its (readonly) SQLite handle in
+  // teardown; on Windows an open handle keeps state.db locked and rmSync
+  // fails with EPERM.
+  let sources: HermesSource[] = [];
 
   function buildImporter(): HermesImporter {
+    const source = new HermesSource(sourceDir);
+    sources.push(source);
     return new HermesImporter({
-      source: new HermesSource(sourceDir),
+      source,
       sessionStore,
       taskStore,
       stateDir,
@@ -112,6 +118,7 @@ describe("HermesImporter", () => {
   }
 
   beforeEach(() => {
+    sources = [];
     sourceDir = mkdtempSync(join(tmpdir(), "hermes-src-"));
     stateDir = mkdtempSync(join(tmpdir(), "hermes-dst-"));
     sessionStore = new SessionStore({ dbFile: join(stateDir, "sessions.sqlite") });
@@ -121,8 +128,9 @@ describe("HermesImporter", () => {
   afterEach(() => {
     sessionStore.close();
     taskStore.close();
-    rmSync(sourceDir, { recursive: true, force: true });
-    rmSync(stateDir, { recursive: true, force: true });
+    for (const source of sources) source.close();
+    rmSync(sourceDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    rmSync(stateDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
 
   it("imports sessions and cron jobs", () => {
@@ -186,8 +194,11 @@ describe("HermesImporter", () => {
     const opts = { options: ["sessions" as const], execute: true, overwrite: false };
     buildImporter().run(opts);
 
-    // Mutate the source so the mapped transcript differs.
-    rmSync(join(sourceDir, "state.db"));
+    // Mutate the source so the mapped transcript differs. Close any open
+    // source handle first: on Windows the readonly SQLite handle keeps
+    // state.db locked and rmSync would fail with EPERM.
+    for (const source of sources) source.close();
+    rmSync(join(sourceDir, "state.db"), { maxRetries: 5, retryDelay: 100 });
     seedStateDb(
       sourceDir,
       [{ id: "s-1" }],

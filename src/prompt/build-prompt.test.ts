@@ -113,6 +113,29 @@ describe("buildPrompt", () => {
     expect(text).not.toMatch(/\n### lessons\n/);
   });
 
+  it("appends a Windows platform hint to the stable prefix only on win32 capabilities", () => {
+    const session = mkSession();
+    const darwin = buildPrompt({
+      session,
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const windows = buildPrompt({
+      session,
+      toolDescriptors: TOOLS,
+      capabilities: { ...CAPS, platform: "win32" },
+      skillCatalog: SKILLS,
+    });
+    expect(darwin.stablePrefix).not.toContain("Windows environment:");
+    expect(windows.stablePrefix).toContain("Windows environment:");
+    expect(windows.stablePrefix).toContain("findstr");
+    expect(windows.stablePrefix).toContain("%VAR%");
+    // The Windows hint changes the stable prefix deterministically by
+    // platform — the two hashes differ but each is stable per platform.
+    expect(windows.stablePrefix).not.toBe(darwin.stablePrefix);
+  });
+
   it("mentions `### lessons` in the persona stable prefix (KV-cache change #1)", () => {
     const session = mkSession();
     const { stablePrefix } = buildPrompt({

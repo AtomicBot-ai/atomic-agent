@@ -1,11 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import { pdfExtractor } from "./pdf-extractor.js";
 
 const FIXTURE_PATH = resolve(
-  new URL("../../test-fixtures/sample.pdf", import.meta.url).pathname,
+  fileURLToPath(new URL("../../test-fixtures/sample.pdf", import.meta.url)),
 );
 
 describe("pdfExtractor", () => {

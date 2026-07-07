@@ -123,11 +123,16 @@ async function collectPosix(signal: AbortSignal): Promise<ProcessInfo[]> {
 }
 
 /**
- * Windows path — `tasklist /FO CSV /V` gives verbose output with user,
- * CPU time, and memory. We skip the header row.
+ * Windows path — plain `tasklist /FO CSV /NH`. We deliberately avoid the
+ * verbose `/V` flag: on Windows it queries the session/user/window-title of
+ * every process and routinely takes tens of seconds, blowing the timeout.
+ * The non-verbose form returns in well under a second at the cost of the
+ * user column (CPU%/MEM% are already unavailable here anyway).
+ *
+ * Non-verbose columns: Image Name, PID, Session Name, Session#, Mem Usage.
  */
 async function collectWindows(signal: AbortSignal): Promise<ProcessInfo[]> {
-  const result = await runCommand("tasklist", ["/FO", "CSV", "/NH", "/V"], {
+  const result = await runCommand("tasklist", ["/FO", "CSV", "/NH"], {
     cwd: process.cwd(),
     signal,
     timeoutMs: 15_000,
@@ -143,15 +148,13 @@ async function collectWindows(signal: AbortSignal): Promise<ProcessInfo[]> {
     const line = raw.trim();
     if (!line) continue;
     const fields = parseCsvRow(line);
-    // Expected columns (tasklist /V): Image Name, PID, Session Name,
-    // Session#, Mem Usage, Status, User Name, CPU Time, Window Title.
-    if (fields.length < 8) continue;
+    if (fields.length < 2) continue;
     const pid = Number(fields[1]);
     if (!Number.isFinite(pid)) continue;
     rows.push({
       pid,
       ppid: null,
-      user: fields[6] ?? "",
+      user: "",
       cpuPercent: null,
       memPercent: null,
       command: fields[0] ?? "",

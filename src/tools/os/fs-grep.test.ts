@@ -6,9 +6,15 @@ import type {
 import type { ToolContext } from "../tool-registry.js";
 import { buildOsFsGrepTool, parseRipgrepJson } from "./fs-grep.js";
 
+// A platform-native absolute root: the grep runner is mocked in these tests
+// so the path is never touched on disk, but it must be a valid absolute path
+// for the host so `resolveUserPath` does not reject a Unix path on Windows.
+const FIXTURE_ROOT =
+  process.platform === "win32" ? "C:\\tmp\\fixture" : "/tmp/fixture";
+
 function makeCtx(): ToolContext {
   return {
-    workingDir: "/tmp/fixture",
+    workingDir: FIXTURE_ROOT,
     sessionId: "test",
     stepIndex: 0,
     signal: new AbortController().signal,

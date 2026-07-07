@@ -33,6 +33,12 @@ export interface LlmHealthState {
    * `null` until the first successful `/props` call.
    */
   model: string | null;
+  /**
+   * Physical context window (`n_ctx`) reported by `/props`, or `null`
+   * until the first successful `/props` call / on an older build that
+   * does not expose it. Surfaced in the prompt meta-row as `ctx <n>`.
+   */
+  contextWindow: number | null;
 }
 
 export function createInitialLlmHealthState(): LlmHealthState {
@@ -42,5 +48,6 @@ export function createInitialLlmHealthState(): LlmHealthState {
     latencyMs: null,
     error: null,
     model: null,
+    contextWindow: null,
   };
 }

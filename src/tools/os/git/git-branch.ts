@@ -95,7 +95,7 @@ function parseBranches(
   currentBranch: string | null,
 ): GitBranch[] {
   const out: GitBranch[] = [];
-  for (const raw of stdout.split("\n")) {
+  for (const raw of stdout.split(/\r?\n/)) {
     if (!raw) continue;
     const parts = raw.split("\x00");
     if (parts.length < 4) continue;
