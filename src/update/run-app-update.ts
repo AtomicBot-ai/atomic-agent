@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { basename, dirname } from "node:path";
+import { dirname, posix as pathPosix, win32 as pathWin32 } from "node:path";
 
 export interface RunAppUpdateOptions {
   repo?: string;
@@ -22,29 +22,98 @@ export class AppUpdateError extends Error {
   }
 }
 
+const DEFAULT_REPO = "AtomicBot-ai/atomic-agent";
+
 /**
  * Whether the running process is the installed SEA binary (and thus a
  * self-update over `process.execPath` is meaningful). Returns `false`
  * when running under `node` / `tsx` in development — overwriting the
  * Node binary with the agent installer would be destructive.
+ *
+ * Supported on all platforms. On Windows the installer (`install.ps1`)
+ * moves the locked, running `atomic-agent.exe` (and the loaded
+ * `better_sqlite3.node`) aside before writing the new files, so the
+ * update completes while the process is live; the user relaunches to
+ * pick up the new binary.
  */
-export function canSelfUpdate(): boolean {
-  const exe = basename(process.execPath).toLowerCase();
+export function canSelfUpdate(
+  platform: NodeJS.Platform = process.platform,
+  execPath: string = process.execPath,
+): boolean {
+  const base =
+    platform === "win32"
+      ? pathWin32.basename(execPath)
+      : pathPosix.basename(execPath);
+  const exe = base.toLowerCase();
   // `node` / `node.exe` (and the rare `tsx` shim) are dev runtimes.
   if (exe.startsWith("node") || exe.startsWith("tsx")) return false;
   return exe.startsWith("atomic-agent");
 }
 
+export interface UpdateInvocation {
+  command: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+}
+
 /**
- * Re-run the canonical `install.sh` from GitHub, targeting the directory
- * of the currently-running binary so the existing install is upgraded
- * in place. The installer already handles platform detection, checksum
- * verification and extraction; we only pin the install dir and suppress
- * the rc-file PATH edit (the entry is already present on an upgrade).
+ * Build the platform-specific process invocation that re-runs the
+ * canonical installer against the current install dir. Pure — no I/O —
+ * so it is unit-testable without spawning anything.
  *
- * Only valid for the installed SEA binary — see {@link canSelfUpdate}.
- * The running process is **not** restarted; the caller must prompt the
- * user to relaunch so the new binary takes effect.
+ * - POSIX: `sh -c "curl -fsSL .../install.sh | sh"`.
+ * - Windows: `powershell.exe -Command "irm .../install.ps1 | iex"`.
+ *
+ * Both pin the install dir to the running binary's directory and
+ * suppress the PATH edit (already present on an upgrade). The installer
+ * itself handles checksum verification, extraction, and — on Windows —
+ * the locked-file swap that makes in-place self-update possible.
+ */
+export function buildUpdateInvocation(params: {
+  platform: NodeJS.Platform;
+  repo: string;
+  installDir: string;
+  version?: string;
+  baseEnv?: NodeJS.ProcessEnv;
+}): UpdateInvocation {
+  const { platform, repo, installDir, version } = params;
+  const baseEnv = params.baseEnv ?? process.env;
+  const env: NodeJS.ProcessEnv = {
+    ...baseEnv,
+    ATOMIC_AGENT_REPO: repo,
+    ATOMIC_AGENT_INSTALL_DIR: installDir,
+    // The PATH entry already exists on an upgrade; don't touch it.
+    ATOMIC_AGENT_NO_PATH: "1",
+    ...(version ? { ATOMIC_AGENT_VERSION: version } : {}),
+  };
+
+  if (platform === "win32") {
+    const scriptUrl = `https://raw.githubusercontent.com/${repo}/main/scripts/install.ps1`;
+    return {
+      command: "powershell.exe",
+      args: [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        `irm '${scriptUrl}' | iex`,
+      ],
+      env,
+    };
+  }
+
+  const scriptUrl = `https://raw.githubusercontent.com/${repo}/main/scripts/install.sh`;
+  // `curl ... | sh` mirrors the documented install path exactly so the
+  // updater never drifts from the canonical installer.
+  return { command: "sh", args: ["-c", `curl -fsSL ${scriptUrl} | sh`], env };
+}
+
+/**
+ * Re-run the canonical installer from GitHub, targeting the directory of
+ * the currently-running binary so the existing install is upgraded in
+ * place. Only valid for the installed SEA binary — see
+ * {@link canSelfUpdate}. The running process is **not** restarted; the
+ * caller must prompt the user to relaunch so the new binary takes effect.
  */
 export async function runAppUpdate(
   opts?: RunAppUpdateOptions,
@@ -55,43 +124,28 @@ export async function runAppUpdate(
         "update via your package manager or git checkout in development",
     );
   }
-  if (process.platform === "win32") {
-    throw new AppUpdateError(
-      "in-app update is not supported on Windows; download the latest " +
-        "release zip from GitHub Releases",
-    );
-  }
 
-  const repo = opts?.repo ?? "AtomicBot-ai/atomic-agent";
+  const repo = opts?.repo ?? DEFAULT_REPO;
   const installDir = dirname(process.execPath);
-  const scriptUrl = `https://raw.githubusercontent.com/${repo}/main/scripts/install.sh`;
+  const invocation = buildUpdateInvocation({
+    platform: process.platform,
+    repo,
+    installDir,
+    ...(opts?.version ? { version: opts.version } : {}),
+  });
 
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    ATOMIC_AGENT_REPO: repo,
-    ATOMIC_AGENT_INSTALL_DIR: installDir,
-    // The PATH entry already exists on an upgrade; don't touch rc files.
-    ATOMIC_AGENT_NO_PATH: "1",
-    ...(opts?.version ? { ATOMIC_AGENT_VERSION: opts.version } : {}),
-  };
-
-  // `curl ... | sh` mirrors the documented install path exactly so the
-  // updater never drifts from the canonical installer.
-  const command = `curl -fsSL ${scriptUrl} | sh`;
-
-  await runShell(command, env, opts?.onLine, opts?.signal);
+  await runProcess(invocation, opts?.onLine, opts?.signal);
   return { ok: true, installDir };
 }
 
-function runShell(
-  command: string,
-  env: NodeJS.ProcessEnv,
+function runProcess(
+  invocation: UpdateInvocation,
   onLine: ((line: string) => void) | undefined,
   signal: AbortSignal | undefined,
 ): Promise<void> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn("sh", ["-c", command], {
-      env,
+    const child = spawn(invocation.command, invocation.args, {
+      env: invocation.env,
       stdio: ["ignore", "pipe", "pipe"],
       ...(signal ? { signal } : {}),
     });

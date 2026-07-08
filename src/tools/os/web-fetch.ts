@@ -5,6 +5,7 @@ import {
 } from "../../sandbox/command-runner.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { extractWebContent, type ExtractMode } from "./web-fetch-extract.js";
+import { CurlUnavailableError, isCurlMissingError } from "./ensure-curl.js";
 import {
   assertHostAllowed,
   parseHttpUrl,
@@ -218,12 +219,18 @@ async function curlOnce(
   opts: FetchWithGuardOptions,
 ): Promise<CurlResponse> {
   const curlArgs = buildCurlArgs(url, pinnedIp);
-  const result = await opts.runCommand("curl", curlArgs, {
-    cwd: opts.cwd,
-    timeoutMs: DEFAULT_TIMEOUT_MS + 2_000,
-    signal: opts.signal,
-    maxOutputBytes: MAX_RESPONSE_BYTES + 1024,
-  });
+  let result: CommandResult;
+  try {
+    result = await opts.runCommand("curl", curlArgs, {
+      cwd: opts.cwd,
+      timeoutMs: DEFAULT_TIMEOUT_MS + 2_000,
+      signal: opts.signal,
+      maxOutputBytes: MAX_RESPONSE_BYTES + 1024,
+    });
+  } catch (err) {
+    if (isCurlMissingError(err)) throw new CurlUnavailableError();
+    throw err;
+  }
   if (result.exitCode !== 0) {
     throw new Error(`${TOOL_NAME}: ${formatCurlError(result)}`);
   }

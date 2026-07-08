@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
@@ -47,7 +48,9 @@ function formatLatency(llmMs: number | null, stepMs: number | null): string {
 }
 
 function shortenPath(value: string): string {
-  const home = process.env.HOME;
+  // `process.env.HOME` is typically empty on Windows (`USERPROFILE` is used
+  // instead); `os.homedir()` is cross-platform.
+  const home = homedir();
   if (home && value.startsWith(home)) return `~${value.slice(home.length)}`;
   return value;
 }

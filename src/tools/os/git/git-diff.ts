@@ -85,7 +85,7 @@ function parsePaths(raw: unknown): string[] {
 function countAddRemove(diff: string): { added: number; removed: number } {
   let added = 0;
   let removed = 0;
-  for (const line of diff.split("\n")) {
+  for (const line of diff.split(/\r?\n/)) {
     if (line.startsWith("+") && !line.startsWith("+++")) added++;
     else if (line.startsWith("-") && !line.startsWith("---")) removed++;
   }

@@ -2,12 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { ApprovalGate } from "../../../approval/approval-gate.js";
 import type { ToolContext } from "../../tool-registry.js";
 import { buildOsFsArchiveExtractTool } from "./extract-tool.js";
 
 const FIXTURES = resolve(
-  new URL("../test-fixtures", import.meta.url).pathname,
+  fileURLToPath(new URL("../test-fixtures", import.meta.url)),
 );
 
 function makeCtx(workingDir: string): ToolContext {

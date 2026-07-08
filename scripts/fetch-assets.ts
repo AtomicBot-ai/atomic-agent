@@ -22,6 +22,7 @@ import { createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { argv, exit, platform, stdout, stderr } from "node:process";
+import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
 import {
   BUNDLE_TARGETS,
@@ -29,7 +30,9 @@ import {
   type BundleTarget,
 } from "./bundle-targets.js";
 
-const ROOT = resolve(new URL("..", import.meta.url).pathname);
+// `new URL(...).pathname` yields `/C:/...` on Windows, which breaks every
+// downstream path op. `fileURLToPath` returns a native `C:\...` path.
+const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const RIPGREP_VERSION = "14.1.1";
 const RIPGREP_BASE_URL = `https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}`;
 

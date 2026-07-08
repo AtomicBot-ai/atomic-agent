@@ -41,13 +41,29 @@ describe("sanitizeEntryPath", () => {
     });
   });
 
-  it("rejects backslashes inside entry names", () => {
-    withTmp((dir) => {
-      const result = sanitizeEntryPath(dir, "foo\\bar.txt");
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.error.reason).toBe("backslash_in_path");
-    });
-  });
+  it.skipIf(process.platform === "win32")(
+    "rejects backslashes inside entry names (POSIX)",
+    () => {
+      withTmp((dir) => {
+        const result = sanitizeEntryPath(dir, "foo\\bar.txt");
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.error.reason).toBe("backslash_in_path");
+      });
+    },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "treats backslashes as path separators on Windows",
+    () => {
+      withTmp((dir) => {
+        // On Windows `\` is a legitimate separator, so archive entries with
+        // backslashes are normalised to `/` and validated as nested paths.
+        const result = sanitizeEntryPath(dir, "foo\\bar.txt");
+        expect(result.ok).toBe(true);
+        if (result.ok) expect(result.value.normalised).toBe("foo/bar.txt");
+      });
+    },
+  );
 
   it("rejects zip-slip traversal", () => {
     withTmp((dir) => {

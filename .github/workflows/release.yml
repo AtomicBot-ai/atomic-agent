@@ -1,6 +1,8 @@
-# SEA release: build per-target Node SEA CLI, sign+notarize macOS, upload draft GitHub Release.
-# Secrets (match openclaw / electron-desktop): MACOS_CSC_LINK, MACOS_CSC_KEY_PASSWORD,
+# SEA release: build per-target Node SEA CLI, sign+notarize macOS, sign Windows, upload draft GitHub Release.
+# macOS secrets (match openclaw / electron-desktop): MACOS_CSC_LINK, MACOS_CSC_KEY_PASSWORD,
 # NOTARYTOOL_KEY, NOTARYTOOL_KEY_ID, NOTARYTOOL_ISSUER
+# Windows code-signing secrets (DigiCert KeyLocker, match electron-desktop): SM_API_KEY,
+# SM_CLIENT_CERT_FILE_B64, SM_CLIENT_CERT_PASSWORD, SM_CODE_SIGNING_CERT_SHA1_HASH
 
 name: Release (SEA)
 
@@ -29,10 +31,15 @@ jobs:
         include:
           - { slug: darwin-arm64, os: macos-14 }
           - { slug: linux-x64, os: ubuntu-22.04 }
-          # Temporarily disabled while Windows path bug in scripts is under investigation:
+          # win32-x64 re-enabled after the Windows path bug in the build
+          # scripts (`new URL(...).pathname` → `fileURLToPath`) was fixed.
+          # windows-2022 ships MSVC build tools so `better-sqlite3` rebuilds
+          # natively during `npm ci`.
+          - { slug: win32-x64, os: windows-2022 }
+          # Still disabled (own runner-availability / cost considerations,
+          # unrelated to the Windows fix):
           # - { slug: darwin-x64, os: macos-13 }
           # - { slug: linux-arm64, os: ubuntu-24.04-arm }
-          # - { slug: win32-x64, os: windows-2022 }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     permissions:
@@ -121,6 +128,105 @@ jobs:
             exit 0
           fi
           "./scripts/notarize-mac-binary.sh" "bundle/${{ matrix.slug }}/atomic-agent"
+
+      # --- Windows code signing (DigiCert KeyLocker) -----------------------------
+      # We sign the SOURCE files BEFORE `Package bundle` copies them into the zip.
+      # PE Authenticode signatures live inside the file and survive a plain copy,
+      # so signing here yields a fully signed archive without splitting the
+      # stage/archive step. Targets: the SEA binary (already at bundle/<slug>/),
+      # plus the ripgrep and better-sqlite3 sources that package-bundle.ts pulls
+      # into vendor/ and node_modules/ later.
+      - name: Setup DigiCert KeyLocker (Windows)
+        if: matrix.slug == 'win32-x64'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_FILE_B64: ${{ secrets.SM_CLIENT_CERT_FILE_B64 }}
+        run: |
+          $headers = @{ "x-api-key" = $env:SM_API_KEY }
+          $smctlUrl = "https://one.digicert.com/signingmanager/api-ui/v1/releases/smtools-windows-x64.msi/download"
+          Invoke-WebRequest -Uri $smctlUrl -Headers $headers -OutFile smtools.msi
+          Start-Process msiexec.exe -ArgumentList "/i", "smtools.msi", "/quiet", "/norestart" -Wait
+
+          $smctlPath = "C:\Program Files\DigiCert\DigiCert One Signing Manager Tools"
+          echo "$smctlPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+          $certBytes = [Convert]::FromBase64String($env:SM_CLIENT_CERT_FILE_B64)
+          $certPath = "$env:RUNNER_TEMP\digicert_client_cert.p12"
+          [IO.File]::WriteAllBytes($certPath, $certBytes)
+          echo "SM_CLIENT_CERT_FILE=$certPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Verify DigiCert KeyLocker setup (Windows)
+        if: matrix.slug == 'win32-x64'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_HOST: https://clientauth.one.digicert.com
+        run: smctl healthcheck
+
+      - name: Sync certificates to Windows Store (Windows)
+        if: matrix.slug == 'win32-x64'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_HOST: https://clientauth.one.digicert.com
+        run: smctl windows certsync
+
+      - name: Setup Windows SDK signtool (Windows)
+        if: matrix.slug == 'win32-x64'
+        shell: pwsh
+        run: |
+          $signtoolPath = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "signtool.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -like "*\x64\*" } |
+            Sort-Object { [version]($_.FullName -replace '.*\\(\d+\.\d+\.\d+\.\d+)\\.*', '$1') } -Descending |
+            Select-Object -First 1
+
+          if ($signtoolPath) {
+            $signtoolDir = $signtoolPath.DirectoryName
+            Write-Host "Found signtool at: $signtoolDir"
+            echo "$signtoolDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          } else {
+            Write-Error "signtool.exe not found in Windows SDK"
+            exit 1
+          }
+
+      - name: Sign Windows binaries with DigiCert KeyLocker
+        if: matrix.slug == 'win32-x64'
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
+          SM_HOST: https://clientauth.one.digicert.com
+        run: |
+          $ErrorActionPreference = "Stop"
+          $targets = @()
+
+          # SEA binary — signed in place; package-bundle.ts archives this dir as-is.
+          $sea = "bundle\win32-x64\atomic-agent.exe"
+          if (-not (Test-Path $sea)) {
+            Write-Error "SEA binary not found at $sea"
+            exit 1
+          }
+          $targets += (Get-Item $sea).FullName
+
+          # ripgrep source — package-bundle copies it into vendor/rg.exe later.
+          $rg = "assets\ripgrep\win32-x64\rg.exe"
+          if (Test-Path $rg) { $targets += (Get-Item $rg).FullName }
+
+          # better-sqlite3 native addon source — copied into node_modules/ later.
+          $sqlite = Get-ChildItem -Path "node_modules\better-sqlite3\build\Release" -Filter "*.node" -ErrorAction SilentlyContinue
+          foreach ($f in $sqlite) { $targets += $f.FullName }
+
+          Write-Host "Signing $($targets.Count) binaries"
+          foreach ($t in $targets) {
+            Write-Host "Signing: $t"
+            signtool sign /sha1 $env:SM_CODE_SIGNING_CERT_SHA1_HASH /tr http://timestamp.digicert.com /td SHA256 /fd SHA256 "$t"
+            signtool verify /pa "$t"
+          }
+      # --- end Windows code signing ---------------------------------------------
 
       - name: Package bundle
         run: npx tsx scripts/package-bundle.ts "${{ matrix.slug }}"

@@ -72,6 +72,52 @@ const DANGEROUS_PATTERNS: readonly PatternRule[] = [
     regex: /\bnpm\s+(?:uninstall|unpublish)\b/,
     reason: "package mutation",
   },
+  // Windows destructive operations (require approval, not outright block).
+  {
+    id: "dangerous.win_del_recursive",
+    regex: /\b(?:del|erase)\b.*\s\/(?:s|q)\b/,
+    reason: "recursive or forced delete",
+  },
+  {
+    id: "dangerous.win_rmdir_recursive",
+    regex: /\b(?:rd|rmdir)\b.*\s\/s\b/,
+    reason: "recursive directory delete",
+  },
+  {
+    id: "dangerous.win_remove_item_recurse",
+    regex: /\bremove-item\b.*-recurse/,
+    reason: "recursive PowerShell remove",
+  },
+  {
+    id: "dangerous.win_remove_item_force",
+    regex: /\bremove-item\b.*-force/,
+    reason: "forced PowerShell remove",
+  },
+  {
+    id: "dangerous.win_reg_delete",
+    regex: /\breg\s+delete\b/,
+    reason: "registry deletion",
+  },
+  {
+    id: "dangerous.win_takeown",
+    regex: /\btakeown\b/,
+    reason: "take ownership",
+  },
+  {
+    id: "dangerous.win_icacls_grant",
+    regex: /\bicacls\b.*\/grant/,
+    reason: "ACL modification",
+  },
+  {
+    id: "dangerous.win_net_user",
+    regex: /\bnet\s+user\b.*\/(?:add|delete)/,
+    reason: "user account mutation",
+  },
+  {
+    id: "dangerous.win_ps_download_exec",
+    regex: /\b(?:iwr|invoke-webrequest|curl|wget)\b.*\|\s*(?:iex|invoke-expression)\b/,
+    reason: "download piped into PowerShell",
+  },
 ];
 
 export const dangerousRule: Rule = {

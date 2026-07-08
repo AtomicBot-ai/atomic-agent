@@ -49,6 +49,44 @@ const HARDLINE_PATTERNS: readonly PatternRule[] = [
     regex: />\s*\/dev\/(?:sd[a-z]|hd[a-z]|nvme\d+n\d+|disk\d+)/,
     reason: "redirect into raw block device",
   },
+  // Windows catastrophic operations. `joinedLower` is lowercased and keeps
+  // backslashes, so drive roots read as `c:\`. `shutdown`/`reboot` above
+  // already cover the Windows `shutdown` command.
+  {
+    id: "hardline.win_format",
+    regex: /\bformat\s+(?:\/\S+\s+)*[a-z]:/,
+    reason: "format a Windows drive",
+  },
+  {
+    id: "hardline.win_diskpart",
+    regex: /\bdiskpart\b/,
+    reason: "disk partitioning tool",
+  },
+  {
+    id: "hardline.win_power",
+    regex: /\b(?:stop|restart)-computer\b/,
+    reason: "host power state change",
+  },
+  {
+    id: "hardline.win_cipher_wipe",
+    regex: /\bcipher\s+\/w[:\s]/,
+    reason: "secure wipe of free space",
+  },
+  {
+    id: "hardline.win_del_root",
+    regex: /\b(?:del|erase)\b.*[a-z]:\\\*/,
+    reason: "recursive delete of a drive root",
+  },
+  {
+    id: "hardline.win_del_windows",
+    regex: /\b(?:del|erase|rd|rmdir)\b.*\\windows(?:\\|\s|$)/,
+    reason: "delete of the Windows system directory",
+  },
+  {
+    id: "hardline.win_rd_root",
+    regex: /\b(?:rd|rmdir)\s+(?:\/[a-z]\s+)*\/s\s+["']?[a-z]:\\?(?:["'\s]|$)/,
+    reason: "recursive delete of a drive root",
+  },
 ];
 
 export const hardlineRule: Rule = {

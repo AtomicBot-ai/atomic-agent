@@ -144,7 +144,17 @@ export type TuiAction =
    * the first healthy `/health`. Updates the active model label shown
    * in the StatusBar without touching the rest of the health slice.
    */
-  | { type: "llm_model_updated"; model: string | null }
+  | {
+      type: "llm_model_updated";
+      model: string | null;
+      /**
+       * Physical context window (`n_ctx`) reported by `/props`, or `null`
+       * when unknown (older llama.cpp builds, cloud providers, optimistic
+       * catalog-label updates before the daemon reports). Omitted updates
+       * leave the previous value untouched.
+       */
+      contextWindow?: number | null;
+    }
   /** Refresh the always-on sidebar session list (orchestrator drives the load). */
   | { type: "recent_sessions_updated"; sessions: readonly SessionPickerEntry[] }
   /** Toggle keyboard focus between editor and sidebar. */

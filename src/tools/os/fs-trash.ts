@@ -26,7 +26,7 @@ async function trashOneDarwin(
   const inner = escapeAppleScriptDoubleQuotedSegment(absolutePath);
   const script = `tell application "Finder" to delete POSIX file "${inner}"`;
   const result = await runCommand("osascript", ["-e", script], {
-    cwd: "/",
+    cwd: process.cwd(),
     timeoutMs: 120_000,
     signal,
   });
@@ -42,13 +42,13 @@ async function trashPathsLinux(
   signal: AbortSignal,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const result = await runCommand("gio", ["trash", ...paths], {
-    cwd: "/",
+    cwd: process.cwd(),
     timeoutMs: 120_000,
     signal,
   });
   if (result.exitCode === 0) return { ok: true };
   const result2 = await runCommand("trash-put", paths, {
-    cwd: "/",
+    cwd: process.cwd(),
     timeoutMs: 120_000,
     signal,
   });
@@ -71,7 +71,7 @@ async function trashOneWindows(
   const result = await runCommand(
     "powershell.exe",
     ["-NoProfile", "-NonInteractive", "-Command", ps],
-    { cwd: "/", timeoutMs: 120_000, signal },
+    { cwd: process.cwd(), timeoutMs: 120_000, signal },
   );
   if (result.exitCode !== 0) {
     const err = [result.stderr, result.stdout].filter(Boolean).join("\n").trim();

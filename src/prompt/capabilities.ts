@@ -36,8 +36,11 @@ export async function buildCapabilities(
 export type WhichRunner = (bin: string) => Promise<boolean>;
 
 async function defaultWhich(bin: string): Promise<boolean> {
+  // Windows has no `which`; the built-in analogue is `where`.
+  const [tool, args] =
+    platform() === "win32" ? ["where", [bin]] : ["which", [bin]];
   try {
-    const result = await runCommand("which", [bin], {
+    const result = await runCommand(tool, args, {
       cwd: process.cwd(),
       timeoutMs: 2000,
     });

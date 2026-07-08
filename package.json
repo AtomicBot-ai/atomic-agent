@@ -1,6 +1,6 @@
 {
   "name": "atomic-agent",
-  "version": "0.1.57",
+  "version": "0.1.61",
   "description": "Lightweight local operator agent (browser + OS) runtime for Tauri apps. Connects to an external llama.cpp server via HTTP and exposes a sidecar NDJSON protocol plus a debug CLI.",
   "license": "MIT",
   "type": "module",
@@ -20,7 +20,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-starter-skills.mjs",
     "build:watch": "tsc -p tsconfig.json --watch",
-    "clean": "rm -rf dist",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc -p tsconfig.json --noEmit",

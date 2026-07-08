@@ -53,6 +53,30 @@ describe("buildLlamaServerArgs", () => {
     ]);
     expect(args).not.toContain("--mmproj");
     expect(args).not.toContain("--chat-template-file");
+    // No effective context passed ⇒ no --ctx-size (llama.cpp default).
+    expect(args).not.toContain("--ctx-size");
+  });
+
+  it("appends --ctx-size when an effective context size is provided", () => {
+    const args = buildLlamaServerArgs(
+      baseOpts,
+      "/tmp/data/models/qwen-3.5-4b/weights.gguf",
+      "qwen-3.5-4b",
+      16384,
+    );
+    const idx = args.indexOf("--ctx-size");
+    expect(idx).toBeGreaterThan(-1);
+    expect(args[idx + 1]).toBe("16384");
+  });
+
+  it("does NOT append --ctx-size when the effective size is 0", () => {
+    const args = buildLlamaServerArgs(
+      baseOpts,
+      "/tmp/data/models/qwen-3.5-4b/weights.gguf",
+      "qwen-3.5-4b",
+      0,
+    );
+    expect(args).not.toContain("--ctx-size");
   });
 
   it("appends --chat-template-file when chatTemplateFile is set", () => {

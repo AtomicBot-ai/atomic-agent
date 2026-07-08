@@ -773,6 +773,15 @@ export interface UserManagedLocalLlmConfig {
    * Resolved in `startDaemon` via `resolveManagedDevice`.
    */
   device: string;
+  /**
+   * llama-server context window (`--ctx-size`) for the managed chat
+   * daemon.
+   *   - `0` (default) — auto: fit the context to the target device's
+   *     free VRAM at start (see `estimateContextSize`).
+   *   - a positive value — pin `--ctx-size` exactly, clamped only to the
+   *     model's trained context ceiling.
+   */
+  contextSize: number;
 }
 
 /**
@@ -1287,7 +1296,7 @@ export interface UserConfigFile {
 // v31: skills gains `clawhub` (ClawHub registry — the primary skill
 // marketplace). Older files inherit it enabled against the public registry
 // with suspicious skills hidden.
-export const USER_CONFIG_VERSION = 31 as const;
+export const USER_CONFIG_VERSION = 32 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1359,6 +1368,10 @@ export type RewriterGateMode = "heuristic" | "embedding" | "always";
  * managed daemon auto-picks the best GPU at start; older files inherit
  * `"auto"` transparently. v27 added `web.search.*` for the native
  * keyless-first `os.web.search` tool and provider selection.
+ * v31→v32 added `localModels.managed.contextSize` (default `0` = auto):
+ * the managed chat daemon fits `--ctx-size` to the target device's free
+ * VRAM at start; a positive value pins the context explicitly. Older
+ * files inherit `0` transparently.
  * Older files are transparently upgraded by filling missing
  * blocks/fields from `USER_CONFIG_DEFAULTS`. Anything older than v5
  * is not migrated: this is active development, callers delete their
@@ -1391,6 +1404,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   28,
   29,
   30,
+  31,
   USER_CONFIG_VERSION,
 ];
 
@@ -1406,6 +1420,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       dataDirOverride: null,
       autoUpdate: false,
       device: "auto",
+      contextSize: 0,
     },
     embeddings: {
       enabled: false,
@@ -2295,6 +2310,35 @@ function parseMcpEnv(
   return out;
 }
 
+// HTTP header field names are RFC 7230 tokens, not env-var names — they
+// routinely contain hyphens (`X-CMC-MCP-API-KEY`). Validate against the token
+// grammar instead of the `[A-Za-z_][A-Za-z0-9_]*` pattern used for stdio `env`.
+const HTTP_HEADER_NAME_RE = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
+
+function parseMcpHeaders(
+  raw: unknown,
+  field: string,
+): Record<string, string> | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, `expected object, got ${JSON.stringify(raw)}`);
+  }
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!HTTP_HEADER_NAME_RE.test(k)) {
+      throw new ConfigValidationError(
+        `${field}.${k}`,
+        "http header name must be a valid RFC 7230 token",
+      );
+    }
+    if (typeof v !== "string") {
+      throw new ConfigValidationError(`${field}.${k}`, "http header value must be a string");
+    }
+    out[k] = v;
+  }
+  return out;
+}
+
 function parseMcpTransport(raw: unknown, field: string): McpTransport {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw new ConfigValidationError(field, "expected transport object");
@@ -2319,7 +2363,7 @@ function parseMcpTransport(raw: unknown, field: string): McpTransport {
     const headers =
       obj.headers === undefined || obj.headers === null
         ? undefined
-        : parseMcpEnv(obj.headers, `${field}.headers`);
+        : parseMcpHeaders(obj.headers, `${field}.headers`);
     return {
       kind: "streamable_http",
       url,
@@ -2331,7 +2375,7 @@ function parseMcpTransport(raw: unknown, field: string): McpTransport {
     const headers =
       obj.headers === undefined || obj.headers === null
         ? undefined
-        : parseMcpEnv(obj.headers, `${field}.headers`);
+        : parseMcpHeaders(obj.headers, `${field}.headers`);
     return {
       kind: "sse",
       url,
@@ -2542,6 +2586,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     device: parseNonEmptyString(
       rawManaged.device ?? USER_CONFIG_DEFAULTS.localModels.managed.device,
       "localModels.managed.device",
+    ),
+    contextSize: parseNonNegativeInt(
+      rawManaged.contextSize ??
+        USER_CONFIG_DEFAULTS.localModels.managed.contextSize,
+      "localModels.managed.contextSize",
     ),
   };
 

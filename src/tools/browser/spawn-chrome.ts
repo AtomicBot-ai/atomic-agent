@@ -31,6 +31,31 @@ export interface RunningChrome {
   cdpUrl: string;
 }
 
+/**
+ * Kill a process and its descendants. On Windows `proc.kill` only signals
+ * the direct child, leaving Chrome's helper processes (GPU, renderers)
+ * orphaned; `taskkill /T /F` walks the whole tree. Falls back to SIGKILL
+ * when the pid is gone or taskkill cannot be spawned.
+ */
+function killProcessTree(proc: ChildProcess): void {
+  if (process.platform === "win32" && typeof proc.pid === "number") {
+    try {
+      spawn("taskkill", ["/PID", String(proc.pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      return;
+    } catch {
+      // fall through to SIGKILL
+    }
+  }
+  try {
+    proc.kill("SIGKILL");
+  } catch {
+    // already dead
+  }
+}
+
 export async function spawnChrome(input: SpawnChromeInput): Promise<RunningChrome> {
   await mkdir(input.userDataDir, { recursive: true });
 
@@ -69,11 +94,7 @@ export async function spawnChrome(input: SpawnChromeInput): Promise<RunningChrom
       exitPromise,
     ]);
   } catch (err) {
-    try {
-      proc.kill("SIGKILL");
-    } catch {
-      // ignore
-    }
+    killProcessTree(proc);
     throw err;
   }
 
@@ -154,6 +175,13 @@ export async function stopChrome(
   const exited = new Promise<void>((resolve) => {
     proc.once("exit", () => resolve());
   });
+  // Windows has no graceful SIGTERM for Chrome's process tree — go straight
+  // to `taskkill /T /F` so no orphaned helper processes linger.
+  if (process.platform === "win32") {
+    killProcessTree(proc);
+    await Promise.race([exited, delay(graceMs)]);
+    return;
+  }
   try {
     proc.kill("SIGTERM");
   } catch {
@@ -164,11 +192,7 @@ export async function stopChrome(
     delay(graceMs).then(() => "timeout" as const),
   ]);
   if (timed === "timeout") {
-    try {
-      proc.kill("SIGKILL");
-    } catch {
-      // already dead
-    }
+    killProcessTree(proc);
     await exited;
   }
 }

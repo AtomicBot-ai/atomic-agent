@@ -87,7 +87,11 @@ export class LlmHealthPoller {
     this.url = nextUrl;
     this.hasSettledResult = false;
     this.modelFetchedForUrl = false;
-    this.emitter.emit({ type: "llm_model_updated", model: null });
+    this.emitter.emit({
+      type: "llm_model_updated",
+      model: null,
+      contextWindow: null,
+    });
     if (!this.stopped) void this.tick();
   }
 
@@ -185,11 +189,12 @@ export class LlmHealthPoller {
       if (!response.ok) return;
       const json = (await response.json()) as Record<string, unknown>;
       const label = extractModelLabel(json);
+      const contextWindow = extractContextWindow(json);
       // Mark as fetched even when the field is missing so we do not
       // hammer `/props` every tick on older llama.cpp builds.
       this.modelFetchedForUrl = true;
       if (this.stopped) return;
-      this.emitter.emit({ type: "llm_model_updated", model: label });
+      this.emitter.emit({ type: "llm_model_updated", model: label, contextWindow });
     } catch {
       // Swallow: a one-off `/props` failure must not disturb the
       // health loop. We simply retry on the next URL change.
@@ -230,4 +235,25 @@ function extractModelLabel(props: Record<string, unknown>): string | null {
 function basename(value: string): string {
   const parts = value.split(/[\\/]/);
   return parts[parts.length - 1] || value;
+}
+
+/**
+ * Best-effort extraction of the physical context window (`n_ctx`) from
+ * the `/props` response. Mirrors the bootstrap `ModelProfile.contextWindow`
+ * resolution: prefer `default_generation_settings.n_ctx`, fall back to a
+ * root-level `n_ctx`. Returns `null` when neither is a positive number.
+ */
+function extractContextWindow(props: Record<string, unknown>): number | null {
+  const candidates: Array<unknown> = [
+    (props["default_generation_settings"] as Record<string, unknown> | undefined)?.[
+      "n_ctx"
+    ],
+    props["n_ctx"],
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "number" && Number.isFinite(candidate) && candidate > 0) {
+      return candidate;
+    }
+  }
+  return null;
 }

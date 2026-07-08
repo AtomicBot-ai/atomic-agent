@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { runCommand } from "../../../sandbox/command-runner.js";
 import type { ToolContext } from "../../tool-registry.js";
 
@@ -29,7 +29,7 @@ export async function runGitRaw(
     timeoutMs: 10_000,
     env: {
       ...process.env,
-      GIT_PAGER: "cat",
+      GIT_PAGER: "",
       GIT_TERMINAL_PROMPT: "0",
       GIT_AUTHOR_DATE: "2024-01-01T00:00:00Z",
       GIT_COMMITTER_DATE: "2024-01-01T00:00:00Z",
@@ -49,7 +49,7 @@ export async function writeRepoFile(
   content: string,
 ): Promise<void> {
   const full = join(repo, relPath);
-  const parent = full.substring(0, full.lastIndexOf("/"));
+  const parent = dirname(full);
   if (parent && parent !== repo) await mkdir(parent, { recursive: true });
   await writeFile(full, content, "utf8");
 }

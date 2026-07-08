@@ -13,6 +13,13 @@ export interface GpuDevice {
   id: string;
   description: string;
   totalMemMiB: number;
+  /**
+   * Free VRAM reported alongside the total (`... MiB, <free> MiB free`),
+   * or `0` when the backend did not report a free figure. Used by the
+   * managed-daemon context auto-sizer to fit the KV cache into whatever
+   * is left after the weights load.
+   */
+  freeMemMiB: number;
 }
 
 /**
@@ -49,13 +56,18 @@ export function parseListDevices(output: string): GpuDevice[] {
     let rest = match[2].trim();
     if (rest.length === 0) continue;
     let totalMemMiB = 0;
+    let freeMemMiB = 0;
     const memMatch = rest.match(/\((\d+)\s*MiB/i);
     if (memMatch && memMatch[1] !== undefined) {
       totalMemMiB = Number(memMatch[1]);
+      const freeMatch = rest.match(/,\s*(\d+)\s*MiB\s*free/i);
+      if (freeMatch && freeMatch[1] !== undefined) {
+        freeMemMiB = Number(freeMatch[1]);
+      }
       const parenIdx = rest.lastIndexOf("(");
       if (parenIdx > 0) rest = rest.slice(0, parenIdx).trim();
     }
-    devices.push({ id, description: rest, totalMemMiB });
+    devices.push({ id, description: rest, totalMemMiB, freeMemMiB });
   }
   return devices;
 }
