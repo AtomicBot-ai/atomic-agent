@@ -20,6 +20,7 @@ export {
 
 export {
   toSessionSummary,
+  deriveSessionTitle,
   createSession,
   listSessions,
   getSession,

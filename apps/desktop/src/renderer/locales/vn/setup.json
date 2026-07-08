@@ -1,0 +1,16 @@
+{
+  "welcome": "Chào mừng đến với Atomic Bot",
+  "description": "Để bắt đầu, khởi chạy nhanh với Atomic Bot Model hoặc chọn nhà cung cấp cục bộ hoặc từ xa của riêng bạn",
+  "descriptionWeb": "Để bắt đầu, bạn cần kết nối với mô hình đám mây bằng khóa API",
+  "quickStart": "Khởi động nhanh với Atomic Bot Model",
+  "quickStartDescription": "Không cần thiết lập",
+  "quickStartFailed": "Đã xảy ra lỗi. Vui lòng thử lại.",
+  "downloading": "Đang tải…",
+  "downloadingDescription": "Vui lòng đợi trong khi chúng tôi tải xuống mô hình. Điều này có thể mất vài phút.",
+  "orDivider": "hoặc",
+  "localModel": "Thiết lập mô hình cục bộ",
+  "remoteProvider": "Thiết lập nhà cung cấp từ xa",
+  "turboQuantTagline": "Mô hình AI cục bộ trên thiết bị — nhanh trên phần cứng phổ thông.",
+  "skip": "Bỏ qua",
+  "modelUnavailable": "Chưa có trong danh mục — mở Hub sau khi kết nối."
+}

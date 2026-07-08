@@ -53,6 +53,36 @@ describe("session-service", () => {
     expect(summary).not.toHaveProperty("turns");
   });
 
+  it("derives the title from the first user turn", () => {
+    const summary = toSessionSummary(
+      fakeState({
+        turns: [
+          { kind: "user", text: "  Hello there, agent  ", at: 1 },
+          { kind: "assistant_reply", text: "Hi", at: 2 },
+          { kind: "user", text: "second message", at: 3 },
+        ],
+      }),
+      { isBusy: () => false },
+    );
+    expect(summary.title).toBe("Hello there, agent");
+  });
+
+  it("clamps a long title to 60 chars with an ellipsis", () => {
+    const long = "a".repeat(120);
+    const summary = toSessionSummary(
+      fakeState({ turns: [{ kind: "user", text: long, at: 1 }] }),
+      { isBusy: () => false },
+    );
+    expect(summary.title).not.toBeNull();
+    expect(summary.title as string).toHaveLength(60);
+    expect(summary.title as string).toMatch(/…$/);
+  });
+
+  it("returns a null title for a session with no user turn", () => {
+    const summary = toSessionSummary(fakeState(), { isBusy: () => false });
+    expect(summary.title).toBeNull();
+  });
+
   it("creates a session and returns a summary", () => {
     const deps = makeDeps();
     const summary = createSession(deps, { metadata: { a: 1 } });

@@ -1,0 +1,24 @@
+appId: ai.atomicbot.agent.desktop
+productName: Atomic Agent
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+extraResources:
+  - from: ../../bundle
+    to: sidecar
+    filter:
+      - "**/atomic-agent-sidecar*"
+asar: true
+mac:
+  category: public.app-category.productivity
+  target:
+    - dmg
+win:
+  target:
+    - nsis
+linux:
+  target:
+    - AppImage

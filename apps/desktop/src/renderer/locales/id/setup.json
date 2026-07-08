@@ -1,0 +1,16 @@
+{
+  "welcome": "Selamat Datang di Atomic Bot",
+  "description": "Untuk memulai, luncurkan dengan cepat menggunakan Atomic Bot Model atau pilih penyedia lokal atau jarak jauh Anda sendiri",
+  "descriptionWeb": "Untuk memulai, Anda perlu terhubung ke model cloud menggunakan kunci API",
+  "quickStart": "Mulai cepat dengan Atomic Bot Model",
+  "quickStartDescription": "Tidak perlu pengaturan",
+  "quickStartFailed": "Terjadi kesalahan. Silakan coba lagi.",
+  "downloading": "Mengunduh…",
+  "downloadingDescription": "Harap tunggu saat kami mengunduh model. Ini mungkin memakan waktu beberapa menit.",
+  "orDivider": "atau",
+  "localModel": "Siapkan model lokal",
+  "remoteProvider": "Siapkan penyedia jarak jauh",
+  "turboQuantTagline": "Model AI lokal di perangkat Anda — cepat di perangkat keras rata-rata.",
+  "skip": "Lewati",
+  "modelUnavailable": "Belum ada di katalog — buka Hub setelah terhubung."
+}

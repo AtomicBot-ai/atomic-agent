@@ -1,0 +1,11 @@
+{
+  "title": "Out of context error",
+  "description": "This chat is reaching the AI’s memory limit, like a whiteboard filling up. We can expand the memory window (called context size) so it remembers more, but it may use more of your computer’s memory. We can also truncate the input, which means it will forget some of the chat history to make room for new messages.",
+  "increaseContextSizeDescription": "Do you want to increase the context size?",
+  "truncateInput": "Truncate Input",
+  "increaseContextSize": "Increase Context Size",
+  "outOfMemoryTitle": "Not enough memory to load the model",
+  "outOfMemoryDescription": "The model requires more RAM or VRAM than is currently available. Try closing other applications, picking a smaller / more quantized model, or reducing the context size.",
+  "modelLoadFailedTitle": "Failed to load the model",
+  "modelLoadFailedDescription": "The model could not be started. {{message}}"
+}

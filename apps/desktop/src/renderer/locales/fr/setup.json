@@ -1,0 +1,16 @@
+{
+  "welcome": "Bienvenue sur Atomic Bot",
+  "description": "Pour commencer, lancez rapidement avec Atomic Bot Model ou choisissez votre propre fournisseur local ou distant",
+  "descriptionWeb": "Pour commencer, vous devrez vous connecter à un modèle cloud à l'aide d'une clé API",
+  "quickStart": "Démarrage rapide avec Atomic Bot Model",
+  "quickStartDescription": "Aucune configuration requise",
+  "quickStartFailed": "Une erreur s'est produite. Veuillez réessayer.",
+  "downloading": "Téléchargement…",
+  "downloadingDescription": "Veuillez patienter pendant le téléchargement du modèle. Cela peut prendre quelques minutes.",
+  "orDivider": "ou",
+  "localModel": "Configurer le modèle local",
+  "remoteProvider": "Configurer le fournisseur distant",
+  "turboQuantTagline": "Modèles d'IA locaux sur votre appareil — très rapides sur un matériel courant.",
+  "skip": "Ignorer",
+  "modelUnavailable": "Pas encore dans le catalogue — ouvrez le Hub après connexion."
+}

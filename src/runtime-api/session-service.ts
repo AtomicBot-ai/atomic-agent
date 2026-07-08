@@ -16,6 +16,31 @@ export interface SessionSummary {
   updatedAt: number;
   lastError: string | null;
   busy: boolean;
+  /**
+   * Human-readable label for the session, derived from the first user
+   * message (trimmed + clamped). `null` when the session has no user turn
+   * yet. Consumed by the desktop sidebar thread list.
+   */
+  title: string | null;
+}
+
+/** Upper bound on the derived title length in characters. */
+const SESSION_TITLE_MAX_CHARS = 60;
+
+/**
+ * Derive a session title from the first `user` turn. Collapses internal
+ * whitespace, trims, and clamps to {@link SESSION_TITLE_MAX_CHARS}.
+ * Returns `null` when no user turn (with non-empty text) exists.
+ */
+export function deriveSessionTitle(state: SessionState): string | null {
+  for (const turn of state.turns) {
+    if (turn.kind !== "user") continue;
+    const normalized = turn.text.replace(/\s+/g, " ").trim();
+    if (normalized.length === 0) continue;
+    if (normalized.length <= SESSION_TITLE_MAX_CHARS) return normalized;
+    return `${normalized.slice(0, SESSION_TITLE_MAX_CHARS - 1).trimEnd()}…`;
+  }
+  return null;
 }
 
 export interface SessionServiceDeps {
@@ -50,6 +75,7 @@ export function toSessionSummary(
     updatedAt: state.updatedAt,
     lastError: state.lastError,
     busy: turnController.isBusy(state.id),
+    title: deriveSessionTitle(state),
   };
 }
 

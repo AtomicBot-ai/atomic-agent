@@ -98,10 +98,12 @@ export function registerSessionHandlers(ctx: SidecarHandlerContext): void {
     async (request) => {
       const { sessionId, text, maxSteps } = request.payload;
       if (!pool.has(sessionId)) {
-        throw new RuntimeApiError(
-          `session not found: ${sessionId}`,
-          "not_found",
-        );
+        // Lazily hydrate a persisted-but-not-resident session into the pool.
+        // `session.list` reads straight from `SessionStore`, so the host can
+        // surface old sessions this sidecar process never opened; sending to
+        // one must load + register it rather than 404. `getSession` throws
+        // `not_found` when the id is truly absent on disk too.
+        pool.register(getSession(sessionDeps, sessionId));
       }
       // Fresh controller per send so a completed/cancelled turn never leaks
       // its aborted signal into the next turn on this session.
