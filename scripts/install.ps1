@@ -156,6 +156,8 @@ finally {
   Remove-Item -Path $Work -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+$script:PathStatus = "added"
+
 function Add-ToUserPath($dir) {
   $current = [Environment]::GetEnvironmentVariable("Path", "User")
   if (-not $current) { $current = "" }
@@ -163,12 +165,14 @@ function Add-ToUserPath($dir) {
   foreach ($e in $entries) {
     if ($e.TrimEnd('\') -ieq $dir.TrimEnd('\')) {
       Write-Info "PATH already contains $dir"
+      $script:PathStatus = "present"
       return
     }
   }
   if ($env:ATOMIC_AGENT_NO_PATH -eq "1") {
     Write-Info "add to PATH manually (PowerShell):"
     Write-Info "  [Environment]::SetEnvironmentVariable('Path', `"$dir;`$([Environment]::GetEnvironmentVariable('Path','User'))`", 'User')"
+    $script:PathStatus = "manual"
     return
   }
   $sep = if ($current.Length -gt 0 -and -not $current.EndsWith(';')) { ";" } else { "" }
@@ -176,11 +180,26 @@ function Add-ToUserPath($dir) {
   [Environment]::SetEnvironmentVariable("Path", $updated, "User")
   # Reflect in the current session too so `atomic-agent` works right away.
   $env:Path = "$env:Path;$dir"
-  Write-Info "added $dir to user PATH (open a new terminal for it to take effect everywhere)"
+  Write-Info "added $dir to user PATH"
+  $script:PathStatus = "added"
 }
 
 Add-ToUserPath $InstallDir
 
 Write-Info ""
-Write-Info "to run:"
-Write-Info "  atomic-agent"
+switch ($script:PathStatus) {
+  "present" {
+    Write-Info "to run:"
+    Write-Info "  atomic-agent"
+  }
+  "manual" {
+    Write-Info "atomic-agent is NOT on your PATH yet."
+    Write-Info "add $InstallDir to your PATH, then run:"
+    Write-Info "  atomic-agent"
+  }
+  default {
+    Write-Info "atomic-agent was added to your PATH."
+    Write-Info "it works in THIS terminal now; open a NEW terminal elsewhere, then run:"
+    Write-Info "  atomic-agent"
+  }
+}

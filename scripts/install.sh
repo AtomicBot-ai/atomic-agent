@@ -172,13 +172,18 @@ replace_dir "$STAGE/node_modules" "$INSTALL_DIR/node_modules"
 add_to_path() {
   _dir="$1"
 
+  PATH_STATUS="added"
+  RC_FILE=""
+
   case ":${PATH:-}:" in
     *":${_dir}:"*)
+      PATH_STATUS="present"
       return 0
       ;;
   esac
 
   if [ "${ATOMIC_AGENT_NO_PATH:-0}" = "1" ]; then
+    PATH_STATUS="manual"
     echo "add to PATH: export PATH=\"${_dir}:\$PATH\""
     return 0
   fi
@@ -219,6 +224,7 @@ add_to_path() {
   esac
 
   _marker="# added by atomic-agent installer"
+  RC_FILE="$_rc"
 
   mkdir -p "$(dirname "$_rc")"
   [ -f "$_rc" ] || : > "$_rc"
@@ -233,7 +239,6 @@ add_to_path() {
   } >> "$_rc"
 
   echo "added ${_dir} to PATH via ${_rc}"
-  echo "run: source \"${_rc}\"   (or open a new shell)"
 }
 
 add_to_path "$INSTALL_DIR"
@@ -246,5 +251,22 @@ fi
 
 echo
 echo "installed atomic-agent to ${INSTALL_DIR}/atomic-agent"
-echo "to run:"
-echo "atomic-agent"
+case "${PATH_STATUS:-added}" in
+  present)
+    echo "to run:"
+    echo "  atomic-agent"
+    ;;
+  manual)
+    echo "atomic-agent is NOT on your PATH yet."
+    echo "add ${INSTALL_DIR} to your PATH, then run:"
+    echo "  atomic-agent"
+    ;;
+  *)
+    echo "atomic-agent was added to your PATH."
+    echo "open a NEW terminal, then run:"
+    echo "  atomic-agent"
+    if [ -n "${RC_FILE:-}" ]; then
+      echo "(to use it in THIS terminal, first reload your shell config: ${RC_FILE})"
+    fi
+    ;;
+esac
