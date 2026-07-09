@@ -84,12 +84,14 @@ function PaletteRow({
 }): ReactElement {
   return (
     <Box>
-      <Text
-        color={selected ? theme.colors.accentSoft : theme.colors.muted}
-        bold={selected}
-      >
-        {selected ? theme.glyphs.chevronRight : " "} /{command.name}
-      </Text>
+      <Box flexShrink={0}>
+        <Text
+          color={selected ? theme.colors.accentSoft : theme.colors.muted}
+          bold={selected}
+        >
+          {selected ? theme.glyphs.chevronRight : " "} /{command.name}
+        </Text>
+      </Box>
       <Text color={theme.colors.muted}>
         {"  "}
         {command.description}
