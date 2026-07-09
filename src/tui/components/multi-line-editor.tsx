@@ -11,6 +11,7 @@ import {
   lineStart,
   rowColToCursor,
 } from "./multi-line-editor-cursor.js";
+import { normalizeInsertText } from "./multi-line-editor-input.js";
 
 export interface MultiLineEditorProps {
   value: string;
@@ -261,7 +262,18 @@ function handleKey(ctx: KeyContext): void {
   // editor does not insert it as literal text.
   if (key.ctrl || key.meta) return;
   if (input.length === 0) return;
-  if (input.charCodeAt(0) < 0x20 && input !== "\n" && input !== "\t") return;
+  // A single control char pressed on its own is ignored — but a
+  // multi-char paste burst is always sanitised and inserted, even when
+  // its first byte is a CR/control, because `normalizeInsertText` strips
+  // the offending bytes.
+  if (
+    input.length === 1 &&
+    input.charCodeAt(0) < 0x20 &&
+    input !== "\n" &&
+    input !== "\t"
+  ) {
+    return;
+  }
   insertText(ctx, input);
 }
 
@@ -274,8 +286,10 @@ function isGlobalHotkey(input: string, key: Key): boolean {
 
 function insertText(ctx: KeyContext, text: string): void {
   const { value, cursor, setBuffer } = ctx;
-  const next = value.slice(0, cursor) + text + value.slice(cursor);
-  setBuffer(next, cursor + text.length);
+  const clean = normalizeInsertText(text);
+  if (clean.length === 0) return;
+  const next = value.slice(0, cursor) + clean + value.slice(cursor);
+  setBuffer(next, cursor + clean.length);
 }
 
 function moveCursorVertically(ctx: KeyContext, direction: -1 | 1): void {
