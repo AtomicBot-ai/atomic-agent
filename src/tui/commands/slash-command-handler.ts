@@ -74,6 +74,13 @@ export interface SlashDispatchResult {
     | "token"
     | "clear-token"
     | "clear-owner";
+  /**
+   * `/analytics <verb>` (or `/privacy analytics <verb>`) side-effect.
+   * `enable` / `disable` toggle the opt-out; `status` just re-reads the
+   * persisted flag into the UI. The caller (submit-handler) maps this to
+   * the privacy orchestrator.
+   */
+  readonly analyticsVerb?: "enable" | "disable" | "status";
 }
 
 /**
@@ -220,6 +227,10 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
         { type: "ui_mode_set", mode: "debug" },
         { type: "tab_changed", tab: "import" },
       ]);
+    case "privacy":
+      return dispatchPrivacySub(parsed.args);
+    case "analytics":
+      return dispatchAnalyticsSub(parsed.args);
     default:
       return pureActions([], {
         systemMessage: `command /${resolved.name} not yet implemented`,
@@ -266,6 +277,7 @@ function pureActions(
     triggerLocalModelsStatus: false,
     setThemeName: undefined,
     telegramVerb: undefined,
+    analyticsVerb: undefined,
     ...overrides,
   };
 }
@@ -576,4 +588,51 @@ function dispatchTelegramSub(rawArgs: string): SlashDispatchResult {
           "usage: /telegram | /telegram enable | disable | start | stop | restart | pair | token | clear-token | clear-owner",
       });
   }
+}
+
+/**
+ * Sub-dispatcher for `/privacy [analytics <verb>]`. Bare `/privacy`
+ * opens the Privacy tab. `/privacy analytics on|off|status` forwards to
+ * the same analytics side-effect as the top-level `/analytics` command.
+ */
+function dispatchPrivacySub(rawArgs: string): SlashDispatchResult {
+  const argPart = rawArgs.trim();
+  if (argPart.length === 0) {
+    return pureActions([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "privacy" },
+    ]);
+  }
+  const bits = argPart.split(/\s+/);
+  if ((bits[0] ?? "").toLowerCase() === "analytics") {
+    return dispatchAnalyticsSub(bits.slice(1).join(" "));
+  }
+  return pureActions([], {
+    systemMessage: "usage: /privacy | /privacy analytics on|off|status",
+  });
+}
+
+/**
+ * Sub-dispatcher for `/analytics <verb>`. Maps `on`/`enable`,
+ * `off`/`disable`, and `status` onto `analyticsVerb`. Every verb also
+ * opens the Privacy tab so the effect is visible.
+ */
+function dispatchAnalyticsSub(rawArgs: string): SlashDispatchResult {
+  const verb = rawArgs.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+  const openPrivacyTab: TuiAction[] = [
+    { type: "ui_mode_set", mode: "debug" },
+    { type: "tab_changed", tab: "privacy" },
+  ];
+  if (verb === "on" || verb === "enable") {
+    return pureActions(openPrivacyTab, { analyticsVerb: "enable" });
+  }
+  if (verb === "off" || verb === "disable") {
+    return pureActions(openPrivacyTab, { analyticsVerb: "disable" });
+  }
+  if (verb === "status") {
+    return pureActions(openPrivacyTab, { analyticsVerb: "status" });
+  }
+  return pureActions([], {
+    systemMessage: "usage: /analytics on | off | status",
+  });
 }

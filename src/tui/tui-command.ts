@@ -315,6 +315,11 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.telegram.advanceConnect(),
         onTelegramAdvancedToggleRequested: () =>
           orchestrator.telegram.toggleAdvanced(),
+        onAnalyticsToggleRequested: () =>
+          orchestrator.privacy.toggleAnalytics(),
+        onAnalyticsSetEnabledRequested: (enabled) =>
+          orchestrator.privacy.setAnalyticsEnabled(enabled),
+        onPrivacyRefreshRequested: () => orchestrator.privacy.refresh(),
         onUpdateConfirmed: () => orchestrator.runUpdate(),
         onUpdateRestart: () => {
           restartRequested = true;

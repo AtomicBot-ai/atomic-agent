@@ -17,6 +17,7 @@ import { McpOrchestrator } from "./mcp/mcp-orchestrator.js";
 import { ImportOrchestrator } from "./import/import-orchestrator.js";
 import { ProvidersOrchestrator } from "./providers/providers-orchestrator.js";
 import { TuiTelegramOrchestrator } from "./telegram/tui-telegram-orchestrator.js";
+import { PrivacyOrchestrator } from "./privacy/privacy-orchestrator.js";
 import type { TuiEventBus } from "./tui-app.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
 import { turnsToMessages } from "./turns-to-messages.js";
@@ -86,6 +87,7 @@ export class ChatOrchestrator {
   public readonly localModels: LocalModelsOrchestrator;
   public readonly llmHealth: LlmHealthPoller;
   public readonly telegram: TuiTelegramOrchestrator;
+  public readonly privacy: PrivacyOrchestrator;
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -113,6 +115,7 @@ export class ChatOrchestrator {
       },
     });
     this.telegram = new TuiTelegramOrchestrator(runtime, bus);
+    this.privacy = new PrivacyOrchestrator(runtime, bus);
   }
 
   /**
@@ -129,6 +132,7 @@ export class ChatOrchestrator {
     this.refreshRecentSessions();
     this.llmHealth.start();
     this.telegram.start();
+    this.privacy.refresh();
     // Boot the tasks orchestrator on TUI mount so the always-on
     // sidebar's Tasks pane has fresh data without waiting for the
     // operator to open the Tasks debug tab. Idempotent — opening the

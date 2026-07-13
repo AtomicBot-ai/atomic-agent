@@ -101,6 +101,15 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     name: "import",
     description: "open the Import tab (one-shot Hermes -> atomic-agent migration)",
   },
+  {
+    name: "privacy",
+    description:
+      "open the Privacy tab · subcommands: `/privacy analytics on|off`",
+  },
+  {
+    name: "analytics",
+    description: "toggle anonymous analytics: `/analytics on|off|status`",
+  },
 ];
 
 /**

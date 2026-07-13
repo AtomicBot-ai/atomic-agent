@@ -35,6 +35,7 @@ export const MANAGE_TABS: readonly TuiTab[] = [
   "llm",
   "telegram",
   "import",
+  "privacy",
 ];
 
 /** Canonical top-level section ordering for status bar / cycling. */

@@ -454,6 +454,14 @@ export interface AgentRuntime {
     sessionId: string,
     handler: ApprovalHandler,
   ): () => void;
+  /**
+   * Hot-toggle anonymous analytics + error reporting (they share the
+   * single `config.analytics.enabled` opt-out). Rebuilds the in-memory
+   * PostHog / Sentry clients so the change applies without a restart.
+   * Persisting the flag to `config.json` is the caller's responsibility
+   * (the TUI settings tab). Idempotent.
+   */
+  setAnalyticsEnabled(enabled: boolean): Promise<void>;
   /** Close all resources (browser, sqlite, llama client). Safe to call twice. */
   shutdown(): Promise<void>;
 }
@@ -501,7 +509,11 @@ export async function createAgentRuntime(
   const analyticsStateStore = new AnalyticsStateStore(
     resolve(config.paths.stateDir, "analytics.json"),
   );
-  const analytics = createAnalyticsClient({
+  // Both clients are `let` (not `const`) so `setAnalyticsEnabled` can
+  // hot-swap them without a process restart. The `runTurn` / `onEvent` /
+  // `shutdown` closures read these variables at call time, so a reassign
+  // is picked up on the next event.
+  let analytics = createAnalyticsClient({
     enabled: config.analytics.enabled,
     installId: analyticsStateStore.getInstallId(),
     platform: process.platform,
@@ -516,14 +528,63 @@ export async function createAgentRuntime(
   // machine — never message content, paths, tool args, or IP (see
   // `src/error-reporting/`). `null` when disabled or the DSN is still
   // the placeholder sentinel.
-  const errorReporter = createSentryClient({
+  let errorReporter = createSentryClient({
     enabled: config.analytics.enabled,
     installId: analyticsStateStore.getInstallId(),
     release: getAppVersion(),
     platform: process.platform,
     logger,
   });
-  installGlobalErrorHandlers(errorReporter);
+  // Read the current reporter lazily so a hot-toggle is reflected without
+  // re-installing the process-global handlers.
+  installGlobalErrorHandlers(() => errorReporter);
+  // Live intent mirror for `setAnalyticsEnabled`. Tracks the operator's
+  // choice, which is distinct from "is a client non-null" — the factories
+  // still return `null` in test env / on a placeholder key/DSN even when
+  // enabled.
+  let analyticsEnabled = config.analytics.enabled;
+
+  /**
+   * Hot-toggle anonymous analytics (PostHog) and error reporting
+   * (Sentry) — they share the single `config.analytics.enabled` opt-out.
+   * Persisting the flag to `config.json` is the caller's job (the TUI
+   * settings tab); this method only rebuilds the in-memory clients so the
+   * change takes effect without a restart. Idempotent: a no-op when the
+   * requested value already matches the live intent.
+   */
+  const setAnalyticsEnabled = async (enabled: boolean): Promise<void> => {
+    if (enabled === analyticsEnabled) return;
+    analyticsEnabled = enabled;
+    // Tear down the previous clients (fire-safe: `shutdown` swallows its
+    // own errors) before rebuilding so queued events are flushed.
+    if (analytics) {
+      await analytics.shutdown();
+      analytics = null;
+    }
+    if (errorReporter) {
+      await errorReporter.shutdown();
+      errorReporter = null;
+    }
+    if (enabled) {
+      analytics = createAnalyticsClient({
+        enabled: true,
+        installId: analyticsStateStore.getInstallId(),
+        platform: process.platform,
+        logger,
+      });
+      // Fire the one-time `app_installed` event if it never went out
+      // while analytics was disabled (guarded by the state store).
+      captureAppInstalled(analytics, analyticsStateStore);
+      errorReporter = createSentryClient({
+        enabled: true,
+        installId: analyticsStateStore.getInstallId(),
+        release: getAppVersion(),
+        platform: process.platform,
+        logger,
+      });
+    }
+    logger.info("analytics toggled", { enabled });
+  };
 
   const traceEnabled = resolveTraceEnabled(
     config.tracing.trace.enabled,
@@ -921,6 +982,26 @@ export async function createAgentRuntime(
       adapter: provider.toolCallAdapter ?? null,
       slotAffinity: provider.capabilities.supportsSlotAffinity,
     };
+  };
+
+  /**
+   * Real model identifier for analytics. Cloud providers carry the model
+   * in their config entry (`defaultChatModel` / `model`); local llama-server
+   * exposes it as `/props.model_alias`. The detected profile id (e.g.
+   * `plain-instruct`) is only a last-resort fallback — it names the prompt
+   * profile, not the model, so it must never be the primary source.
+   */
+  const resolveActiveModelName = (): string => {
+    const resolved = resolveLlmConfig(getConfig());
+    const entry = resolved.providers.find(
+      (p) => p.id === resolved.activeTextProvider,
+    );
+    return (
+      entry?.defaultChatModel ??
+      entry?.model ??
+      modelAlias ??
+      getLiveProfile().id
+    );
   };
 
   const bootstrapLlmSlice = resolveActiveLlmSlice();
@@ -1859,7 +1940,7 @@ export async function createAgentRuntime(
     if (origin !== "scheduler") {
       captureMessageSent(analytics, analyticsStateStore, {
         provider: providerRegistry.activeText.name,
-        model: modelAlias ?? getLiveProfile().id,
+        model: resolveActiveModelName(),
       });
     }
     const submission = {
@@ -2155,6 +2236,7 @@ export async function createAgentRuntime(
     reloadLlmProvider,
     setApprovalHandlerForSession: (sessionId, handler) =>
       approvalRouter.setForSession(sessionId, handler),
+    setAnalyticsEnabled,
     shutdown,
   } as AgentRuntime & { telegramChannel: TelegramChannel | null };
   Object.defineProperty(runtime, "skillCatalog", {

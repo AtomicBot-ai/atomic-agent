@@ -181,6 +181,19 @@ export function runSlashCommand(
   if (result.telegramVerb) {
     runTelegramVerb(result.telegramVerb, callbacks);
   }
+  if (result.analyticsVerb) {
+    switch (result.analyticsVerb) {
+      case "enable":
+        void callbacks.onAnalyticsSetEnabledRequested?.(true);
+        break;
+      case "disable":
+        void callbacks.onAnalyticsSetEnabledRequested?.(false);
+        break;
+      case "status":
+        callbacks.onPrivacyRefreshRequested?.();
+        break;
+    }
+  }
 }
 
 function runTelegramVerb(

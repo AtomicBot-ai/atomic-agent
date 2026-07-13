@@ -6,6 +6,13 @@ import {
   POSTHOG_PROJECT_KEY,
 } from "./posthog-config.js";
 
+/**
+ * Sentinel IP sent as the `$ip` event property. Overriding with a truthy
+ * placeholder is the only client-side lever that prevents PostHog from
+ * storing the request's real IP (see the class doc for why `null` fails).
+ */
+const IP_PLACEHOLDER = "0.0.0.0";
+
 /** Minimal logger surface so this module does not depend on the tracing package. */
 export interface AnalyticsLogger {
   warn(message: string, context?: Record<string, unknown>): void;
@@ -26,9 +33,10 @@ export interface AnalyticsClientOptions {
  *   - attributed to the anonymous `installId` (no user/device linkage);
  *   - sent with `disableGeoip: true` (no location enrichment — also the
  *     library default as of posthog-node v3, set explicitly for clarity);
- *   - stamped with `$ip: null` so PostHog does not persist the machine's
- *     public IP (server-side ingestion uses the request IP unless `$ip`
- *     is provided in the event properties);
+ *   - stamped with `$ip: "0.0.0.0"` so PostHog persists a placeholder instead
+ *     of the machine's real public IP. PostHog's ingestion only honors a
+ *     truthy `$ip` override — a falsy value (`null`/empty) is ignored and the
+ *     request IP is captured instead, so the override must be a real string;
  *   - stamped with the `platform` OS tag (`darwin` / `linux` / `win32`).
  *
  * The client is fire-safe: capture failures are swallowed so an
@@ -64,9 +72,11 @@ export class AnalyticsClient {
           ...properties,
           // OS platform dimension, stamped on every event.
           platform: this.platform,
-          // Overrides PostHog's server-side IP capture so the machine's
-          // public IP is never stored alongside the event.
-          $ip: null,
+          // Overrides PostHog's server-side IP capture with a placeholder so
+          // the machine's real public IP is never stored. PostHog only honors
+          // a truthy `$ip` override — a `null`/falsy value is ignored and the
+          // request IP is used instead, so the sentinel MUST be a real string.
+          $ip: IP_PLACEHOLDER,
         },
         disableGeoip: true,
       });

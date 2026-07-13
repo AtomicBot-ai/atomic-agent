@@ -43,6 +43,10 @@ import {
   type ImportPanelState,
 } from "./import/import-panel-state.js";
 import {
+  createInitialPrivacyPanelState,
+  type PrivacyPanelState,
+} from "./privacy/privacy-panel-state.js";
+import {
   createInitialProvidersPanelState,
   type ProvidersPanelState,
 } from "./providers/providers-panel-state.js";
@@ -96,7 +100,8 @@ export type TuiTab =
   | "telegram"
   | "mcp"
   | "providers"
-  | "import";
+  | "import"
+  | "privacy";
 
 /**
  * Top-level UI mode: `chat` is the default single-scroll openclaw-style
@@ -335,6 +340,8 @@ export interface TuiState {
   mcpPanel: McpPanelState;
   /** State slice driving the Import tab (one-shot Hermes -> atomic-agent migration). */
   importPanel: ImportPanelState;
+  /** State slice driving the Privacy tab (data-egress preferences). */
+  privacyPanel: PrivacyPanelState;
   /** Cloud / local LLM provider registry (hot-swap active text provider). */
   providersPanel: ProvidersPanelState;
   /** Unified operator LLM panel combining provider routing and local daemon state. */
@@ -484,6 +491,7 @@ export function createInitialTuiState(
     memoryPanel: createInitialMemoryPanelState(),
     mcpPanel: createInitialMcpPanelState(),
     importPanel: createInitialImportPanelState(),
+    privacyPanel: createInitialPrivacyPanelState(),
     providersPanel: createInitialProvidersPanelState(),
     llmPanel,
     localModelsPanel: createInitialLocalModelsPanelState(),

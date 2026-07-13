@@ -9,6 +9,7 @@ import type { MemoryAction } from "./memory/memory-actions.js";
 import type { McpAction } from "./mcp/mcp-actions.js";
 import type { ImportAction } from "./import/import-actions.js";
 import type { TelegramAction } from "./telegram/telegram-actions.js";
+import type { PrivacyAction } from "./privacy/privacy-actions.js";
 import type { ProvidersAction } from "./providers/providers-actions.js";
 import type { LlmPanelAction } from "./llm-panel/llm-panel-actions.js";
 import type { ChatMessage, SessionPickerEntry, TuiTab, TuiUiMode } from "./tui-state.js";
@@ -185,6 +186,7 @@ export type TuiAction =
   | MemoryAction
   | McpAction
   | TelegramAction
+  | PrivacyAction
   | ProvidersAction
   | LlmPanelAction
   | ImportAction;

@@ -23,6 +23,7 @@ import { McpPanel } from "./mcp-panel.js";
 import { MemoryPanel } from "./memory-panel.js";
 import { ImportPanel } from "./import-panel.js";
 import { TelegramPanel } from "../telegram/components/telegram-panel.js";
+import { PrivacyPanel } from "../privacy/components/privacy-panel.js";
 import { ProvidersPanel } from "./providers-panel.js";
 
 interface DebugPaneProps {
@@ -125,6 +126,7 @@ function buildManageTabs(state: TuiState): SubTab[] {
     { id: "llm", label: "LLM" },
     { id: "telegram", label: telegramTabLabel(state) },
     { id: "import", label: "Import" },
+    { id: "privacy", label: "Privacy" },
   ];
 }
 
@@ -236,6 +238,8 @@ function ActiveDebugTab({
       return <TelegramPanel panel={state.telegramPanel} />;
     case "import":
       return <ImportPanel panel={state.importPanel} />;
+    case "privacy":
+      return <PrivacyPanel panel={state.privacyPanel} />;
     default:
       return <EventFeed state={state} maxVisible={maxVisible} />;
   }

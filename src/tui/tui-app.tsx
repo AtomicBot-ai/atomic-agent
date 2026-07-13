@@ -61,6 +61,7 @@ import { handleImportTabKey } from "./import/import-key-bindings.js";
 import type { ImportFormState } from "./import/import-panel-state.js";
 import { handleProvidersTabKey } from "./providers/providers-key-bindings.js";
 import { handleTelegramTabKey } from "./telegram/telegram-key-bindings.js";
+import { handlePrivacyTabKey } from "./privacy/privacy-key-bindings.js";
 
 export { makeTuiEventBus } from "./make-event-bus.js";
 
@@ -287,6 +288,12 @@ export interface TuiAppCallbacks {
   onTelegramAdvanceConnectRequested?(): void | Promise<void>;
   /** Telegram tab: toggle the inline advanced controls. */
   onTelegramAdvancedToggleRequested?(): void;
+  /** Privacy tab: toggle anonymous analytics + error reporting (live). */
+  onAnalyticsToggleRequested?(): void | Promise<void>;
+  /** Privacy tab: set analytics to an explicit value (slash-command path). */
+  onAnalyticsSetEnabledRequested?(enabled: boolean): void | Promise<void>;
+  /** Privacy tab: re-read the persisted `analytics.enabled` snapshot. */
+  onPrivacyRefreshRequested?(): void;
   /** Import tab: run a dry-run preview of the Hermes import. */
   onImportPreview?(form: ImportFormState): void;
   /** Import tab: execute the import (write sessions / tasks / secrets). */
@@ -436,6 +443,8 @@ export function TuiApp({
     state.uiMode === "debug" && state.activeTab === "telegram";
   const importTabActive =
     state.uiMode === "debug" && state.activeTab === "import";
+  const privacyTabActive =
+    state.uiMode === "debug" && state.activeTab === "privacy";
   const terminalSize = useTerminalSize();
   const sidebarVisible =
     state.uiMode === "chat" && terminalSize.columns >= SIDEBAR_MIN_COLUMNS;
@@ -460,6 +469,7 @@ export function TuiApp({
         !llmTabActive &&
         !telegramTabActive &&
         !importTabActive &&
+        !privacyTabActive &&
         !sidebarFocused &&
         !(
           localModelsTabActive &&
@@ -526,6 +536,10 @@ export function TuiApp({
     }
     if (importTabActive) {
       handleImportTabKey(input, key, { state, dispatch, callbacks });
+      return;
+    }
+    if (privacyTabActive) {
+      handlePrivacyTabKey(input, key, { state, dispatch, callbacks });
       return;
     }
   });

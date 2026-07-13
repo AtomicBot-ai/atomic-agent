@@ -25,6 +25,7 @@ import { reduceImportAction } from "./import/import-reducer.js";
 import { reduceProvidersPanel } from "./providers/providers-reducer.js";
 import { reduceLlmPanelAction } from "./llm-panel/llm-panel-reducer.js";
 import { reduceTelegramAction } from "./telegram/telegram-panel-reducer.js";
+import { reducePrivacyAction } from "./privacy/privacy-panel-reducer.js";
 import type { TuiAction } from "./tui-action.js";
 import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
 
@@ -49,6 +50,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (llmPanelHandled !== null) return llmPanelHandled;
   const telegramHandled = reduceTelegramAction(state, action);
   if (telegramHandled !== null) return telegramHandled;
+  const privacyHandled = reducePrivacyAction(state, action);
+  if (privacyHandled !== null) return privacyHandled;
   const uiHandled = reduceUiAction(state, action);
   if (uiHandled !== null) return uiHandled;
   switch (action.type) {

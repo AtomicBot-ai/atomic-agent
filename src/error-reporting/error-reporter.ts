@@ -30,8 +30,12 @@ export function captureError(
 
 /**
  * Install process-global `uncaughtException` / `unhandledRejection`
- * handlers that report through the client. Idempotent and a no-op when
- * the client is `null`.
+ * handlers that report through the client resolved by `getClient` at
+ * capture time. The getter (rather than a captured value) is what lets
+ * the runtime hot-toggle analytics on/off without re-installing the
+ * process handlers — the handler always sees the *current* client, or
+ * `null` when reporting is disabled (in which case capture no-ops).
+ * Idempotent: the handlers are installed exactly once per process.
  *
  * Crash semantics are preserved conservatively: the fatal exit path is
  * only taken for `uncaughtException` when this runtime installed the sole
@@ -41,9 +45,8 @@ export function captureError(
  * kill a process the host expected to keep running.
  */
 export function installGlobalErrorHandlers(
-  client: SentryClient | null,
+  getClient: () => SentryClient | null,
 ): void {
-  if (!client) return;
   if (globalHandlersInstalled) return;
   globalHandlersInstalled = true;
 
@@ -51,11 +54,14 @@ export function installGlobalErrorHandlers(
     process.listenerCount("uncaughtException") === 0;
 
   process.on("uncaughtException", (err) => {
+    const client = getClient();
     captureError(client, err, { source: "uncaughtException" });
     if (soleUncaughtHandler) {
-      // Preserve Node's default fatal behavior: flush best-effort, print
-      // the stack to local stderr, then exit non-zero.
-      void client.flush(2000).finally(() => {
+      // Preserve Node's default fatal behavior: flush best-effort (only
+      // when a client is present), print the stack to local stderr, then
+      // exit non-zero.
+      const flushed = client ? client.flush(2000) : Promise.resolve();
+      void flushed.finally(() => {
         try {
           process.stderr.write(`${err?.stack ?? err}\n`);
         } catch {
@@ -67,7 +73,7 @@ export function installGlobalErrorHandlers(
   });
 
   process.on("unhandledRejection", (reason) => {
-    captureError(client, reason, { source: "unhandledRejection" });
+    captureError(getClient(), reason, { source: "unhandledRejection" });
     // Deliberately non-fatal: an unhandled rejection should not tear down
     // a long-lived agent. Capturing is enough for observability.
   });

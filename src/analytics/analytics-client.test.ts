@@ -25,8 +25,8 @@ describe("AnalyticsClient", () => {
     expect(arg.distinctId).toBe("install-123");
     expect(arg.event).toBe("message_sent");
     expect(arg.disableGeoip).toBe(true);
-    // IP is overridden to null so PostHog never stores the machine's IP.
-    expect(arg.properties.$ip).toBeNull();
+    // IP is overridden with a placeholder so PostHog never stores the real IP.
+    expect(arg.properties.$ip).toBe("0.0.0.0");
     expect(arg.properties.platform).toBe("darwin");
     expect(arg.properties.provider).toBe("llama-server");
     expect(arg.properties.model).toBe("qwen");
