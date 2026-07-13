@@ -465,6 +465,9 @@ export function loadConfig(): AtomicAgentConfig {
     tui: {
       theme: user.tui.theme,
     },
+    analytics: {
+      enabled: user.analytics.enabled,
+    },
     telegram: {
       enabled: user.telegram.enabled,
       ownerUserId: user.telegram.ownerUserId,

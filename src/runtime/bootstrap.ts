@@ -158,6 +158,19 @@ import {
 
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 
+import {
+  AnalyticsStateStore,
+  createAnalyticsClient,
+  captureAppInstalled,
+  captureMessageSent,
+} from "../analytics/index.js";
+import {
+  createSentryClient,
+  installGlobalErrorHandlers,
+  captureError,
+} from "../error-reporting/index.js";
+import { getAppVersion } from "../version.js";
+
 export interface RuntimeEventHandlers {
   onAgentEvent?: (event: AgentLoopEvent) => void;
   onApprovalRequest?: (request: ApprovalRequest) => void;
@@ -478,6 +491,39 @@ export async function createAgentRuntime(
     sinks: logSinks,
   });
   const metrics = new AgentMetrics(new MetricsCollector({ sinks: metricSinks }));
+
+  // Anonymous product analytics (PostHog). Opt-out via
+  // `config.analytics.enabled = false`. The client is `null` when
+  // disabled; every event carries only an anonymous install id plus
+  // `{ provider, model }` — never message content, paths, args, or IP
+  // (see `src/analytics/`). Fire the one-time `app_installed` event on
+  // the first boot of a fresh install.
+  const analyticsStateStore = new AnalyticsStateStore(
+    resolve(config.paths.stateDir, "analytics.json"),
+  );
+  const analytics = createAnalyticsClient({
+    enabled: config.analytics.enabled,
+    installId: analyticsStateStore.getInstallId(),
+    platform: process.platform,
+    logger,
+  });
+  captureAppInstalled(analytics, analyticsStateStore);
+
+  // Anonymous error reporting (Sentry). Shares the opt-out flag
+  // (`config.analytics.enabled`) and the anonymous install id with
+  // product analytics. Strict allowlist: only error type / category /
+  // safe scalar codes / path-stripped stack frames ever leave the
+  // machine — never message content, paths, tool args, or IP (see
+  // `src/error-reporting/`). `null` when disabled or the DSN is still
+  // the placeholder sentinel.
+  const errorReporter = createSentryClient({
+    enabled: config.analytics.enabled,
+    installId: analyticsStateStore.getInstallId(),
+    release: getAppVersion(),
+    platform: process.platform,
+    logger,
+  });
+  installGlobalErrorHandlers(errorReporter);
 
   const traceEnabled = resolveTraceEnabled(
     config.tracing.trace.enabled,
@@ -1513,6 +1559,15 @@ export async function createAgentRuntime(
         recorder?.onAgentEvent(event);
         turnController.emit(ctx.sessionId, event);
       }
+      // Report terminal LLM failures (never `cancelled` — filtered inside
+      // captureError). The scrubber strips everything but the error type,
+      // category, and path-stripped frames.
+      if (event.type === "loop_failed") {
+        captureError(errorReporter, event.error, {
+          source: "llm_failure",
+          category: event.category,
+        });
+      }
       options.handlers?.onAgentEvent?.(event);
     },
     metrics,
@@ -1656,6 +1711,15 @@ export async function createAgentRuntime(
     } catch {
       // already closed
     }
+    // Flush any queued analytics events before the process exits.
+    // Fire-safe: `shutdown()` swallows its own errors.
+    if (analytics) {
+      await analytics.shutdown();
+    }
+    // Flush any queued error reports before the process exits.
+    if (errorReporter) {
+      await errorReporter.shutdown();
+    }
   };
 
   const refreshSkills = async (): Promise<void> => {
@@ -1786,9 +1850,21 @@ export async function createAgentRuntime(
       origin?: TurnOrigin;
     } = {},
   ): Promise<RunTurnResult> => {
+    const origin = runOptions.origin ?? "cli";
+    // Product analytics: count only human-originated turns. Scheduler-
+    // driven turns (durable tasks, cron, webhook ingress) are excluded
+    // — they are not "a person sending a message". `captureMessageSent`
+    // no-ops when analytics is disabled and also fires the one-time
+    // `first_message_sent`.
+    if (origin !== "scheduler") {
+      captureMessageSent(analytics, analyticsStateStore, {
+        provider: providerRegistry.activeText.name,
+        model: modelAlias ?? getLiveProfile().id,
+      });
+    }
     const submission = {
       sessionId: session.id,
-      origin: runOptions.origin ?? "cli",
+      origin,
       run: () => executeTurn(session, userMessage, runOptions),
       ...(runOptions.eventHook ? { eventHook: runOptions.eventHook } : {}),
       ...(runOptions.signal ? { signal: runOptions.signal } : {}),

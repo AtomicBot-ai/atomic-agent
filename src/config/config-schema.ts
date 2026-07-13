@@ -643,6 +643,15 @@ export interface AtomicAgentConfig {
     theme: string;
   };
   /**
+   * Anonymous product analytics (PostHog). Mirrors
+   * `UserConfigFile.analytics`. Only `{ provider, model }` and a random
+   * anonymous install id ever leave the machine — never message content,
+   * paths, tool args, or the machine's IP (see `src/analytics/`).
+   */
+  analytics: {
+    enabled: boolean;
+  };
+  /**
    * Telegram remote-control channel. Mirrors `UserConfigFile.telegram`.
    * The bot token is **not** stored here — it lives in
    * `<stateDir>/.env` as `TELEGRAM_BOT_TOKEN` and is loaded at
@@ -1264,6 +1273,17 @@ export interface UserConfigFile {
     theme: string;
   };
   /**
+   * Anonymous product analytics (PostHog). Added in config v33. Older
+   * files are transparently upgraded with `analytics: { enabled: true }`.
+   * Opt-out only via this flag — set `enabled: false` to disable. Only
+   * `{ provider, model }` plus a random anonymous install id are sent;
+   * message content, file paths, tool arguments, and the machine's IP
+   * are never transmitted (see `src/analytics/`).
+   */
+  analytics: {
+    enabled: boolean;
+  };
+  /**
    * Telegram remote-control channel. Added in config v9. Older files
    * are transparently upgraded with `telegram: { enabled: false,
    * ownerUserId: null }`. The bot token is intentionally not stored
@@ -1296,7 +1316,7 @@ export interface UserConfigFile {
 // v31: skills gains `clawhub` (ClawHub registry — the primary skill
 // marketplace). Older files inherit it enabled against the public registry
 // with suspicious skills hidden.
-export const USER_CONFIG_VERSION = 32 as const;
+export const USER_CONFIG_VERSION = 33 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1372,6 +1392,9 @@ export type RewriterGateMode = "heuristic" | "embedding" | "always";
  * the managed chat daemon fits `--ctx-size` to the target device's free
  * VRAM at start; a positive value pins the context explicitly. Older
  * files inherit `0` transparently.
+ * v32→v33 added the optional `analytics.*` block (anonymous PostHog
+ * product analytics — opt-out via `analytics.enabled: false`). Older
+ * files inherit `analytics: { enabled: true }` transparently.
  * Older files are transparently upgraded by filling missing
  * blocks/fields from `USER_CONFIG_DEFAULTS`. Anything older than v5
  * is not migrated: this is active development, callers delete their
@@ -1405,6 +1428,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   29,
   30,
   31,
+  32,
   USER_CONFIG_VERSION,
 ];
 
@@ -1639,6 +1663,9 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   },
   tui: {
     theme: "auto",
+  },
+  analytics: {
+    enabled: true,
   },
   telegram: {
     enabled: false,
@@ -2559,6 +2586,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const skills = (obj.skills as Record<string, unknown> | undefined) ?? {};
   const telegram = (obj.telegram as Record<string, unknown> | undefined) ?? {};
   const tui = (obj.tui as Record<string, unknown> | undefined) ?? {};
+  const analytics =
+    (obj.analytics as Record<string, unknown> | undefined) ?? {};
   const mcp = (obj.mcp as Record<string, unknown> | undefined) ?? {};
 
   const rawManaged =
@@ -3234,6 +3263,12 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       theme: parseThemeName(
         tui.theme ?? USER_CONFIG_DEFAULTS.tui.theme,
         "tui.theme",
+      ),
+    },
+    analytics: {
+      enabled: parseBool(
+        analytics.enabled ?? USER_CONFIG_DEFAULTS.analytics.enabled,
+        "analytics.enabled",
       ),
     },
     telegram: {
