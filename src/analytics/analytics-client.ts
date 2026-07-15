@@ -23,6 +23,8 @@ export interface AnalyticsClientOptions {
   installId: string;
   /** OS platform tag stamped on every event (e.g. `darwin` / `linux` / `win32`). */
   platform: string;
+  /** App version stamped on every event as `app_version` (e.g. `1.2.3`). */
+  version: string;
   logger?: AnalyticsLogger;
   /** Test seam — inject a fake PostHog implementation. */
   posthog?: Pick<PostHog, "capture" | "shutdown">;
@@ -37,7 +39,8 @@ export interface AnalyticsClientOptions {
  *     of the machine's real public IP. PostHog's ingestion only honors a
  *     truthy `$ip` override — a falsy value (`null`/empty) is ignored and the
  *     request IP is captured instead, so the override must be a real string;
- *   - stamped with the `platform` OS tag (`darwin` / `linux` / `win32`).
+ *   - stamped with the `platform` OS tag (`darwin` / `linux` / `win32`);
+ *   - stamped with the `app_version` tag (the running app version).
  *
  * The client is fire-safe: capture failures are swallowed so an
  * analytics outage never disturbs the agent runtime.
@@ -46,11 +49,13 @@ export class AnalyticsClient {
   private readonly posthog: Pick<PostHog, "capture" | "shutdown">;
   private readonly installId: string;
   private readonly platform: string;
+  private readonly version: string;
   private readonly logger?: AnalyticsLogger;
 
   constructor(options: AnalyticsClientOptions) {
     this.installId = options.installId;
     this.platform = options.platform;
+    this.version = options.version;
     if (options.logger) this.logger = options.logger;
     this.posthog =
       options.posthog ??
@@ -72,6 +77,8 @@ export class AnalyticsClient {
           ...properties,
           // OS platform dimension, stamped on every event.
           platform: this.platform,
+          // App version dimension, stamped on every event.
+          app_version: this.version,
           // Overrides PostHog's server-side IP capture with a placeholder so
           // the machine's real public IP is never stored. PostHog only honors
           // a truthy `$ip` override — a `null`/falsy value is ignored and the
@@ -109,6 +116,7 @@ export function createAnalyticsClient(options: {
   enabled: boolean;
   installId: string;
   platform: string;
+  version: string;
   logger?: AnalyticsLogger;
   posthog?: Pick<PostHog, "capture" | "shutdown">;
 }): AnalyticsClient | null {
@@ -123,6 +131,7 @@ export function createAnalyticsClient(options: {
   return new AnalyticsClient({
     installId: options.installId,
     platform: options.platform,
+    version: options.version,
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.posthog ? { posthog: options.posthog } : {}),
   });

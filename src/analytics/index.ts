@@ -16,3 +16,4 @@ export {
   captureMessageSent,
 } from "./analytics-events.js";
 export type { MessageEventContext } from "./analytics-events.js";
+export { sanitizeModelAlias } from "./sanitize-model-alias.js";

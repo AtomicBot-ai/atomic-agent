@@ -15,6 +15,7 @@ describe("AnalyticsClient", () => {
     const client = new AnalyticsClient({
       installId: "install-123",
       platform: "darwin",
+      version: "1.2.3",
       posthog,
     });
 
@@ -28,19 +29,24 @@ describe("AnalyticsClient", () => {
     // IP is overridden with a placeholder so PostHog never stores the real IP.
     expect(arg.properties.$ip).toBe("0.0.0.0");
     expect(arg.properties.platform).toBe("darwin");
+    expect(arg.properties.app_version).toBe("1.2.3");
     expect(arg.properties.provider).toBe("llama-server");
     expect(arg.properties.model).toBe("qwen");
   });
 
-  it("stamps the platform tag on every event, including bare ones", () => {
+  it("stamps the platform and app_version tags on every event, including bare ones", () => {
     const posthog = fakePosthog();
     const client = new AnalyticsClient({
       installId: "x",
       platform: "linux",
+      version: "9.9.9",
       posthog,
     });
     client.capture("app_installed");
     expect(posthog.capture.mock.calls[0][0].properties.platform).toBe("linux");
+    expect(posthog.capture.mock.calls[0][0].properties.app_version).toBe(
+      "9.9.9",
+    );
   });
 
   it("is fire-safe: swallows capture errors", () => {
@@ -53,6 +59,7 @@ describe("AnalyticsClient", () => {
     const client = new AnalyticsClient({
       installId: "x",
       platform: "darwin",
+      version: "1.0.0",
       posthog,
     });
     expect(() => client.capture("app_installed")).not.toThrow();
@@ -63,6 +70,7 @@ describe("AnalyticsClient", () => {
       enabled: false,
       installId: "x",
       platform: "darwin",
+      version: "1.0.0",
       posthog: fakePosthog(),
     });
     expect(client).toBeNull();
@@ -73,6 +81,7 @@ describe("AnalyticsClient", () => {
       enabled: true,
       installId: "x",
       platform: "darwin",
+      version: "1.0.0",
       posthog: fakePosthog(),
     });
     expect(client).toBeInstanceOf(AnalyticsClient);
@@ -85,6 +94,7 @@ describe("AnalyticsClient", () => {
       enabled: true,
       installId: "x",
       platform: "darwin",
+      version: "1.0.0",
     });
     expect(client).toBeNull();
   });

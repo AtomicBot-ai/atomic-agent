@@ -163,6 +163,7 @@ import {
   createAnalyticsClient,
   captureAppInstalled,
   captureMessageSent,
+  sanitizeModelAlias,
 } from "../analytics/index.js";
 import {
   createSentryClient,
@@ -517,6 +518,7 @@ export async function createAgentRuntime(
     enabled: config.analytics.enabled,
     installId: analyticsStateStore.getInstallId(),
     platform: process.platform,
+    version: getAppVersion(),
     logger,
   });
   captureAppInstalled(analytics, analyticsStateStore);
@@ -570,6 +572,7 @@ export async function createAgentRuntime(
         enabled: true,
         installId: analyticsStateStore.getInstallId(),
         platform: process.platform,
+        version: getAppVersion(),
         logger,
       });
       // Fire the one-time `app_installed` event if it never went out
@@ -986,20 +989,25 @@ export async function createAgentRuntime(
 
   /**
    * Real model identifier for analytics. Cloud providers carry the model
-   * in their config entry (`defaultChatModel` / `model`); local llama-server
-   * exposes it as `/props.model_alias`. The detected profile id (e.g.
-   * `plain-instruct`) is only a last-resort fallback — it names the prompt
-   * profile, not the model, so it must never be the primary source.
+   * in their config entry (`defaultChatModel` / `model`). Local llama-server
+   * has no model name in its synthesized `local-llama` entry, so we prefer
+   * the managed GGUF id (`localModels.managed.modelId`); in external mode
+   * (no GGUF id) we fall back to the sanitized operator `--alias`
+   * (`/props.model_alias`). The detected profile id (e.g. `plain-instruct`)
+   * is only a last-resort fallback — it names the prompt profile, not the
+   * model, so it must never be the primary source.
    */
   const resolveActiveModelName = (): string => {
-    const resolved = resolveLlmConfig(getConfig());
+    const liveConfig = getConfig();
+    const resolved = resolveLlmConfig(liveConfig);
     const entry = resolved.providers.find(
       (p) => p.id === resolved.activeTextProvider,
     );
     return (
       entry?.defaultChatModel ??
       entry?.model ??
-      modelAlias ??
+      liveConfig.localModels.managed.modelId ??
+      sanitizeModelAlias(modelAlias) ??
       getLiveProfile().id
     );
   };
