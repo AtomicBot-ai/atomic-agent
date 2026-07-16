@@ -1,7 +1,7 @@
 ---
 name: pandoc
 description: Convert documents between formats (Markdown, DOCX, HTML, PDF, RST, EPUB, LaTeX) via the `pandoc` CLI. Use to transform a document from one format to another.
-version: 1.0.0
+version: 1.0.1
 requires_tools:
   - os.shell.run
 dangerous: false
@@ -35,7 +35,7 @@ Outcome map:
 
 Reply (solo `reply` step):
 
-> «`pandoc` не установлен. Могу поставить: `brew install pandoc`. Поставить?»
+> "`pandoc` is not installed. I can install it: `brew install pandoc`. Install it?"
 
 On yes:
 
@@ -49,7 +49,7 @@ On Linux: `apt-get install pandoc`.
 
 PDF output needs a TeX engine. Offer the lightweight option:
 
-> «Для экспорта в PDF нужен движок TeX. Могу поставить: `brew install --cask basictex` (или лёгкий `brew install tectonic`). Что предпочитаете?»
+> "PDF export needs a TeX engine. I can install: `brew install --cask basictex` (or the lightweight `brew install tectonic`). Which do you prefer?"
 
 `tectonic` is simplest (`pandoc in.md -o out.pdf --pdf-engine=tectonic`).
 

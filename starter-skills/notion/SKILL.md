@@ -1,7 +1,7 @@
 ---
 name: notion
 description: Read and write Notion pages, databases (data sources), and blocks via the Notion REST API.
-version: 1.3.0
+version: 1.3.1
 requires_tools:
   - os.shell.run
   - os.http.request
@@ -87,10 +87,10 @@ When a check fails, the agent's job is to OFFER concrete help and EXECUTE the fi
 
 The agent CAN write the key into `~/.atomic-agent/.env` itself once the user provides it. Offer two paths in a single reply:
 
-> «У вас не задан `NOTION_API_KEY`. Два варианта:
-> (a) Если ключ уже есть — пришлите его сюда, я допишу его в `~/.atomic-agent/.env` и попрошу перезапустить агента.
-> (b) Если ключа нет — я объясню, как создать интеграцию в Notion (это занимает ~1 минуту), а в конце вы пришлёте мне ключ, и я допишу его сам.
-> Что выбираете?»
+> "You don't have `NOTION_API_KEY` set. Two options:
+> (a) If you already have a key — send it here, I'll append it to `~/.atomic-agent/.env` and ask you to restart the agent.
+> (b) If you don't have a key — I'll explain how to create an integration in Notion (it takes ~1 minute), and at the end you'll send me the key and I'll append it myself.
+> Which do you choose?"
 
 #### Path (a) — user pastes the key
 
@@ -104,7 +104,7 @@ When the user replies with a string starting with `ntn_` or `secret_`, validate 
 } }]
 ```
 
-Then reply: «Ключ сохранён в `~/.atomic-agent/.env`. Перезапустите агента (Ctrl+C и заново), чтобы env-переменная подхватилась — после рестарта я продолжу с того же места.» Do NOT echo the key back verbatim in subsequent replies; treat it as a secret from this point.
+Then reply: "The key is saved to `~/.atomic-agent/.env`. Restart the agent (Ctrl+C and start again) so the env variable is picked up — I'll continue from the same place after the restart." Do NOT echo the key back verbatim in subsequent replies; treat it as a secret from this point.
 
 #### Path (b) — guided walkthrough
 
@@ -116,10 +116,10 @@ The agent CANNOT create Notion integrations itself (no Notion API for that — i
 
 Then reply with three short bullets:
 
-> «Я открыл страницу интеграций. Сделайте три шага:
-> 1. Нажмите "+ New integration", выберите "Internal", дайте любое имя, нажмите Save.
-> 2. На вкладке Configuration скопируйте "Internal Integration Token" (начинается с `ntn_`).
-> 3. Пришлите токен сюда — дальше я сам.»
+> "I opened the integrations page. Do three steps:
+> 1. Click \"+ New integration\", choose \"Internal\", give it any name, click Save.
+> 2. On the Configuration tab, copy the \"Internal Integration Token\" (starts with `ntn_`).
+> 3. Send the token here — I'll take it from there."
 
 When the user pastes the token, switch to Path (a).
 
@@ -133,7 +133,7 @@ Notion returns `404 object_not_found` when the integration doesn't have access t
 
 Then reply:
 
-> «Я открыл страницу в браузере. В правом верхнем углу нажмите `…` → `Connections` (или `Connect to`) → выберите вашу интеграцию. После этого скажите "готово" — я повторю запрос.»
+> "I opened the page in your browser. In the top-right corner click `…` → `Connections` (or `Connect to`) → choose your integration. After that say \"done\" — I'll retry the request."
 
 ## Calling the API
 

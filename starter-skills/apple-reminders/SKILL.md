@@ -1,7 +1,7 @@
 ---
 name: apple-reminders
 description: Manage Apple Reminders via the `remindctl` CLI on macOS — list, add, complete, delete, manage lists.
-version: 1.2.1
+version: 1.2.2
 requires_tools:
   - os.shell.run
 dangerous: false
@@ -39,7 +39,7 @@ When a check fails, the agent's job is to OFFER concrete help and EXECUTE the fi
 
 Reply (solo `reply` step):
 
-> «Утилита `remindctl` не установлена. Могу поставить её через Homebrew (`brew install steipete/tap/remindctl`) — потребуется подтверждение и около 20 секунд. Поставить?»
+> "The `remindctl` utility is not installed. I can install it via Homebrew (`brew install steipete/tap/remindctl`) — it needs your confirmation and takes about 20 seconds. Install it?"
 
 On yes:
 
@@ -49,13 +49,13 @@ On yes:
 
 After install, retry the original command.
 
-If `brew` itself is missing, do NOT attempt to bootstrap Homebrew — reply: «У вас не установлен Homebrew. Поставьте его вручную с https://brew.sh/, потом я продолжу.»
+If `brew` itself is missing, do NOT attempt to bootstrap Homebrew — reply: "You don't have Homebrew installed. Install it manually from https://brew.sh/, then I'll continue."
 
 ### Reminders permission missing
 
 Unlike Notes Automation, `remindctl` has its own CLI command to request the permission — the agent CAN do it directly. Offer + execute:
 
-> «У `remindctl` нет разрешения на доступ к Reminders. Запросить сейчас? Появится системный диалог, в нём нажмите "Allow".»
+> "`remindctl` doesn't have permission to access Reminders. Request it now? A system dialog will appear — click \"Allow\" in it."
 
 On yes:
 

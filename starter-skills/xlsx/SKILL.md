@@ -1,7 +1,7 @@
 ---
 name: xlsx
 description: Create and edit Excel .xlsx workbooks (sheets, cells, formulas, formatting) via Python `openpyxl`. Use to generate spreadsheets or write/update cells. Reading is via os.fs.read_document.
-version: 1.0.0
+version: 1.0.1
 requires_tools:
   - os.shell.run
   - os.fs.read_document
@@ -37,7 +37,7 @@ Outcome map:
 
 Reply (solo `reply` step):
 
-> «Библиотека `openpyxl` не установлена. Могу поставить: `python3 -m pip install --user openpyxl`. Поставить?»
+> "The `openpyxl` library is not installed. I can install it: `python3 -m pip install --user openpyxl`. Install it?"
 
 On yes:
 

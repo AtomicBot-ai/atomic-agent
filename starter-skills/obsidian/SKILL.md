@@ -1,7 +1,7 @@
 ---
 name: obsidian
 description: Read, search, and create Markdown notes inside an Obsidian vault on disk.
-version: 1.2.0
+version: 1.2.1
 requires_tools:
   - os.fs.read
   - os.fs.glob
@@ -42,7 +42,7 @@ When a check fails, the agent's job is to OFFER concrete help and EXECUTE the fi
 
 Reply:
 
-> «Я не нашёл Obsidian vault ни в `$OBSIDIAN_VAULT_PATH`, ни в `~/Documents/Obsidian Vault`. Пришлите мне абсолютный путь к вашему vault — я проверю и сохраню его в `~/.atomic-agent/.env`, чтобы в будущем находить автоматически.»
+> "I couldn't find an Obsidian vault in either `$OBSIDIAN_VAULT_PATH` or `~/Documents/Obsidian Vault`. Send me the absolute path to your vault — I'll verify it and save it to `~/.atomic-agent/.env` so I can find it automatically in the future."
 
 When the user replies with a path, verify it exists:
 
@@ -60,13 +60,13 @@ If it lists `.md` files, persist the choice:
 } }]
 ```
 
-Then reply: «Vault найден и сохранён. Перезапустите агента, чтобы env-переменная подхватилась — после рестарта я продолжу. (Для текущей сессии путь уже использую.)» Continue using the path in-memory for the current session — no need to wait for restart to serve the user's request.
+Then reply: "Vault found and saved. Restart the agent so the env variable is picked up — I'll continue after the restart. (I'm already using the path for the current session.)" Continue using the path in-memory for the current session — no need to wait for restart to serve the user's request.
 
-If the path does NOT contain `.md` files, ask once more before persisting: «По этому пути нет markdown-файлов. Точно vault там, или другой путь?»
+If the path does NOT contain `.md` files, ask once more before persisting: "There are no markdown files at this path. Is the vault really there, or is it a different path?"
 
 ### Resolved path is not a real vault
 
-Same playbook as above, but skip the "not found" framing — just say: «Папка по умолчанию (`~/Documents/Obsidian Vault`) существует, но похоже это не Obsidian vault — markdown-файлов нет. Пришлите правильный путь.»
+Same playbook as above, but skip the "not found" framing — just say: "The default folder (`~/Documents/Obsidian Vault`) exists, but it doesn't look like an Obsidian vault — there are no markdown files. Send me the correct path."
 
 ## When to use
 

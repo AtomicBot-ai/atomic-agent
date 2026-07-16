@@ -1,7 +1,7 @@
 ---
 name: pdf
 description: Manipulate PDF files — merge, split, extract pages/text, PDF↔images, OCR, info — via the `qpdf` / `poppler` / `ocrmypdf` CLIs. Use to combine, slice, convert, or OCR PDFs.
-version: 1.0.0
+version: 1.0.1
 requires_tools:
   - os.shell.run
   - os.fs.read_document
@@ -42,7 +42,7 @@ OFFER concrete help and EXECUTE the fix yourself — do not dump docs on the use
 
 Reply (solo `reply` step):
 
-> «Утилиты для PDF не установлены. Могу поставить через Homebrew: `brew install qpdf poppler` (и `brew install ocrmypdf` для OCR). Поставить?»
+> "The PDF utilities are not installed. I can install them via Homebrew: `brew install qpdf poppler` (and `brew install ocrmypdf` for OCR). Install them?"
 
 On yes:
 

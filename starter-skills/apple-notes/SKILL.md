@@ -1,7 +1,7 @@
 ---
 name: apple-notes
 description: Manage Apple Notes via the `memo` CLI on macOS — create, view, search, edit, export.
-version: 1.2.1
+version: 1.2.2
 requires_tools:
   - os.shell.run
 dangerous: false
@@ -39,7 +39,7 @@ When a check fails, the agent's job is to OFFER concrete help and EXECUTE the fi
 
 Reply (solo `reply` step):
 
-> «Утилита `memo` не установлена. Я могу поставить её сам через Homebrew (`brew install antoniorodr/memo/memo`), это потребует подтверждения и ~30 секунд. Поставить?»
+> "The `memo` utility is not installed. I can install it myself via Homebrew (`brew install antoniorodr/memo/memo`); it needs your confirmation and takes ~30 seconds. Install it?"
 
 If user agrees, execute as **two consecutive solo steps**:
 
@@ -53,7 +53,7 @@ If user agrees, execute as **two consecutive solo steps**:
 
 After both succeed, retry the original command.
 
-If `brew` itself is missing (`exit != 0`, `command not found: brew`), do NOT attempt to install Homebrew automatically — that requires `sudo` and a network curl-pipe-bash. Reply with: «У вас не установлен Homebrew. Я не могу поставить его автоматически — это требует sudo и интерактивной установки. Ставить вручную с https://brew.sh/, потом я продолжу.»
+If `brew` itself is missing (`exit != 0`, `command not found: brew`), do NOT attempt to install Homebrew automatically — that requires `sudo` and a network curl-pipe-bash. Reply with: "You don't have Homebrew installed. I can't install it automatically — that requires sudo and an interactive install. Install it manually from https://brew.sh/, then I'll continue."
 
 ### Automation permission denied
 
@@ -65,9 +65,9 @@ If `brew` itself is missing (`exit != 0`, `command not found: brew`), do NOT att
 
 Then reply:
 
-> «Я открыл нужную панель. Найдите там вашу терминальную программу или `atomic-agent` и включите галочку рядом с Notes. После этого скажите "готово" — я повторю проверку.»
+> "I opened the right panel. Find your terminal program or `atomic-agent` there and enable the checkbox next to Notes. After that say \"done\" — I'll re-run the check."
 
-When user says готово / done, retry a benign read (`memo notes -s __probe__` to trigger the OS prompt if still pending), then proceed.
+When the user says done, retry a benign read (`memo notes -s __probe__` to trigger the OS prompt if still pending), then proceed.
 
 ## When to use
 

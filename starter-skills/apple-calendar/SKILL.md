@@ -1,7 +1,7 @@
 ---
 name: apple-calendar
 description: Read macOS Calendar events via the `icalBuddy` CLI and create events via AppleScript (osascript). Use to check the user's calendar, agenda, upcoming events, or add an event on macOS.
-version: 1.1.1
+version: 1.1.2
 requires_tools:
   - os.shell.run
 dangerous: false
@@ -36,7 +36,7 @@ dump install instructions on the user.
 
 Reply (solo `reply` step):
 
-> «Утилита `icalBuddy` не установлена. Могу поставить через Homebrew (`brew install ical-buddy`) — потребуется подтверждение и ~20 секунд. Поставить?»
+> "The `icalBuddy` utility is not installed. I can install it via Homebrew (`brew install ical-buddy`) — it needs your confirmation and takes ~20 seconds. Install it?"
 
 On yes:
 
@@ -47,7 +47,7 @@ On yes:
 After install, retry the original command.
 
 If `brew` itself is missing, do NOT bootstrap Homebrew automatically — reply:
-«У вас не установлен Homebrew. Поставьте его вручную с https://brew.sh/, потом я продолжу.»
+"You don't have Homebrew installed. Install it manually from https://brew.sh/, then I'll continue."
 
 ### Calendar permission missing
 
@@ -61,9 +61,9 @@ Open the panel to help the user:
 
 Then reply:
 
-> «Я открыл нужную панель. Найдите там вашу терминальную программу или `atomic-agent` и включите галочку рядом с Calendars. После этого скажите "готово" — я повторю проверку.»
+> "I opened the right panel. Find your terminal program or `atomic-agent` there and enable the checkbox next to Calendars. After that say \"done\" — I'll re-run the check."
 
-When the user says готово / done, re-run a benign read (`icalBuddy eventsToday`)
+When the user says done, re-run a benign read (`icalBuddy eventsToday`)
 to confirm access.
 
 ## When to use
