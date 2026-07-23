@@ -7,6 +7,7 @@ import type { BrowserChannel } from "../../config/index.js";
 import { loadPlaywrightCore } from "../../native/load-playwright-core.js";
 import { summariseAriaSnapshot } from "./aria-compressor.js";
 import { buildChromeLaunchArgs } from "./build-chrome-launch-args.js";
+import { clearStaleChromeLocks } from "./clear-stale-chrome-locks.js";
 import {
   decorateChromeProfile,
   markChromeProfileCleanExit,
@@ -294,6 +295,9 @@ export class PlaywrightBackend implements BrowserBackend {
           "Install one, or set ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH to the binary path.",
       );
     }
+    // Drop locks left by a previous hard kill / SIGINT so Chromium can
+    // re-bind the profile (see clear-stale-chrome-locks.ts + #22).
+    clearStaleChromeLocks(this.options.userDataDir);
     decorateChromeProfile(this.options.userDataDir);
     const cdpPort = await pickAvailableLoopbackPort();
     const args = buildChromeLaunchArgs({

@@ -31,6 +31,12 @@ export {
   markChromeProfileCleanExit,
 } from "./decorate-chrome-profile.js";
 export type { DecorateChromeProfileOptions } from "./decorate-chrome-profile.js";
+export {
+  CHROME_LOCK_BASENAMES,
+  clearStaleChromeLocks,
+  readChromeSingletonLockPid,
+} from "./clear-stale-chrome-locks.js";
+export type { ClearStaleChromeLocksResult } from "./clear-stale-chrome-locks.js";
 export { findChromeExecutable } from "./find-chrome-executable.js";
 export type {
   BrowserExecutable,
@@ -42,7 +48,11 @@ export {
   stopChrome,
 } from "./spawn-chrome.js";
 export type { RunningChrome, SpawnChromeInput } from "./spawn-chrome.js";
-export { summariseAriaSnapshot } from "./aria-compressor.js";
+export {
+  DEFAULT_ARIA_MAX_CHARS,
+  packLinesToCharBudget,
+  summariseAriaSnapshot,
+} from "./aria-compressor.js";
 export type {
   AriaCompressionOptions,
   AriaSnapshotSummary,
