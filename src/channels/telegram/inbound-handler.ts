@@ -218,16 +218,30 @@ async function dispatchToRuntime(
 
   let reply: string | null = null;
   let failure: { error: Error; category: LlmFailureCategory } | null = null;
+  // Live progress indicator: a single editable message that mirrors the
+  // turn's activity ("Thinking…" → "🔧 <tool>" → "✅ <summary>") so the
+  // operator gets immediate, visible feedback that their message landed.
+  // The native `chatAction: "typing"` dots (kept running below) are too
+  // subtle and vanish the instant a fast reply lands. Torn down before the
+  // final reply is posted so the answer stands alone. Best-effort: a failed
+  // post/edit/delete never affects the turn outcome.
+  const progress = new TelegramProgressIndicator(
+    ctx.api,
+    chatId,
+    toTelegramLogger(ctx.logger),
+  );
   const eventHook = (event: AgentLoopEvent): void => {
     if (event.type === "llm_event") {
       if (event.event.type === "assistant_reply") reply = event.event.text;
-      return;
     }
     if (event.type === "loop_failed") {
       failure = { error: event.error, category: event.category };
     }
+    const label = progressLabel(event);
+    if (label !== null) progress.update(label);
   };
 
+  progress.start("🤔 Thinking…");
   const stopKeepalive = startTypingKeepalive(ctx, chatId);
   try {
     await ctx.runtime.runTurn(session, text, {
@@ -246,6 +260,12 @@ async function dispatchToRuntime(
       ctx.inflight.delete(chatId);
     }
   }
+
+  // Remove the progress indicator before posting the final text so the
+  // reply (or infra message) stands alone rather than appearing above a
+  // stale "Thinking…" bubble. Awaits the internal chain so a fast turn
+  // whose `start()` send is still in flight is cleaned up before we send.
+  await progress.remove();
 
   // Only the agent's natural-language reply gets parse-mode
   // formatting. Cancellation acks, the empty-reply marker, and
@@ -300,6 +320,149 @@ function startTypingKeepalive(
   }
   const handle = setInterval(sendTyping, TYPING_KEEPALIVE_MS);
   return () => clearInterval(handle);
+}
+
+/**
+ * Maximum length of a `step_finished.summary` echoed into the live progress
+ * bubble. Tool summaries can be long; clip so the indicator stays a glancable
+ * status line rather than a second reply.
+ */
+const PROGRESS_SUMMARY_MAX_CHARS = 80;
+
+/**
+ * Minimum gap between two progress edits. Telegram rate-limits
+ * `editMessageText` per chat; editing faster than this buys nothing visually
+ * and risks 429 flood-waits. Combined with the "skip identical text" guard in
+ * `update`, a chatty turn settles to at most ~1.4 edits/s.
+ */
+const PROGRESS_MIN_EDIT_INTERVAL_MS = 700;
+
+function truncateForProgress(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= PROGRESS_SUMMARY_MAX_CHARS) return trimmed;
+  return `${trimmed.slice(0, PROGRESS_SUMMARY_MAX_CHARS - 1)}…`;
+}
+
+/**
+ * Map an `AgentLoopEvent` to a short, operator-facing progress label, or
+ * `null` when the event carries nothing worth surfacing (token accounting,
+ * streaming deltas, the terminal `assistant_reply` which the reply path
+ * already handles). Tool names are shown verbatim — they are stable,
+ * meaningful identifiers (`os.fs.write`, `browser.navigate`, …) and inventing
+ * friendlier verbs would drift from the tool registry.
+ */
+function progressLabel(event: AgentLoopEvent): string | null {
+  switch (event.type) {
+    case "turn_started":
+      return "🤔 Thinking…";
+    case "step_started":
+      return `⚙️ Working… (step ${event.stepIndex + 1})`;
+    case "step_finished": {
+      const summary = event.summary.trim();
+      return summary.length > 0 ? `✅ ${truncateForProgress(summary)}` : null;
+    }
+    case "loop_detected":
+      return `🔁 Repeating ${event.tool} (×${event.count})`;
+    case "llm_event": {
+      const step = event.event;
+      if (step.type === "tool_call_parsed") return `🔧 ${step.call.tool}`;
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * A single editable Telegram message that mirrors the current turn's
+ * activity, giving the operator immediate visible feedback that their
+ * message landed and is being worked on. Lifecycle: `start()` posts the
+ * bubble, `update()` edits it (throttled + deduped), `remove()` deletes it
+ * once the turn settles. Every network call is best-effort and serialised
+ * through an internal promise chain so a fast turn that calls `remove()`
+ * before `start()`'s `sendMessage` resolves still cleans up correctly (the
+ * send handler observes `removed` and deletes the just-posted message).
+ * Failures are logged (start) or swallowed (edit/delete) — the indicator is
+ * pure channel infrastructure and must never affect the turn outcome.
+ */
+class TelegramProgressIndicator {
+  private messageId: number | null = null;
+  private removed = false;
+  private lastText = "";
+  private lastEditAt = 0;
+  private chain: Promise<unknown> = Promise.resolve();
+
+  constructor(
+    private readonly api: TelegramApi,
+    private readonly chatId: number,
+    private readonly logger?: TelegramLogger,
+    private readonly minEditIntervalMs: number = PROGRESS_MIN_EDIT_INTERVAL_MS,
+  ) {}
+
+  /** Post the initial indicator bubble. Fire-and-forget. */
+  start(text: string): void {
+    this.lastText = text;
+    this.chain = this.chain.then(async () => {
+      if (this.removed) return;
+      try {
+        const sent = await this.api.sendMessage(this.chatId, text);
+        const messageId =
+          typeof sent === "object" && sent !== null && "message_id" in sent
+            ? (sent as { message_id?: number }).message_id
+            : undefined;
+        if (this.removed) {
+          // The turn finished while we were sending; don't leave a stale
+          // bubble behind.
+          if (typeof messageId === "number") {
+            await this.api.deleteMessage?.(this.chatId, messageId).catch(
+              () => undefined,
+            );
+          }
+          return;
+        }
+        this.messageId = typeof messageId === "number" ? messageId : null;
+        this.lastEditAt = Date.now();
+      } catch (err) {
+        this.logger?.warn("telegram: progress start failed (non-fatal)", {
+          chatId: this.chatId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    });
+  }
+
+  /** Throttled, deduped live update. Fire-and-forget. */
+  update(text: string): void {
+    if (this.removed || text === this.lastText) return;
+    const now = Date.now();
+    if (now - this.lastEditAt < this.minEditIntervalMs) return;
+    this.lastText = text;
+    this.lastEditAt = now;
+    this.chain = this.chain.then(async () => {
+      if (this.removed || this.messageId === null) return;
+      try {
+        await this.api.editMessageText?.(this.chatId, this.messageId, text);
+      } catch {
+        // "message is not modified", flood-wait, or already deleted — all
+        // non-fatal for a best-effort indicator.
+      }
+    });
+  }
+
+  /** Delete the indicator. Idempotent; resolves once the delete settles. */
+  remove(): Promise<void> {
+    this.removed = true;
+    this.chain = this.chain.then(async () => {
+      if (this.messageId === null) return;
+      try {
+        await this.api.deleteMessage?.(this.chatId, this.messageId);
+      } catch {
+        // Already gone or flood-wait — non-fatal.
+      }
+      this.messageId = null;
+    });
+    return this.chain.then(() => undefined);
+  }
 }
 
 function formatStatus(ctx: InboundContext): string {

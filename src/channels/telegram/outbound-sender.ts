@@ -34,6 +34,13 @@ export interface TelegramApi {
     opts?: Record<string, unknown>,
   ): Promise<unknown>;
   /**
+   * Delete a message by id. Optional because only the live-progress
+   * indicator (which posts then removes a single "Thinking…" bubble)
+   * needs it; inbound paths that never post transient messages can omit
+   * it. Best-effort at every call site — a failed delete is swallowed.
+   */
+  deleteMessage?(chatId: number, messageId: number): Promise<unknown>;
+  /**
    * Acknowledge a `callback_query` so the in-app loading spinner on
    * the operator's client dismisses. Optional because the inbound
    * paths that don't process callback queries never call it.
