@@ -89,6 +89,10 @@ export function parseListDevices(output: string): GpuDevice[] {
  * 1 = unrecognised (assume discrete — safer than assuming iGPU),
  * 0 = known integrated. Discrete hints win outright so "Intel Arc" and
  * "Radeon RX" are not caught by the integrated patterns.
+ *
+ * Apple Silicon descriptions (e.g. "Apple M1 Max") match neither the
+ * discrete nor integrated patterns, so they land on rank 1 — the desired
+ * "unrecognised → assume discrete" outcome. No Apple carve-out needed.
  */
 export function deviceClassRank(description: string): 0 | 1 | 2 {
   if (DISCRETE_DEVICE_RE.test(description)) return 2;

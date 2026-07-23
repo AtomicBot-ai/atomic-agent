@@ -60,6 +60,42 @@ describe("parseListDevices", () => {
     expect(parseListDevices("")).toEqual([]);
     expect(parseListDevices("no devices here")).toEqual([]);
   });
+
+  it("parses canonical MetalN device lines (Apple Silicon)", () => {
+    const out = [
+      "Available devices:",
+      "  Metal0: Apple M3 Ultra (98304 MiB, 90000 MiB free)",
+    ].join("\n");
+    expect(parseListDevices(out)).toEqual<GpuDevice[]>([
+      {
+        id: "Metal0",
+        description: "Apple M3 Ultra",
+        totalMemMiB: 98304,
+        freeMemMiB: 90000,
+      },
+    ]);
+  });
+
+  it("normalises 'GPU 0:' Metal table rows to Metal0", () => {
+    const out = "GPU 0: Apple M2 Max (id: 0, buffer size: 64 GiB)";
+    const devices = parseListDevices(out);
+    expect(devices).toHaveLength(1);
+    expect(devices[0]?.id).toBe("Metal0");
+    expect(devices[0]?.description).toMatch(/Apple M2 Max/i);
+  });
+
+  it("parses ggml-metal device log lines", () => {
+    const out = "ggml-metal : device 0 = Apple M3 Ultra";
+    const devices = parseListDevices(out);
+    expect(devices).toEqual<GpuDevice[]>([
+      {
+        id: "Metal0",
+        description: "Apple M3 Ultra",
+        totalMemMiB: 0,
+        freeMemMiB: 0,
+      },
+    ]);
+  });
 });
 
 describe("pickBestDevice", () => {
@@ -170,6 +206,20 @@ describe("pickBestDevice", () => {
     ];
     expect(pickBestDevice(devices)).toBe("Vulkan0");
   });
+
+
+  it("treats Apple Silicon Metal devices as auto-pickable (not discarded)", () => {
+    const devices: GpuDevice[] = [
+      {
+        id: "Metal0",
+        description: "Apple M3 Ultra",
+        totalMemMiB: 98304,
+        freeMemMiB: 90000,
+      },
+    ];
+    expect(pickBestDevice(devices)).toBe("Metal0");
+  });
+
 });
 
 describe("resolveManagedDevice", () => {
