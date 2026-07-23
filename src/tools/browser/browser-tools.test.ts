@@ -488,6 +488,21 @@ describe("browser tools on a fake backend", () => {
 });
 
 describe("summariseAriaSnapshot", () => {
+
+  it("applies maxChars budget and reports size truncation footer", () => {
+    const lines = Array.from({ length: 200 }, (_, i) => `- link "Item ${i}" [ref=e${i}]`);
+    const raw = lines.join("\n");
+    const out = summariseAriaSnapshot(
+      raw,
+      { url: "https://example.com", title: "t" },
+      { maxChars: 400, dropNoise: false },
+    );
+    expect(out.text.length).toBeLessThan(raw.length);
+    expect(out.text).toMatch(/truncated ARIA tree by size/);
+    expect(out.refs.length).toBeGreaterThan(0);
+    expect(out.refs.length).toBeLessThan(200);
+  });
+
   it("extracts refs and emits a header", () => {
     const raw = [
       "- banner",
