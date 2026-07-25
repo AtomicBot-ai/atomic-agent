@@ -641,6 +641,11 @@ export interface AtomicAgentConfig {
    */
   tui: {
     theme: string;
+    /**
+     * Interval in ms for cycling rotating prompt placeholders. Set to `0`
+     * to disable the rotating suggestions entirely. Default `4000`.
+     */
+    placeholderRotationMs: number;
   };
   /**
    * Anonymous product analytics (PostHog). Mirrors
@@ -1271,6 +1276,11 @@ export interface UserConfigFile {
    */
   tui: {
     theme: string;
+    /**
+     * Interval in ms for cycling rotating prompt placeholders. Set to `0`
+     * to disable the rotating suggestions entirely. Default `4000`.
+     */
+    placeholderRotationMs: number;
   };
   /**
    * Anonymous product analytics (PostHog). Added in config v33. Older
@@ -1316,7 +1326,9 @@ export interface UserConfigFile {
 // v31: skills gains `clawhub` (ClawHub registry — the primary skill
 // marketplace). Older files inherit it enabled against the public registry
 // with suspicious skills hidden.
-export const USER_CONFIG_VERSION = 33 as const;
+// v34: tui gains `placeholderRotationMs` (disable rotating prompt
+// placeholders by setting to 0).
+export const USER_CONFIG_VERSION = 34 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1429,6 +1441,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   30,
   31,
   32,
+  33,
   USER_CONFIG_VERSION,
 ];
 
@@ -1663,6 +1676,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   },
   tui: {
     theme: "auto",
+    placeholderRotationMs: 4000,
   },
   analytics: {
     enabled: true,
@@ -3263,6 +3277,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       theme: parseThemeName(
         tui.theme ?? USER_CONFIG_DEFAULTS.tui.theme,
         "tui.theme",
+      ),
+      placeholderRotationMs: parseNonNegativeInt(
+        tui.placeholderRotationMs ?? USER_CONFIG_DEFAULTS.tui.placeholderRotationMs,
+        "tui.placeholderRotationMs",
       ),
     },
     analytics: {

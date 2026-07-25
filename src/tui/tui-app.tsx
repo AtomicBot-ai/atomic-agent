@@ -7,6 +7,7 @@ import {
   useState,
   type ReactElement,
 } from "react";
+import { getConfig } from "../config/index.js";
 import { reduceTuiState } from "./agent-event-reducer.js";
 import type { TuiAction } from "./tui-action.js";
 import { handleAppKey } from "./app-key-bindings.js";
@@ -765,7 +766,11 @@ export function TuiApp({
           <PromptShell
             value={state.inputValue}
             placeholder="Type a message or `/` for commands…"
-            rotatingPlaceholders={PROMPT_PLACEHOLDERS}
+            rotatingPlaceholders={
+              getConfig().tui.placeholderRotationMs > 0
+                ? PROMPT_PLACEHOLDERS
+                : []
+            }
             model={promptLlm.model}
             provider={promptLlm.provider}
             leftSlot={promptLeftSlot}
