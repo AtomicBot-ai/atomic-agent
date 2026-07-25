@@ -6,7 +6,10 @@ import {
   selectLlmActiveRouteSummary,
   selectLlmPanelRows,
 } from "../llm-panel/llm-panel-selectors.js";
-import type { LocalModelsPanelState } from "../local-models/local-models-panel-state.js";
+import {
+  toStatusLine,
+  type LocalModelsPanelState,
+} from "../local-models/local-models-panel-state.js";
 import { LLM_PANEL_MODES, type LlmPanelMode } from "../llm-panel/llm-panel-state.js";
 import { LlmModeRows } from "./llm-mode-rows.js";
 import { LlmPanelModals } from "./llm-panel-modals.js";
@@ -30,6 +33,57 @@ const COMPACT_HEADER_ROWS = 3;
  */
 const FULL_HEADER_MIN_LIST = 3;
 
+/**
+ * Height of whatever overlay is currently drawn above the list.
+ * `LlmPanelModals` early-returns, so at most one modal is ever open —
+ * hence the if/else chain rather than a sum.
+ *
+ * ponytail: these are static estimates, not measurements. Ink can only
+ * measure after layout, which is too late for a budget decision, so the
+ * numbers are deliberately generous and the list absorbs the slack.
+ * Keep them in step when a modal's markup changes; the frame-height
+ * tests fail loudly if one drifts.
+ */
+function estimateOverlayRows(state: TuiState): number {
+  let rows = 0;
+  const hf = state.llmPanel.huggingFacePrompt;
+  if (hf) {
+    // border(2) + title + 2-line hint + input + "Enter submit" footer.
+    rows += 7;
+    if (hf.busy || hf.error) rows += 1;
+    if (hf.results.length > 0) rows += hf.results.length + 2;
+  } else if (state.providersPanel.wizard) {
+    rows += PROVIDERS_WIZARD_ROWS;
+  } else if (
+    state.providersPanel.removeConfirm ||
+    state.localModelsPanel.embeddingOnboardingPrompt ||
+    state.localModelsPanel.removeConfirmId ||
+    state.localModelsPanel.embeddingRemoveConfirmId ||
+    state.llmPanel.stopLocalDaemonsPrompt
+  ) {
+    // border(2) + title + one wrapped body line + key hint.
+    rows += 6;
+  }
+  if (isDaemonStarting(state.localModelsPanel)) rows += STARTING_BANNER_ROWS;
+  if (state.llmPanel.mode === "local") {
+    const pulls = [
+      state.localModelsPanel.pull,
+      state.localModelsPanel.embeddingPull,
+    ].filter((pull) => pull !== null);
+    // `+ 1` for the wrapper's bottom margin, which is emitted once for
+    // the whole group rather than per banner.
+    if (pulls.length > 0) rows += pulls.length * DOWNLOAD_BANNER_ROWS + 1;
+  }
+  return rows;
+}
+
+/** Rows the providers wizard occupies; it is the tallest modal. */
+const PROVIDERS_WIZARD_ROWS = 14;
+/** Title + hint + spacer emitted by `StartingBanner`. */
+const STARTING_BANNER_ROWS = 5;
+/** Label + model line + progress bar per in-flight download. */
+const DOWNLOAD_BANNER_ROWS = 3;
+
 export function LlmPanel({
   state,
   maxRows = 12,
@@ -44,9 +98,15 @@ export function LlmPanel({
   // `maxRows` is the TOTAL budget for the tab content. Split it between
   // the fixed header and the (windowed) list, collapsing the verbose
   // RouteCard when the terminal is too short to afford it.
-  const useFull = maxRows >= FULL_HEADER_ROWS + FULL_HEADER_MIN_LIST;
+  // Modals and banners render ABOVE the list and are part of the same
+  // frame, so their height has to come out of the same budget. Leaving
+  // them unbudgeted is what lets a tall overlay push the frame past the
+  // terminal, and Ink overlaps lines rather than clipping them.
+  const overlayRows = estimateOverlayRows(state);
+  const useFull =
+    maxRows - overlayRows >= FULL_HEADER_ROWS + FULL_HEADER_MIN_LIST;
   const headerRows = useFull ? FULL_HEADER_ROWS : COMPACT_HEADER_ROWS;
-  const listBudget = Math.max(1, maxRows - headerRows);
+  const listBudget = Math.max(1, maxRows - headerRows - overlayRows);
   return (
     <Box flexDirection="column" width="100%">
       <LlmPanelModals state={state} />
@@ -70,10 +130,19 @@ export function LlmPanel({
         <LlmModeRows rows={rows} state={state} maxRows={listBudget} />
       </Box>
       <Box marginTop={useFull ? 1 : 0} flexDirection="column">
-        <Text color={theme.colors.muted}>
+        {/* This panel — not the Models tab — is where the first-run wizard
+            lands after "Local models", so the Hugging Face escape hatch is
+            advertised here or nobody finds it. Folded into the existing
+            hint line rather than added as a second one: the panel runs its
+            compact footer at ordinary terminal heights, and an extra line
+            would overflow the budget (Ink garbles, it does not clip). */}
+        <Text color={theme.colors.muted} wrap="truncate-end">
           {useFull
             ? "j/k move · Enter selected action · ←/→ switch Local/Cloud/External · n add provider · c configure · r refresh"
             : "j/k · Enter · ←/→ mode · r"}
+          {state.llmPanel.mode === "local"
+            ? " · /models add <hf-url> adds any GGUF"
+            : ""}
         </Text>
       </Box>
     </Box>
@@ -200,11 +269,14 @@ function StatusLines({
     ) {
       lines.push("local catalog: loading");
     }
+    // Flattened again at the point of render, not only on the way into
+    // state: this slot is one row tall by construction, and it must hold
+    // that whatever a future writer puts in the field.
     if (state.localModelsPanel.errorLine) {
-      lines.push(`local catalog: ${state.localModelsPanel.errorLine}`);
+      lines.push(`local catalog: ${toStatusLine(state.localModelsPanel.errorLine)}`);
     }
     if (state.localModelsPanel.daemonError) {
-      lines.push(`local daemon: ${state.localModelsPanel.daemonError}`);
+      lines.push(`local daemon: ${toStatusLine(state.localModelsPanel.daemonError)}`);
     }
   } else {
     if (state.providersPanel.busy) lines.push("cloud providers: updating");
@@ -214,7 +286,12 @@ function StatusLines({
   }
   return (
     <Box flexDirection="column" marginBottom={compact ? 0 : 1}>
-      <Text color={theme.colors.muted}>{lines[0] ?? "status: ready"}</Text>
+      {/* `truncate-end` is what actually guarantees one row: flattening
+          newlines is not enough, since a long single line wraps and
+          overruns the budget just as badly on a narrow terminal. */}
+      <Text color={theme.colors.muted} wrap="truncate-end">
+        {lines[0] ?? "status: ready"}
+      </Text>
     </Box>
   );
 }

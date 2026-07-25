@@ -31,6 +31,18 @@ export type LlmPanelRow =
       enterEffect: string;
     }
   | {
+      /**
+       * Call-to-action row pinned under the local text models: opens the
+       * "add from Hugging Face" prompt. Carries no model — it is the one
+       * row whose Enter creates a catalog entry rather than acting on one.
+       */
+      kind: "localAddHuggingFace";
+      id: "local-add-huggingface";
+      mode: "local";
+      primaryAction: "add";
+      enterEffect: string;
+    }
+  | {
       kind: "localDaemon";
       id: "local-runtime";
       mode: "local";

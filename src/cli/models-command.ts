@@ -1,11 +1,13 @@
 import { getConfig } from "../config/index.js";
 import {
+  runLocalModelsAdd,
   runLocalModelsDevices,
   runLocalModelsList,
   runLocalModelsListEmbeddings,
   runLocalModelsPull,
   runLocalModelsPullEmbedding,
   runLocalModelsRemove,
+  runLocalModelsSearch,
   runLocalModelsStart,
   runLocalModelsStatus,
   runLocalModelsStop,
@@ -32,6 +34,16 @@ const HELP =
     "                                (stops daemon first; does not auto-restart)",
     "  remove <id>                   Delete a downloaded model (refuses if active + daemon running)",
     "",
+    "Hugging Face (any GGUF, not just the curated catalog):",
+    "  search <query>                Search GGUF repos on Hugging Face",
+    "  add <ref>                     Register a repo/file as a custom model, then `pull` it",
+    "                                Accepts repo URLs, /resolve/ or /blob/ file URLs,",
+    "                                hf://owner/repo[@rev]/file.gguf, a pasted",
+    "                                `hf download …` command, and bare owner/name ids.",
+    "                                Picks a 4-bit quant and any mmproj projector",
+    "                                automatically when you name only a repo.",
+    "                                Export HF_TOKEN for gated or private repos.",
+    "",
     "GPU subcommands:",
     "  devices                       List GPU devices (llama-server --list-devices); active marked with *",
     "  use-device <auto|cpu|Vulkan0> Set the managed daemon's GPU (auto-picks best discrete by default)",
@@ -45,6 +57,8 @@ const HELP =
     "",
     "Examples:",
     "  atomic-agent models list",
+    "  atomic-agent models search qwen3 coder",
+    "  atomic-agent models add https://huggingface.co/unsloth/Qwen3.5-4B-GGUF",
     "  atomic-agent models pull qwen-3.5-4b",
     "  atomic-agent models use qwen-3.5-4b",
     "  atomic-agent models pull-embedding nomic-embed-text-v1.5",
@@ -79,6 +93,10 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return runLocalModelsUpdate();
       case "remove":
         return runLocalModelsRemove(args[1]);
+      case "add":
+        return runLocalModelsAdd(args[1]);
+      case "search":
+        return runLocalModelsSearch(args.slice(1));
       case "devices":
         return runLocalModelsDevices();
       case "use-device":

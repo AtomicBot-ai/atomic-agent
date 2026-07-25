@@ -47,7 +47,9 @@ describe("handleLlmPanelKey", () => {
       callbacks: callbacks(),
     });
     expect(handled).toBe(true);
-    expect(dispatched).toEqual([{ type: "llm_cursor_set", cursor: 0 }]);
+    // The fixture seeds one chat model; row 1 is the pinned
+    // "+ Add a model from Hugging Face…" call to action.
+    expect(dispatched).toEqual([{ type: "llm_cursor_set", cursor: 1 }]);
   });
 
   it("switches panel modes without changing the active route", () => {

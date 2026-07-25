@@ -177,6 +177,12 @@ export function runSlashCommand(
   ) {
     callbacks.onLocalModelsSetActiveRequested?.(result.localModelsUseModelId);
   }
+  if (result.localModelsAddRef) {
+    void callbacks.onLocalModelsAddCustomRequested?.(result.localModelsAddRef);
+  }
+  if (result.localModelsSearchQuery) {
+    void callbacks.onLocalModelsHfSearchRequested?.(result.localModelsSearchQuery);
+  }
   if (result.triggerLocalModelsStatus) void callbacks.onLocalModelsStatusRequested?.();
   if (result.telegramVerb) {
     runTelegramVerb(result.telegramVerb, callbacks);

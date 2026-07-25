@@ -67,6 +67,8 @@ describe("llm-panel selectors", () => {
 
     expect(selectLlmPanelRows(state, "local").map((row) => row.kind)).toEqual([
       "localTextModel",
+      // Pinned call to action, always present between the two sections.
+      "localAddHuggingFace",
       "localEmbeddingModel",
     ]);
     const cloudRows = selectLlmPanelRows(state, "cloud");

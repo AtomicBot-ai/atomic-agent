@@ -15,6 +15,52 @@ export function handleLlmModalKey(
   },
 ): boolean | null {
   const { state, dispatch, callbacks } = ctx;
+
+  // Checked first: this modal captures every printable character, so any
+  // handler above it would steal letters out of a pasted URL.
+  const hfPrompt = state.llmPanel.huggingFacePrompt;
+  if (hfPrompt) {
+    if (hfPrompt.busy) {
+      // Esc still aborts the wait; everything else is swallowed so keys
+      // typed during a lookup cannot queue up behind it.
+      if (key.escape) dispatch({ type: "llm_hf_prompt_closed" });
+      return true;
+    }
+    if (key.escape) {
+      dispatch({ type: "llm_hf_prompt_closed" });
+      return true;
+    }
+    // Digit picks apply only to a rendered result list — otherwise digits
+    // are ordinary characters in a repo name (`Qwen3-8B`).
+    if (hfPrompt.results.length > 0 && /^[1-9]$/.test(input)) {
+      const hit = hfPrompt.results[Number(input) - 1];
+      if (hit) {
+        void callbacks.onLlmHuggingFaceSubmitted?.(hit.repoId);
+        return true;
+      }
+    }
+    if (key.return) {
+      const query = hfPrompt.buffer.trim();
+      if (query.length > 0) void callbacks.onLlmHuggingFaceSubmitted?.(query);
+      return true;
+    }
+    if (key.backspace || key.delete) {
+      dispatch({
+        type: "llm_hf_prompt_buffer_changed",
+        buffer: hfPrompt.buffer.slice(0, -1),
+      });
+      return true;
+    }
+    if (input && input.length > 0 && !key.ctrl && !key.meta) {
+      dispatch({
+        type: "llm_hf_prompt_buffer_changed",
+        buffer: hfPrompt.buffer + input,
+      });
+      return true;
+    }
+    return true;
+  }
+
   if (state.providersPanel.wizard !== null) {
     const result = handleProvidersWizardKey(input, key, state.providersPanel.wizard);
     if (!result.handled) return false;

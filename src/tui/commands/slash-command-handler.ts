@@ -1,4 +1,5 @@
 import type { TuiAction } from "../tui-action.js";
+import { looksLikeHuggingFaceReference } from "../../local-llm/index.js";
 import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";
 import { isThemeName, THEME_NAMES } from "../theme/theme.js";
 import { parseSlashCommand } from "./slash-command-parser.js";
@@ -53,6 +54,10 @@ export interface SlashDispatchResult {
   readonly skillHubInstallId?: string;
   readonly localModelsPullModelId?: string;
   readonly localModelsUseModelId?: string;
+  /** `/models add <hf-url|owner/name>` — register a custom Hugging Face model. */
+  readonly localModelsAddRef?: string;
+  /** `/models search <query>` — list GGUF repos on Hugging Face. */
+  readonly localModelsSearchQuery?: string;
   readonly triggerLocalModelsStatus?: boolean;
   /**
    * Theme name the caller should activate via `setActiveTheme` before
@@ -274,6 +279,8 @@ function pureActions(
     skillDisableName: undefined,
     localModelsPullModelId: undefined,
     localModelsUseModelId: undefined,
+    localModelsAddRef: undefined,
+    localModelsSearchQuery: undefined,
     triggerLocalModelsStatus: false,
     setThemeName: undefined,
     telegramVerb: undefined,
@@ -316,6 +323,8 @@ function dispatchThemeSub(rawArgs: string): SlashDispatchResult {
  *   - `pull <id>`   — open the tab and kick off a pull for the given id.
  *   - `use <id>`    — open the tab and set the given id as active.
  *   - `status`      — emit the managed-runtime status line in the feed.
+ *   - `search <q>`  — list matching GGUF repos on Hugging Face.
+ *   - `add <ref>`   — register any Hugging Face GGUF as a custom model.
  *   - `<base-url>`  — persist the base URL for external mode (back-compat).
  */
 function dispatchModelsSub(rawArgs: string, commandName: string): SlashDispatchResult {
@@ -353,13 +362,37 @@ function dispatchModelsSub(rawArgs: string, commandName: string): SlashDispatchR
   if (bits[0] === "status") {
     return pureActions([], { triggerLocalModelsStatus: true });
   }
+  if (bits[0] === "search" && bits.length > 1) {
+    return pureActions([], { localModelsSearchQuery: bits.slice(1).join(" ") });
+  }
+  // A pasted Hugging Face reference is routed to `add` with or without the
+  // verb — it is never a llama-server base URL, so the back-compat branch
+  // below would otherwise silently misconfigure the runtime. The predicate
+  // lives next to the parser so the two cannot drift apart.
+  const addRef =
+    bits[0] === "add" && bits.length > 1
+      ? bits.slice(1).join(" ")
+      : looksLikeHuggingFaceReference(argPart)
+        ? argPart
+        : null;
+  if (addRef) {
+    return {
+      ...pureActions([
+        { type: "ui_mode_set", mode: "debug" },
+        { type: "tab_changed", tab: "llm" },
+        { type: "llm_focus_set", focus: "local" },
+      ]),
+      localModelsAddRef: addRef,
+    };
+  }
   try {
     const url = normalizeLocalLlmBaseUrl(argPart);
     return { ...pureActions([]), persistLlamaUrl: url };
   } catch {
     return pureActions([], {
       systemMessage:
-        "usage: /models | /models pull <id> | /models use <id> | /models status | /models <base-url>",
+        "usage: /models | /models pull <id> | /models use <id> | /models status\n" +
+        "       /models search <query> | /models add <hf-url|owner/name> | /models <base-url>",
     });
   }
 }

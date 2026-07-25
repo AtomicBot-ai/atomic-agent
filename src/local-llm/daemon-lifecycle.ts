@@ -275,9 +275,36 @@ async function waitForHealthOkWithLog(dataDir: string, port: number, timeoutMs: 
   } catch {
     tail = "(no log)";
   }
+  const cause = extractLoadFailure(tail);
   throw new Error(
-    `llama-server did not become healthy within ${timeoutMs}ms. Log tail:\n${tail}`,
+    `llama-server did not become healthy within ${timeoutMs}ms` +
+      `${cause ? `: ${cause}` : ""}. Log tail:\n${tail}`,
   );
+}
+
+/**
+ * Pull the one line worth showing out of a llama-server log tail.
+ *
+ * The timeout message is the symptom; the log says *why* — most often an
+ * architecture the bundled llama.cpp build cannot read, which is the
+ * common outcome of pointing at an arbitrary Hugging Face GGUF. Callers
+ * surface only the first line of an error in one-row status slots, so
+ * that line has to carry the diagnosis or the operator is left with
+ * "did not become healthy" and nowhere to go.
+ */
+export function extractLoadFailure(logTail: string): string | null {
+  // Ordered by specificity: the architecture line names the actual
+  // problem, the generic ones are fallbacks.
+  const patterns = [
+    /unknown model architecture:\s*'[^']*'/i,
+    /error loading model:\s*(.+)/i,
+    /failed to load model[^\n]*/i,
+  ];
+  for (const pattern of patterns) {
+    const hit = logTail.match(pattern);
+    if (hit) return hit[0].trim().replace(/\s+/g, " ");
+  }
+  return null;
 }
 
 export async function startDaemon(opts: DaemonStartOptions): Promise<{ pid: number }> {

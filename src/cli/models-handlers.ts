@@ -1,6 +1,10 @@
 import { join } from "node:path";
 import { getConfig, resetConfigCache } from "../config/index.js";
 import { ensureUserConfigFileSync, writeUserConfigFileSync } from "../config/config-file.js";
+import {
+  addCustomModel,
+  removeCustomModel,
+} from "../config/custom-models-store.js";
 import type { UserConfigFile } from "../config/config-schema.js";
 import {
   checkForBackendUpdate,
@@ -18,10 +22,12 @@ import {
   isKnownLocalModelId,
   isMmprojDownloaded,
   isModelDownloaded,
+  listLocalModels,
   listVulkanDevices,
-  LOCAL_MODELS_CATALOG,
   readBackendVersion,
   removeModel,
+  resolveCustomModelFromHuggingFace,
+  searchHuggingFaceGgufModels,
   resolveChatTemplatePath,
   resolveDownloadAsset,
   resolveManagedDevice,
@@ -64,7 +70,7 @@ export async function runLocalModelsList(): Promise<number> {
   process.stdout.write(
     "ID                  | FAMILY | SIZE   | CONTEXT | DL  | ACTIVE\n",
   );
-  for (const m of LOCAL_MODELS_CATALOG) {
+  for (const m of listLocalModels()) {
     const dl = isModelDownloaded(dataDir, m) ? "yes" : "no";
     const active =
       cfg.localModels.managed.modelId === m.id && cfg.localModels.mode === "managed" ? "*" : " ";
@@ -78,7 +84,7 @@ export async function runLocalModelsList(): Promise<number> {
 export async function runLocalModelsPull(idArg: string | undefined): Promise<number> {
   if (!idArg || !isKnownLocalModelId(idArg)) {
     process.stderr.write(
-      `unknown model id. Valid: ${LOCAL_MODELS_CATALOG.map((m) => m.id).join(", ")}\n`,
+      `unknown model id. Valid: ${listLocalModels().map((m) => m.id).join(", ")}\n`,
     );
     return 1;
   }
@@ -119,7 +125,7 @@ export async function runLocalModelsPull(idArg: string | undefined): Promise<num
 export async function runLocalModelsUse(idArg: string | undefined): Promise<number> {
   if (!idArg || !isKnownLocalModelId(idArg)) {
     process.stderr.write(
-      `unknown model id. Valid: ${LOCAL_MODELS_CATALOG.map((m) => m.id).join(", ")}\n`,
+      `unknown model id. Valid: ${listLocalModels().map((m) => m.id).join(", ")}\n`,
     );
     return 1;
   }
@@ -606,7 +612,7 @@ export async function runLocalModelsUpdate(): Promise<number> {
 export async function runLocalModelsRemove(idArg: string | undefined): Promise<number> {
   if (!idArg || !isKnownLocalModelId(idArg)) {
     process.stderr.write(
-      `unknown model id. Valid: ${LOCAL_MODELS_CATALOG.map((m) => m.id).join(", ")}\n`,
+      `unknown model id. Valid: ${listLocalModels().map((m) => m.id).join(", ")}\n`,
     );
     return 1;
   }
@@ -625,6 +631,72 @@ export async function runLocalModelsRemove(idArg: string | undefined): Promise<n
     }
   }
   await removeModel(dataDir, idArg);
-  process.stdout.write(`removed ${idArg}\n`);
+  // Custom entries are user data, not catalog: dropping the files without
+  // dropping the entry would leave a permanently "not downloaded" row.
+  const forgotten = idArg.startsWith("custom-") && removeCustomModel(idArg);
+  process.stdout.write(
+    `removed ${idArg}${forgotten ? " (and its custom-model entry)" : ""}\n`,
+  );
   return 0;
+}
+
+/**
+ * `models add <url|owner/name>` — register a GGUF from any Hugging Face
+ * repo as a `custom-…` catalog entry. Does not download: the user chains
+ * `models pull <id>` (or Enter in the TUI) exactly as for curated models.
+ */
+export async function runLocalModelsAdd(refArg: string | undefined): Promise<number> {
+  if (!refArg) {
+    process.stderr.write(
+      "usage: atomic-agent models add <huggingface-url | owner/name>\n" +
+        "  e.g. atomic-agent models add https://huggingface.co/unsloth/Qwen3.5-4B-GGUF\n",
+    );
+    return 1;
+  }
+  try {
+    const def = await resolveCustomModelFromHuggingFace(refArg);
+    addCustomModel(def);
+    process.stdout.write(
+      `added ${def.id}\n` +
+        `  file:    ${def.filename} (${def.sizeLabel})\n` +
+        `  source:  ${def.huggingFaceUrl}\n` +
+        (def.supportsVision ? `  mmproj:  ${def.mmprojFilename}\n` : "") +
+        `\nnext: atomic-agent models pull ${def.id} && atomic-agent models use ${def.id}\n`,
+    );
+    return 0;
+  } catch (e) {
+    process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
+    return 1;
+  }
+}
+
+/** `models search <query>` — GGUF repos on Hugging Face, most downloaded first. */
+export async function runLocalModelsSearch(
+  args: readonly string[],
+): Promise<number> {
+  const query = args.join(" ").trim();
+  if (query.length === 0) {
+    process.stderr.write("usage: atomic-agent models search <query>\n");
+    return 1;
+  }
+  try {
+    const hits = await searchHuggingFaceGgufModels(query);
+    if (hits.length === 0) {
+      process.stdout.write(`no GGUF repos matched ${JSON.stringify(query)}\n`);
+      return 0;
+    }
+    process.stdout.write("REPO                                               | DOWNLOADS | LIKES\n");
+    for (const hit of hits) {
+      process.stdout.write(
+        `${hit.repoId.padEnd(50)} | ${String(hit.downloads).padStart(9)} | ${hit.likes}\n`,
+      );
+    }
+    process.stdout.write(
+      `\nadd one with: atomic-agent models add ${hits[0]!.repoId}\n`,
+    );
+    return 0;
+  } catch (e) {
+    process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
+    return 1;
+  }
 }

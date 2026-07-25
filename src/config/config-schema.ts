@@ -3,7 +3,10 @@ import {
   parseUserLlmFileConfig,
   type UserLlmFileConfig,
 } from "./llm-config.js";
-import { isKnownLocalModelId } from "../local-llm/models-catalog.js";
+import {
+  isKnownLocalModelId,
+  type LocalModelDef,
+} from "../local-llm/models-catalog.js";
 import {
   MCP_SERVER_NAME_MAX_LENGTH,
   MCP_SERVER_NAME_RE,
@@ -126,6 +129,8 @@ export interface AtomicAgentConfig {
      * healthy. Disabled / unreachable ⇒ FTS5-only recall path.
      */
     embeddings: UserManagedEmbeddingLlmConfig;
+    /** User-added Hugging Face models. Mirrors the user config block. */
+    customModels: LocalModelDef[];
   };
   paths: {
     stateDir: string;
@@ -863,6 +868,14 @@ export interface UserConfigFile {
      * `{ enabled: false, modelId: null, port: 19092 }`.
      */
     embeddings: UserManagedEmbeddingLlmConfig;
+    /**
+     * User-added GGUF models pulled from arbitrary Hugging Face repos
+     * (config v34). Each entry is a full `LocalModelDef` with a
+     * `custom-` prefixed id; `loadConfig()` registers them so the
+     * curated catalog and these resolve through one lookup. Older files
+     * are upgraded with `[]`.
+     */
+    customModels: LocalModelDef[];
   };
   log: { level: LogLevel };
   agent: {
@@ -1339,7 +1352,9 @@ export interface UserConfigFile {
 // the last CLI session exits). Older files transparently inherit `true`.
 // v35: telegram gains `progressIndicator` (live "Thinking…" bubble toggle).
 // Older files transparently inherit `true`.
-export const USER_CONFIG_VERSION = 35 as const;
+// v36: localModels gains `customModels` (GGUF models the user pointed at on
+// Hugging Face). Older files inherit `[]` transparently.
+export const USER_CONFIG_VERSION = 36 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1454,6 +1469,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   32,
   33,
   34,
+  35,
   USER_CONFIG_VERSION,
 ];
 
@@ -1478,6 +1494,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       port: 19092,
       url: "http://127.0.0.1:19092",
     },
+    customModels: [],
   },
   log: { level: "info" },
   agent: {
@@ -1786,16 +1803,124 @@ export function parseLocalLlmMode(raw: unknown, field: string): LocalLlmMode {
   );
 }
 
-function parseOptionalManagedModelId(raw: unknown, field: string): string | null {
+function parseOptionalManagedModelId(
+  raw: unknown,
+  field: string,
+  customModels: readonly LocalModelDef[],
+): string | null {
   if (raw === null || raw === undefined) return null;
   const s = parseNonEmptyString(raw, field);
-  if (!isKnownLocalModelId(s)) {
+  // The custom list comes from the same file, so it is checked directly
+  // rather than through the module registry — a config that adds a model
+  // and selects it in one write must validate before it is ever loaded.
+  if (!isKnownLocalModelId(s) && !customModels.some((m) => m.id === s)) {
     throw new ConfigValidationError(
       field,
       `unknown managed local model id: ${JSON.stringify(s)}`,
     );
   }
   return s;
+}
+
+/**
+ * Validate one user-added model entry. Only the fields the runtime
+ * actually reads are enforced; the rest are cosmetic and defaulted so a
+ * hand-edited config can stay terse.
+ */
+export function parseCustomLocalModel(
+  raw: unknown,
+  field: string,
+): LocalModelDef {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected an object");
+  }
+  const o = raw as Record<string, unknown>;
+  const id = parseNonEmptyString(o.id, `${field}.id`);
+  if (!id.startsWith("custom-")) {
+    throw new ConfigValidationError(
+      `${field}.id`,
+      `custom model ids must start with "custom-", got ${JSON.stringify(id)}`,
+    );
+  }
+  // The id becomes a directory name under `<dataDir>/models/`.
+  if (!/^custom-[a-z0-9._-]+$/.test(id)) {
+    throw new ConfigValidationError(
+      `${field}.id`,
+      `custom model id must match /^custom-[a-z0-9._-]+$/, got ${JSON.stringify(id)}`,
+    );
+  }
+  const filename = parseNonEmptyString(o.filename, `${field}.filename`);
+  const huggingFaceUrl = parseUrl(o.huggingFaceUrl, `${field}.huggingFaceUrl`);
+  const supportsVision = parseBool(
+    o.supportsVision ?? false,
+    `${field}.supportsVision`,
+  );
+  const fileSizeGb = parseNonNegativeNumber(
+    o.fileSizeGb ?? 0,
+    `${field}.fileSizeGb`,
+  );
+  const def: LocalModelDef = {
+    id: id as LocalModelDef["id"],
+    name: typeof o.name === "string" && o.name.length > 0 ? o.name : id,
+    filename,
+    huggingFaceUrl,
+    fileSizeGb,
+    sizeLabel:
+      typeof o.sizeLabel === "string" && o.sizeLabel.length > 0
+        ? o.sizeLabel
+        : `${fileSizeGb.toFixed(1)} GB`,
+    description:
+      typeof o.description === "string" ? o.description : "Custom model",
+    maxContextLength: parseNonNegativeInt(
+      o.maxContextLength ?? 0,
+      `${field}.maxContextLength`,
+    ),
+    contextLabel:
+      typeof o.contextLabel === "string" && o.contextLabel.length > 0
+        ? o.contextLabel
+        : "auto",
+    minRamGb: parseNonNegativeNumber(o.minRamGb ?? 1, `${field}.minRamGb`),
+    recommendedRamGb: parseNonNegativeNumber(
+      o.recommendedRamGb ?? 2,
+      `${field}.recommendedRamGb`,
+    ),
+    family: "custom",
+    supportsVision,
+  };
+  if (supportsVision) {
+    return {
+      ...def,
+      mmprojUrl: parseUrl(o.mmprojUrl, `${field}.mmprojUrl`),
+      mmprojFilename: parseNonEmptyString(
+        o.mmprojFilename,
+        `${field}.mmprojFilename`,
+      ),
+      mmprojFileSizeGb: parseNonNegativeNumber(
+        o.mmprojFileSizeGb ?? 0,
+        `${field}.mmprojFileSizeGb`,
+      ),
+    };
+  }
+  return def;
+}
+
+export function parseCustomLocalModels(
+  raw: unknown,
+  field: string,
+): LocalModelDef[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected an array");
+  }
+  const out = raw.map((entry, i) => parseCustomLocalModel(entry, `${field}[${i}]`));
+  const seen = new Set<string>();
+  for (const def of out) {
+    if (seen.has(def.id)) {
+      throw new ConfigValidationError(field, `duplicate custom model id: ${def.id}`);
+    }
+    seen.add(def.id);
+  }
+  return out;
 }
 
 export function parseBrowserChannel(raw: unknown, field: string): BrowserChannel {
@@ -1890,6 +2015,23 @@ export function parseBoundedPositiveInt(
  * Parse a non-negative integer (includes `0`). Used for caps that
  * accept `0` as "feature disabled", e.g. `memory.reflection.maxNotesPerCall`.
  */
+/** Non-negative float — sizes in GB are fractional. */
+export function parseNonNegativeNumber(raw: unknown, field: string): number {
+  const value =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string"
+        ? Number.parseFloat(raw)
+        : NaN;
+  if (!Number.isFinite(value) || value < 0) {
+    throw new ConfigValidationError(
+      field,
+      `expected non-negative number, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return value;
+}
+
 export function parseNonNegativeInt(raw: unknown, field: string): number {
   const value =
     typeof raw === "number"
@@ -2617,12 +2759,20 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (obj.analytics as Record<string, unknown> | undefined) ?? {};
   const mcp = (obj.mcp as Record<string, unknown> | undefined) ?? {};
 
+  // Parsed before `managed.modelId` so a config that adds a custom model
+  // and activates it in the same write validates.
+  const customModels = parseCustomLocalModels(
+    localModels.customModels,
+    "localModels.customModels",
+  );
+
   const rawManaged =
     (localModels.managed as Record<string, unknown> | undefined) ?? {};
   const managed: UserManagedLocalLlmConfig = {
     modelId: parseOptionalManagedModelId(
       rawManaged.modelId,
       "localModels.managed.modelId",
+      customModels,
     ),
     port: parsePositiveInt(
       rawManaged.port ?? USER_CONFIG_DEFAULTS.localModels.managed.port,
@@ -2717,6 +2867,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       ),
       managed,
       embeddings: embeddingsDaemon,
+      customModels,
     },
     log: {
       level: parseLogLevel(log.level ?? USER_CONFIG_DEFAULTS.log.level, "log.level"),

@@ -12,6 +12,7 @@ import {
   type LocalModelRow,
   type LocalModelsPanelState,
   type RamFit,
+  toStatusLine,
 } from "../local-models/local-models-panel-state.js";
 import type { LocalModelDef } from "../../local-llm/index.js";
 
@@ -79,11 +80,11 @@ interface LocalModelsPanelProps {
 
 /**
  * Rows consumed by the full status footer (top margin + mode line +
- * chat daemon + embedding daemon + data-dir + hotkey hint). Collapsed to
- * a 1-line daemon status + short hint when the window is short — Ink
- * garbles a frame taller than the terminal, it does not clip it.
+ * chat daemon + embedding daemon + data-dir + hotkey hint + Hugging Face
+ * hint). Collapsed to a 1-line daemon status + short hint when the window
+ * is short — Ink garbles a frame taller than the terminal, not clips it.
  */
-const FULL_FOOTER_ROWS = 7;
+const FULL_FOOTER_ROWS = 8;
 /** Rows consumed by the collapsed footer: daemon line + short hint. */
 const COMPACT_FOOTER_ROWS = 3;
 /** Minimum list rows we want before bothering to keep the full footer. */
@@ -407,7 +408,9 @@ export function LocalModelsPanel({
         <Box marginTop={1} flexDirection="column">
           <DownloadBanners panel={panel} />
           {panel.errorLine ? (
-            <Text color="red">{panel.errorLine}</Text>
+            <Text color="red" wrap="truncate-end">
+              {toStatusLine(panel.errorLine)}
+            </Text>
           ) : null}
           <Text color={theme.colors.muted}>
             mode: {panel.configMode}
@@ -419,7 +422,9 @@ export function LocalModelsPanel({
           {renderDaemonLine(panel)}
           {renderEmbeddingDaemonLine(panel.embeddingDaemon)}
           {panel.daemonError ? (
-            <Text color="red">daemon: {panel.daemonError}</Text>
+            <Text color="red" wrap="truncate-end">
+              daemon: {toStatusLine(panel.daemonError)}
+            </Text>
           ) : null}
           {panel.dataDir ? (
             <Text color={theme.colors.muted}>
@@ -431,12 +436,18 @@ export function LocalModelsPanel({
           <Text color={theme.colors.muted}>
             j/k move · Enter pull/activate (embedding: *row + Enter starts server) · g gguf · i info · d remove · s chat+embedding · E embeddings on/off · G gpu · B · r · L
           </Text>
+          <Text color={theme.colors.muted}>
+            not listed? /models search &lt;query&gt; · /models add
+            &lt;huggingface-url&gt; adds any GGUF
+          </Text>
         </Box>
       ) : (
         <Box flexDirection="column">
           <DownloadBanners panel={panel} />
           {panel.errorLine ? (
-            <Text color="red">{panel.errorLine}</Text>
+            <Text color="red" wrap="truncate-end">
+              {toStatusLine(panel.errorLine)}
+            </Text>
           ) : null}
           {renderDaemonLine(panel)}
           <Text color={theme.colors.muted}>

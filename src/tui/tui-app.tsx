@@ -126,6 +126,19 @@ export interface TuiAppCallbacks {
   onLocalModelsDeviceCycleRequested?(): void | Promise<void>;
   onLocalModelsRemoveConfirmed?(modelId: import("../local-llm/index.js").LocalModelId): void;
   onLocalModelsStatusRequested?(): void | Promise<void>;
+  /**
+   * `/models add <hf-url|owner/name>` — resolve a Hugging Face repo into
+   * a `custom-…` catalog entry so it joins the Models tab row list.
+   */
+  onLocalModelsAddCustomRequested?(reference: string): void | Promise<void>;
+  /** `/models search <query>` — list GGUF repos from Hugging Face. */
+  onLocalModelsHfSearchRequested?(query: string): void | Promise<void>;
+  /**
+   * Submit from the "Add a model from Hugging Face" prompt on the LLM
+   * tab. One string carrying either a reference (resolve + add) or a
+   * search query (list hits back into the prompt).
+   */
+  onLlmHuggingFaceSubmitted?(text: string): void | Promise<void>;
   /** Ask the orchestrator to (re)start the llama-server daemon. */
   onLocalModelsDaemonStartRequested?(): void | Promise<void>;
   /** Ask the orchestrator to stop the llama-server daemon. */
