@@ -115,6 +115,50 @@ describe("pickBestDevice", () => {
     expect(pickBestDevice([])).toBeNull();
   });
 
+  // AMD APU iGPUs carry no "Intel"/"integrated" marker and Vulkan
+  // reports their shared-RAM heap as larger than the dGPU's VRAM, so the
+  // VRAM tiebreak used to hand the model to the iGPU.
+  it.each([
+    "AMD Radeon(TM) Graphics",
+    "AMD Radeon 780M Graphics",
+    "AMD Radeon(TM) Vega 8 Graphics",
+    "Intel(R) Graphics (RPL-S)",
+  ])("prefers the dGPU over integrated %s reporting more memory", (igpu) => {
+    const devices: GpuDevice[] = [
+      {
+        id: "Vulkan0",
+        description: igpu,
+        totalMemMiB: 16384,
+        freeMemMiB: 16384,
+      },
+      {
+        id: "Vulkan1",
+        description: "NVIDIA GeForce RTX 4060 Laptop GPU",
+        totalMemMiB: 8188,
+        freeMemMiB: 8188,
+      },
+    ];
+    expect(pickBestDevice(devices)).toBe("Vulkan1");
+  });
+
+  it("does not demote a discrete Intel Arc to integrated", () => {
+    const devices: GpuDevice[] = [
+      {
+        id: "Vulkan0",
+        description: "Intel(R) Arc(TM) A770 Graphics",
+        totalMemMiB: 16384,
+        freeMemMiB: 16384,
+      },
+      {
+        id: "Vulkan1",
+        description: "Intel(R) UHD Graphics 770",
+        totalMemMiB: 32000,
+        freeMemMiB: 32000,
+      },
+    ];
+    expect(pickBestDevice(devices)).toBe("Vulkan0");
+  });
+
   it("falls back to an integrated GPU when no discrete is present", () => {
     const devices: GpuDevice[] = [
       {

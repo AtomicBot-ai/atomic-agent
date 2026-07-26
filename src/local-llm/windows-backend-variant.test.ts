@@ -43,7 +43,12 @@ describe("selectWindowsBackendAsset", () => {
     expect(selectWindowsBackendAsset(null)).toBe(WINDOWS_BACKEND_ASSETS.vulkan);
   });
 
-  it("picks cuda-13.3 when the driver supports >= 13.3", () => {
+  it("picks cuda-13.3 for any 13.x driver (minor-version compatibility)", () => {
+    // Blackwell (sm_120) exists only in the 13.3 build; a 13.0 driver
+    // runs it fine, so it must not be sent to the 12.4 build.
+    expect(selectWindowsBackendAsset({ major: 13, minor: 0 })).toBe(
+      WINDOWS_BACKEND_ASSETS.cuda133,
+    );
     expect(selectWindowsBackendAsset({ major: 13, minor: 3 })).toBe(
       WINDOWS_BACKEND_ASSETS.cuda133,
     );
@@ -55,16 +60,11 @@ describe("selectWindowsBackendAsset", () => {
     );
   });
 
-  it("picks cuda-12.4 when the driver supports >= 12.4 but < 13.3", () => {
+  it("picks cuda-12.4 for a 12.x driver at or above 12.4", () => {
     expect(selectWindowsBackendAsset({ major: 12, minor: 4 })).toBe(
       WINDOWS_BACKEND_ASSETS.cuda124,
     );
     expect(selectWindowsBackendAsset({ major: 12, minor: 6 })).toBe(
-      WINDOWS_BACKEND_ASSETS.cuda124,
-    );
-    // 13.0 is newer than 12.4 but older than the 13.3 build we ship, so
-    // the safe choice is the 12.4 build (a 13.0 driver runs it fine).
-    expect(selectWindowsBackendAsset({ major: 13, minor: 0 })).toBe(
       WINDOWS_BACKEND_ASSETS.cuda124,
     );
   });

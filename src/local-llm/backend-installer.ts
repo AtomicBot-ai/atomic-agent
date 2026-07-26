@@ -130,8 +130,14 @@ export async function checkForBackendUpdate(
 ): Promise<{ updateAvailable: boolean; latestTag: string; currentTag: string | null }> {
   const current = readBackendVersion(dataDir);
   const release = await fetchLatestRelease();
+  // A variant mismatch counts as an update even at the same tag: a
+  // Windows box that installed the Vulkan build before its NVIDIA driver
+  // was present would otherwise keep running Vulkan (and offloading to
+  // whatever device Vulkan enumerates) forever.
+  const variantStale =
+    current?.asset !== undefined && current.asset !== resolveDownloadAsset().assetName;
   return {
-    updateAvailable: current?.tag !== release.tag,
+    updateAvailable: current?.tag !== release.tag || variantStale,
     latestTag: release.tag,
     currentTag: current?.tag ?? null,
   };
@@ -342,6 +348,7 @@ export async function downloadBackend(
   writeBackendVersion(dataDir, {
     tag: release.tag,
     downloadedAt: new Date().toISOString(),
+    asset: assetName,
   });
 
   return { ok: true, tag: release.tag };

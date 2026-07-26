@@ -29,11 +29,23 @@ export interface GpuDevice {
 const SOFTWARE_DEVICE_RE = /llvmpipe|lavapipe|swiftshader|software/i;
 
 /**
- * Integrated GPUs (Intel iGPU, some AMD APUs) share system RAM and are
- * far slower than a discrete card. Used as a tiebreaker so an auto-pick
- * prefers the dGPU even when the iGPU reports more "memory".
+ * Positive discrete-GPU hints, checked *before* the integrated ones so a
+ * discrete card whose name also trips an integrated pattern (Intel Arc,
+ * "Radeon RX") is never demoted.
  */
-const INTEGRATED_DEVICE_RE = /intel|integrated|\buhd\b|\biris\b/i;
+const DISCRETE_DEVICE_RE =
+  /nvidia|geforce|\brtx\b|\bgtx\b|quadro|tesla|\barc\b|radeon\s*(rx|pro)\b/i;
+
+/**
+ * Integrated GPUs (Intel iGPU, AMD APUs) share system RAM and are far
+ * slower than a discrete card. Vulkan reports their heap as a slice of
+ * system RAM — often *larger* than a dGPU's VRAM — so without this the
+ * VRAM tiebreak picks the iGPU. AMD APU marketing names carry no "APU"
+ * marker: "AMD Radeon(TM) Graphics", "AMD Radeon 780M Graphics",
+ * "Radeon(TM) Vega 8 Graphics".
+ */
+const INTEGRATED_DEVICE_RE =
+  /intel|integrated|\buhd\b|\biris\b|\bvega\b|\bapu\b|radeon.*\b\d{3}m\b|radeon(\(tm\))?\s*graphics/i;
 
 /**
  * Parse the stdout/stderr of `llama-server --list-devices`. Pure — no
@@ -72,8 +84,16 @@ export function parseListDevices(output: string): GpuDevice[] {
   return devices;
 }
 
-function isDiscrete(description: string): boolean {
-  return !INTEGRATED_DEVICE_RE.test(description);
+/**
+ * Offload desirability, higher is better: 2 = known discrete card,
+ * 1 = unrecognised (assume discrete — safer than assuming iGPU),
+ * 0 = known integrated. Discrete hints win outright so "Intel Arc" and
+ * "Radeon RX" are not caught by the integrated patterns.
+ */
+export function deviceClassRank(description: string): 0 | 1 | 2 {
+  if (DISCRETE_DEVICE_RE.test(description)) return 2;
+  if (INTEGRATED_DEVICE_RE.test(description)) return 0;
+  return 1;
 }
 
 /**
@@ -88,9 +108,8 @@ export function pickBestDevice(devices: readonly GpuDevice[]): string | null {
   );
   if (candidates.length === 0) return null;
   const ranked = [...candidates].sort((a, b) => {
-    const aDiscrete = isDiscrete(a.description);
-    const bDiscrete = isDiscrete(b.description);
-    if (aDiscrete !== bDiscrete) return aDiscrete ? -1 : 1;
+    const rank = deviceClassRank(b.description) - deviceClassRank(a.description);
+    if (rank !== 0) return rank;
     return b.totalMemMiB - a.totalMemMiB;
   });
   return ranked[0]?.id ?? null;

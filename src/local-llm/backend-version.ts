@@ -6,6 +6,16 @@ import { resolveVersionFilePath } from "./backend-paths.js";
 export interface BackendVersionInfo {
   tag: string;
   downloadedAt: string;
+  /**
+   * Release asset actually installed. On Windows the same
+   * `llama-server.exe` ships in a Vulkan and two CUDA zips, so the
+   * binary's presence alone cannot tell us which compute backend is on
+   * disk. Recording it lets `checkForBackendUpdate` offer a re-download
+   * when the machine now warrants a different variant (e.g. the NVIDIA
+   * driver was installed after the first Vulkan-only install). Absent on
+   * installs predating this field.
+   */
+  asset?: string;
 }
 
 export function readBackendVersion(dataDir: string): BackendVersionInfo | null {
