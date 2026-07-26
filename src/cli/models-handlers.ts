@@ -23,6 +23,7 @@ import {
   readBackendVersion,
   removeModel,
   resolveChatTemplatePath,
+  resolveDownloadAsset,
   resolveManagedDevice,
   resolveMmprojFilePath,
   resolvePlatformAsset,
@@ -149,6 +150,28 @@ export async function runLocalModelsUse(idArg: string | undefined): Promise<numb
   return 0;
 }
 
+/**
+ * Describe the installed compute backend and flag it when this machine
+ * warrants a different one. Every Windows zip ships the same
+ * `llama-server.exe`, so without the recorded asset name there is no way
+ * to tell a Vulkan install from a CUDA one — which is exactly the state
+ * that silently leaves an NVIDIA box enumerating (and offloading to) its
+ * integrated GPU.
+ */
+function describeComputeBackend(installed: string | undefined): string {
+  if (installed === undefined) {
+    return "unknown (installed before variant tracking) — run 'models update' to refresh";
+  }
+  let want: string;
+  try {
+    want = resolveDownloadAsset().assetName;
+  } catch {
+    return installed;
+  }
+  if (installed === want) return installed;
+  return `${installed} — this machine warrants ${want}; run 'models update'`;
+}
+
 export async function runLocalModelsStatus(): Promise<number> {
   const cfg = getConfig();
   if (cfg.localModels.mode === "external") {
@@ -172,6 +195,7 @@ export async function runLocalModelsStatus(): Promise<number> {
   process.stdout.write(
     `backend:        ${ver?.tag ?? "(none)"} (installed ${ver?.downloadedAt ?? "n/a"}), binary ${binOk ? "ok" : "missing"}\n`,
   );
+  process.stdout.write(`compute:        ${describeComputeBackend(ver?.asset)}\n`);
   process.stdout.write(`active model:   ${modelLine}\n`);
   process.stdout.write(
     `daemon:         ${st.running ? `running (pid ${st.pid})` : "stopped"}  ${cfg.localModels.url}\n`,
