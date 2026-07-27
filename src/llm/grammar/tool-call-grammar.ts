@@ -310,35 +310,69 @@ function peelTrailingToolJson(text: string): {
   }
 }
 
+/**
+ * Locate a balanced JSON value in `raw` after skipping leading noise.
+ * Small / degenerate models often emit false-start brackets inside
+ * reasoning garbage (`[SFC]`, half-open `{...`) before a real tool-call
+ * array. Prefer the first candidate that BOTH balances and `JSON.parse`s;
+ * fall back to a clear incomplete/not-found error when nothing works.
+ */
 function extractJsonRoot(raw: string): ExtractedRoot {
   const input = raw.trim();
   if (input.length === 0) {
     throw new ToolCallParseError("tool-call body is empty");
   }
 
-  let start = -1;
-  let kind: "object" | "array" | null = null;
-  let depthCurly = 0;
-  let depthSquare = 0;
+  let sawOpen = false;
+  let sawIncomplete = false;
+
+  for (let start = 0; start < input.length; start += 1) {
+    const open = input[start]!;
+    if (open !== "{" && open !== "[") {
+      continue;
+    }
+    sawOpen = true;
+    const kind: "object" | "array" = open === "{" ? "object" : "array";
+    const extracted = tryExtractBalancedRoot(input, start, kind);
+    if (extracted === null) {
+      sawIncomplete = true;
+      continue;
+    }
+    try {
+      JSON.parse(extracted.jsonText);
+      return extracted;
+    } catch {
+      // unbalanced-escape / truncated-but-closed junk; try next start
+      continue;
+    }
+  }
+
+  if (!sawOpen) {
+    throw new ToolCallParseError("tool-call JSON value not found");
+  }
+  if (sawIncomplete) {
+    throw new ToolCallParseError("tool-call JSON value is incomplete");
+  }
+  throw new ToolCallParseError("tool-call JSON value not found");
+}
+
+/**
+ * Bracket-count from a known open at `start`. Returns null when the root
+ * never closes (incomplete). Nested braces/brackets are tracked with
+ * string-escape awareness identical to the pre-scan single-pass parser.
+ */
+function tryExtractBalancedRoot(
+  input: string,
+  start: number,
+  kind: "object" | "array",
+): ExtractedRoot | null {
+  let depthCurly = kind === "object" ? 1 : 0;
+  let depthSquare = kind === "array" ? 1 : 0;
   let inString = false;
   let escaped = false;
 
-  for (let idx = 0; idx < input.length; idx += 1) {
+  for (let idx = start + 1; idx < input.length; idx += 1) {
     const ch = input[idx]!;
-    if (start === -1) {
-      if (ch === "{") {
-        start = idx;
-        kind = "object";
-        depthCurly = 1;
-      } else if (ch === "[") {
-        start = idx;
-        kind = "array";
-        depthSquare = 1;
-      } else if (!/\s/.test(ch)) {
-        continue;
-      }
-      continue;
-    }
 
     if (inString) {
       if (escaped) {
@@ -377,11 +411,7 @@ function extractJsonRoot(raw: string): ExtractedRoot {
       }
     }
   }
-
-  if (start === -1) {
-    throw new ToolCallParseError("tool-call JSON value not found");
-  }
-  throw new ToolCallParseError("tool-call JSON value is incomplete");
+  return null;
 }
 
 function escapeRegex(text: string): string {

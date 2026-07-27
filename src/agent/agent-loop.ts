@@ -13,6 +13,7 @@ import type { ModelProfileManager } from "../llm/model-profile-manager.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import {
   CancelledError,
+  GrammarError,
   LlmFailure,
   classifyFailure,
 } from "../llm/index.js";
@@ -46,6 +47,7 @@ import {
   formatRepeatNotice,
   formatWanderingRedirect,
   formatForcedLoopReply,
+  formatForcedGrammarReply,
 } from "./loop-detector.js";
 import type { BatchLoopSignal } from "./batch-executor.js";
 import { getConfig } from "../config/index.js";
@@ -659,6 +661,74 @@ export class AgentLoop {
       } catch (err) {
         runError = err instanceof Error ? err : new Error(String(err));
         const category = classifyFailure(err);
+        // `cancelled` is user-initiated — close the turn cleanly.
+        const cancelled =
+          err instanceof CancelledError ||
+          (err instanceof LlmFailure && err.category === "cancelled") ||
+          category === "cancelled";
+        if (cancelled) {
+          this.deps.logger?.error("agent loop failed", {
+            sessionId: state.id,
+            stepIndex: i,
+            error: runError.message,
+            category,
+          });
+          this.deps.onEvent?.({
+            type: "loop_failed",
+            error: runError,
+            category,
+          });
+          this.deps.metrics?.recordLlmFailure({
+            sessionId: state.id,
+            category,
+          });
+          state = { ...state, status: "cancelled" };
+          this.deps.onEvent?.({ type: "loop_completed", reason: "cancelled" });
+          state = incrementTurnCount(state);
+          const durationMs = Date.now() - turnStartedAt;
+          this.deps.onEvent?.({
+            type: "turn_finished",
+            turnIndex,
+            reason: "cancelled",
+            stepCount: stepsTaken,
+            durationMs,
+          });
+          return { session: state, reason: "cancelled", stepCount: stepsTaken };
+        }
+
+        // Persistent tool-call parse / batch-validation failure after the
+        // one-shot repair. Mirror the loop-breaker contract: end the turn
+        // with a synthetic reply so multi-turn chat survives small/local
+        // models dumping degenerate junk (issue #37). Still record the
+        // failure metric + step_error (already emitted by executeStep);
+        // do NOT emit loop_failed or mark the session failed.
+        const isGrammar =
+          err instanceof GrammarError ||
+          (err instanceof LlmFailure && err.category === "grammar") ||
+          category === "grammar";
+        if (isGrammar) {
+          this.deps.metrics?.recordLlmFailure({
+            sessionId: state.id,
+            category: "grammar",
+          });
+          const replyText = formatForcedGrammarReply(runError.message);
+          state = recordTurn(state, assistantReplyTurn(replyText));
+          this.deps.onEvent?.({
+            type: "llm_event",
+            event: { type: "assistant_reply", text: replyText },
+          });
+          this.deps.logger?.warn(
+            "tool-call parse failed after repair; forcing graceful reply",
+            {
+              sessionId: state.id,
+              stepIndex: i,
+              error: runError.message,
+            },
+          );
+          reason = "reply";
+          break;
+        }
+
         this.deps.logger?.error("agent loop failed", {
           sessionId: state.id,
           stepIndex: i,
@@ -674,27 +744,6 @@ export class AgentLoop {
           sessionId: state.id,
           category,
         });
-        // `cancelled` is user-initiated and should close the turn
-        // cleanly without marking the session as failed. Everything
-        // else keeps the existing failed-terminal contract.
-        const cancelled =
-          err instanceof CancelledError ||
-          (err instanceof LlmFailure && err.category === "cancelled") ||
-          category === "cancelled";
-        if (cancelled) {
-          state = { ...state, status: "cancelled" };
-          this.deps.onEvent?.({ type: "loop_completed", reason: "cancelled" });
-          state = incrementTurnCount(state);
-          const durationMs = Date.now() - turnStartedAt;
-          this.deps.onEvent?.({
-            type: "turn_finished",
-            turnIndex,
-            reason: "cancelled",
-            stepCount: stepsTaken,
-            durationMs,
-          });
-          return { session: state, reason: "cancelled", stepCount: stepsTaken };
-        }
         // Symmetric with the cancelled path above: set terminal state,
         // emit `loop_completed` + `turn_finished`, increment turnCount,
         // and RETURN — never throw. Callers (CLI / TUI / task-runner /

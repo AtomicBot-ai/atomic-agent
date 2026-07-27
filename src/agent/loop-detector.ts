@@ -625,6 +625,23 @@ export function formatForcedLoopReply(tool: string, count: number): string {
   ].join(" ");
 }
 
+/**
+ * Synthetic assistant reply when the model failed to emit a parseable
+ * tool-call array even after the one-shot repair pass. Mirrors the
+ * loop-breaker "session stays usable" contract — a small/local model
+ * jellyfish of degenerate junk must not hard-fail multi-turn chat.
+ */
+export function formatForcedGrammarReply(reason: string): string {
+  const trimmed = reason.trim().replace(/\s+/g, " ");
+  const short =
+    trimmed.length > 160 ? `${trimmed.slice(0, 157)}…` : trimmed || "parse failed";
+  return [
+    `(stopped: model output was not a valid tool call after one repair — ${short}).`,
+    "I could not run tools for this turn.",
+    "Please rephrase or try a stronger model if this keeps happening.",
+  ].join(" ");
+}
+
 function formatLoopGuidance(
   tool: string,
   count: number,

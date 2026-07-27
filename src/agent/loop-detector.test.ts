@@ -4,6 +4,7 @@ import {
   BATCH_LOOP_LABEL,
   LOOP_VETO_DENIED_REASON,
   ToolLoopTracker,
+  formatForcedGrammarReply,
   formatForcedLoopReply,
   formatRepeatNotice,
   formatVetoInstruction,
@@ -301,6 +302,15 @@ describe("loop notice formatters", () => {
     expect(reply).toContain("browser.click");
     expect(reply).toContain("4");
     expect(reply.toLowerCase()).toContain("best answer");
+  });
+
+  it("formatForcedGrammarReply keeps the reason short and actionable", () => {
+    const reply = formatForcedGrammarReply(
+      "tool-call JSON value is incomplete",
+    );
+    expect(reply).toContain("tool-call JSON value is incomplete");
+    expect(reply.toLowerCase()).toContain("not a valid tool call");
+    expect(reply.toLowerCase()).toContain("stronger model");
   });
 
   it("formatWanderingRedirect is an actionable redirect", () => {

@@ -155,7 +155,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.session.stepCount).toBe(1);
   });
 
-  it("throws and marks the session as failed when the LLM emits invalid tool JSON", async () => {
+  it("soft-fails invalid tool JSON after repair instead of killing the session", async () => {
     const registry = buildDefaultToolRegistry();
     const loop = new AgentLoop({
       registry,
@@ -172,9 +172,11 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       maxSteps: 3,
       signal: new AbortController().signal,
     });
-    expect(result.reason).toBe("failed");
-    expect(result.session.status).toBe("failed");
-    expect(result.session.lastError).toMatch(/tool-call/);
+    expect(result.reason).toBe("reply");
+    expect(result.session.status).toBe("pending");
+    expect(result.session.lastError == null).toBe(true);
+    const last = result.session.turns.at(-1);
+    expect(last?.kind).toBe("assistant_reply");
   });
 
   it("recovers via a one-shot parser retry when the first completion is malformed", async () => {
@@ -795,11 +797,12 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(stepErrors[0]?.category).toBe("model");
   });
 
-  it("classifies persistent parse failure as GrammarError after one retry", async () => {
+  it("soft-fails persistent parse failure with a graceful reply after one retry", async () => {
     const registry = buildDefaultToolRegistry();
     let llmCalls = 0;
     const stepErrors: Array<{ category: string }> = [];
     const parseRetries: number[] = [];
+    const loopFailed: unknown[] = [];
     const loop = new AgentLoop({
       registry,
       slotManager: new SlotManager(2),
@@ -819,6 +822,8 @@ describe("AgentLoop end-to-end with mock LLM", () => {
           event.event.type === "parse_retry"
         ) {
           parseRetries.push(event.event.attempt);
+        } else if (event.type === "loop_failed") {
+          loopFailed.push(event);
         }
       },
     });
@@ -828,11 +833,18 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       maxSteps: 3,
       signal: new AbortController().signal,
     });
-    expect(result.reason).toBe("failed");
-    expect(result.session.status).toBe("failed");
+    // Issue #37: small-model junk must not hard-fail the session.
+    expect(result.reason).toBe("reply");
+    expect(result.session.status).not.toBe("failed");
     expect(llmCalls).toBe(2);
     expect(parseRetries).toHaveLength(1);
     expect(stepErrors[0]?.category).toBe("grammar");
+    expect(loopFailed).toHaveLength(0);
+    const last = result.session.turns.at(-1);
+    expect(last?.kind).toBe("assistant_reply");
+    if (last?.kind === "assistant_reply") {
+      expect(last.text).toContain("not a valid tool call");
+    }
   });
 
   it("classifies a missing tool call as ToolExecutionError", async () => {

@@ -348,6 +348,24 @@ first thought
     expect(out.args).toEqual({});
   });
 
+  it("skips false-start bracket junk before a real tool-call array", () => {
+    // Repro shape from #37: degenerate reasoningized text emits tokens
+    // like `[SFC]` before the actual grammar-constrained array.
+    const raw =
+      'noise [SFC] more` junk [{"tool":"reply","args":{"text":"hi"}}]';
+    const batch = parseToolCalls(raw);
+    expect(batch.calls).toHaveLength(1);
+    expect(batch.calls[0]?.tool).toBe("reply");
+    expect(batch.calls[0]?.args).toEqual({ text: "hi" });
+  });
+
+  it("skips an incomplete object start before a later valid root", () => {
+    const raw =
+      '{ "tool": "reply", "args": {"text": "half" [{"tool":"reply","args":{"text":"ok"}}]';
+    const batch = parseToolCalls(raw);
+    expect(batch.calls[0]?.args).toEqual({ text: "ok" });
+  });
+
   it("rejects non-JSON input", () => {
     expect(() => parseToolCall("not json")).toThrow(ToolCallParseError);
   });
