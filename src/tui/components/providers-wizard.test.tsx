@@ -38,7 +38,8 @@ describe("ProvidersWizard chat model step", () => {
     );
 
     const { lastFrame } = render(
-      <ProvidersWizard wizard={chatModelStep("https://many.example", 20)} />,
+      // pasted with `/v1` — the header must show the URL actually requested
+      <ProvidersWizard wizard={chatModelStep("https://many.example/v1", 20)} />,
     );
     await flush();
 

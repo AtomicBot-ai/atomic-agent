@@ -1,5 +1,8 @@
 import type { Key } from "ink";
-import { getCachedOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import {
+  getCachedOpenAiCompatModels,
+  normalizeOpenAiCompatBaseUrl,
+} from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import {
   listAimlapiChatModels,
   listAimlapiEmbeddingModels,
@@ -118,8 +121,12 @@ function isLinePhase(phase: ProvidersWizardPhase): boolean {
   );
 }
 
+/** Normalized so the fetch, the cache key and the displayed URL always agree. */
 export function baseUrlForWizard(wizard: ProvidersWizardState): string {
-  return wizard.baseUrlLine.trim() || OPENAI_COMPAT_DEFAULT_BASE_URL;
+  return (
+    normalizeOpenAiCompatBaseUrl(wizard.baseUrlLine) ||
+    OPENAI_COMPAT_DEFAULT_BASE_URL
+  );
 }
 
 /**
