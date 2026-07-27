@@ -155,13 +155,13 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.session.stepCount).toBe(1);
   });
 
-  it("throws and marks the session as failed when the LLM emits invalid tool JSON", async () => {
+  it("marks the session as failed when the LLM emits a botched tool call", async () => {
     const registry = buildDefaultToolRegistry();
     const loop = new AgentLoop({
       registry,
       slotManager: new SlotManager(2),
       grammar: 'root ::= "ok"',
-      llmComplete: async () => makeCompletion("not a json"),
+      llmComplete: async () => makeCompletion('[{"tool":"reply","args":{'),
       toolDescriptors: TOOLS,
       capabilities: CAPS,
       skillCatalog: SKILLS,
@@ -175,6 +175,31 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.reason).toBe("failed");
     expect(result.session.status).toBe("failed");
     expect(result.session.lastError).toMatch(/tool-call/);
+  });
+
+  it("degrades to a plain reply when the LLM answers in prose instead of a tool call", async () => {
+    const registry = buildDefaultToolRegistry();
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => makeCompletion("Hi! How can I help?"),
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const session = createEmptySessionState({ id: "s-prose", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "hi",
+      maxSteps: 3,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("reply");
+    expect(result.session.status).toBe("pending");
+    expect(result.session.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "Hi! How can I help?",
+    });
   });
 
   it("recovers via a one-shot parser retry when the first completion is malformed", async () => {
@@ -806,7 +831,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       grammar: 'root ::= "ok"',
       llmComplete: async () => {
         llmCalls += 1;
-        return makeCompletion("not valid json at all");
+        return makeCompletion('[{"tool":"reply","args":{"text":');
       },
       toolDescriptors: TOOLS,
       capabilities: CAPS,

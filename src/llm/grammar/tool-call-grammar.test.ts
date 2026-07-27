@@ -395,6 +395,43 @@ first thought
     expect(out.args.args).toEqual(["-n", "5"]);
   });
 
+  it("ignores bracket runs in prose that are not JSON (issue #37)", () => {
+    const raw = `<think>
+[SFC] 分析中 [1] — what should I answer? {not json either}
+</think>
+[{"tool":"reply","args":{"text":"hi"}}]`;
+    const out = parseToolCall(raw);
+    expect(out.tool).toBe("reply");
+    expect(out.args).toEqual({ text: "hi" });
+  });
+
+  it("peels the real call out of an unclosed think block full of brackets", () => {
+    const raw = `<think>
+rambling [SFC] more rambling
+[{"tool":"reply","args":{"text":"hi"}}]`;
+    const extracted = extractReasoning(raw);
+    expect(extracted.body).toBe('[{"tool":"reply","args":{"text":"hi"}}]');
+    expect(parseToolCall(raw).tool).toBe("reply");
+  });
+
+  it("survives an unmatched brace in the reasoning before the call", () => {
+    const raw = `<think>
+a stray { brace, then the answer
+[{"tool":"reply","args":{"text":"hi"}}]`;
+    const out = parseToolCall(raw);
+    expect(out.tool).toBe("reply");
+    expect(out.args).toEqual({ text: "hi" });
+  });
+
+  it("prefers the emitted call over one rehearsed inside the reasoning", () => {
+    const raw = `<think>
+maybe [{"tool":"finish","args":{"summary":"no"}}] — actually no
+</think>
+[{"tool":"reply","args":{"text":"yes"}}]`;
+    const out = parseToolCall(raw);
+    expect(out.tool).toBe("reply");
+  });
+
   it("extracts JSON when prose precedes and args strings contain braces", () => {
     const raw = `preamble
 {"tool":"finish","args":{"summary":"literal {}"}}`;
