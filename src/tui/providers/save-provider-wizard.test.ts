@@ -110,7 +110,8 @@ describe("saveProviderWizardToConfig", () => {
     expect(getConfig().llm?.providers.find((p) => p.id === "openai-compatible"))
       .toMatchObject({
         kind: "openai-compatible",
-        baseUrl: "https://api.venice.ai/api/",
+        // trailing slash normalized away — callers append `/v1/...`
+        baseUrl: "https://api.venice.ai/api",
         defaultChatModel: "venice-uncensored",
       });
   });

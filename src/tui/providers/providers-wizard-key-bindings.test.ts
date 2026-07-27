@@ -1,6 +1,7 @@
 import type { Key } from "ink";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import { LOCAL_EMBEDDING_CHOICE_ID } from "./providers-model-options.js";
 import { handleProvidersWizardKey } from "./providers-wizard-key-bindings.js";
 import { createProvidersWizardState } from "./providers-wizard-state.js";
@@ -60,6 +61,59 @@ describe("handleProvidersWizardKey", () => {
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.kind).toBe("openai-compatible");
     expect(wizard.phase).toBe("api_key");
+  });
+
+  describe("openai-compatible chat model step", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    async function wizardAtChatModelStep(
+      baseUrl: string,
+    ): Promise<ProvidersWizardState> {
+      let wizard = createProvidersWizardState("add", {
+        kind: "openai-compatible",
+      });
+      wizard = { ...wizard, phase: "base_url" };
+      for (const ch of baseUrl) wizard = next(wizard, ch, emptyKey());
+      return next(wizard, "", emptyKey({ return: true }));
+    }
+
+    it("picks a discovered model with arrows + Enter", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({
+          ok: true,
+          json: async () => ({ data: [{ id: "a-model" }, { id: "b-model" }] }),
+        })),
+      );
+      await fetchOpenAiCompatModels("https://picks.example");
+
+      let wizard = await wizardAtChatModelStep("https://picks.example");
+      expect(wizard.phase).toBe("chat_model_line");
+
+      wizard = next(wizard, "", emptyKey({ downArrow: true }));
+      wizard = next(wizard, "", emptyKey({ return: true }));
+      expect(wizard.chatModelLine).toBe("b-model");
+      expect(wizard.phase).toBe("embedding_model_line");
+    });
+
+    it("lets typing override the discovered list", async () => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({
+          ok: true,
+          json: async () => ({ data: [{ id: "a-model" }] }),
+        })),
+      );
+      await fetchOpenAiCompatModels("https://typed.example");
+
+      let wizard = await wizardAtChatModelStep("https://typed.example");
+      for (const ch of "my-own") wizard = next(wizard, ch, emptyKey());
+      wizard = next(wizard, "", emptyKey({ return: true }));
+      expect(wizard.chatModelLine).toBe("my-own");
+      expect(wizard.phase).toBe("embedding_model_line");
+    });
   });
 
   it("walks the OpenRouter onboarding flow through model and embedding picks", () => {

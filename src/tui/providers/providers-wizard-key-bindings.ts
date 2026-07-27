@@ -1,9 +1,11 @@
 import type { Key } from "ink";
+import { getCachedOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import {
   listAimlapiChatModels,
   listAimlapiEmbeddingModels,
   listOpenRouterChatModels,
   listOpenRouterEmbeddingModels,
+  OPENAI_COMPAT_DEFAULT_BASE_URL,
 } from "./providers-model-options.js";
 import type {
   ProvidersWizardKind,
@@ -116,6 +118,24 @@ function isLinePhase(phase: ProvidersWizardPhase): boolean {
   );
 }
 
+export function baseUrlForWizard(wizard: ProvidersWizardState): string {
+  return wizard.baseUrlLine.trim() || OPENAI_COMPAT_DEFAULT_BASE_URL;
+}
+
+/**
+ * Chat model ids discovered from `{baseUrl}/v1/models`. Empty once the operator
+ * types anything — a typed id is a deliberate override, so the picker steps
+ * aside (backspacing back to empty brings it back).
+ */
+export function listCompatChatModelPicks(
+  wizard: ProvidersWizardState,
+): readonly string[] {
+  if (wizard.phase !== "chat_model_line") return [];
+  if (wizard.kind !== "openai-compatible") return [];
+  if (wizard.chatModelLine.length > 0) return [];
+  return getCachedOpenAiCompatModels(baseUrlForWizard(wizard)) ?? [];
+}
+
 export type ProvidersWizardKeyResult =
   | { handled: true; wizard: ProvidersWizardState; submit?: false }
   | { handled: true; wizard: ProvidersWizardState; submit: true }
@@ -165,6 +185,33 @@ export function handleProvidersWizardKey(
   }
 
   if (isLinePhase(wizard.phase)) {
+    const picks = listCompatChatModelPicks(wizard);
+    if (picks.length > 0) {
+      // Arrows only: printable keys fall through to line editing so an id the
+      // server does not advertise can still be typed.
+      if (key.downArrow) {
+        return {
+          handled: true,
+          wizard: { ...wizard, cursor: (wizard.cursor + 1) % picks.length },
+        };
+      }
+      if (key.upArrow) {
+        return {
+          handled: true,
+          wizard: {
+            ...wizard,
+            cursor: (wizard.cursor - 1 + picks.length) % picks.length,
+          },
+        };
+      }
+      if (key.return) {
+        const picked = picks[wizard.cursor] ?? picks[0]!;
+        return {
+          handled: true,
+          wizard: advanceWizardPhase({ ...wizard, chatModelLine: picked }),
+        };
+      }
+    }
     const field =
       wizard.phase === "base_url"
         ? "baseUrlLine"

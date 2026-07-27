@@ -1,5 +1,11 @@
 import { Box, Text } from "ink";
-import type { ReactElement } from "react";
+import { useEffect, useState, type ReactElement } from "react";
+import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
+import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import {
+  baseUrlForWizard,
+  listCompatChatModelPicks,
+} from "../providers/providers-wizard-key-bindings.js";
 import { theme } from "../theme/theme.js";
 import {
   listAimlapiChatModels,
@@ -103,6 +109,76 @@ function renderLineField(props: {
   );
 }
 
+/** Keep long server model lists inside a fixed viewport around the cursor. */
+const PICK_WINDOW = 12;
+
+function CompatChatModelStep(props: {
+  wizard: ProvidersWizardState;
+}): ReactElement {
+  const w = props.wizard;
+  const baseUrl = baseUrlForWizard(w);
+  const [status, setStatus] = useState<{ loading: boolean; error: string | null }>(
+    { loading: true, error: null },
+  );
+
+  useEffect(() => {
+    let alive = true;
+    setStatus({ loading: true, error: null });
+    const apiKey =
+      w.apiKeyBuffer.trim() ||
+      resolveLlmProviderApiKey({
+        id: "openai-compatible",
+        kind: "openai-compatible",
+      });
+    fetchOpenAiCompatModels(baseUrl, apiKey).then(
+      () => {
+        if (alive) setStatus({ loading: false, error: null });
+      },
+      (err: unknown) => {
+        if (alive) {
+          setStatus({
+            loading: false,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      },
+    );
+    return () => {
+      alive = false;
+    };
+    // Re-fetch only when the server changes; the key is fixed for this wizard run.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseUrl]);
+
+  const picks = listCompatChatModelPicks(w);
+  if (picks.length > 0) {
+    const cursor = Math.min(w.cursor, picks.length - 1);
+    const start = Math.min(
+      Math.max(0, cursor - Math.floor(PICK_WINDOW / 2)),
+      Math.max(0, picks.length - PICK_WINDOW),
+    );
+    return renderPickList(
+      `Chat model — ${picks.length} from ${baseUrl}/v1/models`,
+      picks.slice(start, start + PICK_WINDOW).map((id) => ({ label: id })),
+      cursor - start,
+      `↑/↓ move (${cursor + 1}/${picks.length}) · Enter select · type to enter an id by hand · Esc cancel`,
+    );
+  }
+
+  const hint = status.loading
+    ? `listing models from ${baseUrl}/v1/models…`
+    : status.error
+      ? `model list unavailable (${status.error}) — type the id · Enter to continue`
+      : "Enter to continue · Backspace to empty for the model list · Esc cancel";
+  return renderLineField({
+    title: "Chat model id",
+    value: w.chatModelLine,
+    placeholder: OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
+    hint,
+    error: w.error,
+  });
+}
+
 export function ProvidersWizard(props: {
   wizard: ProvidersWizardState;
 }): ReactElement {
@@ -202,13 +278,7 @@ export function ProvidersWizard(props: {
   }
 
   if (w.phase === "chat_model_line") {
-    return renderLineField({
-      title: "Chat model id",
-      value: w.chatModelLine,
-      placeholder: OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
-      hint: "Enter to continue · Esc cancel",
-      error: w.error,
-    });
+    return <CompatChatModelStep wizard={w} />;
   }
 
   if (w.phase === "embedding_model_line") {
