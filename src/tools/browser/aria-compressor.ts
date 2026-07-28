@@ -118,7 +118,7 @@ export function summariseAriaSnapshot(
       ? DEFAULT_ARIA_MAX_CHARS
       : options.maxChars <= 0 || !Number.isFinite(options.maxChars)
         ? Number.POSITIVE_INFINITY
-        : Math.trunc(options.maxChars);
+        : Math.max(1, Math.trunc(options.maxChars));
   const dropNoise = options.dropNoise ?? true;
 
   const rawLines = rawText.split(/\r?\n/);
@@ -187,10 +187,11 @@ export function summariseAriaSnapshot(
 }
 
 /**
- * Order-preserving pack: include lines until `maxChars` would be exceeded.
- * Prefer dropping pure noise-adjacent empty lines already removed upstream;
- * here we simply cut the tail so refs near the top of the page survive —
- * which is what the model almost always acts on first.
+ * Order-preserving pack: include lines in their original order until adding
+ * the next line would exceed `maxChars`, then cut the tail. Lines near the
+ * top of the tree survive — which is what the model almost always acts on
+ * first — but there is no per-line ref/name scoring; packing is purely
+ * positional.
  */
 export function packLinesToCharBudget(
   lines: readonly string[],

@@ -503,6 +503,40 @@ describe("summariseAriaSnapshot", () => {
     expect(out.refs.length).toBeLessThan(200);
   });
 
+  it("applies char budget and noise dropping together (default call-site path)", () => {
+    // The only real call site (playwright-backend) passes no options, so the
+    // char budget and noise dropping always run together. Cover that here.
+    const noise = Array.from({ length: 20 }, (_, i) => `  - generic [ref=n${i}]:`);
+    const links = Array.from(
+      { length: 200 },
+      (_, i) => `- link "Item ${i}" [ref=e${i}]`,
+    );
+    const raw = [...noise, ...links].join("\n");
+    const out = summariseAriaSnapshot(
+      raw,
+      { url: "https://example.com", title: "t" },
+      { maxChars: 400 },
+    );
+    expect(out.text).toMatch(/collapsed \d+ empty container lines/);
+    expect(out.text).toMatch(/truncated ARIA tree by size/);
+    // Empty generics are dropped, so none of the n-refs survive.
+    expect(out.refs.some((r) => r.startsWith("n"))).toBe(false);
+    expect(out.refs.length).toBeGreaterThan(0);
+  });
+
+  it("treats a fractional maxChars as at least one char (never wipes the tree)", () => {
+    const raw = '- link "Home" [ref=e1]';
+    const out = summariseAriaSnapshot(
+      raw,
+      { url: "u", title: "t" },
+      { maxChars: 0.4 },
+    );
+    // Must not collapse to an empty body: 0.4 -> trunc 0 previously wiped it.
+    expect(out.text).toContain("truncated ARIA tree by size");
+    expect(out.refs.length).toBeGreaterThanOrEqual(0);
+    expect(out.text).toMatch(/^url: u/);
+  });
+
   it("extracts refs and emits a header", () => {
     const raw = [
       "- banner",
