@@ -61,40 +61,42 @@ describe("parseListDevices", () => {
     expect(parseListDevices("no devices here")).toEqual([]);
   });
 
-  it("parses canonical MetalN device lines (Apple Silicon)", () => {
+  it("parses the real Apple Silicon Metal row verbatim (MTL0, from an M1 Max)", () => {
+    // Verbatim from `llama-server --list-devices` on an Apple M1 Max.
+    // The addressable --device id is MTL0, not Metal0 — read it out of
+    // the table rather than constructing it.
     const out = [
       "Available devices:",
-      "  Metal0: Apple M3 Ultra (98304 MiB, 90000 MiB free)",
+      "  BLAS: Accelerate (0 MiB, 0 MiB free)",
+      "  MTL0: Apple M1 Max (25559 MiB, 25558 MiB free)",
     ].join("\n");
+    // BLAS has no trailing digit, so it is not a --device id form and is
+    // correctly skipped; only the real MTL0 GPU row is returned.
     expect(parseListDevices(out)).toEqual<GpuDevice[]>([
       {
-        id: "Metal0",
-        description: "Apple M3 Ultra",
-        totalMemMiB: 98304,
-        freeMemMiB: 90000,
+        id: "MTL0",
+        description: "Apple M1 Max",
+        totalMemMiB: 25559,
+        freeMemMiB: 25558,
       },
     ]);
   });
 
-  it("normalises 'GPU 0:' Metal table rows to Metal0", () => {
-    const out = "GPU 0: Apple M2 Max (id: 0, buffer size: 64 GiB)";
+  it("merges a later memory-bearing row into an earlier figure-less duplicate", () => {
+    // Some builds emit the table on both stdout and stderr; an init line
+    // seen first must not shadow the row carrying the real memory figures.
+    const out = [
+      "MTL0: Apple M1 Max",
+      "MTL0: Apple M1 Max (25559 MiB, 25558 MiB free)",
+    ].join("\n");
     const devices = parseListDevices(out);
     expect(devices).toHaveLength(1);
-    expect(devices[0]?.id).toBe("Metal0");
-    expect(devices[0]?.description).toMatch(/Apple M2 Max/i);
-  });
-
-  it("parses ggml-metal device log lines", () => {
-    const out = "ggml-metal : device 0 = Apple M3 Ultra";
-    const devices = parseListDevices(out);
-    expect(devices).toEqual<GpuDevice[]>([
-      {
-        id: "Metal0",
-        description: "Apple M3 Ultra",
-        totalMemMiB: 0,
-        freeMemMiB: 0,
-      },
-    ]);
+    expect(devices[0]).toEqual<GpuDevice>({
+      id: "MTL0",
+      description: "Apple M1 Max",
+      totalMemMiB: 25559,
+      freeMemMiB: 25558,
+    });
   });
 });
 
@@ -211,13 +213,13 @@ describe("pickBestDevice", () => {
   it("treats Apple Silicon Metal devices as auto-pickable (not discarded)", () => {
     const devices: GpuDevice[] = [
       {
-        id: "Metal0",
-        description: "Apple M3 Ultra",
-        totalMemMiB: 98304,
-        freeMemMiB: 90000,
+        id: "MTL0",
+        description: "Apple M1 Max",
+        totalMemMiB: 25559,
+        freeMemMiB: 25558,
       },
     ];
-    expect(pickBestDevice(devices)).toBe("Metal0");
+    expect(pickBestDevice(devices)).toBe("MTL0");
   });
 
 });
