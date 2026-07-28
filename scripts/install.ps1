@@ -9,7 +9,7 @@
   that directory to the user PATH.
 
 .EXAMPLE
-  irm https://raw.githubusercontent.com/AtomicBot-ai/atomic-agent/main/scripts/install.ps1 | iex
+  irm https://atomicagent.io/install.ps1 | iex
 
 .NOTES
   Environment overrides (mirrors install.sh):

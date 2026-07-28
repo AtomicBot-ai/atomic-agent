@@ -2,7 +2,7 @@
 # Install a released atomic-agent CLI (Node SEA) from GitHub Releases.
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/AtomicBot-ai/atomic-agent/main/scripts/install.sh | sh
+#   curl -fsSL https://atomicagent.io/install | sh
 #
 # Environment:
 #   ATOMIC_AGENT_REPO=owner/atomic-agent   (default: AtomicBot-ai/atomic-agent)
