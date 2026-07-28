@@ -31,6 +31,12 @@ export {
   markChromeProfileCleanExit,
 } from "./decorate-chrome-profile.js";
 export type { DecorateChromeProfileOptions } from "./decorate-chrome-profile.js";
+export {
+  CHROME_LOCK_BASENAMES,
+  clearStaleChromeLocks,
+  readChromeSingletonLockPid,
+} from "./clear-stale-chrome-locks.js";
+export type { ClearStaleChromeLocksResult } from "./clear-stale-chrome-locks.js";
 export { findChromeExecutable } from "./find-chrome-executable.js";
 export type {
   BrowserExecutable,
