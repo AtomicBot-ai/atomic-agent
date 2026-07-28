@@ -366,6 +366,30 @@ describe("browser tools on a fake backend", () => {
     expect(backend.readyCalls).toBe(0);
   });
 
+  it("tabs new proceeds to the backend when a non-http(s) URL is approved", async () => {
+    const gate = new ApprovalGate({
+      emit: (req) =>
+        setImmediate(() =>
+          gate.resolve({ approvalId: req.approvalId, approved: true }),
+        ),
+    });
+    const tool = buildBrowserTabsTool(backend, {
+      approvals: gate,
+      approvalRequired: true,
+    });
+    const result = await tool.run(
+      { action: "new", url: "file:///etc/hosts" },
+      CTX,
+    );
+    expect(result.status).toBe("ok");
+    // url survives the await and reaches the backend intact
+    expect(backend.lastTabs).toEqual({
+      action: "new",
+      url: "file:///etc/hosts",
+    });
+    expect(backend.readyCalls).toBe(1);
+  });
+
   it("tabs new with javascript: URL is gated the same way", async () => {
     const gate = new ApprovalGate({
       emit: (req) => gate.reject(req.approvalId, "denied js scheme"),
