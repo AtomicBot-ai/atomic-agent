@@ -326,10 +326,95 @@ describe("browser tools on a fake backend", () => {
   });
 
   it("tabs list rendering includes the active marker", async () => {
-    const tool = buildBrowserTabsTool(backend);
+    const tool = buildBrowserTabsTool(backend, autoApprove());
     const result = await tool.run({ action: "list" }, CTX);
     expect(result.status).toBe("ok");
     expect(result.summary).toContain("*[0] Example");
+  });
+
+  it("tabs new with http(s) URL does not require approval", async () => {
+    const gate = new ApprovalGate({
+      emit: (req) => gate.reject(req.approvalId, "should not be called"),
+    });
+    const tool = buildBrowserTabsTool(backend, {
+      approvals: gate,
+      approvalRequired: true,
+    });
+    const result = await tool.run(
+      { action: "new", url: "https://example.com/docs" },
+      CTX,
+    );
+    expect(result.status).toBe("ok");
+    expect(backend.lastTabs).toEqual({
+      action: "new",
+      url: "https://example.com/docs",
+    });
+  });
+
+  it("tabs new requires approval for non-http(s) schemes", async () => {
+    const gate = new ApprovalGate({
+      emit: (req) => gate.reject(req.approvalId, "denied file scheme"),
+    });
+    const tool = buildBrowserTabsTool(backend, {
+      approvals: gate,
+      approvalRequired: true,
+    });
+    await expect(
+      tool.run({ action: "new", url: "file:///etc/passwd" }, CTX),
+    ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    expect(backend.lastTabs).toBeNull();
+    expect(backend.readyCalls).toBe(0);
+  });
+
+  it("tabs new proceeds to the backend when a non-http(s) URL is approved", async () => {
+    const gate = new ApprovalGate({
+      emit: (req) =>
+        setImmediate(() =>
+          gate.resolve({ approvalId: req.approvalId, approved: true }),
+        ),
+    });
+    const tool = buildBrowserTabsTool(backend, {
+      approvals: gate,
+      approvalRequired: true,
+    });
+    const result = await tool.run(
+      { action: "new", url: "file:///etc/hosts" },
+      CTX,
+    );
+    expect(result.status).toBe("ok");
+    // url survives the await and reaches the backend intact
+    expect(backend.lastTabs).toEqual({
+      action: "new",
+      url: "file:///etc/hosts",
+    });
+    expect(backend.readyCalls).toBe(1);
+  });
+
+  it("tabs new with javascript: URL is gated the same way", async () => {
+    const gate = new ApprovalGate({
+      emit: (req) => gate.reject(req.approvalId, "denied js scheme"),
+    });
+    const tool = buildBrowserTabsTool(backend, {
+      approvals: gate,
+      approvalRequired: true,
+    });
+    await expect(
+      tool.run({ action: "new", url: "javascript:alert(1)" }, CTX),
+    ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    expect(backend.lastTabs).toBeNull();
+  });
+
+  it("tabs list never hits the URL approval gate", async () => {
+    const gate = new ApprovalGate({
+      emit: (req) => gate.reject(req.approvalId, "list must not ask"),
+    });
+    const tool = buildBrowserTabsTool(backend, {
+      approvals: gate,
+      approvalRequired: true,
+    });
+    const result = await tool.run({ action: "list" }, CTX);
+    expect(result.status).toBe("ok");
+    expect(backend.lastTabs?.action).toBe("list");
   });
 
   it("buildBrowserTools registers all browser tools", () => {

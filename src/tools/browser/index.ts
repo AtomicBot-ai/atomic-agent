@@ -70,7 +70,7 @@ export function buildBrowserTools(
     buildBrowserTypeTool(backend),
     buildBrowserReadAriaTool(backend),
     buildBrowserSearchTool(backend),
-    buildBrowserTabsTool(backend),
+    buildBrowserTabsTool(backend, dangerous),
     buildBrowserScrollTool(backend),
   ];
 }
