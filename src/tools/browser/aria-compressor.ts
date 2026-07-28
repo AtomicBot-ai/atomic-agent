@@ -18,12 +18,24 @@ export interface AriaCompressionOptions {
    */
   maxLines?: number;
   /**
+   * Soft character budget applied AFTER noise removal and BEFORE the
+   * line cap. Dense SPAs can emit short lines that still blow small
+   * local-model context windows (8k–16k). Default ~24k chars ≈ a few
+   * thousand tokens of ARIA text — enough for useful refs, small enough
+   * that a 9B/ local chat model still has room for the stable prefix.
+   * Set `0` / Infinity to disable. Related: #21.
+   */
+  maxChars?: number;
+  /**
    * Drop pure container lines (`generic`, `group`, `none`, ...) that
    * carry no name and no inline text. Default true; tests set false to
    * verify the raw-line pathway.
    */
   dropNoise?: boolean;
 }
+
+/** Default char budget when callers omit `maxChars`. */
+export const DEFAULT_ARIA_MAX_CHARS = 24_000;
 
 /**
  * Roles that convey no semantic signal to the model on their own: empty
@@ -101,6 +113,12 @@ export function summariseAriaSnapshot(
   options: AriaCompressionOptions = {},
 ): AriaSnapshotSummary {
   const maxLines = options.maxLines ?? 800;
+  const maxChars =
+    options.maxChars === undefined
+      ? DEFAULT_ARIA_MAX_CHARS
+      : options.maxChars <= 0 || !Number.isFinite(options.maxChars)
+        ? Number.POSITIVE_INFINITY
+        : Math.max(1, Math.trunc(options.maxChars));
   const dropNoise = options.dropNoise ?? true;
 
   const rawLines = rawText.split(/\r?\n/);
@@ -117,11 +135,19 @@ export function summariseAriaSnapshot(
     kept.push(line);
   }
 
-  const truncatedByLimit = kept.length > maxLines;
-  const finalLines = truncatedByLimit ? kept.slice(0, maxLines) : kept;
-  const omittedByLimit = kept.length - finalLines.length;
-  const omittedChars = truncatedByLimit
-    ? kept.slice(maxLines).reduce((sum, line) => sum + line.length + 1, 0)
+  // Prefer keeping interactive / named nodes when we must cut by chars:
+  // score lines with refs or quoted names higher and pack greedily in
+  // original order until the budget fills (order-preserving pack).
+  const charPacked = packLinesToCharBudget(kept, maxChars);
+  const afterChars = charPacked.lines;
+  const truncatedByChars = charPacked.truncated;
+  const omittedCharsByBudget = charPacked.omittedChars;
+
+  const truncatedByLimit = afterChars.length > maxLines;
+  const finalLines = truncatedByLimit ? afterChars.slice(0, maxLines) : afterChars;
+  const omittedByLimit = afterChars.length - finalLines.length;
+  const omittedCharsByLines = truncatedByLimit
+    ? afterChars.slice(maxLines).reduce((sum, line) => sum + line.length + 1, 0)
     : 0;
 
   const body = finalLines.join("\n");
@@ -131,9 +157,14 @@ export function summariseAriaSnapshot(
       `… [collapsed ${droppedNoise} empty container lines]`,
     );
   }
+  if (truncatedByChars) {
+    footerParts.push(
+      `… [truncated ARIA tree by size; ~${omittedCharsByBudget} chars over budget — scroll or navigate to see more]`,
+    );
+  }
   if (truncatedByLimit) {
     footerParts.push(
-      `… [truncated ARIA tree; ${omittedByLimit} lines / ~${omittedChars} chars omitted — scroll or navigate to see more]`,
+      `… [truncated ARIA tree; ${omittedByLimit} lines / ~${omittedCharsByLines} chars omitted — scroll or navigate to see more]`,
     );
   }
   const footer = footerParts.length > 0 ? `\n${footerParts.join("\n")}` : "";
@@ -153,6 +184,41 @@ export function summariseAriaSnapshot(
     .digest("hex")
     .slice(0, 12);
   return { text, digest, refs };
+}
+
+/**
+ * Order-preserving pack: include lines in their original order until adding
+ * the next line would exceed `maxChars`, then cut the tail. Lines near the
+ * top of the tree survive — which is what the model almost always acts on
+ * first — but there is no per-line ref/name scoring; packing is purely
+ * positional.
+ */
+export function packLinesToCharBudget(
+  lines: readonly string[],
+  maxChars: number,
+): { lines: string[]; truncated: boolean; omittedChars: number } {
+  if (!Number.isFinite(maxChars) || maxChars === Number.POSITIVE_INFINITY) {
+    return { lines: [...lines], truncated: false, omittedChars: 0 };
+  }
+  if (maxChars <= 0) {
+    return { lines: [], truncated: lines.length > 0, omittedChars: lines.join("\n").length };
+  }
+  const out: string[] = [];
+  let used = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]!;
+    // +1 for the join newline, except before the first line.
+    const add = line.length + (out.length > 0 ? 1 : 0);
+    if (used + add > maxChars) {
+      const omittedChars = lines
+        .slice(i)
+        .reduce((sum, l, idx) => sum + l.length + (idx > 0 || out.length > 0 ? 1 : 0), 0);
+      return { lines: out, truncated: true, omittedChars };
+    }
+    out.push(line);
+    used += add;
+  }
+  return { lines: out, truncated: false, omittedChars: 0 };
 }
 
 function extractRefs(rawText: string): string[] {

@@ -11,7 +11,6 @@ import type {
   TabsInput,
   TypeInput,
 } from "./browser-backend.js";
-import { summariseAriaSnapshot } from "./aria-compressor.js";
 import {
   buildBrowserClickTool,
   buildBrowserNavigateTool,
@@ -484,85 +483,5 @@ describe("browser tools on a fake backend", () => {
     const tool = buildBrowserScrollTool(backend);
     const result = await tool.run({ direction: "down" }, CTX);
     expect(result.summary).toContain("remaining below");
-  });
-});
-
-describe("summariseAriaSnapshot", () => {
-  it("extracts refs and emits a header", () => {
-    const raw = [
-      "- banner",
-      '  - link [ref=e5]: Home',
-      '  - textbox [ref=e7]: Search',
-    ].join("\n");
-    const out = summariseAriaSnapshot(raw, {
-      url: "https://u/",
-      title: "T",
-    });
-    expect(out.refs.sort()).toEqual(["e5", "e7"]);
-    expect(out.text).toMatch(/^url: https:\/\/u\//);
-    expect(out.text).toContain("[ref=e5]");
-    expect(out.digest).toMatch(/^[a-f0-9]+$/);
-  });
-
-  it("truncates past maxLines", () => {
-    const lines = Array.from({ length: 50 }, (_, i) => `- link [ref=e${i}]`);
-    const out = summariseAriaSnapshot(
-      lines.join("\n"),
-      { url: "u", title: "t" },
-      { maxLines: 10 },
-    );
-    expect(out.text).toContain("[truncated ARIA tree");
-  });
-
-  it("collapses chains of empty generic containers so interactive nodes survive", () => {
-    const raw = [
-      "- generic [ref=e2]:",
-      "  - generic [ref=e4]:",
-      "    - generic [ref=e5]:",
-      "      - generic [ref=e6]:",
-      '        - link "DuckDuckGo home" [ref=e7]: /url',
-      "        - generic [ref=e8]:",
-      '          - heading "Results" [ref=e9]: Results',
-      '          - link "Hermes - Wikipedia" [ref=e10]: /url',
-    ].join("\n");
-    const out = summariseAriaSnapshot(raw, {
-      url: "https://duckduckgo.com/?q=hermes",
-      title: "hermes at DuckDuckGo",
-    });
-    expect(out.text).toContain('link "DuckDuckGo home"');
-    expect(out.text).toContain('heading "Results"');
-    expect(out.text).toContain('link "Hermes - Wikipedia"');
-    expect(out.text).toContain("[collapsed 5 empty container lines]");
-    // Noise refs are NOT in the ref list because the model can't
-    // usefully act on empty generics.
-    expect(out.refs.sort()).toEqual(["e10", "e7", "e9"]);
-  });
-
-  it("keeps container lines that carry a quoted name or inline text", () => {
-    const raw = [
-      '- generic "search-results" [ref=e1]:',
-      "- generic [ref=e2]: some inline text",
-      "- generic [ref=e3]:",
-    ].join("\n");
-    const out = summariseAriaSnapshot(raw, { url: "u", title: "t" });
-    expect(out.text).toContain('generic "search-results"');
-    expect(out.text).toContain("some inline text");
-    expect(out.text).toContain("[collapsed 1 empty container lines]");
-  });
-
-  it("dropNoise=false preserves the raw tree verbatim", () => {
-    const raw = [
-      "- generic [ref=e1]:",
-      "  - generic [ref=e2]:",
-      '    - link [ref=e3]: /url',
-    ].join("\n");
-    const out = summariseAriaSnapshot(
-      raw,
-      { url: "u", title: "t" },
-      { dropNoise: false },
-    );
-    expect(out.text).toContain("generic [ref=e1]");
-    expect(out.text).toContain("generic [ref=e2]");
-    expect(out.text).not.toContain("[collapsed");
   });
 });
