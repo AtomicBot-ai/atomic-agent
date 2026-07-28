@@ -12,6 +12,7 @@ import { REPAIR_MAX_TOKENS } from "./step-executor.js";
 import { buildGrammar } from "../llm/grammar/build-grammar.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
+import { replyTool } from "../tools/conversation/reply.js";
 import type {
   CapabilitiesSummary,
   SkillCatalogEntry,
@@ -1296,5 +1297,64 @@ describe("executeStep skill.view short-circuit", () => {
     expect(outcome.toolResults).toHaveLength(1);
     expect(outcome.toolResults[0]!.status).toBe("ok");
     expect(outcome.toolResults[0]!.summary).toContain("already loaded");
+  });
+});
+
+describe("executeStep unparseable-completion fallback", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  async function runQwenStep(content: string) {
+    const registry = new ToolRegistry();
+    registry.register(replyTool);
+    const grammar = await buildGrammar(QWEN_THINK_PROFILE, grammarsDir);
+    return executeStep(
+      {
+        session: createEmptySessionState({ id: "s-fallback", workingDir: "/w" }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hi",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async () => ({
+          content,
+          reasoningContent: "",
+          stop: true,
+          truncated: false,
+          timing: {
+            promptMs: 1,
+            predictedMs: 1,
+            promptTokens: 20,
+            predictedTokens: 5,
+          },
+          cacheHitTokens: 0,
+          slotId: 0,
+          modelId: "mock",
+        }),
+        grammar,
+        profile: QWEN_THINK_PROFILE,
+      },
+    );
+  }
+
+  it("degrades prose after a closed think block to a reply", async () => {
+    // The `<think>` open tag is prefilled by the prompt, so the
+    // completion starts inside the reasoning block.
+    const outcome = await runQwenStep("thinking about it</think>Hi there!");
+    expect(outcome.terminal).toBe("turn");
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0]!.tool).toBe("reply");
+    expect(outcome.toolCalls[0]!.args).toEqual({ text: "Hi there!" });
+    expect(outcome.toolResults[0]!.status).toBe("ok");
+  });
+
+  it("still fails when the model never left its think block (issue #37)", async () => {
+    await expect(
+      runQwenStep("[SFC] 分析中 rambling that never closes"),
+    ).rejects.toThrow(/tool-call/);
   });
 });

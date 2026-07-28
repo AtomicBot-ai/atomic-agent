@@ -310,78 +310,149 @@ function peelTrailingToolJson(text: string): {
   }
 }
 
+interface RootSpan extends ExtractedRoot {
+  /** Bracket nesting depth the span sits at; `0` is top level. */
+  depth: number;
+  /** Memoised `JSON.parse` result — filled in by `spanValue`. */
+  parsed?: { ok: boolean; value: unknown };
+}
+
+/**
+ * Lazily `JSON.parse` a span. Parsing is deferred because the healthy
+ * path (one top-level call, arbitrarily nested args) would otherwise
+ * re-parse every nested object of every completion on every step.
+ */
+function spanValue(span: RootSpan): { ok: boolean; value: unknown } {
+  if (span.parsed === undefined) {
+    try {
+      span.parsed = { ok: true, value: JSON.parse(span.jsonText) };
+    } catch {
+      span.parsed = { ok: false, value: undefined };
+    }
+  }
+  return span.parsed;
+}
+
+/**
+ * Pick the tool-call JSON root out of a completion that may also carry
+ * prose. Reasoning text routinely contains bracket runs (`[SFC]`,
+ * `[1]`, a rehearsed `{...}`), so the first balanced span is NOT
+ * necessarily the call — preference order is:
+ *
+ *  1. the LAST top-level span that parses and looks like a tool call
+ *     (the model's final answer wins over anything it rehearsed while
+ *     thinking) — widened to nested spans only when NO top-level span
+ *     parses, which is how a stray unmatched `{` in the prose stops
+ *     swallowing the call that follows it,
+ *  2. the first top-level span that parses at all,
+ *  3. the first top-level span (so the caller's `JSON.parse` produces
+ *     the familiar `invalid tool-call JSON: ...` message).
+ *
+ * Spans close in inner-to-outer order, so an enclosing array always
+ * lands after its own entries and rule 1 keeps the whole batch.
+ */
 function extractJsonRoot(raw: string): ExtractedRoot {
   const input = raw.trim();
   if (input.length === 0) {
     throw new ToolCallParseError("tool-call body is empty");
   }
 
-  let start = -1;
-  let kind: "object" | "array" | null = null;
-  let depthCurly = 0;
-  let depthSquare = 0;
+  const { spans, sawOpen } = collectRootSpans(input);
+  const roots = spans.filter((span) => span.depth === 0);
+  // Nested spans are only in play when the top level never closed —
+  // otherwise a malformed batch (`[{...}, 42]`) would silently degrade
+  // to whichever entry happens to be well-formed, dropping calls the
+  // model asked for.
+  const eligible = roots.some((span) => spanValue(span).ok) ? roots : spans;
+  for (let idx = eligible.length - 1; idx >= 0; idx -= 1) {
+    const span = eligible[idx]!;
+    const { ok, value } = spanValue(span);
+    if (ok && looksLikeToolCallRoot(value)) {
+      return { jsonText: span.jsonText, kind: span.kind };
+    }
+  }
+  const parsable = roots.find((span) => spanValue(span).ok) ?? roots[0];
+  if (parsable !== undefined) {
+    return { jsonText: parsable.jsonText, kind: parsable.kind };
+  }
+  if (!sawOpen) {
+    throw new ToolCallParseError("tool-call JSON value not found");
+  }
+  throw new ToolCallParseError("tool-call JSON value is incomplete");
+}
+
+/**
+ * Single left-to-right pass collecting every balanced `{...}` / `[...]`
+ * span, with string-escape awareness. Spans are reported in closing
+ * order (inner before enclosing) and tagged with their nesting depth.
+ * A closer that does not match its opener drops the whole pending run —
+ * it was never JSON.
+ *
+ * Quotes only open a string INSIDE a bracket run: an odd quote in the
+ * surrounding prose must not swallow the tool call that follows it.
+ *
+ * ponytail: an odd quote INSIDE an abandoned run (a model rehearsing
+ * `{"tool": ...` in its reasoning and never closing it) still shifts
+ * every later quote and hides the real call. Recovering from that needs
+ * a re-scan seeded after each unmatched opener — add it if traces ever
+ * show it.
+ */
+function collectRootSpans(input: string): { spans: RootSpan[]; sawOpen: boolean } {
+  const spans: RootSpan[] = [];
+  const stack: { kind: "object" | "array"; start: number }[] = [];
+  let sawOpen = false;
   let inString = false;
   let escaped = false;
 
   for (let idx = 0; idx < input.length; idx += 1) {
     const ch = input[idx]!;
-    if (start === -1) {
-      if (ch === "{") {
-        start = idx;
-        kind = "object";
-        depthCurly = 1;
-      } else if (ch === "[") {
-        start = idx;
-        kind = "array";
-        depthSquare = 1;
-      } else if (!/\s/.test(ch)) {
-        continue;
-      }
-      continue;
-    }
-
     if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch === "\\") {
-        escaped = true;
-      } else if (ch === '"') {
-        inString = false;
-      }
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
       continue;
     }
-
     if (ch === '"') {
-      inString = true;
+      if (stack.length > 0) inString = true;
       continue;
     }
-    if (ch === "{") {
-      depthCurly += 1;
+    if (ch === "{" || ch === "[") {
+      sawOpen = true;
+      stack.push({ kind: ch === "{" ? "object" : "array", start: idx });
       continue;
     }
-    if (ch === "}") {
-      depthCurly -= 1;
-      if (kind === "object" && depthCurly === 0 && depthSquare === 0) {
-        return { jsonText: input.slice(start, idx + 1), kind: "object" };
-      }
+    if (ch !== "}" && ch !== "]") continue;
+    const open = stack.pop();
+    const expected = ch === "}" ? "object" : "array";
+    if (open === undefined) continue;
+    if (open.kind !== expected) {
+      stack.length = 0;
       continue;
     }
-    if (ch === "[") {
-      depthSquare += 1;
-      continue;
-    }
-    if (ch === "]") {
-      depthSquare -= 1;
-      if (kind === "array" && depthSquare === 0 && depthCurly === 0) {
-        return { jsonText: input.slice(start, idx + 1), kind: "array" };
-      }
-    }
+    spans.push({
+      jsonText: input.slice(open.start, idx + 1),
+      kind: open.kind,
+      depth: stack.length,
+    });
   }
+  return { spans, sawOpen };
+}
 
-  if (start === -1) {
-    throw new ToolCallParseError("tool-call JSON value not found");
+/** Shape gate: a call object, or a non-empty array of call objects. */
+function looksLikeToolCallRoot(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.length > 0 && value.every(isToolCallObject);
   }
-  throw new ToolCallParseError("tool-call JSON value is incomplete");
+  return isToolCallObject(value);
+}
+
+function isToolCallObject(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return ["tool", "name", "action"].some((key) => {
+    const name = record[key];
+    return typeof name === "string" && name.trim().length > 0;
+  });
 }
 
 function escapeRegex(text: string): string {

@@ -582,11 +582,27 @@ async function executeStepInner(
         rawLength: completion.content.length,
         raw: completion.content,
       });
-      throw new GrammarError(
-        parsed.error.message,
-        rawPreview(completion.content),
-        { cause: parsed.error },
-      );
+      // Last resort: the model talked instead of emitting a call (small
+      // models routinely answer "hi" in plain prose even under the
+      // grammar). Wrap that prose as a `reply` so the turn closes with
+      // the model's text — same degradation the `native_tools` path
+      // already applies — instead of failing the whole loop. Only
+      // reasoning came back? Then there is no answer to deliver and the
+      // `GrammarError` still stands.
+      const fallback = replyFallbackBatch(completion, deps.profile);
+      if (fallback === null) {
+        throw new GrammarError(
+          parsed.error.message,
+          rawPreview(completion.content),
+          { cause: parsed.error },
+        );
+      }
+      deps.logger?.warn("degrading unparseable completion to a reply", {
+        sessionId: ctx.session.id,
+        stepIndex: ctx.stepIndex,
+        reason: parsed.error.message,
+      });
+      parsed = { ok: true, batch: fallback };
     }
   }
   const batch = parsed.batch;
@@ -969,6 +985,41 @@ function tryParseToolCalls(
       error: err instanceof Error ? err : new Error(String(err)),
     };
   }
+}
+
+/**
+ * Wrap a completion's non-reasoning prose as a length-1 `reply` batch.
+ * Returns `null` when the completion carries nothing but reasoning (a
+ * model that degenerated inside its think block has no answer to
+ * deliver, so the caller keeps its `GrammarError`).
+ */
+function replyFallbackBatch(
+  completion: CompletionResult,
+  profile: ModelProfile,
+): ToolCallBatch | null {
+  const extracted = extractReasoning(
+    normalizeContent(completion, profile),
+    getReasoningTagOptions(profile),
+  );
+  const text = extracted.body.trim();
+  if (text.length === 0) return null;
+  // Only prose degrades. A body that opens a JSON value means the model
+  // did try to emit a call and botched it (or the batch failed
+  // validation) — echoing that literal back at the user would be worse
+  // than the `GrammarError`.
+  if (text.startsWith("{") || text.startsWith("[")) return null;
+  const reasoning = resolveReasoning(completion, profile);
+  return {
+    kind: "batch",
+    calls: [
+      {
+        tool: "reply",
+        args: { text },
+        ...(reasoning.length > 0 ? { reasoning } : {}),
+      },
+    ],
+    ...(reasoning.length > 0 ? { reasoning } : {}),
+  };
 }
 
 function buildLlmStreamParams(args: {
