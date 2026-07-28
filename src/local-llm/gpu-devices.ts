@@ -49,23 +49,41 @@ const INTEGRATED_DEVICE_RE =
 
 /**
  * Parse the stdout/stderr of `llama-server --list-devices`. Pure — no
- * IO. Recognises lines of the shape:
+ * IO. Recognises the device-table rows llama.cpp actually prints:
  *
  *   Vulkan0: NVIDIA GeForce RTX 4070 (8188 MiB, 8188 MiB free)
  *   Vulkan1: Intel(R) Graphics (RPL-S) (... MiB, ... MiB free)
+ *   CUDA0: NVIDIA H100
+ *   MTL0: Apple M1 Max (25559 MiB, 25558 MiB free)   ← Metal, Apple Silicon
  *
- * The leading token must be `<letters><digits>` followed by `:` so
- * header lines ("Available devices:", "ggml_vulkan: ...") never match.
- * When no `(<n> MiB ...)` figure is present, `totalMemMiB` is `0` and
- * the whole remainder becomes the description.
+ * The leading token must be `<letters><digits>:` so header lines
+ * ("Available devices:", "ggml_vulkan: ...") never match. The `id`
+ * captured here is exactly what the backend answers to at `--device`
+ * spawn time — it is read out of the table, never constructed, so no
+ * fabricated id can reach the daemon and fail its health poll. On real
+ * Apple Silicon hardware the addressable id is `MTL0` (verified on an
+ * M1 Max), NOT `Metal0`; parsing the row verbatim keeps us correct
+ * regardless of the exact backend prefix. When no memory figure is
+ * present, `totalMemMiB` / `freeMemMiB` are `0`.
+ *
+ * Duplicate rows (stdout+stderr, or an init line before the memory-
+ * bearing row) merge so a figure-less first sighting does not shadow
+ * the real VRAM numbers used by context auto-sizing.
  */
 export function parseListDevices(output: string): GpuDevice[] {
   const devices: GpuDevice[] = [];
-  for (const line of output.split(/\r?\n/)) {
-    const match = line.match(/^\s*([A-Za-z]+\d+):\s*(.+)$/);
-    if (!match || match[1] === undefined || match[2] === undefined) continue;
-    const id = match[1];
-    let rest = match[2].trim();
+  const byId = new Map<string, GpuDevice>();
+
+  for (const rawLine of output.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    const canonical = line.match(/^([A-Za-z]+\d+):\s*(.+)$/);
+    if (!canonical || canonical[1] === undefined || canonical[2] === undefined) {
+      continue;
+    }
+    const id = canonical[1];
+    let rest = canonical[2].trim();
     if (rest.length === 0) continue;
     let totalMemMiB = 0;
     let freeMemMiB = 0;
@@ -79,7 +97,22 @@ export function parseListDevices(output: string): GpuDevice[] {
       const parenIdx = rest.lastIndexOf("(");
       if (parenIdx > 0) rest = rest.slice(0, parenIdx).trim();
     }
-    devices.push({ id, description: rest, totalMemMiB, freeMemMiB });
+
+    const existing = byId.get(id);
+    if (existing) {
+      // A duplicate row can arrive when the table prints to both stdout
+      // and stderr, or an init line precedes the memory-bearing row.
+      // Keep whichever carries real figures rather than first-seen.
+      if (existing.totalMemMiB === 0 && totalMemMiB > 0) {
+        existing.totalMemMiB = totalMemMiB;
+        existing.freeMemMiB = freeMemMiB;
+        existing.description = rest;
+      }
+      continue;
+    }
+    const device: GpuDevice = { id, description: rest, totalMemMiB, freeMemMiB };
+    byId.set(id, device);
+    devices.push(device);
   }
   return devices;
 }
@@ -89,6 +122,10 @@ export function parseListDevices(output: string): GpuDevice[] {
  * 1 = unrecognised (assume discrete — safer than assuming iGPU),
  * 0 = known integrated. Discrete hints win outright so "Intel Arc" and
  * "Radeon RX" are not caught by the integrated patterns.
+ *
+ * Apple Silicon descriptions (e.g. "Apple M1 Max") match neither the
+ * discrete nor integrated patterns, so they land on rank 1 — the desired
+ * "unrecognised → assume discrete" outcome. No Apple carve-out needed.
  */
 export function deviceClassRank(description: string): 0 | 1 | 2 {
   if (DISCRETE_DEVICE_RE.test(description)) return 2;

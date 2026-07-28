@@ -60,6 +60,44 @@ describe("parseListDevices", () => {
     expect(parseListDevices("")).toEqual([]);
     expect(parseListDevices("no devices here")).toEqual([]);
   });
+
+  it("parses the real Apple Silicon Metal row verbatim (MTL0, from an M1 Max)", () => {
+    // Verbatim from `llama-server --list-devices` on an Apple M1 Max.
+    // The addressable --device id is MTL0, not Metal0 — read it out of
+    // the table rather than constructing it.
+    const out = [
+      "Available devices:",
+      "  BLAS: Accelerate (0 MiB, 0 MiB free)",
+      "  MTL0: Apple M1 Max (25559 MiB, 25558 MiB free)",
+    ].join("\n");
+    // BLAS has no trailing digit, so it is not a --device id form and is
+    // correctly skipped; only the real MTL0 GPU row is returned.
+    expect(parseListDevices(out)).toEqual<GpuDevice[]>([
+      {
+        id: "MTL0",
+        description: "Apple M1 Max",
+        totalMemMiB: 25559,
+        freeMemMiB: 25558,
+      },
+    ]);
+  });
+
+  it("merges a later memory-bearing row into an earlier figure-less duplicate", () => {
+    // Some builds emit the table on both stdout and stderr; an init line
+    // seen first must not shadow the row carrying the real memory figures.
+    const out = [
+      "MTL0: Apple M1 Max",
+      "MTL0: Apple M1 Max (25559 MiB, 25558 MiB free)",
+    ].join("\n");
+    const devices = parseListDevices(out);
+    expect(devices).toHaveLength(1);
+    expect(devices[0]).toEqual<GpuDevice>({
+      id: "MTL0",
+      description: "Apple M1 Max",
+      totalMemMiB: 25559,
+      freeMemMiB: 25558,
+    });
+  });
 });
 
 describe("pickBestDevice", () => {
@@ -170,6 +208,20 @@ describe("pickBestDevice", () => {
     ];
     expect(pickBestDevice(devices)).toBe("Vulkan0");
   });
+
+
+  it("treats Apple Silicon Metal devices as auto-pickable (not discarded)", () => {
+    const devices: GpuDevice[] = [
+      {
+        id: "MTL0",
+        description: "Apple M1 Max",
+        totalMemMiB: 25559,
+        freeMemMiB: 25558,
+      },
+    ];
+    expect(pickBestDevice(devices)).toBe("MTL0");
+  });
+
 });
 
 describe("resolveManagedDevice", () => {
