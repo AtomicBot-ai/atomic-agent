@@ -48,11 +48,7 @@ export {
   stopChrome,
 } from "./spawn-chrome.js";
 export type { RunningChrome, SpawnChromeInput } from "./spawn-chrome.js";
-export {
-  DEFAULT_ARIA_MAX_CHARS,
-  packLinesToCharBudget,
-  summariseAriaSnapshot,
-} from "./aria-compressor.js";
+export { summariseAriaSnapshot } from "./aria-compressor.js";
 export type {
   AriaCompressionOptions,
   AriaSnapshotSummary,

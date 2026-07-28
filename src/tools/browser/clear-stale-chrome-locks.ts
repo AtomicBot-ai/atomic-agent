@@ -68,28 +68,44 @@ export function isProcessAlive(pid: number): boolean {
 }
 
 /**
- * Best-effort: does the live PID look like a Chromium-family browser?
- * Used only to avoid deleting locks while a real Chrome still holds them
- * under a recycled PID race (extremely rare). On failure we treat as
- * "unknown → keep locks" when the PID is alive.
+ * Result of probing a live PID's identity.
+ *   - "chromium": the process is a Chromium-family browser → keep its locks.
+ *   - "other": we successfully probed and it is NOT a browser → safe to clear.
+ *   - "unknown": the probe itself failed (no /proc access, ps timeout,
+ *     unexpected platform) → we cannot tell, so fail open and keep locks.
+ *
+ * The "other" vs "unknown" split matters: a failed probe must never be read
+ * as "not chromium → clear", or a live browser could have its locks pulled
+ * out from under it.
  */
-export function processLooksLikeChromium(pid: number): boolean {
+export type ProcessKind = "chromium" | "other" | "unknown";
+
+const CHROMIUM_COMM = /chrome|chromium|msedge|brave|google chrome|electron|helper/;
+
+/**
+ * Best-effort: probe whether the live PID looks like a Chromium-family
+ * browser. Distinguishes a successful "not a browser" answer from a probe
+ * that could not run at all — see {@link ProcessKind}.
+ */
+export function processLooksLikeChromium(pid: number): ProcessKind {
   try {
     if (process.platform === "linux") {
       const comm = fs.readFileSync(`/proc/${pid}/comm`, "utf8").trim().toLowerCase();
-      return /chrome|chromium|msedge|brave|electron/.test(comm);
+      return CHROMIUM_COMM.test(comm) ? "chromium" : "other";
     }
     if (process.platform === "darwin") {
       const out = execFileSync("ps", ["-p", String(pid), "-o", "comm="], {
         encoding: "utf8",
         timeout: 1000,
       }).trim().toLowerCase();
-      return /chrome|chromium|msedge|brave|google chrome|electron|helper/.test(out);
+      return CHROMIUM_COMM.test(out) ? "chromium" : "other";
     }
-    // Windows: keep conservative — if alive, do not clear.
-    return true;
+    // Windows: no cheap probe here — stay conservative and keep locks.
+    return "unknown";
   } catch {
-    return false;
+    // Probe failed (permission denied, ps timeout, ENOENT). We cannot tell,
+    // so fail open: treat as unknown and keep the locks.
+    return "unknown";
   }
 }
 
@@ -103,9 +119,17 @@ export function processLooksLikeChromium(pid: number): boolean {
  */
 export function clearStaleChromeLocks(
   userDataDir: string,
-  opts: { now?: () => number } = {},
+  opts: {
+    now?: () => number;
+    /** Liveness check override (defaults to {@link isProcessAlive}). */
+    isAlive?: (pid: number) => boolean;
+    /** Identity probe override (defaults to {@link processLooksLikeChromium}). */
+    probe?: (pid: number) => ProcessKind;
+  } = {},
 ): ClearStaleChromeLocksResult {
-  void opts; // reserved for future mtime grace windows
+  void opts.now; // reserved for future mtime grace windows
+  const isAlive = opts.isAlive ?? isProcessAlive;
+  const probe = opts.probe ?? processLooksLikeChromium;
   const removed: string[] = [];
   const kept: string[] = [];
   const reasons: string[] = [];
@@ -121,15 +145,23 @@ export function clearStaleChromeLocks(
     // No owner PID — companion locks alone are always safe to drop.
     shouldClear = true;
     reasons.push("no parseable SingletonLock pid");
-  } else if (!isProcessAlive(pid)) {
+  } else if (!isAlive(pid)) {
     shouldClear = true;
     reasons.push(`pid ${pid} not alive`);
-  } else if (!processLooksLikeChromium(pid)) {
-    shouldClear = true;
-    reasons.push(`pid ${pid} alive but not chromium-family`);
   } else {
-    shouldClear = false;
-    reasons.push(`pid ${pid} looks like a live chromium holder`);
+    const kind = probe(pid);
+    if (kind === "other") {
+      shouldClear = true;
+      reasons.push(`pid ${pid} alive but not chromium-family`);
+    } else if (kind === "chromium") {
+      shouldClear = false;
+      reasons.push(`pid ${pid} looks like a live chromium holder`);
+    } else {
+      // "unknown" — probe failed. Fail open: keep the locks rather than risk
+      // clearing a live browser we simply could not identify.
+      shouldClear = false;
+      reasons.push(`pid ${pid} alive but identity unknown (probe failed) — keeping locks`);
+    }
   }
 
   for (const base of CHROME_LOCK_BASENAMES) {

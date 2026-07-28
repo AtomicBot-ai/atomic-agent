@@ -62,17 +62,49 @@ describe("clearStaleChromeLocks", () => {
   });
 
   it("removes locks when owner pid is dead", () => {
-    // PIDs this high are almost never live on a developer workstation;
-    // if somehow alive the test still asserts kept/removed consistency.
     const deadPid = 2147483000;
     plantLocks(`127.0.0.1-${deadPid}`);
-    const result = clearStaleChromeLocks(dir);
-    if (!result.reasons.some((r) => r.includes("not alive"))) {
-      // Extremely unlikely: pid is alive — skip destructive assertion.
-      return;
-    }
+    // Inject the liveness check so the assertion is deterministic regardless
+    // of what PIDs happen to be live on the host running the suite.
+    const result = clearStaleChromeLocks(dir, { isAlive: () => false });
+    expect(result.reasons.some((r) => r.includes("not alive"))).toBe(true);
     expect(result.removed.length).toBeGreaterThan(0);
     expect(fs.existsSync(path.join(dir, "SingletonLock"))).toBe(false);
+  });
+
+  it("keeps locks when the owner pid is a live Chromium process", () => {
+    plantLocks("host-4242");
+    const result = clearStaleChromeLocks(dir, {
+      isAlive: () => true,
+      probe: () => "chromium",
+    });
+    expect(result.removed).toEqual([]);
+    expect(result.kept.length).toBeGreaterThan(0);
+    expect(fs.lstatSync(path.join(dir, "SingletonLock")).isSymbolicLink()).toBe(true);
+  });
+
+  it("clears locks when the owner pid is alive but is not a browser", () => {
+    plantLocks("host-4242");
+    const result = clearStaleChromeLocks(dir, {
+      isAlive: () => true,
+      probe: () => "other",
+    });
+    expect(result.removed.length).toBeGreaterThan(0);
+    expect(fs.existsSync(path.join(dir, "SingletonLock"))).toBe(false);
+  });
+
+  it("fails open: keeps locks when a live pid's identity probe fails", () => {
+    // Regression: a failed probe (no /proc, ps timeout) must NOT be read as
+    // "not chromium → clear" — a live browser could lose its locks.
+    plantLocks("host-4242");
+    const result = clearStaleChromeLocks(dir, {
+      isAlive: () => true,
+      probe: () => "unknown",
+    });
+    expect(result.removed).toEqual([]);
+    expect(result.kept.length).toBeGreaterThan(0);
+    expect(result.reasons.some((r) => r.includes("identity unknown"))).toBe(true);
+    expect(fs.lstatSync(path.join(dir, "SingletonLock")).isSymbolicLink()).toBe(true);
   });
 
   it("keeps locks when owner pid is this process (live) and processLooksLikeChromium is conservative", () => {
