@@ -47,7 +47,12 @@ function isAtLeast(v: CudaVersion, major: number, minor: number): boolean {
  */
 export function selectWindowsBackendAsset(cuda: CudaVersion | null): string {
   if (cuda === null) return WINDOWS_BACKEND_ASSETS.vulkan;
-  if (isAtLeast(cuda, 13, 3)) return WINDOWS_BACKEND_ASSETS.cuda133;
+  // Threshold is the driver's CUDA *major*, not the build's exact minor:
+  // CUDA minor-version compatibility lets a 13.3-built binary run on any
+  // 13.x driver. Gating on >= 13.3 sent 13.0 drivers to the 12.4 build,
+  // which has no sm_120 (Blackwell) code at all — that toolkit predates
+  // the arch, so RTX 50-series had to JIT from PTX or fall off the GPU.
+  if (isAtLeast(cuda, 13, 0)) return WINDOWS_BACKEND_ASSETS.cuda133;
   if (isAtLeast(cuda, 12, 4)) return WINDOWS_BACKEND_ASSETS.cuda124;
   return WINDOWS_BACKEND_ASSETS.vulkan;
 }

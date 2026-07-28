@@ -19,6 +19,8 @@ export {
   type PlatformAsset,
 } from "./platform-assets.js";
 
+export { resolveDownloadAsset } from "./windows-backend-variant.js";
+
 export {
   resolveBackendDir,
   resolveModelsDir,
