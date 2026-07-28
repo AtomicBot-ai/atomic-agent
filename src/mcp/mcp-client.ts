@@ -21,6 +21,11 @@ import {
 import { resourceClassFor } from "../agent/tool-resource-class.js";
 import { McpConnectError, McpRequestError, scrubErrorMessage } from "./mcp-errors.js";
 import {
+  attachStderrTail,
+  formatStderrTail,
+  type StderrTail,
+} from "./mcp-stderr-tail.js";
+import {
   qualifyMcpToolName,
   splitMcpToolName,
 } from "./mcp-resource-class.js";
@@ -63,6 +68,8 @@ export interface McpClientDeps {
 const CLIENT_NAME = "atomic-agent";
 const CLIENT_VERSION = "0.1.0";
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
+/** Grace for a dying child's stderr to arrive after the transport closes. */
+const STDERR_SETTLE_MS = 250;
 const DEFAULT_TOOL_CALL_TIMEOUT_MS = 60_000;
 
 /**
@@ -124,8 +131,14 @@ export class McpClient {
       );
     }
     this.connecting = true;
+    let stderrTail: StderrTail = { read: () => "", settle: async () => {} };
     try {
       const transport = this.buildTransport();
+      // Attached before `client.connect()` starts the child: the SDK hands
+      // out a PassThrough up front precisely so early output is not lost.
+      stderrTail = attachStderrTail(
+        transport instanceof StdioClientTransport ? transport.stderr : null,
+      );
       const client = new Client(
         { name: CLIENT_NAME, version: CLIENT_VERSION },
         {
@@ -148,13 +161,11 @@ export class McpClient {
             this.config.name,
             `connect timeout after ${DEFAULT_CONNECT_TIMEOUT_MS}ms`,
           ),
-      ).catch((err) => {
+      ).catch(async (err) => {
         // Best-effort cleanup; the transport may be half-constructed.
         // Swallow secondary errors so the original cause propagates.
         client.close().catch(() => {});
-        throw err instanceof McpConnectError
-          ? err
-          : new McpConnectError(this.config.name, scrubErrorMessage(err));
+        throw await this.connectError(err, stderrTail);
       });
 
       this.client = client;
@@ -162,10 +173,29 @@ export class McpClient {
     } catch (err) {
       throw err instanceof McpConnectError
         ? err
-        : new McpConnectError(this.config.name, scrubErrorMessage(err));
+        : await this.connectError(err, stderrTail);
     } finally {
       this.connecting = false;
     }
+  }
+
+  /**
+   * Wrap a connect failure, appending whatever the server printed on
+   * stderr. `Connection closed` alone never says *why* a stdio server
+   * refused to start; its last stderr lines usually do.
+   */
+  private async connectError(
+    err: unknown,
+    stderrTail: StderrTail,
+  ): Promise<McpConnectError> {
+    const base =
+      err instanceof McpConnectError ? err.message : scrubErrorMessage(err);
+    await stderrTail.settle(STDERR_SETTLE_MS);
+    const tail = formatStderrTail(stderrTail.read());
+    return new McpConnectError(
+      this.config.name,
+      tail ? `${base} · server stderr: ${tail}` : base,
+    );
   }
 
   /**
