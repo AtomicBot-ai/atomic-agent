@@ -28,6 +28,27 @@ export function normalizeLocalLlmBaseUrl(raw: string): string {
 }
 
 /**
+ * True when `url` resolves to the managed daemon's own loopback address.
+ * Pointing external mode at the managed port is legal — it is how you
+ * drive a daemon you started yourself with `atomic-agent models start` —
+ * so callers that tear the managed daemon down on a switch to external
+ * must skip it here, or they would kill the server they just pointed at.
+ */
+export function pointsAtManagedDaemon(url: string, managedPort: number): boolean {
+  try {
+    const parsed = new URL(url);
+    const loopback =
+      parsed.hostname === "127.0.0.1" ||
+      parsed.hostname === "localhost" ||
+      // `new URL` keeps IPv6 hosts bracketed.
+      parsed.hostname === "[::1]";
+    return loopback && parsed.port === String(managedPort);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Merge local-models-related user config keys, validate, write, and
  * invalidate the global config cache.
  */

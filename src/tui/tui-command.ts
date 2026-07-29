@@ -10,7 +10,10 @@ import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
 import { enterAltScreen } from "./alt-screen.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { parseTuiArgs } from "./tui-args.js";
-import { persistUserLocalLlmUrl } from "./persist-user-local-models-config.js";
+import {
+  persistUserLocalLlmUrl,
+  pointsAtManagedDaemon,
+} from "./persist-user-local-models-config.js";
 import { persistUserTuiTheme } from "./persist-user-tui-config.js";
 import {
   isManagedModeReadyOnDisk,
@@ -432,7 +435,16 @@ function persistLlamaUrl(
       if (getConfig().llm?.activeTextProvider !== "local-llama") {
         await orchestrator.providers.setActiveText("local-llama");
       }
-      await orchestrator.localModels.refresh();
+      // An external server replaces the managed chat daemon, which would
+      // otherwise keep its VRAM for a route nothing uses. Unless the new
+      // URL *is* the managed daemon — stopping it would kill the server
+      // we just pointed at. Both branches refresh the LLM tab so it stops
+      // reporting managed mode.
+      if (pointsAtManagedDaemon(nextUrl, getConfig().localModels.managed.port)) {
+        await orchestrator.localModels.refresh();
+      } else {
+        await orchestrator.localModels.stopChatDaemonOnly();
+      }
       bus.emit({
         type: "runtime_info",
         line: `local-llm URL saved (${health.latencyMs}ms)`,

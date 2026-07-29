@@ -12,6 +12,7 @@ import {
   persistUserLocalModelsConfig,
   persistUserLocalLlmUrl,
   persistUserRemoteLlmUrls,
+  pointsAtManagedDaemon,
 } from "./persist-user-local-models-config.js";
 
 describe("normalizeLocalLlmBaseUrl", () => {
@@ -151,5 +152,19 @@ describe("persistUserLocalLlmUrl", () => {
     expect(written.localModels.embeddings.enabled).toBe(false);
     expect(written.localModels.embeddings.modelId).toBeNull();
     expect(written.memory.embeddings.enabled).toBe(false);
+  });
+});
+
+describe("pointsAtManagedDaemon", () => {
+  it("matches the managed port on every loopback spelling", () => {
+    for (const host of ["127.0.0.1", "localhost", "[::1]"]) {
+      expect(pointsAtManagedDaemon(`http://${host}:19091`, 19091)).toBe(true);
+    }
+  });
+
+  it("rejects another port, another host, and unparseable input", () => {
+    expect(pointsAtManagedDaemon("http://127.0.0.1:8080", 19091)).toBe(false);
+    expect(pointsAtManagedDaemon("http://192.168.1.50:19091", 19091)).toBe(false);
+    expect(pointsAtManagedDaemon("not a url", 19091)).toBe(false);
   });
 });
