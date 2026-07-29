@@ -1,6 +1,7 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import {
   runCommand as defaultRunCommand,
+  type CommandOptions,
   type CommandResult,
 } from "../../sandbox/command-runner.js";
 import {
@@ -12,21 +13,29 @@ import type {
   HttpApprovalMode,
 } from "../../config/index.js";
 import type { ToolDefinition } from "../tool-registry.js";
-import { CurlUnavailableError, isCurlMissingError } from "./ensure-curl.js";
+import { CurlUnavailableError } from "./ensure-curl.js";
+import {
+  executeGuardedHttpRequest,
+  isCurlTransportError,
+  type HttpMethod,
+  SsrfBlockedError,
+} from "./http-request-fetch.js";
+import type { HostLookup } from "./web-fetch-ssrf-guard.js";
 
-/**
- * Marker we append to curl stdout via `-w` so we can split the response
- * body from the structured metadata without relying on `curl -i` (which
- * mixes redirect chains into the body). The token is random-looking but
- * deterministic so tests can assert on it.
- */
-const CURL_META_MARKER = "__ATOMIC_CURL_META__";
+export type { HttpMethod } from "./http-request-fetch.js";
+export { parseCurlOutput } from "./http-request-fetch.js";
 
-export type HttpMethod = "GET" | "POST";
+type RunCommandFn = (
+  cmd: string,
+  args: string[],
+  opts: CommandOptions,
+) => Promise<CommandResult>;
 
 export interface OsHttpRequestOptions extends DangerousToolOptions {
   config: Pick<AtomicAgentConfig, "http">;
-  runCommand?: typeof defaultRunCommand;
+  runCommand?: RunCommandFn;
+  /** Injectable DNS lookup for SSRF tests (mirrors os.web.fetch). */
+  lookup?: HostLookup;
 }
 
 interface HttpArgs {
@@ -46,7 +55,7 @@ export function buildOsHttpRequestTool(
   return {
     name: "os.http.request",
     description:
-      "Raw HTTP GET or POST via the system `curl` binary for APIs and machine-readable endpoints (JSON, XML, plain text). Returns the response body verbatim — no HTML extraction or cleanup. To read a human web page as markdown/text, use `os.web.fetch` instead. Host allowlist and approval policy come from `config.http`. Body is capped at `config.http.maxResponseBytes`.",
+      "Raw HTTP GET or POST via the system `curl` binary for APIs and machine-readable endpoints (JSON, XML, plain text). Returns the response body verbatim — no HTML extraction or cleanup. To read a human web page as markdown/text, use `os.web.fetch` instead. Blocks private/internal addresses (SSRF) like `os.web.fetch`, pins DNS with curl `--resolve`, and re-validates each redirect hop. Host allowlist and approval policy come from `config.http`. Body is capped at `config.http.maxResponseBytes`.",
     readonly: false,
     async run(rawArgs, ctx) {
       const httpCfg = options.config.http;
@@ -75,75 +84,84 @@ export function buildOsHttpRequestTool(
         );
       }
 
-      const curlArgs = buildCurlArgs(args);
-      let commandResult: CommandResult;
+      let guarded;
       try {
-        commandResult = await runCommand("curl", curlArgs, {
-          cwd: ctx.workingDir,
-          timeoutMs: args.timeoutMs + 2_000,
-          signal: ctx.signal,
-          maxOutputBytes: httpCfg.maxResponseBytes + 1024,
-          input: args.body,
-        });
+        guarded = await executeGuardedHttpRequest(
+          args.url,
+          {
+            method: args.method,
+            headers: args.headers,
+            body: args.body,
+            timeoutMs: args.timeoutMs,
+            followRedirects: args.followRedirects,
+          },
+          {
+            runCommand,
+            lookup: options.lookup,
+            cwd: ctx.workingDir,
+            signal: ctx.signal,
+            maxResponseBytes: httpCfg.maxResponseBytes,
+          },
+        );
       } catch (err) {
-        if (isCurlMissingError(err)) {
+        if (err instanceof CurlUnavailableError) {
           return compressToolResult({
             tool: "os.http.request",
             status: "error",
-            output: new CurlUnavailableError().message,
+            output: err.message,
             details: { url: args.url, method: args.method },
+          });
+        }
+        if (err instanceof SsrfBlockedError) {
+          return compressToolResult({
+            tool: "os.http.request",
+            status: "error",
+            output: err.message,
+            details: {
+              url: args.url,
+              method: args.method,
+              blocked: true,
+              host: err.host,
+            },
+          });
+        }
+        if (isCurlTransportError(err)) {
+          return compressToolResult({
+            tool: "os.http.request",
+            status: "error",
+            output: err.message,
+            details: {
+              exitCode: err.exitCode,
+              stderr: err.stderr,
+              url: args.url,
+              method: args.method,
+              command: err.command,
+            },
           });
         }
         throw err;
       }
 
-      if (commandResult.exitCode !== 0) {
-        return compressToolResult({
-          tool: "os.http.request",
-          status: "error",
-          output: formatCurlError(commandResult),
-          details: {
-            exitCode: commandResult.exitCode,
-            stderr: commandResult.stderr.trim(),
-            url: args.url,
-            method: args.method,
-            command: ["curl", ...curlArgs],
-          },
-        });
-      }
-
-      const parsed = parseCurlOutput(commandResult.stdout);
-      const truncated = commandResult.truncated;
-      // An HTTP status >= 400 is a real failure signal. Returning
-      // `status:"ok"` here masked erroring endpoints from the model and
-      // from the loop detector's semantic result hash, letting the agent
-      // hammer the same dead endpoint indefinitely. Surface it as an
-      // error while keeping the response body in `details.body` so the
-      // model can still inspect any error payload.
-      const isHttpError = parsed.status >= 400;
-      // Return the body verbatim — this tool is the raw-HTTP surface. HTML
-      // extraction (markdown/text) is the job of `os.web.fetch`. Lift the
-      // compressor caps so small JSON payloads that would otherwise be
-      // cropped to 400 chars / 12 lines survive intact for the LLM. The
-      // body is already bounded by curl via `maxResponseBytes`; the
-      // downstream rendering layer applies its own per-turn cap.
+      const isHttpError = guarded.status >= 400;
       return compressToolResult(
         {
           tool: "os.http.request",
           status: isHttpError ? "error" : "ok",
           output: isHttpError
-            ? `HTTP ${parsed.status} ${args.method} ${args.url}`
-            : parsed.body,
+            ? `HTTP ${guarded.status} ${args.method} ${guarded.finalUrl}`
+            : guarded.body,
           details: {
             url: args.url,
+            finalUrl: guarded.finalUrl,
             method: args.method,
-            status: parsed.status,
-            contentType: parsed.contentType,
-            sizeDownload: parsed.sizeDownload,
-            timeTotalSeconds: parsed.timeTotal,
-            truncated,
-            command: ["curl", ...curlArgs],
-            ...(isHttpError ? { body: parsed.body } : {}),
+            status: guarded.status,
+            contentType: guarded.contentType,
+            sizeDownload: guarded.sizeDownload,
+            timeTotalSeconds: guarded.timeTotal,
+            truncated: guarded.truncated,
+            redirectChain: guarded.redirectChain,
+            command: guarded.command,
+            ...(isHttpError ? { body: guarded.body } : {}),
           },
         },
         {
@@ -201,8 +219,12 @@ function parseArgs(
           `os.http.request: header ${JSON.stringify(key)} must be a string`,
         );
       }
-      if (key.includes("\n") || key.includes("\r") || value.includes("\n") || value.includes("\r")) {
-        // Block CRLF-injection into curl header args.
+      if (
+        key.includes("\n") ||
+        key.includes("\r") ||
+        value.includes("\n") ||
+        value.includes("\r")
+      ) {
         throw new Error(
           `os.http.request: header ${JSON.stringify(key)} contains CR/LF which is not allowed`,
         );
@@ -306,72 +328,12 @@ function buildApprovalPreview(args: HttpArgs): string {
     lines.push(`${k}: ${v}`);
   }
   if (args.body !== undefined) {
-    const snippet = args.body.length > 400
-      ? `${args.body.slice(0, 400)}… [${args.body.length} bytes]`
-      : args.body;
+    const snippet =
+      args.body.length > 400
+        ? `${args.body.slice(0, 400)}… [${args.body.length} bytes]`
+        : args.body;
     lines.push("");
     lines.push(snippet);
   }
   return lines.join("\n");
-}
-
-function buildCurlArgs(args: HttpArgs): string[] {
-  const argv: string[] = ["-sS", "--max-time", String(Math.ceil(args.timeoutMs / 1000))];
-  if (args.followRedirects) argv.push("-L");
-  if (args.method !== "GET") argv.push("-X", args.method);
-  for (const [key, value] of Object.entries(args.headers)) {
-    argv.push("-H", `${key}: ${value}`);
-  }
-  if (args.body !== undefined) {
-    // Use --data-binary to avoid curl munging newlines.
-    argv.push("--data-binary", "@-");
-  }
-  argv.push(
-    "-w",
-    `\n${CURL_META_MARKER}%{http_code}|%{content_type}|%{size_download}|%{time_total}`,
-  );
-  argv.push("--", args.url);
-  return argv;
-}
-
-interface CurlParsedOutput {
-  body: string;
-  status: number;
-  contentType: string;
-  sizeDownload: number;
-  timeTotal: number;
-}
-
-export function parseCurlOutput(stdout: string): CurlParsedOutput {
-  const markerIdx = stdout.lastIndexOf(CURL_META_MARKER);
-  if (markerIdx === -1) {
-    return {
-      body: stdout,
-      status: 0,
-      contentType: "",
-      sizeDownload: stdout.length,
-      timeTotal: 0,
-    };
-  }
-  const body = stdout.slice(0, markerIdx).replace(/\n$/, "");
-  const meta = stdout.slice(markerIdx + CURL_META_MARKER.length).trim();
-  const [statusStr = "", contentType = "", sizeStr = "", timeStr = ""] =
-    meta.split("|");
-  const status = Number.parseInt(statusStr, 10);
-  const sizeDownload = Number.parseInt(sizeStr, 10);
-  const timeTotal = Number.parseFloat(timeStr);
-  return {
-    body,
-    status: Number.isFinite(status) ? status : 0,
-    contentType: contentType.trim(),
-    sizeDownload: Number.isFinite(sizeDownload) ? sizeDownload : body.length,
-    timeTotal: Number.isFinite(timeTotal) ? timeTotal : 0,
-  };
-}
-
-function formatCurlError(result: CommandResult): string {
-  const stderr = result.stderr.trim();
-  if (stderr.length > 0) return stderr;
-  if (result.timedOut) return "curl timed out";
-  return `curl exited with code ${result.exitCode}`;
 }

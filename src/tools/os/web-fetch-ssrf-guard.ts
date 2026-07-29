@@ -179,6 +179,14 @@ export async function assertHostAllowed(
   if (host.length === 0) {
     throw new SsrfBlockedError("empty host", host);
   }
+  // IP literals do not need DNS — reject them directly so a custom/test
+  // lookup cannot whitewash a private target by returning a public pin.
+  if (isBlockedIp(host)) {
+    throw new SsrfBlockedError(
+      `${host} is a private/internal address`,
+      host,
+    );
+  }
   let addresses: readonly { address: string; family: number }[];
   try {
     addresses = await lookup(host);
