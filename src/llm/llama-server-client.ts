@@ -42,6 +42,15 @@ export class LlamaServerError extends Error {
     message: string,
     public readonly status: number | null,
     public readonly url: string,
+    /**
+     * True when *our own* `requestTimeoutMs` controller fired rather than
+     * the transport failing. Both surface as `status === null`, but a
+     * timeout is a "the model is slower than the budget" signal, not a
+     * transient blip — replaying it just burns another full timeout of
+     * GPU time (3 attempts x 300s = 15 silent minutes). See
+     * `isRetryableLlamaError`.
+     */
+    public readonly timedOut = false,
   ) {
     super(message);
     this.name = "LlamaServerError";
@@ -193,7 +202,7 @@ export class LlamaServerClient {
     return this.runWithRetry(
       url,
       async () => {
-        const { controller, cleanup } = this.createRequestController(
+        const { controller, cleanup, timedOut } = this.createRequestController(
           request.signal,
         );
         try {
@@ -209,9 +218,7 @@ export class LlamaServerClient {
           const json = (await response.json()) as Record<string, unknown>;
           return normaliseCompletionResponse(json);
         } catch (err) {
-          if (err instanceof LlamaServerError) throw err;
-          const message = err instanceof Error ? err.message : String(err);
-          throw new LlamaServerError(message, null, url);
+          throw this.wrapTransportError(err, url, timedOut());
         } finally {
           cleanup();
         }
@@ -231,14 +238,14 @@ export class LlamaServerClient {
       response: Response;
       controller: AbortController;
       cleanup: () => void;
+      timedOut: () => boolean;
     };
     try {
       opened = await this.runWithRetry(
         url,
         async () => {
-          const { controller, cleanup } = this.createRequestController(
-            request.signal,
-          );
+          const { controller, cleanup, timedOut } =
+            this.createRequestController(request.signal);
           try {
             const response = await this.fetchImpl(url, {
               method: "POST",
@@ -249,12 +256,10 @@ export class LlamaServerClient {
             if (!response.ok || !response.body) {
               throw await buildHttpError(response, url);
             }
-            return { response, controller, cleanup };
+            return { response, controller, cleanup, timedOut };
           } catch (err) {
             cleanup();
-            if (err instanceof LlamaServerError) throw err;
-            const message = err instanceof Error ? err.message : String(err);
-            throw new LlamaServerError(message, null, url);
+            throw this.wrapTransportError(err, url, timedOut());
           }
         },
         request.signal,
@@ -264,7 +269,7 @@ export class LlamaServerClient {
       const message = err instanceof Error ? err.message : String(err);
       throw new LlamaServerError(message, null, url);
     }
-    const { response, cleanup } = opened;
+    const { response, cleanup, timedOut } = opened;
     let finalResult: CompletionResult = {
       content: "",
       reasoningContent: "",
@@ -331,9 +336,7 @@ export class LlamaServerClient {
       }
       return finalResult;
     } catch (err) {
-      if (err instanceof LlamaServerError) throw err;
-      const message = err instanceof Error ? err.message : String(err);
-      throw new LlamaServerError(message, null, url);
+      throw this.wrapTransportError(err, url, timedOut());
     } finally {
       cleanup();
     }
@@ -350,25 +353,57 @@ export class LlamaServerClient {
   private createRequestController(externalSignal?: AbortSignal): {
     controller: AbortController;
     cleanup: () => void;
+    /** True once the per-request timeout (not the caller) fired the abort. */
+    timedOut: () => boolean;
   } {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    let expired = false;
+    const timer = setTimeout(() => {
+      expired = true;
+      controller.abort();
+    }, this.requestTimeoutMs);
+    const timedOut = (): boolean => expired;
     if (!externalSignal) {
-      return { controller, cleanup: () => clearTimeout(timer) };
+      return { controller, cleanup: () => clearTimeout(timer), timedOut };
     }
     if (externalSignal.aborted) {
       controller.abort();
-      return { controller, cleanup: () => clearTimeout(timer) };
+      return { controller, cleanup: () => clearTimeout(timer), timedOut };
     }
     const onAbort = (): void => controller.abort();
     externalSignal.addEventListener("abort", onAbort, { once: true });
     return {
       controller,
+      timedOut,
       cleanup: () => {
         clearTimeout(timer);
         externalSignal.removeEventListener("abort", onAbort);
       },
     };
+  }
+
+  /**
+   * Normalise a caught transport failure into a `LlamaServerError`,
+   * preserving whether it was our own request-timeout so the retry policy
+   * can refuse to replay it. Pass-through for errors already of that type.
+   */
+  private wrapTransportError(
+    err: unknown,
+    url: string,
+    timedOut: boolean,
+  ): LlamaServerError {
+    if (err instanceof LlamaServerError) return err;
+    if (timedOut) {
+      return new LlamaServerError(
+        `llama-server request exceeded requestTimeoutMs (${this.requestTimeoutMs}ms) — ` +
+          `raise localModels.requestTimeoutMs or lower completionMaxTokens`,
+        null,
+        url,
+        true,
+      );
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    return new LlamaServerError(message, null, url);
   }
 
   private prepareRequest(
@@ -528,6 +563,10 @@ function toNumber(value: unknown, fallback = 0): number {
  */
 function isRetryableLlamaError(err: unknown): boolean {
   if (!(err instanceof LlamaServerError)) return false;
+  // Our own request-timeout, not a transport failure. Replaying it costs
+  // another full `requestTimeoutMs` of GPU time and cannot succeed if the
+  // model simply needs longer than the budget.
+  if (err.timedOut) return false;
   if (err.status === null) return true;
   if (err.status >= 500 && err.status < 600) return true;
   return false;
