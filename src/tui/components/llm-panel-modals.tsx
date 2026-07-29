@@ -1,8 +1,9 @@
 import { Box, Text } from "ink";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { ProvidersWizard } from "./providers-wizard.js";
+import { parseExternalUrl } from "../llm-panel/llm-panel-modal-key-bindings.js";
 
 export function LlmPanelModals({ state }: { state: TuiState }): ReactElement | null {
   if (state.providersPanel.wizard) {
@@ -43,6 +44,22 @@ export function LlmPanelModals({ state }: { state: TuiState }): ReactElement | n
       </PromptBox>
     );
   }
+  if (state.llmPanel.externalUrlDraft !== null) {
+    const draft = state.llmPanel.externalUrlDraft;
+    const valid = parseExternalUrl(draft) !== null;
+    return (
+      <PromptBox tone="accent" title="External llama.cpp base URL">
+        <Text>
+          {draft}
+          <Text color={theme.colors.muted}>▏</Text>
+        </Text>
+        {valid ? null : <Text color={theme.colors.error}>invalid URL</Text>}
+        <Text color={theme.colors.muted}>
+          Saved after a /health probe succeeds. Enter save · Esc cancel
+        </Text>
+      </PromptBox>
+    );
+  }
   if (state.llmPanel.stopLocalDaemonsPrompt) {
     return (
       <PromptBox tone="accent" title="Stop local daemons now?">
@@ -63,7 +80,7 @@ function PromptBox({
 }: {
   tone: "accent" | "danger";
   title: string;
-  children: ReactElement | readonly ReactElement[];
+  children: ReactNode;
 }): ReactElement {
   const color = tone === "danger" ? theme.colors.error : theme.colors.accentSoft;
   return (

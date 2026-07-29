@@ -7,7 +7,9 @@ export type LlmPanelAction =
   | { type: "llm_cursor_set"; cursor: number; mode?: LlmPanelMode }
   | { type: "llm_focus_set"; focus: LlmPanelSection; cursor?: number }
   | { type: "llm_stop_local_daemons_prompt_opened"; providerId: string }
-  | { type: "llm_stop_local_daemons_prompt_closed" };
+  | { type: "llm_stop_local_daemons_prompt_closed" }
+  /** Opens (string), edits (string) or closes (`null`) the external URL editor. */
+  | { type: "llm_external_url_draft_set"; value: string | null };
 
 export function isLlmPanelAction(
   action: { type: string },
@@ -19,6 +21,7 @@ export function isLlmPanelAction(
     action.type === "llm_cursor_set" ||
     action.type === "llm_focus_set" ||
     action.type === "llm_stop_local_daemons_prompt_opened" ||
-    action.type === "llm_stop_local_daemons_prompt_closed"
+    action.type === "llm_stop_local_daemons_prompt_closed" ||
+    action.type === "llm_external_url_draft_set"
   );
 }

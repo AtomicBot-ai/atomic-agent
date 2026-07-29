@@ -69,11 +69,11 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   {
     name: "llm",
     description:
-      "open LLM Local/Cloud panel · `/llm provider <id>` switch text provider",
+      "open LLM Local/Cloud/External panel · `/llm provider <id>` switch text provider",
   },
   {
     name: "model",
-    description: "open the LLM Local/Cloud panel",
+    description: "open the LLM Local/Cloud/External panel",
   },
   {
     name: "mcp",

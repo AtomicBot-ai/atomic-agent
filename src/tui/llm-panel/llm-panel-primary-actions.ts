@@ -9,6 +9,7 @@ import { isCloudProviderKind } from "../providers/providers-orchestrator.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
 import type { LlmPanelRow } from "./llm-panel-selectors.js";
 import { isLocalTextActive } from "./llm-panel-selectors.js";
+import { nextMode } from "./llm-panel-reducer.js";
 
 export function triggerLlmPrimary(
   row: LlmPanelRow | null,
@@ -39,15 +40,19 @@ export function triggerLlmPrimary(
     case "cloudEmbeddingModel":
       triggerCloudEmbeddingModel(row, dispatch, callbacks);
       return;
+    case "externalUrl":
+      dispatch({ type: "llm_external_url_draft_set", value: row.url });
+      return;
   }
 }
 
+/** Move `delta` panes (right = +1, left = -1), wrapping at both ends. */
 export function switchLlmMode(
   state: TuiState,
   dispatch: (action: TuiAction) => void,
+  delta = 1,
 ): void {
-  const nextMode = state.llmPanel.mode === "local" ? "cloud" : "local";
-  dispatch({ type: "llm_mode_set", mode: nextMode });
+  dispatch({ type: "llm_mode_set", mode: nextMode(state.llmPanel.mode, delta) });
 }
 
 export function openProviderConfig(

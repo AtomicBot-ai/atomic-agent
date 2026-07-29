@@ -423,6 +423,16 @@ function persistLlamaUrl(
       persistUserLocalLlmUrl(nextUrl);
       bus.emit({ type: "llama_url_changed", url: nextUrl });
       orchestrator.updateLlamaUrl(nextUrl);
+      // The URL only takes effect if the chat route points at
+      // llama-server; a cloud provider would otherwise stay active and
+      // the saved URL would look inert. Done after the probe so a dead
+      // address never steals a working route, and skipped when the route
+      // is already local so editing a URL stays quiet. `refresh()`
+      // re-reads `localModels.mode` so the LLM tab stops claiming managed.
+      if (getConfig().llm?.activeTextProvider !== "local-llama") {
+        await orchestrator.providers.setActiveText("local-llama");
+      }
+      await orchestrator.localModels.refresh();
       bus.emit({
         type: "runtime_info",
         line: `local-llm URL saved (${health.latencyMs}ms)`,

@@ -4,6 +4,7 @@ import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
 import { handleLlmModalKey } from "./llm-panel-modal-key-bindings.js";
 import { clampLlmCursor, selectLlmRowAt } from "./llm-panel-selectors.js";
+import { cursorFieldFor } from "./llm-panel-state.js";
 import {
   activateProviderEmbedding,
   openAddProvider,
@@ -59,7 +60,7 @@ export function handleLlmPanelKey(
     return true;
   }
   if (input === "[" || input === "]" || key.leftArrow || key.rightArrow) {
-    switchLlmMode(state, dispatch);
+    switchLlmMode(state, dispatch, input === "[" || key.leftArrow ? -1 : 1);
     return true;
   }
   if (input === "e") {
@@ -101,8 +102,6 @@ export function handleLlmPanelKey(
 }
 
 function activeCursor(state: TuiState): number {
-  return state.llmPanel.mode === "cloud"
-    ? state.llmPanel.cloudCursor
-    : state.llmPanel.localCursor;
+  return state.llmPanel[cursorFieldFor(state.llmPanel.mode)];
 }
 
