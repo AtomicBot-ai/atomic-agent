@@ -34,6 +34,56 @@ function makeLlamaStub(
   } as { client: Pick<LlamaServerClient, "fetchProps">; calls: number };
 }
 
+describe("ModelProfileManager slot discovery", () => {
+  // Managed mode defers the boot health check, so bootstrap builds the
+  // SlotManager on a one-slot default. This refresh hook is the only path
+  // that ever widens it to the daemon's real `--parallel` count.
+  it("reports /props.total_slots on a successful refresh", async () => {
+    const stub = makeLlamaStub([{ ...QWEN3_PROPS, total_slots: 2 }]);
+    const seen: number[] = [];
+    const mgr = new ModelProfileManager({
+      llama: stub.client as LlamaServerClient,
+      initialProfile: PLAIN_INSTRUCT_PROFILE,
+      initialGrammar: await buildGrammar(PLAIN_INSTRUCT_PROFILE),
+      initialModelId: null,
+      onTotalSlots: (n) => seen.push(n),
+    });
+    await mgr.refresh();
+    expect(seen).toEqual([2]);
+  });
+
+  it("stays silent when the server omits total_slots", async () => {
+    const stub = makeLlamaStub([QWEN3_PROPS]);
+    const seen: number[] = [];
+    const mgr = new ModelProfileManager({
+      llama: stub.client as LlamaServerClient,
+      initialProfile: PLAIN_INSTRUCT_PROFILE,
+      initialGrammar: await buildGrammar(PLAIN_INSTRUCT_PROFILE),
+      initialModelId: null,
+      onTotalSlots: (n) => seen.push(n),
+    });
+    await mgr.refresh();
+    expect(seen).toEqual([]);
+  });
+
+  it("reports slots even when the probe body fails profile detection", async () => {
+    // Slot discovery must not be hostage to the grammar rebuild path — an
+    // oversized pool thrashes the KV cache on every turn regardless of
+    // whether the profile changed.
+    const stub = makeLlamaStub([{ total_slots: 4 }]);
+    const seen: number[] = [];
+    const mgr = new ModelProfileManager({
+      llama: stub.client as LlamaServerClient,
+      initialProfile: PLAIN_INSTRUCT_PROFILE,
+      initialGrammar: await buildGrammar(PLAIN_INSTRUCT_PROFILE),
+      initialModelId: null,
+      onTotalSlots: (n) => seen.push(n),
+    });
+    await mgr.refresh();
+    expect(seen).toEqual([4]);
+  });
+});
+
 describe("ModelProfileManager", () => {
   it("reports the initial profile/grammar until a mismatch is observed", async () => {
     const grammar = await buildGrammar(GEMMA4_THINK_PROFILE);

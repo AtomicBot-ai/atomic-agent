@@ -237,6 +237,24 @@ function selectBaseProfile(
  * also fall back to a root-level `n_ctx` for older builds and custom
  * forks. Returns `null` when neither is a positive number.
  */
+/**
+ * Extract `total_slots` from a `/props` payload — the number of parallel
+ * slots llama-server was started with (`--parallel`). Anything missing,
+ * non-finite, or below 1 collapses to `null` so callers fall back to the
+ * conservative `SlotManager` default rather than guessing high: an id
+ * above the real count is wrapped by llama.cpp (`id_slot % n_slots`) into
+ * a *different session's* slot, silently thrashing the KV cache.
+ */
+export function extractTotalSlots(
+  props: Record<string, unknown>,
+): number | null {
+  const raw = props.total_slots;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 1) {
+    return null;
+  }
+  return Math.trunc(raw);
+}
+
 function readContextWindow(props: Record<string, unknown>): number | null {
   const defaults = readObject(props.default_generation_settings);
   const nested = toPositiveInt(defaults.n_ctx);

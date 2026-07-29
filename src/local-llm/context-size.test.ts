@@ -8,6 +8,27 @@ import {
   resolveDeviceFreeVramMiB,
 } from "./context-size.js";
 import type { GpuDevice } from "./gpu-devices.js";
+import { minUsableContextWindow } from "../prompt/token-budget.js";
+import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
+
+// Drift guard. The floor exists so a model that does not fit VRAM still
+// gets a *workable* context rather than a merely non-zero one. When it sat
+// at 8192 it was equal to `completionMaxTokens` and smaller than the fixed
+// prompt plus that budget, so every step on a floored model came back
+// `truncated` and the agent never emitted a tool call. Either constant may
+// move; they must not cross.
+describe("MIN_AUTO_CONTEXT", () => {
+  it("clears the agent's fixed prompt plus a full generation budget", () => {
+    const required = minUsableContextWindow(
+      USER_CONFIG_DEFAULTS.localModels.completionMaxTokens,
+    );
+    expect(MIN_AUTO_CONTEXT).toBeGreaterThanOrEqual(required);
+  });
+
+  it("is not itself capped away by the auto-size ceiling", () => {
+    expect(MIN_AUTO_CONTEXT).toBeLessThanOrEqual(MAX_AUTO_CONTEXT);
+  });
+});
 
 const QWEN_9B = {
   modelSizeGb: 5.3,

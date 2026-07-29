@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   detectModelProfile,
+  extractTotalSlots,
   detectVisionSupport,
   GEMMA4_THINK_PROFILE,
   PLAIN_INSTRUCT_PROFILE,
@@ -13,6 +14,27 @@ import {
   LLAMA3_PROPS,
   QWEN3_PROPS,
 } from "./model-profile.fixtures.js";
+
+describe("extractTotalSlots", () => {
+  it("reads a positive integer slot count", () => {
+    expect(extractTotalSlots({ total_slots: 2 })).toBe(2);
+  });
+
+  // Falling back to `null` (and thus the conservative SlotManager default)
+  // is deliberate: llama.cpp wraps an out-of-range id into another
+  // session's slot rather than erroring, so guessing high corrupts cache
+  // affinity silently.
+  it("collapses missing, non-numeric, and sub-1 values to null", () => {
+    for (const raw of [undefined, null, "2", 0, -1, Number.NaN, Infinity]) {
+      expect(extractTotalSlots({ total_slots: raw })).toBeNull();
+    }
+    expect(extractTotalSlots({})).toBeNull();
+  });
+
+  it("truncates a fractional count", () => {
+    expect(extractTotalSlots({ total_slots: 2.9 })).toBe(2);
+  });
+});
 
 describe("detectModelProfile", () => {
   it("detects qwen think profile from props", () => {

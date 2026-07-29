@@ -3,6 +3,7 @@ import { buildGrammar } from "./grammar/build-grammar.js";
 import type { LlamaServerClient } from "./llama-server-client.js";
 import {
   detectModelProfile,
+  extractTotalSlots,
   type ModelProfile,
 } from "./model-profile.js";
 import { checkProfileGrammarAligned } from "./profile-invariants.js";
@@ -26,6 +27,15 @@ export interface ModelProfileManagerOptions {
    * `browser.*` into the `tool-name` rule. Default `true`.
    */
   browserEnabled?: boolean;
+  /**
+   * Invoked with `/props.total_slots` after every successful probe.
+   * Managed mode defers the boot health check (the daemon may not be
+   * running yet), so bootstrap builds the `SlotManager` on a conservative
+   * one-slot default; this is the hook that widens it to the server's
+   * real `--parallel` count on the first refresh. Omit to ignore slot
+   * discovery entirely (tests with a stubbed HTTP layer).
+   */
+  onTotalSlots?: (totalSlots: number) => void;
   logger?: StructuredLogger;
 }
 
@@ -65,6 +75,9 @@ export class ModelProfileManager {
   private readonly llama: LlamaServerClient;
   private readonly grammarsDir: string | undefined;
   private readonly browserEnabled: boolean;
+  private readonly onTotalSlots:
+    | ((totalSlots: number) => void)
+    | undefined;
   private readonly logger: StructuredLogger | undefined;
 
   constructor(options: ModelProfileManagerOptions) {
@@ -74,6 +87,7 @@ export class ModelProfileManager {
     this.llama = options.llama;
     this.grammarsDir = options.grammarsDir;
     this.browserEnabled = options.browserEnabled ?? true;
+    this.onTotalSlots = options.onTotalSlots;
     this.logger = options.logger;
   }
 
@@ -131,6 +145,14 @@ export class ModelProfileManager {
   async refresh(): Promise<ModelProfileRefreshResult> {
     try {
       const props = await this.llama.fetchProps();
+      // Slot discovery rides this probe. Done before the profile work so a
+      // grammar rebuild failure cannot swallow it — an oversized slot pool
+      // silently thrashes the server's KV cache and is worth correcting
+      // even on a turn where nothing else changed.
+      const totalSlots = extractTotalSlots(props);
+      if (totalSlots !== null) {
+        this.onTotalSlots?.(totalSlots);
+      }
       const nextProfile = detectModelProfile(props);
       const nextModelId = normaliseId(
         typeof props.model_alias === "string" ? props.model_alias : null,
