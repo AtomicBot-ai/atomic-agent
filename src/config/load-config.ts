@@ -464,6 +464,7 @@ export function loadConfig(): AtomicAgentConfig {
     },
     tui: {
       theme: user.tui.theme,
+      placeholderRotationMs: user.tui.placeholderRotationMs,
     },
     analytics: {
       enabled: user.analytics.enabled,
