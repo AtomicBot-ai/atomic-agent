@@ -272,16 +272,16 @@ describe("executeStep batch handling", () => {
     ]);
   });
 
-  it("native_tools: reasoning-only completion (empty content, no tool_calls) fails fast as ModelError", async () => {
-    // Pre-`tool_choice: "auto"` migration this case used to round-trip
-    // through a one-shot `parse_retry`. After the migration, a completion
-    // that carried `reasoningContent` but neither `content` nor
-    // `tool_calls` is treated as a model defect: replaying the same prompt
-    // would reproduce the same wall, so we fail fast with `ModelError`
-    // (category `model`) instead of burning a retry on it. The legacy
-    // "retry into a healthy tool_calls completion" path is no longer
-    // exercised because the runtime no longer rewards models that hide
-    // the answer in the reasoning channel.
+  it("native_tools: reasoning-only completion (empty content, no tool_calls) is salvaged as a reply", async () => {
+    // Reasoning models served over OpenAI-compatible APIs (Qwen3.8 with
+    // `preserve_thinking` on, DeepSeek-R1) routinely end hard turns with
+    // the entire answer in `reasoning_content`, `content` empty and no
+    // `tool_calls`. Failing fast here (the pre-Qwen3.8 contract) killed
+    // whole sessions on healthy completions. The parser now salvages the
+    // reasoning body — GBNF batch if one is embedded, otherwise a
+    // length-1 `reply` — without burning a retry: no prompt is replayed,
+    // so the original fail-fast concern (replaying the same prompt into
+    // the same wall) does not apply.
     const registry = makeRegistry();
     const session = createEmptySessionState({
       id: "s-native-reasoning-only",
@@ -289,47 +289,52 @@ describe("executeStep batch handling", () => {
     });
     let llmCalls = 0;
 
-    await expect(
-      executeStep(
-        {
-          session,
-          toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
-          capabilities: CAPS,
-          skillCatalog: SKILLS,
-          stepIndex: 0,
-          signal: new AbortController().signal,
-          userMessage: "привет",
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "привет",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        async llmComplete() {
+          llmCalls += 1;
+          return {
+            content: "",
+            reasoningContent: "I should call reply.",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
+            cacheHitTokens: 0,
+            slotId: -1,
+            modelId: "openai/gpt-5.5",
+          };
         },
-        {
-          registry,
-          slotManager: new SlotManager(2),
-          async llmComplete() {
-            llmCalls += 1;
-            return {
-              content: "",
-              reasoningContent: "I should call reply.",
-              stop: true,
-              truncated: false,
-              timing: {
-                promptMs: 1,
-                predictedMs: 1,
-                promptTokens: 20,
-                predictedTokens: 5,
-              },
-              cacheHitTokens: 0,
-              slotId: -1,
-              modelId: "openai/gpt-5.5",
-            };
-          },
-          grammar: "",
-          profile: PLAIN_INSTRUCT_PROFILE,
-          toolTransport: "native_tools",
-          toolCallAdapter: null,
-          supportsSlotAffinity: false,
-        },
-      ),
-    ).rejects.toMatchObject({ name: "ModelError" });
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+      },
+    );
+
     expect(llmCalls).toBe(1);
+    expect(outcome.toolResults).toHaveLength(1);
+    expect(outcome.toolResults[0]?.status).toBe("ok");
+    expect(outcome.nextSession.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "I should call reply.",
+    });
   });
 
   it("repairs a native-tools reply call with empty args before execution", async () => {

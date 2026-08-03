@@ -872,12 +872,22 @@ function isNativeToolsEmptyCompletionHandledByParser(
   if (deps.toolTransport !== "native_tools" || reason !== "empty") {
     return false;
   }
-  // Empty `content` is OK only when the model still emitted at least one
-  // OpenAI `tool_call` — the parser can recover those. With BOTH content
-  // and tool_calls empty there is nothing left to parse; route through
-  // ModelError so the agent loop fails fast instead of replaying the same
-  // prompt against the same wall.
-  return completion.toolCalls !== undefined && completion.toolCalls.length > 0;
+  // Empty `content` is OK when the model still emitted at least one
+  // OpenAI `tool_call` — the parser can recover those.
+  if (completion.toolCalls !== undefined && completion.toolCalls.length > 0) {
+    return true;
+  }
+  // Reasoning-only completions (Qwen3.8 with preserve_thinking,
+  // DeepSeek-R1 over OpenAI-compatible APIs): the model ends its turn
+  // with all text in `reasoning_content`, `content` empty and no
+  // tool_calls. The parser salvages these — a GBNF-shaped batch inside
+  // the reasoning, or the reasoning itself as a `reply`. Only a
+  // completion with NOTHING in any channel routes through ModelError.
+  const reasoning =
+    typeof completion.reasoningContent === "string"
+      ? completion.reasoningContent.trim()
+      : "";
+  return reasoning.length > 0;
 }
 
 /**
@@ -964,6 +974,48 @@ function tryParseToolCalls(
               },
             ],
             ...(reasoning.length > 0 ? { reasoning } : {}),
+          },
+        };
+      }
+      // Reasoning-only completion: no tool_calls, empty content, but the
+      // think channel carries text. Same two recovery paths as for plain
+      // content, applied to the reasoning body: models occasionally emit
+      // the GBNF-style call array inside the think block, and a model
+      // that reasoned its way to a final answer without ever leaving the
+      // think channel still has an answer worth delivering as `reply`.
+      const reasoningText =
+        typeof completion.reasoningContent === "string"
+          ? completion.reasoningContent.trim()
+          : "";
+      if (reasoningText.length > 0) {
+        try {
+          const grammarBatch = parseToolCalls(
+            reasoningText,
+            getReasoningTagOptions(profile),
+          );
+          if (grammarBatch.calls.length > 0) {
+            const adapter = deps.toolCallAdapter ?? openAiToolCallAdapter;
+            const calls = grammarBatch.calls.map((call) => ({
+              ...call,
+              tool: adapter.nameUnescape(call.tool),
+            }));
+            return { ok: true, batch: { ...grammarBatch, calls } };
+          }
+        } catch {
+          // Not GBNF-shaped — fall through to the reply wrap.
+        }
+        return {
+          ok: true,
+          batch: {
+            kind: "batch",
+            calls: [
+              {
+                tool: "reply",
+                args: { text: reasoningText },
+                reasoning: reasoningText,
+              },
+            ],
+            reasoning: reasoningText,
           },
         };
       }
