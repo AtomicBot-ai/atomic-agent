@@ -4,13 +4,7 @@ import { OpenAiProvider, type OpenAiProviderOptions } from "../openai/openai-pro
 export const DEFAULT_AIMLAPI_BASE = "https://api.aimlapi.com";
 
 /** Strips a trailing `/v1` so paths are not doubled (`/v1/v1/...`). */
-export function normalizeAimlapiBaseUrl(baseUrl: string): string {
-  const trimmed = baseUrl.replace(/\/$/, "");
-  if (trimmed.endsWith("/v1")) {
-    return trimmed.slice(0, -"/v1".length);
-  }
-  return trimmed;
-}
+export { normalizeOpenAiBaseUrl as normalizeAimlapiBaseUrl } from "../openai/normalize-openai-base-url.js";
 
 export type AimlapiProviderOptions = Omit<OpenAiProviderOptions, "baseUrl"> & {
   baseUrl?: string;
@@ -23,13 +17,11 @@ export type AimlapiProviderOptions = Omit<OpenAiProviderOptions, "baseUrl"> & {
  */
 export class AimlapiProvider extends OpenAiProvider {
   constructor(options: AimlapiProviderOptions) {
-    const baseUrl = normalizeAimlapiBaseUrl(
-      options.baseUrl ?? DEFAULT_AIMLAPI_BASE,
-    );
     super({
       ...options,
       id: options.id,
-      baseUrl,
+      // OpenAiProvider normalizes the base URL.
+      baseUrl: options.baseUrl ?? DEFAULT_AIMLAPI_BASE,
       defaultChatModel: options.defaultChatModel,
     });
   }

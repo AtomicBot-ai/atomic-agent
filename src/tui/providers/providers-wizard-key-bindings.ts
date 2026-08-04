@@ -1,8 +1,7 @@
 import type { Key } from "ink";
-import {
-  getCachedOpenAiCompatModels,
-  normalizeOpenAiCompatBaseUrl,
-} from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
+import { getCachedOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { normalizeOpenAiBaseUrl } from "../../llm/provider/openai/normalize-openai-base-url.js";
 import {
   listAimlapiChatModels,
   listAimlapiEmbeddingModels,
@@ -124,8 +123,20 @@ function isLinePhase(phase: ProvidersWizardPhase): boolean {
 /** Normalized so the fetch, the cache key and the displayed URL always agree. */
 export function baseUrlForWizard(wizard: ProvidersWizardState): string {
   return (
-    normalizeOpenAiCompatBaseUrl(wizard.baseUrlLine) ||
-    OPENAI_COMPAT_DEFAULT_BASE_URL
+    normalizeOpenAiBaseUrl(wizard.baseUrlLine) || OPENAI_COMPAT_DEFAULT_BASE_URL
+  );
+}
+
+/** Typed key wins; otherwise a key already in the environment needs no retyping. */
+export function apiKeyForWizard(
+  wizard: ProvidersWizardState,
+): string | undefined {
+  return (
+    wizard.apiKeyBuffer.trim() ||
+    resolveLlmProviderApiKey({
+      id: "openai-compatible",
+      kind: "openai-compatible",
+    })
   );
 }
 
@@ -140,7 +151,12 @@ export function listCompatChatModelPicks(
   if (wizard.phase !== "chat_model_line") return [];
   if (wizard.kind !== "openai-compatible") return [];
   if (wizard.chatModelLine.length > 0) return [];
-  return getCachedOpenAiCompatModels(baseUrlForWizard(wizard)) ?? [];
+  return (
+    getCachedOpenAiCompatModels(
+      baseUrlForWizard(wizard),
+      apiKeyForWizard(wizard),
+    ) ?? []
+  );
 }
 
 export type ProvidersWizardKeyResult =

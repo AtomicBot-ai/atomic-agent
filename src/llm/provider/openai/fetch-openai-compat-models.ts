@@ -4,20 +4,24 @@
  * synchronously through the module cache, same shape as the OpenRouter picker.
  */
 
-const cache = new Map<string, readonly string[]>();
+import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 
-/** Callers append `/v1/...`, so a base URL pasted with `/v1` must lose it. */
-export function normalizeOpenAiCompatBaseUrl(raw: string): string {
-  return raw
-    .trim()
-    .replace(/\/+$/, "")
-    .replace(/\/v\d+$/, "");
+const CACHE_TTL_MS = 60 * 60 * 1000;
+
+const cache = new Map<string, { fetchedAt: number; ids: readonly string[] }>();
+
+/** The key is part of the identity: an anonymous list must not serve an authenticated request. */
+function cacheKey(baseUrl: string, apiKey?: string): string {
+  return `${normalizeOpenAiBaseUrl(baseUrl)}\n${apiKey ?? ""}`;
 }
 
 export function getCachedOpenAiCompatModels(
   baseUrl: string,
+  apiKey?: string,
 ): readonly string[] | undefined {
-  return cache.get(normalizeOpenAiCompatBaseUrl(baseUrl));
+  const hit = cache.get(cacheKey(baseUrl, apiKey));
+  if (!hit || Date.now() - hit.fetchedAt > CACHE_TTL_MS) return undefined;
+  return hit.ids;
 }
 
 /** Throws on unreachable/unauthorized servers so the caller can fall back to typing. */
@@ -25,10 +29,10 @@ export async function fetchOpenAiCompatModels(
   baseUrl: string,
   apiKey?: string,
 ): Promise<readonly string[]> {
-  const base = normalizeOpenAiCompatBaseUrl(baseUrl);
-  const cached = cache.get(base);
+  const cached = getCachedOpenAiCompatModels(baseUrl, apiKey);
   if (cached) return cached;
 
+  const base = normalizeOpenAiBaseUrl(baseUrl);
   const res = await fetch(`${base}/v1/models`, {
     headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
     signal: AbortSignal.timeout(10_000),
@@ -41,6 +45,6 @@ export async function fetchOpenAiCompatModels(
     .sort((a, b) => a.localeCompare(b));
   if (ids.length === 0) throw new Error("server listed no models");
 
-  cache.set(base, ids);
+  cache.set(cacheKey(baseUrl, apiKey), { fetchedAt: Date.now(), ids });
   return ids;
 }

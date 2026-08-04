@@ -2,21 +2,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchOpenAiCompatModels,
   getCachedOpenAiCompatModels,
-  normalizeOpenAiCompatBaseUrl,
 } from "./fetch-openai-compat-models.js";
 
 describe("fetchOpenAiCompatModels", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
-  });
-
-  it("strips trailing slashes and an explicit /v1 from the base url", () => {
-    expect(normalizeOpenAiCompatBaseUrl(" https://vllm.example/v1/ ")).toBe(
-      "https://vllm.example",
-    );
-    expect(normalizeOpenAiCompatBaseUrl("https://vllm.example")).toBe(
-      "https://vllm.example",
-    );
+    vi.useRealTimers();
   });
 
   it("lists sorted model ids, sends the bearer key, and caches per base url", async () => {
@@ -35,9 +26,40 @@ describe("fetchOpenAiCompatModels", () => {
       headers: { Authorization: "Bearer key" },
     });
 
-    expect(getCachedOpenAiCompatModels("https://vllm.example/")).toEqual(ids);
+    expect(getCachedOpenAiCompatModels("https://vllm.example/", "key")).toEqual(ids);
     await fetchOpenAiCompatModels("https://vllm.example", "key");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not serve one key's list to another key", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [{ id: "m" }] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchOpenAiCompatModels("https://keyed.example", "first");
+    expect(getCachedOpenAiCompatModels("https://keyed.example", "second")).toBeUndefined();
+    expect(getCachedOpenAiCompatModels("https://keyed.example")).toBeUndefined();
+
+    await fetchOpenAiCompatModels("https://keyed.example", "second");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("expires the cache after an hour so rotated keys and new models show up", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [{ id: "m" }] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchOpenAiCompatModels("https://stale.example", "key");
+    vi.advanceTimersByTime(60 * 60 * 1000 + 1);
+    expect(getCachedOpenAiCompatModels("https://stale.example", "key")).toBeUndefined();
+
+    await fetchOpenAiCompatModels("https://stale.example", "key");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("throws on a rejected request so callers can fall back to typing", async () => {

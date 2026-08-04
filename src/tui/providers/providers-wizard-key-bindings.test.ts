@@ -1,5 +1,5 @@
 import type { Key } from "ink";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import { LOCAL_EMBEDDING_CHOICE_ID } from "./providers-model-options.js";
@@ -64,8 +64,15 @@ describe("handleProvidersWizardKey", () => {
   });
 
   describe("openai-compatible chat model step", () => {
+    // The cache is keyed by base url + api key, so the priming fetch below has
+    // to use the key the wizard resolves — pin it instead of reading the env.
+    const ENV_KEY = "env-key";
+    beforeEach(() => {
+      vi.stubEnv("OPENAI_COMPAT_API_KEY", ENV_KEY);
+    });
     afterEach(() => {
       vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
     });
 
     async function wizardAtChatModelStep(
@@ -87,7 +94,7 @@ describe("handleProvidersWizardKey", () => {
           json: async () => ({ data: [{ id: "a-model" }, { id: "b-model" }] }),
         })),
       );
-      await fetchOpenAiCompatModels("https://picks.example");
+      await fetchOpenAiCompatModels("https://picks.example", ENV_KEY);
 
       let wizard = await wizardAtChatModelStep("https://picks.example");
       expect(wizard.phase).toBe("chat_model_line");
@@ -106,7 +113,7 @@ describe("handleProvidersWizardKey", () => {
           json: async () => ({ data: [{ id: "a-model" }] }),
         })),
       );
-      await fetchOpenAiCompatModels("https://typed.example");
+      await fetchOpenAiCompatModels("https://typed.example", ENV_KEY);
 
       let wizard = await wizardAtChatModelStep("https://typed.example");
       for (const ch of "my-own") wizard = next(wizard, ch, emptyKey());

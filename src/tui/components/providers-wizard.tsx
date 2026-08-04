@@ -1,8 +1,8 @@
 import { Box, Text } from "ink";
 import { useEffect, useState, type ReactElement } from "react";
-import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
 import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import {
+  apiKeyForWizard,
   baseUrlForWizard,
   listCompatChatModelPicks,
 } from "../providers/providers-wizard-key-bindings.js";
@@ -117,20 +117,18 @@ function CompatChatModelStep(props: {
 }): ReactElement {
   const w = props.wizard;
   const baseUrl = baseUrlForWizard(w);
+  const isCompat = w.kind === "openai-compatible";
   const [status, setStatus] = useState<{ loading: boolean; error: string | null }>(
-    { loading: true, error: null },
+    { loading: isCompat, error: null },
   );
 
   useEffect(() => {
+    // Only the openai-compatible kind carries an operator-supplied base URL;
+    // any other kind would fire this at the default host with a stray key.
+    if (!isCompat) return;
     let alive = true;
     setStatus({ loading: true, error: null });
-    const apiKey =
-      w.apiKeyBuffer.trim() ||
-      resolveLlmProviderApiKey({
-        id: "openai-compatible",
-        kind: "openai-compatible",
-      });
-    fetchOpenAiCompatModels(baseUrl, apiKey).then(
+    fetchOpenAiCompatModels(baseUrl, apiKeyForWizard(w)).then(
       () => {
         if (alive) setStatus({ loading: false, error: null });
       },
@@ -148,7 +146,7 @@ function CompatChatModelStep(props: {
     };
     // Re-fetch only when the server changes; the key is fixed for this wizard run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baseUrl]);
+  }, [baseUrl, isCompat]);
 
   const picks = listCompatChatModelPicks(w);
   if (picks.length > 0) {
@@ -165,9 +163,11 @@ function CompatChatModelStep(props: {
     );
   }
 
-  const hint = status.loading
-    ? `listing models from ${baseUrl}/v1/models…`
-    : status.error
+  const hint = !isCompat
+    ? "Enter to continue · Esc cancel"
+    : status.loading
+      ? `listing models from ${baseUrl}/v1/models…`
+      : status.error
       ? `model list unavailable (${status.error}) — type the id · Enter to continue`
       : "Enter to continue · Backspace to empty for the model list · Esc cancel";
   return renderLineField({

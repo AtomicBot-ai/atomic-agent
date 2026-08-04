@@ -1,5 +1,5 @@
 import type { UserLlmProviderEntry } from "../../config/llm-config.js";
-import { normalizeOpenAiCompatBaseUrl } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { normalizeOpenAiBaseUrl } from "../../llm/provider/openai/normalize-openai-base-url.js";
 import {
   LOCAL_EMBEDDING_CHOICE_ID,
   OPENAI_COMPAT_DEFAULT_BASE_URL,
@@ -59,7 +59,7 @@ export function buildProviderEntryFromWizard(input: {
     ...(input.kind === "openai-compatible"
       ? {
           baseUrl:
-            normalizeOpenAiCompatBaseUrl(input.baseUrl ?? "") ||
+            normalizeOpenAiBaseUrl(input.baseUrl ?? "") ||
             OPENAI_COMPAT_DEFAULT_BASE_URL,
         }
       : {}),
