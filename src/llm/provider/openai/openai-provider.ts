@@ -26,6 +26,7 @@ import {
   type OpenAiHttpDeps,
 } from "./openai-http.js";
 import { normaliseOpenAiChatResponse } from "./openai-normalise-response.js";
+import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 import { describeImageViaOpenAi } from "./openai-describe-image.js";
 
 export interface OpenAiProviderOptions {
@@ -72,7 +73,7 @@ export class OpenAiProvider implements LlmProvider {
     };
     this.defaultChatModel = options.defaultChatModel;
     this.http = {
-      baseUrl: options.baseUrl.replace(/\/$/, ""),
+      baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
       apiKey: options.apiKey,
       extraHeaders: options.headers ?? {},
       requestTimeoutMs: options.requestTimeoutMs ?? 600_000,
