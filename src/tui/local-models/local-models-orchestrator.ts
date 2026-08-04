@@ -39,6 +39,7 @@ import {
   startChatAndEmbeddingDaemons,
   startEmbeddingDaemon,
   stopChatAndEmbeddingDaemons,
+  stopDaemon as stopChatDaemonProcess,
   stopEmbeddingDaemon,
   type EmbeddingDaemonStartOptions,
   type EmbeddingModelDef,
@@ -964,6 +965,43 @@ export class LocalModelsOrchestrator {
           line: "local-llm: daemons stopped — hybrid recall off (embedding switch unchanged)",
         });
       }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.bus.emit({ type: "local_models_daemon_error_set", message: msg });
+      this.bus.emit({ type: "runtime_info", line: `local-llm: stop failed — ${msg}` });
+    } finally {
+      this.endActiveRefresh();
+      await this.refresh();
+    }
+  }
+
+  /**
+   * Stop only the managed *chat* daemon, leaving the embedding daemon —
+   * and therefore hybrid recall — running. Used when the chat route moves
+   * to an external llama-server: the managed chat process is the one that
+   * got replaced, and it would otherwise sit on its VRAM forever.
+   *
+   * A no-op when nothing is running, so callers can fire it
+   * unconditionally without emitting a misleading "stopped" line.
+   * `daemonSupervised` is deliberately left alone: the embedding side may
+   * still be ours to tear down at exit.
+   */
+  async stopChatDaemonOnly(): Promise<void> {
+    const cfg = getConfig();
+    const dataDir = cfg.paths.localModelsDataDir;
+    const status = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
+    if (!status.running) {
+      await this.refresh();
+      return;
+    }
+    this.bus.emit({ type: "local_models_daemon_phase_set", phase: "stopping" });
+    this.beginActiveRefresh();
+    try {
+      await stopChatDaemonProcess(dataDir);
+      this.bus.emit({
+        type: "runtime_info",
+        line: "local-llm: managed chat daemon stopped — the external URL is the chat route now",
+      });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.bus.emit({ type: "local_models_daemon_error_set", message: msg });

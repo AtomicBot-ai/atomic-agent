@@ -2,7 +2,12 @@ import type { EmbeddingModelRow, LocalModelRow } from "../local-models/local-mod
 import type { ProviderRow } from "../providers/providers-panel-state.js";
 import type { TuiState } from "../tui-state.js";
 import type { LlmPanelMode } from "./llm-panel-state.js";
-import { selectCloudRows, selectLocalRows } from "./llm-panel-row-builders.js";
+import {
+  selectCloudRows,
+  selectExternalRows,
+  selectLocalRows,
+} from "./llm-panel-row-builders.js";
+import { cursorFieldFor } from "./llm-panel-state.js";
 
 export type LlmPanelRow =
   | {
@@ -72,6 +77,16 @@ export type LlmPanelRow =
       available: boolean;
       primaryAction: "configure" | "use" | "current";
       enterEffect: string;
+    }
+  | {
+      kind: "externalUrl";
+      id: "external-url";
+      mode: "external";
+      url: string;
+      active: boolean;
+      available: boolean;
+      primaryAction: "edit" | "use" | "current";
+      enterEffect: string;
     };
 
 export interface LlmActiveRouteSummary {
@@ -95,7 +110,9 @@ export function selectLlmPanelRows(
   state: TuiState,
   mode: LlmPanelMode = state.llmPanel.mode,
 ): readonly LlmPanelRow[] {
-  return mode === "cloud" ? selectCloudRows(state) : selectLocalRows(state);
+  if (mode === "cloud") return selectCloudRows(state);
+  if (mode === "external") return selectExternalRows(state);
+  return selectLocalRows(state);
 }
 
 export function selectLlmRowAt(
@@ -114,9 +131,7 @@ export function clampLlmCursor(state: TuiState, cursor: number): number {
 }
 
 export function activeCursor(state: TuiState): number {
-  return state.llmPanel.mode === "cloud"
-    ? state.llmPanel.cloudCursor
-    : state.llmPanel.localCursor;
+  return state.llmPanel[cursorFieldFor(state.llmPanel.mode)];
 }
 
 export function selectLlmActiveRouteSummary(

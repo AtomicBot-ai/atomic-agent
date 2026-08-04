@@ -26,6 +26,34 @@ export function selectLocalRows(state: TuiState): readonly LlmPanelRow[] {
   return rows;
 }
 
+/**
+ * The External pane is a single row: an external llama.cpp *is* one base
+ * URL. Enter opens the editor pre-filled with the current URL; saving it
+ * is what flips `localModels.mode` to `external` (see
+ * `persistUserLocalLlmUrl`), so there is no separate "switch" action.
+ */
+export function selectExternalRows(state: TuiState): readonly LlmPanelRow[] {
+  const active =
+    state.localModelsPanel.configMode === "external" &&
+    state.providersPanel.rows.some(
+      (row) => row.id === "local-llama" && row.isActiveText,
+    );
+  return [
+    {
+      kind: "externalUrl",
+      id: "external-url",
+      mode: "external",
+      url: state.session.llamaUrl,
+      active,
+      available: true,
+      primaryAction: active ? "current" : "use",
+      enterEffect: active
+        ? "Enter: edit the base URL"
+        : "Enter: point the chat route at an external llama.cpp",
+    },
+  ];
+}
+
 export function selectCloudRows(state: TuiState): readonly LlmPanelRow[] {
   const providers = state.providersPanel.rows.filter(
     (row) => row.kind !== "llama-server",

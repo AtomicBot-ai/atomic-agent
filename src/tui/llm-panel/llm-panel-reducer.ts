@@ -1,7 +1,7 @@
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
 import { isLlmPanelAction } from "./llm-panel-actions.js";
-import type { LlmPanelMode } from "./llm-panel-state.js";
+import { cursorFieldFor, LLM_PANEL_MODES, type LlmPanelMode } from "./llm-panel-state.js";
 
 export function reduceLlmPanelAction(
   state: TuiState,
@@ -28,34 +28,30 @@ export function reduceLlmPanelAction(
     case "llm_mode_toggled":
       return {
         ...state,
-        llmPanel: { ...panel, mode: panel.mode === "local" ? "cloud" : "local" },
+        llmPanel: { ...panel, mode: nextMode(panel.mode, 1) },
       };
-    case "llm_cursor_set":
-      if ((action.mode ?? panel.mode) === "cloud") {
-        return {
-          ...state,
-          llmPanel: { ...panel, mode: "cloud", cloudCursor: Math.max(0, action.cursor) },
-        };
-      }
+    case "llm_cursor_set": {
+      const mode = action.mode ?? panel.mode;
       return {
         ...state,
         llmPanel: {
           ...panel,
-          mode: "local",
-          localCursor: Math.max(0, action.cursor),
+          mode,
+          [cursorFieldFor(mode)]: Math.max(0, action.cursor),
         },
       };
-    case "llm_focus_set":
+    }
+    case "llm_focus_set": {
+      const field = cursorFieldFor(action.focus);
       return {
         ...state,
         llmPanel: {
           ...panel,
           mode: action.focus,
-          ...(action.focus === "cloud"
-            ? { cloudCursor: Math.max(0, action.cursor ?? panel.cloudCursor) }
-            : { localCursor: Math.max(0, action.cursor ?? panel.localCursor) }),
+          [field]: Math.max(0, action.cursor ?? panel[field]),
         },
       };
+    }
     case "llm_stop_local_daemons_prompt_opened":
       return {
         ...state,
@@ -69,9 +65,21 @@ export function reduceLlmPanelAction(
         ...state,
         llmPanel: { ...panel, stopLocalDaemonsPrompt: null },
       };
+    case "llm_external_url_draft_set":
+      return {
+        ...state,
+        llmPanel: { ...panel, externalUrlDraft: action.value },
+      };
     default:
       return state;
   }
+}
+
+/** Step `delta` panes from `mode`, wrapping at both ends. */
+export function nextMode(mode: LlmPanelMode, delta: number): LlmPanelMode {
+  const at = LLM_PANEL_MODES.indexOf(mode);
+  const len = LLM_PANEL_MODES.length;
+  return LLM_PANEL_MODES[(at + delta + len) % len] ?? mode;
 }
 
 export function resolveModeFromActiveRoute(state: TuiState): LlmPanelMode | null {

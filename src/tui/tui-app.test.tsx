@@ -289,7 +289,7 @@ describe("TuiApp (smoke)", () => {
     expect(text).toContain("Mode:");
     expect(text).toContain("Local text models");
     expect(text).toContain("Local embeddings");
-    expect(text).toContain("Press → to switch to Cloud");
+    expect(text).toContain("Press ←/→ to switch mode");
     expect(text).not.toContain("Local runtime");
     unmount();
   });

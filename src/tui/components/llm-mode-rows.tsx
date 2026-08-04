@@ -27,11 +27,11 @@ export function LlmModeRows({
   if (fullViewHeight > maxRows) {
     return <WindowedRows rows={rows} state={state} maxRows={maxRows} />;
   }
-  return state.llmPanel.mode === "local" ? (
-    <LocalRows rows={rows} state={state} />
-  ) : (
-    <CloudRows rows={rows} state={state} />
-  );
+  if (state.llmPanel.mode === "local") return <LocalRows rows={rows} state={state} />;
+  if (state.llmPanel.mode === "external") {
+    return <ExternalRows rows={rows} state={state} />;
+  }
+  return <CloudRows rows={rows} state={state} />;
 }
 
 /** Human-readable section title for a row, used by the windowed view. */
@@ -50,6 +50,8 @@ function sectionTitle(kind: LlmPanelRow["kind"]): string {
     case "localDaemon":
     case "localBackend":
       return "Local runtime";
+    case "externalUrl":
+      return "External llama.cpp";
   }
 }
 
@@ -156,6 +158,32 @@ function CloudRows({
   );
 }
 
+/**
+ * A llama-server the operator runs themselves is just a base URL, so the
+ * pane is one row plus the hints that matter once you point at it: the
+ * managed daemon keeps its VRAM until you stop it (`s`), and the Local
+ * pane is where you go back to a managed model.
+ */
+function ExternalRows({
+  rows,
+  state,
+}: {
+  rows: readonly LlmPanelRow[];
+  state: TuiState;
+}): ReactElement {
+  return (
+    <Box flexDirection="column">
+      <RowsSection title="External llama.cpp" rows={rows} state={state} />
+      <Text color={theme.colors.muted}>
+        {"  "}managed daemon: {formatDaemon(state)} · s start/stop
+      </Text>
+      <Text color={theme.colors.muted}>
+        {"  "}← Local pane: pick a managed model to switch back
+      </Text>
+    </Box>
+  );
+}
+
 function RowsSection({
   title,
   rows,
@@ -235,7 +263,19 @@ function renderRowText(row: LlmPanelRow, state: TuiState): string {
       return `${row.providerId}/${row.modelId} [text]`;
     case "cloudEmbeddingModel":
       return `${row.providerId}/${row.modelId} [embedding]`;
+    case "externalUrl":
+      return `base URL ${row.url} [${externalStatus(row.active, state)}]`;
   }
+}
+
+/**
+ * Health only describes the *active* route, so an inactive external URL
+ * reports "not active" rather than borrowing the managed daemon's probe.
+ */
+function externalStatus(active: boolean, state: TuiState): string {
+  if (!active) return "not active";
+  const { status, latencyMs } = state.llmHealth;
+  return latencyMs === null ? status : `${status} · ${latencyMs}ms`;
 }
 
 function localModelStatus(model: Extract<LlmPanelRow, { kind: "localTextModel" }>["model"]): string {

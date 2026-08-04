@@ -10,7 +10,10 @@ import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
 import { enterAltScreen } from "./alt-screen.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { parseTuiArgs } from "./tui-args.js";
-import { persistUserLocalLlmUrl } from "./persist-user-local-models-config.js";
+import {
+  persistUserLocalLlmUrl,
+  pointsAtManagedDaemon,
+} from "./persist-user-local-models-config.js";
 import { persistUserTuiTheme } from "./persist-user-tui-config.js";
 import {
   isManagedModeReadyOnDisk,
@@ -423,6 +426,25 @@ function persistLlamaUrl(
       persistUserLocalLlmUrl(nextUrl);
       bus.emit({ type: "llama_url_changed", url: nextUrl });
       orchestrator.updateLlamaUrl(nextUrl);
+      // The URL only takes effect if the chat route points at
+      // llama-server; a cloud provider would otherwise stay active and
+      // the saved URL would look inert. Done after the probe so a dead
+      // address never steals a working route, and skipped when the route
+      // is already local so editing a URL stays quiet. `refresh()`
+      // re-reads `localModels.mode` so the LLM tab stops claiming managed.
+      if (getConfig().llm?.activeTextProvider !== "local-llama") {
+        await orchestrator.providers.setActiveText("local-llama");
+      }
+      // An external server replaces the managed chat daemon, which would
+      // otherwise keep its VRAM for a route nothing uses. Unless the new
+      // URL *is* the managed daemon — stopping it would kill the server
+      // we just pointed at. Both branches refresh the LLM tab so it stops
+      // reporting managed mode.
+      if (pointsAtManagedDaemon(nextUrl, getConfig().localModels.managed.port)) {
+        await orchestrator.localModels.refresh();
+      } else {
+        await orchestrator.localModels.stopChatDaemonOnly();
+      }
       bus.emit({
         type: "runtime_info",
         line: `local-llm URL saved (${health.latencyMs}ms)`,

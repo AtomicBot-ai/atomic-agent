@@ -7,6 +7,7 @@ import {
   selectLlmPanelRows,
 } from "../llm-panel/llm-panel-selectors.js";
 import type { LocalModelsPanelState } from "../local-models/local-models-panel-state.js";
+import { LLM_PANEL_MODES, type LlmPanelMode } from "../llm-panel/llm-panel-state.js";
 import { LlmModeRows } from "./llm-mode-rows.js";
 import { LlmPanelModals } from "./llm-panel-modals.js";
 
@@ -71,7 +72,7 @@ export function LlmPanel({
       <Box marginTop={useFull ? 1 : 0} flexDirection="column">
         <Text color={theme.colors.muted}>
           {useFull
-            ? "j/k move · Enter selected action · ←/→ switch Local/Cloud · n add provider · c configure · r refresh"
+            ? "j/k move · Enter selected action · ←/→ switch Local/Cloud/External · n add provider · c configure · r refresh"
             : "j/k · Enter · ←/→ mode · r"}
         </Text>
       </Box>
@@ -150,22 +151,32 @@ function RouteCard({
   );
 }
 
-function ModeHeader({ mode }: { mode: "local" | "cloud" }): ReactElement {
-  const switchHint =
-    mode === "local" ? "Press → to switch to Cloud" : "Press ← to switch to Local";
+const MODE_LABELS: Record<LlmPanelMode, string> = {
+  local: "Local",
+  cloud: "Cloud",
+  external: "External llama.cpp",
+};
+
+function ModeHeader({ mode }: { mode: LlmPanelMode }): ReactElement {
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Text>
         Mode:{" "}
-        <Text bold color={mode === "local" ? theme.colors.accentSoft : theme.colors.muted}>
-          Local
-        </Text>
-        <Text color={theme.colors.muted}> | </Text>
-        <Text bold color={mode === "cloud" ? theme.colors.accentSoft : theme.colors.muted}>
-          Cloud
-        </Text>
+        {LLM_PANEL_MODES.map((candidate, index) => (
+          <Text key={candidate}>
+            {index > 0 ? <Text color={theme.colors.muted}> | </Text> : null}
+            <Text
+              bold
+              color={
+                candidate === mode ? theme.colors.accentSoft : theme.colors.muted
+              }
+            >
+              {MODE_LABELS[candidate]}
+            </Text>
+          </Text>
+        ))}
       </Text>
-      <Text color={theme.colors.muted}>{switchHint}</Text>
+      <Text color={theme.colors.muted}>Press ←/→ to switch mode</Text>
     </Box>
   );
 }
