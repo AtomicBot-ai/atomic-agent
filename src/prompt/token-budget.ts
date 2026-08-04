@@ -114,6 +114,29 @@ export interface EffectiveConversationCapInput {
 export const CONVERSATION_CAP_SAFETY_MARGIN = 512;
 
 /**
+ * Approximate token cost of the agent's fixed prompt scaffolding — the
+ * stable prefix (persona + tool catalog + capabilities + instructions),
+ * measured at ~5.2k and rounded up for drift. Only used for the startup
+ * sanity check on a model's context window; nothing depends on it being
+ * exact, and the real per-build figure comes from `checkBudget`.
+ */
+export const AGENT_FIXED_PROMPT_TOKENS = 6000;
+
+/**
+ * Smallest context window in which the agent can actually complete a
+ * step: fixed scaffolding + a full generation budget + boundary margin.
+ * `contextWindow` below this means every step will hit llama.cpp's
+ * context ceiling and come back `truncated`.
+ */
+export function minUsableContextWindow(completionMaxTokens: number): number {
+  return (
+    AGENT_FIXED_PROMPT_TOKENS +
+    completionMaxTokens +
+    CONVERSATION_CAP_SAFETY_MARGIN
+  );
+}
+
+/**
  * Hard minimum for the effective conversation cap. Even on tiny-context
  * models we keep at least this many tokens so the last user turn and a
  * bit of recent history stay visible; `packConversation` is responsible

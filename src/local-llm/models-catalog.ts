@@ -43,6 +43,19 @@ export interface LocalModelDef {
   minRamGb: number;
   recommendedRamGb: number;
   family: "qwen" | "gemma";
+  /**
+   * Jinja file under `assets/ai-models/` passed to llama-server as
+   * `--chat-template-file`, overriding the template baked into the GGUF.
+   *
+   * **Invariant:** an override MUST preserve every reasoning marker
+   * `detectModelProfile` keys on (`<think>` + `enable_thinking` for Qwen,
+   * `<|channel>thought` + `<|turn>` for Gemma 4). llama-server echoes the
+   * override back at `/props.chat_template`, which is the runtime's only
+   * profile signal — a template without those markers demotes a thinking
+   * model to `plain-instruct`, `buildGrammar` then drops the reasoning
+   * prelude from the GBNF root, and the sampler is forced to open with `[`
+   * and stalls in `ws` until `n_predict`. Prefer leaving this unset.
+   */
   chatTemplateAsset?: string;
   tag?: string;
   /**
@@ -199,7 +212,6 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 6,
     recommendedRamGb: 8,
     family: "qwen",
-    chatTemplateAsset: "qwen3.5-chat-template.jinja",
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/mmproj-F16.gguf",
@@ -241,7 +253,6 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 24,
     recommendedRamGb: 36,
     family: "qwen",
-    chatTemplateAsset: "qwen3.5-chat-template.jinja",
     tag: "High Performance",
     supportsVision: true,
     mmprojUrl:

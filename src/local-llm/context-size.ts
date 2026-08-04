@@ -32,14 +32,21 @@ const COMPUTE_OVERHEAD_MIB = 768;
 const KV_BYTES_PER_TOKEN_PER_GB = 32_000;
 
 /**
- * Lower bound for the auto-sized context. The agent's stable prefix
- * (persona + tool catalog + capabilities + instructions) alone is
- * several thousand tokens; below this floor the agent cannot hold even a
- * single turn, so we force it even when VRAM is tight. On small GPUs
- * this makes llama.cpp's `-fit` step spill some layers to the CPU
- * (slower) rather than reject every request with HTTP 400.
+ * Lower bound for the auto-sized context. On small GPUs this makes
+ * llama.cpp's `-fit` step spill some layers to the CPU (slower) rather
+ * than reject every request with HTTP 400.
+ *
+ * Derived, not arbitrary: the agent's stable prefix (persona + tool
+ * catalog + capabilities + instructions) measures ~5.2k tokens on its
+ * own, and `localModels.completionMaxTokens` defaults to 8192. The old
+ * 8192 floor was therefore *equal to* the generation budget and smaller
+ * than prefix + budget combined — a model that landed on it had ~2-3k
+ * tokens of room, could not finish a reasoning block plus a tool-call
+ * array, and hit llama.cpp's context ceiling with `truncated: true` on
+ * every step. Any model >= ~14 GB on a 16 GB card lands on this floor,
+ * so the value has to clear 5.2k + 8192 + margin.
  */
-export const MIN_AUTO_CONTEXT = 8192;
+export const MIN_AUTO_CONTEXT = 16_384;
 
 /**
  * Upper bound for the auto-sized context. Caps KV growth on large GPUs

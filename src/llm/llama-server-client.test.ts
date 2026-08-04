@@ -159,6 +159,55 @@ describe("LlamaServerClient.complete", () => {
     expect(result.content).toBe("ok");
   });
 
+  // A slow model that blows `requestTimeoutMs` surfaces as an abort with
+  // `status === null`, structurally identical to a dropped socket. Retrying
+  // it burns another full timeout of GPU time per attempt and cannot
+  // succeed, so it must short-circuit like a 4xx does.
+  it("does not retry when its own requestTimeoutMs fires", async () => {
+    let calls = 0;
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      requestTimeoutMs: 5,
+      fetchImpl: createMockFetch(
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            calls += 1;
+            init.signal?.addEventListener("abort", () => {
+              reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+            });
+          }),
+      ),
+      completionRetries: 5,
+      completionRetryBackoffMs: 0,
+      sleep: async () => {},
+    });
+    await expect(client.complete({ prompt: "hi" })).rejects.toMatchObject({
+      name: "LlamaServerError",
+      status: null,
+      timedOut: true,
+    });
+    expect(calls).toBe(1);
+  });
+
+  it("still retries genuine transport failures", async () => {
+    let calls = 0;
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      requestTimeoutMs: 60_000,
+      fetchImpl: createMockFetch(async () => {
+        calls += 1;
+        throw new Error("ECONNRESET");
+      }),
+      completionRetries: 3,
+      completionRetryBackoffMs: 0,
+      sleep: async () => {},
+    });
+    await expect(client.complete({ prompt: "hi" })).rejects.toMatchObject({
+      timedOut: false,
+    });
+    expect(calls).toBe(3);
+  });
+
   it("does not retry on 4xx grammar/validation errors", async () => {
     let calls = 0;
     const client = new LlamaServerClient({

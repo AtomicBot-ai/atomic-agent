@@ -34,11 +34,12 @@ import type {
 import {
   buildGrammar,
   detectModelProfile,
+  extractTotalSlots,
   ModelProfileManager,
   PLAIN_INSTRUCT_PROFILE,
 } from "../llm/index.js";
 import { checkProfileGrammarAligned } from "../llm/profile-invariants.js";
-import { SlotManager } from "../llm/slot-manager.js";
+import { DEFAULT_SLOT_COUNT, SlotManager } from "../llm/slot-manager.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
 
 import { ApprovalGate } from "../approval/approval-gate.js";
@@ -123,6 +124,7 @@ import { seedStarterSkillsIfMissing } from "../skills/seed-starter-skills.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { filterToolDescriptorsByConfig } from "./filter-disabled-tools.js";
 import { buildCapabilities } from "../prompt/capabilities.js";
+import { minUsableContextWindow } from "../prompt/token-budget.js";
 import type {
   CapabilitiesSummary,
   SkillCatalogEntry,
@@ -680,8 +682,32 @@ export async function createAgentRuntime(
       url: config.localModels.url,
     });
   } else {
-    logger.info("slot manager using default slot count (probe miss)", {
-      slotCount: 4,
+    // Managed mode always defers the boot probe (the daemon may not be up
+    // yet), so this is the normal path there. `ModelProfileManager` calls
+    // `slotManager.resize()` on its first successful `/props` refresh at
+    // turn start; until then the pool is the single slot every
+    // llama-server is guaranteed to have.
+    logger.info("slot manager using conservative default (probe deferred)", {
+      slotCount: DEFAULT_SLOT_COUNT,
+    });
+  }
+
+  // A context window that cannot hold the fixed prompt plus a full
+  // generation budget makes every step come back `truncated` — the model
+  // burns its remaining tokens and never closes a tool-call array. Loud
+  // at startup because the failure mode downstream is silent.
+  const minUsableCtx = minUsableContextWindow(
+    config.localModels.completionMaxTokens,
+  );
+  if (profile.contextWindow && profile.contextWindow < minUsableCtx) {
+    logger.warn("context window too small for the agent prompt", {
+      contextWindow: profile.contextWindow,
+      required: minUsableCtx,
+      completionMaxTokens: config.localModels.completionMaxTokens,
+      hint:
+        config.localModels.mode === "managed"
+          ? "raise localModels.managed.contextSize, lower localModels.completionMaxTokens, or pick a model that fits VRAM"
+          : "start llama-server with a larger --ctx-size, or lower localModels.completionMaxTokens",
     });
   }
 
@@ -961,6 +987,14 @@ export async function createAgentRuntime(
         initialModelId: modelAlias,
         grammarsDir: config.paths.grammarsDir,
         browserEnabled: config.browser.enabled,
+        onTotalSlots: (discovered) => {
+          if (discovered === slotManager.getSlotCount()) return;
+          logger.info("slot pool resized from /props", {
+            from: slotManager.getSlotCount(),
+            to: discovered,
+          });
+          slotManager.resize(discovered);
+        },
         logger,
       })
     : undefined;
@@ -2361,20 +2395,6 @@ function logResolvedProfile(
     totalSlots,
   });
   return { profile: resolved, modelAlias: alias, totalSlots };
-}
-
-/**
- * Extract `total_slots` from a `/props` payload. `llama-server` reports
- * the number as an integer at the top level; anything else (missing,
- * non-finite, non-positive) collapses to `null` so the caller falls back
- * to the SlotManager default.
- */
-function extractTotalSlots(props: Record<string, unknown>): number | null {
-  const raw = props.total_slots;
-  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 1) {
-    return null;
-  }
-  return Math.trunc(raw);
 }
 
 /**

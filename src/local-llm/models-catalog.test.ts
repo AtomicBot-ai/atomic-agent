@@ -21,10 +21,13 @@ describe("models-catalog", () => {
     expect(DEFAULT_LLAMACPP_MODEL_ID).toBe("qwen-3.5-4b");
   });
 
-  it("resolves qwen-3.5-4b chat template asset", () => {
-    expect(getLocalModelDef("qwen-3.5-4b").chatTemplateAsset).toBe(
-      "qwen3.5-chat-template.jinja",
-    );
+  // The bundled Qwen 3.5 override was a Qwen2.5-style ChatML template with
+  // no `<think>` / `enable_thinking` markers. Because `--chat-template-file`
+  // is what `/props.chat_template` reports back, it demoted the profile to
+  // `plain-instruct` and deadlocked the grammar. See chat-templates.test.ts.
+  it("does not override the Qwen 3.5 chat template", () => {
+    expect(getLocalModelDef("qwen-3.5-4b").chatTemplateAsset).toBeUndefined();
+    expect(getLocalModelDef("qwen-3.5-35b").chatTemplateAsset).toBeUndefined();
   });
 
   it("throws on unknown id", () => {

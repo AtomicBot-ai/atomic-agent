@@ -43,4 +43,13 @@ exponent ::= ("e" | "E") ("+" | "-")? [0-9]+
 boolean ::= "true" | "false"
 null-lit ::= "null"
 
-ws ::= [ \t\n\r]*
+# Bounded, deliberately. Whitespace is legal at ~10 seams inside the JSON
+# body and GBNF masks EOG until the whole root is satisfied, so an
+# unbounded `[ \t\n\r]*` gives a stuck sampler an infinite legal move: it
+# emits newlines until `n_predict` while the stream parser (still waiting
+# on `"tool":`) surfaces nothing to the UI — a silent multi-minute hang.
+# 64 is far past any realistic newline+indent run (deep pretty-printed
+# JSON tops out well under it); past that the mask simply forces the next
+# real token, which is the desired recovery. Same grouped `{0,n}` shape
+# already used for the reasoning-seam whitespace rule in build-grammar.ts.
+ws ::= ( [ \t\n\r] ){0,64}
