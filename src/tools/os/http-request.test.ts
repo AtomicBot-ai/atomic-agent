@@ -11,6 +11,7 @@ import {
   hostAllowed,
   parseCurlOutput,
 } from "./http-request.js";
+import type { HostLookup } from "./web-fetch-ssrf-guard.js";
 
 function makeCtx(): ToolContext {
   return {
@@ -83,6 +84,25 @@ function fakeRun(
   };
 }
 
+/** Hermetic lookup: public unicast address for any hostname. */
+const publicLookup: HostLookup = async () => [
+  { address: "93.184.216.34", family: 4 },
+];
+
+function privateLookup(ip: string): HostLookup {
+  return async () => [{ address: ip, family: 4 }];
+}
+
+function meta(
+  status: number,
+  contentType: string,
+  size: number,
+  time = 0.01,
+  redirectUrl = "",
+): string {
+  return `__ATOMIC_CURL_META__${status}|${contentType}|${size}|${time}|${redirectUrl}`;
+}
+
 describe("hostAllowed", () => {
   it("returns true when allowlist is null", () => {
     expect(hostAllowed("api.github.com", null)).toBe(true);
@@ -105,13 +125,14 @@ describe("hostAllowed", () => {
 describe("parseCurlOutput", () => {
   it("splits body from meta marker", () => {
     const stdout =
-      'hello world\n__ATOMIC_CURL_META__200|application/json; charset=utf-8|11|0.123';
+      "hello world\n__ATOMIC_CURL_META__200|application/json; charset=utf-8|11|0.123|https://next.example/";
     const parsed = parseCurlOutput(stdout);
     expect(parsed.body).toBe("hello world");
     expect(parsed.status).toBe(200);
     expect(parsed.contentType).toBe("application/json; charset=utf-8");
     expect(parsed.sizeDownload).toBe(11);
     expect(parsed.timeTotal).toBeCloseTo(0.123);
+    expect(parsed.redirectUrl).toBe("https://next.example/");
   });
 
   it("falls back to raw output if marker is missing", () => {
@@ -124,6 +145,7 @@ describe("parseCurlOutput", () => {
 describe("os.http.request", () => {
   it("rejects when config.http.enabled is false", async () => {
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ enabled: false }),
@@ -136,6 +158,7 @@ describe("os.http.request", () => {
 
   it("rejects non-http(s) URLs", async () => {
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig(),
@@ -148,6 +171,7 @@ describe("os.http.request", () => {
 
   it("rejects hostnames not on the allowlist", async () => {
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ hostAllowlist: ["api.github.com"] }),
@@ -161,6 +185,7 @@ describe("os.http.request", () => {
   it("performs GET without approval when approvalMode=writes", async () => {
     const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: denyAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "writes" }),
@@ -174,13 +199,14 @@ describe("os.http.request", () => {
     );
     expect(result.status).toBe("ok");
     expect(result.details.status).toBe(200);
-    expect(capture.args).toContain("https://example.com");
+    expect(capture.args!.some((a) => a.includes("example.com"))).toBe(true);
     expect(capture.args).not.toContain("-X");
   });
 
   it("returns status:error for a 404 while keeping the body in details", async () => {
     const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: false,
       config: makeHttpConfig({ approvalMode: "never" }),
@@ -198,6 +224,7 @@ describe("os.http.request", () => {
   it("returns status:error for a 500", async () => {
     const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: false,
       config: makeHttpConfig({ approvalMode: "never" }),
@@ -213,6 +240,7 @@ describe("os.http.request", () => {
 
   it("requires approval for POST when approvalMode=writes", async () => {
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: denyAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "writes" }),
@@ -228,6 +256,7 @@ describe("os.http.request", () => {
 
   it("requires approval for GET when approvalMode=always", async () => {
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: denyAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "always" }),
@@ -241,6 +270,7 @@ describe("os.http.request", () => {
   it("bypasses approval entirely when approvalMode=never", async () => {
     const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: denyAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
@@ -259,6 +289,7 @@ describe("os.http.request", () => {
   it("serialises object body to JSON and auto-sets Content-Type", async () => {
     const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
@@ -290,6 +321,7 @@ describe("os.http.request", () => {
   it("passes custom headers through to curl and does not override them", async () => {
     const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
@@ -320,6 +352,7 @@ describe("os.http.request", () => {
   it("injects a default Accept header when none is provided", async () => {
     const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
@@ -334,6 +367,7 @@ describe("os.http.request", () => {
   it("does not override an explicit Accept header", async () => {
     const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
@@ -357,6 +391,7 @@ describe("os.http.request", () => {
 
   it("rejects headers containing CR/LF to prevent injection", async () => {
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
@@ -375,6 +410,7 @@ describe("os.http.request", () => {
 
   it("rejects body on GET requests", async () => {
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
@@ -390,6 +426,7 @@ describe("os.http.request", () => {
 
   it("returns structured error when curl fails", async () => {
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
@@ -416,6 +453,7 @@ describe("os.http.request", () => {
       "</body></html>",
     ].join("\n");
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
@@ -440,6 +478,7 @@ describe("os.http.request", () => {
       cursor: "abc",
     });
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
@@ -461,6 +500,7 @@ describe("os.http.request", () => {
   it("returns an HTML-looking body unchanged when content-type is missing", async () => {
     const html = "<!doctype html><html><body><p>Sniffed</p></body></html>";
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
@@ -479,6 +519,7 @@ describe("os.http.request", () => {
   it("returns plain-text responses verbatim", async () => {
     const body = "if (a < b) return true; else return false;";
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
@@ -500,6 +541,7 @@ describe("os.http.request", () => {
     );
     expect(big.length).toBeGreaterThan(2000);
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ approvalMode: "never" }),
@@ -519,16 +561,111 @@ describe("os.http.request", () => {
   it("uses config.http.defaultTimeoutMs when timeoutMs is not provided", async () => {
     const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } = {};
     const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
       approvals: approveAll(),
       approvalRequired: true,
       config: makeHttpConfig({ defaultTimeoutMs: 7_000, approvalMode: "never" }),
       runCommand: fakeRun(capture, {
-        stdout: 'ok\n__ATOMIC_CURL_META__200|text/plain|2|0.01',
+        stdout: "ok\n" + meta(200, "text/plain", 2),
       }),
     });
     await tool.run({ url: "https://example.com" }, makeCtx());
     const maxTimeIdx = capture.args!.indexOf("--max-time");
     expect(maxTimeIdx).toBeGreaterThan(-1);
     expect(capture.args![maxTimeIdx + 1]).toBe("7");
+  });
+
+  it("blocks private IP literals (SSRF parity with os.web.fetch)", async () => {
+    const capture: { cmd?: string; args?: string[] } = {};
+    const tool = buildOsHttpRequestTool({
+      // Hostname itself is the blocked IP — lookup must surface that address
+      // (real DNS does this for literal IPs; do not substitute a public pin).
+      lookup: async () => [{ address: "169.254.169.254", family: 4 }],
+      approvals: approveAll(),
+      approvalRequired: false,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun(capture, {
+        stdout: "ok\n" + meta(200, "text/plain", 2),
+      }),
+    });
+    const result = await tool.run(
+      { url: "http://169.254.169.254/latest/meta-data/" },
+      makeCtx(),
+    );
+    expect(result.status).toBe("error");
+    expect(result.details.blocked).toBe(true);
+    expect(result.summary).toMatch(/private|internal|169\.254/i);
+    expect(capture.args).toBeUndefined();
+  });
+
+  it("blocks hosts that DNS-resolve to a private address", async () => {
+    const capture: { cmd?: string; args?: string[] } = {};
+    const tool = buildOsHttpRequestTool({
+      lookup: privateLookup("10.0.0.5"),
+      approvals: approveAll(),
+      approvalRequired: false,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun(capture),
+    });
+    const result = await tool.run({ url: "https://evil.internal" }, makeCtx());
+    expect(result.status).toBe("error");
+    expect(result.details.blocked).toBe(true);
+    expect(result.summary).toContain("10.0.0.5");
+    expect(capture.args).toBeUndefined();
+  });
+
+  it("pins curl with --resolve and does not use bare -L", async () => {
+    const capture: { cmd?: string; args?: string[] } = {};
+    const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
+      approvals: approveAll(),
+      approvalRequired: false,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun(capture, {
+        stdout: "ok\n" + meta(200, "text/plain", 2),
+      }),
+    });
+    await tool.run({ url: "https://example.com/x" }, makeCtx());
+    const resolveIdx = capture.args!.indexOf("--resolve");
+    expect(resolveIdx).toBeGreaterThan(-1);
+    expect(capture.args![resolveIdx + 1]).toBe("example.com:443:93.184.216.34");
+    expect(capture.args).toContain("--max-redirs");
+    expect(capture.args).not.toContain("-L");
+  });
+
+  it("re-validates redirect hops and blocks a private Location target", async () => {
+    const calls: string[][] = [];
+    const runCommand = async (
+      _cmd: string,
+      args: string[],
+      _opts: CommandOptions,
+    ): Promise<CommandResult> => {
+      calls.push(args);
+      if (calls.length === 1) {
+        return makeCommandResult({
+          stdout:
+            "\n" +
+            meta(302, "text/plain", 0, 0.01, "http://169.254.169.254/meta"),
+        });
+      }
+      return makeCommandResult({
+        stdout: "leaked\n" + meta(200, "text/plain", 6),
+      });
+    };
+    // First hop is public; second hop would be private IP literal.
+    const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
+      approvals: approveAll(),
+      approvalRequired: false,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand,
+    });
+    const result = await tool.run(
+      { url: "https://example.com/start", followRedirects: true },
+      makeCtx(),
+    );
+    expect(result.status).toBe("error");
+    expect(result.details.blocked).toBe(true);
+    expect(calls).toHaveLength(1);
   });
 });
