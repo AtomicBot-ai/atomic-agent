@@ -25,16 +25,40 @@ export class AppUpdateError extends Error {
 const DEFAULT_REPO = "AtomicBot-ai/atomic-agent";
 
 /**
+ * How many trailing installer lines travel with a failure. The installers put
+ * the reason last (`error: ...` on Windows, a bare stderr line on POSIX), so a
+ * short tail is enough to explain a 404, a checksum mismatch or a locked file.
+ */
+const FAILURE_TAIL_LINES = 8;
+
+/**
+ * Compose the failure message for a non-zero installer exit. The exit code on
+ * its own is not actionable, and the streamed `onLine` output lands in the
+ * runtime feed rather than next to the failed-update notice — so the reason has
+ * to be attached to the error itself. Pure, so the formatting is unit-testable.
+ */
+export function formatInstallFailure(
+  code: number | null,
+  tail: readonly string[],
+): string {
+  const header = `install script exited with code ${code ?? "unknown"}`;
+  if (tail.length === 0) return `${header} (no output)`;
+  return [header, ...tail.map((line) => `  ${line}`)].join("\n");
+}
+
+/**
  * Whether the running process is the installed SEA binary (and thus a
  * self-update over `process.execPath` is meaningful). Returns `false`
  * when running under `node` / `tsx` in development — overwriting the
  * Node binary with the agent installer would be destructive.
  *
  * Supported on all platforms. On Windows the installer (`install.ps1`)
- * moves the locked, running `atomic-agent.exe` (and the loaded
- * `better_sqlite3.node`) aside before writing the new files, so the
- * update completes while the process is live; the user relaunches to
- * pick up the new binary.
+ * applies the new tree as an all-or-nothing transaction: every existing
+ * file — including the locked, running `atomic-agent.exe` and the loaded
+ * `better_sqlite3.node` — is displaced to `<name>.old-<stamp>` before its
+ * replacement is written, so a mid-run failure rolls back instead of
+ * leaving a half-updated install. The update completes while the process
+ * is live; the user relaunches to pick up the new binary.
  */
 export function canSelfUpdate(
   platform: NodeJS.Platform = process.platform,
@@ -150,11 +174,14 @@ function runProcess(
       ...(signal ? { signal } : {}),
     });
 
+    const tail: string[] = [];
     const emit = (chunk: Buffer): void => {
-      if (!onLine) return;
       for (const line of chunk.toString("utf-8").split(/\r?\n/)) {
         const trimmed = line.trim();
-        if (trimmed.length > 0) onLine(trimmed);
+        if (trimmed.length === 0) continue;
+        onLine?.(trimmed);
+        tail.push(trimmed);
+        if (tail.length > FAILURE_TAIL_LINES) tail.shift();
       }
     };
     child.stdout.on("data", emit);
@@ -168,11 +195,7 @@ function runProcess(
         resolvePromise();
         return;
       }
-      reject(
-        new AppUpdateError(
-          `install script exited with code ${code ?? "unknown"}`,
-        ),
-      );
+      reject(new AppUpdateError(formatInstallFailure(code, tail)));
     });
   });
 }

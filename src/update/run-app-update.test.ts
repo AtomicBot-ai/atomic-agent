@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { canSelfUpdate, buildUpdateInvocation } from "./run-app-update.js";
+import {
+  canSelfUpdate,
+  buildUpdateInvocation,
+  formatInstallFailure,
+} from "./run-app-update.js";
 
 describe("canSelfUpdate", () => {
   it("allows the installed binary on POSIX", () => {
@@ -88,5 +92,29 @@ describe("buildUpdateInvocation", () => {
     expect(inv.env.HOME).toBe("/home/u");
     expect(inv.env.PATH).toBe("/usr/bin");
     expect(inv.env.ATOMIC_AGENT_REPO).toBe("owner/repo");
+  });
+});
+
+describe("formatInstallFailure", () => {
+  it("should attach the installer's own reason to the exit code", () => {
+    const message = formatInstallFailure(1, [
+      "downloading atomic-agent-win32-x64.zip from AtomicBot-ai/atomic-agent ...",
+      "error: download failed: https://github.com/o/r/releases/latest/download/a.zip",
+    ]);
+    expect(message).toContain("install script exited with code 1");
+    expect(message).toContain("error: download failed:");
+    expect(message.split("\n")).toHaveLength(3);
+  });
+
+  it("should say so explicitly when the installer produced no output", () => {
+    expect(formatInstallFailure(1, [])).toBe(
+      "install script exited with code 1 (no output)",
+    );
+  });
+
+  it("should render a null exit code (killed by signal) without crashing", () => {
+    expect(formatInstallFailure(null, ["boom"])).toContain(
+      "exited with code unknown",
+    );
   });
 });

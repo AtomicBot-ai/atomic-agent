@@ -111,6 +111,7 @@
     "yaml": "^2.8.3"
   },
   "devDependencies": {
+    "@sentry/esbuild-plugin": "^5.4.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/html-to-text": "^9.0.4",
     "@types/node": "^24.12.2",

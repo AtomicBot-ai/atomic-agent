@@ -8,6 +8,9 @@ export {
   scrubError,
   sanitizeStack,
   extractSafeCode,
+  extractSafeReason,
+  extractSafeTool,
+  extractSafeTransportHost,
   readKnownCategory,
   STATIC_MESSAGE_ERRORS,
 } from "./error-scrubber.js";

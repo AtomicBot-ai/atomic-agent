@@ -7,6 +7,7 @@ export {
 export {
   runAppUpdate,
   canSelfUpdate,
+  formatInstallFailure,
   AppUpdateError,
   type RunAppUpdateOptions,
   type RunAppUpdateResult,

@@ -21,6 +21,23 @@ export interface ScrubbedErrorEvent {
   httpStatus?: number;
   /** Safe errno-style code (e.g. `ECONNREFUSED`), when present. */
   code?: string;
+  /**
+   * `ModelError.reason` when present. Restricted to the fixed 3-value
+   * enum (`truncated | empty | no_stop`) — never freeform.
+   */
+  reason?: string;
+  /**
+   * `ToolExecutionError.tool` when present. Restricted to a bounded
+   * identifier shape (registry tool names such as `os.fs.read`) — never
+   * freeform text, since a hallucinated tool name could in theory echo
+   * model output derived from the user's conversation.
+   */
+  tool?: string;
+  /**
+   * Host (no path/query) parsed from `TransportError.url`, when present.
+   * Only the host travels — the full URL could carry query params.
+   */
+  transportHost?: string;
   /** Path-stripped stack frames (basenames only — no home dir / username). */
   frames: SentryStackFrame[];
 }
@@ -50,6 +67,17 @@ const KNOWN_CATEGORIES = new Set([
  * Any error not in this set is reported without its message.
  */
 export const STATIC_MESSAGE_ERRORS = new Set<string>([]);
+
+/** Mirror of `ModelFailureReason` in `src/llm/reliability/failure-category.ts` — a fixed 3-value enum, safe to allowlist verbatim. */
+const KNOWN_MODEL_FAILURE_REASONS = new Set(["truncated", "empty", "no_stop"]);
+
+/**
+ * Bounded identifier pattern for tool names (mirrors `MCP_TOOL_NAME_RE` in
+ * `src/mcp/mcp-types.ts`). A value that does not match this shape is
+ * dropped rather than sent — it could be arbitrary model output rather
+ * than a real registry tool name.
+ */
+const SAFE_IDENTIFIER_RE = /^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,63}$/;
 
 const MAX_FRAMES = 30;
 
@@ -118,6 +146,44 @@ export function extractSafeCode(err: unknown): {
   return out;
 }
 
+/** Read `ModelError.reason` off an error, restricted to the known enum. */
+export function extractSafeReason(err: unknown): string | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const reason = (err as { reason?: unknown }).reason;
+  return typeof reason === "string" && KNOWN_MODEL_FAILURE_REASONS.has(reason)
+    ? reason
+    : undefined;
+}
+
+/**
+ * Read `ToolExecutionError.tool` off an error, restricted to a bounded
+ * identifier shape so freeform / hallucinated text is never sent.
+ */
+export function extractSafeTool(err: unknown): string | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const tool = (err as { tool?: unknown }).tool;
+  return typeof tool === "string" && SAFE_IDENTIFIER_RE.test(tool)
+    ? tool
+    : undefined;
+}
+
+/**
+ * Read the host (no path/query) off `TransportError.url`, when the URL
+ * parses cleanly. Only the host travels — llama-server URLs are operator
+ * infrastructure config, not user content, but the path/query is dropped
+ * defensively in case a custom endpoint ever encodes anything in it.
+ */
+export function extractSafeTransportHost(err: unknown): string | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const url = (err as { url?: unknown }).url;
+  if (typeof url !== "string" || url.length === 0) return undefined;
+  try {
+    return new URL(url).host || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Build a {@link ScrubbedErrorEvent} from an `Error` using the strict
  * allowlist. `message` is included only when the error's class name is in
@@ -133,6 +199,9 @@ export function scrubError(
       ? opts.category
       : undefined) ?? readKnownCategory(err);
   const { httpStatus, code } = extractSafeCode(err);
+  const reason = extractSafeReason(err);
+  const tool = extractSafeTool(err);
+  const transportHost = extractSafeTransportHost(err);
   const event: ScrubbedErrorEvent = {
     errorType,
     source: opts.source,
@@ -144,5 +213,8 @@ export function scrubError(
   }
   if (httpStatus !== undefined) event.httpStatus = httpStatus;
   if (code !== undefined) event.code = code;
+  if (reason !== undefined) event.reason = reason;
+  if (tool !== undefined) event.tool = tool;
+  if (transportHost !== undefined) event.transportHost = transportHost;
   return event;
 }

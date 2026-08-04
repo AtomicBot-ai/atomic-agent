@@ -8,6 +8,7 @@ assets/ripgrep/
 .DS_Store
 .env
 .env.local
+.env.sentry-build-plugin
 coverage/
 .atomic-agent/
 .history/
@@ -15,3 +16,4 @@ ARCHITECTURE.md
 CLAW-LOOT.md
 /logs/*
 /tmp/*
+.cursor/

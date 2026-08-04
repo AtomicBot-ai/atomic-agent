@@ -21,6 +21,11 @@
 
 $ErrorActionPreference = "Stop"
 
+# Invoke-WebRequest renders a progress bar per chunk. On a 40+ MB release zip
+# that costs more wall time than the transfer itself, and when the in-app
+# updater captures stdout it can stall outright.
+$ProgressPreference = "SilentlyContinue"
+
 # PowerShell 5.1 defaults to TLS 1.0/1.1; GitHub requires TLS 1.2+.
 try {
   [Net.ServicePointManager]::SecurityProtocol =
@@ -39,7 +44,22 @@ $InstallDir = if ($env:ATOMIC_AGENT_INSTALL_DIR) {
 }
 
 function Write-Info($msg) { Write-Host $msg }
-function Fail($msg) { Write-Error $msg; exit 1 }
+
+# Throws rather than exiting: the install transaction below has to observe the
+# failure so it can roll back before the process dies. The top-level catch
+# turns the exception into a single readable line and exits 1.
+function Fail($msg) { throw $msg }
+
+# Invoke-WebRequest's exception names the status code but not the URL, so a bare
+# "404 (Not Found)" during self-update does not say whether the tag, the repo or
+# the asset name was wrong. Attribute it.
+function Get-RemoteFile($url, $dest) {
+  try {
+    Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -ErrorAction Stop
+  } catch {
+    Fail "download failed: $url`n  $($_.Exception.Message)"
+  }
+}
 
 # Suffix for files moved aside during a self-update over a running install.
 $script:BackupStamp = Get-Date -Format "yyyyMMddHHmmss"
@@ -57,34 +77,128 @@ function Remove-StaleBackups($dir) {
   }
 }
 
-# Copy a staged tree onto the install dir, tolerating files the running
-# process holds open (its own atomic-agent.exe, the loaded
-# better_sqlite3.node). Windows forbids overwriting a locked file but
-# allows renaming it, so we move the locked target aside to
-# <name>.old-<stamp> and write the fresh copy in its place. The live
-# process keeps executing from the moved inode until the user relaunches.
-# This is what makes in-app self-update work on Windows.
-function Copy-TreeWithSwap($src, $dst) {
-  foreach ($item in Get-ChildItem -LiteralPath $src -Recurse -File) {
-    $rel = $item.FullName.Substring($src.Length).TrimStart('\', '/')
-    $target = Join-Path $dst $rel
-    $targetDir = Split-Path -Parent $target
-    if (-not (Test-Path -LiteralPath $targetDir)) {
-      New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
-    }
+# Undo a partially-applied transaction: drop whatever we already wrote and put
+# every displaced original back where it was. Walks the journal in reverse so
+# the most recently touched files are restored first.
+#
+# Best-effort per entry — one unrecoverable file must not stop the rest from
+# being restored, so the install ends up as close to its pre-update state as
+# the filesystem allows. Anything left behind keeps its .old-<stamp> name and
+# is reported, never silently dropped.
+function Undo-TreeTransaction($journal) {
+  # Nothing was touched yet (e.g. the staged tree could not be enumerated), so
+  # announcing a rollback would only be misleading.
+  if ($journal.Count -eq 0) { return }
+  Write-Info "rolling back partial install ..."
+  $stranded = @()
+  for ($i = $journal.Count - 1; $i -ge 0; $i--) {
+    $entry = $journal[$i]
     try {
-      Copy-Item -LiteralPath $item.FullName -Destination $target -Force -ErrorAction Stop
-    } catch {
-      $backup = "$target.old-$script:BackupStamp"
-      try {
-        Move-Item -LiteralPath $target -Destination $backup -Force -ErrorAction Stop
-      } catch {
-        Fail ("failed to replace $target (locked and could not be moved aside). " +
-          "Close atomic-agent and re-run the installer.`n  $($_.Exception.Message)")
+      # The fresh copy is never mapped by a live process (the original was
+      # displaced before it was written), so this delete always has a path.
+      if (Test-Path -LiteralPath $entry.Target) {
+        Remove-Item -LiteralPath $entry.Target -Force -ErrorAction Stop
       }
-      Copy-Item -LiteralPath $item.FullName -Destination $target -Force
+      if ($entry.Backup) {
+        Move-Item -LiteralPath $entry.Backup -Destination $entry.Target -Force -ErrorAction Stop
+      }
+    } catch {
+      $stranded += $entry.Target
     }
   }
+  if ($stranded.Count -gt 0) {
+    Write-Info "warning: could not restore $($stranded.Count) file(s):"
+    foreach ($path in $stranded) { Write-Info "  $path" }
+    Write-Info "close atomic-agent and re-run the installer to repair the install"
+  }
+}
+
+# Drop the displaced originals a committed transaction no longer needs. The
+# ones the live process still maps (its own atomic-agent.exe, the loaded
+# better_sqlite3.node) cannot be deleted while it runs — they keep their
+# .old-<stamp> name and Remove-StaleBackups collects them on a later update.
+function Remove-TransactionBackups($journal) {
+  foreach ($entry in $journal) {
+    if (-not $entry.Backup) { continue }
+    try {
+      Remove-Item -LiteralPath $entry.Backup -Force -ErrorAction Stop
+    } catch {
+      Write-Info "note: $(Split-Path -Leaf $entry.Backup) is still in use; it will be cleaned on a later update"
+    }
+  }
+}
+
+# Whether two files already hold the same bytes. Length is compared first so
+# the hash only runs on genuine candidates.
+function Test-SameFile($left, $right) {
+  if ((Get-Item -LiteralPath $left).Length -ne (Get-Item -LiteralPath $right).Length) {
+    return $false
+  }
+  $leftHash = (Get-FileHash -LiteralPath $left -Algorithm SHA256).Hash
+  $rightHash = (Get-FileHash -LiteralPath $right -Algorithm SHA256).Hash
+  return $leftHash -eq $rightHash
+}
+
+# Apply a staged tree onto the install dir as a single all-or-nothing
+# transaction: either every file is the new version, or the install is left as
+# it was before the run.
+#
+# Windows forbids overwriting a file a live process holds open but allows
+# RENAMING it, so every pre-existing target is displaced to <name>.old-<stamp>
+# BEFORE the fresh copy is written. That ordering is the whole point — nothing
+# is ever overwritten in place, so every step stays reversible and a failure
+# halfway through can be undone. This is what makes in-app self-update work on
+# Windows; the live process keeps executing from the displaced file until the
+# user relaunches.
+#
+# Directory-level swap (what install.sh does via replace_dir) is deliberately
+# not used here: Windows refuses to rename a directory that contains a loaded
+# module, and node_modules/ holds better_sqlite3.node while the agent runs. So
+# the granularity has to be per-file.
+function Copy-TreeTransactional($src, $dst) {
+  $journal = New-Object System.Collections.ArrayList
+  $unchanged = 0
+  try {
+    foreach ($item in Get-ChildItem -LiteralPath $src -Recurse -File) {
+      $rel = $item.FullName.Substring($src.Length).TrimStart('\', '/')
+      $target = Join-Path $dst $rel
+      $targetDir = Split-Path -Parent $target
+      if (-not (Test-Path -LiteralPath $targetDir)) {
+        New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+      }
+
+      $exists = Test-Path -LiteralPath $target
+      # On a patch release most of the tree (node_modules/, assets/) is
+      # untouched. Leaving those files alone keeps the number of displacements
+      # — and therefore the number of ways this can fail — proportional to what
+      # actually changed.
+      if ($exists -and (Test-SameFile $item.FullName $target)) {
+        $unchanged++
+        continue
+      }
+
+      # Displace first, and only journal the entry once the original is safely
+      # out of the way — a failed displacement leaves the file untouched, so it
+      # must not appear in the rollback plan.
+      $backup = $null
+      if ($exists) {
+        $backup = "$target.old-$($script:BackupStamp)"
+        try {
+          Move-Item -LiteralPath $target -Destination $backup -Force -ErrorAction Stop
+        } catch {
+          Fail ("failed to displace $target (locked and could not be moved aside). " +
+            "Close atomic-agent and re-run the installer.`n  $($_.Exception.Message)")
+        }
+      }
+      [void]$journal.Add([pscustomobject]@{ Target = $target; Backup = $backup })
+      Copy-Item -LiteralPath $item.FullName -Destination $target -Force -ErrorAction Stop
+    }
+  } catch {
+    Undo-TreeTransaction $journal
+    throw
+  }
+  Write-Info "replaced $($journal.Count) file(s), $unchanged unchanged"
+  Remove-TransactionBackups $journal
 }
 
 # Only win32-x64 is published today. On ARM64 Windows the x64 build still runs
@@ -115,8 +229,8 @@ try {
   $ZipPath = Join-Path $Work $ArchiveName
   $ShaPath = "$ZipPath.sha256"
 
-  Invoke-WebRequest -Uri $ZipUrl -OutFile $ZipPath -UseBasicParsing
-  Invoke-WebRequest -Uri $ShaUrl -OutFile $ShaPath -UseBasicParsing
+  Get-RemoteFile $ZipUrl $ZipPath
+  Get-RemoteFile $ShaUrl $ShaPath
 
   # The .sha256 file is `shasum -a 256`-style: "<hex>  <filename>".
   $expected = ((Get-Content -Path $ShaPath -Raw).Trim() -split '\s+')[0].ToLower()
@@ -143,14 +257,22 @@ try {
   New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 
   # Self-update-safe install: drop stale backups from a previous update, then
-  # copy the staged tree in, moving locked files (the running .exe / loaded
-  # .node) aside instead of failing. This lets an already-running install
-  # upgrade itself; relaunch afterwards to run the new binary.
+  # apply the staged tree as an all-or-nothing transaction that displaces
+  # locked files (the running .exe / loaded .node) instead of failing. This
+  # lets an already-running install upgrade itself; relaunch afterwards to run
+  # the new binary.
   Remove-StaleBackups $InstallDir
-  Copy-TreeWithSwap $Stage $InstallDir
+  Copy-TreeTransactional $Stage $InstallDir
 
   Write-Info ""
   Write-Info "installed atomic-agent to $InstallDir\atomic-agent.exe"
+}
+catch {
+  # A bare PowerShell error record is unreadable when the in-app updater
+  # forwards it line by line into the TUI feed, so emit the reason as plain
+  # text. Rollback (when the failure happened mid-transaction) already ran.
+  Write-Info "error: $($_.Exception.Message)"
+  exit 1
 }
 finally {
   Remove-Item -Path $Work -Recurse -Force -ErrorAction SilentlyContinue

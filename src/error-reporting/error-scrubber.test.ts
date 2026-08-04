@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   extractSafeCode,
+  extractSafeReason,
+  extractSafeTool,
+  extractSafeTransportHost,
   sanitizeStack,
   scrubError,
 } from "./error-scrubber.js";
@@ -49,6 +52,44 @@ describe("extractSafeCode", () => {
   });
 });
 
+describe("extractSafeReason", () => {
+  it("allows the known ModelFailureReason enum values", () => {
+    expect(extractSafeReason({ reason: "truncated" })).toBe("truncated");
+    expect(extractSafeReason({ reason: "empty" })).toBe("empty");
+    expect(extractSafeReason({ reason: "no_stop" })).toBe("no_stop");
+  });
+
+  it("drops an unrecognised reason (could be freeform text)", () => {
+    expect(extractSafeReason({ reason: "user typed something weird" })).toBeUndefined();
+    expect(extractSafeReason(null)).toBeUndefined();
+  });
+});
+
+describe("extractSafeTool", () => {
+  it("allows a bounded registry-style tool identifier", () => {
+    expect(extractSafeTool({ tool: "os.fs.read" })).toBe("os.fs.read");
+    expect(extractSafeTool({ tool: "unknown" })).toBe("unknown");
+  });
+
+  it("drops a tool value that is not a bounded identifier (could echo model output)", () => {
+    expect(extractSafeTool({ tool: "please read /Users/alex/notes.txt" })).toBeUndefined();
+    expect(extractSafeTool({ tool: "a".repeat(65) })).toBeUndefined();
+  });
+});
+
+describe("extractSafeTransportHost", () => {
+  it("extracts only the host, dropping path and query", () => {
+    expect(
+      extractSafeTransportHost({ url: "http://127.0.0.1:8080/completion?x=1" }),
+    ).toBe("127.0.0.1:8080");
+  });
+
+  it("drops a malformed url", () => {
+    expect(extractSafeTransportHost({ url: "not a url" })).toBeUndefined();
+    expect(extractSafeTransportHost({})).toBeUndefined();
+  });
+});
+
 describe("scrubError", () => {
   it("omits the raw message by default (allowlist policy)", () => {
     const err = new Error("failed reading /Users/alex/secret.txt");
@@ -75,5 +116,36 @@ describe("scrubError", () => {
     const err = new Error("x");
     const ev = scrubError(err, { source: "llm_failure", category: "grammar" });
     expect(ev.category).toBe("grammar");
+  });
+
+  it("carries ModelError.reason through when it is a known enum value", () => {
+    const err = Object.assign(new Error("cut off"), {
+      name: "ModelError",
+      category: "model",
+      reason: "truncated",
+    });
+    const ev = scrubError(err, { source: "llm_failure" });
+    expect(ev.reason).toBe("truncated");
+  });
+
+  it("carries ToolExecutionError.tool through when it is a bounded identifier", () => {
+    const err = Object.assign(new Error("boom"), {
+      name: "ToolExecutionError",
+      category: "tool",
+      tool: "os.shell.run",
+    });
+    const ev = scrubError(err, { source: "llm_failure" });
+    expect(ev.tool).toBe("os.shell.run");
+  });
+
+  it("carries TransportError's url host through, never the full url", () => {
+    const err = Object.assign(new Error("net down"), {
+      name: "TransportError",
+      category: "transport",
+      status: null,
+      url: "http://localhost:8080/completion",
+    });
+    const ev = scrubError(err, { source: "llm_failure" });
+    expect(ev.transportHost).toBe("localhost:8080");
   });
 });

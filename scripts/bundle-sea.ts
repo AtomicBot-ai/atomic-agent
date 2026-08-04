@@ -5,17 +5,32 @@
  * `sea-config.json` must set `mainFormat: "module"` so Node treats the
  * injected script as ESM. A top-of-file banner exposes `require` via
  * `createRequire` for dependencies that still use dynamic `require()`.
+ *
+ * When `SENTRY_AUTH_TOKEN` is present (release CI only), the bundle's
+ * sourcemap is uploaded to Sentry via `@sentry/esbuild-plugin` and then
+ * deleted from disk — the shipped binary never carries a `.map` file or
+ * a `sourceMappingURL` comment, but Sentry can still symbolicate stack
+ * traces for the exact release version. See `src/error-reporting/` for
+ * the privacy-scrubbing rules applied to the events themselves.
  */
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { exit, stderr, stdout } from "node:process";
 import * as esbuild from "esbuild";
+import { sentryEsbuildPlugin } from "@sentry/esbuild-plugin";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const OUT_DIR = join(ROOT, "dist-sea");
 const OUT_FILE = join(OUT_DIR, "cli.mjs");
 const ENTRY = join(ROOT, "src", "cli", "index.ts");
+
+// Must match the org/project slugs the runtime's Sentry DSN posts events
+// to (see `src/error-reporting/sentry-config.ts`), and the release name
+// must match `getAppVersion()` (see `src/version.ts`) so a symbolicated
+// stack trace resolves against the exact build that produced it.
+const SENTRY_ORG = "atomic-agent";
+const SENTRY_PROJECT = "cli";
 
 async function readPackageVersion(): Promise<string> {
   const raw = await readFile(join(ROOT, "package.json"), "utf-8");
@@ -30,6 +45,10 @@ async function main(): Promise<number> {
   await mkdir(OUT_DIR, { recursive: true });
 
   const version = await readPackageVersion();
+  // Only set in CI on the repo that owns the release (forked-PR / local dev
+  // runs never see this secret) — gates the Sentry upload below so a plain
+  // `npm run bundle:sea` never needs credentials or talks to Sentry.
+  const sentryAuthToken = process.env.SENTRY_AUTH_TOKEN;
 
   await esbuild.build({
     absWorkingDir: ROOT,
@@ -39,8 +58,12 @@ async function main(): Promise<number> {
     platform: "node",
     target: "node22",
     format: "esm",
-    // Linked maps are not embedded in SEA; keep output smaller so startup parse uses less RAM.
-    sourcemap: false,
+    // "external" writes a sibling `cli.mjs.map` without a trailing
+    // `//# sourceMappingURL=` comment in the shipped bundle — the map never
+    // ships (see `sourcemaps.filesToDeleteAfterUpload` below; `package-bundle.ts`
+    // also never globs `dist-sea/*.map`), it only exists long enough for the
+    // Sentry plugin to read and upload it for stack-trace symbolication.
+    sourcemap: "external",
     minify: true,
     // Preserve some names for less cryptic error stacks; identifiers still mangle.
     keepNames: true,
@@ -61,6 +84,30 @@ async function main(): Promise<number> {
       __ATOMIC_AGENT_VERSION__: JSON.stringify(version),
     },
     loader: { ".node": "file" },
+    plugins: sentryAuthToken
+      ? [
+          sentryEsbuildPlugin({
+            org: SENTRY_ORG,
+            project: SENTRY_PROJECT,
+            authToken: sentryAuthToken,
+            telemetry: false,
+            release: { name: version },
+            sourcemaps: {
+              // Delete the map from disk right after Sentry has it — belt-and-
+              // suspenders on top of `package-bundle.ts` never globbing it.
+              filesToDeleteAfterUpload: [join(OUT_DIR, "*.map")],
+            },
+            // Sourcemap upload is best-effort observability, never a release
+            // gate: log and let the build continue on any failure (auth,
+            // network, Sentry outage, ...).
+            errorHandler: (err) => {
+              stderr.write(
+                `bundle-sea: sentry sourcemap upload failed (continuing build): ${err.message}\n`,
+              );
+            },
+          }),
+        ]
+      : [],
     // CJS dependencies use `require("events")`, `__dirname`, and `__filename`. The ESM output must
     // polyfill all three: `createRequire(import.meta.url)` for `require`, and
     // `fileURLToPath(import.meta.url)` + `path.dirname(...)` for the two CJS path globals. Without the
@@ -81,6 +128,11 @@ const __dirname = __dirnameForSea(__filename);
   const st = await stat(OUT_FILE);
   stdout.write(
     `bundle-sea: wrote ${OUT_FILE} (${st.size} bytes, version ${version})\n`,
+  );
+  stdout.write(
+    sentryAuthToken
+      ? `bundle-sea: uploaded sourcemap to Sentry (org=${SENTRY_ORG} project=${SENTRY_PROJECT} release=${version})\n`
+      : "bundle-sea: SENTRY_AUTH_TOKEN not set; skipping sourcemap upload\n",
   );
   return 0;
 }

@@ -48,6 +48,9 @@ export function buildEnvelope(
   if (ev.category) tags.category = ev.category;
   if (ev.code) tags.code = ev.code;
   if (ev.httpStatus !== undefined) tags.http_status = String(ev.httpStatus);
+  if (ev.reason) tags.reason = ev.reason;
+  if (ev.tool) tags.tool = ev.tool;
+  if (ev.transportHost) tags.transport_host = ev.transportHost;
 
   const topFrame = ev.frames.at(-1)?.filename ?? "";
 
@@ -60,7 +63,17 @@ export function buildEnvelope(
     // Anonymous id only; `ip_address: null` opts out of IP collection.
     user: { id: meta.installId, ip_address: null },
     tags,
-    fingerprint: ["{{ default }}", ev.errorType, ev.category ?? "", topFrame],
+    // The extra discriminator (tool / reason / host) splits a catch-all
+    // bucket like "ToolExecutionError: ToolExecutionError" into one issue
+    // per failing tool / model-failure reason / transport target, instead
+    // of every occurrence landing in a single undiagnosable issue.
+    fingerprint: [
+      "{{ default }}",
+      ev.errorType,
+      ev.category ?? "",
+      ev.tool ?? ev.reason ?? ev.transportHost ?? "",
+      topFrame,
+    ],
     exception: {
       values: [
         {

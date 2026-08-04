@@ -74,6 +74,11 @@ jobs:
         run: npm run build
 
       - name: Bundle CLI for SEA
+        env:
+          # Enables Sentry sourcemap upload in scripts/bundle-sea.ts; absent
+          # on forked-PR runs (no secrets access), which is the intended
+          # local/dev-parity fallback (build succeeds, upload just skips).
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         run: npm run bundle:sea
 
       - name: Fetch runtime assets (ripgrep for host)
