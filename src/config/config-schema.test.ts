@@ -552,6 +552,7 @@ describe("parseUserConfigFile", () => {
       enabled: true,
       ownerUserId: 12345678,
       parseMode: "html",
+      progressIndicator: true,
     });
   });
 
@@ -564,7 +565,30 @@ describe("parseUserConfigFile", () => {
       enabled: true,
       ownerUserId: 12345678,
       parseMode: "plain",
+      progressIndicator: true,
     });
+  });
+
+  it("accepts a v33 file and fills in telegram.progressIndicator=true transparently", () => {
+    const parsed = parseUserConfigFile({
+      version: 33,
+      telegram: { enabled: true, ownerUserId: 12345678, parseMode: "plain" },
+    });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.telegram.progressIndicator).toBe(true);
+  });
+
+  it("preserves an explicit telegram.progressIndicator=false", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      telegram: {
+        enabled: true,
+        ownerUserId: 12345678,
+        parseMode: "plain",
+        progressIndicator: false,
+      },
+    });
+    expect(parsed.telegram.progressIndicator).toBe(false);
   });
 
   it("rejects an unknown telegram.parseMode", () => {
