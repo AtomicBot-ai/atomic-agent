@@ -33,6 +33,18 @@ describe("parseDriverCudaVersion", () => {
     });
   });
 
+  it("reads the `CUDA UMD Version` field used by driver 610+", () => {
+    // Driver 610.x reworked the header: `Driver Version` became `KMD
+    // Version` and `CUDA Version` became `CUDA UMD Version`. Matching
+    // `CUDA Version:` literally returned null on those boxes, which sent
+    // an RTX 5070 Ti to the Vulkan build.
+    expect(
+      parseDriverCudaVersion(
+        "| NVIDIA-SMI 610.47                 KMD Version: 610.47        CUDA UMD Version: 13.3     |",
+      ),
+    ).toEqual({ major: 13, minor: 3 });
+  });
+
   it("returns null when the field is absent", () => {
     expect(parseDriverCudaVersion("no gpu here")).toBeNull();
   });
