@@ -1940,17 +1940,6 @@ export async function createAgentRuntime(
     } = {},
   ): Promise<RunTurnResult> => {
     const origin = runOptions.origin ?? "cli";
-    // Product analytics: count only human-originated turns. Scheduler-
-    // driven turns (durable tasks, cron, webhook ingress) are excluded
-    // — they are not "a person sending a message". `captureMessageSent`
-    // no-ops when analytics is disabled and also fires the one-time
-    // `first_message_sent`.
-    if (origin !== "scheduler") {
-      captureMessageSent(analytics, analyticsStateStore, {
-        provider: providerRegistry.activeText.name,
-        model: resolveActiveModelName(),
-      });
-    }
     const submission = {
       sessionId: session.id,
       origin,
@@ -1958,7 +1947,39 @@ export async function createAgentRuntime(
       ...(runOptions.eventHook ? { eventHook: runOptions.eventHook } : {}),
       ...(runOptions.signal ? { signal: runOptions.signal } : {}),
     } as const;
-    return turnController.enqueue(submission);
+
+    // Product analytics: count only human-originated turns. Scheduler-
+    // driven turns (durable tasks, cron, webhook ingress) are excluded
+    // — they are not "a person sending a message". We measure the turn's
+    // wall-clock duration (`latency_ms`) plus non-content shape metrics
+    // (`step_count`, `outcome`), and emit whether the turn resolves or
+    // throws — a failed/aborted turn is still a real "message sent"
+    // attempt. On throw we have no result, so only `outcome: "failed"`
+    // is known. `captureMessageSent` no-ops when analytics is disabled
+    // and also fires the one-time `first_message_sent`.
+    if (origin === "scheduler") {
+      return turnController.enqueue(submission);
+    }
+    const startedAt = Date.now();
+    try {
+      const result = await turnController.enqueue(submission);
+      captureMessageSent(analytics, analyticsStateStore, {
+        provider: providerRegistry.activeText.name,
+        model: resolveActiveModelName(),
+        latencyMs: Date.now() - startedAt,
+        stepCount: result.stepCount,
+        outcome: result.reason,
+      });
+      return result;
+    } catch (error) {
+      captureMessageSent(analytics, analyticsStateStore, {
+        provider: providerRegistry.activeText.name,
+        model: resolveActiveModelName(),
+        latencyMs: Date.now() - startedAt,
+        outcome: "failed",
+      });
+      throw error;
+    }
   };
 
   const taskRunner = new TaskRunner({
