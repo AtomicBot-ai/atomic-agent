@@ -21,14 +21,23 @@ export interface CudaVersion {
 }
 
 /**
- * Parse the `CUDA Version: X.Y` field from `nvidia-smi` header output.
- * This value is the **maximum** CUDA runtime version the installed
- * driver supports (not the CUDA toolkit version), which is exactly what
- * we need to decide which prebuilt CUDA backend will load. Returns null
- * when the field is absent.
+ * Parse the CUDA version field from `nvidia-smi` header output. This
+ * value is the **maximum** CUDA runtime version the installed driver
+ * supports (not the CUDA toolkit version), which is exactly what we need
+ * to decide which prebuilt CUDA backend will load. Returns null when the
+ * field is absent.
+ *
+ * The field name is not stable across drivers. Up to 5xx/6xx-early the
+ * header reads `Driver Version: X  CUDA Version: Y`; driver 610 renamed
+ * the pair to `KMD Version: X  CUDA UMD Version: Y`. Matching
+ * `CUDA Version:` literally returned null on 610 boxes, so every machine
+ * on a current driver silently fell back to the Vulkan build — which is
+ * the only configuration that enumerates an AMD APU alongside the
+ * NVIDIA card. The optional word tolerates that rename (and any future
+ * qualifier) without loosening the match to bare "CUDA".
  */
 export function parseDriverCudaVersion(output: string): CudaVersion | null {
-  const match = output.match(/CUDA Version:\s*(\d+)\.(\d+)/i);
+  const match = output.match(/CUDA(?:\s+\w+)?\s+Version:\s*(\d+)\.(\d+)/i);
   if (!match) return null;
   const major = Number(match[1]);
   const minor = Number(match[2]);
