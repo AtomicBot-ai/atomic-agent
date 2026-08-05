@@ -11,6 +11,15 @@
 export interface ScrubbedErrorEvent {
   /** Error class name, e.g. `TransportError` / `TypeError`. */
   errorType: string;
+  /**
+   * Class name of `err.cause`, when the top-level error is a generic
+   * wrapper (e.g. `ToolExecutionError("unknown", ...)` built by
+   * `toLlmFailure`'s catch-all branch). A class name is not
+   * user-originated data — same safety bar as `errorType` — but it
+   * distinguishes a `TypeError` from a `SyntaxError` etc. that would
+   * otherwise all collapse into the same wrapper type.
+   */
+  causeType?: string;
   /** LLM failure taxonomy, when the error carries one. */
   category?: string;
   /** Where the error was captured (`uncaughtException`, `llm_failure`, …). */
@@ -185,9 +194,27 @@ export function extractSafeTransportHost(err: unknown): string | undefined {
 }
 
 /**
+ * Read the underlying `Error` off `err.cause`, when present. Only an
+ * `Error` instance is returned — a non-Error cause carries no `.stack` /
+ * `.name` worth extracting.
+ */
+function readCauseError(err: Error): Error | undefined {
+  const cause = (err as { cause?: unknown }).cause;
+  return cause instanceof Error ? cause : undefined;
+}
+
+/**
  * Build a {@link ScrubbedErrorEvent} from an `Error` using the strict
  * allowlist. `message` is included only when the error's class name is in
  * {@link STATIC_MESSAGE_ERRORS}.
+ *
+ * When `err` is a generic wrapper built around an original failure (e.g.
+ * `toLlmFailure`'s catch-all `ToolExecutionError("unknown", ...)`), the
+ * wrapper's own `.stack` only points at the `new ToolExecutionError(...)`
+ * call site, not the original throw site — `err.cause` is where the
+ * actually useful frames live. Prefer the cause's stack whenever the
+ * cause is itself an `Error`; fall back to `err.stack` otherwise so
+ * ordinary (non-wrapped) errors are unaffected.
  */
 export function scrubError(
   err: Error,
@@ -202,11 +229,16 @@ export function scrubError(
   const reason = extractSafeReason(err);
   const tool = extractSafeTool(err);
   const transportHost = extractSafeTransportHost(err);
+  const causeError = readCauseError(err);
+  const causeType = causeError
+    ? causeError.name || causeError.constructor?.name || "Error"
+    : undefined;
   const event: ScrubbedErrorEvent = {
     errorType,
     source: opts.source,
-    frames: sanitizeStack(err.stack),
+    frames: sanitizeStack(causeError?.stack ?? err.stack),
   };
+  if (causeType) event.causeType = causeType;
   if (category) event.category = category;
   if (STATIC_MESSAGE_ERRORS.has(errorType) && err.message) {
     event.message = err.message;

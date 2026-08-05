@@ -45,6 +45,7 @@ export function buildEnvelope(
     error_type: ev.errorType,
     source: ev.source,
   };
+  if (ev.causeType) tags.cause_type = ev.causeType;
   if (ev.category) tags.category = ev.category;
   if (ev.code) tags.code = ev.code;
   if (ev.httpStatus !== undefined) tags.http_status = String(ev.httpStatus);
@@ -52,7 +53,11 @@ export function buildEnvelope(
   if (ev.tool) tags.tool = ev.tool;
   if (ev.transportHost) tags.transport_host = ev.transportHost;
 
-  const topFrame = ev.frames.at(-1)?.filename ?? "";
+  // `frames[0]` is the innermost frame (V8 lists the throw site first),
+  // i.e. where the failure actually originated. `.at(-1)` would instead
+  // pick the outermost caller (e.g. the TUI's turn entry point), which is
+  // shared by unrelated bugs and defeats the fingerprint's purpose.
+  const topFrame = ev.frames[0]?.filename ?? "";
 
   const event = {
     event_id: eventId,
@@ -63,15 +68,19 @@ export function buildEnvelope(
     // Anonymous id only; `ip_address: null` opts out of IP collection.
     user: { id: meta.installId, ip_address: null },
     tags,
-    // The extra discriminator (tool / reason / host) splits a catch-all
-    // bucket like "ToolExecutionError: ToolExecutionError" into one issue
-    // per failing tool / model-failure reason / transport target, instead
-    // of every occurrence landing in a single undiagnosable issue.
+    // The extra discriminator (causeType / tool / reason / host) splits a
+    // catch-all bucket like "ToolExecutionError: ToolExecutionError" into
+    // one issue per underlying cause class / failing tool / model-failure
+    // reason / transport target, instead of every occurrence landing in a
+    // single undiagnosable issue. `causeType` is checked first because it
+    // is only ever populated on the generic-wrapper path (see
+    // `toLlmFailure`'s catch-all) where `tool` is always the useless
+    // literal `"unknown"`.
     fingerprint: [
       "{{ default }}",
       ev.errorType,
       ev.category ?? "",
-      ev.tool ?? ev.reason ?? ev.transportHost ?? "",
+      ev.causeType ?? ev.tool ?? ev.reason ?? ev.transportHost ?? "",
       topFrame,
     ],
     exception: {
