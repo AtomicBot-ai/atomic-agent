@@ -791,6 +791,16 @@ export interface UserManagedLocalLlmConfig {
    *     model's trained context ceiling.
    */
   contextSize: number;
+  /**
+   * Stop the managed chat daemon when the last CLI session exits.
+   * `true` (default) — closing the terminal frees the RAM/VRAM the
+   * model was holding; a second live session keeps the daemon up (see
+   * `session-registry.ts`). `false` — keep the model warm between
+   * sessions; the operator stops it via `atomic-agent models stop`.
+   * Standalone daemons started with `models start` are never touched.
+   * Added in config v34; older files transparently get `true`.
+   */
+  stopOnExit: boolean;
 }
 
 /**
@@ -1316,7 +1326,9 @@ export interface UserConfigFile {
 // v31: skills gains `clawhub` (ClawHub registry — the primary skill
 // marketplace). Older files inherit it enabled against the public registry
 // with suspicious skills hidden.
-export const USER_CONFIG_VERSION = 33 as const;
+// v34: localModels.managed gains `stopOnExit` (stop the managed daemon when
+// the last CLI session exits). Older files transparently inherit `true`.
+export const USER_CONFIG_VERSION = 34 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1429,6 +1441,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   30,
   31,
   32,
+  33,
   USER_CONFIG_VERSION,
 ];
 
@@ -1443,6 +1456,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       port: 19091,
       dataDirOverride: null,
       autoUpdate: false,
+      stopOnExit: true,
       device: "auto",
       contextSize: 0,
     },
@@ -2611,6 +2625,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     autoUpdate: parseBool(
       rawManaged.autoUpdate ?? USER_CONFIG_DEFAULTS.localModels.managed.autoUpdate,
       "localModels.managed.autoUpdate",
+    ),
+    stopOnExit: parseBool(
+      rawManaged.stopOnExit ??
+        USER_CONFIG_DEFAULTS.localModels.managed.stopOnExit,
+      "localModels.managed.stopOnExit",
     ),
     device: parseNonEmptyString(
       rawManaged.device ?? USER_CONFIG_DEFAULTS.localModels.managed.device,

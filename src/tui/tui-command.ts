@@ -7,6 +7,7 @@ import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { LogRecord, LogSink } from "../tracing/structured-logger.js";
 import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
+import { registerSession } from "../local-llm/session-registry.js";
 import { enterAltScreen } from "./alt-screen.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { parseTuiArgs } from "./tui-args.js";
@@ -143,6 +144,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
   const onSignal = (): void => orchestrator.quit();
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
+  // SIGHUP fires when the terminal window is closed. Without a handler
+  // the default action kills the process before `orchestrator.shutdown()`
+  // runs, orphaning the managed llama-server with the model still in
+  // RAM/VRAM — the exact complaint in #52.
+  process.once("SIGHUP", onSignal);
+
+  // Mark this process as a live TUI session so `stopOnExit` teardown can
+  // tell "last session exits, stop the daemon" from "another window is
+  // still chatting, leave it running".
+  const releaseSession = registerSession(config.paths.localModelsDataDir);
 
   const altScreen = enterAltScreen({ stdout: process.stdout, hideCursor: false });
 
@@ -360,9 +371,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
   } finally {
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
-    altScreen.restore();
-    ink.clear();
+    process.off("SIGHUP", onSignal);
+    try {
+      altScreen.restore();
+      ink.clear();
+    } catch {
+      // After SIGHUP the tty is gone and these writes raise EIO; the
+      // daemon teardown below must still run.
+    }
     await orchestrator.shutdown();
+    releaseSession();
   }
 
   // Self-update restart handoff. The runtime is fully shut down and the
