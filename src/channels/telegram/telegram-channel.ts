@@ -196,6 +196,10 @@ export class TelegramChannel {
           // the freshly-registered text handler — same pattern as
           // `setOwnerUserId`.
           agentReplyParseMode: this.currentParseMode,
+          // Captured by value at registration time, same as parseMode:
+          // flipping `telegram.progressIndicator` takes effect on the
+          // next channel (re)start.
+          progressIndicator: this.deps.config.telegram.progressIndicator,
           inflight: this.inflight,
           ensureApprovalSession: (sessionId, chatId) =>
             this.ensureApprovalSession(sessionId, chatId),

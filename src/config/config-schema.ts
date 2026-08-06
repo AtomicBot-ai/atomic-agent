@@ -755,6 +755,15 @@ export interface TelegramConfig {
    * `parseUserConfigFile`.
    */
   parseMode: TelegramParseMode;
+  /**
+   * Live progress indicator in the Telegram channel: a single editable
+   * "Thinking…" bubble that mirrors the turn's activity and deletes
+   * itself when the reply lands. Enabled by default; `false` is the
+   * kill switch if the always-on behavior surprises anyone in
+   * production. Added in config v34; older files transparently get
+   * `true` via the defaults-fallback in `parseUserConfigFile`.
+   */
+  progressIndicator: boolean;
 }
 
 /**
@@ -1328,7 +1337,9 @@ export interface UserConfigFile {
 // with suspicious skills hidden.
 // v34: localModels.managed gains `stopOnExit` (stop the managed daemon when
 // the last CLI session exits). Older files transparently inherit `true`.
-export const USER_CONFIG_VERSION = 34 as const;
+// v35: telegram gains `progressIndicator` (live "Thinking…" bubble toggle).
+// Older files transparently inherit `true`.
+export const USER_CONFIG_VERSION = 35 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1442,6 +1453,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   31,
   32,
   33,
+  34,
   USER_CONFIG_VERSION,
 ];
 
@@ -1685,6 +1697,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     enabled: false,
     ownerUserId: null,
     parseMode: "html",
+    progressIndicator: true,
   },
   mcp: {
     // Added in v23. Empty by default — the operator declares MCP
@@ -3302,6 +3315,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       parseMode: parseTelegramParseMode(
         telegram.parseMode ?? USER_CONFIG_DEFAULTS.telegram.parseMode,
         "telegram.parseMode",
+      ),
+      progressIndicator: parseBool(
+        telegram.progressIndicator ??
+          USER_CONFIG_DEFAULTS.telegram.progressIndicator,
+        "telegram.progressIndicator",
       ),
     },
     mcp: {

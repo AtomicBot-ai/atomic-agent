@@ -472,6 +472,7 @@ export function loadConfig(): AtomicAgentConfig {
       enabled: user.telegram.enabled,
       ownerUserId: user.telegram.ownerUserId,
       parseMode: user.telegram.parseMode,
+      progressIndicator: user.telegram.progressIndicator,
     },
     mcp: {
       // Servers are owned by the user-config file. Deep clone the

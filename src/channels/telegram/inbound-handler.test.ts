@@ -106,6 +106,8 @@ interface FakeApi extends TelegramApi {
     opts?: Record<string, unknown> | undefined;
   }>;
   typingChats: number[];
+  edits: Array<{ chatId: number; messageId: number; text: string }>;
+  deletes: Array<{ chatId: number; messageId: number }>;
 }
 
 function makeFakeApi(): FakeApi {
@@ -115,9 +117,13 @@ function makeFakeApi(): FakeApi {
     opts?: Record<string, unknown> | undefined;
   }> = [];
   const typingChats: number[] = [];
+  const edits: Array<{ chatId: number; messageId: number; text: string }> = [];
+  const deletes: Array<{ chatId: number; messageId: number }> = [];
   return {
     sent,
     typingChats,
+    edits,
+    deletes,
     sendMessage: vi.fn(
       async (
         chatId: number,
@@ -131,6 +137,16 @@ function makeFakeApi(): FakeApi {
     sendChatAction: vi.fn(async (chatId: number) => {
       typingChats.push(chatId);
       return undefined;
+    }),
+    editMessageText: vi.fn(
+      async (chatId: number, messageId: number, text: string) => {
+        edits.push({ chatId, messageId, text });
+        return true;
+      },
+    ),
+    deleteMessage: vi.fn(async (chatId: number, messageId: number) => {
+      deletes.push({ chatId, messageId });
+      return true;
     }),
   };
 }
@@ -289,6 +305,56 @@ describe("handleInboundText", () => {
     const replyMsg = api.sent.find((m) => m.text === "the sky is blue");
     expect(replyMsg).toBeDefined();
     expect(api.typingChats[0]).toBe(CHAT);
+  });
+
+  it("posts the progress bubble silently and deletes it before the reply", async () => {
+    const { runtime } = makeFakeRuntime({
+      scripts: [
+        {
+          events: [
+            {
+              type: "llm_event",
+              event: { type: "assistant_reply", text: "done" },
+            },
+          ],
+        },
+      ],
+    });
+    const api = makeFakeApi();
+    const ctx = makeContext(runtime, api, pointer, OWNER);
+    await handleInboundText(makeUpdate("do the thing"), ctx);
+
+    // First send is the bubble (silent), second is the reply (audible).
+    expect(api.sent[0]!.text).toBe("🤔 Thinking…");
+    expect(api.sent[0]!.opts).toMatchObject({ disable_notification: true });
+    expect(api.sent[1]!.text).toBe("done");
+    expect(api.sent[1]!.opts?.disable_notification).toBeUndefined();
+    // The bubble (message_id 1) is removed once the turn settles.
+    expect(api.deletes).toEqual([{ chatId: CHAT, messageId: 1 }]);
+  });
+
+  it("progressIndicator: false suppresses the bubble entirely", async () => {
+    const { runtime } = makeFakeRuntime({
+      scripts: [
+        {
+          events: [
+            {
+              type: "llm_event",
+              event: { type: "assistant_reply", text: "done" },
+            },
+          ],
+        },
+      ],
+    });
+    const api = makeFakeApi();
+    const ctx = makeContext(runtime, api, pointer, OWNER);
+    ctx.progressIndicator = false;
+    await handleInboundText(makeUpdate("do the thing"), ctx);
+
+    expect(api.sent).toHaveLength(1);
+    expect(api.sent[0]!.text).toBe("done");
+    expect(api.deletes).toHaveLength(0);
+    expect(api.edits).toHaveLength(0);
   });
 
   it("formats loop_failed events as a single error message", async () => {

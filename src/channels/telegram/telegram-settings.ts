@@ -25,6 +25,7 @@ export interface PersistedTelegramSettings {
   enabled: boolean;
   ownerUserId: number | null;
   parseMode: TelegramParseMode;
+  progressIndicator: boolean;
 }
 
 /**
@@ -43,6 +44,7 @@ export function readTelegramSettings(
     enabled: block.enabled,
     ownerUserId: block.ownerUserId,
     parseMode: block.parseMode,
+    progressIndicator: block.progressIndicator,
   };
 }
 
@@ -67,6 +69,9 @@ export function writeTelegramSettings(
         ? { ownerUserId: patch.ownerUserId }
         : {}),
       ...(patch.parseMode !== undefined ? { parseMode: patch.parseMode } : {}),
+      ...(patch.progressIndicator !== undefined
+        ? { progressIndicator: patch.progressIndicator }
+        : {}),
     },
   };
   writeUserConfigFileSync(paths.userConfigPath, next);
@@ -74,6 +79,7 @@ export function writeTelegramSettings(
     enabled: next.telegram.enabled,
     ownerUserId: next.telegram.ownerUserId,
     parseMode: next.telegram.parseMode,
+    progressIndicator: next.telegram.progressIndicator,
   };
 }
 
