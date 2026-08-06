@@ -76,7 +76,7 @@ describe("captureMessageSent", () => {
     expect(store.markFirstMessageSent).toHaveBeenCalledTimes(1);
   });
 
-  it("attaches only provider + model", () => {
+  it("attaches only provider + model when no shape metrics given", () => {
     const client = fakeClient();
     const store = fakeStore({ firstMessage: true });
     captureMessageSent(client, store, ctx);
@@ -84,6 +84,41 @@ describe("captureMessageSent", () => {
       provider: "openrouter",
       model: "gpt",
     });
+  });
+
+  it("attaches latency_ms / step_count / outcome to message_sent when provided", () => {
+    const client = fakeClient();
+    const store = fakeStore({ firstMessage: true });
+    captureMessageSent(client, store, {
+      ...ctx,
+      latencyMs: 1234,
+      stepCount: 5,
+      outcome: "reply",
+    });
+    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.messageSent, {
+      provider: "openrouter",
+      model: "gpt",
+      latency_ms: 1234,
+      step_count: 5,
+      outcome: "reply",
+    });
+  });
+
+  it("keeps shape metrics off first_message_sent (only provider + model)", () => {
+    const client = fakeClient();
+    const store = fakeStore(); // first message not yet sent
+    captureMessageSent(client, store, {
+      ...ctx,
+      latencyMs: 1234,
+      stepCount: 5,
+      outcome: "reply",
+    });
+    // first call is first_message_sent — must carry base props only
+    expect(client.capture).toHaveBeenNthCalledWith(
+      1,
+      ANALYTICS_EVENTS.firstMessageSent,
+      { provider: "openrouter", model: "gpt" },
+    );
   });
 
   it("no-ops when analytics is disabled (null client)", () => {
