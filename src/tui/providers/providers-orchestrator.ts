@@ -14,6 +14,8 @@ import {
 } from "../persist-llm-provider.js";
 import { refreshAimlapiChatCatalogFromApi } from "../../llm/provider/aimlapi/fetch-aimlapi-chat-catalog.js";
 import { refreshOpenRouterChatCatalogFromApi } from "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
+import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { OPENAI_COMPAT_DEFAULT_BASE_URL } from "./providers-model-options.js";
 import { isProvidersAction } from "./providers-actions.js";
 import type { ProviderRow } from "./providers-panel-state.js";
 import { saveProviderWizardToConfig } from "./save-provider-wizard.js";
@@ -41,6 +43,8 @@ export class ProvidersOrchestrator {
         void this.setActiveText(action.id);
       } else if (action.type === "providers_select_chat_model") {
         void this.selectChatModel(action.providerId, action.modelId);
+      } else if (action.type === "providers_chat_model_picker_requested") {
+        void this.openChatModelPicker(action.providerId);
       } else if (action.type === "providers_select_embedding_model") {
         void this.selectEmbeddingModel(action.providerId, action.modelId);
       } else if (action.type === "providers_set_active_embedding") {
@@ -70,6 +74,39 @@ export class ProvidersOrchestrator {
         });
       }
     });
+  }
+
+  /**
+   * Open the reopenable model picker for an `openai-compatible` provider
+   * and drive its async list fetch. `providerId: null` resolves to the
+   * active text provider. No-ops for curated kinds (their models are
+   * already first-class rows) and for unknown ids.
+   */
+  async openChatModelPicker(providerId: string | null): Promise<void> {
+    const config = getConfig();
+    const resolved = resolveLlmConfig(config);
+    const id = providerId ?? resolved.activeTextProvider;
+    if (!id) return;
+    const provider = resolved.providers.find((p) => p.id === id);
+    const fileEntry = config.llm?.providers.find((e) => e.id === id);
+    if (!provider || provider.kind !== "openai-compatible") return;
+    const baseUrl = fileEntry?.baseUrl ?? OPENAI_COMPAT_DEFAULT_BASE_URL;
+    this.bus.emit({
+      type: "llm_model_picker_opened",
+      providerId: id,
+      currentModelId: fileEntry?.defaultChatModel ?? fileEntry?.model ?? null,
+    });
+    try {
+      const apiKey = resolveLlmProviderApiKey(provider) ?? undefined;
+      const models = await fetchOpenAiCompatModels(baseUrl, apiKey);
+      this.bus.emit({ type: "llm_model_picker_loaded", providerId: id, models });
+    } catch (err) {
+      this.bus.emit({
+        type: "llm_model_picker_failed",
+        providerId: id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   refresh(): void {

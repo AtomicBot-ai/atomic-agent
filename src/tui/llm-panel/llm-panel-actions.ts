@@ -9,7 +9,20 @@ export type LlmPanelAction =
   | { type: "llm_stop_local_daemons_prompt_opened"; providerId: string }
   | { type: "llm_stop_local_daemons_prompt_closed" }
   /** Opens (string), edits (string) or closes (`null`) the external URL editor. */
-  | { type: "llm_external_url_draft_set"; value: string | null };
+  | { type: "llm_external_url_draft_set"; value: string | null }
+  | {
+      type: "llm_model_picker_opened";
+      providerId: string;
+      currentModelId: string | null;
+    }
+  | {
+      type: "llm_model_picker_loaded";
+      providerId: string;
+      models: readonly string[];
+    }
+  | { type: "llm_model_picker_failed"; providerId: string; error: string }
+  | { type: "llm_model_picker_cursor_set"; cursor: number }
+  | { type: "llm_model_picker_closed" };
 
 export function isLlmPanelAction(
   action: { type: string },
@@ -22,6 +35,11 @@ export function isLlmPanelAction(
     action.type === "llm_focus_set" ||
     action.type === "llm_stop_local_daemons_prompt_opened" ||
     action.type === "llm_stop_local_daemons_prompt_closed" ||
-    action.type === "llm_external_url_draft_set"
+    action.type === "llm_external_url_draft_set" ||
+    action.type === "llm_model_picker_opened" ||
+    action.type === "llm_model_picker_loaded" ||
+    action.type === "llm_model_picker_failed" ||
+    action.type === "llm_model_picker_cursor_set" ||
+    action.type === "llm_model_picker_closed"
   );
 }

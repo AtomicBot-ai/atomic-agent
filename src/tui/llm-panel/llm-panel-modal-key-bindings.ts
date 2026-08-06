@@ -4,6 +4,7 @@ import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
 import { handleProvidersWizardKey } from "../providers/providers-wizard-key-bindings.js";
 import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";
+import { stopLocalDaemonsForCloudSelection } from "./llm-panel-primary-actions.js";
 
 export function handleLlmModalKey(
   input: string,
@@ -86,6 +87,37 @@ export function handleLlmModalKey(
       dispatch({ type: "local_models_embedding_remove_confirm_closed" });
       return true;
     }
+    return true;
+  }
+
+  const picker = state.llmPanel.modelPicker;
+  if (picker !== null) {
+    if (key.escape) {
+      dispatch({ type: "llm_model_picker_closed" });
+      return true;
+    }
+    if (picker.status === "ready" && picker.models.length > 0) {
+      if (key.upArrow || key.downArrow) {
+        const delta = key.downArrow ? 1 : -1;
+        const next =
+          (picker.cursor + delta + picker.models.length) % picker.models.length;
+        dispatch({ type: "llm_model_picker_cursor_set", cursor: next });
+        return true;
+      }
+      if (key.return) {
+        const modelId = picker.models[picker.cursor];
+        if (modelId === undefined) return true;
+        dispatch({ type: "llm_model_picker_closed" });
+        callbacks.onProvidersSelectChatModel?.(picker.providerId, modelId);
+        stopLocalDaemonsForCloudSelection(state, callbacks);
+        return true;
+      }
+    }
+    if (key.return && picker.status === "error") {
+      dispatch({ type: "llm_model_picker_closed" });
+      return true;
+    }
+    // Loading (or any other key): the modal owns the keyboard.
     return true;
   }
 

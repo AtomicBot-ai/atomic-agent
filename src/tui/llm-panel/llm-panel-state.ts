@@ -14,6 +14,21 @@ export interface LlmStopLocalDaemonsPrompt {
   providerId: string;
 }
 
+/**
+ * Reopenable model picker for `openai-compatible` providers. Opened from
+ * the cloudChatModel row or `/model`; the async model-list fetch is owned
+ * by `ProvidersOrchestrator`, which emits the loaded/failed transitions.
+ * A non-null value means the modal owns the keyboard.
+ */
+export interface LlmModelPickerState {
+  providerId: string;
+  currentModelId: string | null;
+  status: "loading" | "ready" | "error";
+  models: readonly string[];
+  cursor: number;
+  error: string | null;
+}
+
 export interface LlmPanelState {
   mode: LlmPanelMode;
   localCursor: number;
@@ -27,6 +42,7 @@ export interface LlmPanelState {
    * keyboard.
    */
   externalUrlDraft: string | null;
+  modelPicker: LlmModelPickerState | null;
 }
 
 export function createInitialLlmPanelState(): LlmPanelState {
@@ -38,6 +54,7 @@ export function createInitialLlmPanelState(): LlmPanelState {
     syncModeToActiveRoute: false,
     stopLocalDaemonsPrompt: null,
     externalUrlDraft: null,
+    modelPicker: null,
   };
 }
 

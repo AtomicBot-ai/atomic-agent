@@ -44,6 +44,53 @@ export function LlmPanelModals({ state }: { state: TuiState }): ReactElement | n
       </PromptBox>
     );
   }
+  if (state.llmPanel.modelPicker !== null) {
+    const picker = state.llmPanel.modelPicker;
+    if (picker.status === "loading") {
+      return (
+        <PromptBox tone="accent" title={`Models — ${picker.providerId}`}>
+          <Text color={theme.colors.muted}>fetching model list… · Esc cancel</Text>
+        </PromptBox>
+      );
+    }
+    if (picker.status === "error") {
+      return (
+        <PromptBox tone="danger" title={`Models — ${picker.providerId}`}>
+          <Text color={theme.colors.error}>
+            model list unavailable ({picker.error ?? "unknown error"})
+          </Text>
+          <Text color={theme.colors.muted}>Enter/Esc close</Text>
+        </PromptBox>
+      );
+    }
+    // 12-row window around the cursor, same shape as the wizard picker.
+    const WINDOW = 12;
+    const start = Math.max(
+      0,
+      Math.min(picker.cursor - Math.floor(WINDOW / 2), picker.models.length - WINDOW),
+    );
+    const visible = picker.models.slice(start, start + WINDOW);
+    return (
+      <PromptBox tone="accent" title={`Models — ${picker.providerId}`}>
+        {visible.map((id, i) => {
+          const idx = start + i;
+          const selected = idx === picker.cursor;
+          const isCurrent = id === picker.currentModelId;
+          return (
+            <Text key={id} color={selected ? theme.colors.accent : undefined}>
+              {selected ? "› " : "  "}
+              {id}
+              {isCurrent ? <Text color={theme.colors.success}> current</Text> : null}
+            </Text>
+          );
+        })}
+        <Text color={theme.colors.muted}>
+          {`↑/↓ move (${picker.cursor + 1}/${picker.models.length}) · Enter select · Esc cancel`}
+        </Text>
+      </PromptBox>
+    );
+  }
+
   if (state.llmPanel.externalUrlDraft !== null) {
     const draft = state.llmPanel.externalUrlDraft;
     const valid = parseExternalUrl(draft) !== null;
