@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  isMtpCompanionFile,
+  isShardedGguf,
   buildCustomModelDef,
   buildCustomModelId,
   looksLikeHuggingFaceReference,
@@ -10,6 +12,42 @@ import {
 } from "./huggingface.js";
 
 const GB = 1024 * 1024 * 1024;
+
+describe("sharded and companion-file guards", () => {
+  const gg = (path: string, sizeBytes = 1000) => ({ path, sizeBytes });
+
+  it("pickDefaultGgufFile never selects a shard, first part included", () => {
+    const picked = pickDefaultGgufFile([
+      gg("model-00001-of-00003.gguf", 10),
+      gg("model-00002-of-00003.gguf", 10),
+      gg("model-q4_k_m.gguf", 5000),
+    ]);
+    expect(picked?.path).toBe("model-q4_k_m.gguf");
+  });
+
+  it("pickDefaultGgufFile skips MTP companion files in the smallest-file fallback", () => {
+    const picked = pickDefaultGgufFile([
+      gg("model-mtp-draft.gguf", 10),
+      gg("MTP/companion.gguf", 12),
+      gg("model-iq2_xxs.gguf", 5000),
+    ]);
+    expect(picked?.path).toBe("model-iq2_xxs.gguf");
+  });
+
+  it("isShardedGguf matches every part of a multi-part model", () => {
+    expect(isShardedGguf("m-00001-of-00003.gguf")).toBe(true);
+    expect(isShardedGguf("m-00003-of-00003.gguf")).toBe(true);
+    expect(isShardedGguf("m-q4_k_m.gguf")).toBe(false);
+  });
+
+  it("isMtpCompanionFile matches delimited mtp tokens only", () => {
+    expect(isMtpCompanionFile("model-mtp.gguf")).toBe(true);
+    expect(isMtpCompanionFile("mtp-draft.gguf")).toBe(true);
+    expect(isMtpCompanionFile("MTP/x.gguf")).toBe(true);
+    expect(isMtpCompanionFile("empty-model.gguf")).toBe(false);
+    expect(isMtpCompanionFile("prompt-tuned.gguf")).toBe(false);
+  });
+});
 
 describe("parseHuggingFaceModelRef", () => {
   it("parses a /resolve/ file URL", () => {

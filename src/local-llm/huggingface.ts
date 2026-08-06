@@ -272,17 +272,28 @@ export function isMmprojFile(path: string): boolean {
 }
 
 /**
- * Multi-part GGUFs are named `…-00001-of-00003.gguf`; llama.cpp loads
- * the whole set when pointed at the FIRST shard, so later shards are
- * never selectable on their own.
- *
- * ponytail: we only *select* the first shard — the downloader still
- * fetches a single file, so sharded repos need the remaining parts
- * pulled by hand. Fetch the full set here if sharded repos become common.
+ * Multi-part GGUFs are named `…-00001-of-00003.gguf`. The downloader
+ * fetches exactly one file, so ANY shard — first included — yields a
+ * model llama-server cannot start (the remaining parts are missing).
+ * Sharded picks are therefore rejected outright with a clear error
+ * instead of producing a silently broken install. Support means
+ * fetching the full set; do that if sharded repos become common.
  */
-function isNonFirstShard(path: string): boolean {
-  const m = /-(\d{5})-of-\d{5}\.gguf$/i.exec(path);
-  return m !== null && m[1] !== "00001";
+export function isShardedGguf(path: string): boolean {
+  return /-\d{5}-of-\d{5}\.gguf$/i.test(path);
+}
+
+/**
+ * Speculative-decoding companion files (MTP/NextN) are GGUFs but not
+ * runnable models. They are usually tiny, so the smallest-file fallback
+ * in `pickDefaultGgufFile` would otherwise happily select one when none
+ * of the preferred quants exist. Patterns: an `mtp/` folder, or `mtp`
+ * as a delimited token in the file name.
+ */
+export function isMtpCompanionFile(path: string): boolean {
+  return /(^|\/)mtp\//i.test(path) || /(^|[-_.])mtp([-_.]|\.gguf$)/i.test(
+    path.split("/").pop() ?? path,
+  );
 }
 
 const QUANT_PREFERENCE = [
@@ -303,7 +314,10 @@ export function pickDefaultGgufFile(
   files: readonly HuggingFaceFile[],
 ): HuggingFaceFile | null {
   const candidates = files.filter(
-    (f) => !isMmprojFile(f.path) && !isNonFirstShard(f.path),
+    (f) =>
+      !isMmprojFile(f.path) &&
+      !isShardedGguf(f.path) &&
+      !isMtpCompanionFile(f.path),
   );
   if (candidates.length === 0) return null;
   for (const quant of QUANT_PREFERENCE) {
@@ -430,10 +444,29 @@ export async function resolveCustomModelFromHuggingFace(
           `paste the repo URL instead and the projector is picked up automatically.`,
       );
     }
+    if (isShardedGguf(file.path)) {
+      throw new Error(
+        `${ref.filePath} is one part of a sharded model — only this part ` +
+          `would be downloaded and the model would not start. Sharded ` +
+          `models are not supported yet; pick a single-file quant instead.`,
+      );
+    }
+    if (isMtpCompanionFile(file.path)) {
+      throw new Error(
+        `${ref.filePath} looks like a speculative-decoding companion ` +
+          `(MTP/NextN), not runnable model weights — pick the main GGUF.`,
+      );
+    }
   } else {
     file = pickDefaultGgufFile(files);
     if (!file) {
-      throw new Error(`no usable .gguf weights in ${ref.repoId}`);
+      const sharded = files.some((f) => isShardedGguf(f.path));
+      throw new Error(
+        sharded
+          ? `${ref.repoId} only ships sharded (multi-part) weights, which ` +
+            `are not supported yet — look for a single-file quant of the model`
+          : `no usable .gguf weights in ${ref.repoId}`,
+      );
     }
   }
   return buildCustomModelDef({
