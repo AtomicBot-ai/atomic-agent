@@ -29,6 +29,9 @@ import type {
  * provider management.
  */
 export class ProvidersOrchestrator {
+  /** Backs the picker's stale-response guard; see `openChatModelPicker`. */
+  private chatModelPickerGeneration = 0;
+
   constructor(
     private readonly runtime: AgentRuntime,
     private readonly bus: TuiEventBus & { emit(action: unknown): void },
@@ -91,19 +94,28 @@ export class ProvidersOrchestrator {
     const fileEntry = config.llm?.providers.find((e) => e.id === id);
     if (!provider || provider.kind !== "openai-compatible") return;
     const baseUrl = fileEntry?.baseUrl ?? OPENAI_COMPAT_DEFAULT_BASE_URL;
+    // Every open gets a fresh generation so a response from a picker the
+    // operator already closed (or reopened for the same provider) cannot
+    // repopulate the current one.
+    const generation = ++this.chatModelPickerGeneration;
     this.bus.emit({
-      type: "llm_model_picker_opened",
+      type: "providers_chat_model_picker_opened",
       providerId: id,
       currentModelId: fileEntry?.defaultChatModel ?? fileEntry?.model ?? null,
+      generation,
     });
     try {
       const apiKey = resolveLlmProviderApiKey(provider) ?? undefined;
       const models = await fetchOpenAiCompatModels(baseUrl, apiKey);
-      this.bus.emit({ type: "llm_model_picker_loaded", providerId: id, models });
+      this.bus.emit({
+        type: "providers_chat_model_picker_loaded",
+        generation,
+        models,
+      });
     } catch (err) {
       this.bus.emit({
-        type: "llm_model_picker_failed",
-        providerId: id,
+        type: "providers_chat_model_picker_failed",
+        generation,
         error: err instanceof Error ? err.message : String(err),
       });
     }

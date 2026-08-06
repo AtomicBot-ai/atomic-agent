@@ -28,6 +28,20 @@ export type ProvidersAction =
       type: "providers_chat_model_picker_requested";
       providerId: string | null;
     }
+  | {
+      type: "providers_chat_model_picker_opened";
+      providerId: string;
+      currentModelId: string | null;
+      generation: number;
+    }
+  | {
+      type: "providers_chat_model_picker_loaded";
+      generation: number;
+      models: readonly string[];
+    }
+  | { type: "providers_chat_model_picker_failed"; generation: number; error: string }
+  | { type: "providers_chat_model_picker_cursor_set"; cursor: number }
+  | { type: "providers_chat_model_picker_closed" }
   | { type: "providers_wizard_updated"; wizard: ProvidersWizardState }
   | { type: "providers_wizard_closed" }
   | { type: "providers_wizard_submit_started" }

@@ -90,10 +90,10 @@ export function handleLlmModalKey(
     return true;
   }
 
-  const picker = state.llmPanel.modelPicker;
+  const picker = state.providersPanel.chatModelPicker;
   if (picker !== null) {
     if (key.escape) {
-      dispatch({ type: "llm_model_picker_closed" });
+      dispatch({ type: "providers_chat_model_picker_closed" });
       return true;
     }
     if (picker.status === "ready" && picker.models.length > 0) {
@@ -101,20 +101,20 @@ export function handleLlmModalKey(
         const delta = key.downArrow ? 1 : -1;
         const next =
           (picker.cursor + delta + picker.models.length) % picker.models.length;
-        dispatch({ type: "llm_model_picker_cursor_set", cursor: next });
+        dispatch({ type: "providers_chat_model_picker_cursor_set", cursor: next });
         return true;
       }
       if (key.return) {
         const modelId = picker.models[picker.cursor];
         if (modelId === undefined) return true;
-        dispatch({ type: "llm_model_picker_closed" });
+        dispatch({ type: "providers_chat_model_picker_closed" });
         callbacks.onProvidersSelectChatModel?.(picker.providerId, modelId);
         stopLocalDaemonsForCloudSelection(state, callbacks);
         return true;
       }
     }
     if (key.return && picker.status === "error") {
-      dispatch({ type: "llm_model_picker_closed" });
+      dispatch({ type: "providers_chat_model_picker_closed" });
       return true;
     }
     // Loading (or any other key): the modal owns the keyboard.

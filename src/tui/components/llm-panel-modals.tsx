@@ -44,8 +44,8 @@ export function LlmPanelModals({ state }: { state: TuiState }): ReactElement | n
       </PromptBox>
     );
   }
-  if (state.llmPanel.modelPicker !== null) {
-    const picker = state.llmPanel.modelPicker;
+  if (state.providersPanel.chatModelPicker !== null) {
+    const picker = state.providersPanel.chatModelPicker;
     if (picker.status === "loading") {
       return (
         <PromptBox tone="accent" title={`Models — ${picker.providerId}`}>
@@ -72,7 +72,7 @@ export function LlmPanelModals({ state }: { state: TuiState }): ReactElement | n
     const visible = picker.models.slice(start, start + WINDOW);
     return (
       <PromptBox tone="accent" title={`Models — ${picker.providerId}`}>
-        {visible.map((id, i) => {
+        {visible.map((id: string, i: number) => {
           const idx = start + i;
           const selected = idx === picker.cursor;
           const isCurrent = id === picker.currentModelId;

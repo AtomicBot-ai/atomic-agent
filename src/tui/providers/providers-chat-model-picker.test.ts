@@ -5,9 +5,9 @@ import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import { createInitialTuiState, type TuiState } from "../tui-state.js";
 import { fakeSession } from "../test-fixtures.js";
-import { handleLlmModalKey } from "./llm-panel-modal-key-bindings.js";
-import { reduceLlmPanelAction } from "./llm-panel-reducer.js";
-import type { LlmModelPickerState } from "./llm-panel-state.js";
+import { reduceProvidersPanel } from "./providers-reducer.js";
+import type { ProvidersChatModelPickerState } from "./providers-panel-state.js";
+import { handleLlmModalKey } from "../llm-panel/llm-panel-modal-key-bindings.js";
 
 function emptyKey(overrides: Partial<Key> = {}): Key {
   return {
@@ -39,17 +39,26 @@ function callbacks(overrides: Partial<TuiAppCallbacks> = {}): TuiAppCallbacks {
   };
 }
 
-function stateWithPicker(picker: LlmModelPickerState | null): TuiState {
+function stateWithPicker(
+  picker: ProvidersChatModelPickerState | null,
+): TuiState {
   const base = createInitialTuiState(fakeSession());
   return {
     ...base,
     uiMode: "debug" as const,
     activeTab: "llm" as const,
-    llmPanel: { ...base.llmPanel, mode: "cloud" as const, modelPicker: picker },
+    llmPanel: { ...base.llmPanel, mode: "cloud" as const },
+    providersPanel: {
+      ...base.providersPanel,
+      chatModelPicker: picker,
+      chatModelPickerGeneration: picker?.generation ?? 0,
+    },
   };
 }
 
-function readyPicker(overrides: Partial<LlmModelPickerState> = {}): LlmModelPickerState {
+function readyPicker(
+  overrides: Partial<ProvidersChatModelPickerState> = {},
+): ProvidersChatModelPickerState {
   return {
     providerId: "my-vllm",
     currentModelId: "qwen-32b",
@@ -57,6 +66,7 @@ function readyPicker(overrides: Partial<LlmModelPickerState> = {}): LlmModelPick
     models: ["glm-9b", "qwen-32b", "yi-34b"],
     cursor: 1,
     error: null,
+    generation: 1,
     ...overrides,
   };
 }
@@ -79,12 +89,13 @@ function pressModal(
 describe("model picker reducer", () => {
   it("opened → loading state for the provider", () => {
     const state = stateWithPicker(null);
-    const next = reduceLlmPanelAction(state, {
-      type: "llm_model_picker_opened",
+    const next = reduceProvidersPanel(state, {
+      type: "providers_chat_model_picker_opened",
       providerId: "my-vllm",
       currentModelId: "qwen-32b",
+      generation: 1,
     });
-    expect(next.llmPanel.modelPicker).toMatchObject({
+    expect(next.providersPanel.chatModelPicker).toMatchObject({
       providerId: "my-vllm",
       status: "loading",
       models: [],
@@ -95,47 +106,50 @@ describe("model picker reducer", () => {
     const state = stateWithPicker(
       readyPicker({ status: "loading", models: [], cursor: 0 }),
     );
-    const next = reduceLlmPanelAction(state, {
-      type: "llm_model_picker_loaded",
-      providerId: "my-vllm",
+    const next = reduceProvidersPanel(state, {
+      type: "providers_chat_model_picker_loaded",
+      generation: 1,
       models: ["glm-9b", "qwen-32b", "yi-34b"],
     });
-    expect(next.llmPanel.modelPicker).toMatchObject({
+    expect(next.providersPanel.chatModelPicker).toMatchObject({
       status: "ready",
       cursor: 1,
     });
   });
 
-  it("stale loaded for another provider is ignored", () => {
+  it("a response from an older generation is ignored", () => {
+    // Esc, then reopen for the SAME provider: the first fetch settles
+    // late and must not repopulate the second picker.
     const state = stateWithPicker(
-      readyPicker({ providerId: "other", status: "loading" }),
+      readyPicker({ status: "loading", models: [], generation: 2 }),
     );
-    const next = reduceLlmPanelAction(state, {
-      type: "llm_model_picker_loaded",
-      providerId: "my-vllm",
-      models: ["a"],
+    const next = reduceProvidersPanel(state, {
+      type: "providers_chat_model_picker_loaded",
+      generation: 1,
+      models: ["stale-model"],
     });
-    expect(next.llmPanel.modelPicker?.status).toBe("loading");
+    expect(next.providersPanel.chatModelPicker?.status).toBe("loading");
+    expect(next.providersPanel.chatModelPicker?.models).toEqual([]);
   });
 
   it("loaded after close does not resurrect the modal", () => {
     const state = stateWithPicker(null);
-    const next = reduceLlmPanelAction(state, {
-      type: "llm_model_picker_loaded",
-      providerId: "my-vllm",
+    const next = reduceProvidersPanel(state, {
+      type: "providers_chat_model_picker_loaded",
+      generation: 1,
       models: ["a"],
     });
-    expect(next.llmPanel.modelPicker).toBeNull();
+    expect(next.providersPanel.chatModelPicker).toBeNull();
   });
 
   it("failed → error state", () => {
     const state = stateWithPicker(readyPicker({ status: "loading" }));
-    const next = reduceLlmPanelAction(state, {
-      type: "llm_model_picker_failed",
-      providerId: "my-vllm",
+    const next = reduceProvidersPanel(state, {
+      type: "providers_chat_model_picker_failed",
+      generation: 1,
       error: "http 401",
     });
-    expect(next.llmPanel.modelPicker).toMatchObject({
+    expect(next.providersPanel.chatModelPicker).toMatchObject({
       status: "error",
       error: "http 401",
     });
@@ -149,7 +163,7 @@ describe("model picker modal keys", () => {
       emptyKey({ downArrow: true }),
       stateWithPicker(readyPicker({ cursor: 2 })),
     );
-    expect(dispatched).toEqual([{ type: "llm_model_picker_cursor_set", cursor: 0 }]);
+    expect(dispatched).toEqual([{ type: "providers_chat_model_picker_cursor_set", cursor: 0 }]);
   });
 
   it("Enter selects the model under the cursor, closes, and routes the switch", () => {
@@ -160,7 +174,7 @@ describe("model picker modal keys", () => {
       stateWithPicker(readyPicker({ cursor: 2 })),
       callbacks({ onProvidersSelectChatModel }),
     );
-    expect(dispatched).toEqual([{ type: "llm_model_picker_closed" }]);
+    expect(dispatched).toEqual([{ type: "providers_chat_model_picker_closed" }]);
     expect(onProvidersSelectChatModel).toHaveBeenCalledWith("my-vllm", "yi-34b");
   });
 
@@ -172,7 +186,7 @@ describe("model picker modal keys", () => {
       stateWithPicker(readyPicker()),
       callbacks({ onProvidersSelectChatModel }),
     );
-    expect(dispatched).toEqual([{ type: "llm_model_picker_closed" }]);
+    expect(dispatched).toEqual([{ type: "providers_chat_model_picker_closed" }]);
     expect(onProvidersSelectChatModel).not.toHaveBeenCalled();
   });
 
@@ -192,6 +206,6 @@ describe("model picker modal keys", () => {
       emptyKey({ return: true }),
       stateWithPicker(readyPicker({ status: "error", error: "http 500" })),
     );
-    expect(dispatched).toEqual([{ type: "llm_model_picker_closed" }]);
+    expect(dispatched).toEqual([{ type: "providers_chat_model_picker_closed" }]);
   });
 });

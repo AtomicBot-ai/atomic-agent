@@ -182,6 +182,8 @@ export function handleAppKey(
       state.localModelsPanel.removeConfirmId !== null ||
       state.localModelsPanel.embeddingRemoveConfirmId !== null ||
       state.localModelsPanel.embeddingOnboardingPrompt !== null ||
+      state.providersPanel.chatModelPicker !== null ||
+      state.llmPanel.externalUrlDraft !== null ||
       state.llmPanel.stopLocalDaemonsPrompt !== null);
   const debugTabBusy =
     tasksTabBusy ||
