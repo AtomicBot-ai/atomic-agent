@@ -83,6 +83,7 @@ export class ProvidersOrchestrator {
         isActiveText: p.id === resolved.activeTextProvider,
         isActiveEmbedding: p.id === resolved.activeEmbeddingProvider,
         hasApiKey: Boolean(resolveLlmProviderApiKey(p)?.length),
+        baseUrl: fileEntry?.baseUrl ?? null,
         chatModel: fileEntry?.defaultChatModel ?? fileEntry?.model ?? null,
         chatModelOptions: listChatModelOptionsForEntry(fileEntry),
         embeddingModel: fileEntry?.defaultEmbeddingModel ?? null,

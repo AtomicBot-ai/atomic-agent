@@ -27,6 +27,26 @@ function emptyKey(overrides: Partial<Key> = {}): Key {
   };
 }
 
+describe("createProvidersWizardState configure prefill", () => {
+  it("prefills baseUrlLine from the stored base URL", () => {
+    const wizard = createProvidersWizardState("configure", {
+      providerId: "my-vllm",
+      kind: "openai-compatible",
+      baseUrl: "http://192.168.1.50:8000",
+    });
+    expect(wizard.baseUrlLine).toBe("http://192.168.1.50:8000");
+    expect(wizard.phase).toBe("api_key");
+  });
+
+  it("keeps baseUrlLine empty when no stored URL is passed", () => {
+    const wizard = createProvidersWizardState("configure", {
+      providerId: "my-vllm",
+      kind: "openai-compatible",
+    });
+    expect(wizard.baseUrlLine).toBe("");
+  });
+});
+
 describe("handleProvidersWizardKey", () => {
   it("walks the aimlapi onboarding flow when the cursor lands on it", () => {
     let wizard = createProvidersWizardState("add");
