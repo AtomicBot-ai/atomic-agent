@@ -83,6 +83,7 @@ export function handleProvidersTabKey(
         wizard: createProvidersWizardState("configure", {
           providerId: row.id,
           kind: row.kind,
+          ...(row.baseUrl ? { baseUrl: row.baseUrl } : {}),
         }),
       });
     }

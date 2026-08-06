@@ -194,7 +194,7 @@ function triggerCloudEmbeddingModel(
 }
 
 function openProviderConfigFor(
-  provider: { id: string; kind: string },
+  provider: { id: string; kind: string; baseUrl?: string | null },
   dispatch: (action: TuiAction) => void,
 ): void {
   if (!isCloudProviderKind(provider.kind)) return;
@@ -204,6 +204,7 @@ function openProviderConfigFor(
     wizard: createProvidersWizardState("configure", {
       providerId: provider.id,
       kind: provider.kind,
+      ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
     }),
   });
 }

@@ -35,7 +35,16 @@ export interface ProvidersWizardState {
 
 export function createProvidersWizardState(
   mode: ProvidersWizardMode,
-  opts?: { providerId?: string; kind?: ProvidersWizardKind },
+  opts?: {
+    providerId?: string;
+    kind?: ProvidersWizardKind;
+    /**
+     * Stored base URL of the entry being reconfigured. Prefills the
+     * `base_url` step so pressing Enter through it keeps the custom
+     * endpoint instead of silently resetting it to the OpenAI default.
+     */
+    baseUrl?: string;
+  },
 ): ProvidersWizardState {
   const configure = mode === "configure";
   const kind = opts?.kind ?? null;
@@ -46,7 +55,7 @@ export function createProvidersWizardState(
     providerId: opts?.providerId ?? null,
     cursor: 0,
     apiKeyBuffer: "",
-    baseUrlLine: "",
+    baseUrlLine: opts?.baseUrl ?? "",
     chatModelLine: "",
     embeddingModelLine: "",
     selectedChatModelId: null,

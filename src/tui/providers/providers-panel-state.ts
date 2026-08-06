@@ -8,6 +8,13 @@ export type ProviderRow = {
   isActiveText: boolean;
   isActiveEmbedding: boolean;
   hasApiKey: boolean;
+  /**
+   * Stored base URL for `openai-compatible` entries (`null` for curated
+   * kinds and when unset). Carried on the row so configure-mode wizards
+   * can prefill the URL step instead of opening on an empty field that
+   * silently resets a custom endpoint to the OpenAI default.
+   */
+  baseUrl: string | null;
   chatModel: string | null;
   chatModelOptions?: readonly string[];
   embeddingModel: string | null;
