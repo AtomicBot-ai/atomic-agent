@@ -109,6 +109,84 @@ export function reduceProvidersPanel(
         ...state,
         providersPanel: { ...panel, wizard: null },
       };
+    case "providers_chat_model_picker_opened":
+      return {
+        ...state,
+        providersPanel: {
+          ...panel,
+          chatModelPickerGeneration: action.generation,
+          chatModelPicker: {
+            providerId: action.providerId,
+            currentModelId: action.currentModelId,
+            status: "loading",
+            models: [],
+            cursor: 0,
+            error: null,
+            generation: action.generation,
+          },
+        },
+      };
+    case "providers_chat_model_picker_loaded": {
+      // Generation-keyed: a response from a picker that was closed, or
+      // reopened (even for the same provider) before its fetch settled,
+      // must not repopulate the current one.
+      if (
+        !panel.chatModelPicker ||
+        panel.chatModelPicker.generation !== action.generation
+      ) {
+        return state;
+      }
+      const currentIdx = panel.chatModelPicker.currentModelId
+        ? action.models.indexOf(panel.chatModelPicker.currentModelId)
+        : -1;
+      return {
+        ...state,
+        providersPanel: {
+          ...panel,
+          chatModelPicker: {
+            ...panel.chatModelPicker,
+            status: "ready",
+            models: action.models,
+            cursor: currentIdx >= 0 ? currentIdx : 0,
+            error: null,
+          },
+        },
+      };
+    }
+    case "providers_chat_model_picker_failed": {
+      if (
+        !panel.chatModelPicker ||
+        panel.chatModelPicker.generation !== action.generation
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        providersPanel: {
+          ...panel,
+          chatModelPicker: {
+            ...panel.chatModelPicker,
+            status: "error",
+            error: action.error,
+          },
+        },
+      };
+    }
+    case "providers_chat_model_picker_cursor_set": {
+      if (!panel.chatModelPicker) return state;
+      return {
+        ...state,
+        providersPanel: {
+          ...panel,
+          chatModelPicker: { ...panel.chatModelPicker, cursor: action.cursor },
+        },
+      };
+    }
+    case "providers_chat_model_picker_closed":
+      return {
+        ...state,
+        providersPanel: { ...panel, chatModelPicker: null },
+      };
     case "providers_remove_opened":
       return {
         ...state,

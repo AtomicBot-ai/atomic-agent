@@ -18,6 +18,30 @@ export type ProvidersAction =
   | { type: "providers_busy"; busy: boolean }
   | { type: "providers_wizard_opened"; wizard: ProvidersWizardState }
   | { type: "providers_catalog_refresh_requested" }
+  | {
+      /**
+       * Open the reopenable chat-model picker for an `openai-compatible`
+       * provider. `providerId: null` targets the active text provider
+       * (`/model`). Handled by `ProvidersOrchestrator`, which owns the
+       * async list fetch and emits the `llm_model_picker_*` transitions.
+       */
+      type: "providers_chat_model_picker_requested";
+      providerId: string | null;
+    }
+  | {
+      type: "providers_chat_model_picker_opened";
+      providerId: string;
+      currentModelId: string | null;
+      generation: number;
+    }
+  | {
+      type: "providers_chat_model_picker_loaded";
+      generation: number;
+      models: readonly string[];
+    }
+  | { type: "providers_chat_model_picker_failed"; generation: number; error: string }
+  | { type: "providers_chat_model_picker_cursor_set"; cursor: number }
+  | { type: "providers_chat_model_picker_closed" }
   | { type: "providers_wizard_updated"; wizard: ProvidersWizardState }
   | { type: "providers_wizard_closed" }
   | { type: "providers_wizard_submit_started" }

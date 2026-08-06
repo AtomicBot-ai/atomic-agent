@@ -176,6 +176,16 @@ function triggerCloudChatModel(
     openProviderConfigFor(row.provider, dispatch);
     return;
   }
+  if (row.provider.kind === "openai-compatible") {
+    // The picker owns selection for server-listed providers: Enter on the
+    // current-model row reopens the `/v1/models` list instead of
+    // re-selecting the same model (#62).
+    dispatch({
+      type: "providers_chat_model_picker_requested",
+      providerId: row.providerId,
+    });
+    return;
+  }
   callbacks.onProvidersSelectChatModel?.(row.providerId, row.modelId);
   stopLocalDaemonsForCloudSelection(state, callbacks);
 }
@@ -209,7 +219,7 @@ function openProviderConfigFor(
   });
 }
 
-function stopLocalDaemonsForCloudSelection(
+export function stopLocalDaemonsForCloudSelection(
   state: TuiState,
   callbacks: TuiAppCallbacks,
 ): void {

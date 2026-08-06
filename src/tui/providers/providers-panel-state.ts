@@ -24,6 +24,27 @@ export interface ProvidersRemoveConfirmState {
   id: string;
 }
 
+/**
+ * Reopenable chat-model picker for `openai-compatible` providers, opened
+ * from the LLM panel's model row or `/model`. Lives here rather than on
+ * `llmPanel` because the async `/v1/models` fetch and the resulting
+ * selection are owned by `ProvidersOrchestrator`, matching `wizard` and
+ * `removeConfirm`. A non-null value means the modal owns the keyboard.
+ *
+ * `generation` increments on every open so a response from a previous
+ * open (Esc, then reopen for the same provider before the first fetch
+ * settles) cannot repopulate the current one.
+ */
+export interface ProvidersChatModelPickerState {
+  providerId: string;
+  currentModelId: string | null;
+  status: "loading" | "ready" | "error";
+  models: readonly string[];
+  cursor: number;
+  error: string | null;
+  generation: number;
+}
+
 export interface ProvidersPanelState {
   mode: ProvidersPanelMode;
   cursor: number;
@@ -32,6 +53,9 @@ export interface ProvidersPanelState {
   busy: boolean;
   wizard: ProvidersWizardState | null;
   removeConfirm: ProvidersRemoveConfirmState | null;
+  chatModelPicker: ProvidersChatModelPickerState | null;
+  /** Monotonic counter backing `ProvidersChatModelPickerState.generation`. */
+  chatModelPickerGeneration: number;
 }
 
 export function createInitialProvidersPanelState(): ProvidersPanelState {
@@ -43,5 +67,7 @@ export function createInitialProvidersPanelState(): ProvidersPanelState {
     busy: false,
     wizard: null,
     removeConfirm: null,
+    chatModelPicker: null,
+    chatModelPickerGeneration: 0,
   };
 }

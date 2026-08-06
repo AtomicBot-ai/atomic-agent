@@ -14,6 +14,7 @@ export interface LlmStopLocalDaemonsPrompt {
   providerId: string;
 }
 
+
 export interface LlmPanelState {
   mode: LlmPanelMode;
   localCursor: number;

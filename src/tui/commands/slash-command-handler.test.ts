@@ -168,6 +168,7 @@ describe("dispatchSlashCommand", () => {
     expect(result.actions).toEqual([
       { type: "ui_mode_set", mode: "debug" },
       { type: "tab_changed", tab: "llm" },
+      { type: "providers_chat_model_picker_requested", providerId: null },
     ]);
   });
 

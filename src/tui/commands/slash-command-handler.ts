@@ -207,9 +207,14 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
     case "llm":
       return dispatchLlmSub(parsed.args);
     case "model":
+      // Jump to the LLM tab and, when the active text provider is an
+      // openai-compatible entry, reopen its model picker (#62). The
+      // request no-ops for other kinds, leaving the tab switch as the
+      // whole effect, which matches the previous behavior.
       return pureActions([
         { type: "ui_mode_set", mode: "debug" },
         { type: "tab_changed", tab: "llm" },
+        { type: "providers_chat_model_picker_requested", providerId: null },
       ]);
     case "models":
       return dispatchModelsSub(parsed.args, parsed.name);
