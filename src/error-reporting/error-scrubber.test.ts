@@ -148,4 +148,55 @@ describe("scrubError", () => {
     const ev = scrubError(err, { source: "llm_failure" });
     expect(ev.transportHost).toBe("localhost:8080");
   });
+
+  it("prefers the cause's stack over the wrapper's own stack", () => {
+    function throwOriginal(): never {
+      throw new TypeError("cannot read x of undefined");
+    }
+    let cause: Error;
+    try {
+      throwOriginal();
+      throw new Error("unreachable");
+    } catch (err) {
+      cause = err as Error;
+    }
+    const wrapper = Object.assign(new Error("ToolExecutionError"), {
+      name: "ToolExecutionError",
+      category: "tool",
+      tool: "unknown",
+      cause,
+    });
+    const ev = scrubError(wrapper, { source: "llm_failure" });
+    // The wrapper's own stack would only ever show the `scrubError` test
+    // call site, never `throwOriginal` — this pins that the cause's frame
+    // (where the real failure happened) wins.
+    expect(ev.frames.some((f) => f.function === "throwOriginal")).toBe(true);
+  });
+
+  it("falls back to the wrapper's own stack when cause is not an Error", () => {
+    const err = Object.assign(new Error("boom"), {
+      name: "ToolExecutionError",
+      cause: "a plain string cause, not an Error",
+    });
+    const ev = scrubError(err, { source: "llm_failure" });
+    expect(ev.causeType).toBeUndefined();
+    expect(ev.frames).toEqual(sanitizeStack(err.stack));
+  });
+
+  it("surfaces the cause's class name as causeType, distinct from the wrapper's errorType", () => {
+    const cause = new RangeError("out of bounds");
+    const wrapper = Object.assign(new Error("ToolExecutionError"), {
+      name: "ToolExecutionError",
+      cause,
+    });
+    const ev = scrubError(wrapper, { source: "llm_failure" });
+    expect(ev.errorType).toBe("ToolExecutionError");
+    expect(ev.causeType).toBe("RangeError");
+  });
+
+  it("omits causeType when the error has no cause", () => {
+    const err = new Error("plain failure");
+    const ev = scrubError(err, { source: "uncaughtException" });
+    expect(ev.causeType).toBeUndefined();
+  });
 });

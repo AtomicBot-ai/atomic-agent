@@ -1,6 +1,7 @@
 import { totalmem } from "node:os";
 
 import { getConfig, resetConfigCache } from "../../config/index.js";
+import { hasOtherLiveSessions } from "../../local-llm/session-registry.js";
 import {
   checkForBackendUpdate,
   DEFAULT_EMBEDDING_MODEL_ID,
@@ -180,7 +181,17 @@ export class LocalModelsOrchestrator {
     // llama-server is orphaned in the background.
     if (this.daemonSupervised) {
       this.daemonSupervised = false;
-      await this.stopDaemonSilent();
+      const cfg = getConfig();
+      // `stopOnExit: false` keeps the model warm between sessions (the
+      // operator owns teardown via `models stop`). With it on, only the
+      // LAST live session stops the daemon — a second TUI window still
+      // chatting must not lose its model because this one closed first.
+      if (
+        cfg.localModels.managed.stopOnExit &&
+        !hasOtherLiveSessions(cfg.paths.localModelsDataDir)
+      ) {
+        await this.stopDaemonSilent();
+      }
     }
   }
 

@@ -442,6 +442,29 @@ describe("parseUserConfigFile", () => {
     expect(parsed.localModels.managed.device).toBe("auto");
   });
 
+  it("defaults localModels.managed.stopOnExit to true", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.localModels.managed.stopOnExit).toBe(true);
+  });
+
+  it("preserves an explicit localModels.managed.stopOnExit=false", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { managed: { stopOnExit: false } },
+    });
+    expect(parsed.localModels.managed.stopOnExit).toBe(false);
+  });
+
+  it("accepts a v33 file and fills in stopOnExit=true transparently", () => {
+    const parsed = parseUserConfigFile({
+      version: 33,
+      localModels: { managed: { autoUpdate: true } },
+    });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.localModels.managed.stopOnExit).toBe(true);
+    expect(parsed.localModels.managed.autoUpdate).toBe(true);
+  });
+
   it("preserves an explicit localModels.managed.device override", () => {
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,
