@@ -278,6 +278,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onLocalModelsRemoveConfirmed: (id) =>
           void orchestrator.localModels.removeLocalModel(id),
         onLocalModelsStatusRequested: () => orchestrator.localModels.emitStatusLine(),
+        onLocalModelsAddCustomRequested: (reference) =>
+          orchestrator.localModels.addCustomModelFromHuggingFace(reference),
+        onLocalModelsHfSearchRequested: (query) =>
+          orchestrator.localModels.searchHuggingFace(query),
+        onLlmHuggingFaceSubmitted: (text) =>
+          orchestrator.localModels.submitHuggingFacePrompt(text),
         onLocalModelsDaemonStartRequested: () =>
           void orchestrator.localModels.startDaemon(),
         onLocalModelsDaemonStopRequested: () =>

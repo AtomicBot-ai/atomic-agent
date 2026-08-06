@@ -70,6 +70,73 @@ export function reduceLlmPanelAction(
         ...state,
         llmPanel: { ...panel, externalUrlDraft: action.value },
       };
+    case "llm_hf_prompt_opened":
+      return {
+        ...state,
+        llmPanel: {
+          ...panel,
+          huggingFacePrompt: {
+            buffer: "",
+            busy: false,
+            error: null,
+            results: [],
+          },
+        },
+      };
+    case "llm_hf_prompt_buffer_changed":
+      if (!panel.huggingFacePrompt) return state;
+      return {
+        ...state,
+        llmPanel: {
+          ...panel,
+          huggingFacePrompt: {
+            ...panel.huggingFacePrompt,
+            buffer: action.buffer,
+            error: null,
+          },
+        },
+      };
+    case "llm_hf_prompt_busy_set":
+      if (!panel.huggingFacePrompt) return state;
+      return {
+        ...state,
+        llmPanel: {
+          ...panel,
+          huggingFacePrompt: { ...panel.huggingFacePrompt, busy: action.busy },
+        },
+      };
+    case "llm_hf_prompt_failed":
+      if (!panel.huggingFacePrompt) return state;
+      return {
+        ...state,
+        llmPanel: {
+          ...panel,
+          huggingFacePrompt: {
+            ...panel.huggingFacePrompt,
+            busy: false,
+            error: action.error,
+          },
+        },
+      };
+    case "llm_hf_prompt_results_set":
+      if (!panel.huggingFacePrompt) return state;
+      return {
+        ...state,
+        llmPanel: {
+          ...panel,
+          huggingFacePrompt: {
+            ...panel.huggingFacePrompt,
+            busy: false,
+            error: null,
+            results: action.results,
+          },
+        },
+      };
+    case "llm_hf_prompt_closed":
+      return {
+        ...state,
+        llmPanel: { ...panel, huggingFacePrompt: null },
+      };
     default:
       return state;
   }

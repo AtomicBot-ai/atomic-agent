@@ -3,6 +3,9 @@ export {
   DEFAULT_LLAMACPP_MODEL_ID,
   getLocalModelDef,
   isKnownLocalModelId,
+  listLocalModels,
+  listCustomLocalModels,
+  setCustomLocalModels,
   EMBEDDING_MODELS_CATALOG,
   DEFAULT_EMBEDDING_MODEL_ID,
   getEmbeddingModelDef,
@@ -61,6 +64,21 @@ export {
   removeEmbeddingModel,
 } from "./model-installer.js";
 export { resolveChatTemplatePath } from "./chat-templates.js";
+export {
+  buildCustomModelDef,
+  buildCustomModelId,
+  listHuggingFaceGgufFiles,
+  looksLikeHuggingFaceReference,
+  parseHuggingFaceModelRef,
+  pickDefaultGgufFile,
+  pickMmprojFile,
+  resolveCustomModelFromHuggingFace,
+  resolveHuggingFaceFileUrl,
+  searchHuggingFaceGgufModels,
+  type HuggingFaceFile,
+  type HuggingFaceModelRef,
+  type HuggingFaceSearchHit,
+} from "./huggingface.js";
 export {
   parseListDevices,
   pickBestDevice,

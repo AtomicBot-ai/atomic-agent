@@ -38,6 +38,9 @@ export function LlmModeRows({
 function sectionTitle(kind: LlmPanelRow["kind"]): string {
   switch (kind) {
     case "localTextModel":
+    // Shares the text-models heading on purpose so it renders as the last
+    // row of that section rather than starting a section of its own.
+    case "localAddHuggingFace":
       return "Local text models";
     case "localEmbeddingModel":
       return "Local embeddings";
@@ -124,7 +127,9 @@ function LocalRows({
   rows: readonly LlmPanelRow[];
   state: TuiState;
 }): ReactElement {
-  const textRows = rows.filter((row) => row.kind === "localTextModel");
+  const textRows = rows.filter(
+    (row) => row.kind === "localTextModel" || row.kind === "localAddHuggingFace",
+  );
   const embeddingRows = rows.filter((row) => row.kind === "localEmbeddingModel");
   return (
     <Box flexDirection="column">
@@ -251,6 +256,8 @@ function renderRowText(row: LlmPanelRow, state: TuiState): string {
   switch (row.kind) {
     case "localTextModel":
       return `${row.model.id} ${row.model.def.sizeLabel} [${localModelStatus(row.model)}]`;
+    case "localAddHuggingFace":
+      return "+ Add a model from Hugging Face…";
     case "localEmbeddingModel":
       return `${row.model.id} ${row.model.def.sizeLabel} [${row.model.downloaded ? "downloaded" : "remote"}]`;
     case "localDaemon":

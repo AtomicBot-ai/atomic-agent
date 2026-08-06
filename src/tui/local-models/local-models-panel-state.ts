@@ -7,6 +7,32 @@ import type {
 
 export type LocalModelsPanelMode = "list" | "detail" | "backendUpdate" | "pullProgress";
 
+/** Longest status text a one-row slot can hold before it wraps. */
+const STATUS_LINE_MAX_CHARS = 160;
+
+/**
+ * Flatten an error message into something a single-row status slot can
+ * render. `daemonError` / `errorLine` are view-model fields — every
+ * renderer prints them as one `<Text>` inside a fixed row budget — but
+ * their sources are not one-liners: a failed `llama-server` start
+ * carries a 4 KB, ~25-line log tail. Ink overlaps lines when a frame
+ * outgrows its budget rather than clipping, so an unflattened message
+ * corrupts the whole panel.
+ *
+ * Nothing is lost: the full text is also emitted to the runtime feed,
+ * and the raw log lives in the LLM logs tab (`L`).
+ */
+export function toStatusLine(message: string): string {
+  const firstLine = message.split("\n").find((line) => line.trim().length > 0) ?? "";
+  const collapsed = firstLine.trim().replace(/\s+/g, " ");
+  const hadMore = message.trimEnd().includes("\n");
+  const clipped =
+    collapsed.length > STATUS_LINE_MAX_CHARS
+      ? `${collapsed.slice(0, STATUS_LINE_MAX_CHARS - 1)}…`
+      : collapsed;
+  return hadMore ? `${clipped} (press L for the full log)` : clipped;
+}
+
 /**
  * Memory-v2 phase 1B (revised). The panel renders chat and embedding
  * catalogs on a **single screen** with one shared cursor. Indices

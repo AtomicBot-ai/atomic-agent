@@ -12,6 +12,7 @@ import {
   ensureUserConfigFileSync,
   getUserConfigPath,
 } from "./config-file.js";
+import { setCustomLocalModels } from "../local-llm/models-catalog.js";
 import { loadDotenvFromStateDir } from "./load-dotenv.js";
 import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
 import type { UserLlmFileConfig } from "./llm-config.js";
@@ -92,6 +93,9 @@ export function loadConfig(): AtomicAgentConfig {
   loadDotenvFromStateDir(stateDir);
   const userConfigFile = getUserConfigPath(stateDir);
   const user = ensureUserConfigFileSync(userConfigFile);
+  // Publish user-added Hugging Face models to the catalog registry so
+  // `getLocalModelDef` / `isKnownLocalModelId` resolve them everywhere.
+  setCustomLocalModels(user.localModels.customModels);
   const grammarsDir = resolveAssetDir("ATOMIC_AGENT_GRAMMARS_DIR", "grammars");
 
   const browserChannel: BrowserChannel = readBrowserChannel(
@@ -153,6 +157,7 @@ export function loadConfig(): AtomicAgentConfig {
       mode: user.localModels.mode,
       managed: { ...user.localModels.managed },
       embeddings: { ...user.localModels.embeddings },
+      customModels: [...user.localModels.customModels],
     },
     paths: {
       stateDir,

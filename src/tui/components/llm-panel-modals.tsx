@@ -6,6 +6,9 @@ import { ProvidersWizard } from "./providers-wizard.js";
 import { parseExternalUrl } from "../llm-panel/llm-panel-modal-key-bindings.js";
 
 export function LlmPanelModals({ state }: { state: TuiState }): ReactElement | null {
+  if (state.llmPanel.huggingFacePrompt) {
+    return <HuggingFacePrompt prompt={state.llmPanel.huggingFacePrompt} />;
+  }
   if (state.providersPanel.wizard) {
     return <ProvidersWizard wizard={state.providersPanel.wizard} />;
   }
@@ -71,6 +74,52 @@ export function LlmPanelModals({ state }: { state: TuiState }): ReactElement | n
     );
   }
   return null;
+}
+
+/**
+ * One field, two intents: a URL / `owner/name` is resolved and added on
+ * Enter; anything else is searched and comes back as a numbered pick list.
+ */
+function HuggingFacePrompt({
+  prompt,
+}: {
+  prompt: NonNullable<TuiState["llmPanel"]["huggingFacePrompt"]>;
+}): ReactElement {
+  return (
+    <PromptBox tone="accent" title="Add a model from Hugging Face">
+      <Text color={theme.colors.muted}>
+        Paste a model URL, hf://…, an `hf download` command, or owner/name
+        — or type words to search.
+      </Text>
+      <Text>
+        {"> "}
+        {prompt.buffer}
+        {prompt.busy ? "" : "▌"}
+      </Text>
+      {prompt.busy ? (
+        <Text color={theme.colors.accentSoft}>working…</Text>
+      ) : null}
+      {prompt.error ? <Text color={theme.colors.error}>{prompt.error}</Text> : null}
+      {prompt.results.length > 0 ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text color={theme.colors.muted}>press a number to add:</Text>
+          {prompt.results.map((hit, i) => (
+            <Text key={hit.repoId}>
+              <Text bold color={theme.colors.accentSoft}>
+                {" "}
+                {i + 1}
+              </Text>{" "}
+              {hit.repoId}{" "}
+              <Text color={theme.colors.muted}>
+                ({hit.downloads.toLocaleString()} downloads)
+              </Text>
+            </Text>
+          ))}
+        </Box>
+      ) : null}
+      <Text color={theme.colors.muted}>Enter submit · Esc cancel</Text>
+    </PromptBox>
+  );
 }
 
 function PromptBox({

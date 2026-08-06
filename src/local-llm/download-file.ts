@@ -42,6 +42,14 @@ export async function downloadFile(
   if (isGitHub) {
     const token = (process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "").trim();
     if (token) headers.Authorization = `Bearer ${token}`;
+  } else if (url.includes("huggingface.co")) {
+    // Gated / private repos 401 without this; public ones ignore it.
+    const token = (
+      process.env.HF_TOKEN ||
+      process.env.HUGGING_FACE_HUB_TOKEN ||
+      ""
+    ).trim();
+    if (token) headers.Authorization = `Bearer ${token}`;
   }
 
   const res = await fetch(url, {

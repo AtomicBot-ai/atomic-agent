@@ -1,7 +1,7 @@
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
 import { isLocalModelsAction } from "./local-models-actions.js";
-import { totalRowCount } from "./local-models-panel-state.js";
+import { toStatusLine, totalRowCount } from "./local-models-panel-state.js";
 
 function clampCursor(cursor: number, len: number): number {
   if (len <= 0) return 0;
@@ -167,7 +167,7 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
             mode: "list",
             embeddingPull: null,
             loading: false,
-            errorLine: action.error,
+            errorLine: toStatusLine(action.error),
           },
         };
       }
@@ -178,7 +178,7 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
           mode: "list",
           pull: null,
           loading: false,
-          errorLine: action.error,
+          errorLine: toStatusLine(action.error),
         },
       };
     case "local_models_backend_check_started":
@@ -194,7 +194,10 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
         },
       };
     case "local_models_error_set":
-      return { ...state, localModelsPanel: { ...p, errorLine: action.message } };
+      return {
+        ...state,
+        localModelsPanel: { ...p, errorLine: toStatusLine(action.message) },
+      };
     case "local_models_error_cleared":
       return { ...state, localModelsPanel: { ...p, errorLine: null } };
     case "local_models_mode_set":
@@ -220,7 +223,12 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
     case "local_models_daemon_error_set":
       return {
         ...state,
-        localModelsPanel: { ...p, daemonError: action.message, daemonPhase: "idle" },
+        localModelsPanel: {
+          ...p,
+          daemonError:
+            action.message === null ? null : toStatusLine(action.message),
+          daemonPhase: "idle",
+        },
       };
     case "local_llm_logs_loaded":
       return {

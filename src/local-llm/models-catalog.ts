@@ -3,7 +3,7 @@
  * desktop local LLM models; `family` replaces UI-only icon fields.
  */
 
-export type LocalModelId =
+export type CuratedLocalModelId =
   | "qwen-3.5-4b"
   | "qwen-3.5-9b"
   | "qwen-3.5-35b"
@@ -13,6 +13,15 @@ export type LocalModelId =
   | "gemma-4-12b"
   | "gemma-4-26b-a4b"
   | "gemma-4-31b";
+
+/**
+ * Chat model identifier: a curated catalog entry, or a user-added model
+ * pulled from an arbitrary Hugging Face repo (`custom-<slug>`, minted by
+ * `buildCustomModelId`). The `custom-` prefix is load-bearing — it keeps
+ * the typed wall against `EmbeddingModelId` intact (no embedding id can
+ * ever satisfy this type) while leaving the id space open.
+ */
+export type LocalModelId = CuratedLocalModelId | `custom-${string}`;
 
 /**
  * Memory-v2 phase 1B. Embedding model identifiers. A separate union
@@ -42,7 +51,7 @@ export interface LocalModelDef {
   contextLabel: string;
   minRamGb: number;
   recommendedRamGb: number;
-  family: "qwen" | "gemma";
+  family: "qwen" | "gemma" | "custom";
   /**
    * Jinja file under `assets/ai-models/` passed to llama-server as
    * `--chat-template-file`, overriding the template baked into the GGUF.
@@ -264,14 +273,39 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
 
 export const DEFAULT_LLAMACPP_MODEL_ID: LocalModelId = "qwen-3.5-4b";
 
+/**
+ * User-added models (`localModels.customModels` in the user config),
+ * mirrored here so every existing catalog consumer — daemon start, the
+ * installer, the TUI rows, the CLI — resolves them through the same
+ * `getLocalModelDef` / `isKnownLocalModelId` pair.
+ *
+ * Populated by `loadConfig()`; a module-level registry rather than a
+ * `getConfig()` call because `config-schema` imports this file and the
+ * cycle would be worse than the mutable module state.
+ */
+let customModels: readonly LocalModelDef[] = [];
+
+export function setCustomLocalModels(defs: readonly LocalModelDef[]): void {
+  customModels = defs;
+}
+
+export function listCustomLocalModels(): readonly LocalModelDef[] {
+  return customModels;
+}
+
+/** Curated catalog + user-added models, in that order. */
+export function listLocalModels(): readonly LocalModelDef[] {
+  return [...LOCAL_MODELS_CATALOG, ...customModels];
+}
+
 export function getLocalModelDef(id: LocalModelId): LocalModelDef {
-  const found = LOCAL_MODELS_CATALOG.find((m) => m.id === id);
+  const found = listLocalModels().find((m) => m.id === id);
   if (!found) throw new Error(`unknown local model id: ${id}`);
   return found;
 }
 
 export function isKnownLocalModelId(raw: string): raw is LocalModelId {
-  return LOCAL_MODELS_CATALOG.some((m) => m.id === raw);
+  return listLocalModels().some((m) => m.id === raw);
 }
 
 /**

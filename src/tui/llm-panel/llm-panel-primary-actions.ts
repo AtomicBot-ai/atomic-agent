@@ -25,6 +25,9 @@ export function triggerLlmPrimary(
     case "localEmbeddingModel":
       triggerLocalEmbeddingModel(row.model, state, callbacks);
       return;
+    case "localAddHuggingFace":
+      dispatch({ type: "llm_hf_prompt_opened" });
+      return;
     case "localDaemon":
       triggerDaemonAction(state, callbacks);
       return;

@@ -3,6 +3,10 @@ import { totalmem } from "node:os";
 import { getConfig, resetConfigCache } from "../../config/index.js";
 import { hasOtherLiveSessions } from "../../local-llm/session-registry.js";
 import {
+  addCustomModel,
+  removeCustomModel,
+} from "../../config/custom-models-store.js";
+import {
   checkForBackendUpdate,
   DEFAULT_EMBEDDING_MODEL_ID,
   DEFAULT_LLAMACPP_MODEL_ID,
@@ -22,10 +26,13 @@ import {
   isKnownLocalModelId,
   isMmprojDownloaded,
   isModelDownloaded,
+  listLocalModels,
   listVulkanDevices,
-  LOCAL_MODELS_CATALOG,
+  parseHuggingFaceModelRef,
   probeNvidiaVramMiB,
   readBackendVersion,
+  resolveCustomModelFromHuggingFace,
+  searchHuggingFaceGgufModels,
   readLogTail,
   removeEmbeddingModel as removeEmbeddingModelFiles,
   removeModel,
@@ -200,7 +207,7 @@ export class LocalModelsOrchestrator {
     try {
       const cfg = getConfig();
       const dataDir = cfg.paths.localModelsDataDir;
-      const rows = LOCAL_MODELS_CATALOG.map((def) => ({
+      const rows = listLocalModels().map((def) => ({
         id: def.id,
         def,
         downloaded: isModelDownloaded(dataDir, def),
@@ -649,6 +656,128 @@ export class LocalModelsOrchestrator {
   }
 
   /**
+   * `/models add <url|owner/name>` — resolve a Hugging Face repo into a
+   * catalog entry and persist it, so it shows up as an ordinary row the
+   * operator can pull with Enter. Nothing is downloaded here; the
+   * download is the operator's next keystroke.
+   */
+  async addCustomModelFromHuggingFace(reference: string): Promise<void> {
+    this.bus.emit({
+      type: "runtime_info",
+      line: `local-llm: resolving ${reference} on Hugging Face…`,
+    });
+    try {
+      const def = await resolveCustomModelFromHuggingFace(reference);
+      addCustomModel(def);
+      await this.refresh();
+      this.bus.emit({
+        type: "runtime_info",
+        line:
+          `local-llm: added ${def.id} — ${def.filename} (${def.sizeLabel})` +
+          `${def.supportsVision ? " + mmproj" : ""}. ` +
+          `Select it in the Models tab and press Enter to download.`,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.bus.emit({ type: "local_models_error_set", message: msg });
+      this.bus.emit({ type: "runtime_info", line: `local-llm: add failed — ${msg}` });
+    }
+  }
+
+  /**
+   * Submit handler for the "Add a model from Hugging Face" prompt. Input
+   * that parses as a URL / `owner/name` is resolved and added straight
+   * away; anything else is a search whose hits go back into the prompt as
+   * a numbered pick list. Errors stay inside the modal so the operator can
+   * correct the text instead of losing it.
+   */
+  async submitHuggingFacePrompt(text: string): Promise<void> {
+    const query = text.trim();
+    if (query.length === 0) return;
+    this.bus.emit({ type: "llm_hf_prompt_busy_set", busy: true });
+
+    let looksLikeRef = true;
+    try {
+      parseHuggingFaceModelRef(query);
+    } catch {
+      looksLikeRef = false;
+    }
+
+    if (looksLikeRef) {
+      try {
+        const def = await resolveCustomModelFromHuggingFace(query);
+        addCustomModel(def);
+        this.bus.emit({ type: "llm_hf_prompt_closed" });
+        await this.refresh();
+        this.bus.emit({
+          type: "runtime_info",
+          line:
+            `local-llm: added ${def.id} — ${def.filename} (${def.sizeLabel})` +
+            `${def.supportsVision ? " + mmproj" : ""}. ` +
+            `Select it under Local text models and press Enter to download.`,
+        });
+      } catch (e) {
+        this.bus.emit({
+          type: "llm_hf_prompt_failed",
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+      return;
+    }
+
+    try {
+      const hits = await searchHuggingFaceGgufModels(query, 9);
+      if (hits.length === 0) {
+        this.bus.emit({
+          type: "llm_hf_prompt_failed",
+          error: `no GGUF repos matched ${JSON.stringify(query)}`,
+        });
+        return;
+      }
+      this.bus.emit({
+        type: "llm_hf_prompt_results_set",
+        results: hits.map((h) => ({ repoId: h.repoId, downloads: h.downloads })),
+      });
+    } catch (e) {
+      this.bus.emit({
+        type: "llm_hf_prompt_failed",
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  /** `/models search <query>` — list GGUF repos into the runtime feed. */
+  async searchHuggingFace(query: string): Promise<void> {
+    this.bus.emit({
+      type: "runtime_info",
+      line: `local-llm: searching Hugging Face for ${JSON.stringify(query)}…`,
+    });
+    try {
+      const hits = await searchHuggingFaceGgufModels(query, 10);
+      if (hits.length === 0) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: no GGUF repos matched ${JSON.stringify(query)}`,
+        });
+        return;
+      }
+      for (const hit of hits) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: `  ${hit.repoId}  (${hit.downloads.toLocaleString()} downloads, ${hit.likes} likes)`,
+        });
+      }
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: add one with  /models add ${hits[0]!.repoId}`,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.bus.emit({ type: "local_models_error_set", message: msg });
+    }
+  }
+
+  /**
    * Delete a model's on-disk files. If the daemon is currently serving
    * the model we are about to remove, stop it first — otherwise the
    * server keeps the GGUF mmap'd, the next refresh races against a
@@ -683,6 +812,9 @@ export class LocalModelsOrchestrator {
     }
     try {
       await removeModel(dataDir, id);
+      // A custom model is user data, not catalog — removing its files
+      // without removing the entry leaves a permanently empty row.
+      if (id.startsWith("custom-")) removeCustomModel(id);
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: ${def.name} removed`,

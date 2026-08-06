@@ -62,6 +62,8 @@ export function persistUserLocalModelsConfig(partial: {
    * "operator wants hybrid recall on with this model" mutation.
    */
   embeddings?: Partial<UserConfigFile["localModels"]["embeddings"]>;
+  /** Full replacement for `localModels.customModels`. */
+  customModels?: UserConfigFile["localModels"]["customModels"];
 }): void {
   const path = getConfig().paths.userConfigFile;
   const prev = ensureUserConfigFileSync(path);
@@ -71,6 +73,9 @@ export function persistUserLocalModelsConfig(partial: {
     ...prev.localModels,
     ...(partial.url !== undefined ? { url: partial.url } : {}),
     ...(partial.mode !== undefined ? { mode: partial.mode } : {}),
+    ...(partial.customModels !== undefined
+      ? { customModels: partial.customModels }
+      : {}),
     managed: {
       ...prev.localModels.managed,
       ...(partial.managed ?? {}),

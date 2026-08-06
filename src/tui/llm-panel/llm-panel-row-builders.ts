@@ -20,6 +20,9 @@ import type { LlmPanelRow } from "./llm-panel-selectors.js";
 export function selectLocalRows(state: TuiState): readonly LlmPanelRow[] {
   const rows: LlmPanelRow[] = [];
   for (const model of state.localModelsPanel.rows) rows.push(localTextRow(state, model));
+  // Pinned directly under the text models: the curated catalog is a
+  // starting point, not the whole choice, and this is the row that says so.
+  rows.push(addHuggingFaceRow());
   for (const model of state.localModelsPanel.embeddingRows) {
     rows.push(localEmbeddingRow(state, model));
   }
@@ -52,6 +55,16 @@ export function selectExternalRows(state: TuiState): readonly LlmPanelRow[] {
         : "Enter: point the chat route at an external llama.cpp",
     },
   ];
+}
+
+function addHuggingFaceRow(): LlmPanelRow {
+  return {
+    kind: "localAddHuggingFace",
+    id: "local-add-huggingface",
+    mode: "local",
+    primaryAction: "add",
+    enterEffect: "Enter: paste a URL or search",
+  };
 }
 
 export function selectCloudRows(state: TuiState): readonly LlmPanelRow[] {
