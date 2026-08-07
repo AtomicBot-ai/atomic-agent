@@ -19,7 +19,7 @@ interface HotkeyChip {
  * PageUp; Mac keyboards reach it via Fn+Up, and that is the spelling
  * Mac users actually recognise.
  */
-const SCROLL_KEY = process.platform === "darwin" ? "fn+\u2191" : "pgup";
+const SCROLL_KEY = process.platform === "darwin" ? "fn+\u2191\u2193" : "pgup/pgdn";
 
 /**
  * Bottom hint strip: surfaces the keybindings that are meaningful in

@@ -23,7 +23,7 @@ function chatState(overrides: Partial<TuiState> = {}): TuiState {
   };
 }
 
-const SCROLL_KEY = process.platform === "darwin" ? "fn+↑" : "pgup";
+const SCROLL_KEY = process.platform === "darwin" ? "fn+↑↓" : "pgup/pgdn";
 
 describe("HotkeyHint scroll chip", () => {
   it("advertises the chat-scroll key in the idle chat footer", () => {
