@@ -145,12 +145,13 @@ describe("dispatchSlashCommand", () => {
     expect(result.systemMessage).toContain("debug bundle");
   });
 
-  it("opens the LLM panel on the active local/cloud route for /models", () => {
+  it("opens the LLM panel on the active route and requests the picker for /models", () => {
     const result = dispatchSlashCommand("/models");
     expect(result.actions).toEqual([
       { type: "ui_mode_set", mode: "debug" },
       { type: "tab_changed", tab: "llm" },
       { type: "llm_mode_set_to_active_route" },
+      { type: "providers_chat_model_picker_requested", providerId: null },
     ]);
   });
 
@@ -163,13 +164,15 @@ describe("dispatchSlashCommand", () => {
     ]);
   });
 
-  it("opens the chat model picker for /model", () => {
-    const result = dispatchSlashCommand("/model");
-    expect(result.actions).toEqual([
-      { type: "ui_mode_set", mode: "debug" },
-      { type: "tab_changed", tab: "llm" },
-      { type: "providers_chat_model_picker_requested", providerId: null },
-    ]);
+  it("treats /model as an alias of /models (same actions)", () => {
+    expect(dispatchSlashCommand("/model").actions).toEqual(
+      dispatchSlashCommand("/models").actions,
+    );
+  });
+
+  it("routes /model subcommands through the /models dispatcher", () => {
+    const result = dispatchSlashCommand("/model use qwen-3.5-4b");
+    expect(result.localModelsUseModelId).toBe("qwen-3.5-4b");
   });
 
   it("requests persistLlamaUrl for /models with a valid URL", () => {

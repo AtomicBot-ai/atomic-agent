@@ -77,10 +77,6 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
       "open LLM Local/Cloud/External panel · `/llm provider <id>` switch text provider",
   },
   {
-    name: "model",
-    description: "open the LLM Local/Cloud/External panel",
-  },
-  {
     name: "mcp",
     description:
       "open MCP tab (configured servers + discovered tools / resources / prompts) · subcommands: `/mcp add` opens JSON-paste modal, `/mcp remove <name>` opens delete-confirm",
@@ -89,7 +85,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
     name: "models",
     description:
       "open chat model picker · subcommands: pull <id> | use <id> | status | <base-url>",
-    aliases: ["local"],
+    aliases: ["model", "local"],
   },
   { name: "tasks", description: "jump to the Tasks tab (Option 4 cron + ingress UI)" },
   {

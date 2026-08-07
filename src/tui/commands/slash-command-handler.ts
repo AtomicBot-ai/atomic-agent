@@ -216,16 +216,6 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return dispatchMcpSub(parsed.args);
     case "llm":
       return dispatchLlmSub(parsed.args);
-    case "model":
-      // Jump to the LLM tab and, when the active text provider is an
-      // openai-compatible entry, reopen its model picker (#62). The
-      // request no-ops for other kinds, leaving the tab switch as the
-      // whole effect, which matches the previous behavior.
-      return pureActions([
-        { type: "ui_mode_set", mode: "debug" },
-        { type: "tab_changed", tab: "llm" },
-        { type: "providers_chat_model_picker_requested", providerId: null },
-      ]);
     case "models":
       return dispatchModelsSub(parsed.args, parsed.name);
     case "tasks":
@@ -327,8 +317,16 @@ function dispatchThemeSub(rawArgs: string): SlashDispatchResult {
 }
 
 /**
- * Sub-dispatcher for `/models [verb] [args]`. Accepted shapes:
- *   - (bare)        — open the LLM tab on the active local/cloud route.
+ * Sub-dispatcher for `/models [verb] [args]` (aliases: `/model`,
+ * `/local`). `/model` used to be a separate command that only differed
+ * in bare behavior (tab jump + picker request vs tab jump + route sync),
+ * which read as two commands opening the same window; the two were
+ * merged so either spelling lands in one place. Accepted shapes:
+ *   - (bare)        — open the LLM tab on the active local/cloud route
+ *                     and reopen the chat model picker (#62). The picker
+ *                     request no-ops for curated/local kinds, leaving
+ *                     the tab switch as the whole effect there.
+ *                     `/local` pins the local pane and skips the picker.
  *   - `pull <id>`   — open the tab and kick off a pull for the given id.
  *   - `use <id>`    — open the tab and set the given id as active.
  *   - `status`      — emit the managed-runtime status line in the feed.
@@ -338,12 +336,18 @@ function dispatchModelsSub(rawArgs: string, commandName: string): SlashDispatchR
   const argPart = rawArgs.trim();
   const bits = argPart.split(/\s+/).filter(Boolean);
   if (argPart.length === 0) {
+    if (commandName === "local") {
+      return pureActions([
+        { type: "ui_mode_set", mode: "debug" },
+        { type: "tab_changed", tab: "llm" },
+        { type: "llm_mode_set", mode: "local" },
+      ]);
+    }
     return pureActions([
       { type: "ui_mode_set", mode: "debug" },
       { type: "tab_changed", tab: "llm" },
-      commandName === "local"
-        ? { type: "llm_mode_set", mode: "local" }
-        : { type: "llm_mode_set_to_active_route" },
+      { type: "llm_mode_set_to_active_route" },
+      { type: "providers_chat_model_picker_requested", providerId: null },
     ]);
   }
   if (bits[0] === "pull" && bits[1]) {
