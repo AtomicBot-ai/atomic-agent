@@ -428,6 +428,12 @@ function persistLlamaUrl(
 ): void {
   void (async () => {
     try {
+      // Immediate feedback: the probe can take up to 8s against a dead
+      // host, and a silent gap reads as a freeze (#65).
+      bus.emit({
+        type: "runtime_info",
+        line: `probing ${nextUrl}…`,
+      });
       const health = await checkLlamaServer({
         url: nextUrl,
         retries: 0,
@@ -435,6 +441,33 @@ function persistLlamaUrl(
         timeoutMs: 8000,
       });
       if (!health.reachable) {
+        // An OpenAI-compatible runner (KoboldCpp, LM Studio, vLLM) is a
+        // real server, just not one the external llama.cpp route can
+        // drive. Say so and point at the path that works, instead of
+        // letting a false pass switch the route onto it and hang (#65,
+        // #66).
+        if (health.kind === "openai-compat") {
+          bus.emit({
+            type: "runtime_info",
+            line:
+              `${nextUrl} answers like an OpenAI-compatible server, not ` +
+              `llama.cpp. Add it as a cloud provider instead: LLM tab -> ` +
+              `Cloud -> n (add provider) -> openai-compatible, base URL ${nextUrl}.`,
+          });
+          return;
+        }
+        // A 503 with llama.cpp's loading body is the right server at a
+        // wrong moment; telling the operator to reconfigure would be a
+        // lie. Just say to come back once the model is up.
+        if (health.kind === "llama-loading") {
+          bus.emit({
+            type: "runtime_info",
+            line:
+              `${nextUrl} is a llama.cpp server that is still loading its ` +
+              `model. Give it a minute and save the URL again.`,
+          });
+          return;
+        }
         bus.emit({
           type: "runtime_info",
           line: `local-llm /health failed at ${nextUrl}: ${health.error ?? "unknown"}`,
