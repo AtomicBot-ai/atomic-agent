@@ -63,7 +63,7 @@ function readContextLength(m: AimlapiApiModel): number {
  * `undefined` means "the response says nothing about it", which is the
  * case for the whole current catalog: the `features` array was removed
  * and nothing replaced it. Callers must not read that silence as "no
- * tools" — doing so filtered out all 337 chat models and silently pinned
+ * tools": doing so filtered out all 337 chat models and silently pinned
  * the picker to the offline list.
  */
 function readAdvertisedToolSupport(
@@ -90,6 +90,9 @@ function readToolSupport(m: AimlapiApiModel): "none" | "basic" | "parallel" {
 }
 
 function readVisionSupport(m: AimlapiApiModel): boolean {
+  // Unlike tools, silence deliberately reads as "no vision": overclaiming
+  // would invite image input that the backend rejects, while underclaiming
+  // only hides a badge and never empties the catalog.
   return (m.features ?? []).some((f) => f.includes(".vision"));
 }
 
@@ -147,11 +150,12 @@ export function listAimlapiChatPicks(): readonly AimlapiChatPick[] {
 /**
  * Pull the public aimlapi catalog and rebuild the TUI picker.
  *
- * Filters to rows where `type === "chat-completion"` and the model
- * advertises a `*.function` feature (the agent loop relies on tool
- * calling). Models with `type === "responses"` (e.g. `openai/o3-pro`)
- * are intentionally excluded — they live on `/v1/responses` and 404 on
- * `/v1/chat/completions`.
+ * Keeps rows whose `type` is a chat-completions variant (see
+ * {@link isChatCompletionType}) and drops a model only when the API
+ * explicitly advertises that it cannot call tools; a missing `features`
+ * array is treated as silence, not as "no". Rows on other surfaces
+ * (`responses`, `anthropic/messages`, image/video generations) are
+ * excluded because they 404 on `/v1/chat/completions`.
  *
  * For ids that exist in {@link AIMLAPI_MODELS_CATALOG}, the static
  * entry wins (we hand-curate pricing/cache flags). For new live ids,
@@ -170,6 +174,9 @@ export async function refreshAimlapiChatCatalogFromApi(): Promise<boolean> {
 
     const liveById = new Map<string, AimlapiApiModel>();
     for (const m of rows) {
+      // A single null or scalar row must not throw and drag the whole
+      // live catalog into the static fallback.
+      if (!m || typeof m !== "object") continue;
       if (typeof m.id !== "string" || m.id.length === 0) continue;
       if (!isChatCompletionType(m.type)) continue;
       // Only drop a model when the API explicitly says it cannot call

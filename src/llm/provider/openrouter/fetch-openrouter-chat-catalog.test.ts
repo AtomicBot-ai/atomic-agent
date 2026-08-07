@@ -3,6 +3,26 @@ import {
   listOpenRouterChatPicks,
   refreshOpenRouterChatCatalogFromApi,
 } from "./fetch-openrouter-chat-catalog.js";
+import {
+  OPENROUTER_CHAT_MODEL_ORDER,
+  OPENROUTER_MODELS_CATALOG,
+} from "./openrouter-models-catalog.js";
+
+function staticChatIds(): readonly string[] {
+  return OPENROUTER_CHAT_MODEL_ORDER.filter(
+    (id) => OPENROUTER_MODELS_CATALOG.get(id)?.kind === "chat",
+  );
+}
+
+/**
+ * The picks cache lives at module scope, so a fallback test running after
+ * a successful refresh would happily read the previous test's cache and
+ * prove nothing. A fresh module instance starts with an empty cache.
+ */
+async function importFreshModule() {
+  vi.resetModules();
+  return import("./fetch-openrouter-chat-catalog.js");
+}
 
 describe("refreshOpenRouterChatCatalogFromApi", () => {
   afterEach(() => {
@@ -92,10 +112,39 @@ describe("refreshOpenRouterChatCatalogFromApi", () => {
         throw new Error("network down");
       }),
     );
-    const ok = await refreshOpenRouterChatCatalogFromApi();
+    const mod = await importFreshModule();
+    const ok = await mod.refreshOpenRouterChatCatalogFromApi();
     expect(ok).toBe(false);
-    // The offline list is still served, so the picker is never empty.
-    expect(listOpenRouterChatPicks().length).toBeGreaterThan(0);
+    // The exact offline list, not a leftover live cache.
+    expect(mod.listOpenRouterChatPicks().map((p) => p.id)).toEqual(
+      staticChatIds(),
+    );
+  });
+
+  it("skips null rows in data instead of losing the whole live catalog", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          data: [
+            null,
+            "not-an-object",
+            {
+              id: "vendor/ok",
+              name: "OK",
+              context_length: 128_000,
+              pricing: { prompt: "0.000001", completion: "0.000002" },
+              supported_parameters: ["tools"],
+            },
+          ],
+        }),
+      })),
+    );
+
+    const ok = await refreshOpenRouterChatCatalogFromApi();
+    expect(ok).toBe(true);
+    expect(listOpenRouterChatPicks().map((p) => p.id)).toEqual(["vendor/ok"]);
   });
 
   it("keeps models when supported_parameters is absent", async () => {

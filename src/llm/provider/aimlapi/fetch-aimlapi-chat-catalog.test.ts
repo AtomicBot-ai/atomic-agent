@@ -1,8 +1,28 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  AIMLAPI_CHAT_MODEL_ORDER,
+  AIMLAPI_MODELS_CATALOG,
+} from "./aimlapi-models-catalog.js";
+import {
   listAimlapiChatPicks,
   refreshAimlapiChatCatalogFromApi,
 } from "./fetch-aimlapi-chat-catalog.js";
+
+function staticChatIds(): readonly string[] {
+  return AIMLAPI_CHAT_MODEL_ORDER.filter(
+    (id) => AIMLAPI_MODELS_CATALOG.get(id)?.kind === "chat",
+  );
+}
+
+/**
+ * The picks cache lives at module scope, so a fallback test running after
+ * a successful refresh would happily read the previous test's cache and
+ * prove nothing. A fresh module instance starts with an empty cache.
+ */
+async function importFreshModule() {
+  vi.resetModules();
+  return import("./fetch-aimlapi-chat-catalog.js");
+}
 
 describe("refreshAimlapiChatCatalogFromApi", () => {
   afterEach(() => {
@@ -129,7 +149,7 @@ describe("refreshAimlapiChatCatalogFromApi", () => {
     expect(picks.some((p) => p.id === "openai/gpt-5-2")).toBe(true);
   });
 
-  it("returns false and leaves a static fallback when the API call fails", async () => {
+  it("returns false and serves the static catalog when the API call fails", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
@@ -137,10 +157,13 @@ describe("refreshAimlapiChatCatalogFromApi", () => {
       }),
     );
 
-    const ok = await refreshAimlapiChatCatalogFromApi();
+    const mod = await importFreshModule();
+    const ok = await mod.refreshAimlapiChatCatalogFromApi();
     expect(ok).toBe(false);
-    const picks = listAimlapiChatPicks();
-    expect(picks.length).toBeGreaterThan(0);
+    // The exact offline list, not a leftover live cache.
+    expect(mod.listAimlapiChatPicks().map((p) => p.id)).toEqual(
+      staticChatIds(),
+    );
   });
 
   it("keeps every advertised model instead of a capped head", async () => {
@@ -307,8 +330,35 @@ describe("refreshAimlapiChatCatalogFromApi", () => {
       "fetch",
       vi.fn(async () => ({ ok: true, json: async () => ({ nope: true }) })),
     );
-    const ok = await refreshAimlapiChatCatalogFromApi();
+    const mod = await importFreshModule();
+    const ok = await mod.refreshAimlapiChatCatalogFromApi();
     expect(ok).toBe(false);
-    expect(listAimlapiChatPicks().length).toBeGreaterThan(0);
+    expect(mod.listAimlapiChatPicks().map((p) => p.id)).toEqual(
+      staticChatIds(),
+    );
+  });
+
+  it("skips null rows in data instead of losing the whole live catalog", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          data: [
+            null,
+            "not-an-object",
+            {
+              id: "vendor/ok",
+              type: "openai/chat-completions",
+              info: { contextLength: 8000 },
+            },
+          ],
+        }),
+      })),
+    );
+
+    const ok = await refreshAimlapiChatCatalogFromApi();
+    expect(ok).toBe(true);
+    expect(listAimlapiChatPicks().map((p) => p.id)).toEqual(["vendor/ok"]);
   });
 });

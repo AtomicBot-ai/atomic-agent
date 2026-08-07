@@ -43,12 +43,26 @@ function maskedKey(buffer: string): string {
   return masked + extra;
 }
 
+/** Keep long server model lists inside a fixed viewport around the cursor. */
+const PICK_WINDOW = 12;
+
 function renderPickList(
   title: string,
   options: readonly { label: string }[],
   cursor: number,
   hint: string,
 ): ReactElement {
+  // Window every pick list, not just the openai-compatible step: the live
+  // OpenRouter/aimlapi catalogs run past 300 rows, and an unwindowed map
+  // would paint them all into the terminal at once.
+  const total = options.length;
+  const clamped = Math.min(Math.max(cursor, 0), Math.max(0, total - 1));
+  const start = Math.min(
+    Math.max(0, clamped - Math.floor(PICK_WINDOW / 2)),
+    Math.max(0, total - PICK_WINDOW),
+  );
+  const visible = options.slice(start, start + PICK_WINDOW);
+  const position = total > PICK_WINDOW ? ` (${clamped + 1}/${total})` : "";
   return (
     <Box
       flexDirection="column"
@@ -61,15 +75,22 @@ function renderPickList(
       <Text bold color={theme.colors.accentSoft}>
         {title}
       </Text>
-      {options.map((opt, i) => {
-        const mark = i === cursor ? ">" : " ";
+      {visible.map((opt, i) => {
+        const index = start + i;
+        const mark = index === clamped ? ">" : " ";
         return (
-          <Text key={`${i}-${opt.label}`} color={i === cursor ? theme.colors.accentSoft : undefined}>
+          <Text
+            key={`${index}-${opt.label}`}
+            color={index === clamped ? theme.colors.accentSoft : undefined}
+          >
             {mark} {opt.label}
           </Text>
         );
       })}
-      <Text color={theme.colors.muted}>{hint}</Text>
+      <Text color={theme.colors.muted}>
+        {hint}
+        {position}
+      </Text>
     </Box>
   );
 }
@@ -109,9 +130,6 @@ function renderLineField(props: {
   );
 }
 
-/** Keep long server model lists inside a fixed viewport around the cursor. */
-const PICK_WINDOW = 12;
-
 function CompatChatModelStep(props: {
   wizard: ProvidersWizardState;
 }): ReactElement {
@@ -150,16 +168,11 @@ function CompatChatModelStep(props: {
 
   const picks = listCompatChatModelPicks(w);
   if (picks.length > 0) {
-    const cursor = Math.min(w.cursor, picks.length - 1);
-    const start = Math.min(
-      Math.max(0, cursor - Math.floor(PICK_WINDOW / 2)),
-      Math.max(0, picks.length - PICK_WINDOW),
-    );
     return renderPickList(
       `Chat model — ${picks.length} from ${baseUrl}/v1/models`,
-      picks.slice(start, start + PICK_WINDOW).map((id) => ({ label: id })),
-      cursor - start,
-      `↑/↓ move (${cursor + 1}/${picks.length}) · Enter select · type to enter an id by hand · Esc cancel`,
+      picks.map((id) => ({ label: id })),
+      w.cursor,
+      "↑/↓ move · Enter select · type to enter an id by hand · Esc cancel",
     );
   }
 

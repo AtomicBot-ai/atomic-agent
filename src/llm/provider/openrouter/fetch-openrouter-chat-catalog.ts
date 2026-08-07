@@ -76,6 +76,9 @@ function scoreChat(m: OpenRouterApiModel): number {
 
 function apiRowToEntry(m: OpenRouterApiModel): ModelCatalogEntry {
   const id = m.id!;
+  // Unlike tools, silence deliberately reads as "no vision": overclaiming
+  // would invite image input that the route rejects, while underclaiming
+  // only hides a badge and never empties the catalog.
   const vision = (m.architecture?.input_modalities ?? []).includes("image");
   return {
     id,
@@ -139,8 +142,14 @@ export async function refreshOpenRouterChatCatalogFromApi(): Promise<boolean> {
       signal: AbortSignal.timeout(20_000),
     });
     if (!res.ok) return false;
-    const json = (await res.json()) as { data?: OpenRouterApiModel[] };
-    const rows = json.data ?? [];
+    const json = (await res.json()) as {
+      data?: (OpenRouterApiModel | null)[];
+    };
+    // A single null or scalar row must not throw and drag the whole live
+    // catalog into the static fallback.
+    const rows = (json.data ?? []).filter(
+      (m): m is OpenRouterApiModel => !!m && typeof m === "object",
+    );
     const ranked = rows
       .filter((m) => scoreChat(m) >= 0)
       .sort((a, b) => scoreChat(b) - scoreChat(a));
