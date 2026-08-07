@@ -23,6 +23,11 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   },
   { name: "help", description: "list available slash commands" },
   {
+    name: "tools",
+    description:
+      "list built-in tools (fs, shell, browser, memory, vision): `/tools` | `/tools <query>`",
+  },
+  {
     name: "theme",
     description:
       "switch the UI theme: `/theme <name>` | `/theme list` (github, catppuccin, dracula, nord, …)",

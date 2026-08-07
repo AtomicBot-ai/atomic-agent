@@ -3,6 +3,7 @@ import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js
 import { isThemeName, THEME_NAMES } from "../theme/theme.js";
 import { parseSlashCommand } from "./slash-command-parser.js";
 import { resolveSlashCommand, SLASH_COMMANDS } from "./slash-commands.js";
+import { renderToolsOverview, renderToolsSearch } from "./tools-listing.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -196,6 +197,8 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return pureActions([], { triggerSessionPicker: true });
     case "new":
       return pureActions([], { triggerSessionNew: true });
+    case "tools":
+      return dispatchToolsSub(parsed.args);
     case "skills":
       return dispatchSkillsSub(parsed.args);
     case "skill":
@@ -483,6 +486,21 @@ function dispatchLlmSub(rawArgs: string): SlashDispatchResult {
   }
   return pureActions([], {
     systemMessage: "usage: /llm | /llm provider <id>",
+  });
+}
+
+/**
+ * `/tools` answers "what can this agent actually do" without touching a
+ * panel: the listing is pure text, filtered through the same config
+ * gates the runtime applies so disabled families never show up.
+ * Users used to search /skills for "filesystem", find nothing, and
+ * conclude the agent could not touch files (#71).
+ */
+function dispatchToolsSub(rawArgs: string): SlashDispatchResult {
+  const query = rawArgs.trim();
+  return pureActions([], {
+    systemMessage:
+      query.length === 0 ? renderToolsOverview() : renderToolsSearch(query),
   });
 }
 
