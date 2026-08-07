@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 
+import { getConfig } from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import { stderrSink } from "../tracing/structured-logger.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
@@ -112,6 +113,22 @@ function parseArgs(args: string[]): ServeArgs | { help: true } | { error: string
 }
 
 /**
+ * Boot-time approval resolution for `serve` — the same contract `run`
+ * and `tui` apply: the persisted `agent.approvalRequired` is the
+ * baseline and `--no-approval` can only force approvals OFF for this
+ * process, never back on. Keeping serve on this rule makes the Privacy
+ * tab's "persists to config.json and applies to future runs too"
+ * promise hold for every interactive entry point. Exported for unit
+ * tests.
+ */
+export function resolveServeApprovalRequired(
+  noApproval: boolean,
+  configApprovalRequired: boolean,
+): boolean {
+  return !noApproval && configApprovalRequired;
+}
+
+/**
  * Entry point for `atomic-agent serve`. Boots the shared agent runtime
  * once, wires it to an HTTP-facing approval bus, starts the server,
  * and hands control to the host process until SIGINT/SIGTERM. Per-turn
@@ -139,7 +156,10 @@ export async function serveCommand(args: string[]): Promise<number> {
   try {
     runtime = await createAgentRuntime({
       workingDir: parsed.workingDir,
-      approvalRequired: !parsed.noApproval,
+      approvalRequired: resolveServeApprovalRequired(
+        parsed.noApproval,
+        getConfig().agent.approvalRequired,
+      ),
       traceDefault: true,
       handlers: {
         logSinks: [stderrSink],

@@ -34,7 +34,10 @@ export function createCapabilitiesHandler(): HttpHandler {
         tokenBudget: runtime.config.agent.tokenBudget,
         maxSteps: runtime.config.agent.maxSteps,
         toolTimeoutMs: runtime.config.agent.toolTimeoutMs,
-        approvalRequired: runtime.config.agent.approvalRequired,
+        // Live gate state, not the boot-time config snapshot: reflects
+        // `--no-approval` and later `setApprovalRequired` calls (the
+        // Privacy-tab toggle), so admin UIs render the truth.
+        approvalRequired: runtime.isApprovalRequired(),
       },
       tools: runtime.toolRegistry.list().map((t) => ({
         name: t.name,

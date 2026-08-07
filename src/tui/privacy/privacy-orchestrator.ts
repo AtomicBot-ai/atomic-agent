@@ -49,11 +49,17 @@ export class PrivacyOrchestrator {
    * live approval gate. `on = true` means the agent runs every
    * approval-gated action without asking, now and on future runs, until
    * toggled back. Fire-safe: a failure surfaces as a sticky error line.
+   * When the persist step succeeded and only the hot-apply threw, the
+   * error says so explicitly: config.json is already rewritten, so the
+   * next boot will come up with the new value even though this process
+   * kept the old gate state.
    */
   async setApproveEverything(on: boolean): Promise<void> {
     this.bus.emit({ type: "privacy_action_started" });
+    let persisted = false;
     try {
       persistApprovalRequired(!on);
+      persisted = true;
       this.runtime.setApprovalRequired(!on);
       this.bus.emit({
         type: "privacy_action_settled",
@@ -64,14 +70,11 @@ export class PrivacyOrchestrator {
       this.refresh();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.bus.emit({
-        type: "privacy_action_settled",
-        error: `approve everything toggle failed: ${msg}`,
-      });
-      this.bus.emit({
-        type: "runtime_info",
-        line: `privacy: approve everything toggle failed: ${msg}`,
-      });
+      const line = persisted
+        ? `approve everything toggle failed live, but config.json was already rewritten (next start uses the new value): ${msg}`
+        : `approve everything toggle failed: ${msg}`;
+      this.bus.emit({ type: "privacy_action_settled", error: line });
+      this.bus.emit({ type: "runtime_info", line: `privacy: ${line}` });
     }
   }
 

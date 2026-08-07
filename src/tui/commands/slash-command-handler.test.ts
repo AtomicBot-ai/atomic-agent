@@ -298,4 +298,46 @@ describe("dispatchSlashCommand", () => {
     expect(result.actions).toEqual([]);
     expect(result.systemMessage).toContain("unknown theme");
   });
+
+  it("opens the Privacy tab for bare /privacy", () => {
+    const result = dispatchSlashCommand("/privacy");
+    expect(result.actions).toEqual([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "privacy" },
+    ]);
+    expect(result.approveEverythingVerb).toBeUndefined();
+  });
+
+  it("emits approveEverythingVerb and opens the tab for /privacy approve on|off", () => {
+    const on = dispatchSlashCommand("/privacy approve on");
+    expect(on.approveEverythingVerb).toBe("on");
+    expect(on.actions).toEqual([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "privacy" },
+    ]);
+
+    const off = dispatchSlashCommand("/privacy approve off");
+    expect(off.approveEverythingVerb).toBe("off");
+    expect(off.actions).toEqual([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "privacy" },
+    ]);
+  });
+
+  it("prints usage for /privacy approve without an explicit on|off", () => {
+    // No bare form on purpose: `on` means "run everything without
+    // asking", so the target state must be named.
+    for (const raw of ["/privacy approve", "/privacy approve maybe"]) {
+      const result = dispatchSlashCommand(raw);
+      expect(result.approveEverythingVerb).toBeUndefined();
+      expect(result.actions).toEqual([]);
+      expect(result.systemMessage).toContain("/privacy approve on | off");
+    }
+  });
+
+  it("still routes /privacy analytics <verb> to the analytics side-effect", () => {
+    const result = dispatchSlashCommand("/privacy analytics off");
+    expect(result.analyticsVerb).toBe("disable");
+    expect(result.approveEverythingVerb).toBeUndefined();
+  });
 });

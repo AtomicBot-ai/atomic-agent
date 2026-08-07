@@ -194,6 +194,11 @@ export function runSlashCommand(
         break;
     }
   }
+  if (result.approveEverythingVerb) {
+    void callbacks.onApproveEverythingSetRequested?.(
+      result.approveEverythingVerb === "on",
+    );
+  }
 }
 
 function runTelegramVerb(

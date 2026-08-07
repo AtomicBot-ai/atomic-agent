@@ -114,4 +114,26 @@ describe("PrivacyOrchestrator — approve everything", () => {
     const settled = actions.find((a) => a.type === "privacy_action_settled");
     expect(settled?.error).toContain("boom");
   });
+
+  it("names the already-rewritten config.json when persist won but hot-apply lost", async () => {
+    // persistApprovalRequired runs first and succeeds (real state dir),
+    // then the gate throws. The operator must learn the two surfaces
+    // diverged: this process kept the old gate, the next boot will not.
+    const { actions, bus } = makeBus();
+    const runtime = {
+      isApprovalRequired: () => true,
+      setApprovalRequired: () => {
+        throw new Error("boom");
+      },
+    } as unknown as AgentRuntime;
+    await new PrivacyOrchestrator(runtime, bus).toggleApproveEverything();
+
+    const onDisk = JSON.parse(
+      readFileSync(getConfig().paths.userConfigFile, "utf8"),
+    );
+    expect(onDisk.agent.approvalRequired).toBe(false); // persist DID land
+    const settled = actions.find((a) => a.type === "privacy_action_settled");
+    expect(settled?.error).toContain("config.json was already rewritten");
+    expect(settled?.error).toContain("next start uses the new value");
+  });
 });

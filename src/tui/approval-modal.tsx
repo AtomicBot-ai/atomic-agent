@@ -50,6 +50,10 @@ export function ApprovalModal({ request }: ApprovalModalProps): ReactElement {
           <Text color="green">[y]</Text> approve   <Text color="red">[n]</Text> deny   <Text color="gray">[esc]</Text> abort run
         </Text>
       </Box>
+      <Text color="gray">
+        y approves this call only; turn approvals off on the Privacy tab
+        (/privacy)
+      </Text>
     </Box>
   );
 }

@@ -297,6 +297,11 @@ export interface TuiAppCallbacks {
    * live and in `config.json`; on = the agent runs without asking).
    */
   onApproveEverythingToggleRequested?(): void | Promise<void>;
+  /**
+   * Privacy tab: set approve-everything to an explicit value (the
+   * `/privacy approve on|off` slash-command path).
+   */
+  onApproveEverythingSetRequested?(on: boolean): void | Promise<void>;
   /** Privacy tab: re-read the persisted `analytics.enabled` snapshot. */
   onPrivacyRefreshRequested?(): void;
   /** Import tab: run a dry-run preview of the Hermes import. */

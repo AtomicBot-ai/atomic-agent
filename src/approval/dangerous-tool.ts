@@ -2,7 +2,12 @@ import type { ApprovalGate } from "./approval-gate.js";
 
 export interface DangerousToolOptions {
   approvals: ApprovalGate;
-  /** When false, the gate is bypassed (used in tests and `--no-approval`). */
+  /**
+   * Test-only seam: production wiring always passes `true` (see the
+   * bootstrap's `dangerous` options), and the ApprovalGate owns the live
+   * switch via its auto-approve mode. `false` here skips the gate
+   * entirely and exists so unit tests can exercise tools without one.
+   */
   approvalRequired: boolean;
 }
 

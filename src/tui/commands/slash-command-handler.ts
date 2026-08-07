@@ -82,6 +82,13 @@ export interface SlashDispatchResult {
    * the privacy orchestrator.
    */
   readonly analyticsVerb?: "enable" | "disable" | "status";
+  /**
+   * `/privacy approve <on|off>` side-effect: set the approve-everything
+   * toggle to an explicit value (`on` = the agent runs approval-gated
+   * actions without asking). The caller (submit-handler) maps this to
+   * `PrivacyOrchestrator.setApproveEverything`.
+   */
+  readonly approveEverythingVerb?: "on" | "off";
 }
 
 /**
@@ -286,6 +293,7 @@ function pureActions(
     setThemeName: undefined,
     telegramVerb: undefined,
     analyticsVerb: undefined,
+    approveEverythingVerb: undefined,
     ...overrides,
   };
 }
@@ -614,9 +622,12 @@ function dispatchTelegramSub(rawArgs: string): SlashDispatchResult {
 }
 
 /**
- * Sub-dispatcher for `/privacy [analytics <verb>]`. Bare `/privacy`
- * opens the Privacy tab. `/privacy analytics on|off|status` forwards to
- * the same analytics side-effect as the top-level `/analytics` command.
+ * Sub-dispatcher for `/privacy [analytics <verb> | approve <on|off>]`.
+ * Bare `/privacy` opens the Privacy tab. `/privacy analytics
+ * on|off|status` forwards to the same analytics side-effect as the
+ * top-level `/analytics` command. `/privacy approve on|off` sets the
+ * approve-everything toggle to an explicit value (mirrors the panel's
+ * `y` hotkey, but idempotent because the target state is named).
  */
 function dispatchPrivacySub(rawArgs: string): SlashDispatchResult {
   const argPart = rawArgs.trim();
@@ -630,8 +641,36 @@ function dispatchPrivacySub(rawArgs: string): SlashDispatchResult {
   if ((bits[0] ?? "").toLowerCase() === "analytics") {
     return dispatchAnalyticsSub(bits.slice(1).join(" "));
   }
+  if ((bits[0] ?? "").toLowerCase() === "approve") {
+    return dispatchApproveSub(bits.slice(1).join(" "));
+  }
   return pureActions([], {
-    systemMessage: "usage: /privacy | /privacy analytics on|off|status",
+    systemMessage:
+      "usage: /privacy | /privacy analytics on|off|status | /privacy approve on|off",
+  });
+}
+
+/**
+ * Sub-dispatcher for `/privacy approve <on|off>`. Opens the Privacy tab
+ * so the toggle's new state (and its warning copy) is visible, then
+ * asks the caller to run `setApproveEverything`. No bare form: the verb
+ * is deliberately explicit because `on` means "run everything without
+ * asking".
+ */
+function dispatchApproveSub(rawArgs: string): SlashDispatchResult {
+  const verb = rawArgs.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+  const openPrivacyTab: TuiAction[] = [
+    { type: "ui_mode_set", mode: "debug" },
+    { type: "tab_changed", tab: "privacy" },
+  ];
+  if (verb === "on") {
+    return pureActions(openPrivacyTab, { approveEverythingVerb: "on" });
+  }
+  if (verb === "off") {
+    return pureActions(openPrivacyTab, { approveEverythingVerb: "off" });
+  }
+  return pureActions([], {
+    systemMessage: "usage: /privacy approve on | off",
   });
 }
 

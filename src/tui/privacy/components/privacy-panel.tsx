@@ -66,7 +66,8 @@ export function PrivacyPanel({ panel }: PrivacyPanelProps): ReactElement {
       <Box marginTop={1} flexDirection="column">
         <Text color={theme.colors.muted}>
           {"   "}Covers shell commands, file writes and deletes, HTTP
-          requests, process kills, and script runs. Hardline guards still
+          requests, process kills, script runs, and browser navigation to
+          non-web URLs (file://, javascript:). Hardline guards still
           block catastrophic commands (rm -rf /, disk formats) either way.
           Persists to config.json and applies to future runs too.
         </Text>

@@ -77,4 +77,18 @@ describe("handleEditorSubmit", () => {
     expect(onDebugBundleExportRequested).toHaveBeenCalledTimes(1);
     expect(onDebugBundleExportRequested).toHaveBeenCalledWith(state);
   });
+
+  it("maps /privacy approve on|off onto onApproveEverythingSetRequested", () => {
+    const state = createInitialTuiState(fakeSession());
+    const onApproveEverythingSetRequested = vi.fn();
+    const dispatch = vi.fn();
+    const callbacks = stubCallbacks({ onApproveEverythingSetRequested });
+
+    handleEditorSubmit("/privacy approve on", state, dispatch, callbacks);
+    expect(onApproveEverythingSetRequested).toHaveBeenCalledWith(true);
+
+    handleEditorSubmit("/privacy approve off", state, dispatch, callbacks);
+    expect(onApproveEverythingSetRequested).toHaveBeenCalledWith(false);
+    expect(onApproveEverythingSetRequested).toHaveBeenCalledTimes(2);
+  });
 });

@@ -14,6 +14,10 @@ import type {
   BotFactory,
   BotInstance,
 } from "../channels/telegram/index.js";
+import type {
+  ApprovalGate,
+  ApprovalRequest,
+} from "../approval/approval-gate.js";
 import type { ChannelStatus } from "./channel-status.js";
 import { GEMMA4_PROPS } from "../llm/model-profile.fixtures.js";
 import type {
@@ -21,6 +25,8 @@ import type {
   BrowserBackend,
   ClickInput,
   NavigateInput,
+  ScrollInput,
+  ScrollResult,
   SearchInput,
   TabInfo,
   TabsInput,
@@ -57,6 +63,12 @@ class FakeBackend implements BrowserBackend {
   }
   async tabs(_input: TabsInput): Promise<{ tabs: TabInfo[] }> {
     return { tabs: [] };
+  }
+  async hasRef(): Promise<boolean> {
+    return false;
+  }
+  async scroll(_input: ScrollInput): Promise<ScrollResult> {
+    return { scrollY: 0, scrollHeight: 0, viewportHeight: 800 };
   }
 }
 
@@ -107,6 +119,59 @@ describe("createAgentRuntime", () => {
       expect(names).toContain("os.clipboard.read");
       expect(names).toContain("skill.view");
       expect(names).toContain("skill.run_script");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("keeps the ApprovalGate the single live switch: a no-approval boot flips back to interactive", async () => {
+    // Locked invariant: tools always register `approvalRequired: true`;
+    // boot flags land in the gate's auto-approve mode. A tool-level
+    // `false` would freeze this boot's value forever and the second
+    // half of this test would hang waiting for a prompt that never fires.
+    const prompts: ApprovalRequest[] = [];
+    let gate: ApprovalGate | null = null;
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalRequired: false,
+      handlers: {
+        onApprovalRequest: (request) => {
+          prompts.push(request);
+          gate?.resolve({
+            approvalId: request.approvalId,
+            approved: false,
+            reason: "test-denied",
+          });
+        },
+      },
+      overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
+    });
+    gate = runtime.approvals;
+    try {
+      const ctx = {
+        workingDir,
+        sessionId: "s-approve-flip",
+        stepIndex: 0,
+        signal: new AbortController().signal,
+      };
+      // Auto-approve boot: dangerous navigation runs without a prompt.
+      await runtime.toolRegistry.invoke(
+        "browser.navigate",
+        { url: "file:///etc/hosts" },
+        ctx,
+      );
+      expect(prompts).toHaveLength(0);
+
+      runtime.setApprovalRequired(true);
+      await expect(
+        runtime.toolRegistry.invoke(
+          "browser.navigate",
+          { url: "file:///etc/hosts" },
+          ctx,
+        ),
+      ).rejects.toThrow(/approval denied/);
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]?.tool).toBe("browser.navigate");
     } finally {
       await runtime.shutdown();
     }

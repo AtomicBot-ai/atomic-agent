@@ -45,6 +45,17 @@ describe("PrivacyPanel — approve everything row", () => {
     expect(lastFrame() ?? "").toContain("Hardline guards still");
   });
 
+  it("lists every gated surface, including browser navigation", () => {
+    // The user-facing coverage list may never undersell the internal one
+    // in bootstrap.ts (shell, file writes, HTTP, process kills, script
+    // runs, browser navigation to non-web URLs).
+    const frame =
+      render(<PrivacyPanel panel={panelState()} />).lastFrame() ?? "";
+    expect(frame).toContain("browser navigation");
+    expect(frame).toContain("file://");
+    expect(frame).toContain("javascript:");
+  });
+
   it("keeps the analytics row intact next to the new toggle", () => {
     const { lastFrame } = render(
       <PrivacyPanel
