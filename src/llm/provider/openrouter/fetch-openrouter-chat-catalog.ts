@@ -6,7 +6,6 @@ import {
 
 const MODELS_URL = "https://openrouter.ai/api/v1/models";
 const CACHE_TTL_MS = 60 * 60 * 1000;
-const MAX_PICKS = 12;
 
 type OpenRouterApiModel = {
   id?: string;
@@ -32,8 +31,22 @@ function pricePerMillion(tokenPrice: string | undefined): number {
   return Math.round(n * 1_000_000 * 100) / 100;
 }
 
+/**
+ * Tool support as advertised by the API.
+ *
+ * A missing or empty `supported_parameters` means the response says
+ * nothing, not that the model lacks tools. Treating silence as a "no"
+ * is what emptied the aimlapi catalog when that provider dropped its
+ * capability field, so this reader keeps the two cases apart.
+ */
+function readAdvertisedTools(m: OpenRouterApiModel): boolean | undefined {
+  if (!Array.isArray(m.supported_parameters)) return undefined;
+  if (m.supported_parameters.length === 0) return undefined;
+  return m.supported_parameters.includes("tools");
+}
+
 function hasTools(m: OpenRouterApiModel): boolean {
-  return Array.isArray(m.supported_parameters) && m.supported_parameters.includes("tools");
+  return readAdvertisedTools(m) ?? true;
 }
 
 function scoreChat(m: OpenRouterApiModel): number {
@@ -146,9 +159,12 @@ export async function refreshOpenRouterChatCatalogFromApi(): Promise<boolean> {
       seen.add(auto.id);
     }
 
+    // Everything OpenRouter advertises, not a truncated head: the picker
+    // filters by typed text, so a long list costs nothing while a capped
+    // one silently hides most of the catalog (#62 follow-up). `ranked`
+    // keeps the score order, so the useful models still come first.
     for (const m of ranked) {
       if (!m.id || seen.has(m.id)) continue;
-      if (picks.length >= MAX_PICKS) break;
       const entry = apiRowToEntry(m);
       picks.push({
         id: m.id,

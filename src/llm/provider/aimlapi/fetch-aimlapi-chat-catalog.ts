@@ -6,18 +6,43 @@ import {
 
 const MODELS_URL = "https://api.aimlapi.com/v1/models";
 const CACHE_TTL_MS = 60 * 60 * 1000;
-const MAX_PICKS = 32;
 
 type AimlapiApiModel = {
   id?: string;
   type?: string;
+  /**
+   * Capability flags. Present in the pre-2026-08 response shape; the
+   * current API dropped the field entirely, so every reader must treat
+   * it as optional rather than assuming its absence means "no support".
+   */
   features?: readonly string[];
+  /** Current shape: `playground:chat`, `tier:tier_2`, and similar. */
+  tags?: readonly string[];
   info?: {
     contextLength?: number;
     context_length?: number;
     name?: string;
   };
 };
+
+/**
+ * Chat rows have carried two different `type` spellings: `chat-completion`
+ * (pre-2026-08) and `openai/chat-completions` (current, vendor-prefixed).
+ * Matching on the suffix keeps both working and survives the next
+ * renaming of the same idea, while still excluding the other families in
+ * the same response: video generations, image generations,
+ * `anthropic/messages`, and the `responses/submit` family.
+ */
+function isChatCompletionType(type: string | undefined): boolean {
+  if (typeof type !== "string") return false;
+  const normalized = type.toLowerCase();
+  return (
+    normalized === "chat-completion" ||
+    normalized === "chat-completions" ||
+    normalized.endsWith("/chat-completions") ||
+    normalized.endsWith("/chat-completion")
+  );
+}
 
 export type AimlapiChatPick = {
   id: string;
@@ -32,15 +57,36 @@ function readContextLength(m: AimlapiApiModel): number {
   return m.info?.contextLength ?? m.info?.context_length ?? 128_000;
 }
 
-function readToolSupport(
+/**
+ * Tool support as advertised by the API.
+ *
+ * `undefined` means "the response says nothing about it", which is the
+ * case for the whole current catalog: the `features` array was removed
+ * and nothing replaced it. Callers must not read that silence as "no
+ * tools" — doing so filtered out all 337 chat models and silently pinned
+ * the picker to the offline list.
+ */
+function readAdvertisedToolSupport(
   m: AimlapiApiModel,
-): "none" | "basic" | "parallel" {
-  const features = m.features ?? [];
+): "none" | "basic" | "parallel" | undefined {
+  const features = m.features;
+  if (features === undefined || features.length === 0) return undefined;
   const hasFn = features.some((f) => f.includes(".function"));
   const hasParallel = features.some((f) => f.includes("parallel-tool-calls"));
   if (hasParallel) return "parallel";
   if (hasFn) return "basic";
   return "none";
+}
+
+/**
+ * Effective tool support for building a catalog entry. Falls back to
+ * `basic` when the API is silent: aimlapi routes these ids to
+ * `/v1/chat/completions`, which is the tool-calling surface, and a model
+ * that turns out not to support tools fails loudly at request time
+ * rather than being invisible in the picker.
+ */
+function readToolSupport(m: AimlapiApiModel): "none" | "basic" | "parallel" {
+  return readAdvertisedToolSupport(m) ?? "basic";
 }
 
 function readVisionSupport(m: AimlapiApiModel): boolean {
@@ -124,9 +170,11 @@ export async function refreshAimlapiChatCatalogFromApi(): Promise<boolean> {
 
     const liveById = new Map<string, AimlapiApiModel>();
     for (const m of rows) {
-      if (typeof m.id !== "string") continue;
-      if (m.type !== "chat-completion") continue;
-      if (readToolSupport(m) === "none") continue;
+      if (typeof m.id !== "string" || m.id.length === 0) continue;
+      if (!isChatCompletionType(m.type)) continue;
+      // Only drop a model when the API explicitly says it cannot call
+      // tools. Silence is not a "no" (see `readAdvertisedToolSupport`).
+      if (readAdvertisedToolSupport(m) === "none") continue;
       liveById.set(m.id, m);
     }
 
@@ -142,9 +190,14 @@ export async function refreshAimlapiChatCatalogFromApi(): Promise<boolean> {
       seen.add(id);
     }
 
-    for (const [id, live] of liveById) {
+    // Everything the provider advertises, not a truncated head: the
+    // picker filters by typed text, so a long list costs nothing while a
+    // capped one silently hides most of the catalog (#62 follow-up).
+    // Curated ids above keep their hand-picked order; the rest follow
+    // alphabetically so the tail is predictable.
+    const rest = [...liveById.entries()].sort(([a], [b]) => a.localeCompare(b));
+    for (const [id, live] of rest) {
       if (seen.has(id)) continue;
-      if (picks.length >= MAX_PICKS) break;
       const entry = entryFromLiveModel(live, id);
       if (entry.kind !== "chat") continue;
       picks.push({ id, label: labelForPick(id, entry), entry });
