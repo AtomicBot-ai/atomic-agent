@@ -4,6 +4,7 @@ import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
 import { handleProvidersWizardKey } from "../providers/providers-wizard-key-bindings.js";
 import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";
+import { filteredPickerModels } from "../providers/providers-panel-state.js";
 import { stopLocalDaemonsForCloudSelection } from "./llm-panel-primary-actions.js";
 
 export function handleLlmModalKey(
@@ -96,20 +97,65 @@ export function handleLlmModalKey(
       dispatch({ type: "providers_chat_model_picker_closed" });
       return true;
     }
-    if (picker.status === "ready" && picker.models.length > 0) {
+    if (picker.status === "ready") {
+      const rows = filteredPickerModels(picker);
       if (key.upArrow || key.downArrow) {
+        if (rows.length === 0) return true;
         const delta = key.downArrow ? 1 : -1;
-        const next =
-          (picker.cursor + delta + picker.models.length) % picker.models.length;
+        const next = (picker.cursor + delta + rows.length) % rows.length;
         dispatch({ type: "providers_chat_model_picker_cursor_set", cursor: next });
         return true;
       }
       if (key.return) {
-        const modelId = picker.models[picker.cursor];
+        const modelId = rows[picker.cursor];
         if (modelId === undefined) return true;
         dispatch({ type: "providers_chat_model_picker_closed" });
         callbacks.onProvidersSelectChatModel?.(picker.providerId, modelId);
         stopLocalDaemonsForCloudSelection(state, callbacks);
+        return true;
+      }
+      if (key.backspace || key.delete) {
+        // Nothing to erase: dispatching would reset the cursor to the top
+        // of the list for no reason, so swallow the key instead.
+        if (picker.query.length === 0) return true;
+        dispatch({
+          type: "providers_chat_model_picker_query_set",
+          query: picker.query.slice(0, -1),
+        });
+        return true;
+      }
+      // Printable keys type into the filter. The guard is explicit
+      // rather than "anything with input": Ink 7's parse-keypress
+      // reports input === "" for Tab, arrows and PgUp/PgDn, but that is
+      // an implementation detail, so navigation keys are excluded by
+      // flag and control characters by code point before anything is
+      // appended to the query. Ctrl/meta combos are not typed into it,
+      // but they are still swallowed by the modal below. Ctrl+C keeps
+      // working only because handleAppKey (tui-app.tsx) runs before
+      // this handler ever sees the key.
+      const isNavigationKey =
+        key.tab ||
+        key.return ||
+        key.escape ||
+        key.backspace ||
+        key.delete ||
+        key.upArrow ||
+        key.downArrow ||
+        key.leftArrow ||
+        key.rightArrow ||
+        key.pageUp ||
+        key.pageDown;
+      if (
+        input.length > 0 &&
+        !key.ctrl &&
+        !key.meta &&
+        !isNavigationKey &&
+        isPrintableFilterInput(input)
+      ) {
+        dispatch({
+          type: "providers_chat_model_picker_query_set",
+          query: picker.query + input,
+        });
         return true;
       }
     }
@@ -165,6 +211,21 @@ export function handleLlmModalKey(
   }
 
   return null;
+}
+
+/**
+ * True when every code point of the reported input is printable text.
+ * Rejects C0 controls (below 0x20) and DEL (0x7f) so escape-sequence
+ * fragments and raw control bytes can never land in the picker filter.
+ */
+function isPrintableFilterInput(input: string): boolean {
+  for (const char of input) {
+    const codePoint = char.codePointAt(0);
+    if (codePoint === undefined || codePoint < 0x20 || codePoint === 0x7f) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**

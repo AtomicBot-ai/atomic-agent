@@ -41,6 +41,7 @@ export type ProvidersAction =
     }
   | { type: "providers_chat_model_picker_failed"; generation: number; error: string }
   | { type: "providers_chat_model_picker_cursor_set"; cursor: number }
+  | { type: "providers_chat_model_picker_query_set"; query: string }
   | { type: "providers_chat_model_picker_closed" }
   | { type: "providers_wizard_updated"; wizard: ProvidersWizardState }
   | { type: "providers_wizard_closed" }
