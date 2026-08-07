@@ -67,7 +67,6 @@ export function handleProvidersTabKey(
     return true;
   }
   if (input === "n") {
-    dispatch({ type: "providers_catalog_refresh_requested" });
     dispatch({
       type: "providers_wizard_opened",
       wizard: createProvidersWizardState("add"),
@@ -77,7 +76,6 @@ export function handleProvidersTabKey(
   if (input === "c") {
     const row = panel.rows[panel.cursor];
     if (row && isCloudProviderKind(row.kind)) {
-      dispatch({ type: "providers_catalog_refresh_requested" });
       dispatch({
         type: "providers_wizard_opened",
         wizard: createProvidersWizardState("configure", {

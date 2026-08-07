@@ -105,6 +105,43 @@ describe("refreshOpenRouterChatCatalogFromApi", () => {
     expect(picks.some((p) => p.id === "vendor/model-39")).toBe(true);
   });
 
+  it("shares one in-flight request between concurrent refresh calls", async () => {
+    let releaseFetch: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const fetchMock = vi.fn(async () => {
+      await gate;
+      return {
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: "vendor/only",
+              context_length: 128_000,
+              supported_parameters: ["tools"],
+            },
+          ],
+        }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const mod = await importFreshModule();
+
+    const first = mod.refreshOpenRouterChatCatalogFromApi();
+    const second = mod.refreshOpenRouterChatCatalogFromApi();
+    releaseFetch();
+    expect(await first).toBe(true);
+    expect(await second).toBe(true);
+    // The TUI kicks the refresh from both the panel prefetch and the
+    // wizard picker; those must coalesce into a single network call.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // A later, non-overlapping call is a real refresh again.
+    await mod.refreshOpenRouterChatCatalogFromApi();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("falls back to the static catalog when the API is unreachable", async () => {
     vi.stubGlobal(
       "fetch",

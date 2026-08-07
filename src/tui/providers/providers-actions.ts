@@ -17,7 +17,6 @@ export type ProvidersAction =
   | { type: "providers_status"; line: string | null }
   | { type: "providers_busy"; busy: boolean }
   | { type: "providers_wizard_opened"; wizard: ProvidersWizardState }
-  | { type: "providers_catalog_refresh_requested" }
   | {
       /**
        * Open the reopenable chat-model picker for an `openai-compatible`

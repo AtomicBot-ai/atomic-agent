@@ -65,7 +65,6 @@ export function openProviderConfig(
     ) ?? state.providersPanel.rows.find((row) => isCloudProviderKind(row.kind));
   if (provider) openProviderConfigFor(provider, dispatch);
   else {
-    dispatch({ type: "providers_catalog_refresh_requested" });
     dispatch({
       type: "providers_wizard_opened",
       wizard: createProvidersWizardState("add"),
@@ -74,7 +73,6 @@ export function openProviderConfig(
 }
 
 export function openAddProvider(dispatch: (action: TuiAction) => void): void {
-  dispatch({ type: "providers_catalog_refresh_requested" });
   dispatch({
     type: "providers_wizard_opened",
     wizard: createProvidersWizardState("add"),
@@ -208,7 +206,6 @@ function openProviderConfigFor(
   dispatch: (action: TuiAction) => void,
 ): void {
   if (!isCloudProviderKind(provider.kind)) return;
-  dispatch({ type: "providers_catalog_refresh_requested" });
   dispatch({
     type: "providers_wizard_opened",
     wizard: createProvidersWizardState("configure", {

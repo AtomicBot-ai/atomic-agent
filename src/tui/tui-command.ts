@@ -243,8 +243,17 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onMemoryExpandNeighborsRequested: (noteId) =>
           orchestrator.memory.expandNoteNeighbors(noteId),
         onMcpAutoRefreshStart: () => orchestrator.mcp.startAutoRefresh(),
-        onProvidersTabRefresh: () =>
-          orchestrator.providers.refresh(),
+        onProvidersTabRefresh: () => {
+          orchestrator.providers.refresh();
+          // The catalog fetchers cache at module scope, so a fresh TUI
+          // process starts on the short static lists. Kick the live
+          // refresh here (TUI start + providers/LLM tab activation);
+          // the warm-cache guard inside makes repeats free. Dispatching
+          // a reducer action cannot do this: the keymap/reducer layer
+          // never reaches the bus the orchestrator listens on, which is
+          // exactly how the live lists went missing from the pickers.
+          orchestrator.providers.prefetchCloudCatalogs();
+        },
         onProvidersSetActiveText: (id) =>
           void orchestrator.providers.setActiveText(id),
         onProvidersSelectChatModel: (providerId, modelId) =>

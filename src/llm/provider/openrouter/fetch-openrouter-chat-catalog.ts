@@ -142,12 +142,27 @@ export function listOpenRouterChatPicks(): readonly OpenRouterChatPick[] {
   return getCachedOpenRouterChatPicks() ?? picksFromStaticCatalog();
 }
 
+let inFlight: Promise<boolean> | null = null;
+
 /**
  * Pull the public OpenRouter model list and rebuild the TUI picker
  * (non-Anthropic, `tools`-capable chat models). Falls back to the static
  * catalog on network/parse errors.
+ *
+ * Concurrent callers share one request: the TUI triggers this from both
+ * the panel prefetch and the wizard's picker step, and doubling the
+ * fetch would only race two writers over the same module cache.
  */
-export async function refreshOpenRouterChatCatalogFromApi(): Promise<boolean> {
+export function refreshOpenRouterChatCatalogFromApi(): Promise<boolean> {
+  if (inFlight) return inFlight;
+  const request = fetchAndCacheCatalog().finally(() => {
+    inFlight = null;
+  });
+  inFlight = request;
+  return request;
+}
+
+async function fetchAndCacheCatalog(): Promise<boolean> {
   try {
     const res = await fetch(MODELS_URL, {
       signal: AbortSignal.timeout(20_000),

@@ -12,8 +12,14 @@ import {
   removeLlmProvider,
   wrapLlmConfigError,
 } from "../persist-llm-provider.js";
-import { refreshAimlapiChatCatalogFromApi } from "../../llm/provider/aimlapi/fetch-aimlapi-chat-catalog.js";
-import { refreshOpenRouterChatCatalogFromApi } from "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
+import {
+  getCachedAimlapiChatPicks,
+  refreshAimlapiChatCatalogFromApi,
+} from "../../llm/provider/aimlapi/fetch-aimlapi-chat-catalog.js";
+import {
+  getCachedOpenRouterChatPicks,
+  refreshOpenRouterChatCatalogFromApi,
+} from "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
 import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import { OPENAI_COMPAT_DEFAULT_BASE_URL } from "./providers-model-options.js";
 import { isProvidersAction } from "./providers-actions.js";
@@ -40,8 +46,6 @@ export class ProvidersOrchestrator {
       if (!isProvidersAction(action)) return;
       if (action.type === "providers_refresh_requested") {
         this.refresh();
-      } else if (action.type === "providers_catalog_refresh_requested") {
-        this.prefetchOpenRouterCatalog();
       } else if (action.type === "providers_set_active_text") {
         void this.setActiveText(action.id);
       } else if (action.type === "providers_select_chat_model") {
@@ -59,24 +63,34 @@ export class ProvidersOrchestrator {
   /**
    * Refresh chat model lists from cloud catalog endpoints (best-effort,
    * cached 1h per provider). Today: OpenRouter + aimlapi.
+   *
+   * Wired to `onProvidersTabRefresh`, so it runs on TUI start and every
+   * time the providers/LLM tab activates; the warm-cache guard keeps
+   * that to at most one network round-trip per provider per hour. The
+   * `providers_status` emit doubles as the re-render trigger that makes
+   * already-mounted panels re-read the now-live module cache.
    */
-  prefetchOpenRouterCatalog(): void {
-    void refreshOpenRouterChatCatalogFromApi().then((ok) => {
-      if (ok) {
-        this.bus.emit({
-          type: "providers_status",
-          line: "OpenRouter model list updated from API",
-        });
-      }
-    });
-    void refreshAimlapiChatCatalogFromApi().then((ok) => {
-      if (ok) {
-        this.bus.emit({
-          type: "providers_status",
-          line: "AI/ML API model list updated from API",
-        });
-      }
-    });
+  prefetchCloudCatalogs(): void {
+    if (getCachedOpenRouterChatPicks() === null) {
+      void refreshOpenRouterChatCatalogFromApi().then((ok) => {
+        if (ok) {
+          this.bus.emit({
+            type: "providers_status",
+            line: "OpenRouter model list updated from API",
+          });
+        }
+      });
+    }
+    if (getCachedAimlapiChatPicks() === null) {
+      void refreshAimlapiChatCatalogFromApi().then((ok) => {
+        if (ok) {
+          this.bus.emit({
+            type: "providers_status",
+            line: "AI/ML API model list updated from API",
+          });
+        }
+      });
+    }
   }
 
   /**
