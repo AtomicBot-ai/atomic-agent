@@ -1,4 +1,7 @@
+import { getConfig } from "../../config/index.js";
+import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
+import { filterToolDescriptorsByConfig } from "../../runtime/filter-disabled-tools.js";
 
 /**
  * Human-readable grouping for `/tools`. Built-in tools are namespaced
@@ -36,18 +39,79 @@ const FAMILY_ALIASES: ReadonlyMap<string, string> = new Map([
   ["vision", "vision"],
   ["image", "vision"],
   ["images", "vision"],
-  ["git", "os.shell"],
+  ["git", "os.git"],
 ]);
+
+/**
+ * The slice of the app config that decides which built-in tools are
+ * actually registered at runtime. Structurally satisfied by
+ * `AtomicAgentConfig`, narrow enough for tests to construct by hand.
+ */
+export interface ToolGateSourceConfig {
+  readonly browser: { readonly enabled: boolean };
+  readonly web: { readonly search: { readonly enabled: boolean } };
+  readonly vision: { readonly enabled: boolean };
+  readonly memory: {
+    readonly profile: { readonly enabled: boolean };
+    readonly notes: { readonly enabled: boolean };
+    readonly lessons: { readonly enabled: boolean };
+    readonly procedures: { readonly enabled: boolean };
+  };
+  readonly tasks: {
+    readonly enabled: boolean;
+    readonly agentToolsEnabled: boolean;
+  };
+  readonly mcp: { readonly servers: readonly unknown[] };
+}
+
+/**
+ * The catalog in `DEFAULT_TOOL_DESCRIPTORS` is static; the runtime
+ * drops config-gated families before the model ever sees them (see
+ * `bootstrap.ts` → `filterToolDescriptorsByConfig`). `/tools` must
+ * apply the same gates or it advertises tools the agent cannot call
+ * (e.g. `browser.*` under `browser.enabled=false`).
+ *
+ * Two gates are approximated because their runtime inputs are probed
+ * at bootstrap, not read from config: vision uses `vision.enabled`
+ * alone (the mmproj capability probe is not visible here), and the
+ * MCP gate uses the configured server list instead of live
+ * connections. Both approximations only ever err on the side of the
+ * user's stated config.
+ */
+export function effectiveToolDescriptors(
+  config: ToolGateSourceConfig = getConfig(),
+): readonly ToolDescriptor[] {
+  return filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+    browser: { enabled: config.browser.enabled },
+    web: { search: { enabled: config.web.search.enabled } },
+    vision: {
+      enabled: config.vision.enabled,
+      providerAvailable: config.vision.enabled,
+    },
+    memory: {
+      profile: { enabled: config.memory.profile.enabled },
+      notes: { enabled: config.memory.notes.enabled },
+      lessons: { enabled: config.memory.lessons.enabled },
+      procedures: { enabled: config.memory.procedures.enabled },
+    },
+    tasks: {
+      agentToolsEnabled: config.tasks.enabled && config.tasks.agentToolsEnabled,
+    },
+    mcp: { enabled: config.mcp.servers.length > 0 },
+  });
+}
 
 export interface ToolFamilyListing {
   readonly family: string;
   readonly tools: readonly string[];
 }
 
-/** All built-in tools grouped by family, families and tools sorted. */
-export function listToolFamilies(): readonly ToolFamilyListing[] {
+/** Enabled built-in tools grouped by family, families and tools sorted. */
+export function listToolFamilies(
+  descriptors: readonly ToolDescriptor[] = effectiveToolDescriptors(),
+): readonly ToolFamilyListing[] {
   const byFamily = new Map<string, string[]>();
-  for (const descriptor of DEFAULT_TOOL_DESCRIPTORS) {
+  for (const descriptor of descriptors) {
     const family = familyOf(descriptor.name);
     const bucket = byFamily.get(family);
     if (bucket) bucket.push(descriptor.name);
@@ -66,26 +130,29 @@ export function listToolFamilies(): readonly ToolFamilyListing[] {
  * ("filesystem"), a family prefix ("os.fs"), or any substring of a tool
  * name. Returns an empty array when nothing matches.
  */
-export function searchTools(query: string): readonly string[] {
+export function searchTools(
+  query: string,
+  descriptors: readonly ToolDescriptor[] = effectiveToolDescriptors(),
+): readonly string[] {
   const q = query.trim().toLowerCase();
   if (q.length === 0) return [];
-  const aliased = FAMILY_ALIASES.get(q);
-  const needle = aliased ?? q;
-  return DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name)
-    .filter((name) => name.toLowerCase().includes(needle.toLowerCase()))
+  const needle = FAMILY_ALIASES.get(q) ?? q;
+  return descriptors
+    .map((d) => d.name)
+    .filter((name) => name.toLowerCase().includes(needle))
     .sort((a, b) => a.localeCompare(b));
 }
 
-/** `/tools` with no argument: every family, one line each. */
-export function renderToolsOverview(): string {
-  const families = listToolFamilies();
+/** `/tools` with no argument: every enabled family, one line each. */
+export function renderToolsOverview(
+  descriptors: readonly ToolDescriptor[] = effectiveToolDescriptors(),
+): string {
+  const families = listToolFamilies(descriptors);
   const total = families.reduce((sum, f) => sum + f.tools.length, 0);
   const lines = [
-    `built-in tools (${total}) — always available, no install needed:`,
+    `built-in tools (${total}) enabled under the current config:`,
     "",
-    ...families.map(
-      (f) => `  ${f.family}  ${f.tools.map(shortName).join(" ")}`,
-    ),
+    ...families.map(renderFamilyLine),
     "",
     "these are separate from /skills, which lists optional playbooks.",
     "`/tools <query>` filters, e.g. `/tools filesystem` or `/tools browser`.",
@@ -94,9 +161,20 @@ export function renderToolsOverview(): string {
 }
 
 /** `/tools <query>`: matching tools, or a clear miss message. */
-export function renderToolsSearch(query: string): string {
-  const matches = searchTools(query);
+export function renderToolsSearch(
+  query: string,
+  descriptors: readonly ToolDescriptor[] = effectiveToolDescriptors(),
+): string {
+  const matches = searchTools(query, descriptors);
   if (matches.length === 0) {
+    const gatedMatches = searchTools(query, DEFAULT_TOOL_DESCRIPTORS);
+    if (gatedMatches.length > 0) {
+      return [
+        `no enabled tool matches "${query.trim()}". these exist but are turned off in your config:`,
+        "",
+        ...gatedMatches.map((name) => `  ${name}`),
+      ].join("\n");
+    }
     return (
       `no built-in tool matches "${query.trim()}".\n` +
       "run `/tools` for the full list, or `/skills` for optional skill packs."
@@ -107,6 +185,18 @@ export function renderToolsSearch(query: string): string {
     "",
     ...matches.map((name) => `  ${name}`),
   ].join("\n");
+}
+
+/**
+ * One overview line per family. Namespaced families show short member
+ * names after the prefix; a single-segment tool (`reply`, `finish`)
+ * IS its own family, so repeating the name would render "reply  reply".
+ */
+function renderFamilyLine(f: ToolFamilyListing): string {
+  if (f.tools.length === 1 && f.tools[0] === f.family) {
+    return `  ${f.family}`;
+  }
+  return `  ${f.family}  ${f.tools.map(shortName).join(" ")}`;
 }
 
 /** Drop the family prefix so the overview stays one line per family. */

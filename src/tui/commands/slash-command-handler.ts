@@ -491,7 +491,8 @@ function dispatchLlmSub(rawArgs: string): SlashDispatchResult {
 
 /**
  * `/tools` answers "what can this agent actually do" without touching a
- * panel: built-in tools are always loaded, so a listing is pure text.
+ * panel: the listing is pure text, filtered through the same config
+ * gates the runtime applies so disabled families never show up.
  * Users used to search /skills for "filesystem", find nothing, and
  * conclude the agent could not touch files (#71).
  */
