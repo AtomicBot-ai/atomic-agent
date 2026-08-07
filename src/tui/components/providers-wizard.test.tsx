@@ -63,7 +63,8 @@ describe("ProvidersWizard chat model step", () => {
     expect(text).toContain("30 from https://many.example/v1/models");
     // ids are listed sorted; cursor 20 lands on the 21st of them
     expect(text).toContain("> model-28");
-    expect(text).toContain("(21/30)");
+    // The counter opens the hint, right after the movement keys.
+    expect(text).toContain("↑/↓ move (21/30) · PgUp/PgDn jump");
     expect(text).not.toContain("model-10");
   });
 
@@ -100,6 +101,18 @@ describe("ProvidersWizard chat model step", () => {
 
     const text = stripAnsi(lastFrame() ?? "");
     expect(text).toContain("model list unavailable (http 403)");
+  });
+});
+
+describe("ProvidersWizard pick list counter", () => {
+  it("shows the position counter for short lists too", () => {
+    // 3 provider kinds, well under the viewport. The counter is not a
+    // long-list extra: hiding it below a size threshold reads as a glitch.
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={createProvidersWizardState("add")} />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("j/k move (1/3) · Enter pick · Esc cancel");
   });
 });
 

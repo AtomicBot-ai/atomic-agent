@@ -16,6 +16,7 @@ import {
   OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
 } from "../providers/providers-model-options.js";
 import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
+import { renderPickList } from "./wizard-pick-list.js";
 
 const KIND_OPTIONS = [
   { id: "openrouter" as const, label: "OpenRouter (cloud chat + optional cloud embed)" },
@@ -41,58 +42,6 @@ function maskedKey(buffer: string): string {
   const masked = "•".repeat(Math.min(buffer.length, 48));
   const extra = buffer.length > 48 ? `+${buffer.length - 48}` : "";
   return masked + extra;
-}
-
-/** Keep long server model lists inside a fixed viewport around the cursor. */
-const PICK_WINDOW = 12;
-
-function renderPickList(
-  title: string,
-  options: readonly { label: string }[],
-  cursor: number,
-  hint: string,
-): ReactElement {
-  // Window every pick list, not just the openai-compatible step: the live
-  // OpenRouter/aimlapi catalogs run past 300 rows, and an unwindowed map
-  // would paint them all into the terminal at once.
-  const total = options.length;
-  const clamped = Math.min(Math.max(cursor, 0), Math.max(0, total - 1));
-  const start = Math.min(
-    Math.max(0, clamped - Math.floor(PICK_WINDOW / 2)),
-    Math.max(0, total - PICK_WINDOW),
-  );
-  const visible = options.slice(start, start + PICK_WINDOW);
-  const position = total > PICK_WINDOW ? ` (${clamped + 1}/${total})` : "";
-  return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={theme.colors.accentSoft}
-      paddingX={1}
-      marginY={1}
-      width="100%"
-    >
-      <Text bold color={theme.colors.accentSoft}>
-        {title}
-      </Text>
-      {visible.map((opt, i) => {
-        const index = start + i;
-        const mark = index === clamped ? ">" : " ";
-        return (
-          <Text
-            key={`${index}-${opt.label}`}
-            color={index === clamped ? theme.colors.accentSoft : undefined}
-          >
-            {mark} {opt.label}
-          </Text>
-        );
-      })}
-      <Text color={theme.colors.muted}>
-        {hint}
-        {position}
-      </Text>
-    </Box>
-  );
 }
 
 function renderLineField(props: {
@@ -168,12 +117,14 @@ function CompatChatModelStep(props: {
 
   const picks = listCompatChatModelPicks(w);
   if (picks.length > 0) {
-    return renderPickList(
-      `Chat model — ${picks.length} from ${baseUrl}/v1/models`,
-      picks.map((id) => ({ label: id })),
-      w.cursor,
-      "↑/↓ move · Enter select · type to enter an id by hand · Esc cancel",
-    );
+    return renderPickList({
+      title: `Chat model — ${picks.length} from ${baseUrl}/v1/models`,
+      options: picks.map((id) => ({ label: id })),
+      cursor: w.cursor,
+      moveHint: "↑/↓ move",
+      actionsHint:
+        "PgUp/PgDn jump · Enter select · type to enter an id by hand · Esc cancel",
+    });
   }
 
   const hint = !isCompat
@@ -199,12 +150,13 @@ export function ProvidersWizard(props: {
   const modeLabel = w.mode === "configure" ? `configure ${w.providerId}` : "add provider";
 
   if (w.phase === "pick_kind") {
-    return renderPickList(
-      `LLM provider — ${modeLabel}`,
-      KIND_OPTIONS,
-      w.cursor,
-      "j/k move · Enter pick · Esc cancel",
-    );
+    return renderPickList({
+      title: `LLM provider — ${modeLabel}`,
+      options: KIND_OPTIONS,
+      cursor: w.cursor,
+      moveHint: "j/k move",
+      actionsHint: "Enter pick · Esc cancel",
+    });
   }
 
   if (w.phase === "api_key") {
@@ -241,43 +193,43 @@ export function ProvidersWizard(props: {
   }
 
   if (w.phase === "pick_chat_model" && w.kind === "openrouter") {
-    const models = listOpenRouterChatModels();
-    return renderPickList(
-      "Chat model (OpenRouter)",
-      models,
-      w.cursor,
-      "j/k move · Enter select · Esc cancel",
-    );
+    return renderPickList({
+      title: "Chat model (OpenRouter)",
+      options: listOpenRouterChatModels(),
+      cursor: w.cursor,
+      moveHint: "j/k move",
+      actionsHint: "PgUp/PgDn jump · Enter select · Esc cancel",
+    });
   }
 
   if (w.phase === "pick_chat_model" && w.kind === "aimlapi") {
-    const models = listAimlapiChatModels();
-    return renderPickList(
-      "Chat model (AI/ML API)",
-      models,
-      w.cursor,
-      "j/k move · Enter select · Esc cancel",
-    );
+    return renderPickList({
+      title: "Chat model (AI/ML API)",
+      options: listAimlapiChatModels(),
+      cursor: w.cursor,
+      moveHint: "j/k move",
+      actionsHint: "PgUp/PgDn jump · Enter select · Esc cancel",
+    });
   }
 
   if (w.phase === "pick_embedding" && w.kind === "openrouter") {
-    const models = listOpenRouterEmbeddingModels();
-    return renderPickList(
-      "Embedding backend",
-      models,
-      w.cursor,
-      "j/k move · Enter finish · Esc cancel",
-    );
+    return renderPickList({
+      title: "Embedding backend",
+      options: listOpenRouterEmbeddingModels(),
+      cursor: w.cursor,
+      moveHint: "j/k move",
+      actionsHint: "PgUp/PgDn jump · Enter finish · Esc cancel",
+    });
   }
 
   if (w.phase === "pick_embedding" && w.kind === "aimlapi") {
-    const models = listAimlapiEmbeddingModels();
-    return renderPickList(
-      "Embedding backend",
-      models,
-      w.cursor,
-      "j/k move · Enter finish · Esc cancel",
-    );
+    return renderPickList({
+      title: "Embedding backend",
+      options: listAimlapiEmbeddingModels(),
+      cursor: w.cursor,
+      moveHint: "j/k move",
+      actionsHint: "PgUp/PgDn jump · Enter finish · Esc cancel",
+    });
   }
 
   if (w.phase === "base_url") {

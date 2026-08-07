@@ -2,123 +2,19 @@ import type { Key } from "ink";
 import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
 import { getCachedOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import { normalizeOpenAiBaseUrl } from "../../llm/provider/openai/normalize-openai-base-url.js";
+import { PICK_WINDOW } from "../components/wizard-pick-list.js";
+import { OPENAI_COMPAT_DEFAULT_BASE_URL } from "./providers-model-options.js";
 import {
-  listAimlapiChatModels,
-  listAimlapiEmbeddingModels,
-  listOpenRouterChatModels,
-  listOpenRouterEmbeddingModels,
-  OPENAI_COMPAT_DEFAULT_BASE_URL,
-} from "./providers-model-options.js";
-import type {
-  ProvidersWizardKind,
-  ProvidersWizardPhase,
-  ProvidersWizardState,
-} from "./providers-wizard-state.js";
-
-const KIND_COUNT = 3;
-
-/** Maps the `pick_kind` cursor index to the actual kind. */
-const KIND_ORDER: readonly ProvidersWizardKind[] = [
-  "openrouter",
-  "aimlapi",
-  "openai-compatible",
-];
-
-function kindAtCursor(cursor: number): ProvidersWizardKind {
-  return KIND_ORDER[cursor] ?? "openrouter";
-}
-
-function isCuratedCatalogKind(
-  kind: NonNullable<ProvidersWizardState["kind"]>,
-): boolean {
-  return kind === "openrouter" || kind === "aimlapi";
-}
-
-function listChatModelsForKind(
-  kind: NonNullable<ProvidersWizardState["kind"]>,
-): ReturnType<typeof listOpenRouterChatModels> {
-  if (kind === "aimlapi") return listAimlapiChatModels();
-  return listOpenRouterChatModels();
-}
-
-function listEmbeddingModelsForKind(
-  kind: NonNullable<ProvidersWizardState["kind"]>,
-): ReturnType<typeof listOpenRouterEmbeddingModels> {
-  if (kind === "aimlapi") return listAimlapiEmbeddingModels();
-  return listOpenRouterEmbeddingModels();
-}
-
-function nextPhaseAfterApiKey(
-  kind: NonNullable<ProvidersWizardState["kind"]>,
-): ProvidersWizardPhase {
-  if (isCuratedCatalogKind(kind)) return "pick_chat_model";
-  return "base_url";
-}
-
-function advanceWizardPhase(
-  wizard: ProvidersWizardState,
-): ProvidersWizardState {
-  const { phase, kind } = wizard;
-  if (phase === "pick_kind" && kind) {
-    return { ...wizard, phase: "api_key", cursor: 0, error: null };
-  }
-  if (phase === "api_key" && kind) {
-    return {
-      ...wizard,
-      phase: nextPhaseAfterApiKey(kind),
-      cursor: 0,
-      error: null,
-    };
-  }
-  if (phase === "pick_chat_model" && kind && isCuratedCatalogKind(kind)) {
-    const models = listChatModelsForKind(kind);
-    const picked = models[wizard.cursor]?.id ?? models[0]?.id ?? null;
-    return {
-      ...wizard,
-      phase: "pick_embedding",
-      cursor: 0,
-      selectedChatModelId: picked,
-      error: null,
-    };
-  }
-  if (phase === "base_url" && kind === "openai-compatible") {
-    return { ...wizard, phase: "chat_model_line", cursor: 0, error: null };
-  }
-  if (phase === "chat_model_line" && kind === "openai-compatible") {
-    return { ...wizard, phase: "embedding_model_line", cursor: 0, error: null };
-  }
-  return wizard;
-}
-
-function listLengthForPhase(
-  phase: ProvidersWizardPhase,
-  kind: ProvidersWizardState["kind"],
-): number {
-  if (phase === "pick_kind") return KIND_COUNT;
-  if (phase === "pick_chat_model" && kind && isCuratedCatalogKind(kind)) {
-    return listChatModelsForKind(kind).length;
-  }
-  if (phase === "pick_embedding" && kind && isCuratedCatalogKind(kind)) {
-    return listEmbeddingModelsForKind(kind).length;
-  }
-  return 0;
-}
-
-function isListPhase(phase: ProvidersWizardPhase): boolean {
-  return (
-    phase === "pick_kind" ||
-    phase === "pick_chat_model" ||
-    phase === "pick_embedding"
-  );
-}
-
-function isLinePhase(phase: ProvidersWizardPhase): boolean {
-  return (
-    phase === "base_url" ||
-    phase === "chat_model_line" ||
-    phase === "embedding_model_line"
-  );
-}
+  advanceWizardPhase,
+  clampCursor,
+  isCuratedCatalogKind,
+  isLinePhase,
+  isListPhase,
+  kindAtCursor,
+  listEmbeddingModelsForKind,
+  listLengthForPhase,
+} from "./providers-wizard-phases.js";
+import type { ProvidersWizardState } from "./providers-wizard-state.js";
 
 /** Normalized so the fetch, the cache key and the displayed URL always agree. */
 export function baseUrlForWizard(wizard: ProvidersWizardState): string {
@@ -157,6 +53,37 @@ export function listCompatChatModelPicks(
       apiKeyForWizard(wizard),
     ) ?? []
   );
+}
+
+/**
+ * Cursor after one list-navigation key, or `null` when the key is not a
+ * navigation key. Every result starts from the clamped cursor so a
+ * catalog that shrank under an open wizard cannot leave the cursor
+ * pointing past the end (see `clampCursor`). Arrows wrap like before;
+ * PgUp/PgDn jump one viewport (`PICK_WINDOW`) and stop at the edges,
+ * Home/End go straight to them. Arrow-only travel to row 250 of a 300+
+ * catalog was the alternative.
+ */
+function nextListCursor(
+  input: string,
+  key: Key,
+  cursor: number,
+  length: number,
+  withVimKeys: boolean,
+): number | null {
+  const current = clampCursor(cursor, length);
+  const last = Math.max(0, length - 1);
+  if (key.downArrow || (withVimKeys && input === "j")) {
+    return (current + 1) % length;
+  }
+  if (key.upArrow || (withVimKeys && input === "k")) {
+    return (current - 1 + length) % length;
+  }
+  if (key.pageDown) return Math.min(current + PICK_WINDOW, last);
+  if (key.pageUp) return Math.max(current - PICK_WINDOW, 0);
+  if (key.home) return 0;
+  if (key.end) return last;
+  return null;
 }
 
 export type ProvidersWizardKeyResult =
@@ -210,25 +137,15 @@ export function handleProvidersWizardKey(
   if (isLinePhase(wizard.phase)) {
     const picks = listCompatChatModelPicks(wizard);
     if (picks.length > 0) {
-      // Arrows only: printable keys fall through to line editing so an id the
-      // server does not advertise can still be typed.
-      if (key.downArrow) {
-        return {
-          handled: true,
-          wizard: { ...wizard, cursor: (wizard.cursor + 1) % picks.length },
-        };
-      }
-      if (key.upArrow) {
-        return {
-          handled: true,
-          wizard: {
-            ...wizard,
-            cursor: (wizard.cursor - 1 + picks.length) % picks.length,
-          },
-        };
+      // Navigation keys only ("j"/"k" stay printable): typed characters
+      // fall through to line editing so an id the server does not
+      // advertise can still be entered by hand.
+      const moved = nextListCursor(input, key, wizard.cursor, picks.length, false);
+      if (moved !== null) {
+        return { handled: true, wizard: { ...wizard, cursor: moved } };
       }
       if (key.return) {
-        const picked = picks[wizard.cursor] ?? picks[0]!;
+        const picked = picks[clampCursor(wizard.cursor, picks.length)]!;
         return {
           handled: true,
           wizard: advanceWizardPhase({ ...wizard, chatModelLine: picked }),
@@ -284,24 +201,13 @@ export function handleProvidersWizardKey(
     return { handled: true, wizard };
   }
 
-  if (key.downArrow || input === "j") {
-    return {
-      handled: true,
-      wizard: { ...wizard, cursor: (wizard.cursor + 1) % len },
-    };
-  }
-  if (key.upArrow || input === "k") {
-    return {
-      handled: true,
-      wizard: {
-        ...wizard,
-        cursor: (wizard.cursor - 1 + len) % len,
-      },
-    };
+  const moved = nextListCursor(input, key, wizard.cursor, len, true);
+  if (moved !== null) {
+    return { handled: true, wizard: { ...wizard, cursor: moved } };
   }
   if (key.return) {
     if (wizard.phase === "pick_kind") {
-      const kind = kindAtCursor(wizard.cursor);
+      const kind = kindAtCursor(clampCursor(wizard.cursor, len));
       return {
         handled: true,
         wizard: advanceWizardPhase({
@@ -316,7 +222,8 @@ export function handleProvidersWizardKey(
       isCuratedCatalogKind(wizard.kind)
     ) {
       const models = listEmbeddingModelsForKind(wizard.kind);
-      const picked = models[wizard.cursor]?.id ?? models[0]?.id ?? null;
+      const picked =
+        models[clampCursor(wizard.cursor, models.length)]?.id ?? null;
       return {
         handled: true,
         wizard: {

@@ -76,9 +76,13 @@ function scoreChat(m: OpenRouterApiModel): number {
 
 function apiRowToEntry(m: OpenRouterApiModel): ModelCatalogEntry {
   const id = m.id!;
-  // Unlike tools, silence deliberately reads as "no vision": overclaiming
-  // would invite image input that the route rejects, while underclaiming
-  // only hides a badge and never empties the catalog.
+  // Unlike tools, silence deliberately reads as "no vision", and that is
+  // a capability decision, not a cosmetic one: `supportsVision` gates
+  // `vision.describe` through `ProviderCapabilities.vision`, so a row
+  // without `input_modalities` loses image input for that id. Still the
+  // safer default: overclaiming breaks at request time with a rejected
+  // image payload, while underclaiming keeps the model usable for text
+  // and can never empty the catalog.
   const vision = (m.architecture?.input_modalities ?? []).includes("image");
   return {
     id,
@@ -107,7 +111,13 @@ function labelForPick(id: string, entry: ModelCatalogEntry, name?: string): stri
   return `${id}${short}${price}`;
 }
 
+let staticPicks: readonly OpenRouterChatPick[] | null = null;
+
 function picksFromStaticCatalog(): readonly OpenRouterChatPick[] {
+  // Memoized: downstream lookup caches key themselves on the array
+  // reference (see providers-model-options), so the offline fallback must
+  // return a stable array rather than a fresh one per call.
+  if (staticPicks) return staticPicks;
   const out: OpenRouterChatPick[] = [];
   for (const id of OPENROUTER_CHAT_MODEL_ORDER) {
     const entry = OPENROUTER_MODELS_CATALOG.get(id);
@@ -118,6 +128,7 @@ function picksFromStaticCatalog(): readonly OpenRouterChatPick[] {
       entry,
     });
   }
+  staticPicks = out;
   return out;
 }
 

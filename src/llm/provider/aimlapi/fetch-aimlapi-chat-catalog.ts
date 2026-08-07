@@ -14,10 +14,14 @@ type AimlapiApiModel = {
    * Capability flags. Present in the pre-2026-08 response shape; the
    * current API dropped the field entirely, so every reader must treat
    * it as optional rather than assuming its absence means "no support".
+   *
+   * The current shape's `tags` array is deliberately NOT modelled here:
+   * as of 2026-08 it only carries playground grouping and pricing tier
+   * labels (`playground:chat`, `tier:tier_2`), never capability
+   * markers (the gpt-4o family shows up without any vision tag), so
+   * nothing can be derived from it.
    */
   features?: readonly string[];
-  /** Current shape: `playground:chat`, `tier:tier_2`, and similar. */
-  tags?: readonly string[];
   info?: {
     contextLength?: number;
     context_length?: number;
@@ -89,10 +93,24 @@ function readToolSupport(m: AimlapiApiModel): "none" | "basic" | "parallel" {
   return readAdvertisedToolSupport(m) ?? "basic";
 }
 
+/**
+ * Unlike tools, silence deliberately reads as "no vision", and the cost
+ * of that is real, not cosmetic. `supportsVision` becomes the
+ * capability bit on the synthesised {@link ModelCatalogEntry}, which is
+ * what the provider layer reads to gate image input
+ * (`ProviderCapabilities.vision`, whose `false` makes `vision.describe`
+ * raise `VisionUnsupportedError`), so a live-only id whose row stays
+ * silent loses `vision.describe` entirely, not just a "vision" badge in
+ * the picker. We still prefer underclaiming: advertising vision on a
+ * text-only route breaks at request time with a rejected image payload,
+ * while a conservative entry keeps the model usable for text and, unlike
+ * the tools case, can never empty the catalog. Curated ids are
+ * unaffected (their hand-verified static entry wins in
+ * `entryFromLiveModel`), and the current response offers no better
+ * signal to read: `features` is gone, `tags` and `info` carry no
+ * capability fields (see {@link AimlapiApiModel}).
+ */
 function readVisionSupport(m: AimlapiApiModel): boolean {
-  // Unlike tools, silence deliberately reads as "no vision": overclaiming
-  // would invite image input that the backend rejects, while underclaiming
-  // only hides a badge and never empties the catalog.
   return (m.features ?? []).some((f) => f.includes(".vision"));
 }
 
@@ -127,13 +145,20 @@ function formatCtx(tokens: number): string {
   return `${tokens}`;
 }
 
+let staticPicks: readonly AimlapiChatPick[] | null = null;
+
 function picksFromStaticCatalog(): readonly AimlapiChatPick[] {
+  // Memoized: downstream lookup caches key themselves on the array
+  // reference (see providers-model-options), so the offline fallback must
+  // return a stable array rather than a fresh one per call.
+  if (staticPicks) return staticPicks;
   const out: AimlapiChatPick[] = [];
   for (const id of AIMLAPI_CHAT_MODEL_ORDER) {
     const entry = AIMLAPI_MODELS_CATALOG.get(id);
     if (!entry || entry.kind !== "chat") continue;
     out.push({ id, label: labelForPick(id, entry), entry });
   }
+  staticPicks = out;
   return out;
 }
 

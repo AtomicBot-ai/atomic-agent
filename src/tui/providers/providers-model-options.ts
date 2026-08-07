@@ -25,7 +25,12 @@ export { AIMLAPI_DEFAULT_CHAT_MODEL };
 export function listOpenRouterChatModels(): readonly ProviderModelOption[] {
   return listOpenRouterChatPicks().map((p) => ({
     id: p.id,
-    label: `${p.id} · ${formatOpenRouterChatModelDetails(p.id)}`,
+    // Lazy: only the rows a viewport actually paints pay the format cost.
+    // The pick lists run past 300 rows and are rebuilt per keypress, so
+    // eagerly formatting every label made each j/k press quadratic.
+    get label(): string {
+      return `${p.id} · ${formatOpenRouterChatModelDetails(p.id)}`;
+    },
   }));
 }
 
@@ -67,7 +72,10 @@ export function listOpenRouterEmbeddingModels(): readonly ProviderModelOption[] 
 export function listAimlapiChatModels(): readonly ProviderModelOption[] {
   return listAimlapiChatPicks().map((p) => ({
     id: p.id,
-    label: `${p.id} · ${formatAimlapiChatModelDetails(p.id)}`,
+    // Lazy for the same reason as the OpenRouter list above.
+    get label(): string {
+      return `${p.id} · ${formatAimlapiChatModelDetails(p.id)}`;
+    },
   }));
 }
 
@@ -106,14 +114,42 @@ export function listAimlapiEmbeddingModels(): readonly ProviderModelOption[] {
   return out;
 }
 
+/**
+ * O(1) id → entry lookup over a picks list that is itself cached at
+ * module scope in the fetcher. The map is keyed by the picks array
+ * reference: the fetchers return a stable array until a live refresh
+ * replaces it, so a reference change is exactly "the catalog changed,
+ * rebuild". Without this, every list row resolved its entry with a
+ * linear `find` over 300+ picks, which made rendering the picker
+ * quadratic on every keypress.
+ */
+function createCatalogEntryResolver(
+  listPicks: () => readonly { id: string; entry: ModelCatalogEntry }[],
+): (modelId: string) => ModelCatalogEntry | undefined {
+  let cachedSource: readonly { id: string; entry: ModelCatalogEntry }[] | null =
+    null;
+  let cachedById: Map<string, ModelCatalogEntry> = new Map();
+  return (modelId) => {
+    const picks = listPicks();
+    if (picks !== cachedSource) {
+      cachedSource = picks;
+      cachedById = new Map(picks.map((pick) => [pick.id, pick.entry]));
+    }
+    return cachedById.get(modelId);
+  };
+}
+
+const liveAimlapiEntryById = createCatalogEntryResolver(listAimlapiChatPicks);
+const liveOpenRouterEntryById = createCatalogEntryResolver(
+  listOpenRouterChatPicks,
+);
+
 function resolveAimlapiCatalogEntry(modelId: string): ModelCatalogEntry | undefined {
-  const live = listAimlapiChatPicks().find((pick) => pick.id === modelId)?.entry;
-  return live ?? AIMLAPI_MODELS_CATALOG.get(modelId);
+  return liveAimlapiEntryById(modelId) ?? AIMLAPI_MODELS_CATALOG.get(modelId);
 }
 
 function resolveOpenRouterCatalogEntry(modelId: string): ModelCatalogEntry | undefined {
-  const live = listOpenRouterChatPicks().find((pick) => pick.id === modelId)?.entry;
-  return live ?? OPENROUTER_MODELS_CATALOG.get(modelId);
+  return liveOpenRouterEntryById(modelId) ?? OPENROUTER_MODELS_CATALOG.get(modelId);
 }
 
 function formatContextWindow(tokens: number): string {
