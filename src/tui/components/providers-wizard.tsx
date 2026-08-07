@@ -7,7 +7,11 @@ import {
   listCompatChatModelPicks,
 } from "../providers/providers-wizard-key-bindings.js";
 import { theme } from "../theme/theme.js";
-import { PROVIDER_PRESETS } from "../providers/provider-presets.js";
+import { findProviderPreset } from "../providers/provider-presets.js";
+import {
+  KIND_ROW_ORDER,
+  type ProvidersWizardKindRow,
+} from "../providers/providers-wizard-phases.js";
 import {
   listAimlapiChatModels,
   listAimlapiEmbeddingModels,
@@ -16,35 +20,46 @@ import {
   OPENAI_COMPAT_DEFAULT_BASE_URL,
   OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
 } from "../providers/providers-model-options.js";
-import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
+import type {
+  ProvidersWizardKind,
+  ProvidersWizardState,
+} from "../providers/providers-wizard-state.js";
 import { renderPickList } from "./wizard-pick-list.js";
+
+const KIND_LABELS: Record<ProvidersWizardKind, string> = {
+  openrouter: "OpenRouter (cloud chat + optional cloud embed)",
+  aimlapi: "AI/ML API (aimlapi.com — 500+ models, OpenAI-compatible)",
+  "openai-compatible": "OpenAI-compatible API (custom base URL)",
+};
+
+function labelForKindRow(row: ProvidersWizardKindRow): string {
+  if (typeof row !== "object") return KIND_LABELS[row];
+  const preset = findProviderPreset(row.presetId);
+  if (!preset) return row.presetId;
+  return preset.note ? `${preset.label} — ${preset.note}` : preset.label;
+}
 
 /**
  * One flat provider list, matching what other agent CLIs present: the
  * two kinds with built-in catalogs, then every known service (#69), then
- * the manual entry for anything not listed.
+ * the manual entry for anything not listed. Derived from
+ * `KIND_ROW_ORDER` — the key bindings walk that same list, so a row's
+ * label and its Enter action can never drift apart.
  */
-const KIND_OPTIONS = [
-  { id: "openrouter", label: "OpenRouter (cloud chat + optional cloud embed)" },
-  {
-    id: "aimlapi",
-    label: "AI/ML API (aimlapi.com — 500+ models, OpenAI-compatible)",
-  },
-  ...PROVIDER_PRESETS.map((preset) => ({
-    id: preset.id,
-    label: preset.note ? `${preset.label} — ${preset.note}` : preset.label,
-  })),
-  {
-    id: "openai-compatible",
-    label: "OpenAI-compatible API (custom base URL)",
-  },
-];
+const KIND_OPTIONS = KIND_ROW_ORDER.map((row) => ({
+  label: labelForKindRow(row),
+}));
 
-function envHintForKind(
-  kind: ProvidersWizardState["kind"],
-): string {
-  if (kind === "openrouter") return "OPENROUTER_API_KEY";
-  if (kind === "aimlapi") return "AIMLAPI_API_KEY";
+/**
+ * Env var named on the key screen. A preset names its own variable;
+ * naming the shared compat one there would promise Groq's key a home it
+ * does not use.
+ */
+function envHintForWizard(w: ProvidersWizardState): string {
+  const preset = w.presetId ? findProviderPreset(w.presetId) : undefined;
+  if (preset) return preset.envVar;
+  if (w.kind === "openrouter") return "OPENROUTER_API_KEY";
+  if (w.kind === "aimlapi") return "AIMLAPI_API_KEY";
   return "OPENAI_COMPAT_API_KEY";
 }
 
@@ -170,7 +185,14 @@ export function ProvidersWizard(props: {
   }
 
   if (w.phase === "api_key") {
-    const envHint = envHintForKind(w.kind);
+    const envHint = envHintForWizard(w);
+    const preset = w.presetId ? findProviderPreset(w.presetId) : undefined;
+    // Local servers and keyless-listing services save with an empty key;
+    // promising ".env only" here would contradict their own list rows.
+    const emptyMeans =
+      preset && (preset.local || preset.listsModelsWithoutKey)
+        ? "Optional for this service — leave empty to connect without a key."
+        : "Leave empty only if the key is already in .env.";
     return (
       <Box
         flexDirection="column"
@@ -181,11 +203,11 @@ export function ProvidersWizard(props: {
         width="100%"
       >
         <Text bold color={theme.colors.accentSoft}>
-          API key — {w.kind ?? "provider"}
+          API key — {preset?.label ?? w.kind ?? "provider"}
         </Text>
         <Text color={theme.colors.muted}>
           Saved to <Text color={theme.colors.accentSoft}>{".env"}</Text> as{" "}
-          {envHint} (mode 0600). Leave empty only if the key is already in .env.
+          {envHint} (mode 0600). {emptyMeans}
         </Text>
         <Box>
           <Text color={theme.colors.muted}>{"> "}</Text>

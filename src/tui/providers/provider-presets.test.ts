@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   findProviderPreset,
+  presetForEntryId,
   PROVIDER_PRESETS,
   suggestPresetEntryId,
 } from "./provider-presets.js";
@@ -12,13 +13,17 @@ describe("PROVIDER_PRESETS", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("carries an absolute base URL ending in a version segment", () => {
+  it("stores API roots without the /v1 suffix, like every compat base URL", () => {
     for (const preset of PROVIDER_PRESETS) {
       expect(() => new URL(preset.baseUrl)).not.toThrow();
-      // Every verified endpoint serves the OpenAI surface under /v1, so
-      // the stored base must already include it: the provider appends
-      // paths like /chat/completions, not /v1/chat/completions.
-      expect(preset.baseUrl).toMatch(/\/v1$/);
+      // Call sites append `/v1/...` themselves (openai-provider.ts), so
+      // the repo stores compat base URLs without the version segment —
+      // `OPENAI_COMPAT_DEFAULT_BASE_URL` is `https://api.openai.com`.
+      // A stored `/v1` would only survive because normalization strips
+      // it again; presets follow the convention instead of leaning on
+      // that safety net.
+      expect(preset.baseUrl).not.toMatch(/\/v1\/?$/);
+      expect(preset.baseUrl).not.toMatch(/\/$/);
     }
   });
 
@@ -31,15 +36,40 @@ describe("PROVIDER_PRESETS", () => {
     expect(findProviderPreset("lmstudio")?.local).toBe(true);
   });
 
-  it("only marks keyless listing where it was verified", () => {
+  it("keeps the verified keyless-listing services marked", () => {
+    // Presence checks, not an exact list: a new keyless preset must not
+    // break this test, it only has to keep the verified ones flagged.
     const keyless = PROVIDER_PRESETS.filter((p) => p.listsModelsWithoutKey).map(
       (p) => p.id,
     );
-    expect(keyless).toEqual(["nous", "ollama-cloud"]);
+    expect(keyless).toContain("nous");
+    expect(keyless).toContain("ollama-cloud");
   });
 
   it("returns undefined for an unknown id", () => {
     expect(findProviderPreset("nope")).toBeUndefined();
+  });
+});
+
+describe("preset env vars", () => {
+  it("gives every preset its own variable", () => {
+    const vars = PROVIDER_PRESETS.map((p) => p.envVar);
+    expect(new Set(vars).size).toBe(vars.length);
+  });
+
+  it("never reuses the shared compat or catalog variables", () => {
+    // Sharing OPENAI_COMPAT_API_KEY meant connecting a second service
+    // silently overwrote the first one's key.
+    for (const preset of PROVIDER_PRESETS) {
+      expect(preset.envVar).not.toBe("OPENAI_COMPAT_API_KEY");
+      expect(preset.envVar).not.toBe("OPENROUTER_API_KEY");
+      expect(preset.envVar).not.toBe("AIMLAPI_API_KEY");
+    }
+  });
+
+  it("names variables after the service", () => {
+    expect(findProviderPreset("groq")?.envVar).toBe("GROQ_API_KEY");
+    expect(findProviderPreset("together")?.envVar).toBe("TOGETHER_API_KEY");
   });
 });
 
@@ -57,5 +87,21 @@ describe("suggestPresetEntryId", () => {
 
   it("ignores unrelated ids", () => {
     expect(suggestPresetEntryId(groq, ["nous", "openrouter"])).toBe("groq");
+  });
+});
+
+describe("presetForEntryId", () => {
+  it("finds the preset for a plain entry id", () => {
+    expect(presetForEntryId("groq")?.id).toBe("groq");
+  });
+
+  it("finds the preset behind a numbered suffix", () => {
+    expect(presetForEntryId("groq-2")?.id).toBe("groq");
+    expect(presetForEntryId("ollama-cloud-3")?.id).toBe("ollama-cloud");
+  });
+
+  it("returns undefined for hand-added entries", () => {
+    expect(presetForEntryId("openai-compatible")).toBeUndefined();
+    expect(presetForEntryId("my-vllm")).toBeUndefined();
   });
 });

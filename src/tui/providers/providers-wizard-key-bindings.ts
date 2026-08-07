@@ -24,15 +24,22 @@ export function baseUrlForWizard(wizard: ProvidersWizardState): string {
   );
 }
 
-/** Typed key wins; otherwise a key already in the environment needs no retyping. */
+/**
+ * Typed key wins; otherwise a key already in the environment needs no
+ * retyping. The fallback probe resolves the preset's own variable when
+ * one is selected — reading the shared compat variable for Groq would
+ * hand the wrong service's key to the model-list fetch.
+ */
 export function apiKeyForWizard(
   wizard: ProvidersWizardState,
 ): string | undefined {
+  const preset = wizard.presetId ? findProviderPreset(wizard.presetId) : undefined;
   return (
     wizard.apiKeyBuffer.trim() ||
     resolveLlmProviderApiKey({
       id: "openai-compatible",
       kind: "openai-compatible",
+      ...(preset ? { apiKeyEnvVar: preset.envVar } : {}),
     })
   );
 }

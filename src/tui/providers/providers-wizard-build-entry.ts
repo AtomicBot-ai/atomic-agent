@@ -1,6 +1,10 @@
 import type { UserLlmProviderEntry } from "../../config/llm-config.js";
 import { normalizeOpenAiBaseUrl } from "../../llm/provider/openai/normalize-openai-base-url.js";
 import {
+  findProviderPreset,
+  suggestPresetEntryId,
+} from "./provider-presets.js";
+import {
   LOCAL_EMBEDDING_CHOICE_ID,
   OPENAI_COMPAT_DEFAULT_BASE_URL,
   OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
@@ -15,17 +19,39 @@ export type BuiltWizardProvider = {
   activateEmbeddingProviderId: string | null;
 };
 
-export function providerIdForKind(
-  kind: ProvidersWizardKind,
-  presetId?: string | null,
-): string {
+/** The fixed entry id each wizard kind maps to when no preset is involved. */
+function baseIdForKind(kind: ProvidersWizardKind): string {
   if (kind === "openrouter") return "openrouter";
   if (kind === "aimlapi") return "aimlapi";
-  // A preset keeps its own id (`groq`, `nous`, …) so several presets can
-  // coexist instead of overwriting one shared `openai-compatible` entry
-  // (#69). Hand-typed endpoints keep the generic id as before.
-  if (presetId && presetId.length > 0) return presetId;
   return "openai-compatible";
+}
+
+/**
+ * Entry id for a wizard save.
+ *
+ * Reconfiguring keeps the existing id, whatever it is: opening `groq`
+ * (or a hand-added `my-vllm`) and changing the model must update that
+ * entry, not mint an `openai-compatible` duplicate and switch the
+ * active provider to it.
+ *
+ * Adding a preset picks the first free id for its service (`groq`,
+ * `groq-2`, ...), so a second entry for the same service coexists with
+ * the first instead of overwriting it (#69).
+ */
+function providerIdForWizardSave(input: {
+  kind: ProvidersWizardKind;
+  presetId?: string | null;
+  existingProviderId?: string | null;
+  takenProviderIds?: readonly string[];
+}): string {
+  if (input.existingProviderId && input.existingProviderId.length > 0) {
+    return input.existingProviderId;
+  }
+  const preset = input.presetId ? findProviderPreset(input.presetId) : undefined;
+  if (preset) {
+    return suggestPresetEntryId(preset, input.takenProviderIds ?? []);
+  }
+  return baseIdForKind(input.kind);
 }
 
 function isCuratedCatalogKind(kind: ProvidersWizardKind): boolean {
@@ -41,8 +67,13 @@ export function buildProviderEntryFromWizard(input: {
   customEmbeddingModel?: string;
   /** Set when the entry came from a known-service preset (#69). */
   presetId?: string | null;
+  /** Entry being reconfigured; its id is reused verbatim. */
+  existingProviderId?: string | null;
+  /** Ids already in config, so an added preset picks a free one. */
+  takenProviderIds?: readonly string[];
 }): BuiltWizardProvider {
-  const id = providerIdForKind(input.kind, input.presetId);
+  const id = providerIdForWizardSave(input);
+  const preset = input.presetId ? findProviderPreset(input.presetId) : undefined;
   const chatModel = isCuratedCatalogKind(input.kind)
     ? input.chatModelId
     : (input.customChatModel?.trim() || OPENAI_COMPAT_DEFAULT_CHAT_MODEL);
@@ -71,6 +102,11 @@ export function buildProviderEntryFromWizard(input: {
             normalizeOpenAiBaseUrl(input.baseUrl ?? "") ||
             OPENAI_COMPAT_DEFAULT_BASE_URL,
         }
+      : {}),
+    // The preset's own env var rides on the entry, so two services never
+    // resolve one shared key (see `resolveLlmProviderApiKey`).
+    ...(input.kind === "openai-compatible" && preset
+      ? { apiKeyEnvVar: preset.envVar }
       : {}),
   };
 
