@@ -465,6 +465,23 @@ export interface AgentRuntime {
    * (the TUI settings tab). Idempotent.
    */
   setAnalyticsEnabled(enabled: boolean): Promise<void>;
+  /**
+   * Live approval-gate state: `true` when approval-gated tools ask
+   * before running, `false` when every request is auto-approved. Reads
+   * the gate, not the boot-time config snapshot, so it reflects
+   * `--no-approval` and later `setApprovalRequired` calls.
+   */
+  isApprovalRequired(): boolean;
+  /**
+   * Hot-toggle the approval gate without a restart. `false` switches
+   * the gate to auto-approve: every approval-gated tool (shell, file
+   * writes, HTTP, process kills, script runs, browser navigation) runs
+   * without asking. Hardline shell-guard rules still block outright
+   * (they fire before the gate). Persisting `agent.approvalRequired`
+   * to `config.json` is the caller's responsibility (the TUI Privacy
+   * tab). Idempotent; pending prompts are not resolved retroactively.
+   */
+  setApprovalRequired(required: boolean): void;
   /** Close all resources (browser, sqlite, llama client). Safe to call twice. */
   shutdown(): Promise<void>;
 }
@@ -635,9 +652,16 @@ export async function createAgentRuntime(
     emit: (request) => approvalRouter.emit(request),
     autoApprove: !options.approvalRequired,
   });
+  // Tools are registered with `approvalRequired: true` unconditionally;
+  // the gate's `autoApprove` flag carries the boot-time value instead.
+  // Behaviour is identical (auto-approve resolves instantly without
+  // emitting a prompt), but the gate becomes the single live switch, so
+  // `runtime.setApprovalRequired` can flip approvals at runtime in both
+  // directions — tool registrations copy the boolean and would otherwise
+  // freeze a boot-time `false` forever.
   const dangerous: DangerousToolOptions = {
     approvals,
-    approvalRequired: options.approvalRequired,
+    approvalRequired: true,
   };
 
   if (
@@ -2300,6 +2324,8 @@ export async function createAgentRuntime(
     setApprovalHandlerForSession: (sessionId, handler) =>
       approvalRouter.setForSession(sessionId, handler),
     setAnalyticsEnabled,
+    isApprovalRequired: () => !approvals.isAutoApproveEnabled(),
+    setApprovalRequired: (required) => approvals.setAutoApprove(!required),
     shutdown,
   } as AgentRuntime & { telegramChannel: TelegramChannel | null };
   Object.defineProperty(runtime, "skillCatalog", {

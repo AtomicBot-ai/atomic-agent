@@ -5,7 +5,11 @@
  * narrow without a runtime tag dictionary.
  */
 export type PrivacyAction =
-  | { type: "privacy_synced"; analyticsEnabled: boolean }
+  | {
+      type: "privacy_synced";
+      analyticsEnabled: boolean;
+      approveEverything: boolean;
+    }
   | { type: "privacy_action_started" }
   | { type: "privacy_action_settled"; message?: string; error?: string }
   | { type: "privacy_message_cleared" };

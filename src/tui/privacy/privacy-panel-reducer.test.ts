@@ -29,8 +29,25 @@ describe("reducePrivacyAction", () => {
     const next = reducePrivacyAction(state, {
       type: "privacy_synced",
       analyticsEnabled: false,
+      approveEverything: false,
     });
     expect(next?.privacyPanel.analyticsEnabled).toBe(false);
+    expect(next?.privacyPanel.approveEverything).toBe(false);
+  });
+
+  it("folds approveEverything=true from privacy_synced and back", () => {
+    const on = reducePrivacyAction(baseState(), {
+      type: "privacy_synced",
+      analyticsEnabled: true,
+      approveEverything: true,
+    });
+    expect(on?.privacyPanel.approveEverything).toBe(true);
+    const off = reducePrivacyAction(on!, {
+      type: "privacy_synced",
+      analyticsEnabled: true,
+      approveEverything: false,
+    });
+    expect(off?.privacyPanel.approveEverything).toBe(false);
   });
 
   it("marks busy on action_started and clears it on settled", () => {

@@ -19,6 +19,36 @@ describe("ApprovalGate", () => {
     expect(decision.approvalId).toBe(capturedId);
   });
 
+  it("setAutoApprove flips the gate live in both directions", async () => {
+    let emitted = 0;
+    const gate = new ApprovalGate({
+      emit: (req) => {
+        emitted += 1;
+        setImmediate(() =>
+          gate.resolve({ approvalId: req.approvalId, approved: false }),
+        );
+      },
+    });
+    expect(gate.isAutoApproveEnabled()).toBe(false);
+
+    gate.setAutoApprove(true);
+    expect(gate.isAutoApproveEnabled()).toBe(true);
+    const auto = await gate.request({ sessionId: "s", tool: "t", reason: "r" });
+    expect(auto.approved).toBe(true);
+    expect(auto.reason).toBe("auto-approved");
+    expect(emitted).toBe(0);
+
+    gate.setAutoApprove(false);
+    expect(gate.isAutoApproveEnabled()).toBe(false);
+    const interactive = await gate.request({
+      sessionId: "s",
+      tool: "t",
+      reason: "r",
+    });
+    expect(interactive.approved).toBe(false);
+    expect(emitted).toBe(1);
+  });
+
   it("auto-approves when configured", async () => {
     const gate = new ApprovalGate({
       emit: () => {

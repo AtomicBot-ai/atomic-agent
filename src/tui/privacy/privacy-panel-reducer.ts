@@ -26,7 +26,11 @@ function reducePanel(
 ): PrivacyPanelState {
   switch (action.type) {
     case "privacy_synced":
-      return { ...panel, analyticsEnabled: action.analyticsEnabled };
+      return {
+        ...panel,
+        analyticsEnabled: action.analyticsEnabled,
+        approveEverything: action.approveEverything,
+      };
     case "privacy_action_started":
       return { ...panel, busy: true };
     case "privacy_action_settled":

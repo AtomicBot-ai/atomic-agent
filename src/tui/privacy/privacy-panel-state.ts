@@ -12,7 +12,14 @@
 export interface PrivacyPanelState {
   /** Persisted `analytics.enabled` mirror. */
   analyticsEnabled: boolean;
-  /** True while a `setAnalyticsEnabled` mutation is in flight. */
+  /**
+   * Live approval-gate mirror, inverted: `true` means the agent runs
+   * every approval-gated action without asking (`agent.approvalRequired`
+   * is off). Synced from the runtime, not the config file, so a
+   * `--no-approval` boot shows the truth.
+   */
+  approveEverything: boolean;
+  /** True while a settings mutation is in flight. */
   busy: boolean;
   /** Sticky one-line success message (e.g. "analytics enabled"). */
   message: string | null;
@@ -23,6 +30,7 @@ export interface PrivacyPanelState {
 export function createInitialPrivacyPanelState(): PrivacyPanelState {
   return {
     analyticsEnabled: true,
+    approveEverything: false,
     busy: false,
     message: null,
     lastError: null,
