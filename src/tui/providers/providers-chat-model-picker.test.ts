@@ -6,7 +6,10 @@ import type { TuiAppCallbacks } from "../tui-app.js";
 import { createInitialTuiState, type TuiState } from "../tui-state.js";
 import { fakeSession } from "../test-fixtures.js";
 import { reduceProvidersPanel } from "./providers-reducer.js";
-import type { ProvidersChatModelPickerState } from "./providers-panel-state.js";
+import {
+  filteredPickerModels,
+  type ProvidersChatModelPickerState,
+} from "./providers-panel-state.js";
 import { handleLlmModalKey } from "../llm-panel/llm-panel-modal-key-bindings.js";
 
 function emptyKey(overrides: Partial<Key> = {}): Key {
@@ -64,6 +67,7 @@ function readyPicker(
     currentModelId: "qwen-32b",
     status: "ready",
     models: ["glm-9b", "qwen-32b", "yi-34b"],
+    query: "",
     cursor: 1,
     error: null,
     generation: 1,
@@ -207,5 +211,107 @@ describe("model picker modal keys", () => {
       stateWithPicker(readyPicker({ status: "error", error: "http 500" })),
     );
     expect(dispatched).toEqual([{ type: "providers_chat_model_picker_closed" }]);
+  });
+});
+
+describe("model picker filtering", () => {
+  it("typing narrows the visible rows and resets the cursor", () => {
+    const state = stateWithPicker(readyPicker({ cursor: 2 }));
+    const next = reduceProvidersPanel(state, {
+      type: "providers_chat_model_picker_query_set",
+      query: "qwen",
+    });
+    const picker = next.providersPanel.chatModelPicker!;
+    expect(picker.query).toBe("qwen");
+    expect(picker.cursor).toBe(0);
+    expect(filteredPickerModels(picker)).toEqual(["qwen-32b"]);
+  });
+
+  it("filtering is case-insensitive and matches anywhere in the id", () => {
+    const picker = readyPicker({ query: "34B" });
+    expect(filteredPickerModels(picker)).toEqual(["yi-34b"]);
+  });
+
+  it("an empty query shows the whole catalog", () => {
+    expect(filteredPickerModels(readyPicker({ query: "" }))).toHaveLength(3);
+  });
+
+  it("a query matching nothing yields an empty list without crashing", () => {
+    expect(filteredPickerModels(readyPicker({ query: "nope" }))).toEqual([]);
+  });
+
+  it("typing a printable character dispatches a query update", () => {
+    const { dispatched } = pressModal(
+      "q",
+      emptyKey(),
+      stateWithPicker(readyPicker({ query: "" })),
+    );
+    expect(dispatched).toEqual([
+      { type: "providers_chat_model_picker_query_set", query: "q" },
+    ]);
+  });
+
+  it("backspace trims the query", () => {
+    const { dispatched } = pressModal(
+      "",
+      emptyKey({ backspace: true }),
+      stateWithPicker(readyPicker({ query: "qwen" })),
+    );
+    expect(dispatched).toEqual([
+      { type: "providers_chat_model_picker_query_set", query: "qwe" },
+    ]);
+  });
+
+  it("arrows walk the filtered list, not the full one", () => {
+    // "qwen" leaves a single row, so moving down wraps to itself.
+    const { dispatched } = pressModal(
+      "",
+      emptyKey({ downArrow: true }),
+      stateWithPicker(readyPicker({ query: "qwen", cursor: 0 })),
+    );
+    expect(dispatched).toEqual([
+      { type: "providers_chat_model_picker_cursor_set", cursor: 0 },
+    ]);
+  });
+
+  it("Enter selects from the filtered list", () => {
+    const onProvidersSelectChatModel = vi.fn();
+    pressModal(
+      "",
+      emptyKey({ return: true }),
+      stateWithPicker(readyPicker({ query: "yi", cursor: 0 })),
+      callbacks({ onProvidersSelectChatModel }),
+    );
+    expect(onProvidersSelectChatModel).toHaveBeenCalledWith("my-vllm", "yi-34b");
+  });
+
+  it("Enter on an empty result set does nothing", () => {
+    const onProvidersSelectChatModel = vi.fn();
+    const { dispatched } = pressModal(
+      "",
+      emptyKey({ return: true }),
+      stateWithPicker(readyPicker({ query: "nope", cursor: 0 })),
+      callbacks({ onProvidersSelectChatModel }),
+    );
+    expect(onProvidersSelectChatModel).not.toHaveBeenCalled();
+    expect(dispatched).toEqual([]);
+  });
+
+  it("Esc still closes while a query is active", () => {
+    const { dispatched } = pressModal(
+      "",
+      emptyKey({ escape: true }),
+      stateWithPicker(readyPicker({ query: "qwen" })),
+    );
+    expect(dispatched).toEqual([{ type: "providers_chat_model_picker_closed" }]);
+  });
+
+  it("ctrl and meta combos are not typed into the filter", () => {
+    const { dispatched } = pressModal(
+      "c",
+      emptyKey({ ctrl: true }),
+      stateWithPicker(readyPicker({ query: "" })),
+    );
+    expect(dispatched).toEqual([]);
   });
 });

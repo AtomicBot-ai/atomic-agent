@@ -4,6 +4,7 @@ import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
 import { handleProvidersWizardKey } from "../providers/providers-wizard-key-bindings.js";
 import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";
+import { filteredPickerModels } from "../providers/providers-panel-state.js";
 import { stopLocalDaemonsForCloudSelection } from "./llm-panel-primary-actions.js";
 
 export function handleLlmModalKey(
@@ -96,20 +97,37 @@ export function handleLlmModalKey(
       dispatch({ type: "providers_chat_model_picker_closed" });
       return true;
     }
-    if (picker.status === "ready" && picker.models.length > 0) {
+    if (picker.status === "ready") {
+      const rows = filteredPickerModels(picker);
       if (key.upArrow || key.downArrow) {
+        if (rows.length === 0) return true;
         const delta = key.downArrow ? 1 : -1;
-        const next =
-          (picker.cursor + delta + picker.models.length) % picker.models.length;
+        const next = (picker.cursor + delta + rows.length) % rows.length;
         dispatch({ type: "providers_chat_model_picker_cursor_set", cursor: next });
         return true;
       }
       if (key.return) {
-        const modelId = picker.models[picker.cursor];
+        const modelId = rows[picker.cursor];
         if (modelId === undefined) return true;
         dispatch({ type: "providers_chat_model_picker_closed" });
         callbacks.onProvidersSelectChatModel?.(picker.providerId, modelId);
         stopLocalDaemonsForCloudSelection(state, callbacks);
+        return true;
+      }
+      if (key.backspace || key.delete) {
+        dispatch({
+          type: "providers_chat_model_picker_query_set",
+          query: picker.query.slice(0, -1),
+        });
+        return true;
+      }
+      // Printable keys type into the filter. Modifier combos are left
+      // alone so global hotkeys keep working while the modal is open.
+      if (input && input.length > 0 && !key.ctrl && !key.meta) {
+        dispatch({
+          type: "providers_chat_model_picker_query_set",
+          query: picker.query + input,
+        });
         return true;
       }
     }

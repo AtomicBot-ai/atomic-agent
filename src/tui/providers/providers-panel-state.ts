@@ -39,10 +39,30 @@ export interface ProvidersChatModelPickerState {
   providerId: string;
   currentModelId: string | null;
   status: "loading" | "ready" | "error";
+  /** Everything the provider offers, unfiltered. */
   models: readonly string[];
+  /**
+   * Typed filter. Empty string means "no filter"; the picker always
+   * renders `filteredModels(picker)` rather than `models` so the cursor
+   * and the visible rows agree on one list.
+   */
+  query: string;
   cursor: number;
   error: string | null;
   generation: number;
+}
+
+/**
+ * Rows the picker actually shows: every model whose id contains the
+ * typed query, case-insensitively. Kept as a helper rather than stored
+ * state so the filter can never drift out of sync with `models`.
+ */
+export function filteredPickerModels(
+  picker: ProvidersChatModelPickerState,
+): readonly string[] {
+  const q = picker.query.trim().toLowerCase();
+  if (q.length === 0) return picker.models;
+  return picker.models.filter((id) => id.toLowerCase().includes(q));
 }
 
 export interface ProvidersPanelState {

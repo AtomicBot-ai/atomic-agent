@@ -120,6 +120,7 @@ export function reduceProvidersPanel(
             currentModelId: action.currentModelId,
             status: "loading",
             models: [],
+            query: "",
             cursor: 0,
             error: null,
             generation: action.generation,
@@ -179,6 +180,23 @@ export function reduceProvidersPanel(
         providersPanel: {
           ...panel,
           chatModelPicker: { ...panel.chatModelPicker, cursor: action.cursor },
+        },
+      };
+    }
+    case "providers_chat_model_picker_query_set": {
+      if (!panel.chatModelPicker) return state;
+      // Every keystroke re-filters, so the cursor is reset to the top of
+      // the new result set rather than pointing at a row that may no
+      // longer exist.
+      return {
+        ...state,
+        providersPanel: {
+          ...panel,
+          chatModelPicker: {
+            ...panel.chatModelPicker,
+            query: action.query,
+            cursor: 0,
+          },
         },
       };
     }

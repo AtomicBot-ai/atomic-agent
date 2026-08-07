@@ -4,6 +4,7 @@ import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { ProvidersWizard } from "./providers-wizard.js";
 import { parseExternalUrl } from "../llm-panel/llm-panel-modal-key-bindings.js";
+import { filteredPickerModels } from "../providers/providers-panel-state.js";
 
 export function LlmPanelModals({ state }: { state: TuiState }): ReactElement | null {
   if (state.providersPanel.wizard) {
@@ -63,29 +64,57 @@ export function LlmPanelModals({ state }: { state: TuiState }): ReactElement | n
         </PromptBox>
       );
     }
-    // 12-row window around the cursor, same shape as the wizard picker.
+    const rows = filteredPickerModels(picker);
+    // Fixed-height window: the box always renders WINDOW rows, padding
+    // with blanks when the result set is shorter. Ink repaints a frame
+    // by overwriting the previous one line for line, so a box that
+    // changes height between renders leaves the tail of the taller frame
+    // on screen: that is the source of the stray characters (`toolss`,
+    // `toolsls`) and the text bleeding into the header.
     const WINDOW = 12;
     const start = Math.max(
       0,
-      Math.min(picker.cursor - Math.floor(WINDOW / 2), picker.models.length - WINDOW),
+      Math.min(
+        picker.cursor - Math.floor(WINDOW / 2),
+        Math.max(0, rows.length - WINDOW),
+      ),
     );
-    const visible = picker.models.slice(start, start + WINDOW);
+    const visible = rows.slice(start, start + WINDOW);
+    const blanks = Math.max(0, WINDOW - visible.length);
+    const queryLine = picker.query.length > 0 ? picker.query : "";
+    const counter =
+      rows.length === 0
+        ? "no match"
+        : `${picker.cursor + 1}/${rows.length}${
+            rows.length !== picker.models.length ? ` of ${picker.models.length}` : ""
+          }`;
     return (
       <PromptBox tone="accent" title={`Models — ${picker.providerId}`}>
+        <Text color={theme.colors.muted}>
+          {"filter: "}
+          <Text color={theme.colors.accent}>{queryLine}</Text>
+          <Text color={theme.colors.muted}>▏</Text>
+        </Text>
         {visible.map((id: string, i: number) => {
           const idx = start + i;
           const selected = idx === picker.cursor;
           const isCurrent = id === picker.currentModelId;
+          // Key on the row slot, not the id: ids can repeat across a
+          // re-filter, and a duplicate key makes Ink reuse the previous
+          // row's text, which is what left half-erased model names behind.
           return (
-            <Text key={id} color={selected ? theme.colors.accent : undefined}>
+            <Text key={`row-${i}`} color={selected ? theme.colors.accent : undefined}>
               {selected ? "› " : "  "}
               {id}
               {isCurrent ? <Text color={theme.colors.success}> current</Text> : null}
             </Text>
           );
         })}
+        {Array.from({ length: blanks }, (_unused, i) => (
+          <Text key={`pad-${i}`}> </Text>
+        ))}
         <Text color={theme.colors.muted}>
-          {`↑/↓ move (${picker.cursor + 1}/${picker.models.length}) · Enter select · Esc cancel`}
+          {`↑/↓ move (${counter}) · type to filter · Enter select · Esc cancel`}
         </Text>
       </PromptBox>
     );
