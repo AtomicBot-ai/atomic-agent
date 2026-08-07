@@ -128,6 +128,14 @@ function FilterBar({
         {autoRefresh ? " · auto" : ""}
         {loading ? " · …" : ""}
       </Text>
+      {/* Skills are optional playbooks; the built-in tools (fs, shell,
+          browser, memory, vision) are always loaded and never appear
+          here. Users searched this list for "filesystem", found
+          nothing, and concluded the agent could not touch files (#71). */}
+      <Text color={theme.colors.muted}>
+        {"   "}
+        built-in tools: /tools
+      </Text>
     </Box>
   );
 }
