@@ -124,11 +124,34 @@ export function handleLlmModalKey(
         });
         return true;
       }
-      // Printable keys type into the filter. Ctrl/meta combos are not
-      // typed into it, but they are still swallowed by the modal below.
-      // Ctrl+C keeps working only because handleAppKey (tui-app.tsx) runs
-      // before this handler ever sees the key.
-      if (input && input.length > 0 && !key.ctrl && !key.meta) {
+      // Printable keys type into the filter. The guard is explicit
+      // rather than "anything with input": Ink 7's parse-keypress
+      // reports input === "" for Tab, arrows and PgUp/PgDn, but that is
+      // an implementation detail, so navigation keys are excluded by
+      // flag and control characters by code point before anything is
+      // appended to the query. Ctrl/meta combos are not typed into it,
+      // but they are still swallowed by the modal below. Ctrl+C keeps
+      // working only because handleAppKey (tui-app.tsx) runs before
+      // this handler ever sees the key.
+      const isNavigationKey =
+        key.tab ||
+        key.return ||
+        key.escape ||
+        key.backspace ||
+        key.delete ||
+        key.upArrow ||
+        key.downArrow ||
+        key.leftArrow ||
+        key.rightArrow ||
+        key.pageUp ||
+        key.pageDown;
+      if (
+        input.length > 0 &&
+        !key.ctrl &&
+        !key.meta &&
+        !isNavigationKey &&
+        isPrintableFilterInput(input)
+      ) {
         dispatch({
           type: "providers_chat_model_picker_query_set",
           query: picker.query + input,
@@ -188,6 +211,21 @@ export function handleLlmModalKey(
   }
 
   return null;
+}
+
+/**
+ * True when every code point of the reported input is printable text.
+ * Rejects C0 controls (below 0x20) and DEL (0x7f) so escape-sequence
+ * fragments and raw control bytes can never land in the picker filter.
+ */
+function isPrintableFilterInput(input: string): boolean {
+  for (const char of input) {
+    const codePoint = char.codePointAt(0);
+    if (codePoint === undefined || codePoint < 0x20 || codePoint === 0x7f) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**

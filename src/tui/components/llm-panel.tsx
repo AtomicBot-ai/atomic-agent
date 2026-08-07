@@ -49,7 +49,7 @@ export function LlmPanel({
   const listBudget = Math.max(1, maxRows - headerRows);
   return (
     <Box flexDirection="column" width="100%">
-      <LlmPanelModals state={state} />
+      <LlmPanelModals state={state} maxRows={maxRows} />
       {/* The starting banner and active-download banners are important
           feedback — keep them visible regardless of the compact/full
           header decision. */}

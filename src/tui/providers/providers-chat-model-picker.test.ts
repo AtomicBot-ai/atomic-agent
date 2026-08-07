@@ -324,4 +324,52 @@ describe("model picker filtering", () => {
     );
     expect(dispatched).toEqual([]);
   });
+
+  it("Tab is not typed into the filter", () => {
+    const { dispatched, handled } = pressModal(
+      "\t",
+      emptyKey({ tab: true }),
+      stateWithPicker(readyPicker({ query: "" })),
+    );
+    expect(handled).toBe(true);
+    expect(dispatched).toEqual([]);
+  });
+
+  it("PageDown is not typed into the filter, even with a raw sequence as input", () => {
+    const { dispatched, handled } = pressModal(
+      "[6~",
+      emptyKey({ pageDown: true }),
+      stateWithPicker(readyPicker({ query: "" })),
+    );
+    expect(handled).toBe(true);
+    expect(dispatched).toEqual([]);
+  });
+
+  it("left/right arrows are not typed into the filter", () => {
+    for (const overrides of [{ leftArrow: true }, { rightArrow: true }] as const) {
+      const { dispatched } = pressModal(
+        "",
+        emptyKey(overrides),
+        stateWithPicker(readyPicker({ query: "" })),
+      );
+      expect(dispatched).toEqual([]);
+    }
+  });
+
+  it("control characters never reach the filter", () => {
+    for (const raw of ["\u0007", "\u001b", "\u001b[A", "\u007f"]) {
+      const { dispatched } = pressModal(
+        raw,
+        emptyKey(),
+        stateWithPicker(readyPicker({ query: "" })),
+      );
+      expect(dispatched).toEqual([]);
+    }
+  });
+
+  it("surrounding whitespace stays visible in the query but is ignored when filtering", () => {
+    const picker = readyPicker({ query: " qwen " });
+    expect(picker.query).toBe(" qwen ");
+    expect(filteredPickerModels(picker)).toEqual(["qwen-32b"]);
+  });
 });

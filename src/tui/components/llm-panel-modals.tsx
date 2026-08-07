@@ -6,7 +6,43 @@ import { ProvidersWizard } from "./providers-wizard.js";
 import { parseExternalUrl } from "../llm-panel/llm-panel-modal-key-bindings.js";
 import { filteredPickerModels } from "../providers/providers-panel-state.js";
 
-export function LlmPanelModals({ state }: { state: TuiState }): ReactElement | null {
+/** Upper bound for the picker's list window (roomy terminals). */
+const PICKER_MAX_WINDOW = 12;
+/** Never shrink the list window below this many rows. */
+const PICKER_MIN_WINDOW = 3;
+/**
+ * Picker box rows that are not list rows: two border lines, the title,
+ * the filter/status line, the footer, and the box's bottom margin.
+ */
+const PICKER_CHROME_ROWS = 6;
+
+/**
+ * List rows the picker shows. Sized from the tab's row budget so short
+ * terminals get a smaller (but still fixed) window instead of a frame
+ * that outgrows the screen.
+ */
+function pickerWindowRows(maxRows: number | undefined): number {
+  if (maxRows === undefined) return PICKER_MAX_WINDOW;
+  return Math.max(
+    PICKER_MIN_WINDOW,
+    Math.min(PICKER_MAX_WINDOW, maxRows - PICKER_CHROME_ROWS),
+  );
+}
+
+/** `count` blank lines that hold a box at its fixed height. */
+function blankRows(count: number): ReactElement[] {
+  return Array.from({ length: count }, (_unused, i) => (
+    <Text key={`pad-${i}`}> </Text>
+  ));
+}
+
+export function LlmPanelModals({
+  state,
+  maxRows,
+}: {
+  state: TuiState;
+  maxRows?: number;
+}): ReactElement | null {
   if (state.providersPanel.wizard) {
     return <ProvidersWizard wizard={state.providersPanel.wizard} />;
   }
@@ -47,40 +83,49 @@ export function LlmPanelModals({ state }: { state: TuiState }): ReactElement | n
   }
   if (state.providersPanel.chatModelPicker !== null) {
     const picker = state.providersPanel.chatModelPicker;
+    // Fixed-height picker: every status branch (loading, ready, error)
+    // renders the same number of lines, and the ready branch pads its
+    // list area with blanks up to a constant window. Rationale: Ink 7
+    // repaints by erasing the previous frame's line count and rewriting
+    // it (log-update), and once a frame outgrows the terminal it stops
+    // erasing in place and falls back to clearing and rewriting the
+    // whole screen (shouldClearTerminalForFrame in ink). The stray-glyph
+    // artifact this PR chased (`toolss`, text bleeding into the header)
+    // was observed while the unwindowed 337-row catalog pushed frames
+    // past the terminal height, i.e. into that non-erasing regime (see
+    // the review discussion on #68). Holding the modal at one constant
+    // height, sized down on short terminals, keeps repaints in place.
+    const window = pickerWindowRows(maxRows);
     if (picker.status === "loading") {
       return (
         <PromptBox tone="accent" title={`Models — ${picker.providerId}`}>
-          <Text color={theme.colors.muted}>fetching model list… · Esc cancel</Text>
+          <Text color={theme.colors.muted}>fetching model list…</Text>
+          {blankRows(window)}
+          <Text color={theme.colors.muted}>Esc cancel</Text>
         </PromptBox>
       );
     }
     if (picker.status === "error") {
       return (
         <PromptBox tone="danger" title={`Models — ${picker.providerId}`}>
-          <Text color={theme.colors.error}>
+          <Text color={theme.colors.error} wrap="truncate-end">
             model list unavailable ({picker.error ?? "unknown error"})
           </Text>
+          {blankRows(window)}
           <Text color={theme.colors.muted}>Enter/Esc close</Text>
         </PromptBox>
       );
     }
     const rows = filteredPickerModels(picker);
-    // Fixed-height window: the box always renders WINDOW rows, padding
-    // with blanks when the result set is shorter. Ink repaints a frame
-    // by overwriting the previous one line for line, so a box that
-    // changes height between renders leaves the tail of the taller frame
-    // on screen: that is the source of the stray characters (`toolss`,
-    // `toolsls`) and the text bleeding into the header.
-    const WINDOW = 12;
     const start = Math.max(
       0,
       Math.min(
-        picker.cursor - Math.floor(WINDOW / 2),
-        Math.max(0, rows.length - WINDOW),
+        picker.cursor - Math.floor(window / 2),
+        Math.max(0, rows.length - window),
       ),
     );
-    const visible = rows.slice(start, start + WINDOW);
-    const blanks = Math.max(0, WINDOW - visible.length);
+    const visible = rows.slice(start, start + window);
+    const blanks = Math.max(0, window - visible.length);
     const queryLine = picker.query;
     const counter =
       rows.length === 0
@@ -90,7 +135,7 @@ export function LlmPanelModals({ state }: { state: TuiState }): ReactElement | n
           }`;
     return (
       <PromptBox tone="accent" title={`Models — ${picker.providerId}`}>
-        <Text color={theme.colors.muted}>
+        <Text color={theme.colors.muted} wrap="truncate-end">
           {"filter: "}
           <Text color={theme.colors.accent}>{queryLine}</Text>
           <Text color={theme.colors.muted}>▏</Text>
@@ -99,21 +144,26 @@ export function LlmPanelModals({ state }: { state: TuiState }): ReactElement | n
           const idx = start + i;
           const selected = idx === picker.cursor;
           const isCurrent = id === picker.currentModelId;
-          // Key on the row slot, not the id: ids can repeat across a
-          // re-filter, and a duplicate key makes Ink reuse the previous
-          // row's text, which is what left half-erased model names behind.
+          // Slot keys keep the row elements stable across refilters.
+          // They are not what fixed the stray-glyph artifact: ids are
+          // unique within a single render, so key={id} never collided
+          // (see the review of #68); that traced to frame height, per
+          // the fixed-height note above. truncate-end keeps a long id
+          // from wrapping into a second line and changing the height.
           return (
-            <Text key={`row-${i}`} color={selected ? theme.colors.accent : undefined}>
+            <Text
+              key={`row-${i}`}
+              color={selected ? theme.colors.accent : undefined}
+              wrap="truncate-end"
+            >
               {selected ? "› " : "  "}
               {id}
               {isCurrent ? <Text color={theme.colors.success}> current</Text> : null}
             </Text>
           );
         })}
-        {Array.from({ length: blanks }, (_unused, i) => (
-          <Text key={`pad-${i}`}> </Text>
-        ))}
-        <Text color={theme.colors.muted}>
+        {blankRows(blanks)}
+        <Text color={theme.colors.muted} wrap="truncate-end">
           {`↑/↓ move (${counter}) · type to filter · Enter select · Esc cancel`}
         </Text>
       </PromptBox>
