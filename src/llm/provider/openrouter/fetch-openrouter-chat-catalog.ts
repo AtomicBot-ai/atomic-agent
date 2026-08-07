@@ -6,7 +6,6 @@ import {
 
 const MODELS_URL = "https://openrouter.ai/api/v1/models";
 const CACHE_TTL_MS = 60 * 60 * 1000;
-const MAX_PICKS = 12;
 
 type OpenRouterApiModel = {
   id?: string;
@@ -32,8 +31,22 @@ function pricePerMillion(tokenPrice: string | undefined): number {
   return Math.round(n * 1_000_000 * 100) / 100;
 }
 
+/**
+ * Tool support as advertised by the API.
+ *
+ * A missing or empty `supported_parameters` means the response says
+ * nothing, not that the model lacks tools. Treating silence as a "no"
+ * is what emptied the aimlapi catalog when that provider dropped its
+ * capability field, so this reader keeps the two cases apart.
+ */
+function readAdvertisedTools(m: OpenRouterApiModel): boolean | undefined {
+  if (!Array.isArray(m.supported_parameters)) return undefined;
+  if (m.supported_parameters.length === 0) return undefined;
+  return m.supported_parameters.includes("tools");
+}
+
 function hasTools(m: OpenRouterApiModel): boolean {
-  return Array.isArray(m.supported_parameters) && m.supported_parameters.includes("tools");
+  return readAdvertisedTools(m) ?? true;
 }
 
 function scoreChat(m: OpenRouterApiModel): number {
@@ -63,6 +76,13 @@ function scoreChat(m: OpenRouterApiModel): number {
 
 function apiRowToEntry(m: OpenRouterApiModel): ModelCatalogEntry {
   const id = m.id!;
+  // Unlike tools, silence deliberately reads as "no vision", and that is
+  // a capability decision, not a cosmetic one: `supportsVision` gates
+  // `vision.describe` through `ProviderCapabilities.vision`, so a row
+  // without `input_modalities` loses image input for that id. Still the
+  // safer default: overclaiming breaks at request time with a rejected
+  // image payload, while underclaiming keeps the model usable for text
+  // and can never empty the catalog.
   const vision = (m.architecture?.input_modalities ?? []).includes("image");
   return {
     id,
@@ -91,7 +111,13 @@ function labelForPick(id: string, entry: ModelCatalogEntry, name?: string): stri
   return `${id}${short}${price}`;
 }
 
+let staticPicks: readonly OpenRouterChatPick[] | null = null;
+
 function picksFromStaticCatalog(): readonly OpenRouterChatPick[] {
+  // Memoized: downstream lookup caches key themselves on the array
+  // reference (see providers-model-options), so the offline fallback must
+  // return a stable array rather than a fresh one per call.
+  if (staticPicks) return staticPicks;
   const out: OpenRouterChatPick[] = [];
   for (const id of OPENROUTER_CHAT_MODEL_ORDER) {
     const entry = OPENROUTER_MODELS_CATALOG.get(id);
@@ -102,6 +128,7 @@ function picksFromStaticCatalog(): readonly OpenRouterChatPick[] {
       entry,
     });
   }
+  staticPicks = out;
   return out;
 }
 
@@ -126,8 +153,14 @@ export async function refreshOpenRouterChatCatalogFromApi(): Promise<boolean> {
       signal: AbortSignal.timeout(20_000),
     });
     if (!res.ok) return false;
-    const json = (await res.json()) as { data?: OpenRouterApiModel[] };
-    const rows = json.data ?? [];
+    const json = (await res.json()) as {
+      data?: (OpenRouterApiModel | null)[];
+    };
+    // A single null or scalar row must not throw and drag the whole live
+    // catalog into the static fallback.
+    const rows = (json.data ?? []).filter(
+      (m): m is OpenRouterApiModel => !!m && typeof m === "object",
+    );
     const ranked = rows
       .filter((m) => scoreChat(m) >= 0)
       .sort((a, b) => scoreChat(b) - scoreChat(a));
@@ -146,9 +179,12 @@ export async function refreshOpenRouterChatCatalogFromApi(): Promise<boolean> {
       seen.add(auto.id);
     }
 
+    // Everything OpenRouter advertises, not a truncated head: the picker
+    // filters by typed text, so a long list costs nothing while a capped
+    // one silently hides most of the catalog (#62 follow-up). `ranked`
+    // keeps the score order, so the useful models still come first.
     for (const m of ranked) {
       if (!m.id || seen.has(m.id)) continue;
-      if (picks.length >= MAX_PICKS) break;
       const entry = apiRowToEntry(m);
       picks.push({
         id: m.id,
