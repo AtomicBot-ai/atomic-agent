@@ -55,6 +55,7 @@ describe("loadDotenvFromStateDir", () => {
       exists: false,
       loaded: [],
       skipped: [],
+      error: null,
     });
     expect(process.env.ATOMIC_DOTENV_TEST_FOO).toBeUndefined();
     expect(stderrCalls).toEqual([]);
@@ -187,4 +188,5 @@ describe("loadDotenvFromStateDir", () => {
     expect(serialised).not.toContain("super-secret-token-do-not-leak");
     expect(result.loaded).toEqual(["ATOMIC_DOTENV_TEST_FOO"]);
   });
+
 });

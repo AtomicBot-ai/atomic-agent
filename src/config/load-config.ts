@@ -89,7 +89,7 @@ export function loadConfig(): AtomicAgentConfig {
     readEnv("ATOMIC_AGENT_STATE_DIR"),
     ENV_DEFAULTS.STATE_DIR,
   );
-  loadDotenvFromStateDir(stateDir);
+  const dotenv = loadDotenvFromStateDir(stateDir);
   const userConfigFile = getUserConfigPath(stateDir);
   const user = ensureUserConfigFileSync(userConfigFile);
   const grammarsDir = resolveAssetDir("ATOMIC_AGENT_GRAMMARS_DIR", "grammars");
@@ -111,6 +111,7 @@ export function loadConfig(): AtomicAgentConfig {
       : user.localModels.url;
 
   return {
+    dotenv,
     localModels: {
       url: resolvedLocalLlmUrl,
       apiKey: readEnv("ATOMIC_AGENT_LLAMA_API_KEY") ?? null,

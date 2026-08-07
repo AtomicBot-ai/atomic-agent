@@ -3,6 +3,7 @@ import {
   parseUserLlmFileConfig,
   type UserLlmFileConfig,
 } from "./llm-config.js";
+import type { DotenvLoadResult } from "./load-dotenv.js";
 import { isKnownLocalModelId } from "../local-llm/models-catalog.js";
 import {
   MCP_SERVER_NAME_MAX_LENGTH,
@@ -127,6 +128,14 @@ export interface AtomicAgentConfig {
      */
     embeddings: UserManagedEmbeddingLlmConfig;
   };
+  /**
+   * Outcome of the startup `<stateDir>/.env` load performed by
+   * `loadConfig`. Carries variable names and read-failure metadata only,
+   * never values. Frontends surface `dotenv.error` to the user (TUI chat
+   * warning) because a `.env` that exists but cannot be read means stored
+   * secrets were silently dropped (#59).
+   */
+  dotenv: DotenvLoadResult;
   paths: {
     stateDir: string;
     sessionsDbFile: string;

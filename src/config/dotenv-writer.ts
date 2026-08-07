@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -8,8 +7,9 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { userInfo } from "node:os";
 import { dirname, join } from "node:path";
+
+import { restrictWindowsAcl } from "./windows-acl.js";
 
 /**
  * Match the same conventional env-var key shape that `loadDotenvFromStateDir`
@@ -115,35 +115,6 @@ export function setDotenvKey(
   }
   restrictWindowsAcl(path);
   return { path, preexisting: existed, changed: true };
-}
-
-/**
- * On Windows `chmod 0600` does not map to NTFS ACLs (Node only toggles the
- * read-only bit), so the `.env` secret would stay readable by other local
- * users. Best-effort tighten the ACL to the current user only via `icacls`
- * (`/inheritance:r` drops inherited grants). Failures are swallowed — if
- * `icacls` is unavailable the file falls back to the default (inherited)
- * ACL, which is weaker; this is the documented Windows limitation.
- */
-function restrictWindowsAcl(path: string): void {
-  if (process.platform !== "win32") return;
-  let username: string;
-  try {
-    username = userInfo().username;
-  } catch {
-    return;
-  }
-  if (!username) return;
-  try {
-    execFileSync("icacls", [path, "/inheritance:r", "/grant:r", `${username}:F`], {
-      stdio: "ignore",
-      timeout: 5_000,
-      windowsHide: true,
-    });
-  } catch {
-    // Best-effort: leave the default ACL in place if icacls is missing or
-    // rejects (e.g. domain account name mismatch).
-  }
 }
 
 /**
