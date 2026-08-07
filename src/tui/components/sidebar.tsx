@@ -54,9 +54,11 @@ export function Sidebar(props: SidebarProps): ReactElement {
       flexDirection="column"
       borderStyle="single"
       borderTop={false}
-      borderRight={false}
+      // The rail renders on the LEFT of the chat column, so its single
+      // divider faces right, toward the content it frames.
+      borderRight
       borderBottom={false}
-      borderLeft
+      borderLeft={false}
       borderColor={theme.colors.border}
       paddingLeft={1}
       paddingRight={1}

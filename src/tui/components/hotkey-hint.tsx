@@ -15,6 +15,13 @@ interface HotkeyChip {
 }
 
 /**
+ * Platform-aware label for the chat-scroll key. The physical key is
+ * PageUp; Mac keyboards reach it via Fn+Up, and that is the spelling
+ * Mac users actually recognise.
+ */
+const SCROLL_KEY = process.platform === "darwin" ? "fn+\u2191" : "pgup";
+
+/**
  * Bottom hint strip: surfaces the keybindings that are meaningful in
  * the current state so the user never has to guess. We cap to ~6 chips
  * to fit one terminal row and let slash commands take care of the long
@@ -59,7 +66,10 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
     ];
   }
   if (state.status === "running") {
+    // A long streaming answer is exactly when the operator wants to
+    // scroll back, so the hint rides along with abort.
     return [
+      { key: SCROLL_KEY, label: "scroll" },
       { key: "esc", label: "abort" },
       {
         key: "ctrl+c",
@@ -91,11 +101,14 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
       },
     ];
   }
+  // Six chips is the cap for one row on narrow terminals. The scroll
+  // hint replaces ctrl+b: Observe stays reachable via /observe, while
+  // scrolling had no visible entry point at all.
   return [
     { key: "enter", label: "send" },
     { key: "alt+enter", label: "newline" },
     { key: "tab", label: "sidebar" },
-    { key: "ctrl+b", label: "open Observe" },
+    { key: SCROLL_KEY, label: "scroll" },
     { key: "/", label: "commands" },
     {
       key: "ctrl+c",
