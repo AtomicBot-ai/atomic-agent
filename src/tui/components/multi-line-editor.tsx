@@ -1,5 +1,5 @@
 import { Box, useInput, type Key } from "ink";
-import { useCallback, useEffect, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { theme } from "../theme/theme.js";
 import { EditorBody } from "./multi-line-editor-body.js";
 import {
@@ -81,14 +81,25 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     bare = false,
   } = props;
   const [cursorPos, setCursorPos] = useState<number>(value.length);
-  // Clamp cursor whenever the controlled value shrinks (e.g. slash
-  // command cleared the buffer or history recall shortened it).
+  // Distinguish our own edits (keystrokes routed through `setBuffer`)
+  // from external buffer replacements: slash-seeding from panel hotkeys
+  // (the LLM tab dispatches `input_changed "/"` on `/`), history recall,
+  // or a command clearing the buffer. External writers cannot know the
+  // editor's private cursor, so the cursor jumps to the end of the new
+  // value — otherwise typing after a seeded "/" inserted BEFORE it
+  // ("model/" instead of "/model"), which is why /model only ever
+  // worked once per session.
+  const lastInternalValue = useRef(value);
+
   useEffect(() => {
-    setCursorPos((c) => Math.min(c, value.length));
+    if (value === lastInternalValue.current) return;
+    lastInternalValue.current = value;
+    setCursorPos(value.length);
   }, [value]);
 
   const setBuffer = useCallback(
     (next: string, nextCursor: number) => {
+      lastInternalValue.current = next;
       setCursorPos(Math.max(0, Math.min(nextCursor, next.length)));
       onChange(next);
     },
