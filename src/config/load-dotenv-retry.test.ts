@@ -84,11 +84,7 @@ describe("loadDotenvFromStateDir read retries", () => {
 
     expect(result.exists).toBe(false);
     expect(result.loaded).toEqual([]);
-    expect(result.error).toEqual({
-      code: "EPERM",
-      message: `EPERM: operation not permitted, open '${path}'`,
-      attempts: 3,
-    });
+    expect(result.error).toEqual({ code: "EPERM", attempts: 3 });
     expect(sleeps).toEqual([50, 150]);
     const warning = stderrCalls.join("");
     expect(warning).toContain(path);
@@ -129,11 +125,7 @@ describe("loadDotenvFromStateDir read retries", () => {
 });
 
 describe("formatDotenvReadWarning", () => {
-  const failure = {
-    code: "EPERM",
-    message: "EPERM: operation not permitted, open 'C:\\Users\\u\\.atomic-agent\\.env'",
-    attempts: 3,
-  };
+  const failure = { code: "EPERM", attempts: 3 };
 
   it("names the path, the code, and Windows-specific fixes on win32", () => {
     const text = formatDotenvReadWarning(

@@ -3,14 +3,14 @@ import { join } from "node:path";
 
 /**
  * A `.env` read failure that survived the retry loop (or was not
- * retryable). Carries the errno code and Node's error message, which
- * names the path but never the file content.
+ * retryable). Deliberately tiny: the errno code plus the attempt count.
+ * The path lives on `DotenvLoadResult.path`, and for errno failures
+ * Node's message is a fixed function of code, syscall, and path, so
+ * carrying it here would add no diagnostics.
  */
 export interface DotenvReadFailure {
   /** Node errno code (`"EPERM"`, `"EACCES"`, ...) or null when absent. */
   code: string | null;
-  /** Node's error message. Includes the path, never file content. */
-  message: string;
   /** How many read attempts were made before giving up. */
   attempts: number;
 }
@@ -44,10 +44,13 @@ export interface DotenvIoDeps {
 }
 
 /**
- * Codes worth retrying: on Windows a file briefly locked by antivirus
- * or sync software (OneDrive, Dropbox) surfaces as EPERM/EBUSY, and
- * POSIX equivalents as EACCES/EAGAIN. ENOENT is never retried (missing
- * file is the silent no-op case) and everything else fails fast.
+ * Codes worth retrying. On Windows, antivirus and sync software
+ * (OneDrive, Dropbox) hold short-lived locks that surface as
+ * EPERM/EACCES/EBUSY/EAGAIN. EACCES earns its slot only through that
+ * Windows family: on POSIX it is almost always a permanent permission
+ * denial, and retrying it there costs one ~200ms backoff loop before
+ * the loud warning. ENOENT is never retried (missing file is the
+ * silent no-op case) and everything else fails fast.
  */
 const RETRYABLE_READ_CODES = new Set(["EPERM", "EACCES", "EBUSY", "EAGAIN"]);
 const READ_ATTEMPTS = 3;
@@ -85,10 +88,14 @@ function stripQuotes(value: string): string {
 /**
  * Parse a single line into `[key, value]` or `null` when the line is a
  * comment / blank / malformed. Unknown formats are reported via `onError`
- * so the caller can warn once and keep going.
+ * so the caller can warn once and keep going. The diagnostic never echoes
+ * the line itself: a line without `=` can be a fragment of a secret value
+ * left behind by an external non-atomic writer, so only the 1-based line
+ * number and length are reported.
  */
 function parseLine(
   line: string,
+  lineNo: number,
   onError: (reason: string) => void,
 ): [string, string] | null {
   const trimmed = line.trim();
@@ -97,7 +104,7 @@ function parseLine(
 
   const eq = trimmed.indexOf("=");
   if (eq === -1) {
-    onError(`missing '=': ${trimmed}`);
+    onError(`missing '=' on line ${lineNo} (${trimmed.length} chars)`);
     return null;
   }
 
@@ -130,8 +137,7 @@ function readWithRetry(
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code ?? null;
       if (code === "ENOENT") return { kind: "missing" };
-      const message = err instanceof Error ? err.message : String(err);
-      const failure: DotenvReadFailure = { code, message, attempts: attempt };
+      const failure: DotenvReadFailure = { code, attempts: attempt };
       if (!code || !RETRYABLE_READ_CODES.has(code)) {
         return { kind: "failed", failure };
       }
@@ -215,8 +221,9 @@ export function loadDotenvFromStateDir(
 
   result.exists = true;
 
-  for (const line of read.raw.split(/\r?\n/)) {
-    const parsed = parseLine(line, (reason) => {
+  const lines = read.raw.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const parsed = parseLine(lines[i] ?? "", i + 1, (reason) => {
       process.stderr.write(`atomic-agent: skipping ${path} entry — ${reason}\n`);
     });
     if (parsed === null) continue;

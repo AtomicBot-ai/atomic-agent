@@ -357,9 +357,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
 
   // A `.env` that exists but could not be read means stored API keys were
   // silently dropped for this run (#59). The loader already wrote to
-  // stderr, but the alt-screen TUI hides stderr entirely, so surface it
-  // as a warning chat message the user cannot miss. Names + errno only,
-  // never file content.
+  // stderr, but that line scrolls away before the alt screen takes over
+  // and is easy to miss, so repeat it as a warning chat message. Names +
+  // errno only, never file content.
   if (config.dotenv.error) {
     bus.emit({
       type: "system_message",

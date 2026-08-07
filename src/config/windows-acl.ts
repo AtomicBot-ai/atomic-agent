@@ -39,11 +39,12 @@ function defaultDeps(): WindowsAclDeps {
  * resolves the account name on its own (local vs domain vs Microsoft
  * accounts), and a grant that resolves to a different principal than the
  * one running the agent would leave the file readable by nobody after
- * `/inheritance:r` — the loader would then hit EPERM on every startup and
- * silently drop stored secrets (#59). When the probe fails, the ACL is
- * rolled back with `icacls /reset` (restore inherited grants): a secret
- * file with the default user-profile ACL is strictly better than one the
- * agent itself can no longer read.
+ * `/inheritance:r` — the loader would then hit EPERM on every startup.
+ * That is one plausible cause of the symptom reported in #59, not a
+ * confirmed root cause; the probe closes it off either way. When the
+ * probe fails, the ACL is rolled back with `icacls /reset` (restore
+ * inherited grants): a secret file with the default user-profile ACL is
+ * strictly better than one the agent itself can no longer read.
  *
  * All failures are swallowed — if `icacls` is unavailable the file keeps
  * the default (inherited) ACL, which is weaker; this is the documented
