@@ -317,7 +317,7 @@ const DEFAULT_MAX_VISIBLE_ROWS = 14;
 const CTRL_C_WINDOW_MS = 1500;
 
 /**
- * Minimum terminal width (in columns) at which the right-rail sidebar
+ * Minimum terminal width (in columns) at which the left-rail sidebar
  * is rendered. Narrower terminals collapse the layout back to the
  * single-column form so cramped sessions over SSH stay usable. Picked
  * to match opencode's threshold.

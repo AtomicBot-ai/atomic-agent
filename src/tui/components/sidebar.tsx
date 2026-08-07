@@ -23,7 +23,7 @@ const MAX_SESSION_ROWS = 10;
 const MAX_TASK_ROWS = 5;
 
 /**
- * Always-on right-rail sidebar. Two stacked panes — Sessions (top) and
+ * Always-on left-rail sidebar. Two stacked panes — Sessions (top) and
  * Tasks (bottom) — both navigable when the sidebar has focus. Tab
  * cycles editor → sessions → tasks → editor (handled by
  * `app-key-bindings.ts`); the sidebar component itself is purely
