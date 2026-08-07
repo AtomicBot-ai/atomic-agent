@@ -117,15 +117,81 @@ describe("checkLlamaServer", () => {
     expect(calls).toBe(2);
   });
 
-  it("still accepts 'loading model' as a llama-server answer", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => jsonResponse({ status: "loading model" })),
+  it("recognizes a new-build llama.cpp 503 while the model loads", async () => {
+    // Fresh llama.cpp builds answer /health with 503 and an error body
+    // (no `status` field) until the model finishes loading.
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(
+        { error: { code: 503, message: "Loading model..." } },
+        false,
+        503,
+      ),
     );
+    vi.stubGlobal("fetch", fetchMock);
     const result = await checkLlamaServer({
       url: "http://127.0.0.1:8080",
       retries: 0,
     });
-    expect(result.kind).toBe("llama-server");
+    expect(result.reachable).toBe(false);
+    expect(result.kind).toBe("llama-loading");
+    expect(result.error).toContain("loading");
+    // This IS a llama-server; the OpenAI-compat probe must not run and
+    // misidentify it as a different runner.
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.endsWith("/v1/models"))).toBe(false);
+  });
+
+  it("recognizes an old-build llama.cpp 503 with a status body", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ status: "loading model" }, false, 503),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await checkLlamaServer({
+      url: "http://127.0.0.1:8080",
+      retries: 0,
+    });
+    expect(result.reachable).toBe(false);
+    expect(result.kind).toBe("llama-loading");
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.endsWith("/v1/models"))).toBe(false);
+  });
+
+  it("does not retry a deterministic 200 with a non-llama body", async () => {
+    // KoboldCpp's web UI answers 200 with HTML on every path; the same
+    // answer will come back on every retry, so the loop must bail early
+    // instead of burning the whole backoff budget.
+    let healthCalls = 0;
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      if (String(url).endsWith("/health")) {
+        healthCalls += 1;
+        return htmlResponse();
+      }
+      return htmlResponse();
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await checkLlamaServer({
+      url: "http://127.0.0.1:5001",
+      retries: 3,
+      backoffMs: 1,
+    });
+    expect(result.kind).toBe("unknown");
+    expect(healthCalls).toBe(1);
+  });
+
+  it("skips the OpenAI-compat probe when nothing answered at all", async () => {
+    // Connection refused / timeout means no server spoke; asking
+    // /v1/models afterwards only adds dead seconds.
+    const fetchMock = vi.fn(async () => {
+      throw new Error("connect ECONNREFUSED");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await checkLlamaServer({
+      url: "http://127.0.0.1:9999",
+      retries: 0,
+    });
+    expect(result.reachable).toBe(false);
+    expect(result.kind).toBe("unknown");
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.endsWith("/v1/models"))).toBe(false);
   });
 });

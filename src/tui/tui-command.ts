@@ -456,6 +456,18 @@ function persistLlamaUrl(
           });
           return;
         }
+        // A 503 with llama.cpp's loading body is the right server at a
+        // wrong moment; telling the operator to reconfigure would be a
+        // lie. Just say to come back once the model is up.
+        if (health.kind === "llama-loading") {
+          bus.emit({
+            type: "runtime_info",
+            line:
+              `${nextUrl} is a llama.cpp server that is still loading its ` +
+              `model. Give it a minute and save the URL again.`,
+          });
+          return;
+        }
         bus.emit({
           type: "runtime_info",
           line: `local-llm /health failed at ${nextUrl}: ${health.error ?? "unknown"}`,

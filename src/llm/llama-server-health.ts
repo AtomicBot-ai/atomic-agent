@@ -6,18 +6,24 @@ export interface HealthResult {
   /**
    * What actually answered.
    *  - `"llama-server"`: `/health` returned llama.cpp's JSON shape.
+   *  - `"llama-loading"`: `/health` returned llama.cpp's 503 while the
+   *    model is still loading (new builds answer
+   *    `{"error":{"code":503,"message":"Loading model..."}}`, old builds
+   *    `{"status":"loading model"}`). The server IS a llama-server; it
+   *    just cannot serve yet. Callers should say "wait", not "wrong
+   *    server kind".
    *  - `"openai-compat"`: `/health` did not, but `{base}/v1/models`
    *    answered like an OpenAI-compatible server (KoboldCpp, LM Studio,
    *    vLLM). The external llama.cpp route cannot drive these; callers
    *    should steer the operator to the openai-compatible provider.
-   *  - `"unknown"`: nothing recognisable answered.
+   *  - `"unknown"`: nothing recognizable answered.
    *
    * A bare HTTP 200 is deliberately NOT enough for `"llama-server"`:
    * KoboldCpp answers 200 with HTML on every path, which used to make
    * the probe pass falsely and let the chat route switch onto a server
    * the llama.cpp client then hangs against (#65, #66).
    */
-  kind: "llama-server" | "openai-compat" | "unknown";
+  kind: "llama-server" | "llama-loading" | "openai-compat" | "unknown";
   error: string | null;
   latencyMs: number;
 }
@@ -50,7 +56,21 @@ async function pingOnce(
       headers: buildHeaders(apiKey),
       signal: controller.signal,
     });
+    const text = await response.text().catch(() => "");
     if (!response.ok) {
+      // llama.cpp answers /health with 503 while the model is loading:
+      // new builds send {"error":{"code":503,"message":"Loading model..."}},
+      // old builds {"status":"loading model"}. Both mean "this IS a
+      // llama-server, come back in a bit", not "wrong server kind".
+      if (response.status === 503 && bodyLooksLikeLlamaLoading(text)) {
+        return {
+          reachable: false,
+          status: response.status,
+          error: "llama.cpp is still loading the model",
+          kind: "llama-loading",
+          latencyMs: Date.now() - start,
+        };
+      }
       return {
         reachable: false,
         status: response.status,
@@ -59,7 +79,7 @@ async function pingOnce(
         latencyMs: Date.now() - start,
       };
     }
-    const isLlama = await bodyLooksLikeLlamaHealth(response);
+    const isLlama = bodyLooksLikeLlamaHealth(text);
     return {
       reachable: isLlama,
       status: response.status,
@@ -89,15 +109,33 @@ async function pingOnce(
  * happens to return 200 on that path (KoboldCpp serves its web UI there)
  * is not a llama-server and must not pass the probe.
  */
-async function bodyLooksLikeLlamaHealth(response: Response): Promise<boolean> {
+function bodyLooksLikeLlamaHealth(text: string): boolean {
   try {
-    const text = await response.text();
     const parsed: unknown = JSON.parse(text);
     return (
       typeof parsed === "object" &&
       parsed !== null &&
       typeof (parsed as { status?: unknown }).status === "string"
     );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Recognizes llama.cpp's 503 "still loading" body. New builds answer
+ * `{"error":{"code":503,"message":"Loading model..."}}` (no `status`
+ * field); old builds answer `{"status":"loading model"}`.
+ */
+function bodyLooksLikeLlamaLoading(text: string): boolean {
+  if (bodyLooksLikeLlamaHealth(text)) return true;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (typeof parsed !== "object" || parsed === null) return false;
+    const error = (parsed as { error?: unknown }).error;
+    if (typeof error !== "object" || error === null) return false;
+    const message = (error as { message?: unknown }).message;
+    return typeof message === "string" && message.toLowerCase().includes("loading");
   } catch {
     return false;
   }
@@ -161,6 +199,12 @@ export async function checkLlamaServer(
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     last = await pingOnce(url, timeoutMs, apiKey);
     if (last.reachable) return last;
+    // A 200 with a non-llama body is deterministic: the same wrong
+    // server (KoboldCpp web UI) will answer the same way on every
+    // retry, so burning the whole backoff budget changes nothing.
+    // Transient failures (connection refused, timeouts, 503 while
+    // loading) still get the retries.
+    if (last.status === 200 && last.kind === "unknown") break;
     if (attempt < retries) {
       await wait(backoffMs * Math.pow(2, attempt));
     }
@@ -172,10 +216,17 @@ export async function checkLlamaServer(
     kind: "unknown",
     latencyMs: 0,
   };
-  // The server is not a llama-server; find out whether it is an
-  // OpenAI-compatible runner so the caller can say something useful
-  // instead of a bare failure (#66).
-  if (await probeOpenAiCompat(base, timeoutMs, apiKey)) {
+  // Find out whether this is an OpenAI-compatible runner so the caller
+  // can say something useful instead of a bare failure (#66). Only worth
+  // asking when something HTTP actually answered in a way that suggests
+  // a different server kind: a 200 with a non-llama body, or a 404
+  // (LM Studio and friends do not serve /health). Skip it when nothing
+  // answered at all (connection refused, timeout) and when the server
+  // already identified itself as llama.cpp loading a model.
+  const suggestsDifferentServer =
+    failed.kind === "unknown" &&
+    (failed.status === 200 || failed.status === 404);
+  if (suggestsDifferentServer && (await probeOpenAiCompat(base, timeoutMs, apiKey))) {
     return { ...failed, kind: "openai-compat" };
   }
   return failed;
