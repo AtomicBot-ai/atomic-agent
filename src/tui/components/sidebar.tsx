@@ -23,7 +23,7 @@ const MAX_SESSION_ROWS = 10;
 const MAX_TASK_ROWS = 5;
 
 /**
- * Always-on left-rail sidebar. Two stacked panes — Sessions (top) and
+ * Always-on right-rail sidebar. Two stacked panes — Sessions (top) and
  * Tasks (bottom) — both navigable when the sidebar has focus. Tab
  * cycles editor → sessions → tasks → editor (handled by
  * `app-key-bindings.ts`); the sidebar component itself is purely
@@ -54,11 +54,9 @@ export function Sidebar(props: SidebarProps): ReactElement {
       flexDirection="column"
       borderStyle="single"
       borderTop={false}
-      // The rail renders on the LEFT of the chat column, so its single
-      // divider faces right, toward the content it frames.
-      borderRight
+      borderRight={false}
       borderBottom={false}
-      borderLeft={false}
+      borderLeft
       borderColor={theme.colors.border}
       paddingLeft={1}
       paddingRight={1}

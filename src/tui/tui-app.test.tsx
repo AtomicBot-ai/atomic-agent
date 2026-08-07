@@ -193,7 +193,7 @@ describe("TuiApp (smoke)", () => {
     unmount();
   });
 
-  it("renders the left-rail sidebar with Sessions and Tasks panes in chat mode", () => {
+  it("renders the right-rail sidebar with Sessions and Tasks panes in chat mode", () => {
     const bus = makeTuiEventBus();
     const { lastFrame, unmount } = render(
       <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,

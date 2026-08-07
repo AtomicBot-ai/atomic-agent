@@ -317,7 +317,7 @@ const DEFAULT_MAX_VISIBLE_ROWS = 14;
 const CTRL_C_WINDOW_MS = 1500;
 
 /**
- * Minimum terminal width (in columns) at which the left-rail sidebar
+ * Minimum terminal width (in columns) at which the right-rail sidebar
  * is rendered. Narrower terminals collapse the layout back to the
  * single-column form so cramped sessions over SSH stay usable. Picked
  * to match opencode's threshold.
@@ -691,22 +691,6 @@ export function TuiApp({
         <StatusBar state={state} />
       </Box>
       <Box flexDirection="row" flexGrow={1} flexShrink={1} overflow="hidden">
-        {/* Sessions/Tasks rail sits on the LEFT, matching the desktop
-            chat apps users already know. Focus order (Tab: editor ->
-            sessions -> tasks) is logical, not positional, so it is
-            unaffected by which side the rail renders on. */}
-        {sidebarVisible ? (
-          <Sidebar
-            width={SIDEBAR_WIDTH}
-            sessions={state.recentSessions}
-            sessionsCursor={state.sidebarCursor}
-            currentSessionId={state.session.sessionId}
-            tasks={selectSidebarTasks(state.tasksPanel.rows)}
-            tasksCursor={state.sidebarTasksCursor}
-            activeSection={state.sidebarSection}
-            focused={sidebarFocused}
-          />
-        ) : null}
         <Box flexDirection="column" flexGrow={1} overflow="hidden">
           <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
             {state.uiMode === "chat" ? (
@@ -798,6 +782,18 @@ export function TuiApp({
           />
           <HotkeyHint state={state} ctrlCArmed={ctrlCArmed} />
         </Box>
+        {sidebarVisible ? (
+          <Sidebar
+            width={SIDEBAR_WIDTH}
+            sessions={state.recentSessions}
+            sessionsCursor={state.sidebarCursor}
+            currentSessionId={state.session.sessionId}
+            tasks={selectSidebarTasks(state.tasksPanel.rows)}
+            tasksCursor={state.sidebarTasksCursor}
+            activeSection={state.sidebarSection}
+            focused={sidebarFocused}
+          />
+        ) : null}
       </Box>
     </Box>
   );
