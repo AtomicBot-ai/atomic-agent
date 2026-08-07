@@ -262,6 +262,16 @@ describe("model picker filtering", () => {
     ]);
   });
 
+  it("backspace on an empty query is a no-op and keeps the cursor put", () => {
+    const { dispatched, handled } = pressModal(
+      "",
+      emptyKey({ backspace: true }),
+      stateWithPicker(readyPicker({ query: "", cursor: 2 })),
+    );
+    expect(handled).toBe(true);
+    expect(dispatched).toEqual([]);
+  });
+
   it("arrows walk the filtered list, not the full one", () => {
     // "qwen" leaves a single row, so moving down wraps to itself.
     const { dispatched } = pressModal(

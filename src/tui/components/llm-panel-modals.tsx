@@ -81,7 +81,7 @@ export function LlmPanelModals({ state }: { state: TuiState }): ReactElement | n
     );
     const visible = rows.slice(start, start + WINDOW);
     const blanks = Math.max(0, WINDOW - visible.length);
-    const queryLine = picker.query.length > 0 ? picker.query : "";
+    const queryLine = picker.query;
     const counter =
       rows.length === 0
         ? "no match"

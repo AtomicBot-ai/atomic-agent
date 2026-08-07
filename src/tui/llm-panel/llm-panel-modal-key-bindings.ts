@@ -115,14 +115,19 @@ export function handleLlmModalKey(
         return true;
       }
       if (key.backspace || key.delete) {
+        // Nothing to erase: dispatching would reset the cursor to the top
+        // of the list for no reason, so swallow the key instead.
+        if (picker.query.length === 0) return true;
         dispatch({
           type: "providers_chat_model_picker_query_set",
           query: picker.query.slice(0, -1),
         });
         return true;
       }
-      // Printable keys type into the filter. Modifier combos are left
-      // alone so global hotkeys keep working while the modal is open.
+      // Printable keys type into the filter. Ctrl/meta combos are not
+      // typed into it, but they are still swallowed by the modal below.
+      // Ctrl+C keeps working only because handleAppKey (tui-app.tsx) runs
+      // before this handler ever sees the key.
       if (input && input.length > 0 && !key.ctrl && !key.meta) {
         dispatch({
           type: "providers_chat_model_picker_query_set",
