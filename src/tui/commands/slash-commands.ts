@@ -82,10 +82,10 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
       "open MCP tab (configured servers + discovered tools / resources / prompts) · subcommands: `/mcp add` opens JSON-paste modal, `/mcp remove <name>` opens delete-confirm",
   },
   {
-    name: "models",
+    name: "model",
     description:
       "open chat model picker · subcommands: pull <id> | use <id> | status | <base-url>",
-    aliases: ["model", "local"],
+    aliases: ["models", "local"],
   },
   { name: "tasks", description: "jump to the Tasks tab (Option 4 cron + ingress UI)" },
   {

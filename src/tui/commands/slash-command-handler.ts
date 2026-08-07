@@ -216,7 +216,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return dispatchMcpSub(parsed.args);
     case "llm":
       return dispatchLlmSub(parsed.args);
-    case "models":
+    case "model":
       return dispatchModelsSub(parsed.args, parsed.name);
     case "tasks":
       return pureActions([
@@ -317,11 +317,12 @@ function dispatchThemeSub(rawArgs: string): SlashDispatchResult {
 }
 
 /**
- * Sub-dispatcher for `/models [verb] [args]` (aliases: `/model`,
- * `/local`). `/model` used to be a separate command that only differed
- * in bare behavior (tab jump + picker request vs tab jump + route sync),
- * which read as two commands opening the same window; the two were
- * merged so either spelling lands in one place. Accepted shapes:
+ * Sub-dispatcher for `/model [verb] [args]` (aliases: `/models`,
+ * `/local`). `/model` and `/models` used to be separate commands that
+ * only differed in bare behavior (tab jump + picker request vs tab jump
+ * + route sync), which read as two commands opening the same window;
+ * the two were merged under the singular name (the industry-standard
+ * spelling) so either lands in one place. Accepted shapes:
  *   - (bare)        — open the LLM tab on the active local/cloud route
  *                     and reopen the chat model picker (#62). The picker
  *                     request no-ops for curated/local kinds, leaving
@@ -379,7 +380,7 @@ function dispatchModelsSub(rawArgs: string, commandName: string): SlashDispatchR
   } catch {
     return pureActions([], {
       systemMessage:
-        "usage: /models | /models pull <id> | /models use <id> | /models status | /models <base-url>",
+        "usage: /model | /model pull <id> | /model use <id> | /model status | /model <base-url>",
     });
   }
 }

@@ -145,8 +145,8 @@ describe("dispatchSlashCommand", () => {
     expect(result.systemMessage).toContain("debug bundle");
   });
 
-  it("opens the LLM panel on the active route and requests the picker for /models", () => {
-    const result = dispatchSlashCommand("/models");
+  it("opens the LLM panel on the active route and requests the picker for /model", () => {
+    const result = dispatchSlashCommand("/model");
     expect(result.actions).toEqual([
       { type: "ui_mode_set", mode: "debug" },
       { type: "tab_changed", tab: "llm" },
@@ -164,14 +164,14 @@ describe("dispatchSlashCommand", () => {
     ]);
   });
 
-  it("treats /model as an alias of /models (same actions)", () => {
-    expect(dispatchSlashCommand("/model").actions).toEqual(
-      dispatchSlashCommand("/models").actions,
+  it("treats /models as an alias of /model (same actions)", () => {
+    expect(dispatchSlashCommand("/models").actions).toEqual(
+      dispatchSlashCommand("/model").actions,
     );
   });
 
-  it("routes /model subcommands through the /models dispatcher", () => {
-    const result = dispatchSlashCommand("/model use qwen-3.5-4b");
+  it("routes /models subcommands through the /model dispatcher", () => {
+    const result = dispatchSlashCommand("/models use qwen-3.5-4b");
     expect(result.localModelsUseModelId).toBe("qwen-3.5-4b");
   });
 

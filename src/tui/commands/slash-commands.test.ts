@@ -51,16 +51,16 @@ describe("resolveSlashCommand", () => {
     expect(resolveSlashCommand("exit")?.name).toBe("quit");
   });
 
-  it("resolves /model and /local as aliases of /models", () => {
-    expect(resolveSlashCommand("model")?.name).toBe("models");
-    expect(resolveSlashCommand("local")?.name).toBe("models");
+  it("resolves /models and /local as aliases of /model", () => {
+    expect(resolveSlashCommand("models")?.name).toBe("model");
+    expect(resolveSlashCommand("local")?.name).toBe("model");
   });
 
   it("keeps a single registry entry for the model command", () => {
     const modelish = SLASH_COMMANDS.filter(
       (c) => c.name === "model" || c.name === "models",
     );
-    expect(modelish.map((c) => c.name)).toEqual(["models"]);
+    expect(modelish.map((c) => c.name)).toEqual(["model"]);
   });
 
   it("returns null for unknown commands", () => {
