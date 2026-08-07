@@ -1,3 +1,4 @@
+import { PROVIDER_PRESETS } from "./provider-presets.js";
 import {
   listAimlapiChatModels,
   listAimlapiEmbeddingModels,
@@ -10,17 +11,34 @@ import type {
   ProvidersWizardState,
 } from "./providers-wizard-state.js";
 
-const KIND_COUNT = 3;
+/**
+ * Rows on the provider step: the two kinds with built-in catalogs, then
+ * every known service as its own row, then the manual escape hatch.
+ * Preset rows are not new provider kinds, they resolve to
+ * `openai-compatible` with a verified base URL filled in (#69), which is
+ * the same flat shape Hermes and OpenClaw present.
+ */
+export type ProvidersWizardKindRow =
+  | ProvidersWizardKind
+  | { readonly presetId: string };
 
-/** Maps the `pick_kind` cursor index to the actual kind. */
-const KIND_ORDER: readonly ProvidersWizardKind[] = [
+/**
+ * The single source of row order for `pick_kind`. The render layer
+ * derives its labels from this list, so cursor index and label can
+ * never disagree.
+ */
+export const KIND_ROW_ORDER: readonly ProvidersWizardKindRow[] = [
   "openrouter",
   "aimlapi",
+  ...PROVIDER_PRESETS.map((preset) => ({ presetId: preset.id })),
   "openai-compatible",
 ];
 
-export function kindAtCursor(cursor: number): ProvidersWizardKind {
-  return KIND_ORDER[cursor] ?? "openrouter";
+const KIND_COUNT = KIND_ROW_ORDER.length;
+
+/** Maps the `pick_kind` cursor index to the row (kind or preset). */
+export function kindRowAtCursor(cursor: number): ProvidersWizardKindRow {
+  return KIND_ROW_ORDER[cursor] ?? "openrouter";
 }
 
 export function isCuratedCatalogKind(

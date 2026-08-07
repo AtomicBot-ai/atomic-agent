@@ -7,6 +7,7 @@ import {
   listCompatChatModelPicks,
 } from "../providers/providers-wizard-key-bindings.js";
 import { theme } from "../theme/theme.js";
+import { PROVIDER_PRESETS } from "../providers/provider-presets.js";
 import {
   listAimlapiChatModels,
   listAimlapiEmbeddingModels,
@@ -18,14 +19,23 @@ import {
 import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
 import { renderPickList } from "./wizard-pick-list.js";
 
+/**
+ * One flat provider list, matching what other agent CLIs present: the
+ * two kinds with built-in catalogs, then every known service (#69), then
+ * the manual entry for anything not listed.
+ */
 const KIND_OPTIONS = [
-  { id: "openrouter" as const, label: "OpenRouter (cloud chat + optional cloud embed)" },
+  { id: "openrouter", label: "OpenRouter (cloud chat + optional cloud embed)" },
   {
-    id: "aimlapi" as const,
+    id: "aimlapi",
     label: "AI/ML API (aimlapi.com — 500+ models, OpenAI-compatible)",
   },
+  ...PROVIDER_PRESETS.map((preset) => ({
+    id: preset.id,
+    label: preset.note ? `${preset.label} — ${preset.note}` : preset.label,
+  })),
   {
-    id: "openai-compatible" as const,
+    id: "openai-compatible",
     label: "OpenAI-compatible API (custom base URL)",
   },
 ];

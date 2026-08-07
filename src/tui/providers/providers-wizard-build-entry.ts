@@ -15,9 +15,16 @@ export type BuiltWizardProvider = {
   activateEmbeddingProviderId: string | null;
 };
 
-export function providerIdForKind(kind: ProvidersWizardKind): string {
+export function providerIdForKind(
+  kind: ProvidersWizardKind,
+  presetId?: string | null,
+): string {
   if (kind === "openrouter") return "openrouter";
   if (kind === "aimlapi") return "aimlapi";
+  // A preset keeps its own id (`groq`, `nous`, …) so several presets can
+  // coexist instead of overwriting one shared `openai-compatible` entry
+  // (#69). Hand-typed endpoints keep the generic id as before.
+  if (presetId && presetId.length > 0) return presetId;
   return "openai-compatible";
 }
 
@@ -32,8 +39,10 @@ export function buildProviderEntryFromWizard(input: {
   baseUrl?: string;
   customChatModel?: string;
   customEmbeddingModel?: string;
+  /** Set when the entry came from a known-service preset (#69). */
+  presetId?: string | null;
 }): BuiltWizardProvider {
-  const id = providerIdForKind(input.kind);
+  const id = providerIdForKind(input.kind, input.presetId);
   const chatModel = isCuratedCatalogKind(input.kind)
     ? input.chatModelId
     : (input.customChatModel?.trim() || OPENAI_COMPAT_DEFAULT_CHAT_MODEL);

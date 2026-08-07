@@ -3,6 +3,7 @@ import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
 import { getCachedOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import { normalizeOpenAiBaseUrl } from "../../llm/provider/openai/normalize-openai-base-url.js";
 import { PICK_WINDOW } from "../components/wizard-pick-list.js";
+import { findProviderPreset } from "./provider-presets.js";
 import { OPENAI_COMPAT_DEFAULT_BASE_URL } from "./providers-model-options.js";
 import {
   advanceWizardPhase,
@@ -10,7 +11,7 @@ import {
   isCuratedCatalogKind,
   isLinePhase,
   isListPhase,
-  kindAtCursor,
+  kindRowAtCursor,
   listEmbeddingModelsForKind,
   listLengthForPhase,
 } from "./providers-wizard-phases.js";
@@ -207,12 +208,31 @@ export function handleProvidersWizardKey(
   }
   if (key.return) {
     if (wizard.phase === "pick_kind") {
-      const kind = kindAtCursor(clampCursor(wizard.cursor, len));
+      const row = kindRowAtCursor(clampCursor(wizard.cursor, len));
+      if (typeof row === "object") {
+        const preset = findProviderPreset(row.presetId);
+        if (!preset) return { handled: true, wizard };
+        // A preset is an openai-compatible entry with the endpoint
+        // already known, so the operator goes straight to the key step
+        // and never types a base URL. Local servers (LM Studio) need no
+        // key at all, which the api_key step accepts as empty.
+        return {
+          handled: true,
+          wizard: {
+            ...wizard,
+            kind: "openai-compatible",
+            presetId: preset.id,
+            baseUrlLine: preset.baseUrl,
+            phase: "api_key",
+            cursor: 0,
+          },
+        };
+      }
       return {
         handled: true,
         wizard: advanceWizardPhase({
           ...wizard,
-          kind,
+          kind: row,
         }),
       };
     }

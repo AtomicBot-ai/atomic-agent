@@ -20,6 +20,12 @@ export interface ProvidersWizardState {
   kind: ProvidersWizardKind | null;
   /** Set when `mode === "configure"`. */
   providerId: string | null;
+  /**
+   * Preset chosen on the `pick_preset` step. Presets are not a provider
+   * kind: they resolve to `openai-compatible` with `baseUrl` prefilled,
+   * so the operator never types an endpoint from memory (#69).
+   */
+  presetId: string | null;
   cursor: number;
   apiKeyBuffer: string;
   baseUrlLine: string;
@@ -53,6 +59,7 @@ export function createProvidersWizardState(
     phase: configure ? "api_key" : "pick_kind",
     kind,
     providerId: opts?.providerId ?? null,
+    presetId: null,
     cursor: 0,
     apiKeyBuffer: "",
     baseUrlLine: opts?.baseUrl ?? "",

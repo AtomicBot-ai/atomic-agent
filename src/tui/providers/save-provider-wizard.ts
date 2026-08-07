@@ -35,6 +35,7 @@ export function saveProviderWizardToConfig(
 
   const built = buildProviderEntryFromWizard({
     kind,
+    presetId: wizard.presetId,
     chatModelId:
       wizard.selectedChatModelId ?? defaultChatModelForKind(kind),
     embeddingChoiceId:
@@ -45,7 +46,7 @@ export function saveProviderWizardToConfig(
   });
 
   const existing = getConfig().llm?.providers.find(
-    (provider) => provider.id === providerIdForKind(kind),
+    (provider) => provider.id === providerIdForKind(kind, wizard.presetId),
   );
   let entry = built.entry;
   if (wizard.apiKeyBuffer.trim().length > 0) {
