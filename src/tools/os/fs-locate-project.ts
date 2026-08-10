@@ -1,8 +1,6 @@
-import { realpath, stat } from "node:fs/promises";
-import { basename, isAbsolute, resolve } from "node:path";
+import { basename } from "node:path";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
-import { expandHome } from "./expand-home.js";
 import {
   canonicalizePaths,
   collectConfiguredRoots,
@@ -11,6 +9,7 @@ import {
   dedupeByPath,
   dropMissingDirs,
   normalizeForMatch,
+  resolveDirectPath,
   sortCandidates,
   MAX_ROOT_ENTRIES,
   RECENT_SESSIONS_SCAN_LIMIT,
@@ -50,13 +49,16 @@ export function buildOsFsLocateProjectTool(
   return {
     name: "os.fs.locate_project",
     description:
-      "Resolve a project name mentioned by the user (e.g. 'my raylib project') " +
-      "to a directory path. Searches only the session working dir and its " +
-      "ancestors, recent session dirs, and the user-configured projects.roots " +
-      "(one level deep). Never scans the whole disk. On multiple matches, ask " +
-      "the user to pick one; on no match, ask for the full path.",
+      "Resolve a project directory from a short folder-name segment the user " +
+      "mentioned (raylib finds .../_raylib). Pass only that segment or a pasted " +
+      "absolute path as name, never the whole sentence. Searches only the " +
+      "session working dir and its ancestors, recent session dirs, and the " +
+      "user-configured projects.roots (one level deep). Never scans the whole " +
+      "disk. On multiple matches, ask the user to pick one; on no match, ask " +
+      "for the full path.",
     readonly: true,
     async run(rawArgs, ctx) {
+      ctx.signal.throwIfAborted();
       const { query, rawName, limit } = parseArgs(rawArgs);
 
       // Fast path: the user pasted an absolute path (issue screenshot:
@@ -90,14 +92,21 @@ export function buildOsFsLocateProjectTool(
           query,
         ),
       ];
-      const rootScan = await collectConfiguredRoots(deps.projectRoots, query);
+      const rootScan = await collectConfiguredRoots(
+        deps.projectRoots,
+        query,
+        ctx.signal,
+      );
       collected.push(...rootScan.candidates);
 
       // realpath before dedupe: the same dir reached via different
       // spellings (/tmp vs /private/tmp, symlinked session cwd) must
-      // collapse instead of reading as a false ambiguity.
+      // collapse instead of reading as a false ambiguity. Abort is
+      // re-checked between the fs batches.
+      ctx.signal.throwIfAborted();
       const canonical = await canonicalizePaths(collected);
       const deduped = dedupeByPath(canonical);
+      ctx.signal.throwIfAborted();
       const alive = await dropMissingDirs(deduped);
       // The verdict (found / ambiguous) is computed over the FULL match
       // list; `limit` only caps how many candidates are listed. A tight
@@ -149,27 +158,6 @@ function parseArgs(raw: Record<string, unknown>): {
       ? Math.min(MAX_CANDIDATE_LIMIT, Math.max(1, Math.floor(raw.limit)))
       : DEFAULT_CANDIDATE_LIMIT;
   return { query, rawName, limit };
-}
-
-/**
- * Absolute-path fast path. `~` is expanded first so "~/dev/raylib"
- * counts; a non-directory or missing path falls through to the normal
- * search (its last segment may still match a source). The returned
- * path is realpath'd when possible.
- */
-async function resolveDirectPath(rawName: string): Promise<string | null> {
-  const expanded = expandHome(rawName);
-  if (!isAbsolute(expanded)) return null;
-  try {
-    if (!(await stat(expanded)).isDirectory()) return null;
-  } catch {
-    return null;
-  }
-  try {
-    return await realpath(expanded);
-  } catch {
-    return resolve(expanded);
-  }
 }
 
 function splitBestTier(matches: readonly Candidate[]): {

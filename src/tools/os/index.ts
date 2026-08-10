@@ -7,6 +7,8 @@ import { buildOsFsWriteTool } from "./fs-write.js";
 import { buildOsFsTrashTool } from "./fs-trash.js";
 import { osFsListTool } from "./fs-list.js";
 import { osFsGlobTool } from "./fs-glob.js";
+import { buildOsFsLocateProjectTool } from "./fs-locate-project.js";
+import type { RecentSessionDir } from "./fs-locate-project-sources.js";
 import { buildOsFsGrepTool } from "./fs-grep.js";
 import { buildOsFsEditTool } from "./fs-edit.js";
 import { buildOsFsReadDocumentTool } from "./read-document/index.js";
@@ -76,7 +78,14 @@ export { osProcListTool, buildOsProcKillTool } from "./proc/index.js";
 export { isGogCommand } from "./shell-command-guard/index.js";
 
 export interface RegisterOsToolsOptions extends DangerousToolOptions {
-  config: Pick<AtomicAgentConfig, "http" | "web">;
+  config: Pick<AtomicAgentConfig, "http" | "web" | "projects">;
+  /**
+   * Column-only recent-session projection for `os.fs.locate_project`
+   * (`SessionStore.listRecentWorkingDirs`). A closure so the caller
+   * decides which store backs it; must be callable by the time the
+   * first tool invocation happens.
+   */
+  listRecentSessionDirs: (limit: number) => readonly RecentSessionDir[];
 }
 
 export function registerOsTools(
@@ -89,6 +98,12 @@ export function registerOsTools(
   registry.register(buildOsFsTrashTool(options));
   registry.register(osFsListTool);
   registry.register(osFsGlobTool);
+  registry.register(
+    buildOsFsLocateProjectTool({
+      listRecentSessions: options.listRecentSessionDirs,
+      projectRoots: options.config.projects.roots,
+    }),
+  );
   registry.register(buildOsFsGrepTool());
   registry.register(buildOsFsEditTool(options));
   registry.register(buildOsFsReadDocumentTool());

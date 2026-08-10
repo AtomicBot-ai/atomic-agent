@@ -79,8 +79,9 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "os.fs.locate_project",
     summary:
-      "Resolve a project mentioned by name ('my raylib project', 'in tasks-board') to a directory path when the user gives no full path. Checks the session cwd + ancestors, recent session dirs, and configured projects.roots (one level; never a whole-disk scan). Single match: use the returned path. Multiple: ask the user to pick. None: ask for the full path.",
+      "Resolve a project directory from a short folder-name segment the user mentioned (raylib finds .../_raylib). Pass only that segment or a pasted absolute path as name, never the whole sentence. Searches the session cwd + ancestors, recent session dirs, and configured projects.roots (one level; never a whole-disk scan). Single match: use the returned path. Multiple: ask the user to pick. None: ask for the full path.",
     argsSchema: "{ name: string, limit?: number }",
+    examples: ['{"name":"raylib"}', '{"name":"tasks-board"}'],
   },
   {
     name: "os.fs.grep",

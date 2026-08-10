@@ -53,10 +53,7 @@ import { replyTool } from "../tools/conversation/index.js";
 import { buildBrowserTools } from "../tools/browser/index.js";
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
-import {
-  buildOsFsLocateProjectTool,
-  registerOsTools,
-} from "../tools/os/index.js";
+import { registerOsTools } from "../tools/os/index.js";
 import { registerSkillTools } from "../tools/skill/index.js";
 import { buildToolViewTool } from "../tools/tool-view/index.js";
 import { registerMemoryTools } from "../tools/memory/index.js";
@@ -959,6 +956,12 @@ export async function createAgentRuntime(
       })
     : null;
 
+  // Constructed before the tool registry: `os.fs.locate_project`
+  // (issue #77) reads recent-session working dirs through the
+  // column-only `listRecentWorkingDirs` projection, so the store must
+  // exist by the time `registerOsTools` wires the closure below.
+  const sessionStore = new SessionStore();
+
   const toolRegistry = new ToolRegistry();
   toolRegistry.register(finishTool);
   toolRegistry.register(replyTool);
@@ -969,7 +972,8 @@ export async function createAgentRuntime(
   }
   registerOsTools(toolRegistry, {
     ...dangerous,
-    config: { http: config.http, web: config.web },
+    config: { http: config.http, web: config.web, projects: config.projects },
+    listRecentSessionDirs: (limit) => sessionStore.listRecentWorkingDirs(limit),
   });
   registerSkillTools(toolRegistry, skillRegistry, dangerous);
   toolRegistry.register(buildToolViewTool());
@@ -1369,23 +1373,6 @@ export async function createAgentRuntime(
               }),
             );
           });
-
-  const sessionStore = new SessionStore();
-
-  // Issue #77 — fuzzy project-name resolution. Registered here rather
-  // than in `registerOsTools` because the tool reads recent-session
-  // working dirs from the SessionStore constructed just above. Search
-  // sources are bounded by design: session cwd + ancestors, recent
-  // session dirs, and one-level children of the user-declared
-  // `projects.roots` — never a disk-wide scan.
-  toolRegistry.register(
-    buildOsFsLocateProjectTool({
-      // Column-only projection: never deserialises full session
-      // payloads on the tool's read path.
-      listRecentSessions: (limit) => sessionStore.listRecentWorkingDirs(limit),
-      projectRoots: config.projects.roots,
-    }),
-  );
 
   const taskStore = new TaskStore({ dbFile: config.paths.tasksDbFile });
   const webhookSessionStore = new WebhookSessionStore(

@@ -494,7 +494,9 @@ describe("registerOsTools", () => {
             brave: { apiKeyEnv: "BRAVE_SEARCH_API_KEY" },
           },
         },
+        projects: { roots: [] },
       },
+      listRecentSessionDirs: () => [],
     });
     const names = registry.list().map((t) => t.name).sort();
     expect(names).toEqual(
@@ -510,6 +512,7 @@ describe("registerOsTools", () => {
         "os.fs.grep",
         "os.fs.hash",
         "os.fs.list",
+        "os.fs.locate_project",
         "os.fs.patch",
         "os.fs.read",
         "os.fs.read_document",

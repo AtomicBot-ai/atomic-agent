@@ -1,4 +1,4 @@
-import { readdir, realpath, stat } from "node:fs/promises";
+import { opendir, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { expandHome } from "./expand-home.js";
 
@@ -115,10 +115,18 @@ export interface RootScanResult {
 /**
  * One-level scan: each configured root's own basename plus its direct
  * child directories. Recursion never happens.
+ *
+ * The listing is streamed via `opendir` (small internal batches), so a
+ * root that trips the 500-eligible-dirs cap stops reading right there
+ * instead of materialising the whole directory the way `readdir`
+ * would. Only eligible dirs count toward the cap: loose files, hidden
+ * names, and dependency caches cannot evict project dirs from the
+ * window. `signal` aborts between roots and between entries.
  */
 export async function collectConfiguredRoots(
   roots: readonly string[],
   query: string,
+  signal?: AbortSignal,
 ): Promise<RootScanResult> {
   const result: RootScanResult = {
     candidates: [],
@@ -128,6 +136,7 @@ export async function collectConfiguredRoots(
     truncatedRoots: [],
   };
   for (const raw of roots) {
+    signal?.throwIfAborted();
     if (typeof raw !== "string") continue;
     if (raw.trim().length === 0) {
       // A whitespace-only entry survives config validation (it is a
@@ -141,44 +150,60 @@ export async function collectConfiguredRoots(
       continue;
     }
     const root = resolve(expanded);
-    let entries;
+    let dir;
     try {
-      entries = await readdir(root, { withFileTypes: true });
+      dir = await opendir(root);
     } catch {
       result.unreadableRoots.push(root);
       continue;
     }
-    result.rootsScanned += 1;
 
+    const rootCandidates: Candidate[] = [];
     const rootTier = matchTier(basename(root), query);
     if (rootTier !== null) {
-      result.candidates.push({
+      rootCandidates.push({
         path: root,
         source: "configured-root",
         tier: rootTier,
         recency: 0,
       });
     }
-    // Filter BEFORE capping: a root with hundreds of loose files must
-    // not evict real project dirs from the 500-entry window (readdir
-    // order is platform-dependent).
-    const eligible = entries.filter(
-      (entry) =>
-        entry.isDirectory() &&
-        !entry.name.startsWith(".") &&
-        !SKIPPED_DIR_NAMES.has(entry.name),
-    );
-    if (eligible.length > MAX_ROOT_ENTRIES) result.truncatedRoots.push(root);
-    for (const entry of eligible.slice(0, MAX_ROOT_ENTRIES)) {
-      const tier = matchTier(entry.name, query);
-      if (tier === null) continue;
-      result.candidates.push({
-        path: join(root, entry.name),
-        source: "configured-root",
-        tier,
-        recency: 0,
-      });
+
+    let truncated = false;
+    let eligibleSeen = 0;
+    try {
+      for await (const entry of dir) {
+        signal?.throwIfAborted();
+        if (!entry.isDirectory()) continue;
+        if (entry.name.startsWith(".")) continue;
+        if (SKIPPED_DIR_NAMES.has(entry.name)) continue;
+        eligibleSeen += 1;
+        if (eligibleSeen > MAX_ROOT_ENTRIES) {
+          // Cap hit: stop pulling entries entirely (break closes the
+          // dir handle via the async iterator's return()).
+          truncated = true;
+          break;
+        }
+        const tier = matchTier(entry.name, query);
+        if (tier === null) continue;
+        rootCandidates.push({
+          path: join(root, entry.name),
+          source: "configured-root",
+          tier,
+          recency: 0,
+        });
+      }
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      // Mid-stream read failure: count the root as unreadable and drop
+      // its partial candidates so the outcome stays deterministic.
+      result.unreadableRoots.push(root);
+      continue;
     }
+
+    result.rootsScanned += 1;
+    if (truncated) result.truncatedRoots.push(root);
+    result.candidates.push(...rootCandidates);
   }
   return result;
 }
@@ -232,6 +257,27 @@ export async function dropMissingDirs(
     }),
   );
   return checks.filter((c): c is Candidate => c !== null);
+}
+
+/**
+ * Absolute-path fast path. `~` is expanded first so "~/dev/raylib"
+ * counts; a non-directory or missing path falls through to the normal
+ * search (its last segment may still match a source). The returned
+ * path is realpath'd when possible.
+ */
+export async function resolveDirectPath(rawName: string): Promise<string | null> {
+  const expanded = expandHome(rawName);
+  if (!isAbsolute(expanded)) return null;
+  try {
+    if (!(await stat(expanded)).isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  try {
+    return await realpath(expanded);
+  } catch {
+    return resolve(expanded);
+  }
 }
 
 export function sortCandidates(candidates: readonly Candidate[]): Candidate[] {
