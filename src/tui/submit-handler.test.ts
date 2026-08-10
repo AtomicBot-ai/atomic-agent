@@ -44,6 +44,29 @@ describe("handleEditorSubmit", () => {
     expect(systemMessages.some((t) => t.includes("chat cleared"))).toBe(true);
   });
 
+  it("routes the /model picker request through the callback, not dispatch", () => {
+    // The orchestrator that owns the /v1/models fetch listens on the
+    // event bus; a dispatched request action is a reducer no-op it
+    // never sees, which is why /model looked dead in the app.
+    const state = createInitialTuiState(fakeSession());
+    const dispatched: Array<{ type: string }> = [];
+    const onPickerRequested = vi.fn();
+    handleEditorSubmit(
+      "/model",
+      state,
+      ((a: { type: string }) => dispatched.push(a)) as never,
+      stubCallbacks({ onProvidersChatModelPickerRequested: onPickerRequested }),
+    );
+    expect(onPickerRequested).toHaveBeenCalledWith(null);
+    expect(
+      dispatched.some(
+        (a) => a.type === "providers_chat_model_picker_requested",
+      ),
+    ).toBe(false);
+    // The jump to the LLM tab still travels through the reducer.
+    expect(dispatched.some((a) => a.type === "tab_changed")).toBe(true);
+  });
+
   it("with palette open, runs the buffer when it is a full registered command (stale slashQuery)", () => {
     const base = createInitialTuiState(fakeSession());
     const state: TuiState = {
