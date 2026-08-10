@@ -158,6 +158,46 @@ describe("formatTaskReportMessage", () => {
   });
 });
 
+describe("formatTaskReportMessage size envelope", () => {
+  /**
+   * Pins the "one report == one Telegram message" invariant that
+   * `sendTaskReport` leans on: with every field at its cap the
+   * rendered text stays under the 4000-unit outbound chunk size, so
+   * chunking can never split a report today. If a cap grows past
+   * this, `sendTaskReport`'s dropped-chunk accounting (delivered vs
+   * total) is already in place — but this test failing is the signal
+   * to revisit the envelope first.
+   */
+  it("a maximal completed report fits a single outbound chunk (< 4000 units)", () => {
+    const text = formatTaskReportMessage(
+      makeReport({
+        userMessage: "u".repeat(20_000),
+        replyText: "r".repeat(20_000),
+        attempts: 999,
+        maxAttempts: 999,
+        durationMs: 100 * 60 * 1000,
+      }),
+    );
+    expect(text.length).toBeLessThan(4000);
+  });
+
+  it("a maximal failed report fits a single outbound chunk (< 4000 units)", () => {
+    const text = formatTaskReportMessage(
+      makeReport({
+        status: "failed",
+        userMessage: "u".repeat(20_000),
+        replyText: null,
+        errorMessage: "e".repeat(20_000),
+        errorCategory: "transport",
+        attempts: 999,
+        maxAttempts: 999,
+        durationMs: 100 * 60 * 1000,
+      }),
+    );
+    expect(text.length).toBeLessThan(4000);
+  });
+});
+
 /** True when `text` contains an unpaired UTF-16 surrogate. */
 function hasLoneSurrogate(text: string): boolean {
   return /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(

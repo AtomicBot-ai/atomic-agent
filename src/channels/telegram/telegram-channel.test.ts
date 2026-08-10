@@ -17,6 +17,7 @@ import type { TaskReport } from "../../tasks/index.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import {
+  TASK_REPORT_QUEUE_LIMIT,
   TelegramChannel,
   scrubErrorMessage,
   type BotFactory,
@@ -803,12 +804,12 @@ describe("TelegramChannel live-control surface", () => {
       };
     }
 
-    it("returns channel_not_up without touching the API when the channel never started", async () => {
+    it("returns channel_not_up without queueing when no token is configured", async () => {
       const { factory, state } = makeBotFactory();
       const channel = new TelegramChannel({
         runtime: fakeRuntime(),
         config: makeConfig(dir),
-        token: "1234:abcdef",
+        token: null,
         logger,
         botFactory: factory,
         lock: fakeLock().lock,
@@ -816,6 +817,67 @@ describe("TelegramChannel live-control surface", () => {
       const delivery = await channel.sendTaskReport(makeReport());
       expect(delivery).toBe("channel_not_up");
       expect(state.sendMessageCalls).toHaveLength(0);
+    });
+
+    it("queues a report while the channel is not up and flushes it on the transition to up", async () => {
+      const { factory, state } = makeBotFactory();
+      const channel = new TelegramChannel({
+        runtime: fakeRuntime(),
+        config: makeConfig(dir, 42),
+        token: "1234:abcdef",
+        logger,
+        botFactory: factory,
+        lock: fakeLock().lock,
+      });
+      // Token configured, start() not called yet: the boot-race shape.
+      const delivery = await channel.sendTaskReport(makeReport());
+      expect(delivery).toBe("queued");
+      expect(state.sendMessageCalls).toHaveLength(0);
+
+      await channel.start();
+      await vi.waitFor(() => {
+        expect(state.sendMessageCalls).toHaveLength(1);
+      });
+      expect(state.sendMessageCalls[0]!.chatId).toBe(42);
+      expect(state.sendMessageCalls[0]!.text).toContain(
+        "✅ Scheduled task completed",
+      );
+    });
+
+    it("evicts the oldest queued report with a warning when the queue is full", async () => {
+      const warns: string[] = [];
+      const capturingLogger = new StructuredLogger({
+        level: "info",
+        sinks: [
+          (record) => {
+            if (record.level === "warn") warns.push(record.message);
+          },
+        ],
+      });
+      const { factory, state } = makeBotFactory();
+      const channel = new TelegramChannel({
+        runtime: fakeRuntime(),
+        config: makeConfig(dir, 42),
+        token: "1234:abcdef",
+        logger: capturingLogger,
+        botFactory: factory,
+        lock: fakeLock().lock,
+      });
+      for (let i = 0; i <= TASK_REPORT_QUEUE_LIMIT; i += 1) {
+        await channel.sendTaskReport({ ...makeReport(), taskId: `t-q${i}` });
+      }
+      expect(
+        warns.filter((w) => w.includes("evicted: queue full")),
+      ).toHaveLength(1);
+
+      await channel.start();
+      await vi.waitFor(() => {
+        expect(state.sendMessageCalls).toHaveLength(TASK_REPORT_QUEUE_LIMIT);
+      });
+      const delivered = state.sendMessageCalls.map((c) => c.text).join("\n");
+      // Oldest (t-q0) was evicted; the newest survived.
+      expect(delivered).not.toContain("t-q0)");
+      expect(delivered).toContain(`t-q${TASK_REPORT_QUEUE_LIMIT})`);
     });
 
     it("returns not_paired when the channel is up but no owner is configured", async () => {
@@ -862,7 +924,21 @@ describe("TelegramChannel live-control surface", () => {
       expect(sendMock.mock.calls[0]![2]).toBeUndefined();
     });
 
-    it("returns delivery_failed when every chunk is rejected by the API", async () => {
+    it("returns delivery_failed with a delivered/total chunk warning when the API rejects a chunk", async () => {
+      const warnRecords: Array<{ message: string; context?: Record<string, unknown> }> = [];
+      const capturingLogger = new StructuredLogger({
+        level: "warn",
+        sinks: [
+          (record) => {
+            if (record.level === "warn") {
+              warnRecords.push({
+                message: record.message,
+                ...(record.context ? { context: record.context } : {}),
+              });
+            }
+          },
+        ],
+      });
       const { factory } = makeBotFactory({
         sendMessageError: new Error("400 chat not found"),
       });
@@ -870,13 +946,21 @@ describe("TelegramChannel live-control surface", () => {
         runtime: fakeRuntime(),
         config: makeConfig(dir, 42),
         token: "1234:abcdef",
-        logger,
+        logger: capturingLogger,
         botFactory: factory,
         lock: fakeLock().lock,
       });
       await channel.start();
       const delivery = await channel.sendTaskReport(makeReport());
       expect(delivery).toBe("delivery_failed");
+      const chunkWarn = warnRecords.find((w) =>
+        w.message.includes("task report chunks dropped"),
+      );
+      expect(chunkWarn?.context).toMatchObject({
+        taskId: "t-report",
+        deliveredChunks: 0,
+        totalChunks: 1,
+      });
     });
   });
 
@@ -930,6 +1014,17 @@ describe("TelegramChannel live-control surface", () => {
       const sink = TelegramChannel.buildTaskReportSink({
         resolveChannel: () =>
           ({ sendTaskReport: async () => "sent" as const } as unknown as TelegramChannel),
+        logger: { warn: (message) => warns.push(message) },
+      });
+      await sink(makeSinkReport());
+      expect(warns).toHaveLength(0);
+    });
+
+    it("stays silent on a queued report (the channel owns that log and will flush)", async () => {
+      const warns: string[] = [];
+      const sink = TelegramChannel.buildTaskReportSink({
+        resolveChannel: () =>
+          ({ sendTaskReport: async () => "queued" as const } as unknown as TelegramChannel),
         logger: { warn: (message) => warns.push(message) },
       });
       await sink(makeSinkReport());

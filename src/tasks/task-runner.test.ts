@@ -599,6 +599,84 @@ describe("TaskRunner", () => {
       });
     });
 
+    it("captures the finish summary when the turn ends via finish without any reply", async () => {
+      const reports: TaskReport[] = [];
+      const runtime: TaskRunnerRuntime = {
+        runTurn: async (sess, _msg, options) => {
+          // A finish-terminal turn emits no assistant_reply; the final
+          // text lives on the finish tool's executed result.
+          options?.eventHook?.({
+            type: "llm_event",
+            event: {
+              type: "tool_call_executed",
+              result: {
+                tool: "finish",
+                status: "ok",
+                summary: "Backup complete (compressed)",
+                details: { summary: "Backup complete: 12 files archived", final: true },
+                truncated: false,
+              },
+              batchIndex: 0,
+              batchSize: 1,
+            },
+          });
+          return { session: sess, reason: "finish", stepCount: 2 };
+        },
+      };
+      const runner = makeRunner(runtime, (r) => {
+        reports.push(r);
+      });
+      const t = store.create({
+        sessionId: session.id,
+        userMessage: "nightly backup",
+        origin: "cli",
+        maxAttempts: 1,
+        notify: "telegram",
+      });
+      await runner.runOne(t.id);
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({
+        status: "completed",
+        replyText: "Backup complete: 12 files archived",
+      });
+    });
+
+    it("falls back to the compressed finish summary when details.summary is absent", async () => {
+      const reports: TaskReport[] = [];
+      const runtime: TaskRunnerRuntime = {
+        runTurn: async (sess, _msg, options) => {
+          options?.eventHook?.({
+            type: "llm_event",
+            event: {
+              type: "tool_call_executed",
+              result: {
+                tool: "finish",
+                status: "ok",
+                summary: "done, 3 issues triaged",
+                details: { final: true },
+                truncated: false,
+              },
+              batchIndex: 0,
+              batchSize: 1,
+            },
+          });
+          return { session: sess, reason: "finish", stepCount: 1 };
+        },
+      };
+      const runner = makeRunner(runtime, (r) => {
+        reports.push(r);
+      });
+      const t = store.create({
+        sessionId: session.id,
+        userMessage: "triage",
+        origin: "cli",
+        maxAttempts: 1,
+        notify: "telegram",
+      });
+      await runner.runOne(t.id);
+      expect(reports[0]?.replyText).toBe("done, 3 issues triaged");
+    });
+
     it("does NOT pass an eventHook and does NOT report when the task never opted in", async () => {
       const reports: TaskReport[] = [];
       const { runtime, hooksSeen } = replyingRuntime("silent result");

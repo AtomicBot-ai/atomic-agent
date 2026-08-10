@@ -286,19 +286,35 @@ export class TaskRunner {
 
     this.stampWakeReason(session, claimed);
 
-    // Capture the final assistant reply live so a completed report can
-    // carry the result text. The hook is installed only when this task
-    // opted into reporting AND a sink is wired — every other task pays
-    // zero per-event cost (no hook is passed to the turn at all).
+    // Capture the final result text live so a completed report can
+    // carry it. Two shapes, matching the loop's two success terminals:
+    // `assistant_reply` for the `reply` terminal, and the `finish`
+    // tool's summary for the `finish` terminal (unattended tasks
+    // routinely end via `finish` and emit no reply at all — the same
+    // `tool_call_executed` payload the TUI renders as the final feed
+    // line; `details.summary` is the uncompressed argument, with the
+    // compressed `summary` as fallback). The hook is installed only
+    // when this task opted into reporting AND a sink is wired — every
+    // other task pays zero per-event cost (no hook is passed at all).
     let capturedReply: string | null = null;
     const reportHook: TurnEventHook | undefined =
       claimed.notify !== null && this.options.reportSink
         ? (event: AgentLoopEvent): void => {
-            if (
-              event.type === "llm_event" &&
-              event.event.type === "assistant_reply"
-            ) {
+            if (event.type !== "llm_event") return;
+            if (event.event.type === "assistant_reply") {
               capturedReply = event.event.text;
+              return;
+            }
+            if (
+              event.event.type === "tool_call_executed" &&
+              event.event.result.tool === "finish" &&
+              event.event.result.status === "ok"
+            ) {
+              const full = event.event.result.details?.summary;
+              capturedReply =
+                typeof full === "string" && full.length > 0
+                  ? full
+                  : event.event.result.summary;
             }
           }
         : undefined;

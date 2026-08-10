@@ -49,15 +49,27 @@ export interface PairingStateSnapshot {
 /**
  * Outcome of a `sendTaskReport` call. Every branch is a value, never
  * a throw, so the task-runner sink can log skips without a try/catch
- * pyramid: `channel_not_up` (disabled / down / starting), `not_paired`
- * (no `ownerUserId` yet), `delivery_failed` (every chunk dropped by
- * the Telegram API), `sent` (at least one chunk accepted).
+ * pyramid: `sent` (every chunk accepted), `queued` (channel has a
+ * token but is not `up` yet — the report waits in the bounded queue
+ * and is flushed on the transition to `up`), `channel_not_up` (no
+ * token configured, nothing to wait for), `not_paired` (no
+ * `ownerUserId` yet), `delivery_failed` (one or more chunks dropped
+ * by the Telegram API — partial delivery is a failure, never a
+ * silent `sent`).
  */
 export type TaskReportDelivery =
   | "sent"
+  | "queued"
   | "channel_not_up"
   | "not_paired"
   | "delivery_failed";
+
+/**
+ * Hard cap on reports waiting for the channel to reach `up`. When the
+ * queue is full the oldest report is evicted with a warning — bounded
+ * memory wins over completeness for a channel that may never start.
+ */
+export const TASK_REPORT_QUEUE_LIMIT = 20;
 
 /**
  * Outcome of a successful pairing claim. `claim` is what the operator
@@ -110,6 +122,18 @@ export class TelegramChannel {
   private currentBotIdentity: { id: number; username: string | null } | null =
     null;
   private bot: BotInstance | null = null;
+  /**
+   * Task reports that arrived while the channel was not `up` but a
+   * token is configured (boot race: an overdue task can fire on the
+   * first scheduler tick while `start()` is still probing `getMe`, or
+   * the operator may enable the channel later). Flushed in FIFO order
+   * on every transition to `up`; capped at `TASK_REPORT_QUEUE_LIMIT`
+   * with oldest-first eviction. Deliberately not persisted — a report
+   * is a courtesy notification, not durable state (the task row keeps
+   * the authoritative outcome), and the queue survives `stop()` so a
+   * later `restart()` still delivers.
+   */
+  private readonly pendingTaskReports: TaskReport[] = [];
   private approvalBridge: ApprovalBridge | null = null;
   private approvalSubscription: {
     sessionId: string;
@@ -440,7 +464,10 @@ export class TelegramChannel {
         return;
       }
       const delivery = await channel.sendTaskReport(report);
-      if (delivery !== "sent") {
+      // `queued` is not a loss — the channel already info-logged it
+      // and will flush on `up`; warn only on outcomes that dropped
+      // the report.
+      if (delivery !== "sent" && delivery !== "queued") {
         deps.logger.warn("telegram task report skipped", {
           taskId: report.taskId,
           delivery,
@@ -465,10 +492,19 @@ export class TelegramChannel {
    * excerpts may contain `<`/`&` that must never meet the HTML parser.
    * Never throws — every failure mode is a `TaskReportDelivery` value,
    * and per-chunk send errors are already swallowed by `sendOutbound`.
+   *
+   * Not-up handling: with a token configured the report is queued and
+   * flushed on the transition to `up` (see `pendingTaskReports`);
+   * without a token there is nothing to wait for and the report is
+   * skipped as before.
    */
   async sendTaskReport(report: TaskReport): Promise<TaskReportDelivery> {
     const bot = this.bot;
-    if (this.currentState !== "up" || !bot) return "channel_not_up";
+    if (this.currentState !== "up" || !bot) {
+      if (this.currentToken === null) return "channel_not_up";
+      this.queueTaskReport(report);
+      return "queued";
+    }
     const ownerUserId = this.currentOwnerUserId;
     if (ownerUserId === null) return "not_paired";
     const result = await sendOutbound({
@@ -480,11 +516,60 @@ export class TelegramChannel {
         warn: (message, context) => this.deps.logger.warn(message, context),
       },
     });
-    if (result.dropped >= result.chunks) return "delivery_failed";
+    // Any dropped chunk fails the report — a partially delivered
+    // message must never account as `sent`. With the current format
+    // caps a report always fits one chunk (pinned by
+    // task-report-message.test.ts), so this also covers the whole-
+    // message failure; the count split keeps the log honest if the
+    // caps ever grow past the chunk size.
+    if (result.dropped > 0) {
+      this.deps.logger.warn("telegram task report chunks dropped", {
+        taskId: report.taskId,
+        deliveredChunks: result.chunks - result.dropped,
+        totalChunks: result.chunks,
+      });
+      return "delivery_failed";
+    }
     // One logical outbound message, same accounting rule as agent
     // replies (never per-chunk).
     this.deps.metrics?.recordTelegramMessage({ direction: "out" });
     return "sent";
+  }
+
+  /** FIFO-append with oldest-first eviction at `TASK_REPORT_QUEUE_LIMIT`. */
+  private queueTaskReport(report: TaskReport): void {
+    this.pendingTaskReports.push(report);
+    if (this.pendingTaskReports.length > TASK_REPORT_QUEUE_LIMIT) {
+      const evicted = this.pendingTaskReports.shift();
+      this.deps.logger.warn("telegram task report evicted: queue full", {
+        taskId: evicted?.taskId,
+        limit: TASK_REPORT_QUEUE_LIMIT,
+      });
+    }
+    this.deps.logger.info("telegram task report queued until channel is up", {
+      taskId: report.taskId,
+      queued: this.pendingTaskReports.length,
+    });
+  }
+
+  /**
+   * Deliver every queued report now that the channel is `up`. FIFO;
+   * `splice` empties the queue up-front so a report that fails again
+   * mid-flush (channel dropped back to `down`) re-queues itself via
+   * `sendTaskReport` instead of looping here. Fire-and-forget from
+   * `transition` — flushing must never block a state change.
+   */
+  private async flushPendingTaskReports(): Promise<void> {
+    const queued = this.pendingTaskReports.splice(0);
+    for (const report of queued) {
+      const delivery = await this.sendTaskReport(report);
+      if (delivery !== "sent" && delivery !== "queued") {
+        this.deps.logger.warn("queued telegram task report not delivered", {
+          taskId: report.taskId,
+          delivery,
+        });
+      }
+    }
   }
 
   private handlePairingClaim(update: InboundTextUpdate): boolean {
@@ -547,6 +632,12 @@ export class TelegramChannel {
     // counters bracketing them.
     if (next === "up") {
       this.deps.metrics?.recordTelegramUp();
+      // Deliver task reports that arrived before the channel came up
+      // (boot race / late enable). Fire-and-forget: a state change
+      // must never block on Telegram round-trips.
+      if (this.pendingTaskReports.length > 0) {
+        void this.flushPendingTaskReports();
+      }
     } else if (next === "down") {
       this.deps.metrics?.recordTelegramDown({
         outcome: "error",

@@ -2171,7 +2171,12 @@ export async function createAgentRuntime(
           metrics,
         })
       : null;
-  scheduler?.start();
+  // `scheduler?.start()` is deliberately deferred until after the
+  // Telegram channel object is constructed (near the end of bootstrap)
+  // so a task report from the very first due tick can never observe a
+  // missing channel — a not-yet-`up` channel queues reports itself.
+  // The only cost is that overdue tasks fire their first tick a few
+  // seconds later on a cold start; the tick cadence is unchanged.
 
   // Memory-v2 phase 5: cold-path consolidator. Owns its own
   // `setInterval` (scoped carve-out from "Scheduler is the only
@@ -2456,6 +2461,12 @@ export async function createAgentRuntime(
       });
     });
   }
+
+  // Deferred from the Scheduler construction site above: the first
+  // due tick must not race the Telegram channel construction, so task
+  // reports always find the channel object (and queue on it while it
+  // is still starting).
+  scheduler?.start();
 
   return runtime;
 }
