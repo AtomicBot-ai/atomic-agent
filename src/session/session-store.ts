@@ -31,6 +31,12 @@ export interface SessionStoreOptions {
   dbFile?: string;
 }
 
+/** Narrow projection returned by `listRecentWorkingDirs`. */
+export interface RecentWorkingDirRow {
+  workingDir: string;
+  updatedAt: number;
+}
+
 /**
  * Durable session persistence. We serialise the whole SessionState as JSON
  * because it is small (<10 KB) and we optimise for developer iteration
@@ -43,6 +49,7 @@ export class SessionStore {
   private readonly selectStmt: Database.Statement;
   private readonly listByWorkingDirStmt: Database.Statement;
   private readonly listRecentStmt: Database.Statement;
+  private readonly listRecentDirsStmt: Database.Statement;
   private readonly deleteStmt: Database.Statement;
 
   constructor(options: SessionStoreOptions = {}) {
@@ -71,6 +78,10 @@ export class SessionStore {
     );
     this.listRecentStmt = this.db.prepare(
       `SELECT payload FROM sessions ORDER BY updated_at DESC LIMIT ?`,
+    );
+    this.listRecentDirsStmt = this.db.prepare(
+      `SELECT working_dir AS workingDir, updated_at AS updatedAt
+       FROM sessions ORDER BY updated_at DESC LIMIT ?`,
     );
     this.deleteStmt = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
   }
@@ -106,6 +117,17 @@ export class SessionStore {
   listRecent(limit = 25): SessionState[] {
     const rows = this.listRecentStmt.all(limit) as Array<{ payload: string }>;
     return rows.map((row) => normalizeSessionState(JSON.parse(row.payload)));
+  }
+
+  /**
+   * Column-only projection of the most recently updated sessions.
+   * `os.fs.locate_project` calls this on demand (potentially inside a
+   * pure_read fan-out batch), so it must not pay `listRecent`'s
+   * JSON.parse of every full session payload — `working_dir` and
+   * `updated_at` already live as columns.
+   */
+  listRecentWorkingDirs(limit = 25): RecentWorkingDirRow[] {
+    return this.listRecentDirsStmt.all(limit) as RecentWorkingDirRow[];
   }
 
   delete(id: string): void {

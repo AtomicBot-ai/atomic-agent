@@ -1,4 +1,4 @@
-import { readdir, stat } from "node:fs/promises";
+import { readdir, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { expandHome } from "./expand-home.js";
 
@@ -45,15 +45,25 @@ const SOURCE_PRIORITY: Record<CandidateSource, number> = {
   "configured-root": 2,
 };
 
+/**
+ * Both sides are NFC-normalized before the casefold compare: macOS
+ * stores names in NFD, users type NFC — without this "Café" typed in
+ * chat never matches "Café" on disk. The query passed in must already
+ * be `normalizeForMatch`ed by the caller.
+ */
 export function matchTier(
   candidateBasename: string,
   query: string,
 ): MatchTier | null {
-  const base = candidateBasename.toLowerCase();
+  const base = normalizeForMatch(candidateBasename);
   if (base === query) return 0;
   if (base.startsWith(query)) return 1;
   if (base.includes(query)) return 2;
   return null;
+}
+
+export function normalizeForMatch(input: string): string {
+  return input.normalize("NFC").toLowerCase();
 }
 
 /** The working dir itself plus every ancestor, bounded by path depth. */
@@ -118,7 +128,13 @@ export async function collectConfiguredRoots(
     truncatedRoots: [],
   };
   for (const raw of roots) {
-    if (typeof raw !== "string" || raw.trim().length === 0) continue;
+    if (typeof raw !== "string") continue;
+    if (raw.trim().length === 0) {
+      // A whitespace-only entry survives config validation (it is a
+      // non-empty string) — report it instead of skipping silently.
+      result.invalidRoots.push(raw);
+      continue;
+    }
     const expanded = expandHome(raw.trim());
     if (!isAbsolute(expanded)) {
       result.invalidRoots.push(raw);
@@ -143,11 +159,17 @@ export async function collectConfiguredRoots(
         recency: 0,
       });
     }
-    if (entries.length > MAX_ROOT_ENTRIES) result.truncatedRoots.push(root);
-    for (const entry of entries.slice(0, MAX_ROOT_ENTRIES)) {
-      if (!entry.isDirectory()) continue;
-      if (entry.name.startsWith(".")) continue;
-      if (SKIPPED_DIR_NAMES.has(entry.name)) continue;
+    // Filter BEFORE capping: a root with hundreds of loose files must
+    // not evict real project dirs from the 500-entry window (readdir
+    // order is platform-dependent).
+    const eligible = entries.filter(
+      (entry) =>
+        entry.isDirectory() &&
+        !entry.name.startsWith(".") &&
+        !SKIPPED_DIR_NAMES.has(entry.name),
+    );
+    if (eligible.length > MAX_ROOT_ENTRIES) result.truncatedRoots.push(root);
+    for (const entry of eligible.slice(0, MAX_ROOT_ENTRIES)) {
       const tier = matchTier(entry.name, query);
       if (tier === null) continue;
       result.candidates.push({
@@ -159,6 +181,28 @@ export async function collectConfiguredRoots(
     }
   }
   return result;
+}
+
+/**
+ * Canonicalize candidate paths through `realpath` so the same directory
+ * reached via different spellings (macOS `/tmp` vs `/private/tmp`, a
+ * symlinked session cwd vs a configured-root child) collapses in
+ * `dedupeByPath` instead of producing a false ambiguous verdict. A
+ * failed `realpath` (deleted dir) keeps the original path — the later
+ * existence check drops it.
+ */
+export async function canonicalizePaths(
+  candidates: readonly Candidate[],
+): Promise<Candidate[]> {
+  return Promise.all(
+    candidates.map(async (c) => {
+      try {
+        return { ...c, path: await realpath(c.path) };
+      } catch {
+        return c;
+      }
+    }),
+  );
 }
 
 /** First writer wins; input order already encodes source priority. */

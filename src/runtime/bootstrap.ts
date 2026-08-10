@@ -1380,7 +1380,9 @@ export async function createAgentRuntime(
   // `projects.roots` — never a disk-wide scan.
   toolRegistry.register(
     buildOsFsLocateProjectTool({
-      listRecentSessions: (limit) => sessionStore.listRecent(limit),
+      // Column-only projection: never deserialises full session
+      // payloads on the tool's read path.
+      listRecentSessions: (limit) => sessionStore.listRecentWorkingDirs(limit),
       projectRoots: config.projects.roots,
     }),
   );

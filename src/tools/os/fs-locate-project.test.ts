@@ -1,13 +1,27 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, mkdir, rm, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolContext } from "../tool-registry.js";
+import { resourceClassFor } from "../../agent/tool-resource-class.js";
+import { isRareToolName } from "../../prompt/tool-descriptors.js";
 import {
   buildOsFsLocateProjectTool,
   type OsFsLocateProjectDeps,
 } from "./fs-locate-project.js";
 import type { RecentSessionDir } from "./fs-locate-project-sources.js";
+
+/** Windows without Developer Mode cannot create symlinks; skip there. */
+async function trySymlink(target: string, path: string): Promise<boolean> {
+  try {
+    await symlink(target, path, "dir");
+    return true;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EPERM" || code === "EACCES") return false;
+    throw err;
+  }
+}
 
 function makeCtx(workingDir: string): ToolContext {
   return {
@@ -34,7 +48,9 @@ describe("os.fs.locate_project", () => {
   let base: string;
 
   beforeEach(async () => {
-    base = await mkdtemp(join(tmpdir(), "locate-project-"));
+    // realpath so expectations survive symlinked tmp dirs
+    // (macOS /var -> /private/var) now that candidates are canonicalized.
+    base = await realpath(await mkdtemp(join(tmpdir(), "locate-project-")));
   });
 
   afterEach(async () => {
@@ -118,10 +134,11 @@ describe("os.fs.locate_project", () => {
     expect(res.summary).toContain("projects.roots");
   });
 
-  it("never matches hidden dirs or node_modules under a root", async () => {
+  it("never matches hidden dirs, node_modules, or __pycache__ under a root", async () => {
     const root = join(base, "dev");
     await mkdir(join(root, ".config-app"), { recursive: true });
     await mkdir(join(root, "node_modules"), { recursive: true });
+    await mkdir(join(root, "__pycache__"), { recursive: true });
 
     const tool = makeTool({ projectRoots: [root] });
     const hidden = await tool.run({ name: "config-app" }, makeCtx(base));
@@ -129,6 +146,9 @@ describe("os.fs.locate_project", () => {
 
     const nm = await tool.run({ name: "node_modules" }, makeCtx(base));
     expect(nm.details?.found).toBe(false);
+
+    const pycache = await tool.run({ name: "__pycache__" }, makeCtx(base));
+    expect(pycache.details?.found).toBe(false);
   });
 
   it("does not follow symlinked dirs under a root", async () => {
@@ -136,7 +156,7 @@ describe("os.fs.locate_project", () => {
     const outside = join(base, "outside", "linked-project");
     await mkdir(root, { recursive: true });
     await mkdir(outside, { recursive: true });
-    await symlink(outside, join(root, "linked-project"), "dir");
+    if (!(await trySymlink(outside, join(root, "linked-project")))) return;
 
     const tool = makeTool({ projectRoots: [root] });
     const res = await tool.run({ name: "linked-project" }, makeCtx(base));
@@ -288,5 +308,131 @@ describe("os.fs.locate_project", () => {
     await expect(tool.run({}, makeCtx(base))).rejects.toThrow(
       "`name` must be a non-empty string",
     );
+  });
+
+  it("fast-path: returns a pasted absolute directory path immediately", async () => {
+    const pasted = join(base, "pasted-project");
+    await mkdir(pasted, { recursive: true });
+
+    const tool = makeTool();
+    const res = await tool.run({ name: pasted }, makeCtx(base));
+
+    expect(res.details?.found).toBe(true);
+    expect(res.details?.path).toBe(pasted);
+    expect(res.details?.source).toBe("direct-path");
+    expect(res.summary).toContain(pasted);
+    expect(res.summary).not.toContain("Ask the user for the full path");
+  });
+
+  it("fast-path: a missing absolute path falls through to the honest miss", async () => {
+    const tool = makeTool();
+    const res = await tool.run(
+      { name: join(base, "ghost-project") },
+      makeCtx(base),
+    );
+
+    expect(res.details?.found).toBe(false);
+    expect(res.summary).toContain("no project directory matching");
+  });
+
+  it("normalizes backslash input to match by the last segment", async () => {
+    const root = join(base, "dev");
+    await mkdir(join(root, "_raylib"), { recursive: true });
+
+    const tool = makeTool({ projectRoots: [root] });
+    const res = await tool.run({ name: "e:\\dev\\_raylib" }, makeCtx(base));
+
+    expect(res.details?.found).toBe(true);
+    expect(res.details?.path).toBe(join(root, "_raylib"));
+  });
+
+  it("miss with all roots unreadable names the problem in the summary", async () => {
+    const tool = makeTool({
+      projectRoots: [join(base, "nope-a"), join(base, "nope-b")],
+    });
+    const res = await tool.run({ name: "anything" }, makeCtx(base));
+
+    expect(res.details?.found).toBe(false);
+    expect(res.summary).toContain(
+      "none of the 2 configured projects.roots could be scanned",
+    );
+    expect(res.summary).toContain("2 configured root(s) could not be read");
+    expect(res.summary).not.toContain("and 2 configured root(s)");
+  });
+
+  it("reports whitespace-only roots as invalid in the summary", async () => {
+    const tool = makeTool({ projectRoots: ["   "] });
+    const res = await tool.run({ name: "anything" }, makeCtx(base));
+
+    expect(res.details?.found).toBe(false);
+    expect(res.details?.invalidRoots).toEqual(["   "]);
+    expect(res.details?.rootsScanned).toBe(0);
+    expect(res.summary).toContain("skipped (empty or not absolute)");
+  });
+
+  it("surfaces a truncation note in the summary when a root exceeds the cap", async () => {
+    const root = join(base, "huge");
+    await mkdir(root, { recursive: true });
+    for (let i = 0; i < 501; i++) {
+      await mkdir(join(root, `p${String(i).padStart(3, "0")}`));
+    }
+
+    const tool = makeTool({ projectRoots: [root] });
+    const res = await tool.run({ name: "zzz-no-match" }, makeCtx(base));
+
+    expect(res.details?.found).toBe(false);
+    expect(res.summary).toContain("truncated at 500 entries");
+    expect(res.details?.truncatedRoots).toEqual([root]);
+  });
+
+  it("loose files do not consume the per-root cap", async () => {
+    const root = join(base, "files-heavy");
+    await mkdir(root, { recursive: true });
+    for (let i = 0; i < 600; i++) {
+      await writeFile(join(root, `aaa-file-${String(i).padStart(3, "0")}.txt`), "");
+    }
+    await mkdir(join(root, "zzz-needle"));
+
+    const tool = makeTool({ projectRoots: [root] });
+    const res = await tool.run({ name: "zzz-needle" }, makeCtx(base));
+
+    expect(res.details?.found).toBe(true);
+    expect(res.details?.path).toBe(join(root, "zzz-needle"));
+    expect(res.details?.truncatedRoots).toBeUndefined();
+  });
+
+  it("collapses symlink aliases of the same dir instead of reporting ambiguity", async () => {
+    const root = join(base, "dev");
+    const project = join(root, "app");
+    await mkdir(project, { recursive: true });
+    if (!(await trySymlink(root, join(base, "link-dev")))) return;
+
+    const tool = makeTool({
+      projectRoots: [root],
+      listRecentSessions: () => [session(join(base, "link-dev", "app"), 42)],
+    });
+    const res = await tool.run({ name: "app" }, makeCtx(base));
+
+    expect(res.details?.ambiguous).toBe(false);
+    expect(res.details?.found).toBe(true);
+    expect(res.details?.path).toBe(project);
+    const candidates = res.details?.candidates as Array<{ path: string }>;
+    expect(candidates).toHaveLength(1);
+  });
+
+  it("matches across unicode normalization forms (NFC query, NFD dir)", async () => {
+    const root = join(base, "dev");
+    // "Café-proj" with a combining acute accent (NFD).
+    await mkdir(join(root, "Cafe\u0301-proj"), { recursive: true });
+
+    const tool = makeTool({ projectRoots: [root] });
+    const res = await tool.run({ name: "caf\u00e9-proj" }, makeCtx(base));
+
+    expect(res.details?.found).toBe(true);
+  });
+
+  it("is pinned pure_read and frequent-tier", () => {
+    expect(resourceClassFor("os.fs.locate_project")).toBe("pure_read");
+    expect(isRareToolName("os.fs.locate_project")).toBe(false);
   });
 });

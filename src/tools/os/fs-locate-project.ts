@@ -1,13 +1,18 @@
-import { basename } from "node:path";
+import { realpath, stat } from "node:fs/promises";
+import { basename, isAbsolute, resolve } from "node:path";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
+import { expandHome } from "./expand-home.js";
 import {
+  canonicalizePaths,
   collectConfiguredRoots,
   collectCwdChain,
   collectSessionHistory,
   dedupeByPath,
   dropMissingDirs,
+  normalizeForMatch,
   sortCandidates,
+  MAX_ROOT_ENTRIES,
   RECENT_SESSIONS_SCAN_LIMIT,
   type Candidate,
   type RecentSessionDir,
@@ -54,6 +59,30 @@ export function buildOsFsLocateProjectTool(
     async run(rawArgs, ctx) {
       const { query, rawName, limit } = parseArgs(rawArgs);
 
+      // Fast path: the user pasted an absolute path (issue screenshot:
+      // "can you check on e:/_raylib"). If it exists as a directory,
+      // return it — never answer "give me the full path" to a full path.
+      const direct = await resolveDirectPath(rawName);
+      if (direct !== null) {
+        return compressToolResult(
+          {
+            tool: "os.fs.locate_project",
+            status: "ok",
+            output: `project "${rawName}" -> ${direct} (source: direct-path)`,
+            details: {
+              query: rawName,
+              found: true,
+              ambiguous: false,
+              path: direct,
+              source: "direct-path",
+              candidates: [{ path: direct, source: "direct-path" }],
+              rootsScanned: 0,
+            },
+          },
+          { maxSummaryLength: 2000, maxTailLines: 40 },
+        );
+      }
+
       const collected: Candidate[] = [
         ...collectCwdChain(ctx.workingDir, query),
         ...collectSessionHistory(
@@ -64,7 +93,11 @@ export function buildOsFsLocateProjectTool(
       const rootScan = await collectConfiguredRoots(deps.projectRoots, query);
       collected.push(...rootScan.candidates);
 
-      const deduped = dedupeByPath(collected);
+      // realpath before dedupe: the same dir reached via different
+      // spellings (/tmp vs /private/tmp, symlinked session cwd) must
+      // collapse instead of reading as a false ambiguity.
+      const canonical = await canonicalizePaths(collected);
+      const deduped = dedupeByPath(canonical);
       const alive = await dropMissingDirs(deduped);
       // The verdict (found / ambiguous) is computed over the FULL match
       // list; `limit` only caps how many candidates are listed. A tight
@@ -77,6 +110,7 @@ export function buildOsFsLocateProjectTool(
         sorted,
         displayed,
         deps.projectRoots.length,
+        rootScan,
       );
       return compressToolResult(
         {
@@ -103,16 +137,39 @@ function parseArgs(raw: Record<string, unknown>): {
     throw new Error("os.fs.locate_project: `name` must be a non-empty string");
   }
   const rawName = name.trim();
-  // Tolerate a pasted path fragment ("e:/_raylib") — match on its last
-  // segment. Falls back to the trimmed input when basename is empty.
-  const lastSegment = basename(rawName);
-  const query = (lastSegment.length > 0 ? lastSegment : rawName).toLowerCase();
+  // Tolerate a pasted path fragment ("e:/_raylib", "e:\\_raylib") by
+  // matching on its last segment. Backslashes are normalized first so
+  // Windows-style input parses on every host platform; falls back to
+  // the trimmed input when basename is empty.
+  const lastSegment = basename(rawName.replace(/\\/g, "/"));
+  const query = normalizeForMatch(lastSegment.length > 0 ? lastSegment : rawName);
 
   const limit =
     typeof raw.limit === "number" && Number.isFinite(raw.limit)
       ? Math.min(MAX_CANDIDATE_LIMIT, Math.max(1, Math.floor(raw.limit)))
       : DEFAULT_CANDIDATE_LIMIT;
   return { query, rawName, limit };
+}
+
+/**
+ * Absolute-path fast path. `~` is expanded first so "~/dev/raylib"
+ * counts; a non-directory or missing path falls through to the normal
+ * search (its last segment may still match a source). The returned
+ * path is realpath'd when possible.
+ */
+async function resolveDirectPath(rawName: string): Promise<string | null> {
+  const expanded = expandHome(rawName);
+  if (!isAbsolute(expanded)) return null;
+  try {
+    if (!(await stat(expanded)).isDirectory()) return null;
+  } catch {
+    return null;
+  }
+  try {
+    return await realpath(expanded);
+  } catch {
+    return resolve(expanded);
+  }
 }
 
 function splitBestTier(matches: readonly Candidate[]): {
@@ -128,12 +185,44 @@ function splitBestTier(matches: readonly Candidate[]): {
   };
 }
 
+/**
+ * Root-scan problems must land in the OUTPUT text: the model only ever
+ * sees the compressed summary (`toolResultTurn` carries no details), so
+ * anything details-only is invisible to it.
+ */
+function renderRootNotes(rootScan: RootScanResult): string[] {
+  const notes: string[] = [];
+  if (rootScan.invalidRoots.length > 0) {
+    notes.push(
+      `note: ${rootScan.invalidRoots.length} configured root(s) skipped ` +
+        `(empty or not absolute): ${rootScan.invalidRoots
+          .map((r) => JSON.stringify(r))
+          .join(", ")}`,
+    );
+  }
+  if (rootScan.unreadableRoots.length > 0) {
+    notes.push(
+      `note: ${rootScan.unreadableRoots.length} configured root(s) could not ` +
+        `be read: ${rootScan.unreadableRoots.join(", ")}`,
+    );
+  }
+  for (const root of rootScan.truncatedRoots) {
+    notes.push(
+      `note: root ${root} truncated at ${MAX_ROOT_ENTRIES} entries; ` +
+        `matches beyond the cap were not scanned`,
+    );
+  }
+  return notes;
+}
+
 function renderOutput(
   rawName: string,
   sorted: readonly Candidate[],
   displayed: readonly Candidate[],
   configuredRootCount: number,
+  rootScan: RootScanResult,
 ): string {
+  const notes = renderRootNotes(rootScan);
   const { best } = splitBestTier(sorted);
   const hit = best.length === 1 ? best[0] : undefined;
   if (hit !== undefined) {
@@ -143,7 +232,7 @@ function renderOutput(
       lines.push(`weaker matches (mention only if the resolved path looks wrong):`);
       for (const alt of weaker) lines.push(`  - ${alt.path} (${alt.source})`);
     }
-    return lines.join("\n");
+    return [...lines, ...notes].join("\n");
   }
   if (best.length > 1) {
     const lines = [
@@ -154,16 +243,29 @@ function renderOutput(
     if (sorted.length > displayed.length) {
       lines.push(`  (and ${sorted.length - displayed.length} more; raise limit to list them)`);
     }
-    return lines.join("\n");
+    return [...lines, ...notes].join("\n");
   }
-  const hint =
-    configuredRootCount === 0
-      ? `No projects.roots are configured — the user can add parent directories of their projects to "projects.roots" in the agent config to widen the search.`
-      : `Checked the session working dir, recent session dirs, and ${configuredRootCount} configured root(s).`;
-  return (
+  // Honest miss: report how many roots were actually scanned, never the
+  // configured count (all of them may have been unreadable).
+  let hint: string;
+  if (configuredRootCount === 0) {
+    hint =
+      `No projects.roots are configured; the user can add parent directories ` +
+      `of their projects to "projects.roots" in the agent config to widen the search.`;
+  } else if (rootScan.rootsScanned === 0) {
+    hint =
+      `Checked the session working dir and recent session dirs; none of the ` +
+      `${configuredRootCount} configured projects.roots could be scanned (see notes).`;
+  } else {
+    hint =
+      `Checked the session working dir, recent session dirs, and ` +
+      `${rootScan.rootsScanned} configured root(s).`;
+  }
+  return [
     `no project directory matching "${rawName}" was found. ` +
-    `Ask the user for the full path. ${hint}`
-  );
+      `Ask the user for the full path. ${hint}`,
+    ...notes,
+  ].join("\n");
 }
 
 function buildDetails(

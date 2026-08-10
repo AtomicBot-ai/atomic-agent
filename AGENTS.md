@@ -1534,23 +1534,24 @@ Locked invariants (pinned by [src/tui/mcp/mcp-reducer.test.ts](src/tui/mcp/mcp-r
 
 ## Project path resolution (`os.fs.locate_project`)
 
-Issue #77: users mention projects by name ("check my raylib project") instead of full paths. The read-only tool `os.fs.locate_project { name, limit? }` ([src/tools/os/fs-locate-project.ts](src/tools/os/fs-locate-project.ts) + [fs-locate-project-sources.ts](src/tools/os/fs-locate-project-sources.ts), registered in bootstrap after `SessionStore` construction) resolves such mentions against three bounded sources, in priority order:
+Issue #77: users mention projects by name ("check my raylib project") instead of full paths. The read-only tool `os.fs.locate_project { name, limit? }` ([src/tools/os/fs-locate-project.ts](src/tools/os/fs-locate-project.ts) + [fs-locate-project-sources.ts](src/tools/os/fs-locate-project-sources.ts), registered in bootstrap after `SessionStore` construction) first takes a **direct-path fast path** — a pasted absolute path (`e:/_raylib`, `~/dev/app`) that exists as a directory is returned immediately (source `direct-path`) — and otherwise resolves the mention against three bounded sources, in priority order:
 
 1. **`cwd`** — the session working directory and its ancestors (basename match, bounded by path depth).
-2. **`session-history`** — working dirs of recent sessions from `SessionStore.listRecent` (paths the runtime already persists; stat-checked before use so deleted dirs never surface).
-3. **`configured-root`** — the user-declared `projects.roots` dirs (config v36, default `[]`) and their direct children: ONE level, directories only, hidden names / `node_modules` / `__pycache__` / symlinks skipped, at most 500 entries per root.
+2. **`session-history`** — working dirs of recent sessions via `SessionStore.listRecentWorkingDirs`, a column-only projection (`working_dir`, `updated_at`) that never deserialises session payloads on this read path; stat-checked before use so deleted dirs never surface.
+3. **`configured-root`** — the user-declared `projects.roots` dirs (config v36, default `[]`) and their direct children: ONE level, directories only, hidden names / `node_modules` / `__pycache__` / symlinks skipped. Children are filtered to eligible dirs BEFORE the 500-entry cap so loose files cannot evict real project dirs from the scan window.
 
-Matching is case-insensitive on the basename with three tiers (exact > prefix > substring); a pasted path fragment (`e:/_raylib`) matches by its last segment. Exactly one best-tier candidate ⇒ resolved path plus any weaker matches listed. Two or more best-tier candidates ⇒ the result says ambiguous and instructs the model to ask the user, never to guess. Zero ⇒ an honest miss that tells the model to ask for the full path or to suggest adding a parent dir to `projects.roots`.
+Matching is case-insensitive and NFC-normalized on the basename with three tiers (exact > prefix > substring); a pasted fragment matches by its last segment with `\` normalized to `/` first. Candidate paths are canonicalized through `realpath` before dedup so symlink aliases of one dir (macOS `/tmp` vs `/private/tmp`) never read as a false ambiguity. Exactly one best-tier candidate ⇒ resolved path plus any weaker matches listed. Two or more best-tier candidates ⇒ the result says ambiguous and instructs the model to ask the user, never to guess. Zero ⇒ an honest miss that tells the model to ask for the full path or to suggest adding a parent dir to `projects.roots`.
 
-**Locked invariants** (pinned by [src/tools/os/fs-locate-project.test.ts](src/tools/os/fs-locate-project.test.ts) and [src/config/config-schema.test.ts](src/config/config-schema.test.ts)):
+**Locked invariants** (pinned by [src/tools/os/fs-locate-project.test.ts](src/tools/os/fs-locate-project.test.ts), [src/session/session-store.test.ts](src/session/session-store.test.ts), and [src/config/config-schema.test.ts](src/config/config-schema.test.ts)):
 
-1. **No disk-wide scanning, ever.** The search space is exactly the three sources above; roots are scanned one level deep with no recursion. Empty `projects.roots` (the default) means nothing outside session history and the cwd chain is touched.
-2. **Ambiguity is surfaced, not resolved.** Ties at the best match tier produce a candidate list and an ask-the-user instruction; `details.found` stays `false`.
-3. **A miss is honest.** No fallback crawling; the output points at `projects.roots`.
-4. **Hidden dirs and dependency caches never match**, and root scanning stops at one level.
-5. **Resource class `pure_read`, descriptor tier `frequent`.** Fans out inside batches; the full args schema sits in the stable prefix so small local models can call it first-shot (same rationale as the MCP `frequent` decision).
+1. **No disk-wide scanning, ever.** The search space is the pasted path itself plus the three sources above; roots are scanned one level deep with no recursion. Empty `projects.roots` (the default) means nothing outside session history and the cwd chain is touched.
+2. **Ambiguity is surfaced, not resolved.** Ties at the best match tier produce a candidate list and an ask-the-user instruction; `details.found` stays `false`. The verdict is computed on the full match list, so a small `limit` cannot fake confidence.
+3. **A miss is honest, and honesty lives in the summary.** The miss text reports how many roots were actually scanned (never the configured count), and skipped / unreadable / truncated roots are repeated as `note:` lines in the output text — the model only ever sees the compressed summary (`toolResultTurn` carries no `details`), so details-only reporting would be invisible.
+4. **Hidden dirs and dependency caches never match**, root scanning stops at one level, and the per-root cap applies after directory filtering.
+5. **Resource class `pure_read`, descriptor tier `frequent`.** Fans out inside batches; the full args schema sits in the stable prefix so small local models can call it first-shot (same rationale as the MCP `frequent` decision). Pinned by the `is pinned pure_read and frequent-tier` test.
+6. **The session-store read path is column-only.** `listRecentWorkingDirs` is a prepared `SELECT working_dir, updated_at` — no per-row `JSON.parse` on a tool that can appear 16 times in one batch.
 
-Configuration: `projects.roots: string[]` in the user config file (v36, transparent migration; `~` expansion supported). Non-absolute entries are skipped and reported in `details.invalidRoots`; unreadable roots land in `details.unreadableRoots`.
+Configuration: `projects.roots: string[]` in the user config file (v36, transparent migration; `~` expansion supported). Empty or non-absolute entries are skipped and reported (summary note + `details.invalidRoots`); unreadable roots land in `details.unreadableRoots` and the summary.
 
 Deliberately out of scope: an opt-in whole-disk / drive index (the issue sketches it as a possible extra for people who want it — revisit only on real demand), fuzzy-distance matching, and per-root depth knobs.
 
