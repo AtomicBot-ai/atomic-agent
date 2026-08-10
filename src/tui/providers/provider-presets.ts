@@ -44,21 +44,21 @@ export interface ProviderPreset {
   readonly note?: string;
 }
 
+/**
+ * Array order is display order: `KIND_ROW_ORDER` in
+ * `providers-wizard-phases.ts` renders preset rows exactly as listed
+ * here, between the two catalog kinds (OpenRouter, AI/ML API) and the
+ * manual openai-compatible entry. Keep the entries sorted
+ * alphabetically by `label` (plain code-unit order, no locale) so the
+ * list reads predictably; a test enforces this.
+ */
 export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
   {
-    id: "nous",
-    label: "Nous Research",
-    baseUrl: "https://inference-api.nousresearch.com",
-    envVar: "NOUS_API_KEY",
-    listsModelsWithoutKey: true,
-    note: "open-weight models, 350+ ids listed without a key",
-  },
-  {
-    id: "groq",
-    label: "Groq",
-    baseUrl: "https://api.groq.com/openai",
-    envVar: "GROQ_API_KEY",
-    note: "very fast inference on open-weight models",
+    id: "cerebras",
+    label: "Cerebras",
+    baseUrl: "https://api.cerebras.ai",
+    envVar: "CEREBRAS_API_KEY",
+    note: "high-throughput inference",
   },
   {
     id: "deepseek",
@@ -68,13 +68,6 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "DeepSeek models direct from the vendor",
   },
   {
-    id: "together",
-    label: "Together AI",
-    baseUrl: "https://api.together.xyz",
-    envVar: "TOGETHER_API_KEY",
-    note: "broad open-weight catalog",
-  },
-  {
     id: "fireworks",
     label: "Fireworks AI",
     baseUrl: "https://api.fireworks.ai/inference",
@@ -82,11 +75,19 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "open-weight models, function calling",
   },
   {
-    id: "cerebras",
-    label: "Cerebras",
-    baseUrl: "https://api.cerebras.ai",
-    envVar: "CEREBRAS_API_KEY",
-    note: "high-throughput inference",
+    id: "groq",
+    label: "Groq",
+    baseUrl: "https://api.groq.com/openai",
+    envVar: "GROQ_API_KEY",
+    note: "very fast inference on open-weight models",
+  },
+  {
+    id: "lmstudio",
+    label: "LM Studio (local)",
+    baseUrl: "http://localhost:1234",
+    envVar: "LMSTUDIO_API_KEY",
+    local: true,
+    note: "the server LM Studio runs on your machine; no API key needed",
   },
   {
     id: "mistral",
@@ -96,11 +97,12 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "Mistral models direct from the vendor",
   },
   {
-    id: "xai",
-    label: "xAI (Grok)",
-    baseUrl: "https://api.x.ai",
-    envVar: "XAI_API_KEY",
-    note: "Grok models direct from the vendor",
+    id: "nous",
+    label: "Nous Research",
+    baseUrl: "https://inference-api.nousresearch.com",
+    envVar: "NOUS_API_KEY",
+    listsModelsWithoutKey: true,
+    note: "open-weight models, 350+ ids listed without a key",
   },
   {
     id: "ollama-cloud",
@@ -111,12 +113,18 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "hosted Ollama, models listed without a key",
   },
   {
-    id: "lmstudio",
-    label: "LM Studio (local)",
-    baseUrl: "http://localhost:1234",
-    envVar: "LMSTUDIO_API_KEY",
-    local: true,
-    note: "the server LM Studio runs on your machine; no API key needed",
+    id: "together",
+    label: "Together AI",
+    baseUrl: "https://api.together.xyz",
+    envVar: "TOGETHER_API_KEY",
+    note: "broad open-weight catalog",
+  },
+  {
+    id: "xai",
+    label: "xAI (Grok)",
+    baseUrl: "https://api.x.ai",
+    envVar: "XAI_API_KEY",
+    note: "Grok models direct from the vendor",
   },
 ];
 

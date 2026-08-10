@@ -3,8 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import { PICK_WINDOW } from "../components/wizard-pick-list.js";
+import { PROVIDER_PRESETS } from "./provider-presets.js";
 import { LOCAL_EMBEDDING_CHOICE_ID } from "./providers-model-options.js";
 import { handleProvidersWizardKey } from "./providers-wizard-key-bindings.js";
+import { KIND_ROW_ORDER } from "./providers-wizard-phases.js";
 import { createProvidersWizardState } from "./providers-wizard-state.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
 
@@ -77,6 +79,22 @@ describe("createProvidersWizardState configure prefill", () => {
       kind: "openai-compatible",
     });
     expect(wizard.presetId).toBeNull();
+  });
+});
+
+describe("KIND_ROW_ORDER", () => {
+  it("lists catalogs first, presets alphabetically by label, manual last", () => {
+    expect(KIND_ROW_ORDER[0]).toBe("openrouter");
+    expect(KIND_ROW_ORDER[1]).toBe("aimlapi");
+    expect(KIND_ROW_ORDER[KIND_ROW_ORDER.length - 1]).toBe("openai-compatible");
+
+    const presetRows = KIND_ROW_ORDER.slice(2, -1);
+    expect(presetRows).toEqual(
+      PROVIDER_PRESETS.map((preset) => ({ presetId: preset.id })),
+    );
+    const labels = PROVIDER_PRESETS.map((p) => p.label);
+    const sorted = [...labels].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    expect(labels).toEqual(sorted);
   });
 });
 
@@ -338,9 +356,12 @@ describe("handleProvidersWizardKey", () => {
   it("picks a known service straight from the provider list", () => {
     let wizard = createProvidersWizardState("add");
 
-    // Presets follow the two catalog kinds, so Nous is the third row.
-    wizard = next(wizard, "", emptyKey({ downArrow: true }));
-    wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    // Presets follow the two catalog kinds, alphabetically by label,
+    // so the row index is computed instead of hardcoded.
+    const nousIdx = 2 + PROVIDER_PRESETS.findIndex((p) => p.id === "nous");
+    for (let i = 0; i < nousIdx; i += 1) {
+      wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    }
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.kind).toBe("openai-compatible");
     expect(wizard.presetId).toBe("nous");
@@ -352,12 +373,13 @@ describe("handleProvidersWizardKey", () => {
 
   it("reaches a later preset by moving down the same list", () => {
     let wizard = createProvidersWizardState("add");
+    // Fourth row is the second preset (DeepSeek, alphabetical order).
     for (let i = 0; i < 3; i += 1) {
       wizard = next(wizard, "", emptyKey({ downArrow: true }));
     }
     wizard = next(wizard, "", emptyKey({ return: true }));
-    expect(wizard.presetId).toBe("groq");
-    expect(wizard.baseUrlLine).toBe("https://api.groq.com/openai");
+    expect(wizard.presetId).toBe("deepseek");
+    expect(wizard.baseUrlLine).toBe("https://api.deepseek.com");
   });
 });
 
