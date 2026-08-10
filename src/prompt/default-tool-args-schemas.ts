@@ -185,6 +185,16 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     ),
   ],
   [
+    "os.fs.locate_project",
+    obj(
+      {
+        name: stringSchema,
+        limit: numberSchema,
+      },
+      ["name"],
+    ),
+  ],
+  [
     "os.fs.grep",
     obj(
       {

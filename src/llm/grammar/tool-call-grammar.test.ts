@@ -219,6 +219,14 @@ first thought
     expect((out.args as { apply: boolean }).apply).toBe(false);
   });
 
+  it("parses an os.fs.locate_project tool-call", () => {
+    const out = parseToolCall(
+      '{"tool":"os.fs.locate_project","args":{"name":"raylib","limit":5}}',
+    );
+    expect(out.tool).toBe("os.fs.locate_project");
+    expect(out.args).toEqual({ name: "raylib", limit: 5 });
+  });
+
   it("parses an os.fs.watch tool-call", () => {
     const out = parseToolCall(
       '{"tool":"os.fs.watch","args":{"path":".","timeoutMs":3000,"events":["add","change"]}}',

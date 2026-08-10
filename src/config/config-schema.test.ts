@@ -601,6 +601,29 @@ describe("parseUserConfigFile", () => {
     expect(parsed.telegram.progressIndicator).toBe(true);
   });
 
+  it("accepts a v35 file and fills in projects.roots=[] transparently", () => {
+    const parsed = parseUserConfigFile({ version: 35 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.projects).toEqual({ roots: [] });
+  });
+
+  it("preserves explicit projects.roots entries", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      projects: { roots: ["~/dev", "/data/projects"] },
+    });
+    expect(parsed.projects.roots).toEqual(["~/dev", "/data/projects"]);
+  });
+
+  it("rejects a non-array projects.roots", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        projects: { roots: "~/dev" },
+      }),
+    ).toThrow(/projects\.roots/);
+  });
+
   it("preserves an explicit telegram.progressIndicator=false", () => {
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,

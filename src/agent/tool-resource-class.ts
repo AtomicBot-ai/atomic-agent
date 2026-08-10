@@ -71,6 +71,7 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "os.fs.read_document": "pure_read",
   "os.fs.list": "pure_read",
   "os.fs.glob": "pure_read",
+  "os.fs.locate_project": "pure_read",
   "os.fs.grep": "pure_read",
   "os.fs.hash": "pure_read",
   "os.fs.diff": "pure_read",

@@ -111,6 +111,23 @@ describe("SessionStore", () => {
     expect(limited[1]?.id).toBe("s3");
   });
 
+  it("listRecentWorkingDirs returns column-only rows ordered by updated_at", () => {
+    const a = createEmptySessionState({ id: "a", workingDir: "/w1" });
+    const b = createEmptySessionState({ id: "b", workingDir: "/w2" });
+    const c = createEmptySessionState({ id: "c", workingDir: "/w3" });
+    store.save({ ...a, updatedAt: 1000 });
+    store.save({ ...b, updatedAt: 3000 });
+    store.save({ ...c, updatedAt: 2000 });
+
+    const rows = store.listRecentWorkingDirs(2);
+    // Narrow projection: exactly {workingDir, updatedAt}, no payload
+    // deserialisation involved.
+    expect(rows).toEqual([
+      { workingDir: "/w2", updatedAt: 3000 },
+      { workingDir: "/w3", updatedAt: 2000 },
+    ]);
+  });
+
   it("delete removes a session", () => {
     const state = createEmptySessionState({ id: "x", workingDir: "/w" });
     store.save(state);

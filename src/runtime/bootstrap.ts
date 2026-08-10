@@ -956,6 +956,12 @@ export async function createAgentRuntime(
       })
     : null;
 
+  // Constructed before the tool registry: `os.fs.locate_project`
+  // (issue #77) reads recent-session working dirs through the
+  // column-only `listRecentWorkingDirs` projection, so the store must
+  // exist by the time `registerOsTools` wires the closure below.
+  const sessionStore = new SessionStore();
+
   const toolRegistry = new ToolRegistry();
   toolRegistry.register(finishTool);
   toolRegistry.register(replyTool);
@@ -966,7 +972,8 @@ export async function createAgentRuntime(
   }
   registerOsTools(toolRegistry, {
     ...dangerous,
-    config: { http: config.http, web: config.web },
+    config: { http: config.http, web: config.web, projects: config.projects },
+    listRecentSessionDirs: (limit) => sessionStore.listRecentWorkingDirs(limit),
   });
   registerSkillTools(toolRegistry, skillRegistry, dangerous);
   toolRegistry.register(buildToolViewTool());
@@ -1367,7 +1374,6 @@ export async function createAgentRuntime(
             );
           });
 
-  const sessionStore = new SessionStore();
   const taskStore = new TaskStore({ dbFile: config.paths.tasksDbFile });
   const webhookSessionStore = new WebhookSessionStore(
     resolve(config.paths.stateDir, "webhook-sessions.json"),

@@ -1,5 +1,8 @@
 export { SessionStore } from "./session-store.js";
-export type { SessionStoreOptions } from "./session-store.js";
+export type {
+  SessionStoreOptions,
+  RecentWorkingDirRow,
+} from "./session-store.js";
 export {
   createEmptySessionState,
   appendFact,

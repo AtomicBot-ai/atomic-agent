@@ -286,6 +286,16 @@ export interface AtomicAgentConfig {
   web: {
     search: WebSearchConfig;
   };
+  /**
+   * User-declared project root directories consumed by
+   * `os.fs.locate_project` (fuzzy project-name resolution, issue #77).
+   * Mirrors `UserConfigFile.projects`. Default `[]` — with no declared
+   * roots the tool falls back to the session working dir chain and
+   * recent session dirs only.
+   */
+  projects: {
+    roots: string[];
+  };
   log: {
     level: LogLevel;
   };
@@ -892,6 +902,16 @@ export interface UserConfigFile {
   web: {
     search: WebSearchConfig;
   };
+  /**
+   * Project path resolution (config v36). `roots` lists directories
+   * whose direct children are the user's projects; `os.fs.locate_project`
+   * matches fuzzy project names against them (one level, never
+   * recursive). Empty by default so the agent never scans anything the
+   * user did not explicitly declare.
+   */
+  projects: {
+    roots: string[];
+  };
   tracing: {
     trace: {
       enabled: boolean | null;
@@ -1348,7 +1368,11 @@ export interface UserConfigFile {
 // the last CLI session exits). Older files transparently inherit `true`.
 // v35: telegram gains `progressIndicator` (live "Thinking…" bubble toggle).
 // Older files transparently inherit `true`.
-export const USER_CONFIG_VERSION = 35 as const;
+// v36: new `projects` block. `projects.roots` lists user-declared project
+// root directories for `os.fs.locate_project` (issue #77 fuzzy
+// project-name resolution). Older files transparently inherit `[]` —
+// no directory is ever scanned unless the user declares it.
+export const USER_CONFIG_VERSION = 36 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1463,6 +1487,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   32,
   33,
   34,
+  35,
   USER_CONFIG_VERSION,
 ];
 
@@ -1524,6 +1549,9 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
         apiKeyEnv: "BRAVE_SEARCH_API_KEY",
       },
     },
+  },
+  projects: {
+    roots: [],
   },
   tracing: {
     trace: {
@@ -2554,6 +2582,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const agent = (obj.agent as Record<string, unknown> | undefined) ?? {};
   const http = (obj.http as Record<string, unknown> | undefined) ?? {};
   const web = (obj.web as Record<string, unknown> | undefined) ?? {};
+  const projects = (obj.projects as Record<string, unknown> | undefined) ?? {};
   const webSearch = (web.search as Record<string, unknown> | undefined) ?? {};
   const webSearchProvider = parseWebSearchProviderName(
     webSearch.provider ?? USER_CONFIG_DEFAULTS.web.search.provider,
@@ -2843,6 +2872,13 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
           ),
         },
       },
+    },
+    projects: {
+      roots:
+        parseStringArrayOrNull(
+          projects.roots ?? USER_CONFIG_DEFAULTS.projects.roots,
+          "projects.roots",
+        ) ?? [],
     },
     tracing: {
       trace: {
