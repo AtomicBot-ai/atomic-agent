@@ -1,9 +1,42 @@
 import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
 
-import { createInitialTuiState } from "../tui-state.js";
+import { createInitialTuiState, type TuiState } from "../tui-state.js";
 import { fakeSession } from "../test-fixtures.js";
+import type { ProvidersChatModelPickerState } from "../providers/providers-panel-state.js";
 import { LlmPanel } from "./llm-panel.js";
+
+function stateWithPicker(
+  overrides: Partial<ProvidersChatModelPickerState>,
+): TuiState {
+  const base = createInitialTuiState(fakeSession());
+  return {
+    ...base,
+    uiMode: "debug" as const,
+    activeTab: "llm" as const,
+    llmPanel: { ...base.llmPanel, mode: "cloud" as const },
+    providersPanel: {
+      ...base.providersPanel,
+      chatModelPickerGeneration: 1,
+      chatModelPicker: {
+        providerId: "my-vllm",
+        currentModelId: "qwen-32b",
+        status: "ready",
+        models: ["glm-9b", "qwen-32b", "yi-34b"],
+        query: "",
+        cursor: 0,
+        error: null,
+        generation: 1,
+        ...overrides,
+      },
+    },
+  };
+}
+
+function frameHeight(state: TuiState, maxRows: number): number {
+  const { lastFrame } = render(<LlmPanel state={state} maxRows={maxRows} />);
+  return (lastFrame() ?? "").split("\n").length;
+}
 
 function stripAnsi(value: string): string {
   return value.replace(/\u001b\[[0-9;]*m/g, "");
@@ -79,5 +112,45 @@ describe("LlmPanel", () => {
     expect(text).toContain("downloading — Nomic embedding");
     expect(text).toContain("model: nomic-embed-text-v1.5");
     expect(text).toContain("60%");
+  });
+});
+
+describe("model picker fixed height", () => {
+  const MAX_ROWS = 20;
+
+  it("loading, ready and error branches all render the same frame height", () => {
+    const heights = [
+      frameHeight(stateWithPicker({ status: "loading", models: [] }), MAX_ROWS),
+      frameHeight(stateWithPicker({}), MAX_ROWS),
+      frameHeight(
+        stateWithPicker({ status: "error", error: "http 500" }),
+        MAX_ROWS,
+      ),
+    ];
+    expect(new Set(heights).size).toBe(1);
+  });
+
+  it("a narrowing filter keeps the frame height constant", () => {
+    const full = frameHeight(stateWithPicker({ query: "" }), MAX_ROWS);
+    const narrowed = frameHeight(stateWithPicker({ query: "qwen" }), MAX_ROWS);
+    const empty = frameHeight(stateWithPicker({ query: "no-such" }), MAX_ROWS);
+    expect(narrowed).toBe(full);
+    expect(empty).toBe(full);
+  });
+
+  it("short terminals get a smaller window, still equal across branches", () => {
+    const SHORT = 10;
+    const heights = [
+      frameHeight(stateWithPicker({ status: "loading", models: [] }), SHORT),
+      frameHeight(stateWithPicker({}), SHORT),
+      frameHeight(
+        stateWithPicker({ status: "error", error: "http 500" }),
+        SHORT,
+      ),
+    ];
+    expect(new Set(heights).size).toBe(1);
+    expect(heights[0]!).toBeLessThan(
+      frameHeight(stateWithPicker({}), MAX_ROWS),
+    );
   });
 });
