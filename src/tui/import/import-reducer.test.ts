@@ -9,7 +9,7 @@ const SESSION: TuiSessionInfo = {
   llamaUrl: "http://localhost",
   browserChannel: "chromium",
   browserHeadless: true,
-  approvalRequired: false,
+  approvalLevel: 5,
   maxSteps: 10,
   skillCount: 0,
 };

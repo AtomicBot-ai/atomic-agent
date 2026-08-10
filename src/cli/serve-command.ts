@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 
+import { resolveBootApprovalLevel } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import { stderrSink } from "../tracing/structured-logger.js";
@@ -34,7 +35,7 @@ const HELP =
     "  --cwd <dir>         Working directory for OS tools / sessions (default: cwd)",
     "  --api-key <k>       Require this bearer token on all routes except /health and /v1/models",
     "                      (falls back to env ATOMIC_AGENT_API_KEY when flag is omitted)",
-    "  --no-approval       Auto-approve every dangerous tool call (dev / trusted use only)",
+    "  --no-approval       Force approval level 5: auto-approve every dangerous tool call (dev / trusted use only)",
     "",
     "Endpoints (authenticated unless noted):",
     "  POST /v1/chat/completions                OpenAI Chat Completions API (stream or sync)",
@@ -113,22 +114,6 @@ function parseArgs(args: string[]): ServeArgs | { help: true } | { error: string
 }
 
 /**
- * Boot-time approval resolution for `serve` — the same contract `run`
- * and `tui` apply: the persisted `agent.approvalRequired` is the
- * baseline and `--no-approval` can only force approvals OFF for this
- * process, never back on. Keeping serve on this rule makes the Privacy
- * tab's "persists to config.json and applies to future runs too"
- * promise hold for every interactive entry point. Exported for unit
- * tests.
- */
-export function resolveServeApprovalRequired(
-  noApproval: boolean,
-  configApprovalRequired: boolean,
-): boolean {
-  return !noApproval && configApprovalRequired;
-}
-
-/**
  * Entry point for `atomic-agent serve`. Boots the shared agent runtime
  * once, wires it to an HTTP-facing approval bus, starts the server,
  * and hands control to the host process until SIGINT/SIGTERM. Per-turn
@@ -156,9 +141,15 @@ export async function serveCommand(args: string[]): Promise<number> {
   try {
     runtime = await createAgentRuntime({
       workingDir: parsed.workingDir,
-      approvalRequired: resolveServeApprovalRequired(
+      // Same boot contract as `run` and `tui`: the persisted
+      // `agent.approvalLevel` is the baseline and `--no-approval` can
+      // only force level 5 (approve everything) for this process, never
+      // a stricter level. Keeping serve on this rule makes the Privacy
+      // tab's "persists to config.json and applies to future runs too"
+      // promise hold for every interactive entry point.
+      approvalLevel: resolveBootApprovalLevel(
         parsed.noApproval,
-        getConfig().agent.approvalRequired,
+        getConfig().agent.approvalLevel,
       ),
       traceDefault: true,
       handlers: {

@@ -80,7 +80,7 @@ function resolveAssetDir(envKey: string, relativeDefault: string): string {
 
 /**
  * Assemble the full runtime config. User-facing keys (llama.url,
- * log.level, agent.tokenBudget/maxSteps/toolTimeoutMs/approvalRequired)
+ * log.level, agent.tokenBudget/maxSteps/toolTimeoutMs/approvalLevel)
  * come from `<stateDir>/config.json`; everything else stays in env
  * variables.
  */
@@ -172,7 +172,7 @@ export function loadConfig(): AtomicAgentConfig {
       tokenBudget: user.agent.tokenBudget,
       maxSteps: user.agent.maxSteps,
       toolTimeoutMs: user.agent.toolTimeoutMs,
-      approvalRequired: user.agent.approvalRequired,
+      approvalLevel: user.agent.approvalLevel,
       stablePrefixHashSalt:
         readEnv("ATOMIC_AGENT_STABLE_PREFIX_SALT") ??
         ENV_DEFAULTS.STABLE_PREFIX_SALT,

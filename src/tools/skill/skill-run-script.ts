@@ -57,6 +57,7 @@ export function buildSkillRunScriptTool(
           {
             sessionId: ctx.sessionId,
             tool: "skill.run_script",
+            category: "script",
             reason: `run ${record.manifest.name}/${scriptName}`,
             preview,
             affectedResources: [record.rootDir],

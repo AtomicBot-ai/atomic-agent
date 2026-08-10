@@ -76,6 +76,7 @@ export function buildOsHttpRequestTool(
           {
             sessionId: ctx.sessionId,
             tool: "os.http.request",
+            category: "http",
             reason: `${args.method} ${args.url}`,
             preview: buildApprovalPreview(args),
             affectedResources: [args.url],

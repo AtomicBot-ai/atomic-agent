@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
+import { categorizeFsMutation } from "./fs-approval-scope.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import {
   requireApproval,
@@ -37,6 +38,9 @@ export function buildOsFsWriteTool(
         {
           sessionId: ctx.sessionId,
           tool: "os.fs.write",
+          category: await categorizeFsMutation("write", [absolute], {
+            workingDir: ctx.workingDir,
+          }),
           reason: `${mode} ${content.length} bytes into ${absolute}`,
           preview,
           affectedResources: [absolute],

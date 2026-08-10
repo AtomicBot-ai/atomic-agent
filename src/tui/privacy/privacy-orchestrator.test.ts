@@ -27,21 +27,21 @@ function makeBus() {
   };
 }
 
-/** Minimal live-gate stand-in: one mutable flag + a call log. */
-function makeRuntime(initialApprovalRequired: boolean) {
-  const calls: boolean[] = [];
-  let required = initialApprovalRequired;
+/** Minimal live-gate stand-in: one mutable level + a call log. */
+function makeRuntime(initialLevel: number) {
+  const calls: number[] = [];
+  let level = initialLevel;
   const runtime = {
-    isApprovalRequired: () => required,
-    setApprovalRequired: (value: boolean) => {
+    getApprovalLevel: () => level,
+    setApprovalLevel: (value: number) => {
       calls.push(value);
-      required = value;
+      level = value;
     },
   } as unknown as AgentRuntime;
   return { runtime, calls };
 }
 
-describe("PrivacyOrchestrator — approve everything", () => {
+describe("PrivacyOrchestrator — approval level", () => {
   let stateDir: string;
   let originalEnv: string | undefined;
 
@@ -60,78 +60,99 @@ describe("PrivacyOrchestrator — approve everything", () => {
     rmSync(stateDir, { recursive: true, force: true });
   });
 
-  it("refresh() reports the LIVE gate state and mirrors it into the session", () => {
-    const { runtime } = makeRuntime(false); // e.g. booted with --no-approval
+  it("refresh() reports the LIVE gate level and mirrors it into the session", () => {
+    const { runtime } = makeRuntime(5); // e.g. booted with --no-approval
     const { actions, bus } = makeBus();
     new PrivacyOrchestrator(runtime, bus).refresh();
     const synced = actions.find((a) => a.type === "privacy_synced");
-    expect(synced?.approveEverything).toBe(true);
-    const mirrored = actions.find(
-      (a) => a.type === "approval_required_changed",
-    );
-    expect(mirrored?.approvalRequired).toBe(false);
+    expect(synced?.approvalLevel).toBe(5);
+    const mirrored = actions.find((a) => a.type === "approval_level_changed");
+    expect(mirrored?.approvalLevel).toBe(5);
   });
 
-  it("toggle ON hot-applies to the gate and persists agent.approvalRequired=false", async () => {
-    const { runtime, calls } = makeRuntime(true);
+  it("setApprovalLevel(5) hot-applies to the gate and persists agent.approvalLevel", async () => {
+    const { runtime, calls } = makeRuntime(1);
     const { actions, bus } = makeBus();
-    await new PrivacyOrchestrator(runtime, bus).toggleApproveEverything();
+    await new PrivacyOrchestrator(runtime, bus).setApprovalLevel(5);
 
-    expect(calls).toEqual([false]); // live gate flipped to auto-approve
+    expect(calls).toEqual([5]); // live gate moved
     const onDisk = JSON.parse(
       readFileSync(getConfig().paths.userConfigFile, "utf8"),
     );
-    expect(onDisk.agent.approvalRequired).toBe(false); // durable
+    expect(onDisk.agent.approvalLevel).toBe(5); // durable
     const settled = actions.find((a) => a.type === "privacy_action_settled");
     expect(settled?.message).toContain("without asking");
     const synced = actions.filter((a) => a.type === "privacy_synced").at(-1);
-    expect(synced?.approveEverything).toBe(true);
+    expect(synced?.approvalLevel).toBe(5);
   });
 
-  it("toggle OFF restores approvals live and in config.json", async () => {
-    const { runtime, calls } = makeRuntime(false);
+  it("setApprovalLevel(1) restores the strictest level live and in config.json", async () => {
+    const { runtime, calls } = makeRuntime(5);
     const { actions, bus } = makeBus();
-    await new PrivacyOrchestrator(runtime, bus).toggleApproveEverything();
+    await new PrivacyOrchestrator(runtime, bus).setApprovalLevel(1);
 
-    expect(calls).toEqual([true]);
+    expect(calls).toEqual([1]);
     const onDisk = JSON.parse(
       readFileSync(getConfig().paths.userConfigFile, "utf8"),
     );
-    expect(onDisk.agent.approvalRequired).toBe(true);
+    expect(onDisk.agent.approvalLevel).toBe(1);
     const settled = actions.find((a) => a.type === "privacy_action_settled");
-    expect(settled?.message).toContain("ask for approval again");
+    expect(settled?.message).toContain("asks first");
+  });
+
+  it("names each mid-ladder level honestly in the settled message", async () => {
+    const { runtime, bus, actions } = {
+      ...makeRuntime(1),
+      ...makeBus(),
+    };
+    const orch = new PrivacyOrchestrator(runtime, bus);
+    await orch.setApprovalLevel(2);
+    const settled = actions.find((a) => a.type === "privacy_action_settled");
+    expect(settled?.message).toContain("2 (workspace)");
+    expect(settled?.message).toContain("inside the project");
+  });
+
+  it("clamps out-of-range slash-command input before persisting", async () => {
+    const { runtime, calls } = makeRuntime(1);
+    const { bus } = makeBus();
+    await new PrivacyOrchestrator(runtime, bus).setApprovalLevel(42);
+    expect(calls).toEqual([5]);
+    const onDisk = JSON.parse(
+      readFileSync(getConfig().paths.userConfigFile, "utf8"),
+    );
+    expect(onDisk.agent.approvalLevel).toBe(5);
   });
 
   it("surfaces a sticky error when the hot-apply throws", async () => {
     const { actions, bus } = makeBus();
     const runtime = {
-      isApprovalRequired: () => true,
-      setApprovalRequired: () => {
+      getApprovalLevel: () => 1,
+      setApprovalLevel: () => {
         throw new Error("boom");
       },
     } as unknown as AgentRuntime;
-    await new PrivacyOrchestrator(runtime, bus).toggleApproveEverything();
+    await new PrivacyOrchestrator(runtime, bus).setApprovalLevel(3);
     const settled = actions.find((a) => a.type === "privacy_action_settled");
     expect(settled?.error).toContain("boom");
   });
 
   it("names the already-rewritten config.json when persist won but hot-apply lost", async () => {
-    // persistApprovalRequired runs first and succeeds (real state dir),
+    // persistApprovalLevel runs first and succeeds (real state dir),
     // then the gate throws. The operator must learn the two surfaces
     // diverged: this process kept the old gate, the next boot will not.
     const { actions, bus } = makeBus();
     const runtime = {
-      isApprovalRequired: () => true,
-      setApprovalRequired: () => {
+      getApprovalLevel: () => 1,
+      setApprovalLevel: () => {
         throw new Error("boom");
       },
     } as unknown as AgentRuntime;
-    await new PrivacyOrchestrator(runtime, bus).toggleApproveEverything();
+    await new PrivacyOrchestrator(runtime, bus).setApprovalLevel(4);
 
     const onDisk = JSON.parse(
       readFileSync(getConfig().paths.userConfigFile, "utf8"),
     );
-    expect(onDisk.agent.approvalRequired).toBe(false); // persist DID land
+    expect(onDisk.agent.approvalLevel).toBe(4); // persist DID land
     const settled = actions.find((a) => a.type === "privacy_action_settled");
     expect(settled?.error).toContain("config.json was already rewritten");
     expect(settled?.error).toContain("next start uses the new value");

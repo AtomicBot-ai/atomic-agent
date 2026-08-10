@@ -212,7 +212,8 @@ export interface TuiSessionInfo {
   llamaUrl: string;
   browserChannel: string;
   browserHeadless: boolean;
-  approvalRequired: boolean;
+  /** Live approval ladder position (1 = ask for everything … 5 = full trust). */
+  approvalLevel: number;
   maxSteps: number;
   skillCount: number;
 }

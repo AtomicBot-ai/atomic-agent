@@ -11,7 +11,7 @@ export function fakeSession(
     llamaUrl: "http://127.0.0.1:8080",
     browserChannel: "chrome",
     browserHeadless: false,
-    approvalRequired: false,
+    approvalLevel: 5,
     maxSteps: 10,
     skillCount: 0,
     ...overrides,

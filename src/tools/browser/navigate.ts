@@ -43,6 +43,7 @@ export function buildBrowserNavigateTool(
           {
             sessionId: ctx.sessionId,
             tool: "browser.navigate",
+            category: "browser_nonweb",
             reason: "non-http(s) URL requested",
             preview: url,
             affectedResources: [url],

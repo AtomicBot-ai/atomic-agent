@@ -2,6 +2,10 @@ import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { Interface as ReadlineInterface } from "node:readline";
 
+import {
+  formatApprovalLevel,
+  resolveBootApprovalLevel,
+} from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
@@ -241,13 +245,16 @@ export async function runAgentCommand(args: string[]): Promise<number> {
     return 2;
   }
   const config = getConfig();
-  const approvalRequired = !parsed.noApproval && config.agent.approvalRequired;
+  const approvalLevel = resolveBootApprovalLevel(
+    parsed.noApproval,
+    config.agent.approvalLevel,
+  );
 
   let approvalChain: Promise<unknown> = Promise.resolve();
 
   const runtime = await createAgentRuntime({
     workingDir: parsed.workingDir,
-    approvalRequired,
+    approvalLevel,
     traceDefault: true,
     handlers: {
       onAgentEvent: (event) => {
@@ -285,7 +292,7 @@ export async function runAgentCommand(args: string[]): Promise<number> {
       `  llama:   ${config.localModels.url}\n` +
       `  browser: ${config.browser.channel}${config.browser.headless ? " (headless)" : ""}\n` +
       `  skills:  ${runtime.skillCatalog.length} installed\n` +
-      `  approval:${approvalRequired ? " interactive" : " disabled"}\n` +
+      `  approval: level ${formatApprovalLevel(approvalLevel)}\n` +
       `  type /quit to exit, /abort to cancel current turn\n`,
   );
 

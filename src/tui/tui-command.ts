@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { isSea } from "node:sea";
 import { render } from "ink";
 import React from "react";
+import { resolveBootApprovalLevel } from "../approval/approval-level.js";
 import { formatDotenvReadWarning, getConfig } from "../config/index.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
@@ -77,7 +78,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
       ? { uiMode: "debug", activeTab: "llm" }
       : undefined;
   const config = getConfig();
-  const approvalRequired = !parsed.noApproval && config.agent.approvalRequired;
+  const approvalLevel = resolveBootApprovalLevel(
+    parsed.noApproval,
+    config.agent.approvalLevel,
+  );
   const maxSteps = parsed.maxSteps ?? config.agent.maxSteps;
   const bus = makeTuiEventBus();
   // Set when the user presses a key on the post-self-update restart prompt.
@@ -96,7 +100,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
   let orchestratorForChannelStatus: ChatOrchestrator | null = null;
   const runtime = await createAgentRuntime({
     workingDir: parsed.workingDir,
-    approvalRequired,
+    approvalLevel,
     traceDefault: true,
     handlers: {
       onAgentEvent: (event) => bus.emitAgentEvent(event),
@@ -130,7 +134,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
     llamaUrl: config.localModels.url,
     browserChannel: config.browser.channel,
     browserHeadless: config.browser.headless,
-    approvalRequired,
+    approvalLevel,
     maxSteps,
     skillCount: runtime.skillCatalog.length,
   };
@@ -333,10 +337,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.privacy.toggleAnalytics(),
         onAnalyticsSetEnabledRequested: (enabled) =>
           orchestrator.privacy.setAnalyticsEnabled(enabled),
-        onApproveEverythingToggleRequested: () =>
-          orchestrator.privacy.toggleApproveEverything(),
-        onApproveEverythingSetRequested: (on) =>
-          orchestrator.privacy.setApproveEverything(on),
+        onApprovalLevelSetRequested: (level) =>
+          orchestrator.privacy.setApprovalLevel(level),
         onPrivacyRefreshRequested: () => orchestrator.privacy.refresh(),
         onUpdateConfirmed: () => orchestrator.runUpdate(),
         onUpdateRestart: () => {

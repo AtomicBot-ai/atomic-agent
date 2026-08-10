@@ -37,7 +37,7 @@ function stubSession(): TuiSessionInfo {
     llamaUrl: "http://127.0.0.1:8080",
     browserChannel: "chromium",
     browserHeadless: true,
-    approvalRequired: false,
+    approvalLevel: 5,
     maxSteps: 8,
     skillCount: 0,
   };

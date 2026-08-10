@@ -11,7 +11,7 @@ function baseState() {
     llamaUrl: "http://localhost:19091",
     browserChannel: "chrome",
     browserHeadless: true,
-    approvalRequired: false,
+    approvalLevel: 5,
     maxSteps: 20,
     skillCount: 0,
   };
@@ -29,25 +29,25 @@ describe("reducePrivacyAction", () => {
     const next = reducePrivacyAction(state, {
       type: "privacy_synced",
       analyticsEnabled: false,
-      approveEverything: false,
+      approvalLevel: 1,
     });
     expect(next?.privacyPanel.analyticsEnabled).toBe(false);
-    expect(next?.privacyPanel.approveEverything).toBe(false);
+    expect(next?.privacyPanel.approvalLevel).toBe(1);
   });
 
-  it("folds approveEverything=true from privacy_synced and back", () => {
-    const on = reducePrivacyAction(baseState(), {
+  it("folds approval level changes from privacy_synced in both directions", () => {
+    const up = reducePrivacyAction(baseState(), {
       type: "privacy_synced",
       analyticsEnabled: true,
-      approveEverything: true,
+      approvalLevel: 5,
     });
-    expect(on?.privacyPanel.approveEverything).toBe(true);
-    const off = reducePrivacyAction(on!, {
+    expect(up?.privacyPanel.approvalLevel).toBe(5);
+    const down = reducePrivacyAction(up!, {
       type: "privacy_synced",
       analyticsEnabled: true,
-      approveEverything: false,
+      approvalLevel: 2,
     });
-    expect(off?.privacyPanel.approveEverything).toBe(false);
+    expect(down?.privacyPanel.approvalLevel).toBe(2);
   });
 
   it("marks busy on action_started and clears it on settled", () => {

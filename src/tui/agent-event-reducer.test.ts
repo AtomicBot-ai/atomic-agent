@@ -15,7 +15,7 @@ function fakeSession(overrides: Partial<TuiSessionInfo> = {}): TuiSessionInfo {
     llamaUrl: "http://127.0.0.1:8080",
     browserChannel: "chrome",
     browserHeadless: false,
-    approvalRequired: false,
+    approvalLevel: 5,
     maxSteps: 10,
     skillCount: 0,
     ...overrides,
@@ -370,17 +370,17 @@ describe("reduceTuiState", () => {
     expect(next.messages.at(-1)?.reasoningBlocks).toContain("some chain of thought");
   });
 
-  it("mirrors approval_required_changed into state.session for the diagnostics line", () => {
-    const initial = createInitialTuiState(fakeSession({ approvalRequired: true }));
-    const off = reduceTuiState(initial, {
-      type: "approval_required_changed",
-      approvalRequired: false,
+  it("mirrors approval_level_changed into state.session for the diagnostics line", () => {
+    const initial = createInitialTuiState(fakeSession({ approvalLevel: 1 }));
+    const up = reduceTuiState(initial, {
+      type: "approval_level_changed",
+      approvalLevel: 5,
     });
-    expect(off.session.approvalRequired).toBe(false);
-    const on = reduceTuiState(off, {
-      type: "approval_required_changed",
-      approvalRequired: true,
+    expect(up.session.approvalLevel).toBe(5);
+    const down = reduceTuiState(up, {
+      type: "approval_level_changed",
+      approvalLevel: 2,
     });
-    expect(on.session.approvalRequired).toBe(true);
+    expect(down.session.approvalLevel).toBe(2);
   });
 });

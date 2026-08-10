@@ -1,3 +1,4 @@
+import type { ApprovalLevel } from "../approval/approval-level.js";
 import {
   ensureUserConfigFileSync,
   getConfig,
@@ -7,21 +8,21 @@ import {
 } from "../config/index.js";
 
 /**
- * Persist the approval-gate switch (`agent.approvalRequired`) into the
+ * Persist the approval ladder position (`agent.approvalLevel`) into the
  * user config file, then invalidate the global config cache so the next
  * `getConfig()` sees it. Mirrors the other `persist-*` helpers: read →
  * merge → validate → write → reset.
  *
  * The caller is responsible for hot-applying the change to the live
- * runtime via `runtime.setApprovalRequired`; this only durably records
+ * runtime via `runtime.setApprovalLevel`; this only durably records
  * the choice so future runs boot with it.
  */
-export function persistApprovalRequired(required: boolean): void {
+export function persistApprovalLevel(level: ApprovalLevel): void {
   const path = getConfig().paths.userConfigFile;
   const prev = ensureUserConfigFileSync(path);
   const draft = {
     ...prev,
-    agent: { ...prev.agent, approvalRequired: required },
+    agent: { ...prev.agent, approvalLevel: level },
   };
   const validated = parseUserConfigFile(draft);
   writeUserConfigFileSync(path, validated);

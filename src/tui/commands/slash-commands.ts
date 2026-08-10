@@ -109,7 +109,7 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   {
     name: "privacy",
     description:
-      "open the Privacy tab (analytics opt-out + approve-everything toggle) · subcommands: `/privacy analytics on|off` | `/privacy approve on|off`",
+      "open the Privacy tab (analytics opt-out + approval level) · subcommands: `/privacy analytics on|off` | `/privacy level 1..5` | `/privacy approve on|off`",
   },
   {
     name: "analytics",

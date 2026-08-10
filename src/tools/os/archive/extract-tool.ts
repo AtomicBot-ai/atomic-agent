@@ -1,5 +1,6 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import { resolveUserPath } from "../expand-home.js";
+import { categorizeFsMutation } from "../fs-approval-scope.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import {
   requireApproval,
@@ -70,6 +71,9 @@ export function buildOsFsArchiveExtractTool(
         {
           sessionId: ctx.sessionId,
           tool: "os.fs.archive.extract",
+          category: await categorizeFsMutation("extract", [destDir], {
+            workingDir: ctx.workingDir,
+          }),
           reason: `extract ${resolved.format} ${resolved.absolute} → ${destDir}`,
           preview: buildApprovalPreview({
             source: resolved.absolute,

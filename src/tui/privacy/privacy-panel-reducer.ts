@@ -29,7 +29,7 @@ function reducePanel(
       return {
         ...panel,
         analyticsEnabled: action.analyticsEnabled,
-        approveEverything: action.approveEverything,
+        approvalLevel: action.approvalLevel,
       };
     case "privacy_action_started":
       return { ...panel, busy: true };

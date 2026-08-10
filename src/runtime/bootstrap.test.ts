@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomBytes } from "node:crypto";
 
 import { createAgentRuntime, managedLocalLlmHealthFailureHint } from "./bootstrap.js";
 import {
@@ -99,7 +100,7 @@ describe("createAgentRuntime", () => {
   it("wires the full tool catalog (browser + os + skill + finish)", async () => {
     const runtime = await createAgentRuntime({
       workingDir,
-      approvalRequired: false,
+      approvalLevel: 5,
       overrides: {
         browserBackend: backend,
         skipLlamaHealthCheck: true,
@@ -124,16 +125,16 @@ describe("createAgentRuntime", () => {
     }
   });
 
-  it("keeps the ApprovalGate the single live switch: a no-approval boot flips back to interactive", async () => {
+  it("keeps the ApprovalGate the single live switch: a level-5 boot flips back to interactive", async () => {
     // Locked invariant: tools always register `approvalRequired: true`;
-    // boot flags land in the gate's auto-approve mode. A tool-level
-    // `false` would freeze this boot's value forever and the second
-    // half of this test would hang waiting for a prompt that never fires.
+    // the boot level lands in the gate. A tool-level `false` would
+    // freeze this boot's value forever and the second half of this test
+    // would hang waiting for a prompt that never fires.
     const prompts: ApprovalRequest[] = [];
     let gate: ApprovalGate | null = null;
     const runtime = await createAgentRuntime({
       workingDir,
-      approvalRequired: false,
+      approvalLevel: 5,
       handlers: {
         onApprovalRequest: (request) => {
           prompts.push(request);
@@ -154,7 +155,7 @@ describe("createAgentRuntime", () => {
         stepIndex: 0,
         signal: new AbortController().signal,
       };
-      // Auto-approve boot: dangerous navigation runs without a prompt.
+      // Level-5 boot: dangerous navigation runs without a prompt.
       await runtime.toolRegistry.invoke(
         "browser.navigate",
         { url: "file:///etc/hosts" },
@@ -162,7 +163,7 @@ describe("createAgentRuntime", () => {
       );
       expect(prompts).toHaveLength(0);
 
-      runtime.setApprovalRequired(true);
+      runtime.setApprovalLevel(1);
       await expect(
         runtime.toolRegistry.invoke(
           "browser.navigate",
@@ -177,10 +178,84 @@ describe("createAgentRuntime", () => {
     }
   });
 
+  it("level 2 end-to-end: workspace writes run silently, home writes ask, hardline still blocks", async () => {
+    // The main path of the ladder, through the real runtime + real
+    // tools: at level 2 a write inside the session cwd needs no prompt,
+    // a write into the home directory prompts (denied here so nothing
+    // lands), and a catastrophic shell command is blocked by the
+    // hardline guard BEFORE the gate — no prompt at any level.
+    const prompts: ApprovalRequest[] = [];
+    let gate: ApprovalGate | null = null;
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 2,
+      handlers: {
+        onApprovalRequest: (request) => {
+          prompts.push(request);
+          gate?.resolve({
+            approvalId: request.approvalId,
+            approved: false,
+            reason: "test-denied",
+          });
+        },
+      },
+      overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
+    });
+    gate = runtime.approvals;
+    try {
+      const ctx = {
+        workingDir,
+        sessionId: "s-level-2",
+        stepIndex: 0,
+        signal: new AbortController().signal,
+      };
+
+      // 1. Write inside the workspace: silent and actually lands.
+      const inWorkspace = join(workingDir, "notes.txt");
+      const ok = await runtime.toolRegistry.invoke(
+        "os.fs.write",
+        { path: inWorkspace, content: "hello" },
+        ctx,
+      );
+      expect(ok.status).toBe("ok");
+      expect(readFileSync(inWorkspace, "utf8")).toBe("hello");
+      expect(prompts).toHaveLength(0);
+
+      // 2. Write into the real home directory: prompts (fs_write_home is
+      // level 3). The prompt is denied so the file never appears.
+      const inHome = join(
+        homedir(),
+        `atomic-agent-e2e-${randomBytes(6).toString("hex")}.txt`,
+      );
+      await expect(
+        runtime.toolRegistry.invoke(
+          "os.fs.write",
+          { path: inHome, content: "must not land" },
+          ctx,
+        ),
+      ).rejects.toThrow(/approval denied/);
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]?.category).toBe("fs_write_home");
+      expect(existsSync(inHome)).toBe(false);
+
+      // 3. Hardline guard fires before the gate: no prompt, no spawn.
+      const blocked = await runtime.toolRegistry.invoke(
+        "os.shell.run",
+        { cmd: "rm", args: ["-rf", "/"] },
+        ctx,
+      );
+      expect(blocked.status).toBe("error");
+      expect(blocked.summary).toContain("blocked by shell guard");
+      expect(prompts).toHaveLength(1);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
   it("builds a capabilities summary and grammar", async () => {
     const runtime = await createAgentRuntime({
       workingDir,
-      approvalRequired: false,
+      approvalLevel: 5,
       overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
     });
     try {
@@ -197,7 +272,7 @@ describe("createAgentRuntime", () => {
     const events: string[] = [];
     const runtime = await createAgentRuntime({
       workingDir,
-      approvalRequired: false,
+      approvalLevel: 5,
       handlers: {
         onAgentEvent: (e) => events.push(e.type),
       },
@@ -231,7 +306,7 @@ describe("createAgentRuntime", () => {
   it("shutdown closes the browser backend and is idempotent", async () => {
     const runtime = await createAgentRuntime({
       workingDir,
-      approvalRequired: false,
+      approvalLevel: 5,
       overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
     });
     await runtime.shutdown();
@@ -243,7 +318,7 @@ describe("createAgentRuntime", () => {
     const replies = ["hi back", "second answer"];
     const runtime = await createAgentRuntime({
       workingDir,
-      approvalRequired: false,
+      approvalLevel: 5,
       overrides: {
         browserBackend: backend,
         skipLlamaHealthCheck: true,
@@ -321,7 +396,7 @@ describe("createAgentRuntime", () => {
     const events: string[] = [];
     const runtime = await createAgentRuntime({
       workingDir,
-      approvalRequired: false,
+      approvalLevel: 5,
       handlers: { onAgentEvent: (e) => events.push(e.type) },
       overrides: {
         browserBackend: backend,
@@ -359,7 +434,7 @@ describe("createAgentRuntime", () => {
     let notified: Array<{ name: string }> = [];
     const runtime = await createAgentRuntime({
       workingDir,
-      approvalRequired: false,
+      approvalLevel: 5,
       handlers: {
         onSkillRegistryChange: (entries) => {
           notified = entries.map((e) => ({ name: e.name }));
@@ -382,7 +457,7 @@ describe("createAgentRuntime", () => {
   it("uses llamaProps override to resolve a gemma 4 grammar", async () => {
     const runtime = await createAgentRuntime({
       workingDir,
-      approvalRequired: false,
+      approvalLevel: 5,
       overrides: {
         browserBackend: backend,
         skipLlamaHealthCheck: true,
@@ -402,7 +477,7 @@ describe("createAgentRuntime", () => {
   it("starts the scheduler by default and stops it before taskStore closes", async () => {
     const runtime = await createAgentRuntime({
       workingDir,
-      approvalRequired: false,
+      approvalLevel: 5,
       overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
     });
     try {
@@ -418,7 +493,7 @@ describe("createAgentRuntime", () => {
   it("registers the five tasks.* agent tools when enabled", async () => {
     const runtime = await createAgentRuntime({
       workingDir,
-      approvalRequired: false,
+      approvalLevel: 5,
       overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
     });
     try {
@@ -438,7 +513,7 @@ describe("createAgentRuntime", () => {
     resetConfigCache();
     const runtime = await createAgentRuntime({
       workingDir,
-      approvalRequired: false,
+      approvalLevel: 5,
       overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
     });
     try {
@@ -520,7 +595,7 @@ describe("createAgentRuntime", () => {
     const statuses: ChannelStatus[] = [];
     const runtime = await createAgentRuntime({
       workingDir,
-      approvalRequired: false,
+      approvalLevel: 5,
       handlers: { onChannelStatus: (s) => statuses.push(s) },
       overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
     });
@@ -541,7 +616,7 @@ describe("createAgentRuntime", () => {
     try {
       const runtime = await createAgentRuntime({
         workingDir,
-        approvalRequired: false,
+        approvalLevel: 5,
         handlers: { onChannelStatus: (s) => statuses.push(s) },
         overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
       });
@@ -575,7 +650,7 @@ describe("createAgentRuntime", () => {
     try {
       const runtime = await createAgentRuntime({
         workingDir,
-        approvalRequired: false,
+        approvalLevel: 5,
         handlers: { onChannelStatus: (s) => statuses.push(s) },
         overrides: {
           browserBackend: backend,
@@ -606,7 +681,7 @@ describe("createAgentRuntime", () => {
     try {
       const runtime = await createAgentRuntime({
         workingDir,
-        approvalRequired: false,
+        approvalLevel: 5,
         overrides: {
           browserBackend: backend,
           skipLlamaHealthCheck: true,
@@ -636,7 +711,7 @@ describe("createAgentRuntime", () => {
     const logs: LogRecord[] = [];
     const runtime = await createAgentRuntime({
       workingDir,
-      approvalRequired: false,
+      approvalLevel: 5,
       handlers: {
         logSinks: [(record) => logs.push(record)],
       },

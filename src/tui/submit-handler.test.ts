@@ -14,7 +14,7 @@ function fakeSession(overrides: Partial<TuiSessionInfo> = {}): TuiSessionInfo {
     llamaUrl: "http://127.0.0.1:8080",
     browserChannel: "chrome",
     browserHeadless: false,
-    approvalRequired: false,
+    approvalLevel: 5,
     maxSteps: 10,
     skillCount: 0,
     ...overrides,
@@ -78,17 +78,20 @@ describe("handleEditorSubmit", () => {
     expect(onDebugBundleExportRequested).toHaveBeenCalledWith(state);
   });
 
-  it("maps /privacy approve on|off onto onApproveEverythingSetRequested", () => {
+  it("maps /privacy level and the approve aliases onto onApprovalLevelSetRequested", () => {
     const state = createInitialTuiState(fakeSession());
-    const onApproveEverythingSetRequested = vi.fn();
+    const onApprovalLevelSetRequested = vi.fn();
     const dispatch = vi.fn();
-    const callbacks = stubCallbacks({ onApproveEverythingSetRequested });
+    const callbacks = stubCallbacks({ onApprovalLevelSetRequested });
+
+    handleEditorSubmit("/privacy level 3", state, dispatch, callbacks);
+    expect(onApprovalLevelSetRequested).toHaveBeenCalledWith(3);
 
     handleEditorSubmit("/privacy approve on", state, dispatch, callbacks);
-    expect(onApproveEverythingSetRequested).toHaveBeenCalledWith(true);
+    expect(onApprovalLevelSetRequested).toHaveBeenCalledWith(5);
 
     handleEditorSubmit("/privacy approve off", state, dispatch, callbacks);
-    expect(onApproveEverythingSetRequested).toHaveBeenCalledWith(false);
-    expect(onApproveEverythingSetRequested).toHaveBeenCalledTimes(2);
+    expect(onApprovalLevelSetRequested).toHaveBeenCalledWith(1);
+    expect(onApprovalLevelSetRequested).toHaveBeenCalledTimes(3);
   });
 });

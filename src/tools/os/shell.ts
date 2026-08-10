@@ -248,6 +248,7 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
           {
             sessionId: ctx.sessionId,
             tool: "os.shell.run",
+            category: "shell",
             reason: `${guardVerdict.reason} in ${cwd}`,
             preview: commandLine,
             affectedResources: [cwd],

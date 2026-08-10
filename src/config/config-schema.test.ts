@@ -22,21 +22,66 @@ describe("parseUserConfigFile", () => {
         tokenBudget: 3000,
         maxSteps: 10,
         toolTimeoutMs: 45000,
-        approvalRequired: false,
+        approvalLevel: 5,
       },
     });
     expect(parsed.localModels.url).toBe("http://localhost:18991");
     expect(parsed.log.level).toBe("debug");
     expect(parsed.agent.tokenBudget).toBe(3000);
-    expect(parsed.agent.approvalRequired).toBe(false);
+    expect(parsed.agent.approvalLevel).toBe(5);
   });
 
-  it("coerces boolean-ish strings for approvalRequired", () => {
+  it("defaults agent.approvalLevel to 1 (ask for everything)", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.agent.approvalLevel).toBe(1);
+  });
+
+  it("migrates legacy agent.approvalRequired: false to level 5", () => {
+    const parsed = parseUserConfigFile({
+      version: 36,
+      agent: { approvalRequired: false },
+    });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.agent.approvalLevel).toBe(5);
+    // The legacy key is read once and never written back.
+    expect("approvalRequired" in parsed.agent).toBe(false);
+  });
+
+  it("migrates legacy agent.approvalRequired: true (and string forms) to level 1", () => {
+    expect(
+      parseUserConfigFile({ version: 36, agent: { approvalRequired: true } })
+        .agent.approvalLevel,
+    ).toBe(1);
+    expect(
+      parseUserConfigFile({ version: 36, agent: { approvalRequired: "false" } })
+        .agent.approvalLevel,
+    ).toBe(5);
+  });
+
+  it("prefers agent.approvalLevel over a stale legacy approvalRequired", () => {
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,
-      agent: { approvalRequired: "false" },
+      agent: { approvalLevel: 3, approvalRequired: false },
     });
-    expect(parsed.agent.approvalRequired).toBe(false);
+    expect(parsed.agent.approvalLevel).toBe(3);
+  });
+
+  it("rejects out-of-range or non-integer agent.approvalLevel", () => {
+    for (const bad of [0, 6, 2.5, "3", true]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          agent: { approvalLevel: bad },
+        }),
+      ).toThrow(ConfigValidationError);
+    }
+    // null means "unset": falls back through the migration to level 1.
+    expect(
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        agent: { approvalLevel: null },
+      }).agent.approvalLevel,
+    ).toBe(1);
   });
 
   it("rejects unsupported version", () => {

@@ -8,6 +8,7 @@ import {
   type DangerousToolOptions,
 } from "../../approval/dangerous-tool.js";
 import { resolveUserPath } from "./expand-home.js";
+import { categorizeFsMutation } from "./fs-approval-scope.js";
 
 const MAX_PATHS_PER_CALL = 500;
 
@@ -147,6 +148,9 @@ export function buildOsFsTrashTool(options: DangerousToolOptions): ToolDefinitio
         {
           sessionId: ctx.sessionId,
           tool: "os.fs.trash",
+          category: await categorizeFsMutation("trash", absolutes, {
+            workingDir: ctx.workingDir,
+          }),
           reason: `move ${absolutes.length} path(s) to Trash`,
           preview,
           affectedResources: absolutes,

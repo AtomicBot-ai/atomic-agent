@@ -51,7 +51,7 @@ export function ApprovalModal({ request }: ApprovalModalProps): ReactElement {
         </Text>
       </Box>
       <Text color="gray">
-        y approves this call only; turn approvals off on the Privacy tab
+        y approves this call only; raise the level on the Privacy tab
         (/privacy)
       </Text>
     </Box>

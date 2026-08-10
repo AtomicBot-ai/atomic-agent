@@ -45,7 +45,7 @@ describe("loadConfig", () => {
     expect(config.localModels.url).toBe("http://127.0.0.1:8080");
     expect(config.localModels.completionMaxTokens).toBe(8192);
     expect(config.log.level).toBe("info");
-    expect(config.agent.approvalRequired).toBe(true);
+    expect(config.agent.approvalLevel).toBe(1);
   });
 
   it("maps ATOMIC_AGENT_LLAMA_MAX_TOKENS to completionMaxTokens with bounds", () => {
@@ -98,7 +98,7 @@ describe("loadConfig", () => {
         tokenBudget: 3000,
         maxSteps: 42,
         toolTimeoutMs: 12_000,
-        approvalRequired: false,
+        approvalLevel: 5,
       },
     });
     const config = loadConfig();
@@ -106,7 +106,7 @@ describe("loadConfig", () => {
     expect(config.log.level).toBe("debug");
     expect(config.agent.maxSteps).toBe(42);
     expect(config.agent.toolTimeoutMs).toBe(12_000);
-    expect(config.agent.approvalRequired).toBe(false);
+    expect(config.agent.approvalLevel).toBe(5);
   });
 
   it("keeps non-user-facing knobs on environment variables", () => {

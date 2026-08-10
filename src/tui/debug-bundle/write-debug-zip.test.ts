@@ -21,7 +21,7 @@ function stubSnapshot(sessionId: string | null): DebugBundleSnapshot {
       llamaUrl: "http://127.0.0.1:8080",
       browserChannel: "chromium",
       browserHeadless: true,
-      approvalRequired: false,
+      approvalLevel: 5,
       maxSteps: 12,
       skillCount: 0,
     },

@@ -35,9 +35,14 @@ export function createCapabilitiesHandler(): HttpHandler {
         maxSteps: runtime.config.agent.maxSteps,
         toolTimeoutMs: runtime.config.agent.toolTimeoutMs,
         // Live gate state, not the boot-time config snapshot: reflects
-        // `--no-approval` and later `setApprovalRequired` calls (the
-        // Privacy-tab toggle), so admin UIs render the truth.
-        approvalRequired: runtime.isApprovalRequired(),
+        // `--no-approval` boots and later `setApprovalLevel` calls (the
+        // Privacy-tab ladder), so admin UIs render the truth.
+        approvalLevel: runtime.getApprovalLevel(),
+        // Derived compatibility view for clients written against the
+        // binary toggle this route shipped with: `true` while any
+        // category still prompts (level < 5). Computed from the level,
+        // so the two fields cannot drift.
+        approvalRequired: runtime.getApprovalLevel() < 5,
       },
       tools: runtime.toolRegistry.list().map((t) => ({
         name: t.name,

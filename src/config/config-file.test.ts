@@ -451,6 +451,37 @@ describe("user config file IO", () => {
     warn.mockRestore();
   });
 
+  it("ensureUserConfigFileSync migrates v36 → v37: approvalRequired:false becomes level 5 on disk", () => {
+    const path = getUserConfigPath(dir);
+    const { approvalLevel: _dropped, ...legacyAgent } = USER_CONFIG_DEFAULTS.agent;
+    const v36 = {
+      version: 36,
+      localModels: USER_CONFIG_DEFAULTS.localModels,
+      log: { level: "info" },
+      agent: { ...legacyAgent, approvalRequired: false },
+      http: USER_CONFIG_DEFAULTS.http,
+    };
+    writeFileSync(path, JSON.stringify(v36, null, 2) + "\n", "utf8");
+
+    const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const migrated = ensureUserConfigFileSync(path);
+
+    expect(migrated.version).toBe(USER_CONFIG_VERSION);
+    expect(migrated.agent.approvalLevel).toBe(5);
+
+    const onDisk = JSON.parse(readFileSync(path, "utf8"));
+    expect(onDisk.version).toBe(USER_CONFIG_VERSION);
+    expect(onDisk.agent.approvalLevel).toBe(5);
+    // The binary key is consumed by the migration, never written back.
+    expect("approvalRequired" in onDisk.agent).toBe(false);
+
+    const calls = warn.mock.calls.map((args) => String(args[0]));
+    expect(
+      calls.some((line) => line.includes(`migrated config v36 → v${USER_CONFIG_VERSION}`)),
+    ).toBe(true);
+    warn.mockRestore();
+  });
+
   it("ensureUserConfigFileSync migrates v6 → v7 by filling completionMaxTokens default", () => {
     const path = getUserConfigPath(dir);
     const v6 = {
