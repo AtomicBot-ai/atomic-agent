@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 
 import type { ChannelStatus } from "../../runtime/channel-status.js";
 import { getUserConfigPath } from "../../config/index.js";
-import type { TaskReport } from "../../tasks/index.js";
+import type { TaskReport, TaskReportSink } from "../../tasks/index.js";
 
 import {
   handleInboundText,
@@ -408,6 +408,45 @@ export class TelegramChannel {
 
   cancelPairing(): void {
     this.pairing.cancel();
+  }
+
+  /**
+   * Build the `TaskRunner.reportSink` that routes task reports into a
+   * Telegram channel. Static so bootstrap can wire it through the
+   * already-imported `TelegramChannel` name without touching its
+   * import block, and unit-testable in isolation: both skip paths
+   * warn-log with a reason (never silent), pinned by
+   * `telegram-channel.test.ts`.
+   *
+   * `resolveChannel` is read at delivery time, not at build time —
+   * bootstrap constructs the runner before the channel, and a due task
+   * on an early scheduler tick may fire in that window; the `null`
+   * branch logs and drops that report instead of crashing or silently
+   * losing it.
+   */
+  static buildTaskReportSink(deps: {
+    resolveChannel: () => TelegramChannel | null;
+    logger: {
+      warn(message: string, context?: Record<string, unknown>): void;
+    };
+  }): TaskReportSink {
+    return async (report) => {
+      const channel = deps.resolveChannel();
+      if (!channel) {
+        deps.logger.warn(
+          "telegram task report skipped: channel not constructed",
+          { taskId: report.taskId },
+        );
+        return;
+      }
+      const delivery = await channel.sendTaskReport(report);
+      if (delivery !== "sent") {
+        deps.logger.warn("telegram task report skipped", {
+          taskId: report.taskId,
+          delivery,
+        });
+      }
+    };
   }
 
   /**

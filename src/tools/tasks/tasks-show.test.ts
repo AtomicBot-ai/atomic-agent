@@ -35,6 +35,7 @@ function makeRecord(): TaskRecord {
     updatedAt: 0,
     startedAt: null,
     completedAt: null,
+    notify: null,
   };
 }
 

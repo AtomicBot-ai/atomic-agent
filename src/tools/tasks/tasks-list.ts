@@ -114,6 +114,7 @@ function toSummary(record: TaskRecord): Record<string, unknown> {
     schedule: record.schedule,
     attempts: record.attempts,
     maxAttempts: record.maxAttempts,
+    notify: record.notify,
     createdAt: record.createdAt,
   };
 }

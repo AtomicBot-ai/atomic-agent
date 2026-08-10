@@ -2135,28 +2135,18 @@ export async function createAgentRuntime(
     // single sink IS the Telegram route (a second target would turn
     // this into a per-target dispatch). The channel is constructed
     // after the runner — it needs the finished runtime object — so the
-    // sink reads the same live reference the shutdown path uses,
-    // assigned further below. A report that fires in the window before
-    // that assignment (a due task on an early scheduler tick while
-    // bootstrap is still, e.g., awaiting MCP connects) is skipped with
-    // a warning rather than lost silently. Skips never affect the
-    // task's own status, and the runner isolates sink rejections.
-    reportSink: async (report) => {
-      const channel = telegramChannelForShutdown;
-      if (!channel) {
-        logger.warn("telegram task report skipped: channel not constructed", {
-          taskId: report.taskId,
-        });
-        return;
-      }
-      const delivery = await channel.sendTaskReport(report);
-      if (delivery !== "sent") {
-        logger.warn("telegram task report skipped", {
-          taskId: report.taskId,
-          delivery,
-        });
-      }
-    },
+    // sink resolves the same live reference the shutdown path uses,
+    // assigned further below, at delivery time. A report that fires in
+    // the window before that assignment (a due task on an early
+    // scheduler tick while bootstrap is still, e.g., awaiting MCP
+    // connects) is warn-logged and dropped, never lost silently; skips
+    // never affect the task's own status, and the runner isolates sink
+    // rejections. Skip-path logging is pinned by the sink's own unit
+    // tests in telegram-channel.test.ts.
+    reportSink: TelegramChannel.buildTaskReportSink({
+      resolveChannel: () => telegramChannelForShutdown,
+      logger,
+    }),
     logger,
     metrics,
   });

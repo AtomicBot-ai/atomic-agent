@@ -14,7 +14,6 @@ export type {
   TaskRunnerSessionLoader,
   TaskRunnerSessionFactory,
 } from "./task-runner.js";
-export { buildTaskReport, isReportableStatus } from "./task-report.js";
 export type {
   TaskReport,
   TaskReportSink,

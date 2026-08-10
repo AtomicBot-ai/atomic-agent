@@ -355,6 +355,94 @@ describe("TaskStore", () => {
     }
   });
 
+  it("migrates a real v2 database to v3: notify column added, old rows read as null, new writes work", () => {
+    // Build a genuine v2-shaped database by hand: v1 base + v2 columns,
+    // NO notify column, schema_meta version stamped '2', one live row.
+    const dbFile = join(tmp, "tasks-v2.sqlite");
+    const raw = new DatabaseCtor(dbFile);
+    raw.exec(`
+      CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE tasks (
+        id              TEXT PRIMARY KEY,
+        session_id      TEXT,
+        user_message    TEXT NOT NULL,
+        max_steps       INTEGER,
+        status          TEXT NOT NULL,
+        origin          TEXT NOT NULL,
+        attempts        INTEGER NOT NULL DEFAULT 0,
+        max_attempts    INTEGER NOT NULL,
+        last_error      TEXT,
+        last_error_cat  TEXT,
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL,
+        started_at      INTEGER,
+        completed_at    INTEGER,
+        schedule_kind   TEXT,
+        schedule_value  TEXT,
+        scheduled_for   INTEGER,
+        recurring       INTEGER NOT NULL DEFAULT 0,
+        last_scheduled_at INTEGER,
+        trigger_source  TEXT
+      );
+      CREATE INDEX idx_tasks_due
+        ON tasks(status, scheduled_for) WHERE status = 'pending';
+      INSERT INTO schema_meta (key, value) VALUES ('version', '2');
+      INSERT INTO tasks (
+        id, session_id, user_message, max_steps, status, origin,
+        attempts, max_attempts, created_at, updated_at,
+        schedule_kind, schedule_value, scheduled_for, recurring
+      ) VALUES (
+        't-v2-row', 's-old', 'pre-v3 cron', NULL, 'pending', 'cli',
+        0, 3, 1000, 1000,
+        'cron', '{"expression":"0 9 * * *"}', 2000, 1
+      );
+    `);
+    const before = raw
+      .prepare("SELECT COUNT(*) AS n FROM pragma_table_info('tasks') WHERE name = 'notify'")
+      .get() as { n: number };
+    expect(before.n).toBe(0);
+    raw.close();
+
+    // Opening the store runs applyMigrations: v2 -> v3.
+    const migrated = new TaskStore({ dbFile });
+    try {
+      // Pre-migration row reads back intact with notify clamped to null.
+      const oldRow = migrated.get("t-v2-row");
+      expect(oldRow).toMatchObject({
+        userMessage: "pre-v3 cron",
+        status: "pending",
+        recurring: true,
+        notify: null,
+      });
+      // New writes can use the column.
+      const fresh = migrated.create({
+        sessionId: "s-new",
+        userMessage: "post-v3",
+        origin: "cli",
+        maxAttempts: 1,
+        notify: "telegram",
+      });
+      expect(migrated.get(fresh.id)?.notify).toBe("telegram");
+    } finally {
+      migrated.close();
+    }
+
+    // Column exists and the on-disk version was bumped to '3'.
+    const after = new DatabaseCtor(dbFile);
+    try {
+      const col = after
+        .prepare("SELECT COUNT(*) AS n FROM pragma_table_info('tasks') WHERE name = 'notify'")
+        .get() as { n: number };
+      expect(col.n).toBe(1);
+      const version = after
+        .prepare("SELECT value FROM schema_meta WHERE key = 'version'")
+        .get() as { value: string };
+      expect(version.value).toBe("3");
+    } finally {
+      after.close();
+    }
+  });
+
   it("clamps an unknown persisted notify value to null on read", () => {
     const t = store.create(
       {

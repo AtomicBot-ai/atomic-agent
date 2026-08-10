@@ -35,6 +35,7 @@ function makeRecord(overrides: Partial<TaskRecord> = {}): TaskRecord {
     updatedAt: 0,
     startedAt: null,
     completedAt: null,
+    notify: null,
     ...overrides,
   };
 }
@@ -77,6 +78,22 @@ describe("tasks.list", () => {
     const result = await tool.run({ status: "nope" }, makeCtx());
     expect(result.status).toBe("error");
     expect(list).not.toHaveBeenCalled();
+  });
+
+  it("surfaces notify on summary rows so opted-in tasks are visible in a listing", async () => {
+    const list = vi.fn(() => [
+      makeRecord({ id: "t-loud", notify: "telegram" }),
+      makeRecord({ id: "t-quiet" }),
+    ]);
+    const tool = buildTasksListTool({
+      taskStore: { list } as never,
+      defaultLimit: 20,
+    });
+    const result = await tool.run({}, makeCtx());
+    expect(result.status).toBe("ok");
+    const tasks = result.details.tasks as Array<Record<string, unknown>>;
+    expect(tasks[0]).toMatchObject({ id: "t-loud", notify: "telegram" });
+    expect(tasks[1]).toMatchObject({ id: "t-quiet", notify: null });
   });
 
   it("caps limit at 200", async () => {

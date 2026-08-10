@@ -84,12 +84,29 @@ function scheduleLabel(kind: TaskReport["scheduleKind"]): string {
 function promptPreview(userMessage: string): string {
   const flat = userMessage.replace(/\s+/g, " ").trim();
   if (flat.length <= TASK_REPORT_PROMPT_PREVIEW_CHARS) return flat;
-  return `${flat.slice(0, TASK_REPORT_PROMPT_PREVIEW_CHARS - 1)}…`;
+  return `${sliceByCodePoints(flat, TASK_REPORT_PROMPT_PREVIEW_CHARS - 1)}…`;
 }
 
 function truncateWithMarker(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars)}${TASK_REPORT_TRUNCATION_MARKER}`;
+  return `${sliceByCodePoints(text, maxChars)}${TASK_REPORT_TRUNCATION_MARKER}`;
+}
+
+/**
+ * Take at most `limit` UTF-16 units without ever splitting a surrogate
+ * pair — same code-point walk as `chunkUtf16` in
+ * [outbound-sender.ts](outbound-sender.ts). A pair that straddles the
+ * limit is dropped whole, so the cut can land one unit short; a naive
+ * `String.prototype.slice` would instead emit a lone surrogate that
+ * renders as U+FFFD in the operator's chat.
+ */
+function sliceByCodePoints(text: string, limit: number): string {
+  let out = "";
+  for (const ch of text) {
+    if (out.length + ch.length > limit) break;
+    out += ch;
+  }
+  return out;
 }
 
 function formatDuration(ms: number): string {

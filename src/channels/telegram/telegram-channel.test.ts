@@ -879,6 +879,63 @@ describe("TelegramChannel live-control surface", () => {
       expect(delivery).toBe("delivery_failed");
     });
   });
+
+  describe("buildTaskReportSink", () => {
+    function makeSinkReport(): TaskReport {
+      return {
+        taskId: "t-sink",
+        status: "completed",
+        userMessage: "digest",
+        scheduleKind: "cron",
+        attempts: 1,
+        maxAttempts: 1,
+        durationMs: 100,
+        replyText: "done",
+        errorMessage: null,
+        errorCategory: null,
+      };
+    }
+
+    it("warn-logs with a reason and drops the report when no channel is constructed yet", async () => {
+      const warns: Array<{ message: string; context?: Record<string, unknown> }> = [];
+      const sink = TelegramChannel.buildTaskReportSink({
+        resolveChannel: () => null,
+        logger: { warn: (message, context) => warns.push({ message, ...(context ? { context } : {}) }) },
+      });
+      await sink(makeSinkReport());
+      expect(warns).toHaveLength(1);
+      expect(warns[0]!.message).toContain("channel not constructed");
+      expect(warns[0]!.context).toMatchObject({ taskId: "t-sink" });
+    });
+
+    it("warn-logs the delivery outcome when the channel skips the report", async () => {
+      const warns: Array<{ message: string; context?: Record<string, unknown> }> = [];
+      const sendTaskReport = vi.fn(async () => "channel_not_up" as const);
+      const sink = TelegramChannel.buildTaskReportSink({
+        resolveChannel: () =>
+          ({ sendTaskReport } as unknown as TelegramChannel),
+        logger: { warn: (message, context) => warns.push({ message, ...(context ? { context } : {}) }) },
+      });
+      await sink(makeSinkReport());
+      expect(sendTaskReport).toHaveBeenCalledOnce();
+      expect(warns).toHaveLength(1);
+      expect(warns[0]!.context).toMatchObject({
+        taskId: "t-sink",
+        delivery: "channel_not_up",
+      });
+    });
+
+    it("stays silent on a delivered report", async () => {
+      const warns: string[] = [];
+      const sink = TelegramChannel.buildTaskReportSink({
+        resolveChannel: () =>
+          ({ sendTaskReport: async () => "sent" as const } as unknown as TelegramChannel),
+        logger: { warn: (message) => warns.push(message) },
+      });
+      await sink(makeSinkReport());
+      expect(warns).toHaveLength(0);
+    });
+  });
 });
 
 describe("scrubErrorMessage", () => {

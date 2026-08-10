@@ -121,4 +121,46 @@ describe("formatTaskReportMessage", () => {
     expect(text).toContain("Attempt 1/3");
     expect(text).not.toContain("took");
   });
+
+  it("never splits a surrogate pair when truncating the reply", () => {
+    // "a" + 1500 emoji (2 UTF-16 units each) = 3001 units; the 3000-unit
+    // cut lands in the middle of the last pair. A naive slice would leave
+    // a lone high surrogate at the cut.
+    const reply = `a${"💚".repeat(1500)}`;
+    expect(reply.length).toBe(TASK_REPORT_RESULT_MAX_CHARS + 1);
+    const text = formatTaskReportMessage(makeReport({ replyText: reply }));
+    expect(text).toContain(TASK_REPORT_TRUNCATION_MARKER);
+    expect(hasLoneSurrogate(text)).toBe(false);
+  });
+
+  it("never splits a surrogate pair when truncating the error", () => {
+    const error = `x${"🐛".repeat(TASK_REPORT_ERROR_MAX_CHARS)}`;
+    const text = formatTaskReportMessage(
+      makeReport({
+        status: "failed",
+        replyText: null,
+        errorMessage: error,
+        errorCategory: "transport",
+      }),
+    );
+    expect(text).toContain(TASK_REPORT_TRUNCATION_MARKER);
+    expect(hasLoneSurrogate(text)).toBe(false);
+  });
+
+  it("never splits a surrogate pair in the prompt preview", () => {
+    // 118 chars of prefix put the first emoji pair on UTF-16 units
+    // 118-119, so the preview cut (cap - 1 = 119) lands mid-pair. A
+    // naive slice would keep the lone high surrogate.
+    const prompt = `${"p".repeat(TASK_REPORT_PROMPT_PREVIEW_CHARS - 2)}😀😀😀`;
+    const text = formatTaskReportMessage(makeReport({ userMessage: prompt }));
+    expect(hasLoneSurrogate(text)).toBe(false);
+    expect(text).toContain("…");
+  });
 });
+
+/** True when `text` contains an unpaired UTF-16 surrogate. */
+function hasLoneSurrogate(text: string): boolean {
+  return /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(
+    text,
+  );
+}
