@@ -55,6 +55,7 @@ describe("loadDotenvFromStateDir", () => {
       exists: false,
       loaded: [],
       skipped: [],
+      error: null,
     });
     expect(process.env.ATOMIC_DOTENV_TEST_FOO).toBeUndefined();
     expect(stderrCalls).toEqual([]);
@@ -153,7 +154,26 @@ describe("loadDotenvFromStateDir", () => {
       "ATOMIC_DOTENV_TEST_BAR",
       "ATOMIC_DOTENV_TEST_FOO",
     ]);
-    expect(stderrCalls.join("")).toMatch(/missing '='/);
+    expect(stderrCalls.join("")).toMatch(/missing '=' on line 1/);
+  });
+
+  it("reports a torn line by position only, never echoing its content", () => {
+    // A non-atomic external writer can leave a partial line that is a
+    // fragment of a secret value. The diagnostic must locate it without
+    // repeating it.
+    const fragment = "sk-torn-secret-fragment-abc123";
+    writeFileSync(
+      join(dir, ".env"),
+      [fragment, "ATOMIC_DOTENV_TEST_FOO=fine"].join("\n"),
+      "utf8",
+    );
+
+    const result = loadDotenvFromStateDir(dir);
+
+    expect(result.loaded).toEqual(["ATOMIC_DOTENV_TEST_FOO"]);
+    const stderr = stderrCalls.join("");
+    expect(stderr).toContain("missing '=' on line 1");
+    expect(stderr).not.toContain(fragment);
   });
 
   it("rejects keys that do not match the canonical pattern", () => {

@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { isSea } from "node:sea";
 import { render } from "ink";
 import React from "react";
-import { getConfig } from "../config/index.js";
+import { formatDotenvReadWarning, getConfig } from "../config/index.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { LogRecord, LogSink } from "../tracing/structured-logger.js";
@@ -354,6 +354,19 @@ export async function tuiCommand(args: string[]): Promise<number> {
     type: "runtime_info",
     line: `runtime ready — local-llm ${config.localModels.url}, browser ${config.browser.channel}`,
   });
+
+  // A `.env` that exists but could not be read means stored API keys were
+  // silently dropped for this run (#59). The loader already wrote to
+  // stderr, but that line scrolls away before the alt screen takes over
+  // and is easy to miss, so repeat it as a warning chat message. Names +
+  // errno only, never file content.
+  if (config.dotenv.error) {
+    bus.emit({
+      type: "system_message",
+      variant: "warn",
+      text: formatDotenvReadWarning(config.dotenv.path, config.dotenv.error),
+    });
+  }
 
   // If the user is in managed mode and the backend + model are ready
   // on disk, start the daemon immediately so there is no extra

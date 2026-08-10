@@ -1,5 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -24,6 +31,7 @@ describe("loadConfig", () => {
     delete process.env.ATOMIC_AGENT_LLAMA_API_KEY;
     delete process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS;
     delete process.env.ATOMIC_AGENT_BROWSER_CHANNEL;
+    delete process.env.ATOMIC_LOADCONFIG_TEST_KEY;
     resetConfigCache();
     vi.restoreAllMocks();
   });
@@ -154,6 +162,39 @@ describe("loadConfig", () => {
     expect(config.localModels.mode).toBe("managed");
     expect(config.localModels.url).toBe("http://127.0.0.1:19000");
     expect(config.paths.localModelsDataDir).toBe(join(stateDir, "models"));
+  });
+
+  it("carries the .env load outcome as config.dotenv", () => {
+    delete process.env.ATOMIC_LOADCONFIG_TEST_KEY;
+    writeFileSync(
+      join(stateDir, ".env"),
+      "ATOMIC_LOADCONFIG_TEST_KEY=from-file\n",
+      "utf8",
+    );
+
+    const config = loadConfig();
+
+    expect(config.dotenv.path).toBe(join(stateDir, ".env"));
+    expect(config.dotenv.exists).toBe(true);
+    expect(config.dotenv.loaded).toContain("ATOMIC_LOADCONFIG_TEST_KEY");
+    expect(config.dotenv.error).toBeNull();
+    expect(process.env.ATOMIC_LOADCONFIG_TEST_KEY).toBe("from-file");
+  });
+
+  it("reports an unreadable .env in config.dotenv.error without throwing", () => {
+    // A directory named `.env` is the portable stand-in for a file that
+    // exists but cannot be read: readFileSync fails with EISDIR on POSIX
+    // and an access-denied flavour on Windows. Real EPERM needs ACL
+    // tricks that do not survive root test runs or CI images.
+    mkdirSync(join(stateDir, ".env"));
+
+    const config = loadConfig();
+
+    expect(config.dotenv.exists).toBe(false);
+    expect(config.dotenv.loaded).toEqual([]);
+    expect(config.dotenv.error).not.toBeNull();
+    expect(config.dotenv.error?.code).toMatch(/^(EISDIR|EACCES|EPERM)$/);
+    expect(config.dotenv.error?.attempts).toBeGreaterThanOrEqual(1);
   });
 
   it("uses localModelsDataDir override when set", () => {
