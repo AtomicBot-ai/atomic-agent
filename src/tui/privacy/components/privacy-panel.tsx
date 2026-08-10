@@ -8,10 +8,10 @@ export interface PrivacyPanelProps {
 }
 
 /**
- * The Privacy tab surfaces what data (if any) leaves the machine. Today
- * it hosts a single control: the anonymous-analytics opt-out (shared by
- * product analytics and crash reporting). The toggle applies live — no
- * restart.
+ * The Privacy tab hosts the trust-and-safety switches: the
+ * anonymous-analytics opt-out (shared by product analytics and crash
+ * reporting) and the approve-everything toggle over the approval gate.
+ * Both apply live — no restart — and persist to `config.json`.
  */
 export function PrivacyPanel({ panel }: PrivacyPanelProps): ReactElement {
   return (
@@ -43,6 +43,35 @@ export function PrivacyPanel({ panel }: PrivacyPanelProps): ReactElement {
           only an install id and coarse counters.
         </Text>
       </Box>
+      <Box marginTop={1}>
+        <Text bold color={theme.colors.accentSoft}>
+          Approvals
+        </Text>
+      </Box>
+      <Box marginTop={1}>
+        <Text color={theme.colors.muted}>{"   "}approve everything </Text>
+        <Text
+          color={
+            panel.approveEverything ? theme.colors.error : theme.colors.muted
+          }
+        >
+          {panel.approveEverything
+            ? "on (the agent runs every action without asking)"
+            : "off (risky actions ask for approval first)"}
+        </Text>
+        {panel.busy ? (
+          <Text color={theme.colors.muted}>{"  "}…</Text>
+        ) : null}
+      </Box>
+      <Box marginTop={1} flexDirection="column">
+        <Text color={theme.colors.muted}>
+          {"   "}Covers shell commands, file writes and deletes, HTTP
+          requests, process kills, script runs, and browser navigation to
+          non-web URLs (file://, javascript:). Hardline guards still
+          block catastrophic commands (rm -rf /, disk formats) either way.
+          Persists to config.json and applies to future runs too.
+        </Text>
+      </Box>
       {panel.message ? (
         <Box marginTop={1}>
           <Text color={theme.colors.accentSoft}>{"   "}{panel.message}</Text>
@@ -55,7 +84,8 @@ export function PrivacyPanel({ panel }: PrivacyPanelProps): ReactElement {
       ) : null}
       <Box marginTop={1}>
         <Text color={theme.colors.muted}>
-          a — {panel.analyticsEnabled ? "disable" : "enable"} · r — refresh
+          a — analytics {panel.analyticsEnabled ? "off" : "on"} · y — approve
+          everything {panel.approveEverything ? "off" : "on"} · r — refresh
         </Text>
       </Box>
     </Box>

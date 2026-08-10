@@ -15,6 +15,7 @@ export interface PrivacyTabKeyContext {
  * the key was consumed so the editor echo is suppressed.
  *
  *  - `a` — toggle anonymous analytics + error reporting.
+ *  - `y` — toggle approve everything (agent runs without asking).
  *  - `r` — refresh the persisted snapshot.
  */
 export function handlePrivacyTabKey(
@@ -27,6 +28,10 @@ export function handlePrivacyTabKey(
   if (state.privacyPanel.busy) return true;
   if (input === "a") {
     void callbacks.onAnalyticsToggleRequested?.();
+    return true;
+  }
+  if (input === "y") {
+    void callbacks.onApproveEverythingToggleRequested?.();
     return true;
   }
   if (input === "r") {

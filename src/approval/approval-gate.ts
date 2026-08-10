@@ -40,11 +40,26 @@ export class ApprovalGate {
     (decision: ApprovalDecision) => void
   >();
   private readonly emitter: ApprovalEmitter;
-  private readonly autoApprove: boolean;
+  private autoApprove: boolean;
 
   constructor(options: { emit: ApprovalEmitter; autoApprove?: boolean }) {
     this.emitter = options.emit;
     this.autoApprove = options.autoApprove ?? false;
+  }
+
+  /**
+   * Flip auto-approve at runtime. `true` means every subsequent
+   * `request()` resolves approved immediately without emitting a prompt;
+   * `false` restores interactive approvals. Already-pending requests are
+   * not resolved retroactively — they still wait for their decision.
+   */
+  setAutoApprove(value: boolean): void {
+    this.autoApprove = value;
+  }
+
+  /** Current auto-approve state (live value, not the constructor arg). */
+  isAutoApproveEnabled(): boolean {
+    return this.autoApprove;
   }
 
   request(

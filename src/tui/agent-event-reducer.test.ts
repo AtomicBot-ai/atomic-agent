@@ -369,4 +369,18 @@ describe("reduceTuiState", () => {
     expect(next.streamingToolCards).toEqual([]);
     expect(next.messages.at(-1)?.reasoningBlocks).toContain("some chain of thought");
   });
+
+  it("mirrors approval_required_changed into state.session for the diagnostics line", () => {
+    const initial = createInitialTuiState(fakeSession({ approvalRequired: true }));
+    const off = reduceTuiState(initial, {
+      type: "approval_required_changed",
+      approvalRequired: false,
+    });
+    expect(off.session.approvalRequired).toBe(false);
+    const on = reduceTuiState(off, {
+      type: "approval_required_changed",
+      approvalRequired: true,
+    });
+    expect(on.session.approvalRequired).toBe(true);
+  });
 });

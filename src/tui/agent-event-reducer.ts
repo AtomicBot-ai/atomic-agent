@@ -72,6 +72,11 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       return { ...state, session: { ...state.session, sessionId: action.sessionId } };
     case "skill_count_changed":
       return { ...state, session: { ...state.session, skillCount: action.count } };
+    case "approval_required_changed":
+      return {
+        ...state,
+        session: { ...state.session, approvalRequired: action.approvalRequired },
+      };
     case "agent_event":
       return reduceAgentEvent(state, action.event);
     case "approval_requested":
