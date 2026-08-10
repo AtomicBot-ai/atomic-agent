@@ -93,10 +93,11 @@ describe("handleLlmPanelKey", () => {
     expect(onStop).toHaveBeenCalledTimes(1);
   });
 
-  it("asks for the model picker on an openai-compatible model row via the callback", () => {
-    // A dispatched `providers_chat_model_picker_requested` is a reducer
-    // no-op the orchestrator never sees; the request must travel as a
-    // callback, so Enter on the row must not dispatch anything.
+  it("selects directly on an openai-compatible model row, no modal detour", () => {
+    // The inline Cloud-pane list renders `/v1/models` entries as
+    // first-class rows, so Enter switches the model through the same
+    // callback as curated kinds; the picker modal stays closed and no
+    // dead reducer action is dispatched.
     const base = seededState();
     const state = {
       ...base,
@@ -120,8 +121,44 @@ describe("handleLlmPanelKey", () => {
       }),
     });
     expect(dispatched).toEqual([]);
-    expect(onPickerRequested).toHaveBeenCalledWith("openrouter");
-    expect(onSelectChatModel).not.toHaveBeenCalled();
+    expect(onSelectChatModel).toHaveBeenCalledWith(
+      "openrouter",
+      "openai/gpt-4o-mini",
+    );
+    expect(onPickerRequested).not.toHaveBeenCalled();
+  });
+
+  it("f focuses the inline model filter and typed letters land in it", () => {
+    const base = seededState();
+    const state = {
+      ...base,
+      llmPanel: { ...base.llmPanel, mode: "cloud" as const },
+    };
+    const dispatched: TuiAction[] = [];
+    const handled = handleLlmPanelKey("f", emptyKey(), {
+      state,
+      dispatch: (action) => dispatched.push(action),
+      callbacks: callbacks(),
+    });
+    expect(handled).toBe(true);
+    expect(dispatched).toEqual([
+      { type: "llm_mode_set", mode: "cloud" },
+      { type: "llm_cloud_filter_focus_set", focused: true },
+    ]);
+
+    // With the filter focused, a letter that doubles as a hotkey ("c")
+    // edits the filter instead of opening the provider config.
+    const focused = {
+      ...state,
+      llmPanel: { ...state.llmPanel, cloudModelFilterFocused: true },
+    };
+    const typed: TuiAction[] = [];
+    handleLlmPanelKey("c", emptyKey(), {
+      state: focused,
+      dispatch: (action) => typed.push(action),
+      callbacks: callbacks(),
+    });
+    expect(typed).toEqual([{ type: "llm_cloud_filter_set", value: "c" }]);
   });
 
   it("selects an exact cloud embedding model", () => {

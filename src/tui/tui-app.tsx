@@ -226,6 +226,13 @@ export interface TuiAppCallbacks {
    * request never reaches the orchestrator and the picker never opens.
    */
   onProvidersChatModelPickerRequested?(providerId: string | null): void;
+  /**
+   * Cloud pane / `/model`: make sure the inline model list has (or is
+   * fetching) the catalog of `providerId` (`null` = active text
+   * provider). Callback for the same reason as the picker request
+   * above: only the callback layer reaches the orchestrator's bus.
+   */
+  onProvidersInlineModelsEnsureRequested?(providerId: string | null): void;
   /** Providers tab / LLM panel: switch the active embedding provider. */
   onProvidersSetActiveEmbedding?(id: string): void;
   /** Providers tab / LLM panel: select an exact embedding model. */

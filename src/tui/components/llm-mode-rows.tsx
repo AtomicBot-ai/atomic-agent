@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { selectCloudModelSection } from "../llm-panel/llm-panel-row-builders.js";
 import { activeCursor, selectLlmPanelRows, type LlmPanelRow } from "../llm-panel/llm-panel-selectors.js";
 import { classifyRamFit, classifyVramFit } from "../local-models/local-models-panel-state.js";
 import { computeRowWindow } from "../row-window.js";
@@ -15,6 +16,11 @@ export function LlmModeRows({
   state: TuiState;
   maxRows?: number;
 }): ReactElement {
+  // The Cloud pane windows its own model list (the catalog can be 350+
+  // rows), so it never goes through the generic overflow fallback.
+  if (state.llmPanel.mode === "cloud") {
+    return <CloudRows rows={rows} state={state} maxRows={maxRows} />;
+  }
   // When the catalog overflows the available height, switch to a
   // cursor-windowed flat view so the rendered frame never exceeds the
   // terminal (Ink overlaps/garbles lines when it does — it does NOT
@@ -28,10 +34,7 @@ export function LlmModeRows({
     return <WindowedRows rows={rows} state={state} maxRows={maxRows} />;
   }
   if (state.llmPanel.mode === "local") return <LocalRows rows={rows} state={state} />;
-  if (state.llmPanel.mode === "external") {
-    return <ExternalRows rows={rows} state={state} />;
-  }
-  return <CloudRows rows={rows} state={state} />;
+  return <ExternalRows rows={rows} state={state} />;
 }
 
 /** Human-readable section title for a row, used by the windowed view. */
@@ -134,16 +137,64 @@ function LocalRows({
   );
 }
 
+/**
+ * Preferred number of visible model rows in the inline list — matches
+ * the window the modal picker used. Shrinks when the terminal budget
+ * cannot afford it next to the provider/embedding sections.
+ */
+const MODEL_WINDOW = 12;
+
+/**
+ * Cloud pane: providers, then the inline filterable model list (full
+ * catalog of the active provider, windowed around the cursor), then
+ * embeddings. Replaces both the single static model row and the modal
+ * picker this pane used to open.
+ */
 function CloudRows({
   rows,
   state,
+  maxRows,
 }: {
   rows: readonly LlmPanelRow[];
   state: TuiState;
+  maxRows: number;
 }): ReactElement {
   const providerRows = rows.filter((row) => row.kind === "cloudProvider");
   const textRows = rows.filter((row) => row.kind === "cloudChatModel");
   const embeddingRows = rows.filter((row) => row.kind === "cloudEmbeddingModel");
+  const section = selectCloudModelSection(state);
+  const filter = state.llmPanel.cloudModelFilter;
+  const filterFocused = state.llmPanel.cloudModelFilterFocused;
+  const statusLine = section.status !== "ready";
+  // Everything around the model window costs lines: section headers (3),
+  // their bottom margins (3), provider:/filter: (2), the counter (1),
+  // provider/embedding rows, plus a loading/error line when shown.
+  const overhead =
+    9 +
+    Math.max(1, providerRows.length) +
+    Math.max(1, embeddingRows.length) +
+    (statusLine ? 1 : 0);
+  const windowSize = Math.max(3, Math.min(MODEL_WINDOW, maxRows - overhead));
+  const cursorInSection = Math.max(
+    0,
+    Math.min(activeCursor(state) - section.sectionStart, textRows.length - 1),
+  );
+  const start = Math.max(
+    0,
+    Math.min(
+      cursorInSection - Math.floor(windowSize / 2),
+      textRows.length - windowSize,
+    ),
+  );
+  const visible = textRows.slice(start, start + windowSize);
+  const counter =
+    textRows.length === 0
+      ? "no match"
+      : `${cursorInSection + 1}/${textRows.length}${
+          textRows.length !== section.models.length
+            ? ` of ${section.models.length}`
+            : ""
+        }`;
   return (
     <Box flexDirection="column">
       <RowsSection
@@ -152,7 +203,43 @@ function CloudRows({
         state={state}
         empty="No cloud providers configured. Press n to add one."
       />
-      <RowsSection title="Cloud text models" rows={textRows} state={state} />
+      <Box flexDirection="column" marginBottom={1}>
+        <Text bold color={theme.colors.accentSoft}>
+          Cloud text models
+        </Text>
+        <Text color={theme.colors.muted}>
+          {"provider: "}
+          <Text bold color={theme.colors.accentSoft}>
+            {section.provider?.id ?? "none"}
+          </Text>
+        </Text>
+        <Text color={theme.colors.muted}>
+          {"filter: "}
+          <Text color={filterFocused ? theme.colors.accent : undefined}>
+            {filter}
+          </Text>
+          {filterFocused ? <Text color={theme.colors.muted}>▏</Text> : null}
+          {!filterFocused && filter.length === 0 ? (
+            <Text color={theme.colors.muted}>f to filter</Text>
+          ) : null}
+        </Text>
+        {section.status === "loading" ? (
+          <Text color={theme.colors.muted}>  fetching model list…</Text>
+        ) : null}
+        {section.status === "error" ? (
+          <Text color={theme.colors.error}>
+            {"  "}model list unavailable ({section.error ?? "unknown error"}) -
+            showing current model only
+          </Text>
+        ) : null}
+        {visible.map((row) => (
+          <Row key={row.id} row={row} state={state} />
+        ))}
+        <Text color={theme.colors.muted}>
+          {"  "}↑/↓ move ({counter})
+          {filterFocused ? " · type to filter · Enter select · Esc done" : ""}
+        </Text>
+      </Box>
       <RowsSection title="Cloud embeddings" rows={embeddingRows} state={state} />
     </Box>
   );

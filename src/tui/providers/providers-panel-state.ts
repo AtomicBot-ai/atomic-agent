@@ -25,8 +25,10 @@ export interface ProvidersRemoveConfirmState {
 }
 
 /**
- * Reopenable chat-model picker for `openai-compatible` providers, opened
- * from the LLM panel's model row or `/model`. Lives here rather than on
+ * Reopenable chat-model picker modal. The Cloud pane replaced it with
+ * the inline filterable model list (`InlineModelCatalogState` below), so
+ * the modal no longer has an entry point there; it stays for non-panel
+ * flows that need a standalone picker. Lives here rather than on
  * `llmPanel` because the async `/v1/models` fetch and the resulting
  * selection are owned by `ProvidersOrchestrator`, matching `wizard` and
  * `removeConfirm`. A non-null value means the modal owns the keyboard.
@@ -60,9 +62,42 @@ export interface ProvidersChatModelPickerState {
 export function filteredPickerModels(
   picker: ProvidersChatModelPickerState,
 ): readonly string[] {
-  const q = picker.query.trim().toLowerCase();
-  if (q.length === 0) return picker.models;
-  return picker.models.filter((id) => id.toLowerCase().includes(q));
+  return filterModelIds(picker.models, picker.query);
+}
+
+/**
+ * Case-insensitive substring filter over model ids. Shared by the modal
+ * picker and the inline Cloud-pane model list so both surfaces match the
+ * same rows for the same query.
+ */
+export function filterModelIds(
+  models: readonly string[],
+  query: string,
+): readonly string[] {
+  const q = query.trim().toLowerCase();
+  if (q.length === 0) return models;
+  return models.filter((id) => id.toLowerCase().includes(q));
+}
+
+/**
+ * Live model catalog behind the Cloud pane's inline "Cloud text models"
+ * section. Owned by `ProvidersOrchestrator.ensureInlineModels`, which is
+ * the only writer: curated kinds (OpenRouter, aimlapi) load synchronously
+ * from their catalog module and never populate this state, while
+ * `openai-compatible` drives the async `/v1/models` fetch with a visible
+ * `loading` state and an `error` state that falls back to a single
+ * current-model row.
+ *
+ * `generation` mirrors the modal picker's stale-response guard: a fetch
+ * that settles after the operator already switched providers must not
+ * repopulate the section with the previous provider's models.
+ */
+export interface InlineModelCatalogState {
+  providerId: string;
+  status: "loading" | "ready" | "error";
+  models: readonly string[];
+  error: string | null;
+  generation: number;
 }
 
 export interface ProvidersPanelState {
@@ -76,6 +111,8 @@ export interface ProvidersPanelState {
   chatModelPicker: ProvidersChatModelPickerState | null;
   /** Monotonic counter backing `ProvidersChatModelPickerState.generation`. */
   chatModelPickerGeneration: number;
+  /** Inline Cloud-pane model catalog; `null` until first ensured. */
+  inlineModels: InlineModelCatalogState | null;
 }
 
 export function createInitialProvidersPanelState(): ProvidersPanelState {
@@ -89,5 +126,6 @@ export function createInitialProvidersPanelState(): ProvidersPanelState {
     removeConfirm: null,
     chatModelPicker: null,
     chatModelPickerGeneration: 0,
+    inlineModels: null,
   };
 }

@@ -28,6 +28,17 @@ export interface LlmPanelState {
    * keyboard.
    */
   externalUrlDraft: string | null;
+  /**
+   * Typed filter of the Cloud pane's inline model list. Persists when
+   * the filter row loses focus (Esc keeps the text, like the modal did).
+   */
+  cloudModelFilter: string;
+  /**
+   * True while the `filter:` row owns printable keys: typing edits the
+   * filter, ↑/↓ still walk the filtered list, Esc unfocuses. Entered via
+   * `f` or `/model`.
+   */
+  cloudModelFilterFocused: boolean;
 }
 
 export function createInitialLlmPanelState(): LlmPanelState {
@@ -39,6 +50,8 @@ export function createInitialLlmPanelState(): LlmPanelState {
     syncModeToActiveRoute: false,
     stopLocalDaemonsPrompt: null,
     externalUrlDraft: null,
+    cloudModelFilter: "",
+    cloudModelFilterFocused: false,
   };
 }
 

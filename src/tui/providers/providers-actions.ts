@@ -42,6 +42,41 @@ export type ProvidersAction =
   | { type: "providers_chat_model_picker_cursor_set"; cursor: number }
   | { type: "providers_chat_model_picker_query_set"; query: string }
   | { type: "providers_chat_model_picker_closed" }
+  | {
+      /**
+       * Make sure the Cloud pane's inline model list has (or is
+       * fetching) the catalog of `providerId` (`null` = active text
+       * provider). Dispatched by `/model`; `submit-handler` intercepts
+       * it and routes it through the
+       * `onProvidersInlineModelsEnsureRequested` callback into
+       * `ProvidersOrchestrator.ensureInlineModels`, because a dispatched
+       * reducer action never reaches the event bus the orchestrator
+       * listens on (same rule as the picker request above).
+       */
+      type: "providers_inline_models_ensure_requested";
+      providerId: string | null;
+    }
+  | {
+      /**
+       * Inline Cloud-pane model list transitions, emitted by
+       * `ProvidersOrchestrator.ensureInlineModels` on the event bus.
+       */
+      type: "providers_inline_models_loading";
+      providerId: string;
+      generation: number;
+    }
+  | {
+      type: "providers_inline_models_loaded";
+      providerId: string;
+      generation: number;
+      models: readonly string[];
+    }
+  | {
+      type: "providers_inline_models_failed";
+      providerId: string;
+      generation: number;
+      error: string;
+    }
   | { type: "providers_wizard_updated"; wizard: ProvidersWizardState }
   | { type: "providers_wizard_closed" }
   | { type: "providers_wizard_submit_started" }

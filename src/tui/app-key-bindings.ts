@@ -184,7 +184,11 @@ export function handleAppKey(
       state.localModelsPanel.embeddingOnboardingPrompt !== null ||
       state.providersPanel.chatModelPicker !== null ||
       state.llmPanel.externalUrlDraft !== null ||
-      state.llmPanel.stopLocalDaemonsPrompt !== null);
+      state.llmPanel.stopLocalDaemonsPrompt !== null ||
+      // Focused inline model filter is a text-entry surface: Tab/Ctrl+B
+      // must not cycle the nav away mid-typing.
+      (state.llmPanel.mode === "cloud" &&
+        state.llmPanel.cloudModelFilterFocused));
   const debugTabBusy =
     tasksTabBusy ||
     skillsTabBusy ||

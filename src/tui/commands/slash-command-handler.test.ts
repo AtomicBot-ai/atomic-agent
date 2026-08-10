@@ -145,13 +145,16 @@ describe("dispatchSlashCommand", () => {
     expect(result.systemMessage).toContain("debug bundle");
   });
 
-  it("opens the LLM panel on the active route and requests the picker for /model", () => {
+  it("opens the LLM panel on the active route and focuses the inline model filter for /model", () => {
     const result = dispatchSlashCommand("/model");
     expect(result.actions).toEqual([
       { type: "ui_mode_set", mode: "debug" },
       { type: "tab_changed", tab: "llm" },
       { type: "llm_mode_set_to_active_route" },
-      { type: "providers_chat_model_picker_requested", providerId: null },
+      { type: "llm_cloud_filter_focus_set", focused: true },
+      // Intercepted by submit-handler and routed through the
+      // orchestrator callback; it must never reach the reducer.
+      { type: "providers_inline_models_ensure_requested", providerId: null },
     ]);
   });
 

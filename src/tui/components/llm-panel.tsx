@@ -72,8 +72,8 @@ export function LlmPanel({
       <Box marginTop={useFull ? 1 : 0} flexDirection="column">
         <Text color={theme.colors.muted}>
           {useFull
-            ? "j/k move · Enter selected action · ←/→ switch Local/Cloud/External · n add provider · c configure · r refresh"
-            : "j/k · Enter · ←/→ mode · r"}
+            ? "j/k move · Enter selected action · ←/→ switch Local/Cloud/External · f filter · n add provider · c configure · r refresh"
+            : "j/k · Enter · ←/→ mode · f filter · r"}
         </Text>
       </Box>
     </Box>
