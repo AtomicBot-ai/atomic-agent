@@ -62,6 +62,7 @@ export function buildTasksShowTool(
           scheduledFor: record.scheduledFor,
           recurring: record.recurring,
           lastScheduledAt: record.lastScheduledAt,
+          notify: record.notify,
           createdAt: record.createdAt,
           updatedAt: record.updatedAt,
           startedAt: record.startedAt,

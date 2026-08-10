@@ -28,7 +28,7 @@ export function buildTasksCronTool(
   return {
     name: "tasks.cron",
     description:
-      "Schedule a recurring task via a standard 5- or 6-field cron expression. Args: { userMessage, expression, tz? }. Each firing runs in its own persistent session (not the caller's).",
+      'Schedule a recurring task via a standard 5- or 6-field cron expression. Args: { userMessage, expression, tz?, notify? }. Each firing runs in its own persistent session (not the caller\'s). Set notify: "telegram" to send each firing\'s final result to the paired Telegram chat.',
     readonly: false,
     async run(rawArgs) {
       const userMessage = rawArgs.userMessage;
@@ -58,6 +58,15 @@ export function buildTasksCronTool(
           details: { field: "tz" },
         });
       }
+      const notify = rawArgs.notify;
+      if (notify !== undefined && notify !== "telegram") {
+        return compressToolResult({
+          tool: "tasks.cron",
+          status: "error",
+          output: 'validation: notify must be "telegram" when provided',
+          details: { field: "notify" },
+        });
+      }
       try {
         const record = options.taskRunner.create({
           userMessage,
@@ -65,6 +74,7 @@ export function buildTasksCronTool(
           triggerSource: "agent",
           maxAttempts: 1,
           maxSteps: null,
+          ...(notify === "telegram" ? { notify } : {}),
           schedule: {
             kind: "cron",
             expression,
@@ -85,6 +95,7 @@ export function buildTasksCronTool(
             scheduledFor: record.scheduledFor,
             expression,
             tz: typeof tz === "string" ? tz : null,
+            notify: record.notify,
           },
         });
       } catch (err) {

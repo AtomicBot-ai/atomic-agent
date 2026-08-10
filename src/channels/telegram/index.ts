@@ -4,8 +4,16 @@ export type {
   BotInstance,
   ChannelLock,
   PairingStateSnapshot,
+  TaskReportDelivery,
   TelegramChannelDeps,
 } from "./telegram-channel.js";
+export {
+  formatTaskReportMessage,
+  TASK_REPORT_ERROR_MAX_CHARS,
+  TASK_REPORT_PROMPT_PREVIEW_CHARS,
+  TASK_REPORT_RESULT_MAX_CHARS,
+  TASK_REPORT_TRUNCATION_MARKER,
+} from "./task-report-message.js";
 export type {
   InboundContext,
   InboundTextUpdate,

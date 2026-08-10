@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { Database as DatabaseCtor } from "../native/load-better-sqlite3.js";
+
 import { TaskStore } from "./task-store.js";
 import {
   TASK_USER_MESSAGE_MAX_LENGTH,
@@ -306,5 +308,68 @@ describe("TaskStore", () => {
     store.close();
     store = new TaskStore({ dbFile: join(tmp, "tasks.sqlite") });
     expect(store.get(t.id)?.userMessage).toBe("hi");
+  });
+
+  it("defaults notify to null and round-trips an explicit telegram opt-in", () => {
+    const silent = store.create(
+      { sessionId: "s-1", userMessage: "quiet", origin: "cli", maxAttempts: 1 },
+      1_000,
+    );
+    expect(silent.notify).toBeNull();
+    expect(store.get(silent.id)?.notify).toBeNull();
+
+    const loud = store.create(
+      {
+        sessionId: "s-1",
+        userMessage: "report me",
+        origin: "cli",
+        maxAttempts: 1,
+        notify: "telegram",
+      },
+      1_000,
+    );
+    expect(loud.notify).toBe("telegram");
+    expect(store.get(loud.id)?.notify).toBe("telegram");
+  });
+
+  it("rejects a notify target outside the allow-list", () => {
+    expect(() =>
+      store.create({
+        sessionId: "s-1",
+        userMessage: "hi",
+        origin: "cli",
+        maxAttempts: 1,
+        notify: "slack" as never,
+      }),
+    ).toThrow(TaskValidationError);
+    try {
+      store.create({
+        sessionId: "s-1",
+        userMessage: "hi",
+        origin: "cli",
+        maxAttempts: 1,
+        notify: "slack" as never,
+      });
+    } catch (err) {
+      expect((err as TaskValidationError).field).toBe("notify");
+    }
+  });
+
+  it("clamps an unknown persisted notify value to null on read", () => {
+    const t = store.create(
+      {
+        sessionId: "s-1",
+        userMessage: "hi",
+        origin: "cli",
+        maxAttempts: 1,
+        notify: "telegram",
+      },
+      1_000,
+    );
+    // Simulate a row written by a newer schema / hand-edited DB.
+    const raw = new DatabaseCtor(join(tmp, "tasks.sqlite"));
+    raw.prepare("UPDATE tasks SET notify = ? WHERE id = ?").run("pager", t.id);
+    raw.close();
+    expect(store.get(t.id)?.notify).toBeNull();
   });
 });

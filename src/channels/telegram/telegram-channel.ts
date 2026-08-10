@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 
 import type { ChannelStatus } from "../../runtime/channel-status.js";
 import { getUserConfigPath } from "../../config/index.js";
+import type { TaskReport } from "../../tasks/index.js";
 
 import {
   handleInboundText,
@@ -20,7 +21,8 @@ import {
   writeTelegramSettings,
   writeTelegramToken,
 } from "./telegram-settings.js";
-import type { TelegramParseMode } from "./outbound-sender.js";
+import { sendOutbound, type TelegramParseMode } from "./outbound-sender.js";
+import { formatTaskReportMessage } from "./task-report-message.js";
 import { sendWelcomeMessage } from "./welcome-message.js";
 import {
   resolveTokenFromDeps,
@@ -43,6 +45,19 @@ export interface PairingStateSnapshot {
   active: boolean;
   expiresAt: number | null;
 }
+
+/**
+ * Outcome of a `sendTaskReport` call. Every branch is a value, never
+ * a throw, so the task-runner sink can log skips without a try/catch
+ * pyramid: `channel_not_up` (disabled / down / starting), `not_paired`
+ * (no `ownerUserId` yet), `delivery_failed` (every chunk dropped by
+ * the Telegram API), `sent` (at least one chunk accepted).
+ */
+export type TaskReportDelivery =
+  | "sent"
+  | "channel_not_up"
+  | "not_paired"
+  | "delivery_failed";
 
 /**
  * Outcome of a successful pairing claim. `claim` is what the operator
@@ -393,6 +408,44 @@ export class TelegramChannel {
 
   cancelPairing(): void {
     this.pairing.cancel();
+  }
+
+  /**
+   * Post a scheduled task's terminal outcome to the paired owner's DM.
+   * Wired as the `TaskRunner.reportSink` route in bootstrap for tasks
+   * that carry `notify: "telegram"`.
+   *
+   * Chat resolution: the message goes to `chatId = ownerUserId`. The
+   * owner id is only ever captured from a private DM (the inbound
+   * handler drops non-private chats), and the Telegram Bot API
+   * addresses a user-bot private chat by the user's own id — the same
+   * invariant every bot relies on to DM its users.
+   *
+   * Always plain text: a task report is channel infrastructure (see
+   * AGENTS.md §"Telegram remote-control channel"), and its error
+   * excerpts may contain `<`/`&` that must never meet the HTML parser.
+   * Never throws — every failure mode is a `TaskReportDelivery` value,
+   * and per-chunk send errors are already swallowed by `sendOutbound`.
+   */
+  async sendTaskReport(report: TaskReport): Promise<TaskReportDelivery> {
+    const bot = this.bot;
+    if (this.currentState !== "up" || !bot) return "channel_not_up";
+    const ownerUserId = this.currentOwnerUserId;
+    if (ownerUserId === null) return "not_paired";
+    const result = await sendOutbound({
+      api: bot.api,
+      chatId: ownerUserId,
+      text: formatTaskReportMessage(report),
+      parseMode: "plain",
+      logger: {
+        warn: (message, context) => this.deps.logger.warn(message, context),
+      },
+    });
+    if (result.dropped >= result.chunks) return "delivery_failed";
+    // One logical outbound message, same accounting rule as agent
+    // replies (never per-chunk).
+    this.deps.metrics?.recordTelegramMessage({ direction: "out" });
+    return "sent";
   }
 
   private handlePairingClaim(update: InboundTextUpdate): boolean {

@@ -1,12 +1,17 @@
 import { classifyFailure } from "../llm/reliability/index.js";
 import type { LlmFailureCategory } from "../llm/reliability/index.js";
-import type { RunTurnResult } from "../agent/agent-loop.js";
+import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-loop.js";
 import type { SessionState } from "../session/index.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { TurnEventHook, TurnOrigin } from "../runtime/turn-controller.js";
 
 import { nextDelayMs, type BackoffOptions } from "./task-backoff.js";
+import {
+  buildTaskReport,
+  isReportableStatus,
+  type TaskReportSink,
+} from "./task-report.js";
 import { isRecurring, resolveScheduledFor } from "./task-schedule.js";
 import type {
   TaskRecord,
@@ -91,6 +96,12 @@ export interface TaskRunnerOptions {
    * regardless of this flag — they are left for the scheduler.
    */
   runOnCreate: boolean;
+  /**
+   * Terminal-outcome delivery for tasks that opted in via
+   * `TaskRecord.notify`. Optional: without a sink the `notify` flag
+   * is inert (tasks finish silently, same as before v3).
+   */
+  reportSink?: TaskReportSink;
   logger?: StructuredLogger;
   metrics?: AgentMetrics;
   /**
@@ -265,6 +276,7 @@ export class TaskRunner {
         message: `session_not_found: ${claimed.sessionId ?? "<null>"}`,
       });
       this.recordTerminal(blocked);
+      this.maybeReport(blocked, null);
       this.options.logger?.warn("task blocked: session not found", {
         taskId: blocked.id,
         sessionId: blocked.sessionId,
@@ -273,6 +285,23 @@ export class TaskRunner {
     }
 
     this.stampWakeReason(session, claimed);
+
+    // Capture the final assistant reply live so a completed report can
+    // carry the result text. The hook is installed only when this task
+    // opted into reporting AND a sink is wired — every other task pays
+    // zero per-event cost (no hook is passed to the turn at all).
+    let capturedReply: string | null = null;
+    const reportHook: TurnEventHook | undefined =
+      claimed.notify !== null && this.options.reportSink
+        ? (event: AgentLoopEvent): void => {
+            if (
+              event.type === "llm_event" &&
+              event.event.type === "assistant_reply"
+            ) {
+              capturedReply = event.event.text;
+            }
+          }
+        : undefined;
 
     const maxSteps = claimed.maxSteps ?? this.options.defaultMaxSteps;
     try {
@@ -283,6 +312,7 @@ export class TaskRunner {
           maxSteps,
           origin: "scheduler",
           ...(runtimeSignal ? { signal: runtimeSignal } : {}),
+          ...(reportHook ? { eventHook: reportHook } : {}),
         },
       );
       // `runTurn` rejects on hard failures, but `loop_failed` results
@@ -297,6 +327,10 @@ export class TaskRunner {
       }
       const completed = this.options.store.markCompleted(claimed.id);
       this.recordTerminal(completed);
+      // Report off the completed row BEFORE the recurring requeue —
+      // the requeued row is `pending` again and would fail the
+      // terminal-status guard inside `maybeReport`.
+      this.maybeReport(completed, capturedReply);
       return this.maybeRequeueRecurring(completed);
     } catch (err) {
       const category = classifyFailure(err);
@@ -410,6 +444,7 @@ export class TaskRunner {
         ? this.options.store.markBlocked(task.id, failure)
         : this.options.store.markFailed(task.id, failure);
       this.recordTerminal(terminal);
+      this.maybeReport(terminal, null);
       this.options.logger?.warn("task terminal failure", {
         taskId: terminal.id,
         sessionId: terminal.sessionId,
@@ -461,6 +496,29 @@ export class TaskRunner {
       status: task.status,
       attempts: task.attempts,
       durationMs,
+    });
+  }
+
+  /**
+   * Hand a terminal outcome to the report sink when the task opted in.
+   * Fires at the same sites as the terminal metrics, minus `cancelled`
+   * (see `TaskReportStatus`) and minus the pre-claim block inside
+   * `ensureSessionBeforeClaim` (only reachable when no `sessionFactory`
+   * is wired, i.e. test-only setups — production wiring always
+   * supplies one). Fire-and-forget: a rejecting or throwing sink is
+   * warn-logged and never alters the task's status or the drain.
+   */
+  private maybeReport(task: TaskRecord, replyText: string | null): void {
+    const sink = this.options.reportSink;
+    if (!sink || task.notify === null) return;
+    if (!isReportableStatus(task.status)) return;
+    const report = buildTaskReport(task, task.status, replyText);
+    void (async () => sink(report))().catch((err) => {
+      this.options.logger?.warn("task report sink failed", {
+        taskId: task.id,
+        notify: task.notify,
+        error: err instanceof Error ? err.message : String(err),
+      });
     });
   }
 

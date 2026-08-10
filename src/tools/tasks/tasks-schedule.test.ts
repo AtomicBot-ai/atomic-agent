@@ -37,6 +37,7 @@ function makeTaskRunner() {
     updatedAt: 0,
     startedAt: null,
     completedAt: null,
+    notify: input.notify ?? null,
   }));
   return { create };
 }
@@ -152,6 +153,38 @@ describe("tasks.schedule", () => {
     );
     expect(result.status).toBe("error");
     expect(result.details.field).toBe("schedule");
+    expect(runner.create).not.toHaveBeenCalled();
+  });
+
+  it('passes notify: "telegram" through to the created record', async () => {
+    const runner = makeTaskRunner();
+    const tool = buildTasksScheduleTool({
+      taskRunner: runner as never,
+      createSession: makeSessionFactory(),
+      defaultMaxAttempts: 3,
+    });
+    const result = await tool.run(
+      { userMessage: "remind me", inSeconds: 60, notify: "telegram" },
+      makeCtx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(runner.create.mock.calls[0]![0].notify).toBe("telegram");
+    expect(result.details.notify).toBe("telegram");
+  });
+
+  it("rejects an unknown notify target without creating anything", async () => {
+    const runner = makeTaskRunner();
+    const tool = buildTasksScheduleTool({
+      taskRunner: runner as never,
+      createSession: makeSessionFactory(),
+      defaultMaxAttempts: 3,
+    });
+    const result = await tool.run(
+      { userMessage: "x", notify: "email" },
+      makeCtx(),
+    );
+    expect(result.status).toBe("error");
+    expect(result.details.field).toBe("notify");
     expect(runner.create).not.toHaveBeenCalled();
   });
 });

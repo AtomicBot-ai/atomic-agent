@@ -14,6 +14,7 @@ import type { RunTurnResult } from "../agent/agent-loop.js";
 
 import { TaskRunner } from "./task-runner.js";
 import type { TaskRunnerRuntime } from "./task-runner.js";
+import type { TaskReport } from "./task-report.js";
 import { TaskStore } from "./task-store.js";
 
 interface RuntimeCall {
@@ -495,5 +496,226 @@ describe("TaskRunner", () => {
     await runner.drainPending();
     expect(store.get(t.id)?.status).toBe("completed");
     expect(calls).toBe(2);
+  });
+
+  describe("terminal reports (notify)", () => {
+    /**
+     * Runtime whose reply turn also fires the `assistant_reply` event
+     * through the provided eventHook — the channel the runner uses to
+     * capture the final reply text for completed reports. Records
+     * whether a hook was passed at all so the "no hook without
+     * notify" contract can be pinned.
+     */
+    function replyingRuntime(replyText: string): {
+      runtime: TaskRunnerRuntime;
+      hooksSeen: boolean[];
+    } {
+      const hooksSeen: boolean[] = [];
+      const runtime: TaskRunnerRuntime = {
+        runTurn: async (sess, _msg, options) => {
+          hooksSeen.push(options?.eventHook !== undefined);
+          options?.eventHook?.({
+            type: "llm_event",
+            event: { type: "assistant_reply", text: replyText },
+          });
+          return { session: sess, reason: "reply", stepCount: 1 };
+        },
+      };
+      return { runtime, hooksSeen };
+    }
+
+    function makeRunner(
+      runtime: TaskRunnerRuntime,
+      reportSink: (report: TaskReport) => void | Promise<void>,
+      loader: SessionState | null = session,
+    ): TaskRunner {
+      return new TaskRunner({
+        store,
+        runtime,
+        sessionLoader: fakeSessionLoader(loader),
+        defaultMaxSteps: 5,
+        backoff: { initialMs: 1, maxMs: 10 },
+        enabled: true,
+        runOnCreate: false,
+        sleep: async () => undefined,
+        reportSink,
+      });
+    }
+
+    it("reports a completed run with the captured reply text", async () => {
+      const reports: TaskReport[] = [];
+      const { runtime, hooksSeen } = replyingRuntime("42 files scanned");
+      const runner = makeRunner(runtime, (r) => {
+        reports.push(r);
+      });
+      const t = store.create({
+        sessionId: session.id,
+        userMessage: "scan files",
+        origin: "cli",
+        maxAttempts: 3,
+        notify: "telegram",
+      });
+      await runner.runOne(t.id);
+      expect(hooksSeen).toEqual([true]);
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({
+        taskId: t.id,
+        status: "completed",
+        userMessage: "scan files",
+        scheduleKind: null,
+        attempts: 1,
+        maxAttempts: 3,
+        replyText: "42 files scanned",
+        errorMessage: null,
+        errorCategory: null,
+      });
+      expect(reports[0]!.durationMs).not.toBeNull();
+    });
+
+    it("reports off the completed row before a recurring requeue flips it back to pending", async () => {
+      const reports: TaskReport[] = [];
+      const { runtime } = replyingRuntime("digest sent");
+      const runner = makeRunner(runtime, (r) => {
+        reports.push(r);
+      });
+      const t = store.create({
+        sessionId: session.id,
+        userMessage: "digest",
+        origin: "cli",
+        maxAttempts: 1,
+        notify: "telegram",
+        schedule: { kind: "interval", everyMs: 60_000 },
+        scheduledFor: Date.now() - 1,
+      });
+      const after = await runner.runOne(t.id);
+      // the row is already requeued for the next firing...
+      expect(after?.status).toBe("pending");
+      // ...but the report reflects the terminal outcome that just happened
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({
+        status: "completed",
+        scheduleKind: "interval",
+        replyText: "digest sent",
+      });
+    });
+
+    it("does NOT pass an eventHook and does NOT report when the task never opted in", async () => {
+      const reports: TaskReport[] = [];
+      const { runtime, hooksSeen } = replyingRuntime("silent result");
+      const runner = makeRunner(runtime, (r) => {
+        reports.push(r);
+      });
+      const t = store.create({
+        sessionId: session.id,
+        userMessage: "quiet job",
+        origin: "cli",
+        maxAttempts: 3,
+      });
+      await runner.runOne(t.id);
+      expect(store.get(t.id)?.status).toBe("completed");
+      expect(hooksSeen).toEqual([false]);
+      expect(reports).toHaveLength(0);
+    });
+
+    it("reports a terminal failure with the error, and stays silent on the retry before it", async () => {
+      const reports: TaskReport[] = [];
+      let calls = 0;
+      const runtime: TaskRunnerRuntime = {
+        runTurn: async () => {
+          calls += 1;
+          throw new TransportError("llama down", 503, "http://llama");
+        },
+      };
+      const runner = makeRunner(runtime, (r) => {
+        reports.push(r);
+      });
+      const t = store.create({
+        sessionId: session.id,
+        userMessage: "flaky job",
+        origin: "cli",
+        maxAttempts: 2,
+        notify: "telegram",
+      });
+      await runner.drainPending();
+      expect(calls).toBe(2);
+      expect(store.get(t.id)?.status).toBe("failed");
+      // exactly one report — for the terminal attempt, not the retry
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({
+        status: "failed",
+        attempts: 2,
+        replyText: null,
+        errorMessage: "llama down",
+        errorCategory: "transport",
+      });
+    });
+
+    it("reports a blocked task when its session is missing", async () => {
+      const reports: TaskReport[] = [];
+      const { runtime } = replyingRuntime("unused");
+      const runner = makeRunner(
+        runtime,
+        (r) => {
+          reports.push(r);
+        },
+        null,
+      );
+      const t = store.create({
+        sessionId: "gone-session",
+        userMessage: "orphan job",
+        origin: "cli",
+        maxAttempts: 3,
+        notify: "telegram",
+      });
+      await runner.runOne(t.id);
+      expect(store.get(t.id)?.status).toBe("blocked");
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({
+        status: "blocked",
+        errorCategory: "tool",
+      });
+      expect(reports[0]!.errorMessage).toContain("session_not_found");
+    });
+
+    it("does NOT report a cancelled task", async () => {
+      const reports: TaskReport[] = [];
+      const runtime: TaskRunnerRuntime = {
+        runTurn: async () => {
+          throw new CancelledError();
+        },
+      };
+      const runner = makeRunner(runtime, (r) => {
+        reports.push(r);
+      });
+      const t = store.create({
+        sessionId: session.id,
+        userMessage: "aborted job",
+        origin: "cli",
+        maxAttempts: 3,
+        notify: "telegram",
+      });
+      await runner.runOne(t.id);
+      expect(store.get(t.id)?.status).toBe("cancelled");
+      expect(reports).toHaveLength(0);
+    });
+
+    it("a rejecting sink never affects the task outcome", async () => {
+      const { runtime } = replyingRuntime("ok");
+      const runner = makeRunner(runtime, async () => {
+        throw new Error("telegram exploded");
+      });
+      const t = store.create({
+        sessionId: session.id,
+        userMessage: "hardy job",
+        origin: "cli",
+        maxAttempts: 3,
+        notify: "telegram",
+      });
+      const after = await runner.runOne(t.id);
+      expect(after?.status).toBe("completed");
+      // let the fire-and-forget rejection settle (it is caught + logged)
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(store.get(t.id)?.status).toBe("completed");
+    });
   });
 });

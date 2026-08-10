@@ -35,6 +35,7 @@ function makeTaskRunner() {
     updatedAt: 0,
     startedAt: null,
     completedAt: null,
+    notify: input.notify ?? null,
   }));
   return { create };
 }
@@ -79,6 +80,41 @@ describe("tasks.cron", () => {
     );
     expect(result.status).toBe("error");
     expect(result.details.field).toBe("tz");
+    expect(runner.create).not.toHaveBeenCalled();
+  });
+
+  it('passes notify: "telegram" through to the created record', async () => {
+    const runner = makeTaskRunner();
+    const tool = buildTasksCronTool({ taskRunner: runner as never });
+    const result = await tool.run(
+      { userMessage: "digest", expression: "0 9 * * *", notify: "telegram" },
+      makeCtx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(runner.create.mock.calls[0]![0].notify).toBe("telegram");
+    expect(result.details.notify).toBe("telegram");
+  });
+
+  it("omits notify by default (task stays silent)", async () => {
+    const runner = makeTaskRunner();
+    const tool = buildTasksCronTool({ taskRunner: runner as never });
+    const result = await tool.run(
+      { userMessage: "digest", expression: "0 9 * * *" },
+      makeCtx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(runner.create.mock.calls[0]![0].notify).toBeUndefined();
+  });
+
+  it("rejects an unknown notify target without creating anything", async () => {
+    const runner = makeTaskRunner();
+    const tool = buildTasksCronTool({ taskRunner: runner as never });
+    const result = await tool.run(
+      { userMessage: "x", expression: "* * * * *", notify: "slack" },
+      makeCtx(),
+    );
+    expect(result.status).toBe("error");
+    expect(result.details.field).toBe("notify");
     expect(runner.create).not.toHaveBeenCalled();
   });
 });

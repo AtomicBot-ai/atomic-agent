@@ -1030,7 +1030,7 @@ TaskRecord = {
 }
 ```
 
-Stored in a separate SQLite file `<stateDir>/tasks.sqlite` (no cross-file FKs to `sessions.sqlite` — `sessionId` validity is checked at runtime by `TaskRunner` and a missing session marks the task `blocked` with `session_not_found`). Schema version `1`, idempotent migrations in [src/tasks/task-schema.ts](src/tasks/task-schema.ts).
+Stored in a separate SQLite file `<stateDir>/tasks.sqlite` (no cross-file FKs to `sessions.sqlite` — `sessionId` validity is checked at runtime by `TaskRunner` and a missing session marks the task `blocked` with `session_not_found`). Schema version `3`, idempotent migrations in [src/tasks/task-schema.ts](src/tasks/task-schema.ts) (v2 added the scheduling columns, v3 the `notify` opt-in — both documented in §"Background autonomy").
 
 ### Lifecycle
 
@@ -1168,6 +1168,21 @@ Five tools in [src/tools/tasks/](src/tools/tasks/), gated by `config.tasks.agent
 `TaskValidationError`s from `parseOneShotSchedule` / `task-schedule` are caught inside each tool's `run` method and surfaced as a structured `{ status: "error", details }` result — they never escape as thrown exceptions.
 
 Descriptors in [src/prompt/tool-descriptors.ts](src/prompt/tool-descriptors.ts); the GBNF grammar [grammars/tool-call.gbnf](grammars/tool-call.gbnf) was extended with a `tasks-tool` branch covering all five names.
+
+### Telegram reports for scheduled tasks (`notify`)
+
+A task can opt into reporting its terminal outcome to the paired Telegram owner: `TaskRecord.notify ∈ TASK_NOTIFY_TARGETS` (single member `"telegram"` today) or `null` (default — silent, the pre-v3 behaviour). Schema `TASK_SCHEMA_VERSION` 2 → 3 (idempotent `ALTER TABLE tasks ADD COLUMN notify TEXT`). The opt-in is exposed on the `tasks.cron` / `tasks.schedule` agent tools (`notify?: "telegram"`), CLI `task create --notify telegram`, and `TaskCreateInput`; the TUI create form and `POST /api/tasks` do not surface it yet (deferred — the HTTP create surface cannot express schedules either), and the OpenClaw / Hermes cron importers never set it.
+
+Flow: `TaskRunner.runOne` installs a turn event hook **only** for opted-in tasks (every other task passes no hook at all), captures the final `assistant_reply` text, and on a terminal transition hands a `TaskReport` to `TaskRunnerOptions.reportSink`. Bootstrap wires the sink to `TelegramChannel.sendTaskReport`, which renders via [src/channels/telegram/task-report-message.ts](src/channels/telegram/task-report-message.ts) and posts to the owner's DM (`chatId = ownerUserId` — a user-bot private chat is addressed by the user's own id, and the owner id is only ever captured from a private DM).
+
+Locked invariants (pinned by [src/tasks/task-runner.test.ts](src/tasks/task-runner.test.ts), [src/tasks/task-store.test.ts](src/tasks/task-store.test.ts), [src/channels/telegram/task-report-message.test.ts](src/channels/telegram/task-report-message.test.ts), [src/channels/telegram/telegram-channel.test.ts](src/channels/telegram/telegram-channel.test.ts)):
+
+1. **Terminal-only, final result only.** Reports fire on `completed | failed | blocked`. Never on within-attempt retries (`running -> pending`), never on `cancelled` (operator-initiated or shutdown-driven), never mid-run — there are no progress updates. Recurring tasks report each firing off the completed row **before** `requeueRecurring` flips it back to `pending`.
+2. **Best-effort, never load-bearing, never silent.** Channel down / unpaired / API rejection resolves to a `TaskReportDelivery` value and is warn-logged with the reason; the task's own status is untouched. A throwing or rejecting sink is isolated the same way. Losing a report without a log line is forbidden.
+3. **Plain text, bounded size.** Task reports are channel infrastructure (invariant 8 of §"Telegram remote-control channel") — never `parse_mode: "HTML"`. The result excerpt caps at `TASK_REPORT_RESULT_MAX_CHARS` (3000) and errors at 500 chars, both with an explicit `… [truncated]` marker.
+4. **`notify` is an allow-list at both ends.** `TaskStore.create` rejects unknown targets with `TaskValidationError("notify")`; unknown persisted values clamp to `null` on read, so the runner only ever sees list members.
+5. **Egress is explicit and opt-in.** A report sends the task prompt preview plus the result / error excerpt to the Telegram Bot API — that content leaves the machine. Only tasks that explicitly set `notify` are affected.
+6. **Approval behaviour is unchanged.** This feature adds no Telegram approval relay for unattended scheduled runs; approval-requiring steps behave exactly as before.
 
 ### Configuration (env-only under `tasks.*`)
 
@@ -1353,6 +1368,10 @@ When a `runtime.runTurn` call originated on Telegram (`{ origin: "telegram" }`),
 
 Known UX gap (deferred): `/cancel` aborts the turn but the inline-keyboard message lingers because the bridge does not know it was cancelled externally. Documented inline in `approval-bridge.ts`.
 
+### Task reports
+
+`TelegramChannel.sendTaskReport(report)` posts a scheduled task's terminal outcome to the paired owner's DM — the delivery half of §"Background autonomy" → "Telegram reports for scheduled tasks (`notify`)". Rendered by [task-report-message.ts](src/channels/telegram/task-report-message.ts), sent through the same `sendOutbound` chunking / 429-retry path as replies, **always plain text** (a report is channel infrastructure and its error excerpts may carry `<` / `&`). Never throws: every failure mode is a `TaskReportDelivery` value (`sent | channel_not_up | not_paired | delivery_failed`) that the bootstrap sink warn-logs. Each delivered report counts one `messages_sent`.
+
 ### Live control
 
 `TelegramChannel` exposes a small live-control API used by the TUI panel and `/telegram` slash commands:
@@ -1391,7 +1410,7 @@ Slash commands: `/telegram enable|disable`, `/telegram start|stop` (alias for th
 [src/tracing/agent-metrics.ts](src/tracing/agent-metrics.ts):
 
 - Counters: `agent.telegram.up`, `agent.telegram.down` (tagged by `outcome` + short `reason`), `agent.telegram.messages_received`, `agent.telegram.messages_sent`, `agent.telegram.approvals_resolved` (tagged by `resolver` + `approved`).
-- The `messages_*` counters track agent-visible inbound (post owner-check, post slash-command-shortcut) and one-per-reply outbound, **not** raw Telegram updates / `sendMessage` chunks.
+- The `messages_*` counters track agent-visible inbound (post owner-check, post slash-command-shortcut) and one-per-logical-outbound-message (agent replies and task reports), **not** raw Telegram updates / `sendMessage` chunks.
 
 ### Outbound formatting (HTML mode)
 
@@ -1412,13 +1431,13 @@ Pinned by [src/runtime/bootstrap.test.ts](src/runtime/bootstrap.test.ts), [src/c
 5. **Pairing bypasses the owner check.** Inbound handler calls `tryClaimForPairing` **before** filtering by `ownerUserId` — the only path where a non-owner DM is allowed to claim ownership.
 6. **Approval routing is per-session.** `ApprovalRouter.setForSession(sessionId, handler)` binds the Telegram session id to `ApprovalBridge`; everyone else falls through to the host UI handler. A fallback collision between two channels on the same session is intentionally not supported.
 7. **`grammy` is imported from one file only.** [telegram-bot-factory.ts](src/channels/telegram/telegram-bot-factory.ts). Future replacement of the Telegram client touches one file.
-8. **Only agent replies are formatted.** Slash-command acks (`/help`, `/status`, `/new`, `/cancel`), infra messages (`Turn cancelled.`, `(no reply)`), failure envelopes (`Turn failed [<category>]: ...`), pairing welcomes, and approval-keyboard text always send as plain text regardless of `telegram.parseMode`. The carve-out keeps a stray `<` in an error message from colliding with the HTML grammar and keeps the operator's mental model clean: formatted text == agent content, plain text == channel infrastructure.
+8. **Only agent replies are formatted.** Slash-command acks (`/help`, `/status`, `/new`, `/cancel`), infra messages (`Turn cancelled.`, `(no reply)`), failure envelopes (`Turn failed [<category>]: ...`), pairing welcomes, task reports (`sendTaskReport`), and approval-keyboard text always send as plain text regardless of `telegram.parseMode`. The carve-out keeps a stray `<` in an error message from colliding with the HTML grammar and keeps the operator's mental model clean: formatted text == agent content, plain text == channel infrastructure.
 9. **HTML conversion is tag-allowlisted.** `convertMarkdownToTelegramHtml` only emits tags from `{b, i, u, s, code, pre, a, blockquote}` and only `(https?|tg|mailto):` schemes for `<a href>`. New tag emission requires extending both the converter and the allowlist in [markdown-to-html.ts](src/channels/telegram/markdown-to-html.ts).
 10. **Plain-text fallback on HTTP 400 'can't parse entities'.** When `parseMode === "html"`, a parse-rejected chunk is retried once with `parse_mode` stripped and the original raw markdown body — not the formatted HTML — so the operator sees the LLM's intent instead of the broken tags. `parseFallbacks` is surfaced separately from `dropped` for metrics + regression detection.
 
 ### Out of scope (deferred)
 
-Multi-user pairing flows, per-chat session isolation, MarkdownV2 rendering (the escape surface is too wide for typical LLM output and `parse_mode: "MarkdownV2"` rejects the whole message on a single stray reserved char — see §"Outbound formatting"), structured menu / command surfaces beyond plain text, message editing for streaming output, file uploads (image / document ingestion through Telegram), webhook ingress as a Telegram-specific endpoint (the generic `/api/webhooks/:name` path is the existing surface), and a generic `Channel` abstraction (Slack / WhatsApp adapters) are all deferred. The seam is `src/channels/<name>/`; only extract shared interfaces when a second concrete channel actually lands.
+Multi-user pairing flows, per-chat session isolation, MarkdownV2 rendering (the escape surface is too wide for typical LLM output and `parse_mode: "MarkdownV2"` rejects the whole message on a single stray reserved char — see §"Outbound formatting"), structured menu / command surfaces beyond plain text, message editing for streaming output, file uploads (image / document ingestion through Telegram), webhook ingress as a Telegram-specific endpoint (the generic `/api/webhooks/:name` path is the existing surface), mid-run progress updates and an approval relay for unattended scheduled runs (task reports are terminal-only — see §"Background autonomy"), and a generic `Channel` abstraction (Slack / WhatsApp adapters) are all deferred. The seam is `src/channels/<name>/`; only extract shared interfaces when a second concrete channel actually lands.
 
 ## MCP client
 

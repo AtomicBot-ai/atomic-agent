@@ -13,9 +13,11 @@ import {
 } from "./task-schedule.js";
 import {
   TASK_LAST_ERROR_MAX_LENGTH,
+  TASK_NOTIFY_TARGETS,
   TASK_USER_MESSAGE_MAX_LENGTH,
   TaskStateError,
   TaskValidationError,
+  type TaskNotifyTarget,
   type TaskOrigin,
   type TaskRecord,
   type TaskSchedule,
@@ -48,6 +50,12 @@ export interface TaskCreateInput {
   scheduledFor?: number | null;
   /** Informational trigger tag — surfaced on `session.metadata.wakeReason`. */
   triggerSource?: TriggerSource | null;
+  /**
+   * Terminal-outcome report channel (see `TASK_NOTIFY_TARGETS`).
+   * Omit / `null` for the silent default. Anything outside the
+   * allow-list is rejected with a `TaskValidationError`.
+   */
+  notify?: TaskNotifyTarget | null;
   /**
    * Optional explicit id. Used by tests to make assertions; production
    * callers always let the store generate one.
@@ -87,6 +95,7 @@ interface TaskRow {
   recurring: number;
   last_scheduled_at: number | null;
   trigger_source: string | null;
+  notify: string | null;
 }
 
 const TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set([
@@ -137,13 +146,13 @@ export class TaskStore {
          attempts, max_attempts, last_error, last_error_cat,
          created_at, updated_at, started_at, completed_at,
          schedule_kind, schedule_value, scheduled_for, recurring,
-         last_scheduled_at, trigger_source
+         last_scheduled_at, trigger_source, notify
        ) VALUES (
          @id, @session_id, @user_message, @max_steps, @status, @origin,
          @attempts, @max_attempts, @last_error, @last_error_cat,
          @created_at, @updated_at, @started_at, @completed_at,
          @schedule_kind, @schedule_value, @scheduled_for, @recurring,
-         @last_scheduled_at, @trigger_source
+         @last_scheduled_at, @trigger_source, @notify
        )`,
     );
     this.selectStmt = this.db.prepare(
@@ -258,6 +267,7 @@ export class TaskStore {
     const userMessage = validateUserMessage(input.userMessage);
     const maxAttempts = validateMaxAttempts(input.maxAttempts);
     const maxSteps = validateMaxSteps(input.maxSteps);
+    const notify = validateNotify(input.notify);
     const id = input.id ?? `t-${randomUUID()}`;
     const schedule = input.schedule ?? null;
     const recurring =
@@ -288,6 +298,7 @@ export class TaskStore {
           ? now
           : null,
       trigger_source: input.triggerSource ?? null,
+      notify,
     };
     this.insertStmt.run(row);
     return rowToRecord(row);
@@ -534,7 +545,21 @@ function rowToRecord(row: TaskRow): TaskRecord {
     recurring: row.recurring === 1,
     lastScheduledAt: row.last_scheduled_at,
     triggerSource: row.trigger_source as TriggerSource | null,
+    notify: normalizeNotify(row.notify),
   };
+}
+
+/**
+ * Clamp a persisted `notify` value to the allow-list. A row written
+ * by a newer schema (or hand-edited) with an unknown target reads
+ * back as `null` — the task simply stays silent instead of feeding
+ * an unroutable target into the runner.
+ */
+function normalizeNotify(raw: string | null): TaskNotifyTarget | null {
+  if (raw === null) return null;
+  return (TASK_NOTIFY_TARGETS as readonly string[]).includes(raw)
+    ? (raw as TaskNotifyTarget)
+    : null;
 }
 
 function validateSessionId(raw: string | null): string | null {
@@ -573,6 +598,19 @@ function validateMaxAttempts(raw: unknown): number {
     throw new TaskValidationError(
       "maxAttempts",
       `maxAttempts must be a positive integer, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return raw;
+}
+
+function validateNotify(
+  raw: TaskNotifyTarget | null | undefined,
+): TaskNotifyTarget | null {
+  if (raw === undefined || raw === null) return null;
+  if (!(TASK_NOTIFY_TARGETS as readonly string[]).includes(raw)) {
+    throw new TaskValidationError(
+      "notify",
+      `notify must be one of: ${TASK_NOTIFY_TARGETS.join(", ")}`,
     );
   }
   return raw;

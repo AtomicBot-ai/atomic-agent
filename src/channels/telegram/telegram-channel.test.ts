@@ -13,6 +13,7 @@ import type { AtomicAgentConfig } from "../../config/index.js";
 import { USER_CONFIG_DEFAULTS } from "../../config/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { ChannelStatus } from "../../runtime/channel-status.js";
+import type { TaskReport } from "../../tasks/index.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import {
@@ -36,6 +37,8 @@ interface FakeBotState {
 interface FakeBotOptions {
   getMeError?: Error;
   setMyCommandsError?: Error;
+  /** When set, every `sendMessage` rejects with this error. */
+  sendMessageError?: Error;
 }
 
 function makeBotFactory(opts: FakeBotOptions = {}): {
@@ -54,6 +57,7 @@ function makeBotFactory(opts: FakeBotOptions = {}): {
     const bot: BotInstance = {
       api: {
         sendMessage: vi.fn(async (chatId: number, text: string) => {
+          if (opts.sendMessageError) throw opts.sendMessageError;
           state.sendMessageCalls.push({ chatId, text });
           return { message_id: state.sendMessageCalls.length };
         }),
@@ -115,10 +119,13 @@ function fakeRuntime(
   } as unknown as AgentRuntime;
 }
 
-function makeConfig(stateDir: string): AtomicAgentConfig {
+function makeConfig(
+  stateDir: string,
+  ownerUserId: number | null = 42,
+): AtomicAgentConfig {
   return {
     paths: { stateDir },
-    telegram: { enabled: true, ownerUserId: 42, parseMode: "html" },
+    telegram: { enabled: true, ownerUserId, parseMode: "html" },
   } as unknown as AtomicAgentConfig;
 }
 
@@ -778,6 +785,99 @@ describe("TelegramChannel live-control surface", () => {
     expect(state.stopCalls).toBe(0);
     expect(channel.getParseMode()).toBe("plain");
     expect(readPersistedTelegramConfig().parseMode).toBe("plain");
+  });
+
+  describe("sendTaskReport", () => {
+    function makeReport(): TaskReport {
+      return {
+        taskId: "t-report",
+        status: "completed",
+        userMessage: "morning digest",
+        scheduleKind: "cron",
+        attempts: 1,
+        maxAttempts: 1,
+        durationMs: 1_500,
+        replyText: "All quiet. <3 & done",
+        errorMessage: null,
+        errorCategory: null,
+      };
+    }
+
+    it("returns channel_not_up without touching the API when the channel never started", async () => {
+      const { factory, state } = makeBotFactory();
+      const channel = new TelegramChannel({
+        runtime: fakeRuntime(),
+        config: makeConfig(dir),
+        token: "1234:abcdef",
+        logger,
+        botFactory: factory,
+        lock: fakeLock().lock,
+      });
+      const delivery = await channel.sendTaskReport(makeReport());
+      expect(delivery).toBe("channel_not_up");
+      expect(state.sendMessageCalls).toHaveLength(0);
+    });
+
+    it("returns not_paired when the channel is up but no owner is configured", async () => {
+      const { factory, state } = makeBotFactory();
+      const channel = new TelegramChannel({
+        runtime: fakeRuntime(),
+        config: makeConfig(dir, null),
+        token: "1234:abcdef",
+        logger,
+        botFactory: factory,
+        lock: fakeLock().lock,
+      });
+      await channel.start();
+      const delivery = await channel.sendTaskReport(makeReport());
+      expect(delivery).toBe("not_paired");
+      expect(state.sendMessageCalls).toHaveLength(0);
+    });
+
+    it("sends the formatted report to the owner's DM as plain text (no parse_mode)", async () => {
+      const { factory, state } = makeBotFactory();
+      const channel = new TelegramChannel({
+        runtime: fakeRuntime(),
+        config: makeConfig(dir, 42),
+        token: "1234:abcdef",
+        logger,
+        botFactory: factory,
+        lock: fakeLock().lock,
+      });
+      await channel.start();
+      const delivery = await channel.sendTaskReport(makeReport());
+      expect(delivery).toBe("sent");
+      expect(state.sendMessageCalls).toHaveLength(1);
+      const call = state.sendMessageCalls[0]!;
+      // owner's private chat id IS the owner user id
+      expect(call.chatId).toBe(42);
+      expect(call.text).toContain("✅ Scheduled task completed");
+      expect(call.text).toContain("morning digest");
+      // plain infra text: the raw reply goes through unescaped, so a
+      // parse_mode header would have broken on `<3 &`
+      expect(call.text).toContain("All quiet. <3 & done");
+      const sendMock = vi.mocked(
+        (channel as unknown as { bot: BotInstance }).bot.api.sendMessage,
+      );
+      expect(sendMock.mock.calls[0]![2]).toBeUndefined();
+    });
+
+    it("returns delivery_failed when every chunk is rejected by the API", async () => {
+      const { factory } = makeBotFactory({
+        sendMessageError: new Error("400 chat not found"),
+      });
+      const channel = new TelegramChannel({
+        runtime: fakeRuntime(),
+        config: makeConfig(dir, 42),
+        token: "1234:abcdef",
+        logger,
+        botFactory: factory,
+        lock: fakeLock().lock,
+      });
+      await channel.start();
+      const delivery = await channel.sendTaskReport(makeReport());
+      expect(delivery).toBe("delivery_failed");
+    });
   });
 });
 

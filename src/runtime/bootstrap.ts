@@ -2131,6 +2131,32 @@ export async function createAgentRuntime(
     },
     enabled: config.tasks.enabled,
     runOnCreate: config.tasks.runOnCreate,
+    // Telegram is the only `TaskNotifyTarget` today, so the runner's
+    // single sink IS the Telegram route (a second target would turn
+    // this into a per-target dispatch). The channel is constructed
+    // after the runner — it needs the finished runtime object — so the
+    // sink reads the same live reference the shutdown path uses,
+    // assigned further below. A report that fires in the window before
+    // that assignment (a due task on an early scheduler tick while
+    // bootstrap is still, e.g., awaiting MCP connects) is skipped with
+    // a warning rather than lost silently. Skips never affect the
+    // task's own status, and the runner isolates sink rejections.
+    reportSink: async (report) => {
+      const channel = telegramChannelForShutdown;
+      if (!channel) {
+        logger.warn("telegram task report skipped: channel not constructed", {
+          taskId: report.taskId,
+        });
+        return;
+      }
+      const delivery = await channel.sendTaskReport(report);
+      if (delivery !== "sent") {
+        logger.warn("telegram task report skipped", {
+          taskId: report.taskId,
+          delivery,
+        });
+      }
+    },
     logger,
     metrics,
   });

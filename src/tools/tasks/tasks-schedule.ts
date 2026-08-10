@@ -46,7 +46,7 @@ export function buildTasksScheduleTool(
   return {
     name: "tasks.schedule",
     description:
-      "Schedule a one-shot task for the agent to run later. Args: { userMessage, at? (Unix ms), inSeconds?, newSession? }. Defaults to inheriting the current session; set newSession=true for an independent thread.",
+      'Schedule a one-shot task for the agent to run later. Args: { userMessage, at? (Unix ms), inSeconds?, newSession?, notify? }. Defaults to inheriting the current session; set newSession=true for an independent thread. Set notify: "telegram" to send the final result to the paired Telegram chat.',
     readonly: false,
     async run(rawArgs, ctx) {
       const userMessage = rawArgs.userMessage;
@@ -56,6 +56,15 @@ export function buildTasksScheduleTool(
           status: "error",
           output: "validation: userMessage must be a non-empty string",
           details: { field: "userMessage" },
+        });
+      }
+      const notify = rawArgs.notify;
+      if (notify !== undefined && notify !== "telegram") {
+        return compressToolResult({
+          tool: "tasks.schedule",
+          status: "error",
+          output: 'validation: notify must be "telegram" when provided',
+          details: { field: "notify" },
         });
       }
       let schedule: TaskSchedule | null;
@@ -92,6 +101,7 @@ export function buildTasksScheduleTool(
           triggerSource: "agent",
           maxAttempts: options.defaultMaxAttempts,
           maxSteps: null,
+          ...(notify === "telegram" ? { notify } : {}),
           ...(schedule ? { schedule } : {}),
         });
         return compressToolResult({
@@ -106,6 +116,7 @@ export function buildTasksScheduleTool(
             id: record.id,
             sessionId: record.sessionId,
             scheduledFor: record.scheduledFor,
+            notify: record.notify,
           },
         });
       } catch (err) {
