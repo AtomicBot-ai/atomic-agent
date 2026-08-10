@@ -24,6 +24,15 @@ export const ANALYTICS_EVENTS = {
  *  - `outcome`     — how the turn ended: `reply` / `finish` / `max_steps`
  *                    / `cancelled` / `failed`. `max_steps` means the reply
  *                    was cut off by the step budget.
+ *  - `promptTokens` / `completionTokens`
+ *                  — tokens the turn consumed, summed across every LLM
+ *                    call it made. Reported by the provider's `usage`
+ *                    block; omitted when the provider reports none.
+ *  - `costUsd`     — estimated spend for the turn, from the same token
+ *                    counts times per-model pricing. Omitted when the
+ *                    model carries no pricing, which is the normal case
+ *                    for local runners — a free turn reports no cost
+ *                    rather than a zero one.
  */
 export interface MessageEventContext {
   provider: string;
@@ -31,6 +40,9 @@ export interface MessageEventContext {
   latencyMs?: number;
   stepCount?: number;
   outcome?: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  costUsd?: number;
 }
 
 /**
@@ -52,7 +64,8 @@ export function captureAppInstalled(
  * Emit `message_sent` for every human-originated turn, plus the
  * one-time `first_message_sent` on the very first message this install
  * ever sends. Both carry `{ provider, model }`; `message_sent` also
- * carries `latency_ms` when the caller measured the turn duration.
+ * carries `latency_ms` when the caller measured the turn duration, plus
+ * token counts and estimated spend when the provider reported usage.
  * No-ops when analytics is disabled.
  */
 export function captureMessageSent(
@@ -71,5 +84,12 @@ export function captureMessageSent(
     ...(context.latencyMs !== undefined ? { latency_ms: context.latencyMs } : {}),
     ...(context.stepCount !== undefined ? { step_count: context.stepCount } : {}),
     ...(context.outcome !== undefined ? { outcome: context.outcome } : {}),
+    ...(context.promptTokens !== undefined
+      ? { prompt_tokens: context.promptTokens }
+      : {}),
+    ...(context.completionTokens !== undefined
+      ? { completion_tokens: context.completionTokens }
+      : {}),
+    ...(context.costUsd !== undefined ? { cost_usd: context.costUsd } : {}),
   });
 }

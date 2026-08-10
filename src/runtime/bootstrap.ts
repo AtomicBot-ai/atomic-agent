@@ -66,6 +66,10 @@ import {
 } from "../llm/provider/index.js";
 import { resolveActiveToolTransport } from "../llm/provider/registry/resolve-tool-transport.js";
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
+import {
+  resolveModel,
+  type ResolvedModel,
+} from "../llm/provider/model-resolver.js";
 
 import { MemoryStore } from "../memory/memory-store.js";
 import { ProfileStore } from "../memory/profile-store.js";
@@ -166,6 +170,7 @@ import {
   captureAppInstalled,
   captureMessageSent,
   sanitizeModelAlias,
+  TurnUsageMeter,
 } from "../analytics/index.js";
 import {
   createSentryClient,
@@ -1077,6 +1082,31 @@ export async function createAgentRuntime(
       ? new CostAccumulator(config.llm.costTracking.dailyResetHourUtc ?? 0)
       : undefined;
 
+  // Product analytics: token/spend totals for the turn currently in
+  // flight. Unlike `costAccumulator` (opt-in, drives the status bar)
+  // this is always on, because `message_sent` should carry the shape of
+  // a turn for every install — and it stays behind the same analytics
+  // opt-out, since nothing is emitted unless `captureMessageSent` fires.
+  const turnUsageMeter = new TurnUsageMeter();
+
+  /**
+   * Pricing for a model id on the active provider, when the operator
+   * configured any. Cloud entries carry `userModels[].pricing`; local
+   * runners have none, which is why turn cost is reported as absent
+   * rather than zero for them.
+   */
+  const resolveModelPricing = (
+    modelId: string | null,
+  ): ResolvedModel | undefined => {
+    if (!modelId) return undefined;
+    const resolved = resolveLlmConfig(getConfig());
+    const entry = resolved.providers.find(
+      (p) => p.id === resolved.activeTextProvider,
+    );
+    if (!entry) return undefined;
+    return resolveModel(entry, modelId);
+  };
+
   // Vision reuses the active text provider when it exposes describeImage.
   const visionProvider: LlmProvider | undefined = config.vision.enabled
     ? textProvider
@@ -1253,14 +1283,50 @@ export async function createAgentRuntime(
               slotId: params.slotId,
               cachePrompt: params.slotId >= 0,
             });
-      if (costAccumulator && result.usage) {
-        costAccumulator.recordTurn({
-          modelId: result.modelId,
-          usage: result.usage,
-        });
+      if (result.usage) {
+        const model = resolveModelPricing(result.modelId);
+        if (costAccumulator) {
+          costAccumulator.recordTurn({
+            modelId: result.modelId,
+            usage: result.usage,
+            ...(model ? { model } : {}),
+          });
+        }
+        if (params.sessionId) {
+          turnUsageMeter.record({
+            sessionId: params.sessionId,
+            usage: result.usage,
+            ...(model ? { model } : {}),
+          });
+        }
       }
       return result;
     });
+
+  /**
+   * Fold a streamed completion's usage into the turn meter. The stream's
+   * *return* value carries `usage` (deltas do not), so the totals only
+   * exist once the generator finishes — this passes chunks through
+   * untouched and records from the final result. A stream that is
+   * abandoned mid-flight never returns, and contributes nothing, which
+   * is correct: a cancelled turn reports the tokens it actually
+   * finished accounting for.
+   */
+  async function* meterStream(
+    sessionId: string | undefined,
+    stream: AsyncGenerator<StreamChunk, CompletionResult, void>,
+  ): AsyncGenerator<StreamChunk, CompletionResult, void> {
+    const result = yield* stream;
+    if (result.usage && sessionId) {
+      const model = resolveModelPricing(result.modelId);
+      turnUsageMeter.record({
+        sessionId,
+        usage: result.usage,
+        ...(model ? { model } : {}),
+      });
+    }
+    return result;
+  }
 
   const llmCompleteStream = options.overrides?.disableStreaming
     ? undefined
@@ -1275,23 +1341,29 @@ export async function createAgentRuntime(
               ...(params.signal ? { signal: params.signal } : {}),
             };
             if (transport === "native_tools") {
-              return provider.completeStream({
-                ...base,
-                ...(params.tools ? { tools: params.tools } : {}),
-                ...(params.toolChoice !== undefined
-                  ? { toolChoice: params.toolChoice }
-                  : {}),
-                ...(params.parallelToolCalls !== undefined
-                  ? { parallelToolCalls: params.parallelToolCalls }
-                  : {}),
-              });
+              return meterStream(
+                params.sessionId,
+                provider.completeStream({
+                  ...base,
+                  ...(params.tools ? { tools: params.tools } : {}),
+                  ...(params.toolChoice !== undefined
+                    ? { toolChoice: params.toolChoice }
+                    : {}),
+                  ...(params.parallelToolCalls !== undefined
+                    ? { parallelToolCalls: params.parallelToolCalls }
+                    : {}),
+                }),
+              );
             }
-            return provider.completeStream({
-              ...base,
-              grammar: params.grammar,
-              slotId: params.slotId,
-              cachePrompt: params.slotId >= 0,
-            });
+            return meterStream(
+              params.sessionId,
+              provider.completeStream({
+                ...base,
+                grammar: params.grammar,
+                slotId: params.slotId,
+                cachePrompt: params.slotId >= 0,
+              }),
+            );
           });
 
   const sessionStore = new SessionStore();
@@ -2019,6 +2091,7 @@ export async function createAgentRuntime(
       return turnController.enqueue(submission);
     }
     const startedAt = Date.now();
+    turnUsageMeter.begin(session.id);
     try {
       const result = await turnController.enqueue(submission);
       captureMessageSent(analytics, analyticsStateStore, {
@@ -2027,6 +2100,7 @@ export async function createAgentRuntime(
         latencyMs: Date.now() - startedAt,
         stepCount: result.stepCount,
         outcome: result.reason,
+        ...turnUsageMeter.snapshot(session.id),
       });
       return result;
     } catch (error) {
@@ -2035,6 +2109,7 @@ export async function createAgentRuntime(
         model: resolveActiveModelName(),
         latencyMs: Date.now() - startedAt,
         outcome: "failed",
+        ...turnUsageMeter.snapshot(session.id),
       });
       throw error;
     }
