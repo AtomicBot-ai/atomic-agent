@@ -1083,10 +1083,11 @@ export async function createAgentRuntime(
       : undefined;
 
   // Product analytics: token/spend totals for the turn currently in
-  // flight. Unlike `costAccumulator` (opt-in, drives the status bar)
-  // this is always on, because `message_sent` should carry the shape of
-  // a turn for every install — and it stays behind the same analytics
-  // opt-out, since nothing is emitted unless `captureMessageSent` fires.
+  // flight. Unlike `costAccumulator`, which is opt-in behind
+  // `costTracking.enabled`, this is always on, because `message_sent`
+  // should carry the shape of a turn for every install — and it stays
+  // behind the same analytics opt-out, since nothing is emitted unless
+  // `captureMessageSent` fires.
   const turnUsageMeter = new TurnUsageMeter();
 
   /**
