@@ -121,6 +121,79 @@ describe("captureMessageSent", () => {
     );
   });
 
+  it("attaches prompt_tokens / completion_tokens to message_sent when provided", () => {
+    const client = fakeClient();
+    const store = fakeStore({ firstMessage: true });
+    captureMessageSent(client, store, {
+      ...ctx,
+      promptTokens: 100,
+      completionTokens: 50,
+    });
+    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.messageSent, {
+      provider: "openrouter",
+      model: "gpt",
+      prompt_tokens: 100,
+      completion_tokens: 50,
+    });
+  });
+
+  it("attaches cost_usd to message_sent when provided", () => {
+    const client = fakeClient();
+    const store = fakeStore({ firstMessage: true });
+    captureMessageSent(client, store, {
+      ...ctx,
+      costUsd: 0.0042,
+    });
+    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.messageSent, {
+      provider: "openrouter",
+      model: "gpt",
+      cost_usd: 0.0042,
+    });
+  });
+
+  it("keeps prompt_tokens / completion_tokens / cost_usd off first_message_sent (only provider + model)", () => {
+    const client = fakeClient();
+    const store = fakeStore(); // first message not yet sent
+    captureMessageSent(client, store, {
+      ...ctx,
+      promptTokens: 100,
+      completionTokens: 50,
+      costUsd: 0.0042,
+    });
+    // first call is first_message_sent — must carry base props only
+    expect(client.capture).toHaveBeenNthCalledWith(
+      1,
+      ANALYTICS_EVENTS.firstMessageSent,
+      { provider: "openrouter", model: "gpt" },
+    );
+  });
+
+  it("omits prompt_tokens / completion_tokens / cost_usd keys entirely when not provided", () => {
+    const client = fakeClient();
+    const store = fakeStore({ firstMessage: true });
+    captureMessageSent(client, store, ctx);
+    const payload = client.capture.mock.calls[0][1];
+    expect(payload).not.toHaveProperty("prompt_tokens");
+    expect(payload).not.toHaveProperty("completion_tokens");
+    expect(payload).not.toHaveProperty("cost_usd");
+  });
+
+  it("emits cost_usd: 0 when explicitly provided as zero", () => {
+    const client = fakeClient();
+    const store = fakeStore({ firstMessage: true });
+    captureMessageSent(client, store, {
+      ...ctx,
+      costUsd: 0,
+    });
+    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.messageSent, {
+      provider: "openrouter",
+      model: "gpt",
+      cost_usd: 0,
+    });
+    const payload = client.capture.mock.calls[0][1];
+    expect(payload).toHaveProperty("cost_usd", 0);
+  });
+
   it("no-ops when analytics is disabled (null client)", () => {
     const store = fakeStore();
     expect(() => captureMessageSent(null, store, ctx)).not.toThrow();

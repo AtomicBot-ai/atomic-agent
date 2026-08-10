@@ -16,4 +16,6 @@ export {
   captureMessageSent,
 } from "./analytics-events.js";
 export type { MessageEventContext } from "./analytics-events.js";
+export { TurnUsageMeter } from "./turn-usage-meter.js";
+export type { TurnUsageSnapshot } from "./turn-usage-meter.js";
 export { sanitizeModelAlias } from "./sanitize-model-alias.js";
