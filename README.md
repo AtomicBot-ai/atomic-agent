@@ -23,7 +23,7 @@ Drives your browser, edits files, runs approved commands, and remembers context 
 
 **[Quick Install](#quick-install) · [Benchmarks](#benchmarks) · [Why Local-First](#why-local-first) · [Ways to Use It](#ways-to-use-it) · [Docs](#development)**
 
-![atomic-agent terminal demo](assets/demo.gif)
+![Atomic Agent terminal demo](assets/demo.gif)
 
 </div>
 
@@ -48,7 +48,7 @@ irm https://atomicagent.io/install.ps1 | iex
 The installer downloads the release archive, verifies the checksum, and installs the CLI plus support assets (`grammars/`, native prebuilds, and bundled `ripgrep`). Atomic Agent updates itself in place; after an update the TUI prompts you to restart.
 
 > [!NOTE]
-> Developer preview. APIs, commands, config, and behavior are still moving, so pin a release if you need a stable integration point. Current builds: macOS, Linux x64, and Windows x64.
+> Developer preview. APIs, commands, config, and behavior are still moving, so pin a release if you need a stable integration point. Current builds: macOS (Apple Silicon), Linux x64 / arm64, and Windows x64.
 
 ### Run
 
@@ -67,11 +67,15 @@ If something isn't working:
 2. Open an issue on [GitHub](https://github.com/AtomicBot-ai/atomic-agent/issues).
 3. Or ask for help in our [Discord](https://discord.com/invite/Us7qXtDGw).
 
+## Talk to Us
+
+Building something with Atomic Agent, stuck on setup, or just want to share what you are working on? Grab a slot and talk to the team directly: **[cal.com/atomicagent/demo](https://cal.com/atomicagent/demo)**. No agenda required. Questions, feedback, feature requests, or a plain hello all count. We read every issue and every Discord message too, but sometimes a 15-minute call beats a week of comments.
+
 ## Benchmarks
 
 On the public **GAIA validation Level 1** split (53 tasks), Atomic Agent and Hermes drove the **same** local `qwen-3.6-35b-a3b` (`llama-server`, UD-Q4_K_XL), with the same step budget and timeout. The only variable is the agent loop.
 
-![GAIA Level 1 benchmark: atomic-agent 69.8% vs Hermes 58.5%](assets/gaia-l1-benchmark.png)
+![GAIA Level 1 benchmark: Atomic Agent 69.8% vs Hermes 58.5%](assets/gaia-l1-benchmark.png)
 
 | Metric | Atomic Agent | Hermes |
 |---|---|---|
@@ -120,7 +124,7 @@ Full reproducible write-up: [`GAIA-L1-EXPERIMENT.md`](eval-agents/docs/GAIA-L1-E
 
 The control loop and all state run on your machine, not a hosted service:
 
-- **Your data never leaves.** Sessions, memory, tasks, traces, skills, browser profile, and config live under `<stateDir>` on disk. Nothing leaves unless you configure it to.
+- **State lives on your disk.** Sessions, memory, tasks, traces, skills, browser profile, config, and `.env` secrets live under `<stateDir>` as plain files and SQLite databases. See [Privacy and Egress](#privacy-and-egress) for what can leave the machine and how to switch it off.
 - **No API costs.** Run quantized models locally through `llama.cpp`. Bring your own `llama-server` or let the CLI manage one.
 - **Nothing is hidden.** Inspect the prompt, replay trace drift, edit skills, and swap parts without waiting for a vendor. Plain local models, SQLite files, and NDJSON traces.
 - **Runs on your hardware.** Small quantized models run on everyday consumer GPUs and CPUs, no datacenter needed.
@@ -155,9 +159,9 @@ The model chooses actions. Atomic Agent owns the loop, the state, the approvals,
 We run local models on our own TurboQuant `llama.cpp` ([`AtomicBot-ai/atomic-llama-cpp-turboquant`](https://github.com/AtomicBot-ai/atomic-llama-cpp-turboquant)):
 
 - **TurboQuant KV-cache:** WHT-rotated low-bit quantization compresses the KV-cache up to ~6.4× versus F16, with a fused Metal decode kernel, so long-context sessions fit in far less memory.
-- **TurboQuant weights:** Lloyd-Max weight quantization with WHT rotation and fused Metal/Vulkan kernels keeps quality high while small models fit on consumer hardware.
+- **TurboQuant weights:** Lloyd-Max weight quantization with WHT rotation and fused Metal/Vulkan kernels keeps quality usable while small models fit on consumer hardware.
 - **Custom speculative decoding:** purpose-built Gemma 4 MTP and Qwen 3.6 NextN heads reuse the loaded model (no second context, tokenizer, or model load) for +30-50% throughput.
-- **Curated quantized models:** hand-picked GGUF quants that keep quality high while fitting real VRAM budgets.
+- **Curated quantized models:** hand-picked GGUF quants that keep quality usable while fitting real VRAM budgets.
 - **Managed mode:** the CLI downloads, pins, and runs the backend and models for you, no manual `llama.cpp` setup.
 
 ### Tuned for Small Local Models
@@ -169,7 +173,7 @@ Atomic Agent's prompt is engineered so a small model never wastes tokens or brea
 - **Externalized state:** sessions, memory, tasks, skills, traces, browser snapshots, and model config live outside the prompt.
 - **GBNF tool calls:** completions are constrained into a JSON array of tool calls, including the solo case `[{...}]`.
 - **Parallel read batches:** independent read-only calls can run concurrently after a single inference; dangerous actions remain approval-gated.
-- **Compact browser view:** ordinary web operation uses accessibility / ARIA snapshots instead of screenshot-heavy page dumps.
+- **Compact browser view:** ordinary web operation uses accessibility / ARIA snapshots clipped to a character budget (24k by default) instead of screenshot-heavy page dumps.
 
 This is why small local models can stay useful across long, tool-heavy work.
 
@@ -180,7 +184,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | Area | Capabilities |
 |---|---|
 | **Browser** | Navigate, click, type, search, manage tabs, scroll, and read compact ARIA state via `playwright-core` (Chrome / Edge / Chromium). |
-| **Web & HTTP** | Web search with configurable providers (Exa), fetch and extract pages (SSRF-guarded), and make arbitrary HTTP requests, separate from the browser. |
+| **Web & HTTP** | Web search with configurable providers (Exa, DuckDuckGo, Brave, SearXNG); fetch and extract pages or make arbitrary HTTP requests, both SSRF-guarded, separate from the browser. |
 | **Filesystem & shell** | Read, write, edit, patch, glob, grep, diff, watch, hash, list, archive extract, run approved shell commands, and inspect or kill processes. |
 | **Desktop** | Clipboard read/write, desktop notifications, and window list/focus. |
 | **Documents** | Extract text locally from PDF, DOC, DOCX, XLSX, PPTX, ODT, RTF, and plain text. |
@@ -190,7 +194,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | **Skills** | View and run Markdown skill playbooks (scripts are approval-gated), install more from ClawHub. Ships with 17 starter skills (Docker, GitHub, Notion, Obsidian, PDF, and more), auto-installed on first run. |
 | **Vision** | Optional `vision.describe` for multimodal models with `mmproj`, kept outside the text transcript. |
 | **MCP** | Connect external MCP servers; their tools, resources, and prompts join the same registry. |
-| **Providers** | Local `llama-server` by default; OpenAI-compatible, OpenRouter-style, and AI/ML API providers when configured. |
+| **Providers** | Local `llama-server` by default; OpenAI-compatible, OpenRouter, and AI/ML API providers when configured, with live model catalogs and mid-session switching. Reasoning-only completions from reasoning models are recovered instead of failing the turn. |
 | **Telegram** | Single-user remote control with owner pairing and inline approval buttons. |
 
 ### Memory That Grows Outside the Prompt
@@ -222,6 +226,10 @@ atomic-agent task list
 atomic-agent trace list --limit 10
 ```
 
+Handy slash commands: `/help` lists every command, `/tools` lists the built-in tool families, `/model` jumps to the LLM panel and reopens the model picker for the active cloud provider, `/privacy` shows what leaves the machine (`/privacy analytics off` turns analytics off). The chat log scrolls with PgUp / PgDn (fn+arrows on macOS).
+
+Cloud provider setup pulls each provider's full live model catalog, hundreds of models, instead of a short hardcoded list; OpenAI-compatible servers are asked for their own `/v1/models`, and `/model` switches models mid-session.
+
 </details>
 
 <details>
@@ -246,6 +254,8 @@ atomic-agent tui --cwd /path/to/work
 
 Managed mode downloads the backend, pulls GGUF models, selects the active model, and starts detached chat / embedding daemons when configured.
 
+The managed chat daemon stops when the last session exits, freeing the RAM and VRAM the model was holding; set `localModels.managed.stopOnExit: false` in `config.json` to keep the model warm between sessions. Daemons started standalone with `models start` are never touched.
+
 </details>
 
 <details>
@@ -265,6 +275,8 @@ export ATOMIC_AGENT_LLAMA_URL=http://127.0.0.1:8080
 atomic-agent tui --cwd /path/to/work
 ```
 
+The LLM tab in the TUI has an External pane for this setup. Saving a URL runs an honest health probe: it validates the `/health` body, reports llama.cpp's 503 answer while a model loads as loading rather than dead, and recognizes when the URL is a different OpenAI-compatible runner that should be added as a cloud provider instead.
+
 </details>
 
 <details>
@@ -280,7 +292,7 @@ atomic-agent serve \
   --api-key "$ATOMIC_AGENT_API_KEY"
 ```
 
-`POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, traces, config, and capabilities.
+`POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, skills, config, and capabilities.
 
 </details>
 
@@ -323,6 +335,8 @@ TELEGRAM_BOT_TOKEN=123456789:AA-your-bot-token
 
 The TUI can store the token, start the channel, open pairing mode, and show status. Approvals arrive as inline buttons in your DM. Telegram is intentionally single-user.
 
+While a turn runs, the bot keeps one live progress bubble updated in place. It is sent silently and shows step labels only, never tool output; turn it off with `"telegram": { "progressIndicator": false }`.
+
 </details>
 
 <details>
@@ -349,7 +363,7 @@ Configure MCP servers in `config.json`, and their tools join the same registry a
 }
 ```
 
-The TUI MCP panel supports live add / remove without restarting the process.
+The TUI MCP panel supports live add / remove without restarting the process. When a stdio server fails to connect, the tail of its stderr is surfaced in the error instead of a bare disconnect message.
 
 </details>
 
@@ -372,12 +386,18 @@ Everything Atomic Agent does is inspectable and interruptible:
 
 By default, Atomic Agent does not require a hosted agent provider. Model calls go to your configured backend, and local artifacts stay under `<stateDir>`.
 
-Local-first bounds where control lives, not where packets go. Network egress happens exactly when:
+Anonymous usage analytics is on by default. It sends the provider and model names, a random per-install id, and turn-shape numbers (latency, step count, outcome), never message content, file paths, or tool arguments. Crash reports go to Sentry on the same switch, stripped to error type, category, safe scalar codes, a bounded tool name or URL host when present, and path-stripped stack frames. Turn both off with `/privacy analytics off` in the TUI or `"analytics": { "enabled": false }` in `config.json`; the toggle applies live, no restart.
+
+Local-first bounds where control lives, not where packets go. Network egress happens when:
 
 - the browser navigates to a website;
 - an HTTP tool calls a requested endpoint;
+- a web search provider answers a query;
 - a configured cloud LLM or embedding provider receives its request;
-- an MCP server receives a tool call you routed to it.
+- an MCP server receives a tool call you routed to it;
+- you install a skill from ClawHub;
+- the TUI checks GitHub Releases for a newer version at startup (set `ATOMIC_AGENT_UPDATE_CHECK_ON_STARTUP=false` to skip);
+- analytics or crash reporting is enabled, as described above.
 
 > [!NOTE]
 > Skills and shell commands inherit the agent process environment, including `.env` secrets, so anything you run can itself reach the network.
@@ -391,6 +411,7 @@ The promise is not magic secrecy. The promise is that the agent control plane do
 
 - Node.js for development; release bundles ship as Node SEA binaries.
 - A reachable `llama-server`, either managed by `atomic-agent models` or launched externally.
+- Managed mode picks the GPU backend automatically: Metal on Apple Silicon, CUDA on Windows when `nvidia-smi` reports a supported driver (including the reworked driver 610+ headers) with Vulkan as the fallback, Vulkan on Linux, CPU when no GPU is usable. Managed local models ship for Linux x64 only; on arm64 point the agent at an external `llama-server` instead.
 - Chrome, Microsoft Edge, or another configured Chromium-family executable. Browser binaries are not bundled.
 - `git` for git tools.
 - macOS workflows may need Accessibility, Screen Recording, Automation, or Reminders permissions.
