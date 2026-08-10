@@ -24,6 +24,27 @@ export function getCachedOpenAiCompatModels(
   return hit.ids;
 }
 
+/**
+ * Cache lookup by base URL alone, for read-only UI surfaces (the LLM
+ * panel's inline model list) that know a provider's URL but not which
+ * API key fetched the list. The strict keyed lookup above exists so an
+ * anonymous *fetch* never reuses an authenticated response; a panel that
+ * merely renders ids already stored on this machine leaks nothing, so
+ * here the freshest entry for the URL wins regardless of key.
+ */
+export function getCachedOpenAiCompatModelsForBaseUrl(
+  baseUrl: string,
+): readonly string[] | undefined {
+  const prefix = `${normalizeOpenAiBaseUrl(baseUrl)}\n`;
+  let best: { fetchedAt: number; ids: readonly string[] } | undefined;
+  for (const [key, hit] of cache) {
+    if (!key.startsWith(prefix)) continue;
+    if (Date.now() - hit.fetchedAt > CACHE_TTL_MS) continue;
+    if (!best || hit.fetchedAt > best.fetchedAt) best = hit;
+  }
+  return best?.ids;
+}
+
 /** Throws on unreachable/unauthorized servers so the caller can fall back to typing. */
 export async function fetchOpenAiCompatModels(
   baseUrl: string,
