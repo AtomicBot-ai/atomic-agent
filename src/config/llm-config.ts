@@ -9,6 +9,13 @@ export type UserLlmProviderEntry = {
   apiKey?: string;
   model?: string;
   baseUrl?: string;
+  /**
+   * Env var holding this entry's API key. Set for known-service presets
+   * so each service keeps its own key (`GROQ_API_KEY`, `NOUS_API_KEY`,
+   * ...). When present it is authoritative: entries without it fall
+   * back to the per-kind defaults in `resolveLlmProviderApiKey`.
+   */
+  apiKeyEnvVar?: string;
   defaultChatModel?: string;
   defaultEmbeddingModel?: string;
   headers?: Record<string, string>;
@@ -94,6 +101,7 @@ export function parseLlmProviderEntry(
     apiKey: parseOptionalString(obj.apiKey, `${field}.apiKey`),
     model: parseOptionalString(obj.model, `${field}.model`),
     baseUrl: parseOptionalString(obj.baseUrl, `${field}.baseUrl`),
+    apiKeyEnvVar: parseOptionalString(obj.apiKeyEnvVar, `${field}.apiKeyEnvVar`),
     defaultChatModel: parseOptionalString(
       obj.defaultChatModel,
       `${field}.defaultChatModel`,

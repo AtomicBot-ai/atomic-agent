@@ -68,5 +68,71 @@ describe("buildProviderEntryFromWizard", () => {
       baseUrl: "https://api.openai.com",
       defaultChatModel: "gpt-5.4-mini",
     });
+    expect(built.entry.apiKeyEnvVar).toBeUndefined();
+  });
+
+  it("stamps a preset entry with the service's own env var", () => {
+    const built = buildProviderEntryFromWizard({
+      kind: "openai-compatible",
+      presetId: "groq",
+      chatModelId: "",
+      embeddingChoiceId: LOCAL_EMBEDDING_CHOICE_ID,
+      baseUrl: "https://api.groq.com/openai",
+      customChatModel: "llama-3.3-70b-versatile",
+    });
+
+    expect(built.entry).toMatchObject({
+      id: "groq",
+      kind: "openai-compatible",
+      apiKeyEnvVar: "GROQ_API_KEY",
+    });
+  });
+
+  it("gives a second entry for the same service a numbered id", () => {
+    const built = buildProviderEntryFromWizard({
+      kind: "openai-compatible",
+      presetId: "groq",
+      takenProviderIds: ["local-llama", "groq"],
+      chatModelId: "",
+      embeddingChoiceId: LOCAL_EMBEDDING_CHOICE_ID,
+      baseUrl: "https://api.groq.com/openai",
+      customChatModel: "llama-3.3-70b-versatile",
+    });
+
+    // Both entries stay in config: the second one gets `groq-2` instead
+    // of silently replacing the first.
+    expect(built.entry.id).toBe("groq-2");
+    expect(built.activateEmbeddingProviderId).toBe("local-llama");
+  });
+
+  it("keeps the existing id when reconfiguring", () => {
+    const built = buildProviderEntryFromWizard({
+      kind: "openai-compatible",
+      presetId: "groq",
+      existingProviderId: "groq",
+      takenProviderIds: ["local-llama", "groq"],
+      chatModelId: "",
+      embeddingChoiceId: LOCAL_EMBEDDING_CHOICE_ID,
+      baseUrl: "https://api.groq.com/openai",
+      customChatModel: "llama-3.3-70b-versatile",
+    });
+
+    // Reconfigure updates `groq` in place — no `groq-2`, and no
+    // `openai-compatible` duplicate.
+    expect(built.entry.id).toBe("groq");
+  });
+
+  it("keeps a hand-added entry id when reconfiguring without a preset", () => {
+    const built = buildProviderEntryFromWizard({
+      kind: "openai-compatible",
+      existingProviderId: "my-vllm",
+      chatModelId: "",
+      embeddingChoiceId: LOCAL_EMBEDDING_CHOICE_ID,
+      baseUrl: "http://192.168.1.50:8000",
+      customChatModel: "qwen3-30b",
+    });
+
+    expect(built.entry.id).toBe("my-vllm");
+    expect(built.entry.apiKeyEnvVar).toBeUndefined();
   });
 });

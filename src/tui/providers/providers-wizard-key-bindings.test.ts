@@ -48,6 +48,36 @@ describe("createProvidersWizardState configure prefill", () => {
     });
     expect(wizard.baseUrlLine).toBe("");
   });
+
+  it("recovers the preset identity of the entry being reconfigured", () => {
+    // Reconfiguring `groq` must stay Groq: the key screen names
+    // GROQ_API_KEY and the save keeps the id instead of minting an
+    // `openai-compatible` duplicate.
+    const wizard = createProvidersWizardState("configure", {
+      providerId: "groq",
+      kind: "openai-compatible",
+      baseUrl: "https://api.groq.com/openai",
+    });
+    expect(wizard.presetId).toBe("groq");
+    expect(wizard.providerId).toBe("groq");
+  });
+
+  it("recovers the preset behind a numbered entry id", () => {
+    const wizard = createProvidersWizardState("configure", {
+      providerId: "groq-2",
+      kind: "openai-compatible",
+    });
+    expect(wizard.presetId).toBe("groq");
+    expect(wizard.providerId).toBe("groq-2");
+  });
+
+  it("leaves presetId empty for hand-added compat entries", () => {
+    const wizard = createProvidersWizardState("configure", {
+      providerId: "my-vllm",
+      kind: "openai-compatible",
+    });
+    expect(wizard.presetId).toBeNull();
+  });
 });
 
 describe("handleProvidersWizardKey", () => {
@@ -77,10 +107,10 @@ describe("handleProvidersWizardKey", () => {
     }
   });
 
-  it("falls through to the openai-compatible flow on the third kind slot", () => {
+  it("falls through to the openai-compatible flow on the last kind slot", () => {
     let wizard = createProvidersWizardState("add");
-    wizard = next(wizard, "", emptyKey({ downArrow: true }));
-    wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    // Manual entry is the last row, after the preset rows.
+    wizard = next(wizard, "", emptyKey({ upArrow: true }));
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.kind).toBe("openai-compatible");
     expect(wizard.phase).toBe("api_key");
@@ -303,6 +333,31 @@ describe("handleProvidersWizardKey", () => {
         LOCAL_EMBEDDING_CHOICE_ID,
       );
     }
+  });
+
+  it("picks a known service straight from the provider list", () => {
+    let wizard = createProvidersWizardState("add");
+
+    // Presets follow the two catalog kinds, so Nous is the third row.
+    wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.kind).toBe("openai-compatible");
+    expect(wizard.presetId).toBe("nous");
+    expect(wizard.baseUrlLine).toBe("https://inference-api.nousresearch.com");
+    // The endpoint is known, so the operator lands straight on the key
+    // step instead of typing a URL.
+    expect(wizard.phase).toBe("api_key");
+  });
+
+  it("reaches a later preset by moving down the same list", () => {
+    let wizard = createProvidersWizardState("add");
+    for (let i = 0; i < 3; i += 1) {
+      wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    }
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.presetId).toBe("groq");
+    expect(wizard.baseUrlLine).toBe("https://api.groq.com/openai");
   });
 });
 

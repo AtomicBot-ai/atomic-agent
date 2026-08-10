@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { refreshAimlapiChatCatalogFromApi } from "../../llm/provider/aimlapi/fetch-aimlapi-chat-catalog.js";
 import { refreshOpenRouterChatCatalogFromApi } from "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
+import { KIND_ROW_ORDER } from "../providers/providers-wizard-phases.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
 import type { ProvidersWizardKind } from "../providers/providers-wizard-state.js";
 import { ProvidersWizard } from "./providers-wizard.js";
@@ -105,14 +106,17 @@ describe("ProvidersWizard chat model step", () => {
 });
 
 describe("ProvidersWizard pick list counter", () => {
-  it("shows the position counter for short lists too", () => {
-    // 3 provider kinds, well under the viewport. The counter is not a
-    // long-list extra: hiding it below a size threshold reads as a glitch.
+  it("shows the position counter on the provider list", () => {
+    // 2 catalog kinds + 10 presets + manual entry. The counter is not a
+    // long-list extra: hiding it below a size threshold reads as a glitch,
+    // and with the preset rows the list now runs past the viewport anyway.
     const { lastFrame } = render(
       <ProvidersWizard wizard={createProvidersWizardState("add")} />,
     );
     const text = stripAnsi(lastFrame() ?? "");
-    expect(text).toContain("j/k move (1/3) · Enter pick · Esc cancel");
+    expect(text).toContain(
+      `j/k move (1/${KIND_ROW_ORDER.length}) · Enter pick · Esc cancel`,
+    );
   });
 });
 

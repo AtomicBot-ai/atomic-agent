@@ -13,7 +13,10 @@ export function buildOpenAiHeaders(
   return {
     "content-type": "application/json",
     accept: stream ? "text/event-stream" : "application/json",
-    authorization: `Bearer ${deps.apiKey}`,
+    // Keyless servers (a local LM Studio, an unauthenticated vLLM) get no
+    // authorization header at all: `Bearer ` with an empty token is
+    // malformed and some proxies reject it outright.
+    ...(deps.apiKey ? { authorization: `Bearer ${deps.apiKey}` } : {}),
     ...deps.extraHeaders,
   };
 }

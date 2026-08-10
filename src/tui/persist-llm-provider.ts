@@ -102,16 +102,23 @@ export function dotenvKeyForProviderKind(
 export function writeProviderApiKeyToDotenv(
   kind: ProvidersWizardKind,
   apiKey: string,
+  /**
+   * Preset-specific variable (`GROQ_API_KEY`, `TOGETHER_API_KEY`, ...).
+   * Without it every preset would share `OPENAI_COMPAT_API_KEY` and a
+   * second service would overwrite the first one's key.
+   */
+  envVarOverride?: string,
 ): void {
   const trimmed = apiKey.trim();
   if (trimmed.length === 0) {
     throw new LlmAddProviderError("API key is empty");
   }
-  setDotenvKey(getConfig().paths.stateDir, dotenvKeyForProviderKind(kind), trimmed);
-  const envKey = dotenvKeyForProviderKind(kind);
-  if (!process.env[envKey] || process.env[envKey]!.length === 0) {
-    process.env[envKey] = trimmed;
-  }
+  const envKey = envVarOverride ?? dotenvKeyForProviderKind(kind);
+  setDotenvKey(getConfig().paths.stateDir, envKey, trimmed);
+  // Always mirror into the live environment, not only when unset: key
+  // resolution reads `process.env`, so a session that just rewrote .env
+  // must start using the new key now, not after a restart.
+  process.env[envKey] = trimmed;
 }
 
 function mergeProviderIntoBlock(

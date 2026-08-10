@@ -1,3 +1,5 @@
+import { presetForEntryId } from "./provider-presets.js";
+
 export type ProvidersWizardKind =
   | "openrouter"
   | "aimlapi"
@@ -20,6 +22,12 @@ export interface ProvidersWizardState {
   kind: ProvidersWizardKind | null;
   /** Set when `mode === "configure"`. */
   providerId: string | null;
+  /**
+   * Preset chosen on the `pick_preset` step. Presets are not a provider
+   * kind: they resolve to `openai-compatible` with `baseUrl` prefilled,
+   * so the operator never types an endpoint from memory (#69).
+   */
+  presetId: string | null;
   cursor: number;
   apiKeyBuffer: string;
   baseUrlLine: string;
@@ -48,11 +56,20 @@ export function createProvidersWizardState(
 ): ProvidersWizardState {
   const configure = mode === "configure";
   const kind = opts?.kind ?? null;
+  // Reconfiguring an entry that was created from a preset must keep the
+  // preset identity: the key screen then names the service's own env
+  // var, and saving keeps the entry id instead of minting an
+  // `openai-compatible` duplicate. Suffixed ids (`groq-2`) count too.
+  const presetId =
+    configure && kind === "openai-compatible" && opts?.providerId
+      ? (presetForEntryId(opts.providerId)?.id ?? null)
+      : null;
   return {
     mode,
     phase: configure ? "api_key" : "pick_kind",
     kind,
     providerId: opts?.providerId ?? null,
+    presetId,
     cursor: 0,
     apiKeyBuffer: "",
     baseUrlLine: opts?.baseUrl ?? "",
