@@ -5,6 +5,8 @@ import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import { createInitialTuiState, type TuiState } from "../tui-state.js";
 import { fakeSession } from "../test-fixtures.js";
+import { reduceTuiState } from "../agent-event-reducer.js";
+import { dispatchSlashCommand } from "../commands/slash-command-handler.js";
 import { reduceProvidersPanel } from "./providers-reducer.js";
 import {
   filteredPickerModels,
@@ -371,5 +373,80 @@ describe("model picker filtering", () => {
     const picker = readyPicker({ query: " qwen " });
     expect(picker.query).toBe(" qwen ");
     expect(filteredPickerModels(picker)).toEqual(["qwen-32b"]);
+  });
+});
+
+describe("picker armed by bare /model", () => {
+  // End-to-end through the real reducer chain: the exact actions the
+  // slash handler emits for bare /model, then the orchestrator's answer
+  // to the picker request (opened + loaded). Guards the #83 promise that
+  // the filter is live from the first keystroke after /model, not only
+  // when the picker state is hand-built.
+  function stateAfterBareModel(
+    generation: number,
+    from?: TuiState,
+  ): TuiState {
+    let state = from ?? createInitialTuiState(fakeSession());
+    for (const action of dispatchSlashCommand("/model").actions) {
+      state = reduceTuiState(state, action);
+    }
+    // `providers_chat_model_picker_requested` is a state no-op; the
+    // orchestrator responds on the bus with a generation-stamped open
+    // and, once the model list fetch settles, the loaded payload.
+    state = reduceTuiState(state, {
+      type: "providers_chat_model_picker_opened",
+      providerId: "my-vllm",
+      currentModelId: "qwen-32b",
+      generation,
+    });
+    return reduceTuiState(state, {
+      type: "providers_chat_model_picker_loaded",
+      generation,
+      models: ["glm-9b", "qwen-32b", "yi-34b"],
+    });
+  }
+
+  it("bare /model lands on the LLM tab with the picker ready and an empty query", () => {
+    const state = stateAfterBareModel(1);
+    expect(state.uiMode).toBe("debug");
+    expect(state.activeTab).toBe("llm");
+    expect(state.providersPanel.chatModelPicker).toMatchObject({
+      status: "ready",
+      query: "",
+      cursor: 1,
+    });
+    expect(
+      filteredPickerModels(state.providersPanel.chatModelPicker!),
+    ).toHaveLength(3);
+  });
+
+  it("the first keystroke after /model goes straight into the filter and narrows the list", () => {
+    let state = stateAfterBareModel(1);
+    const { dispatched, handled } = pressModal("q", emptyKey(), state);
+    expect(handled).toBe(true);
+    expect(dispatched).toEqual([
+      { type: "providers_chat_model_picker_query_set", query: "q" },
+    ]);
+    for (const action of dispatched) state = reduceTuiState(state, action);
+    const picker = state.providersPanel.chatModelPicker!;
+    expect(picker.query).toBe("q");
+    expect(picker.cursor).toBe(0);
+    expect(filteredPickerModels(picker)).toEqual(["qwen-32b"]);
+  });
+
+  it("running /model again after a filtered session starts over with a fresh query", () => {
+    let state = stateAfterBareModel(1);
+    state = reduceTuiState(state, {
+      type: "providers_chat_model_picker_query_set",
+      query: "qwen",
+    });
+    state = reduceTuiState(state, {
+      type: "providers_chat_model_picker_closed",
+    });
+    state = stateAfterBareModel(2, state);
+    const picker = state.providersPanel.chatModelPicker!;
+    expect(picker.status).toBe("ready");
+    expect(picker.query).toBe("");
+    expect(filteredPickerModels(picker)).toHaveLength(3);
   });
 });
