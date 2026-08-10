@@ -24,10 +24,15 @@ const HELP =
     "  create [--session <id>] --message <text>",
     "         [--max-attempts N] [--max-steps N]",
     "         [--at <unix-ms> | --cron <expr> | --every <seconds>] [--tz <iana>]",
+    "         [--notify telegram]",
     "                            Persist a new task (origin=cli). Omit --session for a",
     "                            lazy one-shot (fresh ephemeral session at run time) or",
     "                            for a recurring task (persistent session allocated on",
     "                            create and reused across firings).",
+    "                            --notify telegram reports the task's final result to",
+    "                            the paired Telegram chat (the result text is sent to",
+    "                            Telegram's servers; skipped with a warning when the",
+    "                            channel is down or unpaired).",
     "  cancel <id>               Move a task to 'cancelled' (idempotent on terminal rows)",
     "  run [<id>|--all-pending] [--session <id>]",
     "                            Manually drain — single task by id, or every pending row",
@@ -38,7 +43,7 @@ const HELP =
     "Examples:",
     "  atomic-agent task list --status pending",
     "  atomic-agent task create --session s-abc --message 'tidy inbox'",
-    "  atomic-agent task create --message 'morning digest' --cron '0 9 * * *' --tz Europe/Berlin",
+    "  atomic-agent task create --message 'morning digest' --cron '0 9 * * *' --tz Europe/Berlin --notify telegram",
     "  atomic-agent task run --all-pending --session s-abc",
     "  atomic-agent task tick",
   ].join("\n") + "\n";
@@ -138,13 +143,19 @@ async function handleCreate(args: string[]): Promise<number> {
   const cronRaw = readOption(args, "--cron");
   const everyRaw = readOption(args, "--every");
   const tz = readOption(args, "--tz");
+  const notifyRaw = readOption(args, "--notify");
 
   if (!message) {
     process.stderr.write(
-      "usage: atomic-agent task create [--session <id>] --message <text> [--at <ms> | --cron <expr> | --every <seconds>] [--tz <iana>] [--max-attempts N] [--max-steps N]\n",
+      "usage: atomic-agent task create [--session <id>] --message <text> [--at <ms> | --cron <expr> | --every <seconds>] [--tz <iana>] [--notify telegram] [--max-attempts N] [--max-steps N]\n",
     );
     return 1;
   }
+  if (notifyRaw !== undefined && notifyRaw !== "telegram") {
+    process.stderr.write("--notify only supports: telegram\n");
+    return 1;
+  }
+  const notify = notifyRaw === "telegram" ? ("telegram" as const) : undefined;
 
   const scheduleFlags = [atRaw, cronRaw, everyRaw].filter((v) => v !== undefined);
   if (scheduleFlags.length > 1) {
@@ -216,6 +227,7 @@ async function handleCreate(args: string[]): Promise<number> {
         triggerSource: "user",
         maxAttempts,
         maxSteps,
+        ...(notify ? { notify } : {}),
         schedule,
       });
       process.stdout.write(`${JSON.stringify(created, null, 2)}\n`);
@@ -240,6 +252,7 @@ async function handleCreate(args: string[]): Promise<number> {
       triggerSource: "user",
       maxAttempts,
       maxSteps,
+      ...(notify ? { notify } : {}),
       ...(schedule ? { schedule } : {}),
     });
     process.stdout.write(`${JSON.stringify(created, null, 2)}\n`);

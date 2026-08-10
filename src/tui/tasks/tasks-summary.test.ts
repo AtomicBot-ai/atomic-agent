@@ -28,6 +28,7 @@ const BASE: TaskRecord = {
   recurring: false,
   lastScheduledAt: null,
   triggerSource: null,
+  notify: null,
 };
 
 describe("formatScheduleLabel", () => {

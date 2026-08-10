@@ -195,7 +195,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | **Vision** | Optional `vision.describe` for multimodal models with `mmproj`, kept outside the text transcript. |
 | **MCP** | Connect external MCP servers; their tools, resources, and prompts join the same registry. |
 | **Providers** | Local `llama-server` by default; OpenAI-compatible, OpenRouter, and AI/ML API providers when configured, with live model catalogs and mid-session switching. Reasoning-only completions from reasoning models are recovered instead of failing the turn. |
-| **Telegram** | Single-user remote control with owner pairing and inline approval buttons. |
+| **Telegram** | Single-user remote control with owner pairing, inline approval buttons, and opt-in result reports from scheduled tasks. |
 
 ### Memory That Grows Outside the Prompt
 
@@ -337,6 +337,8 @@ The TUI can store the token, start the channel, open pairing mode, and show stat
 
 While a turn runs, the bot keeps one live progress bubble updated in place. It is sent silently and shows step labels only, never tool output; turn it off with `"telegram": { "progressIndicator": false }`.
 
+Scheduled tasks can report back to the same chat: create a cron job with `atomic-agent task create --cron "0 9 * * *" --message "morning digest" --notify telegram` (or ask the agent to schedule with `notify: "telegram"`), and each run posts its final result to your paired DM when it finishes. Reporting is strictly per-task opt-in, and the report's result text is sent to Telegram's servers; when the channel is down or unpaired the report is skipped with a logged warning and the task itself is unaffected.
+
 </details>
 
 <details>
@@ -395,6 +397,7 @@ Local-first bounds where control lives, not where packets go. Network egress hap
 - a web search provider answers a query;
 - a configured cloud LLM or embedding provider receives its request;
 - an MCP server receives a tool call you routed to it;
+- the Telegram channel is enabled and the bot exchanges messages with your paired chat, including opt-in scheduled task reports;
 - you install a skill from ClawHub;
 - the TUI checks GitHub Releases for a newer version at startup (set `ATOMIC_AGENT_UPDATE_CHECK_ON_STARTUP=false` to skip);
 - analytics or crash reporting is enabled, as described above.

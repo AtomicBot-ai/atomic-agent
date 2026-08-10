@@ -14,15 +14,22 @@ export type {
   TaskRunnerSessionLoader,
   TaskRunnerSessionFactory,
 } from "./task-runner.js";
+export type {
+  TaskReport,
+  TaskReportSink,
+  TaskReportStatus,
+} from "./task-report.js";
 export { nextDelayMs } from "./task-backoff.js";
 export type { BackoffOptions } from "./task-backoff.js";
 export {
   TASK_LAST_ERROR_MAX_LENGTH,
+  TASK_NOTIFY_TARGETS,
   TASK_USER_MESSAGE_MAX_LENGTH,
   TaskStateError,
   TaskValidationError,
 } from "./task-types.js";
 export type {
+  TaskNotifyTarget,
   TaskOrigin,
   TaskRecord,
   TaskSchedule,

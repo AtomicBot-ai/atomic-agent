@@ -2131,6 +2131,22 @@ export async function createAgentRuntime(
     },
     enabled: config.tasks.enabled,
     runOnCreate: config.tasks.runOnCreate,
+    // Telegram is the only `TaskNotifyTarget` today, so the runner's
+    // single sink IS the Telegram route (a second target would turn
+    // this into a per-target dispatch). The channel is constructed
+    // after the runner — it needs the finished runtime object — so the
+    // sink resolves the same live reference the shutdown path uses,
+    // assigned further below, at delivery time. A report that fires in
+    // the window before that assignment (a due task on an early
+    // scheduler tick while bootstrap is still, e.g., awaiting MCP
+    // connects) is warn-logged and dropped, never lost silently; skips
+    // never affect the task's own status, and the runner isolates sink
+    // rejections. Skip-path logging is pinned by the sink's own unit
+    // tests in telegram-channel.test.ts.
+    reportSink: TelegramChannel.buildTaskReportSink({
+      resolveChannel: () => telegramChannelForShutdown,
+      logger,
+    }),
     logger,
     metrics,
   });
@@ -2155,7 +2171,12 @@ export async function createAgentRuntime(
           metrics,
         })
       : null;
-  scheduler?.start();
+  // `scheduler?.start()` is deliberately deferred until after the
+  // Telegram channel object is constructed (near the end of bootstrap)
+  // so a task report from the very first due tick can never observe a
+  // missing channel — a not-yet-`up` channel queues reports itself.
+  // The only cost is that overdue tasks fire their first tick a few
+  // seconds later on a cold start; the tick cadence is unchanged.
 
   // Memory-v2 phase 5: cold-path consolidator. Owns its own
   // `setInterval` (scoped carve-out from "Scheduler is the only
@@ -2440,6 +2461,12 @@ export async function createAgentRuntime(
       });
     });
   }
+
+  // Deferred from the Scheduler construction site above: the first
+  // due tick must not race the Telegram channel construction, so task
+  // reports always find the channel object (and queue on it while it
+  // is still starting).
+  scheduler?.start();
 
   return runtime;
 }

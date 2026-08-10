@@ -111,6 +111,46 @@ describe("taskCommand", () => {
     }
   });
 
+  it("create --notify telegram persists the opt-in; default stays null", async () => {
+    const code = await taskCommand([
+      "create",
+      "--session",
+      "s-cli-2",
+      "--message",
+      "digest",
+      "--notify",
+      "telegram",
+    ]);
+    expect(code).toBe(0);
+    const created = JSON.parse(stdout());
+    expect(created.notify).toBe("telegram");
+
+    stdoutChunks.length = 0;
+    const silentCode = await taskCommand([
+      "create",
+      "--session",
+      "s-cli-2",
+      "--message",
+      "quiet",
+    ]);
+    expect(silentCode).toBe(0);
+    expect(JSON.parse(stdout()).notify).toBeNull();
+  });
+
+  it("create rejects an unknown --notify target", async () => {
+    const code = await taskCommand([
+      "create",
+      "--session",
+      "s-cli-3",
+      "--message",
+      "x",
+      "--notify",
+      "slack",
+    ]);
+    expect(code).toBe(1);
+    expect(stderr()).toMatch(/--notify only supports: telegram/);
+  });
+
   it("create rejects missing required flags", async () => {
     const code = await taskCommand(["create", "--session", "s-only"]);
     expect(code).toBe(1);

@@ -12,7 +12,7 @@
  * `applyMigrations` with a new step. The `schema_meta` table records
  * the version actually present on disk so upgrades are idempotent.
  */
-export const TASK_SCHEMA_VERSION = 2 as const;
+export const TASK_SCHEMA_VERSION = 3 as const;
 
 const BASE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -71,6 +71,19 @@ CREATE INDEX IF NOT EXISTS idx_tasks_due
   ON tasks(status, scheduled_for) WHERE status = 'pending';
 `;
 
+/**
+ * v2 -> v3 migration: adds the per-task `notify` opt-in so a scheduled
+ * task can report its terminal outcome to a remote channel (Telegram
+ * today). `NULL` (the default for every existing row) preserves the
+ * pre-v3 behaviour: tasks finish silently. Values are validated
+ * against `TASK_NOTIFY_TARGETS` at write time and clamped to `NULL`
+ * on read, so no index is needed — the column is never queried by
+ * itself.
+ */
+const V3_MIGRATION = `
+ALTER TABLE tasks ADD COLUMN notify TEXT;
+`;
+
 export interface TaskDatabaseLike {
   exec(sql: string): unknown;
   prepare(sql: string): {
@@ -92,6 +105,9 @@ export function applyMigrations(db: TaskDatabaseLike): void {
   }
   if (current < 2) {
     db.exec(V2_MIGRATION);
+  }
+  if (current < 3) {
+    db.exec(V3_MIGRATION);
   }
   if (current === TASK_SCHEMA_VERSION) return;
   db.prepare(

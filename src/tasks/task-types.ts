@@ -65,6 +65,17 @@ export type TaskSchedule =
   | { kind: "interval"; everyMs: number };
 
 /**
+ * Channels a task may report its terminal outcome to. Single-member
+ * allow-list today; `TaskStore` validates writes against it and
+ * clamps unknown persisted values back to `null` on read, so the
+ * runner only ever observes members of this list (or `null` = no
+ * report, the default).
+ */
+export const TASK_NOTIFY_TARGETS = ["telegram"] as const;
+
+export type TaskNotifyTarget = (typeof TASK_NOTIFY_TARGETS)[number];
+
+/**
  * Durable record of a deferred `runTurn` submission.
  *
  * Persistence layout: see [src/tasks/task-schema.ts](task-schema.ts).
@@ -118,6 +129,12 @@ export interface TaskRecord {
   lastScheduledAt: number | null;
   /** Informational trigger source (see `TriggerSource`). */
   triggerSource: TriggerSource | null;
+  /**
+   * Per-task opt-in for terminal-outcome reporting (see
+   * `TASK_NOTIFY_TARGETS`). `null` (the default) keeps the pre-v3
+   * behaviour: the task finishes silently.
+   */
+  notify: TaskNotifyTarget | null;
 }
 
 /**
@@ -148,7 +165,8 @@ export class TaskValidationError extends Error {
       | "maxSteps"
       | "maxAttempts"
       | "id"
-      | "schedule",
+      | "schedule"
+      | "notify",
     message: string,
   ) {
     super(message);

@@ -123,7 +123,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
   {
     name: "tasks.schedule",
     summary: "Schedule a one-shot task; current session or newSession.",
-    argsSchema: "{ userMessage: string, at?: number, inSeconds?: number, newSession?: boolean }",
+    argsSchema: '{ userMessage: string, at?: number, inSeconds?: number, newSession?: boolean, notify?: "telegram" }',
     examples: [
       '{"userMessage":"check build","inSeconds":300}',
       '{"userMessage":"PR follow-up","at":1735689600000,"newSession":true}',
@@ -133,8 +133,8 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
   {
     name: "tasks.cron",
     summary: "Recurring cron task; runs in a dedicated persistent session.",
-    argsSchema: '{ userMessage: string, expression: string, tz?: string /* IANA */ }',
-    examples: ['{"userMessage":"digest","expression":"0 9 * * *","tz":"Europe/Berlin"}'],
+    argsSchema: '{ userMessage: string, expression: string, tz?: string /* IANA */, notify?: "telegram" /* report result to paired Telegram */ }',
+    examples: ['{"userMessage":"digest","expression":"0 9 * * *","tz":"Europe/Berlin","notify":"telegram"}'],
     tier: "rare",
   },
   {
