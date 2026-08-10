@@ -41,6 +41,11 @@ export { buildOsFsWriteTool } from "./fs-write.js";
 export { buildOsFsTrashTool } from "./fs-trash.js";
 export { osFsListTool } from "./fs-list.js";
 export { osFsGlobTool } from "./fs-glob.js";
+export {
+  buildOsFsLocateProjectTool,
+  type OsFsLocateProjectDeps,
+} from "./fs-locate-project.js";
+export type { RecentSessionDir } from "./fs-locate-project-sources.js";
 export { buildOsFsGrepTool } from "./fs-grep.js";
 export { buildOsFsEditTool } from "./fs-edit.js";
 export { buildOsFsReadDocumentTool } from "./read-document/index.js";

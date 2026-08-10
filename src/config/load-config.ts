@@ -283,6 +283,9 @@ export function loadConfig(): AtomicAgentConfig {
     web: {
       search: { ...user.web.search },
     },
+    projects: {
+      roots: [...user.projects.roots],
+    },
     log: { level: logLevel },
     tasks: {
       enabled: readBool("ATOMIC_AGENT_TASKS_ENABLED", ENV_DEFAULTS.TASKS_ENABLED),

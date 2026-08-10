@@ -53,7 +53,10 @@ import { replyTool } from "../tools/conversation/index.js";
 import { buildBrowserTools } from "../tools/browser/index.js";
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
-import { registerOsTools } from "../tools/os/index.js";
+import {
+  buildOsFsLocateProjectTool,
+  registerOsTools,
+} from "../tools/os/index.js";
 import { registerSkillTools } from "../tools/skill/index.js";
 import { buildToolViewTool } from "../tools/tool-view/index.js";
 import { registerMemoryTools } from "../tools/memory/index.js";
@@ -1368,6 +1371,20 @@ export async function createAgentRuntime(
           });
 
   const sessionStore = new SessionStore();
+
+  // Issue #77 — fuzzy project-name resolution. Registered here rather
+  // than in `registerOsTools` because the tool reads recent-session
+  // working dirs from the SessionStore constructed just above. Search
+  // sources are bounded by design: session cwd + ancestors, recent
+  // session dirs, and one-level children of the user-declared
+  // `projects.roots` — never a disk-wide scan.
+  toolRegistry.register(
+    buildOsFsLocateProjectTool({
+      listRecentSessions: (limit) => sessionStore.listRecent(limit),
+      projectRoots: config.projects.roots,
+    }),
+  );
+
   const taskStore = new TaskStore({ dbFile: config.paths.tasksDbFile });
   const webhookSessionStore = new WebhookSessionStore(
     resolve(config.paths.stateDir, "webhook-sessions.json"),

@@ -77,6 +77,12 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
       "{ pattern: string | string[], cwd?: string, path?: string, ignore?: string[], absolute?: boolean, limit?: number, sortByMtime?: boolean, nocase?: boolean }",
   },
   {
+    name: "os.fs.locate_project",
+    summary:
+      "Resolve a project mentioned by name ('my raylib project', 'in tasks-board') to a directory path when the user gives no full path. Checks the session cwd + ancestors, recent session dirs, and configured projects.roots (one level; never a whole-disk scan). Single match: use the returned path. Multiple: ask the user to pick. None: ask for the full path.",
+    argsSchema: "{ name: string, limit?: number }",
+  },
+  {
     name: "os.fs.grep",
     summary:
       "Regex ripgrep for text search (content, files_with_matches, count). Best on source/text trees. Avoid tree-wide runs with glob *.pdf (or similar) over huge dirs—slow, binary-heavy, often flaky; prefer os.fs.glob by filename + os.fs.read_document on a small candidate set.",
