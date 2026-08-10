@@ -78,6 +78,7 @@ export class OpenAiProvider implements LlmProvider {
       extraHeaders: options.headers ?? {},
       requestTimeoutMs: options.requestTimeoutMs ?? 600_000,
       fetchImpl: options.fetchImpl ?? fetch,
+      label: options.id,
     };
   }
 

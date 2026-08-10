@@ -4,6 +4,8 @@ export type OpenAiHttpDeps = {
   extraHeaders: Record<string, string>;
   requestTimeoutMs: number;
   fetchImpl: typeof fetch;
+  /** Provider id shown in user-facing failure messages ("openrouter"). */
+  label: string;
 };
 
 /**
@@ -28,9 +30,52 @@ export class OpenAiHttpError extends Error {
     public readonly url: string,
     public readonly timedOut = false,
     public readonly retryAfterMs: number | null = null,
+    /** Provider id for user-facing wording; falls back to the host. */
+    public readonly providerLabel = "",
   ) {
     super(message);
     this.name = "OpenAiHttpError";
+  }
+}
+
+/**
+ * Turn a typed cloud failure into the sentence a user should read in
+ * chat: who failed, what happened, what to do about it. The raw
+ * technical message stays on the error itself for logs. Wording follows
+ * "provider + condition + remedy"; the retry count is only claimed for
+ * classes the client actually retries.
+ */
+export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
+  const who = `"${err.providerLabel || hostOf(err.url)}"`;
+  if (err.timedOut) {
+    return `${who} took too long to answer and the request was stopped.`;
+  }
+  if (err.status === null) {
+    return (
+      `Can't reach ${who} — no response from ${hostOf(err.url)}. ` +
+      `Tried ${OPENAI_MAX_ATTEMPTS} times. Check the provider URL or your connection.`
+    );
+  }
+  if (err.status === 401 || err.status === 403) {
+    return `${who} rejected the API key (${err.status}). Check the key in the Providers panel.`;
+  }
+  if (err.status === 404) {
+    return `${who} answered 404 (not found). The model id or the base URL is likely wrong.`;
+  }
+  if (err.status === 429) {
+    return `${who} is rate-limiting this key (429). Tried ${OPENAI_MAX_ATTEMPTS} times — wait a minute and retry.`;
+  }
+  if (err.status >= 500) {
+    return `${who} is having server trouble (${err.status}). Tried ${OPENAI_MAX_ATTEMPTS} times — this is on the provider, not your setup.`;
+  }
+  return `${who} rejected the request (${err.status}).`;
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
   }
 }
 
@@ -160,6 +205,8 @@ export async function openAiFetch(
         null,
         `${deps.baseUrl}${path}`,
         true,
+        null,
+        deps.label,
       );
     }
     // fetch threw without an HTTP response: DNS failure, refused
@@ -169,6 +216,9 @@ export async function openAiFetch(
       `openai provider network error: ${detail}`,
       null,
       `${deps.baseUrl}${path}`,
+      false,
+      null,
+      deps.label,
     );
   } finally {
     clearTimeout(timer);
@@ -188,6 +238,7 @@ async function httpErrorFromResponse(
     `${deps.baseUrl}${path}`,
     false,
     parseRetryAfterMs(res.headers.get("retry-after")),
+    deps.label,
   );
 }
 

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   OpenAiHttpError,
+  humanizeOpenAiHttpError,
   openAiPostJson,
   openAiStartStream,
   type OpenAiHttpDeps,
@@ -15,6 +16,7 @@ function depsWith(fetchImpl: typeof fetch, requestTimeoutMs = 60_000): OpenAiHtt
     extraHeaders: {},
     requestTimeoutMs,
     fetchImpl,
+    label: "testprov",
   };
 }
 
@@ -201,6 +203,40 @@ describe("openAiStartStream", () => {
       {},
     ).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(OpenAiHttpError);
+  });
+});
+
+describe("humanizeOpenAiHttpError", () => {
+  const mk = (
+    status: number | null,
+    timedOut = false,
+  ): OpenAiHttpError =>
+    new OpenAiHttpError("raw", status, "https://api.x.ai/v1/y", timedOut, null, "openrouter");
+
+  it("names the provider and the remedy per failure class", () => {
+    expect(humanizeOpenAiHttpError(mk(null))).toContain('Can\'t reach "openrouter"');
+    expect(humanizeOpenAiHttpError(mk(null))).toContain("Check the provider URL");
+    expect(humanizeOpenAiHttpError(mk(401))).toContain("rejected the API key (401)");
+    expect(humanizeOpenAiHttpError(mk(403))).toContain("rejected the API key (403)");
+    expect(humanizeOpenAiHttpError(mk(404))).toContain("model id or the base URL");
+    expect(humanizeOpenAiHttpError(mk(429))).toContain("rate-limiting this key (429)");
+    expect(humanizeOpenAiHttpError(mk(500))).toContain("server trouble (500)");
+    expect(humanizeOpenAiHttpError(mk(500))).toContain("not your setup");
+    expect(humanizeOpenAiHttpError(mk(null, true))).toContain("took too long to answer");
+  });
+
+  it("claims a retry count only for classes the client retries", () => {
+    expect(humanizeOpenAiHttpError(mk(401))).not.toContain("Tried");
+    expect(humanizeOpenAiHttpError(mk(404))).not.toContain("Tried");
+    expect(humanizeOpenAiHttpError(mk(null, true))).not.toContain("Tried");
+    expect(humanizeOpenAiHttpError(mk(429))).toContain("Tried 3 times");
+    expect(humanizeOpenAiHttpError(mk(500))).toContain("Tried 3 times");
+    expect(humanizeOpenAiHttpError(mk(null))).toContain("Tried 3 times");
+  });
+
+  it("falls back to the host when no provider label is set", () => {
+    const err = new OpenAiHttpError("raw", 500, "https://api.x.ai/v1/y");
+    expect(humanizeOpenAiHttpError(err)).toContain('"api.x.ai"');
   });
 });
 
