@@ -111,6 +111,14 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "hosted Ollama, models listed without a key",
   },
   {
+    id: "orcarouter",
+    label: "OrcaRouter",
+    baseUrl: "https://api.orcarouter.ai",
+    envVar: "ORCAROUTER_API_KEY",
+    listsModelsWithoutKey: true,
+    note: "OpenAI-compatible gateway, 160+ models via one key",
+  },
+  {
     id: "lmstudio",
     label: "LM Studio (local)",
     baseUrl: "http://localhost:1234",

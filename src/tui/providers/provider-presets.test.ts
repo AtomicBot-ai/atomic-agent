@@ -44,6 +44,14 @@ describe("PROVIDER_PRESETS", () => {
     );
     expect(keyless).toContain("nous");
     expect(keyless).toContain("ollama-cloud");
+    expect(keyless).toContain("orcarouter");
+  });
+
+  it("exposes OrcaRouter as a named preset", () => {
+    expect(findProviderPreset("orcarouter")?.baseUrl).toBe(
+      "https://api.orcarouter.ai",
+    );
+    expect(findProviderPreset("orcarouter")?.envVar).toBe("ORCAROUTER_API_KEY");
   });
 
   it("returns undefined for an unknown id", () => {
