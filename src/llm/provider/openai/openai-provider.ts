@@ -20,9 +20,9 @@ import { createOpenAiStreamConsumer } from "./openai-stream-consumer.js";
 import { buildOpenAiChatBody } from "./openai-build-body.js";
 import {
   buildOpenAiHeaders,
-  openAiFetch,
   openAiGetJson,
   openAiPostJson,
+  openAiStartStream,
   type OpenAiHttpDeps,
 } from "./openai-http.js";
 import { normaliseOpenAiChatResponse } from "./openai-normalise-response.js";
@@ -91,11 +91,15 @@ export class OpenAiProvider implements LlmProvider {
     request: CompletionRequest,
   ): AsyncGenerator<StreamChunk, CompletionResult, void> {
     const body = buildOpenAiChatBody(request, this.defaultChatModel, true);
-    const res = await openAiFetch(this.http, "/v1/chat/completions", body, request, true);
-    if (!res.ok || !res.body) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`chat completion stream failed: ${res.status} ${text}`);
-    }
+    // Opening the stream (connect + status check) happens inside the
+    // client's bounded retry, strictly before the first chunk exists.
+    // From here on the stream is live and failures are terminal.
+    const res = await openAiStartStream(
+      this.http,
+      "/v1/chat/completions",
+      body,
+      request,
+    );
     let accumulated = "";
     let accumulatedReasoning = "";
     let streamFinal: StreamFinalResult | void;

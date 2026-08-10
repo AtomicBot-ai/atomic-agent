@@ -26,6 +26,7 @@ import {
   LlmFailure,
   LlamaServerError,
   ModelError,
+  OpenAiHttpError,
   ToolExecutionError,
   TransportError,
   classifyFailure,
@@ -1434,6 +1435,13 @@ function toLlmFailure(err: unknown, ctx: StepContext): LlmFailure {
       return new TransportError(err.message, err.status, err.url, { cause: err });
     }
     return new GrammarError(err.message, "", { cause: err });
+  }
+  // Cloud provider failures — any status — are provider-boundary
+  // problems, not tool bugs. A 429 or a dead key must never read as
+  // `Turn failed [tool]`. The HTTP client has already spent its bounded
+  // retry budget on the transient subset by the time this propagates.
+  if (err instanceof OpenAiHttpError) {
+    return new TransportError(err.message, err.status, err.url, { cause: err });
   }
   if (err instanceof ToolCallParseError) {
     return new GrammarError(err.message, "", { cause: err });
