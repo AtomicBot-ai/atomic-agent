@@ -172,6 +172,7 @@ Speculative batching (the runtime guessing that the model "should" have batched 
 | `src/http/route-webhooks.ts` + `webhook-template.ts` + `webhook-session-store.ts` | Generic `POST /api/webhooks/:name` ingress. Always materialises into a `TaskRecord`, never calls `runTurn` directly. See §"Background autonomy". |
 | `src/tools/tasks/` | Agent-facing self-scheduling tools (`tasks.schedule`, `tasks.cron`, `tasks.list`, `tasks.cancel`, `tasks.show`), gated by `tasks.agentToolsEnabled`. |
 | `src/llm/provider/` | Provider abstraction layer (`LlmProvider` interface) + `LlamaServerProvider` adapter. Text completion stays on `LlamaServerClient.complete` / `completeStream` (legacy `/completion` extension with GBNF + slot ids); vision routes through `LlamaServerProvider.describeImage` against `/v1/chat/completions` with OpenAI-shape `image_url` content blocks. See §"Vision (multimodal input)". |
+| `src/llm/fallback/` | Cross-provider circuit breaker (`ProviderFallbackChain`) that wraps the `llmComplete` / `llmCompleteStream` seams and fails over between configured provider ids when the active one is unavailable. Timer-free lazy probe. See §"Provider fallback chain". |
 | `src/tools/vision/` | `vision.describe` tool + `loadImageFile` helper. Registered whenever `config.vision.enabled` is true and a provider is constructed; the actual capability gate (`capabilities.vision`) is a dynamic getter that re-reads `ModelProfile` on every check, so vision availability tracks `ModelProfileManager` hot-swaps without a restart. See §"Vision (multimodal input)". |
 | `src/channels/telegram/` | `TelegramChannel` (lifecycle + live-control), `inbound-handler` (slash commands + dispatch into `runTurn`), `outbound-sender` (chunked replies + 429 retry), `approval-bridge` (inline-keyboard approvals with 8-min auto-deny), `pairing-mode` (60s window for first-DM owner claim), `telegram-settings` (`config.json` + `.env` persistence), `telegram-bot-factory` (grammy adapter). The **only** module that imports `grammy`. See §"Telegram remote-control channel". |
 | `src/tui/telegram/` | TUI "Telegram" tab: `telegram-panel-state` + `telegram-actions` + `telegram-panel-reducer` (pure UI state slice), `tui-telegram-orchestrator` (the only TUI module that touches `runtime.telegramChannel`), `telegram-key-bindings`, and the `telegram-panel` / `telegram-token-prompt` / `telegram-pairing-modal` components. See §"Telegram remote-control channel". |
@@ -1624,12 +1625,66 @@ Every terminal failure the agent loop surfaces is normalised into a canonical `L
 
 `category` is plumbed through every observability surface:
 
-- **Events.** `step_error.category` and `loop_failed.category` are mandatory fields on the `AgentLoopEvent` union.
+- **Events.** `step_error.category` and `loop_failed.category` are mandatory fields on the `AgentLoopEvent` union. The `provider_switched` variant on the same union carries fallback-chain state changes (see §"Provider fallback chain").
 - **Traces.** `TraceError.category` on the append-only NDJSON stream (see [src/tracing/trace/trace-event.ts](src/tracing/trace/trace-event.ts)).
 - **Metrics.** `AgentMetrics.recordLlmFailure({ sessionId, category })` increments `agent.llm.failure` tagged by category — fired exactly once per failed turn from the agent-loop outer catch.
 - **TUI.** `agent-event-reducer` renders `! [${category}] ${message}` in the step feed and `failed [${category}]: ${message}` in the run-status line.
 - **Sidecar protocol.** `session_failed.category` and `error.code = step_error:<category>` for the Tauri host.
 - **OpenAI SSE.** Atomic-extension clients receive `{ error, category }`; OpenAI-compatible clients receive `error.type = agent.<category>` (the `type` field is a loose string in the OpenAI error envelope).
+
+## Provider fallback chain
+
+A cross-provider circuit breaker layered **above** the single-provider reliability policy. Where the two retry layers above recover a request on the *same* provider, the fallback chain switches to a *different* configured provider when the active one is unavailable. It lives in [src/llm/fallback/](src/llm/fallback/) and wraps the `llmComplete` / `llmCompleteStream` seams in [src/runtime/bootstrap.ts](src/runtime/bootstrap.ts) — strictly **after** the per-provider retry budget (PR #90 `runOpenAiWithRetry`, `LlamaServerClient.completionRetries`) is spent, never inside it.
+
+### Chain unit and config
+
+The chain is an ordered list of **configured provider ids**, primary first. `CompletionRequest` carries no per-request model field — a provider instance pins its model at construction (`OpenAiProvider.defaultChatModel`), so a `model@provider` pair maps to one provider id in the registry; two models on the same upstream service are two provider entries. Config lives under `llm.fallback`:
+
+```jsonc
+"fallback": {
+  "chain": ["openrouter-gpt", "groq-llama"],  // ordered provider ids; every id must be configured
+  "appendLocal": true,                          // default true: append the llama-server provider id to the tail
+  "failureThreshold": 3,                        // consecutive non-immediate failures before switching
+  "cooldownMs": [30000, 60000, 300000],         // escalating ladder; last entry is the cap
+  "probeThrottleMs": 300000,                    // min gap between primary probes
+  "failureWindowMs": 86400000                   // no-error window that resets the counter + ladder step
+}
+```
+
+- `chain` defaults to `[activeTextProvider]` when absent. Unknown ids are rejected at config parse time (`parseLlmFallbackConfig`), and defensively dropped again at resolve time.
+- The **active text provider is always the primary** — `resolveFallbackChain` hoists it to the head, so a TUI hot-swap re-primes the chain and drops any active override without editing `fallback.chain`.
+- `appendLocal` auto-appends the configured `llama-server`-kind provider id to the tail (unless already present, or none is configured, or the flag is `false`).
+
+### Reset policy (circuit breaker, per provider id)
+
+- **Which failures advance** is decided by `shouldAdvance(err)` from the reliability taxonomy: `transport` and `model` categories advance (provider unreachable or model dead); `grammar` / `tool` / `cancelled` never advance (same request fails identically everywhere, or it is our bug / a user abort). One centralized predicate — both wrappers route through it.
+- **Immediate signals** (429 / 408 / any 5xx / network-null that is not our own request timeout) switch on the **first** occurrence, bypassing the threshold. All other advance-worthy failures increment a consecutive-failure counter and switch at `failureThreshold` (default 3).
+- **Sticky.** After switching, an `overrideActiveId` keeps subsequent turns on the working provider — the dead primary is **not** retried every turn.
+- **Escalating cooldown** on the failed provider: `30s → 60s → 300s` (cap), stepped each time it fails again while tripped. The counter and ladder step reset after `failureWindowMs` (24h) with no new failure, checked **lazily** on next access.
+- **Probe.** When on an override and the primary's cooldown has elapsed **and** `probeThrottleMs` (5 min) has passed since the last probe, the next turn is routed back to the primary as a throttled probe. On success: clear the override, reset the breaker, emit a one-shot "switched back" notice. On failure: re-arm (escalate) the cooldown and stay on the override.
+- **Notifications** ride a new `AgentLoopEvent`, `{ type: "provider_switched"; direction: "away" | "back"; from; to; reason }`, emitted through the same `turnController.emit` path as every other loop event — **at most one per state transition** (never on sticky turns). Bootstrap wires the chain's `noticeSink` to `emitAgentLoopEvent`.
+
+### No new timer (invariant)
+
+The probe is **lazy / turn-boundary driven** — `pickProvider()` reads `Date.now()` at the start of each completion and decides whether this turn probes. There is **no `setInterval`**: this respects the §"Background autonomy" invariant that `Scheduler` (plus the two documented carve-outs) is the only periodic timer in the runtime. If no turns arrive, no probe happens, which is correct — there is nothing to serve anyway. Same shape as the loop-detector per-turn check.
+
+### Streaming
+
+`llmCompleteStream` primes the first chunk (`primeStream`) inside the fallback attempt so a failure to **open** the stream (429/5xx before any output) advances the chain, while a stream that has begun emitting is never restarted (mirrors the openai-http "stream is live" contract). Later failures propagate as-is.
+
+### Scope note — transport is resolved per fallback provider
+
+Each attempt re-resolves `{ transport, adapter }` for the chosen link via `resolveActiveLlmSlice(providerId)`, so the request *shape* (GBNF `grammar` vs native `tools`) is correct for whichever provider actually serves the turn. `LlmStreamParams` always carries `grammar`; `tools` is populated only when the **primary's** transport is `native_tools`. A same-transport fallback (the common cloud→cloud→local case where the cloud legs share `native_tools`) is fully covered. A fallback that needs `native_tools` while the primary is grammar-only (a native-tools cloud provider placed **below** a grammar-only local primary) would reach it without a `tools` payload — an unusual ordering that is out of scope for this iteration; order native-tools providers ahead of grammar-only ones in the chain. The grammar string itself is always built for the primary model.
+
+### Locked invariants (Pinned by tests)
+
+1. **429 / 5xx switches on the first failure; non-immediate transport failures switch at the threshold.** Pinned by [src/llm/fallback/provider-fallback-chain.test.ts](src/llm/fallback/provider-fallback-chain.test.ts), [src/llm/fallback/should-advance.test.ts](src/llm/fallback/should-advance.test.ts).
+2. **Sticky — the dead primary is not re-picked every turn**; only a throttled probe returns to it. Pinned by [src/llm/fallback/provider-fallback-chain.test.ts](src/llm/fallback/provider-fallback-chain.test.ts), [src/llm/fallback/run-with-fallback.test.ts](src/llm/fallback/run-with-fallback.test.ts).
+3. **Cooldown escalates 30/60/300 and caps at 300s.** Pinned by [src/llm/fallback/provider-fallback-chain.test.ts](src/llm/fallback/provider-fallback-chain.test.ts).
+4. **`grammar` / `tool` / `cancelled` never advance.** Pinned by [src/llm/fallback/should-advance.test.ts](src/llm/fallback/should-advance.test.ts), [src/llm/fallback/run-with-fallback.test.ts](src/llm/fallback/run-with-fallback.test.ts).
+5. **Whole-chain exhaustion rethrows the last (already-humanized) error** so `loop_failed` classification is unchanged. Pinned by [src/llm/fallback/run-with-fallback.test.ts](src/llm/fallback/run-with-fallback.test.ts).
+6. **Exactly one switch notice per state transition** (away / back), none on sticky turns. Pinned by [src/llm/fallback/provider-fallback-chain.test.ts](src/llm/fallback/provider-fallback-chain.test.ts).
+7. **`appendLocal` appends the local provider when configured, nothing when not.** Pinned by [src/llm/fallback/fallback-config.test.ts](src/llm/fallback/fallback-config.test.ts).
 
 ## Traceability and replay
 

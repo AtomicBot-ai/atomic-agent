@@ -35,8 +35,10 @@ export {
 export {
   parseLlmProviderEntry,
   parseLlmProviders,
+  parseLlmFallbackConfig,
   parseUserLlmFileConfig,
   type UserLlmFileConfig,
+  type UserLlmFallbackConfig,
   type UserLlmProviderEntry,
 } from "./llm-config.js";
 export type {

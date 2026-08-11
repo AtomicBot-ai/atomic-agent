@@ -75,6 +75,14 @@ import {
   resolveModel,
   type ResolvedModel,
 } from "../llm/provider/model-resolver.js";
+import {
+  ProviderFallbackChain,
+  resolveFallbackChain,
+  runWithFallback,
+  primeStream,
+  replayPrimedStream,
+  type PrimedStream,
+} from "../llm/fallback/index.js";
 
 import { MemoryStore } from "../memory/memory-store.js";
 import { ProfileStore } from "../memory/profile-store.js";
@@ -659,6 +667,40 @@ export async function createAgentRuntime(
     },
   });
 
+  /**
+   * Single fan-out for `AgentLoopEvent`s. The loop's own `onEvent`
+   * closure (built later) routes through here, and so does the provider
+   * fallback chain's notice sink — a `provider_switched` event surfaces
+   * exactly like any other loop event (trace recorder, TUI/HTTP/sidecar
+   * event streams, host handler). Resolving the session from the per-turn
+   * ALS frame keeps two concurrent sessions from cross-contaminating.
+   */
+  const emitAgentLoopEvent = (event: AgentLoopEvent): void => {
+    const ctx = turnContext.getStore();
+    if (ctx) {
+      const recorder = recorders.get(ctx.sessionId);
+      recorder?.onAgentEvent(event);
+      turnController.emit(ctx.sessionId, event);
+    }
+    if (event.type === "loop_failed") {
+      captureError(errorReporter, event.error, {
+        source: "llm_failure",
+        category: event.category,
+      });
+    }
+    options.handlers?.onAgentEvent?.(event);
+  };
+
+  // Cross-provider fallover breaker. Owns no timer — every decision is
+  // computed lazily from the wall clock when a turn asks for a provider
+  // (AGENTS.md §"Provider fallback chain"). The notice sink lifts each
+  // one-shot switch into a `provider_switched` AgentLoopEvent.
+  const fallbackChain = new ProviderFallbackChain({
+    resolve: () => resolveFallbackChain(resolveLlmConfig(getConfig())),
+    noticeSink: (notice) =>
+      emitAgentLoopEvent({ type: "provider_switched", ...notice }),
+  });
+
   // Approval requests flow through `ApprovalRouter`: per-session
   // handlers (Telegram channel, future Slack/etc.) win, otherwise the
   // host's `onApprovalRequest` callback fires. The fallback closure
@@ -1065,11 +1107,19 @@ export async function createAgentRuntime(
     logger,
   });
 
-  /** Re-read on every inference so TUI `setActive` hot-swap takes effect. */
-  const resolveActiveLlmSlice = () => {
+  /**
+   * Re-read on every inference so TUI `setActive` hot-swap takes effect.
+   * `providerId` overrides which provider is used for this call — the
+   * fallback chain passes the chosen link's id; transport/adapter/slot
+   * affinity are then resolved for THAT provider, not the active one. An
+   * unknown id degrades to the active provider (a raced config edit).
+   */
+  const resolveActiveLlmSlice = (providerId?: string) => {
     const fresh = getConfig();
     const resolved = resolveLlmConfig(fresh);
-    const provider = providerRegistry.activeText;
+    const provider =
+      (providerId ? providerRegistry.getProvider(providerId) : undefined) ??
+      providerRegistry.activeText;
     return {
       provider,
       transport: resolveActiveToolTransport(resolved, provider),
@@ -1274,63 +1324,69 @@ export async function createAgentRuntime(
 
   const llmComplete =
     options.overrides?.llamaComplete ??
-    (async (params) => {
-      const { provider, transport } = resolveActiveLlmSlice();
-      const base = {
-        prompt: params.prompt,
-        sessionId: params.sessionId,
-        ...(typeof params.maxTokens === "number"
-          ? { maxTokens: params.maxTokens }
-          : {}),
-        ...(params.signal ? { signal: params.signal } : {}),
-      };
-      const result =
-        transport === "native_tools"
-          ? await provider.complete({
-              ...base,
-              ...(params.tools ? { tools: params.tools } : {}),
-              ...(params.toolChoice !== undefined
-                ? { toolChoice: params.toolChoice }
-                : {}),
-              ...(params.parallelToolCalls !== undefined
-                ? { parallelToolCalls: params.parallelToolCalls }
-                : {}),
-              // Cloud sub-runners (reflection / link-gen / vote /
-              // rewriter / distill) cannot rely on GBNF — OpenAI-
-              // compatible APIs do not understand it. They pass a
-              // `responseFormat` JSON-Schema envelope which we
-              // forward verbatim. The main agent loop never sets
-              // `responseFormat` (it uses `tools` instead), so this
-              // branch is a no-op there.
-              ...(params.responseFormat
-                ? { responseFormat: params.responseFormat }
-                : {}),
-            })
-          : await provider.complete({
-              ...base,
-              grammar: params.grammar,
-              slotId: params.slotId,
-              cachePrompt: params.slotId >= 0,
+    (async (params) =>
+      // Route through the cross-provider fallback chain. Each `attempt`
+      // resolves the transport/adapter for THAT link's provider; the
+      // per-provider retry budget (PR #90) still runs one level below,
+      // inside `provider.complete`, so the breaker only ever sees an
+      // error after those retries are spent.
+      runWithFallback(fallbackChain, async (providerId) => {
+        const { provider, transport } = resolveActiveLlmSlice(providerId);
+        const base = {
+          prompt: params.prompt,
+          sessionId: params.sessionId,
+          ...(typeof params.maxTokens === "number"
+            ? { maxTokens: params.maxTokens }
+            : {}),
+          ...(params.signal ? { signal: params.signal } : {}),
+        };
+        const result =
+          transport === "native_tools"
+            ? await provider.complete({
+                ...base,
+                ...(params.tools ? { tools: params.tools } : {}),
+                ...(params.toolChoice !== undefined
+                  ? { toolChoice: params.toolChoice }
+                  : {}),
+                ...(params.parallelToolCalls !== undefined
+                  ? { parallelToolCalls: params.parallelToolCalls }
+                  : {}),
+                // Cloud sub-runners (reflection / link-gen / vote /
+                // rewriter / distill) cannot rely on GBNF — OpenAI-
+                // compatible APIs do not understand it. They pass a
+                // `responseFormat` JSON-Schema envelope which we
+                // forward verbatim. The main agent loop never sets
+                // `responseFormat` (it uses `tools` instead), so this
+                // branch is a no-op there.
+                ...(params.responseFormat
+                  ? { responseFormat: params.responseFormat }
+                  : {}),
+              })
+            : await provider.complete({
+                ...base,
+                grammar: params.grammar,
+                slotId: params.slotId,
+                cachePrompt: params.slotId >= 0,
+              });
+        if (result.usage) {
+          const model = resolveModelPricing(result.modelId);
+          if (costAccumulator) {
+            costAccumulator.recordTurn({
+              modelId: result.modelId,
+              usage: result.usage,
+              ...(model ? { model } : {}),
             });
-      if (result.usage) {
-        const model = resolveModelPricing(result.modelId);
-        if (costAccumulator) {
-          costAccumulator.recordTurn({
-            modelId: result.modelId,
-            usage: result.usage,
-            ...(model ? { model } : {}),
-          });
+          }
+          if (params.sessionId) {
+            turnUsageMeter.record({
+              sessionId: params.sessionId,
+              usage: result.usage,
+              ...(model ? { model } : {}),
+            });
+          }
         }
-        if (params.sessionId) {
-          turnUsageMeter.record({
-            sessionId: params.sessionId,
-            usage: result.usage,
-            ...(model ? { model } : {}),
-          });
-        }
-      }
-      return result;
-    });
+        return result;
+      }));
 
   /**
    * Fold a streamed completion's usage into the turn meter. The stream's
@@ -1357,42 +1413,62 @@ export async function createAgentRuntime(
     return result;
   }
 
+  /**
+   * Open a completion stream against one provider id, priming the first
+   * chunk so a failure to OPEN the stream (429/5xx before any output)
+   * surfaces synchronously and the fallback chain can advance. Once the
+   * first chunk lands the stream is live and is never restarted — later
+   * failures propagate as-is (mirrors the openai-http "stream is live"
+   * contract).
+   */
+  const openStreamPrimed = (
+    providerId: string,
+    params: LlmStreamParams,
+  ): Promise<PrimedStream<StreamChunk, CompletionResult>> => {
+    const { provider, transport } = resolveActiveLlmSlice(providerId);
+    const base = {
+      prompt: params.prompt,
+      sessionId: params.sessionId,
+      ...(params.signal ? { signal: params.signal } : {}),
+    };
+    const stream =
+      transport === "native_tools"
+        ? provider.completeStream({
+            ...base,
+            ...(params.tools ? { tools: params.tools } : {}),
+            ...(params.toolChoice !== undefined
+              ? { toolChoice: params.toolChoice }
+              : {}),
+            ...(params.parallelToolCalls !== undefined
+              ? { parallelToolCalls: params.parallelToolCalls }
+              : {}),
+          })
+        : provider.completeStream({
+            ...base,
+            grammar: params.grammar,
+            slotId: params.slotId,
+            cachePrompt: params.slotId >= 0,
+          });
+    return primeStream(stream);
+  };
+
   const llmCompleteStream = options.overrides?.disableStreaming
     ? undefined
     : options.overrides?.llamaCompleteStream ??
       (options.overrides?.llamaComplete
         ? undefined
         : (params) => {
-            const { provider, transport } = resolveActiveLlmSlice();
-            const base = {
-              prompt: params.prompt,
-              sessionId: params.sessionId,
-              ...(params.signal ? { signal: params.signal } : {}),
-            };
-            if (transport === "native_tools") {
-              return meterStream(
-                params.sessionId,
-                provider.completeStream({
-                  ...base,
-                  ...(params.tools ? { tools: params.tools } : {}),
-                  ...(params.toolChoice !== undefined
-                    ? { toolChoice: params.toolChoice }
-                    : {}),
-                  ...(params.parallelToolCalls !== undefined
-                    ? { parallelToolCalls: params.parallelToolCalls }
-                    : {}),
-                }),
+            async function* run(): AsyncGenerator<
+              StreamChunk,
+              CompletionResult,
+              void
+            > {
+              const primed = await runWithFallback(fallbackChain, (id) =>
+                openStreamPrimed(id, params),
               );
+              return yield* replayPrimedStream(primed);
             }
-            return meterStream(
-              params.sessionId,
-              provider.completeStream({
-                ...base,
-                grammar: params.grammar,
-                slotId: params.slotId,
-                cachePrompt: params.slotId >= 0,
-              }),
-            );
+            return meterStream(params.sessionId, run());
           });
 
   const taskStore = new TaskStore({ dbFile: config.paths.tasksDbFile });
@@ -1795,28 +1871,11 @@ export async function createAgentRuntime(
           }),
         }
       : {}),
-    onEvent: (event: AgentLoopEvent) => {
-      // The loop has no awareness of which session it is currently
-      // driving; resolve that from the per-turn ALS frame so two
-      // concurrent sessions never cross-contaminate trace records or
-      // per-submission hooks.
-      const ctx = turnContext.getStore();
-      if (ctx) {
-        const recorder = recorders.get(ctx.sessionId);
-        recorder?.onAgentEvent(event);
-        turnController.emit(ctx.sessionId, event);
-      }
-      // Report terminal LLM failures (never `cancelled` — filtered inside
-      // captureError). The scrubber strips everything but the error type,
-      // category, and path-stripped frames.
-      if (event.type === "loop_failed") {
-        captureError(errorReporter, event.error, {
-          source: "llm_failure",
-          category: event.category,
-        });
-      }
-      options.handlers?.onAgentEvent?.(event);
-    },
+    // The loop has no awareness of which session it is currently driving;
+    // `emitAgentLoopEvent` resolves that from the per-turn ALS frame so
+    // two concurrent sessions never cross-contaminate trace records or
+    // per-submission hooks, and reports terminal LLM failures to Sentry.
+    onEvent: emitAgentLoopEvent,
     metrics,
     logger,
   };

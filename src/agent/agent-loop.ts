@@ -305,7 +305,22 @@ export type AgentLoopEvent =
    * LLM-failure taxonomy (see `src/llm/reliability/`); downstream
    * consumers never need to classify the error themselves.
    */
-  | { type: "loop_failed"; error: Error; category: LlmFailureCategory };
+  | { type: "loop_failed"; error: Error; category: LlmFailureCategory }
+  /**
+   * The provider fallback chain changed the active provider for this
+   * turn. `direction: "away"` = the primary was unreachable and we
+   * switched to a fallback; `direction: "back"` = a throttled probe found
+   * the primary healthy again and we returned to it. Emitted at most once
+   * per state transition (never on sticky turns). See AGENTS.md
+   * §"Provider fallback chain".
+   */
+  | {
+      type: "provider_switched";
+      direction: "away" | "back";
+      from: string;
+      to: string;
+      reason: string;
+    };
 
 export interface RunTurnResult {
   session: SessionState;
