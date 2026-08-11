@@ -187,8 +187,23 @@ export function listAimlapiChatPicks(): readonly AimlapiChatPick[] {
  * we synthesise an entry from `info.contextLength` + `features`.
  *
  * Falls back to the static catalog on network or parse errors.
+ *
+ * Concurrent callers share one request: the TUI triggers this from both
+ * the panel prefetch and the wizard's picker step, and doubling the
+ * fetch would only race two writers over the same module cache.
  */
-export async function refreshAimlapiChatCatalogFromApi(): Promise<boolean> {
+export function refreshAimlapiChatCatalogFromApi(): Promise<boolean> {
+  if (inFlight) return inFlight;
+  const request = fetchAndCacheCatalog().finally(() => {
+    inFlight = null;
+  });
+  inFlight = request;
+  return request;
+}
+
+let inFlight: Promise<boolean> | null = null;
+
+async function fetchAndCacheCatalog(): Promise<boolean> {
   try {
     const res = await fetch(MODELS_URL, {
       signal: AbortSignal.timeout(20_000),

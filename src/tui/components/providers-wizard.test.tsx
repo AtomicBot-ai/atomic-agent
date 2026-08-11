@@ -151,6 +151,89 @@ describe("ProvidersWizard cloud model pickers", () => {
     expect(text).not.toContain("vendor/model-304");
   });
 
+  it("triggers the live refresh when the picker opens cold and swaps the list in", async () => {
+    // Fresh module registry: the picker must start from the static
+    // catalog and fire the fetch itself, not inherit a cache warmed by
+    // the tests above.
+    vi.resetModules();
+    const [{ ProvidersWizard: FreshWizard }, wizardState] = await Promise.all([
+      import("./providers-wizard.js"),
+      import("../providers/providers-wizard-state.js"),
+    ]);
+
+    let releaseFetch: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const many = Array.from({ length: 305 }, (_, i) => ({
+      id: `vendor/model-${String(i).padStart(3, "0")}`,
+      name: `Model ${i}`,
+      context_length: 128_000,
+      pricing: { prompt: "0.000001", completion: "0.000002" },
+      supported_parameters: ["tools"],
+      architecture: { input_modalities: ["text"] },
+    }));
+    const fetchMock = vi.fn(async () => {
+      await gate;
+      return { ok: true, json: async () => ({ data: many }) };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const wizard = {
+      ...wizardState.createProvidersWizardState("add", { kind: "openrouter" }),
+      phase: "pick_chat_model" as const,
+      cursor: 0,
+    };
+    const { lastFrame } = render(<FreshWizard wizard={wizard} />);
+    await flush();
+
+    // While the fetch is in flight: static list + a visible loading note.
+    let text = stripAnsi(lastFrame() ?? "");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://openrouter.ai/api/v1/models",
+    );
+    expect(text).toContain("updating model list from API");
+    expect(text).toContain("openrouter/auto");
+    expect(text).not.toContain("/305)");
+
+    releaseFetch();
+    await flush();
+
+    text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("(1/305)");
+    expect(text).not.toContain("updating model list from API");
+  });
+
+  it("stays on the static list without crashing when the refresh fails", async () => {
+    vi.resetModules();
+    const [{ ProvidersWizard: FreshWizard }, wizardState, aimlapiCatalog] =
+      await Promise.all([
+        import("./providers-wizard.js"),
+        import("../providers/providers-wizard-state.js"),
+        import("../../llm/provider/aimlapi/aimlapi-models-catalog.js"),
+      ]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("offline");
+      }),
+    );
+
+    const wizard = {
+      ...wizardState.createProvidersWizardState("add", { kind: "aimlapi" }),
+      phase: "pick_chat_model" as const,
+      cursor: 0,
+    };
+    const { lastFrame } = render(<FreshWizard wizard={wizard} />);
+    await flush();
+
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("Chat model (AI/ML API)");
+    // The static head entry is still on screen and the loading note is gone.
+    expect(text).toContain(aimlapiCatalog.AIMLAPI_CHAT_MODEL_ORDER[0]!);
+    expect(text).not.toContain("updating model list from API");
+  });
+
   it("windows the aimlapi picker when the live catalog has 300+ models", async () => {
     const many = Array.from({ length: 337 }, (_, i) => ({
       id: `vendor/model-${String(i).padStart(3, "0")}`,

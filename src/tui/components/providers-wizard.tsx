@@ -1,6 +1,14 @@
 import { Box, Text } from "ink";
 import { useEffect, useState, type ReactElement } from "react";
+import {
+  getCachedAimlapiChatPicks,
+  refreshAimlapiChatCatalogFromApi,
+} from "../../llm/provider/aimlapi/fetch-aimlapi-chat-catalog.js";
 import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import {
+  getCachedOpenRouterChatPicks,
+  refreshOpenRouterChatCatalogFromApi,
+} from "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
 import {
   apiKeyForWizard,
   baseUrlForWizard,
@@ -10,12 +18,11 @@ import { theme } from "../theme/theme.js";
 import { findProviderPreset } from "../providers/provider-presets.js";
 import {
   KIND_ROW_ORDER,
+  listChatModelsForKind,
   type ProvidersWizardKindRow,
 } from "../providers/providers-wizard-phases.js";
 import {
-  listAimlapiChatModels,
   listAimlapiEmbeddingModels,
-  listOpenRouterChatModels,
   listOpenRouterEmbeddingModels,
   OPENAI_COMPAT_DEFAULT_BASE_URL,
   OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
@@ -168,6 +175,68 @@ function CompatChatModelStep(props: {
   });
 }
 
+/**
+ * Chat-model picker for the two curated cloud kinds. The static catalog
+ * renders immediately; a live refresh runs in this component the moment
+ * the step opens, because nothing else in the wizard flow is guaranteed
+ * to have fetched it (the picker used to render whatever happened to be
+ * in the module cache, which in a fresh TUI process was always the
+ * short static list). While the fetch is in flight the hint says so;
+ * when it lands, the state flip re-renders this component and the list
+ * functions re-read the now-live cache. A failed fetch resolves `false`
+ * and simply leaves the static list on screen.
+ */
+function CatalogChatModelStep(props: {
+  wizard: ProvidersWizardState;
+  kind: "openrouter" | "aimlapi";
+}): ReactElement {
+  const { wizard: w, kind } = props;
+  const getCached =
+    kind === "openrouter" ? getCachedOpenRouterChatPicks : getCachedAimlapiChatPicks;
+  const [loading, setLoading] = useState(() => getCached() === null);
+
+  useEffect(() => {
+    if (getCached() !== null) {
+      setLoading(false);
+      return;
+    }
+    let alive = true;
+    setLoading(true);
+    const refresh =
+      kind === "openrouter"
+        ? refreshOpenRouterChatCatalogFromApi
+        : refreshAimlapiChatCatalogFromApi;
+    refresh().then(
+      () => {
+        if (alive) setLoading(false);
+      },
+      () => {
+        // `refresh` swallows its own errors, but a rejection here must
+        // still clear the spinner rather than crash the wizard.
+        if (alive) setLoading(false);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+    // `getCached` is derived from `kind`; re-running on kind alone is exact.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind]);
+
+  const title =
+    kind === "openrouter" ? "Chat model (OpenRouter)" : "Chat model (AI/ML API)";
+  const actionsHint = loading
+    ? "PgUp/PgDn jump · Enter select · Esc cancel · updating model list from API…"
+    : "PgUp/PgDn jump · Enter select · Esc cancel";
+  return renderPickList({
+    title,
+    options: listChatModelsForKind(kind),
+    cursor: w.cursor,
+    moveHint: "j/k move",
+    actionsHint,
+  });
+}
+
 export function ProvidersWizard(props: {
   wizard: ProvidersWizardState;
 }): ReactElement {
@@ -224,24 +293,11 @@ export function ProvidersWizard(props: {
     );
   }
 
-  if (w.phase === "pick_chat_model" && w.kind === "openrouter") {
-    return renderPickList({
-      title: "Chat model (OpenRouter)",
-      options: listOpenRouterChatModels(),
-      cursor: w.cursor,
-      moveHint: "j/k move",
-      actionsHint: "PgUp/PgDn jump · Enter select · Esc cancel",
-    });
-  }
-
-  if (w.phase === "pick_chat_model" && w.kind === "aimlapi") {
-    return renderPickList({
-      title: "Chat model (AI/ML API)",
-      options: listAimlapiChatModels(),
-      cursor: w.cursor,
-      moveHint: "j/k move",
-      actionsHint: "PgUp/PgDn jump · Enter select · Esc cancel",
-    });
+  if (
+    w.phase === "pick_chat_model" &&
+    (w.kind === "openrouter" || w.kind === "aimlapi")
+  ) {
+    return <CatalogChatModelStep wizard={w} kind={w.kind} />;
   }
 
   if (w.phase === "pick_embedding" && w.kind === "openrouter") {
