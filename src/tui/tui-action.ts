@@ -35,7 +35,7 @@ export type TuiAction =
    * Mirror the live approval-gate state into `state.session` so the
    * diagnostics line ("approval on/off") tracks the Privacy-tab toggle.
    */
-  | { type: "approval_required_changed"; approvalRequired: boolean }
+  | { type: "approval_level_changed"; approvalLevel: number }
   | { type: "session_created"; sessionId: string }
   | { type: "tab_changed"; tab: TuiTab }
   | { type: "ui_mode_toggled" }

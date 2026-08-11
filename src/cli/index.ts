@@ -83,7 +83,7 @@ function printHelp(): void {
     ...COMMANDS.map((c) => `  ${c.name.padEnd(8)} ${c.summary}`),
     "",
     "User config (edit via `atomic-agent config`):",
-    "  <stateDir>/config.json         localModels.url, localModels.mode, log.level, agent.{tokenBudget,maxSteps,toolTimeoutMs,approvalRequired}",
+    "  <stateDir>/config.json         localModels.url, localModels.mode, log.level, agent.{tokenBudget,maxSteps,toolTimeoutMs,approvalLevel}",
     "",
     "Bootstrap env:",
     "  ATOMIC_AGENT_STATE_DIR         Directory for persistent state + config.json (default ~/.atomic-agent)",

@@ -1,18 +1,20 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveServeApprovalRequired } from "./serve-command.js";
+import { resolveBootApprovalLevel } from "../approval/approval-level.js";
 
-describe("resolveServeApprovalRequired", () => {
-  it("matches the run/tui boot contract: persisted flag is the baseline", () => {
-    // Persisted agent.approvalRequired=true, no flag: approvals stay on.
-    expect(resolveServeApprovalRequired(false, true)).toBe(true);
-    // The Privacy-tab toggle persisted false: serve must honor it, the
+// `serve` shares the boot contract with `run` and `tui` by calling the
+// same resolver; this test pins the contract at serve's import site.
+describe("serve boot approval level (resolveBootApprovalLevel)", () => {
+  it("matches the run/tui boot contract: persisted level is the baseline", () => {
+    // Persisted agent.approvalLevel=1, no flag: everything still asks.
+    expect(resolveBootApprovalLevel(false, 1)).toBe(1);
+    // The Privacy-tab ladder persisted 3: serve must honor it, the
     // panel promises "applies to future runs too".
-    expect(resolveServeApprovalRequired(false, false)).toBe(false);
+    expect(resolveBootApprovalLevel(false, 3)).toBe(3);
   });
 
-  it("--no-approval can only force approvals off, never back on", () => {
-    expect(resolveServeApprovalRequired(true, true)).toBe(false);
-    expect(resolveServeApprovalRequired(true, false)).toBe(false);
+  it("--no-approval can only force level 5, never a stricter level", () => {
+    expect(resolveBootApprovalLevel(true, 1)).toBe(5);
+    expect(resolveBootApprovalLevel(true, 5)).toBe(5);
   });
 });

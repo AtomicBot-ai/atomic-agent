@@ -50,7 +50,7 @@ function llmStateWithCatalog(): TuiState {
       llamaUrl: "http://127.0.0.1:19091",
       browserChannel: "chrome",
       browserHeadless: true,
-      approvalRequired: false,
+      approvalLevel: 5,
       maxSteps: 20,
       skillCount: 0,
     },

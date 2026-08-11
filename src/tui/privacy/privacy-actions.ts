@@ -1,3 +1,5 @@
+import type { ApprovalLevel } from "../../approval/approval-level.js";
+
 /**
  * Reducer actions specific to the Privacy tab. The orchestrator and the
  * keyboard layer emit these; the reducer folds them into
@@ -8,7 +10,7 @@ export type PrivacyAction =
   | {
       type: "privacy_synced";
       analyticsEnabled: boolean;
-      approveEverything: boolean;
+      approvalLevel: ApprovalLevel;
     }
   | { type: "privacy_action_started" }
   | { type: "privacy_action_settled"; message?: string; error?: string }

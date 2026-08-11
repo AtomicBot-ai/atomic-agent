@@ -103,7 +103,7 @@ describe("sidecar send_message concurrency", () => {
 
     runtime = await createAgentRuntime({
       workingDir,
-      approvalRequired: false,
+      approvalLevel: 5,
       overrides: {
         browserBackend: new FakeBrowserBackend(),
         skipLlamaHealthCheck: true,

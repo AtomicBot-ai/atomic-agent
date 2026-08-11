@@ -308,19 +308,45 @@ describe("dispatchSlashCommand", () => {
       { type: "ui_mode_set", mode: "debug" },
       { type: "tab_changed", tab: "privacy" },
     ]);
-    expect(result.approveEverythingVerb).toBeUndefined();
+    expect(result.approvalLevelSet).toBeUndefined();
   });
 
-  it("emits approveEverythingVerb and opens the tab for /privacy approve on|off", () => {
+  it("emits approvalLevelSet and opens the tab for /privacy level 1..5", () => {
+    for (const level of [1, 2, 3, 4, 5]) {
+      const result = dispatchSlashCommand(`/privacy level ${level}`);
+      expect(result.approvalLevelSet).toBe(level);
+      expect(result.actions).toEqual([
+        { type: "ui_mode_set", mode: "debug" },
+        { type: "tab_changed", tab: "privacy" },
+      ]);
+    }
+  });
+
+  it("rejects out-of-range or non-numeric /privacy level arguments", () => {
+    for (const raw of [
+      "/privacy level",
+      "/privacy level 0",
+      "/privacy level 6",
+      "/privacy level 2.5",
+      "/privacy level max",
+    ]) {
+      const result = dispatchSlashCommand(raw);
+      expect(result.approvalLevelSet).toBeUndefined();
+      expect(result.actions).toEqual([]);
+      expect(result.systemMessage).toContain("/privacy level 1 | 2 | 3 | 4 | 5");
+    }
+  });
+
+  it("keeps /privacy approve on|off as aliases for levels 5 and 1", () => {
     const on = dispatchSlashCommand("/privacy approve on");
-    expect(on.approveEverythingVerb).toBe("on");
+    expect(on.approvalLevelSet).toBe(5);
     expect(on.actions).toEqual([
       { type: "ui_mode_set", mode: "debug" },
       { type: "tab_changed", tab: "privacy" },
     ]);
 
     const off = dispatchSlashCommand("/privacy approve off");
-    expect(off.approveEverythingVerb).toBe("off");
+    expect(off.approvalLevelSet).toBe(1);
     expect(off.actions).toEqual([
       { type: "ui_mode_set", mode: "debug" },
       { type: "tab_changed", tab: "privacy" },
@@ -332,7 +358,7 @@ describe("dispatchSlashCommand", () => {
     // asking", so the target state must be named.
     for (const raw of ["/privacy approve", "/privacy approve maybe"]) {
       const result = dispatchSlashCommand(raw);
-      expect(result.approveEverythingVerb).toBeUndefined();
+      expect(result.approvalLevelSet).toBeUndefined();
       expect(result.actions).toEqual([]);
       expect(result.systemMessage).toContain("/privacy approve on | off");
     }
@@ -341,6 +367,6 @@ describe("dispatchSlashCommand", () => {
   it("still routes /privacy analytics <verb> to the analytics side-effect", () => {
     const result = dispatchSlashCommand("/privacy analytics off");
     expect(result.analyticsVerb).toBe("disable");
-    expect(result.approveEverythingVerb).toBeUndefined();
+    expect(result.approvalLevelSet).toBeUndefined();
   });
 });

@@ -8,7 +8,7 @@ const SESSION = {
   llamaUrl: "http://127.0.0.1:8080",
   browserChannel: "chromium",
   browserHeadless: false,
-  approvalRequired: false,
+  approvalLevel: 5,
   maxSteps: 8,
   skillCount: 0,
 };

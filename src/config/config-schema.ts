@@ -1,8 +1,11 @@
 import type { TaskSchedule } from "../tasks/task-types.js";
+import type { ApprovalLevel } from "../approval/approval-level.js";
 import {
   parseUserLlmFileConfig,
   type UserLlmFileConfig,
 } from "./llm-config.js";
+
+export type { ApprovalLevel } from "../approval/approval-level.js";
 import type { DotenvLoadResult } from "./load-dotenv.js";
 import { isKnownLocalModelId } from "../local-llm/models-catalog.js";
 import {
@@ -161,7 +164,12 @@ export interface AtomicAgentConfig {
     tokenBudget: number;
     maxSteps: number;
     toolTimeoutMs: number;
-    approvalRequired: boolean;
+    /**
+     * Boot value for the five-step approval ladder (1 = ask for
+     * everything … 5 = approve everything). The live value is owned by
+     * the ApprovalGate; see `runtime.setApprovalLevel`.
+     */
+    approvalLevel: ApprovalLevel;
     stablePrefixHashSalt: string;
     /**
      * Safety-net ceiling for the `### conversation` section of the prompt.
@@ -888,7 +896,12 @@ export interface UserConfigFile {
     tokenBudget: number;
     maxSteps: number;
     toolTimeoutMs: number;
-    approvalRequired: boolean;
+    /**
+     * Five-step approval ladder (config v37). Replaces the binary
+     * `approvalRequired`; the legacy key is still read once for
+     * migration (see `resolveApprovalLevel`) and never written back.
+     */
+    approvalLevel: ApprovalLevel;
     conversationMaxTokens: number;
     worldSnapshotMaxTokens: number;
   };
@@ -1372,7 +1385,13 @@ export interface UserConfigFile {
 // root directories for `os.fs.locate_project` (issue #77 fuzzy
 // project-name resolution). Older files transparently inherit `[]` —
 // no directory is ever scanned unless the user declares it.
-export const USER_CONFIG_VERSION = 36 as const;
+// v37: `agent.approvalRequired` (binary) became `agent.approvalLevel`
+// (five-step ladder, 1 = ask for everything … 5 = approve everything).
+// Migration is presence-driven, not version-gated: whenever the new key
+// is absent, a legacy `approvalRequired: false` maps to level 5 and
+// `true`/absent maps to level 1 — both preserve the old behaviour
+// exactly. The legacy key is never written back.
+export const USER_CONFIG_VERSION = 37 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1488,6 +1507,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   33,
   34,
   35,
+  36,
   USER_CONFIG_VERSION,
 ];
 
@@ -1518,7 +1538,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     tokenBudget: 3000,
     maxSteps: 25,
     toolTimeoutMs: 60_000,
-    approvalRequired: true,
+    approvalLevel: 1,
     conversationMaxTokens: 32_000,
     worldSnapshotMaxTokens: 8_000,
   },
@@ -2095,6 +2115,45 @@ function resolveHttpApprovalMode(
     return "never";
   }
   return parseHttpApprovalMode(raw ?? USER_CONFIG_DEFAULTS.http.approvalMode, field);
+}
+
+export function parseApprovalLevel(raw: unknown, field: string): ApprovalLevel {
+  if (
+    typeof raw === "number" &&
+    Number.isInteger(raw) &&
+    raw >= 1 &&
+    raw <= 5
+  ) {
+    return raw as ApprovalLevel;
+  }
+  throw new ConfigValidationError(
+    field,
+    `expected an integer between 1 and 5, got ${JSON.stringify(raw)}`,
+  );
+}
+
+/**
+ * v37 migration: the binary `agent.approvalRequired` became the
+ * five-step `agent.approvalLevel`. The new key wins whenever present;
+ * otherwise the legacy boolean maps onto the levels that reproduce its
+ * behaviour exactly — `false` ("approve everything") becomes level 5,
+ * `true` becomes level 1 — and an absent pair falls back to the level-1
+ * default. Presence-driven rather than version-gated so hand-written
+ * harness configs that still carry only the boolean keep working. The
+ * legacy key is validated when present (garbage still fails loudly) and
+ * is never written back: `UserConfigFile` no longer has the field.
+ */
+function resolveApprovalLevel(
+  rawLevel: unknown,
+  rawLegacyRequired: unknown,
+): ApprovalLevel {
+  if (rawLevel !== undefined && rawLevel !== null) {
+    return parseApprovalLevel(rawLevel, "agent.approvalLevel");
+  }
+  if (rawLegacyRequired !== undefined && rawLegacyRequired !== null) {
+    return parseBool(rawLegacyRequired, "agent.approvalRequired") ? 1 : 5;
+  }
+  return USER_CONFIG_DEFAULTS.agent.approvalLevel;
 }
 
 export function parseRewriterGateMode(
@@ -2772,9 +2831,9 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         agent.toolTimeoutMs ?? USER_CONFIG_DEFAULTS.agent.toolTimeoutMs,
         "agent.toolTimeoutMs",
       ),
-      approvalRequired: parseBool(
-        agent.approvalRequired ?? USER_CONFIG_DEFAULTS.agent.approvalRequired,
-        "agent.approvalRequired",
+      approvalLevel: resolveApprovalLevel(
+        agent.approvalLevel,
+        agent.approvalRequired,
       ),
       conversationMaxTokens: parsePositiveInt(
         agent.conversationMaxTokens ??

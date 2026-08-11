@@ -56,7 +56,7 @@ describe("configCommand", () => {
         tokenBudget: 3000,
         maxSteps: 42,
         toolTimeoutMs: 12_000,
-        approvalRequired: false,
+        approvalLevel: 5,
         conversationMaxTokens: 32_000,
         worldSnapshotMaxTokens: 8_000,
       },

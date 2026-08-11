@@ -30,7 +30,7 @@ export function DebugDiagnosticsLine({
     latency,
     kv,
     tools,
-    session.approvalRequired ? "approval on" : "approval off",
+    `approval L${session.approvalLevel}`,
     `skills ${session.skillCount}`,
   ].join(` ${theme.glyphs.pipeSeparator} `);
 

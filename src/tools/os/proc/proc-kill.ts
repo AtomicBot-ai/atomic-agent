@@ -41,6 +41,7 @@ export function buildOsProcKillTool(
         {
           sessionId: ctx.sessionId,
           tool: "os.proc.kill",
+          category: "proc_kill",
           reason: `send ${args.signal} to pid ${args.pid}`,
           preview,
           affectedResources: [`pid:${args.pid}`],

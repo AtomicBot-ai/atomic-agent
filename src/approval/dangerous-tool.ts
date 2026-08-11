@@ -1,11 +1,12 @@
 import type { ApprovalGate } from "./approval-gate.js";
+import type { ApprovalCategory } from "./approval-level.js";
 
 export interface DangerousToolOptions {
   approvals: ApprovalGate;
   /**
    * Test-only seam: production wiring always passes `true` (see the
    * bootstrap's `dangerous` options), and the ApprovalGate owns the live
-   * switch via its auto-approve mode. `false` here skips the gate
+   * switch via its approval level. `false` here skips the gate
    * entirely and exists so unit tests can exercise tools without one.
    */
   approvalRequired: boolean;
@@ -14,6 +15,8 @@ export interface DangerousToolOptions {
 export interface ApprovalPrompt {
   sessionId: string;
   tool: string;
+  /** Request category — decides at which approval level the prompt goes silent. */
+  category: ApprovalCategory;
   reason: string;
   preview?: string;
   affectedResources?: string[];
@@ -45,6 +48,7 @@ export async function requireApproval(
     {
       sessionId: prompt.sessionId,
       tool: prompt.tool,
+      category: prompt.category,
       reason: prompt.reason,
       ...(prompt.preview !== undefined ? { preview: prompt.preview } : {}),
       ...(prompt.affectedResources !== undefined

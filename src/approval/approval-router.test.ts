@@ -8,6 +8,7 @@ function req(sessionId: string, approvalId = "a1"): ApprovalRequest {
     approvalId,
     sessionId,
     tool: "os.shell.run",
+    category: "shell",
     reason: "test",
   };
 }

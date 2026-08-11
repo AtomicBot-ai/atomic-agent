@@ -8,7 +8,7 @@ describe("POST /api/approval/resolve", () => {
   let harness: Harness;
 
   beforeEach(async () => {
-    harness = await startTestHarness({ approvalRequired: true });
+    harness = await startTestHarness({ approvalLevel: 1 });
   });
 
   afterEach(async () => {
@@ -24,6 +24,7 @@ describe("POST /api/approval/resolve", () => {
     const pending = harness.runtime.approvals.request({
       sessionId: "s-test",
       tool: "os.shell.run",
+      category: "shell",
       reason: "test",
       approvalId: "approval-1",
     });

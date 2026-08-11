@@ -1,9 +1,23 @@
 import { randomUUID } from "node:crypto";
+import {
+  clampApprovalLevel,
+  isAutoApprovedAt,
+  MIN_APPROVAL_LEVEL,
+  type ApprovalCategory,
+  type ApprovalLevel,
+} from "./approval-level.js";
 
 export interface ApprovalRequest {
   approvalId: string;
   sessionId: string;
   tool: string;
+  /**
+   * What kind of action is being gated. Decides whether the current
+   * approval level auto-approves the request; call sites categorise
+   * because only they know the context (fs tools know the target path,
+   * the shell tool knows the guard verdict, and so on).
+   */
+  category: ApprovalCategory;
   reason: string;
   /** Human-readable preview of the action (command, diff snippet, URL, …). */
   preview?: string;
@@ -40,26 +54,27 @@ export class ApprovalGate {
     (decision: ApprovalDecision) => void
   >();
   private readonly emitter: ApprovalEmitter;
-  private autoApprove: boolean;
+  private level: ApprovalLevel;
 
-  constructor(options: { emit: ApprovalEmitter; autoApprove?: boolean }) {
+  constructor(options: { emit: ApprovalEmitter; level?: ApprovalLevel }) {
     this.emitter = options.emit;
-    this.autoApprove = options.autoApprove ?? false;
+    this.level = options.level ?? MIN_APPROVAL_LEVEL;
   }
 
   /**
-   * Flip auto-approve at runtime. `true` means every subsequent
-   * `request()` resolves approved immediately without emitting a prompt;
-   * `false` restores interactive approvals. Already-pending requests are
-   * not resolved retroactively — they still wait for their decision.
+   * Move the approval level at runtime, in either direction. Out-of-range
+   * input is clamped to [1, 5]. Level 1 prompts for every request; level
+   * 5 auto-approves everything; levels in between auto-approve by
+   * request category (see `approval-level.ts`). Already-pending requests
+   * are not resolved retroactively — they still wait for their decision.
    */
-  setAutoApprove(value: boolean): void {
-    this.autoApprove = value;
+  setLevel(level: number): void {
+    this.level = clampApprovalLevel(level);
   }
 
-  /** Current auto-approve state (live value, not the constructor arg). */
-  isAutoApproveEnabled(): boolean {
-    return this.autoApprove;
+  /** Current approval level (live value, not the constructor arg). */
+  getLevel(): ApprovalLevel {
+    return this.level;
   }
 
   request(
@@ -68,11 +83,11 @@ export class ApprovalGate {
   ): Promise<ApprovalDecision> {
     const approvalId = params.approvalId ?? randomUUID();
     const request: ApprovalRequest = { ...params, approvalId };
-    if (this.autoApprove) {
+    if (isAutoApprovedAt(this.level, request.category)) {
       return Promise.resolve({
         approvalId,
         approved: true,
-        reason: "auto-approved",
+        reason: `auto-approved (level ${this.level})`,
       });
     }
     return new Promise<ApprovalDecision>((resolve, reject) => {

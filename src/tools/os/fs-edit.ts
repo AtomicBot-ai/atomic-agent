@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
+import { categorizeFsMutation } from "./fs-approval-scope.js";
 import {
   requireApproval,
   type DangerousToolOptions,
@@ -57,6 +58,9 @@ export function buildOsFsEditTool(
         {
           sessionId: ctx.sessionId,
           tool: "os.fs.edit",
+          category: await categorizeFsMutation("write", [absolute], {
+            workingDir: ctx.workingDir,
+          }),
           reason: `edit ${occurrences} occurrence${occurrences > 1 ? "s" : ""} in ${absolute}`,
           preview,
           affectedResources: [absolute],

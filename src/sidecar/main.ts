@@ -180,7 +180,7 @@ export async function bootstrapSidecar(): Promise<{
   const buildRuntime = async (workingDir: string): Promise<AgentRuntime> => {
     return createAgentRuntime({
       workingDir,
-      approvalRequired: config.agent.approvalRequired,
+      approvalLevel: config.agent.approvalLevel,
       traceDefault: false,
       handlers: {
         onAgentEvent: (event) => {

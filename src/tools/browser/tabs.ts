@@ -45,6 +45,7 @@ export function buildBrowserTabsTool(
           {
             sessionId: ctx.sessionId,
             tool: "browser.tabs",
+            category: "browser_nonweb",
             reason: "non-http(s) URL requested for new tab",
             preview: input.url,
             affectedResources: [input.url],

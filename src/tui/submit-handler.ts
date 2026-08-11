@@ -205,10 +205,8 @@ export function runSlashCommand(
         break;
     }
   }
-  if (result.approveEverythingVerb) {
-    void callbacks.onApproveEverythingSetRequested?.(
-      result.approveEverythingVerb === "on",
-    );
+  if (result.approvalLevelSet !== undefined) {
+    void callbacks.onApprovalLevelSetRequested?.(result.approvalLevelSet);
   }
 }
 

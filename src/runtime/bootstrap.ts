@@ -43,6 +43,7 @@ import { DEFAULT_SLOT_COUNT, SlotManager } from "../llm/slot-manager.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
 
 import { ApprovalGate } from "../approval/approval-gate.js";
+import type { ApprovalLevel } from "../approval/approval-level.js";
 import { ApprovalRouter } from "../approval/approval-router.js";
 import type { ApprovalHandler } from "../approval/approval-router.js";
 import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
@@ -204,7 +205,13 @@ export interface RuntimeEventHandlers {
 
 export interface CreateAgentRuntimeOptions {
   workingDir: string;
-  approvalRequired: boolean;
+  /**
+   * Boot value for the approval ladder (1 = ask for everything … 5 =
+   * approve everything). Entry points resolve it from the persisted
+   * `agent.approvalLevel` plus `--no-approval` (which forces 5); the
+   * live value afterwards is owned by the ApprovalGate.
+   */
+  approvalLevel: ApprovalLevel;
   handlers?: RuntimeEventHandlers;
   /**
    * Default activation state for tracing when
@@ -471,22 +478,26 @@ export interface AgentRuntime {
    */
   setAnalyticsEnabled(enabled: boolean): Promise<void>;
   /**
-   * Live approval-gate state: `true` when approval-gated tools ask
-   * before running, `false` when every request is auto-approved. Reads
-   * the gate, not the boot-time config snapshot, so it reflects
-   * `--no-approval` and later `setApprovalRequired` calls.
+   * Live approval level (1 = every gated action asks … 5 = approve
+   * everything). Reads the gate, not the boot-time config snapshot, so
+   * it reflects `--no-approval` boots and later `setApprovalLevel`
+   * calls.
    */
-  isApprovalRequired(): boolean;
+  getApprovalLevel(): ApprovalLevel;
   /**
-   * Hot-toggle the approval gate without a restart. `false` switches
-   * the gate to auto-approve: every approval-gated tool (shell, file
-   * writes, HTTP, process kills, script runs, browser navigation) runs
-   * without asking. Hardline shell-guard rules still block outright
-   * (they fire before the gate). Persisting `agent.approvalRequired`
-   * to `config.json` is the caller's responsibility (the TUI Privacy
-   * tab). Idempotent; pending prompts are not resolved retroactively.
+   * Move the approval ladder without a restart, in either direction.
+   * Out-of-range input is clamped to [1, 5]. Level 2 stops asking for
+   * file writes inside the session working directory; level 3 adds
+   * home-directory file operations (Trash, archive extraction) and
+   * HTTP; level 4 adds guarded shell commands, skill scripts, and
+   * process kills; level 5 approves everything, including browser
+   * navigation to non-web URLs. Hardline shell-guard rules still block
+   * outright at every level (they fire before the gate). Persisting
+   * `agent.approvalLevel` to `config.json` is the caller's
+   * responsibility (the TUI Privacy tab). Idempotent; pending prompts
+   * are not resolved retroactively.
    */
-  setApprovalRequired(required: boolean): void;
+  setApprovalLevel(level: number): void;
   /** Close all resources (browser, sqlite, llama client). Safe to call twice. */
   shutdown(): Promise<void>;
 }
@@ -655,15 +666,16 @@ export async function createAgentRuntime(
   });
   const approvals = new ApprovalGate({
     emit: (request) => approvalRouter.emit(request),
-    autoApprove: !options.approvalRequired,
+    level: options.approvalLevel,
   });
   // Tools are registered with `approvalRequired: true` unconditionally;
-  // the gate's `autoApprove` flag carries the boot-time value instead.
-  // Behaviour is identical (auto-approve resolves instantly without
-  // emitting a prompt), but the gate becomes the single live switch, so
-  // `runtime.setApprovalRequired` can flip approvals at runtime in both
-  // directions — tool registrations copy the boolean and would otherwise
-  // freeze a boot-time `false` forever.
+  // the gate's approval level carries the boot-time value instead. Every
+  // request reaches the gate with its category and the gate decides
+  // (auto-approve resolves instantly without emitting a prompt), so the
+  // gate stays the single live switch and `runtime.setApprovalLevel` can
+  // move the ladder at runtime in both directions — tool registrations
+  // copy the boolean and would otherwise freeze a boot-time value
+  // forever.
   const dangerous: DangerousToolOptions = {
     approvals,
     approvalRequired: true,
@@ -2427,8 +2439,8 @@ export async function createAgentRuntime(
     setApprovalHandlerForSession: (sessionId, handler) =>
       approvalRouter.setForSession(sessionId, handler),
     setAnalyticsEnabled,
-    isApprovalRequired: () => !approvals.isAutoApproveEnabled(),
-    setApprovalRequired: (required) => approvals.setAutoApprove(!required),
+    getApprovalLevel: () => approvals.getLevel(),
+    setApprovalLevel: (level) => approvals.setLevel(level),
     shutdown,
   } as AgentRuntime & { telegramChannel: TelegramChannel | null };
   Object.defineProperty(runtime, "skillCatalog", {

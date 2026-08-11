@@ -23,7 +23,7 @@ export type TuiArgsResult = TuiArgs | { error: string };
  * Supported flags:
  *   --cwd / --working-dir <path>   switch the session working directory
  *   --max-steps <n>                override the loop safety cap
- *   --no-approval                  skip the approval gate for this run
+ *   --no-approval                  force approval level 5 (approve everything) for this run
  *   --skip-llama-setup             skip the startup llama URL wizard
  */
 export function parseTuiArgs(args: string[]): TuiArgsResult {

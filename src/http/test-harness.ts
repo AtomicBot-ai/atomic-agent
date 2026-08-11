@@ -26,6 +26,7 @@ import type {
   TypeInput,
 } from "../tools/browser/browser-backend.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
+import type { ApprovalLevel } from "../approval/approval-level.js";
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
 import type { LogSink } from "../tracing/structured-logger.js";
 
@@ -98,8 +99,8 @@ export interface HarnessOptions {
   }) => AsyncGenerator<StreamChunk, CompletionResult, void>;
   llamaProps?: Record<string, unknown>;
   llamaPropsError?: Error;
-  /** Approval required flag (default: false to keep tests deterministic). */
-  approvalRequired?: boolean;
+  /** Approval level (default: 5, auto-approve, to keep tests deterministic). */
+  approvalLevel?: ApprovalLevel;
   /** Extra inspector for each agent event. */
   onAgentEvent?: (event: AgentLoopEvent) => void;
   /** Extra inspector for each approval request. */
@@ -175,7 +176,7 @@ export async function startTestHarness(
 
   const runtime = await createAgentRuntime({
     workingDir,
-    approvalRequired: options.approvalRequired ?? false,
+    approvalLevel: options.approvalLevel ?? 5,
     handlers: {
       logSinks: options.logSinks,
       ...(options.onAgentEvent ? { onAgentEvent: options.onAgentEvent } : {}),

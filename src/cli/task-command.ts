@@ -215,7 +215,7 @@ async function handleCreate(args: string[]): Promise<number> {
   if (isRecurring) {
     const runtime = await createAgentRuntime({
       workingDir: process.cwd(),
-      approvalRequired: false,
+      approvalLevel: 5,
       traceDefault: false,
       overrides: { skipLlamaHealthCheck: true },
     });
@@ -312,7 +312,7 @@ async function handleRun(args: string[]): Promise<number> {
   }
   const runtime = await createAgentRuntime({
     workingDir: process.cwd(),
-    approvalRequired: false,
+    approvalLevel: 5,
     traceDefault: false,
     overrides: { skipLlamaHealthCheck: true },
   });
@@ -357,7 +357,7 @@ async function handleTick(args: string[]): Promise<number> {
   }
   const runtime = await createAgentRuntime({
     workingDir: process.cwd(),
-    approvalRequired: false,
+    approvalLevel: 5,
     traceDefault: false,
     overrides: { skipLlamaHealthCheck: true },
   });

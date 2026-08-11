@@ -84,6 +84,7 @@ function req(approvalId = "abc"): ApprovalRequest {
     approvalId,
     sessionId: "s-1",
     tool: "os.shell.run",
+    category: "shell",
     reason: "skill needs to run \"git push\"",
     preview: "git push origin main",
   };

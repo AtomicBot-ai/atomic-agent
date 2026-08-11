@@ -4,6 +4,7 @@ import { applyPatch, parsePatch } from "diff";
 import type { StructuredPatch } from "diff";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
+import { categorizeFsMutation } from "./fs-approval-scope.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import {
   requireApproval,
@@ -64,6 +65,11 @@ export function buildOsFsPatchTool(
         {
           sessionId: ctx.sessionId,
           tool: "os.fs.patch",
+          category: await categorizeFsMutation(
+            "write",
+            previews.map((p) => p.absolute),
+            { workingDir: ctx.workingDir },
+          ),
           reason: `apply ${parsed.length} patch file(s) under ${args.rootDir}`,
           preview,
           affectedResources: previews.map((p) => p.absolute),
