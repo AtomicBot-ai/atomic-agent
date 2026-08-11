@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  APPROVAL_CATEGORY_LABELS,
   APPROVAL_LEVEL_NAMES,
   clampApprovalLevel,
+  formatApprovalCategory,
   formatApprovalLevel,
   isAutoApprovedAt,
   resolveBootApprovalLevel,
@@ -39,6 +41,18 @@ describe("approval ladder", () => {
         ).toBe(level >= from);
       }
     }
+  });
+
+  it("labels every category and formats a couple of canonical ones", () => {
+    // R5: hosts render `category` next to the prompt. Every category in
+    // the union must have a non-empty label so no prompt shows a blank
+    // kind; the compiler already forces a key here, this guards content.
+    for (const category of Object.keys(APPROVAL_CATEGORY_LABELS) as ApprovalCategory[]) {
+      expect(formatApprovalCategory(category).length).toBeGreaterThan(0);
+    }
+    expect(formatApprovalCategory("fs_write_home")).toBe("file write · home");
+    expect(formatApprovalCategory("trust_config")).toBe("agent trust config");
+    expect(formatApprovalCategory("shell")).toBe("shell command");
   });
 
   it("level 1 asks for every category and level 5 for none (cumulative ladder)", () => {

@@ -194,6 +194,7 @@ export async function bootstrapSidecar(): Promise<{
             approvalId: request.approvalId,
             sessionId: request.sessionId,
             tool: request.tool,
+            category: request.category,
             reason: request.reason,
             preview: request.preview,
             affectedResources: request.affectedResources,

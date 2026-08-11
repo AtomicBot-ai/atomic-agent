@@ -3,11 +3,10 @@ import { dirname, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
-import { categorizeFsMutation } from "./fs-approval-scope.js";
 import {
-  requireApproval,
-  type DangerousToolOptions,
-} from "../../approval/dangerous-tool.js";
+  requireFsApproval,
+  type FsDangerousToolOptions,
+} from "./fs-require-approval.js";
 import type { ToolDefinition } from "../tool-registry.js";
 
 const DIFF_MAX_LINES = 40;
@@ -21,7 +20,7 @@ interface EditArgs {
 }
 
 export function buildOsFsEditTool(
-  options: DangerousToolOptions,
+  options: FsDangerousToolOptions,
 ): ToolDefinition {
   return {
     name: "os.fs.edit",
@@ -53,17 +52,18 @@ export function buildOsFsEditTool(
         : replaceOnce(original, args.oldString, args.newString);
       const diff = renderUnifiedDiff(original, updated, absolute);
       const preview = clamp(diff, PREVIEW_MAX_LEN);
-      await requireApproval(
+      await requireFsApproval(
         options,
         {
+          kind: "write",
+          paths: [absolute],
           sessionId: ctx.sessionId,
           tool: "os.fs.edit",
-          category: await categorizeFsMutation("write", [absolute], {
-            workingDir: ctx.workingDir,
-          }),
           reason: `edit ${occurrences} occurrence${occurrences > 1 ? "s" : ""} in ${absolute}`,
           preview,
           affectedResources: [absolute],
+          workingDir: ctx.workingDir,
+          trustConfigPaths: options.trustConfigPaths,
         },
         ctx.signal,
       );

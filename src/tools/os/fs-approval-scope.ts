@@ -2,7 +2,6 @@ import { lstat, readlink, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ApprovalCategory } from "../../approval/approval-level.js";
-import { getConfig } from "../../config/index.js";
 
 /**
  * Where a filesystem mutation lands, from the approval ladder's point
@@ -36,8 +35,15 @@ export interface FsScopeOptions {
    * Absolute paths that hold the agent's own trust configuration — the
    * user config file and the `.env` with API tokens. A write/edit/patch
    * whose realpath matches one of these is categorised `trust_config`
-   * (asks until level 5) regardless of scope. Test seam; production
-   * reads them from `getConfig()`.
+   * (asks until level 5) regardless of scope.
+   *
+   * Injected by the caller, exactly like `workingDir`: the tools layer
+   * must not know *where* the agent's trust surface lives. The bootstrap
+   * resolves the list once via `getTrustConfigPaths(config.paths)`
+   * (`src/config/config-file.ts`) and threads it through
+   * `registerOsTools` → each fs tool → here. Omitted or empty means
+   * "no trust-config guard" — every path is classified purely by scope.
+   * Unit tests pass a fixed list (or `[]`) directly.
    */
   trustConfigPaths?: readonly string[];
 }
@@ -70,7 +76,7 @@ export async function categorizeFsMutation(
   options: FsScopeOptions,
 ): Promise<ApprovalCategory> {
   if (kind !== "extract") {
-    const trustPaths = resolveTrustConfigPaths(options);
+    const trustPaths = options.trustConfigPaths ?? [];
     if (await touchesTrustConfig(absolutePaths, trustPaths)) {
       return "trust_config";
     }
@@ -222,20 +228,6 @@ function isContained(parent: string, child: string): boolean {
   const rel = relative(parent, child);
   if (rel === "") return true;
   return !rel.startsWith("..") && !isAbsolute(rel);
-}
-
-/**
- * Production trust-config paths: the user config file and the `.env`
- * that sits next to it in the state directory. Both hold the agent's
- * own trust surface — `config.json` carries `agent.approvalLevel`, and
- * `.env` carries API keys / bot tokens the runtime loads at boot — so a
- * silent rewrite of either is an escalation vector. Overridable for
- * tests.
- */
-function resolveTrustConfigPaths(options: FsScopeOptions): readonly string[] {
-  if (options.trustConfigPaths !== undefined) return options.trustConfigPaths;
-  const { userConfigFile, stateDir } = getConfig().paths;
-  return [userConfigFile, join(stateDir, ".env")];
 }
 
 /**

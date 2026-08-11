@@ -21,6 +21,27 @@ export function getUserConfigPath(stateDir: string): string {
   return join(stateDir, ENV_DEFAULTS.USER_CONFIG_FILE_NAME);
 }
 
+/** Resolve the absolute path to the `.env` file inside a state dir. */
+export function getDotenvPath(stateDir: string): string {
+  return join(stateDir, ".env");
+}
+
+/**
+ * The agent's own trust surface: `config.json` (holds
+ * `agent.approvalLevel`) and `.env` (API keys / bot tokens loaded at
+ * boot). A silent rewrite of either is a self-escalation vector, so the
+ * approval ladder categorises a write to these as `trust_config` (asks
+ * until level 5). This is the single place that *knows where the trust
+ * surface lives*; the bootstrap resolves it once from `config.paths` and
+ * injects the list into the fs tools, which never derive it themselves.
+ */
+export function getTrustConfigPaths(paths: {
+  userConfigFile: string;
+  stateDir: string;
+}): readonly string[] {
+  return [paths.userConfigFile, getDotenvPath(paths.stateDir)];
+}
+
 /**
  * Synchronously read and validate the user config file.
  * Returns `null` if the file does not exist. Throws `ConfigValidationError`

@@ -4,12 +4,11 @@ import { applyPatch, parsePatch } from "diff";
 import type { StructuredPatch } from "diff";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
-import { categorizeFsMutation } from "./fs-approval-scope.js";
-import type { ToolDefinition } from "../tool-registry.js";
 import {
-  requireApproval,
-  type DangerousToolOptions,
-} from "../../approval/dangerous-tool.js";
+  requireFsApproval,
+  type FsDangerousToolOptions,
+} from "./fs-require-approval.js";
+import type { ToolDefinition } from "../tool-registry.js";
 
 /**
  * Per-file outcome of applying a patch. Tracked per target so the tool can
@@ -34,7 +33,7 @@ interface PatchArgs {
 }
 
 export function buildOsFsPatchTool(
-  options: DangerousToolOptions,
+  options: FsDangerousToolOptions,
 ): ToolDefinition {
   return {
     name: "os.fs.patch",
@@ -60,19 +59,18 @@ export function buildOsFsPatchTool(
       // message can faithfully describe what will land.
       const allApplicable = previews.every((p) => p.applied);
       const preview = formatReport(previews, "applied");
-      await requireApproval(
+      await requireFsApproval(
         options,
         {
+          kind: "write",
+          paths: previews.map((p) => p.absolute),
           sessionId: ctx.sessionId,
           tool: "os.fs.patch",
-          category: await categorizeFsMutation(
-            "write",
-            previews.map((p) => p.absolute),
-            { workingDir: ctx.workingDir },
-          ),
           reason: `apply ${parsed.length} patch file(s) under ${args.rootDir}`,
           preview,
           affectedResources: previews.map((p) => p.absolute),
+          workingDir: ctx.workingDir,
+          trustConfigPaths: options.trustConfigPaths,
         },
         ctx.signal,
       );

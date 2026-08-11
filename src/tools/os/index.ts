@@ -86,6 +86,14 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
    * first tool invocation happens.
    */
   listRecentSessionDirs: (limit: number) => readonly RecentSessionDir[];
+  /**
+   * Absolute paths of the agent's trust config (`config.json`, `.env`),
+   * resolved once by the bootstrap from `config.paths`
+   * (`getTrustConfigPaths`) and threaded into every fs-mutating tool. The
+   * tools layer never derives this — it does not know *where* the trust
+   * surface lives. Omitted / empty disables the `trust_config` guard.
+   */
+  trustConfigPaths?: readonly string[];
 }
 
 export function registerOsTools(
@@ -113,6 +121,7 @@ export function registerOsTools(
     buildOsFsArchiveExtractTool({
       approvals: options.approvals,
       approvalRequired: options.approvalRequired,
+      trustConfigPaths: options.trustConfigPaths,
     }),
   );
   registry.register(
@@ -135,6 +144,7 @@ export function registerOsTools(
     buildOsFsPatchTool({
       approvals: options.approvals,
       approvalRequired: options.approvalRequired,
+      trustConfigPaths: options.trustConfigPaths,
     }),
   );
   registry.register(osFsWatchTool);

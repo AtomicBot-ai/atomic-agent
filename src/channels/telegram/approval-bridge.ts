@@ -1,4 +1,5 @@
 import type { ApprovalGate, ApprovalRequest } from "../../approval/index.js";
+import { formatApprovalCategory } from "../../approval/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import type { TelegramApi } from "./outbound-sender.js";
@@ -336,7 +337,11 @@ function buildKeyboard(approvalId: string): {
  * unambiguous; it just renders without a fixed-width preview block.
  */
 function formatApprovalText(req: ApprovalRequest): string {
-  const lines: string[] = ["Approval requested", `tool: ${req.tool}`];
+  const lines: string[] = [
+    "Approval requested",
+    `tool: ${req.tool}`,
+    `kind: ${formatApprovalCategory(req.category)}`,
+  ];
   if (req.reason) lines.push(`reason: ${req.reason}`);
   if (req.preview) {
     lines.push("preview:");

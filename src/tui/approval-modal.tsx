@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
+import { formatApprovalCategory } from "../approval/approval-level.js";
 
 interface ApprovalModalProps {
   request: ApprovalRequest;
@@ -27,6 +28,10 @@ export function ApprovalModal({ request }: ApprovalModalProps): ReactElement {
         <Text>
           <Text color="gray">tool:    </Text>
           <Text bold>{request.tool}</Text>
+        </Text>
+        <Text>
+          <Text color="gray">kind:    </Text>
+          {formatApprovalCategory(request.category)}
         </Text>
         <Text>
           <Text color="gray">reason:  </Text>

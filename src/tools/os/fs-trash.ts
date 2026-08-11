@@ -3,12 +3,11 @@ import { platform } from "node:os";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { runCommand } from "../../sandbox/command-runner.js";
-import {
-  requireApproval,
-  type DangerousToolOptions,
-} from "../../approval/dangerous-tool.js";
 import { resolveUserPath } from "./expand-home.js";
-import { categorizeFsMutation } from "./fs-approval-scope.js";
+import {
+  requireFsApproval,
+  type FsDangerousToolOptions,
+} from "./fs-require-approval.js";
 
 const MAX_PATHS_PER_CALL = 500;
 
@@ -114,7 +113,7 @@ async function trashPaths(
   };
 }
 
-export function buildOsFsTrashTool(options: DangerousToolOptions): ToolDefinition {
+export function buildOsFsTrashTool(options: FsDangerousToolOptions): ToolDefinition {
   return {
     name: "os.fs.trash",
     description:
@@ -143,17 +142,18 @@ export function buildOsFsTrashTool(options: DangerousToolOptions): ToolDefinitio
           ? absolutes.join("\n")
           : `${absolutes.slice(0, 12).join("\n")}\n… +${absolutes.length - 12} more`;
 
-      await requireApproval(
+      await requireFsApproval(
         options,
         {
+          kind: "trash",
+          paths: absolutes,
           sessionId: ctx.sessionId,
           tool: "os.fs.trash",
-          category: await categorizeFsMutation("trash", absolutes, {
-            workingDir: ctx.workingDir,
-          }),
           reason: `move ${absolutes.length} path(s) to Trash`,
           preview,
           affectedResources: absolutes,
+          workingDir: ctx.workingDir,
+          trustConfigPaths: options.trustConfigPaths,
         },
         ctx.signal,
       );

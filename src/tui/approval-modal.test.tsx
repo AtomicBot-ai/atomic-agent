@@ -9,6 +9,7 @@ function request(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
     approvalId: "a1",
     sessionId: "s1",
     tool: "os.shell.run",
+    category: "shell",
     reason: "dangerous command",
     ...overrides,
   };
@@ -22,6 +23,16 @@ describe("ApprovalModal", () => {
     expect(frame).toContain("[y]");
     expect(frame).toContain("[n]");
     expect(frame).toContain("[esc]");
+  });
+
+  it("shows the ladder category label so the operator sees why it fired", () => {
+    // R5: the prompt carries its `ApprovalCategory`; the modal renders a
+    // human label (`file write · home`) so a home write reads differently
+    // from a trust-config write.
+    const frame =
+      render(<ApprovalModal request={request({ category: "fs_write_home" })} />).lastFrame() ??
+      "";
+    expect(frame).toContain("file write · home");
   });
 
   it("points at the Privacy-tab toggle so the off switch is discoverable", () => {
