@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { PassThrough } from "node:stream";
 import { StdioProtocol } from "./stdio-protocol.js";
-import type { HostRequest } from "./sidecar-events.js";
+import type {
+  ApprovalRequestPayload,
+  HostRequest,
+} from "./sidecar-events.js";
 
 function createProtocol() {
   const input = new PassThrough();
@@ -125,6 +128,61 @@ describe("StdioProtocol", () => {
     expect(parsed.correlationId).toBe("req-123");
     expect(parsed.ok).toBe(true);
     expect(parsed.payload.echoed).toBe(true);
+  });
+
+  it("round-trips an approval_request payload with its ladder category", async () => {
+    // R5: the prompt's `ApprovalCategory` must survive the wire so a host
+    // can render *why* the gate fired. Emit → NDJSON line → parse back.
+    const { output, protocol } = createProtocol();
+    const linesPromise = readLines(output, 1);
+    const payload: ApprovalRequestPayload = {
+      approvalId: "ap-1",
+      sessionId: "s1",
+      tool: "os.fs.write",
+      category: "trust_config",
+      reason: "write config.json",
+      affectedResources: ["/state/config.json"],
+    };
+    protocol.emitEvent("approval_request", payload);
+    const [line] = await linesPromise;
+    const parsed = JSON.parse(line!) as {
+      type: string;
+      payload: ApprovalRequestPayload;
+    };
+    expect(parsed.type).toBe("approval_request");
+    expect(parsed.payload.category).toBe("trust_config");
+    expect(parsed.payload.tool).toBe("os.fs.write");
+  });
+
+  it("accepts an approval_request payload without a category (pre-ladder host)", async () => {
+    // Back-compat: `category` is optional. A frame emitted by / for a host
+    // that predates the ladder omits it entirely and must still parse
+    // cleanly, with no parse error and `category` simply absent.
+    const { input, protocol, parseErrors } = createProtocol();
+    const received: HostRequest[] = [];
+    protocol.onRequest((req) => received.push(req));
+    // A request frame carrying a category-less approval payload exercises
+    // the same JSON path the host uses; the parser must not choke on the
+    // missing optional field.
+    const legacy = {
+      kind: "request" as const,
+      id: "legacy-1",
+      type: "approval_response" as const,
+      payload: {
+        approvalId: "ap-2",
+        sessionId: "s1",
+        tool: "os.fs.write",
+        reason: "legacy frame, no category",
+      },
+    };
+    input.write(`${JSON.stringify(legacy)}\n`);
+    await new Promise((r) => setImmediate(r));
+    expect(parseErrors).toHaveLength(0);
+    expect(received).toHaveLength(1);
+    expect(received[0]?.id).toBe("legacy-1");
+    expect(
+      (received[0]?.payload as { category?: string }).category,
+    ).toBeUndefined();
   });
 
   it("ignores blank lines between frames", async () => {

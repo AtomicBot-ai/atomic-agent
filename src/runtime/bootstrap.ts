@@ -3,7 +3,11 @@ import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { AtomicAgentConfig } from "../config/index.js";
-import { getConfig, resetConfigCache } from "../config/index.js";
+import {
+  getConfig,
+  getTrustConfigPaths,
+  resetConfigCache,
+} from "../config/index.js";
 
 import type { LlmStreamParams } from "../agent/step-executor.js";
 import { TurnController } from "./turn-controller.js";
@@ -986,6 +990,11 @@ export async function createAgentRuntime(
     ...dangerous,
     config: { http: config.http, web: config.web, projects: config.projects },
     listRecentSessionDirs: (limit) => sessionStore.listRecentWorkingDirs(limit),
+    // The trust surface (`config.json` + `.env`) is resolved once, here,
+    // and injected into the fs tools — the tools layer must not know
+    // where it lives. Pinned by the level-4 `trust_config` case in
+    // bootstrap.test.ts.
+    trustConfigPaths: getTrustConfigPaths(config.paths),
   });
   registerSkillTools(toolRegistry, skillRegistry, dangerous);
   toolRegistry.register(buildToolViewTool());

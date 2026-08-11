@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import type { Interface as ReadlineInterface } from "node:readline";
 
 import {
+  formatApprovalCategory,
   formatApprovalLevel,
   resolveBootApprovalLevel,
 } from "../approval/approval-level.js";
@@ -66,6 +67,7 @@ async function promptApproval(request: ApprovalRequest): Promise<boolean> {
     const lines = [
       "",
       `» approval required for tool: ${request.tool}`,
+      `  kind: ${formatApprovalCategory(request.category)}`,
       `  reason: ${request.reason}`,
     ];
     if (request.preview) lines.push(`  preview: ${request.preview}`);

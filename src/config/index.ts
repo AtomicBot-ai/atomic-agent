@@ -20,6 +20,8 @@ export {
 } from "./config-schema.js";
 export {
   ensureUserConfigFileSync,
+  getDotenvPath,
+  getTrustConfigPaths,
   getUserConfigPath,
   readUserConfigFileSync,
   writeUserConfigFileSync,

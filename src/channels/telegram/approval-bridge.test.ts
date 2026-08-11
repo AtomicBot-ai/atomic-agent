@@ -114,6 +114,8 @@ describe("ApprovalBridge.dispatch", () => {
     const text = args[1] as string;
     expect(text).toContain("Approval requested");
     expect(text).toContain("os.shell.run");
+    // R5: the ladder category is surfaced to the Telegram operator.
+    expect(text).toContain("kind: shell command");
     expect(text).toContain("git push");
     const opts = args[2] as { reply_markup: unknown };
     expect(opts.reply_markup).toEqual({

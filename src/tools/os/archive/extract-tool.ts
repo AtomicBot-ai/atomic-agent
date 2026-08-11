@@ -1,11 +1,10 @@
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import { resolveUserPath } from "../expand-home.js";
-import { categorizeFsMutation } from "../fs-approval-scope.js";
-import type { ToolDefinition } from "../../tool-registry.js";
 import {
-  requireApproval,
-  type DangerousToolOptions,
-} from "../../../approval/dangerous-tool.js";
+  requireFsApproval,
+  type FsDangerousToolOptions,
+} from "../fs-require-approval.js";
+import type { ToolDefinition } from "../../tool-registry.js";
 import { DEFAULT_EXTRACT_LIMITS, type ExtractLimits } from "./archive-types.js";
 import {
   parseFormatOverride,
@@ -13,7 +12,12 @@ import {
   type ArchiveBackendFactories,
 } from "./archive-resolver.js";
 
-export interface ExtractArchiveToolOptions extends DangerousToolOptions {
+/**
+ * Extraction ignores `trustConfigPaths` (it targets a directory, so the
+ * config-file guard never fires) but accepts the shared fs-tool option
+ * shape so the bootstrap can pass one object to every fs factory.
+ */
+export interface ExtractArchiveToolOptions extends FsDangerousToolOptions {
   backends?: ArchiveBackendFactories;
 }
 
@@ -66,15 +70,15 @@ export function buildOsFsArchiveExtractTool(
         options.backends,
       );
 
-      await requireApproval(
+      await requireFsApproval(
         options,
         {
+          kind: "extract",
+          paths: [destDir],
           sessionId: ctx.sessionId,
           tool: "os.fs.archive.extract",
-          category: await categorizeFsMutation("extract", [destDir], {
-            workingDir: ctx.workingDir,
-          }),
           reason: `extract ${resolved.format} ${resolved.absolute} → ${destDir}`,
+          workingDir: ctx.workingDir,
           preview: buildApprovalPreview({
             source: resolved.absolute,
             dest: destDir,

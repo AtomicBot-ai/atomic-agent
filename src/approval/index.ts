@@ -5,8 +5,10 @@ export type {
   ApprovalRequest,
 } from "./approval-gate.js";
 export {
+  APPROVAL_CATEGORY_LABELS,
   APPROVAL_LEVEL_NAMES,
   clampApprovalLevel,
+  formatApprovalCategory,
   formatApprovalLevel,
   isAutoApprovedAt,
   MAX_APPROVAL_LEVEL,

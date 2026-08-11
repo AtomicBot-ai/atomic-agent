@@ -88,6 +88,31 @@ export function isAutoApprovedAt(
   return level >= AUTO_APPROVE_FROM_LEVEL[category];
 }
 
+/**
+ * Short human label for a request category, shown next to an approval
+ * prompt so a host / operator sees *why* the ladder stopped here (a
+ * `file write · home` prompt reads very differently from a
+ * `trust config` one). Kept alongside the union so a new category forces
+ * a label here too — the compiler walks the record.
+ */
+export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
+  fs_write_workspace: "file write · workspace",
+  fs_write_home: "file write · home",
+  fs_trash: "move to Trash",
+  http: "HTTP request",
+  shell: "shell command",
+  script: "skill script",
+  proc_kill: "process kill",
+  browser_nonweb: "browser · non-web URL",
+  trust_config: "agent trust config",
+  other: "uncategorised",
+};
+
+/** `"file write · home"` — the display label for a category. */
+export function formatApprovalCategory(category: ApprovalCategory): string {
+  return APPROVAL_CATEGORY_LABELS[category];
+}
+
 /** Human names for the five levels, used across TUI and CLI surfaces. */
 export const APPROVAL_LEVEL_NAMES: Record<ApprovalLevel, string> = {
   1: "paranoid",

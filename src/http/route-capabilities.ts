@@ -34,22 +34,25 @@ export function createCapabilitiesHandler(): HttpHandler {
         tokenBudget: runtime.config.agent.tokenBudget,
         maxSteps: runtime.config.agent.maxSteps,
         toolTimeoutMs: runtime.config.agent.toolTimeoutMs,
-        // Live gate state, not the boot-time config snapshot: reflects
-        // `--no-approval` boots and later `setApprovalLevel` calls (the
-        // Privacy-tab ladder), so admin UIs render the truth.
+        // Source of truth. Live gate state, not the boot-time config
+        // snapshot: reflects `--no-approval` boots and later
+        // `setApprovalLevel` calls (the Privacy-tab ladder), so admin UIs
+        // render the truth. Level-aware clients read this and ignore
+        // `approvalRequired`.
         approvalLevel: runtime.getApprovalLevel(),
-        // Derived compatibility view for clients written against the
-        // binary toggle this route shipped with: `true` while any
-        // category still prompts (level < 5). Computed from the level,
-        // so the two fields cannot drift.
+        // DEPRECATED — approximate back-compat for clients written
+        // against the binary approve-everything toggle this route shipped
+        // with. `true` while any category can still prompt (level < 5),
+        // derived from `approvalLevel` so the two cannot drift. Kept only
+        // for wire compatibility; read `approvalLevel` instead.
         //
-        // Trade-off: this is coarser than the real behaviour. At level 4
-        // (operator) shell / script / proc-kill run without asking, yet
-        // a binary client reads `approvalRequired: true` and may present
-        // "approvals are on" — semantically imprecise, since the most
-        // dangerous surface is already silent. We accept that for wire
-        // compatibility; a level-aware client should read `approvalLevel`
-        // and ignore this field.
+        // It is coarse at every mid-ladder level, not just one: a binary
+        // client reads `approvalRequired: true` and may render "approvals
+        // are on" while whole categories are already silent — file writes
+        // at level 2 (workspace) / 3 (home), plus shell / script /
+        // proc-kill at level 4 (operator). The boolean cannot express
+        // "on for some categories, off for others"; only `approvalLevel`
+        // carries that, which is why this field is deprecated.
         approvalRequired: runtime.getApprovalLevel() < 5,
       },
       tools: runtime.toolRegistry.list().map((t) => ({

@@ -4,6 +4,8 @@
  * root so a Tauri UI written in TypeScript can import the same types.
  */
 
+import type { ApprovalCategory } from "../approval/approval-level.js";
+
 export type HostRequestType =
   | "start_session"
   | "run_step"
@@ -116,6 +118,14 @@ export interface ApprovalRequestPayload {
   approvalId: string;
   sessionId: string;
   tool: string;
+  /**
+   * Which ladder category triggered the prompt (`fs_write_home`,
+   * `trust_config`, `shell`, …). Optional for back-compat: hosts built
+   * against the pre-ladder protocol ignore it, newer hosts render it so
+   * the operator sees *why* the prompt fired instead of guessing from the
+   * tool name. Use `formatApprovalCategory` for a display label.
+   */
+  category?: ApprovalCategory;
   reason: string;
   /** Human-readable preview of the action (diff snippet, command, URL, etc.). */
   preview?: string;

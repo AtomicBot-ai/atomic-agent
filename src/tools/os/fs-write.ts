@@ -2,15 +2,14 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
-import { categorizeFsMutation } from "./fs-approval-scope.js";
-import type { ToolDefinition } from "../tool-registry.js";
 import {
-  requireApproval,
-  type DangerousToolOptions,
-} from "../../approval/dangerous-tool.js";
+  requireFsApproval,
+  type FsDangerousToolOptions,
+} from "./fs-require-approval.js";
+import type { ToolDefinition } from "../tool-registry.js";
 
 export function buildOsFsWriteTool(
-  options: DangerousToolOptions,
+  options: FsDangerousToolOptions,
 ): ToolDefinition {
   return {
     name: "os.fs.write",
@@ -33,25 +32,18 @@ export function buildOsFsWriteTool(
       const absolute = resolveUserPath(path, ctx.workingDir);
 
       const preview = content.length > 400 ? `${content.slice(0, 400)}…` : content;
-      // Categorisation reads the filesystem (realpath / lstat) and there
-      // is an await before the actual write, so this is technically a
-      // TOCTOU window: a symlink swapped in between here and `writeFile`
-      // could redirect the write. Not exploitable in the current
-      // strictly-sequential agent loop (nothing else runs between the two
-      // in this session), but if intra-turn parallelism ever lets another
-      // mutation interleave, re-categorise (or open with O_NOFOLLOW +
-      // recheck) right before the write instead of trusting this result.
-      await requireApproval(
+      await requireFsApproval(
         options,
         {
+          kind: "write",
+          paths: [absolute],
           sessionId: ctx.sessionId,
           tool: "os.fs.write",
-          category: await categorizeFsMutation("write", [absolute], {
-            workingDir: ctx.workingDir,
-          }),
           reason: `${mode} ${content.length} bytes into ${absolute}`,
           preview,
           affectedResources: [absolute],
+          workingDir: ctx.workingDir,
+          trustConfigPaths: options.trustConfigPaths,
         },
         ctx.signal,
       );
