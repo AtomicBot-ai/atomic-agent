@@ -1,4 +1,8 @@
 export { LlamaServerClient, LlamaServerError } from "./llama-server-client.js";
+export {
+  OpenAiHttpError,
+  humanizeOpenAiHttpError,
+} from "./provider/openai/openai-http.js";
 export type {
   CompletionRequest,
   CompletionResult,

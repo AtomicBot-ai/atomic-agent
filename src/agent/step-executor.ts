@@ -26,10 +26,12 @@ import {
   LlmFailure,
   LlamaServerError,
   ModelError,
+  OpenAiHttpError,
   ToolExecutionError,
   TransportError,
   classifyFailure,
   detectModelFailure,
+  humanizeOpenAiHttpError,
 } from "../llm/index.js";
 import { getConfig } from "../config/index.js";
 import {
@@ -1434,6 +1436,17 @@ function toLlmFailure(err: unknown, ctx: StepContext): LlmFailure {
       return new TransportError(err.message, err.status, err.url, { cause: err });
     }
     return new GrammarError(err.message, "", { cause: err });
+  }
+  // Cloud provider failures — any status — are provider-boundary
+  // problems, not tool bugs. A 429 or a dead key must never read as
+  // `Turn failed [tool]`. The HTTP client has already spent its bounded
+  // retry budget on the transient subset by the time this propagates.
+  // The chat message gets the human wording; the raw technical string
+  // stays on the cause for logs.
+  if (err instanceof OpenAiHttpError) {
+    return new TransportError(humanizeOpenAiHttpError(err), err.status, err.url, {
+      cause: err,
+    });
   }
   if (err instanceof ToolCallParseError) {
     return new GrammarError(err.message, "", { cause: err });

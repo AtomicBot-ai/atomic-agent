@@ -1,4 +1,5 @@
 import { LlamaServerError } from "../llama-server-client.js";
+import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { ToolCallParseError } from "../grammar/tool-call-grammar.js";
 import type { LlmFailureCategory } from "./failure-category.js";
 import { LlmFailure } from "./llm-failures.js";
@@ -21,6 +22,11 @@ export function classifyFailure(err: unknown): LlmFailureCategory {
     if (err.status >= 500) return "transport";
     return "grammar";
   }
+  // Cloud provider failures are provider-boundary problems whatever the
+  // status — a 429 or 401 is no more "our tool broke" than a 503. The
+  // retry budget was already spent inside the HTTP client, matching the
+  // TransportError contract.
+  if (err instanceof OpenAiHttpError) return "transport";
   if (isAbortError(err)) return "cancelled";
   return "tool";
 }
