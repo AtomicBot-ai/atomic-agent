@@ -262,6 +262,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
           // section is populated (or visibly loading) by the time the
           // pane renders.
           void orchestrator.providers.ensureInlineModels(null);
+          // Mirror the effective fallback chain for the Fallback pane
+          // (config-driven; no network). Re-reads live config so a hot
+          // provider swap re-primes the head on tab re-entry.
+          orchestrator.fallback.refresh();
         },
         onProvidersSetActiveText: (id) =>
           void orchestrator.providers.setActiveText(id),

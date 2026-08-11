@@ -12,6 +12,7 @@ import type { TelegramAction } from "./telegram/telegram-actions.js";
 import type { PrivacyAction } from "./privacy/privacy-actions.js";
 import type { ProvidersAction } from "./providers/providers-actions.js";
 import type { LlmPanelAction } from "./llm-panel/llm-panel-actions.js";
+import type { FallbackPanelAction } from "./llm-panel/fallback/fallback-panel-actions.js";
 import type { ChatMessage, SessionPickerEntry, TuiTab, TuiUiMode } from "./tui-state.js";
 
 /**
@@ -194,4 +195,5 @@ export type TuiAction =
   | PrivacyAction
   | ProvidersAction
   | LlmPanelAction
+  | FallbackPanelAction
   | ImportAction;

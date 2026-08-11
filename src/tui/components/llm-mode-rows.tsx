@@ -6,6 +6,7 @@ import { classifyRamFit, classifyVramFit } from "../local-models/local-models-pa
 import { computeRowWindow } from "../row-window.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
+import { FallbackRows } from "./llm-fallback-rows.js";
 
 export function LlmModeRows({
   rows,
@@ -16,6 +17,11 @@ export function LlmModeRows({
   state: TuiState;
   maxRows?: number;
 }): ReactElement {
+  // The Fallback pane renders from `state.fallbackPanel`, not the shared
+  // `LlmPanelRow` list, so it branches before everything else.
+  if (state.llmPanel.mode === "fallback") {
+    return <FallbackRows state={state} />;
+  }
   // The Cloud pane windows its own model list (the catalog can be 350+
   // rows), so it never goes through the generic overflow fallback.
   if (state.llmPanel.mode === "cloud") {

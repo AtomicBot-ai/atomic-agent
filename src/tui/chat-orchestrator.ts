@@ -16,6 +16,7 @@ import { MemoryOrchestrator } from "./memory/memory-orchestrator.js";
 import { McpOrchestrator } from "./mcp/mcp-orchestrator.js";
 import { ImportOrchestrator } from "./import/import-orchestrator.js";
 import { ProvidersOrchestrator } from "./providers/providers-orchestrator.js";
+import { FallbackOrchestrator } from "./llm-panel/fallback/fallback-orchestrator.js";
 import { TuiTelegramOrchestrator } from "./telegram/tui-telegram-orchestrator.js";
 import { PrivacyOrchestrator } from "./privacy/privacy-orchestrator.js";
 import type { TuiEventBus } from "./tui-app.js";
@@ -84,6 +85,7 @@ export class ChatOrchestrator {
   public readonly mcp: McpOrchestrator;
   public readonly import: ImportOrchestrator;
   public readonly providers: ProvidersOrchestrator;
+  public readonly fallback: FallbackOrchestrator;
   public readonly localModels: LocalModelsOrchestrator;
   public readonly llmHealth: LlmHealthPoller;
   public readonly telegram: TuiTelegramOrchestrator;
@@ -105,6 +107,7 @@ export class ChatOrchestrator {
       refreshTasks: () => this.tasks.refresh(),
     });
     this.providers = new ProvidersOrchestrator(runtime, bus);
+    this.fallback = new FallbackOrchestrator(bus);
     this.llmHealth = new LlmHealthPoller(bus, options.llamaUrl);
     this.localModels = new LocalModelsOrchestrator(bus, {
       onManagedModelSelected: (modelId) => {

@@ -3,10 +3,12 @@ import {
   ConfigValidationError,
   ensureUserConfigFileSync,
   getConfig,
+  parseLlmFallbackConfig,
   parseLlmProviderEntry,
   resetConfigCache,
   writeUserConfigFileSync,
   type UserConfigFile,
+  type UserLlmFallbackConfig,
   type UserLlmFileConfig,
   type UserLlmProviderEntry,
 } from "../config/index.js";
@@ -294,6 +296,47 @@ export function setProviderDefaultEmbeddingModelInConfig(
   writeUserConfigFileSync(path, {
     ...file,
     llm: { ...llm, providers },
+  });
+  resetConfigCache();
+}
+
+/**
+ * Persist the fallback chain block under `llm.fallback`, preserving any
+ * timing knobs the operator set by hand (`failureThreshold`,
+ * `cooldownMs`, ...): only `chain` and `appendLocal` — the two the TUI
+ * fallback pane edits — are overwritten. The result is re-validated with
+ * `parseLlmFallbackConfig` (the same predicate the loader runs) so a
+ * chain id that is not a configured provider is rejected here rather than
+ * written and then rejected on the next config read.
+ *
+ * `chain` is written verbatim; the engine's `resolveFallbackChain` still
+ * hoists the active text provider to the head and appends the local
+ * provider when `appendLocal`, so the stored order is the operator's
+ * declared preference, not the effective runtime order.
+ */
+export function setFallbackChainInConfig(
+  chain: readonly string[],
+  appendLocal: boolean,
+): void {
+  const path = getConfig().paths.userConfigFile;
+  const file = ensureUserConfigFileSync(path);
+  const llm = readLlmBlockOrDefault(file);
+  const nextFallback: UserLlmFallbackConfig = {
+    ...llm.fallback,
+    chain: [...chain],
+    appendLocal,
+  };
+  // Re-validate against the live provider set before writing. Throws
+  // ConfigValidationError for an unknown id, which the orchestrator
+  // surfaces on the status line via `wrapLlmConfigError`.
+  const validated = parseLlmFallbackConfig(
+    nextFallback,
+    new Set(llm.providers.map((p) => p.id)),
+    "llm.fallback",
+  );
+  writeUserConfigFileSync(path, {
+    ...file,
+    llm: { ...llm, fallback: validated },
   });
   resetConfigCache();
 }

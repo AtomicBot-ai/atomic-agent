@@ -54,6 +54,10 @@ import {
   createInitialLlmPanelState,
   type LlmPanelState,
 } from "./llm-panel/llm-panel-state.js";
+import {
+  createInitialFallbackPanelState,
+  type FallbackPanelState,
+} from "./llm-panel/fallback/fallback-panel-state.js";
 
 /**
  * High-level lifecycle of the TUI. Mirrors the underlying `SessionState`
@@ -347,6 +351,8 @@ export interface TuiState {
   providersPanel: ProvidersPanelState;
   /** Unified operator LLM panel combining provider routing and local daemon state. */
   llmPanel: LlmPanelState;
+  /** Mirror of the effective provider fallback chain (Fallback pane of the LLM tab). */
+  fallbackPanel: FallbackPanelState;
   /** Managed llama.cpp catalog + download UI (daemon lifecycle stays CLI-only). */
   localModelsPanel: LocalModelsPanelState;
   /** Tail of `<dataDir>/llama-server.log` driving the "LLM logs" tab. */
@@ -495,6 +501,7 @@ export function createInitialTuiState(
     privacyPanel: createInitialPrivacyPanelState(),
     providersPanel: createInitialProvidersPanelState(),
     llmPanel,
+    fallbackPanel: createInitialFallbackPanelState(),
     localModelsPanel: createInitialLocalModelsPanelState(),
     localLlmLogs: createInitialLocalLlmLogsState(),
     llmHealth: createInitialLlmHealthState(),

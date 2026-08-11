@@ -1692,6 +1692,27 @@ The remaining asymmetry: `tools` is populated only when the **primary's** transp
 7. **`appendLocal` appends the local provider when configured, nothing when not.** Pinned by [src/llm/fallback/fallback-config.test.ts](src/llm/fallback/fallback-config.test.ts).
 8. **A cross-transport fallover parses the response with the served link's transport, not the primary's**, and the turn reaches the fallback's answer instead of `loop_failed`. Pinned by [src/llm/fallback/fallback-e2e.integration.test.ts](src/llm/fallback/fallback-e2e.integration.test.ts) (real `AgentLoop` + `step-executor`, both unary and streaming).
 
+### TUI: the Fallback pane
+
+The LLM tab gains a fourth pane, `fallback`, reached with `←`/`→` after Local / Cloud / External ([src/tui/llm-panel/llm-panel-state.ts](src/tui/llm-panel/llm-panel-state.ts) `LLM_PANEL_MODES`). It is the operator surface for `llm.fallback` — the same config the engine reads, edited through the same read → mutate → `writeUserConfigFileSync` → `resetConfigCache` path as every other provider setting. It lives in [src/tui/llm-panel/fallback/](src/tui/llm-panel/fallback/) plus the render in [src/tui/components/llm-fallback-rows.tsx](src/tui/components/llm-fallback-rows.tsx).
+
+**What it shows.** The *effective* chain from `resolveFallbackChain`, one numbered link per row (`1. provider/model [kind]`), the active text provider always the head and tagged `active (primary)`, and the auto-appended local last resort tagged `local last resort (appendLocal)`. Below the list: the `appendLocal` toggle state and a `+ add link` row (present only when a configured provider is not yet in the chain).
+
+**Keys** (do not collide with the tab's existing letters `f`/`n`/`c`/`e`/`E`/`s`/`B`/`L`/`r` or `[`/`]`): `j`/`k` move the row cursor; `<`/`>` move the selected link up/down in priority; `a` (or Enter) opens the add-link picker; `d` removes the selected link; `l` toggles `appendLocal`. The add-link picker owns the keyboard while open (↑/↓ move, Enter adds, Esc cancels).
+
+**Persistence.** `FallbackOrchestrator` ([src/tui/llm-panel/fallback/fallback-orchestrator.ts](src/tui/llm-panel/fallback/fallback-orchestrator.ts)) is the **only** TUI writer of `llm.fallback.chain` / `llm.fallback.appendLocal`, via `setFallbackChainInConfig` in [src/tui/persist-llm-provider.ts](src/tui/persist-llm-provider.ts). It writes the operator's **declared** chain (displayed links minus the synthesised local tail) and re-validates with `parseLlmFallbackConfig` before writing, so an unknown id is rejected here, not on the next read. Timing knobs (`failureThreshold`, `cooldownMs`, …) set by hand are preserved across an edit. Nothing else writes this block, so the pane never fights the runtime `ProviderFallbackChain`.
+
+**Live status is honest, not invented.** The runtime `ProviderFallbackChain` instance is bootstrap-local and **not** on `AgentRuntime`, so the pane cannot read live `cooldownUntil` / probe timers. It therefore never renders a countdown. Its one live signal is the last `provider_switched` `AgentLoopEvent` (already streamed to the TUI), mirrored into `fallbackPanel.lastSwitch`: `failed over A -> B (reason)` on `away`, `recovered primary B` on `back`, else `on primary (no fallover this session)`. If a future change surfaces the breaker state on `AgentRuntime`, the pane can upgrade to a real countdown — until then it shows config statics plus the last announced transition only.
+
+#### Locked invariants (Pinned by tests)
+
+1. **The pane lists the effective chain in order, active provider hoisted to the head and tagged, appended-local tagged.** Pinned by [src/tui/llm-panel/fallback/fallback-panel-selectors.test.ts](src/tui/llm-panel/fallback/fallback-panel-selectors.test.ts), [src/tui/components/llm-fallback-rows.test.tsx](src/tui/components/llm-fallback-rows.test.tsx).
+2. **Reorder is clamped** — a move past either end is a no-op, and neither the active head nor the appended-local link can be reordered/removed. Pinned by [src/tui/llm-panel/fallback/fallback-chain-edits.test.ts](src/tui/llm-panel/fallback/fallback-chain-edits.test.ts).
+3. **Move / add / remove / appendLocal-toggle persist to `config.json`** and re-mirror; hand-set timing knobs survive. Pinned by [src/tui/llm-panel/fallback/fallback-orchestrator.test.ts](src/tui/llm-panel/fallback/fallback-orchestrator.test.ts).
+4. **Keys route to the right intent** and the add-link picker owns the keyboard while open. Pinned by [src/tui/llm-panel/fallback/fallback-key-bindings.test.ts](src/tui/llm-panel/fallback/fallback-key-bindings.test.ts).
+5. **`provider_switched` is mirrored into `fallbackPanel.lastSwitch`; the pane never invents a live countdown.** Pinned by [src/tui/llm-panel/fallback/fallback-panel-reducer.test.ts](src/tui/llm-panel/fallback/fallback-panel-reducer.test.ts), [src/tui/components/llm-fallback-rows.test.tsx](src/tui/components/llm-fallback-rows.test.tsx).
+6. **Empty chain / nothing-addable shows a hint, not a broken list.** Pinned by [src/tui/components/llm-fallback-rows.test.tsx](src/tui/components/llm-fallback-rows.test.tsx), [src/tui/llm-panel/fallback/fallback-panel-reducer.test.ts](src/tui/llm-panel/fallback/fallback-panel-reducer.test.ts).
+
 ## Traceability and replay
 
 Every run produces an append-only NDJSON trace at `<stateDir>/traces/<sessionId>.ndjson` — one event per line. Tracing is on by default for `atomic-agent run` / TUI / `atomic-agent serve`, and off by default in sidecar mode so the Tauri host decides whether to opt in.
