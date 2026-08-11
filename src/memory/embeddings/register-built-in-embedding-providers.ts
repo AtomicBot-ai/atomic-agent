@@ -5,6 +5,11 @@ import {
 } from "./openai-embedding-provider.js";
 import { registerEmbeddingProviderKind } from "./embedding-provider-registry.js";
 import { getEmbeddingModelDef, isKnownEmbeddingModelId } from "../../local-llm/models-catalog.js";
+import {
+  OPENROUTER_APP_CATEGORIES,
+  OPENROUTER_APP_REFERER,
+  OPENROUTER_APP_TITLE,
+} from "../../llm/provider/openrouter/openrouter-provider.js";
 
 export function registerBuiltInEmbeddingProviderKinds(): void {
   registerEmbeddingProviderKind("llama-server", async ({ config, entry }) => {
@@ -43,8 +48,9 @@ export function registerBuiltInEmbeddingProviderKinds(): void {
       model: entry.defaultEmbeddingModel ?? "openai/text-embedding-3-small",
       dim: 1536,
       requestTimeoutMs: entry.requestTimeoutMs,
-      httpReferer: "https://github.com/AtomicBot-ai/atomic-agent",
-      xTitle: "atomic-agent",
+      httpReferer: OPENROUTER_APP_REFERER,
+      xTitle: OPENROUTER_APP_TITLE,
+      categories: OPENROUTER_APP_CATEGORIES,
     });
   });
 }

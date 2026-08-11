@@ -13,6 +13,8 @@ export interface OpenAiEmbeddingProviderOptions {
   dim: number;
   requestTimeoutMs?: number;
   fetchImpl?: typeof fetch;
+  /** Extra request headers, e.g. OpenRouter attribution headers. */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -36,6 +38,7 @@ export class OpenAiEmbeddingProvider implements EmbeddingClient {
           headers: {
             "content-type": "application/json",
             authorization: `Bearer ${this.options.apiKey}`,
+            ...this.options.headers,
           },
           body: JSON.stringify({
             model: this.options.model,
@@ -78,13 +81,16 @@ export class OpenRouterEmbeddingProvider extends OpenAiEmbeddingProvider {
     options: OpenAiEmbeddingProviderOptions & {
       httpReferer?: string;
       xTitle?: string;
+      categories?: string;
     },
   ) {
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = { ...options.headers };
     if (options.httpReferer) headers["HTTP-Referer"] = options.httpReferer;
     if (options.xTitle) headers["X-Title"] = options.xTitle;
+    if (options.categories) headers["X-OpenRouter-Categories"] = options.categories;
     super({
       ...options,
+      headers,
       baseUrl: normalizeOpenRouterBaseUrl(
         options.baseUrl ?? "https://openrouter.ai/api",
       ),
