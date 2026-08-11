@@ -88,6 +88,17 @@ describe("PrivacyPanel — approval level row", () => {
     }
   });
 
+  it("says config.json / .env always ask below level 5, and drops the line at 5", () => {
+    for (const level of [1, 2, 3, 4] as const) {
+      const frame = frameAt(level);
+      expect(frame).toContain("config.json and .env always ask below level 5");
+      expect(frame).toContain("cannot silently raise its own trust level");
+    }
+    // At full trust the caveat is gone — nothing asks, and the line
+    // would be a contradiction.
+    expect(frameAt(5)).not.toContain("always ask below level 5");
+  });
+
   it("keeps the analytics row intact next to the ladder", () => {
     const { lastFrame } = render(
       <PrivacyPanel

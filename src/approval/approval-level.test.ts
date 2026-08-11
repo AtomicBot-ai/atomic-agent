@@ -25,6 +25,7 @@ describe("approval ladder", () => {
       script: 4,
       proc_kill: 4,
       browser_nonweb: 5,
+      trust_config: 5,
       other: 5,
     };
     for (const [category, from] of Object.entries(silentFrom) as [
@@ -50,6 +51,7 @@ describe("approval ladder", () => {
       "script",
       "proc_kill",
       "browser_nonweb",
+      "trust_config",
       "other",
     ];
     for (const category of categories) {

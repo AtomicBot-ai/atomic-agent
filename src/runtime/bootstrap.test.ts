@@ -252,6 +252,52 @@ describe("createAgentRuntime", () => {
     }
   });
 
+  it("C1: writing the agent's own config.json prompts even at level 4 (trust_config)", async () => {
+    // Escalation guard: config.json holds agent.approvalLevel. Without a
+    // dedicated category a write to it would categorise by scope; here
+    // we prove the gate stops it at level 4 (where shell/script/kill are
+    // already silent) and surfaces category `trust_config`. Denied, so
+    // the file the runtime wrote at boot is not clobbered.
+    const prompts: ApprovalRequest[] = [];
+    let gate: ApprovalGate | null = null;
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 4,
+      handlers: {
+        onApprovalRequest: (request) => {
+          prompts.push(request);
+          gate?.resolve({
+            approvalId: request.approvalId,
+            approved: false,
+            reason: "test-denied",
+          });
+        },
+      },
+      overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
+    });
+    gate = runtime.approvals;
+    try {
+      const ctx = {
+        workingDir,
+        sessionId: "s-trust-config",
+        stepIndex: 0,
+        signal: new AbortController().signal,
+      };
+      const configPath = runtime.config.paths.userConfigFile;
+      await expect(
+        runtime.toolRegistry.invoke(
+          "os.fs.write",
+          { path: configPath, content: '{"agent":{"approvalLevel":5}}' },
+          ctx,
+        ),
+      ).rejects.toThrow(/approval denied/);
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]?.category).toBe("trust_config");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
   it("builds a capabilities summary and grammar", async () => {
     const runtime = await createAgentRuntime({
       workingDir,

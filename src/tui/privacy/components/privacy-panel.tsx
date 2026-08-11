@@ -93,6 +93,13 @@ export function PrivacyPanel({ panel }: PrivacyPanelProps): ReactElement {
             {"   "}{line}
           </Text>
         ))}
+        {level < 5 ? (
+          <Text color={theme.colors.muted}>
+            {"   "}Writes to the agent's own config.json and .env always ask
+            below level 5, so the agent cannot silently raise its own trust
+            level.
+          </Text>
+        ) : null}
         <Text color={theme.colors.muted}>
           {"   "}Hardline guards still block catastrophic commands (rm -rf
           /, disk formats) at every level. Persists to config.json and

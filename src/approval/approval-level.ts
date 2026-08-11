@@ -27,6 +27,7 @@ export type ApprovalCategory =
   | "script"
   | "proc_kill"
   | "browser_nonweb"
+  | "trust_config"
   | "other";
 
 /**
@@ -42,7 +43,15 @@ export type ApprovalCategory =
  *  - level 4 (operator): guarded shell commands, skill scripts,
  *    process kills.
  *  - level 5 (full trust): everything, including browser navigation to
- *    non-web URLs and uncategorised requests.
+ *    non-web URLs, writes to the agent's own trust config, and
+ *    uncategorised requests.
+ *
+ * `trust_config` is deliberately pinned at 5: a write to the file that
+ * holds `agent.approvalLevel` (or the `.env` holding API tokens) is the
+ * one action that can silently raise the ladder for the *next* boot, so
+ * it must never go silent below full trust. Otherwise a model at level
+ * 3 or 4 could rewrite its own config to level 5 without a prompt and
+ * escalate itself across a restart. See `fs-approval-scope.ts`.
  */
 const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   fs_write_workspace: 2,
@@ -53,6 +62,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   script: 4,
   proc_kill: 4,
   browser_nonweb: 5,
+  trust_config: 5,
   other: 5,
 };
 

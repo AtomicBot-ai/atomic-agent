@@ -25,7 +25,13 @@ describe("fs approval scope", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  const opts = () => ({ workingDir: workspace, homeDir: home });
+  // No trust-config paths by default so the scope/category tests stay
+  // pure; the trust-config guard has its own block below.
+  const opts = () => ({
+    workingDir: workspace,
+    homeDir: home,
+    trustConfigPaths: [] as string[],
+  });
 
   it("classifies existing and not-yet-existing paths inside the workspace", async () => {
     await writeFile(join(workspace, "a.txt"), "x", "utf8");
@@ -63,6 +69,41 @@ describe("fs approval scope", () => {
     expect(
       await resolveFsScope([join(workspace, "link-home", "f.txt")], opts()),
     ).toBe("home");
+  });
+
+  it("C2: a DANGLING symlink in the workspace pointing outside classifies by target (asks)", async () => {
+    // Broken link leak.txt -> /elsewhere/ghost.txt (target does not
+    // exist). realpath(leak.txt) throws ENOENT; the naive
+    // deepest-existing-ancestor fallback would re-glue the leaf to the
+    // workspace and call it "workspace" (silent at L2) even though
+    // writeFile through the link creates the file OUTSIDE. We must
+    // classify by the link target.
+    const danglingOut = join(workspace, "leak.txt");
+    await symlink(join(elsewhere, "ghost.txt"), danglingOut);
+    expect(await resolveFsScope([danglingOut], opts())).toBe("outside");
+    expect(await categorizeFsMutation("write", [danglingOut], opts())).toBe(
+      "other",
+    );
+  });
+
+  it("C2: a dangling symlink to a not-yet-existing file INSIDE the workspace stays workspace", async () => {
+    // The legitimate case: a link to a workspace file that has not been
+    // created yet must still be a workspace write (silent at L2).
+    const danglingIn = join(workspace, "pending.txt");
+    await symlink(join(workspace, "sub", "new.txt"), danglingIn);
+    expect(await resolveFsScope([danglingIn], opts())).toBe("workspace");
+    expect(await categorizeFsMutation("write", [danglingIn], opts())).toBe(
+      "fs_write_workspace",
+    );
+  });
+
+  it("C2: a chain of dangling symlinks is followed to where the write lands", async () => {
+    // a -> b -> /elsewhere/ghost.txt, none existing: still outside.
+    await symlink(join(workspace, "b.txt"), join(workspace, "a.txt"));
+    await symlink(join(elsewhere, "ghost.txt"), join(workspace, "b.txt"));
+    expect(await resolveFsScope([join(workspace, "a.txt")], opts())).toBe(
+      "outside",
+    );
   });
 
   it("a symlinked workspace root still contains its own files (realpath both sides)", async () => {
@@ -134,7 +175,101 @@ describe("fs approval scope", () => {
       await resolveFsScope([join(workspace, "f.txt")], {
         workingDir: join(root, "does-not-exist"),
         homeDir: home,
+        trustConfigPaths: [],
       }),
     ).toBe("outside");
+  });
+
+  describe("C1: trust-config guard (config.json / .env)", () => {
+    // The state dir sits under home in production, so config.json would
+    // otherwise be fs_write_home (silent at L3) and a model at L3/L4
+    // could rewrite its own approvalLevel to 5 with no prompt.
+    let stateDir: string;
+    let configFile: string;
+    let envFile: string;
+
+    beforeEach(async () => {
+      stateDir = join(home, ".atomic-agent");
+      configFile = join(stateDir, "config.json");
+      envFile = join(stateDir, ".env");
+      await mkdir(stateDir, { recursive: true });
+      await writeFile(configFile, "{}", "utf8");
+      await writeFile(envFile, "SECRET=1", "utf8");
+    });
+
+    const trustOpts = () => ({
+      workingDir: workspace,
+      homeDir: home,
+      trustConfigPaths: [configFile, envFile],
+    });
+
+    it("write/edit/patch to config.json is trust_config (asks until L5)", async () => {
+      expect(await categorizeFsMutation("write", [configFile], trustOpts())).toBe(
+        "trust_config",
+      );
+    });
+
+    it("write to .env (API tokens) is trust_config too", async () => {
+      expect(await categorizeFsMutation("write", [envFile], trustOpts())).toBe(
+        "trust_config",
+      );
+    });
+
+    it("trashing the config file is a trust mutation as well", async () => {
+      expect(await categorizeFsMutation("trash", [configFile], trustOpts())).toBe(
+        "trust_config",
+      );
+    });
+
+    it("a batch that includes config.json is trust_config even alongside a plain file", async () => {
+      expect(
+        await categorizeFsMutation(
+          "write",
+          [join(workspace, "ok.txt"), configFile],
+          trustOpts(),
+        ),
+      ).toBe("trust_config");
+    });
+
+    it("catches a symlink detour to config.json (compared on realpath, not string)", async () => {
+      const decoy = join(workspace, "innocent.json");
+      await symlink(configFile, decoy);
+      expect(await categorizeFsMutation("write", [decoy], trustOpts())).toBe(
+        "trust_config",
+      );
+    });
+
+    it("catches a `..` path that resolves to config.json", async () => {
+      const detour = join(stateDir, "sub", "..", "config.json");
+      await mkdir(join(stateDir, "sub"), { recursive: true });
+      expect(await categorizeFsMutation("write", [detour], trustOpts())).toBe(
+        "trust_config",
+      );
+    });
+
+    it("a not-yet-existing .env on a fresh install still matches", async () => {
+      await rm(envFile, { force: true });
+      expect(await categorizeFsMutation("write", [envFile], trustOpts())).toBe(
+        "trust_config",
+      );
+    });
+
+    it("a normal file next to config.json is NOT trust_config", async () => {
+      expect(
+        await categorizeFsMutation(
+          "write",
+          [join(stateDir, "notes.txt")],
+          trustOpts(),
+        ),
+      ).toBe("fs_write_home");
+    });
+
+    it("extraction never inherits the trust-config guard (targets a dir)", async () => {
+      // Even if destDir is the state dir, extract stays on the scope
+      // ladder; the guard only fires for write/trash of the exact file.
+      expect(await categorizeFsMutation("extract", [stateDir], trustOpts())).toBe(
+        "fs_write_home",
+      );
+    });
   });
 });

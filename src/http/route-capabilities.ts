@@ -42,6 +42,14 @@ export function createCapabilitiesHandler(): HttpHandler {
         // binary toggle this route shipped with: `true` while any
         // category still prompts (level < 5). Computed from the level,
         // so the two fields cannot drift.
+        //
+        // Trade-off: this is coarser than the real behaviour. At level 4
+        // (operator) shell / script / proc-kill run without asking, yet
+        // a binary client reads `approvalRequired: true` and may present
+        // "approvals are on" — semantically imprecise, since the most
+        // dangerous surface is already silent. We accept that for wire
+        // compatibility; a level-aware client should read `approvalLevel`
+        // and ignore this field.
         approvalRequired: runtime.getApprovalLevel() < 5,
       },
       tools: runtime.toolRegistry.list().map((t) => ({
