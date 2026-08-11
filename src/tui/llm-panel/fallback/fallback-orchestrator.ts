@@ -30,6 +30,17 @@ export class FallbackOrchestrator {
     private readonly bus: TuiEventBus & { emit(action: unknown): void },
   ) {
     this.bus.subscribe((action) => {
+      // A provider mutation (activate/select/add/remove) re-emits
+      // `providers_refresh`; re-mirror so the displayed head follows the
+      // active text provider immediately, not only on tab re-entry. This
+      // never writes config — it just re-reads the effective chain.
+      if (
+        typeof (action as { type?: unknown }).type === "string" &&
+        (action as { type: string }).type === "providers_refresh"
+      ) {
+        this.refresh();
+        return;
+      }
       if (!isFallbackPanelAction(action)) return;
       switch (action.type) {
         case "fallback_move_requested":

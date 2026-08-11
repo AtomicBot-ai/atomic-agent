@@ -34,8 +34,8 @@ export function FallbackRows({ state }: { state: TuiState }): ReactElement {
         </Text>
         {panel.links.length === 0 ? (
           <Text color={theme.colors.muted}>
-            {"  "}No chain configured. It defaults to the active provider only
-            — add a link with a to fail over when it is unavailable.
+            {"  "}No chain configured. Falls back to the active provider only.
+            Press a to add a link to fail over to.
           </Text>
         ) : (
           rows.map((row, index) => (

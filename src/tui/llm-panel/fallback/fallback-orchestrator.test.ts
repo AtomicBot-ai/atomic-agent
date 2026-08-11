@@ -149,4 +149,69 @@ describe("FallbackOrchestrator persistence", () => {
     bus.emit({ type: "fallback_remove_requested", providerId: "cloud-a" });
     expect(readFallback(stateDir)?.chain).toEqual(["cloud-a", "cloud-b"]);
   });
+
+  // The appendLocal=true branch is the subtle one (lesson #87): the local
+  // link is *synthesised on read*, so it must never be written into the
+  // stored `chain`, or a round-trip doubles it up.
+  it("does not persist the synthesised local link when appendLocal is on (add)", () => {
+    // Effective chain is [cloud-a, local-llama]; only cloud-a is declared.
+    seedConfig(stateDir, { chain: ["cloud-a"], appendLocal: true });
+    const bus = makeBus();
+    new FallbackOrchestrator(bus);
+    bus.emit({ type: "fallback_add_requested", providerId: "cloud-b" });
+    const fb = readFallback(stateDir)!;
+    // cloud-b appended to the DECLARED chain; local-llama stays out of it
+    // (still synthesised on the next read via appendLocal).
+    expect(fb.chain).toEqual(["cloud-a", "cloud-b"]);
+    expect(fb.chain).not.toContain("local-llama");
+    expect(fb.appendLocal).toBe(true);
+  });
+
+  it("does not persist the synthesised local link when appendLocal is on (move)", () => {
+    seedConfig(stateDir, { chain: ["cloud-a", "cloud-b"], appendLocal: true });
+    const bus = makeBus();
+    new FallbackOrchestrator(bus);
+    // Effective order is [cloud-a, cloud-b, local-llama]; move cloud-b up.
+    bus.emit({ type: "fallback_move_requested", providerId: "cloud-b", delta: -1 });
+    const fb = readFallback(stateDir)!;
+    expect(fb.chain).toEqual(["cloud-b", "cloud-a"]);
+    expect(fb.chain).not.toContain("local-llama");
+  });
+
+  it("treats a move of the appended-local tail as a no-op", () => {
+    seedConfig(stateDir, { chain: ["cloud-a", "cloud-b"], appendLocal: true });
+    const bus = makeBus();
+    new FallbackOrchestrator(bus);
+    // local-llama is the synthesised tail (not a declared link): trying to
+    // move it does not touch the declared chain.
+    bus.emit({ type: "fallback_move_requested", providerId: "local-llama", delta: -1 });
+    expect(readFallback(stateDir)?.chain).toEqual(["cloud-a", "cloud-b"]);
+  });
+
+  it("re-mirrors on providers_refresh so the head follows the active provider", () => {
+    // Active is cloud-a; both providers are in the chain.
+    seedConfig(stateDir, { chain: ["cloud-a", "cloud-b"], appendLocal: false });
+    const bus = makeBus();
+    new FallbackOrchestrator(bus);
+
+    // A provider hot-swap: the config now names cloud-b active. Rewrite it
+    // the way `setActiveTextProviderInConfig` would, then fire the
+    // `providers_refresh` the providers orchestrator emits afterwards.
+    const path = join(stateDir, "config.json");
+    const cfg = JSON.parse(readFileSync(path, "utf8"));
+    cfg.llm.activeTextProvider = "cloud-b";
+    writeFileSync(path, JSON.stringify(cfg), "utf8");
+    resetConfigCache();
+
+    const before = bus.emitted.length;
+    bus.emit({ type: "providers_refresh", rows: [] });
+    const refresh = bus.emitted
+      .slice(before)
+      .find((a) => a.type === "fallback_refresh");
+    expect(refresh).toBeDefined();
+    // resolveFallbackChain hoists cloud-b (the new active) to the head.
+    expect(
+      (refresh as { links: { providerId: string; isActive: boolean }[] }).links[0],
+    ).toMatchObject({ providerId: "cloud-b", isActive: true });
+  });
 });
