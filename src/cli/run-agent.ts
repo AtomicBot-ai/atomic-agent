@@ -105,9 +105,15 @@ async function promptApproval(
       .trim()
       .toLowerCase();
     if (answer === "s" && grantCategory) {
+      process.stderr.write(
+        `\n  granted: ${formatApprovalCategory(request.category)} for this session\n`,
+      );
       return { approved: true, grant: "category" };
     }
     if (answer === "a" && grantShape) {
+      process.stderr.write(
+        `\n  granted: ${request.commandShape} commands for this session\n`,
+      );
       return { approved: true, grant: "shape" };
     }
     return { approved: /^(y|yes)$/.test(answer) };

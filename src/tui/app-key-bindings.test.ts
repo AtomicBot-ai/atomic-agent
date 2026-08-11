@@ -416,13 +416,14 @@ describe("handleAppKey", () => {
     expect(onApprovalDecision).toHaveBeenCalledWith("ap-1", true);
   });
 
-  it("s on a grantable approval resolves with a category grant", () => {
+  it("s on a grantable approval resolves with a category grant and confirms it", () => {
     const state = createInitialTuiState(stubSession());
     state.pendingApproval = pendingRequest();
     const onApprovalDecision = vi.fn();
+    const dispatch = vi.fn();
     const handled = handleAppKey("s", emptyKey(), {
       state,
-      dispatch: vi.fn(),
+      dispatch,
       callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() },
       ctrlCArmed: false,
       setCtrlCArmed: vi.fn(),
@@ -430,15 +431,21 @@ describe("handleAppKey", () => {
     });
     expect(handled).toBe(true);
     expect(onApprovalDecision).toHaveBeenCalledWith("ap-1", true, "category");
+    // A system message confirms the grant at the point of action.
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "system_message",
+      text: "granted: shell command for this session",
+    });
   });
 
-  it("a on a shell approval with a shape resolves with a shape grant", () => {
+  it("a on a shell approval with a shape resolves with a shape grant and confirms it", () => {
     const state = createInitialTuiState(stubSession());
     state.pendingApproval = pendingRequest({ commandShape: "git" });
     const onApprovalDecision = vi.fn();
+    const dispatch = vi.fn();
     const handled = handleAppKey("a", emptyKey(), {
       state,
-      dispatch: vi.fn(),
+      dispatch,
       callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() },
       ctrlCArmed: false,
       setCtrlCArmed: vi.fn(),
@@ -446,6 +453,10 @@ describe("handleAppKey", () => {
     });
     expect(handled).toBe(true);
     expect(onApprovalDecision).toHaveBeenCalledWith("ap-1", true, "shape");
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "system_message",
+      text: "granted: git commands for this session",
+    });
   });
 
   it("s is inert on a trust_config approval (never grantable)", () => {

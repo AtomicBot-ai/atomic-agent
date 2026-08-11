@@ -3,7 +3,10 @@ import type {
   ApprovalGrantScope,
   ApprovalRequest,
 } from "../approval/approval-gate.js";
-import { isGrantableCategory } from "../approval/approval-level.js";
+import {
+  formatApprovalCategory,
+  isGrantableCategory,
+} from "../approval/approval-level.js";
 import { cycleNavSlot, type NavSlot } from "./section.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import type { TuiAction } from "./tui-action.js";
@@ -403,6 +406,23 @@ function canGrantShape(request: ApprovalRequest): boolean {
   return request.category === "shell" && Boolean(request.commandShape);
 }
 
+/**
+ * Human confirmation line for a just-issued session grant, dropped into
+ * the chat transcript so the operator sees the grant land in the same
+ * place approval decisions surface. Active-session grants are otherwise
+ * invisible until a matching request goes silent; this is the honesty at
+ * the point of action while the Privacy-panel listing is a follow-up.
+ */
+function grantConfirmation(
+  request: ApprovalRequest,
+  scope: ApprovalGrantScope,
+): string {
+  if (scope === "shape" && request.commandShape) {
+    return `granted: ${request.commandShape} commands for this session`;
+  }
+  return `granted: ${formatApprovalCategory(request.category)} for this session`;
+}
+
 function handleApprovalKey(
   input: string,
   key: Key,
@@ -426,6 +446,10 @@ function handleApprovalKey(
       approvalId: request.approvalId,
       approved: true,
     });
+    ctx.dispatch({
+      type: "system_message",
+      text: grantConfirmation(request, "category"),
+    });
     return true;
   }
   if (lower === "a" && canGrantShape(request)) {
@@ -434,6 +458,10 @@ function handleApprovalKey(
       type: "approval_resolved",
       approvalId: request.approvalId,
       approved: true,
+    });
+    ctx.dispatch({
+      type: "system_message",
+      text: grantConfirmation(request, "shape"),
     });
     return true;
   }
