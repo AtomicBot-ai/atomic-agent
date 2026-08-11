@@ -1645,7 +1645,7 @@ The chain is an ordered list of **configured provider ids**, primary first. `Com
   "chain": ["openrouter-gpt", "groq-llama"],  // ordered provider ids; every id must be configured
   "appendLocal": true,                          // default true: append the llama-server provider id to the tail
   "failureThreshold": 3,                        // consecutive non-immediate failures before switching
-  "cooldownMs": [30000, 60000, 300000],         // escalating ladder; last entry is the cap
+  "cooldownMs": [30000, 60000, 300000],         // escalating ladder (must be non-decreasing); last entry is the cap
   "probeThrottleMs": 300000,                    // min gap between primary probes
   "failureWindowMs": 86400000                   // no-error window that resets the counter + ladder step
 }
@@ -1655,11 +1655,12 @@ The chain is an ordered list of **configured provider ids**, primary first. `Com
 - The **active text provider is always the primary** — `resolveFallbackChain` hoists it to the head, so a TUI hot-swap re-primes the chain and drops any active override without editing `fallback.chain`.
 - `appendLocal` auto-appends the configured `llama-server`-kind provider id to the tail (unless already present, or none is configured, or the flag is `false`).
 
-### Reset policy (circuit breaker, per provider id)
+### Reset policy (circuit breaker, per provider id, per session)
 
 - **Which failures advance** is decided by `shouldAdvance(err)` from the reliability taxonomy: `transport` and `model` categories advance (provider unreachable or model dead); `grammar` / `tool` / `cancelled` never advance (same request fails identically everywhere, or it is our bug / a user abort). One centralized predicate — both wrappers route through it.
-- **Immediate signals** (429 / 408 / any 5xx / network-null that is not our own request timeout) switch on the **first** occurrence, bypassing the threshold. All other advance-worthy failures increment a consecutive-failure counter and switch at `failureThreshold` (default 3).
-- **Sticky.** After switching, an `overrideActiveId` keeps subsequent turns on the working provider — the dead primary is **not** retried every turn.
+- **Immediate signals** (429 / 408 / any 5xx / network-null that is not our own request timeout) switch on the **first** occurrence, bypassing the threshold. All other advance-worthy failures increment a consecutive-failure counter and switch at `failureThreshold` (default 3). "Our own request timeout" covers **both** transports symmetrically — `OpenAiHttpError.timedOut` and `LlamaServerError.timedOut` (both surface as `status === null`) are weak evidence (one slow turn, not a down provider) and only count toward the threshold; a local timeout in particular must not switch immediately, since replaying it burns another full timeout of GPU time.
+- **Per-session isolation.** One shared `ProviderFallbackChain` serves the main loop and every sub-runner (reflection, link-gen, vote, distill) across all concurrent sessions, so its mutable breaker state (`overrideId`, per-provider failure counters, cooldown ladder, probe throttle) is **partitioned by session id** (`runWithFallback(chain, attempt, sessionId)`). One session's success never clears another's armed cooldown, and their failure counters never cross-contaminate. A keyless call shares one default partition (back-compat for tests / non-session callers).
+- **Sticky.** After switching, a per-partition `overrideId` keeps subsequent turns on the working provider — the dead primary is **not** retried every turn.
 - **Escalating cooldown** on the failed provider: `30s → 60s → 300s` (cap), stepped each time it fails again while tripped. The counter and ladder step reset after `failureWindowMs` (24h) with no new failure, checked **lazily** on next access.
 - **Probe.** When on an override and the primary's cooldown has elapsed **and** `probeThrottleMs` (5 min) has passed since the last probe, the next turn is routed back to the primary as a throttled probe. On success: clear the override, reset the breaker, emit a one-shot "switched back" notice. On failure: re-arm (escalate) the cooldown and stay on the override.
 - **Notifications** ride a new `AgentLoopEvent`, `{ type: "provider_switched"; direction: "away" | "back"; from; to; reason }`, emitted through the same `turnController.emit` path as every other loop event — **at most one per state transition** (never on sticky turns). Bootstrap wires the chain's `noticeSink` to `emitAgentLoopEvent`.
@@ -1683,7 +1684,7 @@ The remaining asymmetry: `tools` is populated only when the **primary's** transp
 
 ### Locked invariants (Pinned by tests)
 
-1. **429 / 5xx switches on the first failure; non-immediate transport failures switch at the threshold.** Pinned by [src/llm/fallback/provider-fallback-chain.test.ts](src/llm/fallback/provider-fallback-chain.test.ts), [src/llm/fallback/should-advance.test.ts](src/llm/fallback/should-advance.test.ts).
+1. **429 / 5xx switches on the first failure; non-immediate transport failures switch at the threshold.** A self-inflicted request timeout on **either** transport (`OpenAiHttpError`/`LlamaServerError` `timedOut`) is non-immediate and only counts toward the threshold. Pinned by [src/llm/fallback/provider-fallback-chain.test.ts](src/llm/fallback/provider-fallback-chain.test.ts), [src/llm/fallback/should-advance.test.ts](src/llm/fallback/should-advance.test.ts).
 2. **Sticky — the dead primary is not re-picked every turn**; only a throttled probe returns to it. Pinned by [src/llm/fallback/provider-fallback-chain.test.ts](src/llm/fallback/provider-fallback-chain.test.ts), [src/llm/fallback/run-with-fallback.test.ts](src/llm/fallback/run-with-fallback.test.ts).
 3. **Cooldown escalates 30/60/300 and caps at 300s.** Pinned by [src/llm/fallback/provider-fallback-chain.test.ts](src/llm/fallback/provider-fallback-chain.test.ts).
 4. **`grammar` / `tool` / `cancelled` never advance.** Pinned by [src/llm/fallback/should-advance.test.ts](src/llm/fallback/should-advance.test.ts), [src/llm/fallback/run-with-fallback.test.ts](src/llm/fallback/run-with-fallback.test.ts).
@@ -1691,6 +1692,8 @@ The remaining asymmetry: `tools` is populated only when the **primary's** transp
 6. **Exactly one switch notice per state transition** (away / back), none on sticky turns. Pinned by [src/llm/fallback/provider-fallback-chain.test.ts](src/llm/fallback/provider-fallback-chain.test.ts).
 7. **`appendLocal` appends the local provider when configured, nothing when not.** Pinned by [src/llm/fallback/fallback-config.test.ts](src/llm/fallback/fallback-config.test.ts).
 8. **A cross-transport fallover parses the response with the served link's transport, not the primary's**, and the turn reaches the fallback's answer instead of `loop_failed`. Pinned by [src/llm/fallback/fallback-e2e.integration.test.ts](src/llm/fallback/fallback-e2e.integration.test.ts) (real `AgentLoop` + `step-executor`, both unary and streaming).
+9. **Breaker state is partitioned by session** — one partition's success does not clear another's armed cooldown, and a keyless call shares one default partition. Pinned by [src/llm/fallback/provider-fallback-chain.test.ts](src/llm/fallback/provider-fallback-chain.test.ts) ("partition isolation").
+10. **The cooldown ladder must be non-decreasing** — a decreasing `cooldownMs` is rejected at parse time so "escalating" stays true. Pinned by [src/config/llm-config.test.ts](src/config/llm-config.test.ts).
 
 ### TUI: the Fallback pane
 

@@ -106,6 +106,23 @@ describe("llm-config", () => {
     ).toThrow(/cooldownMs/);
   });
 
+  it("rejects a decreasing cooldown ladder (must escalate)", () => {
+    expect(() =>
+      parseUserConfigFile(
+        baseLlm({ chain: ["openrouter"], cooldownMs: [300000, 1000] }),
+      ),
+    ).toThrow(/non-decreasing/);
+  });
+
+  it("accepts a flat (equal-step) cooldown ladder", () => {
+    const parsed = parseUserConfigFile(
+      baseLlm({ chain: ["openrouter"], cooldownMs: [30000, 30000] }),
+    );
+    expect(parsed.llm?.fallback).toMatchObject({
+      cooldownMs: [30000, 30000],
+    });
+  });
+
   it("rejects a non-boolean appendLocal", () => {
     expect(() =>
       parseUserConfigFile(baseLlm({ chain: ["openrouter"], appendLocal: "yes" })),

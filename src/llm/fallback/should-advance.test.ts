@@ -46,6 +46,19 @@ describe("shouldAdvance", () => {
     });
   });
 
+  it("advances but NOT immediately on a local llama request timeout", () => {
+    // Symmetric with the cloud case above: our own request-timeout
+    // controller firing (status === null, timedOut) is weak evidence and
+    // must only count toward the threshold — never an immediate switch,
+    // which would replay and burn another full timeout of GPU time.
+    expect(
+      shouldAdvance(new LlamaServerError("x", null, "http://local", true)),
+    ).toEqual({
+      advance: true,
+      immediate: false,
+    });
+  });
+
   it("advances (transport) on a cloud 401 — a dead key should try the fallback", () => {
     // OpenAiHttpError is always transport-category; 401 is not an
     // immediate provider-down signal, so it advances via the threshold.

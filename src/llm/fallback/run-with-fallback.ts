@@ -20,8 +20,9 @@ import type { ProviderFallbackChain } from "./provider-fallback-chain.js";
 export async function runWithFallback<T>(
   chain: ProviderFallbackChain,
   attempt: (providerId: string) => Promise<T>,
+  partitionKey?: string,
 ): Promise<T> {
-  const pick = chain.pickProvider();
+  const pick = chain.pickProvider(partitionKey);
   let currentId = pick.providerId;
   let wasProbe = pick.isProbe;
 
@@ -33,10 +34,10 @@ export async function runWithFallback<T>(
   for (;;) {
     try {
       const result = await attempt(currentId);
-      chain.recordSuccess(currentId, wasProbe);
+      chain.recordSuccess(currentId, wasProbe, partitionKey);
       return result;
     } catch (err) {
-      const nextId = chain.advanceFrom(currentId, err);
+      const nextId = chain.advanceFrom(currentId, err, partitionKey);
       if (nextId === null) throw err;
       currentId = nextId;
       // Only the very first pick can be a probe; every advance is a real

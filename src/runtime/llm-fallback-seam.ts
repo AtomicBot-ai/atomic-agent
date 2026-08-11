@@ -56,7 +56,9 @@ export function createFallbackCompleter(
   deps: FallbackSeamDeps,
 ): (params: LlmStreamParams) => Promise<CompletionResult> {
   return async (params) =>
-    runWithFallback(deps.fallbackChain, async (providerId) => {
+    runWithFallback(
+      deps.fallbackChain,
+      async (providerId) => {
       const { provider, transport } = deps.resolveSlice(providerId);
       const base = {
         prompt: params.prompt,
@@ -92,7 +94,9 @@ export function createFallbackCompleter(
             });
       deps.recordUnaryUsage(params, result);
       return { ...result, servedTransport: transport };
-    });
+      },
+      params.sessionId,
+    );
 }
 
 /**
@@ -146,6 +150,7 @@ export function createFallbackStreamer(
       const { primed, transport } = await runWithFallback(
         deps.fallbackChain,
         (id) => openStreamPrimed(id, params),
+        params.sessionId,
       );
       const result = yield* replayPrimedStream(primed);
       return { ...result, servedTransport: transport };

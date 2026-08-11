@@ -73,5 +73,14 @@ function statusOf(err: unknown): number | null | undefined {
 }
 
 function timedOutOf(err: unknown): boolean {
-  return err instanceof OpenAiHttpError && err.timedOut;
+  // Both cloud and local clients flag their OWN request-timeout controller
+  // firing (status === null). A self-inflicted timeout is weak evidence the
+  // provider is down — one slow turn — so it only counts toward the
+  // threshold, never an immediate switch. Replaying a local timeout also
+  // burns another full timeout of GPU time, so treating it as immediate is
+  // doubly wrong. Missing the LlamaServerError arm here silently made local
+  // timeouts switch on the first failure, contradicting the doc above.
+  if (err instanceof OpenAiHttpError) return err.timedOut;
+  if (err instanceof LlamaServerError) return err.timedOut;
+  return false;
 }

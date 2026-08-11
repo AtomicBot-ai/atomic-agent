@@ -348,4 +348,64 @@ describe("ProviderFallbackChain", () => {
     abort.name = "AbortError";
     expect(chain.advanceFrom("primary", abort)).toBeNull();
   });
+
+  describe("partition isolation", () => {
+    it("keeps override state per partition — one session's fallover does not move another's", () => {
+      const chain = new ProviderFallbackChain({
+        resolve: () => chainOf(["primary", "backup"]),
+      });
+
+      // Session A fails over to backup.
+      expect(chain.advanceFrom("primary", http(429), "sessionA")).toBe("backup");
+      expect(chain.activeOverrideFor("sessionA")).toBe("backup");
+
+      // Session B is untouched: still on primary, no override.
+      expect(chain.activeOverrideFor("sessionB")).toBeNull();
+      expect(chain.pickProvider("sessionB")).toEqual({
+        providerId: "primary",
+        isProbe: false,
+      });
+    });
+
+    it("does not let one partition's success clear another's armed cooldown", () => {
+      const clock = makeClock();
+      const chain = new ProviderFallbackChain({
+        resolve: () => chainOf(["primary", "backup"]),
+        now: clock.now,
+      });
+
+      // Session A trips the primary cooldown (immediate 5xx) and is now
+      // stuck on backup until the cooldown elapses.
+      expect(chain.advanceFrom("primary", http(503), "sessionA")).toBe("backup");
+      expect(chain.activeOverrideFor("sessionA")).toBe("backup");
+
+      // Session B independently succeeds on primary — this must NOT reset
+      // session A's primary breaker (the cross-contamination bug).
+      chain.recordSuccess("primary", false, "sessionB");
+
+      // Before A's cooldown elapses, A must still be held on backup (its
+      // probe is throttled by its OWN cooldown, not cleared by B).
+      expect(chain.pickProvider("sessionA")).toEqual({
+        providerId: "backup",
+        isProbe: false,
+      });
+
+      // Once A's cooldown (30s) + probe throttle elapse, A probes primary.
+      clock.advance(DEFAULT_FALLBACK_TIMING.probeThrottleMs + 1);
+      expect(chain.pickProvider("sessionA")).toEqual({
+        providerId: "primary",
+        isProbe: true,
+      });
+    });
+
+    it("shares one partition when no key is passed (back-compat)", () => {
+      const chain = new ProviderFallbackChain({
+        resolve: () => chainOf(["primary", "backup"]),
+      });
+      expect(chain.advanceFrom("primary", http(429))).toBe("backup");
+      // The keyless getter and the default partition see the same state.
+      expect(chain.activeOverride).toBe("backup");
+      expect(chain.activeOverrideFor("")).toBe("backup");
+    });
+  });
 });

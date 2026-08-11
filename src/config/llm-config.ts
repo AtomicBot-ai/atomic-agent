@@ -196,7 +196,21 @@ function parseCooldownLadder(raw: unknown, field: string): number[] {
       "expected a non-empty array of positive integers (ms)",
     );
   }
-  return raw.map((v, i) => parsePositiveInt(v, `${field}[${i}]`));
+  const ladder = raw.map((v, i) => parsePositiveInt(v, `${field}[${i}]`));
+  // The breaker walks this ladder by step index, so it must be
+  // non-decreasing to actually escalate. A decreasing entry (e.g.
+  // [300000, 1000]) would make the second cooldown SHORTER than the
+  // first — the opposite of the documented "escalating ladder". Reject
+  // it at parse time rather than silently serving a shrinking cooldown.
+  for (let i = 1; i < ladder.length; i++) {
+    if (ladder[i]! < ladder[i - 1]!) {
+      throw new ConfigValidationError(
+        `${field}[${i}]`,
+        `cooldown ladder must be non-decreasing (${ladder[i]} < ${ladder[i - 1]} at the previous step)`,
+      );
+    }
+  }
+  return ladder;
 }
 
 export function parseLlmFallbackConfig(
