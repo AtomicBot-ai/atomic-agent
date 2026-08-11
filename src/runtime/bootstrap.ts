@@ -75,6 +75,15 @@ import {
   resolveModel,
   type ResolvedModel,
 } from "../llm/provider/model-resolver.js";
+import {
+  ProviderFallbackChain,
+  resolveFallbackChain,
+} from "../llm/fallback/index.js";
+import {
+  createFallbackCompleter,
+  createFallbackStreamer,
+  type FallbackSeamDeps,
+} from "./llm-fallback-seam.js";
 
 import { MemoryStore } from "../memory/memory-store.js";
 import { ProfileStore } from "../memory/profile-store.js";
@@ -659,6 +668,40 @@ export async function createAgentRuntime(
     },
   });
 
+  /**
+   * Single fan-out for `AgentLoopEvent`s. The loop's own `onEvent`
+   * closure (built later) routes through here, and so does the provider
+   * fallback chain's notice sink — a `provider_switched` event surfaces
+   * exactly like any other loop event (trace recorder, TUI/HTTP/sidecar
+   * event streams, host handler). Resolving the session from the per-turn
+   * ALS frame keeps two concurrent sessions from cross-contaminating.
+   */
+  const emitAgentLoopEvent = (event: AgentLoopEvent): void => {
+    const ctx = turnContext.getStore();
+    if (ctx) {
+      const recorder = recorders.get(ctx.sessionId);
+      recorder?.onAgentEvent(event);
+      turnController.emit(ctx.sessionId, event);
+    }
+    if (event.type === "loop_failed") {
+      captureError(errorReporter, event.error, {
+        source: "llm_failure",
+        category: event.category,
+      });
+    }
+    options.handlers?.onAgentEvent?.(event);
+  };
+
+  // Cross-provider fallover breaker. Owns no timer — every decision is
+  // computed lazily from the wall clock when a turn asks for a provider
+  // (AGENTS.md §"Provider fallback chain"). The notice sink lifts each
+  // one-shot switch into a `provider_switched` AgentLoopEvent.
+  const fallbackChain = new ProviderFallbackChain({
+    resolve: () => resolveFallbackChain(resolveLlmConfig(getConfig())),
+    noticeSink: (notice) =>
+      emitAgentLoopEvent({ type: "provider_switched", ...notice }),
+  });
+
   // Approval requests flow through `ApprovalRouter`: per-session
   // handlers (Telegram channel, future Slack/etc.) win, otherwise the
   // host's `onApprovalRequest` callback fires. The fallback closure
@@ -1065,11 +1108,19 @@ export async function createAgentRuntime(
     logger,
   });
 
-  /** Re-read on every inference so TUI `setActive` hot-swap takes effect. */
-  const resolveActiveLlmSlice = () => {
+  /**
+   * Re-read on every inference so TUI `setActive` hot-swap takes effect.
+   * `providerId` overrides which provider is used for this call — the
+   * fallback chain passes the chosen link's id; transport/adapter/slot
+   * affinity are then resolved for THAT provider, not the active one. An
+   * unknown id degrades to the active provider (a raced config edit).
+   */
+  const resolveActiveLlmSlice = (providerId?: string) => {
     const fresh = getConfig();
     const resolved = resolveLlmConfig(fresh);
-    const provider = providerRegistry.activeText;
+    const provider =
+      (providerId ? providerRegistry.getProvider(providerId) : undefined) ??
+      providerRegistry.activeText;
     return {
       provider,
       transport: resolveActiveToolTransport(resolved, provider),
@@ -1272,128 +1323,67 @@ export async function createAgentRuntime(
     });
   }
 
-  const llmComplete =
-    options.overrides?.llamaComplete ??
-    (async (params) => {
-      const { provider, transport } = resolveActiveLlmSlice();
-      const base = {
-        prompt: params.prompt,
-        sessionId: params.sessionId,
-        ...(typeof params.maxTokens === "number"
-          ? { maxTokens: params.maxTokens }
-          : {}),
-        ...(params.signal ? { signal: params.signal } : {}),
-      };
-      const result =
-        transport === "native_tools"
-          ? await provider.complete({
-              ...base,
-              ...(params.tools ? { tools: params.tools } : {}),
-              ...(params.toolChoice !== undefined
-                ? { toolChoice: params.toolChoice }
-                : {}),
-              ...(params.parallelToolCalls !== undefined
-                ? { parallelToolCalls: params.parallelToolCalls }
-                : {}),
-              // Cloud sub-runners (reflection / link-gen / vote /
-              // rewriter / distill) cannot rely on GBNF — OpenAI-
-              // compatible APIs do not understand it. They pass a
-              // `responseFormat` JSON-Schema envelope which we
-              // forward verbatim. The main agent loop never sets
-              // `responseFormat` (it uses `tools` instead), so this
-              // branch is a no-op there.
-              ...(params.responseFormat
-                ? { responseFormat: params.responseFormat }
-                : {}),
-            })
-          : await provider.complete({
-              ...base,
-              grammar: params.grammar,
-              slotId: params.slotId,
-              cachePrompt: params.slotId >= 0,
-            });
-      if (result.usage) {
-        const model = resolveModelPricing(result.modelId);
-        if (costAccumulator) {
-          costAccumulator.recordTurn({
-            modelId: result.modelId,
-            usage: result.usage,
-            ...(model ? { model } : {}),
-          });
-        }
-        if (params.sessionId) {
-          turnUsageMeter.record({
-            sessionId: params.sessionId,
-            usage: result.usage,
-            ...(model ? { model } : {}),
-          });
-        }
-      }
-      return result;
-    });
-
-  /**
-   * Fold a streamed completion's usage into the turn meter. The stream's
-   * *return* value carries `usage` (deltas do not), so the totals only
-   * exist once the generator finishes — this passes chunks through
-   * untouched and records from the final result. A stream that is
-   * abandoned mid-flight never returns, and contributes nothing, which
-   * is correct: a cancelled turn reports the tokens it actually
-   * finished accounting for.
-   */
-  async function* meterStream(
-    sessionId: string | undefined,
-    stream: AsyncGenerator<StreamChunk, CompletionResult, void>,
-  ): AsyncGenerator<StreamChunk, CompletionResult, void> {
-    const result = yield* stream;
-    if (result.usage && sessionId) {
-      const model = resolveModelPricing(result.modelId);
-      turnUsageMeter.record({
-        sessionId,
+  // Fold a unary completion's usage into cost + meter. Lifted out of the
+  // seam so the fallback loop + `servedTransport` stamp live in the
+  // testable `llm-fallback-seam` module (which knows nothing about cost
+  // tracking). The per-provider retry budget (PR #90) still runs one
+  // level below, inside `provider.complete`, so the breaker only ever
+  // sees an error after those retries are spent.
+  const recordUnaryUsage = (
+    params: LlmStreamParams,
+    result: CompletionResult,
+  ): void => {
+    if (!result.usage) return;
+    const model = resolveModelPricing(result.modelId);
+    if (costAccumulator) {
+      costAccumulator.recordTurn({
+        modelId: result.modelId,
         usage: result.usage,
         ...(model ? { model } : {}),
       });
     }
-    return result;
-  }
+    if (params.sessionId) {
+      turnUsageMeter.record({
+        sessionId: params.sessionId,
+        usage: result.usage,
+        ...(model ? { model } : {}),
+      });
+    }
+  };
+
+  const recordStreamUsage = (
+    sessionId: string | undefined,
+    result: CompletionResult,
+  ): void => {
+    if (!result.usage || !sessionId) return;
+    const model = resolveModelPricing(result.modelId);
+    turnUsageMeter.record({
+      sessionId,
+      usage: result.usage,
+      ...(model ? { model } : {}),
+    });
+  };
+
+  const fallbackSeamDeps: FallbackSeamDeps = {
+    fallbackChain,
+    resolveSlice: (providerId) => {
+      const { provider, transport } = resolveActiveLlmSlice(providerId);
+      return { provider, transport };
+    },
+    recordUnaryUsage,
+    recordStreamUsage,
+  };
+
+  const llmComplete =
+    options.overrides?.llamaComplete ??
+    createFallbackCompleter(fallbackSeamDeps);
 
   const llmCompleteStream = options.overrides?.disableStreaming
     ? undefined
     : options.overrides?.llamaCompleteStream ??
       (options.overrides?.llamaComplete
         ? undefined
-        : (params) => {
-            const { provider, transport } = resolveActiveLlmSlice();
-            const base = {
-              prompt: params.prompt,
-              sessionId: params.sessionId,
-              ...(params.signal ? { signal: params.signal } : {}),
-            };
-            if (transport === "native_tools") {
-              return meterStream(
-                params.sessionId,
-                provider.completeStream({
-                  ...base,
-                  ...(params.tools ? { tools: params.tools } : {}),
-                  ...(params.toolChoice !== undefined
-                    ? { toolChoice: params.toolChoice }
-                    : {}),
-                  ...(params.parallelToolCalls !== undefined
-                    ? { parallelToolCalls: params.parallelToolCalls }
-                    : {}),
-                }),
-              );
-            }
-            return meterStream(
-              params.sessionId,
-              provider.completeStream({
-                ...base,
-                grammar: params.grammar,
-                slotId: params.slotId,
-                cachePrompt: params.slotId >= 0,
-              }),
-            );
-          });
+        : createFallbackStreamer(fallbackSeamDeps));
 
   const taskStore = new TaskStore({ dbFile: config.paths.tasksDbFile });
   const webhookSessionStore = new WebhookSessionStore(
@@ -1795,28 +1785,11 @@ export async function createAgentRuntime(
           }),
         }
       : {}),
-    onEvent: (event: AgentLoopEvent) => {
-      // The loop has no awareness of which session it is currently
-      // driving; resolve that from the per-turn ALS frame so two
-      // concurrent sessions never cross-contaminate trace records or
-      // per-submission hooks.
-      const ctx = turnContext.getStore();
-      if (ctx) {
-        const recorder = recorders.get(ctx.sessionId);
-        recorder?.onAgentEvent(event);
-        turnController.emit(ctx.sessionId, event);
-      }
-      // Report terminal LLM failures (never `cancelled` — filtered inside
-      // captureError). The scrubber strips everything but the error type,
-      // category, and path-stripped frames.
-      if (event.type === "loop_failed") {
-        captureError(errorReporter, event.error, {
-          source: "llm_failure",
-          category: event.category,
-        });
-      }
-      options.handlers?.onAgentEvent?.(event);
-    },
+    // The loop has no awareness of which session it is currently driving;
+    // `emitAgentLoopEvent` resolves that from the per-turn ALS frame so
+    // two concurrent sessions never cross-contaminate trace records or
+    // per-submission hooks, and reports terminal LLM failures to Sentry.
+    onEvent: emitAgentLoopEvent,
     metrics,
     logger,
   };

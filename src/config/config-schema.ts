@@ -747,6 +747,21 @@ export interface AtomicAgentConfig {
       showInStatusBar: boolean;
       dailyResetHourUtc: number;
     };
+    /**
+     * Cross-provider fallover. `chain` is an ordered list of provider ids
+     * (primary first) tried in turn when the active provider is
+     * unavailable; the local llama-server provider is auto-appended
+     * unless `appendLocal` is false. Timing knobs default to the
+     * circuit-breaker numbers in AGENTS.md §"Provider fallback chain".
+     */
+    fallback?: {
+      chain?: readonly string[];
+      appendLocal?: boolean;
+      failureThreshold?: number;
+      cooldownMs?: readonly number[];
+      probeThrottleMs?: number;
+      failureWindowMs?: number;
+    };
   };
 }
 

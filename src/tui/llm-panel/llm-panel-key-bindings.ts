@@ -9,6 +9,7 @@ import {
 import { selectCloudModelSection } from "./llm-panel-row-builders.js";
 import { clampLlmCursor, selectLlmRowAt } from "./llm-panel-selectors.js";
 import { cursorFieldFor } from "./llm-panel-state.js";
+import { handleFallbackPaneKey } from "./fallback/fallback-key-bindings.js";
 import {
   activateProviderEmbedding,
   openAddProvider,
@@ -34,6 +35,14 @@ export function handleLlmPanelKey(
 
   const modalHandled = handleLlmModalKey(input, key, ctx);
   if (modalHandled !== null) return modalHandled;
+
+  // The Fallback pane owns its own edit keys (move/add/remove/toggle) and
+  // its add-link picker. It runs before the shared letter hotkeys so
+  // those keys act on the chain, not on the Cloud pane. Keys it does not
+  // claim (`[`/`]` pane switch, `/`, `r`, `L`) fall through below.
+  if (state.llmPanel.mode === "fallback") {
+    if (handleFallbackPaneKey(input, key, ctx)) return true;
+  }
 
   // Focused `filter:` row of the inline Cloud model list: printable keys
   // edit the filter, ↑/↓ walk the filtered models, Enter selects, Esc

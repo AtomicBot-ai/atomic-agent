@@ -89,6 +89,15 @@ export interface CompletionResult {
   /** Raw OpenAI tool_calls when transport is native_tools. */
   toolCalls?: ReadonlyArray<OpenAiToolCall>;
   finishReason?: string | null;
+  /**
+   * Tool-call transport of the provider that actually served this
+   * completion. Providers never set it — it is stamped by the fallback
+   * chain wrapper so the caller parses the response with the transport of
+   * the link that answered, not the primary's. Absent on the direct
+   * (non-wrapped) path, where the caller's own `toolTransport` is
+   * authoritative.
+   */
+  servedTransport?: ToolCallTransport;
 }
 
 export interface OpenAiToolCall {

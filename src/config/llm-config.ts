@@ -24,11 +24,21 @@ export type UserLlmProviderEntry = {
   requestTimeoutMs?: number;
 };
 
+export type UserLlmFallbackConfig = {
+  chain?: string[];
+  appendLocal?: boolean;
+  failureThreshold?: number;
+  cooldownMs?: number[];
+  probeThrottleMs?: number;
+  failureWindowMs?: number;
+};
+
 export type UserLlmFileConfig = {
   activeTextProvider: string;
   activeEmbeddingProvider: string;
   toolTransport: UserLlmToolTransport;
   providers: UserLlmProviderEntry[];
+  fallback?: UserLlmFallbackConfig;
 };
 
 const PROVIDER_ID_RE = /^[a-z][a-z0-9-]{0,31}$/;
@@ -172,6 +182,96 @@ export function parseLlmProviders(
   return out;
 }
 
+function parsePositiveInt(raw: unknown, field: string): number {
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw <= 0) {
+    throw new ConfigValidationError(field, "expected a positive integer");
+  }
+  return raw;
+}
+
+function parseCooldownLadder(raw: unknown, field: string): number[] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new ConfigValidationError(
+      field,
+      "expected a non-empty array of positive integers (ms)",
+    );
+  }
+  const ladder = raw.map((v, i) => parsePositiveInt(v, `${field}[${i}]`));
+  // The breaker walks this ladder by step index, so it must be
+  // non-decreasing to actually escalate. A decreasing entry (e.g.
+  // [300000, 1000]) would make the second cooldown SHORTER than the
+  // first — the opposite of the documented "escalating ladder". Reject
+  // it at parse time rather than silently serving a shrinking cooldown.
+  for (let i = 1; i < ladder.length; i++) {
+    if (ladder[i]! < ladder[i - 1]!) {
+      throw new ConfigValidationError(
+        `${field}[${i}]`,
+        `cooldown ladder must be non-decreasing (${ladder[i]} < ${ladder[i - 1]} at the previous step)`,
+      );
+    }
+  }
+  return ladder;
+}
+
+export function parseLlmFallbackConfig(
+  raw: unknown,
+  providerIds: ReadonlySet<string>,
+  field: string,
+): UserLlmFallbackConfig {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected object");
+  }
+  const obj = raw as Record<string, unknown>;
+  const out: UserLlmFallbackConfig = {};
+
+  if (obj.chain !== undefined) {
+    if (!Array.isArray(obj.chain)) {
+      throw new ConfigValidationError(`${field}.chain`, "expected array of provider ids");
+    }
+    const chain = obj.chain.map((v, i) =>
+      parseProviderId(v, `${field}.chain[${i}]`),
+    );
+    for (let i = 0; i < chain.length; i++) {
+      if (!providerIds.has(chain[i]!)) {
+        throw new ConfigValidationError(
+          `${field}.chain[${i}]`,
+          `unknown provider id ${JSON.stringify(chain[i])}`,
+        );
+      }
+    }
+    out.chain = chain;
+  }
+
+  if (obj.appendLocal !== undefined) {
+    if (typeof obj.appendLocal !== "boolean") {
+      throw new ConfigValidationError(`${field}.appendLocal`, "expected boolean");
+    }
+    out.appendLocal = obj.appendLocal;
+  }
+  if (obj.failureThreshold !== undefined) {
+    out.failureThreshold = parsePositiveInt(
+      obj.failureThreshold,
+      `${field}.failureThreshold`,
+    );
+  }
+  if (obj.cooldownMs !== undefined) {
+    out.cooldownMs = parseCooldownLadder(obj.cooldownMs, `${field}.cooldownMs`);
+  }
+  if (obj.probeThrottleMs !== undefined) {
+    out.probeThrottleMs = parsePositiveInt(
+      obj.probeThrottleMs,
+      `${field}.probeThrottleMs`,
+    );
+  }
+  if (obj.failureWindowMs !== undefined) {
+    out.failureWindowMs = parsePositiveInt(
+      obj.failureWindowMs,
+      `${field}.failureWindowMs`,
+    );
+  }
+  return out;
+}
+
 export function parseUserLlmFileConfig(
   raw: unknown,
   defaults: UserLlmFileConfig,
@@ -215,10 +315,20 @@ export function parseUserLlmFileConfig(
       "expected auto|grammar|native_tools",
     );
   }
+  const fallback =
+    obj.fallback === undefined || obj.fallback === null
+      ? undefined
+      : parseLlmFallbackConfig(
+          obj.fallback,
+          new Set(providers.map((p) => p.id)),
+          "llm.fallback",
+        );
+
   return {
     activeTextProvider,
     activeEmbeddingProvider,
     toolTransport: toolTransportRaw,
     providers,
+    ...(fallback ? { fallback } : {}),
   };
 }

@@ -112,6 +112,9 @@ export function selectLlmPanelRows(
 ): readonly LlmPanelRow[] {
   if (mode === "cloud") return selectCloudRows(state);
   if (mode === "external") return selectExternalRows(state);
+  // The Fallback pane renders from `state.fallbackPanel`, not from the
+  // shared `LlmPanelRow` list — it has no rows in this model.
+  if (mode === "fallback") return [];
   return selectLocalRows(state);
 }
 

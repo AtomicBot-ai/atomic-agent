@@ -70,11 +70,7 @@ export function LlmPanel({
         <LlmModeRows rows={rows} state={state} maxRows={listBudget} />
       </Box>
       <Box marginTop={useFull ? 1 : 0} flexDirection="column">
-        <Text color={theme.colors.muted}>
-          {useFull
-            ? "j/k move · Enter selected action · ←/→ switch Local/Cloud/External · f filter · n add provider · c configure · r refresh"
-            : "j/k · Enter · ←/→ mode · f filter · r"}
-        </Text>
+        <Text color={theme.colors.muted}>{footerHint(state.llmPanel.mode, useFull)}</Text>
       </Box>
     </Box>
   );
@@ -155,7 +151,20 @@ const MODE_LABELS: Record<LlmPanelMode, string> = {
   local: "Local",
   cloud: "Cloud",
   external: "External llama.cpp",
+  fallback: "Fallback",
 };
+
+/** Footer key hint, pane-specific for Fallback (its edit keys differ). */
+function footerHint(mode: LlmPanelMode, useFull: boolean): string {
+  if (mode === "fallback") {
+    return useFull
+      ? "j/k move · < > reorder · a add link · d remove · l toggle local · ←/→ switch pane · r refresh"
+      : "j/k · < > reorder · a add · d remove · l local · ←/→ pane";
+  }
+  return useFull
+    ? "j/k move · Enter selected action · ←/→ switch Local/Cloud/External/Fallback · f filter · n add provider · c configure · r refresh"
+    : "j/k · Enter · ←/→ mode · f filter · r";
+}
 
 function ModeHeader({ mode }: { mode: LlmPanelMode }): ReactElement {
   return (

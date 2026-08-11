@@ -1,12 +1,18 @@
 /**
  * Panes of the LLM tab. `local` browses the managed llama.cpp catalog,
  * `cloud` the API providers, `external` the single base URL of a
- * llama-server the operator runs themselves.
+ * llama-server the operator runs themselves, `fallback` the ordered
+ * cross-provider fallover chain.
  */
-export type LlmPanelMode = "local" | "cloud" | "external";
+export type LlmPanelMode = "local" | "cloud" | "external" | "fallback";
 
 /** Left-to-right pane order, used by the ←/→ pane switch. */
-export const LLM_PANEL_MODES: readonly LlmPanelMode[] = ["local", "cloud", "external"];
+export const LLM_PANEL_MODES: readonly LlmPanelMode[] = [
+  "local",
+  "cloud",
+  "external",
+  "fallback",
+];
 
 export type LlmPanelSection = LlmPanelMode;
 
@@ -20,6 +26,7 @@ export interface LlmPanelState {
   localCursor: number;
   cloudCursor: number;
   externalCursor: number;
+  fallbackCursor: number;
   syncModeToActiveRoute: boolean;
   stopLocalDaemonsPrompt: LlmStopLocalDaemonsPrompt | null;
   /**
@@ -47,6 +54,7 @@ export function createInitialLlmPanelState(): LlmPanelState {
     localCursor: 0,
     cloudCursor: 0,
     externalCursor: 0,
+    fallbackCursor: 0,
     syncModeToActiveRoute: false,
     stopLocalDaemonsPrompt: null,
     externalUrlDraft: null,
@@ -58,8 +66,9 @@ export function createInitialLlmPanelState(): LlmPanelState {
 /** Which `LlmPanelState` cursor field belongs to a pane. */
 export function cursorFieldFor(
   mode: LlmPanelMode,
-): "localCursor" | "cloudCursor" | "externalCursor" {
+): "localCursor" | "cloudCursor" | "externalCursor" | "fallbackCursor" {
   if (mode === "cloud") return "cloudCursor";
   if (mode === "external") return "externalCursor";
+  if (mode === "fallback") return "fallbackCursor";
   return "localCursor";
 }

@@ -506,5 +506,6 @@ function mapUserLlmToRuntime(
         ...(apiKey ? { apiKey } : {}),
       };
     }),
+    ...(llm.fallback ? { fallback: llm.fallback } : {}),
   };
 }

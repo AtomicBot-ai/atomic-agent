@@ -24,6 +24,7 @@ import { reduceMcpAction } from "./mcp/mcp-reducer.js";
 import { reduceImportAction } from "./import/import-reducer.js";
 import { reduceProvidersPanel } from "./providers/providers-reducer.js";
 import { reduceLlmPanelAction } from "./llm-panel/llm-panel-reducer.js";
+import { reduceFallbackPanelAction } from "./llm-panel/fallback/fallback-panel-reducer.js";
 import { reduceTelegramAction } from "./telegram/telegram-panel-reducer.js";
 import { reducePrivacyAction } from "./privacy/privacy-panel-reducer.js";
 import type { TuiAction } from "./tui-action.js";
@@ -48,6 +49,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (providersHandled !== null) return providersHandled;
   const llmPanelHandled = reduceLlmPanelAction(state, action);
   if (llmPanelHandled !== null) return llmPanelHandled;
+  const fallbackHandled = reduceFallbackPanelAction(state, action);
+  if (fallbackHandled !== null) return fallbackHandled;
   const telegramHandled = reduceTelegramAction(state, action);
   if (telegramHandled !== null) return telegramHandled;
   const privacyHandled = reducePrivacyAction(state, action);
@@ -265,6 +268,37 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           color: feedColor,
         }),
         { outcome, reason: event.reason, lastRunStatus },
+      );
+    }
+    case "provider_switched": {
+      // The one live signal the Fallback pane has: the runtime breaker
+      // instance is not reachable from the TUI, so we mirror the last
+      // announced transition into `fallbackPanel.lastSwitch` (no invented
+      // countdown) and drop a feed line so the switch is visible in the
+      // stream too.
+      const line =
+        event.direction === "away"
+          ? `» failed over ${event.from} -> ${event.to} (${event.reason})`
+          : `» recovered primary ${event.to} (probe ok)`;
+      return appendFeed(
+        {
+          ...state,
+          fallbackPanel: {
+            ...state.fallbackPanel,
+            lastSwitch: {
+              direction: event.direction,
+              from: event.from,
+              to: event.to,
+              reason: event.reason,
+            },
+          },
+        },
+        {
+          kind: "runtime_info",
+          stepIndex: null,
+          line,
+          color: event.direction === "away" ? "yellow" : "green",
+        },
       );
     }
     case "loop_failed": {

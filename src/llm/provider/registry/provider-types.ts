@@ -51,11 +51,27 @@ export type UserModelConfigEntry = {
   };
 };
 
+export type LlmFallbackConfig = {
+  /** Ordered provider ids to fall over through (primary first). */
+  chain?: readonly string[];
+  /** Auto-append the configured local (llama-server) provider to the tail. Default true. */
+  appendLocal?: boolean;
+  /** Consecutive advance-worthy failures before switching (non-immediate signals). */
+  failureThreshold?: number;
+  /** Escalating cooldown ladder in ms; the last entry is the cap. */
+  cooldownMs?: readonly number[];
+  /** Minimum gap between two primary probes, in ms. */
+  probeThrottleMs?: number;
+  /** No-error window after which the failure counter resets, in ms. */
+  failureWindowMs?: number;
+};
+
 export type ResolvedLlmConfig = {
   activeTextProvider: string;
   activeEmbeddingProvider: string;
   providers: LlmProviderConfigEntry[];
   toolTransport: "auto" | "grammar" | "native_tools";
+  fallback?: LlmFallbackConfig;
 };
 
 const factories = new Map<string, ProviderFactory>();
@@ -83,6 +99,7 @@ export function resolveLlmConfig(config: AtomicAgentConfig): ResolvedLlmConfig {
       activeEmbeddingProvider: llm.activeEmbeddingProvider,
       providers: [...llm.providers],
       toolTransport: llm.toolTransport,
+      ...(llm.fallback ? { fallback: llm.fallback } : {}),
     };
   }
   return {
