@@ -3,6 +3,21 @@ import type { Key } from "ink";
 
 import { handleAppKey } from "./app-key-bindings.js";
 import { createInitialTuiState, type TuiSessionInfo } from "./tui-state.js";
+import type { ApprovalRequest } from "../approval/approval-gate.js";
+
+function pendingRequest(
+  overrides: Partial<ApprovalRequest> = {},
+): ApprovalRequest {
+  return {
+    approvalId: "ap-1",
+    sessionId: "s-x",
+    tool: "os.shell.run",
+    category: "shell",
+    reason: "no guard rule matched",
+    commandShape: "git",
+    ...overrides,
+  };
+}
 
 function emptyKey(overrides: Partial<Key> = {}): Key {
   return {
@@ -383,6 +398,106 @@ describe("handleAppKey", () => {
     });
     expect(handled).toBe(false);
     expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("y on a pending approval resolves it with no grant", () => {
+    const state = createInitialTuiState(stubSession());
+    state.pendingApproval = pendingRequest();
+    const onApprovalDecision = vi.fn();
+    const handled = handleAppKey("y", emptyKey(), {
+      state,
+      dispatch: vi.fn(),
+      callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(true);
+    expect(onApprovalDecision).toHaveBeenCalledWith("ap-1", true);
+  });
+
+  it("s on a grantable approval resolves with a category grant and confirms it", () => {
+    const state = createInitialTuiState(stubSession());
+    state.pendingApproval = pendingRequest();
+    const onApprovalDecision = vi.fn();
+    const dispatch = vi.fn();
+    const handled = handleAppKey("s", emptyKey(), {
+      state,
+      dispatch,
+      callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(true);
+    expect(onApprovalDecision).toHaveBeenCalledWith("ap-1", true, "category");
+    // A system message confirms the grant at the point of action.
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "system_message",
+      text: "granted: shell command for this session",
+    });
+  });
+
+  it("a on a shell approval with a shape resolves with a shape grant and confirms it", () => {
+    const state = createInitialTuiState(stubSession());
+    state.pendingApproval = pendingRequest({ commandShape: "git" });
+    const onApprovalDecision = vi.fn();
+    const dispatch = vi.fn();
+    const handled = handleAppKey("a", emptyKey(), {
+      state,
+      dispatch,
+      callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(true);
+    expect(onApprovalDecision).toHaveBeenCalledWith("ap-1", true, "shape");
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "system_message",
+      text: "granted: git commands for this session",
+    });
+  });
+
+  it("s is inert on a trust_config approval (never grantable)", () => {
+    const state = createInitialTuiState(stubSession());
+    state.pendingApproval = pendingRequest({
+      category: "trust_config",
+      tool: "os.fs.write",
+      commandShape: undefined,
+    });
+    const onApprovalDecision = vi.fn();
+    const handled = handleAppKey("s", emptyKey(), {
+      state,
+      dispatch: vi.fn(),
+      callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    // The key is not routed as a grant; nothing resolves the approval.
+    expect(handled).toBe(false);
+    expect(onApprovalDecision).not.toHaveBeenCalled();
+  });
+
+  it("a is inert on a non-shell approval (no shape to grant)", () => {
+    const state = createInitialTuiState(stubSession());
+    state.pendingApproval = pendingRequest({
+      category: "fs_write_home",
+      tool: "os.fs.write",
+      commandShape: undefined,
+    });
+    const onApprovalDecision = vi.fn();
+    const handled = handleAppKey("a", emptyKey(), {
+      state,
+      dispatch: vi.fn(),
+      callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(false);
+    expect(onApprovalDecision).not.toHaveBeenCalled();
   });
 
   it("Enter on a sidebar Task fires onSidebarTaskActivated with the row id", () => {

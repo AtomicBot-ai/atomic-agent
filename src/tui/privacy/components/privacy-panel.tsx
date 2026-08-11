@@ -1,9 +1,11 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import {
+  formatApprovalCategory,
   formatApprovalLevel,
   type ApprovalLevel,
 } from "../../../approval/approval-level.js";
+import type { SessionGrantsSnapshot } from "../../../approval/approval-gate.js";
 import { theme } from "../../theme/theme.js";
 import type { PrivacyPanelState } from "../privacy-panel-state.js";
 
@@ -106,6 +108,18 @@ export function PrivacyPanel({ panel }: PrivacyPanelProps): ReactElement {
           applies to future runs too.
         </Text>
       </Box>
+      <Box marginTop={1}>
+        <Text bold color={theme.colors.accentSoft}>
+          Session grants
+        </Text>
+      </Box>
+      <Box marginTop={1} flexDirection="column">
+        {sessionGrantLines(panel.sessionGrants).map((line) => (
+          <Text key={line} color={theme.colors.muted}>
+            {"   "}{line}
+          </Text>
+        ))}
+      </Box>
       {panel.message ? (
         <Box marginTop={1}>
           <Text color={theme.colors.accentSoft}>{"   "}{panel.message}</Text>
@@ -124,6 +138,32 @@ export function PrivacyPanel({ panel }: PrivacyPanelProps): ReactElement {
       </Box>
     </Box>
   );
+}
+
+/**
+ * Read-only summary of the active session's point grants (`[s]` / `[a]`
+ * in the approval prompt). In-memory, cleared when the session is
+ * switched / restarted, never persisted — spelled out so the operator can
+ * see what is currently allowed without waiting for a prompt to go silent.
+ */
+function sessionGrantLines(grants: SessionGrantsSnapshot): string[] {
+  const { categories, shapes } = grants;
+  if (categories.length === 0 && shapes.length === 0) {
+    return [
+      "none active — grants you make with [s] / [a] at a prompt appear here for this session",
+    ];
+  }
+  const lines: string[] = [];
+  if (categories.length > 0) {
+    lines.push(
+      `categories: ${categories.map(formatApprovalCategory).join(", ")}`,
+    );
+  }
+  if (shapes.length > 0) {
+    lines.push(`shell commands: ${shapes.join(", ")}`);
+  }
+  lines.push("cleared when you switch or start a session; never persisted");
+  return lines;
 }
 
 /**

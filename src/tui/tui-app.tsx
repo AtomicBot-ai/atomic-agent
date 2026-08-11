@@ -8,6 +8,7 @@ import {
   type ReactElement,
 } from "react";
 import { reduceTuiState } from "./agent-event-reducer.js";
+import type { ApprovalGrantScope } from "../approval/approval-gate.js";
 import type { TuiAction } from "./tui-action.js";
 import { handleAppKey } from "./app-key-bindings.js";
 import { ApprovalModal } from "./approval-modal.js";
@@ -70,7 +71,11 @@ export interface TuiEventBus {
 }
 
 export interface TuiAppCallbacks {
-  onApprovalDecision(approvalId: string, approved: boolean): void;
+  onApprovalDecision(
+    approvalId: string,
+    approved: boolean,
+    grant?: ApprovalGrantScope,
+  ): void;
   onAbort(): void;
   onQuit(): void;
   onMessageSubmitted(message: string): void;
@@ -411,6 +416,12 @@ export function TuiApp({
   useEffect(() => {
     if (state.uiMode === "debug" && state.activeTab === "mcp") {
       callbacks.onMcpAutoRefreshStart?.();
+    }
+  }, [state.uiMode, state.activeTab, callbacks]);
+
+  useEffect(() => {
+    if (state.uiMode === "debug" && state.activeTab === "privacy") {
+      callbacks.onPrivacyRefreshRequested?.();
     }
   }, [state.uiMode, state.activeTab, callbacks]);
 

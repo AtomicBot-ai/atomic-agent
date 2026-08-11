@@ -20,6 +20,8 @@ export interface ApprovalPrompt {
   reason: string;
   preview?: string;
   affectedResources?: string[];
+  /** Command binary (argv[0]) for shell requests; unit of a shape grant. */
+  commandShape?: string;
 }
 
 export class ApprovalDeniedError extends Error {
@@ -53,6 +55,9 @@ export async function requireApproval(
       ...(prompt.preview !== undefined ? { preview: prompt.preview } : {}),
       ...(prompt.affectedResources !== undefined
         ? { affectedResources: prompt.affectedResources }
+        : {}),
+      ...(prompt.commandShape !== undefined
+        ? { commandShape: prompt.commandShape }
         : {}),
     },
     { signal },

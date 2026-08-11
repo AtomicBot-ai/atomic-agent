@@ -1,5 +1,11 @@
 import type { Key } from "ink";
-import type { ApprovalRequest } from "../approval/approval-gate.js";
+import {
+  canGrantCategory,
+  canGrantShape,
+  type ApprovalGrantScope,
+  type ApprovalRequest,
+} from "../approval/approval-gate.js";
+import { formatApprovalCategory } from "../approval/approval-level.js";
 import { cycleNavSlot, type NavSlot } from "./section.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import type { TuiAction } from "./tui-action.js";
@@ -16,7 +22,17 @@ const CHAT_PAGE_DELTA = 8;
 const CHAT_WHEEL_ARROW_DELTA = 2;
 
 export interface AppKeyCallbacks {
-  onApprovalDecision(approvalId: string, approved: boolean): void;
+  /**
+   * Resolve a pending approval. `grant` records a session-scoped point
+   * exception alongside the approval: `"category"` (`s`) silences the
+   * request's whole category, `"shape"` (`a`, shell only) silences the
+   * request's command binary. Absent = this call only (`y`).
+   */
+  onApprovalDecision(
+    approvalId: string,
+    approved: boolean,
+    grant?: ApprovalGrantScope,
+  ): void;
   onAbort(): void;
   onQuit(): void;
   /** Optional — called when Enter is pressed on the focused sidebar row. */
@@ -374,6 +390,23 @@ function handleUpdateKey(
   return false;
 }
 
+/**
+ * Human confirmation line for a just-issued session grant, dropped into
+ * the chat transcript so the operator sees the grant land in the same
+ * place approval decisions surface. Active-session grants are otherwise
+ * invisible until a matching request goes silent; this is the honesty at
+ * the point of action while the Privacy-panel listing is a follow-up.
+ */
+function grantConfirmation(
+  request: ApprovalRequest,
+  scope: ApprovalGrantScope,
+): string {
+  if (scope === "shape" && request.commandShape) {
+    return `granted: ${request.commandShape} commands for this session`;
+  }
+  return `granted: ${formatApprovalCategory(request.category)} for this session`;
+}
+
 function handleApprovalKey(
   input: string,
   key: Key,
@@ -387,6 +420,32 @@ function handleApprovalKey(
       type: "approval_resolved",
       approvalId: request.approvalId,
       approved: true,
+    });
+    return true;
+  }
+  if (lower === "s" && canGrantCategory(request)) {
+    ctx.callbacks.onApprovalDecision(request.approvalId, true, "category");
+    ctx.dispatch({
+      type: "approval_resolved",
+      approvalId: request.approvalId,
+      approved: true,
+    });
+    ctx.dispatch({
+      type: "system_message",
+      text: grantConfirmation(request, "category"),
+    });
+    return true;
+  }
+  if (lower === "a" && canGrantShape(request)) {
+    ctx.callbacks.onApprovalDecision(request.approvalId, true, "shape");
+    ctx.dispatch({
+      type: "approval_resolved",
+      approvalId: request.approvalId,
+      approved: true,
+    });
+    ctx.dispatch({
+      type: "system_message",
+      text: grantConfirmation(request, "shape"),
     });
     return true;
   }
