@@ -216,6 +216,16 @@ export interface TuiAppCallbacks {
   onProvidersSetActiveText?(id: string): void;
   /** Providers tab / LLM panel: select an exact chat model for a provider. */
   onProvidersSelectChatModel?(providerId: string, modelId: string): void;
+  /**
+   * LLM panel / bare `/model`: open the reopenable chat-model picker.
+   * `providerId: null` targets the active text provider. This must be a
+   * callback into `ProvidersOrchestrator.openChatModelPicker`, not a
+   * dispatched reducer action: dispatch feeds the React reducer only,
+   * and the event bus the orchestrator listens on is bridged into the
+   * reducer one way (`bus.subscribe(dispatch)`), so a dispatched
+   * request never reaches the orchestrator and the picker never opens.
+   */
+  onProvidersChatModelPickerRequested?(providerId: string | null): void;
   /** Providers tab / LLM panel: switch the active embedding provider. */
   onProvidersSetActiveEmbedding?(id: string): void;
   /** Providers tab / LLM panel: select an exact embedding model. */

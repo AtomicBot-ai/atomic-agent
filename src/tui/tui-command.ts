@@ -258,6 +258,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.providers.setActiveText(id),
         onProvidersSelectChatModel: (providerId, modelId) =>
           void orchestrator.providers.selectChatModel(providerId, modelId),
+        onProvidersChatModelPickerRequested: (providerId) =>
+          void orchestrator.providers.openChatModelPicker(providerId),
         onProvidersSetActiveEmbedding: (id) =>
           void orchestrator.providers.setActiveEmbedding(id),
         onProvidersSelectEmbeddingModel: (providerId, modelId) =>

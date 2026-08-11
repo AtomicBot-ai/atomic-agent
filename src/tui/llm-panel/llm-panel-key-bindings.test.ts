@@ -93,6 +93,37 @@ describe("handleLlmPanelKey", () => {
     expect(onStop).toHaveBeenCalledTimes(1);
   });
 
+  it("asks for the model picker on an openai-compatible model row via the callback", () => {
+    // A dispatched `providers_chat_model_picker_requested` is a reducer
+    // no-op the orchestrator never sees; the request must travel as a
+    // callback, so Enter on the row must not dispatch anything.
+    const base = seededState();
+    const state = {
+      ...base,
+      providersPanel: {
+        ...base.providersPanel,
+        rows: base.providersPanel.rows.map((row) =>
+          row.id === "openrouter" ? { ...row, kind: "openai-compatible" } : row,
+        ),
+      },
+      llmPanel: { ...base.llmPanel, mode: "cloud" as const, cloudCursor: 1 },
+    };
+    const dispatched: TuiAction[] = [];
+    const onPickerRequested = vi.fn();
+    const onSelectChatModel = vi.fn();
+    handleLlmPanelKey("", emptyKey({ return: true }), {
+      state,
+      dispatch: (action) => dispatched.push(action),
+      callbacks: callbacks({
+        onProvidersChatModelPickerRequested: onPickerRequested,
+        onProvidersSelectChatModel: onSelectChatModel,
+      }),
+    });
+    expect(dispatched).toEqual([]);
+    expect(onPickerRequested).toHaveBeenCalledWith("openrouter");
+    expect(onSelectChatModel).not.toHaveBeenCalled();
+  });
+
   it("selects an exact cloud embedding model", () => {
     const base = seededState();
     const state = {

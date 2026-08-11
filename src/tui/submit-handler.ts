@@ -137,7 +137,18 @@ export function runSlashCommand(
     setActiveTheme(THEMES[result.setThemeName]);
     callbacks.onThemePersistRequested?.(result.setThemeName);
   }
-  for (const action of result.actions) dispatch(action);
+  for (const action of result.actions) {
+    if (action.type === "providers_chat_model_picker_requested") {
+      // A state no-op as a reducer action: the orchestrator that owns
+      // the `/v1/models` fetch listens on the event bus, and dispatch
+      // never reaches it. Route the request through the callback that
+      // `tui-command` binds to `ProvidersOrchestrator.openChatModelPicker`,
+      // like every other provider operation.
+      callbacks.onProvidersChatModelPickerRequested?.(action.providerId);
+      continue;
+    }
+    dispatch(action);
+  }
   if (result.systemMessage) {
     dispatch({ type: "runtime_info", line: result.systemMessage });
     dispatch({ type: "system_message", text: result.systemMessage });
