@@ -89,7 +89,7 @@ describe("ProvidersWizard chat model step", () => {
     expect(countRows(text, "model-")).toBeLessThanOrEqual(12);
   });
 
-  it("falls back to a typed id when the server refuses the list", async () => {
+  it("explains a refused key instead of showing the raw status", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({ ok: false, status: 403 })),
@@ -101,7 +101,29 @@ describe("ProvidersWizard chat model step", () => {
     await flush();
 
     const text = stripAnsi(lastFrame() ?? "");
-    expect(text).toContain("model list unavailable (http 403)");
+    // 403 becomes an actionable line naming the service, not `http 403`.
+    expect(text).toContain("rejected this key");
+    expect(text).toContain("type the id");
+    expect(text).not.toContain("model list unavailable");
+  });
+
+  it("names the preset service in a refused-key message", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: false, status: 401 })),
+    );
+
+    const wizard = {
+      ...createProvidersWizardState("add", { kind: "openai-compatible" }),
+      phase: "chat_model_line" as const,
+      presetId: "groq",
+      baseUrlLine: "https://api.groq.com/openai",
+    };
+    const { lastFrame } = render(<ProvidersWizard wizard={wizard} />);
+    await flush();
+
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("Groq rejected this key");
   });
 });
 

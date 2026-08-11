@@ -70,6 +70,28 @@ function envHintForWizard(w: ProvidersWizardState): string {
   return "OPENAI_COMPAT_API_KEY";
 }
 
+/** Service name for headings: the preset label wins over the raw kind. */
+function providerLabelForWizard(w: ProvidersWizardState): string {
+  const preset = w.presetId ? findProviderPreset(w.presetId) : undefined;
+  return preset?.label ?? w.kind ?? "provider";
+}
+
+/**
+ * Turn a bare transport error into something actionable. `http 401` on
+ * its own reads as a product failure, when it almost always means the
+ * key belongs to a different service than the one selected.
+ */
+function explainModelListError(error: string, w: ProvidersWizardState): string {
+  const service = providerLabelForWizard(w);
+  if (error.includes("401") || error.includes("403")) {
+    return `${service} rejected this key, check it belongs to ${service}`;
+  }
+  if (error.includes("404")) {
+    return `${service} has no model list at this URL`;
+  }
+  return `could not list models from ${service} (${error})`;
+}
+
 function maskedKey(buffer: string): string {
   const masked = "•".repeat(Math.min(buffer.length, 48));
   const extra = buffer.length > 48 ? `+${buffer.length - 48}` : "";
@@ -155,17 +177,17 @@ function CompatChatModelStep(props: {
       cursor: w.cursor,
       moveHint: "↑/↓ move",
       actionsHint:
-        "PgUp/PgDn jump · Enter select · type to enter an id by hand · Esc cancel",
+        "PgUp/PgDn jump · Enter select · type to enter an id by hand · Esc back",
     });
   }
 
   const hint = !isCompat
-    ? "Enter to continue · Esc cancel"
+    ? "Enter to save · Esc back"
     : status.loading
       ? `listing models from ${baseUrl}/v1/models…`
       : status.error
-      ? `model list unavailable (${status.error}) — type the id · Enter to continue`
-      : "Enter to continue · Backspace to empty for the model list · Esc cancel";
+      ? `${explainModelListError(status.error, w)} · type the id · Enter to save`
+      : "Enter to save · Backspace to empty for the model list · Esc back";
   return renderLineField({
     title: "Chat model id",
     value: w.chatModelLine,
@@ -226,8 +248,8 @@ function CatalogChatModelStep(props: {
   const title =
     kind === "openrouter" ? "Chat model (OpenRouter)" : "Chat model (AI/ML API)";
   const actionsHint = loading
-    ? "PgUp/PgDn jump · Enter select · Esc cancel · updating model list from API…"
-    : "PgUp/PgDn jump · Enter select · Esc cancel";
+    ? "PgUp/PgDn jump · Enter select · Esc back · updating model list from API…"
+    : "PgUp/PgDn jump · Enter select · Esc back";
   return renderPickList({
     title,
     options: listChatModelsForKind(kind),
@@ -272,7 +294,7 @@ export function ProvidersWizard(props: {
         width="100%"
       >
         <Text bold color={theme.colors.accentSoft}>
-          API key — {preset?.label ?? w.kind ?? "provider"}
+          API key — {providerLabelForWizard(w)}
         </Text>
         <Text color={theme.colors.muted}>
           Saved to <Text color={theme.colors.accentSoft}>{".env"}</Text> as{" "}
@@ -286,7 +308,7 @@ export function ProvidersWizard(props: {
           <Text color={theme.colors.error}>! {w.error}</Text>
         ) : null}
         <Text color={theme.colors.muted}>
-          Enter to continue · Esc cancel · Backspace edit
+          Enter to continue · Esc back · Backspace edit
           {w.submitting ? " · saving…" : ""}
         </Text>
       </Box>
@@ -306,7 +328,7 @@ export function ProvidersWizard(props: {
       options: listOpenRouterEmbeddingModels(),
       cursor: w.cursor,
       moveHint: "j/k move",
-      actionsHint: "PgUp/PgDn jump · Enter finish · Esc cancel",
+      actionsHint: "PgUp/PgDn jump · Enter finish · Esc back",
     });
   }
 
@@ -316,7 +338,7 @@ export function ProvidersWizard(props: {
       options: listAimlapiEmbeddingModels(),
       cursor: w.cursor,
       moveHint: "j/k move",
-      actionsHint: "PgUp/PgDn jump · Enter finish · Esc cancel",
+      actionsHint: "PgUp/PgDn jump · Enter finish · Esc back",
     });
   }
 
@@ -325,23 +347,13 @@ export function ProvidersWizard(props: {
       title: "API base URL",
       value: w.baseUrlLine,
       placeholder: OPENAI_COMPAT_DEFAULT_BASE_URL,
-      hint: "Enter to continue · Esc cancel",
+      hint: "Enter to continue · Esc back",
       error: w.error,
     });
   }
 
   if (w.phase === "chat_model_line") {
     return <CompatChatModelStep wizard={w} />;
-  }
-
-  if (w.phase === "embedding_model_line") {
-    return renderLineField({
-      title: "Embedding model id (empty = local daemon only)",
-      value: w.embeddingModelLine,
-      placeholder: "(leave empty for local embeddings)",
-      hint: "Enter to save · Esc cancel",
-      error: w.error,
-    });
   }
 
   return (

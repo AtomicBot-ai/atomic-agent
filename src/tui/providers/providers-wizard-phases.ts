@@ -1,4 +1,4 @@
-import { PROVIDER_PRESETS } from "./provider-presets.js";
+import { findProviderPreset, PROVIDER_PRESETS } from "./provider-presets.js";
 import {
   listAimlapiChatModels,
   listAimlapiEmbeddingModels,
@@ -62,10 +62,45 @@ export function listEmbeddingModelsForKind(
 }
 
 function nextPhaseAfterApiKey(
-  kind: NonNullable<ProvidersWizardState["kind"]>,
+  wizard: ProvidersWizardState,
 ): ProvidersWizardPhase {
-  if (isCuratedCatalogKind(kind)) return "pick_chat_model";
+  const kind = wizard.kind;
+  if (kind && isCuratedCatalogKind(kind)) return "pick_chat_model";
+  // A preset already knows its endpoint, so showing the URL step would
+  // ask the operator to confirm something they never typed (#69). Only
+  // the manual openai-compatible row still needs it.
+  if (wizard.presetId) return "chat_model_line";
   return "base_url";
+}
+
+/**
+ * `true` when the wizard should stop on the API-key screen for this
+ * preset. Services that list models without credentials, and local
+ * servers with no key at all, skip it: asking for a key that does not
+ * exist is the dead end presets exist to remove (#69).
+ */
+export function presetNeedsKeyScreen(presetId: string): boolean {
+  const preset = findProviderPreset(presetId);
+  if (!preset) return true;
+  return !preset.listsModelsWithoutKey && !preset.local;
+}
+
+/**
+ * Where the cursor lands when Esc returns to the provider list: on the
+ * row the operator came from, so stepping back and forth is stable.
+ */
+export function cursorForPreviousPick(wizard: ProvidersWizardState): number {
+  if (wizard.presetId) {
+    const idx = KIND_ROW_ORDER.findIndex(
+      (row) => typeof row === "object" && row.presetId === wizard.presetId,
+    );
+    if (idx >= 0) return idx;
+  }
+  if (wizard.kind) {
+    const idx = KIND_ROW_ORDER.indexOf(wizard.kind);
+    if (idx >= 0) return idx;
+  }
+  return 0;
 }
 
 /**
@@ -90,7 +125,7 @@ export function advanceWizardPhase(
   if (phase === "api_key" && kind) {
     return {
       ...wizard,
-      phase: nextPhaseAfterApiKey(kind),
+      phase: nextPhaseAfterApiKey(wizard),
       cursor: 0,
       error: null,
     };
@@ -112,9 +147,10 @@ export function advanceWizardPhase(
   if (phase === "base_url" && kind === "openai-compatible") {
     return { ...wizard, phase: "chat_model_line", cursor: 0, error: null };
   }
-  if (phase === "chat_model_line" && kind === "openai-compatible") {
-    return { ...wizard, phase: "embedding_model_line", cursor: 0, error: null };
-  }
+  // `chat_model_line` is the last step for the compat/preset path: the
+  // embedding screen is gone from the flow, embeddings stay on the local
+  // daemon (which keeps notes on the machine) and remain changeable in
+  // the LLM tab. Submitting from here is handled in the key bindings.
   return wizard;
 }
 
@@ -141,9 +177,5 @@ export function isListPhase(phase: ProvidersWizardPhase): boolean {
 }
 
 export function isLinePhase(phase: ProvidersWizardPhase): boolean {
-  return (
-    phase === "base_url" ||
-    phase === "chat_model_line" ||
-    phase === "embedding_model_line"
-  );
+  return phase === "base_url" || phase === "chat_model_line";
 }
