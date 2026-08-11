@@ -26,8 +26,13 @@ const NO: AdvanceDecision = { advance: false, immediate: false };
  * reliability taxonomy plus the typed HTTP status where available.
  *
  * Category rules (see `src/llm/reliability/`):
- *  - `transport` / `model` → advance (provider unreachable or the model
- *    itself is dead; the next link may serve).
+ *  - `transport` → advance (provider unreachable). Note every cloud
+ *    `OpenAiHttpError` classifies as `transport` regardless of status, so
+ *    a 404 model-not-found or a 401 dead key advances too — a different
+ *    link may have the model or a working key.
+ *  - `model` → advance. This is a *defective completion* from a reachable
+ *    provider (truncated / empty / no_stop), not "model not found"; the
+ *    same prompt would reproduce it here, so another link is worth a try.
  *  - `grammar` / `tool` / `cancelled` → do not advance. A grammar/4xx
  *    failure is request-shape and repeats identically on every provider;
  *    a tool failure is our own bug; a cancellation is user intent.
@@ -48,7 +53,8 @@ export function shouldAdvance(err: unknown): AdvanceDecision {
 
 function isImmediateSignal(err: unknown): boolean {
   const status = statusOf(err);
-  // No typed status on the error (e.g. a bare ModelError) — advance only
+  // No typed status field on the error (e.g. a `model`-category
+  // ModelError, which carries a reason but no HTTP status) — advance only
   // once the consecutive-failure threshold trips, never immediately.
   if (status === undefined) return false;
   if (status === null) {

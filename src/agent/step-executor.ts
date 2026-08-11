@@ -382,7 +382,7 @@ async function executeStepInner(
   if (
     initialModelFailure !== null &&
     !isNativeToolsEmptyCompletionHandledByParser(
-      deps,
+      parseDepsFor(completion, deps),
       initialModelFailure.reason,
       completion,
     )
@@ -448,7 +448,11 @@ async function executeStepInner(
     };
   };
 
-  let parsed = tryParseToolCalls(completion, deps.profile, deps);
+  let parsed = tryParseToolCalls(
+    completion,
+    deps.profile,
+    parseDepsFor(completion, deps),
+  );
   if (parsed.ok) {
     const validation = validateBatch(parsed.batch, deps.registry);
     if (!validation.ok) {
@@ -545,7 +549,7 @@ async function executeStepInner(
     if (
       retryModelFailure !== null &&
       !isNativeToolsEmptyCompletionHandledByParser(
-        deps,
+        parseDepsFor(completion, deps),
         retryModelFailure.reason,
         completion,
       )
@@ -561,7 +565,11 @@ async function executeStepInner(
       );
     }
 
-    parsed = tryParseToolCalls(completion, deps.profile, deps);
+    parsed = tryParseToolCalls(
+      completion,
+      deps.profile,
+      parseDepsFor(completion, deps),
+    );
     if (parsed.ok) {
       const validation = validateBatch(parsed.batch, deps.registry);
       if (!validation.ok) {
@@ -893,6 +901,30 @@ function isNativeToolsEmptyCompletionHandledByParser(
 }
 
 /**
+ * Effective transport for *parsing a response*. Prefers the transport of
+ * the provider that actually served the completion (`servedTransport`,
+ * stamped by the fallback chain wrapper) over the caller's configured
+ * `toolTransport`. They differ on a cross-transport fallover — e.g. a
+ * native-tools cloud primary that fell over to a grammar-only local link:
+ * the request went out grammar-shaped, so the response must be parsed as
+ * grammar, not as OpenAI `tool_calls`. Absent `servedTransport` (the
+ * direct, non-wrapped path), the configured transport is authoritative.
+ */
+function parseDepsFor(
+  completion: CompletionResult,
+  deps: Pick<StepDependencies, "toolTransport" | "toolCallAdapter">,
+): Pick<StepDependencies, "toolTransport" | "toolCallAdapter"> {
+  const served = completion.servedTransport;
+  if (served === undefined || served === deps.toolTransport) return deps;
+  return {
+    toolTransport: served,
+    // A grammar link needs no adapter; a native link uses the default
+    // OpenAI adapter unless the caller carried a custom one for it.
+    toolCallAdapter: served === "native_tools" ? deps.toolCallAdapter : null,
+  };
+}
+
+/**
  * Non-throwing parser wrapper. The step executor uses it to distinguish
  * a malformed first attempt (retryable) from any other error shape.
  * Returns a `ToolCallBatch` that may carry a single call (legacy
@@ -1100,7 +1132,11 @@ function buildLlmStreamParams(args: {
   const adapter = args.deps.toolCallAdapter ?? openAiToolCallAdapter;
   return {
     ...base,
-    grammar: "",
+    // Keep `grammar` populated (not blanked) even on the native path: the
+    // provider fallback chain may hand this request to a grammar-only
+    // llama-server link, which needs the GBNF. Native (cloud) providers
+    // ignore `grammar` entirely and read `tools`, so carrying both makes
+    // the request valid for whichever link actually serves it.
     tools: adapter.descriptorsToTools(args.toolDescriptors),
     // `auto` instead of `required`. Three production-observed reasons:
     //   * Qwen-thinking providers (Alibaba gate) reject `required` outright

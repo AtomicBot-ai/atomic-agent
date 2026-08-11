@@ -66,6 +66,7 @@ import { registerTaskTools } from "../tools/tasks/index.js";
 import { registerVisionTools } from "../tools/vision/index.js";
 import {
   type LlmProvider,
+  type ToolCallTransport,
   ProviderRegistry,
   resolveLlmConfig,
 } from "../llm/provider/index.js";
@@ -1385,7 +1386,10 @@ export async function createAgentRuntime(
             });
           }
         }
-        return result;
+        // Stamp the transport of the link that actually answered so the
+        // caller parses the response with the served provider's transport,
+        // not the primary's (they can differ on a cloud→local fallover).
+        return { ...result, servedTransport: transport };
       }));
 
   /**
@@ -1421,10 +1425,13 @@ export async function createAgentRuntime(
    * failures propagate as-is (mirrors the openai-http "stream is live"
    * contract).
    */
-  const openStreamPrimed = (
+  const openStreamPrimed = async (
     providerId: string,
     params: LlmStreamParams,
-  ): Promise<PrimedStream<StreamChunk, CompletionResult>> => {
+  ): Promise<{
+    primed: PrimedStream<StreamChunk, CompletionResult>;
+    transport: ToolCallTransport;
+  }> => {
     const { provider, transport } = resolveActiveLlmSlice(providerId);
     const base = {
       prompt: params.prompt,
@@ -1449,7 +1456,7 @@ export async function createAgentRuntime(
             slotId: params.slotId,
             cachePrompt: params.slotId >= 0,
           });
-    return primeStream(stream);
+    return { primed: await primeStream(stream), transport };
   };
 
   const llmCompleteStream = options.overrides?.disableStreaming
@@ -1463,10 +1470,14 @@ export async function createAgentRuntime(
               CompletionResult,
               void
             > {
-              const primed = await runWithFallback(fallbackChain, (id) =>
-                openStreamPrimed(id, params),
+              const { primed, transport } = await runWithFallback(
+                fallbackChain,
+                (id) => openStreamPrimed(id, params),
               );
-              return yield* replayPrimedStream(primed);
+              const result = yield* replayPrimedStream(primed);
+              // Stamp the served link's transport so the caller parses the
+              // response with the provider that actually answered.
+              return { ...result, servedTransport: transport };
             }
             return meterStream(params.sessionId, run());
           });

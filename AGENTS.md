@@ -1672,9 +1672,14 @@ The probe is **lazy / turn-boundary driven** — `pickProvider()` reads `Date.no
 
 `llmCompleteStream` primes the first chunk (`primeStream`) inside the fallback attempt so a failure to **open** the stream (429/5xx before any output) advances the chain, while a stream that has begun emitting is never restarted (mirrors the openai-http "stream is live" contract). Later failures propagate as-is.
 
-### Scope note — transport is resolved per fallback provider
+### Cross-transport fallover (request AND response)
 
-Each attempt re-resolves `{ transport, adapter }` for the chosen link via `resolveActiveLlmSlice(providerId)`, so the request *shape* (GBNF `grammar` vs native `tools`) is correct for whichever provider actually serves the turn. `LlmStreamParams` always carries `grammar`; `tools` is populated only when the **primary's** transport is `native_tools`. A same-transport fallback (the common cloud→cloud→local case where the cloud legs share `native_tools`) is fully covered. A fallback that needs `native_tools` while the primary is grammar-only (a native-tools cloud provider placed **below** a grammar-only local primary) would reach it without a `tools` payload — an unusual ordering that is out of scope for this iteration; order native-tools providers ahead of grammar-only ones in the chain. The grammar string itself is always built for the primary model.
+A fallover can cross transports — the common `cloud (native_tools) → local (grammar)` default (`appendLocal`) does exactly that. Both the request shape and the response parse are decoupled from the primary:
+
+- **Request.** Each attempt re-resolves `{ transport, adapter }` for the chosen link via `resolveActiveLlmSlice(providerId)`, so the wire shape is correct for whoever serves. `buildLlmStreamParams` keeps `grammar` **populated even on the native path** (it used to blank it) so a grammar-only link handed the request still has its GBNF; native providers ignore `grammar` and read `tools`, so carrying both is safe.
+- **Response.** The completion is stamped with `servedTransport` — the transport of the link that actually answered — by the fallback wrapper (`llmComplete` / the streaming `run()`). `step-executor.parseDepsFor(completion, deps)` prefers `servedTransport` over the caller's configured `toolTransport` for every parse decision (`tryParseToolCalls`, the empty-completion recovery gate). Without this, a native primary that fell over to a grammar link parsed the grammar reply as OpenAI `tool_calls` and silently broke tool-calling. Pinned by [src/llm/fallback/fallback-e2e.integration.test.ts](src/llm/fallback/fallback-e2e.integration.test.ts).
+
+The remaining asymmetry: `tools` is populated only when the **primary's** transport is `native_tools`. Placing a native-tools provider **below** a grammar-only primary would reach it without a `tools` payload — an unusual ordering; order native-tools links at or above the first grammar-only link. Slot affinity is decided pre-request from the primary, so a cloud→local fallover runs the local link without slot-cache reuse for that turn (correctness-neutral). The grammar string itself is always built for the primary model.
 
 ### Locked invariants (Pinned by tests)
 
@@ -1685,6 +1690,7 @@ Each attempt re-resolves `{ transport, adapter }` for the chosen link via `resol
 5. **Whole-chain exhaustion rethrows the last (already-humanized) error** so `loop_failed` classification is unchanged. Pinned by [src/llm/fallback/run-with-fallback.test.ts](src/llm/fallback/run-with-fallback.test.ts).
 6. **Exactly one switch notice per state transition** (away / back), none on sticky turns. Pinned by [src/llm/fallback/provider-fallback-chain.test.ts](src/llm/fallback/provider-fallback-chain.test.ts).
 7. **`appendLocal` appends the local provider when configured, nothing when not.** Pinned by [src/llm/fallback/fallback-config.test.ts](src/llm/fallback/fallback-config.test.ts).
+8. **A cross-transport fallover parses the response with the served link's transport, not the primary's**, and the turn reaches the fallback's answer instead of `loop_failed`. Pinned by [src/llm/fallback/fallback-e2e.integration.test.ts](src/llm/fallback/fallback-e2e.integration.test.ts) (real `AgentLoop` + `step-executor`, both unary and streaming).
 
 ## Traceability and replay
 

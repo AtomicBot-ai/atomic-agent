@@ -173,6 +173,42 @@ describe("ProviderFallbackChain", () => {
     expect(notices).toHaveLength(2);
   });
 
+  it("does not get stuck when a probe returns the primary but it fails again mid-turn", () => {
+    const clock = makeClock();
+    const notices: ProviderSwitchNotice[] = [];
+    const chain = new ProviderFallbackChain({
+      resolve: () => chainOf(["primary", "backup"]),
+      now: clock.now,
+      noticeSink: (n) => notices.push(n),
+    });
+
+    // Switch away (30s cooldown), then probe at the cooldown+throttle boundary.
+    chain.advanceFrom("primary", http(500));
+    chain.recordSuccess("backup", false);
+    clock.advance(DEFAULT_FALLBACK_TIMING.probeThrottleMs + 1);
+    expect(chain.pickProvider()).toEqual({ providerId: "primary", isProbe: true });
+
+    // The probe turn hands the primary the request and it 429s again mid-turn.
+    // The chain must advance back to backup, re-arm an ESCALATED cooldown
+    // (60s, not stuck at 30s and not reset), and emit NO new "away" notice
+    // (still the same override, already announced).
+    expect(chain.advanceFrom("primary", http(429))).toBe("backup");
+    expect(chain.activeOverride).toBe("backup");
+    expect(notices).toHaveLength(1); // only the original "away"
+
+    // Must NOT probe every turn: the 5-min throttle suppresses re-probing
+    // even though 60s cooldown will elapse quickly.
+    clock.advance(61_000);
+    expect(chain.pickProvider()).toEqual({
+      providerId: "backup",
+      isProbe: false,
+    });
+
+    // After the throttle window fully passes, it probes again (not stuck).
+    clock.advance(DEFAULT_FALLBACK_TIMING.probeThrottleMs);
+    expect(chain.pickProvider()).toEqual({ providerId: "primary", isProbe: true });
+  });
+
   it("throttles repeat probes: after a failed probe, waits probeThrottleMs before the next", () => {
     const clock = makeClock();
     const chain = new ProviderFallbackChain({
