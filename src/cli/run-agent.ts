@@ -5,16 +5,17 @@ import type { Interface as ReadlineInterface } from "node:readline";
 import {
   formatApprovalCategory,
   formatApprovalLevel,
-  isGrantableCategory,
   resolveBootApprovalLevel,
 } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
-import type {
-  ApprovalGrantScope,
-  ApprovalRequest,
+import {
+  canGrantCategory,
+  canGrantShape,
+  type ApprovalGrantScope,
+  type ApprovalRequest,
 } from "../approval/approval-gate.js";
 import { stderrSink } from "../tracing/structured-logger.js";
 import type { SessionState } from "../session/session-state.js";
@@ -78,9 +79,8 @@ interface CliApprovalAnswer {
 async function promptApproval(
   request: ApprovalRequest,
 ): Promise<CliApprovalAnswer> {
-  const grantCategory = isGrantableCategory(request.category);
-  const grantShape =
-    request.category === "shell" && Boolean(request.commandShape);
+  const grantCategory = canGrantCategory(request);
+  const grantShape = canGrantShape(request);
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   try {
     const lines = [
@@ -99,6 +99,11 @@ async function promptApproval(
       options.push(`a = allow all ${request.commandShape} this session`);
     }
     options.push("N = deny");
+    if (!grantCategory) {
+      lines.push(
+        "  (trust-config writes are never granted for the session)",
+      );
+    }
     lines.push(`  approve? [${options.join(", ")}] `);
     process.stderr.write(`${lines.join("\n")}`);
     const answer = (await new Promise<string>((r) => rl.question("", r)))

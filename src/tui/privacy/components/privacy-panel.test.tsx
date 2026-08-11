@@ -14,6 +14,7 @@ function panelState(
     busy: false,
     message: null,
     lastError: null,
+    sessionGrants: { categories: [], shapes: [] },
     ...overrides,
   };
 }
@@ -97,6 +98,27 @@ describe("PrivacyPanel — approval level row", () => {
     // At full trust the caveat is gone — nothing asks, and the line
     // would be a contradiction.
     expect(frameAt(5)).not.toContain("always ask below level 5");
+  });
+
+  it("lists active session grants, and says none when there are none", () => {
+    // Default fixture has no grants → the read-only section says so.
+    const empty = frameAt(1);
+    expect(empty).toContain("Session grants");
+    expect(empty).toContain("none active");
+
+    const withGrants = flat(
+      render(
+        <PrivacyPanel
+          panel={panelState({
+            sessionGrants: { categories: ["shell", "http"], shapes: ["git"] },
+          })}
+        />,
+      ).lastFrame(),
+    );
+    expect(withGrants).toContain("shell command");
+    expect(withGrants).toContain("HTTP request");
+    expect(withGrants).toContain("git");
+    expect(withGrants).toContain("never persisted");
   });
 
   it("keeps the analytics row intact next to the ladder", () => {

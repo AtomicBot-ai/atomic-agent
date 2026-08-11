@@ -160,6 +160,27 @@ export function needsShellInterpretation(
   return false;
 }
 
+/**
+ * Interpreter / wrapper binaries whose danger lives in their arguments,
+ * not their name (`bash -c "<anything>"`). The shell tool withholds the
+ * shape-grant unit (`[a]`) for these: a grant keyed on `bash` would
+ * silence arbitrary code for the rest of the session. Matches the shells
+ * covered by the guard's `dangerous.shell_dash_c` rule. `[s]` (the whole
+ * shell category) and `[y]` (this call only) stay available.
+ */
+const OPAQUE_INTERPRETER_SHAPES: ReadonlySet<string> = new Set([
+  "bash",
+  "sh",
+  "zsh",
+  "dash",
+  "ksh",
+]);
+
+/** True when `[a]` (shape grant) must be withheld for `shape`. */
+export function isOpaqueInterpreterShape(shape: string): boolean {
+  return OPAQUE_INTERPRETER_SHAPES.has(shape);
+}
+
 export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition {
   return {
     name: "os.shell.run",
@@ -246,8 +267,13 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
       if (guardVerdict.action === "approval_required") {
         // Shape grant unit: the normalised binary the guard itself keyed
         // on (basename, lowercased), so `[a]` covers exactly the argv[0]
-        // that would run: `git`, not `/usr/bin/GIT` or a path.
-        const commandShape = basenameCommand(guardInput.cmd).toLowerCase();
+        // that would run: `git`, not `/usr/bin/GIT` or a path. Withheld
+        // for opaque interpreters (`bash -c …`) where the binary name
+        // hides what runs — see `isOpaqueInterpreterShape`.
+        const shape = basenameCommand(guardInput.cmd).toLowerCase();
+        const commandShape = isOpaqueInterpreterShape(shape)
+          ? undefined
+          : shape;
         await requireApproval(
           options,
           {
@@ -257,7 +283,7 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
             reason: `${guardVerdict.reason} in ${cwd}`,
             preview: commandLine,
             affectedResources: [cwd],
-            commandShape,
+            ...(commandShape !== undefined ? { commandShape } : {}),
           },
           ctx.signal,
         );

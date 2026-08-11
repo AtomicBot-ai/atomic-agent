@@ -37,6 +37,9 @@ function makeRuntime(initialLevel: number) {
       calls.push(value);
       level = value;
     },
+    approvals: {
+      sessionGrants: () => ({ categories: [], shapes: [] }),
+    },
   } as unknown as AgentRuntime;
   return { runtime, calls };
 }
@@ -68,6 +71,23 @@ describe("PrivacyOrchestrator — approval level", () => {
     expect(synced?.approvalLevel).toBe(5);
     const mirrored = actions.find((a) => a.type === "approval_level_changed");
     expect(mirrored?.approvalLevel).toBe(5);
+  });
+
+  it("refresh() mirrors the live session grants into the panel snapshot", () => {
+    const { actions, bus } = makeBus();
+    const runtime = {
+      getApprovalLevel: () => 1,
+      setApprovalLevel: () => {},
+      approvals: {
+        sessionGrants: () => ({ categories: ["shell"], shapes: ["git"] }),
+      },
+    } as unknown as AgentRuntime;
+    new PrivacyOrchestrator(runtime, bus).refresh();
+    const synced = actions.find((a) => a.type === "privacy_synced");
+    expect(synced?.sessionGrants).toEqual({
+      categories: ["shell"],
+      shapes: ["git"],
+    });
   });
 
   it("setApprovalLevel(5) hot-applies to the gate and persists agent.approvalLevel", async () => {

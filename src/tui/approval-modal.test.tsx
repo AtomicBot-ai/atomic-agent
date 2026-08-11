@@ -73,4 +73,12 @@ describe("ApprovalModal", () => {
     expect(frame).toContain("[n]");
     expect(frame).toContain("never granted for the session");
   });
+
+  it("offers [s] but NOT [a] for a shell request with no command shape", () => {
+    // Opaque interpreters (bash -c …) reach the prompt with no
+    // commandShape, so [a] must not be offered — only [s] / [y].
+    const frame = render(<ApprovalModal request={request()} />).lastFrame() ?? "";
+    expect(frame).toContain("[s]");
+    expect(frame).not.toContain("[a]");
+  });
 });

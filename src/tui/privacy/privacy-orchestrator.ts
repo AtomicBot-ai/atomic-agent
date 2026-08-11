@@ -35,6 +35,7 @@ export class PrivacyOrchestrator {
       type: "privacy_synced",
       analyticsEnabled: getConfig().analytics.enabled,
       approvalLevel,
+      sessionGrants: this.runtime.approvals.sessionGrants(),
     });
     this.bus.emit({ type: "approval_level_changed", approvalLevel });
   }

@@ -50,6 +50,19 @@ describe("reducePrivacyAction", () => {
     expect(down?.privacyPanel.approvalLevel).toBe(2);
   });
 
+  it("folds session grants from privacy_synced", () => {
+    const next = reducePrivacyAction(baseState(), {
+      type: "privacy_synced",
+      analyticsEnabled: true,
+      approvalLevel: 3,
+      sessionGrants: { categories: ["shell"], shapes: ["git"] },
+    });
+    expect(next?.privacyPanel.sessionGrants).toEqual({
+      categories: ["shell"],
+      shapes: ["git"],
+    });
+  });
+
   it("marks busy on action_started and clears it on settled", () => {
     const started = reducePrivacyAction(baseState(), {
       type: "privacy_action_started",

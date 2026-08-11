@@ -1,4 +1,9 @@
-export { ApprovalGate, ApprovalGateError } from "./approval-gate.js";
+export {
+  ApprovalGate,
+  ApprovalGateError,
+  canGrantCategory,
+  canGrantShape,
+} from "./approval-gate.js";
 export type {
   ApprovalDecision,
   ApprovalEmitter,

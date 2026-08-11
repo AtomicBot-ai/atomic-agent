@@ -1,10 +1,11 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import type { ApprovalRequest } from "../approval/approval-gate.js";
 import {
-  formatApprovalCategory,
-  isGrantableCategory,
-} from "../approval/approval-level.js";
+  canGrantCategory,
+  canGrantShape,
+  type ApprovalRequest,
+} from "../approval/approval-gate.js";
+import { formatApprovalCategory } from "../approval/approval-level.js";
 
 interface ApprovalModalProps {
   request: ApprovalRequest;
@@ -19,9 +20,8 @@ export function ApprovalModal({ request }: ApprovalModalProps): ReactElement {
   const categoryLabel = formatApprovalCategory(request.category);
   // `[s]` for any grantable category (everything but trust_config);
   // `[a]` only when the shell tool supplied a command shape to grant.
-  const grantCategory = isGrantableCategory(request.category);
-  const grantShape =
-    request.category === "shell" && Boolean(request.commandShape);
+  const grantCategory = canGrantCategory(request);
+  const grantShape = canGrantShape(request);
   return (
     <Box
       flexDirection="column"

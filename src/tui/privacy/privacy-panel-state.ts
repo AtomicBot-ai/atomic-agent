@@ -1,4 +1,5 @@
 import type { ApprovalLevel } from "../../approval/approval-level.js";
+import type { SessionGrantsSnapshot } from "../../approval/approval-gate.js";
 
 /**
  * UI state for the TUI "Privacy" tab: the anonymous-analytics opt-out
@@ -26,6 +27,12 @@ export interface PrivacyPanelState {
   message: string | null;
   /** Sticky one-line error from the most recent failed mutation. */
   lastError: string | null;
+  /**
+   * Live session-scoped point grants (categories + shell command shapes)
+   * mirrored from the approval gate. Read-only here — cleared when the
+   * session is switched / restarted, never persisted.
+   */
+  sessionGrants: SessionGrantsSnapshot;
 }
 
 export function createInitialPrivacyPanelState(): PrivacyPanelState {
@@ -35,5 +42,6 @@ export function createInitialPrivacyPanelState(): PrivacyPanelState {
     busy: false,
     message: null,
     lastError: null,
+    sessionGrants: { categories: [], shapes: [] },
   };
 }

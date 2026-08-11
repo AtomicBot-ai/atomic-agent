@@ -420,6 +420,12 @@ export function TuiApp({
   }, [state.uiMode, state.activeTab, callbacks]);
 
   useEffect(() => {
+    if (state.uiMode === "debug" && state.activeTab === "privacy") {
+      callbacks.onPrivacyRefreshRequested?.();
+    }
+  }, [state.uiMode, state.activeTab, callbacks]);
+
+  useEffect(() => {
     if (
       state.uiMode === "debug" &&
       (state.activeTab === "providers" || state.activeTab === "llm")

@@ -80,21 +80,34 @@ interface PendingEntry {
  * Concurrent approvals per session are out of scope — the agent loop is
  * strictly sequential.
  *
- * On top of the standing approval level, the gate holds two in-memory,
- * session-scoped grant sets ("point exceptions"): approved categories
- * and approved shell command shapes. A grant silences its
- * category/shape for the rest of the session without moving the
- * standing level. Grants never persist and never bypass the two hard
- * limits: hardline shell-guard rules block before the gate is ever
- * called, and `trust_config` is never grantable (see `request` /
- * `resolve`).
+ * On top of the standing approval level, the gate holds in-memory,
+ * per-session grant sets ("point exceptions"): approved categories and
+ * approved shell command shapes, keyed by the id of the session that
+ * granted them. A grant silences its category/shape for the rest of
+ * that session without moving the standing level. Because grants are
+ * keyed by session id, a request from a different session — a background
+ * task turn, a second live session on the same runtime — shares this
+ * gate but never rides another session's grant. Grants never persist and
+ * never bypass the two hard limits: hardline shell-guard rules block
+ * before the gate is ever called, and `trust_config` is never grantable
+ * (see `request` / `resolve`).
  */
 export class ApprovalGate {
   private readonly pending = new Map<string, PendingEntry>();
   private readonly emitter: ApprovalEmitter;
   private level: ApprovalLevel;
-  private readonly grantedCategories = new Set<ApprovalCategory>();
-  private readonly grantedShapes = new Set<string>();
+  /**
+   * Session grants keyed by the id of the session that made them. A grant
+   * is a point exception scoped to *that* session; a request from another
+   * session (a background task turn, a second live session) shares this
+   * gate but never sees it. This keying is what makes "session-scoped" a
+   * structural fact rather than a promise every caller remembers to honour
+   * by calling `clearSessionGrants()`.
+   */
+  private readonly grantsBySession = new Map<
+    string,
+    { categories: Set<ApprovalCategory>; shapes: Set<string> }
+  >();
 
   constructor(options: { emit: ApprovalEmitter; level?: ApprovalLevel }) {
     this.emitter = options.emit;
@@ -118,21 +131,41 @@ export class ApprovalGate {
   }
 
   /**
-   * Drop every session grant. Called when a new session starts so point
-   * exceptions never outlive the session that granted them. The standing
-   * level is untouched: it is a durable posture, grants are not.
+   * Drop session grants. With a `sessionId`, drops only that session's
+   * grants; with no argument, drops all of them (the TUI calls the
+   * no-arg form on a session switch / new session as a belt-and-braces
+   * reset — the per-session keying already isolates other sessions). The
+   * standing level is untouched: it is a durable posture, grants are not.
    */
-  clearSessionGrants(): void {
-    this.grantedCategories.clear();
-    this.grantedShapes.clear();
+  clearSessionGrants(sessionId?: string): void {
+    if (sessionId === undefined) {
+      this.grantsBySession.clear();
+      return;
+    }
+    this.grantsBySession.delete(sessionId);
   }
 
-  /** Snapshot of the live grant sets. Diagnostic / UI only. */
-  sessionGrants(): SessionGrantsSnapshot {
-    return {
-      categories: [...this.grantedCategories],
-      shapes: [...this.grantedShapes],
-    };
+  /**
+   * Snapshot of live grants. With a `sessionId`, only that session's
+   * grants; with no argument, the union across every session (in a TUI
+   * process only the interactive operator ever records grants, so the
+   * union is exactly their live set). Diagnostic / UI only.
+   */
+  sessionGrants(sessionId?: string): SessionGrantsSnapshot {
+    if (sessionId !== undefined) {
+      const entry = this.grantsBySession.get(sessionId);
+      return {
+        categories: entry ? [...entry.categories] : [],
+        shapes: entry ? [...entry.shapes] : [],
+      };
+    }
+    const categories = new Set<ApprovalCategory>();
+    const shapes = new Set<string>();
+    for (const entry of this.grantsBySession.values()) {
+      for (const category of entry.categories) categories.add(category);
+      for (const shape of entry.shapes) shapes.add(shape);
+    }
+    return { categories: [...categories], shapes: [...shapes] };
   }
 
   request(
@@ -175,13 +208,15 @@ export class ApprovalGate {
       return `auto-approved (level ${this.level})`;
     }
     if (!isGrantableCategory(request.category)) return null;
-    if (this.grantedCategories.has(request.category)) {
+    const grants = this.grantsBySession.get(request.sessionId);
+    if (!grants) return null;
+    if (grants.categories.has(request.category)) {
       return "auto-approved (session grant)";
     }
     if (
       request.category === "shell" &&
       request.commandShape &&
-      this.grantedShapes.has(request.commandShape)
+      grants.shapes.has(request.commandShape)
     ) {
       return `auto-approved (session grant: ${request.commandShape})`;
     }
@@ -212,13 +247,26 @@ export class ApprovalGate {
     scope: ApprovalGrantScope,
   ): void {
     if (!isGrantableCategory(request.category)) return;
+    const grants = this.grantsForSession(request.sessionId);
     if (scope === "category") {
-      this.grantedCategories.add(request.category);
+      grants.categories.add(request.category);
       return;
     }
     if (request.category === "shell" && request.commandShape) {
-      this.grantedShapes.add(request.commandShape);
+      grants.shapes.add(request.commandShape);
     }
+  }
+
+  /** Get (or lazily create) the grant set for a session id. */
+  private grantsForSession(
+    sessionId: string,
+  ): { categories: Set<ApprovalCategory>; shapes: Set<string> } {
+    let entry = this.grantsBySession.get(sessionId);
+    if (!entry) {
+      entry = { categories: new Set(), shapes: new Set() };
+      this.grantsBySession.set(sessionId, entry);
+    }
+    return entry;
   }
 
   reject(approvalId: string, reason: string): boolean {
@@ -228,4 +276,24 @@ export class ApprovalGate {
   pendingCount(): number {
     return this.pending.size;
   }
+}
+
+/**
+ * Whether the approval prompt may offer `[s]` (grant the whole category
+ * for the session) for this request. Everything is grantable except
+ * `trust_config`. Shared by every surface (TUI modal, TUI keys, CLI
+ * prompt) so the offer set never drifts between them.
+ */
+export function canGrantCategory(request: ApprovalRequest): boolean {
+  return isGrantableCategory(request.category);
+}
+
+/**
+ * Whether the prompt may offer `[a]` (grant this shell command shape).
+ * Only for a shell request that carries a `commandShape`; the shell tool
+ * deliberately withholds the shape for opaque interpreters (`bash -c …`),
+ * so `[a]` is never offered where the binary name hides what runs.
+ */
+export function canGrantShape(request: ApprovalRequest): boolean {
+  return request.category === "shell" && Boolean(request.commandShape);
 }

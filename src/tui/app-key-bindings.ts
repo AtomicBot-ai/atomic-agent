@@ -1,12 +1,11 @@
 import type { Key } from "ink";
-import type {
-  ApprovalGrantScope,
-  ApprovalRequest,
-} from "../approval/approval-gate.js";
 import {
-  formatApprovalCategory,
-  isGrantableCategory,
-} from "../approval/approval-level.js";
+  canGrantCategory,
+  canGrantShape,
+  type ApprovalGrantScope,
+  type ApprovalRequest,
+} from "../approval/approval-gate.js";
+import { formatApprovalCategory } from "../approval/approval-level.js";
 import { cycleNavSlot, type NavSlot } from "./section.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import type { TuiAction } from "./tui-action.js";
@@ -389,21 +388,6 @@ function handleUpdateKey(
     return true;
   }
   return false;
-}
-
-/**
- * `[s]` (grant the whole category this session) is offered for any
- * grantable category; `[a]` (grant this command shape) only for a shell
- * request that carries a `commandShape`. `trust_config` is not grantable
- * so neither key is offered: the gate refuses the grant anyway, but not
- * routing the key keeps the prompt honest.
- */
-function canGrantCategory(request: ApprovalRequest): boolean {
-  return isGrantableCategory(request.category);
-}
-
-function canGrantShape(request: ApprovalRequest): boolean {
-  return request.category === "shell" && Boolean(request.commandShape);
 }
 
 /**
