@@ -8,13 +8,16 @@ import { OPENAI_COMPAT_DEFAULT_BASE_URL } from "./providers-model-options.js";
 import {
   advanceWizardPhase,
   clampCursor,
+  cursorForPreviousPick,
   isCuratedCatalogKind,
   isLinePhase,
   isListPhase,
   kindRowAtCursor,
   listEmbeddingModelsForKind,
   listLengthForPhase,
+  presetNeedsKeyScreen,
 } from "./providers-wizard-phases.js";
+import { createProvidersWizardState } from "./providers-wizard-state.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
 
 /** Normalized so the fetch, the cache key and the displayed URL always agree. */
@@ -109,6 +112,23 @@ export function handleProvidersWizardKey(
     return { handled: true, wizard };
   }
   if (key.escape) {
+    // Esc steps back one screen rather than abandoning the whole wizard:
+    // picking the wrong service should not cost the operator the flow.
+    // Only the first screen (the provider list) closes it. Stepping back
+    // rebuilds a clean pick_kind state so the previous pick does not
+    // leak into the next one, then restores the cursor to that row.
+    if (wizard.phase !== "pick_kind") {
+      return {
+        handled: true,
+        wizard: {
+          ...createProvidersWizardState(wizard.mode, {
+            ...(wizard.providerId ? { providerId: wizard.providerId } : {}),
+          }),
+          phase: "pick_kind",
+          cursor: cursorForPreviousPick(wizard),
+        },
+      };
+    }
     return { handled: true, closed: true };
   }
 
@@ -154,20 +174,22 @@ export function handleProvidersWizardKey(
       }
       if (key.return) {
         const picked = picks[clampCursor(wizard.cursor, picks.length)]!;
+        // Picks only appear on `chat_model_line`, the final step: choosing
+        // one records the id and saves, no embedding screen after it.
         return {
           handled: true,
-          wizard: advanceWizardPhase({ ...wizard, chatModelLine: picked }),
+          wizard: { ...wizard, chatModelLine: picked },
+          submit: true,
         };
       }
     }
     const field =
-      wizard.phase === "base_url"
-        ? "baseUrlLine"
-        : wizard.phase === "chat_model_line"
-          ? "chatModelLine"
-          : "embeddingModelLine";
+      wizard.phase === "base_url" ? "baseUrlLine" : "chatModelLine";
     if (key.return) {
-      if (wizard.phase === "embedding_model_line") {
+      // `chat_model_line` is the final step now that the embedding screen
+      // is gone: embeddings stay on the local daemon unless changed later
+      // in the LLM tab, so Enter saves from here.
+      if (wizard.phase === "chat_model_line") {
         return { handled: true, wizard, submit: true };
       }
       return {
@@ -220,9 +242,12 @@ export function handleProvidersWizardKey(
         const preset = findProviderPreset(row.presetId);
         if (!preset) return { handled: true, wizard };
         // A preset is an openai-compatible entry with the endpoint
-        // already known, so the operator goes straight to the key step
-        // and never types a base URL. Local servers (LM Studio) need no
-        // key at all, which the api_key step accepts as empty.
+        // already known, so the operator never types a base URL. Services
+        // that list models without credentials, and local servers (LM
+        // Studio), skip the key screen too and land straight on the model
+        // choice: asking for a key that does not exist is the dead end
+        // presets exist to remove (#69).
+        const needsKey = presetNeedsKeyScreen(preset.id);
         return {
           handled: true,
           wizard: {
@@ -230,7 +255,7 @@ export function handleProvidersWizardKey(
             kind: "openai-compatible",
             presetId: preset.id,
             baseUrlLine: preset.baseUrl,
-            phase: "api_key",
+            phase: needsKey ? "api_key" : "chat_model_line",
             cursor: 0,
           },
         };

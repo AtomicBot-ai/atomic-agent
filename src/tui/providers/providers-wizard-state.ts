@@ -11,8 +11,7 @@ export type ProvidersWizardPhase =
   | "pick_chat_model"
   | "pick_embedding"
   | "base_url"
-  | "chat_model_line"
-  | "embedding_model_line";
+  | "chat_model_line";
 
 export type ProvidersWizardMode = "add" | "configure";
 

@@ -171,9 +171,13 @@ describe("handleProvidersWizardKey", () => {
       expect(wizard.phase).toBe("chat_model_line");
 
       wizard = next(wizard, "", emptyKey({ downArrow: true }));
-      wizard = next(wizard, "", emptyKey({ return: true }));
-      expect(wizard.chatModelLine).toBe("b-model");
-      expect(wizard.phase).toBe("embedding_model_line");
+      // Choosing a discovered model is the final step: it records the id
+      // and submits, no embedding screen after it.
+      const result = handleProvidersWizardKey("", emptyKey({ return: true }), wizard);
+      expect(result).toMatchObject({ handled: true, submit: true });
+      if ("wizard" in result) {
+        expect(result.wizard.chatModelLine).toBe("b-model");
+      }
     });
 
     it("lets typing override the discovered list", async () => {
@@ -188,9 +192,13 @@ describe("handleProvidersWizardKey", () => {
 
       let wizard = await wizardAtChatModelStep("https://typed.example");
       for (const ch of "my-own") wizard = next(wizard, ch, emptyKey());
-      wizard = next(wizard, "", emptyKey({ return: true }));
-      expect(wizard.chatModelLine).toBe("my-own");
-      expect(wizard.phase).toBe("embedding_model_line");
+      // A typed id is the final step now: Enter saves from the chat model
+      // line, the embedding screen is gone from the flow.
+      const result = handleProvidersWizardKey("", emptyKey({ return: true }), wizard);
+      expect(result).toMatchObject({ handled: true, submit: true });
+      if ("wizard" in result) {
+        expect(result.wizard.chatModelLine).toBe("my-own");
+      }
     });
 
     it("pages and jumps through a long discovered list", async () => {
@@ -366,9 +374,9 @@ describe("handleProvidersWizardKey", () => {
     expect(wizard.kind).toBe("openai-compatible");
     expect(wizard.presetId).toBe("nous");
     expect(wizard.baseUrlLine).toBe("https://inference-api.nousresearch.com");
-    // The endpoint is known, so the operator lands straight on the key
-    // step instead of typing a URL.
-    expect(wizard.phase).toBe("api_key");
+    // Nous lists models without credentials, so both the URL and the key
+    // screens are skipped: the operator lands on the model choice.
+    expect(wizard.phase).toBe("chat_model_line");
   });
 
   it("reaches a later preset by moving down the same list", () => {
@@ -380,6 +388,116 @@ describe("handleProvidersWizardKey", () => {
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.presetId).toBe("deepseek");
     expect(wizard.baseUrlLine).toBe("https://api.deepseek.com");
+  });
+
+  it("takes a keyed preset through the key screen to the model list", () => {
+    let wizard = createProvidersWizardState("add");
+    // Groq is a keyed preset; two leading kind rows precede the presets.
+    const groqIdx = 2 + PROVIDER_PRESETS.findIndex((p) => p.id === "groq");
+    for (let i = 0; i < groqIdx; i += 1) {
+      wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    }
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.presetId).toBe("groq");
+    expect(wizard.phase).toBe("api_key");
+    // After the key, a preset skips the URL screen and lands on the model
+    // choice: service, key, models, three screens, no URL to type.
+    for (const ch of "gsk") wizard = next(wizard, ch, emptyKey());
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("chat_model_line");
+  });
+
+  it("skips the key screen for a local server", () => {
+    let wizard = createProvidersWizardState("add");
+    const lmIdx = 2 + PROVIDER_PRESETS.findIndex((p) => p.id === "lmstudio");
+    for (let i = 0; i < lmIdx; i += 1) {
+      wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    }
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.presetId).toBe("lmstudio");
+    // A local server has no key at all, so the wizard goes straight to the
+    // model choice.
+    expect(wizard.phase).toBe("chat_model_line");
+  });
+
+  it("a preset never shows the URL screen", () => {
+    // Groq (keyed): service -> key -> models, base_url is never reached.
+    let wizard = createProvidersWizardState("add");
+    for (let i = 0; i < 3; i += 1) {
+      wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    }
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    for (const ch of "gsk") wizard = next(wizard, ch, emptyKey());
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).not.toBe("base_url");
+  });
+
+  it("still shows the URL screen for the manual openai-compatible row", () => {
+    let wizard = createProvidersWizardState("add");
+    // Manual entry is the last row.
+    wizard = next(wizard, "", emptyKey({ upArrow: true }));
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.kind).toBe("openai-compatible");
+    expect(wizard.presetId).toBeNull();
+    // No key typed, Enter through the key screen: a hand-added compat
+    // endpoint still has to declare its base URL.
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("base_url");
+  });
+
+  it("Esc from a preset returns to the provider list, not out of the wizard", () => {
+    let wizard = createProvidersWizardState("add");
+    // Nous is keyless, so the wizard lands straight on chat_model_line.
+    const nousIdx = 2 + PROVIDER_PRESETS.findIndex((p) => p.id === "nous");
+    for (let i = 0; i < nousIdx; i += 1) {
+      wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    }
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("chat_model_line");
+
+    const result = handleProvidersWizardKey("", emptyKey({ escape: true }), wizard);
+    expect(result.handled).toBe(true);
+    expect("closed" in result && result.closed).toBeFalsy();
+    expect("wizard" in result && result.wizard.phase).toBe("pick_kind");
+    // The cursor lands back on the row we came from.
+    expect("wizard" in result && result.wizard.cursor).toBe(nousIdx);
+  });
+
+  it("Esc on the provider list closes the wizard", () => {
+    const wizard = createProvidersWizardState("add");
+    const result = handleProvidersWizardKey("", emptyKey({ escape: true }), wizard);
+    expect("closed" in result && result.closed).toBe(true);
+  });
+
+  it("stepping back clears the previous pick so a new one starts clean", () => {
+    let wizard = createProvidersWizardState("add");
+    wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    wizard = next(wizard, "", emptyKey({ escape: true }));
+    expect(wizard.presetId).toBeNull();
+    expect(wizard.baseUrlLine).toBe("");
+  });
+
+  it("saves a keyless preset in exactly two screens: service then models", () => {
+    // The end-to-end main path: Nous from the provider list to a
+    // submittable wizard without a URL screen and without a key screen.
+    let wizard = createProvidersWizardState("add");
+    const nousIdx = 2 + PROVIDER_PRESETS.findIndex((p) => p.id === "nous");
+    for (let i = 0; i < nousIdx; i += 1) {
+      wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    }
+    // Screen one: pick the service.
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.presetId).toBe("nous");
+    expect(wizard.phase).toBe("chat_model_line");
+    // Screen two: type a model id and save. No URL, no key, no embedding.
+    for (const ch of "hermes-4-405b") wizard = next(wizard, ch, emptyKey());
+    const result = handleProvidersWizardKey("", emptyKey({ return: true }), wizard);
+    expect(result).toMatchObject({ handled: true, submit: true });
+    if ("wizard" in result) {
+      expect(result.wizard.chatModelLine).toBe("hermes-4-405b");
+    }
   });
 });
 
