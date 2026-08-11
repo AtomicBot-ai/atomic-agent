@@ -573,35 +573,44 @@ function renderChatRow(
       : insufficient
         ? theme.colors.muted
         : undefined;
+  // `flexWrap="nowrap"` (the Box default) clips the row at the terminal
+  // edge instead of spilling its trailing fragments onto a second
+  // physical line, which Ink then overlaps with the next row — the
+  // garble seen on a narrow window. The height-budget math elsewhere in
+  // this panel assumes one row is one line, so a wrapped row also
+  // desyncs the windowed slice. Keeping the fragments separate preserves
+  // their individual colors; the badges that fall off the edge are
+  // informational and reappear once the window is widened.
   return (
-    <Box key={r.id} flexDirection="row" flexWrap="wrap">
+    <Box key={r.id} flexDirection="row">
       <Text
         color={rowColor}
         bold={isCursor || downloading}
         dimColor={insufficient && !isCursor}
+        wrap="truncate-end"
       >
         {isCursor ? "> " : "  "}
         {r.active ? "* " : ""}
         {r.id} {r.def.sizeLabel}
       </Text>
-      <Text color={r.downloaded ? "green" : theme.colors.muted}>
+      <Text color={r.downloaded ? "green" : theme.colors.muted} wrap="truncate-end">
         {" "}
         [{renderRowAvailability(r)}]
       </Text>
       {r.def.tag ? (
-        <Text color={theme.colors.accent}> [{r.def.tag}]</Text>
+        <Text color={theme.colors.accent} wrap="truncate-end"> [{r.def.tag}]</Text>
       ) : null}
       {fit ? (
-        <Text color={ramFitColor(fit)}>
+        <Text color={ramFitColor(fit)} wrap="truncate-end">
           {" "}
           {fit === "ok" ? "✓ RAM" : fit === "tight" ? "△ RAM" : "✗ RAM"}
         </Text>
       ) : null}
       {vramFit === "insufficient" ? (
-        <Text color={theme.colors.warnStrong}> Not enough VRAM</Text>
+        <Text color={theme.colors.warnStrong} wrap="truncate-end"> Not enough VRAM</Text>
       ) : null}
       {downloading ? (
-        <Text color="yellow">
+        <Text color="yellow" wrap="truncate-end">
           {" "}
           [{mini}] {panel.pull!.percent}%
         </Text>
@@ -652,23 +661,25 @@ function renderEmbeddingRow(
     : isCursor
       ? theme.colors.accentSoft
       : undefined;
+  // See renderChatRow: nowrap + per-fragment truncate-end so a narrow
+  // window clips the row instead of wrapping and overlapping the next.
   return (
-    <Box key={r.id} flexDirection="row" flexWrap="wrap">
-      <Text color={rowColor} bold={isCursor || downloading}>
+    <Box key={r.id} flexDirection="row">
+      <Text color={rowColor} bold={isCursor || downloading} wrap="truncate-end">
         {isCursor ? "> " : "  "}
         {r.active ? "* " : ""}
         {r.id} {r.def.sizeLabel}
       </Text>
-      <Text color={r.downloaded ? "green" : theme.colors.muted}>
+      <Text color={r.downloaded ? "green" : theme.colors.muted} wrap="truncate-end">
         {" "}
         [{r.downloaded ? "gguf" : "remote"}]
       </Text>
-      <Text color={theme.colors.muted}>
+      <Text color={theme.colors.muted} wrap="truncate-end">
         {" "}
         dim {r.def.dim}
       </Text>
       {downloading ? (
-        <Text color="yellow">
+        <Text color="yellow" wrap="truncate-end">
           {" "}
           [{mini}] {panel.embeddingPull!.percent}%
         </Text>

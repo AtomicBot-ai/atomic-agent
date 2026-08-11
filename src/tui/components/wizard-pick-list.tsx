@@ -58,6 +58,7 @@ export function renderPickList(props: {
           <Text
             key={`${index}-${opt.label}`}
             color={index === clamped ? theme.colors.accentSoft : undefined}
+            wrap="truncate-end"
           >
             {mark} {opt.label}
           </Text>
