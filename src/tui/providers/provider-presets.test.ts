@@ -27,6 +27,14 @@ describe("PROVIDER_PRESETS", () => {
     }
   });
 
+  it("is sorted alphabetically by label", () => {
+    // Array order is what the wizard renders, so keep it readable:
+    // plain code-unit comparison, no locale involved.
+    const labels = PROVIDER_PRESETS.map((p) => p.label);
+    const sorted = [...labels].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    expect(labels).toEqual(sorted);
+  });
+
   it("includes the service the request came from", () => {
     // A user asked for presets and named Nous specifically (#69).
     expect(findProviderPreset("nous")).toBeDefined();
