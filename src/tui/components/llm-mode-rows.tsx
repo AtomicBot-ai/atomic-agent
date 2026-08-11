@@ -234,8 +234,14 @@ function Row({ row, state }: { row: LlmPanelRow; state: TuiState }): ReactElemen
     : insufficient
       ? theme.colors.muted
       : undefined;
+  // `wrap="truncate-end"` clips each row to the terminal width instead of
+  // letting Ink wrap it. A wrapped row spills a second physical line that
+  // Ink then overlaps with the following row (the whole panel already
+  // switches to a windowed view to avoid the same overflow vertically —
+  // see `LlmModeRows` — but never guarded the horizontal axis), which is
+  // what garbles adjacent rows and drags rendering on a narrow window.
   return (
-    <Text color={baseColor} bold={selected}>
+    <Text color={baseColor} bold={selected} wrap="truncate-end">
       {mark} {renderRowText(row, state)}
       {insufficient ? (
         <Text color={theme.colors.warn}> Not enough VRAM</Text>
