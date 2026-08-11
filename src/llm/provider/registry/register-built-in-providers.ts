@@ -4,7 +4,12 @@ import { AimlapiProvider } from "../aimlapi/aimlapi-provider.js";
 import { AIMLAPI_DEFAULT_CHAT_MODEL } from "../aimlapi/aimlapi-models-catalog.js";
 import { LlamaServerProvider } from "../llama-server/llama-server-provider.js";
 import { OpenAiProvider } from "../openai/openai-provider.js";
-import { OpenRouterProvider } from "../openrouter/openrouter-provider.js";
+import {
+  OpenRouterProvider,
+  OPENROUTER_APP_CATEGORIES,
+  OPENROUTER_APP_REFERER,
+  OPENROUTER_APP_TITLE,
+} from "../openrouter/openrouter-provider.js";
 import { registerProviderKind } from "./provider-types.js";
 
 let registered = false;
@@ -62,8 +67,9 @@ export function registerBuiltInProviderKinds(): void {
       supportsVision: entry.supportsVision ?? true,
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
-      httpReferer: "https://github.com/AtomicBot-ai/atomic-agent",
-      xTitle: "atomic-agent",
+      httpReferer: OPENROUTER_APP_REFERER,
+      xTitle: OPENROUTER_APP_TITLE,
+      categories: OPENROUTER_APP_CATEGORIES,
     });
   });
 

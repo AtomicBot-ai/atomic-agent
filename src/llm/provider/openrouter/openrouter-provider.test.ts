@@ -14,6 +14,43 @@ describe("normalizeOpenRouterBaseUrl", () => {
 });
 
 describe("OpenRouterProvider", () => {
+  it("sends app-attribution headers on the request", async () => {
+    let sent: Headers | undefined;
+    const fetchImpl = vi.fn(async (_url: string, init?: RequestInit) => {
+      sent = new Headers(init?.headers);
+      return new Response(
+        JSON.stringify({
+          id: "gen-1",
+          model: "openrouter/auto",
+          choices: [
+            {
+              message: { role: "assistant", content: "ok" },
+              finish_reason: "stop",
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+
+    const provider = new OpenRouterProvider({
+      id: "openrouter",
+      apiKey: "test-key",
+      defaultChatModel: "openrouter/auto",
+      fetchImpl: fetchImpl as typeof fetch,
+      requestTimeoutMs: 5000,
+      httpReferer: "https://example.com",
+      xTitle: "Example App",
+      categories: "cli-agent,personal-agent",
+    });
+
+    await provider.complete({ prompt: "hi", maxTokens: 16, temperature: 0 });
+
+    expect(sent?.get("HTTP-Referer")).toBe("https://example.com");
+    expect(sent?.get("X-Title")).toBe("Example App");
+    expect(sent?.get("X-OpenRouter-Categories")).toBe("cli-agent,personal-agent");
+  });
+
   it("posts chat completions to /api/v1/chat/completions (not double /v1)", async () => {
     const fetchImpl = vi.fn(async (url: string) => {
       expect(url).toBe("https://openrouter.ai/api/v1/chat/completions");
