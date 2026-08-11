@@ -182,11 +182,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
       callbacks: {
         onAbort: () => orchestrator.abortCurrentTurn(),
         onQuit: () => orchestrator.quit(),
-        onApprovalDecision: (approvalId, approved) => {
+        onApprovalDecision: (approvalId, approved, grant) => {
           runtime.approvals.resolve({
             approvalId,
             approved,
             reason: approved ? "tui-approved" : "tui-denied",
+            ...(grant ? { grant } : {}),
           });
         },
         onMessageSubmitted: (text) => orchestrator.sendMessage(text),

@@ -1,5 +1,9 @@
 import type { Key } from "ink";
-import type { ApprovalRequest } from "../approval/approval-gate.js";
+import type {
+  ApprovalGrantScope,
+  ApprovalRequest,
+} from "../approval/approval-gate.js";
+import { isGrantableCategory } from "../approval/approval-level.js";
 import { cycleNavSlot, type NavSlot } from "./section.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import type { TuiAction } from "./tui-action.js";
@@ -16,7 +20,17 @@ const CHAT_PAGE_DELTA = 8;
 const CHAT_WHEEL_ARROW_DELTA = 2;
 
 export interface AppKeyCallbacks {
-  onApprovalDecision(approvalId: string, approved: boolean): void;
+  /**
+   * Resolve a pending approval. `grant` records a session-scoped point
+   * exception alongside the approval: `"category"` (`s`) silences the
+   * request's whole category, `"shape"` (`a`, shell only) silences the
+   * request's command binary. Absent = this call only (`y`).
+   */
+  onApprovalDecision(
+    approvalId: string,
+    approved: boolean,
+    grant?: ApprovalGrantScope,
+  ): void;
   onAbort(): void;
   onQuit(): void;
   /** Optional — called when Enter is pressed on the focused sidebar row. */
@@ -374,6 +388,21 @@ function handleUpdateKey(
   return false;
 }
 
+/**
+ * `[s]` (grant the whole category this session) is offered for any
+ * grantable category; `[a]` (grant this command shape) only for a shell
+ * request that carries a `commandShape`. `trust_config` is not grantable
+ * so neither key is offered: the gate refuses the grant anyway, but not
+ * routing the key keeps the prompt honest.
+ */
+function canGrantCategory(request: ApprovalRequest): boolean {
+  return isGrantableCategory(request.category);
+}
+
+function canGrantShape(request: ApprovalRequest): boolean {
+  return request.category === "shell" && Boolean(request.commandShape);
+}
+
 function handleApprovalKey(
   input: string,
   key: Key,
@@ -383,6 +412,24 @@ function handleApprovalKey(
   const lower = input.toLowerCase();
   if (lower === "y") {
     ctx.callbacks.onApprovalDecision(request.approvalId, true);
+    ctx.dispatch({
+      type: "approval_resolved",
+      approvalId: request.approvalId,
+      approved: true,
+    });
+    return true;
+  }
+  if (lower === "s" && canGrantCategory(request)) {
+    ctx.callbacks.onApprovalDecision(request.approvalId, true, "category");
+    ctx.dispatch({
+      type: "approval_resolved",
+      approvalId: request.approvalId,
+      approved: true,
+    });
+    return true;
+  }
+  if (lower === "a" && canGrantShape(request)) {
+    ctx.callbacks.onApprovalDecision(request.approvalId, true, "shape");
     ctx.dispatch({
       type: "approval_resolved",
       approvalId: request.approvalId,

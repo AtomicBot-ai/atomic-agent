@@ -124,6 +124,146 @@ describe("ApprovalGate", () => {
     await expect(promise).rejects.toMatchObject({ name: "ApprovalGateError" });
   });
 
+  it("y (no grant) never silences the next request of the same category", async () => {
+    let emitted = 0;
+    const gate = new ApprovalGate({
+      emit: (req) => {
+        emitted += 1;
+        setImmediate(() =>
+          gate.resolve({ approvalId: req.approvalId, approved: true }),
+        );
+      },
+    });
+    const shell = { sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r" } as const;
+    await gate.request(shell);
+    await gate.request(shell);
+    expect(emitted).toBe(2);
+    expect(gate.sessionGrants().categories).toEqual([]);
+  });
+
+  it("s grants the category for the session: same category goes silent, others still ask", async () => {
+    let emitted = 0;
+    const gate = new ApprovalGate({
+      emit: (req) => {
+        emitted += 1;
+        setImmediate(() =>
+          gate.resolve({ approvalId: req.approvalId, approved: true, grant: "category" }),
+        );
+      },
+    });
+    const first = await gate.request({
+      sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r",
+    });
+    expect(first.approved).toBe(true);
+    expect(emitted).toBe(1);
+    expect(gate.sessionGrants().categories).toEqual(["shell"]);
+
+    // Same category: silent, no new prompt.
+    const second = await gate.request({
+      sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r",
+    });
+    expect(second.approved).toBe(true);
+    expect(second.reason).toBe("auto-approved (session grant)");
+    expect(emitted).toBe(1);
+
+    // Different category: still asks.
+    const other = await gate.request({
+      sessionId: "s", tool: "os.http.request", category: "http", reason: "r",
+    });
+    expect(other.approved).toBe(true);
+    expect(emitted).toBe(2);
+  });
+
+  it("a grants a shell command shape: matching binary silent, other binary still asks", async () => {
+    let emitted = 0;
+    const gate = new ApprovalGate({
+      emit: (req) => {
+        emitted += 1;
+        setImmediate(() =>
+          gate.resolve({ approvalId: req.approvalId, approved: true, grant: "shape" }),
+        );
+      },
+    });
+    await gate.request({
+      sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r",
+      commandShape: "git",
+    });
+    expect(gate.sessionGrants().shapes).toEqual(["git"]);
+    expect(gate.sessionGrants().categories).toEqual([]);
+
+    const sameShape = await gate.request({
+      sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r",
+      commandShape: "git",
+    });
+    expect(sameShape.approved).toBe(true);
+    expect(sameShape.reason).toBe("auto-approved (session grant: git)");
+    expect(emitted).toBe(1);
+
+    const otherShape = await gate.request({
+      sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r",
+      commandShape: "curl",
+    });
+    expect(otherShape.approved).toBe(true);
+    expect(emitted).toBe(2);
+  });
+
+  it("never grants trust_config, even when the caller asks for a category grant", async () => {
+    let emitted = 0;
+    const gate = new ApprovalGate({
+      emit: (req) => {
+        emitted += 1;
+        setImmediate(() =>
+          gate.resolve({ approvalId: req.approvalId, approved: true, grant: "category" }),
+        );
+      },
+    });
+    const trust = {
+      sessionId: "s", tool: "os.fs.write", category: "trust_config", reason: "config write",
+    } as const;
+    await gate.request(trust);
+    expect(gate.sessionGrants().categories).toEqual([]);
+
+    // The next trust_config write still prompts: the grant was refused.
+    await gate.request(trust);
+    expect(emitted).toBe(2);
+  });
+
+  it("clearSessionGrants drops grants but leaves the standing level", async () => {
+    const gate = new ApprovalGate({
+      emit: (req) =>
+        gate.resolve({ approvalId: req.approvalId, approved: true, grant: "category" }),
+      level: 3,
+    });
+    await gate.request({ sessionId: "s", tool: "t", category: "shell", reason: "r" });
+    expect(gate.sessionGrants().categories).toEqual(["shell"]);
+    gate.clearSessionGrants();
+    expect(gate.sessionGrants().categories).toEqual([]);
+    expect(gate.sessionGrants().shapes).toEqual([]);
+    expect(gate.getLevel()).toBe(3);
+  });
+
+  it("a shape grant does not silence a request that carries no commandShape", async () => {
+    let emitted = 0;
+    const gate = new ApprovalGate({
+      emit: (req) => {
+        emitted += 1;
+        setImmediate(() =>
+          gate.resolve({ approvalId: req.approvalId, approved: true, grant: "shape" }),
+        );
+      },
+    });
+    await gate.request({
+      sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r", commandShape: "git",
+    });
+    // A shell request without a shape (unusual, but defensive) must not
+    // ride the shape grant; it still prompts.
+    const noShape = await gate.request({
+      sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r",
+    });
+    expect(noShape.approved).toBe(true);
+    expect(emitted).toBe(2);
+  });
+
   it("reject() resolves the pending request as denied", async () => {
     let pendingId = "";
     const gate = new ApprovalGate({

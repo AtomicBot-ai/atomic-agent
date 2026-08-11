@@ -6,12 +6,42 @@ import {
   formatApprovalCategory,
   formatApprovalLevel,
   isAutoApprovedAt,
+  isGrantableCategory,
   resolveBootApprovalLevel,
   type ApprovalCategory,
   type ApprovalLevel,
 } from "./approval-level.js";
 
 const LEVELS: readonly ApprovalLevel[] = [1, 2, 3, 4, 5];
+
+const ALL_CATEGORIES: readonly ApprovalCategory[] = [
+  "fs_write_workspace",
+  "fs_write_home",
+  "fs_trash",
+  "http",
+  "shell",
+  "script",
+  "proc_kill",
+  "browser_nonweb",
+  "trust_config",
+  "other",
+];
+
+describe("session-grant eligibility", () => {
+  it("grants every category except trust_config", () => {
+    for (const category of ALL_CATEGORIES) {
+      expect(isGrantableCategory(category)).toBe(category !== "trust_config");
+    }
+  });
+
+  it("trust_config is the one non-grantable category (mirrors its level-5 pin)", () => {
+    expect(isGrantableCategory("trust_config")).toBe(false);
+    // The grant-side half of the trust_config invariant lines up with the
+    // auto-approve side: it is silent only at level 5.
+    expect(isAutoApprovedAt(4, "trust_config")).toBe(false);
+    expect(isAutoApprovedAt(5, "trust_config")).toBe(true);
+  });
+});
 
 describe("approval ladder", () => {
   it("matches the approved category table exactly, level by level", () => {

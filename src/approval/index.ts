@@ -2,7 +2,9 @@ export { ApprovalGate, ApprovalGateError } from "./approval-gate.js";
 export type {
   ApprovalDecision,
   ApprovalEmitter,
+  ApprovalGrantScope,
   ApprovalRequest,
+  SessionGrantsSnapshot,
 } from "./approval-gate.js";
 export {
   APPROVAL_CATEGORY_LABELS,
@@ -11,6 +13,7 @@ export {
   formatApprovalCategory,
   formatApprovalLevel,
   isAutoApprovedAt,
+  isGrantableCategory,
   MAX_APPROVAL_LEVEL,
   MIN_APPROVAL_LEVEL,
   resolveBootApprovalLevel,

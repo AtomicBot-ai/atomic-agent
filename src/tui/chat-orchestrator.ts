@@ -253,6 +253,9 @@ export class ChatOrchestrator {
     }
     this.session = loaded;
     this.queue.length = 0;
+    // Session grants are point exceptions scoped to the session that
+    // granted them; a switch must not carry them into the next one.
+    this.runtime.approvals.clearSessionGrants();
     this.bus.emit({
       type: "session_switched",
       sessionId: loaded.id,
@@ -340,6 +343,9 @@ export class ChatOrchestrator {
     }
     this.session = this.runtime.createSession();
     this.queue.length = 0;
+    // A fresh session starts with no point exceptions: grants never
+    // outlive the session that created them.
+    this.runtime.approvals.clearSessionGrants();
     clearTtyScreen(process.stdout);
     this.bus.emit({
       type: "session_switched",

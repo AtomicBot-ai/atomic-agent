@@ -89,6 +89,21 @@ export function isAutoApprovedAt(
 }
 
 /**
+ * Whether a session grant (`[s]` / `[a]` in the prompt) may silence this
+ * category for the rest of the session. Everything is grantable except
+ * `trust_config`: a write to `config.json` / `.env` is the one action
+ * that can silently raise the ladder for the next boot, so it must keep
+ * asking even if the operator granted a broad category earlier. Pinned
+ * at level 5 in `AUTO_APPROVE_FROM_LEVEL` for the same reason; this is
+ * the grant-side half of that invariant. The single source of truth for
+ * "never grantable": the gate reads it on both the grant and the
+ * auto-approve path.
+ */
+export function isGrantableCategory(category: ApprovalCategory): boolean {
+  return category !== "trust_config";
+}
+
+/**
  * Short human label for a request category, shown next to an approval
  * prompt so a host / operator sees *why* the ladder stopped here (a
  * `file write · home` prompt reads very differently from a

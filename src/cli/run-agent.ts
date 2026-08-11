@@ -5,13 +5,17 @@ import type { Interface as ReadlineInterface } from "node:readline";
 import {
   formatApprovalCategory,
   formatApprovalLevel,
+  isGrantableCategory,
   resolveBootApprovalLevel,
 } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
-import type { ApprovalRequest } from "../approval/approval-gate.js";
+import type {
+  ApprovalGrantScope,
+  ApprovalRequest,
+} from "../approval/approval-gate.js";
 import { stderrSink } from "../tracing/structured-logger.js";
 import type { SessionState } from "../session/session-state.js";
 
@@ -57,11 +61,26 @@ function parseArgs(args: string[]): RunArgs | { error: string } {
   };
 }
 
+interface CliApprovalAnswer {
+  approved: boolean;
+  grant?: ApprovalGrantScope;
+}
+
 /**
  * Interactive approval over stdin. We ask the operator to confirm each
- * dangerous action; anything other than `y`/`yes` is treated as refusal.
+ * dangerous action; `y`/`yes` approves this call, `s` also grants the
+ * category for the session, `a` grants this shell command shape.
+ * Anything else is a refusal. The grant options mirror the TUI prompt;
+ * they are offered here too because a CLI operator has the same physical
+ * access to the machine. `trust_config` is never grantable, so those
+ * requests only ever show `y/N`.
  */
-async function promptApproval(request: ApprovalRequest): Promise<boolean> {
+async function promptApproval(
+  request: ApprovalRequest,
+): Promise<CliApprovalAnswer> {
+  const grantCategory = isGrantableCategory(request.category);
+  const grantShape =
+    request.category === "shell" && Boolean(request.commandShape);
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   try {
     const lines = [
@@ -74,10 +93,24 @@ async function promptApproval(request: ApprovalRequest): Promise<boolean> {
     if (request.affectedResources?.length) {
       lines.push(`  affects: ${request.affectedResources.join(", ")}`);
     }
-    lines.push("  approve? [y/N] ");
+    const options = ["y = approve once"];
+    if (grantCategory) options.push("s = allow this kind this session");
+    if (grantShape) {
+      options.push(`a = allow all ${request.commandShape} this session`);
+    }
+    options.push("N = deny");
+    lines.push(`  approve? [${options.join(", ")}] `);
     process.stderr.write(`${lines.join("\n")}`);
-    const answer = await new Promise<string>((r) => rl.question("", r));
-    return /^(y|yes)$/i.test(answer.trim());
+    const answer = (await new Promise<string>((r) => rl.question("", r)))
+      .trim()
+      .toLowerCase();
+    if (answer === "s" && grantCategory) {
+      return { approved: true, grant: "category" };
+    }
+    if (answer === "a" && grantShape) {
+      return { approved: true, grant: "shape" };
+    }
+    return { approved: /^(y|yes)$/.test(answer) };
   } finally {
     rl.close();
   }
@@ -269,11 +302,12 @@ export async function runAgentCommand(args: string[]): Promise<number> {
       },
       onApprovalRequest: (request) => {
         approvalChain = approvalChain.then(async () => {
-          const approved = await promptApproval(request);
+          const answer = await promptApproval(request);
           runtime.approvals.resolve({
             approvalId: request.approvalId,
-            approved,
-            reason: approved ? "cli-approved" : "cli-denied",
+            approved: answer.approved,
+            reason: answer.approved ? "cli-approved" : "cli-denied",
+            ...(answer.grant ? { grant: answer.grant } : {}),
           });
         });
       },

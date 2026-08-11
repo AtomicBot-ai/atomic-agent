@@ -12,6 +12,7 @@ import {
 import { resolveUserPath } from "./expand-home.js";
 import { expandShellGlobArgs } from "./expand-shell-glob-args.js";
 import {
+  basenameCommand,
   checkShellCommandGuard,
   isGogCommand,
 } from "./shell-command-guard/index.js";
@@ -243,6 +244,10 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
       }
 
       if (guardVerdict.action === "approval_required") {
+        // Shape grant unit: the normalised binary the guard itself keyed
+        // on (basename, lowercased), so `[a]` covers exactly the argv[0]
+        // that would run: `git`, not `/usr/bin/GIT` or a path.
+        const commandShape = basenameCommand(guardInput.cmd).toLowerCase();
         await requireApproval(
           options,
           {
@@ -252,6 +257,7 @@ export function buildOsShellTool(options: DangerousToolOptions): ToolDefinition 
             reason: `${guardVerdict.reason} in ${cwd}`,
             preview: commandLine,
             affectedResources: [cwd],
+            commandShape,
           },
           ctx.signal,
         );

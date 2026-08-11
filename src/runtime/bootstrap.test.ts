@@ -298,6 +298,135 @@ describe("createAgentRuntime", () => {
     }
   });
 
+  it("session grant (category) end-to-end: s silences the shell category for the rest of the session, hardline still blocks", async () => {
+    // Issue #79 prompt-side grant, through the real runtime + real shell
+    // tool + real guard. At level 1 every guarded shell command asks. The
+    // operator answers the first with a category grant; every later shell
+    // command runs silently, but the hardline guard still blocks a
+    // catastrophic command despite the grant.
+    const prompts: ApprovalRequest[] = [];
+    let gate: ApprovalGate | null = null;
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 1,
+      handlers: {
+        onApprovalRequest: (request) => {
+          prompts.push(request);
+          gate?.resolve({
+            approvalId: request.approvalId,
+            approved: true,
+            grant: "category",
+          });
+        },
+      },
+      overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
+    });
+    gate = runtime.approvals;
+    try {
+      const ctx = {
+        workingDir,
+        sessionId: "s-grant-category",
+        stepIndex: 0,
+        signal: new AbortController().signal,
+      };
+
+      // 1. First guarded shell command asks; approved with a category grant.
+      const first = await runtime.toolRegistry.invoke(
+        "os.shell.run",
+        { cmd: "git", args: ["--version"] },
+        ctx,
+      );
+      expect(first.status).toBe("ok");
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]?.category).toBe("shell");
+      expect(gate.sessionGrants().categories).toEqual(["shell"]);
+
+      // 2. A different shell binary now runs silently under the grant.
+      const second = await runtime.toolRegistry.invoke(
+        "os.shell.run",
+        { cmd: "ls", args: [workingDir] },
+        ctx,
+      );
+      expect(second.status).toBe("ok");
+      expect(prompts).toHaveLength(1);
+
+      // 3. Hardline still fires before the gate, grant or no grant.
+      const blocked = await runtime.toolRegistry.invoke(
+        "os.shell.run",
+        { cmd: "rm", args: ["-rf", "/"] },
+        ctx,
+      );
+      expect(blocked.status).toBe("error");
+      expect(blocked.summary).toContain("blocked by shell guard");
+      expect(prompts).toHaveLength(1);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("session grant (shape) end-to-end: a silences one binary; a different binary still asks", async () => {
+    // The narrower grant: `a` covers exactly the command binary, so a
+    // second run of the same binary is silent while a different binary
+    // still prompts. Records the shape from the gate's own request, not
+    // the caller's word.
+    const prompts: ApprovalRequest[] = [];
+    let gate: ApprovalGate | null = null;
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 1,
+      handlers: {
+        onApprovalRequest: (request) => {
+          prompts.push(request);
+          gate?.resolve({
+            approvalId: request.approvalId,
+            approved: true,
+            // Only grant a shape for the git binary; deny-by-approve the
+            // rest so a second unrelated binary still prompts.
+            ...(request.commandShape === "git" ? { grant: "shape" as const } : {}),
+          });
+        },
+      },
+      overrides: { browserBackend: backend, skipLlamaHealthCheck: true },
+    });
+    gate = runtime.approvals;
+    try {
+      const ctx = {
+        workingDir,
+        sessionId: "s-grant-shape",
+        stepIndex: 0,
+        signal: new AbortController().signal,
+      };
+
+      // 1. First git command asks and grants the git shape.
+      await runtime.toolRegistry.invoke(
+        "os.shell.run",
+        { cmd: "git", args: ["--version"] },
+        ctx,
+      );
+      expect(prompts).toHaveLength(1);
+      expect(gate.sessionGrants().shapes).toEqual(["git"]);
+
+      // 2. A second git command is silent under the shape grant.
+      await runtime.toolRegistry.invoke(
+        "os.shell.run",
+        { cmd: "git", args: ["status", "--porcelain"] },
+        ctx,
+      );
+      expect(prompts).toHaveLength(1);
+
+      // 3. A different binary is not covered by the git shape; it asks.
+      await runtime.toolRegistry.invoke(
+        "os.shell.run",
+        { cmd: "ls", args: [workingDir] },
+        ctx,
+      );
+      expect(prompts).toHaveLength(2);
+      expect(prompts[1]?.commandShape).toBe("ls");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
   it("builds a capabilities summary and grammar", async () => {
     const runtime = await createAgentRuntime({
       workingDir,
