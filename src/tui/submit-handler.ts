@@ -147,6 +147,13 @@ export function runSlashCommand(
       callbacks.onProvidersChatModelPickerRequested?.(action.providerId);
       continue;
     }
+    if (action.type === "providers_inline_models_ensure_requested") {
+      // Same wiring rule for the inline Cloud-pane model list (`/model`):
+      // the catalog ensure must reach
+      // `ProvidersOrchestrator.ensureInlineModels` through the callback.
+      callbacks.onProvidersInlineModelsEnsureRequested?.(action.providerId);
+      continue;
+    }
     dispatch(action);
   }
   if (result.systemMessage) {

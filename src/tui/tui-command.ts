@@ -257,6 +257,11 @@ export async function tuiCommand(args: string[]): Promise<number> {
           // never reaches the bus the orchestrator listens on, which is
           // exactly how the live lists went missing from the pickers.
           orchestrator.providers.prefetchCloudCatalogs();
+          // Same for the inline Cloud-pane model list: the /v1/models
+          // fetch for openai-compatible providers starts here so the
+          // section is populated (or visibly loading) by the time the
+          // pane renders.
+          void orchestrator.providers.ensureInlineModels(null);
         },
         onProvidersSetActiveText: (id) =>
           void orchestrator.providers.setActiveText(id),
@@ -264,6 +269,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.providers.selectChatModel(providerId, modelId),
         onProvidersChatModelPickerRequested: (providerId) =>
           void orchestrator.providers.openChatModelPicker(providerId),
+        onProvidersInlineModelsEnsureRequested: (providerId) =>
+          void orchestrator.providers.ensureInlineModels(providerId),
         onProvidersSetActiveEmbedding: (id) =>
           void orchestrator.providers.setActiveEmbedding(id),
         onProvidersSelectEmbeddingModel: (providerId, modelId) =>

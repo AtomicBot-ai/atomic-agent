@@ -9,7 +9,11 @@ export type LlmPanelAction =
   | { type: "llm_stop_local_daemons_prompt_opened"; providerId: string }
   | { type: "llm_stop_local_daemons_prompt_closed" }
   /** Opens (string), edits (string) or closes (`null`) the external URL editor. */
-  | { type: "llm_external_url_draft_set"; value: string | null };
+  | { type: "llm_external_url_draft_set"; value: string | null }
+  /** Focus/unfocus the Cloud pane's inline `filter:` row. */
+  | { type: "llm_cloud_filter_focus_set"; focused: boolean }
+  /** Replace the inline filter text (cursor snaps to the top of the result set). */
+  | { type: "llm_cloud_filter_set"; value: string };
 
 export function isLlmPanelAction(
   action: { type: string },
@@ -22,6 +26,8 @@ export function isLlmPanelAction(
     action.type === "llm_focus_set" ||
     action.type === "llm_stop_local_daemons_prompt_opened" ||
     action.type === "llm_stop_local_daemons_prompt_closed" ||
-    action.type === "llm_external_url_draft_set"
+    action.type === "llm_external_url_draft_set" ||
+    action.type === "llm_cloud_filter_focus_set" ||
+    action.type === "llm_cloud_filter_set"
   );
 }

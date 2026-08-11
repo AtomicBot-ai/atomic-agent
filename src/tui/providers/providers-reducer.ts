@@ -205,6 +205,75 @@ export function reduceProvidersPanel(
         ...state,
         providersPanel: { ...panel, chatModelPicker: null },
       };
+    case "providers_inline_models_loading": {
+      // Newest ensure wins unconditionally: the loading emit is the
+      // authoritative "the section now belongs to this provider" signal.
+      // A provider switch also resets the filter — the typed query was
+      // about the previous provider's catalog.
+      const providerChanged =
+        panel.inlineModels?.providerId !== action.providerId;
+      return {
+        ...state,
+        providersPanel: {
+          ...panel,
+          inlineModels: {
+            providerId: action.providerId,
+            status: "loading",
+            models:
+              panel.inlineModels?.providerId === action.providerId
+                ? panel.inlineModels.models
+                : [],
+            error: null,
+            generation: action.generation,
+          },
+        },
+        llmPanel: providerChanged
+          ? { ...state.llmPanel, cloudModelFilter: "" }
+          : state.llmPanel,
+      };
+    }
+    case "providers_inline_models_loaded": {
+      // Generation-keyed like the modal picker: a fetch that settled
+      // after the operator switched providers must not repopulate the
+      // section with the previous provider's models.
+      if (
+        !panel.inlineModels ||
+        panel.inlineModels.generation !== action.generation
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        providersPanel: {
+          ...panel,
+          inlineModels: {
+            ...panel.inlineModels,
+            status: "ready",
+            models: action.models,
+            error: null,
+          },
+        },
+      };
+    }
+    case "providers_inline_models_failed": {
+      if (
+        !panel.inlineModels ||
+        panel.inlineModels.generation !== action.generation
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        providersPanel: {
+          ...panel,
+          inlineModels: {
+            ...panel.inlineModels,
+            status: "error",
+            error: action.error,
+          },
+        },
+      };
+    }
     case "providers_remove_opened":
       return {
         ...state,

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchOpenAiCompatModels,
   getCachedOpenAiCompatModels,
+  getCachedOpenAiCompatModelsForBaseUrl,
 } from "./fetch-openai-compat-models.js";
 
 describe("fetchOpenAiCompatModels", () => {
@@ -60,6 +61,26 @@ describe("fetchOpenAiCompatModels", () => {
 
     await fetchOpenAiCompatModels("https://stale.example", "key");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("serves the URL-only lookup from a keyed fetch, but never past the TTL", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [{ id: "grok-4" }] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchOpenAiCompatModels("https://panel.example", "secret");
+    // The panel knows the base URL but not the key that fetched the list.
+    expect(getCachedOpenAiCompatModelsForBaseUrl("https://panel.example/")).toEqual([
+      "grok-4",
+    ]);
+
+    vi.advanceTimersByTime(60 * 60 * 1000 + 1);
+    expect(
+      getCachedOpenAiCompatModelsForBaseUrl("https://panel.example"),
+    ).toBeUndefined();
   });
 
   it("throws on a rejected request so callers can fall back to typing", async () => {

@@ -77,7 +77,7 @@ describe("llm-panel selectors", () => {
         providerId: "openrouter",
         modelId: "qwen/qwen3.7-max",
         active: true,
-        enterEffect: expect.stringContaining("$2.5/$7.5"),
+        enterEffect: expect.stringContaining("$1.25/$3.75"),
       }),
     );
     const activeCloud = cloudRows.find(

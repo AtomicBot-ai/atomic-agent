@@ -174,15 +174,10 @@ function triggerCloudChatModel(
     openProviderConfigFor(row.provider, dispatch);
     return;
   }
-  if (row.provider.kind === "openai-compatible") {
-    // The picker owns selection for server-listed providers: Enter on the
-    // current-model row reopens the `/v1/models` list instead of
-    // re-selecting the same model (#62). Routed as a callback into
-    // `ProvidersOrchestrator.openChatModelPicker`: dispatch feeds the
-    // reducer only and never reaches the bus the orchestrator listens on.
-    callbacks.onProvidersChatModelPickerRequested?.(row.providerId);
-    return;
-  }
+  // Every model row selects directly now, openai-compatible included:
+  // the inline Cloud-pane list renders the full `/v1/models` catalog as
+  // first-class rows (with a live fetch behind `ensureInlineModels`), so
+  // Enter no longer needs to detour through the picker modal (#62).
   callbacks.onProvidersSelectChatModel?.(row.providerId, row.modelId);
   stopLocalDaemonsForCloudSelection(state, callbacks);
 }

@@ -2,7 +2,8 @@ import type {
   EmbeddingModelRow,
   LocalModelRow,
 } from "../local-models/local-models-panel-state.js";
-import type { ProviderRow } from "../providers/providers-panel-state.js";
+import { getCachedOpenAiCompatModelsForBaseUrl } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { filterModelIds, type ProviderRow } from "../providers/providers-panel-state.js";
 import {
   formatAimlapiChatModelDetails,
   formatAimlapiEmbeddingModelDetails,
@@ -54,19 +55,65 @@ export function selectExternalRows(state: TuiState): readonly LlmPanelRow[] {
   ];
 }
 
+/**
+ * The inline "Cloud text models" section: the full filterable model
+ * catalog of the active provider, rendered in place inside the Cloud
+ * pane (between Cloud providers and Cloud embeddings). Replaces the
+ * single current-model row + modal picker that pane used to open: the
+ * list is complete, the `filter:` row narrows it, and the renderer
+ * windows it to a dozen visible rows.
+ */
+export interface CloudModelSection {
+  /** Provider whose models are listed (active text provider, or first cloud). */
+  provider: ProviderRow | null;
+  status: "loading" | "ready" | "error";
+  /** Human-readable fetch error when `status === "error"`. */
+  error: string | null;
+  /** Full unfiltered catalog, current model first. */
+  models: readonly string[];
+  /** `models` narrowed by `llmPanel.cloudModelFilter`. */
+  filtered: readonly string[];
+  /** Flat-row index of the first model row (= cloud provider row count). */
+  sectionStart: number;
+}
+
+export function selectCloudModelSection(state: TuiState): CloudModelSection {
+  const providers = state.providersPanel.rows.filter(
+    (row) => row.kind !== "llama-server",
+  );
+  const provider =
+    providers.find((row) => row.isActiveText) ?? providers[0] ?? null;
+  const sectionStart = providers.length;
+  if (!provider) {
+    return {
+      provider: null,
+      status: "ready",
+      error: null,
+      models: [],
+      filtered: [],
+      sectionStart,
+    };
+  }
+  const catalog = inlineModelsForProvider(state, provider);
+  const filtered = filterModelIds(
+    catalog.models,
+    state.llmPanel.cloudModelFilter,
+  );
+  return { provider, ...catalog, filtered, sectionStart };
+}
+
 export function selectCloudRows(state: TuiState): readonly LlmPanelRow[] {
   const providers = state.providersPanel.rows.filter(
     (row) => row.kind !== "llama-server",
   );
-  const activeProvider =
-    providers.find((row) => row.isActiveText) ?? providers[0] ?? null;
   const rows: LlmPanelRow[] = providers.map((provider) => cloudProviderRow(provider));
-  if (activeProvider) {
-    for (const modelId of chatModelsForProvider(activeProvider)) {
-      rows.push(cloudChatRow(activeProvider, modelId));
+  const section = selectCloudModelSection(state);
+  if (section.provider) {
+    for (const modelId of section.filtered) {
+      rows.push(cloudChatRow(section.provider, modelId));
     }
-    for (const modelId of embeddingModelsForProvider(activeProvider)) {
-      rows.push(cloudEmbeddingRow(activeProvider, modelId));
+    for (const modelId of embeddingModelsForProvider(section.provider)) {
+      rows.push(cloudEmbeddingRow(section.provider, modelId));
     }
   }
   return rows;
@@ -283,18 +330,50 @@ function cloudEmbeddingEnterEffect(
     : `Enter: use embedding ${provider.id}/${modelId}`;
 }
 
-function chatModelsForProvider(provider: ProviderRow): readonly string[] {
+/**
+ * Full chat-model list for a provider, current model first. Curated
+ * kinds read their catalog synchronously. `openai-compatible` prefers
+ * the orchestrator-owned inline catalog state (which carries live
+ * loading/error transitions), then the 1h `/v1/models` module cache.
+ * When neither has data yet the section reports `loading` — the fetch is
+ * kicked by `ensureInlineModels` on tab activation and provider switch —
+ * and only the current model shows as a fallback row. On `error` the
+ * same single current-model row keeps the route selectable.
+ */
+function inlineModelsForProvider(
+  state: TuiState,
+  provider: ProviderRow,
+): { models: readonly string[]; status: "loading" | "ready" | "error"; error: string | null } {
   const out = new Set<string>();
   for (const option of provider.chatModelOptions ?? []) out.add(option);
   if (provider.chatModel) out.add(provider.chatModel);
   if (provider.kind === "openrouter") {
     for (const option of listOpenRouterChatModels()) out.add(option.id);
-  } else if (provider.kind === "aimlapi") {
-    for (const option of listAimlapiChatModels()) out.add(option.id);
-  } else if (provider.kind === "openai-compatible" && out.size === 0) {
-    out.add(OPENAI_COMPAT_DEFAULT_CHAT_MODEL);
+    return { models: [...out], status: "ready", error: null };
   }
-  return [...out];
+  if (provider.kind === "aimlapi") {
+    for (const option of listAimlapiChatModels()) out.add(option.id);
+    return { models: [...out], status: "ready", error: null };
+  }
+  // openai-compatible: live catalog state first, module cache second.
+  const inline = state.providersPanel.inlineModels;
+  if (inline && inline.providerId === provider.id) {
+    if (inline.status === "ready") {
+      for (const id of inline.models) out.add(id);
+      return { models: [...out], status: "ready", error: null };
+    }
+    if (out.size === 0) out.add(OPENAI_COMPAT_DEFAULT_CHAT_MODEL);
+    return { models: [...out], status: inline.status, error: inline.error };
+  }
+  const cached = provider.baseUrl
+    ? getCachedOpenAiCompatModelsForBaseUrl(provider.baseUrl)
+    : undefined;
+  if (cached && cached.length > 0) {
+    for (const id of cached) out.add(id);
+    return { models: [...out], status: "ready", error: null };
+  }
+  if (out.size === 0) out.add(OPENAI_COMPAT_DEFAULT_CHAT_MODEL);
+  return { models: [...out], status: "loading", error: null };
 }
 
 function embeddingModelsForProvider(provider: ProviderRow): readonly string[] {

@@ -38,6 +38,9 @@ export class ProvidersOrchestrator {
   /** Backs the picker's stale-response guard; see `openChatModelPicker`. */
   private chatModelPickerGeneration = 0;
 
+  /** Backs the inline model list's stale-response guard; see `ensureInlineModels`. */
+  private inlineModelsGeneration = 0;
+
   constructor(
     private readonly runtime: AgentRuntime,
     private readonly bus: TuiEventBus & { emit(action: unknown): void },
@@ -94,10 +97,16 @@ export class ProvidersOrchestrator {
   }
 
   /**
-   * Open the reopenable model picker for an `openai-compatible` provider
-   * and drive its async list fetch. `providerId: null` resolves to the
-   * active text provider. No-ops for curated kinds (their models are
-   * already first-class rows) and for unknown ids.
+   * Open the reopenable model picker MODAL for an `openai-compatible`
+   * provider and drive its async list fetch. `providerId: null` resolves
+   * to the active text provider. No-ops for curated kinds (their models
+   * are already first-class rows) and for unknown ids.
+   *
+   * The Cloud pane and `/model` moved to the inline model list
+   * (`ensureInlineModels`); this modal stays for flows outside that
+   * pane. Reached via the `onProvidersChatModelPickerRequested`
+   * callback, not via a dispatched reducer action, which never reaches
+   * this bus.
    */
   async openChatModelPicker(providerId: string | null): Promise<void> {
     const config = getConfig();
@@ -129,6 +138,58 @@ export class ProvidersOrchestrator {
     } catch (err) {
       this.bus.emit({
         type: "providers_chat_model_picker_failed",
+        generation,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Make sure the Cloud pane's inline model list has (or is fetching)
+   * the catalog of `providerId` (`null` = active text provider).
+   * Curated kinds (OpenRouter, aimlapi) resolve synchronously from
+   * their catalog module and need no inline state, so they no-op here —
+   * the row builder reads them directly. `openai-compatible` providers:
+   * warm `/v1/models` cache loads immediately; a cold cache emits a
+   * visible `loading` state, then `loaded` or `failed`.
+   *
+   * Reached via the `onProvidersInlineModelsEnsureRequested` callback
+   * (tab activation, `/model`) and internally after a provider switch —
+   * never via a dispatched reducer action, which cannot reach this bus.
+   */
+  async ensureInlineModels(providerId: string | null): Promise<void> {
+    const config = getConfig();
+    const resolved = resolveLlmConfig(config);
+    const id = providerId ?? resolved.activeTextProvider;
+    if (!id) return;
+    const provider = resolved.providers.find((p) => p.id === id);
+    const fileEntry = config.llm?.providers.find((e) => e.id === id);
+    if (!provider || !isCloudProviderKind(provider.kind)) return;
+    if (provider.kind !== "openai-compatible") return;
+    const generation = ++this.inlineModelsGeneration;
+    this.bus.emit({
+      type: "providers_inline_models_loading",
+      providerId: id,
+      generation,
+    });
+    const baseUrl = fileEntry?.baseUrl ?? OPENAI_COMPAT_DEFAULT_BASE_URL;
+    try {
+      const apiKey = resolveLlmProviderApiKey(provider) ?? undefined;
+      // Warm 1h cache resolves without a network round-trip, so the
+      // loading state is only ever visible on a genuinely cold fetch.
+      const models = await fetchOpenAiCompatModels(baseUrl, apiKey);
+      this.bus.emit({
+        type: "providers_inline_models_loaded",
+        providerId: id,
+        generation,
+        models,
+      });
+      // Model ids became rows: nudge mounted panels to re-read state.
+      this.refresh();
+    } catch (err) {
+      this.bus.emit({
+        type: "providers_inline_models_failed",
+        providerId: id,
         generation,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -174,6 +235,11 @@ export class ProvidersOrchestrator {
         line: `Switched active text provider to "${id}". New messages use ${transport}.`,
       });
       this.refresh();
+      // The inline Cloud-pane list now shows this provider's models:
+      // repopulate it (live fetch with visible loading when the cache
+      // is cold). Fire-and-forget so a slow /v1/models cannot delay the
+      // switch feedback above.
+      void this.ensureInlineModels(id);
     } catch (err) {
       this.bus.emit({
         type: "providers_status",

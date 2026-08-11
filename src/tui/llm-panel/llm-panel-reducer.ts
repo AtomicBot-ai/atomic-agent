@@ -1,6 +1,7 @@
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
 import { isLlmPanelAction } from "./llm-panel-actions.js";
+import { selectCloudModelSection } from "./llm-panel-row-builders.js";
 import { cursorFieldFor, LLM_PANEL_MODES, type LlmPanelMode } from "./llm-panel-state.js";
 
 export function reduceLlmPanelAction(
@@ -70,6 +71,52 @@ export function reduceLlmPanelAction(
         ...state,
         llmPanel: { ...panel, externalUrlDraft: action.value },
       };
+    case "llm_cloud_filter_focus_set": {
+      if (!action.focused) {
+        return {
+          ...state,
+          llmPanel: { ...panel, cloudModelFilterFocused: false },
+        };
+      }
+      // Focus only applies to the Cloud pane: /model on a local route
+      // dispatches this right after `llm_mode_set_to_active_route`
+      // resolved to `local`, and there the tab switch is the whole
+      // effect. (`f` flips the pane to cloud explicitly before this.)
+      if (panel.mode !== "cloud") return state;
+      // Focusing the filter drops the cursor into the model section so
+      // ↑/↓ and Enter act on models immediately. The section lists the
+      // current model first; when the cursor is already inside the
+      // section, leave it where the operator put it.
+      const section = selectCloudModelSection(state);
+      const sectionEnd = section.sectionStart + section.filtered.length - 1;
+      const cursorInSection =
+        panel.cloudCursor >= section.sectionStart &&
+        panel.cloudCursor <= sectionEnd;
+      return {
+        ...state,
+        llmPanel: {
+          ...panel,
+          cloudModelFilterFocused: true,
+          cloudCursor: cursorInSection ? panel.cloudCursor : section.sectionStart,
+        },
+      };
+    }
+    case "llm_cloud_filter_set": {
+      // Every edit re-filters, so the cursor snaps to the top of the new
+      // result set — same rule the modal picker used.
+      const next: TuiState = {
+        ...state,
+        llmPanel: { ...panel, cloudModelFilter: action.value },
+      };
+      const section = selectCloudModelSection(next);
+      return {
+        ...next,
+        llmPanel: {
+          ...next.llmPanel,
+          cloudCursor: section.sectionStart,
+        },
+      };
+    }
     default:
       return state;
   }

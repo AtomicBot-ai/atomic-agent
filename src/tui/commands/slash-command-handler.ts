@@ -323,11 +323,13 @@ function dispatchThemeSub(rawArgs: string): SlashDispatchResult {
  * + route sync), which read as two commands opening the same window;
  * the two were merged under the singular name (the industry-standard
  * spelling) so either lands in one place. Accepted shapes:
- *   - (bare)        — open the LLM tab on the active local/cloud route
- *                     and reopen the chat model picker (#62). The picker
- *                     request no-ops for curated/local kinds, leaving
+ *   - (bare)        — open the LLM tab on the active local/cloud route,
+ *                     focus the inline model list's `filter:` row and
+ *                     ensure the catalog is loaded (#62). On a local
+ *                     route the focus action no-ops (the reducer flips
+ *                     the pane to cloud only for explicit `f`), leaving
  *                     the tab switch as the whole effect there.
- *                     `/local` pins the local pane and skips the picker.
+ *                     `/local` pins the local pane and skips the list.
  *   - `pull <id>`   — open the tab and kick off a pull for the given id.
  *   - `use <id>`    — open the tab and set the given id as active.
  *   - `status`      — emit the managed-runtime status line in the feed.
@@ -344,11 +346,18 @@ function dispatchModelsSub(rawArgs: string, commandName: string): SlashDispatchR
         { type: "llm_mode_set", mode: "local" },
       ]);
     }
+    // The inline model list replaces the modal picker in the Cloud pane:
+    // jump to the active route, focus the `filter:` row and ensure the
+    // catalog is loaded. The ensure request is intercepted by
+    // submit-handler and routed through the orchestrator callback — a
+    // dispatched reducer action never reaches the bus the orchestrator
+    // listens on.
     return pureActions([
       { type: "ui_mode_set", mode: "debug" },
       { type: "tab_changed", tab: "llm" },
       { type: "llm_mode_set_to_active_route" },
-      { type: "providers_chat_model_picker_requested", providerId: null },
+      { type: "llm_cloud_filter_focus_set", focused: true },
+      { type: "providers_inline_models_ensure_requested", providerId: null },
     ]);
   }
   if (bits[0] === "pull" && bits[1]) {
