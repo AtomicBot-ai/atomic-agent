@@ -1,4 +1,4 @@
-import type { CompletionRequest, OpenAiToolCall } from "../completion-types.js";
+import type { CompletionRequest, CompletionResult, OpenAiToolCall } from "../completion-types.js";
 import {
   coerceJsonSchemaValue,
   validateJsonSchemaValue,
@@ -37,8 +37,11 @@ export function adaptQwenTaggedToolResponse(
 
   const offered = indexOfferedTools(request.tools);
   const contentCalls = parseSource(message.content, offered);
-  if (contentCalls === null) return response;
-  const fromReasoning = contentCalls.length === 0;
+  // #105 allows the tagged call in either field. `null` means content held
+  // tag noise that failed to parse — fail open to reasoning_content rather
+  // than fail closed on the first field alone. An empty-but-clean content
+  // (`[]`) takes the same reasoning path, so `fromReasoning` covers both.
+  const fromReasoning = contentCalls === null || contentCalls.length === 0;
   const toolCalls = fromReasoning
     ? parseSource(message.reasoning_content, offered)
     : contentCalls;
@@ -53,6 +56,52 @@ export function adaptQwenTaggedToolResponse(
   const nextChoices = [...choices];
   nextChoices[0] = { ...choice, message: nextMessage, finish_reason: "tool_calls" };
   return { ...response, choices: nextChoices };
+}
+
+/**
+ * CompletionResult-shaped wrapper for the streaming path. The provider
+ * buffers deltas into a `CompletionResult`, so it cannot call the raw
+ * wire-shape adapter above; this rebuilds the minimal wire envelope the
+ * adapter inspects (`content` / `reasoning_content`), runs the same adapt
+ * seam, and maps the result back. `usage`/`modelId`/`finishReason` come
+ * from the buffered stream so they survive the round-trip untouched.
+ */
+export function adaptQwenCompletionResult(
+  result: CompletionResult,
+  request: Pick<CompletionRequest, "tools">,
+): CompletionResult {
+  const wire = {
+    choices: [
+      {
+        message: {
+          content: result.content,
+          reasoning_content: result.reasoningContent,
+          tool_calls: result.toolCalls ?? [],
+        },
+        finish_reason: result.finishReason ?? null,
+      },
+    ],
+  };
+  const adapted = adaptQwenTaggedToolResponse(wire, request);
+  const choice = (adapted.choices as Array<Record<string, unknown>>)[0];
+  const message = choice?.message as Record<string, unknown> | undefined;
+  if (!message) return result;
+  const toolCalls = Array.isArray(message.tool_calls)
+    ? (message.tool_calls as CompletionResult["toolCalls"])
+    : result.toolCalls;
+  return {
+    ...result,
+    content: typeof message.content === "string" ? message.content : "",
+    reasoningContent:
+      typeof message.reasoning_content === "string"
+        ? message.reasoning_content
+        : "",
+    toolCalls,
+    finishReason:
+      typeof choice?.finish_reason === "string"
+        ? choice.finish_reason
+        : result.finishReason,
+  };
 }
 
 function indexOfferedTools(

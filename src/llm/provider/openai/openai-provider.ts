@@ -28,7 +28,7 @@ import {
 import { normaliseOpenAiChatResponse } from "./openai-normalise-response.js";
 import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 import { describeImageViaOpenAi } from "./openai-describe-image.js";
-import { adaptQwenTaggedToolResponse } from "./qwen-tagged-tool-response-adapter.js";
+import { adaptQwenCompletionResult, adaptQwenTaggedToolResponse } from "./qwen-tagged-tool-response-adapter.js";
 
 export interface OpenAiProviderOptions {
   id: string;
@@ -99,9 +99,6 @@ export class OpenAiProvider implements LlmProvider {
   async *completeStream(
     request: CompletionRequest,
   ): AsyncGenerator<StreamChunk, CompletionResult, void> {
-    if (this.taggedToolCompatibility === "qwen") {
-      return await this.complete(request);
-    }
     const body = buildOpenAiChatBody(request, this.defaultChatModel, true);
     // Opening the stream (connect + status check) happens inside the
     // client's bounded retry, strictly before the first chunk exists.
@@ -140,6 +137,13 @@ export class OpenAiProvider implements LlmProvider {
     }
     if (accumulatedReasoning.length > 0 && final.reasoningContent.length === 0) {
       final.reasoningContent = accumulatedReasoning;
+    }
+    if (this.taggedToolCompatibility === "qwen") {
+      // Buffer-then-adapt: the tagged `<tool_call>` payload may be split
+      // across deltas, so adapt only the fully-buffered message. Text and
+      // reasoning deltas were already yielded above for live UX; the adapt
+      // seam just rewrites the final result (content → tool_calls).
+      return adaptQwenCompletionResult(final, request);
     }
     return final;
   }

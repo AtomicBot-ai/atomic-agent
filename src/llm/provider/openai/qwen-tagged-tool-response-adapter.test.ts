@@ -111,6 +111,26 @@ describe("adaptQwenTaggedToolResponse", () => {
     ]);
   });
 
+  it("salvages reasoning_content when content holds unparseable tag noise (#105)", () => {
+    // Regression for the review finding: a malformed `<tool_call>` in content
+    // must not fail closed and leave a valid call in reasoning_content as prose.
+    const adapted = adaptQwenTaggedToolResponse(
+      responseWith({
+        role: "assistant",
+        content: "let me call <tool_call><function=os.fs.read><parameter=path>/x",
+        reasoning_content:
+          "<tool_call><function=reply><parameter=text>done</parameter></function></tool_call>",
+      }),
+      { prompt: "answer", tools: offeredTools },
+    );
+    const message = firstMessage(adapted);
+
+    expect(message.tool_calls).toMatchObject([
+      { type: "function", function: { name: "reply", arguments: '{"text":"done"}' } },
+    ]);
+    expect(message.reasoning_content).toBeNull();
+  });
+
   it("rejects the entire tagged response when any call is invalid", () => {
     const inputs = [
       [
