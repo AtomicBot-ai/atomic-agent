@@ -21,6 +21,7 @@ import {
   refreshOpenRouterChatCatalogFromApi,
 } from "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
 import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { fetchGeminiModels } from "../../llm/provider/gemini/fetch-gemini-models.js";
 import { OPENAI_COMPAT_DEFAULT_BASE_URL } from "./providers-model-options.js";
 import { isProvidersAction } from "./providers-actions.js";
 import type { ProviderRow } from "./providers-panel-state.js";
@@ -149,9 +150,9 @@ export class ProvidersOrchestrator {
    * the catalog of `providerId` (`null` = active text provider).
    * Curated kinds (OpenRouter, aimlapi) resolve synchronously from
    * their catalog module and need no inline state, so they no-op here —
-   * the row builder reads them directly. `openai-compatible` providers:
-   * warm `/v1/models` cache loads immediately; a cold cache emits a
-   * visible `loading` state, then `loaded` or `failed`.
+   * the row builder reads them directly. `openai-compatible` and
+   * `gemini` providers warm their model cache immediately; a cold cache
+   * emits a visible `loading` state, then `loaded` or `failed`.
    *
    * Reached via the `onProvidersInlineModelsEnsureRequested` callback
    * (tab activation, `/model`) and internally after a provider switch —
@@ -165,7 +166,7 @@ export class ProvidersOrchestrator {
     const provider = resolved.providers.find((p) => p.id === id);
     const fileEntry = config.llm?.providers.find((e) => e.id === id);
     if (!provider || !isCloudProviderKind(provider.kind)) return;
-    if (provider.kind !== "openai-compatible") return;
+    if (provider.kind !== "openai-compatible" && provider.kind !== "gemini") return;
     const generation = ++this.inlineModelsGeneration;
     this.bus.emit({
       type: "providers_inline_models_loading",
@@ -177,7 +178,10 @@ export class ProvidersOrchestrator {
       const apiKey = resolveLlmProviderApiKey(provider) ?? undefined;
       // Warm 1h cache resolves without a network round-trip, so the
       // loading state is only ever visible on a genuinely cold fetch.
-      const models = await fetchOpenAiCompatModels(baseUrl, apiKey);
+      const models =
+        provider.kind === "gemini"
+          ? await fetchGeminiModels(apiKey)
+          : await fetchOpenAiCompatModels(baseUrl, apiKey);
       this.bus.emit({
         type: "providers_inline_models_loaded",
         providerId: id,
