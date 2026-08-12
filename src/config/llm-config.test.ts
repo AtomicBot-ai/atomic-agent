@@ -56,6 +56,36 @@ describe("llm-config", () => {
     );
   });
 
+  it("accepts qwen-openai-compatible as an explicit compatibility provider", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      llm: {
+        activeTextProvider: "qwen",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto",
+        providers: [
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            url: "http://127.0.0.1:19091",
+          },
+          {
+            id: "qwen",
+            kind: "qwen-openai-compatible",
+            baseUrl: "https://example.invalid",
+            defaultChatModel: "qwen-test",
+          },
+        ],
+      },
+    });
+
+    expect(parsed.llm?.providers.find((provider) => provider.id === "qwen")).toMatchObject({
+      kind: "qwen-openai-compatible",
+      baseUrl: "https://example.invalid",
+      defaultChatModel: "qwen-test",
+    });
+  });
+
   const baseLlm = (fallback: unknown) => ({
     version: USER_CONFIG_VERSION,
     llm: {

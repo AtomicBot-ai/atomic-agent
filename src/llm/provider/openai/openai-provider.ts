@@ -28,6 +28,7 @@ import {
 import { normaliseOpenAiChatResponse } from "./openai-normalise-response.js";
 import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 import { describeImageViaOpenAi } from "./openai-describe-image.js";
+import { adaptQwenTaggedToolResponse } from "./qwen-tagged-tool-response-adapter.js";
 
 export interface OpenAiProviderOptions {
   id: string;
@@ -43,6 +44,7 @@ export interface OpenAiProviderOptions {
   fetchImpl?: typeof fetch;
   toolCallAdapter?: ToolCallAdapter;
   streamConsumer?: StreamConsumer;
+  taggedToolCompatibility?: "qwen";
 }
 
 export class OpenAiProvider implements LlmProvider {
@@ -54,6 +56,7 @@ export class OpenAiProvider implements LlmProvider {
 
   private readonly http: OpenAiHttpDeps;
   private readonly defaultChatModel: string;
+  private readonly taggedToolCompatibility: "qwen" | undefined;
 
   constructor(options: OpenAiProviderOptions) {
     this.id = options.id;
@@ -72,6 +75,7 @@ export class OpenAiProvider implements LlmProvider {
       reasoningFormat: options.reasoningFormat ?? "delta_reasoning",
     };
     this.defaultChatModel = options.defaultChatModel;
+    this.taggedToolCompatibility = options.taggedToolCompatibility;
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
       apiKey: options.apiKey,
@@ -85,12 +89,19 @@ export class OpenAiProvider implements LlmProvider {
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const body = buildOpenAiChatBody(request, this.defaultChatModel, false);
     const json = await openAiPostJson(this.http, "/v1/chat/completions", body, request);
-    return normaliseOpenAiChatResponse(json, this.defaultChatModel);
+    const adapted =
+      this.taggedToolCompatibility === "qwen"
+        ? adaptQwenTaggedToolResponse(json, request)
+        : json;
+    return normaliseOpenAiChatResponse(adapted, this.defaultChatModel);
   }
 
   async *completeStream(
     request: CompletionRequest,
   ): AsyncGenerator<StreamChunk, CompletionResult, void> {
+    if (this.taggedToolCompatibility === "qwen") {
+      return await this.complete(request);
+    }
     const body = buildOpenAiChatBody(request, this.defaultChatModel, true);
     // Opening the stream (connect + status check) happens inside the
     // client's bounded retry, strictly before the first chunk exists.
