@@ -1,6 +1,7 @@
 import type { Key } from "ink";
 import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
 import { getCachedOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { getCachedGeminiModels } from "../../llm/provider/gemini/fetch-gemini-models.js";
 import { normalizeOpenAiBaseUrl } from "../../llm/provider/openai/normalize-openai-base-url.js";
 import { PICK_WINDOW } from "../components/wizard-pick-list.js";
 import { findProviderPreset } from "./provider-presets.js";
@@ -56,14 +57,19 @@ export function listCompatChatModelPicks(
   wizard: ProvidersWizardState,
 ): readonly string[] {
   if (wizard.phase !== "chat_model_line") return [];
-  if (wizard.kind !== "openai-compatible") return [];
   if (wizard.chatModelLine.length > 0) return [];
-  return (
-    getCachedOpenAiCompatModels(
-      baseUrlForWizard(wizard),
-      apiKeyForWizard(wizard),
-    ) ?? []
-  );
+  if (wizard.kind === "openai-compatible") {
+    return (
+      getCachedOpenAiCompatModels(
+        baseUrlForWizard(wizard),
+        apiKeyForWizard(wizard),
+      ) ?? []
+    );
+  }
+  if (wizard.kind === "gemini") {
+    return getCachedGeminiModels(apiKeyForWizard(wizard)) ?? [];
+  }
+  return [];
 }
 
 /**

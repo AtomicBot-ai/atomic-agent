@@ -5,6 +5,7 @@ import {
   refreshAimlapiChatCatalogFromApi,
 } from "../../llm/provider/aimlapi/fetch-aimlapi-chat-catalog.js";
 import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { fetchGeminiModels } from "../../llm/provider/gemini/fetch-gemini-models.js";
 import {
   getCachedOpenRouterChatPicks,
   refreshOpenRouterChatCatalogFromApi,
@@ -142,17 +143,24 @@ function CompatChatModelStep(props: {
   const w = props.wizard;
   const baseUrl = baseUrlForWizard(w);
   const isCompat = w.kind === "openai-compatible";
+  const isGemini = w.kind === "gemini";
+  const canList = isCompat || isGemini;
   const [status, setStatus] = useState<{ loading: boolean; error: string | null }>(
-    { loading: isCompat, error: null },
+    { loading: canList, error: null },
   );
 
   useEffect(() => {
-    // Only the openai-compatible kind carries an operator-supplied base URL;
-    // any other kind would fire this at the default host with a stray key.
-    if (!isCompat) return;
+    // Only these kinds have a live model surface worth listing: openai-compatible
+    // carries an operator-supplied base URL, gemini has a fixed host keyed by its
+    // own key. Any other kind would fire at the default host with a stray key.
+    if (!canList) return;
     let alive = true;
     setStatus({ loading: true, error: null });
-    fetchOpenAiCompatModels(baseUrl, apiKeyForWizard(w)).then(
+    const apiKey = apiKeyForWizard(w);
+    const fetchModels = isGemini
+      ? fetchGeminiModels(apiKey)
+      : fetchOpenAiCompatModels(baseUrl, apiKey);
+    fetchModels.then(
       () => {
         if (alive) setStatus({ loading: false, error: null });
       },
@@ -170,12 +178,15 @@ function CompatChatModelStep(props: {
     };
     // Re-fetch only when the server changes; the key is fixed for this wizard run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [baseUrl, isCompat]);
+  }, [baseUrl, isCompat, isGemini]);
 
   const picks = listCompatChatModelPicks(w);
   if (picks.length > 0) {
+    const source = isGemini
+      ? "from Gemini /v1beta/openai/models"
+      : `from ${baseUrl}/v1/models`;
     return renderPickList({
-      title: `Chat model — ${picks.length} from ${baseUrl}/v1/models`,
+      title: `Chat model — ${picks.length} ${source}`,
       options: picks.map((id) => ({ label: id })),
       cursor: w.cursor,
       moveHint: "↑/↓ move",
@@ -184,10 +195,12 @@ function CompatChatModelStep(props: {
     });
   }
 
-  const hint = !isCompat
+  const hint = !canList
     ? "Enter to save · Esc back"
     : status.loading
-      ? `listing models from ${baseUrl}/v1/models…`
+      ? isGemini
+        ? "listing models from Gemini…"
+        : `listing models from ${baseUrl}/v1/models…`
       : status.error
       ? `${explainModelListError(status.error, w)} · type the id · Enter to save`
       : "Enter to save · Backspace to empty for the model list · Esc back";

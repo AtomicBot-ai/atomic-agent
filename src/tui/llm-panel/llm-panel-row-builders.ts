@@ -3,6 +3,8 @@ import type {
   LocalModelRow,
 } from "../local-models/local-models-panel-state.js";
 import { getCachedOpenAiCompatModelsForBaseUrl } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { getCachedGeminiModelsForPanel } from "../../llm/provider/gemini/fetch-gemini-models.js";
+import { GEMINI_DEFAULT_CHAT_MODEL } from "../../llm/provider/gemini/gemini-provider.js";
 import { filterModelIds, type ProviderRow } from "../providers/providers-panel-state.js";
 import {
   formatAimlapiChatModelDetails,
@@ -354,6 +356,28 @@ function inlineModelsForProvider(
   if (provider.kind === "aimlapi") {
     for (const option of listAimlapiChatModels()) out.add(option.id);
     return { models: [...out], status: "ready", error: null };
+  }
+  // gemini: no baseUrl on the entry, so the openai-compat URL-keyed cache
+  // can never hit. Read the gemini-keyed cache the orchestrator warms, and
+  // fall back to the gemini default — never the openai-compat placeholder
+  // (`gpt-5.4-mini` is not a gemini model).
+  if (provider.kind === "gemini") {
+    const inline = state.providersPanel.inlineModels;
+    if (inline && inline.providerId === provider.id) {
+      if (inline.status === "ready") {
+        for (const id of inline.models) out.add(id);
+        return { models: [...out], status: "ready", error: null };
+      }
+      if (out.size === 0) out.add(GEMINI_DEFAULT_CHAT_MODEL);
+      return { models: [...out], status: inline.status, error: inline.error };
+    }
+    const cached = getCachedGeminiModelsForPanel();
+    if (cached && cached.length > 0) {
+      for (const id of cached) out.add(id);
+      return { models: [...out], status: "ready", error: null };
+    }
+    if (out.size === 0) out.add(GEMINI_DEFAULT_CHAT_MODEL);
+    return { models: [...out], status: "loading", error: null };
   }
   // openai-compatible: live catalog state first, module cache second.
   const inline = state.providersPanel.inlineModels;

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { fetchGeminiModels } from "../../llm/provider/gemini/fetch-gemini-models.js";
 import type { ProviderRow } from "../providers/providers-panel-state.js";
 import { createInitialTuiState, type TuiState } from "../tui-state.js";
 import { fakeSession } from "../test-fixtures.js";
@@ -35,6 +36,34 @@ function compatProvider(overrides: Partial<ProviderRow> = {}): ProviderRow {
     baseUrl: "https://api.x.ai",
     chatModel: "grok-4",
     chatModelOptions: ["grok-4"],
+    embeddingModel: null,
+    ...overrides,
+  };
+}
+
+/** Prime the gemini module cache exactly like the orchestrator warm does. */
+async function seedGeminiCache(ids: readonly string[]): Promise<void> {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: ids.map((id) => ({ id })) }),
+    })),
+  );
+  await fetchGeminiModels("key");
+  vi.unstubAllGlobals();
+}
+
+function geminiProvider(overrides: Partial<ProviderRow> = {}): ProviderRow {
+  return {
+    id: "gemini",
+    kind: "gemini",
+    isActiveText: true,
+    isActiveEmbedding: false,
+    hasApiKey: true,
+    baseUrl: null,
+    chatModel: "gemini-2.5-pro",
+    chatModelOptions: ["gemini-2.5-pro"],
     embeddingModel: null,
     ...overrides,
   };
@@ -242,6 +271,57 @@ describe("inline cloud model section for curated providers", () => {
       modelId: "qwen/qwen3.7-max",
       active: true,
     });
+    expect(selectCloudModelSection(state).status).toBe("ready");
+  });
+});
+
+describe("inline cloud model section for gemini", () => {
+  it("reads the gemini-keyed cache (no baseUrl), current model first", async () => {
+    await seedGeminiCache(["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"]);
+    const state = stateWith([geminiProvider()]);
+
+    const rows = chatRows(state);
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toMatchObject({
+      modelId: "gemini-2.5-pro",
+      active: true,
+      primaryAction: "current",
+    });
+    expect(rows.map((row) => row.modelId).sort()).toEqual(
+      ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash"].sort(),
+    );
+    expect(selectCloudModelSection(state).status).toBe("ready");
+  });
+
+  it("never surfaces the openai-compat placeholder (gpt-5.4-mini)", () => {
+    // The degrade the reviewer flagged: with an empty chatModel the gemini
+    // branch must not fall through to OPENAI_COMPAT_DEFAULT_CHAT_MODEL. The
+    // module cache may already be warm from an earlier test in this file, so
+    // assert the invariant — every surfaced id is a gemini model — rather
+    // than a specific cold-cache list.
+    const state = stateWith([
+      geminiProvider({ chatModel: null, chatModelOptions: [] }),
+    ]);
+    const section = selectCloudModelSection(state);
+    expect(section.models).not.toContain("gpt-5.4-mini");
+    for (const id of section.models) expect(id).toMatch(/^gemini-/);
+  });
+
+  it("serves live inlineModels state when it belongs to this gemini provider", () => {
+    const state = stateWith([geminiProvider()], {
+      inlineModels: {
+        providerId: "gemini",
+        status: "ready",
+        models: ["gemini-2.5-pro", "gemini-2.5-flash"],
+        error: null,
+        generation: 1,
+      },
+    });
+    const rows = chatRows(state);
+    expect(rows.map((row) => row.modelId)).toEqual([
+      "gemini-2.5-pro",
+      "gemini-2.5-flash",
+    ]);
     expect(selectCloudModelSection(state).status).toBe("ready");
   });
 });

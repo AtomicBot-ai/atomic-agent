@@ -28,6 +28,25 @@ export function getCachedGeminiModels(
   return hit.ids;
 }
 
+/**
+ * Cache lookup for read-only UI surfaces (the LLM panel's inline model
+ * list) that render whatever ids are already stored on this machine but do
+ * not know which API key fetched them. Mirrors
+ * `getCachedOpenAiCompatModelsForBaseUrl`: the strict keyed lookup above
+ * guards the *fetch* path so an anonymous request never reuses an
+ * authenticated response; here the freshest entry wins regardless of key.
+ */
+export function getCachedGeminiModelsForPanel():
+  | readonly string[]
+  | undefined {
+  let best: { fetchedAt: number; ids: readonly string[] } | undefined;
+  for (const hit of cache.values()) {
+    if (Date.now() - hit.fetchedAt > CACHE_TTL_MS) continue;
+    if (!best || hit.fetchedAt > best.fetchedAt) best = hit;
+  }
+  return best?.ids;
+}
+
 /** Throws on unreachable/unauthorized servers so the caller can surface failure. */
 export async function fetchGeminiModels(
   apiKey?: string,
