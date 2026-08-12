@@ -56,6 +56,34 @@ describe("llm-config", () => {
     );
   });
 
+  it("accepts gemini as a first-class provider kind", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      llm: {
+        activeTextProvider: "gemini",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto",
+        providers: [
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            url: "http://127.0.0.1:19091",
+          },
+          {
+            id: "gemini",
+            kind: "gemini",
+            defaultChatModel: "gemini-2.5-flash",
+          },
+        ],
+      },
+    });
+
+    expect(parsed.llm?.providers.find((p) => p.id === "gemini")).toMatchObject({
+      kind: "gemini",
+      defaultChatModel: "gemini-2.5-flash",
+    });
+  });
+
   const baseLlm = (fallback: unknown) => ({
     version: USER_CONFIG_VERSION,
     llm: {

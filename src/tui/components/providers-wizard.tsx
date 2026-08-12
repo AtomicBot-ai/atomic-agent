@@ -22,6 +22,7 @@ import {
   type ProvidersWizardKindRow,
 } from "../providers/providers-wizard-phases.js";
 import {
+  GEMINI_DEFAULT_CHAT_MODEL,
   listAimlapiEmbeddingModels,
   listOpenRouterEmbeddingModels,
   OPENAI_COMPAT_DEFAULT_BASE_URL,
@@ -36,6 +37,7 @@ import { renderPickList } from "./wizard-pick-list.js";
 const KIND_LABELS: Record<ProvidersWizardKind, string> = {
   openrouter: "OpenRouter (cloud chat + optional cloud embed)",
   aimlapi: "AI/ML API (aimlapi.com — 500+ models, OpenAI-compatible)",
+  gemini: "Gemini (Google AI)",
   "openai-compatible": "OpenAI-compatible API (custom base URL)",
 };
 
@@ -67,6 +69,7 @@ function envHintForWizard(w: ProvidersWizardState): string {
   if (preset) return preset.envVar;
   if (w.kind === "openrouter") return "OPENROUTER_API_KEY";
   if (w.kind === "aimlapi") return "AIMLAPI_API_KEY";
+  if (w.kind === "gemini") return "GEMINI_API_KEY";
   return "OPENAI_COMPAT_API_KEY";
 }
 
@@ -191,7 +194,10 @@ function CompatChatModelStep(props: {
   return renderLineField({
     title: "Chat model id",
     value: w.chatModelLine,
-    placeholder: OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
+    placeholder:
+      w.kind === "gemini"
+        ? GEMINI_DEFAULT_CHAT_MODEL
+        : OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
     hint,
     error: w.error,
   });

@@ -3,6 +3,7 @@ import { presetForEntryId } from "./provider-presets.js";
 export type ProvidersWizardKind =
   | "openrouter"
   | "aimlapi"
+  | "gemini"
   | "openai-compatible";
 
 export type ProvidersWizardPhase =

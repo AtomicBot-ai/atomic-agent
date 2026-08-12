@@ -135,3 +135,11 @@ describe("ProvidersOrchestrator.prefetchCloudCatalogs", () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });
+
+describe("isCloudProviderKind", () => {
+  it("allows an existing Gemini provider to enter configure and key-repair flows", async () => {
+    const { isCloudProviderKind } = await importFreshOrchestrator();
+
+    expect(isCloudProviderKind("gemini")).toBe(true);
+  });
+});

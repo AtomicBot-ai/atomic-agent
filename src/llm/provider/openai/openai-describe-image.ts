@@ -7,6 +7,7 @@ export async function describeImageViaOpenAi(
   deps: OpenAiHttpDeps,
   defaultChatModel: string,
   request: VisionRequest,
+  apiPathPrefix = "/v1",
 ): Promise<VisionResult> {
   const userContent: Array<
     | { type: "image_url"; image_url: { url: string } }
@@ -33,7 +34,12 @@ export async function describeImageViaOpenAi(
     stream: false,
   };
   const start = Date.now();
-  const json = await openAiPostJson(deps, "/v1/chat/completions", body, request);
+  const json = await openAiPostJson(
+    deps,
+    `${apiPathPrefix}/chat/completions`,
+    body,
+    request,
+  );
   const message =
     (json.choices as Array<{ message?: Record<string, unknown> }> | undefined)?.[0]
       ?.message ?? {};

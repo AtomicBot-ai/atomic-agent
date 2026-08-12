@@ -32,6 +32,12 @@ function emptyKey(overrides: Partial<Key> = {}): Key {
   };
 }
 
+function presetRowIndex(id: string): number {
+  return KIND_ROW_ORDER.findIndex(
+    (row) => typeof row === "object" && row.presetId === id,
+  );
+}
+
 describe("createProvidersWizardState configure prefill", () => {
   it("prefills baseUrlLine from the stored base URL", () => {
     const wizard = createProvidersWizardState("configure", {
@@ -86,9 +92,10 @@ describe("KIND_ROW_ORDER", () => {
   it("lists catalogs first, presets alphabetically by label, manual last", () => {
     expect(KIND_ROW_ORDER[0]).toBe("openrouter");
     expect(KIND_ROW_ORDER[1]).toBe("aimlapi");
+    expect(KIND_ROW_ORDER[2]).toBe("gemini");
     expect(KIND_ROW_ORDER[KIND_ROW_ORDER.length - 1]).toBe("openai-compatible");
 
-    const presetRows = KIND_ROW_ORDER.slice(2, -1);
+    const presetRows = KIND_ROW_ORDER.slice(3, -1);
     expect(presetRows).toEqual(
       PROVIDER_PRESETS.map((preset) => ({ presetId: preset.id })),
     );
@@ -99,6 +106,17 @@ describe("KIND_ROW_ORDER", () => {
 });
 
 describe("handleProvidersWizardKey", () => {
+  it("takes Gemini from API key directly to model selection", () => {
+    let wizard = createProvidersWizardState("add");
+    wizard = { ...wizard, cursor: KIND_ROW_ORDER.indexOf("gemini") };
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard).toMatchObject({ kind: "gemini", phase: "api_key" });
+
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("chat_model_line");
+    expect(wizard.phase).not.toBe("base_url");
+  });
+
   it("walks the aimlapi onboarding flow when the cursor lands on it", () => {
     let wizard = createProvidersWizardState("add");
 
@@ -366,7 +384,7 @@ describe("handleProvidersWizardKey", () => {
 
     // Presets follow the two catalog kinds, alphabetically by label,
     // so the row index is computed instead of hardcoded.
-    const nousIdx = 2 + PROVIDER_PRESETS.findIndex((p) => p.id === "nous");
+    const nousIdx = presetRowIndex("nous");
     for (let i = 0; i < nousIdx; i += 1) {
       wizard = next(wizard, "", emptyKey({ downArrow: true }));
     }
@@ -381,8 +399,8 @@ describe("handleProvidersWizardKey", () => {
 
   it("reaches a later preset by moving down the same list", () => {
     let wizard = createProvidersWizardState("add");
-    // Fourth row is the second preset (DeepSeek, alphabetical order).
-    for (let i = 0; i < 3; i += 1) {
+    const deepseekIdx = presetRowIndex("deepseek");
+    for (let i = 0; i < deepseekIdx; i += 1) {
       wizard = next(wizard, "", emptyKey({ downArrow: true }));
     }
     wizard = next(wizard, "", emptyKey({ return: true }));
@@ -393,7 +411,7 @@ describe("handleProvidersWizardKey", () => {
   it("takes a keyed preset through the key screen to the model list", () => {
     let wizard = createProvidersWizardState("add");
     // Groq is a keyed preset; two leading kind rows precede the presets.
-    const groqIdx = 2 + PROVIDER_PRESETS.findIndex((p) => p.id === "groq");
+    const groqIdx = presetRowIndex("groq");
     for (let i = 0; i < groqIdx; i += 1) {
       wizard = next(wizard, "", emptyKey({ downArrow: true }));
     }
@@ -409,7 +427,7 @@ describe("handleProvidersWizardKey", () => {
 
   it("skips the key screen for a local server", () => {
     let wizard = createProvidersWizardState("add");
-    const lmIdx = 2 + PROVIDER_PRESETS.findIndex((p) => p.id === "lmstudio");
+    const lmIdx = presetRowIndex("lmstudio");
     for (let i = 0; i < lmIdx; i += 1) {
       wizard = next(wizard, "", emptyKey({ downArrow: true }));
     }
@@ -423,7 +441,8 @@ describe("handleProvidersWizardKey", () => {
   it("a preset never shows the URL screen", () => {
     // Groq (keyed): service -> key -> models, base_url is never reached.
     let wizard = createProvidersWizardState("add");
-    for (let i = 0; i < 3; i += 1) {
+    const groqIdx = presetRowIndex("groq");
+    for (let i = 0; i < groqIdx; i += 1) {
       wizard = next(wizard, "", emptyKey({ downArrow: true }));
     }
     wizard = next(wizard, "", emptyKey({ return: true }));
@@ -448,7 +467,7 @@ describe("handleProvidersWizardKey", () => {
   it("Esc from a preset returns to the provider list, not out of the wizard", () => {
     let wizard = createProvidersWizardState("add");
     // Nous is keyless, so the wizard lands straight on chat_model_line.
-    const nousIdx = 2 + PROVIDER_PRESETS.findIndex((p) => p.id === "nous");
+    const nousIdx = presetRowIndex("nous");
     for (let i = 0; i < nousIdx; i += 1) {
       wizard = next(wizard, "", emptyKey({ downArrow: true }));
     }
@@ -471,8 +490,7 @@ describe("handleProvidersWizardKey", () => {
 
   it("stepping back clears the previous pick so a new one starts clean", () => {
     let wizard = createProvidersWizardState("add");
-    wizard = next(wizard, "", emptyKey({ downArrow: true }));
-    wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    wizard = { ...wizard, cursor: presetRowIndex("cerebras") };
     wizard = next(wizard, "", emptyKey({ return: true }));
     wizard = next(wizard, "", emptyKey({ escape: true }));
     expect(wizard.presetId).toBeNull();
@@ -483,7 +501,7 @@ describe("handleProvidersWizardKey", () => {
     // The end-to-end main path: Nous from the provider list to a
     // submittable wizard without a URL screen and without a key screen.
     let wizard = createProvidersWizardState("add");
-    const nousIdx = 2 + PROVIDER_PRESETS.findIndex((p) => p.id === "nous");
+    const nousIdx = presetRowIndex("nous");
     for (let i = 0; i < nousIdx; i += 1) {
       wizard = next(wizard, "", emptyKey({ downArrow: true }));
     }

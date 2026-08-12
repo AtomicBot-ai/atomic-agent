@@ -30,6 +30,7 @@ export type ProvidersWizardKindRow =
 export const KIND_ROW_ORDER: readonly ProvidersWizardKindRow[] = [
   "openrouter",
   "aimlapi",
+  "gemini",
   ...PROVIDER_PRESETS.map((preset) => ({ presetId: preset.id })),
   "openai-compatible",
 ];
@@ -66,6 +67,7 @@ function nextPhaseAfterApiKey(
 ): ProvidersWizardPhase {
   const kind = wizard.kind;
   if (kind && isCuratedCatalogKind(kind)) return "pick_chat_model";
+  if (kind === "gemini") return "chat_model_line";
   // A preset already knows its endpoint, so showing the URL step would
   // ask the operator to confirm something they never typed (#69). Only
   // the manual openai-compatible row still needs it.

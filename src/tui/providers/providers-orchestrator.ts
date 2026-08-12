@@ -373,7 +373,10 @@ export class ProvidersOrchestrator {
 
 export function isCloudProviderKind(kind: string): kind is ProvidersWizardKind {
   return (
-    kind === "openrouter" || kind === "aimlapi" || kind === "openai-compatible"
+    kind === "openrouter" ||
+    kind === "aimlapi" ||
+    kind === "gemini" ||
+    kind === "openai-compatible"
   );
 }
 
