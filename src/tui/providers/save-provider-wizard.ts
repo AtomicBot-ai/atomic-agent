@@ -8,6 +8,7 @@ import {
 import { findProviderPreset } from "./provider-presets.js";
 import {
   AIMLAPI_DEFAULT_CHAT_MODEL,
+  GEMINI_DEFAULT_CHAT_MODEL,
   LOCAL_EMBEDDING_CHOICE_ID,
   OPENROUTER_DEFAULT_CHAT_MODEL,
 } from "./providers-model-options.js";
@@ -22,6 +23,7 @@ import type {
 
 function defaultChatModelForKind(kind: ProvidersWizardKind): string {
   if (kind === "aimlapi") return AIMLAPI_DEFAULT_CHAT_MODEL;
+  if (kind === "gemini") return GEMINI_DEFAULT_CHAT_MODEL;
   return OPENROUTER_DEFAULT_CHAT_MODEL;
 }
 

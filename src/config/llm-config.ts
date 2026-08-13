@@ -47,6 +47,7 @@ const PROVIDER_KINDS = new Set([
   "openai-compatible",
   "openrouter",
   "aimlapi",
+  "gemini",
 ]);
 
 function parseProviderId(raw: unknown, field: string): string {

@@ -92,9 +92,14 @@ function readLlmBlockOrDefault(file: UserConfigFile): UserLlmFileConfig {
 
 export function dotenvKeyForProviderKind(
   kind: ProvidersWizardKind,
-): "OPENROUTER_API_KEY" | "AIMLAPI_API_KEY" | "OPENAI_COMPAT_API_KEY" {
+):
+  | "OPENROUTER_API_KEY"
+  | "AIMLAPI_API_KEY"
+  | "GEMINI_API_KEY"
+  | "OPENAI_COMPAT_API_KEY" {
   if (kind === "openrouter") return "OPENROUTER_API_KEY";
   if (kind === "aimlapi") return "AIMLAPI_API_KEY";
+  if (kind === "gemini") return "GEMINI_API_KEY";
   return "OPENAI_COMPAT_API_KEY";
 }
 

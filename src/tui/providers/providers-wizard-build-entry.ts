@@ -5,6 +5,7 @@ import {
   suggestPresetEntryId,
 } from "./provider-presets.js";
 import {
+  GEMINI_DEFAULT_CHAT_MODEL,
   LOCAL_EMBEDDING_CHOICE_ID,
   OPENAI_COMPAT_DEFAULT_BASE_URL,
   OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
@@ -23,6 +24,7 @@ export type BuiltWizardProvider = {
 function baseIdForKind(kind: ProvidersWizardKind): string {
   if (kind === "openrouter") return "openrouter";
   if (kind === "aimlapi") return "aimlapi";
+  if (kind === "gemini") return "gemini";
   return "openai-compatible";
 }
 
@@ -76,7 +78,10 @@ export function buildProviderEntryFromWizard(input: {
   const preset = input.presetId ? findProviderPreset(input.presetId) : undefined;
   const chatModel = isCuratedCatalogKind(input.kind)
     ? input.chatModelId
-    : (input.customChatModel?.trim() || OPENAI_COMPAT_DEFAULT_CHAT_MODEL);
+    : (input.customChatModel?.trim() ||
+      (input.kind === "gemini"
+        ? GEMINI_DEFAULT_CHAT_MODEL
+        : OPENAI_COMPAT_DEFAULT_CHAT_MODEL));
   const useLocal =
     input.embeddingChoiceId === LOCAL_EMBEDDING_CHOICE_ID ||
     (input.kind === "openai-compatible" &&

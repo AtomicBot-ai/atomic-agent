@@ -30,6 +30,13 @@ export { CostAccumulator, type CostAccumulatorSnapshot } from "./cost-accumulato
 export { OpenAiProvider, type OpenAiProviderOptions } from "./openai/index.js";
 export { OpenRouterProvider } from "./openrouter/index.js";
 export {
+  GeminiProvider,
+  type GeminiProviderOptions,
+  DEFAULT_GEMINI_BASE,
+  GEMINI_API_PATH_PREFIX,
+  GEMINI_DEFAULT_CHAT_MODEL,
+} from "./gemini/index.js";
+export {
   AimlapiProvider,
   type AimlapiProviderOptions,
   AIMLAPI_CHAT_MODEL_ORDER,
