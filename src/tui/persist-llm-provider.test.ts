@@ -9,6 +9,7 @@ describe("persist-llm-provider", () => {
   it("maps every wizard kind to its dotenv key", () => {
     expect(dotenvKeyForProviderKind("openrouter")).toBe("OPENROUTER_API_KEY");
     expect(dotenvKeyForProviderKind("aimlapi")).toBe("AIMLAPI_API_KEY");
+    expect(dotenvKeyForProviderKind("gemini")).toBe("GEMINI_API_KEY");
     expect(dotenvKeyForProviderKind("openai-compatible")).toBe(
       "OPENAI_COMPAT_API_KEY",
     );

@@ -54,6 +54,21 @@ describe("buildProviderEntryFromWizard", () => {
     expect(built.useLocalEmbedding).toBe(true);
   });
 
+  it("builds a usable Gemini entry without a manual base URL", () => {
+    const built = buildProviderEntryFromWizard({
+      kind: "gemini",
+      chatModelId: "",
+      embeddingChoiceId: LOCAL_EMBEDDING_CHOICE_ID,
+    });
+
+    expect(built.entry).toEqual({
+      id: "gemini",
+      kind: "gemini",
+      defaultChatModel: "gemini-2.5-flash",
+    });
+    expect(built.useLocalEmbedding).toBe(true);
+  });
+
   it("builds OpenAI-compatible entry with API root base URL", () => {
     const built = buildProviderEntryFromWizard({
       kind: "openai-compatible",

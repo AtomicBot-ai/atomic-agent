@@ -11,6 +11,7 @@ import { createProvidersWizardState } from "./providers-wizard-state.js";
 const ENV_KEYS = [
   "OPENROUTER_API_KEY",
   "AIMLAPI_API_KEY",
+  "GEMINI_API_KEY",
   "OPENAI_COMPAT_API_KEY",
   "OPENAI_API_KEY",
   "GROQ_API_KEY",

@@ -128,6 +128,14 @@ describe("ProvidersWizard chat model step", () => {
 });
 
 describe("ProvidersWizard pick list counter", () => {
+  it("shows a clear Gemini provider row", () => {
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={createProvidersWizardState("add")} />,
+    );
+
+    expect(stripAnsi(lastFrame() ?? "")).toContain("Gemini (Google AI)");
+  });
+
   it("shows the position counter on the provider list", () => {
     // 2 catalog kinds + 10 presets + manual entry. The counter is not a
     // long-list extra: hiding it below a size threshold reads as a glitch,

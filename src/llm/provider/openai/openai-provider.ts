@@ -44,6 +44,7 @@ export interface OpenAiProviderOptions {
   fetchImpl?: typeof fetch;
   toolCallAdapter?: ToolCallAdapter;
   streamConsumer?: StreamConsumer;
+  apiPathPrefix?: string;
   taggedToolCompatibility?: "qwen";
 }
 
@@ -56,6 +57,7 @@ export class OpenAiProvider implements LlmProvider {
 
   private readonly http: OpenAiHttpDeps;
   private readonly defaultChatModel: string;
+  private readonly apiPathPrefix: string;
   private readonly taggedToolCompatibility: "qwen" | undefined;
 
   constructor(options: OpenAiProviderOptions) {
@@ -75,6 +77,7 @@ export class OpenAiProvider implements LlmProvider {
       reasoningFormat: options.reasoningFormat ?? "delta_reasoning",
     };
     this.defaultChatModel = options.defaultChatModel;
+    this.apiPathPrefix = normalizeApiPathPrefix(options.apiPathPrefix ?? "/v1");
     this.taggedToolCompatibility = options.taggedToolCompatibility;
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
@@ -88,7 +91,12 @@ export class OpenAiProvider implements LlmProvider {
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const body = buildOpenAiChatBody(request, this.defaultChatModel, false);
-    const json = await openAiPostJson(this.http, "/v1/chat/completions", body, request);
+    const json = await openAiPostJson(
+      this.http,
+      `${this.apiPathPrefix}/chat/completions`,
+      body,
+      request,
+    );
     const adapted =
       this.taggedToolCompatibility === "qwen"
         ? adaptQwenTaggedToolResponse(json, request)
@@ -105,7 +113,7 @@ export class OpenAiProvider implements LlmProvider {
     // From here on the stream is live and failures are terminal.
     const res = await openAiStartStream(
       this.http,
-      "/v1/chat/completions",
+      `${this.apiPathPrefix}/chat/completions`,
       body,
       request,
     );
@@ -151,7 +159,7 @@ export class OpenAiProvider implements LlmProvider {
   async health(): Promise<ProviderHealthResult> {
     const start = Date.now();
     try {
-      const res = await this.http.fetchImpl(`${this.http.baseUrl}/v1/models`, {
+      const res = await this.http.fetchImpl(`${this.http.baseUrl}${this.apiPathPrefix}/models`, {
         method: "GET",
         headers: buildOpenAiHeaders(this.http, false),
       });
@@ -179,14 +187,24 @@ export class OpenAiProvider implements LlmProvider {
     if (!this.capabilities.vision) {
       throw new VisionUnsupportedError(this.name);
     }
-    return describeImageViaOpenAi(this.http, this.defaultChatModel, request);
+    return describeImageViaOpenAi(
+      this.http,
+      this.defaultChatModel,
+      request,
+      this.apiPathPrefix,
+    );
   }
 
   async listModels(): Promise<readonly string[]> {
-    const json = await openAiGetJson(this.http, "/v1/models");
+    const json = await openAiGetJson(this.http, `${this.apiPathPrefix}/models`);
     const data = (json.data as Array<{ id?: string }> | undefined) ?? [];
     return data.map((row) => row.id).filter((id): id is string => typeof id === "string");
   }
+}
+
+function normalizeApiPathPrefix(prefix: string): string {
+  const trimmed = prefix.trim().replace(/\/+$/, "");
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
 }
 
 function completionFromStreamFinal(

@@ -8,6 +8,7 @@ import {
 import { registerBuiltInProviderKinds } from "./register-built-in-providers.js";
 import type { AtomicAgentConfig } from "../../../config/index.js";
 import { getConfig } from "../../../config/index.js";
+import { GeminiProvider } from "../gemini/gemini-provider.js";
 
 describe("ProviderRegistry", () => {
   it("registers built-in kinds", () => {
@@ -17,6 +18,7 @@ describe("ProviderRegistry", () => {
     expect(kinds).toContain("openai-compatible");
     expect(kinds).toContain("qwen-openai-compatible");
     expect(kinds).toContain("openrouter");
+    expect(kinds).toContain("gemini");
   });
 
   it("resolveLlmConfig synthesizes local-llama when llm block absent", () => {
@@ -25,6 +27,38 @@ describe("ProviderRegistry", () => {
     expect(resolved.activeTextProvider).toBe("local-llama");
     expect(resolved.providers[0]?.kind).toBe("llama-server");
     expect(resolved.toolTransport).toBe("auto");
+  });
+
+  it("constructs Gemini through the built-in registry factory", async () => {
+    const fakeConfig = {
+      ...getConfig(),
+      llm: {
+        activeTextProvider: "gemini",
+        activeEmbeddingProvider: "local-llama-embed",
+        toolTransport: "auto" as const,
+        providers: [
+          {
+            id: "gemini",
+            kind: "gemini",
+            apiKey: "test-key",
+          },
+        ],
+      },
+    } as AtomicAgentConfig;
+
+    const registry = await ProviderRegistry.fromConfig(fakeConfig, {
+      config: fakeConfig,
+      llamaClient: {} as never,
+      getProfile: () => ({}) as never,
+      logger: {
+        debug: () => {},
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+      } as never,
+    });
+
+    expect(registry.activeText).toBeInstanceOf(GeminiProvider);
   });
 
   it("rejects unknown provider kind at fromConfig", async () => {
@@ -43,7 +77,12 @@ describe("ProviderRegistry", () => {
         config: fakeConfig,
         llamaClient: {} as never,
         getProfile: () => ({}) as never,
-        logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
+        logger: {
+          debug: () => {},
+          info: () => {},
+          warn: () => {},
+          error: () => {},
+        } as never,
       }),
     ).rejects.toThrow(/unknown llm provider kind/);
   });

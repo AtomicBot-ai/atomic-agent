@@ -1,6 +1,34 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
+import type { AtomicAgentConfig } from "../../config/index.js";
+
+vi.mock("../../config/index.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../../config/index.js")>();
+  return {
+    ...original,
+    getConfig: () => currentConfig,
+  };
+});
+
+let currentConfig: AtomicAgentConfig;
+
+function configWithGemini(): AtomicAgentConfig {
+  return {
+    llm: {
+      activeTextProvider: "gemini",
+      activeEmbeddingProvider: "local-llama-embed",
+      toolTransport: "auto",
+      providers: [
+        {
+          id: "gemini",
+          kind: "gemini",
+          defaultChatModel: "gemini-2.5-flash",
+        },
+      ],
+    },
+  } as AtomicAgentConfig;
+}
 
 /**
  * The catalog caches live at module scope inside the fetch modules, so
@@ -133,5 +161,78 @@ describe("ProvidersOrchestrator.prefetchCloudCatalogs", () => {
     orchestrator.prefetchCloudCatalogs();
     await flush();
     expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("isCloudProviderKind", () => {
+  it("allows an existing Gemini provider to enter configure and key-repair flows", async () => {
+    const { isCloudProviderKind } = await importFreshOrchestrator();
+
+    expect(isCloudProviderKind("gemini")).toBe(true);
+  });
+});
+
+describe("ProvidersOrchestrator.ensureInlineModels", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("warms the Gemini model catalog through the Cloud pane path", async () => {
+    currentConfig = configWithGemini();
+    const fetchMock = vi.fn(async (url: unknown) => ({
+      ok: true,
+      json: async () => ({
+        data: [{ id: "gemini-2.5-pro" }, { id: "gemini-2.5-flash" }],
+      }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { ProvidersOrchestrator } = await importFreshOrchestrator();
+    const bus = fakeBus();
+    const orchestrator = new ProvidersOrchestrator(
+      {} as AgentRuntime,
+      bus as never,
+    );
+
+    await orchestrator.ensureInlineModels("gemini");
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/openai/models",
+    );
+    expect(bus.emit).toHaveBeenCalledWith({
+      type: "providers_inline_models_loading",
+      providerId: "gemini",
+      generation: 1,
+    });
+    expect(bus.emit).toHaveBeenCalledWith({
+      type: "providers_inline_models_loaded",
+      providerId: "gemini",
+      generation: 1,
+      models: ["gemini-2.5-flash", "gemini-2.5-pro"],
+    });
+  });
+
+  it("reports failure without latching when the Gemini catalog fetch fails", async () => {
+    currentConfig = configWithGemini();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("offline");
+      }),
+    );
+    const { ProvidersOrchestrator } = await importFreshOrchestrator();
+    const bus = fakeBus();
+    const orchestrator = new ProvidersOrchestrator(
+      {} as AgentRuntime,
+      bus as never,
+    );
+
+    await orchestrator.ensureInlineModels("gemini");
+
+    expect(bus.emit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "providers_inline_models_failed",
+        providerId: "gemini",
+      }),
+    );
   });
 });
