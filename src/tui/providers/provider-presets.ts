@@ -105,6 +105,14 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "open-weight models, 350+ ids listed without a key",
   },
   {
+    id: "ollama",
+    label: "Ollama (local)",
+    baseUrl: "http://localhost:11434",
+    envVar: "OLLAMA_API_KEY",
+    local: true,
+    note: "the server `ollama serve` runs on your machine; no API key needed",
+  },
+  {
     id: "ollama-cloud",
     label: "Ollama Cloud",
     baseUrl: "https://ollama.com",

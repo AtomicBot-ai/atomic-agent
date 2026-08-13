@@ -280,6 +280,33 @@ The LLM tab in the TUI has an External pane for this setup. Saving a URL runs an
 </details>
 
 <details>
+<summary><b>Ollama and LM Studio (local)</b></summary>
+
+Running models under [Ollama](https://ollama.com) or [LM Studio](https://lmstudio.ai)? Both are OpenAI-compatible servers, and both are presets in the provider wizard, so there is no base URL to type.
+
+```bash
+ollama serve
+ollama pull qwen2.5:0.5b
+
+atomic-agent tui --cwd /path/to/work
+```
+
+In the TUI, open the LLM tab, add a provider, and pick **Ollama (local)** (or **LM Studio (local)**). A local server has no API key, so the wizard skips the key screen and goes straight to the model choice: two screens, service then model.
+
+Model ids are the tags the server reports, `qwen2.5:0.5b` or `llama3.2:latest` for Ollama, so use the same name you passed to `ollama pull`. The list comes from the server's own `/v1/models`, which means anything you have pulled shows up without a restart.
+
+| Preset | Endpoint |
+| --- | --- |
+| Ollama (local) | `http://localhost:11434` |
+| LM Studio (local) | `http://localhost:1234` |
+
+Two things to know. Ollama's OpenAI-compatible surface lives under `/v1`, but the base URL is stored without it, since every call site appends `/v1/...` itself. And **Ollama (local)** is a different entry from **Ollama Cloud**: the first is the server on your machine and needs no key, the second is the hosted endpoint.
+
+Tool calling works over this path, so the agent loop runs normally, but it is only as reliable as the model you picked. Very small models emit malformed tool calls more often; if the loop stalls, try a larger one before assuming the provider is at fault.
+
+</details>
+
+<details>
 <summary><b>OpenAI-compatible HTTP</b></summary>
 
 Run `atomic-agent` as a local HTTP service:

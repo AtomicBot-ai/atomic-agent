@@ -420,6 +420,71 @@ describe("handleProvidersWizardKey", () => {
     expect(wizard.phase).toBe("chat_model_line");
   });
 
+  it("saves local Ollama in two screens, with its own localhost URL", () => {
+    // Local Ollama is the second local preset, and its host:port differs
+    // from LM Studio's. Picking it must fill in 11434 and skip both the
+    // URL and the key screens: `ollama serve` has no key at all.
+    let wizard = createProvidersWizardState("add");
+    const ollamaIdx = 2 + PROVIDER_PRESETS.findIndex((p) => p.id === "ollama");
+    for (let i = 0; i < ollamaIdx; i += 1) {
+      wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    }
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.kind).toBe("openai-compatible");
+    expect(wizard.presetId).toBe("ollama");
+    // Stored without `/v1`: call sites append it, so a suffix here would
+    // send requests to `/v1/v1/models`, which Ollama answers with a 404.
+    expect(wizard.baseUrlLine).toBe("http://localhost:11434");
+    expect(wizard.phase).toBe("chat_model_line");
+
+    // Model ids are Ollama tags, typed as the server reports them.
+    for (const ch of "llama3.2:latest") wizard = next(wizard, ch, emptyKey());
+    const result = handleProvidersWizardKey("", emptyKey({ return: true }), wizard);
+    expect(result).toMatchObject({ handled: true, submit: true });
+    if ("wizard" in result) {
+      expect(result.wizard.chatModelLine).toBe("llama3.2:latest");
+    }
+  });
+
+  it("keeps local Ollama and Ollama Cloud on separate rows", () => {
+    // The two share an id prefix and a vendor name; picking the local row
+    // must not land on the hosted service (or vice versa).
+    const localIdx = 2 + PROVIDER_PRESETS.findIndex((p) => p.id === "ollama");
+    const cloudIdx =
+      2 + PROVIDER_PRESETS.findIndex((p) => p.id === "ollama-cloud");
+    expect(localIdx).not.toBe(cloudIdx);
+
+    for (const [idx, expected] of [
+      [localIdx, "ollama"],
+      [cloudIdx, "ollama-cloud"],
+    ] as const) {
+      let wizard = createProvidersWizardState("add");
+      for (let i = 0; i < idx; i += 1) {
+        wizard = next(wizard, "", emptyKey({ downArrow: true }));
+      }
+      wizard = next(wizard, "", emptyKey({ return: true }));
+      expect(wizard.presetId).toBe(expected);
+    }
+  });
+
+  it("recovers the local Ollama preset when reconfiguring its entry", () => {
+    // `ollama` is a prefix of `ollama-cloud`, so the lookup must not
+    // confuse a hosted entry for the local one.
+    const local = createProvidersWizardState("configure", {
+      providerId: "ollama",
+      kind: "openai-compatible",
+      baseUrl: "http://localhost:11434",
+    });
+    expect(local.presetId).toBe("ollama");
+
+    const cloud = createProvidersWizardState("configure", {
+      providerId: "ollama-cloud",
+      kind: "openai-compatible",
+      baseUrl: "https://ollama.com",
+    });
+    expect(cloud.presetId).toBe("ollama-cloud");
+  });
+
   it("a preset never shows the URL screen", () => {
     // Groq (keyed): service -> key -> models, base_url is never reached.
     let wizard = createProvidersWizardState("add");
