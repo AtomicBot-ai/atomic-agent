@@ -8,3 +8,4 @@ export {
   openAiToolCallsToBatch,
 } from "./openai-tool-call-adapter.js";
 export { filterCloudCompletionRequest } from "./sampling-filter.js";
+export { adaptQwenTaggedToolResponse } from "./qwen-tagged-tool-response-adapter.js";

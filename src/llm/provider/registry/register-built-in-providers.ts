@@ -60,6 +60,26 @@ export function registerBuiltInProviderKinds(): void {
     });
   });
 
+  registerProviderKind("qwen-openai-compatible", (ctx) => {
+    const entry = ctx.entry;
+    if (!entry.baseUrl || !entry.defaultChatModel) {
+      throw new Error(
+        `qwen-openai-compatible provider "${entry.id}" requires baseUrl and defaultChatModel`,
+      );
+    }
+    return new OpenAiProvider({
+      id: entry.id,
+      baseUrl: entry.baseUrl,
+      apiKey: entry.apiKey ?? "",
+      defaultChatModel: entry.defaultChatModel,
+      headers: entry.headers,
+      supportsVision: entry.supportsVision ?? true,
+      supportsParallelTools: entry.supportsTools ?? true,
+      requestTimeoutMs: entry.requestTimeoutMs,
+      taggedToolCompatibility: "qwen",
+    });
+  });
+
   registerProviderKind("openrouter", (ctx) => {
     const entry = ctx.entry;
     return new OpenRouterProvider({

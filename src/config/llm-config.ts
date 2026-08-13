@@ -45,6 +45,7 @@ const PROVIDER_ID_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const PROVIDER_KINDS = new Set([
   "llama-server",
   "openai-compatible",
+  "qwen-openai-compatible",
   "openrouter",
   "aimlapi",
   "gemini",

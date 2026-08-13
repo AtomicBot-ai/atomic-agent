@@ -28,6 +28,7 @@ import {
 import { normaliseOpenAiChatResponse } from "./openai-normalise-response.js";
 import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 import { describeImageViaOpenAi } from "./openai-describe-image.js";
+import { adaptQwenCompletionResult, adaptQwenTaggedToolResponse } from "./qwen-tagged-tool-response-adapter.js";
 
 export interface OpenAiProviderOptions {
   id: string;
@@ -44,6 +45,7 @@ export interface OpenAiProviderOptions {
   toolCallAdapter?: ToolCallAdapter;
   streamConsumer?: StreamConsumer;
   apiPathPrefix?: string;
+  taggedToolCompatibility?: "qwen";
 }
 
 export class OpenAiProvider implements LlmProvider {
@@ -56,6 +58,7 @@ export class OpenAiProvider implements LlmProvider {
   private readonly http: OpenAiHttpDeps;
   private readonly defaultChatModel: string;
   private readonly apiPathPrefix: string;
+  private readonly taggedToolCompatibility: "qwen" | undefined;
 
   constructor(options: OpenAiProviderOptions) {
     this.id = options.id;
@@ -75,6 +78,7 @@ export class OpenAiProvider implements LlmProvider {
     };
     this.defaultChatModel = options.defaultChatModel;
     this.apiPathPrefix = normalizeApiPathPrefix(options.apiPathPrefix ?? "/v1");
+    this.taggedToolCompatibility = options.taggedToolCompatibility;
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
       apiKey: options.apiKey,
@@ -93,7 +97,11 @@ export class OpenAiProvider implements LlmProvider {
       body,
       request,
     );
-    return normaliseOpenAiChatResponse(json, this.defaultChatModel);
+    const adapted =
+      this.taggedToolCompatibility === "qwen"
+        ? adaptQwenTaggedToolResponse(json, request)
+        : json;
+    return normaliseOpenAiChatResponse(adapted, this.defaultChatModel);
   }
 
   async *completeStream(
@@ -137,6 +145,13 @@ export class OpenAiProvider implements LlmProvider {
     }
     if (accumulatedReasoning.length > 0 && final.reasoningContent.length === 0) {
       final.reasoningContent = accumulatedReasoning;
+    }
+    if (this.taggedToolCompatibility === "qwen") {
+      // Buffer-then-adapt: the tagged `<tool_call>` payload may be split
+      // across deltas, so adapt only the fully-buffered message. Text and
+      // reasoning deltas were already yielded above for live UX; the adapt
+      // seam just rewrites the final result (content → tool_calls).
+      return adaptQwenCompletionResult(final, request);
     }
     return final;
   }

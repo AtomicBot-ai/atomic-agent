@@ -454,6 +454,36 @@ Shell-exported variables win over `.env`. The built-in parser intentionally supp
 
 </details>
 
+<details>
+<summary><b>Qwen / Tinker tagged tool calls</b> (opt-in compatibility provider)</summary>
+
+Some Qwen-serving OpenAI-compatible backends (Tinker, certain vLLM/llama.cpp front-ends) emit tool calls as inline `<tool_call><function=…>…</function></tool_call>` text instead of the native `tool_calls` field — they show up as assistant prose and never execute (#105).
+
+To enable the adapter, set the provider `kind` to **`qwen-openai-compatible`** in `config.json` (with `baseUrl` + `defaultChatModel`). Plain `openai-compatible` does **not** enable it — the generic kind is left untouched on purpose. There is no TUI wizard row for this kind yet; it is config-only for now.
+
+```json
+{
+  "llm": {
+    "providers": [
+      {
+        "id": "tinker",
+        "kind": "qwen-openai-compatible",
+        "baseUrl": "https://your-tinker-host",
+        "defaultChatModel": "Qwen3-32B"
+      }
+    ]
+  }
+}
+```
+
+Behavior:
+- The tagged call is read from `content`, or from `reasoning_content` when content is empty or holds unparseable tag noise.
+- Argument values are coerced against the offered tool's JSON schema; a call that does not match is dropped (fail-closed) rather than executed with guessed args.
+- Streaming stays live: text/reasoning deltas stream as usual and the buffered final message is adapted once the stream closes.
+
+**Limitation — MCP tools:** the schema coercion supports a fixed JSON-Schema subset and rejects unknown keywords such as `$ref`. Atomic's built-in tools are fine, but MCP tools that ship a draft-07 `inputSchema` with `$ref` (or other unsupported keywords) will fail coercion and remain prose. MCP + tagged Qwen is therefore unsupported for now.
+</details>
+
 ## Development
 
 ```bash

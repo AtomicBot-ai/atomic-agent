@@ -16,6 +16,7 @@ describe("ProviderRegistry", () => {
     const kinds = knownProviderKinds();
     expect(kinds).toContain("llama-server");
     expect(kinds).toContain("openai-compatible");
+    expect(kinds).toContain("qwen-openai-compatible");
     expect(kinds).toContain("openrouter");
     expect(kinds).toContain("gemini");
   });
