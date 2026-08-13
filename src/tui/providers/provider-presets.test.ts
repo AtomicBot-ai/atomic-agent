@@ -44,6 +44,29 @@ describe("PROVIDER_PRESETS", () => {
     expect(findProviderPreset("lmstudio")?.local).toBe(true);
   });
 
+  it("offers local Ollama on its default port, marked local", () => {
+    // `ollama serve` listens on 11434 and needs no credentials, so the
+    // wizard can save the entry without a key screen. Verified against a
+    // live server: GET /v1/models answers 200 with an OpenAI-shaped list.
+    const preset = findProviderPreset("ollama");
+    expect(preset?.local).toBe(true);
+    expect(preset?.baseUrl).toBe("http://localhost:11434");
+  });
+
+  it("keeps local Ollama separate from the hosted Ollama Cloud", () => {
+    // Same vendor, different services: one is the operator's own machine
+    // with no key, the other is a hosted endpoint keyed by its own var.
+    const local = findProviderPreset("ollama");
+    const cloud = findProviderPreset("ollama-cloud");
+    expect(local?.baseUrl).not.toBe(cloud?.baseUrl);
+    expect(local?.envVar).not.toBe(cloud?.envVar);
+    expect(cloud?.local).toBeUndefined();
+    // The `-\d+` suffix rule must not turn the hosted id into the local
+    // preset: `ollama` is a prefix of `ollama-cloud`.
+    expect(presetForEntryId("ollama-cloud")?.id).toBe("ollama-cloud");
+    expect(presetForEntryId("ollama-2")?.id).toBe("ollama");
+  });
+
   it("keeps the verified keyless-listing services marked", () => {
     // Presence checks, not an exact list: a new keyless preset must not
     // break this test, it only has to keep the verified ones flagged.
