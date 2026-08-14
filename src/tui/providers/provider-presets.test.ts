@@ -51,6 +51,8 @@ describe("PROVIDER_PRESETS", () => {
     const preset = findProviderPreset("ollama");
     expect(preset?.local).toBe(true);
     expect(preset?.baseUrl).toBe("http://localhost:11434");
+    // The row resolves to the native kind, not the /v1 compat shim.
+    expect(preset?.kind).toBe("ollama");
   });
 
   it("keeps local Ollama separate from the hosted Ollama Cloud", () => {

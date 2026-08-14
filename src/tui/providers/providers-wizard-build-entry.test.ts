@@ -69,6 +69,26 @@ describe("buildProviderEntryFromWizard", () => {
     expect(built.useLocalEmbedding).toBe(true);
   });
 
+  it("builds a native ollama entry carrying the preset URL and env var", () => {
+    const built = buildProviderEntryFromWizard({
+      kind: "ollama",
+      presetId: "ollama",
+      chatModelId: "",
+      embeddingChoiceId: "__local_embedding__",
+      baseUrl: "http://localhost:11434",
+      customChatModel: "qwen3.6:latest",
+      takenProviderIds: [],
+    });
+    expect(built.entry).toMatchObject({
+      id: "ollama",
+      kind: "ollama",
+      defaultChatModel: "qwen3.6:latest",
+      baseUrl: "http://localhost:11434",
+      apiKeyEnvVar: "OLLAMA_API_KEY",
+    });
+    expect(built.useLocalEmbedding).toBe(true);
+  });
+
   it("builds OpenAI-compatible entry with API root base URL", () => {
     const built = buildProviderEntryFromWizard({
       kind: "openai-compatible",

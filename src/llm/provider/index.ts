@@ -37,6 +37,13 @@ export {
   GEMINI_DEFAULT_CHAT_MODEL,
 } from "./gemini/index.js";
 export {
+  OllamaProvider,
+  type OllamaProviderOptions,
+  DEFAULT_OLLAMA_BASE,
+  OLLAMA_AGENT_NUM_CTX,
+  OLLAMA_DEFAULT_CHAT_MODEL,
+} from "./ollama/index.js";
+export {
   AimlapiProvider,
   type AimlapiProviderOptions,
   AIMLAPI_CHAT_MODEL_ORDER,

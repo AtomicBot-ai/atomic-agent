@@ -4,6 +4,7 @@ export type ProvidersWizardKind =
   | "openrouter"
   | "aimlapi"
   | "gemini"
+  | "ollama"
   | "openai-compatible";
 
 export type ProvidersWizardPhase =
@@ -61,7 +62,9 @@ export function createProvidersWizardState(
   // var, and saving keeps the entry id instead of minting an
   // `openai-compatible` duplicate. Suffixed ids (`groq-2`) count too.
   const presetId =
-    configure && kind === "openai-compatible" && opts?.providerId
+    configure &&
+    (kind === "openai-compatible" || kind === "ollama") &&
+    opts?.providerId
       ? (presetForEntryId(opts.providerId)?.id ?? null)
       : null;
   return {

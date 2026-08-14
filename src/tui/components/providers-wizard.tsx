@@ -24,6 +24,7 @@ import {
 } from "../providers/providers-wizard-phases.js";
 import {
   GEMINI_DEFAULT_CHAT_MODEL,
+  OLLAMA_DEFAULT_CHAT_MODEL,
   listAimlapiEmbeddingModels,
   listOpenRouterEmbeddingModels,
   OPENAI_COMPAT_DEFAULT_BASE_URL,
@@ -39,6 +40,7 @@ const KIND_LABELS: Record<ProvidersWizardKind, string> = {
   openrouter: "OpenRouter (cloud chat + optional cloud embed)",
   aimlapi: "AI/ML API (aimlapi.com — 500+ models, OpenAI-compatible)",
   gemini: "Gemini (Google AI)",
+  ollama: "Ollama (local)",
   "openai-compatible": "OpenAI-compatible API (custom base URL)",
 };
 
@@ -71,6 +73,7 @@ function envHintForWizard(w: ProvidersWizardState): string {
   if (w.kind === "openrouter") return "OPENROUTER_API_KEY";
   if (w.kind === "aimlapi") return "AIMLAPI_API_KEY";
   if (w.kind === "gemini") return "GEMINI_API_KEY";
+  if (w.kind === "ollama") return "OLLAMA_API_KEY";
   return "OPENAI_COMPAT_API_KEY";
 }
 
@@ -142,7 +145,7 @@ function CompatChatModelStep(props: {
 }): ReactElement {
   const w = props.wizard;
   const baseUrl = baseUrlForWizard(w);
-  const isCompat = w.kind === "openai-compatible";
+  const isCompat = w.kind === "openai-compatible" || w.kind === "ollama";
   const isGemini = w.kind === "gemini";
   const canList = isCompat || isGemini;
   const [status, setStatus] = useState<{ loading: boolean; error: string | null }>(
@@ -210,7 +213,9 @@ function CompatChatModelStep(props: {
     placeholder:
       w.kind === "gemini"
         ? GEMINI_DEFAULT_CHAT_MODEL
-        : OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
+        : w.kind === "ollama"
+          ? OLLAMA_DEFAULT_CHAT_MODEL
+          : OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
     hint,
     error: w.error,
   });

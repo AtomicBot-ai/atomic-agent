@@ -5,6 +5,10 @@ import type {
 import { getCachedOpenAiCompatModelsForBaseUrl } from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import { getCachedGeminiModelsForPanel } from "../../llm/provider/gemini/fetch-gemini-models.js";
 import { GEMINI_DEFAULT_CHAT_MODEL } from "../../llm/provider/gemini/gemini-provider.js";
+import {
+  DEFAULT_OLLAMA_BASE,
+  OLLAMA_DEFAULT_CHAT_MODEL,
+} from "../../llm/provider/ollama/ollama-provider.js";
 import { filterModelIds, type ProviderRow } from "../providers/providers-panel-state.js";
 import {
   formatAimlapiChatModelDetails,
@@ -379,24 +383,34 @@ function inlineModelsForProvider(
     if (out.size === 0) out.add(GEMINI_DEFAULT_CHAT_MODEL);
     return { models: [...out], status: "loading", error: null };
   }
-  // openai-compatible: live catalog state first, module cache second.
+  // openai-compatible and native ollama: live catalog state first,
+  // module cache second. An ollama entry may omit `baseUrl` (the
+  // provider defaults to localhost), and its placeholder must be an
+  // Ollama model, never the openai-compat one.
+  const fallbackModel =
+    provider.kind === "ollama"
+      ? OLLAMA_DEFAULT_CHAT_MODEL
+      : OPENAI_COMPAT_DEFAULT_CHAT_MODEL;
   const inline = state.providersPanel.inlineModels;
   if (inline && inline.providerId === provider.id) {
     if (inline.status === "ready") {
       for (const id of inline.models) out.add(id);
       return { models: [...out], status: "ready", error: null };
     }
-    if (out.size === 0) out.add(OPENAI_COMPAT_DEFAULT_CHAT_MODEL);
+    if (out.size === 0) out.add(fallbackModel);
     return { models: [...out], status: inline.status, error: inline.error };
   }
-  const cached = provider.baseUrl
-    ? getCachedOpenAiCompatModelsForBaseUrl(provider.baseUrl)
+  const cacheBaseUrl =
+    provider.baseUrl ??
+    (provider.kind === "ollama" ? DEFAULT_OLLAMA_BASE : undefined);
+  const cached = cacheBaseUrl
+    ? getCachedOpenAiCompatModelsForBaseUrl(cacheBaseUrl)
     : undefined;
   if (cached && cached.length > 0) {
     for (const id of cached) out.add(id);
     return { models: [...out], status: "ready", error: null };
   }
-  if (out.size === 0) out.add(OPENAI_COMPAT_DEFAULT_CHAT_MODEL);
+  if (out.size === 0) out.add(fallbackModel);
   return { models: [...out], status: "loading", error: null };
 }
 

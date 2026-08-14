@@ -7,6 +7,7 @@ import { listOpenRouterChatPicks } from "../../llm/provider/openrouter/fetch-ope
 import { OPENROUTER_MODELS_CATALOG } from "../../llm/provider/openrouter/openrouter-models-catalog.js";
 import type { ModelCatalogEntry } from "../../llm/provider/model-resolver.js";
 import { GEMINI_DEFAULT_CHAT_MODEL } from "../../llm/provider/gemini/gemini-provider.js";
+import { OLLAMA_DEFAULT_CHAT_MODEL } from "../../llm/provider/ollama/ollama-provider.js";
 
 export type ProviderModelOption = {
   id: string;
@@ -21,7 +22,7 @@ export const OPENROUTER_DEFAULT_CHAT_MODEL = "openrouter/auto";
 export const OPENAI_COMPAT_DEFAULT_BASE_URL = "https://api.openai.com";
 export const OPENAI_COMPAT_DEFAULT_CHAT_MODEL = "gpt-5.4-mini";
 
-export { AIMLAPI_DEFAULT_CHAT_MODEL, GEMINI_DEFAULT_CHAT_MODEL };
+export { AIMLAPI_DEFAULT_CHAT_MODEL, GEMINI_DEFAULT_CHAT_MODEL, OLLAMA_DEFAULT_CHAT_MODEL };
 
 export function listOpenRouterChatModels(): readonly ProviderModelOption[] {
   return listOpenRouterChatPicks().map((p) => ({

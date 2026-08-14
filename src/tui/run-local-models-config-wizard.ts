@@ -94,6 +94,9 @@ export function isCloudTextProviderReady(): boolean {
  */
 function isKeylessLocalProviderEntry(entry: UserLlmProviderEntry): boolean {
   if (presetForEntryId(entry.id)?.local) return true;
+  // The native ollama kind defaults its base URL to localhost:11434, so
+  // an entry without an explicit baseUrl is local by construction.
+  if (entry.kind === "ollama" && !entry.baseUrl) return true;
   if (!entry.baseUrl) return false;
   let host: string;
   try {

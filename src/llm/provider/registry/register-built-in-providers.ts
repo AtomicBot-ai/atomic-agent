@@ -7,6 +7,10 @@ import {
   GEMINI_DEFAULT_CHAT_MODEL,
 } from "../gemini/gemini-provider.js";
 import { LlamaServerProvider } from "../llama-server/llama-server-provider.js";
+import {
+  OllamaProvider,
+  OLLAMA_DEFAULT_CHAT_MODEL,
+} from "../ollama/ollama-provider.js";
 import { OpenAiProvider } from "../openai/openai-provider.js";
 import {
   OpenRouterProvider,
@@ -120,6 +124,22 @@ export function registerBuiltInProviderKinds(): void {
       defaultChatModel: entry.defaultChatModel ?? GEMINI_DEFAULT_CHAT_MODEL,
       headers: entry.headers,
       supportsVision: entry.supportsVision ?? true,
+      supportsParallelTools: entry.supportsTools ?? true,
+      requestTimeoutMs: entry.requestTimeoutMs,
+    });
+  });
+
+  registerProviderKind("ollama", (ctx) => {
+    const entry = ctx.entry;
+    return new OllamaProvider({
+      id: entry.id,
+      baseUrl: entry.baseUrl,
+      apiKey: entry.apiKey ?? "",
+      defaultChatModel: entry.defaultChatModel ?? OLLAMA_DEFAULT_CHAT_MODEL,
+      headers: entry.headers,
+      // Most pulled Ollama models are text-only; vision stays opt-in
+      // via `supportsVision: true` on the entry.
+      supportsVision: entry.supportsVision ?? false,
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
     });

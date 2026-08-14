@@ -96,10 +96,12 @@ export function dotenvKeyForProviderKind(
   | "OPENROUTER_API_KEY"
   | "AIMLAPI_API_KEY"
   | "GEMINI_API_KEY"
+  | "OLLAMA_API_KEY"
   | "OPENAI_COMPAT_API_KEY" {
   if (kind === "openrouter") return "OPENROUTER_API_KEY";
   if (kind === "aimlapi") return "AIMLAPI_API_KEY";
   if (kind === "gemini") return "GEMINI_API_KEY";
+  if (kind === "ollama") return "OLLAMA_API_KEY";
   return "OPENAI_COMPAT_API_KEY";
 }
 

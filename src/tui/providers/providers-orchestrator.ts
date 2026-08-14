@@ -22,6 +22,7 @@ import {
 } from "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
 import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import { fetchGeminiModels } from "../../llm/provider/gemini/fetch-gemini-models.js";
+import { DEFAULT_OLLAMA_BASE } from "../../llm/provider/ollama/ollama-provider.js";
 import { OPENAI_COMPAT_DEFAULT_BASE_URL } from "./providers-model-options.js";
 import { isProvidersAction } from "./providers-actions.js";
 import type { ProviderRow } from "./providers-panel-state.js";
@@ -116,8 +117,13 @@ export class ProvidersOrchestrator {
     if (!id) return;
     const provider = resolved.providers.find((p) => p.id === id);
     const fileEntry = config.llm?.providers.find((e) => e.id === id);
-    if (!provider || provider.kind !== "openai-compatible") return;
-    const baseUrl = fileEntry?.baseUrl ?? OPENAI_COMPAT_DEFAULT_BASE_URL;
+    if (
+      !provider ||
+      (provider.kind !== "openai-compatible" && provider.kind !== "ollama")
+    ) {
+      return;
+    }
+    const baseUrl = compatBaseUrlForEntry(provider.kind, fileEntry);
     // Every open gets a fresh generation so a response from a picker the
     // operator already closed (or reopened for the same provider) cannot
     // repopulate the current one.
@@ -166,14 +172,20 @@ export class ProvidersOrchestrator {
     const provider = resolved.providers.find((p) => p.id === id);
     const fileEntry = config.llm?.providers.find((e) => e.id === id);
     if (!provider || !isCloudProviderKind(provider.kind)) return;
-    if (provider.kind !== "openai-compatible" && provider.kind !== "gemini") return;
+    if (
+      provider.kind !== "openai-compatible" &&
+      provider.kind !== "gemini" &&
+      provider.kind !== "ollama"
+    ) {
+      return;
+    }
     const generation = ++this.inlineModelsGeneration;
     this.bus.emit({
       type: "providers_inline_models_loading",
       providerId: id,
       generation,
     });
-    const baseUrl = fileEntry?.baseUrl ?? OPENAI_COMPAT_DEFAULT_BASE_URL;
+    const baseUrl = compatBaseUrlForEntry(provider.kind, fileEntry);
     try {
       const apiKey = resolveLlmProviderApiKey(provider) ?? undefined;
       // Warm 1h cache resolves without a network round-trip, so the
@@ -380,8 +392,23 @@ export function isCloudProviderKind(kind: string): kind is ProvidersWizardKind {
     kind === "openrouter" ||
     kind === "aimlapi" ||
     kind === "gemini" ||
+    kind === "ollama" ||
     kind === "openai-compatible"
   );
+}
+
+/**
+ * Base URL for the `/v1/models` fetch of an endpoint-bearing entry.
+ * A hand-written ollama entry may omit `baseUrl` (the provider then
+ * defaults to localhost), so the fallback must be the Ollama host,
+ * never api.openai.com.
+ */
+function compatBaseUrlForEntry(
+  kind: string,
+  fileEntry: { baseUrl?: string } | undefined,
+): string {
+  if (fileEntry?.baseUrl) return fileEntry.baseUrl;
+  return kind === "ollama" ? DEFAULT_OLLAMA_BASE : OPENAI_COMPAT_DEFAULT_BASE_URL;
 }
 
 function listChatModelOptionsForEntry(

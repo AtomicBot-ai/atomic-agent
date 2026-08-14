@@ -443,12 +443,14 @@ describe("handleProvidersWizardKey", () => {
     // from LM Studio's. Picking it must fill in 11434 and skip both the
     // URL and the key screens: `ollama serve` has no key at all.
     let wizard = createProvidersWizardState("add");
-    const ollamaIdx = 2 + PROVIDER_PRESETS.findIndex((p) => p.id === "ollama");
+    const ollamaIdx = presetRowIndex("ollama");
     for (let i = 0; i < ollamaIdx; i += 1) {
       wizard = next(wizard, "", emptyKey({ downArrow: true }));
     }
     wizard = next(wizard, "", emptyKey({ return: true }));
-    expect(wizard.kind).toBe("openai-compatible");
+    // The preset resolves to the native kind: `/api/chat` with
+    // per-request num_ctx instead of the `/v1` compat shim.
+    expect(wizard.kind).toBe("ollama");
     expect(wizard.presetId).toBe("ollama");
     // Stored without `/v1`: call sites append it, so a suffix here would
     // send requests to `/v1/v1/models`, which Ollama answers with a 404.
@@ -467,9 +469,8 @@ describe("handleProvidersWizardKey", () => {
   it("keeps local Ollama and Ollama Cloud on separate rows", () => {
     // The two share an id prefix and a vendor name; picking the local row
     // must not land on the hosted service (or vice versa).
-    const localIdx = 2 + PROVIDER_PRESETS.findIndex((p) => p.id === "ollama");
-    const cloudIdx =
-      2 + PROVIDER_PRESETS.findIndex((p) => p.id === "ollama-cloud");
+    const localIdx = presetRowIndex("ollama");
+    const cloudIdx = presetRowIndex("ollama-cloud");
     expect(localIdx).not.toBe(cloudIdx);
 
     for (const [idx, expected] of [

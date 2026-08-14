@@ -32,6 +32,12 @@ export function resolveLlmProviderApiKey(
     const key = process.env.GEMINI_API_KEY;
     return key && key.length > 0 ? key : undefined;
   }
+  // Local Ollama needs no key; OLLAMA_API_KEY only matters when the
+  // entry points at ollama.com, and `undefined` keeps requests bare.
+  if (entry.kind === "ollama") {
+    const key = process.env.OLLAMA_API_KEY;
+    return key && key.length > 0 ? key : undefined;
+  }
   if (
     entry.kind === "openai-compatible" ||
     entry.kind === "qwen-openai-compatible"

@@ -7,6 +7,7 @@ import {
 import {
   GEMINI_DEFAULT_CHAT_MODEL,
   LOCAL_EMBEDDING_CHOICE_ID,
+  OLLAMA_DEFAULT_CHAT_MODEL,
   OPENAI_COMPAT_DEFAULT_BASE_URL,
   OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
 } from "./providers-model-options.js";
@@ -25,6 +26,7 @@ function baseIdForKind(kind: ProvidersWizardKind): string {
   if (kind === "openrouter") return "openrouter";
   if (kind === "aimlapi") return "aimlapi";
   if (kind === "gemini") return "gemini";
+  if (kind === "ollama") return "ollama";
   return "openai-compatible";
 }
 
@@ -81,10 +83,12 @@ export function buildProviderEntryFromWizard(input: {
     : (input.customChatModel?.trim() ||
       (input.kind === "gemini"
         ? GEMINI_DEFAULT_CHAT_MODEL
-        : OPENAI_COMPAT_DEFAULT_CHAT_MODEL));
+        : input.kind === "ollama"
+          ? OLLAMA_DEFAULT_CHAT_MODEL
+          : OPENAI_COMPAT_DEFAULT_CHAT_MODEL));
   const useLocal =
     input.embeddingChoiceId === LOCAL_EMBEDDING_CHOICE_ID ||
-    (input.kind === "openai-compatible" &&
+    ((input.kind === "openai-compatible" || input.kind === "ollama") &&
       (input.customEmbeddingModel?.trim() ?? "") === "");
 
   let defaultEmbeddingModel: string | undefined;
@@ -108,9 +112,16 @@ export function buildProviderEntryFromWizard(input: {
             OPENAI_COMPAT_DEFAULT_BASE_URL,
         }
       : {}),
+    // The native ollama kind defaults to localhost, but the wizard
+    // persists the preset's base URL explicitly so the entry reads the
+    // same as every other endpoint-bearing one.
+    ...(input.kind === "ollama" && input.baseUrl?.trim()
+      ? { baseUrl: normalizeOpenAiBaseUrl(input.baseUrl) }
+      : {}),
     // The preset's own env var rides on the entry, so two services never
     // resolve one shared key (see `resolveLlmProviderApiKey`).
-    ...(input.kind === "openai-compatible" && preset
+    ...((input.kind === "openai-compatible" || input.kind === "ollama") &&
+    preset
       ? { apiKeyEnvVar: preset.envVar }
       : {}),
   };

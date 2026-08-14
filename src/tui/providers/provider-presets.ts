@@ -42,6 +42,13 @@ export interface ProviderPreset {
   readonly local?: boolean;
   /** One-line hint shown under the label. */
   readonly note?: string;
+  /**
+   * Provider kind the preset resolves to. Almost every preset is an
+   * `openai-compatible` entry with the base URL filled in; a preset
+   * with a dedicated native kind names it here so the wizard builds
+   * the richer entry while the row looks the same to the operator.
+   */
+  readonly kind?: "ollama";
 }
 
 /**
@@ -110,6 +117,9 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     baseUrl: "http://localhost:11434",
     envVar: "OLLAMA_API_KEY",
     local: true,
+    // Resolves to the native kind: `/api/chat` gives per-request
+    // `num_ctx`, which the `/v1` compat shim cannot ask for at all.
+    kind: "ollama",
     note: "the server `ollama serve` runs on your machine; no API key needed",
   },
   {

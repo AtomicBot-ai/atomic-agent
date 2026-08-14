@@ -10,6 +10,7 @@ import {
   AIMLAPI_DEFAULT_CHAT_MODEL,
   GEMINI_DEFAULT_CHAT_MODEL,
   LOCAL_EMBEDDING_CHOICE_ID,
+  OLLAMA_DEFAULT_CHAT_MODEL,
   OPENROUTER_DEFAULT_CHAT_MODEL,
 } from "./providers-model-options.js";
 import {
@@ -24,6 +25,7 @@ import type {
 function defaultChatModelForKind(kind: ProvidersWizardKind): string {
   if (kind === "aimlapi") return AIMLAPI_DEFAULT_CHAT_MODEL;
   if (kind === "gemini") return GEMINI_DEFAULT_CHAT_MODEL;
+  if (kind === "ollama") return OLLAMA_DEFAULT_CHAT_MODEL;
   return OPENROUTER_DEFAULT_CHAT_MODEL;
 }
 

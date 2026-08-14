@@ -84,6 +84,34 @@ describe("llm-config", () => {
     });
   });
 
+  it("accepts ollama as a first-class provider kind", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      llm: {
+        activeTextProvider: "ollama",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto",
+        providers: [
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            url: "http://127.0.0.1:19091",
+          },
+          {
+            id: "ollama",
+            kind: "ollama",
+            defaultChatModel: "qwen3.6",
+          },
+        ],
+      },
+    });
+
+    expect(parsed.llm?.providers.find((p) => p.id === "ollama")).toMatchObject({
+      kind: "ollama",
+      defaultChatModel: "qwen3.6",
+    });
+  });
+
   it("accepts qwen-openai-compatible as an explicit compatibility provider", () => {
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,

@@ -58,7 +58,10 @@ export function listCompatChatModelPicks(
 ): readonly string[] {
   if (wizard.phase !== "chat_model_line") return [];
   if (wizard.chatModelLine.length > 0) return [];
-  if (wizard.kind === "openai-compatible") {
+  // The native ollama kind shares the compat model list: its entries
+  // carry a base URL and Ollama serves `/v1/models` with the same ids
+  // that `/api/tags` reports.
+  if (wizard.kind === "openai-compatible" || wizard.kind === "ollama") {
     return (
       getCachedOpenAiCompatModels(
         baseUrlForWizard(wizard),
@@ -258,7 +261,7 @@ export function handleProvidersWizardKey(
           handled: true,
           wizard: {
             ...wizard,
-            kind: "openai-compatible",
+            kind: preset.kind ?? "openai-compatible",
             presetId: preset.id,
             baseUrlLine: preset.baseUrl,
             phase: needsKey ? "api_key" : "chat_model_line",

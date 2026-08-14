@@ -128,6 +128,30 @@ describe("isCloudTextProviderReady", () => {
     expect(isCloudTextProviderReady()).toBe(true);
   });
 
+  it("treats a native ollama entry without a base URL as ready", () => {
+    const cfg = getConfig();
+    const file = ensureUserConfigFileSync(cfg.paths.userConfigFile);
+    writeUserConfigFileSync(cfg.paths.userConfigFile, {
+      ...file,
+      llm: {
+        activeTextProvider: "ollama",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto",
+        providers: [
+          { id: "local-llama", kind: "llama-server", url: cfg.localModels.url },
+          {
+            id: "ollama",
+            kind: "ollama",
+            defaultChatModel: "qwen3.6",
+          },
+        ],
+      },
+    });
+    resetConfigCache();
+
+    expect(isCloudTextProviderReady()).toBe(true);
+  });
+
   it("does not treat a keyless remote openai-compatible entry as ready", () => {
     const cfg = getConfig();
     const file = ensureUserConfigFileSync(cfg.paths.userConfigFile);

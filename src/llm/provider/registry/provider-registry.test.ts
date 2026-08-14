@@ -9,6 +9,7 @@ import { registerBuiltInProviderKinds } from "./register-built-in-providers.js";
 import type { AtomicAgentConfig } from "../../../config/index.js";
 import { getConfig } from "../../../config/index.js";
 import { GeminiProvider } from "../gemini/gemini-provider.js";
+import { OllamaProvider } from "../ollama/ollama-provider.js";
 
 describe("ProviderRegistry", () => {
   it("registers built-in kinds", () => {
@@ -19,6 +20,7 @@ describe("ProviderRegistry", () => {
     expect(kinds).toContain("qwen-openai-compatible");
     expect(kinds).toContain("openrouter");
     expect(kinds).toContain("gemini");
+    expect(kinds).toContain("ollama");
   });
 
   it("resolveLlmConfig synthesizes local-llama when llm block absent", () => {
@@ -27,6 +29,37 @@ describe("ProviderRegistry", () => {
     expect(resolved.activeTextProvider).toBe("local-llama");
     expect(resolved.providers[0]?.kind).toBe("llama-server");
     expect(resolved.toolTransport).toBe("auto");
+  });
+
+  it("constructs the native Ollama provider through the registry factory", async () => {
+    const fakeConfig = {
+      ...getConfig(),
+      llm: {
+        activeTextProvider: "ollama",
+        activeEmbeddingProvider: "local-llama-embed",
+        toolTransport: "auto" as const,
+        providers: [
+          {
+            id: "ollama",
+            kind: "ollama",
+          },
+        ],
+      },
+    } as AtomicAgentConfig;
+
+    const registry = await ProviderRegistry.fromConfig(fakeConfig, {
+      config: fakeConfig,
+      llamaClient: {} as never,
+      getProfile: () => ({}) as never,
+      logger: {
+        debug: () => {},
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+      } as never,
+    });
+
+    expect(registry.activeText).toBeInstanceOf(OllamaProvider);
   });
 
   it("constructs Gemini through the built-in registry factory", async () => {
