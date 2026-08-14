@@ -9,6 +9,7 @@ export type LocalModelId =
   | "qwen-3.5-35b"
   | "qwen-3.6-27b"
   | "qwen-3.6-35b-a3b"
+  | "qwen-3.8-27b"
   | "gemma-4-e4b"
   | "gemma-4-12b"
   | "gemma-4-26b-a4b"
@@ -157,6 +158,27 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     mmprojFileSizeGb: 1.20,
   },
   {
+    id: "qwen-3.8-27b",
+    name: "Qwen 3.8 27B GGUF",
+    filename: "Qwen3.8-27B-UD-Q4_K_XL.gguf",
+    huggingFaceUrl:
+      "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-Q4_K_XL.gguf",
+    fileSizeGb: 17.9,
+    sizeLabel: "17.9 GB",
+    description: "Latest dense agentic reasoning",
+    maxContextLength: 262_144,
+    contextLabel: "256K",
+    minRamGb: 20,
+    recommendedRamGb: 28,
+    family: "qwen",
+    tag: "New",
+    supportsVision: true,
+    mmprojUrl:
+      "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/mmproj-F16.gguf",
+    mmprojFilename: "mmproj-F16.gguf",
+    mmprojFileSizeGb: 0.93,
+  },
+  {
     id: "qwen-3.6-27b",
     name: "Qwen 3.6 27B GGUF",
     filename: "Qwen3.6-27B-UD-Q4_K_XL.gguf",
@@ -170,7 +192,6 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 20,
     recommendedRamGb: 28,
     family: "qwen",
-    tag: "New",
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/main/mmproj-F16.gguf",
@@ -191,7 +212,6 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 24,
     recommendedRamGb: 36,
     family: "qwen",
-    tag: "New",
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf",
