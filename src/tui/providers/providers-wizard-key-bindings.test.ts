@@ -443,7 +443,7 @@ describe("handleProvidersWizardKey", () => {
     // from LM Studio's. Picking it must fill in 11434 and skip both the
     // URL and the key screens: `ollama serve` has no key at all.
     let wizard = createProvidersWizardState("add");
-    const ollamaIdx = 2 + PROVIDER_PRESETS.findIndex((p) => p.id === "ollama");
+    const ollamaIdx = 3 + PROVIDER_PRESETS.findIndex((p) => p.id === "ollama");
     for (let i = 0; i < ollamaIdx; i += 1) {
       wizard = next(wizard, "", emptyKey({ downArrow: true }));
     }
@@ -467,9 +467,9 @@ describe("handleProvidersWizardKey", () => {
   it("keeps local Ollama and Ollama Cloud on separate rows", () => {
     // The two share an id prefix and a vendor name; picking the local row
     // must not land on the hosted service (or vice versa).
-    const localIdx = 2 + PROVIDER_PRESETS.findIndex((p) => p.id === "ollama");
+    const localIdx = 3 + PROVIDER_PRESETS.findIndex((p) => p.id === "ollama");
     const cloudIdx =
-      2 + PROVIDER_PRESETS.findIndex((p) => p.id === "ollama-cloud");
+      3 + PROVIDER_PRESETS.findIndex((p) => p.id === "ollama-cloud");
     expect(localIdx).not.toBe(cloudIdx);
 
     for (const [idx, expected] of [
