@@ -25,7 +25,7 @@ describe("ChatLog", () => {
     const state = createInitialTuiState(BASE_SESSION);
     const { lastFrame } = render(<ChatLog state={state} />);
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("Local-First AI Agent");
+    expect(text).toContain("Local AI-First Agent");
     expect(text).toContain("/help");
   });
 
