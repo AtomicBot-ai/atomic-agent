@@ -22,10 +22,13 @@ export function SplashBanner(): ReactElement {
         <Tip left="Enter" right="submit message to the agent" />
         <Tip left="/help" right="list all slash commands" />
         <Tip left="/sessions" right="switch to a previous thread" />
+        <Tip left="/observe" right="view diagnostics and world state" />
+        <Tip left="/manage" right="jump to the Manage tab" />
         <Tip left="/new" right="start a fresh session" />
         <Tip left="/model" right="change the chat model" />
         <Tip left="/tasks" right="jump to the Tasks tab (Option 4 cron + ingress UI)" />
         <Tip left="/import" right="open the Import tab (one-shot Hermes -> atomic-agent migration)" />
+        <Tip left="/run" right="start a new run" />
         <Tip left="Ctrl+C ×2" right="quit (once aborts a running turn)" />
       </Box>
       <Box flexGrow={1} />
