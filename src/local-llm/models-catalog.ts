@@ -1,5 +1,5 @@
 /**
- * Curated GGUF catalog (Qwen + Gemma only). URLs mirror atomic-hermes
+ * Curated GGUF catalog (Qwen + Gemma + Nemotron). URLs mirror atomic-hermes
  * desktop local LLM models; `family` replaces UI-only icon fields.
  */
 
@@ -12,7 +12,8 @@ export type LocalModelId =
   | "gemma-4-e4b"
   | "gemma-4-12b"
   | "gemma-4-26b-a4b"
-  | "gemma-4-31b";
+  | "gemma-4-31b"
+  | "nemotron-3.5-30b-a3b";
 
 /**
  * Memory-v2 phase 1B. Embedding model identifiers. A separate union
@@ -42,7 +43,7 @@ export interface LocalModelDef {
   contextLabel: string;
   minRamGb: number;
   recommendedRamGb: number;
-  family: "qwen" | "gemma";
+  family: "qwen" | "gemma" | "nemotron";
   /**
    * Jinja file under `assets/ai-models/` passed to llama-server as
    * `--chat-template-file`, overriding the template baked into the GGUF.
@@ -259,6 +260,23 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
       "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf",
     mmprojFilename: "mmproj-F16.gguf",
     mmprojFileSizeGb: 0.90,
+  },
+  {
+    id: "nemotron-3.5-30b-a3b",
+    name: "NVIDIA Nemotron 3.5 Lightning 30B-A3B GGUF",
+    filename: "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-AD-IQ4_NL.gguf",
+    huggingFaceUrl:
+      "https://huggingface.co/AtomicChat/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF/resolve/main/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-AD-IQ4_NL.gguf",
+    fileSizeGb: 19.65,
+    sizeLabel: "19.7 GB",
+    description: "Hybrid Mamba2 MoE reasoning, imatrix-calibrated",
+    maxContextLength: 262_144,
+    contextLabel: "256K",
+    minRamGb: 24,
+    recommendedRamGb: 32,
+    family: "nemotron",
+    tag: "New",
+    supportsVision: false,
   },
 ];
 

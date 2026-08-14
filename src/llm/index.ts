@@ -19,6 +19,7 @@ export {
   detectModelProfile,
   extractTotalSlots,
   GEMMA4_THINK_PROFILE,
+  NEMOTRON_THINK_PROFILE,
   PLAIN_INSTRUCT_PROFILE,
   QWEN_THINK_PROFILE,
 } from "./model-profile.js";

@@ -62,14 +62,14 @@ export async function runLocalModelsList(): Promise<number> {
   const cfg = getConfig();
   const dataDir = cfg.paths.localModelsDataDir;
   process.stdout.write(
-    "ID                  | FAMILY | SIZE   | CONTEXT | DL  | ACTIVE\n",
+    "ID                   | FAMILY   | SIZE   | CONTEXT | DL  | ACTIVE\n",
   );
   for (const m of LOCAL_MODELS_CATALOG) {
     const dl = isModelDownloaded(dataDir, m) ? "yes" : "no";
     const active =
       cfg.localModels.managed.modelId === m.id && cfg.localModels.mode === "managed" ? "*" : " ";
     process.stdout.write(
-      `${m.id.padEnd(19)} | ${m.family.padEnd(6)} | ${m.sizeLabel.padEnd(6)} | ${m.contextLabel.padEnd(7)} | ${dl.padEnd(3)} | ${active}\n`,
+      `${m.id.padEnd(20)} | ${m.family.padEnd(8)} | ${m.sizeLabel.padEnd(6)} | ${m.contextLabel.padEnd(7)} | ${dl.padEnd(3)} | ${active}\n`,
     );
   }
   return 0;

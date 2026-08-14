@@ -11,10 +11,10 @@ import {
 } from "./models-catalog.js";
 
 describe("models-catalog", () => {
-  it("has exactly 9 Qwen+Gemma models with unique ids", () => {
-    expect(LOCAL_MODELS_CATALOG.length).toBe(9);
+  it("has exactly 10 Qwen+Gemma+Nemotron models with unique ids", () => {
+    expect(LOCAL_MODELS_CATALOG.length).toBe(10);
     const ids = new Set(LOCAL_MODELS_CATALOG.map((m) => m.id));
-    expect(ids.size).toBe(9);
+    expect(ids.size).toBe(10);
   });
 
   it("defaults to qwen-3.5-4b", () => {
@@ -36,13 +36,23 @@ describe("models-catalog", () => {
     ).toThrow(/unknown local model id/);
   });
 
-  it("marks every catalog entry as vision-capable with mmproj URL", () => {
-    expect(LOCAL_MODELS_CATALOG.length).toBeGreaterThan(0);
-    for (const def of LOCAL_MODELS_CATALOG) {
-      expect(def.supportsVision).toBe(true);
+  it("ships mmproj URL for every vision-capable catalog entry", () => {
+    const visionModels = LOCAL_MODELS_CATALOG.filter((m) => m.supportsVision);
+    expect(visionModels.length).toBeGreaterThan(0);
+    for (const def of visionModels) {
       expect(def.mmprojUrl).toMatch(/^https:\/\//);
       expect(def.mmprojFilename).toMatch(/\.gguf$/);
       expect(typeof def.mmprojFileSizeGb).toBe("number");
+    }
+  });
+
+  it("omits mmproj fields on text-only catalog entries", () => {
+    const textOnly = LOCAL_MODELS_CATALOG.filter((m) => !m.supportsVision);
+    expect(textOnly.map((m) => m.id)).toEqual(["nemotron-3.5-30b-a3b"]);
+    for (const def of textOnly) {
+      expect(def.mmprojUrl).toBeUndefined();
+      expect(def.mmprojFilename).toBeUndefined();
+      expect(def.mmprojFileSizeGb).toBeUndefined();
     }
   });
 
