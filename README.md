@@ -295,6 +295,8 @@ In the TUI, open the LLM tab, add a provider, and pick **Ollama (local)** (or **
 
 Model ids are the tags the server reports, `qwen2.5:0.5b` or `llama3.2:latest` for Ollama, so use the same name you passed to `ollama pull`. The list comes from the server's own `/v1/models`, which means anything you have pulled shows up without a restart.
 
+**New in v0.2.1**: The provider wizard now includes a dedicated **Ollama (local)** preset that auto-detects your local Ollama server and provides a streamlined setup experience.
+
 | Preset | Endpoint |
 | --- | --- |
 | Ollama (local) | `http://localhost:11434` |
