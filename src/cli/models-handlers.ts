@@ -20,6 +20,7 @@ import {
   isModelDownloaded,
   listVulkanDevices,
   LOCAL_MODELS_CATALOG,
+  maybeAutoUpdateBackend,
   readBackendVersion,
   removeModel,
   resolveChatTemplatePath,
@@ -218,6 +219,31 @@ export async function runLocalModelsStart(): Promise<number> {
     return 1;
   }
   const dataDir = cfg.paths.localModelsDataDir;
+  try {
+    const auto = await maybeAutoUpdateBackend(dataDir, {
+      enabled: cfg.localModels.managed.autoUpdate,
+      onProgress: (p: number, t: number, tot: number) => {
+        const line = renderPullProgress("backend zip", p, t, tot);
+        if (process.stderr.isTTY) process.stderr.write(`\r${line.padEnd(79)}`);
+        else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
+      },
+    });
+    if (auto.action === "updated") {
+      if (process.stderr.isTTY) process.stderr.write("\n");
+      process.stdout.write(
+        `backend:        updated ${auto.from ?? "none"} → ${auto.to}\n`,
+      );
+    } else if (auto.action === "check_failed") {
+      process.stderr.write(
+        `note: backend update check failed — starting current binary (${auto.error})\n`,
+      );
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`backend auto-update failed: ${msg}\n`);
+    return 1;
+  }
+
   const m = getLocalModelDef(mid);
   const tpl = resolveChatTemplatePath(m) ?? undefined;
   const mmprojFile =

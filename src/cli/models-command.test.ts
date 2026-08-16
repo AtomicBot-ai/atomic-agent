@@ -53,8 +53,9 @@ describe("modelsCommand", () => {
     const code = await modelsCommand(["list"]);
     expect(code).toBe(0);
     const out = stdout();
+    // One row per curated model in LOCAL_MODELS_CATALOG: 4 gemma + 6 qwen.
     expect(out.split("\n").filter((l) => l.includes("qwen-") || l.includes("gemma-"))).toHaveLength(
-      9,
+      10,
     );
   });
 

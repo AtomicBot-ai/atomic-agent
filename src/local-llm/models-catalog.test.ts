@@ -11,10 +11,10 @@ import {
 } from "./models-catalog.js";
 
 describe("models-catalog", () => {
-  it("has exactly 10 Qwen+Gemma+Nemotron models with unique ids", () => {
-    expect(LOCAL_MODELS_CATALOG.length).toBe(10);
+  it("has exactly 11 Qwen+Gemma+Nemotron models with unique ids", () => {
+    expect(LOCAL_MODELS_CATALOG.length).toBe(11);
     const ids = new Set(LOCAL_MODELS_CATALOG.map((m) => m.id));
-    expect(ids.size).toBe(10);
+    expect(ids.size).toBe(11);
   });
 
   it("defaults to qwen-3.5-4b", () => {

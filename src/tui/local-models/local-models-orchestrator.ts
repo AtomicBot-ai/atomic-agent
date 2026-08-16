@@ -24,6 +24,7 @@ import {
   isModelDownloaded,
   listVulkanDevices,
   LOCAL_MODELS_CATALOG,
+  maybeAutoUpdateBackend,
   probeNvidiaVramMiB,
   readBackendVersion,
   readLogTail,
@@ -820,6 +821,7 @@ export class LocalModelsOrchestrator {
     }
     const dataDir = cfg.paths.localModelsDataDir;
     const def = getLocalModelDef(mid);
+    let justPulledBackend = false;
     if (!isBackendDownloaded(dataDir)) {
       this.bus.emit({
         type: "runtime_info",
@@ -827,6 +829,7 @@ export class LocalModelsOrchestrator {
       });
       await this.pullBackend();
       if (!isBackendDownloaded(dataDir)) return false;
+      justPulledBackend = true;
     }
     if (!isModelDownloaded(dataDir, def)) {
       this.bus.emit({
@@ -834,6 +837,10 @@ export class LocalModelsOrchestrator {
         line: `local-llm: model ${def.name} not downloaded — cannot start`,
       });
       return false;
+    }
+    if (!justPulledBackend) {
+      const updated = await this.applyBackendAutoUpdate(dataDir);
+      if (!updated) return false;
     }
     this.bus.emit({ type: "local_models_daemon_phase_set", phase: "starting" });
     this.bus.emit({
@@ -1500,10 +1507,73 @@ export class LocalModelsOrchestrator {
   }
 
   /**
+   * Check GitHub Releases and replace the llama.cpp zip when a newer
+   * tag exists. Check failures are fire-safe (returns true so start
+   * can use the current binary). Download errors return false.
+   */
+  private async applyBackendAutoUpdate(dataDir: string): Promise<boolean> {
+    try {
+      const result = await maybeAutoUpdateBackend(dataDir, {
+        enabled: getConfig().localModels.managed.autoUpdate,
+        onWillDownload: () => {
+          this.bus.emit({
+            type: "local_models_pull_started",
+            pull: {
+              kind: "backend",
+              modelId: "_backend",
+              label: "llama.cpp backend",
+              percent: 0,
+              transferredBytes: 0,
+              totalBytes: 0,
+              error: null,
+            },
+          });
+        },
+        onProgress: (percent: number, transferred: number, total: number) => {
+          this.bus.emit({
+            type: "local_models_pull_progress",
+            kind: "backend",
+            percent,
+            transferredBytes: transferred,
+            totalBytes: total,
+          });
+        },
+      });
+      if (result.action === "updated") {
+        this.bus.emit({ type: "local_models_pull_finished", kind: "backend" });
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: updated llama.cpp ${result.from ?? "none"} → ${result.to}`,
+        });
+      } else if (result.action === "check_failed") {
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: backend update check failed — starting current binary (${result.error})`,
+        });
+      }
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.bus.emit({
+        type: "local_models_pull_failed",
+        kind: "backend",
+        error: msg,
+      });
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: backend auto-update failed — ${msg}`,
+      });
+      return false;
+    }
+  }
+
+  /**
    * Called once at TUI startup. If the user is in managed mode AND the
    * backend + model are already on disk AND no daemon is currently
    * running, start the daemon so the user lands in a ready state
-   * without needing an extra keypress. No-op otherwise.
+   * without needing an extra keypress. When `autoUpdate` is on, a
+   * newer llama.cpp zip is pulled first even if a daemon is already
+   * running (it is stopped, replaced, then restarted).
    */
   async autoStartIfReady(): Promise<void> {
     const cfg = getConfig();
@@ -1517,6 +1587,8 @@ export class LocalModelsOrchestrator {
     if (!isBackendDownloaded(dataDir)) return;
     const def = getLocalModelDef(mid);
     if (!isModelDownloaded(dataDir, def)) return;
+    const autoOk = await this.applyBackendAutoUpdate(dataDir);
+    if (!autoOk) return;
     const running = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
     if (running.running) {
       // Already started by a previous TUI session; adopt it.
