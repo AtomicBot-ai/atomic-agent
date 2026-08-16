@@ -124,4 +124,23 @@ export function registerBuiltInProviderKinds(): void {
       requestTimeoutMs: entry.requestTimeoutMs,
     });
   });
-}
+
+  registerProviderKind("sarvam", (ctx) => {
+      const entry = ctx.entry;
+      if (!entry.baseUrl || !entry.defaultChatModel) {
+        throw new Error(
+          `sarvam provider "${entry.id}" requires baseUrl and defaultChatModel`,
+        );
+      }
+      return new OpenAiProvider({
+        id: entry.id,
+        baseUrl: entry.baseUrl,
+        apiKey: entry.apiKey ?? "",
+        defaultChatModel: entry.defaultChatModel,
+        headers: entry.headers,
+        supportsVision: entry.supportsVision ?? false,
+        supportsParallelTools: entry.supportsTools ?? true,
+        requestTimeoutMs: entry.requestTimeoutMs,
+      });
+    });
+  }

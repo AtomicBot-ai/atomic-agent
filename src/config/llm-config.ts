@@ -49,6 +49,7 @@ const PROVIDER_KINDS = new Set([
   "openrouter",
   "aimlapi",
   "gemini",
+  "sarvam",
 ]);
 
 function parseProviderId(raw: unknown, field: string): string {

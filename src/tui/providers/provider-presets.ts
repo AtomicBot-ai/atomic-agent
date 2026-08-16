@@ -121,6 +121,13 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "hosted Ollama, models listed without a key",
   },
   {
+    id: "sarvam",
+    label: "Sarvam",
+    baseUrl: "https://api.sarvam.ai",
+    envVar: "SARVAM_API_KEY",
+    note: "Sarvam AI models with OpenAI-compatible API",
+  },
+  {
     id: "together",
     label: "Together AI",
     baseUrl: "https://api.together.xyz",
