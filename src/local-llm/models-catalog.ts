@@ -1,6 +1,7 @@
 /**
- * Curated GGUF catalog (Qwen + Gemma + Nemotron). URLs mirror atomic-hermes
- * desktop local LLM models; `family` replaces UI-only icon fields.
+ * Curated GGUF catalog (Qwen + Gemma + Nemotron + Muse). URLs mirror
+ * atomic-hermes desktop local LLM models; `family` replaces UI-only
+ * icon fields.
  */
 
 export type LocalModelId =
@@ -14,7 +15,8 @@ export type LocalModelId =
   | "gemma-4-12b"
   | "gemma-4-26b-a4b"
   | "gemma-4-31b"
-  | "nemotron-3.5-30b-a3b";
+  | "nemotron-3.5-30b-a3b"
+  | "muse-glimmer-30b";
 
 /**
  * Memory-v2 phase 1B. Embedding model identifiers. A separate union
@@ -44,7 +46,7 @@ export interface LocalModelDef {
   contextLabel: string;
   minRamGb: number;
   recommendedRamGb: number;
-  family: "qwen" | "gemma" | "nemotron";
+  family: "qwen" | "gemma" | "nemotron" | "muse";
   /**
    * Jinja file under `assets/ai-models/` passed to llama-server as
    * `--chat-template-file`, overriding the template baked into the GGUF.
@@ -297,6 +299,27 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     family: "nemotron",
     tag: "New",
     supportsVision: false,
+  },
+  {
+    id: "muse-glimmer-30b",
+    name: "Meta Muse Glimmer 30B GGUF",
+    filename: "Muse-Glimmer-30B-UD-Q4_K_XL.gguf",
+    huggingFaceUrl:
+      "https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF/resolve/main/Muse-Glimmer-30B-UD-Q4_K_XL.gguf",
+    fileSizeGb: 15.9,
+    sizeLabel: "15.9 GB",
+    description: "Multimodal 30B MoE (ATEM / Harmony)",
+    maxContextLength: 131_072,
+    contextLabel: "128K",
+    minRamGb: 20,
+    recommendedRamGb: 32,
+    family: "muse",
+    tag: "New",
+    supportsVision: true,
+    mmprojUrl:
+      "https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF/resolve/main/mmproj-Muse-Glimmer-30B-Q8_0.gguf",
+    mmprojFilename: "mmproj-Muse-Glimmer-30B-Q8_0.gguf",
+    mmprojFileSizeGb: 2.05,
   },
 ];
 
