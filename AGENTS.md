@@ -237,7 +237,7 @@ Symmetric **`EmbeddingProviderRegistry`** ([src/memory/embeddings/embedding-prov
 `atomic-agent` supports two modes for the llama-server backend (`config.llama.mode`):
 
 - `external` (default) — user runs `llama-server` out-of-band; runtime reads the URL from `config.llama.url` (env fallback `ATOMIC_AGENT_LLAMA_URL`).
-- `managed` — `atomic-agent` downloads the llama.cpp binary from `AtomicBot-ai/atopmic-llama-cpp-turboquant-nightly` GitHub Releases into `<stateDir>/llamacpp/backend/` and GGUF models into `<stateDir>/llamacpp/models/<id>/`. The server is **not** spawned by the runtime; operators control lifecycle via `atomic-agent llama start|stop|status|update`. Managed start (TUI auto-start / `s`, CLI `models start`) auto-pulls a newer zip when `localModels.managed.autoUpdate` is true (default since config v38; check failures do not block start).
+- `managed` — `atomic-agent` downloads the llama.cpp binary from `AtomicBot-ai/atomic-llama-cpp-turboquant-nightly` GitHub Releases into `<stateDir>/llamacpp/backend/` and GGUF models into `<stateDir>/llamacpp/models/<id>/`. The server is **not** spawned by the runtime; operators control lifecycle via `atomic-agent llama start|stop|status|update`. Managed start (TUI auto-start / `s`, CLI `models start`) auto-pulls a newer zip when `localModels.managed.autoUpdate` is true (default since config v38; check failures do not block start).
 
 **Invariant (preserved):** the agent runtime never starts a `llama-server` process. It only connects. Managed-mode lifecycle lives entirely in the `atomic-agent llama` CLI so runtime code paths stay single-mode.
 
