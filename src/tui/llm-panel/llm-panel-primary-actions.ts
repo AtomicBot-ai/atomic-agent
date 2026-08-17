@@ -114,11 +114,27 @@ function triggerCloudProvider(
   stopLocalDaemonsForCloudSelection(state, callbacks);
 }
 
+/** A pull already in flight for this exact model — pressing Enter again must not restart it. */
+function isPullInFlight(
+  state: TuiState,
+  kind: "chat" | "embedding",
+  modelId: string,
+): boolean {
+  const pull =
+    kind === "chat"
+      ? state.localModelsPanel.pull
+      : state.localModelsPanel.embeddingPull;
+  return Boolean(
+    pull && !pull.error && pull.kind === kind && pull.modelId === modelId,
+  );
+}
+
 function triggerLocalChatModel(
   model: LocalModelRow,
   state: TuiState,
   callbacks: TuiAppCallbacks,
 ): void {
+  if (isPullInFlight(state, "chat", model.id)) return;
   if (!model.downloaded) {
     callbacks.onLocalModelsPullRequested?.(model.id, "with-mmproj");
     return;
@@ -146,6 +162,7 @@ function triggerLocalEmbeddingModel(
   const localProviderActive = state.providersPanel.rows.some(
     (row) => row.id === "local-llama" && row.isActiveEmbedding,
   );
+  if (isPullInFlight(state, "embedding", model.id)) return;
   if (!model.downloaded) {
     callbacks.onLocalModelsEmbeddingPullRequested?.(model.id);
     callbacks.onProvidersSetActiveEmbedding?.("local-llama");
