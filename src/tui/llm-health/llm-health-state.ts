@@ -39,9 +39,23 @@ export interface LlmHealthState {
    * does not expose it. Surfaced in the prompt meta-row as `ctx <n>`.
    */
   contextWindow: number | null;
+  /**
+   * Whether a local backend is the user's actual route, which decides if the
+   * indicator is worth showing at all. A fresh install ships a default
+   * `localModels.url` nobody chose, so without this the very first probe
+   * paints `○ down` about a server that was never meant to exist — noise on
+   * the one screen where the user has the least context to judge it.
+   *
+   * Seeded from config at startup and latched on by a healthy probe, so
+   * somebody running llama-server on the default URL without touching config
+   * still gets the indicator (and keeps it when their server later dies).
+   */
+  localConfigured: boolean;
 }
 
-export function createInitialLlmHealthState(): LlmHealthState {
+export function createInitialLlmHealthState(
+  localConfigured = false,
+): LlmHealthState {
   return {
     status: "unknown",
     lastCheckedAt: null,
@@ -49,5 +63,6 @@ export function createInitialLlmHealthState(): LlmHealthState {
     error: null,
     model: null,
     contextWindow: null,
+    localConfigured,
   };
 }
