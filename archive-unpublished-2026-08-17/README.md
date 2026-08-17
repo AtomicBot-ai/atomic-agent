@@ -20,18 +20,35 @@ so the bundle below restores cleanly against a normal clone.
 
 ## Restoring it
 
+These exact commands were run and verified on 2026-08-17:
+
 ```bash
 git clone https://github.com/AtomicBot-ai/atomic-agent.git
 cd atomic-agent
-git checkout archive/unpublished-2026-08-17 -- .   # or download the .bundle from this branch
-git fetch ./atomic-agent-unpublished-2026-08-17.bundle 'refs/heads/*:refs/heads/archived/*'
-git branch -a | grep archived
+git checkout archive/unpublished-2026-08-17
+git fetch archive-unpublished-2026-08-17/atomic-agent-unpublished-2026-08-17.bundle \
+    'refs/heads/*:refs/heads/archived/*'
+git branch --list 'archived/*'
+git switch archived/valeryb/cli-download-ux-ato22-ato6
 ```
 
-Verify before trusting it:
+The bundle only carries the unpublished commits; its four prerequisite commits all
+live on `main` and `feature/desktop-integration`, so the fetch must run inside a
+clone of this repo (not an empty directory).
+
+Sanity check before trusting it:
 
 ```bash
-git bundle verify atomic-agent-unpublished-2026-08-17.bundle
+git bundle verify archive-unpublished-2026-08-17/atomic-agent-unpublished-2026-08-17.bundle
+```
+
+Note the branch name contains a slash, so `raw.githubusercontent.com/<owner>/<repo>/<branch>/...`
+URLs are ambiguous and 404. To download the bundle without cloning, use the API:
+
+```bash
+curl -sS -H "Accept: application/vnd.github.raw" \
+  "https://api.github.com/repos/AtomicBot-ai/atomic-agent/contents/archive-unpublished-2026-08-17/atomic-agent-unpublished-2026-08-17.bundle?ref=archive/unpublished-2026-08-17" \
+  -o atomic-agent-unpublished-2026-08-17.bundle
 ```
 
 ## Patches
