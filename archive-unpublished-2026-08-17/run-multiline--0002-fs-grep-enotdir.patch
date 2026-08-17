@@ -1,0 +1,200 @@
+From 95f574929e71beb52e33f04d7d94c5cc585ae5b9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=D0=92=D0=B0=D0=BB=D0=B5=D1=80=D0=B8=D0=B9=20=D0=91=D1=80?=
+ =?UTF-8?q?=D0=B8=D0=B6=D0=B0=D1=82=D1=8E=D0=BA?=
+ <valerii@Valerijs-MacBook-Pro.local>
+Date: Sun, 16 Aug 2026 17:56:51 +0300
+Subject: [PATCH 2/2] fix(tools): os.fs.grep on a single file died with `spawn
+ ENOTDIR`
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+`os.fs.grep` passed the caller's `path` straight to the child process `cwd`
+and hardcoded `.` as ripgrep's search target. That only works when `path` is
+a directory: pointing it at one FILE — a natural reading of "grep this file",
+and what a model does unprompted — made `spawn` fail with a bare `ENOTDIR`
+naming no argument.
+
+Hit twice in real runs on a local 27B, both times as
+`{pattern: "// <<NEXT>>", path: ".../index.html", outputMode: "count"}`.
+The model recovered by falling back to whole-file reads, so the run survived
+but burned steps.
+
+`resolveSearchRoot` now splits the path: a directory searches itself, a file
+searches from its parent with the basename as the target. A path that does
+not exist is left alone so ripgrep's own "no such file" message survives
+instead of being replaced by a spawn error.
+
+Also adds the Qwen 3.8 27B GGUF to the local model catalog, from the
+`ggml-org` conversion because it ships the matching `mtp-` draft model in
+the same repo.
+
+Verified by replaying the exact failing tool call: status error -> ok.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ src/local-llm/models-catalog.ts | 25 +++++++++++++++++++++++
+ src/tools/os/fs-grep.test.ts    | 33 +++++++++++++++++++++++++++++-
+ src/tools/os/fs-grep.ts         | 36 +++++++++++++++++++++++++++++----
+ 3 files changed, 89 insertions(+), 5 deletions(-)
+
+diff --git a/src/local-llm/models-catalog.ts b/src/local-llm/models-catalog.ts
+index 22d8e68..c246e0b 100644
+--- a/src/local-llm/models-catalog.ts
++++ b/src/local-llm/models-catalog.ts
+@@ -9,6 +9,7 @@ export type LocalModelId =
+   | "qwen-3.5-35b"
+   | "qwen-3.6-27b"
+   | "qwen-3.6-35b-a3b"
++  | "qwen-3.8-27b"
+   | "gemma-4-e4b"
+   | "gemma-4-12b"
+   | "gemma-4-26b-a4b"
+@@ -198,6 +199,30 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
+     mmprojFilename: "mmproj-F16.gguf",
+     mmprojFileSizeGb: 0.90,
+   },
++  {
++    // Qwen 3.8 27B, from the `ggml-org` conversion rather than a third-party
++    // one: it ships the matching `mtp-` draft model, so the same repo covers
++    // both the weights and the multi-token-prediction speculator.
++    id: "qwen-3.8-27b",
++    name: "Qwen 3.8 27B GGUF",
++    filename: "Qwen3.8-27B-Q4_K_M.gguf",
++    huggingFaceUrl:
++      "https://huggingface.co/ggml-org/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-Q4_K_M.gguf",
++    fileSizeGb: 19.0,
++    sizeLabel: "19.0 GB",
++    description: "Dense reasoning + agentic coding",
++    maxContextLength: 262_144,
++    contextLabel: "256K",
++    minRamGb: 24,
++    recommendedRamGb: 32,
++    family: "qwen",
++    tag: "New",
++    supportsVision: true,
++    mmprojUrl:
++      "https://huggingface.co/ggml-org/Qwen3.8-27B-GGUF/resolve/main/mmproj-Qwen3.8-27B-Q8_0.gguf",
++    mmprojFilename: "mmproj-Qwen3.8-27B-Q8_0.gguf",
++    mmprojFileSizeGb: 0.6,
++  },
+   {
+     id: "qwen-3.5-4b",
+     name: "Qwen 3.5 4B GGUF",
+diff --git a/src/tools/os/fs-grep.test.ts b/src/tools/os/fs-grep.test.ts
+index c88eda4..0faa668 100644
+--- a/src/tools/os/fs-grep.test.ts
++++ b/src/tools/os/fs-grep.test.ts
+@@ -4,7 +4,7 @@ import type {
+   CommandResult,
+ } from "../../sandbox/command-runner.js";
+ import type { ToolContext } from "../tool-registry.js";
+-import { buildOsFsGrepTool, parseRipgrepJson } from "./fs-grep.js";
++import { buildOsFsGrepTool, parseRipgrepJson, resolveSearchRoot } from "./fs-grep.js";
+ 
+ // A platform-native absolute root: the grep runner is mocked in these tests
+ // so the path is never touched on disk, but it must be a valid absolute path
+@@ -310,3 +310,34 @@ describe("os.fs.grep", () => {
+     expect(capturedArgs[after + 1]).toBe("2");
+   });
+ });
++
++describe("resolveSearchRoot", () => {
++  // Regression: `path` was handed straight to `cwd`. A cwd must be a
++  // directory, so grepping a single file died with a bare `spawn ENOTDIR`
++  // that named no argument. Seen twice in real runs when the model asked to
++  // count anchors in one file.
++  const dirStat = { isDirectory: () => true };
++  const fileStat = { isDirectory: () => false };
++
++  it("searches a directory from itself", () => {
++    expect(resolveSearchRoot("/work/project", () => dirStat)).toEqual({
++      cwd: "/work/project",
++      target: ".",
++    });
++  });
++
++  it("searches a FILE from its parent directory, never cwd-ing into it", () => {
++    expect(resolveSearchRoot("/work/project/index.html", () => fileStat)).toEqual({
++      cwd: "/work/project",
++      target: "index.html",
++    });
++  });
++
++  it("leaves a missing path alone so ripgrep reports it, not spawn", () => {
++    expect(
++      resolveSearchRoot("/work/gone", () => {
++        throw new Error("ENOENT");
++      }),
++    ).toEqual({ cwd: "/work/gone", target: "." });
++  });
++});
+diff --git a/src/tools/os/fs-grep.ts b/src/tools/os/fs-grep.ts
+index 1a096d4..66e0efa 100644
+--- a/src/tools/os/fs-grep.ts
++++ b/src/tools/os/fs-grep.ts
+@@ -1,3 +1,5 @@
++import { statSync } from "node:fs";
++import { basename, dirname } from "node:path";
+ import { compressToolResult } from "../../compressor/result-compressor.js";
+ import { resolveUserPath } from "./expand-home.js";
+ import {
+@@ -72,9 +74,15 @@ export function buildOsFsGrepTool(
+         });
+       }
+ 
+-      const rgArgs = buildRgArgs(args);
++      // `path` may legitimately be a single FILE ("grep this one file"), but
++      // it was passed straight to `cwd`, and a cwd must be a directory — the
++      // spawn then failed with a bare `ENOTDIR` that says nothing about which
++      // argument was wrong. Search from the containing directory and name the
++      // file as the target instead.
++      const { cwd, target } = resolveSearchRoot(args.path);
++      const rgArgs = buildRgArgs(args, target);
+       const result = await runCommand(rgPath, rgArgs, {
+-        cwd: args.path,
++        cwd,
+         timeoutMs: args.timeoutMs,
+         signal: ctx.signal,
+       });
+@@ -194,7 +202,27 @@ function parseArgs(
+   };
+ }
+ 
+-function buildRgArgs(args: GrepArgs): string[] {
++/**
++ * Split a user-supplied `path` into the directory ripgrep should run in and
++ * the target it should search. A directory searches itself (`.`); a file
++ * searches from its parent so `cwd` is always a real directory.
++ *
++ * A path that does not exist is left alone: ripgrep's own "no such file"
++ * message is far more useful to the caller than an `ENOTDIR` from `spawn`.
++ */
++export function resolveSearchRoot(
++  path: string,
++  statFn: (p: string) => { isDirectory(): boolean } = statSync,
++): { cwd: string; target: string } {
++  try {
++    if (statFn(path).isDirectory()) return { cwd: path, target: "." };
++    return { cwd: dirname(path), target: basename(path) };
++  } catch {
++    return { cwd: path, target: "." };
++  }
++}
++
++function buildRgArgs(args: GrepArgs, target = "."): string[] {
+   const rg: string[] = ["--json"];
+   if (args.caseInsensitive) rg.push("-i");
+   if (args.multiline) {
+@@ -207,7 +235,7 @@ function buildRgArgs(args: GrepArgs): string[] {
+     rg.push("--glob", g);
+   }
+   if (args.type) rg.push("--type", args.type);
+-  rg.push("--", args.pattern, ".");
++  rg.push("--", args.pattern, target);
+   return rg;
+ }
+ 
+-- 
+2.50.1 (Apple Git-155)
+

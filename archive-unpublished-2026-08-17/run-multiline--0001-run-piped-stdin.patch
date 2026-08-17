@@ -1,0 +1,685 @@
+From a34687b7c92125cd380ebbf3067a930723a92c75 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?=D0=92=D0=B0=D0=BB=D0=B5=D1=80=D0=B8=D0=B9=20=D0=91=D1=80?=
+ =?UTF-8?q?=D0=B8=D0=B6=D0=B0=D1=82=D1=8E=D0=BA?=
+ <valerii@Valerijs-MacBook-Pro.local>
+Date: Fri, 14 Aug 2026 10:58:02 +0300
+Subject: [PATCH 1/2] fix(cli): stop `run` silently dropping piped stdin, add
+ --prompt/--prompt-file
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+`atomic-agent run` is a chat loop where one stdin line is one user message.
+Two things made it unusable from a script:
+
+1. **Buffered lines were discarded.** `rl.question` consumes one line and
+   readline drains the rest of the chunk while that first turn is still in
+   the model — with no `line` listener attached, those lines went nowhere.
+   `printf 'a\nb\nc\n' | atomic-agent run` ran turn `a` and silently threw
+   away `b` and `c`. Verified against a 6-line brief: 1 turn before, 5
+   after. A `pending` queue fed by a `line` listener restores the
+   documented contract. The line-synchronised
+   `eval-memory/harness/multi-turn-driver.ts` is unaffected — it writes one
+   line per reply, so it never has a line in flight to queue.
+
+2. **No way to send a multi-line message at all.** Any newline starts a new
+   turn, so piping a multi-line brief makes turn 0 the first line alone and
+   the model answers a fragment ("the message looks cut off"). `--prompt
+   <text>` and `--prompt-file <path|->` seed the *first* user message
+   intact.
+
+Per invariant #6 these flags are not a one-shot goal mode: the seed goes
+through the same `runtime.runTurn` as any other message and the stdin loop
+keeps reading afterwards, so a TTY drops into interactive chat and a pipe
+ends at EOF.
+
+Also fixes `run --help`, which exited 2 with `unknown flag: --help` — the
+one place an operator would have found the line-per-turn contract
+documented.
+
+`src/cli/run-agent.ts` had no test coverage; adds 22 tests, including a
+fake-runtime chat loop that asserts the exact message text of every turn.
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ AGENTS.md                 |   2 +
+ README.md                 |  13 ++
+ src/cli/run-agent.test.ts | 283 ++++++++++++++++++++++++++++++++++++++
+ src/cli/run-agent.ts      | 195 ++++++++++++++++++++++++--
+ 4 files changed, 485 insertions(+), 8 deletions(-)
+ create mode 100644 src/cli/run-agent.test.ts
+
+diff --git a/AGENTS.md b/AGENTS.md
+index 09b2ad1..8dfa491 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -22,6 +22,8 @@ This is the source-of-truth for automated contributors (LLM agents, codegen, etc
+ 5. **No global singletons.** Dependencies are passed explicitly. `getConfig()` is the only exception.
+ 6. **Session is multi-turn chat only.** A session is a long-lived chat: `user message → 0..N tool steps → reply` is a macro-turn, multiple turns share one `SessionState.turns[]`. Two terminals exist — `reply` ends the turn, `finish` ends the whole session. All three frontends (CLI `run`, TUI, sidecar) go through `runtime.runTurn` only; there is no one-shot goal mode.
+ 
++   **CLI message framing.** One stdin **line** is one user message. `--prompt <text>` / `--prompt-file <path|->` are **not** a one-shot mode: they seed the *first* user message of an ordinary session (one `runTurn` like any other) and the stdin loop keeps reading afterwards. They exist because a scripted caller piping a multi-line brief would otherwise have turn 0 be the first line alone. The loop also **queues** lines that arrive while a turn is in flight — `rl.question` consumes one line and emits no `line` event for it, so before the queue a bulk `printf 'a\nb\nc\n' | atomic-agent run` ran turn `a` and silently discarded `b` and `c`. Ordering and timing are unchanged for the line-synchronised `eval-memory/harness/multi-turn-driver.ts`, which writes one line per reply and so never has a line in flight. Pinned by [src/cli/run-agent.test.ts](src/cli/run-agent.test.ts).
++
+ ## Rare tools: `tool.view` and `### loaded-tools`
+ 
+ The stable-prefix `### tools` block lists **frequent** tools with full `args` schemas in `# common (full)` and **rare** tools as one-line entries under `# extras` (tier `rare`), keeping the cache-hot prefix small. The model does not see full `args` for a rare tool until that tool is **loaded** into the session and rendered in the **variable** tail as `### loaded-tools` (not part of the stable prefix, so it does not pollute KV-cache for steps that do not use rare tools).
+diff --git a/README.md b/README.md
+index 1b8ff1e..35052bc 100644
+--- a/README.md
++++ b/README.md
+@@ -226,6 +226,19 @@ atomic-agent task list
+ atomic-agent trace list --limit 10
+ ```
+ 
++`run` is a chat session, so **each stdin line is one user message**. When you script it, a
++multi-line brief piped in becomes one turn per line — which is rarely what you want, because the
++model's first turn then sees only the first line. Send it as a single message instead:
++
++```bash
++atomic-agent run --prompt-file BRIEF.md --no-approval
++cat BRIEF.md | atomic-agent run --prompt-file -
++atomic-agent run --prompt "summarise README.md"
++```
++
++The seeded message is turn 0 of an ordinary session; the loop keeps reading stdin afterwards, so
++a TTY drops into interactive chat and a pipe ends at EOF. `atomic-agent run --help` lists the flags.
++
+ Handy slash commands: `/help` lists every command, `/tools` lists the built-in tool families, `/model` jumps to the LLM panel and reopens the model picker for the active cloud provider, `/privacy` shows what leaves the machine (`/privacy analytics off` turns analytics off). The chat log scrolls with PgUp / PgDn (fn+arrows on macOS).
+ 
+ Cloud provider setup pulls each provider's full live model catalog, hundreds of models, instead of a short hardcoded list; OpenAI-compatible servers are asked for their own `/v1/models`. The picker filters as you type, and `/model` switches models mid-session.
+diff --git a/src/cli/run-agent.test.ts b/src/cli/run-agent.test.ts
+new file mode 100644
+index 0000000..60d63d8
+--- /dev/null
++++ b/src/cli/run-agent.test.ts
+@@ -0,0 +1,283 @@
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join, resolve } from "node:path";
++import { Readable } from "node:stream";
++
++import type { AgentRuntime } from "../runtime/bootstrap.js";
++import type { SessionState } from "../session/session-state.js";
++
++import {
++  RUN_HELP,
++  parseArgs,
++  resolveInitialMessage,
++  runChatLoop,
++} from "./run-agent.js";
++
++function withTempDir(fn: (dir: string) => void | Promise<void>): Promise<void> {
++  const dir = mkdtempSync(join(tmpdir(), "run-agent-test-"));
++  return Promise.resolve(fn(dir)).finally(() => {
++    rmSync(dir, { recursive: true, force: true });
++  });
++}
++
++const noStdin = (): Promise<string> => {
++  throw new Error("stdin should not be read");
++};
++
++describe("parseArgs", () => {
++  it("keeps the existing flags working", () => {
++    const parsed = parseArgs([
++      "--cwd",
++      "/tmp",
++      "--max-steps",
++      "7",
++      "--no-approval",
++    ]);
++    expect(parsed).toEqual({
++      workingDir: resolve("/tmp"),
++      maxSteps: 7,
++      noApproval: true,
++      promptText: null,
++      promptFile: null,
++    });
++  });
++
++  it("defaults the prompt fields to null so no turn is seeded", () => {
++    const parsed = parseArgs([]);
++    expect(parsed).toMatchObject({ promptText: null, promptFile: null });
++  });
++
++  it("accepts --prompt and --prompt-file", () => {
++    expect(parseArgs(["--prompt", "hi there"])).toMatchObject({
++      promptText: "hi there",
++      promptFile: null,
++    });
++    expect(parseArgs(["--prompt-file", "brief.md"])).toMatchObject({
++      promptText: null,
++      promptFile: "brief.md",
++    });
++  });
++
++  it("rejects --prompt together with --prompt-file", () => {
++    expect(parseArgs(["--prompt", "a", "--prompt-file", "b.md"])).toEqual({
++      error: "--prompt and --prompt-file are mutually exclusive",
++    });
++  });
++
++  it("rejects prompt flags with no value", () => {
++    expect(parseArgs(["--prompt"])).toEqual({
++      error: "--prompt requires a value",
++    });
++    expect(parseArgs(["--prompt-file"])).toEqual({
++      error: "--prompt-file requires a value",
++    });
++  });
++
++  it("treats --help / -h as help rather than an unknown flag", () => {
++    // Regression: `run --help` used to exit 2 with "unknown flag: --help",
++    // which is how an operator discovers the line-per-turn stdin contract.
++    expect(parseArgs(["--help"])).toEqual({ help: true });
++    expect(parseArgs(["-h"])).toEqual({ help: true });
++  });
++
++  it("still reports genuinely unknown flags", () => {
++    expect(parseArgs(["--nope"])).toEqual({ error: "unknown flag: --nope" });
++  });
++
++  it("documents the multi-line stdin pitfall in the help text", () => {
++    expect(RUN_HELP).toContain("--prompt-file");
++    expect(RUN_HELP).toContain("one message per line");
++  });
++});
++
++/**
++ * The chat loop only needs `runTurn` from the runtime, so the fake records
++ * the exact message text of every turn and hands the session straight back.
++ */
++function fakeRuntime(): { runtime: AgentRuntime; messages: string[] } {
++  const messages: string[] = [];
++  const runtime = {
++    runTurn: async (session: SessionState, message: string) => {
++      messages.push(message);
++      return { session };
++    },
++  } as unknown as AgentRuntime;
++  return { runtime, messages };
++}
++
++const BRIEF = "# BUILD BRIEF\n\nStep one: scaffold.\nStep two: verify.";
++
++describe("runChatLoop message framing", () => {
++  let stdout: ReturnType<typeof vi.spyOn>;
++  let stderr: ReturnType<typeof vi.spyOn>;
++
++  beforeEach(() => {
++    // The loop writes one line per turn to stdout and the `you> ` prompt to
++    // stderr; swallow both so test output stays readable.
++    stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
++    stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
++  });
++  afterEach(() => {
++    stdout.mockRestore();
++    stderr.mockRestore();
++  });
++
++  const drive = async (
++    opts: { initialMessage?: string; stdin?: string },
++  ): Promise<string[]> => {
++    const { runtime, messages } = fakeRuntime();
++    await runChatLoop({
++      runtime,
++      initialSession: { status: "pending" } as SessionState,
++      maxSteps: 4,
++      controller: new AbortController(),
++      ...(opts.initialMessage === undefined
++        ? {}
++        : { initialMessage: opts.initialMessage }),
++      input: Readable.from([opts.stdin ?? ""]),
++    });
++    return messages;
++  };
++
++  it("keeps every piped line instead of dropping all but the first", async () => {
++    // Regression: readline drains a whole chunk the moment it lands, and
++    // `rl.question` only takes one line, so a bulk pipe used to run turn 0
++    // and silently discard the rest. Before the queue this returned
++    // exactly ["# BUILD BRIEF"].
++    const messages = await drive({ stdin: `${BRIEF}\n` });
++    expect(messages).toEqual([
++      "# BUILD BRIEF",
++      "Step one: scaffold.",
++      "Step two: verify.",
++    ]);
++    expect(messages[0]).not.toContain("scaffold");
++  });
++
++  it("delivers initialMessage as a single turn with newlines intact", async () => {
++    const messages = await drive({ initialMessage: BRIEF });
++    expect(messages).toEqual([BRIEF]);
++    expect(messages[0]).toContain("scaffold");
++    expect(messages[0]).toContain("verify");
++  });
++
++  it("sends initialMessage before stdin, then keeps chatting", async () => {
++    // Invariant #6: this is not a one-shot mode — the session stays a
++    // multi-turn chat, the seed is just turn 0.
++    const messages = await drive({
++      initialMessage: BRIEF,
++      stdin: "follow up\n",
++    });
++    expect(messages).toEqual([BRIEF, "follow up"]);
++  });
++
++  it("skips the seeded turn when no prompt flag was given", async () => {
++    expect(await drive({ stdin: "hello\n" })).toEqual(["hello"]);
++  });
++
++  it("returns instead of hanging when the input stream is already ended", async () => {
++    // `--prompt-file -` drains stdin before the loop starts, so readline's
++    // `close` fires before the loop can attach a one-shot listener. The
++    // seeded turn must run and the loop must then exit at EOF.
++    const drained = Readable.from(["already read\n"]);
++    for await (const _chunk of drained) {
++      // consume to end
++    }
++    const { runtime, messages } = fakeRuntime();
++    await runChatLoop({
++      runtime,
++      initialSession: { status: "pending" } as SessionState,
++      maxSteps: 1,
++      controller: new AbortController(),
++      initialMessage: BRIEF,
++      input: drained,
++    });
++    expect(messages).toEqual([BRIEF]);
++  });
++
++  it("stops at /quit without seeding an extra turn", async () => {
++    expect(await drive({ stdin: "one\n/quit\ntwo\n" })).toEqual(["one"]);
++  });
++});
++
++describe("resolveInitialMessage", () => {
++  it("seeds no message when neither flag is given", async () => {
++    await expect(
++      resolveInitialMessage({ promptText: null, promptFile: null }, noStdin),
++    ).resolves.toEqual({ message: null });
++  });
++
++  it("passes --prompt through, trimmed", async () => {
++    await expect(
++      resolveInitialMessage(
++        { promptText: "  build the thing  ", promptFile: null },
++        noStdin,
++      ),
++    ).resolves.toEqual({ message: "build the thing" });
++  });
++
++  it("rejects a whitespace-only --prompt instead of seeding an empty turn", async () => {
++    await expect(
++      resolveInitialMessage({ promptText: "   ", promptFile: null }, noStdin),
++    ).resolves.toEqual({ error: "--prompt is empty" });
++  });
++
++  it("reads a multi-line file as ONE message with newlines intact", async () => {
++    await withTempDir(async (dir) => {
++      const path = join(dir, "brief.md");
++      const brief = "# BUILD BRIEF\n\nLine two.\n- bullet three\n";
++      writeFileSync(path, brief);
++      const result = await resolveInitialMessage(
++        { promptText: null, promptFile: path },
++        noStdin,
++      );
++      // This is the whole point of the flag: the model must receive every
++      // line, not just the heading.
++      expect(result).toEqual({
++        message: "# BUILD BRIEF\n\nLine two.\n- bullet three",
++      });
++      if ("message" in result && result.message) {
++        expect(result.message.split("\n")).toHaveLength(4);
++      }
++    });
++  });
++
++  it("reads all of stdin for `-`", async () => {
++    const result = await resolveInitialMessage(
++      { promptText: null, promptFile: "-" },
++      async () => "first line\nsecond line\n",
++    );
++    expect(result).toEqual({ message: "first line\nsecond line" });
++  });
++
++  it("errors on an empty prompt file", async () => {
++    await withTempDir(async (dir) => {
++      const path = join(dir, "empty.md");
++      writeFileSync(path, "\n  \n");
++      await expect(
++        resolveInitialMessage({ promptText: null, promptFile: path }, noStdin),
++      ).resolves.toEqual({ error: `--prompt-file ${path} is empty` });
++    });
++  });
++
++  it("errors on empty stdin, naming stdin rather than `-`", async () => {
++    await expect(
++      resolveInitialMessage(
++        { promptText: null, promptFile: "-" },
++        async () => "",
++      ),
++    ).resolves.toEqual({ error: "--prompt-file stdin is empty" });
++  });
++
++  it("errors with the resolved path when the file is missing", async () => {
++    const result = await resolveInitialMessage(
++      { promptText: null, promptFile: "no-such-brief.md" },
++      noStdin,
++    );
++    expect(result).toMatchObject({});
++    expect("error" in result && result.error).toContain(
++      resolve("no-such-brief.md"),
++    );
++    expect("error" in result && result.error).toContain("ENOENT");
++  });
++});
+diff --git a/src/cli/run-agent.ts b/src/cli/run-agent.ts
+index c93c297..0781c7f 100644
+--- a/src/cli/run-agent.ts
++++ b/src/cli/run-agent.ts
+@@ -1,6 +1,8 @@
++import { readFile } from "node:fs/promises";
+ import { resolve } from "node:path";
+ import { createInterface } from "node:readline";
+ import type { Interface as ReadlineInterface } from "node:readline";
++import type { Readable } from "node:stream";
+ 
+ import {
+   formatApprovalCategory,
+@@ -20,19 +22,53 @@ import {
+ import { stderrSink } from "../tracing/structured-logger.js";
+ import type { SessionState } from "../session/session-state.js";
+ 
++export const RUN_HELP = [
++  "atomic-agent run — interactive chat session with the agent",
++  "",
++  "Usage:",
++  "  atomic-agent run [options]",
++  "",
++  "Options:",
++  "  --cwd, --working-dir <dir>  Working directory for OS/file tools (default: process cwd)",
++  "  --max-steps <n>             Cap tool steps per turn (default: agent.maxSteps)",
++  "  --no-approval               Boot at the lowest approval level (no prompts)",
++  "  --prompt <text>             Send <text> as the first user message, then keep chatting",
++  "  --prompt-file <path>        Read the first user message from <path>; `-` reads all of stdin",
++  "  -h, --help                  Show this help",
++  "",
++  "Piped stdin is one message per line:",
++  "  Each stdin LINE is a separate user message. Piping a multi-line brief therefore",
++  "  sends only the first line as turn 0 and the rest as further turns — the model sees",
++  "  a truncated request. To send a multi-line message as ONE turn, use --prompt-file:",
++  "",
++  "    atomic-agent run --prompt-file BRIEF.md --no-approval",
++  "    cat BRIEF.md | atomic-agent run --prompt-file -",
++].join("\n");
++
+ interface RunArgs {
+   workingDir: string;
+   maxSteps: number | null;
+   noApproval: boolean;
++  /** `--prompt` text, verbatim (newlines preserved). */
++  promptText: string | null;
++  /** `--prompt-file` path, or `-` for "all of stdin". */
++  promptFile: string | null;
+ }
+ 
+-function parseArgs(args: string[]): RunArgs | { error: string } {
++export function parseArgs(
++  args: string[],
++): RunArgs | { help: true } | { error: string } {
+   let workingDir: string | null = null;
+   let maxSteps: number | null = null;
+   let noApproval = false;
++  let promptText: string | null = null;
++  let promptFile: string | null = null;
+   for (let i = 0; i < args.length; i += 1) {
+     const flag = args[i];
+     switch (flag) {
++      case "-h":
++      case "--help":
++        return { help: true };
+       case "--cwd":
+       case "--working-dir": {
+         const value = args[++i];
+@@ -51,17 +87,89 @@ function parseArgs(args: string[]): RunArgs | { error: string } {
+       case "--no-approval":
+         noApproval = true;
+         break;
++      case "--prompt": {
++        const value = args[++i];
++        if (value === undefined) return { error: `${flag} requires a value` };
++        promptText = value;
++        break;
++      }
++      case "--prompt-file": {
++        const value = args[++i];
++        if (!value) return { error: `${flag} requires a value` };
++        promptFile = value;
++        break;
++      }
+       default:
+         return { error: `unknown flag: ${flag}` };
+     }
+   }
++  if (promptText !== null && promptFile !== null) {
++    return { error: "--prompt and --prompt-file are mutually exclusive" };
++  }
+   return {
+     workingDir: workingDir ?? process.cwd(),
+     maxSteps,
+     noApproval,
++    promptText,
++    promptFile,
+   };
+ }
+ 
++/**
++ * Resolve the optional first user message from `--prompt` / `--prompt-file`.
++ *
++ * This exists because the chat loop is line-synchronised: one stdin *line*
++ * is one user message. That contract is load-bearing (the eval harness in
++ * `eval-memory/harness/multi-turn-driver.ts` depends on it, which is also
++ * why replies are flattened to a single stdout line), but it silently
++ * truncates any scripted caller that pipes a multi-line brief — turn 0
++ * receives only line 1 and the model answers a fragment. These flags let
++ * such a caller deliver the brief intact without changing the loop: the
++ * message is fed through the same `runtime.runTurn` as any other, and the
++ * session stays an ordinary multi-turn chat afterwards.
++ *
++ * `--prompt-file -` drains stdin, so a `cat brief | atomic-agent run` pipe
++ * ends at EOF after that turn, exactly as a single piped line does today.
++ */
++export async function resolveInitialMessage(
++  parsed: Pick<RunArgs, "promptText" | "promptFile">,
++  readStdin: () => Promise<string>,
++): Promise<{ message: string | null } | { error: string }> {
++  if (parsed.promptText !== null) {
++    const trimmed = parsed.promptText.trim();
++    if (trimmed.length === 0) return { error: "--prompt is empty" };
++    return { message: trimmed };
++  }
++  if (parsed.promptFile === null) return { message: null };
++
++  let raw: string;
++  if (parsed.promptFile === "-") {
++    raw = await readStdin();
++  } else {
++    const path = resolve(parsed.promptFile);
++    try {
++      raw = await readFile(path, "utf8");
++    } catch (err) {
++      const msg = err instanceof Error ? err.message : String(err);
++      return { error: `--prompt-file ${path}: ${msg}` };
++    }
++  }
++  const trimmed = raw.trim();
++  if (trimmed.length === 0) {
++    const label = parsed.promptFile === "-" ? "stdin" : parsed.promptFile;
++    return { error: `--prompt-file ${label} is empty` };
++  }
++  return { message: trimmed };
++}
++
++async function readAllStdin(): Promise<string> {
++  const chunks: Buffer[] = [];
++  for await (const chunk of process.stdin) {
++    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
++  }
++  return Buffer.concat(chunks).toString("utf8");
++}
++
+ interface CliApprovalAnswer {
+   approved: boolean;
+   grant?: ApprovalGrantScope;
+@@ -162,20 +270,33 @@ function formatAgentEvent(event: AgentLoopEvent): string | null {
+   }
+ }
+ 
+-interface ChatLoopOptions {
++export interface ChatLoopOptions {
+   runtime: AgentRuntime;
+   initialSession: SessionState;
+   maxSteps: number;
+   controller: AbortController;
++  /**
++   * Optional first user message (from `--prompt` / `--prompt-file`), sent
++   * before stdin is read. May contain newlines — it is one turn regardless.
++   */
++  initialMessage?: string | null;
++  /** Message source; defaults to `process.stdin`. Injectable for tests. */
++  input?: Readable;
+ }
+ 
+ /**
+  * Read messages line-by-line from stdin and feed them through
+  * `runtime.runTurn`. Assistant replies go to stdout (so a pipe captures
+  * just the human-readable text); everything else stays on stderr. The
+- * loop ends on EOF, `/quit`, or abort.
++ * loop ends once stdin is drained (EOF), `/quit`, or abort.
++ *
++ * `initialMessage` is sent as turn 0 ahead of the stdin loop; it is the
++ * only way to deliver a multi-line message as a single turn, since a
++ * newline in stdin always starts a new turn.
+  */
+-async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
++export async function runChatLoop(
++  opts: ChatLoopOptions,
++): Promise<SessionState> {
+   let session = opts.initialSession;
+ 
+   const collectReply = (): {
+@@ -226,15 +347,48 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
+     }
+   };
+ 
++  const input = opts.input ?? process.stdin;
+   const rl = createInterface({
+-    input: process.stdin,
++    input,
+     output: process.stderr,
+-    terminal: process.stdin.isTTY === true,
++    terminal: (input as { isTTY?: boolean }).isTTY === true,
++  });
++
++  // `rl.question` consumes exactly one line and, crucially, emits no `line`
++  // event for it — so a `line` listener sees only the lines that arrived
++  // while no question was outstanding. Without this queue those lines are
++  // dropped on the floor: `printf 'a\nb\nc\n' | atomic-agent run` used to
++  // run turn `a` and silently discard `b` and `c`, because readline drains
++  // a whole chunk as soon as it lands while the first turn is still in the
++  // model. Buffering them here restores the documented contract — one
++  // stdin line is one user message — without changing the order or timing
++  // that a line-synchronised driver
++  // (`eval-memory/harness/multi-turn-driver.ts`) sees, since that driver
++  // writes one line per reply and so never has a line in flight.
++  const pending: string[] = [];
++  rl.on("line", (line) => {
++    pending.push(line);
++  });
++
++  // Track end-of-input from a listener attached at creation time, plus the
++  // stream's own `readableEnded`. `--prompt-file -` drains stdin *before*
++  // the interface exists, so `close` has already fired by the time `ask`
++  // would attach its own one-shot listener — without this the loop waits
++  // forever on a question that can never be answered.
++  let inputClosed =
++    (input as { readableEnded?: boolean }).readableEnded === true;
++  rl.once("close", () => {
++    inputClosed = true;
+   });
+ 
+   const ask = (rli: ReadlineInterface): Promise<string | null> =>
+     new Promise((resolvePrompt, rejectPrompt) => {
+-      if ((rli as { closed?: boolean }).closed === true) {
++      const queued = pending.shift();
++      if (queued !== undefined) {
++        resolvePrompt(queued);
++        return;
++      }
++      if (inputClosed || (rli as { closed?: boolean }).closed === true) {
+         resolvePrompt(null);
+         return;
+       }
+@@ -259,6 +413,13 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
+     });
+ 
+   try {
++    if (
++      opts.initialMessage !== undefined &&
++      opts.initialMessage !== null &&
++      !opts.controller.signal.aborted
++    ) {
++      await driveTurn(opts.initialMessage);
++    }
+     while (true) {
+       if (opts.controller.signal.aborted) break;
+       if (session.status === "completed") break;
+@@ -283,11 +444,25 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
+  * CLI entry for `atomic-agent run`. Pure interactive chat: each stdin
+  * line is one user message, each `reply` from the model becomes one
+  * assistant message. `/quit` exits, `/abort` cancels the current turn.
++ * `--prompt` / `--prompt-file` seed the first message so a scripted
++ * caller can send a multi-line brief as one turn.
+  */
+ export async function runAgentCommand(args: string[]): Promise<number> {
+   const parsed = parseArgs(args);
++  if ("help" in parsed) {
++    process.stdout.write(`${RUN_HELP}\n`);
++    return 0;
++  }
+   if ("error" in parsed) {
+-    process.stderr.write(`${parsed.error}\n`);
++    process.stderr.write(`${parsed.error}\n\n${RUN_HELP}\n`);
++    return 2;
++  }
++  // Resolve the seed message before any runtime boot: `--prompt-file -`
++  // consumes stdin, and a bad path should fail fast instead of after a
++  // browser/llama connection attempt.
++  const initial = await resolveInitialMessage(parsed, readAllStdin);
++  if ("error" in initial) {
++    process.stderr.write(`${initial.error}\n`);
+     return 2;
+   }
+   const config = getConfig();
+@@ -340,6 +515,9 @@ export async function runAgentCommand(args: string[]): Promise<number> {
+       `  browser: ${config.browser.channel}${config.browser.headless ? " (headless)" : ""}\n` +
+       `  skills:  ${runtime.skillCatalog.length} installed\n` +
+       `  approval: level ${formatApprovalLevel(approvalLevel)}\n` +
++      (initial.message === null
++        ? ""
++        : `  prompt:  seeded (${initial.message.length} chars, ${initial.message.split("\n").length} lines)\n`) +
+       `  type /quit to exit, /abort to cancel current turn\n`,
+   );
+ 
+@@ -356,6 +534,7 @@ export async function runAgentCommand(args: string[]): Promise<number> {
+       initialSession: session,
+       maxSteps: parsed.maxSteps ?? config.agent.maxSteps,
+       controller,
++      initialMessage: initial.message,
+     });
+     runtime.sessionStore.save(finalSession);
+     process.stderr.write(
+-- 
+2.50.1 (Apple Git-155)
+
