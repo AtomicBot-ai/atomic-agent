@@ -511,7 +511,11 @@ export function createInitialTuiState(
     fallbackPanel: createInitialFallbackPanelState(),
     localModelsPanel: createInitialLocalModelsPanelState(),
     localLlmLogs: createInitialLocalLlmLogsState(),
-    llmHealth: createInitialLlmHealthState(session.localBackendConfigured),
+    // Optional chaining on purpose: `session` is typed as required but tests
+    // call this with nothing (test files are outside tsconfig's include), and
+    // before this argument existed no field was read here, so a bare
+    // `session.` would turn those callers into a crash.
+    llmHealth: createInitialLlmHealthState(session?.localBackendConfigured),
     telegramPanel: createInitialTelegramPanelState(),
     recentSessions: [],
     chatFocus: "editor",
