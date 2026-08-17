@@ -220,6 +220,13 @@ export interface TuiSessionInfo {
   approvalLevel: number;
   maxSteps: number;
   skillCount: number;
+  /**
+   * Whether the user actually opted into a local backend (see
+   * `isLocalBackendConfigured`). Decides whether the llama-server health
+   * indicator is shown at all, so a fresh install is not told that a server
+   * it never configured is down.
+   */
+  localBackendConfigured: boolean;
 }
 
 /**
@@ -504,7 +511,7 @@ export function createInitialTuiState(
     fallbackPanel: createInitialFallbackPanelState(),
     localModelsPanel: createInitialLocalModelsPanelState(),
     localLlmLogs: createInitialLocalLlmLogsState(),
-    llmHealth: createInitialLlmHealthState(),
+    llmHealth: createInitialLlmHealthState(session.localBackendConfigured),
     telegramPanel: createInitialTelegramPanelState(),
     recentSessions: [],
     chatFocus: "editor",

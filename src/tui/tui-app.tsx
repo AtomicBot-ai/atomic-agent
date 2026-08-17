@@ -699,8 +699,16 @@ export function TuiApp({
   const isTty = Boolean(process.stdout.isTTY);
   const rootHeight = isTty ? terminalSize.rows : undefined;
   const promptLlm = selectPromptLlmMeta(state);
+  // No local backend chosen yet ⇒ no local health to report. Without this the
+  // splash screen of a fresh install announces that a server the user never
+  // configured is down, which reads as a broken install rather than an
+  // un-started one. `localConfigured` latches on as soon as local is really
+  // the route (config says so, or a probe answered), so real local users keep
+  // the ● / ○ signal they rely on.
   const promptLeftSlot = promptLlm.usesLocalHealth ? (
-    <LlmHealthBadge health={state.llmHealth} />
+    state.llmHealth.localConfigured ? (
+      <LlmHealthBadge health={state.llmHealth} />
+    ) : null
   ) : (
     <Text>
       <Text color="green" bold>

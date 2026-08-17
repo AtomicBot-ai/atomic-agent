@@ -146,6 +146,11 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
           lastCheckedAt: action.checkedAt,
           latencyMs: action.latencyMs,
           error: action.error,
+          // A server that answers is a server somebody meant to run, even if
+          // config never said so. Latch it on so the indicator appears for
+          // that user and survives the server later going down.
+          localConfigured:
+            state.llmHealth.localConfigured || action.status === "healthy",
         },
       };
     case "llm_model_updated":

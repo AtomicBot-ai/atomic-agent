@@ -14,6 +14,7 @@ export function fakeSession(
     approvalLevel: 5,
     maxSteps: 10,
     skillCount: 0,
+    localBackendConfigured: false,
     ...overrides,
   };
 }

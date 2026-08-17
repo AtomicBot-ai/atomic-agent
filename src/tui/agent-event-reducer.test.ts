@@ -18,6 +18,7 @@ function fakeSession(overrides: Partial<TuiSessionInfo> = {}): TuiSessionInfo {
     approvalLevel: 5,
     maxSteps: 10,
     skillCount: 0,
+    localBackendConfigured: false,
     ...overrides,
   };
 }
@@ -384,3 +385,56 @@ describe("reduceTuiState", () => {
     expect(down.session.approvalLevel).toBe(2);
   });
 });
+
+describe("llm health visibility", () => {
+  it("does not mark local as configured just because a probe failed", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "llm_health_updated",
+        status: "unreachable",
+        checkedAt: 1,
+        latencyMs: null,
+        error: "connect ECONNREFUSED 127.0.0.1:8080",
+      },
+    ]);
+
+    // A fresh install probes a default URL nobody chose; a refusal there is
+    // not news, and the badge stays hidden.
+    expect(state.llmHealth.status).toBe("unreachable");
+    expect(state.llmHealth.localConfigured).toBe(false);
+  });
+
+  it("latches on after a healthy probe and survives the server dying", () => {
+    const healthy = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "llm_health_updated",
+        status: "healthy",
+        checkedAt: 1,
+        latencyMs: 3,
+        error: null,
+      },
+    ]);
+    expect(healthy.llmHealth.localConfigured).toBe(true);
+
+    // Somebody who really runs llama-server keeps the signal when it stops.
+    const died = apply(healthy, [
+      {
+        type: "llm_health_updated",
+        status: "unreachable",
+        checkedAt: 2,
+        latencyMs: null,
+        error: "connect ECONNREFUSED 127.0.0.1:8080",
+      },
+    ]);
+    expect(died.llmHealth.localConfigured).toBe(true);
+    expect(died.llmHealth.status).toBe("unreachable");
+  });
+
+  it("starts visible when config already says local", () => {
+    const state = createInitialTuiState(
+      fakeSession({ localBackendConfigured: true }),
+    );
+    expect(state.llmHealth.localConfigured).toBe(true);
+  });
+});
+
