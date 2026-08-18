@@ -719,6 +719,12 @@ export interface AtomicAgentConfig {
       requestTimeoutMs?: number;
       promptCache?: "auto" | "off" | "explicit-markers";
       providerPreferences?: Record<string, unknown>;
+      /**
+       * Vendor-specific fields merged into the OpenAI-compatible chat
+       * body. Reserved keys (`model`, `messages`, `stream`, `tools`)
+       * are re-applied after the merge and cannot be overridden.
+       */
+      extraBody?: Record<string, unknown>;
       userModels?: ReadonlyArray<{
         id: string;
         kind: "chat" | "embedding";

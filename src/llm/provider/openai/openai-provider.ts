@@ -46,6 +46,12 @@ export interface OpenAiProviderOptions {
   streamConsumer?: StreamConsumer;
   apiPathPrefix?: string;
   taggedToolCompatibility?: "qwen";
+  /**
+   * Vendor-specific fields merged into every chat completion body.
+   * See `RESERVED_BODY_KEYS` in `openai-build-body.ts` for the keys
+   * this passthrough cannot override.
+   */
+  extraBody?: Record<string, unknown>;
 }
 
 export class OpenAiProvider implements LlmProvider {
@@ -59,6 +65,7 @@ export class OpenAiProvider implements LlmProvider {
   private readonly defaultChatModel: string;
   private readonly apiPathPrefix: string;
   private readonly taggedToolCompatibility: "qwen" | undefined;
+  private readonly extraBody: Record<string, unknown> | undefined;
 
   constructor(options: OpenAiProviderOptions) {
     this.id = options.id;
@@ -79,6 +86,7 @@ export class OpenAiProvider implements LlmProvider {
     this.defaultChatModel = options.defaultChatModel;
     this.apiPathPrefix = normalizeApiPathPrefix(options.apiPathPrefix ?? "/v1");
     this.taggedToolCompatibility = options.taggedToolCompatibility;
+    this.extraBody = options.extraBody;
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
       apiKey: options.apiKey,
@@ -90,7 +98,7 @@ export class OpenAiProvider implements LlmProvider {
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
-    const body = buildOpenAiChatBody(request, this.defaultChatModel, false);
+    const body = buildOpenAiChatBody(request, this.defaultChatModel, false, this.extraBody);
     const json = await openAiPostJson(
       this.http,
       `${this.apiPathPrefix}/chat/completions`,
@@ -107,7 +115,7 @@ export class OpenAiProvider implements LlmProvider {
   async *completeStream(
     request: CompletionRequest,
   ): AsyncGenerator<StreamChunk, CompletionResult, void> {
-    const body = buildOpenAiChatBody(request, this.defaultChatModel, true);
+    const body = buildOpenAiChatBody(request, this.defaultChatModel, true, this.extraBody);
     // Opening the stream (connect + status check) happens inside the
     // client's bounded retry, strictly before the first chunk exists.
     // From here on the stream is live and failures are terminal.

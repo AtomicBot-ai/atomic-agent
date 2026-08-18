@@ -57,6 +57,7 @@ export function registerBuiltInProviderKinds(): void {
       supportsVision: entry.supportsVision ?? true,
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
+      extraBody: entry.extraBody,
     });
   });
 
@@ -77,6 +78,7 @@ export function registerBuiltInProviderKinds(): void {
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       taggedToolCompatibility: "qwen",
+      extraBody: entry.extraBody,
     });
   });
 

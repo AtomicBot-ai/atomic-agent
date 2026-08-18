@@ -31,6 +31,18 @@ export type LlmProviderConfigEntry = {
   requestTimeoutMs?: number;
   promptCache?: "auto" | "off" | "explicit-markers";
   providerPreferences?: Record<string, unknown>;
+  /**
+   * Vendor-specific fields merged into the OpenAI-compatible chat
+   * completion body. Lets a deployment reach extensions that are not
+   * part of the OpenAI schema (e.g. Alibaba Model Studio's
+   * `chat_template_kwargs.enable_thinking`) without a code change per
+   * vendor.
+   *
+   * **Reserved keys win.** `model`, `messages`, `stream` and `tools`
+   * are re-applied after the merge, so a stray entry can never detach
+   * the request from the resolved model or drop the tool contract.
+   */
+  extraBody?: Record<string, unknown>;
   userModels?: ReadonlyArray<UserModelConfigEntry>;
 };
 
