@@ -11,7 +11,9 @@ import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
 import { registerSession } from "../local-llm/session-registry.js";
 import { enterAltScreen } from "./alt-screen.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
-import { parseTuiArgs } from "./tui-args.js";
+import { parseTuiArgs,
+  nonInteractiveStdinError,
+} from "./tui-args.js";
 import {
   persistUserLocalLlmUrl,
   pointsAtManagedDaemon,
@@ -42,6 +44,14 @@ export async function tuiCommand(args: string[]): Promise<number> {
   if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n`);
     return 2;
+  }
+  // A TUI needs a terminal — refuse a piped stdin with one sentence
+  // instead of letting Ink's raw-mode requirement crash with a stack
+  // trace. See `nonInteractiveStdinError` for the reasoning.
+  const stdinError = nonInteractiveStdinError();
+  if (stdinError) {
+    process.stderr.write(`${stdinError}\n`);
+    return 1;
   }
   // Theme selection BEFORE any Ink render or stdin listener (the startup-gate
   // wizard and the main render). An explicit
