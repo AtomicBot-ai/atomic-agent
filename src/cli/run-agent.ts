@@ -8,6 +8,8 @@ import {
   resolveBootApprovalLevel,
 } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
+import { formatLlamaUnreachableHint } from "../llm/llama-server-health.js";
+import { resolveLlmConfig } from "../llm/provider/registry/provider-types.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
@@ -127,7 +129,40 @@ async function promptApproval(
   }
 }
 
-function formatAgentEvent(event: AgentLoopEvent): string | null {
+/** Transport failures that mean "nothing answered at the configured URL". */
+const TRANSPORT_NO_ANSWER = /fetch failed|ECONNREFUSED|ECONNRESET|socket hang up|timeout/i;
+
+function withLlamaHint(
+  base: string,
+  category: string,
+  message: string,
+  ctx?: { llamaHint?: string | null; hintShown?: { value: boolean } },
+): string {
+  if (!ctx?.llamaHint || ctx.hintShown?.value) return base;
+  if (category !== "transport" || !TRANSPORT_NO_ANSWER.test(message)) return base;
+  if (ctx.hintShown) ctx.hintShown.value = true;
+  const indented = ctx.llamaHint
+    .split("\n")
+    .map((line) => `    ${line}`)
+    .join("\n");
+  return `${base}\n${indented}`;
+}
+
+/**
+ * Render one agent-loop event as a diagnostic stderr line, or null for
+ * events other surfaces own. Exported for tests.
+ *
+ * `ctx.llamaHint` carries the actionable llama-server message when the
+ * active text route is the local server: a transport failure there is
+ * almost always "llama-server is not running", and the raw undici string
+ * ("fetch failed") tells the operator none of URL / cause / fix. The hint
+ * is appended once per process — every retry repeating three lines of
+ * advice would bury the log.
+ */
+export function formatAgentEvent(
+  event: AgentLoopEvent,
+  ctx?: { llamaHint?: string | null; hintShown?: { value: boolean } },
+): string | null {
   switch (event.type) {
     case "user_message":
       return null;
@@ -148,15 +183,18 @@ function formatAgentEvent(event: AgentLoopEvent): string | null {
         return `  ← ${inner.result.tool} ${inner.result.status}: ${inner.result.summary}${inner.result.truncated ? " (truncated)" : ""}`;
       }
       if (inner.type === "step_error") {
-        return `  ! [${inner.category}] ${inner.error.message}`;
+        const base = `  ! [${inner.category}] ${inner.error.message}`;
+        return withLlamaHint(base, inner.category, inner.error.message, ctx);
       }
       // assistant_reply / reasoning are emitted to stdout from the chat loop instead.
       return null;
     }
     case "loop_completed":
       return null;
-    case "loop_failed":
-      return `» loop failed [${event.category}]: ${event.error.message}`;
+    case "loop_failed": {
+      const base = `» loop failed [${event.category}]: ${event.error.message}`;
+      return withLlamaHint(base, event.category, event.error.message, ctx);
+    }
     default:
       return null;
   }
@@ -298,6 +336,15 @@ export async function runAgentCommand(args: string[]): Promise<number> {
 
   let approvalChain: Promise<unknown> = Promise.resolve();
 
+  // The hint only applies when a transport failure means "local llama is
+  // down" — i.e. the active text route IS the local server. On a cloud
+  // route the same category points at the provider, not at llama.
+  const llamaHint =
+    resolveLlmConfig(config).activeTextProvider === "local-llama"
+      ? formatLlamaUnreachableHint(config.localModels.url)
+      : null;
+  const hintShown = { value: false };
+
   const runtime = await createAgentRuntime({
     workingDir: parsed.workingDir,
     approvalLevel,
@@ -308,7 +355,7 @@ export async function runAgentCommand(args: string[]): Promise<number> {
         // `eventHook` argument of `runTurn` (see `driveTurn`). This
         // global handler only feeds the diagnostic stderr stream so
         // the operator can watch the macro-turn lifecycle.
-        const line = formatAgentEvent(event);
+        const line = formatAgentEvent(event, { llamaHint, hintShown });
         if (line) process.stderr.write(`${line}\n`);
       },
       onApprovalRequest: (request) => {
