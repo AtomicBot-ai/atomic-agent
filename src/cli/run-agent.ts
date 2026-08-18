@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { Interface as ReadlineInterface } from "node:readline";
@@ -60,7 +61,21 @@ function parseArgs(args: string[]): RunArgs | { error: string } | { help: true }
       case "--working-dir": {
         const value = args[++i];
         if (!value) return { error: `${flag} requires a value` };
-        workingDir = resolve(value);
+        const resolved = resolve(value);
+        // A typo'd path used to sail through: the run booted, printed the
+        // bogus directory in its banner as though healthy, ENOENT'd on
+        // every filesystem tool until the step budget ran out — and then
+        // exited 0. Catch it before anything boots.
+        let isDirectory = false;
+        try {
+          isDirectory = statSync(resolved).isDirectory();
+        } catch {
+          isDirectory = false;
+        }
+        if (!isDirectory) {
+          return { error: `${flag} is not a directory: ${resolved}` };
+        }
+        workingDir = resolved;
         break;
       }
       case "--max-steps": {
@@ -443,7 +458,13 @@ export async function runAgentCommand(args: string[]): Promise<number> {
         2,
       )}\n`,
     );
-    if (finalSession.status === "failed") exitCode = 1;
+    // `stalled` means the step budget ran out with nothing produced —
+    // that is not success, and a CI job watching this exit code must not
+    // read it as one. Only `completed` (and a clean EOF on an idle
+    // session) count as 0.
+    if (finalSession.status === "failed" || finalSession.status === "stalled") {
+      exitCode = 1;
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`fatal: ${msg}\n`);

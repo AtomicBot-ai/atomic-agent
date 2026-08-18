@@ -270,8 +270,10 @@ async function handleShow(args: string[]): Promise<number> {
   });
   const record = skills.find((s) => s.manifest.name === name);
   if (!record) {
+    // "That skill does not exist" is a lookup failure, not a usage error:
+    // exit 1, so 2 keeps meaning "you invoked this wrong" across the CLI.
     process.stderr.write(`skill not installed: ${name}\n`);
-    return 2;
+    return 1;
   }
   process.stdout.write(`# path: ${record.manifestPath}\n`);
   process.stdout.write(`# source: ${record.source}\n\n`);
