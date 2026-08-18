@@ -10,7 +10,7 @@ import {
 import { reduceTuiState } from "./agent-event-reducer.js";
 import type { ApprovalGrantScope } from "../approval/approval-gate.js";
 import type { TuiAction } from "./tui-action.js";
-import { handleAppKey } from "./app-key-bindings.js";
+import { handleAppKey, handlePanelEscape } from "./app-key-bindings.js";
 import { ApprovalModal } from "./approval-modal.js";
 import { ChatLog } from "./components/chat-log.js";
 import { DebugPane } from "./components/debug-pane.js";
@@ -537,44 +537,34 @@ export function TuiApp({
     // navigation, tab completion, enter to run, esc to close. Routing to
     // a debug-tab panel here would re-interpret letters as hotkeys.
     if (state.slashPaletteOpen) return;
+    let panelHandled: boolean | null = null;
     if (tasksTabActive) {
-      handleTasksTabKey(input, key, { state, dispatch, callbacks });
-      return;
+      panelHandled = handleTasksTabKey(input, key, { state, dispatch, callbacks });
+    } else if (skillsTabActive) {
+      panelHandled = handleSkillsTabKey(input, key, { state, dispatch, callbacks });
+    } else if (memoryTabActive) {
+      panelHandled = handleMemoryTabKey(input, key, { state, dispatch, callbacks });
+    } else if (mcpTabActive) {
+      panelHandled = handleMcpTabKey(input, key, { state, dispatch, callbacks });
+    } else if (providersTabActive) {
+      panelHandled = handleProvidersTabKey(input, key, { state, dispatch, callbacks });
+    } else if (llmTabActive) {
+      panelHandled = handleLlmPanelKey(input, key, { state, dispatch, callbacks });
+    } else if (localModelsTabActive) {
+      panelHandled = handleLocalModelsTabKey(input, key, {
+        state,
+        dispatch,
+        callbacks,
+      });
+    } else if (telegramTabActive) {
+      panelHandled = handleTelegramTabKey(input, key, { state, dispatch, callbacks });
+    } else if (importTabActive) {
+      panelHandled = handleImportTabKey(input, key, { state, dispatch, callbacks });
+    } else if (privacyTabActive) {
+      panelHandled = handlePrivacyTabKey(input, key, { state, dispatch, callbacks });
     }
-    if (skillsTabActive) {
-      handleSkillsTabKey(input, key, { state, dispatch, callbacks });
-      return;
-    }
-    if (memoryTabActive) {
-      handleMemoryTabKey(input, key, { state, dispatch, callbacks });
-      return;
-    }
-    if (mcpTabActive) {
-      handleMcpTabKey(input, key, { state, dispatch, callbacks });
-      return;
-    }
-    if (providersTabActive) {
-      handleProvidersTabKey(input, key, { state, dispatch, callbacks });
-      return;
-    }
-    if (llmTabActive) {
-      handleLlmPanelKey(input, key, { state, dispatch, callbacks });
-      return;
-    }
-    if (localModelsTabActive) {
-      handleLocalModelsTabKey(input, key, { state, dispatch, callbacks });
-      return;
-    }
-    if (telegramTabActive) {
-      handleTelegramTabKey(input, key, { state, dispatch, callbacks });
-      return;
-    }
-    if (importTabActive) {
-      handleImportTabKey(input, key, { state, dispatch, callbacks });
-      return;
-    }
-    if (privacyTabActive) {
-      handlePrivacyTabKey(input, key, { state, dispatch, callbacks });
+    if (panelHandled !== null) {
+      handlePanelEscape(key, { panelHandled, editorFocus, dispatch });
       return;
     }
   });
