@@ -240,7 +240,9 @@ export async function bootstrapSidecar(): Promise<{
       await disposeActive();
       const workingDir = resolve(request.payload.workingDir);
       const runtime = await buildRuntime(workingDir);
-      const health = await checkLlamaServer();
+      // Status probe for the desktop shell — one attempt; the retry
+      // ladder only delayed the `llm_unavailable` event by 15.5 s.
+      const health = await checkLlamaServer({ retries: 0 });
       if (!health.reachable) {
         const hint =
           config.localModels.mode === "managed"
