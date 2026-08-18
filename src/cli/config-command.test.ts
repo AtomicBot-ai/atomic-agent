@@ -155,4 +155,20 @@ describe("configCommand", () => {
     expect(code).toBe(1);
     expect(stderr).toContain("unknown subcommand: wat");
   });
+
+  it("the set example in --help runs through the real set path", async () => {
+    // Rot-proofing: extract the example payload straight out of the rendered
+    // help text and feed it to `config set` for real. If the schema moves and
+    // the example is left behind (as happened with `"version":1` + `llama`),
+    // this test fails instead of a user's paste.
+    await configCommand(["--help"]);
+    const match = stdout.match(/config set '(\{.*\})'/);
+    expect(match).not.toBeNull();
+    stdout = "";
+    const code = await configCommand(["set", match![1]]);
+    expect(code).toBe(0);
+    const onDisk = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
+    expect(onDisk.version).toBe(USER_CONFIG_VERSION);
+    expect(onDisk.localModels.url).toBe("http://127.0.0.1:19091");
+  });
 });

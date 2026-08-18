@@ -4,8 +4,23 @@ import {
   getConfig,
   parseUserConfigFile,
   resetConfigCache,
+  USER_CONFIG_VERSION,
   writeUserConfigFileSync,
 } from "../config/index.js";
+
+/**
+ * Copy-pasteable `config set` payload, assembled from the live schema
+ * constants so the help text cannot drift from what `parseUserConfigFile`
+ * accepts (the previous hand-written example carried `"version":1` and a
+ * `llama` key, both long dead). `config-command.test.ts` extracts this
+ * exact line from the rendered help and runs it through the real `set`
+ * path.
+ */
+const CONFIG_SET_EXAMPLE = JSON.stringify({
+  version: USER_CONFIG_VERSION,
+  localModels: { url: "http://127.0.0.1:19091" },
+  log: { level: "info" },
+});
 
 const HELP =
   [
@@ -18,12 +33,12 @@ const HELP =
     "  get                       Print the whole config file as JSON",
     "  set '<json>'              Replace the whole config file with a JSON payload",
     "",
+    "Keys left out of the payload are filled with their defaults; the result is",
+    "validated before anything is written.",
+    "",
     "Example:",
     "  atomic-agent config get",
-    "  atomic-agent config set '{\"version\":1,\"llama\":{\"url\":\"http://127.0.0.1:19091\"},",
-    "                            \"log\":{\"level\":\"info\"},",
-    "                            \"agent\":{\"tokenBudget\":3000,\"maxSteps\":25,",
-    "                                     \"toolTimeoutMs\":60000,\"approvalLevel\":1}}'",
+    `  atomic-agent config set '${CONFIG_SET_EXAMPLE}'`,
   ].join("\n") + "\n";
 
 export async function configCommand(args: string[]): Promise<number> {
