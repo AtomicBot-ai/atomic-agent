@@ -25,6 +25,20 @@ export type SessionStatus =
    */
   | "stalled";
 
+/**
+ * Whether a session in this state should make the process exit non-zero.
+ * Both entry points that own an exit code — `atomic-agent run` and the
+ * TUI's chat orchestrator — read it from here so they cannot drift: they
+ * previously each carried their own copy of the rule, and only one was
+ * updated when `stalled` stopped counting as success.
+ *
+ * `cancelled` stays truthful to its own contract (the operator asked to
+ * stop) and is deliberately not a failure.
+ */
+export function isFailedSessionStatus(status: SessionStatus): boolean {
+  return status === "failed" || status === "stalled";
+}
+
 export interface KnownFact {
   text: string;
   source?: string;
