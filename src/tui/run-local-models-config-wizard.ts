@@ -1,6 +1,6 @@
 import { render } from "ink";
 import React from "react";
-import { getConfig } from "../config/index.js";
+import { getConfig, USER_CONFIG_DEFAULTS } from "../config/index.js";
 import { resolveLlmProviderApiKey } from "../config/resolve-llm-api-key.js";
 import {
   getLocalModelDef,
@@ -57,6 +57,7 @@ export async function runLocalModelsStartupGateIfNeeded(options: {
     React.createElement(LocalModelsConfigWizard, {
       initialUrl: getConfig().localModels.url,
       probeError: probe.error,
+      hadConfiguredBackend: isLocalBackendConfigured(),
       onFinished: (o) => {
         outcome.value = o;
       },
@@ -78,6 +79,33 @@ export function isCloudTextProviderReady(): boolean {
   if (!active || active === "local-llama") return false;
   const entry = cfg.llm?.providers.find((provider) => provider.id === active);
   return Boolean(entry && resolveLlmProviderApiKey(entry));
+}
+
+/**
+ * Whether a local backend that could actually be serving was ever set up,
+ * as opposed to untouched defaults. Two signals count: a selected managed
+ * model, and an external URL the user typed instead of the shipped one.
+ * Everything else a fresh install carries — `llm.activeTextProvider`
+ * resolving to `local-llama`, the default `http://127.0.0.1:8080`, the
+ * embeddings daemon toggle, which drives a different port and says nothing
+ * about the chat server — is a default nobody chose and must not count, or
+ * the first-run screen goes back to blaming the user for a server they
+ * never asked for.
+ *
+ * Managed mode on its own deliberately does not count. Picking "Local
+ * models" in the wizard writes `mode: "managed"` before any weights are
+ * pulled, and no server can exist until they are, so treating the bare
+ * mode as configured would report a multi-gigabyte download that has not
+ * started yet as an unreachable server.
+ */
+export function isLocalBackendConfigured(): boolean {
+  const cfg = getConfig();
+  if (cfg.localModels.managed.modelId !== null) return true;
+  // In managed mode the runtime derives `localModels.url` from
+  // `managed.port`, so the comparison below only means anything when the
+  // operator is on the external path.
+  if (cfg.localModels.mode !== "external") return false;
+  return cfg.localModels.url !== USER_CONFIG_DEFAULTS.localModels.url;
 }
 
 /**
