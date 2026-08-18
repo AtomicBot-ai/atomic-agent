@@ -325,4 +325,23 @@ describe("TuiApp (smoke)", () => {
     expect(text).not.toContain("/dump");
     unmount();
   });
+
+  it("Esc from an idle Manage panel returns to the Run screen", async () => {
+    const bus = makeTuiEventBus();
+    const { lastFrame, stdin, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    bus.emit({ type: "ui_mode_set", mode: "debug" });
+    bus.emit({ type: "tab_changed", tab: "tasks" });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(strip(lastFrame() ?? "")).toContain("▸ Manage");
+
+    stdin.write("\u001b");
+    await new Promise((r) => setTimeout(r, 60));
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("▸ Run");
+    expect(text).not.toContain("▸ Manage");
+    unmount();
+  });
 });

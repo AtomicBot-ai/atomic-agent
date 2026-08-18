@@ -271,6 +271,34 @@ export function handleAppKey(
   return false;
 }
 
+/**
+ * Last-resort Esc handling for the debug (Observe / Manage) panels,
+ * called by `TuiApp` after the active panel's own key layer declined
+ * the key. Esc that nobody claimed goes home to Run — the single
+ * "back" gesture out of a panel, which previously did not exist (the
+ * only way back was cycling Tab through every remaining sub-tab).
+ *
+ * Precedence is preserved by the caller passing `panelHandled`: modals,
+ * search inputs, detail views and half-typed forms consume Esc in their
+ * own layer first and never reach here. `editorFocus` guards the tabs
+ * that leave the chat editor focused — there the editor's own input
+ * hook owns Esc (abort / scroll-reset / quit) and must not double-act.
+ *
+ * Returns `true` when the key was consumed.
+ */
+export function handlePanelEscape(
+  key: Key,
+  opts: {
+    panelHandled: boolean;
+    editorFocus: boolean;
+    dispatch: (action: TuiAction) => void;
+  },
+): boolean {
+  if (!key.escape || opts.panelHandled || opts.editorFocus) return false;
+  opts.dispatch({ type: "ui_mode_set", mode: "chat" });
+  return true;
+}
+
 function shouldTreatArrowAsChatScroll(
   input: string,
   key: Key,

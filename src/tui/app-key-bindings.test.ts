@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { Key } from "ink";
 
-import { handleAppKey } from "./app-key-bindings.js";
+import { handleAppKey, handlePanelEscape } from "./app-key-bindings.js";
 import { createInitialTuiState, type TuiSessionInfo } from "./tui-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 
@@ -543,5 +543,56 @@ describe("handleAppKey", () => {
       sidebarVisible: true,
     });
     expect(onSidebarTaskActivated).toHaveBeenCalledWith("task-id-42");
+  });
+});
+
+describe("handlePanelEscape", () => {
+  it("sends an unclaimed Esc home to Run", () => {
+    const dispatch = vi.fn();
+    const consumed = handlePanelEscape(emptyKey({ escape: true }), {
+      panelHandled: false,
+      editorFocus: false,
+      dispatch,
+    });
+    expect(consumed).toBe(true);
+    expect(dispatch).toHaveBeenCalledWith({ type: "ui_mode_set", mode: "chat" });
+  });
+
+  it("leaves the panel alone when its own layer already claimed Esc", () => {
+    // A modal, an open search input or a detail view returns `true` from
+    // the panel's key layer — the operator meant "close that", not
+    // "leave the panel", so the fallback must stay out of the way.
+    const dispatch = vi.fn();
+    const consumed = handlePanelEscape(emptyKey({ escape: true }), {
+      panelHandled: true,
+      editorFocus: false,
+      dispatch,
+    });
+    expect(consumed).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("defers to the chat editor when the editor holds focus", () => {
+    // On tabs that keep the editor focused, Esc already means
+    // abort / scroll-reset / quit inside the editor's own hook.
+    const dispatch = vi.fn();
+    const consumed = handlePanelEscape(emptyKey({ escape: true }), {
+      panelHandled: false,
+      editorFocus: true,
+      dispatch,
+    });
+    expect(consumed).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("ignores every key that is not Esc", () => {
+    const dispatch = vi.fn();
+    const consumed = handlePanelEscape(emptyKey({ tab: true }), {
+      panelHandled: false,
+      editorFocus: false,
+      dispatch,
+    });
+    expect(consumed).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
   });
 });
