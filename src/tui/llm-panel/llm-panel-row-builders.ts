@@ -17,6 +17,7 @@ import {
   listOpenRouterChatModels,
   OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
 } from "../providers/providers-model-options.js";
+import type { LocalModelsPullState } from "../local-models/local-models-panel-state.js";
 import type { TuiState } from "../tui-state.js";
 import type { LlmPanelRow } from "./llm-panel-selectors.js";
 
@@ -121,12 +122,43 @@ export function selectCloudRows(state: TuiState): readonly LlmPanelRow[] {
   return rows;
 }
 
+/**
+ * Live pull for this row, if any. The panel keeps one chat pull and one
+ * embedding pull at a time, so a row is "downloading" when the in-flight
+ * pull names it. Without this the list keeps offering `Enter: download` for
+ * a model that is already coming down, which reads as if nothing happened
+ * and invites a second press.
+ */
+function pullFor(
+  state: TuiState,
+  kind: "chat" | "embedding",
+  modelId: string,
+): LocalModelsPullState | null {
+  const pull =
+    kind === "chat"
+      ? state.localModelsPanel.pull
+      : state.localModelsPanel.embeddingPull;
+  if (!pull || pull.error) return null;
+  return pull.kind === kind && pull.modelId === modelId ? pull : null;
+}
+
+/** `Downloading… 42%` — the percentage is the part that moves. */
+function downloadingLabel(pull: LocalModelsPullState): string {
+  return pull.totalBytes > 0
+    ? `Downloading… ${pull.percent}%`
+    : "Downloading…";
+}
+
 function localTextRow(state: TuiState, model: LocalModelRow): LlmPanelRow {
   const localActive = state.providersPanel.rows.some(
     (row) => row.id === "local-llama" && row.isActiveText,
   );
   const daemonWorks = state.localModelsPanel.daemon.healthy;
   const active = localActive && model.active && daemonWorks;
+  const pull = pullFor(state, "chat", model.id);
+  if (pull) {
+    return buildLocalTextRow(model, active, false, "downloading", downloadingLabel(pull));
+  }
   if (!model.downloaded) {
     return buildLocalTextRow(model, active, false, "download", "Enter: download");
   }
@@ -140,7 +172,7 @@ function localTextRow(state: TuiState, model: LocalModelRow): LlmPanelRow {
     );
   }
   if (!localActive || !model.active) {
-    return buildLocalTextRow(model, active, true, "use", `Enter: use local-llama/${model.id}`);
+    return buildLocalTextRow(model, active, true, "use", "Enter: select model");
   }
   const running =
     state.localModelsPanel.daemon.running ||
@@ -180,6 +212,16 @@ function localEmbeddingRow(state: TuiState, model: EmbeddingModelRow): LlmPanelR
   );
   const daemonWorks = Boolean(daemon?.running && daemon.healthy);
   const active = localEmbeddingActive && model.active && daemonWorks;
+  const pull = pullFor(state, "embedding", model.id);
+  if (pull) {
+    return buildLocalEmbeddingRow(
+      model,
+      active,
+      false,
+      "downloading",
+      downloadingLabel(pull),
+    );
+  }
   if (!model.downloaded) {
     return buildLocalEmbeddingRow(
       model,
@@ -195,7 +237,7 @@ function localEmbeddingRow(state: TuiState, model: EmbeddingModelRow): LlmPanelR
       active,
       true,
       "use",
-      `Enter: use local embedding ${model.id}`,
+      "Enter: select model",
     );
   }
   if (!daemon?.enabled) {

@@ -247,7 +247,20 @@ export function LocalModelsPanel({
     }
     const row = ref.row;
     const m = row.def;
-    const enterHint = !row.downloaded
+    // A pull for this very row is in flight: offering "Enter — download"
+    // again is both wrong and re-triggerable.
+    const rowPull =
+      panel.pull &&
+      !panel.pull.error &&
+      panel.pull.kind === "chat" &&
+      panel.pull.modelId === row.id
+        ? panel.pull
+        : null;
+    const enterHint = rowPull
+      ? rowPull.totalBytes > 0
+        ? `downloading… ${rowPull.percent}%`
+        : "downloading…"
+      : !row.downloaded
       ? row.def.supportsVision
         ? "Enter — download (gguf + mmproj)"
         : "Enter — download"
