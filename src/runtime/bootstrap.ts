@@ -733,7 +733,11 @@ export async function createAgentRuntime(
     !options.overrides?.deferLlamaHealthCheck &&
     !options.overrides?.llamaComplete
   ) {
-    const health = await checkLlamaServer();
+    // One attempt, not the retry ladder: this probe exists to log a line,
+    // and with llama down the default ladder (5 attempts, exponential
+    // backoff) stalled every boot for 15.5 s before the loop then failed
+    // fast anyway. The first real completion is the retry.
+    const health = await checkLlamaServer({ retries: 0 });
     if (!health.reachable) {
       logger.warn("llama-server health check failed", {
         error: health.error,
