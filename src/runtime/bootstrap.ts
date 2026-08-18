@@ -70,6 +70,7 @@ import {
   resolveLlmConfig,
 } from "../llm/provider/index.js";
 import { resolveActiveToolTransport } from "../llm/provider/registry/resolve-tool-transport.js";
+import { catalogForProvider } from "../llm/provider/catalog-for-provider.js";
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
 import {
   resolveModel,
@@ -1170,10 +1171,16 @@ export async function createAgentRuntime(
   const turnUsageMeter = new TurnUsageMeter();
 
   /**
-   * Pricing for a model id on the active provider, when the operator
-   * configured any. Cloud entries carry `userModels[].pricing`; local
-   * runners have none, which is why turn cost is reported as absent
-   * rather than zero for them.
+   * Pricing for a model id on the active provider, when any is known.
+   *
+   * Two sources, in `resolveModel`'s own precedence: a hand-configured
+   * `userModels[].pricing` first, then the provider's bundled catalog.
+   * The catalog is what makes cost work out of the box on OpenRouter and
+   * aimlapi, whose published prices ship with the agent; without it only
+   * operators who priced their models by hand ever saw a `cost_usd`.
+   *
+   * Local runners still resolve to no pricing, which is why turn cost is
+   * reported as absent rather than zero for them.
    */
   const resolveModelPricing = (
     modelId: string | null,
@@ -1184,7 +1191,7 @@ export async function createAgentRuntime(
       (p) => p.id === resolved.activeTextProvider,
     );
     if (!entry) return undefined;
-    return resolveModel(entry, modelId);
+    return resolveModel(entry, modelId, catalogForProvider(entry));
   };
 
   // Vision reuses the active text provider when it exposes describeImage.
