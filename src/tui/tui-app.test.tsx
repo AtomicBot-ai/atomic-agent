@@ -293,4 +293,36 @@ describe("TuiApp (smoke)", () => {
     expect(text).not.toContain("Local runtime");
     unmount();
   });
+
+  it("a keypress landing between a tab switch and its focus teardown stays out of the chat buffer", async () => {
+    const bus = makeTuiEventBus();
+    const { lastFrame, stdin, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
+    );
+    await new Promise((r) => setTimeout(r, 30));
+
+    // Switch to the Tasks panel via the bus (state update outside React's
+    // event system), then yield exactly two immediates: the first lets the
+    // render commit — panel active, editor focus computed false, useInput
+    // handler refs updated — the second lands BEFORE the passive effect
+    // that tears the editor's stale isActive subscription down. A key
+    // written in that window used to be delivered to the panel AND the
+    // editor at once: the tasks search row, the slash palette and a "/"
+    // in the prompt all opened from one keystroke.
+    bus.emit({ type: "ui_mode_set", mode: "debug" });
+    bus.emit({ type: "tab_changed", tab: "tasks" });
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    stdin.write("/");
+
+    await new Promise((r) => setTimeout(r, 60));
+    const text = strip(lastFrame() ?? "");
+    // The panel owns the key: its search row opens…
+    expect(text).toContain("Tasks");
+    // …and nothing leaks into the chat surface: no seeded "/" in the
+    // prompt, no slash palette riding along with it.
+    expect(text).not.toMatch(/❯\s*\//);
+    expect(text).not.toContain("/dump");
+    unmount();
+  });
 });

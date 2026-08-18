@@ -106,8 +106,21 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     [onChange],
   );
 
+  // Ink tears the `isActive` subscription down in a passive effect, one
+  // frame after the render that flipped `focus`. A keypress that arrives in
+  // that gap — always the case when the flip and the key are processed in
+  // the same stdin batch, e.g. Tab into a panel followed by the panel's
+  // hotkey — is still delivered here and lands in the chat buffer of an
+  // editor that is no longer focused. The ref is written during render, so
+  // the callback checks the *current* focus, not the focus the subscription
+  // was created with. (Render-phase write is safe: the value is derived
+  // from props, never from state updated here.)
+  const activeRef = useRef(focus && !disabled);
+  activeRef.current = focus && !disabled;
+
   useInput(
     (input, key) => {
+      if (!activeRef.current) return;
       if (disabled) return;
       handleKey({
         input,
