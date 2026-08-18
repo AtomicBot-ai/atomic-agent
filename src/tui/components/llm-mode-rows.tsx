@@ -208,6 +208,7 @@ function CloudRows({
         rows={providerRows}
         state={state}
         empty="No cloud providers configured. Press n to add one."
+        emphasiseEmpty
       />
       <Box flexDirection="column" marginBottom={1}>
         <Text bold color={theme.colors.accentSoft}>
@@ -282,11 +283,20 @@ function RowsSection({
   rows,
   state,
   empty = "No rows in this section yet.",
+  emphasiseEmpty = false,
 }: {
   title: string;
   rows: readonly LlmPanelRow[];
   state: TuiState;
   empty?: string;
+  /**
+   * Render the empty hint bold in the terminal's default foreground instead of
+   * muted grey. For an empty state that is really a call to action — the pane
+   * is useless until you act on it — muted grey reads as "nothing to see here"
+   * and the instruction gets skipped. Left unset elsewhere: a section that is
+   * merely empty should stay quiet.
+   */
+  emphasiseEmpty?: boolean;
 }): ReactElement {
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -294,7 +304,13 @@ function RowsSection({
         {title}
       </Text>
       {rows.length === 0 ? (
-        <Text color={theme.colors.muted}>  {empty}</Text>
+        <Text
+          bold={emphasiseEmpty}
+          color={emphasiseEmpty ? undefined : theme.colors.muted}
+        >
+          {"  "}
+          {empty}
+        </Text>
       ) : (
         rows.map((row) => <Row key={row.id} row={row} state={state} />)
       )}
