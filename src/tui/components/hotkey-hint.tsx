@@ -78,10 +78,13 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
     ];
   }
   if (state.uiMode === "debug") {
+    // Ctrl+B still cycles panels but is unadvertised: it duplicated the
+    // Tab chip word-for-word, and the freed slot pays for the one hint
+    // panels actually lacked — the way back to Run.
     return [
       { key: "tab", label: "next panel" },
       { key: "shift+tab", label: "prev panel" },
-      { key: "ctrl+b", label: "next panel" },
+      { key: "esc", label: "back to Run" },
       { key: "/", label: "commands" },
       {
         key: "ctrl+c",

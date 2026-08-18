@@ -71,6 +71,19 @@ describe("HotkeyHint scroll chip", () => {
   });
 });
 
+describe("HotkeyHint debug footer", () => {
+  it("advertises the way back to Run and drops the duplicate ctrl+b chip", () => {
+    const out = renderHint(chatState({ uiMode: "debug" }));
+    expect(out).toContain("[esc]");
+    expect(out).toContain("back to Run");
+    expect(out).toContain("next panel");
+    expect(out).toContain("prev panel");
+    // Ctrl+B still cycles panels, but its chip repeated the tab chip
+    // word-for-word; the freed slot now pays for the esc hint.
+    expect(out).not.toContain("ctrl+b");
+  });
+});
+
 describe("HotkeyHint scroll key spelling per platform", () => {
   const realPlatform = process.platform;
 
