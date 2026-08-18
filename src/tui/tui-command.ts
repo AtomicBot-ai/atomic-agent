@@ -18,6 +18,7 @@ import {
 } from "./persist-user-local-models-config.js";
 import { persistUserTuiTheme } from "./persist-user-tui-config.js";
 import {
+  isLocalBackendConfigured,
   isManagedModeReadyOnDisk,
   runLocalModelsStartupGateIfNeeded,
 } from "./run-local-models-config-wizard.js";
@@ -137,6 +138,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
     approvalLevel,
     maxSteps,
     skillCount: runtime.skillCatalog.length,
+    // Read after the startup gate, so a local model picked in the wizard
+    // moments ago already counts as configured for this launch.
+    localBackendConfigured: isLocalBackendConfigured(),
   };
 
   const orchestrator = new ChatOrchestrator(runtime, bus, {

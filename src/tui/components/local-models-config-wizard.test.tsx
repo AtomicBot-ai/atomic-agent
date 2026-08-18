@@ -75,3 +75,40 @@ describe("LocalModelsConfigWizard", () => {
     expect(text).toContain("empty Enter skips embeddings");
   });
 });
+
+describe("LocalModelsConfigWizard first-run headline", () => {
+  it("reads as a setup prompt when no local backend was ever configured", () => {
+    const { lastFrame, unmount } = render(
+      <LocalModelsConfigWizard
+        initialUrl="http://127.0.0.1:8080"
+        probeError="connect ECONNREFUSED 127.0.0.1:8080"
+        onFinished={() => {}}
+      />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    unmount();
+
+    expect(text).toContain("Choose how atomic-agent should run models");
+    // Nothing was configured, so there is no failure to report: neither the
+    // headline nor the raw probe error should suggest a broken install.
+    expect(text).not.toContain("not reachable");
+    expect(text).not.toContain("ECONNREFUSED");
+  });
+
+  it("keeps the diagnostic when the user's own backend stopped answering", () => {
+    const { lastFrame, unmount } = render(
+      <LocalModelsConfigWizard
+        initialUrl="http://10.0.0.4:9090"
+        probeError="connect ECONNREFUSED 10.0.0.4:9090"
+        hadConfiguredBackend
+        onFinished={() => {}}
+      />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    unmount();
+
+    expect(text).toContain("llama-server not reachable");
+    expect(text).toContain("ECONNREFUSED");
+  });
+});
+

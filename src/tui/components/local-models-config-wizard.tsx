@@ -20,6 +20,15 @@ export type LocalModelsWizardOutcome =
 export interface LocalModelsConfigWizardProps {
   initialUrl: string;
   probeError: string | null;
+  /**
+   * Whether the user had already opted into a local backend before this run.
+   * `false` on a fresh install, where the probe failed against a default URL
+   * nobody chose — there the screen is a setup prompt, not a fault report,
+   * and leading with "not reachable" plus a raw ECONNREFUSED reads as if the
+   * install is broken. `true` keeps the honest diagnostic for the user whose
+   * configured server really did stop answering.
+   */
+  hadConfiguredBackend?: boolean;
   onFinished(outcome: LocalModelsWizardOutcome): void;
 }
 
@@ -49,6 +58,7 @@ const PICK_OPTIONS: readonly WizardOption[] = [
 export function LocalModelsConfigWizard({
   initialUrl,
   probeError,
+  hadConfiguredBackend = false,
   onFinished,
 }: LocalModelsConfigWizardProps): ReactElement {
   const app = useApp();
@@ -189,9 +199,11 @@ export function LocalModelsConfigWizard({
     return (
       <Box flexDirection="column" padding={1}>
         <Text bold color={theme.colors.accentSoft}>
-          llama-server not reachable
+          {hadConfiguredBackend
+            ? "llama-server not reachable"
+            : "Choose how atomic-agent should run models"}
         </Text>
-        {probeError ? (
+        {hadConfiguredBackend && probeError ? (
           <Text color={theme.colors.muted}>last error: {probeError}</Text>
         ) : null}
         <Box flexDirection="column" marginTop={1}>
