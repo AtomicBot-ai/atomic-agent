@@ -22,6 +22,20 @@ export type UserLlmProviderEntry = {
   supportsTools?: boolean;
   supportsVision?: boolean;
   requestTimeoutMs?: number;
+  /**
+   * Vendor-specific fields merged into the OpenAI-compatible chat body
+   * for `openai-compatible` / `qwen-openai-compatible` providers. Lets a
+   * deployment reach vendor extensions outside the OpenAI schema, e.g.
+   * Alibaba Model Studio thinking control:
+   *
+   * ```json
+   * { "chat_template_kwargs": { "enable_thinking": false } }
+   * ```
+   *
+   * Reserved keys (`model`, `messages`, `stream`, `tools`) are re-applied
+   * after the merge and cannot be overridden from config.
+   */
+  extraBody?: Record<string, unknown>;
 };
 
 export type UserLlmFallbackConfig = {
@@ -158,7 +172,19 @@ export function parseLlmProviderEntry(
                 "expected positive number",
               );
             })(),
+    extraBody: parseOptionalExtraBody(obj.extraBody, `${field}.extraBody`),
   };
+}
+
+function parseOptionalExtraBody(
+  raw: unknown,
+  field: string,
+): Record<string, unknown> | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected object");
+  }
+  return { ...(raw as Record<string, unknown>) };
 }
 
 export function parseLlmProviders(

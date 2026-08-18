@@ -2,10 +2,19 @@ import { getConfig } from "../../../config/index.js";
 import type { CompletionRequest } from "../completion-types.js";
 import { filterCloudCompletionRequest } from "./sampling-filter.js";
 
+/**
+ * Fields the caller owns unconditionally. `extraBody` is merged *under*
+ * these, so a vendor passthrough can add `chat_template_kwargs` or
+ * `enable_thinking` but can never detach the request from the resolved
+ * model, rewrite the prompt, flip streaming, or drop the tool contract.
+ */
+const RESERVED_BODY_KEYS = ["model", "messages", "stream", "tools"] as const;
+
 export function buildOpenAiChatBody(
   request: CompletionRequest,
   defaultChatModel: string,
   stream: boolean,
+  extraBody?: Record<string, unknown>,
 ): Record<string, unknown> {
   const filtered = filterCloudCompletionRequest(request);
   const body: Record<string, unknown> = {
@@ -48,5 +57,13 @@ export function buildOpenAiChatBody(
       },
     };
   }
-  return body;
+  if (!extraBody) return body;
+  // Vendor passthrough. Merged last so it can reach fields this builder
+  // does not model, then reserved keys are restored on top.
+  const merged: Record<string, unknown> = { ...body, ...extraBody };
+  for (const key of RESERVED_BODY_KEYS) {
+    if (key in body) merged[key] = body[key];
+    else delete merged[key];
+  }
+  return merged;
 }

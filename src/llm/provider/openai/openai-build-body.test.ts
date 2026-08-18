@@ -86,4 +86,64 @@ describe("buildOpenAiChatBody", () => {
     );
     expect(body.response_format).toBeUndefined();
   });
+
+  it("merges extraBody vendor fields into the request body", () => {
+    const body = buildOpenAiChatBody({ prompt: "hi" }, "qwen3.8-27b", false, {
+      chat_template_kwargs: { enable_thinking: false },
+    });
+    expect(body.chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(body.model).toBe("qwen3.8-27b");
+  });
+
+  it("keeps the body byte-identical when extraBody is absent", () => {
+    const withoutArg = buildOpenAiChatBody({ prompt: "hi" }, "qwen3.8-27b", false);
+    const withUndefined = buildOpenAiChatBody(
+      { prompt: "hi" },
+      "qwen3.8-27b",
+      false,
+      undefined,
+    );
+    expect(JSON.stringify(withUndefined)).toBe(JSON.stringify(withoutArg));
+  });
+
+  it("does not let extraBody override reserved keys", () => {
+    const body = buildOpenAiChatBody(
+      {
+        prompt: "hi",
+        tools: [
+          {
+            type: "function",
+            function: { name: "search", parameters: { type: "object" } },
+          },
+        ],
+      },
+      "qwen3.8-27b",
+      true,
+      {
+        model: "attacker-model",
+        messages: [{ role: "user", content: "overwritten" }],
+        stream: false,
+        tools: [],
+      },
+    );
+    expect(body.model).toBe("qwen3.8-27b");
+    expect(body.messages).toEqual([{ role: "user", content: "hi" }]);
+    expect(body.stream).toBe(true);
+    expect(body.tools).toHaveLength(1);
+  });
+
+  it("drops a reserved key that the builder itself never set", () => {
+    // `tools` is absent when the caller sends no tools; extraBody must not
+    // be able to smuggle a tool contract in through the passthrough.
+    const body = buildOpenAiChatBody({ prompt: "hi" }, "qwen3.8-27b", false, {
+      tools: [
+        {
+          type: "function",
+          function: { name: "shell", parameters: { type: "object" } },
+        },
+      ],
+    });
+    expect(body.tools).toBeUndefined();
+    expect("tools" in body).toBe(false);
+  });
 });

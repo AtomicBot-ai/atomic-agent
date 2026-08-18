@@ -202,4 +202,59 @@ describe("llm-config", () => {
     });
     expect(parsed.llm?.fallback).toBeUndefined();
   });
+
+  it("parses extraBody on an openai-compatible provider entry", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      llm: {
+        activeTextProvider: "model-studio",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto",
+        providers: [
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            url: "http://127.0.0.1:19091",
+          },
+          {
+            id: "model-studio",
+            kind: "qwen-openai-compatible",
+            baseUrl: "https://example.invalid/compatible-mode",
+            defaultChatModel: "qwen3.8-27b",
+            extraBody: { chat_template_kwargs: { enable_thinking: false } },
+          },
+        ],
+      },
+    });
+    expect(parsed.llm?.providers[1]?.extraBody).toEqual({
+      chat_template_kwargs: { enable_thinking: false },
+    });
+  });
+
+  it("rejects a non-object extraBody", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        llm: {
+          activeTextProvider: "model-studio",
+          activeEmbeddingProvider: "local-llama",
+          toolTransport: "auto",
+          providers: [
+            {
+              id: "local-llama",
+              kind: "llama-server",
+              url: "http://127.0.0.1:19091",
+            },
+            {
+              id: "model-studio",
+              kind: "qwen-openai-compatible",
+              baseUrl: "https://example.invalid/compatible-mode",
+              defaultChatModel: "qwen3.8-27b",
+              extraBody: "enable_thinking=false",
+            },
+          ],
+        },
+      }),
+    ).toThrow(/extraBody/);
+  });
 });
