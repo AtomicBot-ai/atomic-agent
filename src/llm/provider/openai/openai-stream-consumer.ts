@@ -37,6 +37,14 @@ export function createOpenAiStreamConsumer(
       let finishReason: string | null = null;
       let modelId: string | null = null;
       let usage: CompletionUsage | undefined;
+      // A trustworthy terminal signal: an explicit provider finish_reason
+      // on any chunk, or a parser-recognized terminal event (`[DONE]`).
+      // Some OpenAI-compatible providers send a final finish_reason and
+      // then simply close the connection without ever emitting `[DONE]` —
+      // that still counts. A bare `reader.read()` EOF with neither must
+      // NOT be conflated with either, since a still-open tool call's
+      // arguments may be mid-stream.
+      let terminalObserved = false;
       const toolCalls = new Map<number, MutableToolCall>();
       try {
         while (true) {
@@ -51,6 +59,7 @@ export function createOpenAiStreamConsumer(
             const chunk = parseOpenAiSseEvent(rawEvent, reasoning, toolArgsBuffer);
             content += chunk.delta;
             reasoningContent += chunk.reasoningDelta;
+            if (chunk.finishReason !== null) terminalObserved = true;
             finishReason = chunk.finishReason ?? finishReason;
             modelId = chunk.modelId ?? modelId;
             usage = normaliseUsage(chunk.usage) ?? usage;
@@ -64,6 +73,7 @@ export function createOpenAiStreamConsumer(
                 modelId,
                 usage,
                 toolCalls,
+                terminalObserved: true,
               });
             }
             if (chunk.toolArgsDelta !== undefined) {
@@ -105,6 +115,7 @@ export function createOpenAiStreamConsumer(
         modelId,
         usage,
         toolCalls,
+        terminalObserved,
       });
     },
   };
@@ -135,6 +146,7 @@ function buildFinalResult(args: {
   modelId: string | null;
   usage?: CompletionUsage;
   toolCalls: ReadonlyMap<number, MutableToolCall>;
+  terminalObserved: boolean;
 }): StreamFinalResult {
   const sortedToolCalls = [...args.toolCalls.entries()]
     .sort(([a], [b]) => a - b)
@@ -145,6 +157,7 @@ function buildFinalResult(args: {
     reasoningContent: args.reasoningContent,
     finishReason: args.finishReason,
     modelId: args.modelId,
+    terminalObserved: args.terminalObserved,
     ...(args.usage ? { usage: args.usage } : {}),
     ...(sortedToolCalls.length > 0 ? { toolCalls: sortedToolCalls } : {}),
   };

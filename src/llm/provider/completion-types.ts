@@ -122,4 +122,13 @@ export interface StreamFinalResult {
   finishReason?: string | null;
   usage?: CompletionUsage;
   modelId?: string | null;
+  /**
+   * Whether the underlying transport actually delivered a trustworthy
+   * terminal signal — an explicit provider `finish_reason` on any chunk,
+   * or a parser-recognized terminal event (e.g. `[DONE]`) — before the
+   * stream ended. `false` (or absent) means the connection just closed
+   * (bare EOF / read error) without either: not asserted, so callers must
+   * not treat an absent value as confirmation of a clean completion.
+   */
+  terminalObserved?: boolean;
 }

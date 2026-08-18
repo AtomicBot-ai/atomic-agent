@@ -219,11 +219,22 @@ function completionFromStreamFinal(
     totalTokens: 0,
   };
   const finishReason = streamFinal?.finishReason ?? null;
+  // A native tool call whose stream ended without a trustworthy terminal
+  // signal (no explicit finish_reason, no [DONE]/parser terminal event —
+  // just the connection closing) is not a confirmed completion. Treating
+  // it as an ordinary `stop` would let a mid-stream-cut tool call reach
+  // dispatch indistinguishably from a genuinely finished one. This only
+  // applies when a tool call is actually pending — a plain-text response
+  // that races the same way already has its own `stop`/`no_stop` handling
+  // downstream and is left untouched here.
+  const hasPendingToolCalls = (streamFinal?.toolCalls?.length ?? 0) > 0;
+  const ambiguousToolCallTermination =
+    hasPendingToolCalls && streamFinal?.terminalObserved !== true;
   return {
     content: streamFinal?.content ?? accumulated,
     reasoningContent: streamFinal?.reasoningContent ?? accumulatedReasoning,
-    stop: finishReason !== "length",
-    truncated: finishReason === "length",
+    stop: finishReason !== "length" && !ambiguousToolCallTermination,
+    truncated: finishReason === "length" || ambiguousToolCallTermination,
     timing: {
       promptMs: 0,
       predictedMs: 0,
