@@ -21,7 +21,10 @@ import {
   type ApprovalRequest,
 } from "../approval/approval-gate.js";
 import { stderrSink } from "../tracing/structured-logger.js";
-import type { SessionState } from "../session/session-state.js";
+import {
+  isFailedSessionStatus,
+  type SessionState,
+} from "../session/session-state.js";
 
 interface RunArgs {
   workingDir: string;
@@ -462,7 +465,7 @@ export async function runAgentCommand(args: string[]): Promise<number> {
     // that is not success, and a CI job watching this exit code must not
     // read it as one. Only `completed` (and a clean EOF on an idle
     // session) count as 0.
-    if (finalSession.status === "failed" || finalSession.status === "stalled") {
+    if (isFailedSessionStatus(finalSession.status)) {
       exitCode = 1;
     }
   } catch (err) {

@@ -16,6 +16,32 @@ import { getAppVersion } from "../version.js";
 interface CommandDescriptor {
   name: string;
   summary: string;
+  /**
+   * Resolves to the process exit code:
+   *
+   *   0  success
+   *   1  operational failure — the command was invoked correctly and the
+   *      work did not succeed. A lookup miss ("no such skill") is a
+   *      failure, not a usage error.
+   *   2  usage error — unknown command or subcommand, missing required
+   *      argument, argument of the wrong kind. Nothing was attempted.
+   *
+   * `run`, `skill` and the dispatcher below implement this split. The
+   * rest of the table does not, and a caller must not read their codes
+   * through it:
+   *
+   *   - `config`, `serve`, `trace`, `task`, `models`, `import` predate
+   *     the split and return `1` for usage errors too, so their `1` does
+   *     not mean "the work failed".
+   *   - `trace replay` returns `2` for "stable-prefix drift detected", a
+   *     diff-style result code rather than a usage error.
+   *   - `tui` reports `0` or `1` from its own session, and when it
+   *     relaunches itself it passes the child process's status straight
+   *     through, so any code is possible (130 on SIGINT, say).
+   *   - `repl` is a scaffold and always returns `0`.
+   *
+   * Widening the split to those commands is a separate change.
+   */
   run: (args: string[]) => Promise<number>;
   /**
    * Omit the command from `--help` while keeping it dispatchable when

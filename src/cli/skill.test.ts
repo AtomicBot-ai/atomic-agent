@@ -14,6 +14,21 @@ import {
   writeUserConfigFileSync,
 } from "../config/index.js";
 
+// Only `browseHub`/`searchHub` are stubbed; everything else in the hub
+// module (identifier parsing, installer, scan summary) stays real so the
+// install and tap tests below are unaffected.
+vi.mock("../skills/hub/index.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../skills/hub/index.js")>()),
+  browseHub: vi.fn(async () => ({
+    entries: [],
+    errors: [{ repo: "owner/repo", error: "boom" }],
+  })),
+  searchHub: vi.fn(async () => ({
+    entries: [],
+    errors: [{ repo: "owner/repo", error: "boom" }],
+  })),
+}));
+
 function writeSkill(globalDir: string, name: string): void {
   const dir = join(globalDir, name);
   mkdirSync(dir, { recursive: true });
@@ -182,10 +197,91 @@ describe("skillCommand", () => {
     expect(file?.skills.disabled).toEqual(["beta"]);
   });
 
-  it("uninstall on a skill not installed globally returns 2", async () => {
+  it("uninstall on a skill not installed globally returns 1", async () => {
     const code = await skillCommand(["uninstall", "ghost-skill"]);
-    expect(code).toBe(2);
+    expect(code).toBe(1);
     expect(stderr).toContain("not installed globally: ghost-skill");
+  });
+
+  it("show on a skill that is not installed returns 1", async () => {
+    writeSkill(globalSkillsDir, "alpha");
+    const code = await skillCommand(["show", "ghost-skill"]);
+    expect(code).toBe(1);
+    expect(stderr).toContain("skill not installed: ghost-skill");
+  });
+
+  it("install over an existing skill returns 1", async () => {
+    const sourceDir = mkdtempSync(join(tmpdir(), "atomic-cli-skill-src-"));
+    try {
+      writeSkill(sourceDir, "alpha");
+      expect(await skillCommand(["install", join(sourceDir, "alpha")])).toBe(0);
+      const code = await skillCommand(["install", join(sourceDir, "alpha")]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("already installed");
+    } finally {
+      rmSync(sourceDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns 2 for a missing required argument", async () => {
+    expect(await skillCommand(["show"])).toBe(2);
+    expect(await skillCommand(["uninstall"])).toBe(2);
+    expect(await skillCommand(["enable"])).toBe(2);
+    expect(await skillCommand(["disable"])).toBe(2);
+    expect(stderr).toContain("usage: atomic-agent skill show <name>");
+    expect(stderr).toContain("usage: atomic-agent skill uninstall <name>");
+  });
+
+  it("returns 2 for an unknown subcommand", async () => {
+    const code = await skillCommand(["frobnicate"]);
+    expect(code).toBe(2);
+    expect(stderr).toContain("unknown subcommand: frobnicate");
+  });
+
+  it("returns 2 for a tap repo argument of the wrong shape", async () => {
+    const code = await skillCommand(["tap", "add", "not-a-repo"]);
+    expect(code).toBe(2);
+    expect(stderr).toContain("not-a-repo");
+  });
+
+  it("returns 2 for the remaining argument-shape errors", async () => {
+    // The rest of the usage surface, which reaches its branch without any
+    // network: install with no source, browse with a valueless --source,
+    // search with an empty query, tap with a missing repo or a verb that
+    // does not exist.
+    expect(await skillCommand(["install"])).toBe(2);
+    expect(stderr).toContain("usage: atomic-agent skill install");
+
+    expect(await skillCommand(["browse", "--source"])).toBe(2);
+    expect(stderr).toContain("usage: atomic-agent skill browse");
+
+    expect(await skillCommand(["search"])).toBe(2);
+    expect(stderr).toContain("usage: atomic-agent skill search");
+
+    expect(await skillCommand(["tap", "add"])).toBe(2);
+    expect(await skillCommand(["tap", "remove"])).toBe(2);
+    expect(stderr).toContain("usage: atomic-agent skill tap add <owner/repo>");
+
+    expect(await skillCommand(["tap", "frobnicate"])).toBe(2);
+    expect(stderr).toContain("usage: atomic-agent skill tap list");
+  });
+
+  it("browse and search return 1 when every source failed and nothing was found", async () => {
+    // ClawHub off so the GitHub tap is the only source; it errors, so the
+    // command found nothing and every source it had failed.
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      skills: {
+        taps: ["owner/repo"],
+        clawhub: { ...USER_CONFIG_DEFAULTS.skills.clawhub, enabled: false },
+      },
+    });
+    resetConfigCache();
+
+    expect(await skillCommand(["browse"])).toBe(1);
+    expect(await skillCommand(["search", "anything"])).toBe(1);
+    expect(stderr).toContain("WARN: owner/repo: boom");
+    expect(stdout).toContain("(no skills found)");
   });
 
   it("enable/disable is idempotent across repeated invocations", async () => {
