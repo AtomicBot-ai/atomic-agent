@@ -65,3 +65,20 @@ export function parseTuiArgs(args: string[]): TuiArgsResult {
     skipLlamaSetup,
   };
 }
+
+/**
+ * The one-sentence refusal for a stdin that is not a terminal, or `null`
+ * when the TUI can mount. A pipe (CI, cron, `echo hi | atomic-agent`, a
+ * Dockerfile RUN) used to reach Ink's raw-mode requirement and die with a
+ * React stack trace of minified bundle offsets — and bare `atomic-agent` /
+ * `atomic-agent tui` are exactly the commands new users and scripts run
+ * first. Lives here rather than in tui-command.ts so it is unit-testable:
+ * that module imports the SEA bridge, which vitest cannot load.
+ */
+export function nonInteractiveStdinError(
+  stdin: { isTTY?: boolean } = process.stdin,
+): string | null {
+  if (stdin.isTTY) return null;
+  return "atomic-agent needs an interactive terminal — use 'atomic-agent run' for scripts.";
+}
+
