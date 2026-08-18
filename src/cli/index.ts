@@ -16,6 +16,11 @@ interface CommandDescriptor {
   name: string;
   summary: string;
   run: (args: string[]) => Promise<number>;
+  /**
+   * Omit the command from `--help` while keeping it dispatchable when
+   * typed. Used for scaffolds that are not ready to be advertised.
+   */
+  hidden?: boolean;
 }
 
 const COMMANDS: CommandDescriptor[] = [
@@ -38,6 +43,9 @@ const COMMANDS: CommandDescriptor[] = [
     name: "repl",
     summary: "Interactive debug REPL: step the agent manually",
     run: debugReplCommand,
+    // Still a stub (help/quit only) — dispatchable if typed, but not
+    // advertised until the real implementation lands.
+    hidden: true,
   },
   {
     name: "tui",
@@ -80,7 +88,9 @@ function printHelp(): void {
     "  atomic-agent <command> [options]",
     "",
     "Commands:",
-    ...COMMANDS.map((c) => `  ${c.name.padEnd(8)} ${c.summary}`),
+    ...COMMANDS.filter((c) => !c.hidden).map(
+      (c) => `  ${c.name.padEnd(8)} ${c.summary}`,
+    ),
     "",
     "User config (edit via `atomic-agent config`):",
     "  <stateDir>/config.json         localModels.url, localModels.mode, log.level, agent.{tokenBudget,maxSteps,toolTimeoutMs,approvalLevel}",
