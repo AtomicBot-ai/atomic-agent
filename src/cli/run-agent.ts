@@ -28,13 +28,34 @@ interface RunArgs {
   noApproval: boolean;
 }
 
-function parseArgs(args: string[]): RunArgs | { error: string } {
+const HELP =
+  [
+    "atomic-agent run — chat with the agent over stdin",
+    "",
+    "Usage:",
+    "  atomic-agent run [options]           interactive: one message per line",
+    "  echo \"<goal>\" | atomic-agent run     one-shot: answer on stdout, logs on stderr",
+    "",
+    "Options:",
+    "  --cwd <dir>          Working directory for OS tools (default: current directory)",
+    "  --working-dir <dir>  Alias for --cwd",
+    "  --max-steps <n>      Step budget for one turn (default: agent.maxSteps from config)",
+    "  --no-approval        Force approval level 5: auto-approve every dangerous tool call",
+    "",
+    "In-session:  /quit exits · /abort cancels the current turn",
+    "Exit codes:  0 replied · 1 failed · 2 usage error",
+  ].join("\n") + "\n";
+
+function parseArgs(args: string[]): RunArgs | { error: string } | { help: true } {
   let workingDir: string | null = null;
   let maxSteps: number | null = null;
   let noApproval = false;
   for (let i = 0; i < args.length; i += 1) {
     const flag = args[i];
     switch (flag) {
+      case "--help":
+      case "-h":
+        return { help: true };
       case "--cwd":
       case "--working-dir": {
         const value = args[++i];
@@ -324,6 +345,10 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
  */
 export async function runAgentCommand(args: string[]): Promise<number> {
   const parsed = parseArgs(args);
+  if ("help" in parsed) {
+    process.stdout.write(HELP);
+    return 0;
+  }
   if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n`);
     return 2;

@@ -11,6 +11,7 @@ import { taskCommand } from "./task-command.js";
 import { modelsCommand } from "./models-command.js";
 import { importCommand } from "./import-command.js";
 import { tuiCommand } from "../tui/index.js";
+import { getAppVersion } from "../version.js";
 
 interface CommandDescriptor {
   name: string;
@@ -130,6 +131,25 @@ async function main(): Promise<number> {
   if (command === "-h" || command === "--help") {
     printHelp();
     return 0;
+  }
+  if (command === "-v" || command === "--version" || command === "version") {
+    process.stdout.write(`atomic-agent ${getAppVersion()}\n`);
+    return 0;
+  }
+  // `help <cmd>` reads as naturally as `<cmd> --help`; alias one to the other.
+  if (command === "help") {
+    const target = rest[0];
+    if (!target) {
+      printHelp();
+      return 0;
+    }
+    const aliased = COMMANDS.find((c) => c.name === target);
+    if (!aliased) {
+      process.stderr.write(`unknown command: ${target}\n`);
+      printHelp();
+      return 2;
+    }
+    return aliased.run(["--help"]);
   }
   if (!command) {
     return tuiCommand([]);
