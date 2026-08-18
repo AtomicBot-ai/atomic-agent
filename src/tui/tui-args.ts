@@ -13,7 +13,24 @@ export interface TuiArgs {
   skipLlamaSetup: boolean;
 }
 
-export type TuiArgsResult = TuiArgs | { error: string };
+export type TuiArgsResult = TuiArgs | { error: string } | { help: true };
+
+export const TUI_HELP =
+  [
+    "atomic-agent tui — the interactive terminal dashboard",
+    "",
+    "Usage:",
+    "  atomic-agent tui [options]     (also the default when no command is given)",
+    "",
+    "Options:",
+    "  --cwd <dir>          Working directory for OS tools (default: current directory)",
+    "  --working-dir <dir>  Alias for --cwd",
+    "  --max-steps <n>      Step budget per turn (default: agent.maxSteps from config)",
+    "  --no-approval        Force approval level 5: auto-approve every dangerous tool call",
+    "  --skip-llama-setup   Skip the first-run local-model setup gate",
+    "",
+    "Needs an interactive terminal; in scripts use `atomic-agent run`.",
+  ].join("\n") + "\n";
 
 /**
  * Parses the CLI arguments accepted by `tuiCommand`. Returns either the
@@ -34,6 +51,9 @@ export function parseTuiArgs(args: string[]): TuiArgsResult {
   for (let i = 0; i < args.length; i += 1) {
     const flag = args[i];
     switch (flag) {
+      case "--help":
+      case "-h":
+        return { help: true };
       case "--cwd":
       case "--working-dir": {
         const value = args[++i];

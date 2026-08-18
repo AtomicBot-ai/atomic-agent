@@ -13,6 +13,7 @@ import { enterAltScreen } from "./alt-screen.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { parseTuiArgs,
   nonInteractiveStdinError,
+  TUI_HELP,
 } from "./tui-args.js";
 import {
   persistUserLocalLlmUrl,
@@ -41,6 +42,10 @@ import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
  */
 export async function tuiCommand(args: string[]): Promise<number> {
   const parsed = parseTuiArgs(args);
+  if ("help" in parsed) {
+    process.stdout.write(TUI_HELP);
+    return 0;
+  }
   if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n`);
     return 2;
