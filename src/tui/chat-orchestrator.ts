@@ -4,7 +4,10 @@ import { join } from "node:path";
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { SkillCatalogEntry } from "../prompt/stable-prefix.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
-import type { SessionState } from "../session/session-state.js";
+import {
+  isFailedSessionStatus,
+  type SessionState,
+} from "../session/session-state.js";
 import { checkForAppUpdate, runAppUpdate, canSelfUpdate } from "../update/index.js";
 import { clearTtyScreen } from "./clear-tty-screen.js";
 import { captureAndWriteDebugBundle } from "./debug-bundle/index.js";
@@ -384,7 +387,7 @@ export class ChatOrchestrator {
         origin: "tui",
       });
       this.session = result.session;
-      if (this.session.status === "failed") this.exitCode = 1;
+      if (isFailedSessionStatus(this.session.status)) this.exitCode = 1;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.bus.emit({ type: "runtime_info", line: `turn error: ${msg}` });
