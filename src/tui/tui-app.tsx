@@ -911,6 +911,7 @@ export function TuiApp({
                 availableColumns={
                   terminalSize.columns - 4 - (sidebarVisible ? SIDEBAR_WIDTH : 0)
                 }
+                onActivate={activateMenuNode}
               />
             ) : null}
           </Box>

@@ -1,8 +1,12 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 
+import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
+import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import { chromeTheme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
+import type { MenuNode } from "./menu-registry.js";
 import type { MenuItemRow } from "./menu-selectors.js";
 import {
   clampMenuCursor,
@@ -26,6 +30,12 @@ interface MenuPopupProps {
   availableRows: number;
   /** Columns available in that pane. */
   availableColumns: number;
+  /**
+   * Runs a node. The very same callback `handleMenuKey` fires on Enter —
+   * passed down rather than reached through the mouse context so a click
+   * and a keypress cannot drift into two different activation paths.
+   */
+  onActivate: (node: MenuNode) => void;
 }
 
 /**
@@ -60,6 +70,7 @@ export function MenuPopup({
   state,
   availableRows,
   availableColumns,
+  onActivate,
 }: MenuPopupProps): ReactElement {
   const width = Math.max(28, Math.min(PREFERRED_WIDTH, availableColumns - 2));
   // Interior columns between the two border columns. Ink's own `paddingX`
@@ -107,6 +118,8 @@ export function MenuPopup({
             row={row}
             inner={inner}
             selected={start + idx === cursorRowIdx}
+            itemIndex={itemIndexes.indexOf(start + idx)}
+            onActivate={onActivate}
           />
         ),
       )}
@@ -145,11 +158,17 @@ function MenuItem({
   row,
   inner,
   selected,
+  itemIndex,
+  onActivate,
 }: {
   row: MenuItemRow;
   inner: number;
   selected: boolean;
+  /** Index among the *item* rows — what `menuCursor` counts. */
+  itemIndex: number;
+  onActivate: (node: MenuNode) => void;
 }): ReactElement {
+  const mouse = useMouseCommands();
   const { node } = row;
   const marker = selected ? chromeTheme.glyphs.chevronRight : " ";
   const arrow = node.kind === "submenu" ? ` ${chromeTheme.glyphs.arrowRight}` : "";
@@ -163,8 +182,8 @@ function MenuItem({
     [row.crumb, row.status].filter((part) => part.length > 0).join("  "),
     detailWidth,
   );
-  return (
-    <Box>
+  const body = (
+    <>
       <Text
         color={selected ? chromeTheme.colors.accentSoft : undefined}
         bold={selected}
@@ -173,7 +192,33 @@ function MenuItem({
       </Text>
       <Text color={chromeTheme.colors.muted}>{detail}</Text>
       <Text color={chromeTheme.colors.muted}>{chord}</Text>
-    </Box>
+    </>
+  );
+  if (!mouse) return <Box>{body}</Box>;
+  return (
+    <MouseTarget
+      layer={MOUSE_LAYER_MODAL}
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        // One click acts, the way a menu item does everywhere else. The
+        // rest of the mouse layer selects first and acts on the second
+        // click, because there a mis-click starts a download or switches
+        // sessions. Here the operator opened a menu to pick something —
+        // making them click twice would be the surprising choice.
+        if (itemIndex >= 0) {
+          mouse.dispatch({ type: "menu_cursor_set", cursor: itemIndex });
+        }
+        if (node.kind === "submenu") {
+          mouse.dispatch({ type: "menu_path_set", path: node.id });
+          return true;
+        }
+        mouse.dispatch({ type: "menu_closed" });
+        onActivate(node);
+        return true;
+      }}
+    >
+      {body}
+    </MouseTarget>
   );
 }
 

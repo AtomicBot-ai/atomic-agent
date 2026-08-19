@@ -35,7 +35,17 @@ export function runModeModelSummary(panel: RunModePanelState): string | null {
 }
 
 /** Dial rendered as a fixed-width bar so the row never reflows. */
-export function formatCloudShareBar(cloudShare: number, width = 20): string {
+/**
+ * Bar width in columns. Exported because the mouse layer maps a click
+ * column back to a share value and would otherwise hardcode a second
+ * copy of this number.
+ */
+export const CLOUD_SHARE_BAR_WIDTH = 20;
+
+export function formatCloudShareBar(
+  cloudShare: number,
+  width = CLOUD_SHARE_BAR_WIDTH,
+): string {
   const filled = Math.round((cloudShare / 100) * width);
   return `${"█".repeat(filled)}${"░".repeat(Math.max(0, width - filled))}`;
 }
