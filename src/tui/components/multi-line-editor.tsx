@@ -56,7 +56,12 @@ export interface MultiLineEditorProps {
  *
  * Key handling:
  *   - Enter submits the trimmed buffer (and emits empty-submit as no-op)
- *   - Alt/Meta+Enter or Ctrl+J insert a newline
+ *   - Shift+Enter inserts a newline. Alt/Meta+Enter and Ctrl+J do the
+ *     same, deliberately: plenty of terminals cannot report Shift with
+ *     Return at all (it needs modifyOtherKeys or the kitty protocol), and
+ *     a multi-line editor that some terminals cannot reach is worse than
+ *     one advertised gesture plus quiet fallbacks. The hint strip names
+ *     Shift+Enter because that is what an operator expects to try.
  *   - Backslash at end-of-line before Enter also forces a newline
  *   - Up/Down trigger `onHistoryPrev` / `onHistoryNext` when the cursor
  *     is at the top/bottom of the buffer
@@ -223,6 +228,8 @@ function handleKey(ctx: KeyContext): void {
     return;
   }
   if (key.return) {
+    // Any Return modifier means "newline" — see the note above on why
+    // this is wider than the gesture the hint strip advertises.
     const newline = key.meta || key.shift || key.ctrl;
     const trailingBackslash = value.endsWith("\\") && cursor === value.length;
     if (newline) {

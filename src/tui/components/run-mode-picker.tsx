@@ -4,6 +4,7 @@ import type { ReactElement } from "react";
 import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
+import { openProviderSetupFromRunMode } from "../run-mode/run-mode-key-bindings.js";
 import { theme } from "../theme/theme.js";
 import { RUN_MODES, RUN_MODE_LABELS } from "../run-mode/run-mode-nav.js";
 import {
@@ -72,10 +73,40 @@ export function RunModePicker({ panel }: RunModePickerProps): ReactElement | nul
       {panel.degradedMessage ? (
         <Text color={theme.colors.warn}>{panel.degradedMessage}</Text>
       ) : null}
+      {panel.cloudProviderMissing ? <SetUpProviderRow /> : null}
       <Text color={theme.colors.muted}>
         ↑↓ mode · ←→ share (shift ±25) · digits set · enter apply · esc cancel
       </Text>
     </Box>
+  );
+}
+
+/**
+ * On a fresh install two of the three modes cannot be entered at all,
+ * and this overlay was where you found that out and then had nowhere to
+ * go. The fix belongs on the screen that raises the problem.
+ */
+function SetUpProviderRow(): ReactElement {
+  const mouse = useMouseCommands();
+  const label = (
+    <Text color={theme.colors.accent} bold>
+      {"  "}
+      {theme.glyphs.chevronRight} Set up a cloud provider…{" "}
+      <Text color={theme.colors.muted}>(n)</Text>
+    </Text>
+  );
+  if (!mouse) return label;
+  return (
+    <MouseTarget
+      layer={MOUSE_LAYER_MODAL}
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        openProviderSetupFromRunMode(mouse.dispatch);
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
   );
 }
 

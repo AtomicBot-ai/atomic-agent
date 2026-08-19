@@ -44,6 +44,16 @@ export function RunModeBar({ panel }: RunModeBarProps): ReactElement {
           ) : null}
         </Box>
       ))}
+      {/*
+        The strip showed three names and nothing else, so there was no
+        way to learn it was a control at all — reported as "there is no
+        hint anywhere how to switch them". Naming the key is cheap; the
+        pills are clickable too.
+      */}
+      <Text color={theme.colors.muted}>
+        {"   "}
+        {theme.glyphs.pipeSeparator} ctrl+r or click · /run to configure
+      </Text>
       {panel.lastError ? (
         <Text color={theme.colors.error}>
           {"  "}

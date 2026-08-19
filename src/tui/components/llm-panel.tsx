@@ -1,5 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import {
@@ -166,27 +168,62 @@ function footerHint(mode: LlmPanelMode, useFull: boolean): string {
     : "j/k · Enter · ←/→ mode · f filter · r";
 }
 
+/**
+ * The Local / Cloud / External / Fallback switcher.
+ *
+ * The active pane used to be marked by colour alone. On a screen this
+ * busy that is not a marker — pressing ←/→ visibly changed the rows
+ * underneath and still read as "nothing happened", which is exactly how
+ * it was reported. It carries the same `▸` every other selected thing in
+ * this TUI carries, and each label is its own clickable box.
+ */
 function ModeHeader({ mode }: { mode: LlmPanelMode }): ReactElement {
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text>
-        Mode:{" "}
+      <Box flexWrap="wrap">
+        <Text color={theme.colors.muted}>Mode: </Text>
         {LLM_PANEL_MODES.map((candidate, index) => (
-          <Text key={candidate}>
+          <Box key={candidate} flexShrink={0}>
             {index > 0 ? <Text color={theme.colors.muted}> | </Text> : null}
-            <Text
-              bold
-              color={
-                candidate === mode ? theme.colors.accentSoft : theme.colors.muted
-              }
-            >
-              {MODE_LABELS[candidate]}
-            </Text>
-          </Text>
+            <ModeTab candidate={candidate} active={candidate === mode} />
+          </Box>
         ))}
+      </Box>
+      <Text color={theme.colors.muted}>
+        ←/→ switches pane · click a name to jump straight to it
       </Text>
-      <Text color={theme.colors.muted}>Press ←/→ to switch mode</Text>
     </Box>
+  );
+}
+
+function ModeTab({
+  candidate,
+  active,
+}: {
+  candidate: LlmPanelMode;
+  active: boolean;
+}): ReactElement {
+  const mouse = useMouseCommands();
+  const label = (
+    <Text
+      bold
+      color={active ? theme.colors.accentSoft : theme.colors.muted}
+    >
+      {active ? `${theme.glyphs.chevronRight} ` : "  "}
+      {MODE_LABELS[candidate]}
+    </Text>
+  );
+  if (!mouse) return label;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        mouse.dispatch({ type: "llm_mode_set", mode: candidate });
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
   );
 }
 

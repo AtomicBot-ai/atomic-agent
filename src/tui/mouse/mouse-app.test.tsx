@@ -4,6 +4,7 @@ import { makeTuiEventBus, TuiApp, type TuiAppCallbacks } from "../tui-app.js";
 import type { TuiSessionInfo } from "../tui-state.js";
 import { makeMouseSource, type MouseSourceEmitter } from "./mouse-source.js";
 import type { TuiMouseEvent } from "./mouse-event.js";
+import { computeSidebarWidth } from "../layout.js";
 
 const SESSION: TuiSessionInfo = {
   sessionId: null,
@@ -162,18 +163,17 @@ function mountApp(): {
 }
 
 describe("TuiApp mouse", () => {
-  it("opens the menu when the breadcrumb is clicked", async () => {
-    // #172 retired the Run / Observe / Manage pills for a breadcrumb, so
-    // the mouse route into navigation is the breadcrumb itself: a click
-    // opens the same menu ctrl+p does. Without this the mouse would have
-    // no way to change section at all.
+  it("opens the menu when the rail's Menu button is clicked", async () => {
+    // The pills are gone and the top bar with them; the rail's Menu
+    // button is the mouse route into navigation. Without it the mouse
+    // would have no way to change section at all.
     const app = mountApp();
     await waitUntil(() => app.frame().includes("llama.cpp"), "the Run screen");
     await clickUntil(
       app.mouse,
-      () => locate(app.frame(), "Run"),
-      () => app.frame().includes("Menu"),
-      "click on the breadcrumb",
+      () => locate(app.frame(), "Menu"),
+      () => app.frame().includes("GO"),
+      "click on the rail's Menu button",
     );
     expect(app.frame()).toContain("Menu");
     app.unmount();
@@ -184,9 +184,9 @@ describe("TuiApp mouse", () => {
     await waitUntil(() => app.frame().includes("llama.cpp"), "the Run screen");
     await clickUntil(
       app.mouse,
-      () => locate(app.frame(), "Run"),
-      () => app.frame().includes("Menu"),
-      "click on the breadcrumb",
+      () => locate(app.frame(), "Menu"),
+      () => app.frame().includes("GO"),
+      "click on the rail's Menu button",
     );
     // One click acts on a menu row — the menu is the one surface where
     // the two-step select-then-activate rule would be the surprise.
@@ -205,9 +205,9 @@ describe("TuiApp mouse", () => {
     await waitUntil(() => app.frame().includes("llama.cpp"), "the Run screen");
     await clickUntil(
       app.mouse,
-      () => locate(app.frame(), "Run"),
-      () => app.frame().includes("Menu"),
-      "click on the breadcrumb",
+      () => locate(app.frame(), "Menu"),
+      () => app.frame().includes("GO"),
+      "click on the rail's Menu button",
     );
     await clickUntil(
       app.mouse,
@@ -287,16 +287,23 @@ describe("TuiApp mouse", () => {
   it("moves a panel cursor with the wheel", async () => {
     const app = mountApp();
     app.openSkillsPanel();
+    // The rail shares every terminal row with the panel, so the first
+    // glyph on a line belongs to the rail, not to the row. Slice the
+    // rail off first — ink-testing-library pins stdout at 100 columns,
+    // which is the width the rail sizes itself against.
+    const railColumns = computeSidebarWidth(100);
     const marker = (name: string): string => {
       const line = app
         .frame()
         .split("\n")
         .find((candidate) => candidate.includes(name));
-      return line?.trimStart().slice(0, 1) ?? "";
+      if (!line) return "";
+      return line.slice(railColumns).trimStart().slice(0, 1);
     };
     await waitUntil(() => marker("alpha-skill") === "▸", "the seeded skill rows");
     for (let attempt = 0; attempt < 40; attempt += 1) {
-      app.mouse.emit(wheel("down", 10, 6));
+      // Aim at the panel column: x=10 is inside the rail now.
+      app.mouse.emit(wheel("down", 60, 6));
       await delay(50);
       if (marker("beta-skill") === "▸") break;
     }
@@ -307,12 +314,18 @@ describe("TuiApp mouse", () => {
   it("routes a click to a list row and moves the cursor there", async () => {
     const app = mountApp();
     app.openSkillsPanel();
+    // The rail shares every terminal row with the panel, so the first
+    // glyph on a line belongs to the rail, not to the row. Slice the
+    // rail off first — ink-testing-library pins stdout at 100 columns,
+    // which is the width the rail sizes itself against.
+    const railColumns = computeSidebarWidth(100);
     const marker = (name: string): string => {
       const line = app
         .frame()
         .split("\n")
         .find((candidate) => candidate.includes(name));
-      return line?.trimStart().slice(0, 1) ?? "";
+      if (!line) return "";
+      return line.slice(railColumns).trimStart().slice(0, 1);
     };
     await waitUntil(() => marker("alpha-skill") === "▸", "the seeded skill rows");
     await clickUntil(

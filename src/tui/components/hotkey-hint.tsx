@@ -22,7 +22,7 @@ interface HotkeyChip {
   readonly label: string;
   /**
    * What a click on this chip does. Only chips with one unambiguous
-   * meaning get one — "alt+enter newline" or "↑↓ select" describe a
+   * meaning get one — "shift+enter newline" or "↑↓ select" describe a
    * gesture, not a command, so they stay plain text rather than
    * pretending to be buttons.
    */
@@ -205,7 +205,7 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
   // menu now lists Local / Cloud / Fusion outright.
   return [
     { key: "enter", label: "send" },
-    { key: "alt+enter", label: "newline" },
+    { key: "shift+enter", label: "newline" },
     {
       key: "tab",
       label: "sidebar",
@@ -214,6 +214,12 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
     },
     { key: SCROLL_KEY, label: "scroll" },
     { key: "ctrl+p", label: "menu", onClick: openOperatorMenu },
+    // Esc means something here — it clears the draft — and nothing said
+    // so. It is the one key an operator reaches for expecting "get me
+    // out of this", and leaving it off the strip is how it ended up
+    // feeling like the quit key. (The running branch above already
+    // advertises it as `abort`.)
+    { key: "esc", label: "clear" },
     {
       key: "ctrl+c",
       label: ctrlCArmed ? "press again to quit" : "quit",

@@ -39,8 +39,9 @@ import {
 import { Sidebar } from "./components/sidebar.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import { SlashPalette } from "./components/slash-palette.js";
-import { StatusBar } from "./components/status-bar.js";
 import { RunModeBar } from "./components/run-mode-bar.js";
+import { menuPlaceByTab } from "./menu/menu-registry.js";
+import { getCurrentSection } from "./section.js";
 import { RunModePicker } from "./components/run-mode-picker.js";
 import type { RunModeName } from "../config/index.js";
 import { TasksCancelModal } from "./components/tasks-cancel-modal.js";
@@ -426,6 +427,24 @@ const PROMPT_PLACEHOLDERS: readonly string[] = [
   "Inspect a file, run a search, draft a fix…",
 ];
 
+const SECTION_LABELS: Record<string, string> = {
+  run: "Run",
+  observe: "Observe",
+  manage: "Manage",
+};
+
+/**
+ * `Manage › Tasks` — the one thing the ctrl+p menu cannot tell you,
+ * because you have to open it to read it. Lived in the top bar until the
+ * rail took over the app chrome.
+ */
+function describeLocation(state: TuiState): string {
+  const section = SECTION_LABELS[getCurrentSection(state)] ?? "Run";
+  if (state.uiMode !== "debug") return section;
+  const tab = menuPlaceByTab(state.activeTab)?.label;
+  return tab ? `${section} ${theme.glyphs.chevronRight} ${tab}` : section;
+}
+
 export function TuiApp({
   session,
   bus,
@@ -556,12 +575,11 @@ export function TuiApp({
   const privacyTabActive =
     state.uiMode === "debug" && state.activeTab === "privacy";
   const terminalSize = useTerminalSize();
-  const sidebarVisible =
-    state.uiMode === "chat" && isSidebarVisible(terminalSize.columns);
-  // The rail takes a share of the terminal rather than a flat 30
-  // columns, and its two panes get a row budget cut from the terminal
-  // height — Ink 7 overlaps rather than clips an over-tall frame, so
-  // an unbudgeted rail garbles short windows.
+  // The rail is the app frame now — brand, version, menu, breadcrumb —
+  // so it stays on screen in every mode. It used to be chat-only, which
+  // was fine when it was just a list of sessions; hiding all the chrome
+  // the moment you open a panel is not.
+  const sidebarVisible = isSidebarVisible(terminalSize.columns);
   const sidebarWidth = computeSidebarWidth(terminalSize.columns);
   const sidebarRows = computeSidebarRowBudget(terminalSize.rows);
   const sidebarFocused = sidebarVisible && state.chatFocus === "sidebar";
@@ -569,6 +587,12 @@ export function TuiApp({
     !state.menuOpen &&
     !menuLeaderArmed &&
     !state.pendingApproval &&
+    // The run-mode overlay claims every key — digits for the dial, `n`
+    // for provider setup. Returning `true` from its handler does not
+    // stop the editor: Ink delivers each keypress to every live
+    // `useInput`, child first, so the only way to keep a letter out of
+    // the prompt is to take focus off the editor while it is open.
+    state.runModePanel.picker === null &&
     // The update offer claims y / n / Esc; keep the editor unfocused so
     // those keystrokes never leak into the input buffer. The post-update
     // "press any key to restart" prompt claims every key for the same reason.
@@ -916,20 +940,37 @@ export function TuiApp({
     >
     <Box
       flexDirection="column"
-      paddingLeft={2}
       ref={contentMouseRef}
       {...(rootHeight ? { height: rootHeight } : {})}
     >
-      <Box flexShrink={0}>
-        <StatusBar state={state} />
-      </Box>
-      {state.uiMode === "chat" ? (
-        <Box flexShrink={0}>
-          <RunModeBar panel={state.runModePanel} />
-        </Box>
-      ) : null}
       <Box flexDirection="row" flexGrow={1} flexShrink={1} overflow="hidden">
-        <Box flexDirection="column" flexGrow={1} overflow="hidden">
+        {sidebarVisible ? (
+          <Sidebar
+            width={sidebarWidth}
+            maxSessionRows={sidebarRows.sessions}
+            maxTaskRows={sidebarRows.tasks}
+            sessions={state.recentSessions}
+            sessionsCursor={state.sidebarCursor}
+            currentSessionId={state.session.sessionId}
+            sessionId={state.session.sessionId}
+            location={describeLocation(state)}
+            tasks={selectSidebarTasks(state.tasksPanel.rows)}
+            tasksCursor={state.sidebarTasksCursor}
+            activeSection={state.sidebarSection}
+            focused={sidebarFocused}
+          />
+        ) : null}
+        <Box
+          flexDirection="column"
+          flexGrow={1}
+          overflow="hidden"
+          paddingLeft={2}
+        >
+          {state.uiMode === "chat" ? (
+            <Box flexShrink={0}>
+              <RunModeBar panel={state.runModePanel} />
+            </Box>
+          ) : null}
           <Box
             flexDirection="column"
             flexGrow={1}
@@ -1042,20 +1083,6 @@ export function TuiApp({
           />
           <HotkeyHint state={state} ctrlCArmed={ctrlCArmed} />
         </Box>
-        {sidebarVisible ? (
-          <Sidebar
-            width={sidebarWidth}
-            maxSessionRows={sidebarRows.sessions}
-            maxTaskRows={sidebarRows.tasks}
-            sessions={state.recentSessions}
-            sessionsCursor={state.sidebarCursor}
-            currentSessionId={state.session.sessionId}
-            tasks={selectSidebarTasks(state.tasksPanel.rows)}
-            tasksCursor={state.sidebarTasksCursor}
-            activeSection={state.sidebarSection}
-            focused={sidebarFocused}
-          />
-        ) : null}
       </Box>
     </Box>
     </MouseProvider>

@@ -157,7 +157,8 @@ describe("TuiApp (smoke)", () => {
     stdin.write("\t");
     await new Promise((r) => setTimeout(r, 10));
     const after = strip(lastFrame() ?? "");
-    if (before.includes("Sessions")) {
+    // The rail headers are upper-case since it became the app frame.
+    if (before.includes("SESSIONS")) {
       // Sidebar visible: Tab lands focus on the rail and stays in
       // chat mode. Ctrl+B is the dedicated key for nav cycling.
       expect(after).toContain("Run");

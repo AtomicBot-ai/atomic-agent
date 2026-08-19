@@ -67,7 +67,7 @@ describe("Esc on the Observe tabs", () => {
       // reached the still-focused chat editor and quit the process.
       expect(counts.quit).toBe(0);
       expect(counts.abort).toBe(0);
-      expect(strip(lastFrame() ?? "")).toMatch(/\|\s+Run(\s|$)/m);
+      expect(strip(lastFrame() ?? "")).toMatch(/^\s{0,3}Run\s/m);
       unmount();
     });
   }

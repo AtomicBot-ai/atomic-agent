@@ -57,10 +57,9 @@ describe("Esc on the Import tab", () => {
     // The configure-mode handler ends in a catch-all `return true` that
     // swallows stray letters; before the fix it swallowed Esc too, so the
     // operator was stuck on the tab with no "back" gesture at all.
-    // #172 replaced the section pill row with a breadcrumb: the status
-    // bar names where you are (`Manage ▸ Tasks`) rather than listing
-    // where you could go. "on the Run screen" reads as a bare `Run`.
-    expect(strip(lastFrame() ?? "")).toMatch(/\|\s+Run(\s|$)/m);
+    // The breadcrumb lives on the left rail now — the top bar is gone —
+    // so "on the Run screen" is a rail line reading exactly `Run`.
+    expect(strip(lastFrame() ?? "")).toMatch(/^\s{0,3}Run\s/m);
     expect(quit).toBe(0);
     unmount();
   });

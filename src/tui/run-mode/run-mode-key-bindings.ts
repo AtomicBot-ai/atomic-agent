@@ -1,6 +1,7 @@
 import type { Key } from "ink";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
+import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
 import {
   clampCloudShare,
   CLOUD_SHARE_COARSE_STEP,
@@ -30,7 +31,13 @@ export interface RunModePickerKeyContext {
  *  - `←`/`→`          — dial ±5 (shift: ±25).
  *  - digits           — type a dial value directly.
  *  - `Enter`          — apply the highlighted mode + dial.
+ *  - `n`              — set up the provider this mode needs.
  *  - `Esc`            — close, reverting to what was in force.
+ *
+ * `n` exists because the overlay was a dead end on a fresh install:
+ * Cloud and Fusion both refuse without a cloud provider, and the only
+ * cure was to leave, find Manage -> LLM, and add one. The screen that
+ * tells you what is missing is the screen that should be able to fix it.
  */
 export function handleRunModePickerKey(
   input: string,
@@ -43,6 +50,10 @@ export function handleRunModePickerKey(
 
   if (key.escape) {
     dispatch({ type: "run_mode_picker_closed" });
+    return true;
+  }
+  if (input === "n" || input === "N") {
+    openProviderSetupFromRunMode(dispatch);
     return true;
   }
   if (key.return) {
@@ -87,4 +98,23 @@ export function handleRunModePickerKey(
   }
   // Anything else is swallowed while the picker owns the keyboard.
   return true;
+}
+
+
+/**
+ * Leave the overlay and land on the provider wizard with the Cloud pane
+ * selected — the one place a cloud provider can be added. Exported so
+ * the mouse layer runs exactly this, not a second copy of it.
+ */
+export function openProviderSetupFromRunMode(
+  dispatch: (action: TuiAction) => void,
+): void {
+  dispatch({ type: "run_mode_picker_closed" });
+  dispatch({ type: "ui_mode_set", mode: "debug" });
+  dispatch({ type: "tab_changed", tab: "llm" });
+  dispatch({ type: "llm_mode_set", mode: "cloud" });
+  dispatch({
+    type: "providers_wizard_opened",
+    wizard: createProvidersWizardState("add"),
+  });
 }

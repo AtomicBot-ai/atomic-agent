@@ -72,8 +72,11 @@ describe("Sidebar", () => {
       />,
     );
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("Sessions");
-    expect(text).toContain("Tasks");
+    // Upper-case since the rail became the app frame — it carries the
+    // brand, the version and the menu button now, so its own headings
+    // read as labels rather than as content.
+    expect(text).toContain("SESSIONS");
+    expect(text).toContain("TASKS");
     expect(text).not.toContain("Workspace");
     expect(text).not.toContain("LLM");
   });
@@ -178,8 +181,10 @@ describe("Sidebar", () => {
     // Both panes admit what they are hiding.
     expect(text).toContain("9 more");
     expect(text).toContain("6 more");
-    // Two headers + 3 sessions + 2 tasks + 2 "more" rows + blank row.
-    expect(strip(lastFrame() ?? "").split("\n").length).toBeLessThanOrEqual(10);
+    // Two headers + 3 sessions + 2 tasks + 2 "more" rows + spacers, plus
+    // the brand block (mark, wordmark, version), the menu button and the
+    // breadcrumb slot the rail gained when it replaced the top bar.
+    expect(strip(lastFrame() ?? "").split("\n").length).toBeLessThanOrEqual(22);
   });
 
   it("scrolls the Tasks pane to keep the cursor visible", () => {
