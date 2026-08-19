@@ -28,6 +28,8 @@ export interface SlashDispatchResult {
   readonly triggerSessionPicker: boolean;
   /** When true the caller should ask the orchestrator to start a fresh session. */
   readonly triggerSessionNew: boolean;
+  /** When true the caller should open a new OS terminal window (`/window`). */
+  readonly triggerNewWindow: boolean;
   /** When true the caller should ask the orchestrator to dump the user profile. */
   readonly triggerMemoryDump: boolean;
   /** When true the caller should ask the orchestrator to list the skill catalog in chat. */
@@ -107,6 +109,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       triggerQuit: false,
       triggerSessionPicker: false,
       triggerSessionNew: false,
+      triggerNewWindow: false,
       triggerMemoryDump: false,
       triggerSkillCatalogDump: false,
       triggerDebugBundleDump: false,
@@ -124,6 +127,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       triggerQuit: false,
       triggerSessionPicker: false,
       triggerSessionNew: false,
+      triggerNewWindow: false,
       triggerMemoryDump: false,
       triggerSkillCatalogDump: false,
       triggerDebugBundleDump: false,
@@ -204,6 +208,8 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return pureActions([], { triggerSessionPicker: true });
     case "new":
       return pureActions([], { triggerSessionNew: true });
+    case "window":
+      return pureActions([], { triggerNewWindow: true });
     case "tools":
       return dispatchToolsSub(parsed.args);
     case "skills":
@@ -268,6 +274,7 @@ function pureActions(
     triggerQuit: false,
     triggerSessionPicker: false,
     triggerSessionNew: false,
+    triggerNewWindow: false,
     triggerMemoryDump: false,
     triggerSkillCatalogDump: false,
     triggerDebugBundleDump: false,
