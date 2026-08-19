@@ -30,20 +30,56 @@
  */
 export const MAX_PENDING_STEERS = 16;
 
-/** Narrow read side, so `AgentLoop` never sees the mutating surface. */
-export interface SteeringDrain {
+/**
+ * The turn's side of the inbox: open the gate when the turn starts
+ * accepting steers, drain at each step boundary, and close+drain in one
+ * step on the way out. Declared narrow so `AgentLoop` never sees `push`.
+ */
+export interface SteeringChannel {
+  open(sessionId: string): void;
   drain(sessionId: string): readonly string[];
+  closeAndDrain(sessionId: string): readonly string[];
 }
 
-export class SteeringInbox implements SteeringDrain {
+export class SteeringInbox implements SteeringChannel {
   private readonly bySession = new Map<string, string[]>();
+  /**
+   * Sessions whose running turn is still willing to pick messages up.
+   * This — not `TurnController.isBusy` — is what `push` gates on.
+   *
+   * `isBusy` and "a step boundary is still coming" are two different
+   * facts that stop being true at two different moments: the loop does
+   * its final drain inside `runTurn`, while the controller clears
+   * `busy` later, in its own `finally`. A `push` in that window used to
+   * be accepted (busy was still true) and then sat here until some
+   * unrelated later turn drained it — the operator saw the message
+   * accepted and the running turn never saw it. Making acceptance a
+   * property of *this* object, flipped by the same call that performs
+   * the final drain, collapses the two facts into one.
+   */
+  private readonly accepting = new Set<string>();
+
+  /**
+   * Start accepting steers for the turn now running on `sessionId`.
+   * Called by `AgentLoop.runTurn` on entry. Idempotent.
+   */
+  open(sessionId: string): void {
+    this.accepting.add(sessionId);
+  }
+
+  /** True while a turn on `sessionId` can still pick messages up. */
+  isOpen(sessionId: string): boolean {
+    return this.accepting.has(sessionId);
+  }
 
   /**
    * Queue a message for the turn currently running on `sessionId`.
-   * Returns `false` when the text is blank or the per-session cap is
-   * reached — callers treat that as "not steered, park it instead".
+   * Returns `false` when no turn is accepting steers for that session,
+   * when the text is blank, or when the per-session cap is reached —
+   * callers treat any `false` as "not steered, park it instead".
    */
   push(sessionId: string, text: string): boolean {
+    if (!this.accepting.has(sessionId)) return false;
     const trimmed = text.trim();
     if (trimmed.length === 0) return false;
     const pending = this.bySession.get(sessionId);
@@ -68,6 +104,22 @@ export class SteeringInbox implements SteeringDrain {
     return pending;
   }
 
+  /**
+   * Stop accepting and take what is left, as a single indivisible step.
+   *
+   * This is the turn's LAST act on the inbox. Everything returned here
+   * is `RunTurnResult.undelivered` — the caller's to re-route. Every
+   * `push` that lands after it is refused, so the sender is told "not
+   * steered" while the fact is still true, instead of being told "yes"
+   * and having the text stranded until an unrelated later turn.
+   *
+   * Idempotent: a second call returns `[]`.
+   */
+  closeAndDrain(sessionId: string): readonly string[] {
+    this.accepting.delete(sessionId);
+    return this.drain(sessionId);
+  }
+
   /** Non-destructive read, for UI badges and tests. */
   peek(sessionId: string): readonly string[] {
     return this.bySession.get(sessionId) ?? [];
@@ -75,11 +127,13 @@ export class SteeringInbox implements SteeringDrain {
 
   /** Discard pending messages for one session (session switch / abort). */
   clear(sessionId: string): void {
+    this.accepting.delete(sessionId);
     this.bySession.delete(sessionId);
   }
 
   /** Discard everything (runtime shutdown). */
   clearAll(): void {
+    this.accepting.clear();
     this.bySession.clear();
   }
 }

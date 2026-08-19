@@ -34,6 +34,8 @@ import type {
   TypeInput,
 } from "../tools/browser/browser-backend.js";
 import type { LogRecord } from "../tracing/structured-logger.js";
+import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import type { CompletionResult } from "../llm/llama-server-client.js";
 
 class FakeBackend implements BrowserBackend {
   public shutdowns = 0;
@@ -973,6 +975,10 @@ describe("createAgentRuntime steering", () => {
         sessionId: session.id,
         origin: "tui",
         run: async () => {
+          // Stand in for `AgentLoop.runTurn`, which opens the steering
+          // window on entry — the queue lock alone is not what makes a
+          // session steerable.
+          runtime.steeringInbox.open(session.id);
           expect(runtime.steer(session.id, "change course")).toBe(true);
           expect(runtime.steeringInbox.peek(session.id)).toEqual([
             "change course",
@@ -990,6 +996,123 @@ describe("createAgentRuntime steering", () => {
     }
   });
 
+  /**
+   * The lost-update window. `runTurn` is `enqueue({ run: () =>
+   * executeTurn(...) })`; spelling that composition out by hand is the
+   * only way to stand *between* the loop's final drain and the
+   * controller's `busy.delete`, which is where a `steer()` used to be
+   * accepted and then stranded. Everything else here is the production
+   * wiring: real `TurnController`, real `SteeringInbox`, real
+   * `AgentLoop`, real `runtime.steer`. No sleeps, no timing luck.
+   */
+  it("refuses a steer that lands after the turn's final drain", async () => {
+    const events: AgentLoopEvent[] = [];
+    let inferences = 0;
+    // Assigned right after bootstrap; the completer only runs inside a
+    // turn, which is later still.
+    let sessionId = "";
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      handlers: { onAgentEvent: (event) => events.push(event) },
+      overrides: {
+        browserBackend: new FakeBackend(),
+        skipLlamaHealthCheck: true,
+        llamaComplete: async () => {
+          inferences += 1;
+          if (inferences === 1) {
+            // Sent while step 0's inference is in flight — the window
+            // is open, so this one must be accepted AND delivered.
+            expect(runtime.steer(sessionId, "check the logs first")).toBe(true);
+            return completion(JSON.stringify({ tool: "noop", args: {} }));
+          }
+          return completion(
+            JSON.stringify({ tool: "reply", args: { text: "done" } }),
+          );
+        },
+      },
+    });
+    // A trivial non-terminal tool so the turn has a step boundary at
+    // all; a one-step turn could not exercise steering.
+    runtime.toolRegistry.register({
+      name: "noop",
+      description: "does nothing",
+      readonly: true,
+      run: async () => ({
+        tool: "noop",
+        status: "ok" as const,
+        summary: "noop",
+        details: {},
+        truncated: false,
+      }),
+    });
+    const session = runtime.createSession();
+    sessionId = session.id;
+    const lateSteerResults: boolean[] = [];
+    try {
+      const result = await runtime.turnController.enqueue({
+        sessionId,
+        origin: "tui",
+        run: async () => {
+          const r = await runtime.executeTurn(session, "do the thing", {
+            maxSteps: 4,
+          });
+          // The loop has returned, so its final drain has happened.
+          // The controller clears `busy` in its own `finally`, i.e.
+          // after this body settles — so right here the two facts
+          // disagree, and `isBusy` is the stale one.
+          expect(runtime.turnController.isBusy(sessionId)).toBe(true);
+          lateSteerResults.push(runtime.steer(sessionId, "too late, stop"));
+          return r;
+        },
+      });
+
+      // The in-flight steer landed where it should: a real user turn,
+      // folded into the next step.
+      expect(result.reason).toBe("reply");
+      expect(
+        result.session.turns
+          .filter((t) => t.kind === "user")
+          .map((t) => (t as { text: string }).text),
+      ).toEqual(["do the thing", "check the logs first"]);
+      expect(events).toContainEqual({
+        type: "steer_applied",
+        text: "check the logs first",
+        stepIndex: 1,
+      });
+
+      // The late one did not. The caller is told "not steered" while
+      // that is still true, so it can re-route...
+      expect(lateSteerResults).toEqual([false]);
+      // ...and nothing is left behind for a later turn to pick up.
+      expect(runtime.steeringInbox.peek(sessionId)).toEqual([]);
+      expect(result.undelivered).toEqual([]);
+
+      // The symptom, spelled out: the next turn on this session must
+      // not open with a "while you were working" notice about a turn
+      // that ended before it started.
+      events.length = 0;
+      const tails: string[] = [];
+      const next = await runtime.runTurn(result.session, "next question", {
+        maxSteps: 4,
+        eventHook: (event) => {
+          if (
+            event.type === "llm_event" &&
+            event.event.type === "prompt_captured"
+          ) {
+            tails.push(event.event.tail);
+          }
+        },
+      });
+      expect(next.reason).toBe("reply");
+      expect(events.filter((e) => e.type === "steer_applied")).toEqual([]);
+      expect(tails.length).toBeGreaterThan(0);
+      for (const tail of tails) expect(tail).not.toContain("too late, stop");
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
   it("drops pending steers on shutdown", async () => {
     const runtime = await createAgentRuntime({
       workingDir,
@@ -997,9 +1120,25 @@ describe("createAgentRuntime steering", () => {
       overrides: { browserBackend: new FakeBackend(), skipLlamaHealthCheck: true },
     });
     const session = runtime.createSession();
+    runtime.steeringInbox.open(session.id);
     runtime.steeringInbox.push(session.id, "stale");
     await runtime.shutdown();
     expect(runtime.steeringInbox.peek(session.id)).toEqual([]);
+    // The window is closed too: nothing will ever drain it again.
+    expect(runtime.steer(session.id, "after shutdown")).toBe(false);
   });
 });
+
+function completion(content: string): CompletionResult {
+  return {
+    content,
+    reasoningContent: "",
+    stop: true,
+    truncated: false,
+    timing: { promptMs: 1, predictedMs: 1, promptTokens: 10, predictedTokens: 5 },
+    cacheHitTokens: 0,
+    slotId: 0,
+    modelId: "mock",
+  };
+}
 

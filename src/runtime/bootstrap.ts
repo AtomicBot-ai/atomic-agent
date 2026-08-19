@@ -300,17 +300,21 @@ export interface AgentRuntime {
    * mid-turn message would otherwise have to wait for the turn to
    * close; the inbox lets it reach the model at the next step boundary
    * instead. Prefer {@link AgentRuntime.steer} over touching this
-   * directly — it checks that a turn is actually in flight.
+   * directly — it is the same call with the intent documented.
    */
   readonly steeringInbox: SteeringInbox;
   /**
    * Fold `text` into the turn currently running on `sessionId`.
    *
-   * Returns `false` — and queues nothing — when the session has no turn
-   * in flight, or when the inbox for that session is full. A `false`
-   * return means "not steered": the caller is expected to fall back to
-   * a normal `runTurn`, or to its own message queue. Never starts a
-   * turn on its own.
+   * Returns `false` — and queues nothing — when no running turn is
+   * still able to pick the message up (no turn in flight, or the turn
+   * has already done its final drain), when the text is blank, or when
+   * the inbox for that session is full. A `false` return means "not
+   * steered": the caller is expected to fall back to a normal
+   * `runTurn`, or to its own message queue. `true` means the message is
+   * either delivered at a step boundary or returned on
+   * `RunTurnResult.undelivered` — never stranded. Never starts a turn
+   * on its own.
    */
   steer(sessionId: string, text: string): boolean;
   /**
@@ -2102,11 +2106,21 @@ export async function createAgentRuntime(
    * enqueue: the whole point is to reach the turn that is already
    * running, and going through `turnController` would put the message
    * behind it.
+   *
+   * One call, one decision. It deliberately does NOT pre-check
+   * `turnController.isBusy`: that is a second fact which stops being
+   * true at a different moment than "the loop will drain this again"
+   * (the loop's final drain happens inside `runTurn`, `busy.delete`
+   * later in the controller's `finally`). Guarding on it made this a
+   * check-then-act with a real lost-update window — accepted here,
+   * never delivered, and resurfacing at step 0 of some later turn under
+   * a "while you were working" notice about a turn that had already
+   * ended. `push` alone is authoritative: it accepts only while the
+   * running turn's window is open, and that window is closed by the
+   * same call that performs the final drain.
    */
-  const steer = (sessionId: string, text: string): boolean => {
-    if (!turnController.isBusy(sessionId)) return false;
-    return steeringInbox.push(sessionId, text);
-  };
+  const steer = (sessionId: string, text: string): boolean =>
+    steeringInbox.push(sessionId, text);
 
   const runTurn = async (
     session: SessionState,

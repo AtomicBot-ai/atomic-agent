@@ -172,7 +172,7 @@ export interface AgentLoopDependencies {
    * in AGENTS.md. Absent in tests and in surfaces that do not offer
    * steering, in which case the loop behaves exactly as before.
    */
-  steeringInbox?: SteeringDrain;
+  steeringInbox?: SteeringChannel;
   metrics?: AgentMetrics;
   logger?: StructuredLogger;
 }
@@ -257,12 +257,20 @@ export interface LessonLifecycleHook {
 }
 
 /**
- * Read side of the steering inbox as the loop needs it. Declared
- * structurally (like {@link MemoryContextProvider}) so `src/agent/` does
- * not import from `src/runtime/`, which imports it.
+ * The turn's side of the steering inbox. Declared structurally (like
+ * {@link MemoryContextProvider}) so `src/agent/` does not import from
+ * `src/runtime/`, which imports it.
+ *
+ * The loop owns the window in which steering is accepted: `open` when
+ * the turn starts, `drain` at every step boundary, `closeAndDrain`
+ * exactly once on the way out. `closeAndDrain` is what makes "the turn
+ * can still pick messages up" and "the last drain has happened" the
+ * same fact — see the comment on `SteeringInbox.accepting`.
  */
-export interface SteeringDrain {
+export interface SteeringChannel {
+  open(sessionId: string): void;
   drain(sessionId: string): readonly string[];
+  closeAndDrain(sessionId: string): readonly string[];
 }
 
 export interface RunTurnOptions {
@@ -375,8 +383,38 @@ export class AgentLoop {
    *  - On `finish`: returns with `reason: "finish"`, session marked completed.
    *  - On `max_steps`: synthesises a fallback assistant reply so the user
    *    is never left without a turn closing.
+   *
+   * The wrapper owns the mid-turn steering window: it is open for
+   * exactly the lifetime of this call, and it closes in the same
+   * indivisible step as the loop's final drain (see `flushSteering`).
+   * A `steer()` that lands after that is refused, not stranded.
    */
   async runTurn(
+    session: SessionState,
+    options: RunTurnOptions,
+  ): Promise<RunTurnResult> {
+    this.deps.steeringInbox?.open(session.id);
+    try {
+      return await this.runTurnInner(session, options);
+    } finally {
+      // Every ordinary exit already closed the window through
+      // `flushSteering` — a `return` expression is evaluated before
+      // this block runs, so `undelivered` is unaffected and this call
+      // is a no-op. What it catches is the throw path (a programming
+      // bug escaping the classified-error handling above): without it
+      // the session would stay open forever and every later `steer()`
+      // would be accepted into an inbox nobody drains.
+      const stranded = this.deps.steeringInbox?.closeAndDrain(session.id) ?? [];
+      if (stranded.length > 0) {
+        this.deps.logger?.warn("mid-turn steering stranded by a failed turn", {
+          sessionId: session.id,
+          count: stranded.length,
+        });
+      }
+    }
+  }
+
+  private async runTurnInner(
     session: SessionState,
     options: RunTurnOptions,
   ): Promise<RunTurnResult> {
@@ -963,17 +1001,21 @@ export class AgentLoop {
   }
 
   /**
-   * Empty the steering inbox on the way out of a turn.
+   * Close the steering window and empty the inbox on the way out of a
+   * turn — one indivisible step, which is the whole point.
    *
    * A message pushed after the loop's last drain — during the final
    * inference, or at any point in a turn that was cancelled before it
    * stepped — would otherwise sit in the inbox until some unrelated
    * later turn happened to pick it up, out of order and out of context.
-   * Handing it back to the caller keeps "the message you sent always
-   * goes somewhere" true on every exit path.
+   * What is already pending is handed back to the caller as
+   * `undelivered`; what arrives from here on is refused at `push`, so
+   * the sender learns immediately that it was not steered. Together
+   * that keeps "the message you sent always goes somewhere" true on
+   * every exit path, with no window in between.
    */
   private flushSteering(sessionId: string): readonly string[] {
-    return this.deps.steeringInbox?.drain(sessionId) ?? [];
+    return this.deps.steeringInbox?.closeAndDrain(sessionId) ?? [];
   }
 }
 
