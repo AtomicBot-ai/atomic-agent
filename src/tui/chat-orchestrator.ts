@@ -259,6 +259,7 @@ export class ChatOrchestrator {
     }
     this.session = loaded;
     this.queue.length = 0;
+    this.emitQueue();
     // Session grants are point exceptions scoped to the session that
     // granted them; a switch must not carry them into the next one.
     this.runtime.approvals.clearSessionGrants();
@@ -349,6 +350,7 @@ export class ChatOrchestrator {
     }
     this.session = this.runtime.createSession();
     this.queue.length = 0;
+    this.emitQueue();
     // A fresh session starts with no point exceptions: grants never
     // outlive the session that created them.
     this.runtime.approvals.clearSessionGrants();
@@ -371,9 +373,31 @@ export class ChatOrchestrator {
     this.ensureSession();
     if (this.currentController) {
       this.queue.push(text);
+      this.emitQueue();
       return;
     }
     void this.runOneTurn(text);
+  }
+
+  /**
+   * Drop every parked message without touching the running turn
+   * (`/queue clear`). No-op on an empty queue so the TUI is not spammed
+   * with redundant `queue_changed` frames.
+   */
+  clearQueue(): void {
+    if (this.queue.length === 0) return;
+    this.queue.length = 0;
+    this.emitQueue();
+  }
+
+  /**
+   * Re-publish the pending-message queue to the TUI. The orchestrator is
+   * the source of truth — the reducer mirrors this list rather than
+   * tracking pushes and drains on its own, so an optimistic UI insert can
+   * never drift from what will actually run.
+   */
+  private emitQueue(): void {
+    this.bus.emit({ type: "queue_changed", queued: [...this.queue] });
   }
 
   private async runOneTurn(text: string): Promise<void> {
@@ -401,6 +425,7 @@ export class ChatOrchestrator {
       if (this.currentController === controller) this.currentController = null;
     }
     const next = this.queue.shift();
+    if (next !== undefined) this.emitQueue();
     if (next !== undefined && !this.quitting) {
       void this.runOneTurn(next);
     }
@@ -479,6 +504,7 @@ export class ChatOrchestrator {
     if (this.quitting) return;
     this.quitting = true;
     this.queue.length = 0;
+    this.emitQueue();
     this.currentController?.abort();
   }
 
