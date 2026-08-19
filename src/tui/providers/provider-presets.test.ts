@@ -40,6 +40,33 @@ describe("PROVIDER_PRESETS", () => {
     expect(findProviderPreset("nous")).toBeDefined();
   });
 
+  it("offers Anthropic as a first-class preset", () => {
+    // Claude was the one major vendor with no route into the agent at
+    // all: no preset, and both aggregator catalogs filtered it out.
+    // Anthropic's OpenAI-compatible endpoint needs no new provider kind.
+    const preset = findProviderPreset("anthropic");
+    expect(preset?.baseUrl).toBe("https://api.anthropic.com");
+    expect(preset?.envVar).toBe("ANTHROPIC_API_KEY");
+    expect(preset?.local).toBeUndefined();
+  });
+
+  it("names every hosted vendor preset after its own service", () => {
+    // Each of these answers `<baseUrl>/v1/models` — 200 with a `data`
+    // array, or 401 while the same host 404s a bogus sibling path.
+    const expected: Record<string, string> = {
+      anthropic: "https://api.anthropic.com",
+      dashscope: "https://dashscope-intl.aliyuncs.com/compatible-mode",
+      hyperbolic: "https://api.hyperbolic.xyz",
+      moonshot: "https://api.moonshot.ai",
+      novita: "https://api.novita.ai/openai",
+      perplexity: "https://api.perplexity.ai",
+      sambanova: "https://api.sambanova.ai",
+    };
+    for (const [id, baseUrl] of Object.entries(expected)) {
+      expect(findProviderPreset(id)?.baseUrl, id).toBe(baseUrl);
+    }
+  });
+
   it("marks LM Studio as local", () => {
     expect(findProviderPreset("lmstudio")?.local).toBe(true);
   });
@@ -75,6 +102,8 @@ describe("PROVIDER_PRESETS", () => {
     );
     expect(keyless).toContain("nous");
     expect(keyless).toContain("ollama-cloud");
+    expect(keyless).toContain("novita");
+    expect(keyless).toContain("sambanova");
   });
 
   it("returns undefined for an unknown id", () => {

@@ -77,7 +77,10 @@ describe("llm-panel selectors", () => {
         providerId: "openrouter",
         modelId: "qwen/qwen3.7-max",
         active: true,
-        enterEffect: expect.stringContaining("$1.25/$3.75"),
+        // Price comes from the bundled catalog, refreshed from the live
+        // OpenRouter list on 2026-08-19 ($1.475/$4.425 per 1M, shown to
+        // two decimals).
+        enterEffect: expect.stringContaining("$1.48/$4.42"),
       }),
     );
     const activeCloud = cloudRows.find(
