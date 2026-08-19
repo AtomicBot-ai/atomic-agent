@@ -141,18 +141,25 @@ function applyToolCallDeltas(
  * as `tool not registered in this agent` — the model had done nothing
  * wrong, and the transcript showed the tool it actually asked for nowhere.
  *
- * A repeat of what we already hold is dropped; a genuine continuation is
- * appended, so a gateway that really does split a name across chunks still
- * assembles. The two cases are told apart by whether the accumulated name
- * already ends with the incoming fragment, which is the only signal the
- * stream gives us.
+ * Only one case is detectable: a fragment equal to the whole name we
+ * already hold is that repeat, and is dropped. Everything else is a
+ * continuation and is appended, so a gateway that really does split a
+ * name across chunks still assembles.
+ *
+ * A *partial* repeat cannot be separated from a continuation even in
+ * principle — `["search", "search"]` is both a repeated `search` and a
+ * split `searchsearch` — and guessing by suffix costs real tool names:
+ * every name ending in a doubled letter (`os.proc.kill`, `browser.scroll`,
+ * `os.git.diff`, the `memory.*.recall` trio) split before its last
+ * character would lose that character and fail the same registry lookup
+ * this function exists to keep working.
  */
 function appendToolName(fn: { name: string }, fragment: string): void {
   if (!fn.name) {
     fn.name = fragment;
     return;
   }
-  if (fn.name === fragment || fn.name.endsWith(fragment)) return;
+  if (fn.name === fragment) return;
   fn.name += fragment;
 }
 

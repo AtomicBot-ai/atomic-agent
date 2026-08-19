@@ -91,6 +91,22 @@ describe("openai stream consumer — tool call names", () => {
     expect(result.toolCalls?.[0]?.function.name).toBe("os.fs.read");
   });
 
+  it("assembles a split that ends in the name's doubled last letter", async () => {
+    // `os.proc.kil` + `l`. The fragment is a suffix of what we already
+    // hold, so dropping partial repeats left `os.proc.kil` — a name no
+    // registry has. Every tool whose name ends in a doubled letter
+    // (`os.proc.kill`, `browser.scroll`, `memory.*.recall`) splits this
+    // way, so the suffix signal is loss, not de-duplication.
+    const result = await drain(
+      sseBody([
+        toolCallDelta(0, { name: "os.proc.kil" }, { id: "c", type: "function" }),
+        toolCallDelta(0, { name: "l", arguments: "{}" }),
+        { choices: [{ index: 0, finish_reason: "tool_calls", delta: {} }] },
+      ]),
+    );
+    expect(result.toolCalls?.[0]?.function.name).toBe("os.proc.kill");
+  });
+
   it("keeps parallel calls apart when both repeat their names", async () => {
     const result = await drain(
       sseBody([
