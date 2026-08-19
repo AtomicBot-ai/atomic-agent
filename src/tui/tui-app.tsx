@@ -613,6 +613,16 @@ export function TuiApp({
       dispatch({ type: "chat_scroll_reset" });
       return;
     }
+    // A debug panel is open: Esc is the way back to Run, exactly as the
+    // hint strip advertises. The Observe tabs (Feed / World / Reasoning /
+    // Logs / LLM logs) have no key layer of their own, so `handlePanelEscape`
+    // never sees the keypress and the editor — which stays focused there so
+    // the operator can keep typing while watching the feed — used to fall
+    // through to the quit branch below and kill the agent instead.
+    if (state.uiMode === "debug") {
+      dispatch({ type: "ui_mode_set", mode: "chat" });
+      return;
+    }
     if (canAcceptMessage(state)) {
       callbacks.onQuit();
       dispatch({ type: "quit_requested" });
