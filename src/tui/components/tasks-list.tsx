@@ -3,27 +3,41 @@ import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
 import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
 import { handleTasksTabKey } from "../tasks/tasks-key-bindings.js";
+import {
+  computeTaskListLayout,
+  fitTaskListHints,
+  formatTaskListHeader,
+  formatTaskRowCells,
+  type TaskListLayout,
+} from "../tasks/tasks-list-fit.js";
 import type {
   TaskSummaryRow,
   TasksPanelState,
 } from "../tasks/tasks-panel-state.js";
 import type { TaskStatus } from "../../tasks/task-types.js";
-import { formatRelativeMs } from "../tasks/tasks-summary.js";
 
 export interface TasksListProps {
   panel: TasksPanelState;
   visibleRows: readonly TaskSummaryRow[];
   maxRows: number;
   now: number;
+  /** Columns the panel owns — see `tasks-list-fit.ts` for why it matters. */
+  width: number;
 }
 
 /**
  * Scrollable table view. `visibleRows` is already filtered + sorted by
  * the caller; this component owns only the cursor windowing and the
  * per-row rendering contract.
+ *
+ * Every column width — including the footer hints — comes from
+ * `tasks-list-fit.ts` for the panel's real width, because a row that
+ * wraps takes two terminal lines and collides its own columns into
+ * each other.
  */
 export function TasksList(props: TasksListProps): ReactElement {
-  const { panel, visibleRows, maxRows, now } = props;
+  const { panel, visibleRows, maxRows, now, width } = props;
+  const layout = computeTaskListLayout(width);
   if (visibleRows.length === 0) {
     return (
       <Box flexDirection="column" paddingY={1}>
@@ -41,7 +55,7 @@ export function TasksList(props: TasksListProps): ReactElement {
   const hiddenAfter = Math.max(0, visibleRows.length - windowStart - pageRows.length);
   return (
     <Box flexDirection="column">
-      <HeaderRow />
+      <HeaderRow layout={layout} />
       {hiddenBefore > 0 ? (
         <Text color={theme.colors.muted}>
           ↑ {hiddenBefore} above
@@ -58,6 +72,7 @@ export function TasksList(props: TasksListProps): ReactElement {
         >
           <TaskRow
             row={row}
+            layout={layout}
             selected={idx + windowStart === clamped}
             now={now}
           />
@@ -68,54 +83,54 @@ export function TasksList(props: TasksListProps): ReactElement {
           ↓ {hiddenAfter} below
         </Text>
       ) : null}
-      <HintsRow />
+      <HintsRow width={width} />
     </Box>
   );
 }
 
-function HeaderRow(): ReactElement {
+function HeaderRow({ layout }: { layout: TaskListLayout }): ReactElement {
   return (
     <Box>
-      <Text color={theme.colors.muted}>{"  "}status   schedule               next-run       session   message</Text>
+      <Text color={theme.colors.muted}>{formatTaskListHeader(layout)}</Text>
     </Box>
   );
 }
 
-function HintsRow(): ReactElement {
+function HintsRow({ width }: { width: number }): ReactElement {
   return (
     <Box marginTop={1}>
-      <Text color={theme.colors.muted}>
-        j/k move · Enter detail · n new · c cancel · R run-now · r refresh
-        · a auto · f filter · / search · Esc clear search
-      </Text>
+      <Text color={theme.colors.muted}>{fitTaskListHints(width)}</Text>
     </Box>
   );
 }
 
 function TaskRow({
   row,
+  layout,
   selected,
   now,
 }: {
   row: TaskSummaryRow;
+  layout: TaskListLayout;
   selected: boolean;
   now: number;
 }): ReactElement {
   const chevron = selected ? theme.glyphs.chevronRight : " ";
-  const statusText = row.status.padEnd(9);
-  const scheduleText = truncate(row.scheduleLabel, 22).padEnd(22);
-  const nextRunText = formatRelativeMs(row.scheduledFor, now).padEnd(14);
-  const sessionText = (row.sessionId ? shortId(row.sessionId) : "—").padEnd(10);
+  const cells = formatTaskRowCells(row, layout, now);
   const color = selected ? theme.colors.accentSoft : undefined;
+  // The middle columns are one `<Text>` per cell rather than one joined
+  // string so a dropped column takes its separating space with it.
   return (
     <Box>
       <Text color={color} bold={selected}>
-        {chevron} <Text color={statusColor(row.status)}>{statusText}</Text>
+        {chevron} <Text color={statusColor(row.status)}>{cells.status}</Text>
       </Text>
       <Text color={theme.colors.muted}>
-        {scheduleText} {nextRunText} {sessionText}
+        {cells.schedule ? ` ${cells.schedule}` : ""}
+        {cells.nextRun ? ` ${cells.nextRun}` : ""}
+        {cells.session ? ` ${cells.session}` : ""}
       </Text>
-      <Text color={color}>{truncate(row.userMessage, 64)}</Text>
+      <Text color={color}>{cells.message ? ` ${cells.message}` : ""}</Text>
     </Box>
   );
 }
@@ -135,16 +150,6 @@ function statusColor(status: TaskStatus): string {
     default:
       return theme.colors.muted;
   }
-}
-
-function shortId(id: string): string {
-  if (id.length <= 10) return id;
-  return `${id.slice(0, 10)}…`;
-}
-
-function truncate(text: string, max: number): string {
-  if (text.length <= max) return text;
-  return `${text.slice(0, max - 1)}…`;
 }
 
 function computeWindowStart(cursor: number, total: number, size: number): number {
