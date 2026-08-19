@@ -340,3 +340,41 @@ function withScrollMarkers(
     listRows: Math.max(1, available - markers),
   };
 }
+
+/** Copy for an empty table, split so a narrow panel can drop the detail. */
+export interface EmptyTaskListText {
+  headline: string;
+  /** Second line — context, safe to drop when rows are scarce. */
+  detail: string | null;
+}
+
+/**
+ * What to say when the table has nothing to draw. A fresh install hits
+ * this screen first, and it used to answer with "no tasks match the
+ * current filter" even when the queue was simply empty — sending a
+ * first-time operator hunting for a filter that was never set instead
+ * of telling them what a task is and which key makes one.
+ */
+export function describeEmptyTaskList(args: {
+  totalRows: number;
+  filterStatus: string;
+  searchQuery: string;
+}): EmptyTaskListText {
+  const query = args.searchQuery.trim();
+  if (args.totalRows === 0) {
+    return {
+      headline: "no tasks yet — press `n` to create one.",
+      detail: "tasks fire on a cron / interval schedule, or once at a time.",
+    };
+  }
+  if (query.length > 0) {
+    return {
+      headline: `nothing matches “${query}”.`,
+      detail: "Esc clears the search · `f` cycles the status filter.",
+    };
+  }
+  return {
+    headline: `no ${args.filterStatus} tasks right now.`,
+    detail: "`f` cycles the status filter · `r` refreshes the list.",
+  };
+}

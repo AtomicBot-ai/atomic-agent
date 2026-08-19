@@ -162,3 +162,24 @@ describe("Tasks panel never exceeds its row budget", () => {
     expect(lines.some((l) => l.includes("Enter detail"))).toBe(true);
   });
 });
+
+describe("Tasks panel with an empty queue", () => {
+  it("tells a first-run operator what a task is and which key makes one", () => {
+    const { lastFrame } = render(
+      <Box width={88}>
+        <TasksPanel
+          panel={createInitialTasksPanelState()}
+          now={NOW}
+          maxRows={11}
+          width={88}
+        />
+      </Box>,
+    );
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("no tasks yet");
+    expect(frame).not.toContain("match the current filter");
+    // The key surface stays on screen with nothing in the list.
+    expect(frame).toContain("Enter detail");
+    expect(frame.split("\n").length).toBeLessThanOrEqual(11);
+  });
+});

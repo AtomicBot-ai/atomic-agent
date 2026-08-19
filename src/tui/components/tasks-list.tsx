@@ -6,6 +6,7 @@ import { handleTasksTabKey } from "../tasks/tasks-key-bindings.js";
 import {
   computeTaskListLayout,
   computeTasksListFit,
+  describeEmptyTaskList,
   fitTaskListHints,
   formatTaskListHeader,
   formatTaskRowCells,
@@ -45,14 +46,7 @@ export function TasksList(props: TasksListProps): ReactElement {
   const { panel, visibleRows, maxRows, now, width } = props;
   const layout = computeTaskListLayout(width);
   if (visibleRows.length === 0) {
-    return (
-      <Box flexDirection="column" paddingY={1}>
-        <Text color={theme.colors.muted}>
-          no tasks match the current filter — press `n` to create one,
-          `f` to cycle filter, `r` to refresh.
-        </Text>
-      </Box>
-    );
+    return <EmptyState panel={panel} width={width} maxRows={maxRows} />;
   }
   const fit = computeTasksListFit(maxRows, visibleRows.length);
   const clamped = Math.max(0, Math.min(panel.cursor, visibleRows.length - 1));
@@ -91,6 +85,44 @@ export function TasksList(props: TasksListProps): ReactElement {
         </Text>
       ) : null}
       {fit.hints ? <HintsRow width={width} spacer={fit.hintsSpacer} /> : null}
+    </Box>
+  );
+}
+
+/**
+ * What the tab shows before the first task exists — and the screen a
+ * first-run operator meets on `/tasks`. It carries the same hint strip
+ * as the populated table: the keys are the only thing to learn here,
+ * and hiding them until a task exists is a chicken-and-egg.
+ */
+function EmptyState({
+  panel,
+  width,
+  maxRows,
+}: {
+  panel: TasksPanelState;
+  width: number;
+  maxRows: number;
+}): ReactElement {
+  const { headline, detail } = describeEmptyTaskList({
+    totalRows: panel.rows.length,
+    filterStatus: panel.filterStatus,
+    searchQuery: panel.searchQuery,
+  });
+  // Same ladder as the table: spend rows on the message, then the
+  // context line, then the breathing room around them.
+  const roomy = maxRows >= 5;
+  return (
+    <Box flexDirection="column" paddingY={roomy ? 1 : 0}>
+      <Text color={theme.colors.muted}>{headline}</Text>
+      {detail && maxRows >= 3 ? (
+        <Text color={theme.colors.muted}>{detail}</Text>
+      ) : null}
+      {maxRows >= 4 ? (
+        <Box marginTop={roomy ? 1 : 0}>
+          <Text color={theme.colors.muted}>{fitTaskListHints(width)}</Text>
+        </Box>
+      ) : null}
     </Box>
   );
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeTaskListLayout,
   computeTasksListFit,
+  describeEmptyTaskList,
   fitTaskListHints,
   formatTaskListHeader,
   formatTaskRowCells,
@@ -200,5 +201,38 @@ describe("row budget", () => {
     for (let budget = 1; budget <= 6; budget += 1) {
       expect(computeTasksListFit(budget, 50).listRows).toBeGreaterThanOrEqual(1);
     }
+  });
+});
+
+describe("empty table copy", () => {
+  it("does not blame a filter when the queue is simply empty", () => {
+    const text = describeEmptyTaskList({
+      totalRows: 0,
+      filterStatus: "all",
+      searchQuery: "",
+    });
+    expect(text.headline).not.toContain("filter");
+    expect(text.headline).toContain("`n`");
+    expect(text.detail).toContain("cron");
+  });
+
+  it("names the filter that is hiding the rows", () => {
+    const text = describeEmptyTaskList({
+      totalRows: 12,
+      filterStatus: "running",
+      searchQuery: "",
+    });
+    expect(text.headline).toContain("running");
+    expect(text.detail).toContain("`f`");
+  });
+
+  it("names the search that is hiding the rows", () => {
+    const text = describeEmptyTaskList({
+      totalRows: 12,
+      filterStatus: "all",
+      searchQuery: "digest ",
+    });
+    expect(text.headline).toContain("digest");
+    expect(text.detail).toContain("Esc");
   });
 });
