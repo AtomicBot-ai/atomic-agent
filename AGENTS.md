@@ -218,6 +218,14 @@ Optional `config.llm` (v24) lists `providers[]`, `activeTextProvider`, `activeEm
 
 `ProviderRegistry.setActive(id)` / `swapActive(id)` closes the previous provider and switches the active text backend without process restart. TUI **Providers** tab ([src/tui/providers/](src/tui/providers/)) is the only surface that calls this seam.
 
+### Credential check before save
+
+A cloud provider is verified before anything reaches disk. [src/llm/provider/verify/](src/llm/provider/verify/) is UI-free: `verifyProviderKey(target)` posts one `max_tokens: 1` completion through `openAiFetch` (deliberately not `openAiPostJson` — a key check must not spend the retry budget), and `classifyVerifyResponse` maps the answer onto `ok | invalid_key | no_balance | model_unavailable | rate_limited | unreachable | timeout | provider_error | cancelled`. Status codes alone do not settle it: prepaid services answer 401/403 once credit runs out, OpenAI sends `429 insufficient_quota`, and Gemini answers 400 for a bad key, so the body is consulted for billing/key wording first. `pickProbeModels` picks the cheapest **paid** OpenRouter model — a free model answers 200 on a key with no balance, which would make the check meaningless.
+
+`verifyWizardBeforeSave` ([src/tui/providers/verify-wizard-before-save.ts](src/tui/providers/verify-wizard-before-save.ts)) is the single seam; both the wizard (`ProvidersOrchestrator.completeWizard`) and first-run onboarding (`CloudProviderOnboarding`) go through it. Only `invalid_key` and `no_balance` block a save (`isBlockingVerifyStatus`); everything else saves and reports, so an offline machine stays configurable. Esc cancels a check in flight (`cancelSubmit` → `providers_wizard_verify_cancelled`), and a verdict arriving after a cancel is dropped.
+
+Pinned by [src/llm/provider/verify/classify-verify-response.test.ts](src/llm/provider/verify/classify-verify-response.test.ts), [verify-provider-key.test.ts](src/llm/provider/verify/verify-provider-key.test.ts), [pick-probe-models.test.ts](src/llm/provider/verify/pick-probe-models.test.ts), [src/tui/providers/verify-wizard-before-save.test.ts](src/tui/providers/verify-wizard-before-save.test.ts), [providers-wizard-target.test.ts](src/tui/providers/providers-wizard-target.test.ts) and the `completeWizard` cases in [providers-orchestrator.test.ts](src/tui/providers/providers-orchestrator.test.ts).
+
 ### Locked invariants
 
 1. **Local llama-server path unchanged when no cloud provider is active.** Grammar, slots, and GBNF tests remain the reference behaviour.
