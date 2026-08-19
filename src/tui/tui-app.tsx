@@ -806,7 +806,9 @@ export function TuiApp({
               <MenuPopup
                 state={state}
                 availableRows={menuPaneRows}
-                availableColumns={terminalSize.columns - 4}
+                availableColumns={
+                  terminalSize.columns - 4 - (sidebarVisible ? SIDEBAR_WIDTH : 0)
+                }
               />
             ) : null}
           </Box>

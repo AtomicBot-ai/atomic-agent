@@ -35,6 +35,11 @@ interface MenuPopupProps {
  * so it floats **on top of** the chat log or the active panel instead of
  * displacing them. Nothing below it reflows when the menu opens or closes.
  *
+ * It sits **centred** in that pane, both axes. A dropdown hanging off the
+ * prompt was the first shape, but this is not a dropdown: it is the app's
+ * one modal surface, and a modal belongs in the middle of the window with
+ * the app faded behind it — the same thing a web app would do.
+ *
  * Terminals have no compositing and Ink has no z-index, so occlusion has to
  * be earned: every interior line is padded to the popup's exact inner width,
  * which paints spaces over whatever was underneath. That is also why the rows
@@ -75,15 +80,16 @@ export function MenuPopup({
   const visible = rows.slice(start, start + bodyRows);
   const hiddenAfter = Math.max(0, rows.length - start - visible.length);
 
-  // Anchor to the bottom of the pane so the menu sits just above the prompt,
-  // the way a dropdown hangs off the control that opened it.
+  // Centred in the pane on both axes.
   const height = visible.length + CHROME_ROWS;
-  const offsetTop = Math.max(0, availableRows - height);
+  const offsetTop = Math.max(0, Math.floor((availableRows - height) / 2));
+  const offsetLeft = Math.max(0, Math.floor((availableColumns - width) / 2));
 
   return (
     <Box
       position="absolute"
       marginTop={offsetTop}
+      marginLeft={offsetLeft}
       borderStyle="round"
       borderColor={chromeTheme.colors.accent}
       width={width}
