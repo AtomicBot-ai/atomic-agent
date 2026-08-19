@@ -7,15 +7,34 @@
  * lists still come from the server's own `/v1/models` (#31, #41), so
  * nothing here needs updating when a vendor ships a new model.
  *
- * Every URL below was verified live: each answers `/v1/models` with an
- * OpenAI-shaped payload (200 with a `data` array, or 401/403 asking for
- * a key, which confirms the path exists). A 401 only counts when the
- * same host answers 404 for a bogus sibling path — gateways that reject
- * every request before routing (z.ai, Cohere's compatibility root) prove
- * nothing about `/v1/models` and are deliberately absent. So is anything
- * whose model list does not live under `<root>/v1/models`: DeepInfra
- * serves it at `/v1/openai/models`, which this convention cannot express.
- * Re-verified 2026-08-19.
+ * ## Admission bar for a new preset
+ *
+ * Probe `<baseUrl>/v1/models` **with the exact headers this preset will
+ * send** — the `apiKeyHeader` and `headers` below, not a bare
+ * `Authorization: Bearer` — and accept only one of:
+ *
+ * 1. **200 with a `data` array.** Keyless listing; nothing left to prove.
+ * 2. **401/403 that rejects the *credential*,** with a bogus key of the
+ *    right shape in place. The body must complain about the key
+ *    (`API key is invalid`), never about the request's shape.
+ *
+ * A 401 whose body names a header the preset does not send — Anthropic's
+ * `x-api-key header is required`, a missing mandatory version header, an
+ * "invalid bearer token" for what is an API key and not an OAuth token —
+ * is a **failing** probe, not a passing one. It proves the path exists
+ * and the auth is wrong, which is the exact condition that must keep a
+ * preset out. Fix `apiKeyHeader`/`headers` until the body talks about the
+ * key instead, or drop the preset. (Anthropic shipped under the old
+ * wording, which read any 401 as "asking for a key": it was asking for a
+ * header we never sent, and the preset could not authenticate at all.)
+ *
+ * Both branches additionally require the same host to answer **404 for a
+ * bogus sibling path** — gateways that reject every request before
+ * routing (z.ai, Cohere's compatibility root) prove nothing about
+ * `/v1/models` and are deliberately absent. So is anything whose model
+ * list does not live under `<root>/v1/models`: DeepInfra serves it at
+ * `/v1/openai/models`, which this convention cannot express.
+ * Re-verified 2026-08-20.
  */
 export interface ProviderPreset {
   /** Stable id used as the provider entry id when adding. */
@@ -34,6 +53,22 @@ export interface ProviderPreset {
    * which is what a shared `OPENAI_COMPAT_API_KEY` did.
    */
   readonly envVar: string;
+  /**
+   * Header that carries the API key, for services that do not accept
+   * `Authorization: Bearer`. Absent means the OpenAI convention, which is
+   * every preset but Anthropic. Rides onto the saved config entry as
+   * `apiKeyHeader`, so the next non-Bearer vendor is a data change here
+   * rather than a code change.
+   */
+  readonly apiKeyHeader?: string;
+  /**
+   * Static headers the service requires on every request (Anthropic's
+   * mandatory `anthropic-version`). Copied onto the saved entry's
+   * `headers`, which the operator can then edit in `config.json`. Never
+   * put a secret here — the key travels in `apiKeyHeader` so it can keep
+   * coming from `envVar` instead of being written to config.
+   */
+  readonly headers?: Readonly<Record<string, string>>;
   /**
    * `true` for endpoints that serve a model list without credentials.
    * Saving without a key is allowed for these: the operator can browse
@@ -64,6 +99,15 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     label: "Anthropic (Claude)",
     baseUrl: "https://api.anthropic.com",
     envVar: "ANTHROPIC_API_KEY",
+    // The one preset that is not Bearer-authenticated. `api.anthropic.com`
+    // reads `Authorization: Bearer` as an OAuth token and answers
+    // "Invalid bearer token" to an `sk-ant-…` API key on every path,
+    // including `/v1/models`; the key only ever authenticates as
+    // `x-api-key`. `anthropic-version` is mandatory on every request and
+    // is the header the API dates its wire format by — pinned, not
+    // floating, so a future default cannot silently reshape responses.
+    apiKeyHeader: "x-api-key",
+    headers: { "anthropic-version": "2023-06-01" },
     note: "Claude models through Anthropic's OpenAI-compatible endpoint",
   },
   {

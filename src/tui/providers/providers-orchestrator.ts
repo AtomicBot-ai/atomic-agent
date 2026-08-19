@@ -130,7 +130,10 @@ export class ProvidersOrchestrator {
     });
     try {
       const apiKey = resolveLlmProviderApiKey(provider) ?? undefined;
-      const models = await fetchOpenAiCompatModels(baseUrl, apiKey);
+      // `fileEntry` carries this service's header contract
+      // (`apiKeyHeader` / `headers`) when it came from a preset, so
+      // discovery authenticates exactly the way chat turns will.
+      const models = await fetchOpenAiCompatModels(baseUrl, apiKey, fileEntry);
       this.bus.emit({
         type: "providers_chat_model_picker_loaded",
         generation,
@@ -181,7 +184,7 @@ export class ProvidersOrchestrator {
       const models =
         provider.kind === "gemini"
           ? await fetchGeminiModels(apiKey)
-          : await fetchOpenAiCompatModels(baseUrl, apiKey);
+          : await fetchOpenAiCompatModels(baseUrl, apiKey, fileEntry);
       this.bus.emit({
         type: "providers_inline_models_loaded",
         providerId: id,

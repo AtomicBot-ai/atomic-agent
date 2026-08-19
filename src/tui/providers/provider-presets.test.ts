@@ -1,11 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { parseLlmProviderEntry } from "../../config/llm-config.js";
+import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { getProviderFactory } from "../../llm/provider/registry/provider-types.js";
+import { registerBuiltInProviderKinds } from "../../llm/provider/registry/register-built-in-providers.js";
 import {
   findProviderPreset,
   presetForEntryId,
   PROVIDER_PRESETS,
   suggestPresetEntryId,
 } from "./provider-presets.js";
+import { buildProviderEntryFromWizard } from "./providers-wizard-build-entry.js";
 
 describe("PROVIDER_PRESETS", () => {
   it("has unique ids", () => {
@@ -50,9 +55,32 @@ describe("PROVIDER_PRESETS", () => {
     expect(preset?.local).toBeUndefined();
   });
 
+  it("declares the header contract for the one non-Bearer service", () => {
+    // `api.anthropic.com` reads `Authorization: Bearer` as an OAuth
+    // token — an `sk-ant-…` key sent that way is rejected with "Invalid
+    // bearer token" on every path. Only `x-api-key` reaches the real key
+    // check, and `anthropic-version` is mandatory on every request.
+    expect(findProviderPreset("anthropic")?.apiKeyHeader).toBe("x-api-key");
+    expect(findProviderPreset("anthropic")?.headers).toEqual({
+      "anthropic-version": "2023-06-01",
+    });
+  });
+
+  it("leaves every other preset on the OpenAI Bearer convention", () => {
+    // The override is opt-in per service; a stray one would silently
+    // break a vendor that only accepts Bearer.
+    for (const preset of PROVIDER_PRESETS) {
+      if (preset.id === "anthropic") continue;
+      expect(preset.apiKeyHeader, preset.id).toBeUndefined();
+      expect(preset.headers, preset.id).toBeUndefined();
+    }
+  });
+
   it("names every hosted vendor preset after its own service", () => {
     // Each of these answers `<baseUrl>/v1/models` — 200 with a `data`
-    // array, or 401 while the same host 404s a bogus sibling path.
+    // array, or a 401 that rejects the *key* rather than naming a header
+    // we do not send — while the same host 404s a bogus sibling path.
+    // See the admission bar in `provider-presets.ts`.
     const expected: Record<string, string> = {
       anthropic: "https://api.anthropic.com",
       dashscope: "https://dashscope-intl.aliyuncs.com/compatible-mode",
@@ -163,5 +191,104 @@ describe("presetForEntryId", () => {
   it("returns undefined for hand-added entries", () => {
     expect(presetForEntryId("openai-compatible")).toBeUndefined();
     expect(presetForEntryId("my-vllm")).toBeUndefined();
+  });
+});
+
+/**
+ * The blocker this suite exists for. Asserting `baseUrl` and `envVar`
+ * string equality — which is all this file used to do for Anthropic —
+ * cannot see that the preset resolves to a kind whose only auth mode is
+ * `Authorization: Bearer`, which `api.anthropic.com` never accepts for an
+ * API key. These tests pin the bytes that actually leave the process, on
+ * both request paths, after the entry has been through `config.json`.
+ */
+describe("Anthropic preset — outgoing request headers", () => {
+  const KEY = "sk-ant-test-not-a-real-key";
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** The saved entry, exactly as it looks after a wizard save + restart. */
+  function entryAfterRestart() {
+    const built = buildProviderEntryFromWizard({
+      kind: "openai-compatible",
+      presetId: "anthropic",
+      chatModelId: "",
+      embeddingChoiceId: "local",
+      customChatModel: "claude-opus-4-5",
+      baseUrl: findProviderPreset("anthropic")!.baseUrl,
+    });
+    // Round-trip through the serializer/parser pair that owns
+    // `config.json`: a header contract the file cannot express would be
+    // silently dropped here and the fix would last until restart.
+    return parseLlmProviderEntry(
+      JSON.parse(JSON.stringify(built.entry)) as unknown,
+      "llm.providers[0]",
+    );
+  }
+
+  it("survives the wizard save and the config.json round trip", () => {
+    const entry = entryAfterRestart();
+    expect(entry.apiKeyHeader).toBe("x-api-key");
+    expect(entry.headers).toEqual({ "anthropic-version": "2023-06-01" });
+    // The key itself must NOT be in the entry — it stays in the env var
+    // so it never lands in a config file.
+    expect(entry.apiKeyEnvVar).toBe("ANTHROPIC_API_KEY");
+    expect(entry.apiKey).toBeUndefined();
+  });
+
+  it("sends x-api-key and anthropic-version on model discovery", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [{ id: "claude-opus-4-5" }] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const preset = findProviderPreset("anthropic")!;
+    // Distinct host: the module-level cache is keyed by base URL, and a
+    // sibling test in this run must not serve this one a cached list.
+    await fetchOpenAiCompatModels("https://anthropic-discovery.invalid", KEY, preset);
+
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers["x-api-key"]).toBe(KEY);
+    expect(headers["anthropic-version"]).toBe("2023-06-01");
+    expect(headers.authorization).toBeUndefined();
+  });
+
+  it("sends x-api-key and anthropic-version on every chat turn", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            model: "claude-opus-4-5",
+            choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    // Stub before constructing: OpenAiProvider captures `fetch` in its
+    // constructor when no fetchImpl is injected, which is what the
+    // registry factory does in production.
+    vi.stubGlobal("fetch", fetchMock);
+
+    registerBuiltInProviderKinds();
+    const factory = getProviderFactory("openai-compatible");
+    expect(factory).toBeDefined();
+    const provider = await factory!({
+      entry: { ...entryAfterRestart(), apiKey: KEY },
+      config: {} as never,
+      logger: {} as never,
+    });
+
+    await provider.complete({ prompt: "hi" });
+
+    const sent = new Headers(
+      (fetchMock.mock.calls[0]?.[1] as RequestInit).headers as HeadersInit,
+    );
+    expect(sent.get("x-api-key")).toBe(KEY);
+    expect(sent.get("anthropic-version")).toBe("2023-06-01");
+    expect(sent.get("authorization")).toBeNull();
   });
 });
