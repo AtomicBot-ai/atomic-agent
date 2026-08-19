@@ -30,6 +30,22 @@ import type { SessionPickerEntry, TuiState } from "./tui-state.js";
 const DEBUG_BUNDLE_TRACE_LIMIT = 10;
 const DEBUG_BUNDLE_DIR_NAME = "atomic-agent-debug";
 
+/**
+ * Hard cap on messages parked behind the running turn.
+ *
+ * Nothing bounded this before because nothing could reach it: the editor
+ * was dead for the duration of a turn, so the queue was a de-facto
+ * zero-length buffer. Now that typing stays live, a leaned-on Enter or a
+ * multi-line paste can pile up an arbitrary backlog, and every parked
+ * message is later replayed as a full `runTurn` — an unbounded queue is
+ * an unattended agent run nobody asked for.
+ *
+ * Twenty is past any backlog a human types while watching one turn
+ * stream, small enough that draining it stays comprehensible, and it
+ * keeps `emitQueue`'s whole-array copy bounded at 20 elements per push.
+ */
+export const MAX_QUEUED_MESSAGES = 20;
+
 export interface ChatOrchestratorOptions {
   maxSteps: number;
   /** Initial llama-server base URL for the footer health poller. */
@@ -65,8 +81,9 @@ function formatSkillCatalogSystemMessage(
  * Owns the single live chat session. Each call to `sendMessage` queues a
  * macro-turn through `runtime.runTurn`; only one turn is in flight at any
  * time so the user can keep typing without racing the agent loop. Abort
- * cancels the current turn but keeps the session alive — that is what
- * sets chat mode apart from the legacy goal-runner.
+ * cancels the current turn and discards whatever is parked behind it,
+ * but keeps the session alive — that is what sets chat mode apart from
+ * the legacy goal-runner.
  *
  * The Tasks tab surface (list/detail/create/cancel/run-now) is delegated
  * to `TasksOrchestrator`, which is constructed here and exposed via
@@ -81,6 +98,12 @@ export class ChatOrchestrator {
   /** Latest release version captured by `checkForUpdate`, used by `runUpdate`. */
   private pendingUpdateVersion: string | null = null;
   private readonly queue: string[] = [];
+  /**
+   * Messages refused since the queue last had room, so a burst reads as
+   * one escalating counter instead of N identical lines. Reset by the
+   * first push that fits again.
+   */
+  private droppedWhileFull = 0;
   public exitCode = 0;
   public readonly tasks: TasksOrchestrator;
   public readonly skills: SkillsOrchestrator;
@@ -372,6 +395,22 @@ export class ChatOrchestrator {
     if (this.quitting) return;
     this.ensureSession();
     if (this.currentController) {
+      if (this.queue.length >= MAX_QUEUED_MESSAGES) {
+        this.droppedWhileFull += 1;
+        // Re-publish an unchanged queue on purpose: the reducer already
+        // inserted this message optimistically on `message_queued`, and
+        // only an authoritative `queue_changed` takes it back off the
+        // strip. Skipping the emit here would leave the operator looking
+        // at a parked message that is never going to run.
+        this.emitQueue();
+        this.notify(
+          `queue: full at ${MAX_QUEUED_MESSAGES} — dropped ${this.droppedWhileFull} message${
+            this.droppedWhileFull === 1 ? "" : "s"
+          }; Esc stops the run, /queue clear empties it`,
+        );
+        return;
+      }
+      this.droppedWhileFull = 0;
       this.queue.push(text);
       this.emitQueue();
       return;
@@ -395,9 +434,27 @@ export class ChatOrchestrator {
    * the source of truth — the reducer mirrors this list rather than
    * tracking pushes and drains on its own, so an optimistic UI insert can
    * never drift from what will actually run.
+   *
+   * The whole-array copy is deliberate and now bounded: the action must
+   * not hand subscribers a live reference to `this.queue`, and
+   * `MAX_QUEUED_MESSAGES` caps the copy at 20 elements per emit. Trading
+   * it for a push/shift/clear delta would put queue arithmetic back in
+   * the reducer — the exact drift this design removed.
    */
   private emitQueue(): void {
     this.bus.emit({ type: "queue_changed", queued: [...this.queue] });
+  }
+
+  /**
+   * Operator-facing notice about the queue: an event-feed line plus the
+   * same sentence as a warn message in the transcript, because the feed
+   * is not on screen in chat mode and these two events (an abort binning
+   * parked work, a refused submission) are things the operator typed and
+   * must not lose silently.
+   */
+  private notify(line: string): void {
+    this.bus.emit({ type: "runtime_info", line });
+    this.bus.emit({ type: "system_message", text: line, variant: "warn" });
   }
 
   private async runOneTurn(text: string): Promise<void> {
@@ -496,7 +553,28 @@ export class ChatOrchestrator {
     return ids.slice(0, DEBUG_BUNDLE_TRACE_LIMIT);
   }
 
+  /**
+   * Esc / Ctrl+C / `/abort` — stop the agent, not merely this turn.
+   *
+   * Discarding the queue is the whole point. `runOneTurn` catches the
+   * abort rejection and falls straight through to `this.queue.shift()`,
+   * so an intact backlog turned Esc into "start the next parked
+   * message"; stopping a wrong run cost one Esc per parked message.
+   * Clear first, then abort — the same order `quit()` uses below.
+   *
+   * The drop is announced: the operator typed those messages, so binning
+   * N of them silently is worse than one line in the transcript.
+   */
   abortCurrentTurn(): void {
+    const dropped = this.queue.length;
+    if (dropped > 0) {
+      this.queue.length = 0;
+      this.droppedWhileFull = 0;
+      this.emitQueue();
+      this.notify(
+        `aborted: dropped ${dropped} parked message${dropped === 1 ? "" : "s"}`,
+      );
+    }
     this.currentController?.abort();
   }
 

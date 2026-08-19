@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { createEmptySessionState } from "../session/session-state.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
-import { ChatOrchestrator } from "./chat-orchestrator.js";
+import { ChatOrchestrator, MAX_QUEUED_MESSAGES } from "./chat-orchestrator.js";
 import { makeTuiEventBus } from "./make-event-bus.js";
 import type { TuiAction } from "./tui-action.js";
 
@@ -32,10 +32,13 @@ function deferred(id: string): Deferred {
  * `ChatOrchestrator` constructor builds only stores references and
  * subscribes to the bus, so nothing here needs to do I/O.
  */
-function stubRuntime(runTurn: (text: string) => Promise<unknown>): AgentRuntime {
+function stubRuntime(
+  runTurn: (text: string, opts: { signal: AbortSignal }) => Promise<unknown>,
+): AgentRuntime {
   return {
     createSession: () => session(),
-    runTurn: (_s: unknown, text: string) => runTurn(text),
+    runTurn: (_s: unknown, text: string, opts: { signal: AbortSignal }) =>
+      runTurn(text, opts),
     sessionStore: { listRecent: () => [], load: () => null },
     approvals: { clearSessionGrants: () => undefined },
     config: { update: { checkOnStartup: false, repo: "x/y" }, tracing: { trace: { dir: "/tmp", enabled: false } } },
@@ -118,6 +121,182 @@ describe("ChatOrchestrator message queue", () => {
     expect(queueSnapshots(actions)).toHaveLength(0);
   });
 });
+
+describe("ChatOrchestrator abort", () => {
+  it("discards parked messages instead of draining them into the next turn", async () => {
+    const seen: string[] = [];
+    const runTurn = vi.fn((text: string, opts: { signal: AbortSignal }) => {
+      seen.push(text);
+      return abortableTurn(opts.signal);
+    });
+    const bus = makeTuiEventBus();
+    const actions: TuiAction[] = [];
+    bus.subscribe((a) => actions.push(a));
+    const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
+      maxSteps: 5,
+      llamaUrl: "http://127.0.0.1:8080",
+    });
+
+    orchestrator.sendMessage("running");
+    orchestrator.sendMessage("parked-a");
+    orchestrator.sendMessage("parked-b");
+    expect(queueSnapshots(actions).at(-1)).toEqual(["parked-a", "parked-b"]);
+
+    orchestrator.abortCurrentTurn();
+    await settle();
+
+    // One Esc stops everything: the parked messages must not become turns.
+    expect(seen).toEqual(["running"]);
+    expect(runTurn).toHaveBeenCalledTimes(1);
+    expect(queueSnapshots(actions).at(-1)).toEqual([]);
+    expect(noticeLines(actions)).toContain(
+      "aborted: dropped 2 parked messages",
+    );
+  });
+
+  it("stays quiet when the abort had nothing parked to drop", async () => {
+    const runTurn = vi.fn((_text: string, opts: { signal: AbortSignal }) =>
+      abortableTurn(opts.signal),
+    );
+    const bus = makeTuiEventBus();
+    const actions: TuiAction[] = [];
+    bus.subscribe((a) => actions.push(a));
+    const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
+      maxSteps: 5,
+      llamaUrl: "http://127.0.0.1:8080",
+    });
+
+    orchestrator.sendMessage("running");
+    orchestrator.abortCurrentTurn();
+    await settle();
+
+    expect(queueSnapshots(actions)).toHaveLength(0);
+    expect(noticeLines(actions).filter((l) => l.startsWith("aborted:"))).toEqual(
+      [],
+    );
+  });
+});
+
+describe("ChatOrchestrator queue bound", () => {
+  it("caps the queue and names how many messages it dropped", async () => {
+    const first = deferred("s1");
+    const seen: string[] = [];
+    const runTurn = vi.fn((text: string) => {
+      seen.push(text);
+      return first.promise;
+    });
+    const bus = makeTuiEventBus();
+    const actions: TuiAction[] = [];
+    bus.subscribe((a) => actions.push(a));
+    const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
+      maxSteps: 5,
+      llamaUrl: "http://127.0.0.1:8080",
+    });
+
+    orchestrator.sendMessage("running");
+    for (let i = 0; i < MAX_QUEUED_MESSAGES + 3; i += 1) {
+      orchestrator.sendMessage(`parked-${i}`);
+    }
+
+    const queued = queueSnapshots(actions).at(-1) ?? [];
+    expect(queued).toHaveLength(MAX_QUEUED_MESSAGES);
+    // FIFO: the cap drops the newest arrivals, never the ones already parked.
+    expect(queued[0]).toBe("parked-0");
+    expect(queued.at(-1)).toBe(`parked-${MAX_QUEUED_MESSAGES - 1}`);
+    expect(runTurn).toHaveBeenCalledTimes(1);
+
+    const full = noticeLines(actions).filter((l) => l.startsWith("queue: full"));
+    expect(full).toHaveLength(3);
+    expect(full.at(-1)).toBe(
+      `queue: full at ${MAX_QUEUED_MESSAGES} — dropped 3 messages; Esc stops the run, /queue clear empties it`,
+    );
+
+    first.resolve();
+    await settle();
+    // Exactly the parked messages run — the refused ones are gone for good.
+    expect(seen).toEqual(["running", ...queued]);
+    expect(seen).not.toContain(`parked-${MAX_QUEUED_MESSAGES}`);
+  });
+
+  it("re-publishes the queue on a rejected push so an optimistic insert cannot stick", () => {
+    const runTurn = vi.fn(() => new Promise<never>(() => undefined));
+    const bus = makeTuiEventBus();
+    const actions: TuiAction[] = [];
+    bus.subscribe((a) => actions.push(a));
+    const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
+      maxSteps: 5,
+      llamaUrl: "http://127.0.0.1:8080",
+    });
+
+    orchestrator.sendMessage("running");
+    for (let i = 0; i < MAX_QUEUED_MESSAGES; i += 1) {
+      orchestrator.sendMessage(`parked-${i}`);
+    }
+    const beforeDrop = queueSnapshots(actions).length;
+
+    orchestrator.sendMessage("rejected");
+
+    const snapshots = queueSnapshots(actions);
+    expect(snapshots).toHaveLength(beforeDrop + 1);
+    expect(snapshots.at(-1)).toHaveLength(MAX_QUEUED_MESSAGES);
+    expect(snapshots.at(-1)).not.toContain("rejected");
+  });
+
+  it("forgets the drop counter once the queue has room again", async () => {
+    const first = deferred("s1");
+    const runTurn = vi.fn(() => first.promise);
+    const bus = makeTuiEventBus();
+    const actions: TuiAction[] = [];
+    bus.subscribe((a) => actions.push(a));
+    const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
+      maxSteps: 5,
+      llamaUrl: "http://127.0.0.1:8080",
+    });
+
+    orchestrator.sendMessage("running");
+    for (let i = 0; i < MAX_QUEUED_MESSAGES + 2; i += 1) {
+      orchestrator.sendMessage(`parked-${i}`);
+    }
+    orchestrator.clearQueue();
+    orchestrator.sendMessage("after-clear");
+    // Refills to exactly the cap, then one more that must be refused.
+    for (let i = 0; i < MAX_QUEUED_MESSAGES; i += 1) {
+      orchestrator.sendMessage(`again-${i}`);
+    }
+
+    const full = noticeLines(actions).filter((l) => l.startsWith("queue: full"));
+    // Two drops before the clear, then the counter restarts at 1 after it.
+    expect(full.at(-1)).toBe(
+      `queue: full at ${MAX_QUEUED_MESSAGES} — dropped 1 message; Esc stops the run, /queue clear empties it`,
+    );
+  });
+});
+
+/**
+ * A turn that never settles on its own and rejects the moment the
+ * orchestrator aborts it — what `runtime.runTurn` really does, and the
+ * only shape that exercises `runOneTurn`'s catch-then-drain tail.
+ */
+function abortableTurn(signal: AbortSignal): Promise<never> {
+  return new Promise<never>((_resolve, reject) => {
+    signal.addEventListener("abort", () => reject(new Error("aborted")), {
+      once: true,
+    });
+  });
+}
+
+/** Let the orchestrator's post-turn continuation (catch → finally → drain) run. */
+function settle(): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
+function noticeLines(actions: readonly TuiAction[]): readonly string[] {
+  return actions
+    .filter((a): a is Extract<TuiAction, { type: "runtime_info" }> =>
+      a.type === "runtime_info",
+    )
+    .map((a) => a.line);
+}
 
 function queueSnapshots(actions: readonly TuiAction[]): readonly string[][] {
   return actions
