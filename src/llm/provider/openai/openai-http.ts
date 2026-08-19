@@ -1,7 +1,15 @@
+import { buildOpenAiAuthHeaders } from "./openai-auth-headers.js";
+
 export type OpenAiHttpDeps = {
   baseUrl: string;
   apiKey: string;
   extraHeaders: Record<string, string>;
+  /**
+   * Header that carries the API key when the service does not accept
+   * `Authorization: Bearer` (Anthropic wants `x-api-key`). Absent keeps
+   * the OpenAI convention. See `openai-auth-headers.ts`.
+   */
+  apiKeyHeader?: string;
   requestTimeoutMs: number;
   fetchImpl: typeof fetch;
   /** Provider id shown in user-facing failure messages ("openrouter"). */
@@ -105,11 +113,13 @@ export function buildOpenAiHeaders(
   return {
     "content-type": "application/json",
     accept: stream ? "text/event-stream" : "application/json",
-    // Keyless servers (a local LM Studio, an unauthenticated vLLM) get no
-    // authorization header at all: `Bearer ` with an empty token is
-    // malformed and some proxies reject it outright.
-    ...(deps.apiKey ? { authorization: `Bearer ${deps.apiKey}` } : {}),
-    ...deps.extraHeaders,
+    // Auth (and any service-mandated static headers) come from the one
+    // builder model discovery also uses, so the two request paths cannot
+    // disagree about how this endpoint is authenticated.
+    ...buildOpenAiAuthHeaders(deps.apiKey, {
+      ...(deps.apiKeyHeader ? { apiKeyHeader: deps.apiKeyHeader } : {}),
+      headers: deps.extraHeaders,
+    }),
   };
 }
 

@@ -246,7 +246,7 @@ describe("inline list open flow: /model (cold /v1/models cache)", () => {
     );
     // The provider's key must ride along on the fetch.
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
-      headers: { Authorization: "Bearer sk-nous-test" },
+      headers: { authorization: "Bearer sk-nous-test" },
     });
 
     releaseFetch();

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   OpenAiHttpError,
+  buildOpenAiHeaders,
   humanizeOpenAiHttpError,
   openAiPostJson,
   openAiStartStream,
@@ -253,5 +254,62 @@ describe("classification", () => {
     expect(classifyFailure(new OpenAiHttpError("timeout", null, "u", true))).toBe(
       "transport",
     );
+  });
+});
+
+describe("buildOpenAiHeaders", () => {
+  const base: OpenAiHttpDeps = {
+    baseUrl: "https://api.example.com",
+    apiKey: "k",
+    extraHeaders: {},
+    requestTimeoutMs: 1,
+    fetchImpl: fetch,
+    label: "p",
+  };
+
+  it("defaults to Authorization: Bearer", () => {
+    expect(buildOpenAiHeaders(base, false)).toMatchObject({
+      authorization: "Bearer k",
+      "content-type": "application/json",
+      accept: "application/json",
+    });
+  });
+
+  it("moves the key into apiKeyHeader and drops Authorization entirely", () => {
+    // Not "in addition to": a service that reads Authorization as an
+    // OAuth token rejects the request on the stray header alone.
+    const headers = buildOpenAiHeaders(
+      { ...base, apiKeyHeader: "x-api-key" },
+      false,
+    );
+    expect(headers["x-api-key"]).toBe("k");
+    expect(headers.authorization).toBeUndefined();
+  });
+
+  it("sends no auth header at all for a keyless server", () => {
+    // `Bearer ` with an empty token is malformed; so is an empty
+    // `x-api-key`. Neither shape may be emitted.
+    const headers = buildOpenAiHeaders(
+      { ...base, apiKey: "", apiKeyHeader: "x-api-key" },
+      false,
+    );
+    expect(headers.authorization).toBeUndefined();
+    expect(headers["x-api-key"]).toBeUndefined();
+  });
+
+  it("carries the entry's static headers alongside the key", () => {
+    const headers = buildOpenAiHeaders(
+      {
+        ...base,
+        apiKeyHeader: "x-api-key",
+        extraHeaders: { "anthropic-version": "2023-06-01" },
+      },
+      true,
+    );
+    expect(headers).toMatchObject({
+      "x-api-key": "k",
+      "anthropic-version": "2023-06-01",
+      accept: "text/event-stream",
+    });
   });
 });
