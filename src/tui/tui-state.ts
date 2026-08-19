@@ -416,15 +416,37 @@ export interface TuiState {
    * loses sight of the freshest reply.
    */
   chatScrollOffset: number;
+  /**
+   * Messages the operator submitted while a turn was still running, in
+   * submission order. Mirrors `ChatOrchestrator`'s internal queue — the
+   * orchestrator is the source of truth and re-publishes the list via
+   * `queue_changed` on every mutation; this slice exists so the prompt
+   * can show what is parked without reaching into the orchestrator.
+   */
+  queuedMessages: readonly string[];
 }
 
 /**
- * Derived selector: can the user submit a new chat message right now?
- * Used by both the input component (disable when busy) and the
- * orchestrator (reject submissions sent while a turn is still in flight).
+ * Derived selector: can a new turn start *right now*? Used by the
+ * submit pipeline to decide between running the message immediately and
+ * parking it behind the turn in flight.
  */
 export function canAcceptMessage(state: TuiState): boolean {
   return state.status === "idle";
+}
+
+/**
+ * Derived selector: may the operator put characters into the editor?
+ *
+ * Deliberately weaker than {@link canAcceptMessage}. The editor used to
+ * be disabled for the whole duration of a turn, which meant a running
+ * agent swallowed every keystroke — you could not even draft the next
+ * message, let alone send it. Typing is now allowed whenever the app is
+ * not tearing down; a submission made while busy is queued rather than
+ * dropped (see `handleEditorSubmit`).
+ */
+export function canTypeMessage(state: TuiState): boolean {
+  return state.status !== "quitting";
 }
 
 export const DEFAULT_RING_BUFFER_SIZE = 500;
@@ -523,5 +545,6 @@ export function createInitialTuiState(
     sidebarCursor: 0,
     sidebarTasksCursor: 0,
     chatScrollOffset: 0,
+    queuedMessages: [],
   };
 }

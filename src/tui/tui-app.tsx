@@ -17,6 +17,7 @@ import { DebugPane } from "./components/debug-pane.js";
 import { HotkeyHint } from "./components/hotkey-hint.js";
 import { LlmHealthBadge } from "./components/llm-health-badge.js";
 import { PromptShell } from "./components/prompt-shell.js";
+import { QueuedMessages } from "./components/queued-messages.js";
 import { SessionPicker } from "./components/session-picker.js";
 import { ThemePicker } from "./components/theme-picker.js";
 import {
@@ -42,6 +43,7 @@ import type { TaskCreateKind } from "./tasks/tasks-panel-state.js";
 import type { TaskSchedule } from "../tasks/task-types.js";
 import {
   canAcceptMessage,
+  canTypeMessage,
   createInitialTuiState,
   DEFAULT_RING_BUFFER_SIZE,
   type InitialTuiLayoutOptions,
@@ -79,6 +81,8 @@ export interface TuiAppCallbacks {
   onAbort(): void;
   onQuit(): void;
   onMessageSubmitted(message: string): void;
+  /** Drop every message parked behind the running turn (`/queue clear`). */
+  onQueueClearRequested?(): void;
   /** Ask the orchestrator to emit the recent-sessions list to the bus. */
   onSessionPickerRequested?(): void;
   /** Ask the orchestrator to swap to an existing persisted session. */
@@ -795,6 +799,7 @@ export function TuiApp({
               <UpdateRestartPrompt />
             </Box>
           ) : null}
+          <QueuedMessages queued={state.queuedMessages} width={terminalSize.columns} />
           <PromptShell
             value={state.inputValue}
             placeholder="Type a message or `/` for commands…"
@@ -804,7 +809,7 @@ export function TuiApp({
             leftSlot={promptLeftSlot}
             rightSlot={promptRightSlot}
             focus={editorFocus}
-            disabled={!canAcceptMessage(state)}
+            disabled={!canTypeMessage(state)}
             onChange={onEditorChange}
             onSubmit={submit}
             onEscape={onEscape}

@@ -5,6 +5,7 @@ export { reduceTuiState } from "./agent-event-reducer.js";
 export type { TuiAction } from "./tui-action.js";
 export {
   canAcceptMessage,
+  canTypeMessage,
   createInitialTuiState,
   DEFAULT_RING_BUFFER_SIZE,
 } from "./tui-state.js";
