@@ -12,6 +12,7 @@ import type { ApprovalGrantScope } from "../approval/approval-gate.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
 import type { TuiAction } from "./tui-action.js";
 import {
+  escapeOpensMenu,
   handleAppKey,
   handlePanelEscape,
   isPanelModalOpen,
@@ -816,11 +817,25 @@ export function TuiApp({
       dispatch({ type: "ui_mode_set", mode: "chat" });
       return;
     }
+    // Bottom of the ladder: nothing left to cancel, so Esc opens the
+    // operator menu instead of dying quietly. `escapeOpensMenu` re-checks
+    // every prior claimant rather than trusting the branches above to have
+    // returned — it is shared with the hint strip, and a predicate that
+    // only held "when called from here" would let the strip and the key
+    // drift apart. Dispatching from the editor's own Esc handler is safe:
+    // Ink delivers the same press to `handleAppKey` a moment later, but
+    // with the pre-dispatch `state`, so `handleMenuKey` does not see
+    // `menuOpen` yet and cannot close the menu on the keystroke that
+    // opened it.
+    if (escapeOpensMenu(state)) {
+      dispatch({ type: "menu_opened" });
+      return;
+    }
     // Esc never quits. Everywhere else in the TUI it means cancel / back
     // one level, so a single unannounced press killing the agent — and
     // the half-typed message with it — was a trap: no hint strip ever
     // advertised it, while Ctrl+C deliberately asks twice. Quitting stays
-    // on Ctrl+C twice and `/quit`; Esc just clears the draft.
+    // on Ctrl+C twice and `/quit`; Esc clears the draft.
     if (canAcceptMessage(state)) {
       if (state.inputValue.length > 0) {
         dispatch({ type: "input_changed", value: "" });

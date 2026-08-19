@@ -20,7 +20,7 @@ import type { TuiAction } from "./tui-action.js";
 import { handleRunModePickerKey } from "./run-mode/run-mode-key-bindings.js";
 import { cycleRunMode } from "./run-mode/run-mode-nav.js";
 import type { RunModeName } from "../config/index.js";
-import type { TuiState } from "./tui-state.js";
+import { canAcceptMessage, type TuiState } from "./tui-state.js";
 
 /**
  * Number of **terminal rows** a single PageUp / PageDown keypress
@@ -433,6 +433,64 @@ export function handlePanelEscape(
   if (!key.escape || opts.panelHandled || opts.editorFocus) return false;
   opts.dispatch({ type: "ui_mode_set", mode: "chat" });
   return true;
+}
+
+/**
+ * True when a press of Esc on the Run screen would find nothing to
+ * cancel — the state in which it opens the operator menu instead.
+ *
+ * Esc is the key an operator presses when they want *out* of whatever
+ * they are in, and four PRs went into making it mean exactly "cancel /
+ * back one level" everywhere (it used to quit the agent on the first
+ * press, unannounced). Opening the menu is the natural bottom of that
+ * ladder: once there is nothing left to back out of, "get me out of
+ * here" becomes "show me where I can go". It is additive — every rung
+ * above it keeps the key.
+ *
+ * The rungs, in the order Esc already resolves them, each of which is a
+ * cancel the operator meant and must not be swapped for a menu:
+ *
+ *   1. an open overlay — approval prompt, update offer, run-mode dial,
+ *      slash palette, session picker, theme picker — closes. These own
+ *      Esc in their own layer; the dial and the approval prompt also
+ *      take focus off the editor, which is the only way to keep a key
+ *      out of the prompt at all.
+ *   2. a focused sidebar hands focus back to the editor.
+ *   3. a debug panel goes home to Run.
+ *   4. a transcript scrolled up snaps back to the latest reply.
+ *   5. a running turn aborts.
+ *   6. a half-typed draft is cleared.
+ *
+ * Only when all six decline is the operator pressing Esc against an
+ * idle, empty, unscrolled Run screen — a press that used to do nothing
+ * at all, which is the whole reason it is free to mean something now.
+ *
+ * Says nothing about the menu already being open; that is
+ * {@link escapeOpensMenu}'s business. The hint strip wants this one: it
+ * describes the chat surface, which does not stop being an idle Run
+ * screen just because a popup is floating over it.
+ */
+export function escapeHasNothingToCancel(state: TuiState): boolean {
+  if (state.pendingApproval) return false;
+  if (state.updatePrompt || state.updateStatus === "done") return false;
+  if (state.runModePanel.picker !== null) return false;
+  if (state.slashPaletteOpen) return false;
+  if (state.sessionPickerOpen || state.themePickerOpen) return false;
+  if (state.chatFocus !== "editor") return false;
+  if (state.uiMode !== "chat") return false;
+  if (state.chatScrollOffset > 0) return false;
+  if (!canAcceptMessage(state)) return false;
+  return state.inputValue.length === 0;
+}
+
+/**
+ * The binding itself: {@link escapeHasNothingToCancel} plus the one rung
+ * that only the key cares about — an open menu, which Esc closes
+ * (`handleMenuKey`). Without this the same press would close and reopen
+ * the popup and Esc would look inert.
+ */
+export function escapeOpensMenu(state: TuiState): boolean {
+  return !state.menuOpen && escapeHasNothingToCancel(state);
 }
 
 function shouldTreatArrowAsChatScroll(

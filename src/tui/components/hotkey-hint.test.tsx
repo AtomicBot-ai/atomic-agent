@@ -117,6 +117,40 @@ describe("HotkeyHint scroll key spelling per platform", () => {
   });
 });
 
+describe("HotkeyHint esc chip", () => {
+  it("names the menu when that is what Esc will actually do", () => {
+    const out = renderHint(chatState());
+    expect(out).toMatch(/esc\]\s*menu/);
+  });
+
+  it("names the cancel while there is a draft to cancel", () => {
+    // The whole point of the chip is that Esc changed meaning; a fixed
+    // label would be a lie in one state or the other.
+    const out = renderHint(chatState({ inputValue: "half a thought" }));
+    expect(out).toMatch(/esc\]\s*cancel/);
+    expect(out).not.toMatch(/esc\]\s*menu/);
+  });
+
+  it("names the cancel while the transcript is scrolled back", () => {
+    const out = renderHint(chatState({ chatScrollOffset: 4 }));
+    expect(out).toMatch(/esc\]\s*cancel/);
+  });
+
+  it("does not flinch when a popup floats over the chat", () => {
+    // The row describes the surface behind the menu, not the menu — and a
+    // strip that rewrites itself when a floating window opens would make
+    // the frame below the popup move, which is exactly what the popup is
+    // built not to do.
+    const out = renderHint(chatState({ menuOpen: true }));
+    expect(out).toMatch(/esc\]\s*menu/);
+  });
+
+  it("leaves the abort chip alone while a turn is running", () => {
+    const out = renderHint(chatState({ status: "running" }));
+    expect(out).toMatch(/esc\]\s*abort/);
+  });
+});
+
 describe("HotkeyHint queue affordances", () => {
   it("advertises what Enter does now that the editor stays live mid-run", () => {
     const steering = renderHint(chatState({ status: "running" }));

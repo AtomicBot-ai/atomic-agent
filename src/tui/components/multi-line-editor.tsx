@@ -21,7 +21,18 @@ export interface MultiLineEditorProps {
   disabled?: boolean;
   onChange: (value: string) => void;
   onSubmit: (value: string) => void;
-  /** Esc pressed while editor has focus. */
+  /**
+   * Esc pressed while the editor has focus.
+   *
+   * The editor reports the press and decides nothing — not even "clear the
+   * buffer", which it could do locally. Esc is a whole-app ladder (cancel
+   * an overlay → leave the sidebar → back out of a panel → snap the
+   * transcript down → abort the turn → clear the draft → open the menu),
+   * and only the parent can see the rungs. A local shortcut here would be
+   * a second opinion on the same keystroke, which is exactly how Esc came
+   * to quit the agent in the first place. See `escapeOpensMenu` in
+   * `app-key-bindings.ts` for the order and the reasoning behind it.
+   */
   onEscape?: () => void;
   /** Ctrl+C while editor has focus (overrides the default ignore for Ctrl+C). */
   onInterrupt?: () => void;

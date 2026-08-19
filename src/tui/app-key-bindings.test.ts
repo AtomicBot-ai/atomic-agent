@@ -1,8 +1,17 @@
 import { describe, it, expect, vi } from "vitest";
 import type { Key } from "ink";
 
-import { handleAppKey, handlePanelEscape } from "./app-key-bindings.js";
-import { createInitialTuiState, type TuiSessionInfo } from "./tui-state.js";
+import {
+  escapeHasNothingToCancel,
+  escapeOpensMenu,
+  handleAppKey,
+  handlePanelEscape,
+} from "./app-key-bindings.js";
+import {
+  createInitialTuiState,
+  type TuiSessionInfo,
+  type TuiState,
+} from "./tui-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 
 function pendingRequest(
@@ -751,5 +760,80 @@ describe("Ctrl+T — Enter-while-busy mode", () => {
     expect(c.dispatch).not.toHaveBeenCalledWith({
       type: "while_busy_mode_changed",
     });
+  });
+});
+
+/**
+ * The Esc ladder, rung by rung. Each case is a state in which the
+ * operator pressing Esc means something specific and *not* "show me the
+ * menu" — the whole risk of giving the key a new meaning is that one of
+ * these quietly loses it.
+ */
+describe("escapeOpensMenu", () => {
+  function runScreen(patch: Partial<TuiState> = {}): TuiState {
+    return { ...createInitialTuiState(stubSession()), uiMode: "chat", ...patch };
+  }
+
+  it("opens on an idle, empty, unscrolled Run screen", () => {
+    expect(escapeOpensMenu(runScreen())).toBe(true);
+  });
+
+  it("declines while the menu is already up, so Esc cannot toggle it", () => {
+    expect(escapeOpensMenu(runScreen({ menuOpen: true }))).toBe(false);
+    // ...but the surface underneath is still an idle Run screen, which is
+    // what the hint strip reads and why the two predicates are separate.
+    expect(escapeHasNothingToCancel(runScreen({ menuOpen: true }))).toBe(true);
+  });
+
+  it("declines with a draft in the buffer — Esc clears it first", () => {
+    expect(escapeOpensMenu(runScreen({ inputValue: "half a thought" }))).toBe(
+      false,
+    );
+  });
+
+  it("declines while a turn is running — Esc is the abort", () => {
+    expect(escapeOpensMenu(runScreen({ status: "running" }))).toBe(false);
+  });
+
+  it("declines while the transcript is scrolled back — Esc snaps it down", () => {
+    expect(escapeOpensMenu(runScreen({ chatScrollOffset: 4 }))).toBe(false);
+  });
+
+  it("declines under every overlay that owns Esc in its own layer", () => {
+    const overlays: Partial<TuiState>[] = [
+      { slashPaletteOpen: true },
+      { sessionPickerOpen: true },
+      { themePickerOpen: true },
+      { pendingApproval: pendingRequest() },
+      { updatePrompt: { current: "0.3.0", latest: "0.4.0" } },
+      { updateStatus: "done" },
+    ];
+    for (const overlay of overlays) {
+      expect(escapeOpensMenu(runScreen(overlay))).toBe(false);
+    }
+  });
+
+  it("declines while the run-mode dial is up", () => {
+    const base = createInitialTuiState(stubSession());
+    const state = runScreen({
+      runModePanel: {
+        ...base.runModePanel,
+        picker: {
+          cursor: 0,
+          draftMode: "local",
+          draftCloudShare: 0,
+          digitBuffer: "",
+        },
+      },
+    });
+    expect(escapeOpensMenu(state)).toBe(false);
+  });
+
+  it("declines with the sidebar focused — Esc hands focus back first", () => {
+    expect(escapeOpensMenu(runScreen({ chatFocus: "sidebar" }))).toBe(false);
+  });
+
+  it("declines inside a debug panel — Esc is the way home to Run", () => {
+    expect(escapeOpensMenu(runScreen({ uiMode: "debug" }))).toBe(false);
   });
 });
