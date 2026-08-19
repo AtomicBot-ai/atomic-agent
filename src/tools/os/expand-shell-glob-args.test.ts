@@ -26,10 +26,53 @@ describe("expandShellGlobArgs", () => {
     );
   });
 
-  it("omits argv when glob matches nothing (nullglob-style)", async () => {
+  it("expands a real file glob for rm alongside other argv", async () => {
+    await writeFile(join(dir, "a.txt"), "1", "utf8");
+    await writeFile(join(dir, "b.txt"), "2", "utf8");
+    await writeFile(join(dir, "keep.md"), "3", "utf8");
+    const out = expandShellGlobArgs("rm", ["*.txt"], dir);
+    expect(new Set(out)).toEqual(
+      new Set([join(dir, "a.txt"), join(dir, "b.txt")]),
+    );
+  });
+
+  it("keeps the pattern verbatim when a glob matches nothing", async () => {
     await writeFile(join(dir, "c.txt"), "3", "utf8");
     const out = expandShellGlobArgs("rm", ["-f", "*.png"], dir);
-    expect(out).toEqual(["-f"]);
+    expect(out).toEqual(["-f", "*.png"]);
+  });
+
+  it("keeps a path-shaped pattern that matches nothing verbatim", () => {
+    const out = expandShellGlobArgs("ls", ["./nope/*.png"], dir);
+    expect(out).toEqual(["./nope/*.png"]);
+  });
+
+  it("passes a bash -c payload containing a URL with ? and / through intact", () => {
+    const payload =
+      "curl -s 'https://en.wikipedia.org/w/api.php?action=query&prop=revisions&titles=Outer%20Wilds&format=json'";
+    const args = ["-c", payload];
+    const out = expandShellGlobArgs("bash", args, dir);
+    expect(out).toEqual(args);
+  });
+
+  it("passes a python3 -c payload containing regex metacharacters through intact", () => {
+    const payload = "import re; print(re.findall(r'a?b*c', 'aabbcc'))";
+    const args = ["-c", payload];
+    const out = expandShellGlobArgs("python3", args, dir);
+    expect(out).toEqual(args);
+  });
+
+  it("never drops argv for a bash -c payload, so the shell sees its command", () => {
+    const args = ["-c", "echo 'https://example.com/x?y=1' > /dev/null"];
+    const out = expandShellGlobArgs("bash", args, dir);
+    expect(out.length).toBe(args.length);
+    expect(out[1]).toBe(args[1]);
+  });
+
+  it("does not treat a bare URL argument as a glob", () => {
+    const url = "https://example.com/w/api.php?action=query&x=*";
+    const out = expandShellGlobArgs("curl", ["-s", url], dir);
+    expect(out).toEqual(["-s", url]);
   });
 
   it("does not expand bare *.py for find", async () => {
@@ -41,5 +84,11 @@ describe("expandShellGlobArgs", () => {
   it("does not expand flag-like tokens", () => {
     const out = expandShellGlobArgs("rm", ["-f"], dir);
     expect(out).toEqual(["-f"]);
+  });
+
+  it("still expands a real path argument for an interpreter without -c", async () => {
+    await writeFile(join(dir, "s1.py"), "x", "utf8");
+    const out = expandShellGlobArgs("python3", ["./s1*.py"], dir);
+    expect(out).toEqual([join(dir, "s1.py")]);
   });
 });
