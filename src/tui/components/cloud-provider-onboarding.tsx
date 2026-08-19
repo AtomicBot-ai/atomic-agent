@@ -1,34 +1,60 @@
 import { Box, Text, useInput } from "ink";
-import { useCallback, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { handleProvidersWizardKey } from "../providers/providers-wizard-key-bindings.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
 import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
 import { saveProviderWizardToConfig } from "../providers/save-provider-wizard.js";
+import { verifyWizardBeforeSave } from "../providers/verify-wizard-before-save.js";
 import { theme } from "../theme/theme.js";
 import { ProvidersWizard } from "./providers-wizard.js";
 
 export type CloudProviderOnboardingOutcome = "saved_cloud" | "aborted";
 
 export function CloudProviderOnboarding(props: {
-  onFinished(outcome: CloudProviderOnboardingOutcome): void;
+  /** `notice` carries a key that was saved without a completed check. */
+  onFinished(outcome: CloudProviderOnboardingOutcome, notice?: string): void;
   onBack(): void;
 }): ReactElement {
   const [wizard, setWizard] = useState<ProvidersWizardState>(() =>
     createProvidersWizardState("add"),
   );
   const [submitting, setSubmitting] = useState(false);
+  const verifyAbort = useRef<AbortController | null>(null);
+  const alive = useRef(true);
+  useEffect(() => {
+    return () => {
+      alive.current = false;
+      verifyAbort.current?.abort();
+    };
+  }, []);
 
   const submit = useCallback(
-    (nextWizard: ProvidersWizardState) => {
+    async (nextWizard: ProvidersWizardState) => {
       if (submitting) return;
       setSubmitting(true);
+      const abort = new AbortController();
+      verifyAbort.current = abort;
       try {
+        // First run goes through the same gate as the Providers tab, so
+        // a dead key cannot be the one the agent starts life with.
+        const gate = await verifyWizardBeforeSave(nextWizard, {
+          signal: abort.signal,
+        });
+        if (!alive.current) return;
+        if (!gate.proceed) {
+          setWizard({ ...nextWizard, error: gate.error, submitting: false });
+          setSubmitting(false);
+          return;
+        }
         saveProviderWizardToConfig(nextWizard);
-        props.onFinished("saved_cloud");
+        props.onFinished("saved_cloud", gate.warning ?? undefined);
       } catch (err) {
+        if (!alive.current) return;
         const message = err instanceof Error ? err.message : String(err);
         setWizard({ ...nextWizard, error: message, submitting: false });
         setSubmitting(false);
+      } finally {
+        if (verifyAbort.current === abort) verifyAbort.current = null;
       }
     },
     [props, submitting],
@@ -36,6 +62,7 @@ export function CloudProviderOnboarding(props: {
 
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
+      verifyAbort.current?.abort();
       props.onFinished("aborted");
       return;
     }
@@ -46,8 +73,19 @@ export function CloudProviderOnboarding(props: {
       props.onBack();
       return;
     }
-    if (result.submit) {
-      submit(result.wizard);
+    if ("cancelSubmit" in result && result.cancelSubmit) {
+      verifyAbort.current?.abort();
+      verifyAbort.current = null;
+      setSubmitting(false);
+      setWizard({
+        ...wizard,
+        submitting: false,
+        error: "Key check cancelled — press Enter to try again.",
+      });
+      return;
+    }
+    if ("submit" in result && result.submit) {
+      void submit(result.wizard);
       return;
     }
     setWizard(result.wizard);

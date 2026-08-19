@@ -10,11 +10,13 @@ import {
   getCachedOpenRouterChatPicks,
   refreshOpenRouterChatCatalogFromApi,
 } from "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
+import { listCompatChatModelPicks } from "../providers/providers-wizard-key-bindings.js";
 import {
   apiKeyForWizard,
   baseUrlForWizard,
-  listCompatChatModelPicks,
-} from "../providers/providers-wizard-key-bindings.js";
+  envHintForWizard,
+  wizardKeyIsOptional,
+} from "../providers/providers-wizard-target.js";
 import { theme } from "../theme/theme.js";
 import { findProviderPreset } from "../providers/provider-presets.js";
 import {
@@ -60,20 +62,6 @@ const KIND_OPTIONS = KIND_ROW_ORDER.map((row) => ({
   label: labelForKindRow(row),
 }));
 
-/**
- * Env var named on the key screen. A preset names its own variable;
- * naming the shared compat one there would promise Groq's key a home it
- * does not use.
- */
-function envHintForWizard(w: ProvidersWizardState): string {
-  const preset = w.presetId ? findProviderPreset(w.presetId) : undefined;
-  if (preset) return preset.envVar;
-  if (w.kind === "openrouter") return "OPENROUTER_API_KEY";
-  if (w.kind === "aimlapi") return "AIMLAPI_API_KEY";
-  if (w.kind === "gemini") return "GEMINI_API_KEY";
-  return "OPENAI_COMPAT_API_KEY";
-}
-
 /** Service name for headings: the preset label wins over the raw kind. */
 function providerLabelForWizard(w: ProvidersWizardState): string {
   const preset = w.presetId ? findProviderPreset(w.presetId) : undefined;
@@ -95,6 +83,12 @@ function explainModelListError(error: string, w: ProvidersWizardState): string {
   }
   return `could not list models from ${service} (${error})`;
 }
+
+/**
+ * What `submitting` means now that a save starts with a live key check:
+ * the wait is the provider answering, and Esc gets out of it.
+ */
+const CHECKING_KEY_HINT = " · checking the key with the provider… (Esc cancels)";
 
 function maskedKey(buffer: string): string {
   const masked = "•".repeat(Math.min(buffer.length, 48));
@@ -195,7 +189,9 @@ function CompatChatModelStep(props: {
     });
   }
 
-  const hint = !canList
+  const hint = w.submitting
+    ? CHECKING_KEY_HINT.trimStart()
+    : !canList
     ? "Enter to save · Esc back"
     : status.loading
       ? isGemini
@@ -296,13 +292,11 @@ export function ProvidersWizard(props: {
 
   if (w.phase === "api_key") {
     const envHint = envHintForWizard(w);
-    const preset = w.presetId ? findProviderPreset(w.presetId) : undefined;
     // Local servers and keyless-listing services save with an empty key;
     // promising ".env only" here would contradict their own list rows.
-    const emptyMeans =
-      preset && (preset.local || preset.listsModelsWithoutKey)
-        ? "Optional for this service — leave empty to connect without a key."
-        : "Leave empty only if the key is already in .env.";
+    const emptyMeans = wizardKeyIsOptional(w)
+      ? "Optional for this service — leave empty to connect without a key."
+      : "Leave empty only if the key is already in .env.";
     return (
       <Box
         flexDirection="column"
@@ -328,7 +322,7 @@ export function ProvidersWizard(props: {
         ) : null}
         <Text color={theme.colors.muted}>
           Enter to continue · Esc back · Backspace edit
-          {w.submitting ? " · saving…" : ""}
+          {w.submitting ? CHECKING_KEY_HINT : ""}
         </Text>
       </Box>
     );

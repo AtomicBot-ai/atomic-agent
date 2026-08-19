@@ -29,7 +29,8 @@ export interface LocalModelsConfigWizardProps {
    * configured server really did stop answering.
    */
   hadConfiguredBackend?: boolean;
-  onFinished(outcome: LocalModelsWizardOutcome): void;
+  /** `notice` carries a warning the caller should print after teardown. */
+  onFinished(outcome: LocalModelsWizardOutcome, notice?: string): void;
 }
 
 type WizardPhase = "pick" | "remote-chat-url" | "remote-embedding-url" | "cloud";
@@ -70,8 +71,8 @@ export function LocalModelsConfigWizard({
   const [hint, setHint] = useState<string | null>(null);
 
   const finish = useCallback(
-    (outcome: LocalModelsWizardOutcome) => {
-      onFinished(outcome);
+    (outcome: LocalModelsWizardOutcome, notice?: string) => {
+      onFinished(outcome, notice);
       app.exit();
     },
     [app, onFinished],

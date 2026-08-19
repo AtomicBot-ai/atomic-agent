@@ -14,6 +14,7 @@ import {
   LocalModelsConfigWizard,
   type LocalModelsWizardOutcome,
 } from "./components/local-models-config-wizard.js";
+import { isLocalProviderUrl } from "./providers/is-local-provider-url.js";
 import { presetForEntryId } from "./providers/provider-presets.js";
 
 export type LocalModelsStartupGateResult =
@@ -55,19 +56,25 @@ export async function runLocalModelsStartupGateIfNeeded(options: {
   );
 
   const outcome = { value: "skipped" as LocalModelsWizardOutcome };
+  // A cloud key that saved without a completed check has something to
+  // say; it is printed after the Ink tree is torn down so the message
+  // survives the redraw.
+  let notice: string | undefined;
   const ink = render(
     React.createElement(LocalModelsConfigWizard, {
       initialUrl: getConfig().localModels.url,
       probeError: probe.error,
       hadConfiguredBackend: isLocalBackendConfigured(),
-      onFinished: (o) => {
+      onFinished: (o, n) => {
         outcome.value = o;
+        notice = n;
       },
     }),
     { stdout: process.stdout, stderr: process.stderr, exitOnCtrlC: false },
   );
   await ink.waitUntilExit();
   ink.clear();
+  if (notice) process.stderr.write(`[atomic-agent] ${notice}\n`);
 
   if (outcome.value === "aborted") return "aborted";
   if (outcome.value === "saved_managed") return "saved_managed";
@@ -95,21 +102,7 @@ export function isCloudTextProviderReady(): boolean {
  */
 function isKeylessLocalProviderEntry(entry: UserLlmProviderEntry): boolean {
   if (presetForEntryId(entry.id)?.local) return true;
-  if (!entry.baseUrl) return false;
-  let host: string;
-  try {
-    host = new URL(entry.baseUrl).hostname;
-  } catch {
-    return false;
-  }
-  return (
-    host === "localhost" ||
-    host === "127.0.0.1" ||
-    host === "0.0.0.0" ||
-    host === "::1" ||
-    host === "[::1]" ||
-    host.endsWith(".localhost")
-  );
+  return isLocalProviderUrl(entry.baseUrl);
 }
 
 /**
