@@ -11,6 +11,7 @@ import {
 
 import type { LlmStreamParams } from "../agent/step-executor.js";
 import { TurnController } from "./turn-controller.js";
+import { SteeringInbox } from "./steering-inbox.js";
 import type { TurnEventHook, TurnOrigin } from "./turn-controller.js";
 import type { ChannelStatus } from "./channel-status.js";
 
@@ -293,6 +294,25 @@ export interface AgentRuntime {
    * funnels through this controller internally.
    */
   readonly turnController: TurnController;
+  /**
+   * Out-of-band channel for messages sent to a session whose turn is
+   * already running. `TurnController` is strictly FIFO by design, so a
+   * mid-turn message would otherwise have to wait for the turn to
+   * close; the inbox lets it reach the model at the next step boundary
+   * instead. Prefer {@link AgentRuntime.steer} over touching this
+   * directly — it checks that a turn is actually in flight.
+   */
+  readonly steeringInbox: SteeringInbox;
+  /**
+   * Fold `text` into the turn currently running on `sessionId`.
+   *
+   * Returns `false` — and queues nothing — when the session has no turn
+   * in flight, or when the inbox for that session is full. A `false`
+   * return means "not steered": the caller is expected to fall back to
+   * a normal `runTurn`, or to its own message queue. Never starts a
+   * turn on its own.
+   */
+  steer(sessionId: string, text: string): boolean;
   /**
    * Durable user-profile store. Present even when
    * `memory.profile.enabled` is `false`, because the store owns the
@@ -659,6 +679,7 @@ export async function createAgentRuntime(
    * pointer.
    */
   const turnContext = new AsyncLocalStorage<{ sessionId: string }>();
+  const steeringInbox = new SteeringInbox();
   const turnController = new TurnController({
     onHookError: (err, ctxInfo) => {
       logger.warn("turn event hook threw", {
@@ -1753,6 +1774,8 @@ export async function createAgentRuntime(
     slotManager,
     grammar,
     llmComplete,
+    // Mid-turn steering: the loop drains this at every step boundary.
+    steeringInbox,
     ...(llmCompleteStream ? { llmCompleteStream } : {}),
     toolDescriptors: effectiveToolDescriptors,
     capabilities,
@@ -1851,6 +1874,9 @@ export async function createAgentRuntime(
   const shutdown = async (): Promise<void> => {
     if (shutdownCalled) return;
     shutdownCalled = true;
+    // Nothing will drain the inbox after this point; drop pending
+    // steers so a message cannot resurface in a later process.
+    steeringInbox.clearAll();
     // Cancel any in-flight reflection before tearing down the profile
     // store — otherwise a late-arriving completion could try to write
     // into a closed SQLite connection.
@@ -2069,6 +2095,17 @@ export async function createAgentRuntime(
       sessionStore.save(result.session);
       return result;
     });
+  };
+
+  /**
+   * Public entry point for mid-turn steering. Deliberately does NOT
+   * enqueue: the whole point is to reach the turn that is already
+   * running, and going through `turnController` would put the message
+   * behind it.
+   */
+  const steer = (sessionId: string, text: string): boolean => {
+    if (!turnController.isBusy(sessionId)) return false;
+    return steeringInbox.push(sessionId, text);
   };
 
   const runTurn = async (
@@ -2404,6 +2441,8 @@ export async function createAgentRuntime(
     slotManager,
     sessionStore,
     turnController,
+    steeringInbox,
+    steer,
     profileStore,
     notesStore,
     lessonStore,

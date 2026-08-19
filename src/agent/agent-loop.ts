@@ -48,6 +48,7 @@ import {
   formatForcedLoopReply,
 } from "./loop-detector.js";
 import type { BatchLoopSignal } from "./batch-executor.js";
+import { composeSteerNotice } from "./steer-notice.js";
 import { getConfig } from "../config/index.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
@@ -164,6 +165,14 @@ export interface AgentLoopDependencies {
    */
   lessonLifecycle?: LessonLifecycleHook;
   onEvent?: (event: AgentLoopEvent) => void;
+  /**
+   * Out-of-band channel for user messages that arrive while this turn is
+   * already running (`SteeringInbox`). Drained at the top of every step
+   * and folded into that step's `### notice`; see §"Mid-turn steering"
+   * in AGENTS.md. Absent in tests and in surfaces that do not offer
+   * steering, in which case the loop behaves exactly as before.
+   */
+  steeringInbox?: SteeringDrain;
   metrics?: AgentMetrics;
   logger?: StructuredLogger;
 }
@@ -247,6 +256,15 @@ export interface LessonLifecycleHook {
   }): void;
 }
 
+/**
+ * Read side of the steering inbox as the loop needs it. Declared
+ * structurally (like {@link MemoryContextProvider}) so `src/agent/` does
+ * not import from `src/runtime/`, which imports it.
+ */
+export interface SteeringDrain {
+  drain(sessionId: string): readonly string[];
+}
+
 export interface RunTurnOptions {
   maxSteps: number;
   signal: AbortSignal;
@@ -264,6 +282,13 @@ export type AgentLoopReason =
 
 export type AgentLoopEvent =
   | { type: "user_message"; text: string }
+  /**
+   * A message the user sent mid-turn was folded into the prompt for
+   * step `stepIndex`. Distinct from `user_message`, which marks the
+   * message that *started* the turn — UIs render this one inline in the
+   * running turn rather than as the opening of a new one.
+   */
+  | { type: "steer_applied"; text: string; stepIndex: number }
   | { type: "turn_started"; turnIndex: number }
   | {
       type: "turn_finished";
@@ -326,6 +351,14 @@ export interface RunTurnResult {
   session: SessionState;
   reason: AgentLoopReason;
   stepCount: number;
+  /**
+   * Steering messages that were pushed but never reached a step — the
+   * turn ended (or was cancelled) before the loop could drain them.
+   * Callers MUST re-route these, normally onto their own message queue,
+   * otherwise a message the user watched being accepted vanishes. Empty
+   * on every ordinary turn.
+   */
+  undelivered?: readonly string[];
 }
 
 export class AgentLoop {
@@ -451,6 +484,27 @@ export class AgentLoop {
       }
       this.deps.onEvent?.({ type: "step_started", stepIndex: i });
       const started = Date.now();
+      // Mid-turn steering: anything the user sent since the previous
+      // step boundary joins this step's prompt. It is recorded as a
+      // real `user` turn (the transcript must reflect what was said,
+      // and `packConversation` always keeps the last user turn visible)
+      // AND repeated in `### notice`, which is the tail-most block the
+      // model reads before `### respond`. `composeSteerNotice` appends
+      // to whatever the loop detector already left in `pendingNotice`
+      // rather than overwriting it — both nudges matter.
+      const steered = this.deps.steeringInbox?.drain(state.id) ?? [];
+      for (const text of steered) {
+        state = recordTurn(state, userTurn(text));
+        this.deps.onEvent?.({ type: "steer_applied", text, stepIndex: i });
+      }
+      if (steered.length > 0) {
+        pendingNotice = composeSteerNotice(pendingNotice, steered);
+        this.deps.logger?.info("mid-turn steering applied", {
+          sessionId: state.id,
+          stepIndex: i,
+          count: steered.length,
+        });
+      }
       const noticeForThisStep = pendingNotice;
       pendingNotice = undefined;
       try {
@@ -708,7 +762,12 @@ export class AgentLoop {
             stepCount: stepsTaken,
             durationMs,
           });
-          return { session: state, reason: "cancelled", stepCount: stepsTaken };
+          return {
+            session: state,
+            reason: "cancelled",
+            stepCount: stepsTaken,
+            undelivered: this.flushSteering(state.id),
+          };
         }
         // Symmetric with the cancelled path above: set terminal state,
         // emit `loop_completed` + `turn_finished`, increment turnCount,
@@ -739,7 +798,12 @@ export class AgentLoop {
         // returned earlier without calling the hook (cancellation
         // carries neither success nor failure signal).
         invokeLessonLifecycle(this.deps, state.id, surfacedLessonIds, "failure");
-        return { session: state, reason: "failed", stepCount: stepsTaken };
+        return {
+          session: state,
+          reason: "failed",
+          stepCount: stepsTaken,
+          undelivered: this.flushSteering(state.id),
+        };
       }
     }
 
@@ -890,7 +954,26 @@ export class AgentLoop {
       }
     }
 
-    return { session: state, reason, stepCount: stepsTaken };
+    return {
+      session: state,
+      reason,
+      stepCount: stepsTaken,
+      undelivered: this.flushSteering(state.id),
+    };
+  }
+
+  /**
+   * Empty the steering inbox on the way out of a turn.
+   *
+   * A message pushed after the loop's last drain — during the final
+   * inference, or at any point in a turn that was cancelled before it
+   * stepped — would otherwise sit in the inbox until some unrelated
+   * later turn happened to pick it up, out of order and out of context.
+   * Handing it back to the caller keeps "the message you sent always
+   * goes somewhere" true on every exit path.
+   */
+  private flushSteering(sessionId: string): readonly string[] {
+    return this.deps.steeringInbox?.drain(sessionId) ?? [];
   }
 }
 

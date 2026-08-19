@@ -918,3 +918,88 @@ describe("createAgentRuntime", () => {
     }
   });
 });
+
+describe("createAgentRuntime steering", () => {
+  let stateDir: string;
+  let workingDir: string;
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), "atomic-runtime-steer-"));
+    workingDir = mkdtempSync(join(tmpdir(), "atomic-cwd-steer-"));
+    mkdirSync(join(workingDir, ".atomic-agent", "skills"), { recursive: true });
+    process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    process.env.ATOMIC_AGENT_GRAMMARS_DIR = join(process.cwd(), "grammars");
+    resetConfigCache();
+  });
+
+  afterEach(() => {
+    rmSync(stateDir, { recursive: true, force: true });
+    rmSync(workingDir, { recursive: true, force: true });
+    delete process.env.ATOMIC_AGENT_STATE_DIR;
+    delete process.env.ATOMIC_AGENT_GRAMMARS_DIR;
+    resetConfigCache();
+  });
+
+  it("refuses to steer a session with no turn in flight", async () => {
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      overrides: { browserBackend: new FakeBackend(), skipLlamaHealthCheck: true },
+    });
+    try {
+      const session = runtime.createSession();
+      // Nothing is running: steering would silently vanish, so the
+      // caller is told "no" and can fall back to a normal turn.
+      expect(runtime.steer(session.id, "hello?")).toBe(false);
+      expect(runtime.steeringInbox.peek(session.id)).toEqual([]);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("accepts a steer while a turn holds the session lock", async () => {
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      overrides: { browserBackend: new FakeBackend(), skipLlamaHealthCheck: true },
+    });
+    try {
+      const session = runtime.createSession();
+      let release!: () => void;
+      const held = new Promise<void>((res) => {
+        release = res;
+      });
+      const inFlight = runtime.turnController.enqueue({
+        sessionId: session.id,
+        origin: "tui",
+        run: async () => {
+          expect(runtime.steer(session.id, "change course")).toBe(true);
+          expect(runtime.steeringInbox.peek(session.id)).toEqual([
+            "change course",
+          ]);
+          await held;
+          return null;
+        },
+      });
+      release();
+      await inFlight;
+      // Still pending: only the agent loop drains it.
+      expect(runtime.steeringInbox.drain(session.id)).toEqual(["change course"]);
+    } finally {
+      await runtime.shutdown();
+    }
+  });
+
+  it("drops pending steers on shutdown", async () => {
+    const runtime = await createAgentRuntime({
+      workingDir,
+      approvalLevel: 5,
+      overrides: { browserBackend: new FakeBackend(), skipLlamaHealthCheck: true },
+    });
+    const session = runtime.createSession();
+    runtime.steeringInbox.push(session.id, "stale");
+    await runtime.shutdown();
+    expect(runtime.steeringInbox.peek(session.id)).toEqual([]);
+  });
+});
+
