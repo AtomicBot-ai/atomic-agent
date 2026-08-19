@@ -11,6 +11,7 @@ import {
 } from "./config-file.js";
 import {
   ConfigValidationError,
+  parseUserConfigFile,
   USER_CONFIG_DEFAULTS,
   USER_CONFIG_VERSION,
 } from "./config-schema.js";
@@ -592,6 +593,75 @@ describe("a config written by a newer build", () => {
     >;
     expect(onDisk.version).toBe(USER_CONFIG_VERSION + 5);
     expect(onDisk.somethingFromTheFuture).toEqual({ enabled: true });
+  });
+
+  it("keeps its keys and its version when an older build persists a setting", () => {
+    const dir = mkdtempSync(join(tmpdir(), "atomic-newer-config-"));
+    const path = join(dir, "config.json");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: USER_CONFIG_VERSION + 5,
+        localModels: { url: "http://127.0.0.1:9999" },
+        somethingFromTheFuture: { enabled: true },
+      }),
+      "utf8",
+    );
+    // Exactly what every `persist-*` helper does: read → merge →
+    // validate → write. Before the passthrough this is where the newer
+    // build's keys died and `version` was stamped back down — the loop
+    // the permissive read prevents was only postponed to here.
+    const prev = ensureUserConfigFileSync(path);
+    writeUserConfigFileSync(
+      path,
+      parseUserConfigFile({ ...prev, log: { level: "debug" } }),
+    );
+
+    const onDisk = JSON.parse(readFileSync(path, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    expect(onDisk.somethingFromTheFuture).toEqual({ enabled: true });
+    expect(onDisk.version).toBe(USER_CONFIG_VERSION + 5);
+    expect((onDisk.log as { level: string }).level).toBe("debug");
+  });
+
+  it("keeps its keys through a whole-file replacement that never saw them", () => {
+    const dir = mkdtempSync(join(tmpdir(), "atomic-newer-config-"));
+    const path = join(dir, "config.json");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: USER_CONFIG_VERSION + 5,
+        localModels: { url: "http://127.0.0.1:9999" },
+        somethingFromTheFuture: { enabled: true },
+      }),
+      "utf8",
+    );
+    // `config set` and `PATCH /api/config` validate an operator payload
+    // and replace the file with it. That payload never held the newer
+    // build's keys, so the write path is all that stands between them
+    // and deletion.
+    writeUserConfigFileSync(
+      path,
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        log: { level: "warn" },
+      }),
+    );
+
+    const onDisk = JSON.parse(readFileSync(path, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    expect(onDisk.somethingFromTheFuture).toEqual({ enabled: true });
+    expect(onDisk.version).toBe(USER_CONFIG_VERSION + 5);
+    expect((onDisk.log as { level: string }).level).toBe("warn");
+    // A key this build owns is still the payload's to set: preserving
+    // foreign keys never shadows a parsed value.
+    expect((onDisk.localModels as { url: string }).url).toBe(
+      USER_CONFIG_DEFAULTS.localModels.url,
+    );
   });
 
   it("still refuses a version older than the oldest supported one", () => {

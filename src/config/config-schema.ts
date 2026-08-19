@@ -912,12 +912,34 @@ export interface UserManagedEmbeddingLlmConfig {
 }
 
 /**
+ * Carrier for top-level keys a *newer* build wrote and this build has no
+ * parser for. `parseUserConfigFile` hangs them on the object it returns
+ * and `writeUserConfigFileSync` puts them back into the file, so an
+ * older build reading a shared `config.json` no longer deletes the newer
+ * build's settings the first time it persists anything.
+ *
+ * A symbol rather than a field, deliberately: no JSON key can collide
+ * with it, `JSON.stringify` skips it (so a preserved key is written once,
+ * by the merge in `writeUserConfigFileSync`, never twice), and every
+ * `{ ...prev, tui: { … } }` draft in the `persist-*` helpers carries it
+ * along for free — object spread copies own enumerable symbol properties.
+ */
+export const UNKNOWN_USER_CONFIG_KEYS: unique symbol = Symbol.for(
+  "atomic-agent.userConfig.unknownKeys",
+);
+
+/**
  * User-facing keys that live in `<stateDir>/config.json`. The file
  * format is versioned; bump `USER_CONFIG_VERSION` on breaking schema
  * changes and add a migration step in `parseUserConfigFile`.
  */
 export interface UserConfigFile {
   version: typeof USER_CONFIG_VERSION;
+  /**
+   * Present only when the parsed file carried top-level keys this build
+   * does not know. See {@link UNKNOWN_USER_CONFIG_KEYS}.
+   */
+  readonly [UNKNOWN_USER_CONFIG_KEYS]?: Readonly<Record<string, unknown>>;
   localModels: {
     url: string;
     mode: LocalLlmMode;
@@ -2679,16 +2701,55 @@ export function parseMcpServers(
 }
 
 /**
+ * Top-level keys this build's parser consumes. Derived from
+ * `USER_CONFIG_DEFAULTS` so a newly added block registers itself, plus
+ * the two input-only keys that have no default entry: the optional `llm`
+ * block, and the legacy `telemetry` alias that is read here and written
+ * back as `tracing`. Everything outside this set was written by another
+ * build and is preserved verbatim instead of parsed.
+ */
+const KNOWN_USER_CONFIG_KEYS: ReadonlySet<string> = new Set([
+  ...Object.keys(USER_CONFIG_DEFAULTS),
+  "llm",
+  "telemetry",
+]);
+
+/**
+ * The top-level keys of `raw` this build has no parser for, unioned with
+ * any already carried on it under {@link UNKNOWN_USER_CONFIG_KEYS}. The
+ * union is what makes a `persist-*` round trip lossless: those helpers
+ * spread an already-parsed file (whose unknown keys live only on the
+ * carrier) and hand the draft back to `parseUserConfigFile`. Literal keys
+ * win over carried ones — they are what the file being read says now.
+ */
+export function collectUnknownUserConfigKeys(
+  raw: unknown,
+): Record<string, unknown> {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const obj = raw as Record<string, unknown> & {
+    [UNKNOWN_USER_CONFIG_KEYS]?: Readonly<Record<string, unknown>>;
+  };
+  const out: Record<string, unknown> = { ...(obj[UNKNOWN_USER_CONFIG_KEYS] ?? {}) };
+  for (const [key, value] of Object.entries(obj)) {
+    if (KNOWN_USER_CONFIG_KEYS.has(key)) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+/**
  * Validate and normalise a raw JSON payload into a `UserConfigFile`.
  * Missing sub-keys are filled with defaults — this lets us add new
- * fields without breaking existing installations. Unknown top-level
- * keys are preserved silently (forward compat).
+ * fields without breaking existing installations. Top-level keys this
+ * build has no parser for are carried on the returned object under
+ * {@link UNKNOWN_USER_CONFIG_KEYS} (forward compat).
  */
 export function parseUserConfigFile(raw: unknown): UserConfigFile {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw new ConfigValidationError("<root>", "expected JSON object");
   }
   const obj = raw as Record<string, unknown>;
+  const unknownKeys = collectUnknownUserConfigKeys(obj);
   const version = obj.version ?? USER_CONFIG_VERSION;
   if (typeof version !== "number" || !Number.isInteger(version)) {
     throw new ConfigValidationError(
@@ -2701,8 +2762,12 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   // Every bump this schema has ever taken is additive: new keys arrive
   // with defaults and the parser reads field by field, so a file written
   // by a newer build parses correctly here — the keys this build does not
-  // know are simply not read, and `writeUserConfigFileSync` preserves
-  // unknown top-level keys rather than dropping them.
+  // know are not parsed but are carried on the returned object (see
+  // `UNKNOWN_USER_CONFIG_KEYS`), and `writeUserConfigFileSync` puts them
+  // back into the file rather than dropping them. Without that, reading
+  // would be safe but the operator's first `config set` would delete the
+  // newer build's keys and stamp `version` back down — the loop this
+  // permissiveness exists to prevent, merely postponed.
   //
   // Refusing was actively harmful. Two builds share one `config.json`,
   // so the moment the newer one wrote its version the older one died on
@@ -3521,6 +3586,9 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       servers: parseMcpServers(mcp.servers, "mcp.servers"),
     },
     ...(llmBlock !== undefined ? { llm: llmBlock } : {}),
+    ...(Object.keys(unknownKeys).length > 0
+      ? { [UNKNOWN_USER_CONFIG_KEYS]: unknownKeys }
+      : {}),
   };
 }
 

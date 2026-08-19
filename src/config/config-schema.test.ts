@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ConfigValidationError,
+  UNKNOWN_USER_CONFIG_KEYS,
   USER_CONFIG_DEFAULTS,
   USER_CONFIG_VERSION,
   parseUserConfigFile,
@@ -95,6 +96,32 @@ describe("parseUserConfigFile", () => {
       localModels: { url: "http://127.0.0.1:9999" },
     });
     expect(parsed.localModels.url).toBe("http://127.0.0.1:9999");
+  });
+
+  it("carries top-level keys it cannot parse, through a persist round trip", () => {
+    // The newer build's keys have to survive more than the read: every
+    // `persist-*` helper spreads the parsed file into a draft and hands
+    // it straight back here, so the carrier has to be picked up again on
+    // input or the second validation drops what the first one saved.
+    const parsed = parseUserConfigFile({
+      version: 99,
+      somethingFromTheFuture: { enabled: true },
+      log: { level: "warn" },
+    });
+    expect(parsed[UNKNOWN_USER_CONFIG_KEYS]).toEqual({
+      somethingFromTheFuture: { enabled: true },
+    });
+
+    const reparsed = parseUserConfigFile({ ...parsed, log: { level: "debug" } });
+    expect(reparsed[UNKNOWN_USER_CONFIG_KEYS]).toEqual({
+      somethingFromTheFuture: { enabled: true },
+    });
+    expect(reparsed.log.level).toBe("debug");
+  });
+
+  it("leaves the carrier off a file it fully understands", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed[UNKNOWN_USER_CONFIG_KEYS]).toBeUndefined();
   });
 
   it("still rejects a non-integer version", () => {

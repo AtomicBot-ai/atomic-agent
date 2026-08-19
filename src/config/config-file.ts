@@ -8,6 +8,7 @@ import {
 import { dirname, join } from "node:path";
 
 import {
+  collectUnknownUserConfigKeys,
   ConfigValidationError,
   ENV_DEFAULTS,
   parseUserConfigFile,
@@ -60,13 +61,63 @@ export function readUserConfigFileSync(path: string): UserConfigFile | null {
 /**
  * Atomically write the user config file: tmp file + rename. Creates
  * the parent directory as needed.
+ *
+ * Top-level keys this build has no parser for are written back rather
+ * than dropped, and a `version` already on disk that is *newer* than
+ * this build's is left standing. That is the other half of the
+ * permissive read in `parseUserConfigFile`: without it a shared
+ * `config.json` survives being read by an older build and then loses the
+ * newer build's keys on the first `config set`.
+ *
+ * The keys come from two places, and both are needed. The carrier
+ * `parseUserConfigFile` leaves on the object covers the read → merge →
+ * validate → write helpers (`persist-*`, `models`, telegram settings),
+ * which spread the file they just parsed. The file on disk covers the
+ * whole-payload replacements — `config set`, `PATCH /api/config` — whose
+ * payload never saw those keys at all. A key this build owns always
+ * wins, so a preserved key can never shadow a parsed value.
  */
 export function writeUserConfigFileSync(path: string, data: UserConfigFile): void {
   mkdirSync(dirname(path), { recursive: true });
-  const payload = JSON.stringify(data, null, 2) + "\n";
+  const payload = JSON.stringify(withForeignKeys(path, data), null, 2) + "\n";
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync(tmp, payload, "utf8");
   renameSync(tmp, path);
+}
+
+/**
+ * Merge what this build does not own — unknown top-level keys, and a
+ * newer `version` — back into the payload about to be written. The file
+ * on disk is read best-effort: unreadable or malformed content carries
+ * nothing forward, which is the status quo, and it is about to be
+ * replaced anyway. Where the carrier and the file hold the same foreign
+ * key the file wins; it is the fresher copy of a value neither this
+ * build nor the caller owns.
+ */
+function withForeignKeys(
+  path: string,
+  data: UserConfigFile,
+): Record<string, unknown> {
+  let onDisk: unknown = null;
+  try {
+    if (existsSync(path)) onDisk = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    onDisk = null;
+  }
+  const preserved = {
+    ...collectUnknownUserConfigKeys(data),
+    ...collectUnknownUserConfigKeys(onDisk),
+  };
+  const out: Record<string, unknown> = { ...data };
+  for (const [key, value] of Object.entries(preserved)) {
+    if (key in out) continue;
+    out[key] = value;
+  }
+  const diskVersion = readVersionField(onDisk);
+  if (diskVersion !== null && diskVersion > data.version) {
+    out.version = diskVersion;
+  }
+  return out;
 }
 
 /**
