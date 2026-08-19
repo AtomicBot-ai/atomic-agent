@@ -620,13 +620,29 @@ export function TuiApp({
       dispatch({ type: "chat_scroll_reset" });
       return;
     }
-    if (canAcceptMessage(state)) {
-      callbacks.onQuit();
-      dispatch({ type: "quit_requested" });
-    } else {
-      callbacks.onAbort();
-      dispatch({ type: "abort_requested" });
+    // A debug panel is open: Esc is the way back to Run, exactly as the
+    // hint strip advertises. The Observe tabs (Feed / World / Reasoning /
+    // Logs / LLM logs) have no key layer of their own, so `handlePanelEscape`
+    // never sees the keypress and the editor — which stays focused there so
+    // the operator can keep typing while watching the feed — used to fall
+    // through to the quit branch below and kill the agent instead.
+    if (state.uiMode === "debug") {
+      dispatch({ type: "ui_mode_set", mode: "chat" });
+      return;
     }
+    // Esc never quits. Everywhere else in the TUI it means cancel / back
+    // one level, so a single unannounced press killing the agent — and
+    // the half-typed message with it — was a trap: no hint strip ever
+    // advertised it, while Ctrl+C deliberately asks twice. Quitting stays
+    // on Ctrl+C twice and `/quit`; Esc just clears the draft.
+    if (canAcceptMessage(state)) {
+      if (state.inputValue.length > 0) {
+        dispatch({ type: "input_changed", value: "" });
+      }
+      return;
+    }
+    callbacks.onAbort();
+    dispatch({ type: "abort_requested" });
   }, [state, callbacks]);
 
   // Tab in the editor is reserved for slash-palette completion. Section
