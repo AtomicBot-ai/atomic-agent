@@ -130,8 +130,6 @@ export function apiKeyPhaseError(
  * different, lower-case product.
  */
 const KIND_SERVICE_LABELS: Record<ProvidersWizardKind, string> = {
-  "claude-cli": "Claude Code",
-  "codex-cli": "OpenAI Codex",
   openrouter: "OpenRouter",
   aimlapi: "AI/ML API",
   gemini: "Gemini",
