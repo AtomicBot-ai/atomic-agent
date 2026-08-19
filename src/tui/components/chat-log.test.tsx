@@ -25,7 +25,10 @@ describe("ChatLog", () => {
     const state = createInitialTuiState(BASE_SESSION);
     const { lastFrame } = render(<ChatLog state={state} />);
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("Local-First AI Agent");
+    // The mark shrinks with the surface, so assert on the plus bar the
+    // artwork always keeps rather than on a wordmark that only a tall
+    // terminal earns. See `splash-fit.render.test.tsx`.
+    expect(text).toContain(":::");
     expect(text).toContain("/help");
   });
 

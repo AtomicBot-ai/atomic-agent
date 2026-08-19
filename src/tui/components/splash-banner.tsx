@@ -1,7 +1,17 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import { Logo } from "./logo.js";
+import { useTerminalSize } from "../hooks/use-terminal-size.js";
+import { computeChatViewportRows, computeChatWidth } from "../layout.js";
 import { theme } from "../theme/theme.js";
+import { Logo } from "./logo.js";
+import {
+  computeSplashFit,
+  SPLASH_TIPS,
+  type SplashFit,
+  type SplashSize,
+  type SplashTip,
+  type TipDescriptions,
+} from "./splash-fit.js";
 
 /**
  * Welcome screen shown in place of an empty chat-log. Renders the brand
@@ -9,41 +19,68 @@ import { theme } from "../theme/theme.js";
  * spacers, with a compact tip-list underneath that surfaces the most
  * useful slash commands and hotkeys.
  *
+ * Everything on it is sized against the live terminal: the mark shrinks
+ * (34×20 → 17×10 → one line) as the window narrows or shortens, the tip
+ * list drops entries from its tail, and the tip descriptions collapse to
+ * terse copy before disappearing entirely. See `splash-fit.ts` for the
+ * breakpoints — this component only renders the plan it is handed.
+ *
  * Visibility is decided by the parent (`ChatLog`) based on
  * `messages.length === 0`, so restoring a historical session via
  * `/sessions` swaps the banner out for the transcript.
  */
-export function SplashBanner(): ReactElement {
+export interface SplashBannerProps {
+  /**
+   * Explicit surface size, bypassing the terminal measurement. Only
+   * used by tests — ink-testing-library's stdout stub reports a fixed
+   * 100×0, which would pin every rendered frame to one breakpoint.
+   */
+  size?: SplashSize;
+}
+
+export function SplashBanner({ size }: SplashBannerProps = {}): ReactElement {
+  const terminal = useTerminalSize();
+  const surface: SplashSize = size ?? {
+    columns: computeChatWidth(terminal.columns),
+    rows: computeChatViewportRows(terminal.rows, terminal.columns),
+  };
+  const fit = computeSplashFit(surface);
+  const tips = SPLASH_TIPS.slice(0, fit.tipCount);
   return (
     <Box flexDirection="column" flexGrow={1} alignItems="center" paddingX={2}>
       <Box flexGrow={1} />
-      <Logo />
-      <Box marginTop={1} flexDirection="column">
-        <Tip left="Enter" right="submit message to the agent" />
-        <Tip left="/help" right="list all slash commands" />
-        <Tip left="/sessions" right="switch to a previous thread" />
-        <Tip left="/new" right="start a fresh session" />
-        <Tip left="/model" right="change the chat model" />
-        <Tip left="/tasks" right="jump to the Tasks tab (Option 4 cron + ingress UI)" />
-        <Tip left="/import" right="open the Import tab (one-shot Hermes -> atomic-agent migration)" />
-        <Tip left="Ctrl+C ×2" right="quit (once aborts a running turn)" />
-      </Box>
+      <Logo variant={fit.logo} wordmark={fit.wordmark} tagline={fit.tagline} />
+      {tips.length > 0 ? (
+        <Box marginTop={1} flexDirection="column">
+          {tips.map((tip) => (
+            <Tip key={tip.label} tip={tip} fit={fit} />
+          ))}
+        </Box>
+      ) : null}
       <Box flexGrow={1} />
     </Box>
   );
 }
 
 interface TipProps {
-  left: string;
-  right: string;
+  tip: SplashTip;
+  fit: SplashFit;
 }
 
-function Tip({ left, right }: TipProps): ReactElement {
+function Tip({ tip, fit }: TipProps): ReactElement {
+  const label =
+    fit.labelWidth > 0 ? tip.label.padEnd(fit.labelWidth, " ") : tip.label;
   return (
-    <Text>
+    <Text wrap="truncate">
       <Text color={theme.colors.muted}>  {theme.glyphs.bullet} </Text>
-      <Text color={theme.colors.accent}>{left.padEnd(24, " ")}</Text>
-      <Text color={theme.colors.muted}>{right}</Text>
+      <Text color={theme.colors.accent}>{label}</Text>
+      <Text color={theme.colors.muted}>{description(tip, fit.descriptions)}</Text>
     </Text>
   );
+}
+
+function description(tip: SplashTip, mode: TipDescriptions): string {
+  if (mode === "full") return tip.description;
+  if (mode === "short") return tip.short;
+  return "";
 }

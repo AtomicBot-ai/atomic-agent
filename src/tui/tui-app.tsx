@@ -35,6 +35,11 @@ import { UpdateModal } from "./components/update-modal.js";
 import { UpdateIndicator } from "./components/update-indicator.js";
 import { UpdateRestartPrompt } from "./components/update-restart-prompt.js";
 import { useTerminalSize } from "./hooks/use-terminal-size.js";
+import {
+  computeSidebarRowBudget,
+  computeSidebarWidth,
+  isSidebarVisible,
+} from "./layout.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { slashPrefix } from "./commands/slash-command-parser.js";
 import { handleEditorSubmit } from "./submit-handler.js";
@@ -346,15 +351,6 @@ const DEFAULT_MAX_VISIBLE_ROWS = 14;
 const CTRL_C_WINDOW_MS = 1500;
 
 /**
- * Minimum terminal width (in columns) at which the right-rail sidebar
- * is rendered. Narrower terminals collapse the layout back to the
- * single-column form so cramped sessions over SSH stay usable. Picked
- * to match opencode's threshold.
- */
-const SIDEBAR_MIN_COLUMNS = 100;
-const SIDEBAR_WIDTH = 30;
-
-/**
  * Rotating placeholder pool shown in the prompt's empty state. Phrasing
  * intentionally nudges the operator toward concrete actions the agent
  * can execute locally — file ops, browser automation, codebase Q&A —
@@ -482,7 +478,13 @@ export function TuiApp({
     state.uiMode === "debug" && state.activeTab === "privacy";
   const terminalSize = useTerminalSize();
   const sidebarVisible =
-    state.uiMode === "chat" && terminalSize.columns >= SIDEBAR_MIN_COLUMNS;
+    state.uiMode === "chat" && isSidebarVisible(terminalSize.columns);
+  // The rail takes a share of the terminal rather than a flat 30
+  // columns, and its two panes get a row budget cut from the terminal
+  // height — Ink 7 overlaps rather than clips an over-tall frame, so
+  // an unbudgeted rail garbles short windows.
+  const sidebarWidth = computeSidebarWidth(terminalSize.columns);
+  const sidebarRows = computeSidebarRowBudget(terminalSize.rows);
   const sidebarFocused = sidebarVisible && state.chatFocus === "sidebar";
   const editorFocus =
     !state.pendingApproval &&
@@ -817,7 +819,9 @@ export function TuiApp({
         </Box>
         {sidebarVisible ? (
           <Sidebar
-            width={SIDEBAR_WIDTH}
+            width={sidebarWidth}
+            maxSessionRows={sidebarRows.sessions}
+            maxTaskRows={sidebarRows.tasks}
             sessions={state.recentSessions}
             sessionsCursor={state.sidebarCursor}
             currentSessionId={state.session.sessionId}
