@@ -1,7 +1,12 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Key } from "ink";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { resetConfigCache } from "../../config/index.js";
 import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { upsertLlmProvider } from "../persist-llm-provider.js";
 import { PICK_WINDOW } from "../components/wizard-pick-list.js";
 import { PROVIDER_PRESETS } from "./provider-presets.js";
 import { LOCAL_EMBEDDING_CHOICE_ID } from "./providers-model-options.js";
@@ -606,6 +611,100 @@ describe("handleProvidersWizardKey", () => {
       wizard = { ...wizard, phase: "api_key" };
       wizard = next(wizard, "", emptyKey({ return: true }));
       expect(wizard.phase).toBe("pick_chat_model");
+    });
+  });
+
+  describe("reconfiguring a saved provider", () => {
+    // Every other test here starts from `createProvidersWizardState("add", …)`,
+    // which is how a gate stricter than the save path reached review: a
+    // configure run opens on the key screen with an empty buffer, and the
+    // key it should find is in `config.json`, not `.env`.
+    let stateDir: string;
+    let previousStateDir: string | undefined;
+
+    beforeEach(() => {
+      previousStateDir = process.env.ATOMIC_AGENT_STATE_DIR;
+      stateDir = mkdtempSync(join(tmpdir(), "wizard-configure-"));
+      process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+      delete process.env.OPENROUTER_API_KEY;
+      resetConfigCache();
+    });
+
+    afterEach(() => {
+      rmSync(stateDir, { recursive: true, force: true });
+      if (previousStateDir === undefined) {
+        delete process.env.ATOMIC_AGENT_STATE_DIR;
+      } else {
+        process.env.ATOMIC_AGENT_STATE_DIR = previousStateDir;
+      }
+      delete process.env.OPENROUTER_API_KEY;
+      resetConfigCache();
+    });
+
+    it("Enter leaves the key screen when the key is already saved", () => {
+      upsertLlmProvider({
+        id: "openrouter",
+        kind: "openrouter",
+        apiKey: "sk-or-stored",
+      });
+      const wizard = createProvidersWizardState("configure", {
+        providerId: "openrouter",
+        kind: "openrouter",
+      });
+      expect(wizard.phase).toBe("api_key");
+      const next1 = next(wizard, "", emptyKey({ return: true }));
+      expect(next1.phase).toBe("pick_chat_model");
+      expect(next1.error).toBeNull();
+    });
+
+    it("Enter still refuses when the entry has no key anywhere", () => {
+      upsertLlmProvider({ id: "openrouter", kind: "openrouter" });
+      const wizard = createProvidersWizardState("configure", {
+        providerId: "openrouter",
+        kind: "openrouter",
+      });
+      const next1 = next(wizard, "", emptyKey({ return: true }));
+      expect(next1.phase).toBe("api_key");
+      expect(next1.error).toContain("API key required");
+    });
+
+    it("Esc on the key screen closes the wizard", () => {
+      // The key screen is where a configure run opens, so there is no
+      // screen behind it. Stepping "back" built a provider list this run
+      // never showed and dropped the entry's kind and base URL with it.
+      upsertLlmProvider({
+        id: "my-vllm",
+        kind: "openai-compatible",
+        baseUrl: "http://192.168.1.50:8000/v1",
+      });
+      const wizard = createProvidersWizardState("configure", {
+        providerId: "my-vllm",
+        kind: "openai-compatible",
+        baseUrl: "http://192.168.1.50:8000/v1",
+      });
+      const result = handleProvidersWizardKey(
+        "",
+        emptyKey({ escape: true }),
+        wizard,
+      );
+      expect("closed" in result && result.closed).toBe(true);
+    });
+
+    it("Esc past the key screen still steps back one screen", () => {
+      const wizard = {
+        ...createProvidersWizardState("configure", {
+          providerId: "openrouter",
+          kind: "openrouter",
+        }),
+        phase: "pick_chat_model" as const,
+      };
+      const result = handleProvidersWizardKey(
+        "",
+        emptyKey({ escape: true }),
+        wizard,
+      );
+      expect("closed" in result && result.closed).toBeFalsy();
+      expect("wizard" in result && result.wizard.phase).toBe("pick_kind");
     });
   });
 

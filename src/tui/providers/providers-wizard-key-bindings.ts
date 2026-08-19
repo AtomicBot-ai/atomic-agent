@@ -10,6 +10,7 @@ import {
   isCuratedCatalogKind,
   isLinePhase,
   isListPhase,
+  isWizardFirstScreen,
   kindRowAtCursor,
   listEmbeddingModelsForKind,
   listLengthForPhase,
@@ -102,10 +103,10 @@ export function handleProvidersWizardKey(
   if (key.escape) {
     // Esc steps back one screen rather than abandoning the whole wizard:
     // picking the wrong service should not cost the operator the flow.
-    // Only the first screen (the provider list) closes it. Stepping back
+    // Only the screen the run opened at closes it. Stepping back
     // rebuilds a clean pick_kind state so the previous pick does not
     // leak into the next one, then restores the cursor to that row.
-    if (wizard.phase !== "pick_kind") {
+    if (!isWizardFirstScreen(wizard)) {
       return {
         handled: true,
         wizard: {

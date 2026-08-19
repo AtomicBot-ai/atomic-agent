@@ -14,8 +14,8 @@ import { listCompatChatModelPicks } from "../providers/providers-wizard-key-bind
 import {
   apiKeyForWizard,
   baseUrlForWizard,
+  emptyKeyMeaningForWizard,
   envHintForWizard,
-  wizardKeyIsOptional,
 } from "../providers/providers-wizard-target.js";
 import { theme } from "../theme/theme.js";
 import { findProviderPreset } from "../providers/provider-presets.js";
@@ -329,11 +329,7 @@ export function ProvidersWizard(props: {
 
   if (w.phase === "api_key") {
     const envHint = envHintForWizard(w);
-    // Local servers and keyless-listing services save with an empty key;
-    // promising ".env only" here would contradict their own list rows.
-    const emptyMeans = wizardKeyIsOptional(w)
-      ? "Optional for this service — leave empty to connect without a key."
-      : "Leave empty only if the key is already in .env.";
+    const emptyMeans = emptyKeyMeaningForWizard(w);
     return (
       <Box
         flexDirection="column"
