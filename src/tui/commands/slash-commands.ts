@@ -36,7 +36,12 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   { name: "abort", description: "abort the running turn" },
   { name: "quit", description: "exit atomic-agent", aliases: ["exit"] },
   { name: "debug", description: "toggle debug pane (feed / logs / world …)" },
-  { name: "chat", description: "return to single-view chat mode", aliases: ["run"] },
+  { name: "chat", description: "return to single-view chat mode" },
+  {
+    name: "run",
+    description:
+      "run mode: `/run` (picker) | `/run local|cloud|fusion [0-100]` — fusion orchestrates on cloud, executes locally",
+  },
   {
     name: "observe",
     description:

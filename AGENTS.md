@@ -156,6 +156,9 @@ Speculative batching (the runtime guessing that the model "should" have batched 
 | `src/cli/` | `run`, `index`, `repl`, `tui`, `serve` commands |
 | `src/http/` | OpenAI-compatible HTTP API + atomic admin routes for `atomic-agent serve` |
 | `src/llm/` | HTTP client for external llama-server + GBNF grammar |
+| `src/llm/run-mode/` | Resolves the operator run mode (`local` / `cloud` / `fusion`) against the configured providers |
+| `src/agent/routing/` | Fusion step routing: complexity score, cutoff rule, per-session router |
+| `src/tui/run-mode/` | Run-section mode strip + dial overlay (state, actions, reducer, keys, orchestrator) |
 | `src/prompt/` | Prompt builder, stable prefix, token budget. See [PROMPT.md](PROMPT.md) for full anatomy of the stable prefix and variable tail. |
 | `src/session/` | Session state + sqlite persistence |
 | `src/agent/` | Agent loop + step executor + parallel batch executor (`batch-executor.ts`) + resource-class taxonomy (`tool-resource-class.ts`) + no-progress loop detector |
@@ -1703,6 +1706,7 @@ The remaining asymmetry: `tools` is populated only when the **primary's** transp
 8. **A cross-transport fallover parses the response with the served link's transport, not the primary's**, and the turn reaches the fallback's answer instead of `loop_failed`. Pinned by [src/llm/fallback/fallback-e2e.integration.test.ts](src/llm/fallback/fallback-e2e.integration.test.ts) (real `AgentLoop` + `step-executor`, both unary and streaming).
 9. **Breaker state is partitioned by session** — one partition's success does not clear another's armed cooldown, and a keyless call shares one default partition. Pinned by [src/llm/fallback/provider-fallback-chain.test.ts](src/llm/fallback/provider-fallback-chain.test.ts) ("partition isolation").
 10. **The cooldown ladder must be non-decreasing** — a decreasing `cooldownMs` is rejected at parse time so "escalating" stays true. Pinned by [src/config/llm-config.test.ts](src/config/llm-config.test.ts).
+11. **A `preferredProviderId` changes only the STARTING link.** It is ignored while that specific provider is in cooldown, never sets or clears `overrideId`, and is never reported as a probe; a failure on a preferred start resumes the scan from the chain head (a preferred leg is commonly the tail, and advancing "after" it would strand a recoverable turn). Pinned by [src/llm/fallback/provider-fallback-chain.test.ts](src/llm/fallback/provider-fallback-chain.test.ts).
 
 ### TUI: the Fallback pane
 
@@ -1724,6 +1728,86 @@ The LLM tab gains a fourth pane, `fallback`, reached with `←`/`→` after Loca
 4. **Keys route to the right intent** and the add-link picker owns the keyboard while open. Pinned by [src/tui/llm-panel/fallback/fallback-key-bindings.test.ts](src/tui/llm-panel/fallback/fallback-key-bindings.test.ts).
 5. **`provider_switched` is mirrored into `fallbackPanel.lastSwitch`; the pane never invents a live countdown.** Pinned by [src/tui/llm-panel/fallback/fallback-panel-reducer.test.ts](src/tui/llm-panel/fallback/fallback-panel-reducer.test.ts), [src/tui/components/llm-fallback-rows.test.tsx](src/tui/components/llm-fallback-rows.test.tsx).
 6. **Empty chain / nothing-addable shows a hint, not a broken list.** Pinned by [src/tui/components/llm-fallback-rows.test.tsx](src/tui/components/llm-fallback-rows.test.tsx), [src/tui/llm-panel/fallback/fallback-panel-reducer.test.ts](src/tui/llm-panel/fallback/fallback-panel-reducer.test.ts).
+
+## Run modes (Local / Cloud / Fusion)
+
+An operator-facing mode that names the *pair* of providers a turn may use, layered directly on top of the fallback chain above. `local` uses the configured llama-server provider, `cloud` the configured cloud provider, and `fusion` runs both: the cloud leg orchestrates, the local leg executes.
+
+### Config and the non-contradiction rule
+
+`llm.runMode` (sibling of `llm.fallback`; [src/config/llm-run-mode-config.ts](src/config/llm-run-mode-config.ts)):
+
+```jsonc
+"runMode": {
+  "mode": "local" | "cloud" | "fusion",
+  "localProvider": "local-llama",     // optional pin; default = first llama-server-kind provider
+  "cloudProvider": "openrouter",      // optional pin; default = first non-llama-server provider
+  "fusion": { "cloudShare": 40, "subRunners": "local" }
+}
+```
+
+**`llm.activeTextProvider` stays authoritative**; `runMode.mode` is additive. `resolveRunMode` ([src/llm/run-mode/resolve-run-mode.ts](src/llm/run-mode/resolve-run-mode.ts)) derives the effective mode from which provider is active, and honours a stored `fusion` only while the cloud leg is the active one. Consequences, all deliberate: a mode switch must write both keys in one go (`setRunModeInConfig`, [src/tui/persist-run-mode.ts](src/tui/persist-run-mode.ts)); an operator who changes provider by hand in Manage → LLM simply drops out of fusion on the next read, with no reconciliation step and no state that lies; and because fusion pins the cloud provider as primary, `resolveFallbackChain` hoists it to the chain head and appends local at the tail **with no changes of its own**.
+
+**`cloudShare` is a dial, not a quota.** It moves a cutoff on a bounded per-step score; it does not promise that N% of steps reach the cloud. `0` behaves exactly like `local`, `100` exactly like `cloud`. Do not "fix" it into a running-counter scheduler — a quota necessarily sends some trivial steps to the cloud and keeps some hard ones local, which is the opposite of the intent.
+
+### Degradation
+
+Reported, never silent ([src/llm/run-mode/run-mode-degradation.ts](src/llm/run-mode/run-mode-degradation.ts)): cloud/fusion with no cloud provider stays `local`; fusion with no local provider runs cloud-only; fusion with `llm.toolTransport` pinned still runs but warns, because a pinned transport sends one leg the wrong wire shape.
+
+### Fusion routing policy
+
+The loop is one inference per step, so the split is defined per step ([src/agent/routing/](src/agent/routing/)):
+
+| Step | Route | Why |
+|---|---|---|
+| Step 0 | cloud (whenever `cloudShare > 0`) | Forms the plan and the first tool batch; exactly one call per turn, so cost is bounded |
+| Continuation | scored, with hysteresis | The bulk; mechanical read → edit chains score low and stay local |
+| Parse-repair retry | same leg as the attempt it repairs | Inherited for free by spreading the original `LlmStreamParams`. A repair must be judged by the model that made the mistake, against the same transport |
+| Memory sub-runners | local by default (`fusion.subRunners`) | Cold-path structured-JSON jobs on the reserved reflection slot, already KV-warm locally |
+| MCP sampling | **not covered** — still hard-wired local ([src/mcp/mcp-sampling-handler.ts](src/mcp/mcp-sampling-handler.ts)) | Bypasses the provider registry entirely |
+
+**The final synthesis step is deliberately not special-cased.** The loop cannot know a step is final until the model returns `reply`, so a flag for it would be a lie. Instead the score's dominant term is context pressure, so a step carrying the whole turn escalates on its own. Making "always synthesise on cloud" explicit would need a loop-level change (a post-`reply` re-synthesis pass), not a routing flag.
+
+### The complexity score
+
+Integer 0-100, weights summing to 100 so it is directly comparable to `cloudShare` ([src/agent/routing/compute-step-complexity.ts](src/agent/routing/compute-step-complexity.ts)): context pressure (40) + turn depth (25) + transient notice (20) + tail growth (15). A step routes to the cloud when `score >= 100 - cloudShare`.
+
+**`cacheReused` is deliberately excluded.** It is produced by `slotManager.acquire`, which now runs *after* routing, so feeding it back in would be circular. Do not add it.
+
+`ROUTING_HYSTERESIS` (±10) is load-bearing, not cosmetic: llama-server reuses its KV cache by longest common prefix, so alternating legs every step forces it to reprocess the tail that grew in between. Hysteresis produces runs of consecutive local steps, which is what makes the local cache pay off.
+
+### Slot affinity and provider lifetime
+
+Two things fusion had to fix in the layers below it:
+
+* **Slot affinity follows the routed provider**, via `StepDependencies.resolveSlotAffinity`. Reading it off the *active* provider (cloud, no affinity) would have run every locally-routed step at `slotId: -1` with `cachePrompt` off — a full prompt reprocess per step.
+* **Pinned providers survive an active swap** (`ProviderRegistry.setPinnedProviderIds`). `close()` is a no-op on both shipped kinds today, so this is not a live crash, but the interface promises teardown and switching *into* fusion would otherwise close the leg it is about to route to.
+
+Cost attribution follows the **served** link (`CompletionResult.servedProviderId`), for the same reason `servedTransport` exists: pricing a local completion against the cloud provider's catalog reports a cost that was never incurred.
+
+### TUI surface
+
+A one-row pill strip under the status bar in chat mode ([src/tui/components/run-mode-bar.tsx](src/tui/components/run-mode-bar.tsx)) reading `> Local . Cloud . Fusion 40%`, plus a dial overlay ([src/tui/components/run-mode-picker.tsx](src/tui/components/run-mode-picker.tsx)).
+
+Note it is **not** `DebugPane`'s `SubTabBar` — that component only renders in debug mode, so its `section === "run"` branch is unreachable — and **not** `cycleSubTab`, which returns `TuiTab`s; run modes are not tabs and forcing them in would drag in `getCurrentSection`, `tab_changed`, `NAV_SLOT_ORDER` and the persisted `initialLayout` contract.
+
+**Keys.** `Ctrl+R` cycles Local -> Cloud -> Fusion from any section (free: this file binds only Ctrl+C and Ctrl+B, and `MultiLineEditor` ignores every ctrl chord outside `a/e/u/k/w/c/o`). The overlay claims keys inside `handleAppKey`, beside the approval and update prompts rather than through `submit-handler` — it needs `<-`/`->` and digits, which the focused chat editor would otherwise consume — and swallows **every** key while open. `/run` (own command now, no longer a `/chat` alias) still returns to the Run section and additionally opens the picker; `/run fusion 60` switches directly.
+
+**Persistence.** `RunModeOrchestrator` ([src/tui/run-mode/run-mode-orchestrator.ts](src/tui/run-mode/run-mode-orchestrator.ts)) is the **only** TUI writer of `llm.runMode`. It persists both keys first, then hot-applies the provider swap, so a failed swap still leaves a file that boots into the requested mode — and it refuses to write a mode that would immediately resolve to something else, surfacing the degradation sentence instead.
+
+#### Locked invariants (Pinned by tests)
+
+1. **`activeTextProvider` wins**: a stored `fusion` with the local leg active resolves to `local`, and that is not a degradation. Pinned by [src/llm/run-mode/resolve-run-mode.test.ts](src/llm/run-mode/resolve-run-mode.test.ts).
+2. **Every unavailable mode degrades to a reachable one and says why.** Pinned by [src/llm/run-mode/resolve-run-mode.test.ts](src/llm/run-mode/resolve-run-mode.test.ts), [src/llm/run-mode/run-mode-degradation.test.ts](src/llm/run-mode/run-mode-degradation.test.ts).
+3. **`cloudShare` 0 / 100 are exact**, and step 0 always orchestrates when the cloud leg is in play. Pinned by [src/agent/routing/decide-routing-role.test.ts](src/agent/routing/decide-routing-role.test.ts).
+4. **The score is a bounded integer, monotonic in each term, and NaN-free on zero budgets.** Pinned by [src/agent/routing/compute-step-complexity.test.ts](src/agent/routing/compute-step-complexity.test.ts).
+5. **Hysteresis is per session** and drops when fusion is switched off. Pinned by [src/agent/routing/step-router.test.ts](src/agent/routing/step-router.test.ts).
+6. **No router (or a declining one) leaves `LlmStreamParams` byte-identical to today**, and the slot follows the ROUTED provider. Pinned by [src/agent/step-executor-routing.test.ts](src/agent/step-executor-routing.test.ts).
+7. **A preferred leg is a starting link, not an override** — health still wins, and the served id/transport are stamped from the link that answered. Pinned by [src/runtime/llm-fallback-seam.test.ts](src/runtime/llm-fallback-seam.test.ts).
+8. **A pinned provider survives an active swap.** Pinned by [src/llm/provider/registry/provider-registry.test.ts](src/llm/provider/registry/provider-registry.test.ts).
+9. **Mode and active provider move in ONE config write.** Pinned by [src/tui/persist-run-mode.test.ts](src/tui/persist-run-mode.test.ts).
+10. **The overlay owns the keyboard while open and Esc reverts the draft.** Pinned by [src/tui/run-mode/run-mode-key-bindings.test.ts](src/tui/run-mode/run-mode-key-bindings.test.ts), [src/tui/run-mode/run-mode-reducer.test.ts](src/tui/run-mode/run-mode-reducer.test.ts).
+11. **Bare `/run` keeps its historical "return to Run" behaviour.** Pinned by [src/tui/commands/slash-command-handler.test.ts](src/tui/commands/slash-command-handler.test.ts).
 
 ## Traceability and replay
 
