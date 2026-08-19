@@ -133,6 +133,7 @@ function renderLineField(props: {
 
 function CompatChatModelStep(props: {
   wizard: ProvidersWizardState;
+  maxRows?: number;
 }): ReactElement {
   const w = props.wizard;
   const baseUrl = baseUrlForWizard(w);
@@ -186,6 +187,7 @@ function CompatChatModelStep(props: {
       moveHint: "↑/↓ move",
       actionsHint:
         "PgUp/PgDn jump · Enter select · type to enter an id by hand · Esc back",
+      ...(props.maxRows === undefined ? {} : { maxRows: props.maxRows }),
     });
   }
 
@@ -226,6 +228,7 @@ function CompatChatModelStep(props: {
 function CatalogChatModelStep(props: {
   wizard: ProvidersWizardState;
   kind: "openrouter" | "aimlapi";
+  maxRows?: number;
 }): ReactElement {
   const { wizard: w, kind } = props;
   const getCached =
@@ -271,13 +274,26 @@ function CatalogChatModelStep(props: {
     cursor: w.cursor,
     moveHint: "j/k move",
     actionsHint,
+    ...(props.maxRows === undefined ? {} : { maxRows: props.maxRows }),
   });
 }
 
+/**
+ * `maxRows` is the terminal budget the wizard must fit in, not a
+ * preference. The wizard is a modal: `LlmPanel` hands it the whole tab
+ * budget and renders nothing behind it, and every box below sizes
+ * itself so the frame cannot outgrow the terminal. It used to be drawn
+ * on top of the full LLM panel with no budget at all, and Ink 7 answers
+ * an over-tall frame by painting later lines over earlier ones — which
+ * is how a 24-row provider list arrived on screen as seven half-eaten
+ * rows with OpenRouter's row wearing Codex's tail (reports #1 and #2).
+ */
 export function ProvidersWizard(props: {
   wizard: ProvidersWizardState;
+  maxRows?: number;
 }): ReactElement {
   const w = props.wizard;
+  const maxRows = props.maxRows === undefined ? {} : { maxRows: props.maxRows };
   const modeLabel = w.mode === "configure" ? `configure ${w.providerId}` : "add provider";
 
   if (w.phase === "pick_kind") {
@@ -287,6 +303,7 @@ export function ProvidersWizard(props: {
       cursor: w.cursor,
       moveHint: "j/k move",
       actionsHint: "Enter pick · Esc cancel",
+      ...maxRows,
     });
   }
 
@@ -332,26 +349,23 @@ export function ProvidersWizard(props: {
     w.phase === "pick_chat_model" &&
     (w.kind === "openrouter" || w.kind === "aimlapi")
   ) {
-    return <CatalogChatModelStep wizard={w} kind={w.kind} />;
+    return <CatalogChatModelStep wizard={w} kind={w.kind} {...maxRows} />;
   }
 
-  if (w.phase === "pick_embedding" && w.kind === "openrouter") {
+  if (
+    w.phase === "pick_embedding" &&
+    (w.kind === "openrouter" || w.kind === "aimlapi")
+  ) {
     return renderPickList({
       title: "Embedding backend",
-      options: listOpenRouterEmbeddingModels(),
+      options:
+        w.kind === "openrouter"
+          ? listOpenRouterEmbeddingModels()
+          : listAimlapiEmbeddingModels(),
       cursor: w.cursor,
       moveHint: "j/k move",
       actionsHint: "PgUp/PgDn jump · Enter finish · Esc back",
-    });
-  }
-
-  if (w.phase === "pick_embedding" && w.kind === "aimlapi") {
-    return renderPickList({
-      title: "Embedding backend",
-      options: listAimlapiEmbeddingModels(),
-      cursor: w.cursor,
-      moveHint: "j/k move",
-      actionsHint: "PgUp/PgDn jump · Enter finish · Esc back",
+      ...maxRows,
     });
   }
 
@@ -366,7 +380,7 @@ export function ProvidersWizard(props: {
   }
 
   if (w.phase === "chat_model_line") {
-    return <CompatChatModelStep wizard={w} />;
+    return <CompatChatModelStep wizard={w} {...maxRows} />;
   }
 
   return (

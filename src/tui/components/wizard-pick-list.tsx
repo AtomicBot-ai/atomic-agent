@@ -3,11 +3,45 @@ import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
 
 /**
- * Viewport height for every wizard pick list, and the jump distance for
- * PgUp/PgDn in `providers-wizard-key-bindings`. Keep the two in sync by
- * importing this constant, never by copying the number.
+ * Largest viewport any wizard pick list will use, and the jump distance
+ * for PgUp/PgDn in `providers-wizard-key-bindings`. Keep the two in sync
+ * by importing this constant, never by copying the number.
+ *
+ * The rendered viewport shrinks below this on short terminals (see
+ * `pickWindowRows`); the paging distance deliberately does not. PgDn is
+ * "go a screenful further down a 300-row catalog", and pinning it to a
+ * 3-row window on an 80x24 terminal would turn it into ↓↓↓.
  */
 export const PICK_WINDOW = 12;
+
+/** Never shrink the viewport below this — one row is not a list. */
+export const PICK_MIN_WINDOW = 3;
+
+/**
+ * Rows the box spends on things that are not options: two border lines,
+ * the top and bottom margins, the title, and the hint.
+ */
+const PICK_CHROME_ROWS = 6;
+
+/**
+ * How many option rows fit in `maxRows` total rows of terminal.
+ *
+ * `undefined` means "no budget was passed" and keeps the historical
+ * fixed viewport. Callers that know the budget must pass it: Ink 7 does
+ * not clip a frame taller than the terminal, it paints later lines over
+ * earlier ones, so a 16-row box on an 11-row budget does not lose its
+ * bottom — it eats whatever was above it.
+ */
+export function pickWindowRows(
+  maxRows: number | undefined,
+  extraChromeRows = 0,
+): number {
+  if (maxRows === undefined) return PICK_WINDOW;
+  return Math.max(
+    PICK_MIN_WINDOW,
+    Math.min(PICK_WINDOW, maxRows - PICK_CHROME_ROWS - extraChromeRows),
+  );
+}
 
 /**
  * Bordered option list windowed around the cursor.
@@ -30,14 +64,17 @@ export function renderPickList(props: {
   moveHint: string;
   /** Actions part of the hint, e.g. "Enter select · Esc cancel". */
   actionsHint: string;
+  /** Total terminal rows this box may occupy; omit for the fixed viewport. */
+  maxRows?: number;
 }): ReactElement {
   const total = props.options.length;
   const clamped = Math.min(Math.max(props.cursor, 0), Math.max(0, total - 1));
+  const window = pickWindowRows(props.maxRows);
   const start = Math.min(
-    Math.max(0, clamped - Math.floor(PICK_WINDOW / 2)),
-    Math.max(0, total - PICK_WINDOW),
+    Math.max(0, clamped - Math.floor(window / 2)),
+    Math.max(0, total - window),
   );
-  const visible = props.options.slice(start, start + PICK_WINDOW);
+  const visible = props.options.slice(start, start + window);
   const position = total === 0 ? "(0/0)" : `(${clamped + 1}/${total})`;
   return (
     <Box
@@ -64,7 +101,7 @@ export function renderPickList(props: {
           </Text>
         );
       })}
-      <Text color={theme.colors.muted}>
+      <Text color={theme.colors.muted} wrap="truncate-end">
         {props.moveHint} {position} · {props.actionsHint}
       </Text>
     </Box>
