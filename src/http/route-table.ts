@@ -19,6 +19,7 @@ import {
   createDeleteSessionHandler,
   createGetSessionHandler,
   createListSessionsHandler,
+  createSteerSessionHandler,
 } from "./route-sessions.js";
 import {
   createApprovalEventsHandler,
@@ -61,6 +62,11 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "GET", path: "/api/sessions", handler: createListSessionsHandler() },
     { method: "GET", path: "/api/sessions/{id}", handler: createGetSessionHandler() },
     { method: "DELETE", path: "/api/sessions/{id}", handler: createDeleteSessionHandler() },
+    {
+      method: "POST",
+      path: "/api/sessions/{id}/steer",
+      handler: createSteerSessionHandler(),
+    },
     { method: "POST", path: "/api/approval/resolve", handler: createResolveApprovalHandler() },
     { method: "GET", path: "/api/events", handler: createApprovalEventsHandler() },
     { method: "POST", path: "/api/tasks", handler: createCreateTaskHandler() },

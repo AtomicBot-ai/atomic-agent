@@ -13,6 +13,7 @@ import type {
   CancelPayload,
   GetSessionPayload,
   SendMessagePayload,
+  SteerMessagePayload,
   SkillInstallPayload,
   SkillUninstallPayload,
   StartSessionPayload,
@@ -142,6 +143,13 @@ export async function bootstrapSidecar(): Promise<{
           protocol.emitEvent("user_message", {
             sessionId,
             text: event.text,
+          });
+          break;
+        case "steer_applied":
+          protocol.emitEvent("steer_applied", {
+            sessionId,
+            text: event.text,
+            stepIndex: event.stepIndex,
           });
           break;
         case "turn_started":
@@ -310,6 +318,12 @@ export async function bootstrapSidecar(): Promise<{
       },
     });
     active = { ...active, session: result.session };
+    // A steer that arrived too late to be drained must not vanish. The
+    // sidecar has no queue of its own, so surface it to the host, which
+    // can decide to re-send it as a normal message.
+    for (const text of result.undelivered ?? []) {
+      protocol.emitEvent("steer_undelivered", { sessionId, text });
+    }
     return {
       reason: result.reason,
       turnCount: result.session.turnCount,
@@ -329,6 +343,20 @@ export async function bootstrapSidecar(): Promise<{
           : {}),
       });
       return { resolved };
+    },
+  );
+
+  router.register<SteerMessagePayload, { steered: boolean }>(
+    "steer_message",
+    (request) => {
+      const { sessionId, text } = request.payload;
+      if (!active || active.session.id !== sessionId) return { steered: false };
+      // Deliberately NOT routed through `turnController.enqueue`: the
+      // point of steering is to reach the turn that already holds the
+      // session lock, and enqueueing would put it behind that turn.
+      // `runtime.steer` returns false when nothing is running, which is
+      // the host's cue to call `send_message` instead.
+      return { steered: active.runtime.steer(sessionId, text) };
     },
   );
 
