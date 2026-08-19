@@ -596,3 +596,97 @@ describe("handlePanelEscape", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 });
+
+describe("handleAppKey — ctrl+n opens a new terminal window", () => {
+  function ctx(
+    state: ReturnType<typeof createInitialTuiState>,
+    onNewWindowRequested: () => void,
+  ) {
+    return {
+      state,
+      dispatch: vi.fn(),
+      callbacks: {
+        onApprovalDecision: vi.fn(),
+        onAbort: vi.fn(),
+        onQuit: vi.fn(),
+        onNewWindowRequested,
+      },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    };
+  }
+
+  it("fires the callback and claims the key in chat mode", () => {
+    const onNewWindowRequested = vi.fn();
+    const state = createInitialTuiState(stubSession());
+    const handled = handleAppKey(
+      "n",
+      emptyKey({ ctrl: true }),
+      ctx(state, onNewWindowRequested),
+    );
+    expect(handled).toBe(true);
+    expect(onNewWindowRequested).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays silent while an approval is pending", () => {
+    // The approval layer owns every key — y/n/esc must not compete with
+    // a window spawn.
+    const onNewWindowRequested = vi.fn();
+    const state = {
+      ...createInitialTuiState(stubSession()),
+      pendingApproval: pendingRequest(),
+    };
+    handleAppKey("n", emptyKey({ ctrl: true }), ctx(state, onNewWindowRequested));
+    expect(onNewWindowRequested).not.toHaveBeenCalled();
+  });
+
+  it("stays silent while the slash palette is open", () => {
+    const onNewWindowRequested = vi.fn();
+    const state = {
+      ...createInitialTuiState(stubSession()),
+      slashPaletteOpen: true,
+    };
+    const handled = handleAppKey(
+      "n",
+      emptyKey({ ctrl: true }),
+      ctx(state, onNewWindowRequested),
+    );
+    expect(handled).toBe(false);
+    expect(onNewWindowRequested).not.toHaveBeenCalled();
+  });
+
+  it("ignores a plain `n` and shift/meta variants", () => {
+    const onNewWindowRequested = vi.fn();
+    const state = createInitialTuiState(stubSession());
+    handleAppKey("n", emptyKey(), ctx(state, onNewWindowRequested));
+    handleAppKey(
+      "n",
+      emptyKey({ ctrl: true, shift: true }),
+      ctx(state, onNewWindowRequested),
+    );
+    handleAppKey(
+      "n",
+      emptyKey({ ctrl: true, meta: true }),
+      ctx(state, onNewWindowRequested),
+    );
+    expect(onNewWindowRequested).not.toHaveBeenCalled();
+  });
+
+  it("does not throw when no handler is wired", () => {
+    const state = createInitialTuiState(stubSession());
+    const handled = handleAppKey("n", emptyKey({ ctrl: true }), {
+      state,
+      dispatch: vi.fn(),
+      callbacks: {
+        onApprovalDecision: vi.fn(),
+        onAbort: vi.fn(),
+        onQuit: vi.fn(),
+      },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(true);
+  });
+});

@@ -52,6 +52,12 @@ export interface AppKeyCallbacks {
    * key binding additionally dispatches `quit_requested` so Ink unmounts.
    */
   onUpdateRestart?(): void;
+  /**
+   * Optional — Ctrl+N: open a new OS terminal window running a fresh
+   * `atomic-agent tui` in the same working directory. The handler owns
+   * the spawn and reports success / failure into the chat log.
+   */
+  onNewWindowRequested?(): void;
 }
 
 export interface AppKeyContext {
@@ -214,6 +220,22 @@ export function handleAppKey(
     mcpTabBusy ||
     providersTabBusy ||
     llmTabBusy;
+  // Ctrl+N opens a second agent in a new OS terminal window. Guarded
+  // like Ctrl+B so it cannot fire from inside a modal, the slash
+  // palette, or a pending approval. The editor never claims Ctrl+N
+  // (it handles only ctrl+a/e/u/k/w/c), so no keystroke is stolen.
+  if (
+    !debugTabBusy &&
+    !state.slashPaletteOpen &&
+    !state.pendingApproval &&
+    key.ctrl &&
+    !key.shift &&
+    !key.meta &&
+    input === "n"
+  ) {
+    callbacks.onNewWindowRequested?.();
+    return true;
+  }
   // Ctrl+B is the dedicated nav-cycle escape valve: it always advances
   // one nav slot forward regardless of where focus currently is. This
   // is the key power users press when they want to reach Observe /

@@ -57,6 +57,12 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   { name: "sessions", description: "open session picker to switch threads" },
   { name: "new", description: "start a fresh session (keeps warm runtime)" },
   {
+    name: "window",
+    description:
+      "open a new terminal window running atomic-agent (ctrl+n)",
+    aliases: ["newwindow"],
+  },
+  {
     name: "skills",
     description:
       "jump to the Skills tab · subcommand: `/skills dump` to print catalog in chat",

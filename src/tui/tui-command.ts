@@ -25,6 +25,10 @@ import {
   isManagedModeReadyOnDisk,
   runLocalModelsStartupGateIfNeeded,
 } from "./run-local-models-config-wizard.js";
+import {
+  currentTerminalLaunchInput,
+  openAgentTerminalWindow,
+} from "./open-terminal-window.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
 import {
   detectTerminalBackground,
@@ -213,6 +217,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSessionPickerRequested: () => orchestrator.openSessionPicker(),
         onSessionSwitchRequested: (id) => orchestrator.switchSession(id),
         onSessionNewRequested: () => orchestrator.newSession(),
+        onNewWindowRequested: () => openNewAgentWindow(parsed.workingDir, bus),
         onMemoryDumpRequested: () => orchestrator.dumpProfile(),
         onSkillCatalogRequested: () => orchestrator.dumpSkillCatalog(),
         onPersistLlamaUrl: (nextUrl) => persistLlamaUrl(nextUrl, bus, orchestrator),
@@ -467,6 +472,36 @@ export async function tuiCommand(args: string[]): Promise<number> {
     return orchestrator.exitCode;
   }
   return orchestrator.exitCode;
+}
+
+/**
+ * Ctrl+N / `/window`: launch a second agent in a new OS terminal window.
+ * Fire-and-forget — the result is reported into the chat log either way,
+ * because a silently ignored keystroke is the worst possible outcome
+ * here (the operator cannot tell "not implemented" from "nothing
+ * happened").
+ */
+function openNewAgentWindow(
+  workingDir: string,
+  bus: ReturnType<typeof makeTuiEventBus>,
+): void {
+  void (async () => {
+    const result = await openAgentTerminalWindow(
+      currentTerminalLaunchInput(workingDir, isSea()),
+    );
+    if (result.ok) {
+      bus.emit({
+        type: "system_message",
+        text: `opened a new atomic-agent window (${result.label})`,
+      });
+      return;
+    }
+    bus.emit({
+      type: "system_message",
+      variant: "warn",
+      text: `could not open a new terminal window: ${result.reason}`,
+    });
+  })();
 }
 
 function persistThemeChoice(
