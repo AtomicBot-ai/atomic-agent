@@ -3,6 +3,9 @@ import type { ReactElement } from "react";
 import { filterSlashCommands } from "../commands/slash-commands.js";
 import type { SlashCommandDef } from "../commands/slash-commands.js";
 import { theme } from "../theme/theme.js";
+import { MouseListRow } from "../mouse/mouse-list-row.js";
+import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
+import { handleEditorSubmit } from "../submit-handler.js";
 
 interface SlashPaletteProps {
   query: string;
@@ -51,11 +54,28 @@ export function SlashPalette(props: SlashPaletteProps): ReactElement | null {
         <Text color={theme.colors.muted}>↑ {hiddenBefore} above</Text>
       ) : null}
       {visible.map((cmd, idx) => (
-        <PaletteRow
+        <MouseListRow
           key={cmd.name}
-          command={cmd}
+          layer={MOUSE_LAYER_MODAL}
           selected={idx === visibleCursor}
-        />
+          onSelect={(mouse) =>
+            mouse.dispatch({
+              type: "slash_palette_cursor_set",
+              row: windowStart + idx,
+            })
+          }
+          onActivate={(mouse) => {
+            const state = mouse.getState();
+            handleEditorSubmit(
+              state.inputValue,
+              state,
+              mouse.dispatch,
+              mouse.callbacks,
+            );
+          }}
+        >
+          <PaletteRow command={cmd} selected={idx === visibleCursor} />
+        </MouseListRow>
       ))}
       {hiddenAfter > 0 ? (
         <Text color={theme.colors.muted}>↓ {hiddenAfter} below</Text>

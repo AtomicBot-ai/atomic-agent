@@ -135,6 +135,8 @@ export type TuiAction =
   | { type: "session_picker_closed" }
   /** Move the highlight in the open session picker by delta rows. */
   | { type: "session_picker_cursor_moved"; delta: 1 | -1 }
+  /** Put the session picker highlight on an absolute row (mouse click). */
+  | { type: "session_picker_cursor_set"; row: number }
   /**
    * Open the interactive theme picker. The reducer seeds the cursor from the
    * current `themeName` and records it in `themePickerOriginal` so Esc can
@@ -145,6 +147,8 @@ export type TuiAction =
   | { type: "theme_picker_closed" }
   /** Move the theme picker highlight by delta rows (clamped). */
   | { type: "theme_picker_cursor_moved"; delta: 1 | -1 }
+  /** Put the theme picker highlight on an absolute row (mouse click). */
+  | { type: "theme_picker_cursor_set"; row: number }
   /**
    * Hard-switch the TUI transcript to an already-loaded session. The
    * orchestrator performs the SessionStore load + swap, then dispatches
@@ -198,8 +202,12 @@ export type TuiAction =
   | { type: "sidebar_section_focused"; section: "sessions" | "tasks" }
   /** Move the sidebar's session-list cursor by N rows (clamped). */
   | { type: "sidebar_cursor_moved"; delta: 1 | -1 }
+  /** Put the sidebar's session-list cursor on an absolute row (mouse click). */
+  | { type: "sidebar_cursor_set"; row: number }
   /** Move the sidebar's tasks-list cursor by N rows (clamped). */
   | { type: "sidebar_tasks_cursor_moved"; delta: 1 | -1 }
+  /** Put the sidebar's tasks-list cursor on an absolute row (mouse click). */
+  | { type: "sidebar_tasks_cursor_set"; row: number }
   /** Scroll the chat history by N messages (positive = older). Clamped to [0, total]. */
   | { type: "chat_scrolled"; delta: number }
   /** Snap the chat scroll back to the bottom (newest message). */

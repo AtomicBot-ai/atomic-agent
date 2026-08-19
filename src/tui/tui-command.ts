@@ -24,9 +24,16 @@ import {
   pointsAtManagedDaemon,
 } from "./persist-user-local-models-config.js";
 import {
+  persistUserTuiMouse,
   persistUserTuiTheme,
   persistUserWhileBusySubmit,
 } from "./persist-user-tui-config.js";
+import { createMouseStdin } from "./mouse/mouse-stdin.js";
+import { makeMouseSource } from "./mouse/mouse-source.js";
+import {
+  enableMouseTracking,
+  type MouseTrackingController,
+} from "./mouse/mouse-tracking.js";
 import {
   isLocalBackendConfigured,
   isManagedModeReadyOnDisk,
@@ -197,18 +204,62 @@ export async function tuiCommand(args: string[]): Promise<number> {
 
   const altScreen = enterAltScreen({ stdout: process.stdout, hideCursor: false });
 
-  // Mouse-wheel scroll relies on the terminal's alternate-scroll mode
-  // (`\x1b[?1007h`, enabled by `enterAltScreen`): while the alt screen
-  // is active the wheel is translated by the terminal into cursor
-  // up/down keys, which `handleAppKey.shouldTreatArrowAsChatScroll`
-  // routes into `chat_scrolled`. Crucially we do NOT enable SGR mouse
-  // tracking (1000 + 1006) — doing so would hand every click/drag to
-  // the app and disable the terminal's native text selection (broken
-  // entirely in Apple Terminal, which has no Shift-bypass). Keeping
-  // capture off means drag-to-copy works natively everywhere, matching
-  // opencode's default. The wheel only drives chat scroll while the
-  // editor is focused and empty — an accepted trade-off for native
-  // selection.
+  // Mouse support. Enabling SGR tracking (1000 + 1006) is what makes
+  // clicking panels, rows, tabs and the prompt work at all — the app
+  // cannot see a click the terminal never reports. The cost is real and
+  // was the reason this was previously left off: while reporting is on,
+  // the terminal stops doing its own drag-to-select (Apple Terminal has
+  // no Shift-bypass at all). So it is a toggle, not a fact of life —
+  // `tui.mouse` in the config, `--mouse` / `--no-mouse` per run, and
+  // `/mouse on|off` live. With reporting off, behaviour is exactly what
+  // it was before: alternate-scroll (`\x1b[?1007h` from
+  // `enterAltScreen`) turns the wheel into cursor keys, which
+  // `handleAppKey.shouldTreatArrowAsChatScroll` routes into
+  // `chat_scrolled`.
+  //
+  // The decoded events reach React through `mouseSource`; the bytes
+  // themselves are stripped from the stream Ink reads, because Ink's key
+  // parser would otherwise type them into the chat buffer.
+  const mouseEnabled = parsed.mouse ?? config.tui.mouse;
+  const mouseSource = makeMouseSource();
+  const mouseStdin = createMouseStdin(process.stdin, mouseSource.emit);
+  let mouseTracking: MouseTrackingController | null = mouseEnabled
+    ? enableMouseTracking({ stdout: process.stdout })
+    : null;
+  const setMouseEnabled = (next: boolean | null): void => {
+    if (next === null) {
+      bus.emit({
+        type: "system_message",
+        text: `mouse support is ${mouseTracking ? "on" : "off"} — /mouse on|off to change`,
+      });
+      return;
+    }
+    if (next === Boolean(mouseTracking)) {
+      bus.emit({
+        type: "system_message",
+        text: `mouse support already ${next ? "on" : "off"}`,
+      });
+      return;
+    }
+    if (next) {
+      mouseTracking = enableMouseTracking({ stdout: process.stdout });
+    } else {
+      mouseTracking?.disable();
+      mouseTracking = null;
+    }
+    try {
+      persistUserTuiMouse(next);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      bus.emit({ type: "runtime_info", line: `mouse setting not saved: ${msg}` });
+    }
+    bus.emit({
+      type: "system_message",
+      text: next
+        ? "mouse support on — click panels, rows and the prompt; wheel scrolls"
+        : "mouse support off — the terminal's own text selection is back",
+    });
+  };
 
   const ink = render(
     React.createElement(TuiApp, {
@@ -410,10 +461,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onUpdateRestart: () => {
           restartRequested = true;
         },
+        onMouseSupportRequested: setMouseEnabled,
       },
+      ...(mouseEnabled ? { mouse: mouseSource } : {}),
     }),
     {
-      stdin: process.stdin,
+      stdin: mouseStdin.stdin,
       stdout: process.stdout,
       stderr: process.stderr,
       exitOnCtrlC: false,
@@ -458,6 +511,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
     process.off("SIGTERM", onSignal);
     process.off("SIGHUP", onSignal);
     try {
+      mouseTracking?.disable();
+      mouseStdin.dispose();
       altScreen.restore();
       ink.clear();
     } catch {

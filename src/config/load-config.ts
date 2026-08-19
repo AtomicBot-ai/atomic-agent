@@ -469,6 +469,7 @@ export function loadConfig(): AtomicAgentConfig {
     tui: {
       theme: user.tui.theme,
       whileBusySubmit: user.tui.whileBusySubmit,
+      mouse: user.tui.mouse,
     },
     analytics: {
       enabled: user.analytics.enabled,

@@ -663,13 +663,15 @@ export interface AtomicAgentConfig {
     maxImagesPerCall: number;
   };
   /**
-   * TUI appearance. Mirrors `UserConfigFile.tui`. `theme` is `"auto"`
-   * (OSC 11 autodetect) or a registered theme name. Consumed by the TUI
-   * startup path; the rest of the runtime ignores it.
+   * TUI appearance and input. Mirrors `UserConfigFile.tui`. `theme` is
+   * `"auto"` (OSC 11 autodetect) or a registered theme name; `mouse`
+   * toggles terminal mouse reporting. Consumed by the TUI startup path;
+   * the rest of the runtime ignores it.
    */
   tui: {
     theme: string;
     whileBusySubmit: WhileBusySubmitMode;
+    mouse: boolean;
   };
   /**
    * Anonymous product analytics (PostHog). Mirrors
@@ -1360,10 +1362,17 @@ export interface UserConfigFile {
    * the matching GitHub theme) or a registered theme name (e.g. `dracula`,
    * `nord`). Persisted from the in-app `/theme` picker. Older files are
    * transparently upgraded with `tui: { theme: "auto" }`.
+   *
+   * `mouse` (config v38, default `true`) turns terminal mouse reporting
+   * on: clicking panels, list rows, the nav bar and the prompt, plus
+   * wheel scrolling. Turning it off restores the terminal's own
+   * drag-to-select, which mouse reporting takes over — see `/mouse` and
+   * `--no-mouse`. Older files are upgraded with `mouse: true`.
    */
   tui: {
     theme: string;
     whileBusySubmit: WhileBusySubmitMode;
+    mouse: boolean;
   };
   /**
    * Anonymous product analytics (PostHog). Added in config v33. Older
@@ -1427,7 +1436,10 @@ export interface UserConfigFile {
 // (`local` | `cloud` | `fusion`) plus the fusion cloud-share dial and
 // the sub-runner target. Absence IS the v37 behaviour: it is an
 // optional sub-key of an already-optional block, so no migration code
-// exists; the bump only records the schema change.
+// exists; the bump only records the schema change. The same bump adds
+// `tui.mouse` (terminal mouse reporting, default `true`) and
+// `tui.whileBusySubmit` (`steer` | `queue`, default `steer`) — both are
+// defaulted in, so older files upgrade without a migration step.
 export const USER_CONFIG_VERSION = 38 as const;
 
 /**
@@ -1785,6 +1797,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   tui: {
     theme: "auto",
     whileBusySubmit: "steer",
+    mouse: true,
   },
   analytics: {
     enabled: true,
@@ -3443,6 +3456,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         tui.whileBusySubmit ?? USER_CONFIG_DEFAULTS.tui.whileBusySubmit,
         "tui.whileBusySubmit",
       ),
+      mouse: parseBool(tui.mouse ?? USER_CONFIG_DEFAULTS.tui.mouse, "tui.mouse"),
     },
     analytics: {
       enabled: parseBool(

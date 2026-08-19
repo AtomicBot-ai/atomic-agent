@@ -1,6 +1,8 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
+import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
+import { handleSkillsTabKey } from "../skills/skills-key-bindings.js";
 import type {
   SkillSummaryRow,
   SkillsPanelState,
@@ -45,11 +47,16 @@ export function SkillsList(props: SkillsListProps): ReactElement {
         <Text color={theme.colors.muted}>↑ {hiddenBefore} above</Text>
       ) : null}
       {pageRows.map((row, idx) => (
-        <SkillRow
+        <MouseListRow
           key={row.name}
-          row={row}
           selected={idx + windowStart === clamped}
-        />
+          onSelect={(mouse) =>
+            mouse.dispatch({ type: "skills_cursor_set", row: idx + windowStart })
+          }
+          onActivate={pressEnter(handleSkillsTabKey)}
+        >
+          <SkillRow row={row} selected={idx + windowStart === clamped} />
+        </MouseListRow>
       ))}
       {hiddenAfter > 0 ? (
         <Text color={theme.colors.muted}>↓ {hiddenAfter} below</Text>

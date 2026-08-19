@@ -44,6 +44,14 @@ export function reduceUiAction(
       );
       return { ...state, themePickerCursor: next };
     }
+    case "theme_picker_cursor_set": {
+      if (!state.themePickerOpen) return state;
+      const max = THEME_NAMES.length - 1;
+      return {
+        ...state,
+        themePickerCursor: Math.min(max, Math.max(0, action.row)),
+      };
+    }
     case "tool_expand_toggled": {
       const current = state.toolsExpandedById[action.toolCardId] ?? false;
       return {
@@ -149,6 +157,13 @@ export function reduceUiAction(
       );
       return { ...state, sessionPickerCursor: next };
     }
+    case "session_picker_cursor_set": {
+      const max = Math.max(0, state.sessionPickerList.length - 1);
+      return {
+        ...state,
+        sessionPickerCursor: Math.min(max, Math.max(0, action.row)),
+      };
+    }
     case "llama_url_changed":
       return {
         ...state,
@@ -179,6 +194,13 @@ export function reduceUiAction(
       );
       return { ...state, sidebarCursor: next };
     }
+    case "sidebar_cursor_set": {
+      const max = Math.max(0, state.recentSessions.length - 1);
+      return {
+        ...state,
+        sidebarCursor: Math.min(max, Math.max(0, action.row)),
+      };
+    }
     case "sidebar_tasks_cursor_moved": {
       // Upper bound here is the **rendered** sidebar tasks list size,
       // capped by SIDEBAR_TASKS_LIMIT and the number of active/recurring
@@ -192,6 +214,13 @@ export function reduceUiAction(
         Math.max(0, state.sidebarTasksCursor + action.delta),
       );
       return { ...state, sidebarTasksCursor: next };
+    }
+    case "sidebar_tasks_cursor_set": {
+      const max = Math.max(0, selectSidebarTasks(state.tasksPanel.rows).length - 1);
+      return {
+        ...state,
+        sidebarTasksCursor: Math.min(max, Math.max(0, action.row)),
+      };
     }
     case "chat_scrolled": {
       // `chatScrollOffset` is in **lines** since the line-by-line

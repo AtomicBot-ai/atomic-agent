@@ -28,6 +28,10 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
       "list built-in tools (fs, shell, browser, memory, vision): `/tools` | `/tools <query>`",
   },
   {
+    name: "mouse",
+    description: "mouse support on/off/status (off restores drag-to-select)",
+  },
+  {
     name: "theme",
     description:
       "switch the UI theme: `/theme <name>` | `/theme list` (github, catppuccin, dracula, nord, …)",
