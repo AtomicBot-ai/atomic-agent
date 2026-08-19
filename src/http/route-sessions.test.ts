@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import type { CompletionResult } from "../llm/llama-server-client.js";
+
 import { startTestHarness, type Harness } from "./test-harness.js";
 
 describe("/api/sessions", () => {
@@ -158,3 +160,216 @@ describe("POST /api/sessions/{id}/steer", () => {
   });
 });
 
+
+/**
+ * The other half of the steering promise: `200 {steered:true}` is
+ * acceptance, not delivery, and the surface has to say so when the turn
+ * ends without ever reading the message. Every steer here goes in
+ * through the real `POST /api/sessions/{id}/steer` route while a real
+ * turn holds the session lock — the loss this pins is the one a host
+ * actually hits.
+ */
+describe("GET|DELETE /api/sessions/{id}/steer (undelivered)", () => {
+  let harness: Harness;
+  let sessionId: string;
+  let steerStatus: number | null;
+  let steerText: string;
+
+  function replyCompletion(text: string): CompletionResult {
+    return {
+      content: JSON.stringify({ tool: "reply", args: { text } }),
+      reasoningContent: "",
+      stop: true,
+      truncated: false,
+      timing: { promptMs: 0, predictedMs: 0, promptTokens: 4, predictedTokens: 2 },
+      cacheHitTokens: 0,
+      slotId: 0,
+      modelId: null,
+    };
+  }
+
+  beforeEach(async () => {
+    steerStatus = null;
+    steerText = "stop, summarise what you have instead";
+    harness = await startTestHarness({
+      // Steer from inside the FINAL inference. The loop drains at the
+      // top of a step; this turn replies on the step already running,
+      // so no later boundary exists to drain it and the message comes
+      // back on `RunTurnResult.undelivered`.
+      llamaComplete: async ({ sessionId: turnSession, prompt }) => {
+        // `### respond` marks a real agent step; the recall / reflection
+        // helper prompts run on the same session id BEFORE the loop's
+        // first drain, and steering from one of those would be
+        // delivered normally instead of stranded.
+        const agentStep = prompt.includes("### respond");
+        if (turnSession === sessionId && agentStep && steerStatus === null) {
+          const accepted = await fetch(
+            `${harness.baseUrl}/api/sessions/${sessionId}/steer`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ text: steerText }),
+            },
+          );
+          steerStatus = accepted.status;
+        }
+        return replyCompletion("done");
+      },
+    });
+    sessionId = harness.runtime.createSession({
+      metadata: { source: "undelivered" },
+    }).id;
+  });
+
+  afterEach(async () => {
+    await harness.cleanup();
+  });
+
+  /** Run one turn that strands the steer, and assert it really did. */
+  async function runStrandingTurn(): Promise<void> {
+    const completion = await fetch(`${harness.baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        session_id: sessionId,
+        messages: [{ role: "user", content: "go" }],
+      }),
+    });
+    expect(completion.status).toBe(200);
+    await completion.json();
+    // The POST really was accepted — this is the `200 {steered:true}`
+    // whose message used to be able to vanish.
+    expect(steerStatus).toBe(200);
+    // And the inbox is empty: `flushSteering` swept it on the way out,
+    // so the text exists nowhere but the undelivered store.
+    expect(harness.runtime.steeringInbox.peek(sessionId)).toEqual([]);
+  }
+
+  async function listUndelivered(): Promise<{
+    sessionId: string;
+    undelivered: Array<{ seq: number; text: string; parkedAt: number }>;
+    discarded: number;
+  }> {
+    const response = await fetch(
+      `${harness.baseUrl}/api/sessions/${sessionId}/steer`,
+    );
+    expect(response.status).toBe(200);
+    return (await response.json()) as {
+      sessionId: string;
+      undelivered: Array<{ seq: number; text: string; parkedAt: number }>;
+      discarded: number;
+    };
+  }
+
+  it("surfaces a steer the turn accepted but never delivered", async () => {
+    await runStrandingTurn();
+    const body = await listUndelivered();
+    expect(body.sessionId).toBe(sessionId);
+    expect(body.undelivered.map((e) => e.text)).toEqual([steerText]);
+    expect(body.undelivered[0]?.seq).toBeGreaterThan(0);
+    expect(body.discarded).toBe(0);
+  });
+
+  it("returns nothing for a session whose turns delivered everything", async () => {
+    const other = harness.runtime.createSession();
+    const response = await fetch(
+      `${harness.baseUrl}/api/sessions/${other.id}/steer`,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      sessionId: other.id,
+      undelivered: [],
+      discarded: 0,
+    });
+  });
+
+  it("does not consume on read — a retried GET still finds the message", async () => {
+    await runStrandingTurn();
+    const first = await listUndelivered();
+    const second = await listUndelivered();
+    expect(second.undelivered).toEqual(first.undelivered);
+  });
+
+  it("lets the host resend the message and then ack it", async () => {
+    await runStrandingTurn();
+    const parked = await listUndelivered();
+    const entry = parked.undelivered[0]!;
+
+    // The resend is an ordinary completion carrying the parked text.
+    steerStatus = -1; // stop the stub steering the resend turn as well
+    const resend = await fetch(`${harness.baseUrl}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        session_id: sessionId,
+        messages: [{ role: "user", content: entry.text }],
+      }),
+    });
+    expect(resend.status).toBe(200);
+    const transcript = harness.runtime.sessionStore.load(sessionId);
+    expect(
+      transcript?.turns.some(
+        (turn) => turn.kind === "user" && turn.text === entry.text,
+      ),
+    ).toBe(true);
+
+    const acked = await fetch(
+      `${harness.baseUrl}/api/sessions/${sessionId}/steer?through=${entry.seq}`,
+      { method: "DELETE" },
+    );
+    expect(acked.status).toBe(200);
+    expect(await acked.json()).toEqual({
+      sessionId,
+      acked: 1,
+      remaining: 0,
+    });
+    expect((await listUndelivered()).undelivered).toEqual([]);
+  });
+
+  it("acks by cursor, so a steer parked after the read survives", async () => {
+    await runStrandingTurn();
+    const seen = (await listUndelivered()).undelivered[0]!;
+    // A second turn strands another message between the read and the
+    // ack. A bare "clear" would swallow it unseen.
+    steerStatus = null;
+    steerText = "and cancel the deploy";
+    await runStrandingTurn();
+
+    const acked = await fetch(
+      `${harness.baseUrl}/api/sessions/${sessionId}/steer?through=${seen.seq}`,
+      { method: "DELETE" },
+    );
+    expect((await acked.json()) as unknown).toEqual({
+      sessionId,
+      acked: 1,
+      remaining: 1,
+    });
+    const left = await listUndelivered();
+    expect(left.undelivered.map((e) => e.text)).toEqual([
+      "and cancel the deploy",
+    ]);
+  });
+
+  it("rejects an ack without a usable cursor", async () => {
+    await runStrandingTurn();
+    for (const query of ["", "?through=", "?through=abc", "?through=-1"]) {
+      const response = await fetch(
+        `${harness.baseUrl}/api/sessions/${sessionId}/steer${query}`,
+        { method: "DELETE" },
+      );
+      expect(response.status).toBe(400);
+    }
+    expect((await listUndelivered()).undelivered).toHaveLength(1);
+  });
+
+  it("drops parked steers when the session itself is purged", async () => {
+    await runStrandingTurn();
+    expect((await listUndelivered()).undelivered).toHaveLength(1);
+    const deleted = await fetch(
+      `${harness.baseUrl}/api/sessions/${sessionId}`,
+      { method: "DELETE" },
+    );
+    expect(deleted.status).toBe(200);
+    expect((await listUndelivered()).undelivered).toEqual([]);
+  });
+});

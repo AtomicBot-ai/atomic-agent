@@ -77,6 +77,14 @@ export function createGetSessionHandler(): HttpHandler {
  * correct follow-up is `POST /v1/chat/completions`. `429` means the
  * per-session steering inbox is full; the turn has not read any of them
  * yet, so piling on more would only bloat one prompt.
+ *
+ * `200 {steered:true}` means accepted, **not** delivered: the loop
+ * drains the inbox at step boundaries, and a turn can end before the
+ * next one. Anything left over is parked, not dropped — the turn hands
+ * it back on `RunTurnResult.undelivered` and the route that ran the
+ * turn puts it in the undelivered store, where
+ * `GET /api/sessions/{id}/steer` finds it. That is the HTTP half of the
+ * same promise the sidecar keeps with its `steer_undelivered` event.
  */
 export function createSteerSessionHandler(): HttpHandler {
   return async (req, res, ctx) => {
@@ -126,6 +134,87 @@ export function createSteerSessionHandler(): HttpHandler {
 }
 
 /**
+ * `GET /api/sessions/{id}/steer` — the messages this session's turns
+ * accepted for steering but never delivered.
+ *
+ * A steer that arrives during the final inference, or into a turn that
+ * is cancelled before its next step, is handed back when the turn ends;
+ * by then the `POST` that accepted it has long since answered, so the
+ * server parks it here. Polling this endpoint is how a host that only
+ * ever spoke to `POST .../steer` detects the loss; re-sending is a
+ * normal `POST /v1/chat/completions`.
+ *
+ * Reads do not consume. A retried or prefetched `GET` must not be able
+ * to lose a message — that is the bug this whole path exists to
+ * prevent. Acknowledge with `DELETE /api/sessions/{id}/steer?through=`
+ * once the text is safely somewhere else.
+ *
+ * `discarded` counts messages this session lost to the per-session cap
+ * (`MAX_PARKED_STEERS`) because nobody acked in time. Non-zero means
+ * text is genuinely gone, and the host is told rather than left to
+ * assume the list is complete.
+ */
+export function createGetUndeliveredSteersHandler(): HttpHandler {
+  return async (_req, res, ctx) => {
+    const id = ctx.params.id;
+    if (!id) {
+      sendError(res, 400, openaiError("session id is required"));
+      return;
+    }
+    const undelivered = ctx.undeliveredSteers.list(id);
+    sendJson(res, 200, {
+      sessionId: id,
+      undelivered: undelivered.map((entry) => ({
+        seq: entry.seq,
+        text: entry.text,
+        parkedAt: entry.parkedAt,
+      })),
+      discarded: ctx.undeliveredSteers.discarded(id),
+    });
+  };
+}
+
+/**
+ * `DELETE /api/sessions/{id}/steer?through={seq}` — acknowledge parked
+ * steers up to and including `seq`, which the caller read off a prior
+ * `GET`.
+ *
+ * The cursor is mandatory on purpose: a bare "clear it" would also drop
+ * whatever was parked between the caller's `GET` and this call, which
+ * is a message the host never saw. Anything parked since carries a
+ * higher `seq` and survives. Idempotent — re-acking an already-acked
+ * cursor reports `acked: 0`.
+ */
+export function createAckUndeliveredSteersHandler(): HttpHandler {
+  return async (req, res, ctx) => {
+    const id = ctx.params.id;
+    if (!id) {
+      sendError(res, 400, openaiError("session id is required"));
+      return;
+    }
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const raw = url.searchParams.get("through");
+    const through = raw === null ? NaN : Number.parseInt(raw, 10);
+    if (!Number.isFinite(through) || through < 0) {
+      sendError(
+        res,
+        400,
+        openaiError(
+          "through must be a non-negative integer — use the highest seq returned by GET /api/sessions/{id}/steer",
+        ),
+      );
+      return;
+    }
+    const acked = ctx.undeliveredSteers.ack(id, through);
+    sendJson(res, 200, {
+      sessionId: id,
+      acked,
+      remaining: ctx.undeliveredSteers.list(id).length,
+    });
+  };
+}
+
+/**
  * `DELETE /api/sessions/{id}` — purge the session row. Idempotent:
  * returns 200 whether or not the row existed so orchestrators can
  * blindly retry.
@@ -138,6 +227,10 @@ export function createDeleteSessionHandler(): HttpHandler {
       return;
     }
     ctx.runtime.sessionStore.delete(id);
+    // Purging the session takes its parked steers with it: they are
+    // messages for a conversation the caller just said it is done with,
+    // and leaving them would strand rows nobody will ever ack.
+    ctx.undeliveredSteers.clear(id);
     sendJson(res, 200, { deleted: true, id });
   };
 }

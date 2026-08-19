@@ -16,8 +16,10 @@ import {
   createUninstallSkillHandler,
 } from "./route-skills.js";
 import {
+  createAckUndeliveredSteersHandler,
   createDeleteSessionHandler,
   createGetSessionHandler,
+  createGetUndeliveredSteersHandler,
   createListSessionsHandler,
   createSteerSessionHandler,
 } from "./route-sessions.js";
@@ -66,6 +68,16 @@ export function buildRouteTable(): RouteDefinition[] {
       method: "POST",
       path: "/api/sessions/{id}/steer",
       handler: createSteerSessionHandler(),
+    },
+    {
+      method: "GET",
+      path: "/api/sessions/{id}/steer",
+      handler: createGetUndeliveredSteersHandler(),
+    },
+    {
+      method: "DELETE",
+      path: "/api/sessions/{id}/steer",
+      handler: createAckUndeliveredSteersHandler(),
     },
     { method: "POST", path: "/api/approval/resolve", handler: createResolveApprovalHandler() },
     { method: "GET", path: "/api/events", handler: createApprovalEventsHandler() },

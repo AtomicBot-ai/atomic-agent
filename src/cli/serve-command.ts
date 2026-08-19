@@ -48,6 +48,8 @@ const HELP =
     "  POST /api/skills/install, /uninstall     Manage installed skills",
     "  GET  /api/sessions, GET /api/sessions/{id}, DELETE /api/sessions/{id}",
     "  POST /api/sessions/{id}/steer            Fold a message into the turn already running",
+    "  GET  /api/sessions/{id}/steer            Steers a turn accepted but never delivered",
+    "  DELETE /api/sessions/{id}/steer?through= Acknowledge those up to a seq",
     "  POST /api/approval/resolve               Resolve a pending approval",
     "  GET  /api/events                         SSE stream of pending approval requests",
   ].join("\n") + "\n";
