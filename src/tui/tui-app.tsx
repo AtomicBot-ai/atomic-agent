@@ -40,6 +40,7 @@ import { Sidebar } from "./components/sidebar.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import { SlashPalette } from "./components/slash-palette.js";
 import { RunModeBar } from "./components/run-mode-bar.js";
+import { StatusBar } from "./components/status-bar.js";
 import { menuPlaceByTab } from "./menu/menu-registry.js";
 import { getCurrentSection } from "./section.js";
 import { RunModePicker } from "./components/run-mode-picker.js";
@@ -943,6 +944,18 @@ export function TuiApp({
       ref={contentMouseRef}
       {...(rootHeight ? { height: rootHeight } : {})}
     >
+      {/*
+        Below the rail's width threshold there is no rail, and the top
+        bar it replaced is gone — which left a narrow terminal with no
+        brand, no version, no breadcrumb and no visible way to reach the
+        menu at all. The one-row bar carries the same four things when
+        there is no column to put them in.
+      */}
+      {sidebarVisible ? null : (
+        <Box flexShrink={0} paddingLeft={2}>
+          <StatusBar state={state} />
+        </Box>
+      )}
       <Box flexDirection="row" flexGrow={1} flexShrink={1} overflow="hidden">
         {sidebarVisible ? (
           <Sidebar
@@ -1081,7 +1094,11 @@ export function TuiApp({
             onHistoryPrev={onHistoryPrev}
             onHistoryNext={onHistoryNext}
           />
-          <HotkeyHint state={state} ctrlCArmed={ctrlCArmed} />
+          <HotkeyHint
+            state={state}
+            ctrlCArmed={ctrlCArmed}
+            sidebarVisible={sidebarVisible}
+          />
         </Box>
       </Box>
     </Box>

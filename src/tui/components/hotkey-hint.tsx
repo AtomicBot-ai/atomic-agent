@@ -15,6 +15,12 @@ interface HotkeyHintProps {
   state: TuiState;
   /** Whether a Ctrl+C was recently pressed and is armed for exit. */
   ctrlCArmed?: boolean;
+  /**
+   * Whether the left rail is on screen. Below its width threshold there
+   * is no rail, and a `tab sidebar` chip would name a surface the
+   * operator cannot see.
+   */
+  sidebarVisible?: boolean;
 }
 
 interface HotkeyChip {
@@ -42,8 +48,12 @@ const SCROLL_KEY = process.platform === "darwin" ? "fn+\u2191\u2193" : "pgup/pgd
  * to fit one terminal row and let slash commands take care of the long
  * tail.
  */
-export function HotkeyHint({ state, ctrlCArmed }: HotkeyHintProps): ReactElement {
-  const chips = resolveChips(state, ctrlCArmed ?? false);
+export function HotkeyHint({
+  state,
+  ctrlCArmed,
+  sidebarVisible = true,
+}: HotkeyHintProps): ReactElement {
+  const chips = resolveChips(state, ctrlCArmed ?? false, sidebarVisible);
   return (
     <Box flexShrink={0} flexWrap="wrap">
       {chips.map((chip, idx) => (
@@ -93,7 +103,11 @@ function openOperatorMenu(mouse: MouseContextValue): void {
   mouse.dispatch({ type: "menu_opened" });
 }
 
-function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
+function resolveChips(
+  state: TuiState,
+  ctrlCArmed: boolean,
+  sidebarVisible: boolean,
+): HotkeyChip[] {
   if (state.pendingApproval) {
     const approval = state.pendingApproval;
     return [
@@ -206,12 +220,18 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
   return [
     { key: "enter", label: "send" },
     { key: "shift+enter", label: "newline" },
-    {
-      key: "tab",
-      label: "sidebar",
-      onClick: (mouse) =>
-        mouse.dispatch({ type: "chat_focus_set", focus: "sidebar" }),
-    },
+    // Tab only reaches the rail when there is one; below its width
+    // threshold the chip would name a surface that is not on screen.
+    ...(sidebarVisible
+      ? [
+          {
+            key: "tab",
+            label: "sidebar",
+            onClick: (mouse: MouseContextValue) =>
+              mouse.dispatch({ type: "chat_focus_set", focus: "sidebar" }),
+          },
+        ]
+      : []),
     { key: SCROLL_KEY, label: "scroll" },
     { key: "ctrl+p", label: "menu", onClick: openOperatorMenu },
     // Esc means something here — it clears the draft — and nothing said
