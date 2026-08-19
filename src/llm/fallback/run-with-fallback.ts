@@ -17,14 +17,31 @@ import type { ProviderFallbackChain } from "./provider-fallback-chain.js";
  * chunks is never restarted (mirrors the openai-http "stream is live"
  * contract), so failures after the first chunk propagate as-is.
  */
+export interface RunWithFallbackOptions {
+  /**
+   * Provider to START at for this unit of work (fusion routing). Only
+   * the starting link changes: the switching policy below is untouched,
+   * so a failure still advances through the chain and a preferred
+   * provider in cooldown is ignored.
+   */
+  preferredProviderId?: string;
+}
+
 export async function runWithFallback<T>(
   chain: ProviderFallbackChain,
   attempt: (providerId: string) => Promise<T>,
   partitionKey?: string,
+  options?: RunWithFallbackOptions,
 ): Promise<T> {
-  const pick = chain.pickProvider(partitionKey);
+  const pick = chain.pickProvider(partitionKey, options?.preferredProviderId);
   let currentId = pick.providerId;
   let wasProbe = pick.isProbe;
+  // True only while we are still sitting on the fusion-preferred start.
+  // A failure there resumes the chain from its head, because a preferred
+  // leg's position in the chain says nothing about what has been tried.
+  let onPreferredStart =
+    options?.preferredProviderId !== undefined &&
+    currentId === options.preferredProviderId;
 
   // Guard against a pathological empty chain: no provider to try.
   if (!currentId) {
@@ -37,12 +54,15 @@ export async function runWithFallback<T>(
       chain.recordSuccess(currentId, wasProbe, partitionKey);
       return result;
     } catch (err) {
-      const nextId = chain.advanceFrom(currentId, err, partitionKey);
+      const nextId = chain.advanceFrom(currentId, err, partitionKey, {
+        restartFromHead: onPreferredStart,
+      });
       if (nextId === null) throw err;
       currentId = nextId;
       // Only the very first pick can be a probe; every advance is a real
       // fallover on the working path.
       wasProbe = false;
+      onPreferredStart = false;
     }
   }
 }
