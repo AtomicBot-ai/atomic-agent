@@ -1,4 +1,5 @@
 import type { Key } from "ink";
+import type { RunModeName } from "../../config/llm-run-mode-config.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
 import {
@@ -11,6 +12,18 @@ import {
 export interface RunModePickerKeyContext {
   state: TuiState;
   dispatch: (action: TuiAction) => void;
+  /**
+   * Applying a mode is a config write, so it has to go out through the
+   * callback layer. Dispatching cannot do it: `dispatch` feeds the React
+   * reducer only, and the bus the orchestrators listen on is bridged
+   * into the reducer ONE WAY (`bus.subscribe(dispatch)` in `tui-app`).
+   * This screen used to dispatch a `run_mode_change_requested` action
+   * that nothing on either side consumed, which is why Enter here did
+   * nothing at all — see the commit that added this parameter.
+   */
+  callbacks?: {
+    onRunModeChangeRequested?(mode: RunModeName, cloudShare?: number): void;
+  };
 }
 
 /**
@@ -46,11 +59,12 @@ export function handleRunModePickerKey(
     return true;
   }
   if (key.return) {
-    dispatch({
-      type: "run_mode_change_requested",
-      mode: picker.draftMode,
-      cloudShare: picker.draftCloudShare,
-    });
+    // Same call the mouse layer makes when a selected row is clicked, so
+    // the two gestures cannot drift into meaning different things.
+    ctx.callbacks?.onRunModeChangeRequested?.(
+      picker.draftMode,
+      picker.draftCloudShare,
+    );
     dispatch({ type: "run_mode_picker_closed" });
     return true;
   }

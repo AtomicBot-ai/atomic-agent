@@ -33,6 +33,8 @@ function reducePanel(
         cloudShare: action.cloudShare,
         localLabel: action.localLabel,
         cloudLabel: action.cloudLabel,
+        localProviderId: action.localProviderId,
+        cloudProviderId: action.cloudProviderId,
         cloudProviderMissing: action.cloudProviderMissing,
         localProviderMissing: action.localProviderMissing,
         degradedMessage: action.degradedMessage,
@@ -107,9 +109,5 @@ function reducePanel(
       if (!panel.picker) return panel;
       return { ...panel, picker: { ...panel.picker, digitBuffer: "" } };
     }
-    // A request is handled by the orchestrator; the mirror only moves
-    // on the `run_mode_synced` that follows.
-    case "run_mode_change_requested":
-      return panel;
   }
 }

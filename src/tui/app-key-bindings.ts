@@ -95,7 +95,9 @@ export function handleAppKey(
   // focus and would eat ←/→ and digits. Claim keys here — same place the
   // approval and update prompts claim theirs — and swallow everything
   // until it closes.
-  if (handleRunModePickerKey(input, key, { state, dispatch })) return true;
+  if (handleRunModePickerKey(input, key, { state, dispatch, callbacks })) {
+    return true;
+  }
   if (state.pendingApproval) {
     return handleApprovalKey(input, key, state.pendingApproval, ctx);
   }

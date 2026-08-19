@@ -78,4 +78,12 @@ describe("RunModePicker", () => {
     expect(frame).toContain("enter apply");
     expect(frame).toContain("esc cancel");
   });
+
+  /**
+   * Reported as "I don't see a way to configure fusion anywhere". Every
+   * mode here names a PAIR of providers and the overlay named neither,
+   * so with two cloud providers configured there was nothing on screen
+   * to say which one Fusion would orchestrate through — i.e. which
+   * account gets billed.
+   */
 });
