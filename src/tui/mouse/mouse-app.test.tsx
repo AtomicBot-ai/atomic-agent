@@ -118,6 +118,7 @@ function mountApp(): {
   mouse: MouseSourceEmitter;
   stdin: { write: (data: string) => void };
   openSkillsPanel: () => void;
+  say: (text: string) => void;
   unmount: () => void;
 } {
   const bus = makeTuiEventBus();
@@ -158,6 +159,7 @@ function mountApp(): {
       ],
       });
     },
+    say: (text) => bus.emit({ type: "system_message", text }),
     unmount,
   };
 }
@@ -223,6 +225,30 @@ describe("TuiApp mouse", () => {
       "click on the Logs sub-tab",
     );
     expect(app.frame()).toContain("▸ Logs");
+    app.unmount();
+  });
+
+  it("reaches the per-message copy button through the whole app", async () => {
+    // Proves the button survives the real tree — the chat viewport's
+    // `overflow: hidden` clip, the base-layer wheel target covering the
+    // entire content area, and the layer floor. The badge says "failed"
+    // because no `ClipboardProvider` is mounted and the default writer
+    // refuses to act on a non-TTY stdout, which is exactly the guard
+    // that keeps the suite off the developer's real clipboard.
+    const app = mountApp();
+    await waitUntil(() => app.frame().includes("llama.cpp"), "the Run screen");
+    // The bus subscription is installed by an effect; emitting before it
+    // runs drops the event on the floor.
+    await delay(50);
+    app.say("a message worth copying");
+    await waitUntil(() => app.frame().includes("[copy]"), "the copy button");
+    await clickUntil(
+      app.mouse,
+      () => locate(app.frame(), "[copy]"),
+      () => app.frame().includes("[copy failed]"),
+      "click on the message's copy button",
+    );
+    expect(app.frame()).toContain("[copy failed]");
     app.unmount();
   });
 

@@ -28,8 +28,8 @@ function assistantMsg(
 describe("estimateMessageHeight", () => {
   it("counts a single-line user message as body + bubble overhead", () => {
     const h = estimateMessageHeight(userMsg("u1", "hello"));
-    // 1 body + 3 overhead (margin + 2 padding)
-    expect(h).toBe(4);
+    // 1 body + 3 overhead (margin + 2 padding) + 1 copy-button row
+    expect(h).toBe(5);
   });
 
   it("counts assistant footer when toolSteps > 0", () => {
@@ -70,9 +70,9 @@ describe("selectVisibleMessages", () => {
       userMsg("u3", "c"),
       userMsg("u4", "d"),
     ];
-    // Each 1-line user message costs 4 rows. Budget for 2 messages
-    // exactly: 8 rows.
-    const slice = selectVisibleMessages(msgs, 0, 8);
+    // Each 1-line user message costs 5 rows (4 of bubble + the copy
+    // button under it). Budget for 2 messages exactly: 10 rows.
+    const slice = selectVisibleMessages(msgs, 0, 10);
     expect(slice.visible.map((m) => m.id)).toEqual(["u3", "u4"]);
     expect(slice.hiddenAbove).toBe(2);
   });
@@ -92,8 +92,8 @@ describe("selectVisibleMessages", () => {
 
   it("respects multiline body length", () => {
     const longMsg = userMsg("u1", "line1\nline2\nline3\nline4\nline5");
-    // 5 body + 3 overhead = 8 rows.
-    expect(estimateMessageHeight(longMsg)).toBe(8);
+    // 5 body + 3 overhead + 1 copy button = 9 rows.
+    expect(estimateMessageHeight(longMsg)).toBe(9);
     const slice = selectVisibleMessages(
       [longMsg, userMsg("u2", "tail")],
       0,

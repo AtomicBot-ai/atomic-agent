@@ -6,6 +6,7 @@ import type { TuiAction } from "../tui-action.js";
 import type { ChatMessage, TuiState } from "../tui-state.js";
 import { theme } from "../theme/theme.js";
 import { AssistantBubble } from "./assistant-bubble.js";
+import { ChatCopyButton } from "./chat-copy-button.js";
 import {
   estimateMessageHeight,
   estimateStreamingTailHeight,
@@ -165,12 +166,27 @@ interface FinalisedMessageProps {
   toolsExpandedById: Readonly<Record<string, boolean>>;
 }
 
+/**
+ * One finalised message plus its copy affordance.
+ *
+ * The button hangs below the bubble rather than inside it so the bubble
+ * components stay purely presentational, and so the copied text is the
+ * message's own `text` — the raw source, before markdown rendering,
+ * borders and wrapping. It is attached only to **finalised** messages:
+ * the streaming tail is by definition half a message, and a copy taken
+ * mid-stream would silently truncate.
+ */
 function FinalisedMessage({
   message,
   toolsExpandedById,
 }: FinalisedMessageProps): ReactElement {
   if (message.role === "user") {
-    return <UserBubble text={message.text} />;
+    return (
+      <Box flexDirection="column">
+        <UserBubble text={message.text} />
+        <ChatCopyButton text={message.text} />
+      </Box>
+    );
   }
   if (message.role === "assistant") {
     return (
@@ -202,14 +218,18 @@ function FinalisedMessage({
           text={message.text}
           toolSteps={message.toolSteps ?? 0}
         />
+        <ChatCopyButton text={message.text} />
       </Box>
     );
   }
   return (
-    <SystemBubble
-      text={message.text}
-      warn={message.variant === "warn"}
-    />
+    <Box flexDirection="column">
+      <SystemBubble
+        text={message.text}
+        warn={message.variant === "warn"}
+      />
+      <ChatCopyButton text={message.text} />
+    </Box>
   );
 }
 
