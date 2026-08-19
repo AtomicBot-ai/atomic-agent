@@ -348,4 +348,74 @@ describe("TuiApp (smoke)", () => {
     expect(text).not.toContain("▸ Manage");
     unmount();
   });
+
+  it("ctrl+p opens the operator menu over the prompt", async () => {
+    const bus = makeTuiEventBus();
+    const { lastFrame, stdin, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    stdin.write(String.fromCharCode(16));
+    await new Promise((r) => setTimeout(r, 20));
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("Menu");
+    expect(text).toContain("GO");
+    expect(text).toContain("Manage");
+    expect(text).toContain("esc close");
+    unmount();
+  });
+
+  it("typing in the menu searches instead of reaching the prompt", async () => {
+    const bus = makeTuiEventBus();
+    const { lastFrame, stdin, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    stdin.write(String.fromCharCode(16));
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("privacy");
+    await new Promise((r) => setTimeout(r, 20));
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("Privacy");
+    // The query lives in the menu, never in the editor buffer underneath.
+    expect(text).not.toContain("> privacy");
+    unmount();
+  });
+
+  it("ctrl+g then a chord jumps straight to a panel, and the chord letter never reaches the prompt", async () => {
+    const bus = makeTuiEventBus();
+    const { lastFrame, stdin, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    stdin.write(String.fromCharCode(7));
+    await new Promise((r) => setTimeout(r, 30));
+    stdin.write("t");
+    await new Promise((r) => setTimeout(r, 30));
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("Manage");
+    expect(text).toContain("Tasks");
+    // Ink delivers every key to every useInput, child first — so the editor
+    // sees the chord letter too. If the leader did not disable it, a stray
+    // "t" would be sitting in the prompt right now.
+    expect(text).not.toMatch(/[>\u276f]\s+t\s*$/m);
+    unmount();
+  });
+
+  it("esc closes the menu and leaves the screen it was opened over", async () => {
+    const bus = makeTuiEventBus();
+    const { lastFrame, stdin, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    stdin.write(String.fromCharCode(16));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(strip(lastFrame() ?? "")).toContain("esc close");
+    stdin.write(String.fromCharCode(27));
+    await new Promise((r) => setTimeout(r, 20));
+    const text = strip(lastFrame() ?? "");
+    expect(text).not.toContain("esc close");
+    expect(text).toContain("Run");
+    unmount();
+  });
 });
