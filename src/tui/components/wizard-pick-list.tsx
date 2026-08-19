@@ -43,6 +43,26 @@ export function pickWindowRows(
   );
 }
 
+/** Most error lines the box will spend rows on. */
+const MAX_ERROR_ROWS = 2;
+
+/**
+ * Break a refusal into at most two truncated lines, split at the first
+ * sentence end.
+ *
+ * The verdicts from `describeProviderVerifyOutcome` are two sentences —
+ * what happened, then what to do about it — and run past 80 columns
+ * together. Truncating the pair to one line keeps the verdict and throws
+ * away the instruction, which is the half the operator needs. Splitting
+ * on the sentence boundary is width-independent, so the box height stays
+ * predictable at any terminal width.
+ */
+function errorLines(error: string): readonly string[] {
+  const split = error.indexOf(". ");
+  if (split === -1) return [error];
+  return [error.slice(0, split + 1), error.slice(split + 2)];
+}
+
 /**
  * Bordered option list windowed around the cursor.
  *
@@ -66,10 +86,17 @@ export function renderPickList(props: {
   actionsHint: string;
   /** Total terminal rows this box may occupy; omit for the fixed viewport. */
   maxRows?: number;
+  /**
+   * Why the last action was refused. A list screen used to have nowhere
+   * to say this, so a save the key check rejected looked exactly like a
+   * keypress that did nothing — the whole of report #3.
+   */
+  error?: string | null;
 }): ReactElement {
   const total = props.options.length;
   const clamped = Math.min(Math.max(props.cursor, 0), Math.max(0, total - 1));
-  const window = pickWindowRows(props.maxRows);
+  const errors = props.error ? errorLines(props.error).slice(0, MAX_ERROR_ROWS) : [];
+  const window = pickWindowRows(props.maxRows, errors.length);
   const start = Math.min(
     Math.max(0, clamped - Math.floor(window / 2)),
     Math.max(0, total - window),
@@ -101,6 +128,16 @@ export function renderPickList(props: {
           </Text>
         );
       })}
+      {errors.map((line, i) => (
+        <Text
+          key={`err-${i}`}
+          color={theme.colors.error}
+          wrap="truncate-end"
+        >
+          {i === 0 ? "! " : "  "}
+          {line}
+        </Text>
+      ))}
       <Text color={theme.colors.muted} wrap="truncate-end">
         {props.moveHint} {position} · {props.actionsHint}
       </Text>
