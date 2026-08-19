@@ -9,7 +9,13 @@
  *
  * Every URL below was verified live: each answers `/v1/models` with an
  * OpenAI-shaped payload (200 with a `data` array, or 401/403 asking for
- * a key, which confirms the path exists).
+ * a key, which confirms the path exists). A 401 only counts when the
+ * same host answers 404 for a bogus sibling path — gateways that reject
+ * every request before routing (z.ai, Cohere's compatibility root) prove
+ * nothing about `/v1/models` and are deliberately absent. So is anything
+ * whose model list does not live under `<root>/v1/models`: DeepInfra
+ * serves it at `/v1/openai/models`, which this convention cannot express.
+ * Re-verified 2026-08-19.
  */
 export interface ProviderPreset {
   /** Stable id used as the provider entry id when adding. */
@@ -54,6 +60,13 @@ export interface ProviderPreset {
  */
 export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
   {
+    id: "anthropic",
+    label: "Anthropic (Claude)",
+    baseUrl: "https://api.anthropic.com",
+    envVar: "ANTHROPIC_API_KEY",
+    note: "Claude models through Anthropic's OpenAI-compatible endpoint",
+  },
+  {
     id: "cerebras",
     label: "Cerebras",
     baseUrl: "https://api.cerebras.ai",
@@ -82,6 +95,13 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "very fast inference on open-weight models",
   },
   {
+    id: "hyperbolic",
+    label: "Hyperbolic",
+    baseUrl: "https://api.hyperbolic.xyz",
+    envVar: "HYPERBOLIC_API_KEY",
+    note: "open-weight models on rented GPUs",
+  },
+  {
     id: "lmstudio",
     label: "LM Studio (local)",
     baseUrl: "http://localhost:1234",
@@ -97,12 +117,27 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "Mistral models direct from the vendor",
   },
   {
+    id: "moonshot",
+    label: "Moonshot AI (Kimi)",
+    baseUrl: "https://api.moonshot.ai",
+    envVar: "MOONSHOT_API_KEY",
+    note: "Kimi models direct from the vendor",
+  },
+  {
     id: "nous",
     label: "Nous Research",
     baseUrl: "https://inference-api.nousresearch.com",
     envVar: "NOUS_API_KEY",
     listsModelsWithoutKey: true,
     note: "open-weight models, 350+ ids listed without a key",
+  },
+  {
+    id: "novita",
+    label: "Novita AI",
+    baseUrl: "https://api.novita.ai/openai",
+    envVar: "NOVITA_API_KEY",
+    listsModelsWithoutKey: true,
+    note: "hosted open-weight catalog, models listed without a key",
   },
   {
     id: "ollama",
@@ -119,6 +154,28 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     envVar: "OLLAMA_CLOUD_API_KEY",
     listsModelsWithoutKey: true,
     note: "hosted Ollama, models listed without a key",
+  },
+  {
+    id: "perplexity",
+    label: "Perplexity",
+    baseUrl: "https://api.perplexity.ai",
+    envVar: "PERPLEXITY_API_KEY",
+    note: "Sonar models with live web grounding",
+  },
+  {
+    id: "dashscope",
+    label: "Qwen (DashScope)",
+    baseUrl: "https://dashscope-intl.aliyuncs.com/compatible-mode",
+    envVar: "DASHSCOPE_API_KEY",
+    note: "Qwen models direct from Alibaba Cloud (international endpoint)",
+  },
+  {
+    id: "sambanova",
+    label: "SambaNova",
+    baseUrl: "https://api.sambanova.ai",
+    envVar: "SAMBANOVA_API_KEY",
+    listsModelsWithoutKey: true,
+    note: "open-weight models on custom silicon; models listed without a key",
   },
   {
     id: "together",
