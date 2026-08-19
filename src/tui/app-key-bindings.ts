@@ -9,6 +9,9 @@ import { formatApprovalCategory } from "../approval/approval-level.js";
 import { cycleNavSlot, type NavSlot } from "./section.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import type { TuiAction } from "./tui-action.js";
+import { handleRunModePickerKey } from "./run-mode/run-mode-key-bindings.js";
+import { cycleRunMode } from "./run-mode/run-mode-nav.js";
+import type { RunModeName } from "../config/index.js";
 import type { TuiState } from "./tui-state.js";
 
 /**
@@ -35,6 +38,8 @@ export interface AppKeyCallbacks {
   ): void;
   onAbort(): void;
   onQuit(): void;
+  /** Optional — Ctrl+R cycles Local → Cloud → Fusion. */
+  onRunModeChangeRequested?(mode: RunModeName, cloudShare?: number): void;
   /** Optional — called when Enter is pressed on the focused sidebar row. */
   onSessionSwitchRequested?(sessionId: string): void;
   /**
@@ -86,6 +91,13 @@ export function handleAppKey(
   ctx: AppKeyContext,
 ): boolean {
   const { state, dispatch, callbacks, ctrlCArmed, setCtrlCArmed } = ctx;
+  // The dial overlay opens over the chat surface, where the editor holds
+  // focus and would eat ←/→ and digits. Claim keys here — same place the
+  // approval and update prompts claim theirs — and swallow everything
+  // until it closes.
+  if (handleRunModePickerKey(input, key, { state, dispatch, callbacks })) {
+    return true;
+  }
   if (state.pendingApproval) {
     return handleApprovalKey(input, key, state.pendingApproval, ctx);
   }
@@ -230,6 +242,24 @@ export function handleAppKey(
   ) {
     const next = cycleNavSlot(state, 1);
     applyNavSlot(dispatch, next);
+    return true;
+  }
+  // Ctrl+R cycles the run mode from anywhere — a run mode is global, not
+  // a property of the chat surface. Ctrl+R is free: this file binds only
+  // Ctrl+C and Ctrl+B, and `MultiLineEditor` ignores every ctrl chord
+  // outside a/e/u/k/w/c/o.
+  if (
+    !debugTabBusy &&
+    !state.slashPaletteOpen &&
+    !state.pendingApproval &&
+    key.ctrl &&
+    !key.shift &&
+    !key.meta &&
+    input === "r"
+  ) {
+    callbacks.onRunModeChangeRequested?.(
+      cycleRunMode(state.runModePanel.effective, 1),
+    );
     return true;
   }
   // Tab / Shift+Tab routing:

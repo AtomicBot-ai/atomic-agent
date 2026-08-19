@@ -58,6 +58,15 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
       { key: "esc", label: "abort run" },
     ];
   }
+  if (state.runModePanel.picker) {
+    return [
+      { key: "↑↓", label: "mode" },
+      { key: "←→", label: "share" },
+      { key: "0-9", label: "set" },
+      { key: "enter", label: "apply" },
+      { key: "esc", label: "cancel" },
+    ];
+  }
   if (state.slashPaletteOpen) {
     return [
       { key: "↑↓", label: "select" },
@@ -106,7 +115,10 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
   }
   // Six chips is the cap for one row on narrow terminals. The scroll
   // hint replaces ctrl+b: Observe stays reachable via /observe, while
-  // scrolling had no visible entry point at all.
+  // scrolling had no visible entry point at all. ctrl+r (run mode) is
+  // unadvertised here for the same reason ctrl+b is — the mode strip
+  // above the chat is already the visible entry point, and `/run`
+  // reaches the picker from the palette.
   return [
     { key: "enter", label: "send" },
     { key: "alt+enter", label: "newline" },

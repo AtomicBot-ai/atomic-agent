@@ -226,9 +226,34 @@ atomic-agent task list
 atomic-agent trace list --limit 10
 ```
 
-Handy slash commands: `/help` lists every command, `/tools` lists the built-in tool families, `/model` jumps to the LLM panel and reopens the model picker for the active cloud provider, `/privacy` shows what leaves the machine (`/privacy analytics off` turns analytics off). The chat log scrolls with PgUp / PgDn (fn+arrows on macOS).
+Handy slash commands: `/help` lists every command, `/tools` lists the built-in tool families, `/run` switches run mode, `/model` jumps to the LLM panel and reopens the model picker for the active cloud provider, `/privacy` shows what leaves the machine (`/privacy analytics off` turns analytics off). The chat log scrolls with PgUp / PgDn (fn+arrows on macOS).
 
 Cloud provider setup pulls each provider's full live model catalog, hundreds of models, instead of a short hardcoded list; OpenAI-compatible servers are asked for their own `/v1/models`. The picker filters as you type, and `/model` switches models mid-session.
+
+</details>
+
+<details>
+<summary><b>Run modes: Local, Cloud, Fusion</b></summary>
+
+A strip under the status bar shows which pair of models the next turn will use, and `Ctrl+R` cycles it:
+
+- **Local** — your llama-server model only.
+- **Cloud** — your cloud provider only.
+- **Fusion** — the cloud model orchestrates, the local model executes.
+
+Fusion exists because the two halves of a turn have different needs. Planning the work and reconciling a pile of tool output is where a big model earns its price; the mechanical middle of a turn — read a file, edit it, read the next one — mostly does not. Fusion sends the first step of every turn to the cloud, scores each following step, and keeps the cheap ones local.
+
+```
+/run                 # open the picker
+/run local           # switch directly
+/run fusion 60       # switch and set the cloud share
+```
+
+The **cloud share** is a dial, not a quota. It does not promise that 60% of steps go to the cloud; it lowers the bar a step has to clear to get there, using a score built from how full the context is, how deep into the turn you are, how much tool output the step is carrying, and whether the model just tripped the loop detector. `0` behaves exactly like Local and `100` exactly like Cloud.
+
+Health still wins over the split: if the cloud provider starts failing mid-turn, the usual fallback chain takes over and the turn finishes locally. Background memory work (reflection, distillation, query rewriting) stays local by default, since it is cold-path JSON that would multiply cost for no visible gain.
+
+Selecting a mode you cannot run — Cloud or Fusion with no cloud provider configured — leaves you where you are and says so, rather than failing on the next message.
 
 </details>
 
@@ -466,6 +491,24 @@ Useful environment variables:
 - `ATOMIC_AGENT_BROWSER_CHANNEL`: `chrome`, `msedge`, or `chromium`.
 - `ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH`: explicit Chromium-family executable path.
 - `ATOMIC_AGENT_BROWSER_CDP_URL`: attach to an already-running browser via CDP.
+
+The run mode (Local / Cloud / Fusion) is stored under `llm.runMode`, alongside the providers it names:
+
+```json
+{
+  "llm": {
+    "activeTextProvider": "openrouter",
+    "runMode": {
+      "mode": "fusion",
+      "localProvider": "local-llama",
+      "cloudProvider": "openrouter",
+      "fusion": { "cloudShare": 40, "subRunners": "local" }
+    }
+  }
+}
+```
+
+`localProvider` / `cloudProvider` are optional — the legs default to the first `llama-server`-kind provider and the first non-`llama-server` provider. `cloudShare` is the 0-100 dial described above. `subRunners` (`local` | `cloud` | `follow`) decides where background memory work runs. `activeTextProvider` remains authoritative: change it by hand and the mode follows it, so the two can never disagree.
 
 Secrets for skills and channels belong in `<stateDir>/.env`, not in `config.json`:
 

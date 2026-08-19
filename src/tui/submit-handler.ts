@@ -171,6 +171,12 @@ export function runSlashCommand(
   if (result.triggerSessionNew) callbacks.onSessionNewRequested?.();
   if (result.triggerMemoryDump) callbacks.onMemoryDumpRequested?.();
   if (result.triggerSkillCatalogDump) callbacks.onSkillCatalogRequested?.();
+  if (result.runModeSet) {
+    callbacks.onRunModeChangeRequested?.(
+      result.runModeSet,
+      result.runModeCloudShare,
+    );
+  }
   if (result.persistLlamaUrl) {
     callbacks.onPersistLlamaUrl?.(result.persistLlamaUrl);
   }
