@@ -11,6 +11,7 @@ import { reduceTuiState } from "./agent-event-reducer.js";
 import type { ApprovalGrantScope } from "../approval/approval-gate.js";
 import type { TuiAction } from "./tui-action.js";
 import { handleAppKey, handlePanelEscape } from "./app-key-bindings.js";
+import { APP_CHROME_ROWS } from "./components/debug-pane.js";
 import { MenuPopup } from "./menu/menu-popup.js";
 import type { MenuNode } from "./menu/menu-registry.js";
 import { ApprovalModal } from "./approval-modal.js";
@@ -719,8 +720,12 @@ export function TuiApp({
   // render after this body runs, so the flag is already correct for them.
   setBackdropDimmed(state.menuOpen);
 
+
   const isTty = Boolean(process.stdout.isTTY);
   const rootHeight = isTty ? terminalSize.rows : undefined;
+  // Rows the content pane actually has, so the overlay can sit on its bottom
+  // edge and cap its own height. Same budget the debug pane already uses.
+  const menuPaneRows = Math.max(6, terminalSize.rows - APP_CHROME_ROWS);
   const promptLlm = selectPromptLlmMeta(state);
   // No local backend chosen yet ⇒ no local health to report. Without this the
   // splash screen of a fresh install announces that a server the user never
@@ -758,7 +763,13 @@ export function TuiApp({
       </Box>
       <Box flexDirection="row" flexGrow={1} flexShrink={1} overflow="hidden">
         <Box flexDirection="column" flexGrow={1} overflow="hidden">
-          <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+          <Box
+            flexDirection="column"
+            flexGrow={1}
+            flexShrink={1}
+            overflow="hidden"
+            position="relative"
+          >
             {state.uiMode === "chat" ? (
               <ChatLog state={state} dispatch={dispatch} />
             ) : (
@@ -776,15 +787,17 @@ export function TuiApp({
                 }
               />
             )}
+            {state.menuOpen ? (
+              <MenuPopup
+                state={state}
+                availableRows={menuPaneRows}
+                availableColumns={terminalSize.columns - 4}
+              />
+            ) : null}
           </Box>
           {state.pendingApproval ? (
             <Box flexShrink={0}>
               <ApprovalModal request={state.pendingApproval} />
-            </Box>
-          ) : null}
-          {state.menuOpen ? (
-            <Box flexShrink={0}>
-              <MenuPopup state={state} />
             </Box>
           ) : null}
           {state.sessionPickerOpen ? (

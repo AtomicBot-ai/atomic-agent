@@ -414,4 +414,23 @@ describe("TuiApp (smoke)", () => {
     expect(text).toContain("Run");
     unmount();
   });
+
+  it("floats over the UI without moving it — the frame below is unchanged", async () => {
+    const bus = makeTuiEventBus();
+    const { lastFrame, stdin, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    const before = strip(lastFrame() ?? "").split("\n");
+    stdin.write(String.fromCharCode(16));
+    await new Promise((r) => setTimeout(r, 25));
+    const after = strip(lastFrame() ?? "").split("\n");
+
+    // A popup composites on top; it must not add rows or push the prompt and
+    // the hint strip down the way an inline panel would.
+    expect(after.length).toBe(before.length);
+    expect(after.at(-1)).toBe(before.at(-1));
+    expect(after.some((line) => line.includes("Menu"))).toBe(true);
+    unmount();
+  });
 });
