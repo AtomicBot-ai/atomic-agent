@@ -1,6 +1,8 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 
+import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { getCurrentSection, type TuiSection } from "../section.js";
 import { menuPlaceByTab } from "../menu/menu-registry.js";
 import { theme } from "../theme/theme.js";
@@ -52,6 +54,19 @@ const SECTION_LABELS: Record<TuiSection, string> = {
   manage: "Manage",
 };
 
+/**
+ * Where you are, as one line: `Manage › Tasks`.
+ *
+ * #172 retired the Run / Observe / Manage pill row — it was a menu, and
+ * the menu now lives behind `ctrl+p` where it can hold every destination
+ * instead of only the top three. The breadcrumb is what the popup cannot
+ * tell you, because you have to open it to read it.
+ *
+ * It stays clickable, though. Losing the pills would otherwise take away
+ * the only mouse route into navigation, so a click here opens the menu —
+ * the same thing `ctrl+p` does. Everything visible stays reachable with
+ * the mouse, which is the rule the mouse layer (#165) is built on.
+ */
 function Breadcrumb({
   state,
   section,
@@ -59,9 +74,10 @@ function Breadcrumb({
   state: TuiState;
   section: TuiSection;
 }): ReactElement {
+  const mouse = useMouseCommands();
   const tabLabel =
     state.uiMode === "debug" ? menuPlaceByTab(state.activeTab)?.label : undefined;
-  return (
+  const label = (
     <Text>
       <Text color={theme.colors.accentSoft} bold>
         {SECTION_LABELS[section]}
@@ -73,6 +89,18 @@ function Breadcrumb({
         </Text>
       ) : null}
     </Text>
+  );
+  if (!mouse) return label;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        mouse.dispatch({ type: "menu_opened" });
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
   );
 }
 

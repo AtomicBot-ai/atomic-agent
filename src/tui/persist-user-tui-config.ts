@@ -23,3 +23,17 @@ export function persistUserTuiTheme(theme: string): void {
   writeUserConfigFileSync(path, validated);
   resetConfigCache();
 }
+
+/**
+ * Persist the mouse-support toggle into `tui.mouse`. Same read → merge →
+ * validate → write → reset cycle as the theme; the caller owns turning
+ * the terminal's reporting mode on or off for the running session.
+ */
+export function persistUserTuiMouse(mouse: boolean): void {
+  const path = getConfig().paths.userConfigFile;
+  const prev = ensureUserConfigFileSync(path);
+  const draft = { ...prev, tui: { ...prev.tui, mouse } };
+  const validated = parseUserConfigFile(draft);
+  writeUserConfigFileSync(path, validated);
+  resetConfigCache();
+}

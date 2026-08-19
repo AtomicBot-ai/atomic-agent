@@ -218,6 +218,11 @@ export function runSlashCommand(
         break;
     }
   }
+  if (result.mouseVerb) {
+    callbacks.onMouseSupportRequested?.(
+      result.mouseVerb === "status" ? null : result.mouseVerb === "on",
+    );
+  }
   if (result.approvalLevelSet !== undefined) {
     void callbacks.onApprovalLevelSetRequested?.(result.approvalLevelSet);
   }

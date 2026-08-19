@@ -1,5 +1,7 @@
 import { Box, Text } from "ink";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
+import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
 import {
   formatToolArgsBlock,
   previewToolArgs,
@@ -18,6 +20,11 @@ interface ToolCardProps {
  * reveals the full args block and the full summary/details text. Pending
  * (in-flight) calls render with a spinner-less hourglass glyph and no
  * duration yet.
+ *
+ * Clicking the header line toggles the card. Until now the per-card
+ * toggle existed in the reducer but had no key binding at all — only
+ * `/expand` and `/collapse`, which act on every card at once — so the
+ * mouse is the first way to open one specific card.
  */
 export function ToolCard({ card, expanded }: ToolCardProps): ReactElement {
   const isFinalised = "status" in card;
@@ -29,6 +36,7 @@ export function ToolCard({ card, expanded }: ToolCardProps): ReactElement {
     ? `${card.finishedAt - card.startedAt}ms`
     : "…";
   const header = (
+    <ExpandToggle cardId={card.id}>
     <Text>
       <Text color={color}>
         {theme.glyphs.toolBoxTopLeft}
@@ -51,6 +59,7 @@ export function ToolCard({ card, expanded }: ToolCardProps): ReactElement {
         </Text>
       ) : null}
     </Text>
+    </ExpandToggle>
   );
   if (!expanded) {
     return (
@@ -134,4 +143,30 @@ function toGlyph(status: "pending" | "ok" | "error"): string {
 
 function splitLines(text: string): string[] {
   return text.replace(/\r\n/g, "\n").split("\n");
+}
+
+/**
+ * Wraps the card header so a click folds / unfolds that one card.
+ * Transparent when the mouse layer is absent.
+ */
+function ExpandToggle({
+  cardId,
+  children,
+}: {
+  cardId: string;
+  children: ReactNode;
+}): ReactElement {
+  const mouse = useMouseCommands();
+  if (!mouse) return <>{children}</>;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        mouse.dispatch({ type: "tool_expand_toggled", toolCardId: cardId });
+        return true;
+      }}
+    >
+      {children}
+    </MouseTarget>
+  );
 }

@@ -121,6 +121,11 @@ function reducePanel(
         hubLoading: false,
         hubCursor: clampCursor(panel.hubCursor, action.rows.length),
       };
+    case "skills_hub_cursor_set":
+      return {
+        ...panel,
+        hubCursor: clampCursor(action.row, panel.hubRows.length),
+      };
     case "skills_hub_cursor_moved": {
       const total = panel.hubRows.length;
       const nextCursor = Math.max(
