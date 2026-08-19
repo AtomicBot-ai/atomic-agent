@@ -85,7 +85,7 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
       { key: "tab", label: "next panel" },
       { key: "shift+tab", label: "prev panel" },
       { key: "esc", label: "back to Run" },
-      { key: "/", label: "commands" },
+      { key: "ctrl+p", label: "menu" },
       {
         key: "ctrl+c",
         label: ctrlCArmed ? "press again to quit" : "quit",
@@ -104,15 +104,16 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
       },
     ];
   }
-  // Six chips is the cap for one row on narrow terminals. The scroll
-  // hint replaces ctrl+b: Observe stays reachable via /observe, while
-  // scrolling had no visible entry point at all.
+  // Six chips is the cap for one row on narrow terminals. `ctrl+p` takes
+  // the slot `/` used to hold: the menu contains every slash command as
+  // well as every destination, so advertising the superset costs nothing
+  // and `/` keeps working for anyone who already reaches for it.
   return [
     { key: "enter", label: "send" },
     { key: "alt+enter", label: "newline" },
     { key: "tab", label: "sidebar" },
     { key: SCROLL_KEY, label: "scroll" },
-    { key: "/", label: "commands" },
+    { key: "ctrl+p", label: "menu" },
     {
       key: "ctrl+c",
       label: ctrlCArmed ? "press again to quit" : "quit",
