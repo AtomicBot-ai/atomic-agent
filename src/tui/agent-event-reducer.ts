@@ -27,6 +27,7 @@ import { reduceLlmPanelAction } from "./llm-panel/llm-panel-reducer.js";
 import { reduceFallbackPanelAction } from "./llm-panel/fallback/fallback-panel-reducer.js";
 import { reduceTelegramAction } from "./telegram/telegram-panel-reducer.js";
 import { reducePrivacyAction } from "./privacy/privacy-panel-reducer.js";
+import { reduceRunModeAction } from "./run-mode/run-mode-reducer.js";
 import type { TuiAction } from "./tui-action.js";
 import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
 
@@ -55,6 +56,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (telegramHandled !== null) return telegramHandled;
   const privacyHandled = reducePrivacyAction(state, action);
   if (privacyHandled !== null) return privacyHandled;
+  const runModeHandled = reduceRunModeAction(state, action);
+  if (runModeHandled !== null) return runModeHandled;
   const uiHandled = reduceUiAction(state, action);
   if (uiHandled !== null) return uiHandled;
   switch (action.type) {
@@ -381,6 +384,21 @@ function reduceStepEvent(
           promptTailTokensLast: event.tokens.tail,
         },
       };
+    }
+    case "step_routed": {
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: formatFeedLine({
+          type: "step_routed",
+          stepIndex: event.stepIndex,
+          role: event.role,
+          providerId: event.providerId,
+          complexity: event.complexity,
+          cloudShare: event.cloudShare,
+        }),
+        color: "blue",
+      });
     }
     case "parse_retry": {
       const withFeed = appendFeed(state, {

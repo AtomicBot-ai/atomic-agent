@@ -10,6 +10,7 @@ import type { McpAction } from "./mcp/mcp-actions.js";
 import type { ImportAction } from "./import/import-actions.js";
 import type { TelegramAction } from "./telegram/telegram-actions.js";
 import type { PrivacyAction } from "./privacy/privacy-actions.js";
+import type { RunModeAction } from "./run-mode/run-mode-actions.js";
 import type { ProvidersAction } from "./providers/providers-actions.js";
 import type { LlmPanelAction } from "./llm-panel/llm-panel-actions.js";
 import type { FallbackPanelAction } from "./llm-panel/fallback/fallback-panel-actions.js";
@@ -218,6 +219,7 @@ export type TuiAction =
   | McpAction
   | TelegramAction
   | PrivacyAction
+  | RunModeAction
   | ProvidersAction
   | LlmPanelAction
   | FallbackPanelAction

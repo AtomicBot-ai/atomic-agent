@@ -1,5 +1,7 @@
 import type { WhileBusySubmitMode } from "../../config/index.js";
 import type { TuiAction } from "../tui-action.js";
+import type { RunModeName } from "../../config/index.js";
+import { parseRunModeCommand } from "./dispatch-run-mode.js";
 import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";
 import { isThemeName, THEME_NAMES } from "../theme/theme.js";
 import { parseSlashCommand } from "./slash-command-parser.js";
@@ -39,6 +41,10 @@ export interface SlashDispatchResult {
   readonly triggerDebugBundleDump: boolean;
   /** When true the caller should forward the raw buffer as a normal message. */
   readonly forwardAsMessage: boolean;
+  /** When set, caller should persist this run mode and swap the provider. */
+  readonly runModeSet?: RunModeName;
+  /** Optional dial value accompanying `runModeSet`. */
+  readonly runModeCloudShare?: number;
   /** When set, caller should probe this URL, persist on success, then refresh UI. */
   readonly persistLlamaUrl?: string;
   /** Task id to cancel via the orchestrator (`/task cancel <id>`). */
@@ -184,6 +190,22 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return pureActions([{ type: "ui_mode_toggled" }]);
     case "chat":
       return pureActions([{ type: "ui_mode_set", mode: "chat" }]);
+    case "run": {
+      const runCmd = parseRunModeCommand(parsed.args);
+      if (runCmd.error) {
+        return pureActions([], { systemMessage: runCmd.error });
+      }
+      const actions: TuiAction[] = [];
+      // `/run` was an alias of `/chat`; keep that behaviour exactly.
+      if (runCmd.returnToRun) actions.push({ type: "ui_mode_set", mode: "chat" });
+      if (runCmd.openPicker) actions.push({ type: "run_mode_picker_opened" });
+      return pureActions(actions, {
+        ...(runCmd.mode ? { runModeSet: runCmd.mode } : {}),
+        ...(runCmd.cloudShare === undefined
+          ? {}
+          : { runModeCloudShare: runCmd.cloudShare }),
+      });
+    }
     case "observe":
       return pureActions([
         { type: "ui_mode_set", mode: "debug" },
@@ -341,6 +363,8 @@ function pureActions(
     triggerSkillCatalogDump: false,
     triggerDebugBundleDump: false,
     forwardAsMessage: false,
+    runModeSet: undefined,
+    runModeCloudShare: undefined,
     persistLlamaUrl: undefined,
     taskCancelId: undefined,
     taskRunId: undefined,

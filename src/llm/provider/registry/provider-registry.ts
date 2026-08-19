@@ -28,6 +28,8 @@ export class ProviderRegistry {
     this.providers = providers;
   }
 
+  private pinnedProviderIds?: () => ReadonlySet<string>;
+
   static async fromConfig(
     config: AtomicAgentConfig,
     ctx: Omit<ProviderFactoryContext, "entry"> & {
@@ -76,6 +78,21 @@ export class ProviderRegistry {
     return [...this.providers.keys()];
   }
 
+  /**
+   * Providers that must stay open even when they stop being active.
+   *
+   * Fusion keeps two legs live at once and only one of them can be the
+   * active provider, so switching INTO fusion would otherwise close the
+   * very provider it is about to route to. `close()` is a no-op on both
+   * shipped provider kinds today, which is why this is not currently a
+   * visible crash — but the interface promises teardown, and the first
+   * provider kind that honours it (pooled sockets, a WS transport)
+   * would break fusion silently without this.
+   */
+  setPinnedProviderIds(pinned: () => ReadonlySet<string>): void {
+    this.pinnedProviderIds = pinned;
+  }
+
   async swapActive(id: string): Promise<LlmProvider> {
     const next = this.providers.get(id);
     if (!next) {
@@ -83,7 +100,7 @@ export class ProviderRegistry {
     }
     const prev = this.providers.get(this.activeTextId);
     this.activeTextId = id;
-    if (prev && prev.id !== id) {
+    if (prev && prev.id !== id && !this.pinnedProviderIds?.().has(prev.id)) {
       await prev.close().catch(() => undefined);
     }
     return next;

@@ -404,6 +404,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onApprovalLevelSetRequested: (level) =>
           orchestrator.privacy.setApprovalLevel(level),
         onPrivacyRefreshRequested: () => orchestrator.privacy.refresh(),
+        onRunModeChangeRequested: (mode, cloudShare) =>
+          void orchestrator.runMode.setMode(mode, cloudShare),
         onUpdateConfirmed: () => orchestrator.runUpdate(),
         onUpdateRestart: () => {
           restartRequested = true;

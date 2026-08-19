@@ -54,9 +54,48 @@ describe("dispatchSlashCommand", () => {
     ]);
   });
 
-  it("returns to the Run section for /run (alias of /chat)", () => {
+  it("still returns to the Run section for a bare /run, and opens the mode picker", () => {
+    // `/run` used to be a plain alias of `/chat`. It now owns the run
+    // MODE too, so the historical behaviour is preserved and the picker
+    // is opened on top of it — muscle memory keeps working.
     const result = dispatchSlashCommand("/run");
+    expect(result.actions).toEqual([
+      { type: "ui_mode_set", mode: "chat" },
+      { type: "run_mode_picker_opened" },
+    ]);
+    expect(result.runModeSet).toBeUndefined();
+  });
+
+  it("switches run mode directly for /run <mode>", () => {
+    const result = dispatchSlashCommand("/run fusion");
+    expect(result.runModeSet).toBe("fusion");
+    expect(result.runModeCloudShare).toBeUndefined();
     expect(result.actions).toEqual([{ type: "ui_mode_set", mode: "chat" }]);
+  });
+
+  it("accepts a dial value, with or without a percent sign", () => {
+    expect(dispatchSlashCommand("/run fusion 75").runModeCloudShare).toBe(75);
+    expect(dispatchSlashCommand("/run fusion 75%").runModeCloudShare).toBe(75);
+  });
+
+  it("accepts the inclusive dial bounds", () => {
+    expect(dispatchSlashCommand("/run fusion 0").runModeCloudShare).toBe(0);
+    expect(dispatchSlashCommand("/run fusion 100").runModeCloudShare).toBe(100);
+  });
+
+  it("rejects an unknown mode without touching state", () => {
+    const result = dispatchSlashCommand("/run hybrid");
+    expect(result.runModeSet).toBeUndefined();
+    expect(result.actions).toEqual([]);
+    expect(result.systemMessage).toMatch(/unknown run mode/);
+    // Never forwarded to the model as a chat message.
+    expect(result.forwardAsMessage).toBe(false);
+  });
+
+  it("rejects an out-of-range dial value", () => {
+    const result = dispatchSlashCommand("/run fusion 101");
+    expect(result.runModeSet).toBeUndefined();
+    expect(result.systemMessage).toMatch(/0-100/);
   });
 
   it("switches to debug mode and tab for /logs", () => {

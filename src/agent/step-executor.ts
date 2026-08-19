@@ -84,6 +84,7 @@ import type { ProfileFact } from "../memory/profile-store.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { StepEvent } from "./step-events.js";
+import type { StepRouter } from "./routing/index.js";
 export type { PromptCapturedTokens, StepEvent } from "./step-events.js";
 
 export interface LlmStreamParams {
@@ -119,6 +120,17 @@ export interface LlmStreamParams {
    * instead of waiting for the current step to finish on its own.
    */
   signal?: AbortSignal;
+  /**
+   * Fusion routing: the provider id this call should START at. Only the
+   * starting link changes — the fallback chain still owns health, so a
+   * preferred provider in cooldown is ignored and a failure still
+   * advances through the chain.
+   *
+   * Deliberately a provider id rather than a role: the seam stays
+   * ignorant of run modes, and the policy that picked the leg lives in
+   * `src/agent/routing/`. Absent ⇒ today's behaviour, unchanged.
+   */
+  preferredProviderId?: string;
 }
 
 export type LlmCompleteStream = (
@@ -145,6 +157,23 @@ export interface StepDependencies {
   toolCallAdapter: ToolCallAdapter | null;
   /** When false, completions use slotId -1 (cloud providers). */
   supportsSlotAffinity: boolean;
+  /**
+   * Fusion step router. When present and fusion is the effective run
+   * mode, it picks the leg for each step; absent (or returning null) ⇒
+   * provider selection is left entirely to the fallback chain, i.e.
+   * today's behaviour.
+   */
+  stepRouter?: StepRouter;
+  /**
+   * Slot affinity for a SPECIFIC provider, used when `stepRouter` routes
+   * a step away from the active provider.
+   *
+   * Without this, fusion would read `supportsSlotAffinity` off the
+   * active (cloud) provider and run every locally-routed step with
+   * `slotId: -1` and `cachePrompt: false` — forcing llama-server to
+   * reprocess the whole prompt on each one.
+   */
+  resolveSlotAffinity?: (providerId: string) => boolean;
   /**
    * Invoked after every LLM completion (initial call and one-shot parse
    * retry alike). Used by the agent loop to feed the served `modelId`
@@ -302,7 +331,33 @@ async function executeStepInner(
       ? { userMessage: ctx.userMessage }
       : {}),
   });
-  const slot = deps.supportsSlotAffinity
+  // Route BEFORE acquiring a slot: which provider serves this step
+  // decides whether a slot is worth acquiring at all. That ordering is
+  // also why the complexity score cannot use `cacheReused` — it does
+  // not exist yet, and making it an input would be circular.
+  const routing =
+    deps.stepRouter?.routeStep({
+      sessionId: ctx.session.id,
+      stepIndex: ctx.stepIndex,
+      promptTokens: prompt.tokens.total,
+      stablePrefixTokens: prompt.tokens.stablePrefix,
+      hasTransientNotice: ctx.transientNotice !== undefined,
+    }) ?? null;
+  if (routing) {
+    deps.onEvent?.({
+      type: "step_routed",
+      stepIndex: ctx.stepIndex,
+      role: routing.role,
+      providerId: routing.providerId,
+      complexity: routing.complexity,
+      cloudShare: routing.cloudShare,
+    });
+  }
+  const slotAffinity = routing
+    ? (deps.resolveSlotAffinity?.(routing.providerId) ??
+      deps.supportsSlotAffinity)
+    : deps.supportsSlotAffinity;
+  const slot = slotAffinity
     ? deps.slotManager.acquire(ctx.session.id, prompt.stablePrefix)
     : {
         slotId: -1,
@@ -348,6 +403,7 @@ async function executeStepInner(
     sessionId: ctx.session.id,
     toolDescriptors: ctx.toolDescriptors,
     signal: ctx.signal,
+    ...(routing ? { preferredProviderId: routing.providerId } : {}),
   });
 
   const firstAttempt = await runInitialCompletion({
@@ -1118,6 +1174,7 @@ function buildLlmStreamParams(args: {
   sessionId: string;
   toolDescriptors: readonly ToolDescriptor[];
   signal?: AbortSignal;
+  preferredProviderId?: string;
 }): LlmStreamParams {
   const base: LlmStreamParams = {
     prompt: args.promptText,
@@ -1125,6 +1182,9 @@ function buildLlmStreamParams(args: {
     slotId: args.slotId,
     sessionId: args.sessionId,
     ...(args.signal ? { signal: args.signal } : {}),
+    ...(args.preferredProviderId
+      ? { preferredProviderId: args.preferredProviderId }
+      : {}),
   };
   if (args.deps.toolTransport !== "native_tools") {
     return base;

@@ -32,6 +32,9 @@ import { Sidebar } from "./components/sidebar.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import { SlashPalette } from "./components/slash-palette.js";
 import { StatusBar } from "./components/status-bar.js";
+import { RunModeBar } from "./components/run-mode-bar.js";
+import { RunModePicker } from "./components/run-mode-picker.js";
+import type { RunModeName } from "../config/index.js";
 import { TasksCancelModal } from "./components/tasks-cancel-modal.js";
 import { UpdateModal } from "./components/update-modal.js";
 import { UpdateIndicator } from "./components/update-indicator.js";
@@ -97,6 +100,8 @@ export interface TuiAppCallbacks {
   onMessageSteered?(message: string): void;
   /** Persist the Enter-while-busy mode after a Ctrl+T flip. */
   onWhileBusyModePersistRequested?(mode: WhileBusySubmitMode): void;
+  /** Persist a run-mode switch and hot-apply the provider swap. */
+  onRunModeChangeRequested?(mode: RunModeName, cloudShare?: number): void;
   /** Ask the orchestrator to emit the recent-sessions list to the bus. */
   onSessionPickerRequested?(): void;
   /** Ask the orchestrator to swap to an existing persisted session. */
@@ -769,6 +774,11 @@ export function TuiApp({
       <Box flexShrink={0}>
         <StatusBar state={state} />
       </Box>
+      {state.uiMode === "chat" ? (
+        <Box flexShrink={0}>
+          <RunModeBar panel={state.runModePanel} />
+        </Box>
+      ) : null}
       <Box flexDirection="row" flexGrow={1} flexShrink={1} overflow="hidden">
         <Box flexDirection="column" flexGrow={1} overflow="hidden">
           <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
@@ -793,6 +803,11 @@ export function TuiApp({
           {state.pendingApproval ? (
             <Box flexShrink={0}>
               <ApprovalModal request={state.pendingApproval} />
+            </Box>
+          ) : null}
+          {state.runModePanel.picker ? (
+            <Box flexShrink={0}>
+              <RunModePicker panel={state.runModePanel} />
             </Box>
           ) : null}
           {state.sessionPickerOpen ? (

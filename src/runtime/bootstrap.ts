@@ -10,6 +10,8 @@ import {
 } from "../config/index.js";
 
 import type { LlmStreamParams } from "../agent/step-executor.js";
+import { StepRouter } from "../agent/routing/index.js";
+import { resolveRunMode } from "../llm/run-mode/index.js";
 import { TurnController } from "./turn-controller.js";
 import { SteeringInbox } from "./steering-inbox.js";
 import type { TurnEventHook, TurnOrigin } from "./turn-controller.js";
@@ -1209,11 +1211,16 @@ export async function createAgentRuntime(
    */
   const resolveModelPricing = (
     modelId: string | null,
+    servedProviderId?: string,
   ): ResolvedModel | undefined => {
     if (!modelId) return undefined;
     const resolved = resolveLlmConfig(getConfig());
+    // Price against the provider that actually SERVED the completion,
+    // not the active one. They differ after any fallover, and routinely
+    // under fusion — pricing a local completion against the cloud
+    // provider's catalog reports a cost that was never incurred.
     const entry = resolved.providers.find(
-      (p) => p.id === resolved.activeTextProvider,
+      (p) => p.id === (servedProviderId ?? resolved.activeTextProvider),
     );
     if (!entry) return undefined;
     return resolveModel(entry, modelId, catalogForProvider(entry));
@@ -1364,9 +1371,10 @@ export async function createAgentRuntime(
   const recordUnaryUsage = (
     params: LlmStreamParams,
     result: CompletionResult,
+    servedProviderId?: string,
   ): void => {
     if (!result.usage) return;
-    const model = resolveModelPricing(result.modelId);
+    const model = resolveModelPricing(result.modelId, servedProviderId);
     if (costAccumulator) {
       costAccumulator.recordTurn({
         modelId: result.modelId,
@@ -1388,13 +1396,47 @@ export async function createAgentRuntime(
     result: CompletionResult,
   ): void => {
     if (!result.usage || !sessionId) return;
-    const model = resolveModelPricing(result.modelId);
+    const model = resolveModelPricing(result.modelId, result.servedProviderId);
     turnUsageMeter.record({
       sessionId,
       usage: result.usage,
       ...(model ? { model } : {}),
     });
   };
+
+  // Keep both fusion legs open across an active-provider swap. Without
+  // this, switching into fusion closes the provider it routes to.
+  providerRegistry.setPinnedProviderIds(() => {
+    const runMode = resolveRunMode(resolveLlmConfig(getConfig()));
+    if (runMode.effective !== "fusion") return new Set<string>();
+    return new Set(
+      [runMode.cloudProviderId, runMode.localProviderId].filter(
+        (id): id is string => id !== null,
+      ),
+    );
+  });
+
+  /**
+   * Fusion step router. Always constructed; it resolves the live config
+   * on every step and returns `null` unless fusion is the effective run
+   * mode, so a non-fusion install pays one config read and nothing else.
+   */
+  const stepRouter = new StepRouter({
+    resolveFusion: () => {
+      const live = getConfig();
+      const runMode = resolveRunMode(resolveLlmConfig(live));
+      if (runMode.effective !== "fusion") return null;
+      if (!runMode.cloudProviderId || !runMode.localProviderId) return null;
+      return {
+        cloudProviderId: runMode.cloudProviderId,
+        localProviderId: runMode.localProviderId,
+        cloudShare: runMode.fusion.cloudShare,
+        subRunners: runMode.fusion.subRunners,
+        maxSteps: live.agent.maxSteps,
+        conversationMaxTokens: live.agent.conversationMaxTokens,
+      };
+    },
+  });
 
   const fallbackSeamDeps: FallbackSeamDeps = {
     fallbackChain,
@@ -1416,6 +1458,26 @@ export async function createAgentRuntime(
       (options.overrides?.llamaComplete
         ? undefined
         : createFallbackStreamer(fallbackSeamDeps));
+
+  /**
+   * Completion seam for the memory sub-runners (reflection, link
+   * generation, curation votes, query rewriting, distillation).
+   *
+   * Under fusion these default to the LOCAL leg: they are cold-path,
+   * fire-and-forget structured-JSON jobs that ride the reserved
+   * reflection slot and are already KV-warm on the local server, so
+   * sending them to the cloud multiplies per-turn cost with no
+   * user-visible latency win. `llm.runMode.fusion.subRunners` overrides
+   * it. Outside fusion this is `llmComplete` with no added behaviour.
+   */
+  const subRunnerLlmComplete = (
+    params: LlmStreamParams,
+  ): Promise<CompletionResult> => {
+    const providerId = stepRouter.subRunnerProviderId(params.sessionId);
+    return llmComplete(
+      providerId ? { ...params, preferredProviderId: providerId } : params,
+    );
+  };
 
   const taskStore = new TaskStore({ dbFile: config.paths.tasksDbFile });
   const webhookSessionStore = new WebhookSessionStore(
@@ -1447,7 +1509,7 @@ export async function createAgentRuntime(
   const baseReflectionRunner = buildReflectionRunner({
     config,
     slotManager,
-    llmComplete,
+    llmComplete: subRunnerLlmComplete,
     toolTransport: bootstrapLlmSlice.transport,
     profileStore,
     notesStore,
@@ -1504,7 +1566,7 @@ export async function createAgentRuntime(
           { once: true },
         );
       });
-      const completionPromise = llmComplete({
+      const completionPromise = subRunnerLlmComplete({
         prompt: params.prompt,
         grammar: params.grammar,
         slotId: params.slotId,
@@ -1573,7 +1635,7 @@ export async function createAgentRuntime(
           { once: true },
         );
       });
-      const completionPromise = llmComplete({
+      const completionPromise = subRunnerLlmComplete({
         prompt: params.prompt,
         grammar: params.grammar,
         slotId: params.slotId,
@@ -1709,7 +1771,7 @@ export async function createAgentRuntime(
           { once: true },
         );
       });
-      const completionPromise = llmComplete({
+      const completionPromise = subRunnerLlmComplete({
         prompt: params.prompt,
         grammar: params.grammar,
         slotId: params.slotId,
@@ -1773,6 +1835,7 @@ export async function createAgentRuntime(
     registry: toolRegistry,
     slotManager,
     grammar,
+    stepRouter,
     llmComplete,
     // Mid-turn steering: the loop drains this at every step boundary.
     steeringInbox,
@@ -1855,6 +1918,15 @@ export async function createAgentRuntime(
   Object.defineProperty(loopDeps, "supportsSlotAffinity", {
     enumerable: true,
     get: () => resolveActiveLlmSlice().slotAffinity,
+  });
+  // Slot affinity for a specific routed provider. Without this, fusion
+  // would read affinity off the active (cloud) provider and run every
+  // locally-routed step with slotId -1 — no prompt cache at all on the
+  // local leg.
+  Object.defineProperty(loopDeps, "resolveSlotAffinity", {
+    enumerable: true,
+    get: () => (providerId: string) =>
+      resolveActiveLlmSlice(providerId).slotAffinity,
   });
   const loop = new AgentLoop(
     loopDeps as typeof loopDeps & {
@@ -2261,7 +2333,7 @@ export async function createAgentRuntime(
           { once: true },
         );
       });
-      const completionPromise = llmComplete({
+      const completionPromise = subRunnerLlmComplete({
         prompt: params.prompt,
         grammar: params.grammar,
         slotId: params.slotId,

@@ -197,6 +197,12 @@ export function runSlashCommand(
   if (result.triggerNewWindow) callbacks.onNewWindowRequested?.();
   if (result.triggerMemoryDump) callbacks.onMemoryDumpRequested?.();
   if (result.triggerSkillCatalogDump) callbacks.onSkillCatalogRequested?.();
+  if (result.runModeSet) {
+    callbacks.onRunModeChangeRequested?.(
+      result.runModeSet,
+      result.runModeCloudShare,
+    );
+  }
   if (result.persistLlamaUrl) {
     callbacks.onPersistLlamaUrl?.(result.persistLlamaUrl);
   }

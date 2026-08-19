@@ -409,3 +409,101 @@ describe("ProviderFallbackChain", () => {
     });
   });
 });
+
+describe("ProviderFallbackChain — fusion preferred start", () => {
+  it("starts at the preferred leg instead of the chain primary", () => {
+    const chain = new ProviderFallbackChain({
+      resolve: () => chainOf(["cloud", "local"]),
+    });
+    expect(chain.pickProvider("s1", "local")).toEqual({
+      providerId: "local",
+      isProbe: false,
+    });
+  });
+
+  it("never marks a preferred pick as a probe", () => {
+    const chain = new ProviderFallbackChain({
+      resolve: () => chainOf(["cloud", "local"]),
+    });
+    expect(chain.pickProvider("s1", "local").isProbe).toBe(false);
+  });
+
+  it("never sets the sticky override", () => {
+    const chain = new ProviderFallbackChain({
+      resolve: () => chainOf(["cloud", "local"]),
+    });
+    chain.pickProvider("s1", "local");
+    expect(chain.activeOverrideFor("s1")).toBeNull();
+  });
+
+  it("never clears an override that a real fallover established", () => {
+    const chain = new ProviderFallbackChain({
+      resolve: () => chainOf(["cloud", "local"]),
+    });
+    chain.advanceFrom("cloud", http(429), "s1");
+    expect(chain.activeOverrideFor("s1")).toBe("local");
+    chain.pickProvider("s1", "local");
+    expect(chain.activeOverrideFor("s1")).toBe("local");
+  });
+
+  it("accepts a preferred id that is not a chain member", () => {
+    const chain = new ProviderFallbackChain({
+      resolve: () => chainOf(["cloud"]),
+    });
+    expect(chain.pickProvider("s1", "local").providerId).toBe("local");
+  });
+
+  it("ignores the preference while THAT leg is in cooldown", () => {
+    const clock = makeClock();
+    const chain = new ProviderFallbackChain({
+      resolve: () => chainOf(["cloud", "local"]),
+      now: clock.now,
+    });
+    // A 429 on the local leg trips its breaker immediately.
+    chain.advanceFrom("local", http(429), "s1");
+    expect(chain.pickProvider("s1", "local").providerId).not.toBe("local");
+    // Once the cooldown elapses the preference is honoured again.
+    clock.advance(DEFAULT_FALLBACK_TIMING.cooldownMs[0]! + 1);
+    expect(chain.pickProvider("s1", "local").providerId).toBe("local");
+  });
+
+  it("honours the preference while a DIFFERENT leg is in cooldown", () => {
+    const chain = new ProviderFallbackChain({
+      resolve: () => chainOf(["cloud", "local"]),
+    });
+    chain.advanceFrom("cloud", http(429), "s1");
+    expect(chain.pickProvider("s1", "local").providerId).toBe("local");
+  });
+
+  it("resumes from the chain head when a preferred TAIL start fails", () => {
+    const chain = new ProviderFallbackChain({
+      resolve: () => chainOf(["cloud", "local"]),
+    });
+    // Without `restartFromHead` this returns null (nothing after the
+    // tail) and the turn dies even though the cloud leg is healthy.
+    expect(
+      chain.advanceFrom("local", http(503), "s1", { restartFromHead: true }),
+    ).toBe("cloud");
+  });
+
+  it("keeps the default advance behaviour when the flag is absent", () => {
+    const chain = new ProviderFallbackChain({
+      resolve: () => chainOf(["cloud", "local"]),
+    });
+    expect(chain.advanceFrom("local", http(503), "s1")).toBeNull();
+  });
+
+  it("leaves an unpreferred pick byte-identical to today", () => {
+    const chain = new ProviderFallbackChain({
+      resolve: () => chainOf(["cloud", "local"]),
+    });
+    expect(chain.pickProvider("s1")).toEqual({
+      providerId: "cloud",
+      isProbe: false,
+    });
+    expect(chain.pickProvider("s1", undefined)).toEqual({
+      providerId: "cloud",
+      isProbe: false,
+    });
+  });
+});
