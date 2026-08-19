@@ -184,4 +184,22 @@ describe("buildProviderEntryFromWizard", () => {
     expect(built.entry.defaultChatModel).toBe("sonnet");
   });
 
+  it("omits defaultChatModel for codex, which resolves the model itself", () => {
+    const built = buildProviderEntryFromWizard({
+      kind: "codex-cli",
+      chatModelId: "",
+      embeddingChoiceId: "",
+      customChatModel: "",
+    });
+    expect(built.entry).toEqual({
+      id: "codex-cli",
+      kind: "subscription-cli",
+      subscriptionCli: { cli: "codex" },
+    });
+    // Writing "" would fail config validation (parseOptionalString
+    // rejects the empty string), and any pinned id is rejected by Codex
+    // under a ChatGPT login.
+    expect(built.entry.defaultChatModel).toBeUndefined();
+  });
+
 });

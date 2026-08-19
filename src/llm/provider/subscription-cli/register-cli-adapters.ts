@@ -1,5 +1,6 @@
 import { registerCliAdapter } from "./cli-adapter-descriptor.js";
 import { claudeCliAdapter } from "./claude-cli-adapter.js";
+import { codexCliAdapter } from "./codex-cli-adapter.js";
 
 let registered = false;
 
@@ -12,4 +13,5 @@ export function registerBuiltInCliAdapters(): void {
   if (registered) return;
   registered = true;
   registerCliAdapter(claudeCliAdapter);
+  registerCliAdapter(codexCliAdapter);
 }

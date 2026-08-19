@@ -3,6 +3,10 @@ export {
   CLAUDE_CLI_SYSTEM_PROMPT,
 } from "./claude-cli-adapter.js";
 export {
+  codexCliAdapter,
+  CODEX_CLI_SYSTEM_PROMPT,
+} from "./codex-cli-adapter.js";
+export {
   CLAUDE_CLI_CHAT_MODELS,
   CLAUDE_CLI_CONTEXT_WINDOW,
   CLAUDE_CLI_DEFAULT_CHAT_MODEL,

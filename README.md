@@ -194,7 +194,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | **Skills** | View and run Markdown skill playbooks (scripts are approval-gated), install more from ClawHub. Ships with 17 starter skills (Docker, GitHub, Notion, Obsidian, PDF, and more), auto-installed on first run. |
 | **Vision** | Optional `vision.describe` for multimodal models with `mmproj`, kept outside the text transcript. |
 | **MCP** | Connect external MCP servers; their tools, resources, and prompts join the same registry. |
-| **Providers** | Local `llama-server` by default; OpenAI-compatible, OpenRouter, AI/ML API, and Gemini providers when configured, with live model catalogs and mid-session switching. Your existing **Claude Code subscription** works too, driven through its own signed-in CLI with no API key. Reasoning-only completions from reasoning models are recovered instead of failing the turn. |
+| **Providers** | Local `llama-server` by default; OpenAI-compatible, OpenRouter, AI/ML API, and Gemini providers when configured, with live model catalogs and mid-session switching. Your existing **Claude Code and OpenAI Codex subscriptions** work too, driven through their own signed-in CLIs with no API key. Reasoning-only completions from reasoning models are recovered instead of failing the turn. |
 | **Telegram** | Single-user remote control with owner pairing, inline approval buttons, and opt-in result reports from scheduled tasks. |
 
 ### Memory That Grows Outside the Prompt
@@ -423,7 +423,7 @@ Local-first bounds where control lives, not where packets go. Network egress hap
 - an HTTP tool calls a requested endpoint;
 - a web search provider answers a query;
 - a configured cloud LLM or embedding provider receives its request;
-- a `subscription-cli` provider is active and the vendor CLI (`claude`) receives your prompt on its stdin, then sends it on under its own account;
+- a `subscription-cli` provider is active and the vendor CLI (`claude` or `codex`) receives your prompt on its stdin, then sends it on under its own account;
 - an MCP server receives a tool call you routed to it;
 - the Telegram channel is enabled and the bot exchanges messages with your paired chat, including opt-in scheduled task reports;
 - you install a skill from ClawHub;
@@ -483,13 +483,13 @@ Shell-exported variables win over `.env`. The built-in parser intentionally supp
 </details>
 
 <details>
-<summary><b>Claude Code subscription</b> (no API key)</summary>
+<summary><b>Claude Code / OpenAI Codex subscriptions</b> (no API key)</summary>
 
-Drives the `claude` CLI you are already signed into, so a flat-rate Claude subscription can power the agent with no API key and no per-token billing.
+Drives a vendor CLI you are already signed into, so a flat-rate subscription can power the agent with no API key and no per-token billing. Two are supported: `claude` (Claude Code) and `codex` (OpenAI Codex).
 
-**Prerequisite:** [Claude Code](https://claude.com/claude-code) installed and signed in — run `claude` once and complete `/login`. Atomic only spawns that binary; it never reads, copies, or replays its OAuth tokens or keychain entries.
+**Prerequisite:** the CLI installed and signed in — `claude` then `/login`, or `npm i -g @openai/codex` then `codex login`. Atomic only spawns the binary; it never reads, copies, or replays its OAuth tokens or keychain entries.
 
-In the TUI: **Providers → `n` → Claude Code subscription**, then type a model (`sonnet`, `opus`, `haiku`, `fable`, or a pinned id like `claude-sonnet-5`). There is no API-key screen, because there is no key. Equivalent `config.json`:
+In the TUI: **Providers → `n` →** pick the subscription row, then type a model. For Claude that is `sonnet`, `opus`, `haiku`, `fable`, or a pinned id like `claude-sonnet-5`; **for Codex leave it blank** — under a ChatGPT login Codex rejects explicit model ids (`not supported when using Codex with a ChatGPT account`) and resolves one itself. There is no API-key screen, because there is no key. Equivalent `config.json`:
 
 ```json
 {
@@ -509,7 +509,9 @@ In the TUI: **Providers → `n` → Claude Code subscription**, then type a mode
 
 Optional keys inside `subscriptionCli`: `binPath` (absolute path when the CLI is not on `PATH`), `extraArgs` (appended verbatim — e.g. `["--effort", "high"]`), `streaming` (set `false` to buffer), `maxBudgetUsd`.
 
-Each completion runs `claude --print` with the prompt on **stdin** (a two-zone prompt exceeds the 128 KiB argv limit) and these flags, which are load-bearing rather than cosmetic:
+Swap `"cli": "claude"` for `"cli": "codex"` to drive Codex instead, and drop `defaultChatModel`.
+
+Each completion spawns the CLI fresh with the prompt on **stdin** (a two-zone prompt exceeds the 128 KiB argv limit). For `claude` it runs `claude --print` with these flags, which are load-bearing rather than cosmetic:
 
 - **`--tools ""`** — disables Claude Code's own Bash/Edit/Write. Without it a second agent would act on your machine outside Atomic's approval ladder.
 - **`--strict-mcp-config`** with no config — keeps your MCP servers out of what should be a stateless completion.
@@ -517,9 +519,15 @@ Each completion runs `claude --print` with the prompt on **stdin** (a two-zone p
 - **`--no-session-persistence`** — Atomic owns session state; CLI-side history would double-count context.
 - **`--bare` is never passed.** Its own docs say OAuth and keychain are never read under it, which would defeat the whole feature.
 
-Not supported on this provider: vision, embeddings (they stay on the local daemon), and the sampling knobs `temperature` / `top_p` / `top_k` / `seed` / `stop` / `maxTokens` — the CLI exposes no flag for them, so they are dropped rather than silently approximated. Reconfiguring `binPath` or `extraArgs` means editing `config.json`; the model is changeable from the LLM tab.
+For `codex` it runs `codex exec --json` with `--ephemeral`, `--skip-git-repo-check`, `--ignore-user-config` and `-s read-only`. Three differences are worth knowing, because Codex is a more opinionated agent than Claude's headless mode:
 
-Two things worth knowing before you switch a long-running agent onto it: each completion pays roughly 0.8 s of process startup, and subscription plans have session and weekly caps that an autonomous multi-step agent reaches much faster than interactive use. When a cap is hit, the CLI's own message is surfaced verbatim.
+- **There is no `--tools ""` equivalent.** `-s read-only` confines Codex's own tools to reading; it cannot remove them. Left to itself, Codex will try to *perform* the request with its own tools instead of emitting Atomic's tool-call protocol — in testing it answered "I can't find `probe.txt`" after looking in its own working directory. The fix is an explicit completion-engine instruction prepended to the prompt (Codex has no system-prompt flag). It works — verified turns drive `os.fs.read` → `reply` and `os.fs.read` → `os.fs.write` → `reply` with no parse retries — but it is a prompt-level guarantee, not a structural one like `--tools ""`.
+- **Codex exits 0 even when the turn fails.** A bad model id, an expired login and a rate limit all produce a clean exit with a `turn.failed` event, so the adapter treats a missing `turn.completed` as a failure rather than trusting the exit code.
+- **No streaming.** `codex exec --json` emits the answer in one `item.completed`, with no incremental text events, so this provider buffers instead of pretending to stream.
+
+Not supported on either CLI: vision, embeddings (they stay on the local daemon), and the sampling knobs `temperature` / `top_p` / `top_k` / `seed` / `stop` / `maxTokens` — neither CLI exposes a flag for them, so they are dropped rather than silently approximated. Reconfiguring `binPath` or `extraArgs` means editing `config.json`; the model is changeable from the LLM tab.
+
+Two things worth knowing before you switch a long-running agent onto either: each completion pays roughly 0.8 s of process startup, and subscription plans have session and weekly caps that an autonomous multi-step agent reaches much faster than interactive use. When a cap is hit, the CLI's own message is surfaced verbatim.
 
 > [!NOTE]
 > Whether driving a subscription CLI from another agent is acceptable use is the vendor's call, not this project's. Atomic uses the officially documented headless mode and nothing else; the decision to use it is yours.

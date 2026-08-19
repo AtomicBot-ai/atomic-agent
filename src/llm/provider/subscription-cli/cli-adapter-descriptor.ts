@@ -3,10 +3,17 @@ import type { CompletionResult } from "../completion-types.js";
 
 /** Everything the argv builders need from one completion request. */
 export interface CliArgsInput {
+  /**
+   * Empty when the operator set no model and the CLI resolves one
+   * itself — Codex under a ChatGPT login rejects every explicit id, so
+   * the flag has to be omitted rather than guessed at.
+   */
   model: string;
   systemPrompt: string;
   /** JSON Schema from `CompletionRequest.responseFormat`, when set. */
   responseSchema?: Record<string, unknown>;
+  /** Path to that schema on disk, for CLIs that take a file. */
+  responseSchemaPath?: string;
   maxBudgetUsd?: number;
   extraArgs: readonly string[];
 }
@@ -35,11 +42,21 @@ export interface CliAdapterDescriptor {
   readonly systemPrompt: string;
   readonly staticModels: readonly string[];
   readonly contextWindow: number;
-  readonly supportsJsonSchema: boolean;
+  /**
+   * How the CLI accepts a structured-output schema: `claude` takes it
+   * inline on argv, `codex` takes a path to a file on disk.
+   */
+  readonly schemaDelivery: "inline" | "file" | "none";
   /** `"none"` means `completeStream` must fall back to buffering. */
   readonly streamMode: "ndjson" | "none";
   readonly installHint: string;
   readonly authHint: string;
+  /**
+   * The text written to the child's stdin. Exists because only some
+   * CLIs have a system-prompt flag; the rest must carry that steering
+   * inside the prompt itself.
+   */
+  buildStdin(prompt: string, systemPrompt: string): string;
   completeArgs(input: CliArgsInput): string[];
   streamArgs(input: CliArgsInput): string[];
   healthArgs(): string[];

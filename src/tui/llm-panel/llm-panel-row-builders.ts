@@ -406,7 +406,11 @@ function inlineModelsForProvider(
   // spin on "loading" forever, because no request will ever complete for
   // a provider that has no HTTP endpoint.
   if (provider.kind === SUBSCRIPTION_CLI_KIND) {
-    for (const id of CLAUDE_CLI_CHAT_MODELS) out.add(id);
+    // Claude ships a curated list; Codex publishes none and resolves the
+    // model itself, so its pane shows only whatever the entry pinned.
+    if (provider.subscriptionCli?.cli === "claude") {
+      for (const id of CLAUDE_CLI_CHAT_MODELS) out.add(id);
+    }
     return { models: [...out], status: "ready", error: null };
   }
   // gemini: no baseUrl on the entry, so the openai-compat URL-keyed cache

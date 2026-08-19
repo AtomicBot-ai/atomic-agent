@@ -39,6 +39,8 @@ import { renderPickList } from "./wizard-pick-list.js";
 const KIND_LABELS: Record<ProvidersWizardKind, string> = {
   "claude-cli":
     "Claude Code subscription (drives your signed-in `claude` CLI — no API key)",
+  "codex-cli":
+    "OpenAI Codex subscription (drives your signed-in `codex` CLI — no API key)",
   openrouter: "OpenRouter (cloud chat + optional cloud embed)",
   aimlapi: "AI/ML API (aimlapi.com — 500+ models, OpenAI-compatible)",
   gemini: "Gemini (Google AI)",

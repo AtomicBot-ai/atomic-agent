@@ -41,8 +41,7 @@ function baseArgs(input: CliArgsInput): string[] {
     "--print",
     "--input-format",
     "text",
-    "--model",
-    input.model,
+    ...(input.model ? ["--model", input.model] : []),
     "--system-prompt",
     input.systemPrompt,
     // Safety-critical, not an optimisation: Claude Code's built-in
@@ -238,11 +237,16 @@ export const claudeCliAdapter: CliAdapterDescriptor = {
   systemPrompt: CLAUDE_CLI_SYSTEM_PROMPT,
   staticModels: CLAUDE_CLI_CHAT_MODELS,
   contextWindow: CLAUDE_CLI_CONTEXT_WINDOW,
-  supportsJsonSchema: true,
+  schemaDelivery: "inline",
   streamMode: "ndjson",
   installHint:
     "Install Claude Code (https://claude.com/claude-code) and run `claude` once to sign in, or set llm.providers[].subscriptionCli.binPath to the binary's absolute path.",
   authHint: "Run `claude` in a terminal and complete /login, then retry.",
+  buildStdin(prompt) {
+    // Claude takes the steering through --system-prompt, so the prompt
+    // reaches the model exactly as atomic-agent built it.
+    return prompt;
+  },
   completeArgs(input) {
     return [...baseArgs(input), "--output-format", "json", ...tailArgs(input)];
   },

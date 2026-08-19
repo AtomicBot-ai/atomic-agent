@@ -3,6 +3,7 @@ import { presetForEntryId } from "./provider-presets.js";
 
 export type ProvidersWizardKind =
   | "claude-cli"
+  | "codex-cli"
   | "openrouter"
   | "aimlapi"
   | "gemini"
@@ -18,6 +19,7 @@ const SUBSCRIPTION_CLI_WIZARD_KINDS: Partial<
   Record<ProvidersWizardKind, SubscriptionCliName>
 > = {
   "claude-cli": "claude",
+  "codex-cli": "codex",
 };
 
 /** The vendor CLI this row drives, or null for a key-based provider. */

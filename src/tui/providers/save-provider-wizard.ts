@@ -21,10 +21,17 @@ import {
   type ProvidersWizardKind,
   type ProvidersWizardState,
 } from "./providers-wizard-state.js";
-import { CLAUDE_CLI_DEFAULT_CHAT_MODEL } from "../../llm/provider/subscription-cli/claude-cli-models.js";
+import {
+  registerBuiltInCliAdapters,
+  resolveCliAdapter,
+} from "../../llm/provider/subscription-cli/index.js";
 
 function defaultChatModelForKind(kind: ProvidersWizardKind): string {
-  if (subscriptionCliForWizardKind(kind)) return CLAUDE_CLI_DEFAULT_CHAT_MODEL;
+  const cli = subscriptionCliForWizardKind(kind);
+  if (cli) {
+    registerBuiltInCliAdapters();
+    return resolveCliAdapter(cli).defaultChatModel;
+  }
   if (kind === "aimlapi") return AIMLAPI_DEFAULT_CHAT_MODEL;
   if (kind === "gemini") return GEMINI_DEFAULT_CHAT_MODEL;
   return OPENROUTER_DEFAULT_CHAT_MODEL;

@@ -32,6 +32,7 @@ export const KIND_ROW_ORDER: readonly ProvidersWizardKindRow[] = [
   // Subscription CLIs first: they need no key and no endpoint, so they
   // are the shortest path from a fresh install to a working agent.
   "claude-cli",
+  "codex-cli",
   "openrouter",
   "aimlapi",
   "gemini",

@@ -93,12 +93,13 @@ describe("KIND_ROW_ORDER", () => {
     // A CLI-backed provider needs no key and no endpoint, so it is the
     // shortest path from a fresh install to a working agent.
     expect(KIND_ROW_ORDER[0]).toBe("claude-cli");
-    expect(KIND_ROW_ORDER[1]).toBe("openrouter");
-    expect(KIND_ROW_ORDER[2]).toBe("aimlapi");
-    expect(KIND_ROW_ORDER[3]).toBe("gemini");
+    expect(KIND_ROW_ORDER[1]).toBe("codex-cli");
+    expect(KIND_ROW_ORDER[2]).toBe("openrouter");
+    expect(KIND_ROW_ORDER[3]).toBe("aimlapi");
+    expect(KIND_ROW_ORDER[4]).toBe("gemini");
     expect(KIND_ROW_ORDER[KIND_ROW_ORDER.length - 1]).toBe("openai-compatible");
 
-    const presetRows = KIND_ROW_ORDER.slice(4, -1);
+    const presetRows = KIND_ROW_ORDER.slice(5, -1);
     expect(presetRows).toEqual(
       PROVIDER_PRESETS.map((preset) => ({ presetId: preset.id })),
     );
@@ -120,6 +121,16 @@ describe("handleProvidersWizardKey", () => {
       phase: "chat_model_line",
     });
     expect(wizard.presetId).toBeNull();
+  });
+
+  it("takes the Codex CLI row straight past the API-key screen too", () => {
+    let wizard = createProvidersWizardState("add");
+    wizard = { ...wizard, cursor: KIND_ROW_ORDER.indexOf("codex-cli") };
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard).toMatchObject({
+      kind: "codex-cli",
+      phase: "chat_model_line",
+    });
   });
 
   it("takes Gemini from API key directly to model selection", () => {

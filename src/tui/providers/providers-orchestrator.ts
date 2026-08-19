@@ -216,6 +216,9 @@ export class ProvidersOrchestrator {
         hasApiKey:
           Boolean(resolveLlmProviderApiKey(p)?.length) || usesExternalCliAuth(p),
         baseUrl: fileEntry?.baseUrl ?? null,
+        subscriptionCli: fileEntry?.subscriptionCli
+          ? { cli: fileEntry.subscriptionCli.cli }
+          : null,
         chatModel: fileEntry?.defaultChatModel ?? fileEntry?.model ?? null,
         chatModelOptions: listChatModelOptionsForEntry(fileEntry),
         embeddingModel: fileEntry?.defaultEmbeddingModel ?? null,

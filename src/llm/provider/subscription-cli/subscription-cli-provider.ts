@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   CompletionRequest,
   CompletionResult,
@@ -94,6 +97,8 @@ export class SubscriptionCliProvider implements LlmProvider {
     this.name = descriptor.displayName;
     this.binary = resolveCliBinary(descriptor.defaultBinary, options.binPath);
     this.cwd = options.cwd;
+    // May be empty: Codex under a ChatGPT login rejects explicit model
+    // ids and resolves one itself, so the flag is then omitted.
     this.model = options.model ?? descriptor.defaultChatModel;
     this.extraArgs = options.extraArgs ?? [];
     this.streamingEnabled =
@@ -119,9 +124,42 @@ export class SubscriptionCliProvider implements LlmProvider {
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
-    const args = this.descriptor.completeArgs(this.argsInput(request));
-    const outcome = await this.runCli(this.runOptions(args, request));
-    return this.descriptor.parseResult(outcome.stdout, this.model);
+    const staged = await this.stageSchema(request);
+    try {
+      const args = this.descriptor.completeArgs(
+        this.argsInput(request, staged.path),
+      );
+      const outcome = await this.runCli(this.runOptions(args, request));
+      return this.descriptor.parseResult(outcome.stdout, this.model);
+    } finally {
+      await staged.cleanup();
+    }
+  }
+
+  /**
+   * Some CLIs take the structured-output schema inline on argv, others
+   * only as a path. Writing that file is a side effect, so it lives here
+   * rather than inside the argv builders, which stay pure and testable.
+   */
+  private async stageSchema(
+    request: CompletionRequest,
+  ): Promise<{ path?: string; cleanup: () => Promise<void> }> {
+    const noop = { cleanup: async () => {} };
+    if (
+      this.descriptor.schemaDelivery !== "file" ||
+      !request.responseFormat
+    ) {
+      return noop;
+    }
+    const dir = await mkdtemp(join(tmpdir(), "atomic-cli-schema-"));
+    const path = join(dir, "schema.json");
+    await writeFile(path, JSON.stringify(request.responseFormat.schema), "utf8");
+    return {
+      path,
+      cleanup: async () => {
+        await rm(dir, { recursive: true, force: true }).catch(() => {});
+      },
+    };
   }
 
   async *completeStream(
@@ -210,13 +248,15 @@ export class SubscriptionCliProvider implements LlmProvider {
     // Nothing to release — every invocation is its own short-lived process.
   }
 
-  private argsInput(request: CompletionRequest) {
+  private argsInput(request: CompletionRequest, schemaPath?: string) {
+    const delivery = this.descriptor.schemaDelivery;
     return {
       model: this.model,
       systemPrompt: this.descriptor.systemPrompt,
-      ...(request.responseFormat
+      ...(request.responseFormat && delivery === "inline"
         ? { responseSchema: request.responseFormat.schema }
         : {}),
+      ...(schemaPath ? { responseSchemaPath: schemaPath } : {}),
       ...(this.maxBudgetUsd === undefined
         ? {}
         : { maxBudgetUsd: this.maxBudgetUsd }),
@@ -232,7 +272,10 @@ export class SubscriptionCliProvider implements LlmProvider {
       // exceeds the 128 KiB single-argument limit once the conversation
       // zone fills, and argv delivery would fail with E2BIG on exactly
       // the long sessions that matter most.
-      input: request.prompt,
+      input: this.descriptor.buildStdin(
+        request.prompt,
+        this.descriptor.systemPrompt,
+      ),
       cwd: this.cwd,
       timeoutMs: this.timeoutMs,
       maxOutputBytes: MAX_COMPLETION_BYTES,
