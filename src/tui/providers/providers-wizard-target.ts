@@ -9,6 +9,7 @@
  * wizard.
  */
 
+import { getConfig } from "../../config/index.js";
 import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
 import type { UserLlmProviderEntry } from "../../config/llm-config.js";
 import { normalizeOpenAiBaseUrl } from "../../llm/provider/openai/normalize-openai-base-url.js";
@@ -44,14 +45,36 @@ function keyLookupEntryForWizard(
 }
 
 /**
- * Typed key wins; otherwise a key already in the environment needs no
- * retyping.
+ * The `config.json` entry a `configure` run would overwrite, or
+ * `undefined` while adding. `saveProviderWizardToConfig` keeps this
+ * entry's `apiKey` when the key screen is left blank, so every question
+ * about "does this wizard have a key" has to see it: a key the operator
+ * typed once lives in `config.json` with nothing in `.env` to find.
+ */
+function storedEntryForWizard(
+  wizard: ProvidersWizardState,
+): UserLlmProviderEntry | undefined {
+  const { mode, providerId } = wizard;
+  if (mode !== "configure" || !providerId) return undefined;
+  return getConfig().llm?.providers.find(
+    (provider) => provider.id === providerId,
+  );
+}
+
+/**
+ * Typed key wins; then the key the entry being reconfigured already has
+ * (stored, or under its own env var); then a key already in the
+ * environment for this kind. Same union `saveProviderWizardToConfig`
+ * accepts, so the key screen never refuses what the save would take.
  */
 export function apiKeyForWizard(
   wizard: ProvidersWizardState,
 ): string | undefined {
+  const typed = wizard.apiKeyBuffer.trim();
+  if (typed) return typed;
+  const stored = storedEntryForWizard(wizard);
   return (
-    wizard.apiKeyBuffer.trim() ||
+    (stored && resolveLlmProviderApiKey(stored)) ??
     resolveLlmProviderApiKey(keyLookupEntryForWizard(wizard))
   );
 }
@@ -82,6 +105,23 @@ export function wizardKeyIsOptional(wizard: ProvidersWizardState): boolean {
 }
 
 /**
+ * What leaving the key screen blank means for this run, in the operator's
+ * words. Local servers and keyless-listing services save without a key;
+ * a reconfigure keeps the one already in `config.json` — telling that
+ * operator the key must be "in .env" describes a file it was never
+ * written to. Everyone else does need one there.
+ */
+export function emptyKeyMeaningForWizard(wizard: ProvidersWizardState): string {
+  if (wizardKeyIsOptional(wizard)) {
+    return "Optional for this service — leave empty to connect without a key.";
+  }
+  if (storedEntryForWizard(wizard)?.apiKey) {
+    return "Leave empty to keep the key already saved.";
+  }
+  return "Leave empty only if the key is already in .env.";
+}
+
+/**
  * Why the key screen cannot be left yet, or `null` when it can.
  *
  * The check used to happen only at the end of the wizard, in
@@ -90,6 +130,10 @@ export function wizardKeyIsOptional(wizard: ProvidersWizardState): boolean {
  * here costs one keystroke instead. Whitespace counts as empty — it is
  * what a mis-paste leaves behind, and it would otherwise be written to
  * `.env` as a real key.
+ *
+ * Never stricter than the save it fronts: `apiKeyForWizard` consults the
+ * stored entry the same way, so reconfiguring a provider whose key is
+ * already saved passes with a blank screen instead of demanding it again.
  */
 export function apiKeyPhaseError(
   wizard: ProvidersWizardState,

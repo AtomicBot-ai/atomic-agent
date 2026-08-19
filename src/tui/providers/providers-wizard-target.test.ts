@@ -1,8 +1,14 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { resetConfigCache } from "../../config/index.js";
+import { upsertLlmProvider } from "../persist-llm-provider.js";
 import {
   apiKeyForWizard,
   apiKeyPhaseError,
+  emptyKeyMeaningForWizard,
   envHintForWizard,
   wizardKeyIsOptional,
 } from "./providers-wizard-target.js";
@@ -24,6 +30,7 @@ const ENV_KEYS = [
   "OLLAMA_API_KEY",
   "NOUS_API_KEY",
   "OLLAMA_CLOUD_API_KEY",
+  "VLLM_API_KEY",
 ] as const;
 
 function wizardFor(
@@ -108,6 +115,116 @@ describe("apiKeyPhaseError", () => {
       expect(wizardKeyIsOptional(wizard)).toBe(true);
       expect(apiKeyPhaseError(wizard)).toBeNull();
     }
+  });
+});
+
+describe("apiKeyPhaseError in configure mode", () => {
+  // A key the operator typed into the wizard once is stored in
+  // `config.json` by `upsertLlmProvider`, with nothing written to `.env`.
+  // The gate has to see it exactly where `saveProviderWizardToConfig`
+  // does, or reconfiguring a provider's model demands the key again.
+  let stateDir: string;
+  let previousStateDir: string | undefined;
+
+  beforeEach(() => {
+    previousStateDir = process.env.ATOMIC_AGENT_STATE_DIR;
+    stateDir = mkdtempSync(join(tmpdir(), "wizard-target-"));
+    process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    for (const key of ENV_KEYS) delete process.env[key];
+    resetConfigCache();
+  });
+
+  afterEach(() => {
+    rmSync(stateDir, { recursive: true, force: true });
+    if (previousStateDir === undefined) {
+      delete process.env.ATOMIC_AGENT_STATE_DIR;
+    } else {
+      process.env.ATOMIC_AGENT_STATE_DIR = previousStateDir;
+    }
+    for (const key of ENV_KEYS) delete process.env[key];
+    resetConfigCache();
+  });
+
+  function configureWizard(
+    kind: ProvidersWizardKind,
+    providerId: string,
+  ): ProvidersWizardState {
+    return createProvidersWizardState("configure", { providerId, kind });
+  }
+
+  it("accepts an empty screen when the entry's key is in config.json", () => {
+    upsertLlmProvider({
+      id: "openrouter",
+      kind: "openrouter",
+      apiKey: "sk-or-stored",
+    });
+    const wizard = configureWizard("openrouter", "openrouter");
+    expect(apiKeyForWizard(wizard)).toBe("sk-or-stored");
+    expect(apiKeyPhaseError(wizard)).toBeNull();
+  });
+
+  it("reads the entry's own env var, as the save path does", () => {
+    // A hand-added compat entry naming its own variable: no preset to
+    // supply it, and the per-kind fallbacks would answer with a
+    // different service's key or nothing at all.
+    upsertLlmProvider({
+      id: "my-vllm",
+      kind: "openai-compatible",
+      baseUrl: "http://192.168.1.50:8000/v1",
+      apiKeyEnvVar: "VLLM_API_KEY",
+    });
+    process.env.VLLM_API_KEY = "vllm-from-env";
+    const wizard = configureWizard("openai-compatible", "my-vllm");
+    expect(apiKeyForWizard(wizard)).toBe("vllm-from-env");
+    expect(apiKeyPhaseError(wizard)).toBeNull();
+  });
+
+  it("still refuses when the entry has no key anywhere", () => {
+    upsertLlmProvider({ id: "openrouter", kind: "openrouter" });
+    const wizard = configureWizard("openrouter", "openrouter");
+    expect(apiKeyPhaseError(wizard)).toContain("API key required");
+  });
+
+  it("refuses for an id that is not stored yet", () => {
+    const wizard = configureWizard("openrouter", "openrouter");
+    expect(apiKeyPhaseError(wizard)).toContain("API key required");
+  });
+
+  it("does not let a stored key satisfy an `add` run", () => {
+    // Adding a second OpenRouter entry must still ask for its own key,
+    // whatever the first one has saved.
+    upsertLlmProvider({
+      id: "openrouter",
+      kind: "openrouter",
+      apiKey: "sk-or-stored",
+    });
+    expect(apiKeyPhaseError(wizardFor("openrouter"))).toContain(
+      "API key required",
+    );
+    expect(apiKeyForWizard(wizardFor("openrouter"))).toBeUndefined();
+  });
+
+  it("tells the operator the saved key is what an empty screen keeps", () => {
+    upsertLlmProvider({
+      id: "openrouter",
+      kind: "openrouter",
+      apiKey: "sk-or-stored",
+    });
+    expect(
+      emptyKeyMeaningForWizard(configureWizard("openrouter", "openrouter")),
+    ).toBe("Leave empty to keep the key already saved.");
+  });
+});
+
+describe("emptyKeyMeaningForWizard", () => {
+  it("points at .env when there is no saved key to keep", () => {
+    expect(emptyKeyMeaningForWizard(wizardFor("openrouter"))).toContain(".env");
+  });
+
+  it("calls the key optional for a keyless service", () => {
+    expect(
+      emptyKeyMeaningForWizard(wizardFor("openai-compatible", "lmstudio")),
+    ).toContain("Optional for this service");
   });
 });
 
