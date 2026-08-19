@@ -26,12 +26,16 @@ const REASONING_BUBBLE_OVERHEAD_ROWS = 5; // marginTop + paddingTop + 1-line hea
 const TOOL_CARD_BASE_ROWS = 2;
 const ASSISTANT_FOOTER_ROWS = 1;
 /**
- * `FinalisedMessage` hangs a `[copy]` button under every finalised
- * bubble, whatever the role. One row, unconditional — the streaming tail
- * has no button, which is why this is charged here and not in
- * `estimateStreamingTailHeight`.
+ * `FinalisedMessage` hangs a button footer under every finalised bubble,
+ * whatever the role: `[copy]` everywhere, `[try again]` beside it on
+ * user messages. The two share a row, so this stays one row and
+ * unconditional — the day a role earns a second footer line this
+ * estimate has to learn about roles, and an under-count is not cosmetic:
+ * Ink 7 paints an over-tall frame's later lines over its earlier ones
+ * instead of clipping. The streaming tail has no footer at all, which is
+ * why the row is charged here and not in `estimateStreamingTailHeight`.
  */
-const COPY_BUTTON_ROWS = 1;
+const MESSAGE_FOOTER_ROWS = 1;
 
 function bodyLines(text: string): number {
   if (text.length === 0) return 1;
@@ -40,7 +44,7 @@ function bodyLines(text: string): number {
 
 export function estimateMessageHeight(message: ChatMessage): number {
   const bodyRows = bodyLines(message.text);
-  let total = bodyRows + BUBBLE_OVERHEAD_ROWS + COPY_BUTTON_ROWS;
+  let total = bodyRows + BUBBLE_OVERHEAD_ROWS + MESSAGE_FOOTER_ROWS;
   if (message.role === "assistant") {
     if (message.reasoningBlocks && message.reasoningBlocks.length > 0) {
       total += REASONING_BUBBLE_OVERHEAD_ROWS + 1;

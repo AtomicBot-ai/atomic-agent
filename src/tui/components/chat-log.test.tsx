@@ -61,6 +61,35 @@ describe("ChatLog", () => {
     expect(text).toContain("hi there");
   });
 
+  it("offers [try again] beside [copy] on a user message, sharing one row", () => {
+    const state: TuiState = {
+      ...createInitialTuiState(BASE_SESSION),
+      messages: [{ id: "m1", role: "user", text: "list the files", timestamp: 1 }],
+    };
+    const { lastFrame } = render(<ChatLog state={state} />);
+    const text = strip(lastFrame() ?? "");
+    const footer = text.split("\n").find((line) => line.includes("[copy]"));
+    // Same row, not merely present: `estimateMessageHeight` charges one
+    // footer row per message, and Ink 7 paints an over-tall frame's later
+    // lines over its earlier ones instead of clipping it.
+    expect(footer).toContain("[try again]");
+  });
+
+  it("keeps [try again] off assistant and system messages", () => {
+    const state: TuiState = {
+      ...createInitialTuiState(BASE_SESSION),
+      messages: [
+        { id: "m1", role: "assistant", text: "hi there", toolSteps: 0, timestamp: 1 },
+        { id: "m2", role: "system", text: "turn finished", timestamp: 2 },
+      ],
+    };
+    const { lastFrame } = render(<ChatLog state={state} />);
+    const text = strip(lastFrame() ?? "");
+    // Both still copyable; neither carries a command to re-run.
+    expect(text.split("[copy]").length - 1).toBe(2);
+    expect(text).not.toContain("[try again]");
+  });
+
   it("hides the `reply` tool card so it does not duplicate the assistant bubble", () => {
     const state: TuiState = {
       ...createInitialTuiState(BASE_SESSION),

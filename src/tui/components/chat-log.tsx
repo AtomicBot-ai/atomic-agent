@@ -11,6 +11,7 @@ import {
   estimateMessageHeight,
   estimateStreamingTailHeight,
 } from "./chat-message-height.js";
+import { ChatTryAgainButton } from "./chat-try-again-button.js";
 import { ReasoningBubble } from "./reasoning-bubble.js";
 import { SplashBanner } from "./splash-banner.js";
 import { SystemBubble } from "./system-bubble.js";
@@ -167,14 +168,20 @@ interface FinalisedMessageProps {
 }
 
 /**
- * One finalised message plus its copy affordance.
+ * One finalised message plus its footer of affordances.
  *
- * The button hangs below the bubble rather than inside it so the bubble
- * components stay purely presentational, and so the copied text is the
- * message's own `text` — the raw source, before markdown rendering,
- * borders and wrapping. It is attached only to **finalised** messages:
- * the streaming tail is by definition half a message, and a copy taken
- * mid-stream would silently truncate.
+ * The buttons hang below the bubble rather than inside it so the bubble
+ * components stay purely presentational, and so the text they act on is
+ * the message's own `text` — the raw source, before markdown rendering,
+ * borders and wrapping. They are attached only to **finalised**
+ * messages: the streaming tail is by definition half a message, and a
+ * copy taken mid-stream would silently truncate.
+ *
+ * `[try again]` joins `[copy]` on user messages only — the roles differ
+ * in whether re-sending their text means anything, and the argument is
+ * written out in `chat-try-again-button.tsx`. Both buttons share one
+ * row, so the footer costs the same single row for every role and
+ * `estimateMessageHeight` stays role-blind.
  */
 function FinalisedMessage({
   message,
@@ -184,7 +191,10 @@ function FinalisedMessage({
     return (
       <Box flexDirection="column">
         <UserBubble text={message.text} />
-        <ChatCopyButton text={message.text} />
+        <Box flexDirection="row">
+          <ChatCopyButton text={message.text} />
+          <ChatTryAgainButton text={message.text} />
+        </Box>
       </Box>
     );
   }
