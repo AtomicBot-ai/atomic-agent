@@ -12,7 +12,9 @@
 import { getConfig } from "../../config/index.js";
 import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
 import type { UserLlmProviderEntry } from "../../config/llm-config.js";
+import { isAsciiOnly } from "../../llm/provider/openai/ascii-header-guard.js";
 import { normalizeOpenAiBaseUrl } from "../../llm/provider/openai/normalize-openai-base-url.js";
+import { isLoopbackBaseUrl } from "../persist-user-local-models-config.js";
 import { findProviderPreset } from "./provider-presets.js";
 import { OPENAI_COMPAT_DEFAULT_BASE_URL } from "./providers-model-options.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
@@ -98,10 +100,15 @@ export function envHintForWizard(wizard: ProvidersWizardState): string {
  * the operator's own machine have no key at all, and keyless-listing
  * services work before one is entered. Both save with an empty key and
  * send requests without an Authorization header.
+ *
+ * A hand-added compat endpoint pointing at a loopback address is a local
+ * server too, even without a matching preset. A raw `llama-server` on
+ * `http://127.0.0.1:9931` needs no key, so an empty one is valid there.
  */
 export function wizardKeyIsOptional(wizard: ProvidersWizardState): boolean {
   const preset = wizard.presetId ? findProviderPreset(wizard.presetId) : undefined;
-  return Boolean(preset && (preset.local || preset.listsModelsWithoutKey));
+  if (preset && (preset.local || preset.listsModelsWithoutKey)) return true;
+  return wizard.kind === "openai-compatible" && isLoopbackBaseUrl(wizard.baseUrlLine);
 }
 
 /**
@@ -138,6 +145,13 @@ export function emptyKeyMeaningForWizard(wizard: ProvidersWizardState): string {
 export function apiKeyPhaseError(
   wizard: ProvidersWizardState,
 ): string | null {
+  const typed = wizard.apiKeyBuffer.trim();
+  // A non-ASCII key cannot go into an Authorization header. Refusing it
+  // here names the problem on the key screen rather than letting the
+  // first model-list fetch crash with an opaque ByteString error.
+  if (typed && !isAsciiOnly(typed)) {
+    return "API key contains non-ASCII characters. Use a plain ASCII key.";
+  }
   if (wizardKeyIsOptional(wizard)) return null;
   if (apiKeyForWizard(wizard)) return null;
   return `API key required — paste the key, or set ${envHintForWizard(wizard)} in .env first`;

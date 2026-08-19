@@ -4,6 +4,7 @@
  * synchronously through the module cache, same shape as the OpenRouter picker.
  */
 
+import { assertAsciiApiKey } from "./ascii-header-guard.js";
 import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
@@ -55,7 +56,11 @@ export async function fetchOpenAiCompatModels(
 
   const base = normalizeOpenAiBaseUrl(baseUrl);
   const res = await fetch(`${base}/v1/models`, {
-    headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+    // A non-ASCII key would throw an opaque ByteString error from inside
+    // `fetch`; assert first so the failure names the key and the fix.
+    headers: apiKey
+      ? { Authorization: `Bearer ${assertAsciiApiKey(apiKey)}` }
+      : {},
     signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) throw new Error(`http ${res.status}`);

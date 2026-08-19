@@ -173,7 +173,7 @@ function CompatChatModelStep(props: {
     const source = isGemini
       ? "from Gemini /v1beta/openai/models"
       : `from ${baseUrl}/v1/models`;
-    return renderPickList({
+    const pickList = renderPickList({
       title: `Chat model — ${picks.length} ${source}`,
       options: picks.map((id) => ({ label: id })),
       cursor: w.cursor,
@@ -181,6 +181,16 @@ function CompatChatModelStep(props: {
       actionsHint:
         "PgUp/PgDn jump · Enter select · type to enter an id by hand · Esc back",
     });
+    // A rejected submit (empty or non-ASCII key) leaves the wizard on this
+    // step with `w.error` set. The pick list has no error slot of its own,
+    // so without this the operator's Enter reads as doing nothing.
+    if (!w.error) return pickList;
+    return (
+      <Box flexDirection="column" width="100%">
+        {pickList}
+        <Text color={theme.colors.error}>! {w.error}</Text>
+      </Box>
+    );
   }
 
   const hint = !canList

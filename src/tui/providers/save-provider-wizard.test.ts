@@ -197,6 +197,56 @@ describe("saveProviderWizardToConfig", () => {
     expect(getConfig().llm?.activeTextProvider).toBe("lmstudio");
   });
 
+  it("saves a hand-added loopback endpoint with no key", () => {
+    // A raw llama-server on the operator's own machine: no preset, no key,
+    // just a loopback base URL. An empty key is valid here.
+    const built = saveProviderWizardToConfig({
+      ...createProvidersWizardState("add"),
+      kind: "openai-compatible" as const,
+      phase: "chat_model_line" as const,
+      apiKeyBuffer: "",
+      baseUrlLine: "http://127.0.0.1:9931",
+      chatModelLine: "qwen3-30b",
+    });
+
+    expect(built.entry.id).toBe("openai-compatible");
+    expect(built.entry.apiKey).toBeUndefined();
+    expect(process.env.OPENAI_COMPAT_API_KEY).toBeUndefined();
+    expect(getConfig().llm?.activeTextProvider).toBe("openai-compatible");
+  });
+
+  it("still refuses an empty key for a non-loopback custom URL", () => {
+    // A remote OpenAI-compatible host with no preset needs a key: the
+    // loopback exception must not weaken the check for real endpoints.
+    expect(() =>
+      saveProviderWizardToConfig({
+        ...createProvidersWizardState("add"),
+        kind: "openai-compatible" as const,
+        phase: "chat_model_line" as const,
+        apiKeyBuffer: "",
+        baseUrlLine: "https://api.example.com",
+        chatModelLine: "some-model",
+      }),
+    ).toThrow(/API key is empty/);
+  });
+
+  it("refuses a non-ASCII key before it can reach a header", () => {
+    // A stray Cyrillic character would otherwise crash the first request
+    // with an opaque ByteString error; catch it at save time instead.
+    expect(() =>
+      saveProviderWizardToConfig({
+        ...createProvidersWizardState("add"),
+        kind: "openai-compatible" as const,
+        phase: "chat_model_line" as const,
+        apiKeyBuffer: "sk-т", // Cyrillic "т", code point 1090
+        baseUrlLine: "https://api.example.com",
+        chatModelLine: "some-model",
+      }),
+    ).toThrow(/non-ASCII/);
+    // Nothing was written to .env for a rejected key.
+    expect(process.env.OPENAI_COMPAT_API_KEY).toBeUndefined();
+  });
+
   it("gives a second entry for the same service a numbered id", () => {
     saveProviderWizardToConfig(groqWizard("gsk-groq"));
     const second = saveProviderWizardToConfig({

@@ -28,6 +28,36 @@ export function normalizeLocalLlmBaseUrl(raw: string): string {
 }
 
 /**
+ * True when `url`'s host is a loopback / on-machine address, at any port.
+ * Covers the IPv4 loopback and unspecified addresses, `localhost` and any
+ * `*.localhost` subdomain (reserved for the loopback by RFC 6761), and the
+ * IPv6 loopback in both bare and bracketed forms. A URL without a scheme
+ * (`localhost:9931`) parses with the host in the wrong slot, so it is
+ * normalized to `http://` first, matching how the wizard stores base URLs.
+ */
+export function isLoopbackBaseUrl(url: string): boolean {
+  const trimmed = url.trim();
+  if (trimmed.length === 0) return false;
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
+    ? trimmed
+    : `http://${trimmed}`;
+  try {
+    const host = new URL(withScheme).hostname.toLowerCase();
+    return (
+      host === "127.0.0.1" ||
+      host === "0.0.0.0" ||
+      host === "localhost" ||
+      host.endsWith(".localhost") ||
+      host === "::1" ||
+      // `new URL` keeps IPv6 hosts bracketed.
+      host === "[::1]"
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * True when `url` resolves to the managed daemon's own loopback address.
  * Pointing external mode at the managed port is legal — it is how you
  * drive a daemon you started yourself with `atomic-agent models start` —
@@ -37,12 +67,7 @@ export function normalizeLocalLlmBaseUrl(raw: string): string {
 export function pointsAtManagedDaemon(url: string, managedPort: number): boolean {
   try {
     const parsed = new URL(url);
-    const loopback =
-      parsed.hostname === "127.0.0.1" ||
-      parsed.hostname === "localhost" ||
-      // `new URL` keeps IPv6 hosts bracketed.
-      parsed.hostname === "[::1]";
-    return loopback && parsed.port === String(managedPort);
+    return isLoopbackBaseUrl(url) && parsed.port === String(managedPort);
   } catch {
     return false;
   }

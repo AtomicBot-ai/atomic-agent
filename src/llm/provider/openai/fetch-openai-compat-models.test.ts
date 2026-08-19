@@ -93,4 +93,19 @@ describe("fetchOpenAiCompatModels", () => {
     ).rejects.toThrow("http 401");
     expect(getCachedOpenAiCompatModels("https://locked.example")).toBeUndefined();
   });
+
+  it("rejects a non-ASCII key with a readable reason, never a ByteString crash", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [{ id: "m" }] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    // "sk-т" carries a Cyrillic character that cannot sit in a header.
+    await expect(
+      fetchOpenAiCompatModels("https://byte.example", "sk-т"),
+    ).rejects.toThrow(/non-ASCII/);
+    // The guard fires before the request, so `fetch` never runs.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });

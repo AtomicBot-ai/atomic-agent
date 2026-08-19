@@ -1,3 +1,5 @@
+import { assertAsciiApiKey } from "./ascii-header-guard.js";
+
 export type OpenAiHttpDeps = {
   baseUrl: string;
   apiKey: string;
@@ -107,8 +109,12 @@ export function buildOpenAiHeaders(
     accept: stream ? "text/event-stream" : "application/json",
     // Keyless servers (a local LM Studio, an unauthenticated vLLM) get no
     // authorization header at all: `Bearer ` with an empty token is
-    // malformed and some proxies reject it outright.
-    ...(deps.apiKey ? { authorization: `Bearer ${deps.apiKey}` } : {}),
+    // malformed and some proxies reject it outright. A non-ASCII key
+    // would throw an opaque ByteString error from inside `fetch`; assert
+    // first so the failure names the key and the fix.
+    ...(deps.apiKey
+      ? { authorization: `Bearer ${assertAsciiApiKey(deps.apiKey)}` }
+      : {}),
     ...deps.extraHeaders,
   };
 }

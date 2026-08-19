@@ -1,11 +1,13 @@
 import { getConfig } from "../../config/index.js";
 import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
+import { isAsciiOnly } from "../../llm/provider/openai/ascii-header-guard.js";
 import {
   setActiveTextProviderInConfig,
   upsertLlmProvider,
   writeProviderApiKeyToDotenv,
 } from "../persist-llm-provider.js";
 import { findProviderPreset } from "./provider-presets.js";
+import { wizardKeyIsOptional } from "./providers-wizard-target.js";
 import {
   AIMLAPI_DEFAULT_CHAT_MODEL,
   GEMINI_DEFAULT_CHAT_MODEL,
@@ -55,11 +57,19 @@ export function saveProviderWizardToConfig(
   );
   let entry = built.entry;
   const preset = wizard.presetId ? findProviderPreset(wizard.presetId) : undefined;
-  // Local servers have no key at all, and keyless-listing services work
-  // before one is entered, so an empty key is a valid state for both:
-  // nothing is written to .env and requests go out without Authorization.
-  const keyOptional = Boolean(preset && (preset.local || preset.listsModelsWithoutKey));
+  // Local servers (including a hand-added loopback endpoint) have no key
+  // at all, and keyless-listing services work before one is entered, so
+  // an empty key is a valid state for both: nothing is written to .env
+  // and requests go out without Authorization.
+  const keyOptional = wizardKeyIsOptional(wizard);
   if (wizard.apiKeyBuffer.trim().length > 0) {
+    if (!isAsciiOnly(wizard.apiKeyBuffer)) {
+      // A non-ASCII key cannot go into an Authorization header and would
+      // otherwise crash the first request with an opaque ByteString error.
+      throw new Error(
+        "API key contains non-ASCII characters. Use a plain ASCII key.",
+      );
+    }
     writeProviderApiKeyToDotenv(kind, wizard.apiKeyBuffer, preset?.envVar);
   } else if (existing?.apiKey) {
     entry = { ...entry, apiKey: existing.apiKey };
