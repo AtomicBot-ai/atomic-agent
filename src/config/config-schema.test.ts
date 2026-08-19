@@ -992,4 +992,12 @@ describe("parseUserConfigFile", () => {
       }),
     ).toThrow(/timeoutMs/);
   });
+  it("upgrades a v37 file to the current version untouched", () => {
+    // v38 only ADDED the optional `llm.runMode` sub-key, so a v37 file
+    // needs no migration code — absence already is the v37 behaviour.
+    const parsed = parseUserConfigFile({ version: 37 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(USER_CONFIG_VERSION).toBe(38);
+    expect(parsed.llm?.runMode).toBeUndefined();
+  });
 });

@@ -11,12 +11,13 @@ import {
 } from "./menu-registry.js";
 
 /**
- * The slash palette exactly as it shipped in v0.2.2, before the registry
- * refactor. `SLASH_COMMANDS` is now derived from `MENU`; this snapshot is
- * what makes "no visible change" a claim the suite can check rather than
- * a promise in a PR description.
+ * The slash palette exactly as `feat/run-mode-tui` (#163) declares it by hand.
+ * `SLASH_COMMANDS` is derived from `MENU` on this branch, so this is a
+ * cross-check between two independent views of the command surface rather
+ * than a snapshot of my own output: if the registry and #163 ever disagree
+ * about a command, its description, its aliases or its position, this fails.
  */
-const V0_2_2_SLASH_COMMANDS = [
+const EXPECTED_SLASH_COMMANDS = [
   {
     name: "dump",
     description:
@@ -62,7 +63,11 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "chat",
     description:
       "return to single-view chat mode",
-    aliases: ["run"],
+  },
+  {
+    name: "run",
+    description:
+      "run mode: `/run` (picker) | `/run local|cloud|fusion [0-100]` — fusion orchestrates on cloud, executes locally",
   },
   {
     name: "observe",
@@ -182,9 +187,10 @@ const V0_2_2_SLASH_COMMANDS = [
   },
 ];
 
+
 describe("menu registry", () => {
-  it("derives the v0.2.2 slash palette unchanged — same commands, same order", () => {
-    expect(SLASH_COMMANDS).toEqual(V0_2_2_SLASH_COMMANDS);
+  it("derives exactly the palette #163 declares — same commands, same order", () => {
+    expect(SLASH_COMMANDS).toEqual(EXPECTED_SLASH_COMMANDS);
   });
 
   it("gives every node a unique id", () => {

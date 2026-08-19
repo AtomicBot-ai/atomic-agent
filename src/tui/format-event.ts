@@ -40,6 +40,14 @@ export type FeedLineInput =
   | {
       type: "rare_tool_autoloaded";
       tool: string;
+    }
+  | {
+      type: "step_routed";
+      stepIndex: number;
+      role: "orchestrator" | "executor";
+      providerId: string;
+      complexity: number;
+      cloudShare: number;
     };
 
 const ARGS_PREVIEW_LIMIT = 160;
@@ -65,6 +73,15 @@ export function formatFeedLine(input: FeedLineInput): string {
     }
     case "rare_tool_autoloaded": {
       return `  ↻ loaded schema for ${input.tool} after tool error`;
+    }
+    case "step_routed": {
+      // Show the cutoff alongside the score so the line explains the
+      // decision rather than just announcing it.
+      const cutoff = 100 - input.cloudShare;
+      const leg =
+        input.role === "orchestrator" ? "cloud orchestrator" : "local executor";
+      const comparison = input.role === "orchestrator" ? "≥" : "<";
+      return `[step ${input.stepIndex}] → ${leg} ${input.providerId} (complexity ${input.complexity} ${comparison} ${cutoff})`;
     }
     default:
       return "";

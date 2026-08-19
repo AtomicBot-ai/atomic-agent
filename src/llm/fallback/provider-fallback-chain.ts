@@ -36,6 +36,17 @@ export interface ProviderSwitchNotice {
   reason: string;
 }
 
+/** Extra switching policy for one `advanceFrom` call. */
+export interface AdvanceOptions {
+  /**
+   * Resume the scan from the chain head rather than from just after
+   * `fromId`. Set when the failed attempt was a fusion-preferred start,
+   * whose position in the chain carries no "already tried everything
+   * above me" meaning.
+   */
+  restartFromHead?: boolean;
+}
+
 /** What `pickProvider` decided for the turn about to run. */
 export interface ProviderPick {
   /** Provider id to route this turn through. */
@@ -117,8 +128,20 @@ export class ProviderFallbackChain {
    * chain, drops a stale override that no longer names a chain member,
    * and — when the primary's cooldown has elapsed and the probe throttle
    * allows — routes this one turn back to the primary as a probe.
+   *
+   * `preferredId` is the fusion router's chosen leg for THIS call. It
+   * changes only the starting link, and health still wins: the
+   * preference is ignored while that specific provider is in cooldown,
+   * and a failure still advances through the chain as usual. It never
+   * sets or clears `overrideId` and is never reported as a probe —
+   * both of those are primary-recovery concepts, and a fusion pick is
+   * not a fallover. The id need not be a chain member; `advanceFrom`
+   * already restarts from the chain head for a non-member.
    */
-  pickProvider(partitionKey: string = DEFAULT_PARTITION): ProviderPick {
+  pickProvider(
+    partitionKey: string = DEFAULT_PARTITION,
+    preferredId?: string,
+  ): ProviderPick {
     const { chain } = this.resolve();
     const primary = chain[0];
     if (!primary) {
@@ -133,6 +156,16 @@ export class ProviderFallbackChain {
     // override provider drops the override entirely.
     if (p.overrideId && !chain.includes(p.overrideId)) {
       this.clearOverride(p);
+    }
+
+    // Fusion routing preference, checked before the override/probe
+    // logic so a healthy preferred leg is honoured — but only while
+    // that leg itself is healthy, so a tripped breaker still wins.
+    if (preferredId !== undefined && preferredId.length > 0) {
+      const preferred = this.breaker(p, preferredId);
+      if (this.now() >= preferred.cooldownUntil) {
+        return { providerId: preferredId, isProbe: false };
+      }
     }
 
     if (!p.overrideId) {
@@ -161,6 +194,7 @@ export class ProviderFallbackChain {
     fromId: string,
     err: unknown,
     partitionKey: string = DEFAULT_PARTITION,
+    options?: AdvanceOptions,
   ): string | null {
     const decision = shouldAdvance(err);
     if (!decision.advance) return null;
@@ -171,8 +205,14 @@ export class ProviderFallbackChain {
 
     const idx = chain.indexOf(fromId);
     // Next healthy link after `fromId`. When `fromId` is not in the chain
-    // (raced config edit) start from the top.
-    const startFrom = idx < 0 ? 0 : idx + 1;
+    // (raced config edit) start from the top — and likewise when the
+    // failure came from a fusion-preferred start, which can sit anywhere
+    // in the chain and is commonly its TAIL. Advancing "after" the tail
+    // would strand a recoverable turn with the rest of the chain untried.
+    // The `candidate === fromId` guard below keeps the failed link out
+    // of the scan either way.
+    const startFrom =
+      idx < 0 || options?.restartFromHead === true ? 0 : idx + 1;
     for (let i = startFrom; i < chain.length; i += 1) {
       const candidate = chain[i]!;
       if (candidate === fromId) continue;

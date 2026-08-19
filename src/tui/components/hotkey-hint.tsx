@@ -58,6 +58,15 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
       { key: "esc", label: "abort run" },
     ];
   }
+  if (state.runModePanel.picker) {
+    return [
+      { key: "↑↓", label: "mode" },
+      { key: "←→", label: "share" },
+      { key: "0-9", label: "set" },
+      { key: "enter", label: "apply" },
+      { key: "esc", label: "cancel" },
+    ];
+  }
   if (state.slashPaletteOpen) {
     return [
       { key: "↑↓", label: "select" },
@@ -107,7 +116,10 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
   // Six chips is the cap for one row on narrow terminals. `ctrl+p` takes
   // the slot `/` used to hold: the menu contains every slash command as
   // well as every destination, so advertising the superset costs nothing
-  // and `/` keeps working for anyone who already reaches for it.
+  // and `/` keeps working for anyone who already reaches for it. ctrl+r
+  // (cycle run mode) stays unadvertised for the same reason ctrl+b was —
+  // the mode strip above the chat is its visible entry point, and the
+  // menu now lists Local / Cloud / Fusion outright.
   return [
     { key: "enter", label: "send" },
     { key: "alt+enter", label: "newline" },

@@ -87,3 +87,68 @@ describe("ProviderRegistry", () => {
     ).rejects.toThrow(/unknown llm provider kind/);
   });
 });
+
+describe("ProviderRegistry pinned providers", () => {
+  /** Minimal stand-in that records whether it was torn down. */
+  function fake(id: string) {
+    const state = { closed: false };
+    const provider = {
+      id,
+      name: id,
+      capabilities: {},
+      toolCallAdapter: null,
+      streamConsumer: null,
+      async complete() {
+        throw new Error("unused");
+      },
+      async *completeStream() {
+        throw new Error("unused");
+      },
+      async describeImage() {
+        throw new Error("unused");
+      },
+      async health() {
+        return { reachable: true, status: 200, error: null, latencyMs: 1 };
+      },
+      async close() {
+        state.closed = true;
+      },
+    };
+    return { provider, state };
+  }
+
+  function registryOf(ids: string[]) {
+    const fakes = ids.map((id) => fake(id));
+    const map = new Map(
+      fakes.map((f) => [f.provider.id, f.provider as never] as const),
+    );
+    // `new ProviderRegistry(...)` is private to the module's factory, so
+    // reach it the same way `fromConfig` does.
+    const registry = Reflect.construct(ProviderRegistry, [ids[0], map]) as
+      ProviderRegistry;
+    return { registry, fakes };
+  }
+
+  it("closes the previous provider on a plain swap", async () => {
+    const { registry, fakes } = registryOf(["cloud", "local"]);
+    await registry.swapActive("local");
+    expect(fakes[0]!.state.closed).toBe(true);
+  });
+
+  it("keeps a pinned provider open across a swap", async () => {
+    // Fusion keeps both legs live; closing the one it is about to route
+    // to would break the executor leg on the very next step.
+    const { registry, fakes } = registryOf(["cloud", "local"]);
+    registry.setPinnedProviderIds(() => new Set(["cloud", "local"]));
+    await registry.swapActive("local");
+    expect(fakes[0]!.state.closed).toBe(false);
+    expect(registry.activeText.id).toBe("local");
+  });
+
+  it("resumes closing once nothing is pinned", async () => {
+    const { registry, fakes } = registryOf(["cloud", "local"]);
+    registry.setPinnedProviderIds(() => new Set<string>());
+    await registry.swapActive("local");
+    expect(fakes[0]!.state.closed).toBe(true);
+  });
+});

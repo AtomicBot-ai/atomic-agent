@@ -66,6 +66,13 @@ interface MenuNodeBase {
    */
   readonly chord?: string;
   readonly slash?: MenuSlash;
+  /**
+   * Literal command line run when this node is activated, for entries that
+   * take arguments (`/run fusion`). Kept separate from {@link MenuSlash}
+   * because the palette should list `/run` once, not once per mode — this
+   * is an activation channel, not a listing.
+   */
+  readonly command?: string;
   /** Parent submenu id, for nodes one level down. */
   readonly parent?: string;
 }
@@ -106,7 +113,6 @@ export const MENU: readonly MenuNode[] = [
       name: "chat",
       description:
         "return to single-view chat mode",
-      aliases: ["run"],
       rank: 8,
     },
     section: "run",
@@ -425,6 +431,53 @@ export const MENU: readonly MenuNode[] = [
         "abort the running turn",
       rank: 5,
     },
+  },
+  {
+    kind: "action",
+    id: "run.picker",
+    label: "Run type\u2026",
+    group: "run",
+    slash: {
+      name: "run",
+      description:
+        "run mode: `/run` (picker) | `/run local|cloud|fusion [0-100]` \u2014 fusion orchestrates on cloud, executes locally",
+      // Fractional on purpose: `/run` slots between `chat` (8) and
+      // `observe` (9) without renumbering every entry after it.
+      rank: 8.5,
+    },
+  },
+  {
+    kind: "submenu",
+    id: "run.mode",
+    label: "Run type",
+    group: "run",
+  },
+  {
+    kind: "action",
+    id: "run.mode.local",
+    label: "Local",
+    group: "run",
+    parent: "run.mode",
+    chord: "1",
+    command: "/run local",
+  },
+  {
+    kind: "action",
+    id: "run.mode.cloud",
+    label: "Cloud",
+    group: "run",
+    parent: "run.mode",
+    chord: "2",
+    command: "/run cloud",
+  },
+  {
+    kind: "action",
+    id: "run.mode.fusion",
+    label: "Fusion",
+    group: "run",
+    parent: "run.mode",
+    chord: "3",
+    command: "/run fusion",
   },
   {
     kind: "action",

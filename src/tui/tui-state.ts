@@ -47,6 +47,10 @@ import {
   type PrivacyPanelState,
 } from "./privacy/privacy-panel-state.js";
 import {
+  createInitialRunModePanelState,
+  type RunModePanelState,
+} from "./run-mode/run-mode-panel-state.js";
+import {
   createInitialProvidersPanelState,
   type ProvidersPanelState,
 } from "./providers/providers-panel-state.js";
@@ -365,6 +369,8 @@ export interface TuiState {
   importPanel: ImportPanelState;
   /** State slice driving the Privacy tab (data-egress preferences). */
   privacyPanel: PrivacyPanelState;
+  /** Run-section mode strip (Local / Cloud / Fusion) + its dial overlay. */
+  runModePanel: RunModePanelState;
   /** Cloud / local LLM provider registry (hot-swap active text provider). */
   providersPanel: ProvidersPanelState;
   /** Unified operator LLM panel combining provider routing and local daemon state. */
@@ -521,6 +527,7 @@ export function createInitialTuiState(
     mcpPanel: createInitialMcpPanelState(),
     importPanel: createInitialImportPanelState(),
     privacyPanel: createInitialPrivacyPanelState(),
+    runModePanel: createInitialRunModePanelState(),
     providersPanel: createInitialProvidersPanelState(),
     llmPanel,
     fallbackPanel: createInitialFallbackPanelState(),

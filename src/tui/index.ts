@@ -47,3 +47,14 @@ export {
   resolveStartupTheme,
 } from "./theme/detect-terminal-background.js";
 export type { TerminalBackgroundMode } from "./theme/detect-terminal-background.js";
+export {
+  createInitialRunModePanelState,
+  cycleRunMode,
+  reduceRunModeAction,
+  RUN_MODES,
+  RunModeOrchestrator,
+  runModeModelSummary,
+  runModePillLabel,
+  type RunModePanelState,
+} from "./run-mode/index.js";
+export { setRunModeInConfig, RunModePersistError } from "./persist-run-mode.js";

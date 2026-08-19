@@ -62,3 +62,12 @@ export type {
   VisionRequest,
   VisionResult,
 } from "./provider/index.js";
+export {
+  describeRunModeDegradation,
+  resolveRunMode,
+} from "./run-mode/index.js";
+export type {
+  ResolvedRunMode,
+  RunModeDegradation,
+  RunModeDegradationReason,
+} from "./run-mode/index.js";
