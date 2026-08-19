@@ -84,6 +84,12 @@ function explainModelListError(error: string, w: ProvidersWizardState): string {
   return `could not list models from ${service} (${error})`;
 }
 
+/**
+ * What `submitting` means now that a save starts with a live key check:
+ * the wait is the provider answering, and Esc gets out of it.
+ */
+const CHECKING_KEY_HINT = " · checking the key with the provider… (Esc cancels)";
+
 function maskedKey(buffer: string): string {
   const masked = "•".repeat(Math.min(buffer.length, 48));
   const extra = buffer.length > 48 ? `+${buffer.length - 48}` : "";
@@ -183,7 +189,9 @@ function CompatChatModelStep(props: {
     });
   }
 
-  const hint = !canList
+  const hint = w.submitting
+    ? CHECKING_KEY_HINT.trimStart()
+    : !canList
     ? "Enter to save · Esc back"
     : status.loading
       ? isGemini
@@ -314,7 +322,7 @@ export function ProvidersWizard(props: {
         ) : null}
         <Text color={theme.colors.muted}>
           Enter to continue · Esc back · Backspace edit
-          {w.submitting ? " · saving…" : ""}
+          {w.submitting ? CHECKING_KEY_HINT : ""}
         </Text>
       </Box>
     );
