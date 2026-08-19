@@ -31,6 +31,7 @@ describe("loadConfig", () => {
     delete process.env.ATOMIC_AGENT_LLAMA_API_KEY;
     delete process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS;
     delete process.env.ATOMIC_AGENT_BROWSER_CHANNEL;
+    delete process.env.ATOMIC_AGENT_GRAMMARS_DIR;
     delete process.env.ATOMIC_LOADCONFIG_TEST_KEY;
     resetConfigCache();
     vi.restoreAllMocks();
@@ -211,5 +212,32 @@ describe("loadConfig", () => {
     });
     resetConfigCache();
     expect(loadConfig().paths.localModelsDataDir).toBe(override);
+  });
+
+  it("resolves grammarsDir without consulting the working directory", () => {
+    // The Ctrl+N "new terminal window" spawn starts the agent by absolute
+    // path from the operator's home, so cwd holds no `grammars/` and the
+    // old cwd-relative default died on ENOENT tool-call.gbnf. Standing in
+    // an empty temp dir reproduces exactly that shape.
+    const elsewhere = mkdtempSync(join(tmpdir(), "atomic-cwd-"));
+    const originalCwd = process.cwd();
+    try {
+      process.chdir(elsewhere);
+      resetConfigCache();
+      const grammarsDir = loadConfig().paths.grammarsDir;
+      expect(grammarsDir.startsWith(elsewhere)).toBe(false);
+      expect(existsSync(join(grammarsDir, "tool-call.gbnf"))).toBe(true);
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("still lets ATOMIC_AGENT_GRAMMARS_DIR win over the packaged copy", () => {
+    const override = join(stateDir, "custom-grammars");
+    mkdirSync(override);
+    process.env.ATOMIC_AGENT_GRAMMARS_DIR = override;
+    resetConfigCache();
+    expect(loadConfig().paths.grammarsDir).toBe(override);
   });
 });
