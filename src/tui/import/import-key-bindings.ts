@@ -48,6 +48,12 @@ function handleConfigureKey(
   form: ImportFormState,
 ): boolean {
   const { dispatch, callbacks } = ctx;
+  // Decline Esc so `handlePanelEscape` can turn it into "back to Run" —
+  // the gesture the hint strip advertises on every debug tab. The
+  // catch-all `return true` at the bottom of this handler (which swallows
+  // stray letters so they cannot leak into the form) would otherwise eat
+  // it and leave the operator with no way off the Import tab.
+  if (key.escape) return false;
   if (key.ctrl && key.return) {
     callbacks.onImportPreview?.(form);
     return true;
