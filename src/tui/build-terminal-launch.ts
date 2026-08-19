@@ -106,16 +106,37 @@ export function agentArgv(input: TerminalLaunchInput): readonly string[] {
 }
 
 /**
- * A freshly spawned terminal starts a login shell and does **not**
- * inherit our environment, so a non-default state dir has to travel
- * inside the command line — otherwise the second window silently talks
- * to a different `~/.atomic-agent`.
+ * Env vars the child must be told about explicitly, in the order they
+ * are emitted. A freshly spawned terminal starts a login shell and does
+ * **not** inherit our environment, so anything that steers where the
+ * agent reads its state or its packaged assets has to travel inside the
+ * command line — otherwise the second window silently talks to a
+ * different `~/.atomic-agent`, or resolves `grammars/` and
+ * `starter-skills/` from its own cwd and disagrees with the parent about
+ * which copy is authoritative.
  */
+const FORWARDED_ENV: readonly string[] = [
+  "ATOMIC_AGENT_STATE_DIR",
+  "ATOMIC_AGENT_GRAMMARS_DIR",
+  "ATOMIC_AGENT_STARTER_SKILLS_DIR",
+];
+
+/** `NAME='value' ` for every forwarded var that is actually set. */
+function forwardedEnv(
+  input: TerminalLaunchInput,
+  format: (name: string, value: string) => string,
+): string {
+  return FORWARDED_ENV.map((name) => {
+    const value = input.env[name];
+    return value ? format(name, value) : "";
+  }).join("");
+}
+
 function posixCommandLine(input: TerminalLaunchInput): string {
-  const stateDir = input.env.ATOMIC_AGENT_STATE_DIR;
-  const prefix = stateDir
-    ? `ATOMIC_AGENT_STATE_DIR=${shellQuote(stateDir)} `
-    : "";
+  const prefix = forwardedEnv(
+    input,
+    (name, value) => `${name}=${shellQuote(value)} `,
+  );
   const agent = agentArgv(input).map(shellQuote).join(" ");
   return `cd ${shellQuote(input.cwd)} && ${prefix}${agent}`;
 }
@@ -168,8 +189,10 @@ function win32Launch(input: TerminalLaunchInput): TerminalLaunch {
       label: "Windows Terminal",
     };
   }
-  const stateDir = input.env.ATOMIC_AGENT_STATE_DIR;
-  const prefix = stateDir ? `set "ATOMIC_AGENT_STATE_DIR=${stateDir}" && ` : "";
+  const prefix = forwardedEnv(
+    input,
+    (name, value) => `set "${name}=${value}" && `,
+  );
   const command = `${prefix}${agent.map(cmdQuote).join(" ")}`;
   return {
     cmd: "cmd.exe",
