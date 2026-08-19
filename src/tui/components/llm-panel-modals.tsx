@@ -3,7 +3,12 @@ import type { ReactElement, ReactNode } from "react";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { ProvidersWizard } from "./providers-wizard.js";
-import { parseExternalUrl } from "../llm-panel/llm-panel-modal-key-bindings.js";
+import {
+  handleLlmModalKey,
+  parseExternalUrl,
+} from "../llm-panel/llm-panel-modal-key-bindings.js";
+import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
+import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import { filteredPickerModels } from "../providers/providers-panel-state.js";
 
 /** Upper bound for the picker's list window (roomy terminals). */
@@ -180,15 +185,31 @@ export function LlmPanelModals({
           // the fixed-height note above. truncate-end keeps a long id
           // from wrapping into a second line and changing the height.
           return (
-            <Text
+            // Two-step, like the inline list: Enter here repoints the
+            // chat route at this model. Registered at the modal layer
+            // because that is the only layer the registry accepts while
+            // this box owns the keyboard.
+            <MouseListRow
               key={`row-${i}`}
-              color={selected ? theme.colors.accent : undefined}
-              wrap="truncate-end"
+              layer={MOUSE_LAYER_MODAL}
+              selected={selected}
+              onSelect={(mouse) =>
+                mouse.dispatch({
+                  type: "providers_chat_model_picker_cursor_set",
+                  cursor: idx,
+                })
+              }
+              onActivate={pressEnter(handleLlmModalKey)}
             >
-              {selected ? "› " : "  "}
-              {id}
-              {isCurrent ? <Text color={theme.colors.success}> current</Text> : null}
-            </Text>
+              <Text
+                color={selected ? theme.colors.accent : undefined}
+                wrap="truncate-end"
+              >
+                {selected ? "› " : "  "}
+                {id}
+                {isCurrent ? <Text color={theme.colors.success}> current</Text> : null}
+              </Text>
+            </MouseListRow>
           );
         })}
         {blankRows(blanks)}

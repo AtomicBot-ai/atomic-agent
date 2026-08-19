@@ -57,18 +57,31 @@ function strip(value: string): string {
 
 const tick = () => new Promise((r) => setTimeout(r, 25));
 
-function makeApp() {
+/** What a terminal sends for ↓ — spelled out so an editor cannot eat it. */
+const DOWN_ARROW = "\u001B[B";
+
+/**
+ * `holdRows: true` keeps the provider refresh bottled up until the test
+ * calls `releaseRows()`. That is the shape of a cold TUI: the rows come
+ * from the orchestrator, and until they land nothing can say whether the
+ * active route is cloud or local.
+ */
+function makeApp(options: { holdRows?: boolean } = {}) {
   const bus = makeTuiEventBus();
   const orchestrator = new ProvidersOrchestrator({} as AgentRuntime, bus);
   const onProvidersSelectChatModel = vi.fn();
+  let rowsAllowed = !options.holdRows;
+  const refresh = (): void => {
+    orchestrator.refresh();
+    void orchestrator.ensureInlineModels(null);
+  };
   const callbacks: TuiAppCallbacks = {
     onApprovalDecision: () => {},
     onAbort: () => {},
     onQuit: () => {},
     onMessageSubmitted: () => {},
     onProvidersTabRefresh: () => {
-      orchestrator.refresh();
-      void orchestrator.ensureInlineModels(null);
+      if (rowsAllowed) refresh();
     },
     onProvidersSelectChatModel,
     onProvidersInlineModelsEnsureRequested: (providerId) =>
@@ -77,7 +90,19 @@ function makeApp() {
   const rendered = render(
     <TuiApp session={SESSION} bus={bus} callbacks={callbacks} />,
   );
-  return { ...rendered, onProvidersSelectChatModel };
+  return {
+    ...rendered,
+    onProvidersSelectChatModel,
+    releaseRows: () => {
+      rowsAllowed = true;
+      refresh();
+    },
+  };
+}
+
+/** `(3/21)` → `3/21`; `<none>` when the list is not on screen. */
+function modelCounter(frame: string): string {
+  return frame.match(/↑\/↓ move \(([^)]*)\)/)?.[1] ?? "<none>";
 }
 
 afterEach(() => {
@@ -188,6 +213,52 @@ describe("full-app inline model list (ink render, real orchestrator)", () => {
     const filtered = strip(lastFrame() ?? "");
     expect(filtered).toContain("vendor/model-353");
     expect(filtered).toContain("(1/1 of 355)");
+
+    unmount();
+  });
+
+  it("the first ↓ after a cold /model moves the cursor", async () => {
+    currentConfig = configWithNous("https://app-cold.nous.example");
+    const models = Array.from({ length: 20 }, (_, i) => `vendor/model-${i}`);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ data: models.map((id) => ({ id })) }),
+      })),
+    );
+
+    const { lastFrame, stdin, unmount, releaseRows } = makeApp({
+      holdRows: true,
+    });
+    await tick();
+    stdin.write("/model");
+    await tick();
+    stdin.write("\r");
+    await tick();
+    // The rows /model needed to resolve its pane only land now.
+    releaseRows();
+    await tick();
+    await tick();
+
+    const opened = strip(lastFrame() ?? "");
+    expect(opened).toContain("Cloud text models");
+    // The deferred half of the request has to arrive with the rows:
+    // without it the pane is Cloud but the filter row never took the
+    // keyboard, so typing fires panel hotkeys instead of filtering.
+    expect(opened).toContain("type to filter");
+    expect(modelCounter(opened)).toBe("1/21");
+
+    stdin.write(DOWN_ARROW);
+    await tick();
+    // The bug this pins: the cursor was parked on the provider row above
+    // the section, so this press only climbed into the list and the
+    // counter stayed at 1/21 — one keystroke silently eaten.
+    expect(modelCounter(strip(lastFrame() ?? ""))).toBe("2/21");
+
+    stdin.write(DOWN_ARROW);
+    await tick();
+    expect(modelCounter(strip(lastFrame() ?? ""))).toBe("3/21");
 
     unmount();
   });

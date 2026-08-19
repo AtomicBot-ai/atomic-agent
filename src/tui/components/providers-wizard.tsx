@@ -36,6 +36,31 @@ import type {
   ProvidersWizardState,
 } from "../providers/providers-wizard-state.js";
 import { renderPickList } from "./wizard-pick-list.js";
+import type { MouseContextValue } from "../mouse/mouse-context.js";
+import { pressEnter } from "../mouse/mouse-list-row.js";
+import { handleLlmModalKey } from "../llm-panel/llm-panel-modal-key-bindings.js";
+
+/**
+ * Click wiring shared by every pick list the wizard shows, so the four
+ * screens cannot drift apart. A click on an unselected row only moves
+ * the wizard's own cursor; a click on the selected row is replayed as
+ * Enter through `handleLlmModalKey`, the same entry point the keyboard
+ * uses, so whatever Enter advances or saves today a second click does
+ * too.
+ */
+const PICK_LIST_MOUSE = {
+  onRowSelect: (index: number, mouse: MouseContextValue): void => {
+    const wizard = mouse.getState().providersPanel.wizard;
+    // The wizard can close between the paint and the click; there is
+    // nothing to move a cursor in then.
+    if (!wizard) return;
+    mouse.dispatch({
+      type: "providers_wizard_updated",
+      wizard: { ...wizard, cursor: index },
+    });
+  },
+  onRowActivate: pressEnter(handleLlmModalKey),
+} as const;
 
 const KIND_LABELS: Record<ProvidersWizardKind, string> = {
   "claude-cli":
@@ -209,6 +234,7 @@ function CompatChatModelStep(props: {
         w.submitting,
       ),
       ...(props.maxRows === undefined ? {} : { maxRows: props.maxRows }),
+      ...PICK_LIST_MOUSE,
       error: w.error,
     });
   }
@@ -297,6 +323,7 @@ function CatalogChatModelStep(props: {
     moveHint: "j/k move",
     actionsHint: listActionsHint(actionsHint, w.submitting),
     ...(props.maxRows === undefined ? {} : { maxRows: props.maxRows }),
+    ...PICK_LIST_MOUSE,
     error: w.error,
   });
 }
@@ -327,6 +354,7 @@ export function ProvidersWizard(props: {
       moveHint: "j/k move",
       actionsHint: "Enter pick · Esc cancel",
       ...maxRows,
+      ...PICK_LIST_MOUSE,
       error: w.error,
     });
   }
@@ -395,6 +423,7 @@ export function ProvidersWizard(props: {
         w.submitting,
       ),
       ...maxRows,
+      ...PICK_LIST_MOUSE,
       error: w.error,
     });
   }

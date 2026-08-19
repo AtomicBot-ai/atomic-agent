@@ -46,6 +46,15 @@ export interface LlmPanelState {
    * `f` or `/model`.
    */
   cloudModelFilterFocused: boolean;
+  /**
+   * `/model` asked for the filter row while `syncModeToActiveRoute` was
+   * still waiting on provider rows, so the pane was not yet known to be
+   * Cloud and the focus could not be applied. The refresh that resolves
+   * the route applies it — see `focusCloudModelFilter`. Without this the
+   * request was simply dropped and `/model` landed on an unfocused pane
+   * with the cursor still sitting on a provider row above the list.
+   */
+  pendingCloudFilterFocus: boolean;
 }
 
 export function createInitialLlmPanelState(): LlmPanelState {
@@ -60,6 +69,7 @@ export function createInitialLlmPanelState(): LlmPanelState {
     externalUrlDraft: null,
     cloudModelFilter: "",
     cloudModelFilterFocused: false,
+    pendingCloudFilterFocus: false,
   };
 }
 
