@@ -37,5 +37,12 @@ export {
   useMouseTarget,
   type MouseContextValue,
 } from "./mouse-context.js";
+export {
+  createSelectionPassthrough,
+  DEFAULT_SELECTION_WINDOW_MS,
+  type SelectionPassthrough,
+  type SelectionPassthroughOptions,
+  type SelectionSuspendable,
+} from "./selection-passthrough.js";
 export { MouseListRow, pressEnter } from "./mouse-list-row.js";
 export { arrowKey, returnKey } from "./synthetic-key.js";

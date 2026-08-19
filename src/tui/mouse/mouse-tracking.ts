@@ -16,6 +16,16 @@
  * toggle (`tui.mouse`, `--no-mouse`, `/mouse`) rather than a
  * hard-wired behaviour. `disable()` restores native selection
  * instantly, without restarting the TUI.
+ *
+ * `suspend()` / `resume()` are the *momentary* form of the same
+ * trade-off, for the case where the operator wants one selection rather
+ * than a mode change (see `selection-passthrough.ts`). They write the
+ * same escape pairs `disable()` does, but keep the controller — and
+ * critically its `process.on("exit")` restore — alive across the gap, so
+ * a crash mid-selection still leaves a clean terminal. A `disable()`
+ * while suspended writes nothing further and simply detaches the hook:
+ * reporting is already off, and repeating the disable pair would be a
+ * second `1000l` against a terminal that never saw a matching `1000h`.
  */
 import type { Writable } from "node:stream";
 
@@ -29,6 +39,15 @@ const DISABLE_SGR_REPORTS = "\u001B[?1006l";
 export interface MouseTrackingController {
   /** Stops mouse reporting and hands selection back to the terminal. Safe to call twice. */
   disable(): void;
+  /**
+   * Hands selection back *temporarily*. The controller stays live and
+   * still cleans up on exit. Safe to call twice; a no-op once disabled.
+   */
+  suspend(): void;
+  /** Re-requests reporting after a {@link suspend}. A no-op once disabled. */
+  resume(): void;
+  /** `true` between a {@link suspend} and its {@link resume}. */
+  isSuspended(): boolean;
 }
 
 export interface MouseTrackingOptions {
@@ -45,18 +64,33 @@ export function enableMouseTracking(
 ): MouseTrackingController {
   const stdout = options.stdout ?? process.stdout;
   if (!streamIsTty(stdout)) {
-    return { disable: () => {} };
+    return {
+      disable: () => {},
+      suspend: () => {},
+      resume: () => {},
+      isSuspended: () => false,
+    };
   }
-  stdout.write(ENABLE_BUTTON_TRACKING);
-  stdout.write(ENABLE_SGR_REPORTS);
-  let disabled = false;
-  const disable = (): void => {
-    if (disabled) return;
-    disabled = true;
+  const startReporting = (): void => {
+    stdout.write(ENABLE_BUTTON_TRACKING);
+    stdout.write(ENABLE_SGR_REPORTS);
+  };
+  const stopReporting = (): void => {
     // Reverse order: stop the extended encoding first so a terminal
     // that only understood 1000 still sees a clean disable.
     stdout.write(DISABLE_SGR_REPORTS);
     stdout.write(DISABLE_BUTTON_TRACKING);
+  };
+  startReporting();
+  let disabled = false;
+  let suspended = false;
+  const disable = (): void => {
+    if (disabled) return;
+    disabled = true;
+    // Already handed back by `suspend()` — writing the pair again would
+    // disable modes that are not currently on.
+    if (suspended) return;
+    stopReporting();
   };
   // Last-chance cleanup. Without it an uncaught exception leaves the
   // terminal reporting clicks as escape sequences into the shell.
@@ -67,6 +101,17 @@ export function enableMouseTracking(
       process.off("exit", onExit);
       disable();
     },
+    suspend: () => {
+      if (disabled || suspended) return;
+      suspended = true;
+      stopReporting();
+    },
+    resume: () => {
+      if (disabled || !suspended) return;
+      suspended = false;
+      startReporting();
+    },
+    isSuspended: () => suspended,
   };
 }
 

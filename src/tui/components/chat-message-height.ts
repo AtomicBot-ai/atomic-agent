@@ -25,6 +25,13 @@ const BUBBLE_OVERHEAD_ROWS = 3; // marginTop + paddingTop + paddingBottom
 const REASONING_BUBBLE_OVERHEAD_ROWS = 5; // marginTop + paddingTop + 1-line header + paddingBottom + safety
 const TOOL_CARD_BASE_ROWS = 2;
 const ASSISTANT_FOOTER_ROWS = 1;
+/**
+ * `FinalisedMessage` hangs a `[copy]` button under every finalised
+ * bubble, whatever the role. One row, unconditional — the streaming tail
+ * has no button, which is why this is charged here and not in
+ * `estimateStreamingTailHeight`.
+ */
+const COPY_BUTTON_ROWS = 1;
 
 function bodyLines(text: string): number {
   if (text.length === 0) return 1;
@@ -33,7 +40,7 @@ function bodyLines(text: string): number {
 
 export function estimateMessageHeight(message: ChatMessage): number {
   const bodyRows = bodyLines(message.text);
-  let total = bodyRows + BUBBLE_OVERHEAD_ROWS;
+  let total = bodyRows + BUBBLE_OVERHEAD_ROWS + COPY_BUTTON_ROWS;
   if (message.role === "assistant") {
     if (message.reasoningBlocks && message.reasoningBlocks.length > 0) {
       total += REASONING_BUBBLE_OVERHEAD_ROWS + 1;

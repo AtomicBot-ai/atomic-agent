@@ -34,6 +34,7 @@ import {
   enableMouseTracking,
   type MouseTrackingController,
 } from "./mouse/mouse-tracking.js";
+import { createSelectionPassthrough } from "./mouse/selection-passthrough.js";
 import {
   isLocalBackendConfigured,
   isManagedModeReadyOnDisk,
@@ -222,10 +223,23 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // parser would otherwise type them into the chat buffer.
   const mouseEnabled = parsed.mouse ?? config.tui.mouse;
   const mouseSource = makeMouseSource();
-  const mouseStdin = createMouseStdin(process.stdin, mouseSource.emit);
   let mouseTracking: MouseTrackingController | null = mouseEnabled
     ? enableMouseTracking({ stdout: process.stdout })
     : null;
+  // A shift-modified press only reaches us on terminals that refuse to
+  // bypass reporting for selection (Apple Terminal). Treat it as "I was
+  // trying to select" and hand the terminal back its drag for a moment,
+  // rather than making the operator find `/mouse off`. See
+  // `selection-passthrough.ts` for why in-app selection is not the
+  // answer here.
+  const selection = createSelectionPassthrough({
+    tracking: () => mouseTracking,
+    notify: (text) => bus.emit({ type: "system_message", text }),
+  });
+  const mouseStdin = createMouseStdin(process.stdin, (event) => {
+    if (selection.observe(event)) return;
+    mouseSource.emit(event);
+  });
   const setMouseEnabled = (next: boolean | null): void => {
     if (next === null) {
       bus.emit({
@@ -244,6 +258,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
     if (next) {
       mouseTracking = enableMouseTracking({ stdout: process.stdout });
     } else {
+      // Drop any pending selection window first: it would otherwise fire
+      // a resume against a controller the operator just switched off.
+      selection.dispose();
       mouseTracking?.disable();
       mouseTracking = null;
     }
@@ -256,7 +273,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
     bus.emit({
       type: "system_message",
       text: next
-        ? "mouse support on — click panels, rows and the prompt; wheel scrolls"
+        ? "mouse support on — click panels, rows and the prompt; wheel scrolls; " +
+          "[copy] under a message copies it; Shift+drag still selects text"
         : "mouse support off — the terminal's own text selection is back",
     });
   };
@@ -513,6 +531,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
     process.off("SIGTERM", onSignal);
     process.off("SIGHUP", onSignal);
     try {
+      // Before `disable()`: a live selection window would keep a timer
+      // pinned and could re-enable reporting after teardown.
+      selection.dispose();
       mouseTracking?.disable();
       mouseStdin.dispose();
       altScreen.restore();
