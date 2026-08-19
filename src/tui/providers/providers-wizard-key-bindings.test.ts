@@ -587,7 +587,10 @@ describe("handleProvidersWizardKey", () => {
     });
 
     it("keeps Enter on the key screen when nothing was typed", () => {
+      // Row 0 is a subscription CLI, which has no key screen at all —
+      // walk to the first key-based row before testing the key gate.
       let wizard = createProvidersWizardState("add");
+      wizard = { ...wizard, cursor: KIND_ROW_ORDER.indexOf("openrouter") };
       wizard = next(wizard, "", emptyKey({ return: true }));
       expect(wizard).toMatchObject({ kind: "openrouter", phase: "api_key" });
 
