@@ -44,7 +44,11 @@ describe("TuiApp (smoke)", () => {
     expect(text).toContain("Run");
     expect(text).toContain("Observe");
     expect(text).toContain("Manage");
-    expect(text).toContain("Local AI-First Agent");
+    // The splash mark scales with the window; ink-testing-library's
+    // 100-column stdout reports no rows, so the fallback 80x24 surface
+    // gets the compact mark rather than the wordmark + tagline. Assert
+    // on what every size keeps. See `components/splash-fit.render.test.tsx`.
+    expect(text).toContain(":::");
     expect(text).toContain("commands");
     unmount();
   });
