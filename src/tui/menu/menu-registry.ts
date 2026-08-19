@@ -578,3 +578,11 @@ export function menuNodeById(id: string): MenuNode | null {
 export function menuNodeByChord(key: string): MenuNode | null {
   return MENU.find((node) => node.chord === key) ?? null;
 }
+
+/** The destination that owns a debug tab, for breadcrumbs and status text. */
+export function menuPlaceByTab(tab: TuiTab): MenuPlaceNode | null {
+  for (const node of MENU) {
+    if (node.kind === "place" && node.tab === tab) return node;
+  }
+  return null;
+}
