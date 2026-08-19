@@ -83,6 +83,32 @@ describe("buildTerminalLaunch — macOS", () => {
     );
   });
 
+  it("carries the asset dir overrides alongside the state dir", () => {
+    // Same login-shell problem: if the parent was pointed at a
+    // non-default `grammars/` or `starter-skills/` and the child is not
+    // told, the new window quietly resolves different assets.
+    const launch = buildTerminalLaunch(
+      input({
+        env: {
+          ATOMIC_AGENT_GRAMMARS_DIR: "/opt/atomic/grammars",
+          ATOMIC_AGENT_STARTER_SKILLS_DIR: "/opt/atomic/starter skills",
+        },
+      }),
+    );
+    expect(launch?.args[1]).toContain(
+      "ATOMIC_AGENT_GRAMMARS_DIR='/opt/atomic/grammars'",
+    );
+    expect(launch?.args[1]).toContain(
+      "ATOMIC_AGENT_STARTER_SKILLS_DIR='/opt/atomic/starter skills'",
+    );
+  });
+
+  it("emits no assignments when nothing is overridden", () => {
+    // The common case must stay a bare `cd … && node …` line.
+    const launch = buildTerminalLaunch(input());
+    expect(launch?.args[1]).not.toContain("ATOMIC_AGENT_");
+  });
+
   it("escapes quotes in paths for both the shell and AppleScript layers", () => {
     const launch = buildTerminalLaunch(input({ cwd: `/home/o'brien/work` }));
     const script = launch?.args[1] ?? "";
@@ -166,5 +192,23 @@ describe("buildTerminalLaunch — Windows", () => {
       "cmd",
       "/k",
     ]);
+  });
+
+  it("forwards the state and asset dirs through `set` on the cmd.exe path", () => {
+    const launch = buildTerminalLaunch(
+      input({
+        platform: "win32",
+        cwd: "C:\\work",
+        env: {
+          ATOMIC_AGENT_STATE_DIR: "C:\\state",
+          ATOMIC_AGENT_GRAMMARS_DIR: "C:\\opt\\grammars",
+        },
+      }),
+    );
+    const command = String(launch?.args.at(-1));
+    expect(command).toContain(`set "ATOMIC_AGENT_STATE_DIR=C:\\state" && `);
+    expect(command).toContain(
+      `set "ATOMIC_AGENT_GRAMMARS_DIR=C:\\opt\\grammars" && `,
+    );
   });
 });
