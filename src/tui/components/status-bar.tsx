@@ -1,16 +1,10 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 
-import { applyNavSlot } from "../app-key-bindings.js";
-import { useMouseCommands } from "../mouse/mouse-context.js";
-import { MouseTarget } from "../mouse/mouse-context.js";
+import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
-import {
-  getCurrentSection,
-  getDefaultTabForSection,
-  SECTION_ORDER,
-  type TuiSection,
-} from "../section.js";
+import { getCurrentSection, type TuiSection } from "../section.js";
+import { menuPlaceByTab } from "../menu/menu-registry.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { getAppVersion } from "../../version.js";
@@ -20,7 +14,13 @@ interface StatusBarProps {
 }
 
 /**
- * One-row operator status bar. Replaces the legacy `header-line` +
+ * One-row operator status bar. Shows **where you are**, not where you could
+ * go: the three-section pill row was a menu, and the menu now lives behind
+ * `ctrl+p` where it can hold every destination instead of only the top three.
+ * What is left is a breadcrumb — `Manage › Tasks` — which is the one thing
+ * the popup cannot tell you, because you have to open it to read it.
+ *
+ * Replaces the legacy `header-line` +
  * `status-line` + `footer-line` trio: only signal that needs to be
  * visible at every glance stays on screen — current section and a
  * short session id when one exists. Verbose details (full cwd, llama
@@ -42,7 +42,7 @@ export function StatusBar({ state }: StatusBarProps): ReactElement {
       </Text>
       <Text color={theme.colors.muted}> v{getAppVersion()}</Text>
       <Sep />
-      <SectionPills active={section} />
+      <Breadcrumb state={state} section={section} />
       <SessionTag sessionId={state.session.sessionId} />
     </Box>
   );
@@ -55,46 +55,39 @@ const SECTION_LABELS: Record<TuiSection, string> = {
 };
 
 /**
- * The Run / Observe / Manage switcher. Each pill is its own `<Box>`
- * rather than one flat `<Text>` run so the mouse layer can measure it:
- * a click lands on the pill the operator actually pointed at instead of
- * being reverse-engineered from label widths, which would break the
- * next time a label changes.
+ * Where you are, as one line: `Manage › Tasks`.
+ *
+ * #172 retired the Run / Observe / Manage pill row — it was a menu, and
+ * the menu now lives behind `ctrl+p` where it can hold every destination
+ * instead of only the top three. The breadcrumb is what the popup cannot
+ * tell you, because you have to open it to read it.
+ *
+ * It stays clickable, though. Losing the pills would otherwise take away
+ * the only mouse route into navigation, so a click here opens the menu —
+ * the same thing `ctrl+p` does. Everything visible stays reachable with
+ * the mouse, which is the rule the mouse layer (#165) is built on.
  */
-function SectionPills({ active }: { active: TuiSection }): ReactElement {
-  return (
-    <Box flexWrap="wrap">
-      {SECTION_ORDER.map((id, idx) => (
-        <Box key={id} flexShrink={0}>
-          <SectionPill id={id} active={active === id} />
-          {idx < SECTION_ORDER.length - 1 ? (
-            <Text color={theme.colors.muted}>
-              {"  "}
-              {theme.glyphs.dotSeparator}
-              {"  "}
-            </Text>
-          ) : null}
-        </Box>
-      ))}
-    </Box>
-  );
-}
-
-function SectionPill({
-  id,
-  active,
+function Breadcrumb({
+  state,
+  section,
 }: {
-  id: TuiSection;
-  active: boolean;
+  state: TuiState;
+  section: TuiSection;
 }): ReactElement {
   const mouse = useMouseCommands();
+  const tabLabel =
+    state.uiMode === "debug" ? menuPlaceByTab(state.activeTab)?.label : undefined;
   const label = (
-    <Text
-      color={active ? theme.colors.accentSoft : theme.colors.muted}
-      bold={active}
-    >
-      {active ? `${theme.glyphs.chevronRight} ` : "  "}
-      {SECTION_LABELS[id]}
+    <Text>
+      <Text color={theme.colors.accentSoft} bold>
+        {SECTION_LABELS[section]}
+      </Text>
+      {tabLabel ? (
+        <Text color={theme.colors.muted}>
+          {" "}
+          {theme.glyphs.chevronRight} <Text>{tabLabel}</Text>
+        </Text>
+      ) : null}
     </Text>
   );
   if (!mouse) return label;
@@ -102,17 +95,7 @@ function SectionPill({
     <MouseTarget
       onMouse={(hit) => {
         if (!isPrimaryPress(hit.event)) return false;
-        // Clicking the section you are already in is a no-op rather
-        // than a reset — it would otherwise throw away the sub-tab the
-        // operator navigated to.
-        if (!active) {
-          applyNavSlot(
-            mouse.dispatch,
-            id === "run"
-              ? { kind: "run" }
-              : { kind: "debug-tab", tab: getDefaultTabForSection(id) },
-          );
-        }
+        mouse.dispatch({ type: "menu_opened" });
         return true;
       }}
     >

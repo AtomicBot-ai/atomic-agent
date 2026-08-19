@@ -16,6 +16,7 @@ import {
   handlePanelEscape,
   isPanelModalOpen,
 } from "./app-key-bindings.js";
+import { APP_CHROME_ROWS } from "./components/debug-pane.js";
 import { MenuPopup } from "./menu/menu-popup.js";
 import type { MenuNode } from "./menu/menu-registry.js";
 import { ApprovalModal } from "./approval-modal.js";
@@ -679,8 +680,13 @@ export function TuiApp({
 
   const activateMenuNode = useCallback(
     (node: MenuNode) => {
-      // A node that carries a slash name is *run as that command*, so the
-      // menu never grows a second dispatch path beside the slash handler.
+      // Nodes are activated by running a command, so the menu never grows a
+      // second dispatch path beside the slash handler. `command` carries the
+      // argument-bearing form (`/run fusion`); `slash` the bare one.
+      if (node.command) {
+        runSlashCommand(node.command, state, dispatch, callbacks);
+        return;
+      }
       if (node.slash) {
         runSlashCommand(`/${node.slash.name}`, state, dispatch, callbacks);
         return;
@@ -859,8 +865,12 @@ export function TuiApp({
   // render after this body runs, so the flag is already correct for them.
   setBackdropDimmed(state.menuOpen);
 
+
   const isTty = Boolean(process.stdout.isTTY);
   const rootHeight = isTty ? terminalSize.rows : undefined;
+  // Rows the content pane actually has, so the overlay can sit on its bottom
+  // edge and cap its own height. Same budget the debug pane already uses.
+  const menuPaneRows = Math.max(6, terminalSize.rows - APP_CHROME_ROWS);
   const promptLlm = selectPromptLlmMeta(state);
   // No local backend chosen yet ⇒ no local health to report. Without this the
   // splash screen of a fresh install announces that a server the user never
@@ -920,7 +930,13 @@ export function TuiApp({
       ) : null}
       <Box flexDirection="row" flexGrow={1} flexShrink={1} overflow="hidden">
         <Box flexDirection="column" flexGrow={1} overflow="hidden">
-          <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+          <Box
+            flexDirection="column"
+            flexGrow={1}
+            flexShrink={1}
+            overflow="hidden"
+            position="relative"
+          >
             {state.uiMode === "chat" ? (
               <ChatLog state={state} dispatch={dispatch} />
             ) : (
@@ -938,6 +954,13 @@ export function TuiApp({
                 }
               />
             )}
+            {state.menuOpen ? (
+              <MenuPopup
+                state={state}
+                availableRows={menuPaneRows}
+                availableColumns={terminalSize.columns - 4}
+              />
+            ) : null}
           </Box>
           {state.pendingApproval ? (
             <Box flexShrink={0}>
@@ -947,11 +970,6 @@ export function TuiApp({
           {state.runModePanel.picker ? (
             <Box flexShrink={0}>
               <RunModePicker panel={state.runModePanel} />
-            </Box>
-          ) : null}
-          {state.menuOpen ? (
-            <Box flexShrink={0}>
-              <MenuPopup state={state} />
             </Box>
           ) : null}
           {state.sessionPickerOpen ? (

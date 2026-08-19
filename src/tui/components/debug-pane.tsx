@@ -169,7 +169,7 @@ function buildManageTabs(state: TuiState): SubTab[] {
  * terminal — it overlaps/garbles earlier lines instead (verified) — so
  * the per-tab budget must subtract this accurately and err generous.
  */
-const APP_CHROME_ROWS = 9;
+export const APP_CHROME_ROWS = 9;
 /**
  * Height consumed INSIDE the debug pane above the active tab: the
  * `SubTabBar` (1 row) + the `DebugDiagnosticsLine`. The diagnostics line

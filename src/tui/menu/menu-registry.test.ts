@@ -209,6 +209,7 @@ const RELEASE_SLASH_COMMANDS = [
   },
 ];
 
+
 describe("menu registry", () => {
   it("derives the whole slash palette — same commands, same order", () => {
     expect(SLASH_COMMANDS).toEqual(RELEASE_SLASH_COMMANDS);

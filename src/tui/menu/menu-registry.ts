@@ -66,6 +66,13 @@ interface MenuNodeBase {
    */
   readonly chord?: string;
   readonly slash?: MenuSlash;
+  /**
+   * Literal command line run when this node is activated, for entries that
+   * take arguments (`/run fusion`). Kept separate from {@link MenuSlash}
+   * because the palette should list `/run` once, not once per mode — this
+   * is an activation channel, not a listing.
+   */
+  readonly command?: string;
   /** Parent submenu id, for nodes one level down. */
   readonly parent?: string;
 }
@@ -427,6 +434,53 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.picker",
+    label: "Run type\u2026",
+    group: "run",
+    slash: {
+      name: "run",
+      description:
+        "run mode: `/run` (picker) | `/run local|cloud|fusion [0-100]` \u2014 fusion orchestrates on cloud, executes locally",
+      // Fractional on purpose: `/run` slots between `chat` (8) and
+      // `observe` (9) without renumbering every entry after it.
+      rank: 8.5,
+    },
+  },
+  {
+    kind: "submenu",
+    id: "run.mode",
+    label: "Run type",
+    group: "run",
+  },
+  {
+    kind: "action",
+    id: "run.mode.local",
+    label: "Local",
+    group: "run",
+    parent: "run.mode",
+    chord: "1",
+    command: "/run local",
+  },
+  {
+    kind: "action",
+    id: "run.mode.cloud",
+    label: "Cloud",
+    group: "run",
+    parent: "run.mode",
+    chord: "2",
+    command: "/run cloud",
+  },
+  {
+    kind: "action",
+    id: "run.mode.fusion",
+    label: "Fusion",
+    group: "run",
+    parent: "run.mode",
+    chord: "3",
+    command: "/run fusion",
+  },
+  {
+    kind: "action",
     id: "run.expand",
     label: "Expand all tool cards",
     group: "run",
@@ -551,18 +605,6 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
-    id: "run.mode",
-    label: "Run mode — Local · Cloud · Fusion…",
-    group: "run",
-    slash: {
-      name: "run",
-      description:
-        "run mode: `/run` (picker) | `/run local|cloud|fusion [0-100]` — fusion orchestrates on cloud, executes locally",
-      rank: 8.5,
-    },
-  },
-  {
-    kind: "action",
     id: "run.queue",
     label: "Queue what you type while a turn runs",
     group: "run",
@@ -637,4 +679,12 @@ export function menuNodeById(id: string): MenuNode | null {
 /** Resolve the node bound to a `ctrl+g` chord key. */
 export function menuNodeByChord(key: string): MenuNode | null {
   return MENU.find((node) => node.chord === key) ?? null;
+}
+
+/** The destination that owns a debug tab, for breadcrumbs and status text. */
+export function menuPlaceByTab(tab: TuiTab): MenuPlaceNode | null {
+  for (const node of MENU) {
+    if (node.kind === "place" && node.tab === tab) return node;
+  }
+  return null;
 }

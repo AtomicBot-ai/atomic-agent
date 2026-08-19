@@ -199,11 +199,10 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
   // Six chips is the cap for one row on narrow terminals. `ctrl+p` takes
   // the slot `/` used to hold: the menu contains every slash command as
   // well as every destination, so advertising the superset costs nothing
-  // and `/` keeps working for anyone who already reaches for it. The
-  // scroll hint replaces ctrl+b: Observe stays reachable via /observe,
-  // while scrolling had no visible entry point at all. ctrl+r (run mode)
-  // is unadvertised for the same reason ctrl+b is — the mode strip above
-  // the chat is already the visible entry point.
+  // and `/` keeps working for anyone who already reaches for it. ctrl+r
+  // (cycle run mode) stays unadvertised for the same reason ctrl+b was —
+  // the mode strip above the chat is its visible entry point, and the
+  // menu now lists Local / Cloud / Fusion outright.
   return [
     { key: "enter", label: "send" },
     { key: "alt+enter", label: "newline" },

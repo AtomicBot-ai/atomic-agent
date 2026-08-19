@@ -153,11 +153,28 @@ function statusFor(state: TuiState, node: MenuNode): string {
       return countLabel(state.logs.length, "line");
     case "go.run":
       return countLabel(state.messages.length, "message");
+    case "run.mode":
+      return runModeLabel(state);
     case "session.switch":
       return countLabel(state.recentSessions.length, "recent");
     default:
       return "";
   }
+}
+
+/**
+ * Current run mode for the `Run type` row, so the menu answers "what am I on"
+ * as well as "what can I switch to".
+ */
+function runModeLabel(state: TuiState): string {
+  const panel = (state as { runModePanel?: { effective?: string; cloudShare?: number } })
+    .runModePanel;
+  const mode = panel?.effective;
+  if (!mode) return "";
+  if (mode === "fusion" && typeof panel?.cloudShare === "number") {
+    return `fusion \u00b7 ${panel.cloudShare}% cloud`;
+  }
+  return mode;
 }
 
 function countLabel(count: number, noun: string): string {

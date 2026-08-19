@@ -41,13 +41,16 @@ describe("TuiApp (smoke)", () => {
     );
     const text = strip(lastFrame() ?? "");
     expect(text).toContain("atomic-agent");
+    // The status bar shows where you are, not a menu of where you could go —
+    // the three-section pill row moved into the ctrl+p menu.
     expect(text).toContain("Run");
-    expect(text).toContain("Observe");
-    expect(text).toContain("Manage");
-    // The splash mark scales with the window; ink-testing-library's
-    // 100-column stdout reports no rows, so the fallback 80x24 surface
-    // gets the compact mark rather than the wordmark + tagline. Assert
-    // on what every size keeps. See `components/splash-fit.render.test.tsx`.
+    // #172 turned the section pills into a breadcrumb: the status bar
+    // names where you *are*, and the ctrl+p menu is where you go.
+    expect(text).not.toContain("Observe");
+    expect(text).not.toContain("Manage");
+    // The splash mark scales with the window (#151); ink-testing-library's
+    // stdout reports no rows, so the fallback surface gets the compact
+    // mark. Assert on what every size keeps.
     expect(text).toContain(":::");
     expect(text).toContain("commands");
     unmount();
@@ -150,20 +153,19 @@ describe("TuiApp (smoke)", () => {
     );
     await new Promise((r) => setTimeout(r, 10));
     const before = strip(lastFrame() ?? "");
-    expect(before).toContain("▸ Run");
+    expect(before).toContain("Run");
     stdin.write("\t");
     await new Promise((r) => setTimeout(r, 10));
     const after = strip(lastFrame() ?? "");
     if (before.includes("Sessions")) {
       // Sidebar visible: Tab lands focus on the rail and stays in
       // chat mode. Ctrl+B is the dedicated key for nav cycling.
-      expect(after).toContain("▸ Run");
-      expect(after).not.toContain("▸ Observe");
+      expect(after).toContain("Run");
+      expect(after).not.toContain("Observe \u25b8");
     } else {
       // Sidebar collapsed (narrow runner): Tab falls back to the nav
       // cycle and lands on Observe → Feed.
-      expect(after).toContain("▸ Observe");
-      expect(after).toContain("▸ Feed");
+      expect(after).toContain("Observe \u25b8 Feed");
     }
     unmount();
   });
@@ -177,8 +179,7 @@ describe("TuiApp (smoke)", () => {
     stdin.write("\u0002");
     await new Promise((r) => setTimeout(r, 10));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("▸ Observe");
-    expect(text).toContain("▸ Feed");
+    expect(text).toContain("Observe \u25b8 Feed");
     unmount();
   });
 
@@ -192,7 +193,7 @@ describe("TuiApp (smoke)", () => {
     await new Promise((r) => setTimeout(r, 10));
     const text = strip(lastFrame() ?? "");
     // Shift+Tab from Run wraps to the last Manage sub-tab (Telegram).
-    expect(text).toContain("▸ Manage");
+    expect(text).toContain("Manage \u25b8");
     expect(text).toContain("▸ Telegram");
     unmount();
   });
@@ -339,13 +340,13 @@ describe("TuiApp (smoke)", () => {
     bus.emit({ type: "ui_mode_set", mode: "debug" });
     bus.emit({ type: "tab_changed", tab: "tasks" });
     await new Promise((r) => setTimeout(r, 10));
-    expect(strip(lastFrame() ?? "")).toContain("▸ Manage");
+    expect(strip(lastFrame() ?? "")).toContain("Manage \u25b8");
 
     stdin.write("\u001b");
     await new Promise((r) => setTimeout(r, 60));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("▸ Run");
-    expect(text).not.toContain("▸ Manage");
+    expect(text).toContain("Run");
+    expect(text).not.toContain("Manage \u25b8");
     unmount();
   });
 
@@ -416,6 +417,25 @@ describe("TuiApp (smoke)", () => {
     const text = strip(lastFrame() ?? "");
     expect(text).not.toContain("esc close");
     expect(text).toContain("Run");
+    unmount();
+  });
+
+  it("floats over the UI without moving it — the frame below is unchanged", async () => {
+    const bus = makeTuiEventBus();
+    const { lastFrame, stdin, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    const before = strip(lastFrame() ?? "").split("\n");
+    stdin.write(String.fromCharCode(16));
+    await new Promise((r) => setTimeout(r, 25));
+    const after = strip(lastFrame() ?? "").split("\n");
+
+    // A popup composites on top; it must not add rows or push the prompt and
+    // the hint strip down the way an inline panel would.
+    expect(after.length).toBe(before.length);
+    expect(after.at(-1)).toBe(before.at(-1));
+    expect(after.some((line) => line.includes("Menu"))).toBe(true);
     unmount();
   });
 });
