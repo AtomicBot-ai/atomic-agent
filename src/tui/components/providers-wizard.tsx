@@ -10,11 +10,13 @@ import {
   getCachedOpenRouterChatPicks,
   refreshOpenRouterChatCatalogFromApi,
 } from "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
+import { listCompatChatModelPicks } from "../providers/providers-wizard-key-bindings.js";
 import {
   apiKeyForWizard,
   baseUrlForWizard,
-  listCompatChatModelPicks,
-} from "../providers/providers-wizard-key-bindings.js";
+  envHintForWizard,
+  wizardKeyIsOptional,
+} from "../providers/providers-wizard-target.js";
 import { theme } from "../theme/theme.js";
 import { findProviderPreset } from "../providers/provider-presets.js";
 import {
@@ -59,20 +61,6 @@ function labelForKindRow(row: ProvidersWizardKindRow): string {
 const KIND_OPTIONS = KIND_ROW_ORDER.map((row) => ({
   label: labelForKindRow(row),
 }));
-
-/**
- * Env var named on the key screen. A preset names its own variable;
- * naming the shared compat one there would promise Groq's key a home it
- * does not use.
- */
-function envHintForWizard(w: ProvidersWizardState): string {
-  const preset = w.presetId ? findProviderPreset(w.presetId) : undefined;
-  if (preset) return preset.envVar;
-  if (w.kind === "openrouter") return "OPENROUTER_API_KEY";
-  if (w.kind === "aimlapi") return "AIMLAPI_API_KEY";
-  if (w.kind === "gemini") return "GEMINI_API_KEY";
-  return "OPENAI_COMPAT_API_KEY";
-}
 
 /** Service name for headings: the preset label wins over the raw kind. */
 function providerLabelForWizard(w: ProvidersWizardState): string {
@@ -296,13 +284,11 @@ export function ProvidersWizard(props: {
 
   if (w.phase === "api_key") {
     const envHint = envHintForWizard(w);
-    const preset = w.presetId ? findProviderPreset(w.presetId) : undefined;
     // Local servers and keyless-listing services save with an empty key;
     // promising ".env only" here would contradict their own list rows.
-    const emptyMeans =
-      preset && (preset.local || preset.listsModelsWithoutKey)
-        ? "Optional for this service — leave empty to connect without a key."
-        : "Leave empty only if the key is already in .env.";
+    const emptyMeans = wizardKeyIsOptional(w)
+      ? "Optional for this service — leave empty to connect without a key."
+      : "Leave empty only if the key is already in .env.";
     return (
       <Box
         flexDirection="column"
