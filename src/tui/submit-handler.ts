@@ -151,6 +151,14 @@ export function runSlashCommand(
     setActiveTheme(THEMES[result.setThemeName]);
     callbacks.onThemePersistRequested?.(result.setThemeName);
   }
+  // Bare `/steer` / `/queue` are the persisting form, so they take the same
+  // callback as Ctrl+T (`app-key-bindings.ts`) and land in the same
+  // `persistUserWhileBusySubmit` helper — one write path, one error path.
+  // `/steer <msg>` sets `submitWhileBusy` instead and never reaches here,
+  // which is what keeps a one-off from moving the default.
+  if (result.setWhileBusyMode) {
+    callbacks.onWhileBusyModePersistRequested?.(result.setWhileBusyMode);
+  }
   for (const action of result.actions) {
     if (action.type === "providers_chat_model_picker_requested") {
       // A state no-op as a reducer action: the orchestrator that owns

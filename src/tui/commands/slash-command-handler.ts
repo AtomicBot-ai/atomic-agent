@@ -97,6 +97,15 @@ export interface SlashDispatchResult {
    */
   readonly submitWhileBusy?: { mode: WhileBusySubmitMode; text: string };
   /**
+   * Bare `/steer` / `/queue`: the new Enter-while-busy default. The
+   * `while_busy_mode_changed` action flips the live state; this asks the
+   * caller to also write it to `tui.whileBusySubmit` through
+   * `onWhileBusyModePersistRequested` — the same callback Ctrl+T uses, so
+   * every route to the setting shares one persist path. Deliberately
+   * unset by the message-carrying form, which is a one-off.
+   */
+  readonly setWhileBusyMode?: WhileBusySubmitMode;
+  /**
    * `/privacy level <1..5>` side-effect (with `/privacy approve on|off`
    * kept as aliases for 5 and 1): move the approval ladder to an
    * explicit level. The caller (submit-handler) maps this to
@@ -274,12 +283,13 @@ function formatSlashCommandHelp(): string {
 }
 
 /**
- * `/queue` — bare switches the Enter-while-busy mode to `queue` and
- * lists what is currently parked; `clear` (alias `drop`) empties it;
- * anything else is a one-off message to park without changing the mode.
- * The `queue_changed` action is dispatched optimistically so the strip
- * above the prompt disappears immediately; `ChatOrchestrator.clearQueue`
- * then re-publishes the authoritative empty queue.
+ * `/queue` — bare switches the Enter-while-busy mode to `queue`, persists
+ * it, and lists what is currently parked; `clear` (alias `drop`) empties
+ * it; anything else is a one-off message to park without changing the
+ * mode. The `queue_changed` action is dispatched optimistically so the
+ * strip above the prompt disappears immediately;
+ * `ChatOrchestrator.clearQueue` then re-publishes the authoritative empty
+ * queue.
  */
 function dispatchQueueSub(args: string): SlashDispatchResult {
   const raw = args.trim();
@@ -295,14 +305,15 @@ function dispatchQueueSub(args: string): SlashDispatchResult {
     });
   }
   return pureActions([{ type: "while_busy_mode_changed", mode: "queue" }], {
+    setWhileBusyMode: "queue",
     queueVerb: "list",
   });
 }
 
 /**
- * `/steer` — bare switches the Enter-while-busy mode to `steer`;
- * `/steer <message>` lands one message in the running turn without
- * changing the persisted default.
+ * `/steer` — bare switches the Enter-while-busy mode to `steer` and
+ * persists it; `/steer <message>` lands one message in the running turn
+ * without changing the persisted default.
  */
 function dispatchSteerSub(args: string): SlashDispatchResult {
   const raw = args.trim();
@@ -312,6 +323,7 @@ function dispatchSteerSub(args: string): SlashDispatchResult {
     });
   }
   return pureActions([{ type: "while_busy_mode_changed", mode: "steer" }], {
+    setWhileBusyMode: "steer",
     systemMessage:
       "Enter now steers the running turn (Ctrl+T or /queue switches back)",
   });
@@ -347,6 +359,7 @@ function pureActions(
     analyticsVerb: undefined,
     queueVerb: undefined,
     submitWhileBusy: undefined,
+    setWhileBusyMode: undefined,
     approvalLevelSet: undefined,
     ...overrides,
   };

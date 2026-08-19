@@ -302,59 +302,104 @@ describe("steer vs queue while a turn is running", () => {
   it("/steer <msg> lands one message without changing the mode", () => {
     const dispatched: Array<{ type: string }> = [];
     const onMessageSteered = vi.fn();
+    const onWhileBusyModePersistRequested = vi.fn();
     handleEditorSubmit(
       "/steer drop what you are doing",
       busy("queue"),
       ((a: { type: string }) => dispatched.push(a)) as never,
-      stubCallbacks({ onMessageSteered }),
+      stubCallbacks({ onMessageSteered, onWhileBusyModePersistRequested }),
     );
     expect(onMessageSteered).toHaveBeenCalledWith("drop what you are doing");
     expect(
       dispatched.some((a) => a.type === "while_busy_mode_changed"),
     ).toBe(false);
+    // The message-carrying form is a one-off: nothing reaches the config file.
+    expect(onWhileBusyModePersistRequested).not.toHaveBeenCalled();
   });
 
   it("/queue <msg> parks one message without changing the mode", () => {
     const dispatched: Array<{ type: string }> = [];
     const onMessageSubmitted = vi.fn();
     const onMessageSteered = vi.fn();
+    const onWhileBusyModePersistRequested = vi.fn();
     handleEditorSubmit(
       "/queue and then deploy",
       busy("steer"),
       ((a: { type: string }) => dispatched.push(a)) as never,
-      stubCallbacks({ onMessageSubmitted, onMessageSteered }),
+      stubCallbacks({
+        onMessageSubmitted,
+        onMessageSteered,
+        onWhileBusyModePersistRequested,
+      }),
     );
     expect(onMessageSubmitted).toHaveBeenCalledWith("and then deploy");
     expect(onMessageSteered).not.toHaveBeenCalled();
     expect(
       dispatched.some((a) => a.type === "while_busy_mode_changed"),
     ).toBe(false);
+    expect(onWhileBusyModePersistRequested).not.toHaveBeenCalled();
   });
 
   it("bare /steer and bare /queue flip the persisted mode", () => {
+    // Same contract as Ctrl+T in `app-key-bindings.test.ts`: the reducer
+    // action moves the live mode, the callback makes it survive a restart.
+    // Without the second half the operator sees the confirmation and finds
+    // the old mode back on the next launch.
     const steerDispatched: Array<{ type: string; mode?: string }> = [];
+    const onSteerPersist = vi.fn();
     handleEditorSubmit(
       "/steer",
       busy("queue"),
       ((a: { type: string; mode?: string }) => steerDispatched.push(a)) as never,
-      stubCallbacks(),
+      stubCallbacks({ onWhileBusyModePersistRequested: onSteerPersist }),
     );
     expect(steerDispatched).toContainEqual({
       type: "while_busy_mode_changed",
       mode: "steer",
     });
+    expect(onSteerPersist).toHaveBeenCalledWith("steer");
 
     const queueDispatched: Array<{ type: string; mode?: string }> = [];
+    const onQueuePersist = vi.fn();
     handleEditorSubmit(
       "/queue",
       busy("steer"),
       ((a: { type: string; mode?: string }) => queueDispatched.push(a)) as never,
-      stubCallbacks(),
+      stubCallbacks({ onWhileBusyModePersistRequested: onQueuePersist }),
     );
     expect(queueDispatched).toContainEqual({
       type: "while_busy_mode_changed",
       mode: "queue",
     });
+    expect(onQueuePersist).toHaveBeenCalledWith("queue");
+  });
+
+  it("bare /queue persists even though its confirmation is the listing", () => {
+    // `/queue` returns `queueVerb: "list"` and no `systemMessage`, so the
+    // only feedback the operator gets is the parked-message listing plus
+    // the persist helper's runtime line. Keep the persist wired to the
+    // bare form specifically, on an idle session too.
+    const onWhileBusyModePersistRequested = vi.fn();
+    handleEditorSubmit(
+      "/queue",
+      createInitialTuiState(fakeSession()),
+      (() => {}) as never,
+      stubCallbacks({ onWhileBusyModePersistRequested }),
+    );
+    expect(onWhileBusyModePersistRequested).toHaveBeenCalledWith("queue");
+  });
+
+  it("/queue clear drops the parked messages without touching the default", () => {
+    const onQueueClearRequested = vi.fn();
+    const onWhileBusyModePersistRequested = vi.fn();
+    handleEditorSubmit(
+      "/queue clear",
+      busy("steer"),
+      (() => {}) as never,
+      stubCallbacks({ onQueueClearRequested, onWhileBusyModePersistRequested }),
+    );
+    expect(onQueueClearRequested).toHaveBeenCalled();
+    expect(onWhileBusyModePersistRequested).not.toHaveBeenCalled();
   });
 
   it("/steer <msg> on an idle session just sends it", () => {
