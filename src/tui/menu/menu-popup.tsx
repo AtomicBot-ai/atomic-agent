@@ -3,7 +3,7 @@ import type { ReactElement } from "react";
 
 import { chromeTheme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
-import type { MenuItemRow, MenuRow } from "./menu-selectors.js";
+import type { MenuItemRow } from "./menu-selectors.js";
 import {
   clampMenuCursor,
   selectMenuRows,
@@ -11,134 +11,195 @@ import {
 } from "./menu-selectors.js";
 import { MENU_LEADER_LABEL } from "./menu-keys.js";
 
-/** Rows of list body. Keeps the popup shorter than a short terminal. */
-const MAX_ROWS = 16;
+/** Popup width, clamped to the terminal on narrow windows. */
+const PREFERRED_WIDTH = 64;
+/** Rows of list body at most, before the window starts scrolling. */
+const MAX_BODY_ROWS = 16;
+/** Border (2) + title row + footer row. */
+const CHROME_ROWS = 4;
+/** Column reserved for the entry label. */
+const LABEL_WIDTH = 26;
 
 interface MenuPopupProps {
   state: TuiState;
+  /** Rows available in the pane the menu floats over. */
+  availableRows: number;
+  /** Columns available in that pane. */
+  availableColumns: number;
 }
 
 /**
  * The operator menu: one key (`ctrl+p`) to every destination and every verb.
  *
- * Rendered directly above the prompt on the same left rail rather than as a
- * full-screen takeover, so it reads as belonging to the input you were
- * already typing in. The app behind it is dimmed by `setBackdropDimmed`
- * (see `theme.ts`) — this component reads {@link chromeTheme}, which ignores
- * that flag, so the menu stays at full contrast against a faded backdrop.
+ * Rendered as a true overlay — `position="absolute"` inside the content pane,
+ * so it floats **on top of** the chat log or the active panel instead of
+ * displacing them. Nothing below it reflows when the menu opens or closes.
+ *
+ * Terminals have no compositing and Ink has no z-index, so occlusion has to
+ * be earned: every interior line is padded to the popup's exact inner width,
+ * which paints spaces over whatever was underneath. That is also why the rows
+ * are laid out as fixed-width columns rather than with `flexGrow` — a flexed
+ * row stops at its content and lets the background show through.
+ *
+ * A background colour would do the same job in one line, but only by picking
+ * a colour, and the TUI ships eleven themes across light and dark grounds.
+ * Spaces are theme-agnostic.
+ *
+ * The app behind is dimmed by `setBackdropDimmed` (see `theme.ts`); this
+ * component reads {@link chromeTheme}, which ignores that flag, so the menu
+ * stays at full contrast against a faded backdrop.
  *
  * Pure presentation: every key is handled by `handleMenuKey`.
  */
-export function MenuPopup({ state }: MenuPopupProps): ReactElement {
+export function MenuPopup({
+  state,
+  availableRows,
+  availableColumns,
+}: MenuPopupProps): ReactElement {
+  const width = Math.max(28, Math.min(PREFERRED_WIDTH, availableColumns - 2));
+  // Interior columns between the two border columns. Ink's own `paddingX`
+  // is NOT painted by our rows — it leaves real gaps the backdrop shows
+  // through — so the one-column gutter is baked into every string instead.
+  const inner = width - 2;
+
   const rows = selectMenuRows(state);
   const cursor = clampMenuCursor(state, state.menuCursor);
   const itemIndexes = rows.flatMap((row, idx) => (row.kind === "item" ? [idx] : []));
   const cursorRowIdx = itemIndexes[cursor] ?? -1;
-  const start = windowStart(rows, cursorRowIdx);
-  const visible = rows.slice(start, start + MAX_ROWS);
+
+  const bodyRows = Math.max(
+    3,
+    Math.min(MAX_BODY_ROWS, availableRows - CHROME_ROWS),
+  );
+  const start = windowStart(rows.length, cursorRowIdx, bodyRows);
+  const visible = rows.slice(start, start + bodyRows);
   const hiddenAfter = Math.max(0, rows.length - start - visible.length);
+
+  // Anchor to the bottom of the pane so the menu sits just above the prompt,
+  // the way a dropdown hangs off the control that opened it.
+  const height = visible.length + CHROME_ROWS;
+  const offsetTop = Math.max(0, availableRows - height);
 
   return (
     <Box
+      position="absolute"
+      marginTop={offsetTop}
       borderStyle="round"
       borderColor={chromeTheme.colors.accent}
-      paddingX={1}
+      width={width}
       flexDirection="column"
-      flexShrink={0}
     >
-      <Box>
-        <Text color={chromeTheme.colors.accentSoft} bold>
-          {selectMenuTitle(state)}
-        </Text>
-        <Text color={chromeTheme.colors.muted}>
-          {"  "}
-          {chromeTheme.glyphs.promptCaret} {state.menuQuery}
-          <Text color={chromeTheme.colors.accent}>{"█"}</Text>
-        </Text>
-      </Box>
-      {start > 0 ? (
-        <Text color={chromeTheme.colors.muted}>{"↑"} {start} above</Text>
-      ) : null}
+      <TitleRow state={state} inner={inner} />
       {visible.map((row, idx) =>
         row.kind === "header" ? (
           <Text key={`h-${row.label}-${idx}`} color={chromeTheme.colors.muted}>
-            {row.label.toUpperCase()}
+            {fit(` ${row.label.toUpperCase()}`, inner)}
           </Text>
         ) : (
           <MenuItem
             key={row.node.id}
             row={row}
+            inner={inner}
             selected={start + idx === cursorRowIdx}
           />
         ),
       )}
-      {hiddenAfter > 0 ? (
-        <Text color={chromeTheme.colors.muted}>
-          {"↓"} {hiddenAfter} below
-        </Text>
-      ) : null}
       {rows.length === 0 ? (
-        <Text color={chromeTheme.colors.warn}>nothing matches</Text>
+        <Text color={chromeTheme.colors.warn}>{fit(" nothing matches", inner)}</Text>
       ) : null}
-      <Text color={chromeTheme.colors.muted}>{footer(state)}</Text>
+      <Text color={chromeTheme.colors.muted}>
+        {fit(` ${footer(state, hiddenAfter)}`, inner)}
+      </Text>
+    </Box>
+  );
+}
+
+function TitleRow({
+  state,
+  inner,
+}: {
+  state: TuiState;
+  inner: number;
+}): ReactElement {
+  const title = selectMenuTitle(state);
+  const caret = `${chromeTheme.glyphs.promptCaret} ${state.menuQuery}`;
+  const left = fit(` ${title}`, Math.min(title.length + 3, inner));
+  const rest = inner - left.length;
+  return (
+    <Box>
+      <Text color={chromeTheme.colors.accentSoft} bold>
+        {left}
+      </Text>
+      <Text color={chromeTheme.colors.muted}>{fit(caret, Math.max(0, rest))}</Text>
     </Box>
   );
 }
 
 function MenuItem({
   row,
+  inner,
   selected,
 }: {
   row: MenuItemRow;
+  inner: number;
   selected: boolean;
 }): ReactElement {
   const { node } = row;
-  const isSubmenu = node.kind === "submenu";
-  const detail = [row.crumb, row.status].filter((part) => part.length > 0).join("  ");
+  const marker = selected ? chromeTheme.glyphs.chevronRight : " ";
+  const arrow = node.kind === "submenu" ? ` ${chromeTheme.glyphs.arrowRight}` : "";
+  // Leading and trailing space are part of the row, not Box padding, so the
+  // whole line is opaque edge to edge.
+  const label = fit(` ${marker} ${node.label}${arrow}`, Math.min(LABEL_WIDTH, inner));
+  const chordText = node.chord ? `${MENU_LEADER_LABEL} ${node.chord} ` : " ";
+  const chord = fit(chordText, Math.min(chordText.length, Math.max(0, inner - label.length)));
+  const detailWidth = Math.max(0, inner - label.length - chord.length);
+  const detail = fit(
+    [row.crumb, row.status].filter((part) => part.length > 0).join("  "),
+    detailWidth,
+  );
   return (
     <Box>
-      <Box flexShrink={0} width={26}>
-        <Text
-          color={selected ? chromeTheme.colors.accentSoft : undefined}
-          bold={selected}
-        >
-          {selected ? chromeTheme.glyphs.chevronRight : " "} {node.label}
-          {isSubmenu ? ` ${chromeTheme.glyphs.arrowRight}` : ""}
-        </Text>
-      </Box>
-      <Box flexGrow={1}>
-        <Text color={chromeTheme.colors.muted}>{detail}</Text>
-      </Box>
-      {node.chord ? (
-        <Box flexShrink={0}>
-          <Text color={chromeTheme.colors.muted}>
-            {MENU_LEADER_LABEL} {node.chord}
-          </Text>
-        </Box>
-      ) : null}
+      <Text
+        color={selected ? chromeTheme.colors.accentSoft : undefined}
+        bold={selected}
+      >
+        {label}
+      </Text>
+      <Text color={chromeTheme.colors.muted}>{detail}</Text>
+      <Text color={chromeTheme.colors.muted}>{chord}</Text>
     </Box>
   );
 }
 
 /**
  * Footer names exactly the moves that are legal right now — `←` only appears
- * once there is a level to go back to.
+ * once there is a level to go back to, `→` only while one is reachable.
  */
-function footer(state: TuiState): string {
-  const parts = [`${"↑↓"} move`];
-  if (state.menuQuery.trim().length === 0 && state.menuPath !== null) {
-    parts.push(`${"←"} back`);
-  }
-  if (state.menuQuery.trim().length === 0 && state.menuPath === null) {
-    parts.push(`${"→"} open`);
-  }
-  parts.push("enter go", "type to search", "esc close");
+function footer(state: TuiState, hiddenAfter: number): string {
+  const searching = state.menuQuery.trim().length > 0;
+  const parts = ["↑↓ move"];
+  if (!searching && state.menuPath !== null) parts.push("← back");
+  if (!searching && state.menuPath === null) parts.push("→ open");
+  parts.push("enter go", "esc close");
+  if (hiddenAfter > 0) parts.push(`↓ ${hiddenAfter} more`);
   return parts.join("   ");
 }
 
+/**
+ * Pad or truncate to exactly `width` columns. Every interior line goes
+ * through this — it is what makes the popup opaque.
+ */
+function fit(text: string, width: number): string {
+  if (width <= 0) return "";
+  if (text.length > width) {
+    return width <= 1 ? text.slice(0, width) : `${text.slice(0, width - 1)}…`;
+  }
+  return text.padEnd(width);
+}
+
 /** Scroll window that keeps the cursor row visible. */
-function windowStart(rows: readonly MenuRow[], cursorRowIdx: number): number {
-  if (rows.length <= MAX_ROWS || cursorRowIdx < 0) return 0;
-  if (cursorRowIdx < MAX_ROWS) return 0;
-  return Math.min(cursorRowIdx - MAX_ROWS + 1, rows.length - MAX_ROWS);
+function windowStart(total: number, cursorRowIdx: number, size: number): number {
+  if (total <= size || cursorRowIdx < 0) return 0;
+  if (cursorRowIdx < size) return 0;
+  return Math.min(cursorRowIdx - size + 1, total - size);
 }
