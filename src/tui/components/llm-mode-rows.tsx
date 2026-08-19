@@ -5,6 +5,11 @@ import { activeCursor, selectLlmPanelRows, type LlmPanelRow } from "../llm-panel
 import { classifyRamFit, classifyVramFit } from "../local-models/local-models-panel-state.js";
 import { computeRowWindow } from "../row-window.js";
 import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
+import {
+  MOUSE_LAYER_MODAL,
+  MOUSE_LAYER_PANEL,
+} from "../mouse/mouse-registry.js";
+import { isPanelModalOpen } from "../app-key-bindings.js";
 import { handleLlmPanelKey } from "../llm-panel/llm-panel-key-bindings.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
@@ -354,6 +359,17 @@ function Row({ row, state }: { row: LlmPanelRow; state: TuiState }): ReactElemen
   // what garbles adjacent rows and drags rendering on a narrow window.
   return (
     <MouseListRow
+      // `/model` focuses the `filter:` row, and a focused filter is a
+      // text-entry surface: `isPanelModalOpen` counts it as a modal and
+      // TuiApp raises the registry floor to `MOUSE_LAYER_MODAL`, which
+      // drops every panel-layer target on the floor. Registering these
+      // rows at the layer the registry is actually accepting is what
+      // makes them clickable while the list is open — the one moment
+      // the operator is looking at models and reaching for the mouse.
+      // Reading the same predicate the key layer gates on keeps the two
+      // from drifting; no other surface is drawn over this pane, so a
+      // real modal cannot lose a click to these rows.
+      layer={isPanelModalOpen(state) ? MOUSE_LAYER_MODAL : MOUSE_LAYER_PANEL}
       selected={selected}
       onSelect={(mouse) =>
         mouse.dispatch({ type: "llm_cursor_set", cursor: idx })

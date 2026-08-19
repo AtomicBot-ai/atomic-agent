@@ -75,30 +75,31 @@ export function reduceLlmPanelAction(
       if (!action.focused) {
         return {
           ...state,
-          llmPanel: { ...panel, cloudModelFilterFocused: false },
+          llmPanel: {
+            ...panel,
+            cloudModelFilterFocused: false,
+            pendingCloudFilterFocus: false,
+          },
         };
       }
-      // Focus only applies to the Cloud pane: /model on a local route
-      // dispatches this right after `llm_mode_set_to_active_route`
-      // resolved to `local`, and there the tab switch is the whole
-      // effect. (`f` flips the pane to cloud explicitly before this.)
-      if (panel.mode !== "cloud") return state;
-      // Focusing the filter drops the cursor into the model section so
-      // ↑/↓ and Enter act on models immediately. The section lists the
-      // current model first; when the cursor is already inside the
-      // section, leave it where the operator put it.
-      const section = selectCloudModelSection(state);
-      const sectionEnd = section.sectionStart + section.filtered.length - 1;
-      const cursorInSection =
-        panel.cloudCursor >= section.sectionStart &&
-        panel.cloudCursor <= sectionEnd;
+      if (panel.mode === "cloud") return focusCloudModelFilter(state);
+      // The pane is not Cloud. Two very different reasons for that, and
+      // they must not be treated alike:
+      //
+      //  - the route resolved to `local`, so /model legitimately landed
+      //    on the Local pane and the tab switch is the whole effect
+      //    (`f` flips the pane to cloud explicitly before this);
+      //  - the route has not resolved yet, because `providersPanel.rows`
+      //    was still empty when `llm_mode_set_to_active_route` ran one
+      //    action earlier — the first /model of a session. Dropping the
+      //    request there left the operator on a Cloud pane whose filter
+      //    was not focused and whose cursor still pointed at a provider
+      //    row above the list, so the first ↑/↓ was spent climbing into
+      //    the section and looked like a swallowed keypress.
+      if (!panel.syncModeToActiveRoute) return state;
       return {
         ...state,
-        llmPanel: {
-          ...panel,
-          cloudModelFilterFocused: true,
-          cloudCursor: cursorInSection ? panel.cloudCursor : section.sectionStart,
-        },
+        llmPanel: { ...panel, pendingCloudFilterFocus: true },
       };
     }
     case "llm_cloud_filter_set": {
@@ -120,6 +121,35 @@ export function reduceLlmPanelAction(
     default:
       return state;
   }
+}
+
+/**
+ * Give the `filter:` row of the inline Cloud list the keyboard and drop
+ * the cursor into the model section, so ↑/↓ and Enter act on models
+ * immediately. The section lists the current model first; when the
+ * cursor is already inside the section, leave it where the operator put
+ * it.
+ *
+ * Shared with `providers_refresh` (see `providers-reducer.ts`): the
+ * route that /model asks for can only be resolved once provider rows
+ * exist, and this is the half of the request that has to wait for them.
+ */
+export function focusCloudModelFilter(state: TuiState): TuiState {
+  const panel = state.llmPanel;
+  const section = selectCloudModelSection(state);
+  const sectionEnd = section.sectionStart + section.filtered.length - 1;
+  const cursorInSection =
+    panel.cloudCursor >= section.sectionStart &&
+    panel.cloudCursor <= sectionEnd;
+  return {
+    ...state,
+    llmPanel: {
+      ...panel,
+      cloudModelFilterFocused: true,
+      pendingCloudFilterFocus: false,
+      cloudCursor: cursorInSection ? panel.cloudCursor : section.sectionStart,
+    },
+  };
 }
 
 /** Step `delta` panes from `mode`, wrapping at both ends. */

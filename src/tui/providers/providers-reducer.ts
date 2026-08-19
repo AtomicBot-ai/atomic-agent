@@ -1,5 +1,8 @@
 import type { TuiState } from "../tui-state.js";
-import { resolveModeFromActiveRoute } from "../llm-panel/llm-panel-reducer.js";
+import {
+  focusCloudModelFilter,
+  resolveModeFromActiveRoute,
+} from "../llm-panel/llm-panel-reducer.js";
 import { isProvidersAction } from "./providers-actions.js";
 import { createInitialProvidersPanelState } from "./providers-panel-state.js";
 
@@ -28,7 +31,7 @@ export function reduceProvidersPanel(
         if (!state.llmPanel.syncModeToActiveRoute) return nextState;
         const mode = resolveModeFromActiveRoute(nextState);
         if (!mode) return nextState;
-        return {
+        const synced: TuiState = {
           ...nextState,
           llmPanel: {
             ...nextState.llmPanel,
@@ -36,6 +39,19 @@ export function reduceProvidersPanel(
             syncModeToActiveRoute: false,
           },
         };
+        // These rows are what `/model` was waiting for. It asked for the
+        // Cloud pane's filter row before the route was known, so apply
+        // that half here — with the rows in hand the model section has a
+        // real start index to drop the cursor onto. A route that turned
+        // out to be local drops the request instead: there is no filter
+        // row on that pane.
+        if (mode !== "cloud" || !synced.llmPanel.pendingCloudFilterFocus) {
+          return {
+            ...synced,
+            llmPanel: { ...synced.llmPanel, pendingCloudFilterFocus: false },
+          };
+        }
+        return focusCloudModelFilter(synced);
       }
     case "providers_cursor_down":
       if (panel.rows.length === 0) return state;

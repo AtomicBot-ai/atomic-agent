@@ -1,5 +1,8 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import type { MouseContextValue } from "../mouse/mouse-context.js";
+import { MouseListRow } from "../mouse/mouse-list-row.js";
+import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import { theme } from "../theme/theme.js";
 
 /**
@@ -92,6 +95,15 @@ export function renderPickList(props: {
    * keypress that did nothing — the whole of report #3.
    */
   error?: string | null;
+  /**
+   * Move the cursor to the clicked row. Omit to leave the list
+   * keyboard-only: the local-models wizard renders in its own Ink tree
+   * with no mouse context, and a list without this renders exactly as
+   * it did before.
+   */
+  onRowSelect?: (index: number, mouse: MouseContextValue) => void;
+  /** Run the row that already holds the cursor — the click's "Enter". */
+  onRowActivate?: (mouse: MouseContextValue) => void;
 }): ReactElement {
   const total = props.options.length;
   const clamped = Math.min(Math.max(props.cursor, 0), Math.max(0, total - 1));
@@ -118,7 +130,7 @@ export function renderPickList(props: {
       {visible.map((opt, i) => {
         const index = start + i;
         const mark = index === clamped ? ">" : " ";
-        return (
+        const row = (
           <Text
             key={`${index}-${opt.label}`}
             color={index === clamped ? theme.colors.accentSoft : undefined}
@@ -126,6 +138,26 @@ export function renderPickList(props: {
           >
             {mark} {opt.label}
           </Text>
+        );
+        const select = props.onRowSelect;
+        if (!select) return row;
+        return (
+          // The wizard is a modal — `TuiApp` raises the registry floor
+          // while it owns the keyboard, so its rows have to live at the
+          // modal layer or the click is dropped. Two-step, like every
+          // other cursor list here: these are 300-row catalogs, one text
+          // row looks much like the next, and the last screen's Enter is
+          // the save that writes the provider and runs the live key
+          // check. Selecting first is what makes a mis-click free.
+          <MouseListRow
+            key={`${index}-${opt.label}`}
+            layer={MOUSE_LAYER_MODAL}
+            selected={index === clamped}
+            onSelect={(mouse) => select(index, mouse)}
+            {...(props.onRowActivate ? { onActivate: props.onRowActivate } : {})}
+          >
+            {row}
+          </MouseListRow>
         );
       })}
       {errors.map((line, i) => (
