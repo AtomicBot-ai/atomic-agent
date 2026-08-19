@@ -13,6 +13,7 @@ import type { PrivacyAction } from "./privacy/privacy-actions.js";
 import type { ProvidersAction } from "./providers/providers-actions.js";
 import type { LlmPanelAction } from "./llm-panel/llm-panel-actions.js";
 import type { FallbackPanelAction } from "./llm-panel/fallback/fallback-panel-actions.js";
+import type { WhileBusySubmitMode } from "../config/index.js";
 import type { ChatMessage, SessionPickerEntry, TuiTab, TuiUiMode } from "./tui-state.js";
 
 /**
@@ -58,6 +59,30 @@ export type TuiAction =
    * `user_message` agent event, so the action carries no payload.
    */
   | { type: "message_submitted" }
+  /**
+   * The operator pressed Enter while a turn was still running. Unlike
+   * `message_submitted` this must NOT reset the run state — the turn in
+   * flight owns `feed` / `reasoning` / `streamingToolCards` and wiping
+   * them mid-run would blank the screen the operator is reading. We only
+   * clear the editor and record the message as parked; the orchestrator
+   * confirms with `queue_changed` once it has actually buffered it.
+   */
+  | { type: "message_queued"; text: string }
+  /** Orchestrator re-published its pending-message queue (push/drain/clear). */
+  | { type: "queue_changed"; queued: readonly string[] }
+  /**
+   * Flip (or set) what Enter does while a turn is running. `mode`
+   * omitted toggles; the persist side-effect lives in the caller, like
+   * `theme_set`.
+   */
+  | { type: "while_busy_mode_changed"; mode?: WhileBusySubmitMode }
+  /**
+   * The operator submitted a message in `steer` mode. Clears the editor
+   * only — the user bubble is appended when the agent loop confirms
+   * delivery (`steer_applied`), so a steer that arrives too late and
+   * falls back to the queue is not rendered twice.
+   */
+  | { type: "message_steered"; text: string }
   | { type: "quit_requested" }
   | {
       type: "loaded_skill";

@@ -6,6 +6,7 @@ import {
   type ApprovalRequest,
 } from "../approval/approval-gate.js";
 import { formatApprovalCategory } from "../approval/approval-level.js";
+import type { WhileBusySubmitMode } from "../config/index.js";
 import { cycleNavSlot, type NavSlot } from "./section.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import type { TuiAction } from "./tui-action.js";
@@ -34,6 +35,8 @@ export interface AppKeyCallbacks {
     grant?: ApprovalGrantScope,
   ): void;
   onAbort(): void;
+  /** Persist the Enter-while-busy mode after a Ctrl+T flip. */
+  onWhileBusyModePersistRequested?(mode: WhileBusySubmitMode): void;
   onQuit(): void;
   /** Optional — called when Enter is pressed on the focused sidebar row. */
   onSessionSwitchRequested?(sessionId: string): void;
@@ -114,6 +117,23 @@ export function handleAppKey(
     state.chatFocus === "sidebar"
   ) {
     if (handleSidebarKey(input, key, ctx)) return true;
+  }
+  // Ctrl+T flips what Enter does while a turn is running (steer <-> queue).
+  // Alt/Shift/Ctrl+Enter are all already "insert newline" in
+  // `multi-line-editor.tsx`, so the mode cannot live on a Return
+  // modifier; an explicit, visible toggle is the honest alternative.
+  if (
+    key.ctrl &&
+    !key.shift &&
+    !key.meta &&
+    input === "t" &&
+    !state.pendingApproval
+  ) {
+    dispatch({ type: "while_busy_mode_changed" });
+    callbacks.onWhileBusyModePersistRequested?.(
+      state.whileBusyMode === "steer" ? "queue" : "steer",
+    );
+    return true;
   }
   if (key.ctrl && input === "c") {
     if (ctrlCArmed) {

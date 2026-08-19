@@ -259,6 +259,7 @@ export class ChatOrchestrator {
     }
     this.session = loaded;
     this.queue.length = 0;
+    this.emitQueue();
     // Session grants are point exceptions scoped to the session that
     // granted them; a switch must not carry them into the next one.
     this.runtime.approvals.clearSessionGrants();
@@ -349,6 +350,7 @@ export class ChatOrchestrator {
     }
     this.session = this.runtime.createSession();
     this.queue.length = 0;
+    this.emitQueue();
     // A fresh session starts with no point exceptions: grants never
     // outlive the session that created them.
     this.runtime.approvals.clearSessionGrants();
@@ -371,9 +373,52 @@ export class ChatOrchestrator {
     this.ensureSession();
     if (this.currentController) {
       this.queue.push(text);
+      this.emitQueue();
       return;
     }
     void this.runOneTurn(text);
+  }
+
+  /**
+   * Fold a message into the turn already running on this session.
+   *
+   * Falls back to the normal queue whenever the runtime refuses: the
+   * turn may have finished between the operator's keypress and this
+   * call, or the steering inbox may be full. Either way the message
+   * goes somewhere — the one outcome this must never have is silence.
+   */
+  steerMessage(text: string): void {
+    if (this.quitting) return;
+    const session = this.ensureSession();
+    if (this.runtime.steer(session.id, text)) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: "steering: will reach the model at the next step",
+      });
+      return;
+    }
+    this.sendMessage(text);
+  }
+
+  /**
+   * Drop every parked message without touching the running turn
+   * (`/queue clear`). No-op on an empty queue so the TUI is not spammed
+   * with redundant `queue_changed` frames.
+   */
+  clearQueue(): void {
+    if (this.queue.length === 0) return;
+    this.queue.length = 0;
+    this.emitQueue();
+  }
+
+  /**
+   * Re-publish the pending-message queue to the TUI. The orchestrator is
+   * the source of truth — the reducer mirrors this list rather than
+   * tracking pushes and drains on its own, so an optimistic UI insert can
+   * never drift from what will actually run.
+   */
+  private emitQueue(): void {
+    this.bus.emit({ type: "queue_changed", queued: [...this.queue] });
   }
 
   private async runOneTurn(text: string): Promise<void> {
@@ -387,6 +432,17 @@ export class ChatOrchestrator {
         origin: "tui",
       });
       this.session = result.session;
+      // A steer that landed too late to be drained (final inference, or
+      // a cancelled turn) comes back here. Park it so it runs as its own
+      // turn rather than evaporating.
+      for (const undelivered of result.undelivered ?? []) {
+        this.queue.push(undelivered);
+        this.bus.emit({
+          type: "runtime_info",
+          line: `steering: turn ended first — queued "${undelivered}"`,
+        });
+      }
+      if ((result.undelivered ?? []).length > 0) this.emitQueue();
       if (isFailedSessionStatus(this.session.status)) this.exitCode = 1;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -401,6 +457,7 @@ export class ChatOrchestrator {
       if (this.currentController === controller) this.currentController = null;
     }
     const next = this.queue.shift();
+    if (next !== undefined) this.emitQueue();
     if (next !== undefined && !this.quitting) {
       void this.runOneTurn(next);
     }
@@ -479,6 +536,7 @@ export class ChatOrchestrator {
     if (this.quitting) return;
     this.quitting = true;
     this.queue.length = 0;
+    this.emitQueue();
     this.currentController?.abort();
   }
 

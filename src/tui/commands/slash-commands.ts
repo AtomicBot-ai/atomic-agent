@@ -34,6 +34,16 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   },
   { name: "clear", description: "clear chat transcript (keeps session)" },
   { name: "abort", description: "abort the running turn" },
+  {
+    name: "queue",
+    description:
+      "Enter parks messages behind the running turn: `/queue` (switch + list) | `/queue clear` | `/queue <message>`",
+  },
+  {
+    name: "steer",
+    description:
+      "Enter folds messages into the running turn: `/steer` (switch) | `/steer <message>`",
+  },
   { name: "quit", description: "exit atomic-agent", aliases: ["exit"] },
   { name: "debug", description: "toggle debug pane (feed / logs / world …)" },
   { name: "chat", description: "return to single-view chat mode", aliases: ["run"] },

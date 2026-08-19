@@ -9,6 +9,7 @@ import {
 } from "react";
 import { reduceTuiState } from "./agent-event-reducer.js";
 import type { ApprovalGrantScope } from "../approval/approval-gate.js";
+import type { WhileBusySubmitMode } from "../config/index.js";
 import type { TuiAction } from "./tui-action.js";
 import { handleAppKey, handlePanelEscape } from "./app-key-bindings.js";
 import { ApprovalModal } from "./approval-modal.js";
@@ -17,6 +18,7 @@ import { DebugPane } from "./components/debug-pane.js";
 import { HotkeyHint } from "./components/hotkey-hint.js";
 import { LlmHealthBadge } from "./components/llm-health-badge.js";
 import { PromptShell } from "./components/prompt-shell.js";
+import { QueuedMessages } from "./components/queued-messages.js";
 import { SessionPicker } from "./components/session-picker.js";
 import { ThemePicker } from "./components/theme-picker.js";
 import {
@@ -47,6 +49,7 @@ import type { TaskCreateKind } from "./tasks/tasks-panel-state.js";
 import type { TaskSchedule } from "../tasks/task-types.js";
 import {
   canAcceptMessage,
+  canTypeMessage,
   createInitialTuiState,
   DEFAULT_RING_BUFFER_SIZE,
   type InitialTuiLayoutOptions,
@@ -84,6 +87,16 @@ export interface TuiAppCallbacks {
   onAbort(): void;
   onQuit(): void;
   onMessageSubmitted(message: string): void;
+  /** Drop every message parked behind the running turn (`/queue clear`). */
+  onQueueClearRequested?(): void;
+  /**
+   * Fold a message into the turn already running (`steer` mode). The
+   * orchestrator falls back to the queue when the runtime refuses —
+   * the turn may have ended between the keypress and the dispatch.
+   */
+  onMessageSteered?(message: string): void;
+  /** Persist the Enter-while-busy mode after a Ctrl+T flip. */
+  onWhileBusyModePersistRequested?(mode: WhileBusySubmitMode): void;
   /** Ask the orchestrator to emit the recent-sessions list to the bus. */
   onSessionPickerRequested?(): void;
   /** Ask the orchestrator to swap to an existing persisted session. */
@@ -730,8 +743,18 @@ export function TuiApp({
       <Text color="gray"> {promptLlm.cloudLabel ?? "cloud"}</Text>
     </Text>
   );
+  // While a turn is running the meta-row's job changes: the operator
+  // needs to know what Enter will do to the message they are typing far
+  // more than they need the context-window size.
   const promptRightSlot =
-    state.llmHealth.contextWindow !== null ? (
+    state.status === "running" || state.status === "awaiting_approval" ? (
+      <Text>
+        <Text color={theme.colors.accentSoft} bold>
+          {"\u23ce"} {state.whileBusyMode}
+        </Text>
+        <Text color={theme.colors.muted}> (ctrl+t)</Text>
+      </Text>
+    ) : state.llmHealth.contextWindow !== null ? (
       <Text color={theme.colors.muted}>
         ctx {state.llmHealth.contextWindow}
       </Text>
@@ -818,6 +841,7 @@ export function TuiApp({
               <UpdateRestartPrompt />
             </Box>
           ) : null}
+          <QueuedMessages queued={state.queuedMessages} width={terminalSize.columns} />
           <PromptShell
             value={state.inputValue}
             placeholder="Type a message or `/` for commands…"
@@ -827,7 +851,7 @@ export function TuiApp({
             leftSlot={promptLeftSlot}
             rightSlot={promptRightSlot}
             focus={editorFocus}
-            disabled={!canAcceptMessage(state)}
+            disabled={!canTypeMessage(state)}
             onChange={onEditorChange}
             onSubmit={submit}
             onEscape={onEscape}

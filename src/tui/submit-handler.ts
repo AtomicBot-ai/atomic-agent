@@ -11,7 +11,12 @@ import type { TuiAction } from "./tui-action.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
 import { isThemeName, setActiveTheme, THEME_NAMES, THEMES } from "./theme/theme.js";
 import type { TuiAppCallbacks } from "./tui-app.js";
-import { canAcceptMessage, type TuiState } from "./tui-state.js";
+import type { WhileBusySubmitMode } from "../config/index.js";
+import {
+  canAcceptMessage,
+  canTypeMessage,
+  type TuiState,
+} from "./tui-state.js";
 
 type Dispatch = (action: TuiAction) => void;
 
@@ -80,7 +85,16 @@ export function handleEditorSubmit(
     return;
   }
 
-  if (!canAcceptMessage(state)) return;
+  // A turn is already in flight. Two ways to land the message, chosen
+  // by `whileBusyMode` (Ctrl+T, or `/steer` / `/queue` for one message):
+  //   steer — fold it into the running turn at its next step boundary
+  //   queue — park it and run it as its own turn afterwards
+  // Either way it is never dropped, which is the whole point.
+  if (!canAcceptMessage(state)) {
+    if (!canTypeMessage(state)) return;
+    submitWhileBusy(trimmed, state.whileBusyMode, dispatch, callbacks);
+    return;
+  }
   dispatch({ type: "message_submitted" });
   callbacks.onMessageSubmitted(trimmed);
 }
@@ -162,6 +176,17 @@ export function runSlashCommand(
   }
   if (result.clearBuffer) dispatch({ type: "input_changed", value: "" });
   dispatch({ type: "slash_palette_closed" });
+  if (result.submitWhileBusy) {
+    const { mode, text } = result.submitWhileBusy;
+    // `/steer foo` / `/queue foo` on an idle session is just "send foo".
+    if (canAcceptMessage(state)) {
+      dispatch({ type: "message_submitted" });
+      callbacks.onMessageSubmitted(text);
+    } else if (canTypeMessage(state)) {
+      submitWhileBusy(text, mode, dispatch, callbacks);
+    }
+  }
+  if (result.queueVerb) runQueueVerb(result.queueVerb, state, dispatch, callbacks);
   if (result.triggerAbort) callbacks.onAbort();
   if (result.triggerQuit) {
     callbacks.onAbort();
@@ -216,6 +241,65 @@ export function runSlashCommand(
   if (result.approvalLevelSet !== undefined) {
     void callbacks.onApprovalLevelSetRequested?.(result.approvalLevelSet);
   }
+}
+
+/**
+ * Land a message that was submitted while a turn was running, in the
+ * requested mode. Split out so `/steer` and `/queue` can reuse it for a
+ * one-off override without flipping the persisted default.
+ */
+export function submitWhileBusy(
+  text: string,
+  mode: WhileBusySubmitMode,
+  dispatch: Dispatch,
+  callbacks: TuiAppCallbacks,
+): void {
+  if (mode === "steer" && callbacks.onMessageSteered) {
+    dispatch({ type: "message_steered", text });
+    callbacks.onMessageSteered(text);
+    return;
+  }
+  dispatch({ type: "message_queued", text });
+  callbacks.onMessageSubmitted(text);
+}
+
+/**
+ * `/queue` needs the live queue to render, which `dispatchSlashCommand`
+ * (a pure buffer -> result function) cannot see. The listing is built
+ * here from `TuiState`; `clear` also tells the orchestrator to drop its
+ * own copy so the two never diverge.
+ */
+function runQueueVerb(
+  verb: NonNullable<SlashDispatchResult["queueVerb"]>,
+  state: TuiState,
+  dispatch: Dispatch,
+  callbacks: TuiAppCallbacks,
+): void {
+  if (verb === "clear") {
+    callbacks.onQueueClearRequested?.();
+    const line =
+      state.queuedMessages.length === 0
+        ? "queue: already empty"
+        : `queue: dropped ${state.queuedMessages.length} parked message${
+            state.queuedMessages.length === 1 ? "" : "s"
+          }`;
+    dispatch({ type: "runtime_info", line });
+    dispatch({ type: "system_message", text: line });
+    return;
+  }
+  const text = formatQueueListing(state.queuedMessages);
+  dispatch({ type: "runtime_info", line: text.split("\n")[0] ?? text });
+  dispatch({ type: "system_message", text });
+}
+
+/** Multi-line `/queue` listing for the chat transcript. */
+export function formatQueueListing(queued: readonly string[]): string {
+  if (queued.length === 0) {
+    return "queue: (empty) \u2014 messages sent while a turn is running are parked here";
+  }
+  const header = `queue (${queued.length} message${queued.length === 1 ? "" : "s"})`;
+  const lines = queued.map((text, i) => `  ${i + 1}. ${text.replace(/\s+/g, " ").trim()}`);
+  return [header, ...lines].join("\n");
 }
 
 function runTelegramVerb(

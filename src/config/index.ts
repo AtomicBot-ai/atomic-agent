@@ -11,12 +11,14 @@ export type {
   WebSearchConfig,
   WebSearchProviderName,
   WebhookConfig,
+  WhileBusySubmitMode,
 } from "./config-schema.js";
 export {
   ConfigValidationError,
   USER_CONFIG_DEFAULTS,
   USER_CONFIG_VERSION,
   parseUserConfigFile,
+  parseWhileBusySubmit,
 } from "./config-schema.js";
 export {
   ensureUserConfigFileSync,

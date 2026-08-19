@@ -85,3 +85,100 @@ describe("reduceUiAction theme picker", () => {
     expect(closed?.themePickerOriginal).toBe("");
   });
 });
+
+describe("reduceUiAction message_queued", () => {
+  it("parks the message and clears the editor", () => {
+    const state = createInitialTuiState(SESSION);
+    const next = reduceUiAction(
+      { ...state, inputValue: "draft" },
+      { type: "message_queued", text: "draft" },
+    );
+    expect(next?.queuedMessages).toEqual(["draft"]);
+    expect(next?.inputValue).toBe("");
+  });
+
+  it("appends in submission order", () => {
+    const state = createInitialTuiState(SESSION);
+    const first = reduceUiAction(state, { type: "message_queued", text: "a" });
+    const second = reduceUiAction(first!, { type: "message_queued", text: "b" });
+    expect(second?.queuedMessages).toEqual(["a", "b"]);
+  });
+
+  it("leaves the running turn's state alone", () => {
+    // The whole point of a separate action: `message_submitted` calls
+    // startNewRun, which would blank the feed of the turn in flight.
+    const state = {
+      ...createInitialTuiState(SESSION),
+      status: "running" as const,
+      currentStep: 3,
+      runStartedAt: 1234,
+    };
+    const next = reduceUiAction(state, { type: "message_queued", text: "x" });
+    expect(next?.status).toBe("running");
+    expect(next?.currentStep).toBe(3);
+    expect(next?.runStartedAt).toBe(1234);
+  });
+
+  it("mirrors the orchestrator queue on queue_changed", () => {
+    const state = createInitialTuiState(SESSION);
+    const seeded = reduceUiAction(state, { type: "message_queued", text: "a" });
+    const next = reduceUiAction(seeded!, {
+      type: "queue_changed",
+      queued: [],
+    });
+    expect(next?.queuedMessages).toEqual([]);
+  });
+
+  it("drops the queue when the session is switched", () => {
+    const state = createInitialTuiState(SESSION);
+    const seeded = reduceUiAction(state, { type: "message_queued", text: "a" });
+    const next = reduceUiAction(seeded!, {
+      type: "session_switched",
+      sessionId: "s2",
+      workingDir: "/tmp",
+      messages: [],
+    });
+    expect(next?.queuedMessages).toEqual([]);
+  });
+});
+
+describe("reduceUiAction while_busy_mode_changed", () => {
+  it("toggles when no explicit mode is given", () => {
+    const state = createInitialTuiState(SESSION);
+    expect(state.whileBusyMode).toBe("steer");
+    const toQueue = reduceUiAction(state, { type: "while_busy_mode_changed" });
+    expect(toQueue?.whileBusyMode).toBe("queue");
+    const backToSteer = reduceUiAction(toQueue!, {
+      type: "while_busy_mode_changed",
+    });
+    expect(backToSteer?.whileBusyMode).toBe("steer");
+  });
+
+  it("sets an explicit mode idempotently", () => {
+    const state = createInitialTuiState(SESSION);
+    const once = reduceUiAction(state, {
+      type: "while_busy_mode_changed",
+      mode: "queue",
+    });
+    const twice = reduceUiAction(once!, {
+      type: "while_busy_mode_changed",
+      mode: "queue",
+    });
+    expect(twice?.whileBusyMode).toBe("queue");
+  });
+
+  it("message_steered clears the editor without parking the message", () => {
+    const state = { ...createInitialTuiState(SESSION), inputValue: "draft" };
+    const next = reduceUiAction(state, {
+      type: "message_steered",
+      text: "draft",
+    });
+    expect(next?.inputValue).toBe("");
+    // The bubble arrives with `steer_applied`, so nothing is queued and
+    // nothing is rendered yet — a steer that misses the turn must not
+    // show up twice when it falls back to the queue.
+    expect(next?.queuedMessages).toEqual([]);
+    expect(next?.messages).toEqual([]);
+  });
+});
+

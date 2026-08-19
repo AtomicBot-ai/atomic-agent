@@ -128,3 +128,248 @@ describe("handleEditorSubmit", () => {
     expect(onApprovalLevelSetRequested).toHaveBeenCalledTimes(3);
   });
 });
+
+describe("handleEditorSubmit while a turn is running", () => {
+  function runningState(): TuiState {
+    return { ...createInitialTuiState(fakeSession()), status: "running" };
+  }
+
+  it("queues the message instead of dropping it", () => {
+    const dispatched: Array<{ type: string; text?: string }> = [];
+    const onMessageSubmitted = vi.fn();
+    handleEditorSubmit(
+      "and also check the logs",
+      runningState(),
+      ((a: { type: string; text?: string }) => dispatched.push(a)) as never,
+      stubCallbacks({ onMessageSubmitted }),
+    );
+    expect(onMessageSubmitted).toHaveBeenCalledWith("and also check the logs");
+    expect(dispatched).toContainEqual({
+      type: "message_queued",
+      text: "and also check the logs",
+    });
+  });
+
+  it("never dispatches message_submitted mid-run (it would wipe the live turn)", () => {
+    const dispatched: Array<{ type: string }> = [];
+    handleEditorSubmit(
+      "second thought",
+      runningState(),
+      ((a: { type: string }) => dispatched.push(a)) as never,
+      stubCallbacks(),
+    );
+    expect(dispatched.some((a) => a.type === "message_submitted")).toBe(false);
+  });
+
+  it("drops the submit entirely once the app is quitting", () => {
+    const dispatched: Array<{ type: string }> = [];
+    const onMessageSubmitted = vi.fn();
+    handleEditorSubmit(
+      "too late",
+      { ...createInitialTuiState(fakeSession()), status: "quitting" },
+      ((a: { type: string }) => dispatched.push(a)) as never,
+      stubCallbacks({ onMessageSubmitted }),
+    );
+    expect(onMessageSubmitted).not.toHaveBeenCalled();
+    expect(dispatched).toHaveLength(0);
+  });
+
+  it("still starts a turn immediately when idle", () => {
+    const dispatched: Array<{ type: string }> = [];
+    const onMessageSubmitted = vi.fn();
+    handleEditorSubmit(
+      "go",
+      createInitialTuiState(fakeSession()),
+      ((a: { type: string }) => dispatched.push(a)) as never,
+      stubCallbacks({ onMessageSubmitted }),
+    );
+    expect(dispatched.some((a) => a.type === "message_submitted")).toBe(true);
+    expect(dispatched.some((a) => a.type === "message_queued")).toBe(false);
+    expect(onMessageSubmitted).toHaveBeenCalledWith("go");
+  });
+});
+
+describe("/queue", () => {
+  it("lists the parked messages in the transcript", () => {
+    const state: TuiState = {
+      ...createInitialTuiState(fakeSession()),
+      status: "running",
+      queuedMessages: ["first", "second"],
+    };
+    const messages: string[] = [];
+    handleEditorSubmit(
+      "/queue",
+      state,
+      ((a: { type: string; text?: string }) => {
+        if (a.type === "system_message" && a.text) messages.push(a.text);
+      }) as never,
+      stubCallbacks(),
+    );
+    const joined = messages.join("\n");
+    expect(joined).toContain("queue (2 messages)");
+    expect(joined).toContain("1. first");
+    expect(joined).toContain("2. second");
+  });
+
+  it("clear empties the reducer slice and tells the orchestrator", () => {
+    const state: TuiState = {
+      ...createInitialTuiState(fakeSession()),
+      status: "running",
+      queuedMessages: ["first"],
+    };
+    const dispatched: Array<{ type: string; queued?: readonly string[] }> = [];
+    const onQueueClearRequested = vi.fn();
+    handleEditorSubmit(
+      "/queue clear",
+      state,
+      ((a: { type: string; queued?: readonly string[] }) =>
+        dispatched.push(a)) as never,
+      stubCallbacks({ onQueueClearRequested }),
+    );
+    expect(onQueueClearRequested).toHaveBeenCalledTimes(1);
+    expect(dispatched).toContainEqual({ type: "queue_changed", queued: [] });
+  });
+
+  it("says so when there is nothing parked", () => {
+    const messages: string[] = [];
+    handleEditorSubmit(
+      "/queue",
+      createInitialTuiState(fakeSession()),
+      ((a: { type: string; text?: string }) => {
+        if (a.type === "system_message" && a.text) messages.push(a.text);
+      }) as never,
+      stubCallbacks(),
+    );
+    expect(messages.join("\n")).toContain("queue: (empty)");
+  });
+});
+
+describe("steer vs queue while a turn is running", () => {
+  function busy(mode: "steer" | "queue"): TuiState {
+    return {
+      ...createInitialTuiState(fakeSession()),
+      status: "running",
+      whileBusyMode: mode,
+    };
+  }
+
+  it("steers when the mode says steer", () => {
+    const dispatched: Array<{ type: string }> = [];
+    const onMessageSteered = vi.fn();
+    const onMessageSubmitted = vi.fn();
+    handleEditorSubmit(
+      "no, use the staging db",
+      busy("steer"),
+      ((a: { type: string }) => dispatched.push(a)) as never,
+      stubCallbacks({ onMessageSteered, onMessageSubmitted }),
+    );
+    expect(onMessageSteered).toHaveBeenCalledWith("no, use the staging db");
+    expect(onMessageSubmitted).not.toHaveBeenCalled();
+    expect(dispatched.some((a) => a.type === "message_steered")).toBe(true);
+    expect(dispatched.some((a) => a.type === "message_queued")).toBe(false);
+  });
+
+  it("queues when the mode says queue", () => {
+    const dispatched: Array<{ type: string }> = [];
+    const onMessageSteered = vi.fn();
+    const onMessageSubmitted = vi.fn();
+    handleEditorSubmit(
+      "afterwards, run the tests",
+      busy("queue"),
+      ((a: { type: string }) => dispatched.push(a)) as never,
+      stubCallbacks({ onMessageSteered, onMessageSubmitted }),
+    );
+    expect(onMessageSubmitted).toHaveBeenCalledWith("afterwards, run the tests");
+    expect(onMessageSteered).not.toHaveBeenCalled();
+    expect(dispatched.some((a) => a.type === "message_queued")).toBe(true);
+  });
+
+  it("falls back to queueing when the host wired no steer callback", () => {
+    // Steering is optional on the callback surface; a host that does not
+    // implement it must still not drop the message.
+    const dispatched: Array<{ type: string }> = [];
+    const onMessageSubmitted = vi.fn();
+    handleEditorSubmit(
+      "still needs to land",
+      busy("steer"),
+      ((a: { type: string }) => dispatched.push(a)) as never,
+      stubCallbacks({ onMessageSubmitted }),
+    );
+    expect(onMessageSubmitted).toHaveBeenCalledWith("still needs to land");
+    expect(dispatched.some((a) => a.type === "message_queued")).toBe(true);
+  });
+
+  it("/steer <msg> lands one message without changing the mode", () => {
+    const dispatched: Array<{ type: string }> = [];
+    const onMessageSteered = vi.fn();
+    handleEditorSubmit(
+      "/steer drop what you are doing",
+      busy("queue"),
+      ((a: { type: string }) => dispatched.push(a)) as never,
+      stubCallbacks({ onMessageSteered }),
+    );
+    expect(onMessageSteered).toHaveBeenCalledWith("drop what you are doing");
+    expect(
+      dispatched.some((a) => a.type === "while_busy_mode_changed"),
+    ).toBe(false);
+  });
+
+  it("/queue <msg> parks one message without changing the mode", () => {
+    const dispatched: Array<{ type: string }> = [];
+    const onMessageSubmitted = vi.fn();
+    const onMessageSteered = vi.fn();
+    handleEditorSubmit(
+      "/queue and then deploy",
+      busy("steer"),
+      ((a: { type: string }) => dispatched.push(a)) as never,
+      stubCallbacks({ onMessageSubmitted, onMessageSteered }),
+    );
+    expect(onMessageSubmitted).toHaveBeenCalledWith("and then deploy");
+    expect(onMessageSteered).not.toHaveBeenCalled();
+    expect(
+      dispatched.some((a) => a.type === "while_busy_mode_changed"),
+    ).toBe(false);
+  });
+
+  it("bare /steer and bare /queue flip the persisted mode", () => {
+    const steerDispatched: Array<{ type: string; mode?: string }> = [];
+    handleEditorSubmit(
+      "/steer",
+      busy("queue"),
+      ((a: { type: string; mode?: string }) => steerDispatched.push(a)) as never,
+      stubCallbacks(),
+    );
+    expect(steerDispatched).toContainEqual({
+      type: "while_busy_mode_changed",
+      mode: "steer",
+    });
+
+    const queueDispatched: Array<{ type: string; mode?: string }> = [];
+    handleEditorSubmit(
+      "/queue",
+      busy("steer"),
+      ((a: { type: string; mode?: string }) => queueDispatched.push(a)) as never,
+      stubCallbacks(),
+    );
+    expect(queueDispatched).toContainEqual({
+      type: "while_busy_mode_changed",
+      mode: "queue",
+    });
+  });
+
+  it("/steer <msg> on an idle session just sends it", () => {
+    const dispatched: Array<{ type: string }> = [];
+    const onMessageSubmitted = vi.fn();
+    const onMessageSteered = vi.fn();
+    handleEditorSubmit(
+      "/steer go",
+      createInitialTuiState(fakeSession()),
+      ((a: { type: string }) => dispatched.push(a)) as never,
+      stubCallbacks({ onMessageSubmitted, onMessageSteered }),
+    );
+    expect(onMessageSubmitted).toHaveBeenCalledWith("go");
+    expect(onMessageSteered).not.toHaveBeenCalled();
+    expect(dispatched.some((a) => a.type === "message_submitted")).toBe(true);
+  });
+});
+

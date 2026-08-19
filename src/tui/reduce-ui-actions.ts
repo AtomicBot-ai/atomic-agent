@@ -94,6 +94,32 @@ export function reduceUiAction(
       return navigateInputHistory(state, action.delta);
     case "input_history_reset":
       return { ...state, inputHistoryCursor: null };
+    case "message_queued":
+      return {
+        ...state,
+        queuedMessages: [...state.queuedMessages, action.text],
+        inputValue: "",
+        inputHistoryCursor: null,
+        slashPaletteOpen: false,
+        slashQuery: "",
+        slashPaletteCursor: 0,
+      };
+    case "queue_changed":
+      return { ...state, queuedMessages: [...action.queued] };
+    case "while_busy_mode_changed": {
+      const next =
+        action.mode ?? (state.whileBusyMode === "steer" ? "queue" : "steer");
+      return { ...state, whileBusyMode: next };
+    }
+    case "message_steered":
+      return {
+        ...state,
+        inputValue: "",
+        inputHistoryCursor: null,
+        slashPaletteOpen: false,
+        slashQuery: "",
+        slashPaletteCursor: 0,
+      };
     case "chat_cleared":
       return {
         ...state,
@@ -210,6 +236,7 @@ export function reduceUiAction(
         sidebarSection: "sessions",
         sidebarCursor: 0,
         sidebarTasksCursor: 0,
+        queuedMessages: [],
       };
     default:
       return null;
