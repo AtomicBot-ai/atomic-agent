@@ -95,6 +95,17 @@ export function ensureUserConfigFileSync(path: string): UserConfigFile {
     return USER_CONFIG_DEFAULTS;
   }
   const parsed = parseUserConfigFile(raw.parsed);
+  // A file written by a NEWER build is read and left exactly as it is.
+  // Rewriting it would silently delete whatever that build added — and
+  // since both builds share one `config.json`, the two would then take
+  // turns destroying each other's keys on every launch. Reading is safe
+  // (the schema is additive); writing is not ours to do.
+  if (
+    raw.originalVersion !== null &&
+    raw.originalVersion > USER_CONFIG_VERSION
+  ) {
+    return parsed;
+  }
   if (raw.originalVersion !== USER_CONFIG_VERSION) {
     writeUserConfigFileSync(path, parsed);
     process.stderr.write(
