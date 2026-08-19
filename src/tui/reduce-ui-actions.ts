@@ -92,8 +92,6 @@ export function reduceUiAction(
     }
     case "input_history_navigated":
       return navigateInputHistory(state, action.delta);
-    case "input_history_reset":
-      return { ...state, inputHistoryCursor: null, inputHistoryDraft: null };
     case "chat_cleared":
       return {
         ...state,

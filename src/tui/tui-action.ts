@@ -99,8 +99,6 @@ export type TuiAction =
   | { type: "slash_palette_cursor_set"; row: number }
   /** Navigate input history by delta (up = older, down = newer). */
   | { type: "input_history_navigated"; delta: 1 | -1 }
-  /** Restore the live editor buffer, exiting history navigation. */
-  | { type: "input_history_reset" }
   /** Clear the chat transcript (slash `/clear`). */
   | { type: "chat_cleared" }
   /** Populate + show the session picker overlay. */
