@@ -29,6 +29,21 @@ export function subscriptionCliForWizardKind(
   return SUBSCRIPTION_CLI_WIZARD_KINDS[kind] ?? null;
 }
 
+/**
+ * The wizard row a stored `subscription-cli` entry came from. The map
+ * above only runs one way, and a saved entry keeps the CLI name rather
+ * than the row it was picked on, so reconfiguring one has to walk back.
+ * `null` for a CLI name no wizard row offers.
+ */
+export function wizardKindForSubscriptionCli(
+  cli: string,
+): ProvidersWizardKind | null {
+  for (const [kind, name] of Object.entries(SUBSCRIPTION_CLI_WIZARD_KINDS)) {
+    if (name === cli) return kind as ProvidersWizardKind;
+  }
+  return null;
+}
+
 export type ProvidersWizardPhase =
   | "pick_kind"
   | "api_key"
@@ -75,10 +90,26 @@ export function createProvidersWizardState(
      * endpoint instead of silently resetting it to the OpenAI default.
      */
     baseUrl?: string;
+    /**
+     * Stored chat model of the entry being reconfigured. Prefills the
+     * model step so Enter keeps the pinned model instead of silently
+     * resetting it to the kind's default.
+     */
+    chatModel?: string;
   },
 ): ProvidersWizardState {
   const configure = mode === "configure";
   const kind = opts?.kind ?? null;
+  // A CLI-backed provider has no key to paste — it authenticates from
+  // the CLI's own session. Opening configure on the key screen would be
+  // the dead end `advanceWizardPhase` already skips on the add path, so
+  // reconfiguring lands on the one thing that is editable: the model.
+  const cliBacked = kind !== null && subscriptionCliForWizardKind(kind) !== null;
+  const phase: ProvidersWizardPhase = !configure
+    ? "pick_kind"
+    : cliBacked
+      ? "chat_model_line"
+      : "api_key";
   // Reconfiguring an entry that was created from a preset must keep the
   // preset identity: the key screen then names the service's own env
   // var, and saving keeps the entry id instead of minting an
@@ -89,14 +120,14 @@ export function createProvidersWizardState(
       : null;
   return {
     mode,
-    phase: configure ? "api_key" : "pick_kind",
+    phase,
     kind,
     providerId: opts?.providerId ?? null,
     presetId,
     cursor: 0,
     apiKeyBuffer: "",
     baseUrlLine: opts?.baseUrl ?? "",
-    chatModelLine: "",
+    chatModelLine: cliBacked ? (opts?.chatModel ?? "") : "",
     embeddingModelLine: "",
     selectedChatModelId: null,
     selectedEmbeddingChoiceId: null,

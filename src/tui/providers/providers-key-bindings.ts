@@ -4,7 +4,7 @@ import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
 import { createProvidersWizardState } from "./providers-wizard-state.js";
 import { handleProvidersWizardKey } from "./providers-wizard-key-bindings.js";
-import { isCloudProviderKind } from "./providers-orchestrator.js";
+import { configureWizardKindForRow } from "./providers-orchestrator.js";
 
 export interface ProvidersTabKeyContext {
   state: TuiState;
@@ -75,13 +75,15 @@ export function handleProvidersTabKey(
   }
   if (input === "c") {
     const row = panel.rows[panel.cursor];
-    if (row && isCloudProviderKind(row.kind)) {
+    const kind = row ? configureWizardKindForRow(row) : null;
+    if (row && kind) {
       dispatch({
         type: "providers_wizard_opened",
         wizard: createProvidersWizardState("configure", {
           providerId: row.id,
-          kind: row.kind,
+          kind,
           ...(row.baseUrl ? { baseUrl: row.baseUrl } : {}),
+          ...(row.chatModel ? { chatModel: row.chatModel } : {}),
         }),
       });
     }

@@ -1,6 +1,9 @@
 import { getConfig } from "../../config/index.js";
 import type { UserLlmProviderEntry } from "../../config/index.js";
-import { usesExternalCliAuth } from "../../config/provider-auth-mode.js";
+import {
+  SUBSCRIPTION_CLI_KIND,
+  usesExternalCliAuth,
+} from "../../config/provider-auth-mode.js";
 import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
 import { resolveLlmConfig } from "../../llm/provider/registry/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
@@ -27,6 +30,7 @@ import { OPENAI_COMPAT_DEFAULT_BASE_URL } from "./providers-model-options.js";
 import { isProvidersAction } from "./providers-actions.js";
 import type { ProviderRow } from "./providers-panel-state.js";
 import { saveProviderWizardToConfig } from "./save-provider-wizard.js";
+import { wizardKindForSubscriptionCli } from "./providers-wizard-state.js";
 import type {
   ProvidersWizardKind,
   ProvidersWizardState,
@@ -382,6 +386,11 @@ export class ProvidersOrchestrator {
   }
 }
 
+/**
+ * Key-based cloud kinds, whose config `kind` is the wizard row verbatim.
+ * Use `configureWizardKindForRow` to decide whether a row can be
+ * configured — `subscription-cli` can, and is not one of these.
+ */
 export function isCloudProviderKind(kind: string): kind is ProvidersWizardKind {
   return (
     kind === "openrouter" ||
@@ -389,6 +398,27 @@ export function isCloudProviderKind(kind: string): kind is ProvidersWizardKind {
     kind === "gemini" ||
     kind === "openai-compatible"
   );
+}
+
+/**
+ * The wizard row `c` (and the LLM tab's configure action) opens for a
+ * provider row, or `null` when the row has nothing to configure.
+ *
+ * `subscription-cli` needs the indirection the cloud kinds do not: two
+ * wizard rows collapse onto one config kind, so the stored `kind` alone
+ * cannot say whether the entry drives `claude` or `codex` — only the CLI
+ * name on the entry can. Without it the key fell through every branch,
+ * was swallowed by the panel handler, and did nothing.
+ */
+export function configureWizardKindForRow(row: {
+  kind: string;
+  subscriptionCli?: { cli: string } | null;
+}): ProvidersWizardKind | null {
+  if (isCloudProviderKind(row.kind)) return row.kind;
+  if (row.kind === SUBSCRIPTION_CLI_KIND && row.subscriptionCli) {
+    return wizardKindForSubscriptionCli(row.subscriptionCli.cli);
+  }
+  return null;
 }
 
 function listChatModelOptionsForEntry(

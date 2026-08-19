@@ -29,6 +29,7 @@ import {
   OPENAI_COMPAT_DEFAULT_BASE_URL,
   OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
 } from "../providers/providers-model-options.js";
+import { CLAUDE_CLI_DEFAULT_CHAT_MODEL } from "../../llm/provider/subscription-cli/claude-cli-models.js";
 import { subscriptionCliForWizardKind } from "../providers/providers-wizard-state.js";
 import type {
   ProvidersWizardKind,
@@ -187,6 +188,24 @@ function CompatChatModelStep(props: {
     // Re-fetch only when the server changes; the key is fixed for this wizard run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseUrl, isCompat, isGemini]);
+
+  // A CLI-backed provider has no endpoint to list and no key screen
+  // behind it, so this is the whole configure flow for one: the id the
+  // CLI's own `--model` accepts. Naming the openai-compat placeholder
+  // here would suggest `gpt-5.4-mini` is a valid answer for `claude`.
+  const cli = w.kind ? subscriptionCliForWizardKind(w.kind) : null;
+  if (cli) {
+    return renderLineField({
+      title: `Chat model id — ${cli} CLI`,
+      value: w.chatModelLine,
+      placeholder:
+        cli === "claude"
+          ? CLAUDE_CLI_DEFAULT_CHAT_MODEL
+          : "(empty — the CLI resolves the model)",
+      hint: "Enter to save · Esc back · no API key: the CLI uses its own session",
+      error: w.error,
+    });
+  }
 
   const picks = listCompatChatModelPicks(w);
   if (picks.length > 0) {

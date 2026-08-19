@@ -70,6 +70,28 @@ describe("createProvidersWizardState configure prefill", () => {
     expect(wizard.providerId).toBe("groq");
   });
 
+  it("skips the key screen for a CLI-backed entry and prefills its model", () => {
+    // No key exists for a subscription CLI, so `api_key` would be a dead
+    // end; the model id is the only thing configure can change.
+    const wizard = createProvidersWizardState("configure", {
+      providerId: "claude-cli",
+      kind: "claude-cli",
+      chatModel: "opus",
+    });
+    expect(wizard.phase).toBe("chat_model_line");
+    expect(wizard.chatModelLine).toBe("opus");
+  });
+
+  it("saves a CLI-backed model line straight from the model step", () => {
+    const wizard = createProvidersWizardState("configure", {
+      providerId: "claude-cli",
+      kind: "claude-cli",
+      chatModel: "opus",
+    });
+    const result = handleProvidersWizardKey("", emptyKey({ return: true }), wizard);
+    expect(result).toMatchObject({ handled: true, submit: true });
+  });
+
   it("recovers the preset behind a numbered entry id", () => {
     const wizard = createProvidersWizardState("configure", {
       providerId: "groq-2",
