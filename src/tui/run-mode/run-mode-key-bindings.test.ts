@@ -29,6 +29,26 @@ function withPicker(): TuiState {
   ]);
 }
 
+/** The mirror the orchestrator pushes in, with one leg reported absent. */
+function withMissingLeg(leg: "cloud" | "local"): TuiState {
+  return apply(createInitialTuiState(fakeSession()), [
+    {
+      type: "run_mode_synced",
+      effective: "local",
+      stored: "local",
+      cloudShare: 40,
+      localLabel: leg === "local" ? null : "qwen3-4b",
+      cloudLabel: leg === "cloud" ? null : "vendor/big",
+      localProviderId: leg === "local" ? null : "local-llama",
+      cloudProviderId: leg === "cloud" ? null : "openrouter",
+      cloudProviderMissing: leg === "cloud",
+      localProviderMissing: leg === "local",
+      degradedMessage: null,
+    },
+    { type: "run_mode_picker_opened" },
+  ]);
+}
+
 function press(state: TuiState, input: string, key: Partial<Key> = {}) {
   const dispatch = vi.fn();
   const onRunModeChangeRequested = vi.fn();
@@ -129,6 +149,39 @@ describe("handleRunModePickerKey", () => {
       type: "run_mode_picker_digit_typed",
       digit: "7",
     });
+  });
+
+  /**
+   * `n` used to open the add-a-cloud-provider wizard whatever the cursor
+   * was on. With Local highlighted on a machine that has no llama-server
+   * that is the wrong screen entirely — no number of cloud keys makes a
+   * local executor appear — so the key follows the highlighted mode.
+   */
+  it("routes n to the leg the highlighted mode is missing", () => {
+    const onLocal = withMissingLeg("local");
+    const { dispatch } = press(onLocal, "n");
+    expect(dispatch).toHaveBeenCalledWith({ type: "llm_mode_set", mode: "local" });
+    expect(dispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "providers_wizard_opened" }),
+    );
+  });
+
+  it("routes n to the cloud wizard when Cloud is the mode with no leg", () => {
+    const onCloud = apply(withMissingLeg("cloud"), [
+      { type: "run_mode_picker_cursor_set", cursor: 1 },
+    ]);
+    const { dispatch } = press(onCloud, "n");
+    expect(dispatch).toHaveBeenCalledWith({ type: "llm_mode_set", mode: "cloud" });
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "providers_wizard_opened" }),
+    );
+  });
+
+  it("leaves the chat surface for the LLM tab either way", () => {
+    const { dispatch } = press(withMissingLeg("local"), "n");
+    expect(dispatch).toHaveBeenCalledWith({ type: "run_mode_picker_closed" });
+    expect(dispatch).toHaveBeenCalledWith({ type: "ui_mode_set", mode: "debug" });
+    expect(dispatch).toHaveBeenCalledWith({ type: "tab_changed", tab: "llm" });
   });
 
   it("swallows every unclaimed key so nothing leaks to the editor", () => {

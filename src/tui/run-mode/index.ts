@@ -24,3 +24,11 @@ export {
 } from "./run-mode-selectors.js";
 export { handleRunModePickerKey } from "./run-mode-key-bindings.js";
 export { RunModeOrchestrator } from "./run-mode-orchestrator.js";
+export {
+  describeRunModeSetup,
+  openRunModeSetup,
+  runModeSetupOffer,
+  runModeSetupTarget,
+  type RunModeLegAvailability,
+  type RunModeSetupTarget,
+} from "./run-mode-setup.js";

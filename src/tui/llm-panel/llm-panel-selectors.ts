@@ -1,5 +1,6 @@
 import type { EmbeddingModelRow, LocalModelRow } from "../local-models/local-models-panel-state.js";
 import type { ProviderRow } from "../providers/providers-panel-state.js";
+import { runModeModelSummary } from "../run-mode/run-mode-selectors.js";
 import type { TuiState } from "../tui-state.js";
 import type { LlmPanelMode } from "./llm-panel-state.js";
 import {
@@ -171,8 +172,32 @@ export function selectLlmActiveRouteSummary(
   };
 }
 
+/**
+ * What the composer's meta row names as the route for the next turn.
+ *
+ * Fusion is read off the run-mode mirror rather than the active provider
+ * because it is the one mode whose route is a PAIR. The fusion rule puts
+ * the cloud leg in `activeTextProvider`, so following the active row
+ * alone would print the same single cloud model for Cloud and for
+ * Fusion — the composer would not move at all on a switch between them,
+ * and it would never name the local executor that runs most of the
+ * steps. `activeTextProvider` stays authoritative: `effective` is only
+ * ever `fusion` when that provider IS the cloud leg, so this reports the
+ * resolution, it does not compete with it.
+ */
 export function selectPromptLlmMeta(state: TuiState): PromptLlmMeta {
   const active = state.providersPanel.rows.find((row) => row.isActiveText) ?? null;
+  const runMode = state.runModePanel;
+  const fusionPair =
+    runMode.effective === "fusion" ? runModeModelSummary(runMode) : null;
+  if (fusionPair) {
+    return {
+      model: fusionPair,
+      provider: runMode.cloudProviderId,
+      usesLocalHealth: false,
+      cloudLabel: "fusion",
+    };
+  }
   if (active && active.kind !== "llama-server") {
     return {
       model: active.chatModel,
