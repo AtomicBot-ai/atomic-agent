@@ -17,10 +17,18 @@ import { formatRelativeMs } from "./tasks-summary.js";
  * `../row-window.ts`), so the doubled height then overwrote the filter
  * bar and the header row with task text and diagnostics fragments.
  *
- * That is geometry, not rendering, so it lives here as pure functions:
- * the component asks for a layout and renders it, and the invariant —
- * a row never exceeds the panel width — can be unit-tested as a table
- * instead of through screenshots.
+ * The height side is the same story from the other axis: the list used
+ * to treat its whole row budget as *table rows* and then draw a header,
+ * two scroll markers and a hint strip on top of it, so even with
+ * one-line rows the panel asked for ~5 rows more than the debug pane
+ * had budgeted — and those 5 rows are what Ink paints over the top of
+ * the filter bar.
+ *
+ * All of that is geometry, not rendering, so it lives here as pure
+ * functions: the component asks for a layout and renders it, and the
+ * invariants — a row never exceeds the panel width, a frame never
+ * exceeds its row budget — can be unit-tested as a table instead of
+ * through screenshots.
  */
 
 /** Chevron gutter in front of every row: the glyph plus one space. */
@@ -245,4 +253,90 @@ export function fitTaskListHints(width: number): string {
   // truncated `j/k move` still says the list is navigable.
   if (line.length === 0) return truncate(TASK_LIST_HINTS[0] ?? "", usable);
   return line;
+}
+/** How the list spends a row budget across its chrome and its rows. */
+export interface TasksListFit {
+  /** Rows the table body may draw. */
+  listRows: number;
+  /** Whether the column-header row is drawn. */
+  header: boolean;
+  /** Whether the footer hint strip is drawn. */
+  hints: boolean;
+  /** Whether a blank row separates the table from the hints. */
+  hintsSpacer: boolean;
+  /** Rows reserved for the `↑ N above` / `↓ N below` markers. */
+  scrollMarkerRows: number;
+}
+
+/**
+ * Rows the table keeps before it starts shedding chrome. Below three
+ * the list stops being a list, so the header and then the hints go
+ * first — a garbled panel helps nobody, but neither does a header with
+ * a single row under it.
+ */
+const MIN_LIST_ROWS = 3;
+
+/**
+ * Chrome combinations in the order they are given up. Everything is
+ * kept while it fits; then the blank spacer, then the hints, then the
+ * header.
+ */
+const CHROME_LADDER: ReadonlyArray<
+  Pick<TasksListFit, "header" | "hints" | "hintsSpacer">
+> = [
+  { header: true, hints: true, hintsSpacer: true },
+  { header: true, hints: true, hintsSpacer: false },
+  { header: true, hints: false, hintsSpacer: false },
+  { header: false, hints: false, hintsSpacer: false },
+];
+
+/**
+ * Split `budget` rows between the table's chrome and its body so the
+ * rendered frame is never taller than the budget. `totalRows` is the
+ * number of rows the filter currently matches — it decides whether the
+ * scroll markers need reserving at all.
+ */
+export function computeTasksListFit(
+  budget: number,
+  totalRows: number,
+): TasksListFit {
+  const rows = Math.max(1, Math.floor(budget));
+  for (const [index, chrome] of CHROME_LADDER.entries()) {
+    const cost =
+      (chrome.header ? 1 : 0) +
+      (chrome.hints ? 1 : 0) +
+      (chrome.hintsSpacer ? 1 : 0);
+    const listRows = rows - cost;
+    const last = index === CHROME_LADDER.length - 1;
+    if (listRows >= MIN_LIST_ROWS || last) {
+      return withScrollMarkers(chrome, listRows, totalRows);
+    }
+  }
+  /* c8 ignore next 2 -- the ladder's last entry always returns above */
+  return withScrollMarkers(
+    { header: false, hints: false, hintsSpacer: false },
+    rows,
+    totalRows,
+  );
+}
+
+/**
+ * Reserve both marker rows as soon as the table cannot show everything.
+ * Reserving lazily (only for the marker that is on screen right now)
+ * overflows by one row the moment the cursor scrolls far enough for the
+ * second marker to appear, and one row is all Ink needs to overpaint.
+ */
+function withScrollMarkers(
+  chrome: Pick<TasksListFit, "header" | "hints" | "hintsSpacer">,
+  listRows: number,
+  totalRows: number,
+): TasksListFit {
+  const available = Math.max(1, listRows);
+  const markers =
+    totalRows > available ? Math.min(2, Math.max(0, available - 1)) : 0;
+  return {
+    ...chrome,
+    scrollMarkerRows: markers,
+    listRows: Math.max(1, available - markers),
+  };
 }

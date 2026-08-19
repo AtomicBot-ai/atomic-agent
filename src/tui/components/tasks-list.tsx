@@ -5,11 +5,13 @@ import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
 import { handleTasksTabKey } from "../tasks/tasks-key-bindings.js";
 import {
   computeTaskListLayout,
+  computeTasksListFit,
   fitTaskListHints,
   formatTaskListHeader,
   formatTaskRowCells,
   type TaskListLayout,
 } from "../tasks/tasks-list-fit.js";
+import { computeRowWindow } from "../row-window.js";
 import type {
   TaskSummaryRow,
   TasksPanelState,
@@ -19,6 +21,7 @@ import type { TaskStatus } from "../../tasks/task-types.js";
 export interface TasksListProps {
   panel: TasksPanelState;
   visibleRows: readonly TaskSummaryRow[];
+  /** Rows the whole table may occupy, chrome included. */
   maxRows: number;
   now: number;
   /** Columns the panel owns — see `tasks-list-fit.ts` for why it matters. */
@@ -33,7 +36,10 @@ export interface TasksListProps {
  * Every column width — including the footer hints — comes from
  * `tasks-list-fit.ts` for the panel's real width, because a row that
  * wraps takes two terminal lines and collides its own columns into
- * each other.
+ * each other. `maxRows` is the budget for the *whole* table, header and
+ * hints included: the header, the scroll markers and the hint strip
+ * used to be drawn on top of it, which is how the panel outgrew the
+ * space the debug pane had reserved.
  */
 export function TasksList(props: TasksListProps): ReactElement {
   const { panel, visibleRows, maxRows, now, width } = props;
@@ -48,14 +54,15 @@ export function TasksList(props: TasksListProps): ReactElement {
       </Box>
     );
   }
+  const fit = computeTasksListFit(maxRows, visibleRows.length);
   const clamped = Math.max(0, Math.min(panel.cursor, visibleRows.length - 1));
-  const windowStart = computeWindowStart(clamped, visibleRows.length, maxRows);
-  const pageRows = visibleRows.slice(windowStart, windowStart + maxRows);
-  const hiddenBefore = windowStart;
-  const hiddenAfter = Math.max(0, visibleRows.length - windowStart - pageRows.length);
+  const rowWindow = computeRowWindow(visibleRows.length, clamped, fit.listRows);
+  const windowStart = rowWindow.start;
+  const pageRows = visibleRows.slice(windowStart, windowStart + rowWindow.count);
+  const { hiddenBefore, hiddenAfter } = rowWindow;
   return (
     <Box flexDirection="column">
-      <HeaderRow layout={layout} />
+      {fit.header ? <HeaderRow layout={layout} /> : null}
       {hiddenBefore > 0 ? (
         <Text color={theme.colors.muted}>
           ↑ {hiddenBefore} above
@@ -83,7 +90,7 @@ export function TasksList(props: TasksListProps): ReactElement {
           ↓ {hiddenAfter} below
         </Text>
       ) : null}
-      <HintsRow width={width} />
+      {fit.hints ? <HintsRow width={width} spacer={fit.hintsSpacer} /> : null}
     </Box>
   );
 }
@@ -96,9 +103,18 @@ function HeaderRow({ layout }: { layout: TaskListLayout }): ReactElement {
   );
 }
 
-function HintsRow({ width }: { width: number }): ReactElement {
+function HintsRow({
+  width,
+  spacer,
+}: {
+  width: number;
+  spacer: boolean;
+}): ReactElement {
+  // The blank row above the hints is the house look for a manage panel,
+  // but it is the first thing to go when the budget is tight: a hint
+  // strip the operator can read beats the whitespace around it.
   return (
-    <Box marginTop={1}>
+    <Box marginTop={spacer ? 1 : 0}>
       <Text color={theme.colors.muted}>{fitTaskListHints(width)}</Text>
     </Box>
   );
@@ -150,10 +166,4 @@ function statusColor(status: TaskStatus): string {
     default:
       return theme.colors.muted;
   }
-}
-
-function computeWindowStart(cursor: number, total: number, size: number): number {
-  if (total <= size) return 0;
-  if (cursor < size) return 0;
-  return Math.min(cursor - size + 1, total - size);
 }

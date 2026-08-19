@@ -22,6 +22,13 @@ export interface TasksPanelProps {
 }
 
 /**
+ * Rows the panel spends on its own chrome before the table starts: the
+ * one-line filter bar. `maxRows` is the budget for everything the tab
+ * draws, so the table below only ever gets what is left.
+ */
+const FILTER_BAR_ROWS = 1;
+
+/**
  * Top-level router for the Tasks tab. Switches between list, detail
  * and create-form views based on `panel.mode`. The cancel-confirm
  * modal is rendered separately by `TuiApp` above the editor, not
@@ -53,7 +60,7 @@ export function TasksPanel(props: TasksPanelProps): ReactElement {
         <TasksList
           panel={panel}
           visibleRows={visibleRows}
-          maxRows={maxRows}
+          maxRows={maxRows - FILTER_BAR_ROWS}
           now={now}
           width={width}
         />

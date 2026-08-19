@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computeTaskListLayout,
+  computeTasksListFit,
   fitTaskListHints,
   formatTaskListHeader,
   formatTaskRowCells,
@@ -137,5 +138,67 @@ describe("footer hints", () => {
     const hints = fitTaskListHints(6);
     expect(hints.length).toBeLessThanOrEqual(6);
     expect(hints.length).toBeGreaterThan(0);
+  });
+});
+
+describe("row budget", () => {
+  /** Rows a fit actually draws, given how many rows the filter matched. */
+  function drawnRows(budget: number, totalRows: number): number {
+    const fit = computeTasksListFit(budget, totalRows);
+    const window = Math.min(fit.listRows, totalRows);
+    return (
+      (fit.header ? 1 : 0) +
+      (fit.hints ? 1 : 0) +
+      (fit.hintsSpacer ? 1 : 0) +
+      fit.scrollMarkerRows +
+      window
+    );
+  }
+
+  it("never plans more rows than the budget", () => {
+    for (let budget = 1; budget <= 40; budget += 1) {
+      for (const totalRows of [1, 3, 12, 200]) {
+        expect(drawnRows(budget, totalRows)).toBeLessThanOrEqual(budget);
+      }
+    }
+  });
+
+  it("reserves both scroll markers once the table cannot show everything", () => {
+    // Reserving only the marker that happens to be on screen overflows
+    // by one row as soon as the cursor scrolls the other one into view.
+    const fit = computeTasksListFit(12, 100);
+    expect(fit.scrollMarkerRows).toBe(2);
+    expect(computeTasksListFit(12, 3).scrollMarkerRows).toBe(0);
+  });
+
+  it("keeps header and hints while the budget can carry a real list", () => {
+    const fit = computeTasksListFit(20, 12);
+    expect(fit.header).toBe(true);
+    expect(fit.hints).toBe(true);
+    expect(fit.hintsSpacer).toBe(true);
+    expect(fit.listRows).toBeGreaterThanOrEqual(12);
+  });
+
+  it("sheds the spacer, then the hints, then the header", () => {
+    expect(computeTasksListFit(5, 3)).toMatchObject({
+      header: true,
+      hints: true,
+      hintsSpacer: false,
+    });
+    expect(computeTasksListFit(4, 3)).toMatchObject({
+      header: true,
+      hints: false,
+      hintsSpacer: false,
+    });
+    expect(computeTasksListFit(2, 3)).toMatchObject({
+      header: false,
+      hints: false,
+    });
+  });
+
+  it("always leaves at least one task row", () => {
+    for (let budget = 1; budget <= 6; budget += 1) {
+      expect(computeTasksListFit(budget, 50).listRows).toBeGreaterThanOrEqual(1);
+    }
   });
 });
