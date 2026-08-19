@@ -113,12 +113,20 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       return { ...state, activeTab: action.tab };
     case "abort_requested":
       return { ...state, aborting: true };
-    case "input_changed":
+    case "input_changed": {
+      // Moving the caret re-emits the buffer unchanged (the editor owns
+      // the cursor and reports it through `onChange`). That is not an
+      // edit, so it must not knock us out of history recall — otherwise
+      // a single Left/Right after Up dropped the recall position and the
+      // parked draft with it.
+      if (action.value === state.inputValue) return state;
       return {
         ...state,
         inputValue: action.value,
         inputHistoryCursor: null,
+        inputHistoryDraft: null,
       };
+    }
     case "message_submitted":
       return startNewRun(state);
     case "quit_requested":
