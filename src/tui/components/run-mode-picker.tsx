@@ -4,7 +4,11 @@ import type { ReactElement } from "react";
 import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
-import { openProviderSetupFromRunMode } from "../run-mode/run-mode-key-bindings.js";
+import {
+  openRunModeSetup,
+  runModeSetupOffer,
+  type RunModeSetupTarget,
+} from "../run-mode/run-mode-setup.js";
 import { theme } from "../theme/theme.js";
 import { RUN_MODES, RUN_MODE_LABELS } from "../run-mode/run-mode-nav.js";
 import {
@@ -82,7 +86,12 @@ export function RunModePicker({ panel }: RunModePickerProps): ReactElement | nul
       {panel.degradedMessage ? (
         <Text color={theme.colors.warn}>{panel.degradedMessage}</Text>
       ) : null}
-      {panel.cloudProviderMissing ? <SetUpProviderRow /> : null}
+      {/*
+        The row follows the cursor, not the config: highlight Local on a
+        machine with no llama-server and the thing to set up is the local
+        runtime, not another cloud key.
+      */}
+      <SetUpLegRow target={runModeSetupOffer(picker.draftMode, panel)} />
       <Text color={theme.colors.muted}>
         ↑↓ mode · ←→ share (shift ±25) · digits set · enter apply · esc cancel
       </Text>
@@ -151,17 +160,33 @@ function LegRow({
   );
 }
 
+const SETUP_LABELS: Record<RunModeSetupTarget, string> = {
+  "cloud-provider": "Set up a cloud provider…",
+  "local-runtime": "Set up the local llama-server…",
+};
+
 /**
  * On a fresh install two of the three modes cannot be entered at all,
  * and this overlay was where you found that out and then had nowhere to
  * go. The fix belongs on the screen that raises the problem.
+ *
+ * `null` renders an empty row rather than nothing, because this overlay
+ * has to hold its height: Ink 7 paints an over-tall frame's later lines
+ * over its earlier ones, and a row that appears and disappears as the
+ * cursor moves between modes would make the box breathe under the chat
+ * surface it floats over.
  */
-function SetUpProviderRow(): ReactElement {
+function SetUpLegRow({
+  target,
+}: {
+  target: RunModeSetupTarget | null;
+}): ReactElement {
   const mouse = useMouseCommands();
+  if (!target) return <Text> </Text>;
   const label = (
     <Text color={theme.colors.accent} bold>
       {"  "}
-      {theme.glyphs.chevronRight} Set up a cloud provider…{" "}
+      {theme.glyphs.chevronRight} {SETUP_LABELS[target]}{" "}
       <Text color={theme.colors.muted}>(n)</Text>
     </Text>
   );
@@ -171,7 +196,7 @@ function SetUpProviderRow(): ReactElement {
       layer={MOUSE_LAYER_MODAL}
       onMouse={(hit) => {
         if (!isPrimaryPress(hit.event)) return false;
-        openProviderSetupFromRunMode(mouse.dispatch);
+        openRunModeSetup(mouse.dispatch, target);
         return true;
       }}
     >

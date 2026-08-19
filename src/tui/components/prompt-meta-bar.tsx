@@ -47,6 +47,14 @@ const SEND_LABEL = " send → ";
 
 const MODEL_LABEL_MAX_LEN = 32;
 
+/**
+ * Separator `runModeModelSummary` puts between the two fusion legs.
+ * Matched here rather than imported as a run-mode concept: this file
+ * only needs to know that a label can be a pair, so that it can spend
+ * its budget on both halves instead of on the first one.
+ */
+const PAIR_SEPARATOR = " ⇄ ";
+
 export function PromptMetaBar({
   leftSlot,
   model,
@@ -190,7 +198,21 @@ function MetaLeft({ leftSlot, model, provider }: MetaLeftProps): ReactElement {
 }
 
 function formatModel(model: string): string {
-  const stripped = model.replace(/\.gguf$/i, "");
-  if (stripped.length <= MODEL_LABEL_MAX_LEN) return stripped;
-  return `${stripped.slice(0, MODEL_LABEL_MAX_LEN - 1)}…`;
+  // Fusion names both legs. Truncating the joined string would eat the
+  // local half whole and leave "anthropic/claude-sonnet-4.5 ⇄ q…", which
+  // says less than either name alone would: the reader can no longer
+  // tell which local model is executing. Each side gets half the budget
+  // so both stay identifiable at the width the row already had.
+  const [cloud, local] = model.split(PAIR_SEPARATOR);
+  if (cloud !== undefined && local !== undefined) {
+    const half = Math.floor((MODEL_LABEL_MAX_LEN - PAIR_SEPARATOR.length) / 2);
+    return `${shorten(cloud, half)}${PAIR_SEPARATOR}${shorten(local, half)}`;
+  }
+  return shorten(model, MODEL_LABEL_MAX_LEN);
+}
+
+function shorten(label: string, max: number): string {
+  const stripped = label.replace(/\.gguf$/i, "");
+  if (stripped.length <= max) return stripped;
+  return `${stripped.slice(0, max - 1)}…`;
 }

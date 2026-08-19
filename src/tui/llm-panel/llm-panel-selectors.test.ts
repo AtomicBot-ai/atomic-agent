@@ -131,6 +131,88 @@ describe("llm-panel selectors", () => {
       cloudLabel: "cloud",
     });
   });
+
+  /**
+   * Cloud and Fusion share an active provider — the fusion rule requires
+   * the cloud leg to be the active one — so following `isActiveText`
+   * alone printed the same single model for both. Switching Cloud →
+   * Fusion moved nothing in the composer, and the local executor that
+   * runs most of a fusion turn was never named at all.
+   */
+  it("names both legs in the prompt when fusion is in force", () => {
+    const base = createInitialTuiState(fakeSession());
+    const state = {
+      ...base,
+      runModePanel: {
+        ...base.runModePanel,
+        effective: "fusion" as const,
+        cloudProviderId: "openrouter",
+        localProviderId: "local-llama",
+        cloudLabel: "openai/gpt-4o-mini",
+        localLabel: "qwen3-4b",
+      },
+      providersPanel: {
+        ...base.providersPanel,
+        rows: [
+          {
+            id: "openrouter",
+            kind: "openrouter",
+            isActiveText: true,
+            isActiveEmbedding: false,
+            hasApiKey: true,
+            chatModel: "openai/gpt-4o-mini",
+            embeddingModel: null,
+          },
+        ],
+      },
+    };
+
+    expect(selectPromptLlmMeta(state)).toEqual({
+      model: "openai/gpt-4o-mini ⇄ qwen3-4b",
+      provider: "openrouter",
+      usesLocalHealth: false,
+      cloudLabel: "fusion",
+    });
+  });
+
+  /**
+   * `activeTextProvider` stays authoritative: an operator who moved the
+   * active provider by hand drops out of fusion, `effective` reports
+   * `cloud`, and the composer must follow the resolution rather than the
+   * stored mode.
+   */
+  it("falls back to the active provider when fusion is only stored", () => {
+    const base = createInitialTuiState(fakeSession());
+    const state = {
+      ...base,
+      runModePanel: {
+        ...base.runModePanel,
+        effective: "cloud" as const,
+        stored: "fusion" as const,
+        cloudProviderId: "openrouter",
+        localProviderId: "local-llama",
+        cloudLabel: "openai/gpt-4o-mini",
+        localLabel: "qwen3-4b",
+      },
+      providersPanel: {
+        ...base.providersPanel,
+        rows: [
+          {
+            id: "openrouter",
+            kind: "openrouter",
+            isActiveText: true,
+            isActiveEmbedding: false,
+            hasApiKey: true,
+            chatModel: "openai/gpt-4o-mini",
+            embeddingModel: null,
+          },
+        ],
+      },
+    };
+
+    expect(selectPromptLlmMeta(state).model).toBe("openai/gpt-4o-mini");
+    expect(selectPromptLlmMeta(state).cloudLabel).toBe("cloud");
+  });
 });
 
 function localDef(id: LocalModelDef["id"]): LocalModelDef {

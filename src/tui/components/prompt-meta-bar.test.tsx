@@ -150,3 +150,39 @@ describe("composer buttons", () => {
     unmount();
   });
 });
+
+describe("the model label", () => {
+  const renderModel = (model: string): string => {
+    const { lastFrame, unmount } = render(
+      <PromptShell
+        value=""
+        focus
+        model={model}
+        onChange={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+    const frame = strip(lastFrame() ?? "");
+    unmount();
+    return frame;
+  };
+
+  /**
+   * Fusion names both legs. Spending the whole budget left-to-right ate
+   * the local half outright — "vendor/some-very-long-name ⇄ q…" — which
+   * hides the model that actually executes most of the steps.
+   */
+  it("keeps both fusion legs identifiable", () => {
+    const frame = renderModel(
+      "vendor/some-very-long-cloud-model ⇄ qwen3-4b-instruct-q4.gguf",
+    );
+    expect(frame).toContain("vendor/some-v…");
+    expect(frame).toContain("qwen3-4b-inst…");
+  });
+
+  it("still trims a single long name the way it always did", () => {
+    expect(renderModel("vendor/an-extremely-long-single-model-name")).toContain(
+      "vendor/an-extremely-long-single…",
+    );
+  });
+});

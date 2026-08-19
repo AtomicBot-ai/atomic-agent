@@ -2,13 +2,13 @@ import type { Key } from "ink";
 import type { RunModeName } from "../../config/llm-run-mode-config.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
-import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
 import {
   clampCloudShare,
   CLOUD_SHARE_COARSE_STEP,
   CLOUD_SHARE_STEP,
   RUN_MODES,
 } from "./run-mode-nav.js";
+import { openRunModeSetup, runModeSetupOffer } from "./run-mode-setup.js";
 
 export interface RunModePickerKeyContext {
   state: TuiState;
@@ -44,13 +44,16 @@ export interface RunModePickerKeyContext {
  *  - `←`/`→`          — dial ±5 (shift: ±25).
  *  - digits           — type a dial value directly.
  *  - `Enter`          — apply the highlighted mode + dial.
- *  - `n`              — set up the provider this mode needs.
+ *  - `n`              — set up the leg the HIGHLIGHTED mode is missing.
  *  - `Esc`            — close, reverting to what was in force.
  *
  * `n` exists because the overlay was a dead end on a fresh install:
  * Cloud and Fusion both refuse without a cloud provider, and the only
  * cure was to leave, find Manage -> LLM, and add one. The screen that
  * tells you what is missing is the screen that should be able to fix it.
+ * It follows the cursor rather than always opening the cloud wizard,
+ * because with Local highlighted the missing leg is a llama-server and
+ * the cloud wizard cannot supply one.
  */
 export function handleRunModePickerKey(
   input: string,
@@ -66,7 +69,15 @@ export function handleRunModePickerKey(
     return true;
   }
   if (input === "n" || input === "N") {
-    openProviderSetupFromRunMode(dispatch);
+    // Nothing missing still opens the cloud wizard: `n` is advertised on
+    // the overlay, and a key that silently does nothing on a healthy
+    // config reads as broken. Adding a second cloud provider is the only
+    // sensible thing "set up" can mean there.
+    openRunModeSetup(
+      dispatch,
+      runModeSetupOffer(picker.draftMode, ctx.state.runModePanel) ??
+        "cloud-provider",
+    );
     return true;
   }
   if (key.return) {
@@ -112,23 +123,4 @@ export function handleRunModePickerKey(
   }
   // Anything else is swallowed while the picker owns the keyboard.
   return true;
-}
-
-
-/**
- * Leave the overlay and land on the provider wizard with the Cloud pane
- * selected — the one place a cloud provider can be added. Exported so
- * the mouse layer runs exactly this, not a second copy of it.
- */
-export function openProviderSetupFromRunMode(
-  dispatch: (action: TuiAction) => void,
-): void {
-  dispatch({ type: "run_mode_picker_closed" });
-  dispatch({ type: "ui_mode_set", mode: "debug" });
-  dispatch({ type: "tab_changed", tab: "llm" });
-  dispatch({ type: "llm_mode_set", mode: "cloud" });
-  dispatch({
-    type: "providers_wizard_opened",
-    wizard: createProvidersWizardState("add"),
-  });
 }
