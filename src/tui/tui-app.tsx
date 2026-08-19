@@ -623,13 +623,19 @@ export function TuiApp({
       dispatch({ type: "ui_mode_set", mode: "chat" });
       return;
     }
+    // Esc never quits. Everywhere else in the TUI it means cancel / back
+    // one level, so a single unannounced press killing the agent — and
+    // the half-typed message with it — was a trap: no hint strip ever
+    // advertised it, while Ctrl+C deliberately asks twice. Quitting stays
+    // on Ctrl+C twice and `/quit`; Esc just clears the draft.
     if (canAcceptMessage(state)) {
-      callbacks.onQuit();
-      dispatch({ type: "quit_requested" });
-    } else {
-      callbacks.onAbort();
-      dispatch({ type: "abort_requested" });
+      if (state.inputValue.length > 0) {
+        dispatch({ type: "input_changed", value: "" });
+      }
+      return;
     }
+    callbacks.onAbort();
+    dispatch({ type: "abort_requested" });
   }, [state, callbacks]);
 
   // Tab in the editor is reserved for slash-palette completion. Section
