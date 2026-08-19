@@ -120,12 +120,40 @@ function applyToolCallDeltas(
     };
     if (delta.id) current.id = delta.id;
     if (delta.type) current.type = delta.type;
-    if (delta.function?.name) current.function.name += delta.function.name;
+    if (delta.function?.name) {
+      appendToolName(current.function, delta.function.name);
+    }
     if (delta.function?.arguments) {
       current.function.arguments += delta.function.arguments;
     }
     toolCalls.set(delta.index, current);
   }
+}
+
+/**
+ * Accumulate a tool call's function name across stream deltas.
+ *
+ * The OpenAI streaming shape sends the name **once**, in the first delta
+ * for a given `index`, and streams only `arguments` after that. Plenty of
+ * gateways do not: AI/ML API fronting Anthropic repeats the whole name in
+ * every chunk of the call. Blind concatenation turned a five-chunk `reply`
+ * into `replyreplyreplyreplyreply`, which then failed the registry lookup
+ * as `tool not registered in this agent` — the model had done nothing
+ * wrong, and the transcript showed the tool it actually asked for nowhere.
+ *
+ * A repeat of what we already hold is dropped; a genuine continuation is
+ * appended, so a gateway that really does split a name across chunks still
+ * assembles. The two cases are told apart by whether the accumulated name
+ * already ends with the incoming fragment, which is the only signal the
+ * stream gives us.
+ */
+function appendToolName(fn: { name: string }, fragment: string): void {
+  if (!fn.name) {
+    fn.name = fragment;
+    return;
+  }
+  if (fn.name === fragment || fn.name.endsWith(fragment)) return;
+  fn.name += fragment;
 }
 
 function buildFinalResult(args: {
