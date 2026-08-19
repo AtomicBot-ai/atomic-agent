@@ -16,6 +16,8 @@ import {
   handlePanelEscape,
   isPanelModalOpen,
 } from "./app-key-bindings.js";
+import { MenuPopup } from "./menu/menu-popup.js";
+import type { MenuNode } from "./menu/menu-registry.js";
 import { ApprovalModal } from "./approval-modal.js";
 import { ChatLog } from "./components/chat-log.js";
 import { DebugPane } from "./components/debug-pane.js";
@@ -28,6 +30,7 @@ import { ThemePicker } from "./components/theme-picker.js";
 import {
   isThemeName,
   setActiveTheme,
+  setBackdropDimmed,
   theme,
   THEME_NAMES,
   THEMES,
@@ -51,7 +54,7 @@ import {
 } from "./layout.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { slashPrefix } from "./commands/slash-command-parser.js";
-import { handleEditorSubmit } from "./submit-handler.js";
+import { handleEditorSubmit, runSlashCommand } from "./submit-handler.js";
 import type { TaskCreateKind } from "./tasks/tasks-panel-state.js";
 import type { TaskSchedule } from "../tasks/task-types.js";
 import {
@@ -435,6 +438,7 @@ export function TuiApp({
   );
   const app = useApp();
   const [ctrlCArmed, setCtrlCArmed] = useState(false);
+  const [menuLeaderArmed, setMenuLeaderArmed] = useState(false);
   const ctrlCTimer = useRef<NodeJS.Timeout | null>(null);
   const registryRef = useRef<MouseTargetRegistry | null>(null);
   registryRef.current ??= new MouseTargetRegistry();
@@ -561,6 +565,8 @@ export function TuiApp({
   const sidebarRows = computeSidebarRowBudget(terminalSize.rows);
   const sidebarFocused = sidebarVisible && state.chatFocus === "sidebar";
   const editorFocus =
+    !state.menuOpen &&
+    !menuLeaderArmed &&
     !state.pendingApproval &&
     // The update offer claims y / n / Esc; keep the editor unfocused so
     // those keystrokes never leak into the input buffer. The post-update
@@ -630,6 +636,8 @@ export function TuiApp({
     state.sessionPickerOpen ||
     state.themePickerOpen ||
     state.slashPaletteOpen ||
+    state.menuOpen ||
+    state.runModePanel.picker !== null ||
     isPanelModalOpen(state);
   useEffect(() => {
     registry.setMinLayer(modalOwnsInput ? MOUSE_LAYER_MODAL : MOUSE_LAYER_BASE);
@@ -669,6 +677,26 @@ export function TuiApp({
     [registry],
   );
 
+  const activateMenuNode = useCallback(
+    (node: MenuNode) => {
+      // A node that carries a slash name is *run as that command*, so the
+      // menu never grows a second dispatch path beside the slash handler.
+      if (node.slash) {
+        runSlashCommand(`/${node.slash.name}`, state, dispatch, callbacks);
+        return;
+      }
+      if (node.kind === "place") {
+        if (node.tab) {
+          dispatch({ type: "ui_mode_set", mode: "debug" });
+          dispatch({ type: "tab_changed", tab: node.tab });
+        } else {
+          dispatch({ type: "ui_mode_set", mode: "chat" });
+        }
+      }
+    },
+    [state, callbacks],
+  );
+
   useInput((input, key) => {
     const appHandled = handleAppKey(input, key, {
       state,
@@ -677,6 +705,9 @@ export function TuiApp({
       ctrlCArmed,
       setCtrlCArmed,
       sidebarVisible,
+      menuLeaderArmed,
+      setMenuLeaderArmed,
+      activateMenuNode,
     });
     if (appHandled) return;
     // While the slash-command palette is open, let the (now-focused)
@@ -824,6 +855,10 @@ export function TuiApp({
   // the smoke tests assert against an overlapped frame. In production
   // the alt-screen + `height={rows}` combo gives us the opencode-style
   // pinned-input-at-bottom UX.
+  // Render-phase on purpose: `theme` is a read-at-render proxy, and children
+  // render after this body runs, so the flag is already correct for them.
+  setBackdropDimmed(state.menuOpen);
+
   const isTty = Boolean(process.stdout.isTTY);
   const rootHeight = isTty ? terminalSize.rows : undefined;
   const promptLlm = selectPromptLlmMeta(state);
@@ -912,6 +947,11 @@ export function TuiApp({
           {state.runModePanel.picker ? (
             <Box flexShrink={0}>
               <RunModePicker panel={state.runModePanel} />
+            </Box>
+          ) : null}
+          {state.menuOpen ? (
+            <Box flexShrink={0}>
+              <MenuPopup state={state} />
             </Box>
           ) : null}
           {state.sessionPickerOpen ? (

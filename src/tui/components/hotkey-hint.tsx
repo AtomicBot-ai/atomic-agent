@@ -88,9 +88,9 @@ function Chip({ chip }: { chip: HotkeyChip }): ReactElement {
 }
 
 /** Opens the slash palette exactly the way typing `/` does. */
-function openSlashPalette(mouse: MouseContextValue): void {
-  mouse.dispatch({ type: "input_changed", value: "/" });
-  mouse.dispatch({ type: "slash_palette_opened", query: "" });
+/** Click target for the `ctrl+p` chip — the operator menu. */
+function openOperatorMenu(mouse: MouseContextValue): void {
+  mouse.dispatch({ type: "menu_opened" });
 }
 
 function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
@@ -177,7 +177,7 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
         label: "back to Run",
         onClick: (mouse) => mouse.dispatch({ type: "ui_mode_set", mode: "chat" }),
       },
-      { key: "/", label: "commands", onClick: openSlashPalette },
+      { key: "ctrl+p", label: "menu", onClick: openOperatorMenu },
       {
         key: "ctrl+c",
         label: ctrlCArmed ? "press again to quit" : "quit",
@@ -196,12 +196,14 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
       },
     ];
   }
-  // Six chips is the cap for one row on narrow terminals. The scroll
-  // hint replaces ctrl+b: Observe stays reachable via /observe, while
-  // scrolling had no visible entry point at all. ctrl+r (run mode) is
-  // unadvertised here for the same reason ctrl+b is — the mode strip
-  // above the chat is already the visible entry point, and `/run`
-  // reaches the picker from the palette.
+  // Six chips is the cap for one row on narrow terminals. `ctrl+p` takes
+  // the slot `/` used to hold: the menu contains every slash command as
+  // well as every destination, so advertising the superset costs nothing
+  // and `/` keeps working for anyone who already reaches for it. The
+  // scroll hint replaces ctrl+b: Observe stays reachable via /observe,
+  // while scrolling had no visible entry point at all. ctrl+r (run mode)
+  // is unadvertised for the same reason ctrl+b is — the mode strip above
+  // the chat is already the visible entry point.
   return [
     { key: "enter", label: "send" },
     { key: "alt+enter", label: "newline" },
@@ -212,7 +214,7 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
         mouse.dispatch({ type: "chat_focus_set", focus: "sidebar" }),
     },
     { key: SCROLL_KEY, label: "scroll" },
-    { key: "/", label: "commands", onClick: openSlashPalette },
+    { key: "ctrl+p", label: "menu", onClick: openOperatorMenu },
     {
       key: "ctrl+c",
       label: ctrlCArmed ? "press again to quit" : "quit",
