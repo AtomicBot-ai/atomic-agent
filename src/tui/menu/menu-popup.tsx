@@ -3,6 +3,7 @@ import type { ReactElement } from "react";
 
 import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
+import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import { chromeTheme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import type { MenuNode } from "./menu-registry.js";
@@ -196,6 +197,7 @@ function MenuItem({
   if (!mouse) return <Box>{body}</Box>;
   return (
     <MouseTarget
+      layer={MOUSE_LAYER_MODAL}
       onMouse={(hit) => {
         if (!isPrimaryPress(hit.event)) return false;
         // One click acts, the way a menu item does everywhere else. The

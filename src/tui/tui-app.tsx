@@ -958,7 +958,9 @@ export function TuiApp({
               <MenuPopup
                 state={state}
                 availableRows={menuPaneRows}
-                availableColumns={terminalSize.columns - 4}
+                availableColumns={
+                  terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
+                }
                 onActivate={activateMenuNode}
               />
             ) : null}

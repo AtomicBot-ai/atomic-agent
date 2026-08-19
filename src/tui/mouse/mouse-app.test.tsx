@@ -162,27 +162,58 @@ function mountApp(): {
 }
 
 describe("TuiApp mouse", () => {
-  it("switches section when the nav bar is clicked", async () => {
+  it("opens the menu when the breadcrumb is clicked", async () => {
+    // #172 retired the Run / Observe / Manage pills for a breadcrumb, so
+    // the mouse route into navigation is the breadcrumb itself: a click
+    // opens the same menu ctrl+p does. Without this the mouse would have
+    // no way to change section at all.
     const app = mountApp();
-    await waitUntil(() => app.frame().includes("▸ Run"), "the Run screen");
+    await waitUntil(() => app.frame().includes("llama.cpp"), "the Run screen");
     await clickUntil(
       app.mouse,
-      () => locate(app.frame(), "Observe"),
-      () => app.frame().includes("▸ Observe"),
-      "click on the Observe pill",
+      () => locate(app.frame(), "Run"),
+      () => app.frame().includes("Menu"),
+      "click on the breadcrumb",
     );
-    expect(app.frame()).toContain("▸ Observe");
+    expect(app.frame()).toContain("Menu");
+    app.unmount();
+  });
+
+  it("navigates when a menu row is clicked", async () => {
+    const app = mountApp();
+    await waitUntil(() => app.frame().includes("llama.cpp"), "the Run screen");
+    await clickUntil(
+      app.mouse,
+      () => locate(app.frame(), "Run"),
+      () => app.frame().includes("Menu"),
+      "click on the breadcrumb",
+    );
+    // One click acts on a menu row — the menu is the one surface where
+    // the two-step select-then-activate rule would be the surprise.
+    await clickUntil(
+      app.mouse,
+      () => locate(app.frame(), "Toggle debug pane"),
+      () => app.frame().includes("▸ Feed"),
+      "click on a menu row",
+    );
+    expect(app.frame()).toContain("▸ Feed");
     app.unmount();
   });
 
   it("switches sub-tab when a tab label is clicked", async () => {
     const app = mountApp();
-    await waitUntil(() => app.frame().includes("Observe"), "the nav bar");
+    await waitUntil(() => app.frame().includes("llama.cpp"), "the Run screen");
     await clickUntil(
       app.mouse,
-      () => locate(app.frame(), "Observe"),
-      () => app.frame().includes("▸ Observe"),
-      "click on the Observe pill",
+      () => locate(app.frame(), "Run"),
+      () => app.frame().includes("Menu"),
+      "click on the breadcrumb",
+    );
+    await clickUntil(
+      app.mouse,
+      () => locate(app.frame(), "Toggle debug pane"),
+      () => app.frame().includes("▸ Feed"),
+      "click on a menu row",
     );
     await waitUntil(() => app.frame().includes("Logs"), "the Observe sub-tabs");
     await clickUntil(
@@ -197,7 +228,7 @@ describe("TuiApp mouse", () => {
 
   it("ignores a click that lands on no target", async () => {
     const app = mountApp();
-    await waitUntil(() => app.frame().includes("▸ Run"), "the Run screen");
+    await waitUntil(() => app.frame().includes("llama.cpp"), "the Run screen");
     const before = app.frame();
     app.mouse.emit(click(0, 0));
     await delay(150);
@@ -207,7 +238,7 @@ describe("TuiApp mouse", () => {
 
   it("places the editor caret where the prompt is clicked", async () => {
     const app = mountApp();
-    await waitUntil(() => app.frame().includes("▸ Run"), "the Run screen");
+    await waitUntil(() => app.frame().includes("llama.cpp"), "the Run screen");
     app.stdin.write("hello");
     await waitUntil(() => app.frame().includes("hello"), "the typed buffer");
     // Click the second "l" (index 3) then type: the character has to land
@@ -232,7 +263,7 @@ describe("TuiApp mouse", () => {
 
   it("clamps a click past the end of a line to the line end", async () => {
     const app = mountApp();
-    await waitUntil(() => app.frame().includes("▸ Run"), "the Run screen");
+    await waitUntil(() => app.frame().includes("llama.cpp"), "the Run screen");
     app.stdin.write("hi");
     await waitUntil(() => app.frame().includes("hi"), "the typed buffer");
     await clickUntil(
@@ -292,6 +323,51 @@ describe("TuiApp mouse", () => {
     );
     expect(marker("beta-skill")).toBe("▸");
     expect(marker("alpha-skill")).not.toBe("▸");
+    app.unmount();
+  });
+});
+
+describe("TuiApp mouse — run modes", () => {
+  it("asks for the run mode a clicked pill names", async () => {
+    const asked: string[] = [];
+    const bus = makeTuiEventBus();
+    const mouse = makeMouseSource();
+    const { lastFrame, unmount } = render(
+      <TuiApp
+        session={SESSION}
+        bus={bus}
+        callbacks={{
+          ...noopCallbacks(),
+          onRunModeChangeRequested: (mode) => asked.push(mode),
+        }}
+        mouse={mouse}
+      />,
+    );
+    const frame = (): string => strip(lastFrame() ?? "");
+    await waitUntil(() => frame().includes("Fusion"), "the run-mode strip");
+    await clickUntil(
+      mouse,
+      () => locate(frame(), "Fusion"),
+      () => asked.includes("fusion"),
+      "click on the Fusion pill",
+    );
+    expect(asked).toContain("fusion");
+    unmount();
+  });
+
+  it("opens the dial when the pill already in effect is clicked", async () => {
+    // Re-applying the mode you are already in would be a wasted provider
+    // swap, and on Fusion the dial is otherwise unreachable by mouse.
+    const app = mountApp();
+    await waitUntil(() => app.frame().includes("Local"), "the run-mode strip");
+    await clickUntil(
+      app.mouse,
+      () => locate(app.frame(), "Local"),
+      () => app.frame().includes("cloud share"),
+      "click on the active pill",
+    );
+    expect(app.frame()).toContain("Run mode");
+    expect(app.frame()).toContain("cloud share");
     app.unmount();
   });
 });

@@ -3,6 +3,7 @@ import type { ReactElement } from "react";
 
 import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
+import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import { theme } from "../theme/theme.js";
 import { RUN_MODES, RUN_MODE_LABELS } from "../run-mode/run-mode-nav.js";
 import {
@@ -104,6 +105,7 @@ function ModeRow({
   if (!mouse) return label;
   return (
     <MouseTarget
+      layer={MOUSE_LAYER_MODAL}
       onMouse={(hit) => {
         if (!isPrimaryPress(hit.event)) return false;
         if (selected) {
@@ -148,6 +150,7 @@ function ShareDial({
   const barStartColumn = 2 + "cloud share ".length + 3 + 1 + 2;
   return (
     <MouseTarget
+      layer={MOUSE_LAYER_MODAL}
       onMouse={(hit) => {
         if (!isPrimaryPress(hit.event)) return false;
         const column = hit.localX - barStartColumn;
