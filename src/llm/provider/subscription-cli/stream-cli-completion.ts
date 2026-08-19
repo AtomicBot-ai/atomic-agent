@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { isBrokenPipe } from "../../../sandbox/index.js";
 import type { CliRunOptions } from "./run-cli-completion.js";
 import {
   isEnoent,
@@ -34,6 +35,8 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
 
   let stderr = "";
   let timedOut = false;
+  let inputTruncated = false;
+  let stdinError: Error | null = null;
   let killTimer: NodeJS.Timeout | null = null;
   let settled = false;
 
@@ -45,7 +48,10 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
     } catch {
       // already gone
     }
-    // Escalate only if SIGTERM was not enough.
+    // Escalate only if SIGTERM was not enough. A second `stop` (abort
+    // followed by the generator's own cleanup) must not re-arm it, or
+    // the first timer is orphaned and fires at a pid we no longer track.
+    if (killTimer) return;
     killTimer = setTimeout(() => {
       try {
         child.kill("SIGKILL");
@@ -92,6 +98,20 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
   // real await picks it up. Other awaiters still see the rejection.
   exited.catch(() => {});
 
+  // Ctrl+C in the TUI runs `onAbort` -> `stop("abort")` -> SIGTERM while
+  // a prompt past the pipe buffer (~64 KiB) is still draining, so the
+  // write fails with EPIPE. An `error` on a stream with no listener is
+  // fatal for the process, which would turn the most routine action in
+  // the TUI — cancelling a turn — into a lost session. The broken pipe
+  // is expected here; the child's exit code still reports the outcome.
+  child.stdin.on("error", (err: NodeJS.ErrnoException) => {
+    if (isBrokenPipe(err)) {
+      inputTruncated = true;
+      return;
+    }
+    stdinError ??= err;
+  });
+
   if (options.input !== undefined) child.stdin.write(options.input);
   child.stdin.end();
 
@@ -117,7 +137,10 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
     if (buffer.length > 0) yield buffer;
 
     const { code } = await exited;
-    if (code !== 0 || timedOut) {
+    // A stdin failure that is not a broken pipe is a local fault, not
+    // something the CLI's exit code explains — report it as itself.
+    if (stdinError) throw stdinError;
+    if (code !== 0 || timedOut || inputTruncated) {
       throw mapCliFailure({
         binary: options.binary,
         installHint: options.installHint,
@@ -127,6 +150,7 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
         stderr,
         timedOut,
         truncated: false,
+        inputTruncated,
         timeoutMs: options.timeoutMs,
         maxOutputBytes: options.maxOutputBytes,
       });
@@ -135,6 +159,19 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
     if (timer) clearTimeout(timer);
     options.signal?.removeEventListener("abort", onAbort);
     if (!settled) stop("done");
-    if (killTimer) clearTimeout(killTimer);
+    // Cancel the SIGKILL escalation only once the child is actually
+    // gone. Clearing it unconditionally cancelled the timer `stop` had
+    // armed microseconds earlier, so a child that traps SIGTERM was
+    // never force-killed and survived as an orphan — one per aborted
+    // turn. While it is still alive, let the delay run and disarm on
+    // exit instead.
+    if (killTimer) {
+      const armed = killTimer;
+      const disarm = () => clearTimeout(armed);
+      // `.then(f, f)` rather than `.finally`: the latter returns a
+      // promise that re-throws, and nobody is left to await it here.
+      if (settled) disarm();
+      else void exited.then(disarm, disarm);
+    }
   }
 };

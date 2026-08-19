@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import type { CliRunOptions } from "./run-cli-completion.js";
 import { streamCliCommand } from "./stream-cli-completion.js";
-import { SubscriptionCliNotInstalledError } from "./subscription-cli-errors.js";
+import {
+  SubscriptionCliAuthError,
+  SubscriptionCliNotInstalledError,
+} from "./subscription-cli-errors.js";
 
 /**
  * These exercise the real spawn/line-splitting path against a scripted
@@ -123,5 +126,111 @@ describe("streamCliCommand", () => {
     expect(first.value).toBe('{"type":"a"}');
     // The generator's finally block is responsible for the kill.
     await iterator.return();
+  });
+});
+
+/** A prompt well past the ~64 KiB pipe buffer, so the write cannot flush at once. */
+const BIG_PROMPT = "x".repeat(1024 * 1024);
+
+describe("streamCliCommand stdin", () => {
+  it("maps a signed-out CLI that never read a 1 MiB prompt to an auth error", async () => {
+    // Without an `error` listener on `child.stdin` the EPIPE from the
+    // undrained write is an uncaught exception, and
+    // `installGlobalErrorHandlers` keeps that fatal — the operator loses
+    // the session instead of being told to run /login.
+    const script = `
+      process.stderr.write("Please run /login to authenticate", () => process.exit(1));
+    `;
+    await expect(
+      collect(options(script, { input: BIG_PROMPT })),
+    ).rejects.toBeInstanceOf(SubscriptionCliAuthError);
+  });
+
+  it("survives an abort fired while a 1 MiB prompt is still draining", async () => {
+    // Ctrl+C in the TUI: onAbort -> stop("abort") -> SIGTERM lands on a
+    // child that has not read its stdin, so the pending write faults.
+    const controller = new AbortController();
+    const script = `
+      process.stdout.write('{"type":"a"}\\n');
+      setTimeout(() => {}, 60000);
+    `;
+    const lines: string[] = [];
+    await expect(
+      (async () => {
+        for await (const line of streamCliCommand(
+          options(script, { input: BIG_PROMPT, signal: controller.signal }),
+        )) {
+          lines.push(line);
+          controller.abort();
+        }
+      })(),
+    ).rejects.toThrow();
+    expect(lines).toEqual(['{"type":"a"}']);
+  });
+
+  it("refuses a run whose prompt was only half delivered, even on exit 0", async () => {
+    // `codex` exits 0 even when it fails, so the exit code alone would
+    // let a completion computed from a truncated prompt through.
+    const script = `
+      process.stdout.write('{"type":"a"}\\n', () => process.exit(0));
+    `;
+    await expect(collect(options(script, { input: BIG_PROMPT }))).rejects.toThrow(
+      /stopped reading the prompt/,
+    );
+  });
+});
+
+describe("streamCliCommand SIGKILL escalation", () => {
+  const strays: number[] = [];
+
+  afterEach(() => {
+    // Belt and braces: nothing this file spawns may outlive the suite.
+    for (const pid of strays.splice(0)) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // already gone, which is the point of the test
+      }
+    }
+  });
+
+  function alive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function waitUntilGone(pid: number, budgetMs: number): Promise<number> {
+    const started = Date.now();
+    while (Date.now() - started < budgetMs) {
+      if (!alive(pid)) return Date.now() - started;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return -1;
+  }
+
+  it("force-kills a child that traps SIGTERM instead of orphaning it", async () => {
+    // The `finally` used to clear the SIGKILL timer `stop` had just
+    // armed, so this child survived every abort — one orphan per
+    // cancelled turn. It reports its own pid so the test can watch it.
+    const script = `
+      process.on("SIGTERM", () => {});
+      process.stdout.write(process.pid + "\\n");
+      setInterval(() => {}, 1000);
+    `;
+    const iterator = streamCliCommand(options(script));
+    const first = await iterator.next();
+    const pid = Number(first.value);
+    expect(Number.isInteger(pid)).toBe(true);
+    strays.push(pid);
+
+    await iterator.return();
+    // SIGTERM is ignored, so only the 2s escalation can end it.
+    expect(alive(pid)).toBe(true);
+    const tookMs = await waitUntilGone(pid, 8_000);
+    expect(tookMs).toBeGreaterThanOrEqual(0);
   });
 });
