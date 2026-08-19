@@ -34,6 +34,7 @@ function makeCommandResult(
     durationMs: 1,
     timedOut: false,
     truncated: false,
+    inputTruncated: false,
     ...overrides,
   };
 }

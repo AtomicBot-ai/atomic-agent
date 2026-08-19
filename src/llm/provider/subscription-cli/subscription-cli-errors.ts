@@ -66,6 +66,8 @@ export interface CliFailureInput {
   stderr: string;
   timedOut: boolean;
   truncated: boolean;
+  /** The CLI stopped reading stdin before the prompt was fully written. */
+  inputTruncated?: boolean;
   timeoutMs: number;
   maxOutputBytes: number;
 }
@@ -97,6 +99,16 @@ export function mapCliFailure(input: CliFailureInput): Error {
       input.binary,
       input.authHint,
       tail(input.stderr || input.stdout),
+    );
+  }
+  // Checked after the auth patterns: a signed-out CLI is what usually
+  // drops the pipe, and "run /login" is the more actionable message.
+  if (input.inputTruncated) {
+    return new SubscriptionCliInvocationError(
+      `"${input.binary}" stopped reading the prompt before it was fully written (exit ${
+        input.exitCode ?? "null"
+      }): ${tail(input.stderr || input.stdout) || "no output"}`,
+      input.exitCode,
     );
   }
   return new SubscriptionCliInvocationError(

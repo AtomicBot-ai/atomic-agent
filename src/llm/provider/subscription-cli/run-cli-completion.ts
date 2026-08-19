@@ -63,7 +63,16 @@ export const runCliCommand: CliRunner = async (options) => {
     throw err;
   }
 
-  if (result.exitCode !== 0 || result.timedOut || result.truncated) {
+  // `inputTruncated` is its own failure condition: a CLI that stops
+  // reading mid-prompt answered a different question than the one we
+  // asked, and `codex` exits 0 even when it fails, so the exit code
+  // alone would let that through as a good completion.
+  if (
+    result.exitCode !== 0 ||
+    result.timedOut ||
+    result.truncated ||
+    result.inputTruncated
+  ) {
     throw mapCliFailure({
       binary: options.binary,
       installHint: options.installHint,
@@ -73,6 +82,7 @@ export const runCliCommand: CliRunner = async (options) => {
       stderr: result.stderr,
       timedOut: result.timedOut,
       truncated: result.truncated,
+      inputTruncated: result.inputTruncated,
       timeoutMs: options.timeoutMs,
       maxOutputBytes: options.maxOutputBytes,
     });
