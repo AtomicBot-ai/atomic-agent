@@ -130,10 +130,26 @@ export function apiKeyPhaseError(
   return `API key required — paste the key, or set ${envHintForWizard(wizard)} in .env first`;
 }
 
+/**
+ * How each built-in kind is named in prose. The raw kind is a config
+ * token, not a service name: `"openrouter" rejected this key` in the
+ * middle of a screen whose own row says "OpenRouter" reads as a
+ * different, lower-case product.
+ */
+const KIND_SERVICE_LABELS: Record<ProvidersWizardKind, string> = {
+  "claude-cli": "Claude Code",
+  "codex-cli": "OpenAI Codex",
+  openrouter: "OpenRouter",
+  aimlapi: "AI/ML API",
+  gemini: "Gemini",
+  "openai-compatible": "this endpoint",
+};
+
 /** Service name for headings and for every sentence about a failure. */
 export function providerLabelForWizard(wizard: ProvidersWizardState): string {
   const preset = wizard.presetId ? findProviderPreset(wizard.presetId) : undefined;
-  return preset?.label ?? wizard.kind ?? "provider";
+  if (preset) return preset.label;
+  return wizard.kind ? KIND_SERVICE_LABELS[wizard.kind] : "provider";
 }
 
 /** The model this wizard run is about to save, before any defaulting. */

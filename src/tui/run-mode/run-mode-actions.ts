@@ -4,10 +4,12 @@ import type { RunModeName } from "../../config/llm-run-mode-config.js";
  * Reducer actions for the Run-mode strip and its dial overlay. The
  * `run_mode_` prefix lets the root reducer narrow without a tag table.
  *
- * `run_mode_change_requested` is intentionally a REQUEST, not a state
- * change: only the orchestrator may write config or move the active
- * provider, and the mirror updates when it reports back via
- * `run_mode_synced`.
+ * There is deliberately no "apply this mode" action here. Only the
+ * orchestrator may write config or move the active provider, and it is
+ * unreachable from a dispatch: the bus it listens on is bridged into
+ * the reducer one way. Applying a mode goes through
+ * `TuiAppCallbacks.onRunModeChangeRequested`; the mirror updates when
+ * the orchestrator reports back via `run_mode_synced`.
  */
 export type RunModeAction =
   | {
@@ -17,11 +19,12 @@ export type RunModeAction =
       cloudShare: number;
       localLabel: string | null;
       cloudLabel: string | null;
+      localProviderId: string | null;
+      cloudProviderId: string | null;
       cloudProviderMissing: boolean;
       localProviderMissing: boolean;
       degradedMessage: string | null;
     }
-  | { type: "run_mode_change_requested"; mode: RunModeName; cloudShare?: number }
   | { type: "run_mode_change_started" }
   | { type: "run_mode_change_settled"; error?: string }
   | { type: "run_mode_picker_opened" }

@@ -36,6 +36,14 @@ const MODE_BLURBS: Record<string, string> = {
  * mouse layer uses for lists, because applying a mode swaps providers.
  * The dial is the exception: it is a slider, and clicking a slider at a
  * position means "put it here", so one click sets the share.
+ *
+ * The leg rows report, they do not edit. Pinning a leg writes
+ * `llm.runMode.cloudProvider` / `localProvider`, and the only wire this
+ * screen has to the orchestrator that owns config writes is
+ * `onRunModeChangeRequested(mode, cloudShare?)` — which has no room for
+ * a provider id. Widening it means editing `TuiAppCallbacks` in
+ * `tui-app.tsx`. Until then the pins stay a config-file setting, and
+ * this screen at least says which providers are in force.
  */
 export function RunModePicker({ panel }: RunModePickerProps): ReactElement | null {
   const picker = panel.picker;
@@ -70,6 +78,7 @@ export function RunModePicker({ panel }: RunModePickerProps): ReactElement | nul
           ? describeCloudShare(picker.draftCloudShare)
           : "the dial only applies to Fusion"}
       </Text>
+      <LegRows panel={panel} />
       {panel.degradedMessage ? (
         <Text color={theme.colors.warn}>{panel.degradedMessage}</Text>
       ) : null}
@@ -78,6 +87,67 @@ export function RunModePicker({ panel }: RunModePickerProps): ReactElement | nul
         ↑↓ mode · ←→ share (shift ±25) · digits set · enter apply · esc cancel
       </Text>
     </Box>
+  );
+}
+
+/**
+ * The two legs a mode runs on, named.
+ *
+ * Every mode on this screen is a statement about a PAIR of providers —
+ * Fusion runs both at once — and the overlay used to name neither. With
+ * more than one cloud provider configured that is not a cosmetic gap:
+ * the cloud leg is `llm.runMode.cloudProvider`, or failing that the
+ * first non-`llama-server` entry in `llm.providers`, which is not
+ * necessarily the one the operator was last using. "Fusion" with no
+ * further information does not say which account is about to be billed.
+ *
+ * Read-only for now, and deliberately so — see the note on
+ * `RunModePicker`. Changing a leg means writing `llm.runMode`, and this
+ * screen has exactly one wire to the orchestrator that can do that.
+ */
+function LegRows({ panel }: { panel: RunModePanelState }): ReactElement {
+  return (
+    <>
+      <LegRow
+        name="cloud leg"
+        providerId={panel.cloudProviderId}
+        model={panel.cloudLabel}
+        missingHint="none configured — press n to add one"
+      />
+      <LegRow
+        name="local leg"
+        providerId={panel.localProviderId}
+        model={panel.localLabel}
+        missingHint="no llama-server provider"
+      />
+    </>
+  );
+}
+
+function LegRow({
+  name,
+  providerId,
+  model,
+  missingHint,
+}: {
+  name: string;
+  providerId: string | null;
+  model: string | null;
+  missingHint: string;
+}): ReactElement {
+  return (
+    <Text color={theme.colors.muted}>
+      {"  "}
+      {name}{"    "}
+      {providerId ? (
+        <Text color={theme.colors.accentSoft}>
+          {providerId}
+          {model && model !== providerId ? ` · ${model}` : ""}
+        </Text>
+      ) : (
+        <Text color={theme.colors.warn}>{missingHint}</Text>
+      )}
+    </Text>
   );
 }
 

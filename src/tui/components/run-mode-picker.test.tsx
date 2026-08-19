@@ -78,4 +78,44 @@ describe("RunModePicker", () => {
     expect(frame).toContain("enter apply");
     expect(frame).toContain("esc cancel");
   });
+
+  /**
+   * Reported as "I don't see a way to configure fusion anywhere". Every
+   * mode here names a PAIR of providers and the overlay named neither,
+   * so with two cloud providers configured there was nothing on screen
+   * to say which one Fusion would orchestrate through — i.e. which
+   * account gets billed.
+   */
+  describe("the two legs", () => {
+    it("names the provider filling each leg", () => {
+      const frame = frameOf(
+        open({
+          cloudProviderId: "aimlapi",
+          cloudLabel: "gpt-5",
+          localProviderId: "local-llama",
+          localLabel: "qwen-3.5-4b",
+        }),
+      );
+      expect(frame).toContain("cloud leg");
+      expect(frame).toContain("aimlapi · gpt-5");
+      expect(frame).toContain("local leg");
+      expect(frame).toContain("local-llama · qwen-3.5-4b");
+    });
+
+    it("says a missing cloud leg is missing, and how to fix it", () => {
+      const frame = frameOf(
+        open({ cloudProviderId: null, localProviderId: "local-llama" }),
+      );
+      expect(frame).toContain("cloud leg");
+      expect(frame).toContain("press n to add one");
+    });
+
+    it("does not repeat the id when no model name resolved", () => {
+      const frame = frameOf(
+        open({ cloudProviderId: "openrouter", cloudLabel: "openrouter" }),
+      );
+      expect(frame).toContain("openrouter");
+      expect(frame).not.toContain("openrouter · openrouter");
+    });
+  });
 });
