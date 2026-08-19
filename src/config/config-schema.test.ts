@@ -84,8 +84,24 @@ describe("parseUserConfigFile", () => {
     ).toBe(1);
   });
 
-  it("rejects unsupported version", () => {
-    expect(() => parseUserConfigFile({ version: 99 })).toThrow(
+  it("reads a version newer than this build instead of refusing it", () => {
+    // Knowingly replaces "rejects unsupported version", which pinned
+    // `{version: 99}` as fatal. That is what made two builds sharing one
+    // `config.json` mutually exclusive: the newer one wrote v38 and the
+    // installed v0.2.2 then failed every command. The schema is additive,
+    // so a newer file parses fine — unknown keys are simply not read.
+    const parsed = parseUserConfigFile({
+      version: 99,
+      localModels: { url: "http://127.0.0.1:9999" },
+    });
+    expect(parsed.localModels.url).toBe("http://127.0.0.1:9999");
+  });
+
+  it("still rejects a non-integer version", () => {
+    expect(() => parseUserConfigFile({ version: "38" })).toThrow(
+      ConfigValidationError,
+    );
+    expect(() => parseUserConfigFile({ version: 38.5 })).toThrow(
       ConfigValidationError,
     );
   });
@@ -991,5 +1007,13 @@ describe("parseUserConfigFile", () => {
         memory: { retrieve: { rewriter: { timeoutMs: 0 } } },
       }),
     ).toThrow(/timeoutMs/);
+  });
+  it("upgrades a v37 file to the current version untouched", () => {
+    // v38 only ADDED the optional `llm.runMode` sub-key, so a v37 file
+    // needs no migration code — absence already is the v37 behaviour.
+    const parsed = parseUserConfigFile({ version: 37 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(USER_CONFIG_VERSION).toBe(38);
+    expect(parsed.llm?.runMode).toBeUndefined();
   });
 });

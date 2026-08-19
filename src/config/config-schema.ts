@@ -4,6 +4,7 @@ import {
   parseUserLlmFileConfig,
   type UserLlmFileConfig,
 } from "./llm-config.js";
+import type { UserLlmRunModeConfig } from "./llm-run-mode-config.js";
 
 export type { ApprovalLevel } from "../approval/approval-level.js";
 import type { DotenvLoadResult } from "./load-dotenv.js";
@@ -768,6 +769,14 @@ export interface AtomicAgentConfig {
       probeThrottleMs?: number;
       failureWindowMs?: number;
     };
+    /**
+     * Operator run mode: `local` (llama-server only), `cloud` (cloud
+     * provider only) or `fusion` (cloud orchestrates, local executes).
+     * `activeTextProvider` stays authoritative — this block is additive
+     * and is reconciled by `resolveRunMode`. See AGENTS.md §"Run modes
+     * (Local / Cloud / Fusion)".
+     */
+    runMode?: UserLlmRunModeConfig;
   };
 }
 
@@ -1412,7 +1421,12 @@ export interface UserConfigFile {
 // is absent, a legacy `approvalRequired: false` maps to level 5 and
 // `true`/absent maps to level 1 — both preserve the old behaviour
 // exactly. The legacy key is never written back.
-export const USER_CONFIG_VERSION = 37 as const;
+// v38: new optional `llm.runMode` block — the operator run mode
+// (`local` | `cloud` | `fusion`) plus the fusion cloud-share dial and
+// the sub-runner target. Absence IS the v37 behaviour: it is an
+// optional sub-key of an already-optional block, so no migration code
+// exists; the bump only records the schema change.
+export const USER_CONFIG_VERSION = 38 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1529,6 +1543,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   34,
   35,
   36,
+  37,
   USER_CONFIG_VERSION,
 ];
 
@@ -2646,10 +2661,31 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   }
   const obj = raw as Record<string, unknown>;
   const version = obj.version ?? USER_CONFIG_VERSION;
-  if (
-    typeof version !== "number" ||
-    !SUPPORTED_INPUT_VERSIONS.includes(version)
-  ) {
+  if (typeof version !== "number" || !Number.isInteger(version)) {
+    throw new ConfigValidationError(
+      "version",
+      `expected an integer version; got ${JSON.stringify(version)}`,
+    );
+  }
+  // A version *newer* than this build is read, not refused.
+  //
+  // Every bump this schema has ever taken is additive: new keys arrive
+  // with defaults and the parser reads field by field, so a file written
+  // by a newer build parses correctly here — the keys this build does not
+  // know are simply not read, and `writeUserConfigFileSync` preserves
+  // unknown top-level keys rather than dropping them.
+  //
+  // Refusing was actively harmful. Two builds share one `config.json`,
+  // so the moment the newer one wrote its version the older one died on
+  // *every* command — `models status`, `config get`, the TUI — with a
+  // validation error naming 33 acceptable versions and no way out.
+  // Running two versions side by side is normal (a release plus a build
+  // under test), and an additive schema has no reason to make it fatal.
+  //
+  // The other half of this contract lives in `ensureUserConfigFileSync`,
+  // which must not rewrite a newer file back down to this build's shape —
+  // reading it is safe, overwriting would delete the newer build's keys.
+  if (version < USER_CONFIG_VERSION && !SUPPORTED_INPUT_VERSIONS.includes(version)) {
     throw new ConfigValidationError(
       "version",
       `unsupported config version ${JSON.stringify(version)}; expected one of ${SUPPORTED_INPUT_VERSIONS.join(", ")}`,

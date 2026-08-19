@@ -554,3 +554,50 @@ describe("user config file IO", () => {
     warn.mockRestore();
   });
 });
+
+describe("a config written by a newer build", () => {
+  // Regression: two builds share one `~/.atomic-agent/config.json`. The
+  // 0.3.0 build bumped it to v38 and the installed v0.2.2 release then
+  // died on every single command with "unsupported config version 38".
+  // An additive schema has no reason to make version skew fatal.
+  it("is read, not refused", () => {
+    const dir = mkdtempSync(join(tmpdir(), "atomic-newer-config-"));
+    const path = join(dir, "config.json");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: USER_CONFIG_VERSION + 5,
+        localModels: { url: "http://127.0.0.1:9999" },
+        somethingFromTheFuture: { enabled: true },
+      }),
+      "utf8",
+    );
+    const parsed = ensureUserConfigFileSync(path);
+    expect(parsed.localModels.url).toBe("http://127.0.0.1:9999");
+  });
+
+  it("is never rewritten back down to this build's version", () => {
+    const dir = mkdtempSync(join(tmpdir(), "atomic-newer-config-"));
+    const path = join(dir, "config.json");
+    const future = {
+      version: USER_CONFIG_VERSION + 5,
+      localModels: { url: "http://127.0.0.1:9999" },
+      somethingFromTheFuture: { enabled: true },
+    };
+    writeFileSync(path, JSON.stringify(future), "utf8");
+    ensureUserConfigFileSync(path);
+    const onDisk = JSON.parse(readFileSync(path, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    expect(onDisk.version).toBe(USER_CONFIG_VERSION + 5);
+    expect(onDisk.somethingFromTheFuture).toEqual({ enabled: true });
+  });
+
+  it("still refuses a version older than the oldest supported one", () => {
+    const dir = mkdtempSync(join(tmpdir(), "atomic-old-config-"));
+    const path = join(dir, "config.json");
+    writeFileSync(path, JSON.stringify({ version: 2 }), "utf8");
+    expect(() => ensureUserConfigFileSync(path)).toThrow(/unsupported config version/);
+  });
+});
