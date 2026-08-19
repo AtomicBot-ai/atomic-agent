@@ -137,6 +137,16 @@ export function handleAppKey(
     !state.themePickerOpen &&
     !state.sessionPickerOpen
   ) {
+    // Scroll-reset keeps its precedence: Esc with the chat scrolled away
+    // from the bottom snaps back to the latest reply before doing
+    // anything else — the rung this branch now runs ahead of, and the
+    // reason a mid-run PageUp + Esc must not destroy the turn. Only in
+    // chat mode; on a debug tab the chat is off-screen, so a stale
+    // offset there would just make Esc look dead.
+    if (state.uiMode === "chat" && state.chatScrollOffset > 0) {
+      dispatch({ type: "chat_scroll_reset" });
+      return true;
+    }
     callbacks.onAbort();
     dispatch({ type: "abort_requested" });
     return true;
@@ -299,7 +309,8 @@ export function handleAppKey(
  * search inputs, detail views and half-typed forms consume Esc in their
  * own layer first and never reach here. `editorFocus` guards the tabs
  * that leave the chat editor focused — there the editor's own input
- * hook owns Esc (abort / scroll-reset / quit) and must not double-act.
+ * hook owns Esc (scroll-reset / quit; abort is claimed earlier, by
+ * `handleAppKey`) and must not double-act.
  *
  * Returns `true` when the key was consumed.
  */

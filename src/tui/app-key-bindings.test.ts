@@ -544,6 +544,72 @@ describe("handleAppKey", () => {
     });
     expect(onSidebarTaskActivated).toHaveBeenCalledWith("task-id-42");
   });
+
+  it("Esc while running aborts the turn when the chat is pinned to the bottom", () => {
+    const state = createInitialTuiState(stubSession());
+    state.status = "running";
+    const dispatch = vi.fn();
+    const onAbort = vi.fn();
+    const handled = handleAppKey("", emptyKey({ escape: true }), {
+      state,
+      dispatch,
+      callbacks: { onApprovalDecision: vi.fn(), onAbort, onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(true);
+    expect(onAbort).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith({ type: "abort_requested" });
+  });
+
+  it("Esc while running snaps the scrolled-back chat home instead of aborting", () => {
+    // Reported sequence: submit, PageUp to read back through the
+    // streaming answer, Esc. The scroll-reset rung documents that it
+    // runs "before doing anything else"; the abort claim must not eat
+    // the turn out from under an operator who was only scrolling.
+    const state = createInitialTuiState(stubSession());
+    state.status = "running";
+    state.chatScrollOffset = 8;
+    const dispatch = vi.fn();
+    const onAbort = vi.fn();
+    const handled = handleAppKey("", emptyKey({ escape: true }), {
+      state,
+      dispatch,
+      callbacks: { onApprovalDecision: vi.fn(), onAbort, onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(true);
+    expect(onAbort).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({ type: "chat_scroll_reset" });
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "abort_requested" });
+  });
+
+  it("Esc while running on a debug tab aborts even with a stale scroll offset", () => {
+    // Nothing resets `chatScrollOffset` on a mode switch, and the chat
+    // is off-screen in debug mode — snapping an invisible log back would
+    // just make Esc look dead there.
+    const state = createInitialTuiState(stubSession());
+    state.status = "running";
+    state.uiMode = "debug";
+    state.activeTab = "logs";
+    state.chatScrollOffset = 8;
+    const dispatch = vi.fn();
+    const onAbort = vi.fn();
+    const handled = handleAppKey("", emptyKey({ escape: true }), {
+      state,
+      dispatch,
+      callbacks: { onApprovalDecision: vi.fn(), onAbort, onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(true);
+    expect(onAbort).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith({ type: "abort_requested" });
+  });
 });
 
 describe("handlePanelEscape", () => {

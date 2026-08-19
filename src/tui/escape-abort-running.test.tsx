@@ -20,7 +20,10 @@ const SESSION: TuiSessionInfo = {
  * assertion waits past that flush window before reading the frame.
  */
 const ESC = String.fromCharCode(27);
+const PAGE_UP = `${String.fromCharCode(27)}[5~`;
 const FLUSH_MS = 60;
+/** Comfortably past the 24-row `ink-testing-library` default viewport. */
+const TALL_CHAT_LINES = 40;
 
 const settle = (): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, FLUSH_MS));
@@ -54,8 +57,10 @@ describe("Esc while a turn is running", () => {
 
     // The editor is `disabled` for the whole run, which switches its
     // `useInput` off — so this has to be claimed by the global key layer
-    // or the advertised "[esc] abort" does nothing at all.
-    expect(counts.abort).toBeGreaterThan(0);
+    // or the advertised "[esc] abort" does nothing at all. Exactly once:
+    // the editor's own Esc handler no longer carries a second copy of
+    // the abort, which would double-fire once it stays live during a run.
+    expect(counts.abort).toBe(1);
     expect(counts.quit).toBe(0);
     unmount();
   });
@@ -78,6 +83,42 @@ describe("Esc while a turn is running", () => {
     // The hint strip checks `running` before `uiMode === "debug"`, so a
     // run in flight aborts rather than navigating back to Run.
     expect(counts.abort).toBeGreaterThan(0);
+    expect(counts.quit).toBe(0);
+    unmount();
+  });
+
+  it("snaps a scrolled-back chat home first and keeps the turn alive", async () => {
+    const counts = { quit: 0, abort: 0 };
+    const bus = makeTuiEventBus();
+    const { stdin, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={trackingCallbacks(counts)} />,
+    );
+    await settle();
+    bus.emit({ type: "message_submitted" });
+    // A chat taller than the viewport, or `ChatLog` clamps the scroll
+    // straight back to 0 and PageUp is a no-op.
+    for (let i = 0; i < TALL_CHAT_LINES; i++) {
+      bus.emit({ type: "system_message", text: `line ${i}` });
+    }
+    await settle();
+
+    // Read back through the streaming answer, then press the Esc the
+    // scroll-reset rung documents as "snap to the latest reply before
+    // doing anything else".
+    stdin.write(PAGE_UP);
+    await settle();
+    stdin.write(ESC);
+    await settle();
+
+    expect(counts.abort).toBe(0);
+
+    // The offset is back at 0, so the next Esc means abort — which also
+    // proves the first one consumed the scroll rather than falling
+    // through and leaving the chat pinned mid-history.
+    stdin.write(ESC);
+    await settle();
+
+    expect(counts.abort).toBe(1);
     expect(counts.quit).toBe(0);
     unmount();
   });
