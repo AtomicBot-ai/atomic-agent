@@ -1,6 +1,10 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import { applyNavSlot, decideApproval } from "../app-key-bindings.js";
+import {
+  applyNavSlot,
+  decideApproval,
+  escapeHasNothingToCancel,
+} from "../app-key-bindings.js";
 import {
   MouseTarget,
   useMouseCommands,
@@ -217,6 +221,7 @@ function resolveChips(
   // (cycle run mode) stays unadvertised for the same reason ctrl+b was —
   // the mode strip above the chat is its visible entry point, and the
   // menu now lists Local / Cloud / Fusion outright.
+  const escapeMenu = escapeHasNothingToCancel(state);
   return [
     { key: "enter", label: "send" },
     { key: "ctrl+j", label: "newline" },
@@ -234,12 +239,27 @@ function resolveChips(
       : []),
     { key: SCROLL_KEY, label: "scroll" },
     { key: "ctrl+p", label: "menu", onClick: openOperatorMenu },
-    // Esc means something here — it clears the draft — and nothing said
-    // so. It is the one key an operator reaches for expecting "get me
-    // out of this", and leaving it off the strip is how it ended up
-    // feeling like the quit key. (The running branch above already
-    // advertises it as `abort`.)
-    { key: "esc", label: "clear" },
+    // Esc means something here and nothing said so. It is the one key an
+    // operator reaches for expecting "get me out of this", and leaving it
+    // off the strip is how it ended up feeling like the quit key. (The
+    // running branch above already advertises it as `abort`.)
+    //
+    // What it means now depends on what is left to cancel, so the chip has
+    // to follow the state instead of naming one fixed action: `cancel`
+    // covers the two things Esc still backs out of on this surface — a
+    // half-typed draft and a transcript scrolled up — and once neither is
+    // there it opens the menu. It shares its body with the binding, so the
+    // label cannot claim one thing while the key does another.
+    //
+    // Deliberately blind to the menu already being open (`escapeOpensMenu`
+    // is not): this whole row describes the chat surface *behind* any
+    // popup — `enter send` and `tab sidebar` are no truer while the menu
+    // has the keyboard — and the popup carries its own `esc close` footer.
+    // Flipping this one word when a floating surface opens would also make
+    // the strip a moving part of a frame that is supposed to sit still.
+    escapeMenu
+      ? { key: "esc", label: "menu", onClick: openOperatorMenu }
+      : { key: "esc", label: "cancel" },
     {
       key: "ctrl+c",
       label: ctrlCArmed ? "press again to quit" : "quit",
