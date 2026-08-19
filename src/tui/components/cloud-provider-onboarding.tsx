@@ -28,9 +28,40 @@ export function CloudProviderOnboarding(props: {
     };
   }, []);
 
+  /**
+   * Whether the check this controller belongs to may still touch the
+   * screen or the config. Asked again after every await, at both exits.
+   *
+   * `alive` alone answers a different question: Esc and Ctrl+C both end
+   * a check without unmounting anything, so a mounted component says
+   * nothing about whether its operator still wants the answer. Nor does
+   * a verdict — `verifyProviderKey` samples the signal at the top of
+   * each probe and in the fetch catch, so an abort landing between the
+   * response arriving and `classifyVerifyResponse` returning still comes
+   * back as an ordinary `ok`/`rate_limited`. The Providers-tab twin
+   * carries this guard in `completeWizard` for the same reason.
+   *
+   * A run superseded by the operator's retry is covered because
+   * `cancelSubmit` is the only thing that frees the wizard for a second
+   * check and it aborts first: no cancel, no second run.
+   */
+  const checkStillWanted = useCallback(
+    (abort: AbortController): boolean =>
+      alive.current && !abort.signal.aborted,
+    [],
+  );
+
   const submit = useCallback(
     async (nextWizard: ProvidersWizardState) => {
-      if (submitting) return;
+      // Re-entry is guarded on the ref, not on `submitting`: that state
+      // is captured in this closure, and the cancel handler resets it
+      // while the check it cancelled is still resolving, so Enter after
+      // Esc read a stale `false`. So did two key events drained from
+      // stdin in one turn, which started two checks racing to save the
+      // same wizard — and neither was cancelled, so no post-await check
+      // could tell them apart. The ref is written before the first await
+      // and cleared only by the run that owns it, or by a cancel.
+      if (verifyAbort.current) return;
       setSubmitting(true);
       const abort = new AbortController();
       verifyAbort.current = abort;
@@ -40,7 +71,7 @@ export function CloudProviderOnboarding(props: {
         const gate = await verifyWizardBeforeSave(nextWizard, {
           signal: abort.signal,
         });
-        if (!alive.current) return;
+        if (!checkStillWanted(abort)) return;
         if (!gate.proceed) {
           setWizard({ ...nextWizard, error: gate.error, submitting: false });
           setSubmitting(false);
@@ -49,7 +80,10 @@ export function CloudProviderOnboarding(props: {
         saveProviderWizardToConfig(nextWizard);
         props.onFinished("saved_cloud", gate.warning ?? undefined);
       } catch (err) {
-        if (!alive.current) return;
+        // An abandoned run does not get to report a failure either: it
+        // would paint over the screen the operator was handed back, and
+        // free `submitting` under a check that is still running.
+        if (!checkStillWanted(abort)) return;
         const message = err instanceof Error ? err.message : String(err);
         setWizard({ ...nextWizard, error: message, submitting: false });
         setSubmitting(false);
@@ -57,7 +91,7 @@ export function CloudProviderOnboarding(props: {
         if (verifyAbort.current === abort) verifyAbort.current = null;
       }
     },
-    [props, submitting],
+    [checkStillWanted, props],
   );
 
   useInput((input, key) => {
