@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import type { Key } from "ink";
 
 import { handleAppKey, handlePanelEscape } from "./app-key-bindings.js";
+import type { MenuNode } from "./menu/menu-registry.js";
 import { createInitialTuiState, type TuiSessionInfo } from "./tui-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 
@@ -543,6 +544,94 @@ describe("handleAppKey", () => {
       sidebarVisible: true,
     });
     expect(onSidebarTaskActivated).toHaveBeenCalledWith("task-id-42");
+  });
+});
+
+describe("handleAppKey with the ctrl+g leader armed", () => {
+  function pressWhileArmed(
+    input: string,
+    key: Key,
+    state = createInitialTuiState(stubSession()),
+  ) {
+    const activated: MenuNode[] = [];
+    const dispatch = vi.fn();
+    const setMenuLeaderArmed = vi.fn();
+    const setCtrlCArmed = vi.fn();
+    const onAbort = vi.fn();
+    const onQuit = vi.fn();
+    const handled = handleAppKey(input, key, {
+      state,
+      dispatch,
+      callbacks: {
+        onApprovalDecision: vi.fn(),
+        onAbort,
+        onQuit,
+      },
+      ctrlCArmed: false,
+      setCtrlCArmed,
+      sidebarVisible: false,
+      menuLeaderArmed: true,
+      setMenuLeaderArmed,
+      activateMenuNode: (node) => activated.push(node),
+    });
+    return {
+      handled,
+      activated,
+      dispatch,
+      setMenuLeaderArmed,
+      setCtrlCArmed,
+      onAbort,
+      onQuit,
+    };
+  }
+
+  it("a bare chord key activates its node", () => {
+    const run = pressWhileArmed("c", emptyKey());
+    expect(run.activated.map((n) => n.id)).toEqual(["go.manage.mcp"]);
+    expect(run.handled).toBe(true);
+    expect(run.setMenuLeaderArmed).toHaveBeenCalledWith(false);
+  });
+
+  it("an unclaimed bare key is swallowed rather than leaked to the prompt", () => {
+    const run = pressWhileArmed("z", emptyKey());
+    expect(run.activated).toEqual([]);
+    expect(run.handled).toBe(true);
+  });
+
+  it("Ctrl+C disarms and aborts the turn instead of jumping to the MCP tab", () => {
+    const state = createInitialTuiState(stubSession());
+    state.status = "running";
+    const run = pressWhileArmed("c", emptyKey({ ctrl: true }), state);
+    expect(run.activated).toEqual([]);
+    expect(run.setMenuLeaderArmed).toHaveBeenCalledWith(false);
+    expect(run.setCtrlCArmed).toHaveBeenCalledWith(true);
+    expect(run.onAbort).toHaveBeenCalled();
+    expect(run.dispatch).toHaveBeenCalledWith({ type: "abort_requested" });
+    expect(run.handled).toBe(true);
+  });
+
+  it("Ctrl+Q disarms without quitting the app", () => {
+    const run = pressWhileArmed("q", emptyKey({ ctrl: true }));
+    expect(run.activated).toEqual([]);
+    expect(run.onQuit).not.toHaveBeenCalled();
+    expect(run.dispatch).not.toHaveBeenCalledWith({ type: "quit_requested" });
+    // Nothing else binds ctrl+q, so the key falls through unclaimed —
+    // which is the point: the leader no longer stands in the way.
+    expect(run.handled).toBe(false);
+  });
+
+  it("Ctrl+L disarms and falls through instead of opening the LLM tab", () => {
+    const run = pressWhileArmed("l", emptyKey({ ctrl: true }));
+    expect(run.activated).toEqual([]);
+    expect(run.dispatch).not.toHaveBeenCalled();
+    expect(run.handled).toBe(false);
+  });
+
+  it("Esc disarms and is swallowed, so it cancels the leader", () => {
+    const run = pressWhileArmed("", emptyKey({ escape: true }));
+    expect(run.activated).toEqual([]);
+    expect(run.setMenuLeaderArmed).toHaveBeenCalledWith(false);
+    expect(run.handled).toBe(true);
   });
 });
 

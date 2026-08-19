@@ -84,6 +84,33 @@ describe("HotkeyHint debug footer", () => {
   });
 });
 
+describe("HotkeyHint pending ctrl+g leader", () => {
+  it("says the leader is waiting instead of showing the idle chips", () => {
+    const { lastFrame, unmount } = render(
+      <HotkeyHint state={chatState()} menuLeaderArmed />,
+    );
+    const out = (lastFrame() ?? "").replace(ANSI, "");
+    unmount();
+    expect(out).toContain("ctrl+g");
+    expect(out).toContain("waiting for a chord");
+    expect(out).toContain("[esc]");
+    expect(out).toContain("cancel");
+    // The armed leader unfocuses the editor and eats the next key, so the
+    // strip must not keep advertising chips that no longer apply.
+    expect(out).not.toContain("send");
+  });
+
+  it("keeps the approval footer, which outranks the leader on keys", () => {
+    const { lastFrame, unmount } = render(
+      <HotkeyHint state={chatState({ pendingApproval: fakeApproval() })} menuLeaderArmed />,
+    );
+    const out = (lastFrame() ?? "").replace(ANSI, "");
+    unmount();
+    expect(out).toContain("approve");
+    expect(out).not.toContain("waiting for a chord");
+  });
+});
+
 describe("HotkeyHint scroll key spelling per platform", () => {
   const realPlatform = process.platform;
 

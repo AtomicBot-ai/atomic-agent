@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { MENU_LEADER_LABEL } from "../menu/menu-keys.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 
@@ -7,6 +8,8 @@ interface HotkeyHintProps {
   state: TuiState;
   /** Whether a Ctrl+C was recently pressed and is armed for exit. */
   ctrlCArmed?: boolean;
+  /** Whether a `ctrl+g` leader is waiting for its chord key. */
+  menuLeaderArmed?: boolean;
 }
 
 interface HotkeyChip {
@@ -27,8 +30,12 @@ const SCROLL_KEY = process.platform === "darwin" ? "fn+\u2191\u2193" : "pgup/pgd
  * to fit one terminal row and let slash commands take care of the long
  * tail.
  */
-export function HotkeyHint({ state, ctrlCArmed }: HotkeyHintProps): ReactElement {
-  const chips = resolveChips(state, ctrlCArmed ?? false);
+export function HotkeyHint({
+  state,
+  ctrlCArmed,
+  menuLeaderArmed,
+}: HotkeyHintProps): ReactElement {
+  const chips = resolveChips(state, ctrlCArmed ?? false, menuLeaderArmed ?? false);
   return (
     <Box flexShrink={0}>
       {chips.map((chip, idx) => (
@@ -50,12 +57,27 @@ export function HotkeyHint({ state, ctrlCArmed }: HotkeyHintProps): ReactElement
   );
 }
 
-function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
+function resolveChips(
+  state: TuiState,
+  ctrlCArmed: boolean,
+  menuLeaderArmed: boolean,
+): HotkeyChip[] {
   if (state.pendingApproval) {
     return [
       { key: "y", label: "approve" },
       { key: "n", label: "deny" },
       { key: "esc", label: "abort run" },
+    ];
+  }
+  // An armed leader owns the very next keystroke and unfocuses the editor
+  // while it waits, so it takes the whole strip: the row the operator is
+  // already looking at is where "the app is mid-gesture" belongs. Ordered
+  // to match key precedence — a pending approval still outranks it.
+  if (menuLeaderArmed) {
+    return [
+      { key: MENU_LEADER_LABEL, label: "waiting for a chord" },
+      { key: "ctrl+p", label: "full menu" },
+      { key: "esc", label: "cancel" },
     ];
   }
   if (state.slashPaletteOpen) {

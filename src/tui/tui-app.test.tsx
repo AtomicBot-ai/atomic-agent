@@ -33,6 +33,25 @@ function strip(value: string): string {
     .replace(/\u001b\]8;;[^\u0007]*\u0007/g, "");
 }
 
+/**
+ * Poll the rendered frame until it satisfies `match`, then return it. Ink
+ * renders on its own schedule and a loaded runner stretches it, so a fixed
+ * sleep is a coin flip for anything that also waits on a timer.
+ */
+async function waitForFrame(
+  lastFrame: () => string | undefined,
+  match: (text: string) => boolean,
+  timeoutMs = 5000,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let text = strip(lastFrame() ?? "");
+  while (!match(text) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 20));
+    text = strip(lastFrame() ?? "");
+  }
+  return text;
+}
+
 describe("TuiApp (smoke)", () => {
   it("renders the chat surface with the compact operator status bar", () => {
     const bus = makeTuiEventBus();
@@ -399,6 +418,34 @@ describe("TuiApp (smoke)", () => {
     // sees the chord letter too. If the leader did not disable it, a stray
     // "t" would be sitting in the prompt right now.
     expect(text).not.toMatch(/[>\u276f]\s+t\s*$/m);
+    unmount();
+  });
+
+  it("an armed ctrl+g is visible in the hint strip and disarms itself when no chord follows", async () => {
+    const bus = makeTuiEventBus();
+    const { lastFrame, stdin, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    stdin.write(String.fromCharCode(7));
+    const armed = await waitForFrame(lastFrame, (t) =>
+      t.includes("waiting for a chord"),
+    );
+    expect(armed).toContain("waiting for a chord");
+
+    // Nothing follows the leader. It must disarm on its own — while it is
+    // armed the editor is unfocused and the next keystroke is swallowed.
+    // No key is pressed here on purpose: only the timer can end this state.
+    const idle = await waitForFrame(
+      lastFrame,
+      (t) => !t.includes("waiting for a chord"),
+    );
+    expect(idle).not.toContain("waiting for a chord");
+    // Idle chips are back, and no chord fired on the way out. Matched on the
+    // chip key, not its label: a narrow runner wraps the strip and can split
+    // "menu" off its own chip.
+    expect(idle).toContain("[ctrl+p]");
+    expect(idle).not.toContain("Manage ▸");
     unmount();
   });
 

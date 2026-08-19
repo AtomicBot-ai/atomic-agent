@@ -38,9 +38,17 @@ export function isMenuLeaderKey(input: string, key: Key): boolean {
  * or `null` when nothing claims that key — an unknown chord is swallowed
  * rather than falling through, so a mistyped leader can never land a stray
  * letter in the prompt or fire a panel hotkey.
+ *
+ * A chord is a *bare* key, same as the sibling predicates above insist on
+ * an unmodified `ctrl`. Ink reports `ctrl+c` as `input === "c"` with
+ * `key.ctrl`, so without this guard the armed leader would read the abort
+ * key as the MCP chord — and `ctrl+q` as quit, `ctrl+l` as the LLM tab.
+ * Held modifiers mean the operator changed their mind, not that they typed
+ * a chord.
  */
 export function resolveLeaderChord(input: string, key: Key): MenuNode | null {
   if (key.escape || input.length === 0) return null;
+  if (key.ctrl || key.meta) return null;
   return menuNodeByChord(input);
 }
 

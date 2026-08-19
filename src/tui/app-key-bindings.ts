@@ -122,10 +122,16 @@ export function handleAppKey(
   if (ctx.menuLeaderArmed) {
     ctx.setMenuLeaderArmed(false);
     const node = resolveLeaderChord(input, key);
-    if (node) ctx.activateMenuNode(node);
-    // An unclaimed chord is swallowed rather than passed on: a mistyped
-    // leader must not leak a letter into the prompt or fire a panel hotkey.
-    return true;
+    if (node) {
+      ctx.activateMenuNode(node);
+      return true;
+    }
+    // An unclaimed *bare* key is swallowed rather than passed on: a
+    // mistyped leader must not leak a letter into the prompt or fire a
+    // panel hotkey. A modified key was never a chord, though — it means
+    // the operator changed their mind — so it only disarms and then falls
+    // through to the bindings below, where `ctrl+c` still aborts the turn.
+    if (!key.ctrl && !key.meta) return true;
   }
   if (!state.slashPaletteOpen && isMenuLeaderKey(input, key)) {
     ctx.setMenuLeaderArmed(true);

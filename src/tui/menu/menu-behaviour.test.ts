@@ -147,4 +147,15 @@ describe("leader chords", () => {
     expect(resolveLeaderChord("z", KEY as never)).toBeNull();
     expect(resolveLeaderChord("", { ...KEY, escape: true } as never)).toBeNull();
   });
+
+  it("resolves nothing while a modifier is held, so ctrl+c stays reachable", () => {
+    // Ink reports Ctrl+C as input "c" with `key.ctrl` — the same letter the
+    // MCP tab claims as its chord. Reading it as a chord would navigate
+    // instead of aborting; ctrl+q would quit and ctrl+l would leave the
+    // conventional clear-screen unreachable.
+    for (const input of ["c", "q", "l", "t"]) {
+      expect(resolveLeaderChord(input, { ...KEY, ctrl: true } as never)).toBeNull();
+      expect(resolveLeaderChord(input, { ...KEY, meta: true } as never)).toBeNull();
+    }
+  });
 });

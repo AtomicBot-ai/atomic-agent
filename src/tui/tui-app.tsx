@@ -355,6 +355,13 @@ export interface TuiAppProps {
 
 const DEFAULT_MAX_VISIBLE_ROWS = 14;
 const CTRL_C_WINDOW_MS = 1500;
+/**
+ * How long a `ctrl+g` leader waits for its chord before disarming itself.
+ * The same window as Ctrl+C on purpose — both are "you started a two-key
+ * gesture, finish it" timers, and an armed leader is not free to leave
+ * pending: it unfocuses the editor and eats the next keystroke.
+ */
+const MENU_LEADER_WINDOW_MS = CTRL_C_WINDOW_MS;
 
 /**
  * Rotating placeholder pool shown in the prompt's empty state. Phrasing
@@ -384,6 +391,7 @@ export function TuiApp({
   const [ctrlCArmed, setCtrlCArmed] = useState(false);
   const [menuLeaderArmed, setMenuLeaderArmed] = useState(false);
   const ctrlCTimer = useRef<NodeJS.Timeout | null>(null);
+  const menuLeaderTimer = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => bus.subscribe(dispatch), [bus]);
 
@@ -463,6 +471,19 @@ export function TuiApp({
       if (ctrlCTimer.current) clearTimeout(ctrlCTimer.current);
     };
   }, [ctrlCArmed]);
+
+  // A leader that is never followed by a chord must not stay armed: it
+  // holds the editor unfocused and swallows whatever is typed next.
+  useEffect(() => {
+    if (!menuLeaderArmed) return;
+    menuLeaderTimer.current = setTimeout(
+      () => setMenuLeaderArmed(false),
+      MENU_LEADER_WINDOW_MS,
+    );
+    return () => {
+      if (menuLeaderTimer.current) clearTimeout(menuLeaderTimer.current);
+    };
+  }, [menuLeaderArmed]);
 
   const tasksTabActive =
     state.uiMode === "debug" && state.activeTab === "tasks";
@@ -880,7 +901,11 @@ export function TuiApp({
             onHistoryPrev={onHistoryPrev}
             onHistoryNext={onHistoryNext}
           />
-          <HotkeyHint state={state} ctrlCArmed={ctrlCArmed} />
+          <HotkeyHint
+            state={state}
+            ctrlCArmed={ctrlCArmed}
+            menuLeaderArmed={menuLeaderArmed}
+          />
         </Box>
         {sidebarVisible ? (
           <Sidebar
