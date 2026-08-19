@@ -141,3 +141,44 @@ describe("reduceUiAction message_queued", () => {
     expect(next?.queuedMessages).toEqual([]);
   });
 });
+
+describe("reduceUiAction while_busy_mode_changed", () => {
+  it("toggles when no explicit mode is given", () => {
+    const state = createInitialTuiState(SESSION);
+    expect(state.whileBusyMode).toBe("steer");
+    const toQueue = reduceUiAction(state, { type: "while_busy_mode_changed" });
+    expect(toQueue?.whileBusyMode).toBe("queue");
+    const backToSteer = reduceUiAction(toQueue!, {
+      type: "while_busy_mode_changed",
+    });
+    expect(backToSteer?.whileBusyMode).toBe("steer");
+  });
+
+  it("sets an explicit mode idempotently", () => {
+    const state = createInitialTuiState(SESSION);
+    const once = reduceUiAction(state, {
+      type: "while_busy_mode_changed",
+      mode: "queue",
+    });
+    const twice = reduceUiAction(once!, {
+      type: "while_busy_mode_changed",
+      mode: "queue",
+    });
+    expect(twice?.whileBusyMode).toBe("queue");
+  });
+
+  it("message_steered clears the editor without parking the message", () => {
+    const state = { ...createInitialTuiState(SESSION), inputValue: "draft" };
+    const next = reduceUiAction(state, {
+      type: "message_steered",
+      text: "draft",
+    });
+    expect(next?.inputValue).toBe("");
+    // The bubble arrives with `steer_applied`, so nothing is queued and
+    // nothing is rendered yet — a steer that misses the turn must not
+    // show up twice when it falls back to the queue.
+    expect(next?.queuedMessages).toEqual([]);
+    expect(next?.messages).toEqual([]);
+  });
+});
+

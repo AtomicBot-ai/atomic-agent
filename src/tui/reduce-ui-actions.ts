@@ -106,6 +106,20 @@ export function reduceUiAction(
       };
     case "queue_changed":
       return { ...state, queuedMessages: [...action.queued] };
+    case "while_busy_mode_changed": {
+      const next =
+        action.mode ?? (state.whileBusyMode === "steer" ? "queue" : "steer");
+      return { ...state, whileBusyMode: next };
+    }
+    case "message_steered":
+      return {
+        ...state,
+        inputValue: "",
+        inputHistoryCursor: null,
+        slashPaletteOpen: false,
+        slashQuery: "",
+        slashPaletteCursor: 0,
+      };
     case "chat_cleared":
       return {
         ...state,

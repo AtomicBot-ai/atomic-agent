@@ -1,4 +1,5 @@
 import type { ApprovalRequest } from "../approval/approval-gate.js";
+import type { WhileBusySubmitMode } from "../config/index.js";
 import type {
   LatestResult,
   LoadedSkillBody,
@@ -424,6 +425,14 @@ export interface TuiState {
    * can show what is parked without reaching into the orchestrator.
    */
   queuedMessages: readonly string[];
+  /**
+   * What Enter does while a turn is running: `steer` folds the message
+   * into the turn in flight, `queue` parks it for the next one. Seeded
+   * from `config.tui.whileBusySubmit` at mount and flipped in-app with
+   * Ctrl+T (persisted). Irrelevant when idle — Enter always starts a
+   * turn then.
+   */
+  whileBusyMode: WhileBusySubmitMode;
 }
 
 /**
@@ -454,6 +463,8 @@ export const DEFAULT_RING_BUFFER_SIZE = 500;
 export interface InitialTuiLayoutOptions {
   uiMode?: TuiUiMode;
   activeTab?: TuiTab;
+  /** Seeds {@link TuiState.whileBusyMode} from the persisted user config. */
+  whileBusyMode?: WhileBusySubmitMode;
 }
 
 export function createInitialTuiState(
@@ -546,5 +557,6 @@ export function createInitialTuiState(
     sidebarTasksCursor: 0,
     chatScrollOffset: 0,
     queuedMessages: [],
+    whileBusyMode: layout?.whileBusyMode ?? "steer",
   };
 }

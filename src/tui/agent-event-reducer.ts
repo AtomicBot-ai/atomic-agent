@@ -209,6 +209,13 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
   switch (event.type) {
     case "user_message":
       return appendUserMessage(state, event.text);
+    case "steer_applied":
+      // Same bubble shape as any other user message: it *is* one, and
+      // the agent loop recorded it as a real `user` turn. Rendering it
+      // here (rather than optimistically at submit time) means a steer
+      // that missed the turn and fell back to the queue appears exactly
+      // once, when it actually reaches the model.
+      return appendUserMessage(state, event.text);
     case "turn_started":
       return {
         ...state,

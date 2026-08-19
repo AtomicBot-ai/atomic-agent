@@ -68,19 +68,29 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
   if (state.status === "running") {
     // A long streaming answer is exactly when the operator wants to
     // scroll back, so the hint rides along with abort. The editor stays
-    // live during a run, so advertise what Enter does now — and how many
-    // messages are already parked behind the turn.
+    // live during a run, so this row also has to say what Enter will do
+    // to whatever is being typed, and how to flip it.
+    //
+    // Labels are terse on purpose: the strip must stay on ONE terminal
+    // row at 80 columns. An armed Ctrl+C takes the whole row for itself
+    // — at that moment nothing else matters.
+    if (ctrlCArmed) {
+      return [
+        { key: "ctrl+c", label: "press again to quit" },
+        { key: "esc", label: "abort" },
+      ];
+    }
     const chips: HotkeyChip[] = [
       { key: SCROLL_KEY, label: "scroll" },
-      { key: "\u23ce", label: "queue message" },
-      { key: "esc", label: "abort" },
+      { key: "\u23ce", label: state.whileBusyMode },
       {
-        key: "ctrl+c",
-        label: ctrlCArmed ? "press again to quit" : "abort",
+        key: "ctrl+t",
+        label: state.whileBusyMode === "steer" ? "queue" : "steer",
       },
+      { key: "esc", label: "abort" },
     ];
     if (state.queuedMessages.length > 0) {
-      chips.push({ key: "/queue", label: `${state.queuedMessages.length} parked` });
+      chips.push({ key: "queued", label: `${state.queuedMessages.length}` });
     }
     return chips;
   }

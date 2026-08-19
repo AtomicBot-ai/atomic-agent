@@ -380,6 +380,27 @@ export class ChatOrchestrator {
   }
 
   /**
+   * Fold a message into the turn already running on this session.
+   *
+   * Falls back to the normal queue whenever the runtime refuses: the
+   * turn may have finished between the operator's keypress and this
+   * call, or the steering inbox may be full. Either way the message
+   * goes somewhere — the one outcome this must never have is silence.
+   */
+  steerMessage(text: string): void {
+    if (this.quitting) return;
+    const session = this.ensureSession();
+    if (this.runtime.steer(session.id, text)) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: "steering: will reach the model at the next step",
+      });
+      return;
+    }
+    this.sendMessage(text);
+  }
+
+  /**
    * Drop every parked message without touching the running turn
    * (`/queue clear`). No-op on an empty queue so the TUI is not spammed
    * with redundant `queue_changed` frames.
@@ -411,6 +432,17 @@ export class ChatOrchestrator {
         origin: "tui",
       });
       this.session = result.session;
+      // A steer that landed too late to be drained (final inference, or
+      // a cancelled turn) comes back here. Park it so it runs as its own
+      // turn rather than evaporating.
+      for (const undelivered of result.undelivered ?? []) {
+        this.queue.push(undelivered);
+        this.bus.emit({
+          type: "runtime_info",
+          line: `steering: turn ended first — queued "${undelivered}"`,
+        });
+      }
+      if ((result.undelivered ?? []).length > 0) this.emitQueue();
       if (isFailedSessionStatus(this.session.status)) this.exitCode = 1;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

@@ -37,7 +37,12 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
   {
     name: "queue",
     description:
-      "messages parked behind the running turn: `/queue` (list) | `/queue clear`",
+      "Enter parks messages behind the running turn: `/queue` (switch + list) | `/queue clear` | `/queue <message>`",
+  },
+  {
+    name: "steer",
+    description:
+      "Enter folds messages into the running turn: `/steer` (switch) | `/steer <message>`",
   },
   { name: "quit", description: "exit atomic-agent", aliases: ["exit"] },
   { name: "debug", description: "toggle debug pane (feed / logs / world …)" },

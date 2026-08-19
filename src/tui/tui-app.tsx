@@ -9,6 +9,7 @@ import {
 } from "react";
 import { reduceTuiState } from "./agent-event-reducer.js";
 import type { ApprovalGrantScope } from "../approval/approval-gate.js";
+import type { WhileBusySubmitMode } from "../config/index.js";
 import type { TuiAction } from "./tui-action.js";
 import { handleAppKey, handlePanelEscape } from "./app-key-bindings.js";
 import { ApprovalModal } from "./approval-modal.js";
@@ -83,6 +84,14 @@ export interface TuiAppCallbacks {
   onMessageSubmitted(message: string): void;
   /** Drop every message parked behind the running turn (`/queue clear`). */
   onQueueClearRequested?(): void;
+  /**
+   * Fold a message into the turn already running (`steer` mode). The
+   * orchestrator falls back to the queue when the runtime refuses —
+   * the turn may have ended between the keypress and the dispatch.
+   */
+  onMessageSteered?(message: string): void;
+  /** Persist the Enter-while-busy mode after a Ctrl+T flip. */
+  onWhileBusyModePersistRequested?(mode: WhileBusySubmitMode): void;
   /** Ask the orchestrator to emit the recent-sessions list to the bus. */
   onSessionPickerRequested?(): void;
   /** Ask the orchestrator to swap to an existing persisted session. */
@@ -711,8 +720,18 @@ export function TuiApp({
       <Text color="gray"> {promptLlm.cloudLabel ?? "cloud"}</Text>
     </Text>
   );
+  // While a turn is running the meta-row's job changes: the operator
+  // needs to know what Enter will do to the message they are typing far
+  // more than they need the context-window size.
   const promptRightSlot =
-    state.llmHealth.contextWindow !== null ? (
+    state.status === "running" || state.status === "awaiting_approval" ? (
+      <Text>
+        <Text color={theme.colors.accentSoft} bold>
+          {"\u23ce"} {state.whileBusyMode}
+        </Text>
+        <Text color={theme.colors.muted}> (ctrl+t)</Text>
+      </Text>
+    ) : state.llmHealth.contextWindow !== null ? (
       <Text color={theme.colors.muted}>
         ctx {state.llmHealth.contextWindow}
       </Text>

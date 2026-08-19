@@ -1,3 +1,4 @@
+import type { WhileBusySubmitMode } from "../../config/index.js";
 import type { TuiAction } from "../tui-action.js";
 import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";
 import { isThemeName, THEME_NAMES } from "../theme/theme.js";
@@ -90,6 +91,12 @@ export interface SlashDispatchResult {
    */
   readonly queueVerb?: "list" | "clear";
   /**
+   * `/steer <msg>` or `/queue <msg>`: land this one message in the given
+   * mode without touching the persisted default. Ignored when no turn is
+   * running (the caller submits it normally instead).
+   */
+  readonly submitWhileBusy?: { mode: WhileBusySubmitMode; text: string };
+  /**
    * `/privacy level <1..5>` side-effect (with `/privacy approve on|off`
    * kept as aliases for 5 and 1): move the approval ladder to an
    * explicit level. The caller (submit-handler) maps this to
@@ -157,6 +164,8 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       });
     case "queue":
       return dispatchQueueSub(parsed.args);
+    case "steer":
+      return dispatchSteerSub(parsed.args);
     case "abort":
       return pureActions([{ type: "abort_requested" }], {
         triggerAbort: true,
@@ -265,19 +274,47 @@ function formatSlashCommandHelp(): string {
 }
 
 /**
- * `/queue` — bare lists what is parked, `clear` (alias `drop`) empties
- * it. The reducer action is dispatched optimistically so the strip above
- * the prompt disappears immediately; `ChatOrchestrator.clearQueue` then
- * re-publishes the authoritative empty queue.
+ * `/queue` — bare switches the Enter-while-busy mode to `queue` and
+ * lists what is currently parked; `clear` (alias `drop`) empties it;
+ * anything else is a one-off message to park without changing the mode.
+ * The `queue_changed` action is dispatched optimistically so the strip
+ * above the prompt disappears immediately; `ChatOrchestrator.clearQueue`
+ * then re-publishes the authoritative empty queue.
  */
 function dispatchQueueSub(args: string): SlashDispatchResult {
-  const verb = args.trim().toLowerCase();
+  const raw = args.trim();
+  const verb = raw.toLowerCase();
   if (verb === "clear" || verb === "drop") {
     return pureActions([{ type: "queue_changed", queued: [] }], {
       queueVerb: "clear",
     });
   }
-  return pureActions([], { queueVerb: "list" });
+  if (raw.length > 0) {
+    return pureActions([], {
+      submitWhileBusy: { mode: "queue", text: raw },
+    });
+  }
+  return pureActions([{ type: "while_busy_mode_changed", mode: "queue" }], {
+    queueVerb: "list",
+  });
+}
+
+/**
+ * `/steer` — bare switches the Enter-while-busy mode to `steer`;
+ * `/steer <message>` lands one message in the running turn without
+ * changing the persisted default.
+ */
+function dispatchSteerSub(args: string): SlashDispatchResult {
+  const raw = args.trim();
+  if (raw.length > 0) {
+    return pureActions([], {
+      submitWhileBusy: { mode: "steer", text: raw },
+    });
+  }
+  return pureActions([{ type: "while_busy_mode_changed", mode: "steer" }], {
+    systemMessage:
+      "Enter now steers the running turn (Ctrl+T or /queue switches back)",
+  });
 }
 
 function pureActions(
@@ -309,6 +346,7 @@ function pureActions(
     telegramVerb: undefined,
     analyticsVerb: undefined,
     queueVerb: undefined,
+    submitWhileBusy: undefined,
     approvalLevelSet: undefined,
     ...overrides,
   };
