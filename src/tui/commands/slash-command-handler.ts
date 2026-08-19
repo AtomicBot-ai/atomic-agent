@@ -89,6 +89,13 @@ export interface SlashDispatchResult {
    * `PrivacyOrchestrator.setApprovalLevel`.
    */
   readonly approvalLevelSet?: number;
+  /**
+   * `/mouse [on|off]` — flip terminal mouse reporting at runtime, or
+   * report the current state with no argument. The caller owns the
+   * escape sequences and the config write, because both live outside
+   * React (see `tui-command.ts`).
+   */
+  readonly mouseVerb?: "on" | "off" | "status";
 }
 
 /**
@@ -142,6 +149,8 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return pureActions([], {
         systemMessage: formatSlashCommandHelp(),
       });
+    case "mouse":
+      return dispatchMouseSub(parsed.args);
     case "theme":
       return dispatchThemeSub(parsed.args);
     case "clear":
@@ -295,6 +304,25 @@ function pureActions(
  * the registry and, on success, asks the caller to swap + persist + re-render.
  * Unknown names surface a usage hint instead of switching.
  */
+/**
+ * `/mouse` with no argument reports state; `on` / `off` set it. Any
+ * other word is rejected rather than guessed at — a typo'd `/mouse ff`
+ * silently disabling clicks would be a maddening bug to chase.
+ */
+function dispatchMouseSub(rawArgs: string): SlashDispatchResult {
+  const verb = rawArgs.trim().toLowerCase();
+  if (verb.length === 0) return pureActions([], { mouseVerb: "status" });
+  if (verb === "on" || verb === "enable") {
+    return pureActions([], { mouseVerb: "on" });
+  }
+  if (verb === "off" || verb === "disable") {
+    return pureActions([], { mouseVerb: "off" });
+  }
+  return pureActions([], {
+    systemMessage: `usage: /mouse [on|off] (got "${rawArgs.trim()}")`,
+  });
+}
+
 function dispatchThemeSub(rawArgs: string): SlashDispatchResult {
   const arg = rawArgs.trim().toLowerCase();
   if (arg.length === 0) {

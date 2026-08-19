@@ -1,4 +1,4 @@
-import { Box, Text, useApp, useInput } from "ink";
+import { Box, Text, useApp, useInput, type DOMElement, type Key } from "ink";
 import {
   useCallback,
   useEffect,
@@ -10,7 +10,11 @@ import {
 import { reduceTuiState } from "./agent-event-reducer.js";
 import type { ApprovalGrantScope } from "../approval/approval-gate.js";
 import type { TuiAction } from "./tui-action.js";
-import { handleAppKey, handlePanelEscape } from "./app-key-bindings.js";
+import {
+  handleAppKey,
+  handlePanelEscape,
+  isPanelModalOpen,
+} from "./app-key-bindings.js";
 import { ApprovalModal } from "./approval-modal.js";
 import { ChatLog } from "./components/chat-log.js";
 import { DebugPane } from "./components/debug-pane.js";
@@ -63,6 +67,15 @@ import type { ImportFormState } from "./import/import-panel-state.js";
 import { handleProvidersTabKey } from "./providers/providers-key-bindings.js";
 import { handleTelegramTabKey } from "./telegram/telegram-key-bindings.js";
 import { handlePrivacyTabKey } from "./privacy/privacy-key-bindings.js";
+import { MouseProvider } from "./mouse/mouse-context.js";
+import {
+  MOUSE_LAYER_BASE,
+  MOUSE_LAYER_MODAL,
+  MouseTargetRegistry,
+  type MouseHit,
+} from "./mouse/mouse-registry.js";
+import type { MouseSource } from "./mouse/mouse-source.js";
+import { arrowKey } from "./mouse/synthetic-key.js";
 
 export { makeTuiEventBus } from "./make-event-bus.js";
 
@@ -93,6 +106,12 @@ export interface TuiAppCallbacks {
   onPersistLlamaUrl?(url: string): void;
   /** Persist the chosen TUI theme name into the user config (`/theme`). */
   onThemePersistRequested?(themeName: string): void;
+  /**
+   * `/mouse on|off` — flip terminal mouse reporting live. `null` asks
+   * for the current state to be reported without changing it. The
+   * handler owns the escape sequences and the config write.
+   */
+  onMouseSupportRequested?(enabled: boolean | null): void;
   /** Start the Tasks-tab auto-refresh loop (first entry only). */
   onTasksAutoRefreshStart?(): void;
   /** Perform a one-shot refresh of the tasks list. */
@@ -340,6 +359,12 @@ export interface TuiAppProps {
   maxVisibleRows?: number;
   /** Optional initial debug tab / mode (e.g. after managed-mode wizard). */
   initialLayout?: InitialTuiLayoutOptions;
+  /**
+   * Decoded terminal mouse reports. Supplied by `tui-command.ts` when
+   * mouse support is on; omitted (tests, `--no-mouse`) the app is
+   * keyboard-only and every clickable surface simply never fires.
+   */
+  mouse?: MouseSource;
 }
 
 const DEFAULT_MAX_VISIBLE_ROWS = 14;
@@ -353,6 +378,14 @@ const CTRL_C_WINDOW_MS = 1500;
  */
 const SIDEBAR_MIN_COLUMNS = 100;
 const SIDEBAR_WIDTH = 30;
+
+/**
+ * Rows the chat transcript moves per wheel notch. Three keeps a flick
+ * of the wheel useful on a long transcript without overshooting the
+ * reply the operator is reading; the keyboard's own ±2 arrow scroll is
+ * deliberately finer.
+ */
+const WHEEL_SCROLL_LINES = 3;
 
 /**
  * Rotating placeholder pool shown in the prompt's empty state. Phrasing
@@ -374,6 +407,7 @@ export function TuiApp({
   callbacks,
   maxVisibleRows = DEFAULT_MAX_VISIBLE_ROWS,
   initialLayout,
+  mouse,
 }: TuiAppProps): ReactElement {
   const [state, dispatch] = useReducer(reduceTuiState, { session, initialLayout }, (init) =>
     createInitialTuiState(init.session, DEFAULT_RING_BUFFER_SIZE, init.initialLayout),
@@ -381,8 +415,23 @@ export function TuiApp({
   const app = useApp();
   const [ctrlCArmed, setCtrlCArmed] = useState(false);
   const ctrlCTimer = useRef<NodeJS.Timeout | null>(null);
+  const registryRef = useRef<MouseTargetRegistry | null>(null);
+  registryRef.current ??= new MouseTargetRegistry();
+  const registry = registryRef.current;
+  // Click handlers run outside React's render pass, so they read state
+  // through a ref rather than a closure that may be a frame stale.
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const getState = useCallback(() => stateRef.current, []);
 
   useEffect(() => bus.subscribe(dispatch), [bus]);
+
+  useEffect(() => {
+    if (!mouse) return;
+    return mouse.subscribe((event) => {
+      registry.dispatch(event);
+    });
+  }, [mouse, registry]);
 
   useEffect(() => {
     callbacks.onProvidersTabRefresh?.();
@@ -522,6 +571,77 @@ export function TuiApp({
     }
   }, [sidebarVisible, state.chatFocus]);
 
+  /**
+   * Routes a key to whichever Observe / Manage panel is on screen.
+   * Returns `null` when no panel owns the surface (chat mode), `true` /
+   * `false` for handled / declined. Shared by the keyboard hook and the
+   * mouse wheel, so a wheel notch means exactly what an arrow key means
+   * on every panel — including the clamping each panel does itself.
+   */
+  const routePanelKey = (input: string, key: Key): boolean | null => {
+    const ctx = { state, dispatch, callbacks };
+    if (tasksTabActive) return handleTasksTabKey(input, key, ctx);
+    if (skillsTabActive) return handleSkillsTabKey(input, key, ctx);
+    if (memoryTabActive) return handleMemoryTabKey(input, key, ctx);
+    if (mcpTabActive) return handleMcpTabKey(input, key, ctx);
+    if (providersTabActive) return handleProvidersTabKey(input, key, ctx);
+    if (llmTabActive) return handleLlmPanelKey(input, key, ctx);
+    if (localModelsTabActive) return handleLocalModelsTabKey(input, key, ctx);
+    if (telegramTabActive) return handleTelegramTabKey(input, key, ctx);
+    if (importTabActive) return handleImportTabKey(input, key, ctx);
+    if (privacyTabActive) return handlePrivacyTabKey(input, key, ctx);
+    return null;
+  };
+
+  // While a modal or confirm owns the keyboard it owns the mouse too:
+  // raising the floor stops a click from reaching the list rendered
+  // behind it. Same predicate the key layer gates on.
+  const modalOwnsInput =
+    Boolean(state.pendingApproval) ||
+    Boolean(state.updatePrompt) ||
+    state.updateStatus === "done" ||
+    state.sessionPickerOpen ||
+    state.themePickerOpen ||
+    state.slashPaletteOpen ||
+    isPanelModalOpen(state);
+  useEffect(() => {
+    registry.setMinLayer(modalOwnsInput ? MOUSE_LAYER_MODAL : MOUSE_LAYER_BASE);
+  }, [registry, modalOwnsInput]);
+
+  /**
+   * Whole-viewport wheel target. Scrolling over the chat moves the
+   * transcript; over a panel it walks that panel's cursor. Registered
+   * at the base layer and covering everything, so it only ever fires
+   * for events no smaller target claimed.
+   */
+  const contentMouseRef = useRef<DOMElement | null>(null);
+  const wheelHandler = (hit: MouseHit): boolean => {
+    if (hit.event.kind !== "wheel" || !hit.event.wheel) return false;
+    const direction = hit.event.wheel;
+    if (state.uiMode === "chat") {
+      dispatch({
+        type: "chat_scrolled",
+        delta: direction === "up" ? WHEEL_SCROLL_LINES : -WHEEL_SCROLL_LINES,
+      });
+      return true;
+    }
+    return routePanelKey("", arrowKey(direction)) === true;
+  };
+  // TuiApp renders the provider, so it cannot consume the context hook
+  // itself — it registers on the registry it owns. The handler is read
+  // through a ref so the subscription survives every re-render.
+  const wheelHandlerRef = useRef(wheelHandler);
+  wheelHandlerRef.current = wheelHandler;
+  useEffect(
+    () =>
+      registry.register({
+        ref: contentMouseRef,
+        layer: MOUSE_LAYER_BASE,
+        handler: (hit) => wheelHandlerRef.current(hit),
+      }),
+    [registry],
+  );
+
   useInput((input, key) => {
     const appHandled = handleAppKey(input, key, {
       state,
@@ -537,32 +657,7 @@ export function TuiApp({
     // navigation, tab completion, enter to run, esc to close. Routing to
     // a debug-tab panel here would re-interpret letters as hotkeys.
     if (state.slashPaletteOpen) return;
-    let panelHandled: boolean | null = null;
-    if (tasksTabActive) {
-      panelHandled = handleTasksTabKey(input, key, { state, dispatch, callbacks });
-    } else if (skillsTabActive) {
-      panelHandled = handleSkillsTabKey(input, key, { state, dispatch, callbacks });
-    } else if (memoryTabActive) {
-      panelHandled = handleMemoryTabKey(input, key, { state, dispatch, callbacks });
-    } else if (mcpTabActive) {
-      panelHandled = handleMcpTabKey(input, key, { state, dispatch, callbacks });
-    } else if (providersTabActive) {
-      panelHandled = handleProvidersTabKey(input, key, { state, dispatch, callbacks });
-    } else if (llmTabActive) {
-      panelHandled = handleLlmPanelKey(input, key, { state, dispatch, callbacks });
-    } else if (localModelsTabActive) {
-      panelHandled = handleLocalModelsTabKey(input, key, {
-        state,
-        dispatch,
-        callbacks,
-      });
-    } else if (telegramTabActive) {
-      panelHandled = handleTelegramTabKey(input, key, { state, dispatch, callbacks });
-    } else if (importTabActive) {
-      panelHandled = handleImportTabKey(input, key, { state, dispatch, callbacks });
-    } else if (privacyTabActive) {
-      panelHandled = handlePrivacyTabKey(input, key, { state, dispatch, callbacks });
-    }
+    const panelHandled = routePanelKey(input, key);
     if (panelHandled !== null) {
       handlePanelEscape(key, { panelHandled, editorFocus, dispatch });
       return;
@@ -715,9 +810,16 @@ export function TuiApp({
     ) : null;
 
   return (
+    <MouseProvider
+      registry={registry}
+      dispatch={dispatch}
+      callbacks={callbacks}
+      getState={getState}
+    >
     <Box
       flexDirection="column"
       paddingLeft={2}
+      ref={contentMouseRef}
       {...(rootHeight ? { height: rootHeight } : {})}
     >
       <Box flexShrink={0}>
@@ -829,6 +931,7 @@ export function TuiApp({
         ) : null}
       </Box>
     </Box>
+    </MouseProvider>
   );
 }
 

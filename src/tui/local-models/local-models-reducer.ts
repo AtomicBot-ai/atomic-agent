@@ -48,6 +48,14 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
         },
       };
     }
+    case "local_models_cursor_set":
+      return {
+        ...state,
+        localModelsPanel: {
+          ...p,
+          cursor: clampCursor(action.row, totalRowCount(p)),
+        },
+      };
     case "local_models_cursor_up":
       return {
         ...state,

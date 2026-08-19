@@ -2,6 +2,9 @@ import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import type { SessionPickerEntry } from "../tui-state.js";
 import { theme } from "../theme/theme.js";
+import { MouseListRow } from "../mouse/mouse-list-row.js";
+import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
+import { handleEditorSubmit } from "../submit-handler.js";
 
 export interface SessionPickerProps {
   sessions: readonly SessionPickerEntry[];
@@ -45,12 +48,31 @@ export function SessionPicker(props: SessionPickerProps): ReactElement {
         <Text color={theme.colors.muted}>↑ {hiddenBefore} above</Text>
       ) : null}
       {visible.map((entry, idx) => (
-        <PickerRow
+        <MouseListRow
           key={entry.sessionId}
-          entry={entry}
+          layer={MOUSE_LAYER_MODAL}
           selected={idx === visibleCursor}
-          current={entry.sessionId === currentSessionId}
-        />
+          onSelect={(mouse) =>
+            mouse.dispatch({
+              type: "session_picker_cursor_set",
+              row: windowStart + idx,
+            })
+          }
+          onActivate={(mouse) =>
+            handleEditorSubmit(
+              "",
+              mouse.getState(),
+              mouse.dispatch,
+              mouse.callbacks,
+            )
+          }
+        >
+          <PickerRow
+            entry={entry}
+            selected={idx === visibleCursor}
+            current={entry.sessionId === currentSessionId}
+          />
+        </MouseListRow>
       ))}
       {hiddenAfter > 0 ? (
         <Text color={theme.colors.muted}>↓ {hiddenAfter} below</Text>

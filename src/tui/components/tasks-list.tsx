@@ -1,6 +1,8 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
+import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
+import { handleTasksTabKey } from "../tasks/tasks-key-bindings.js";
 import type {
   TaskSummaryRow,
   TasksPanelState,
@@ -46,12 +48,20 @@ export function TasksList(props: TasksListProps): ReactElement {
         </Text>
       ) : null}
       {pageRows.map((row, idx) => (
-        <TaskRow
+        <MouseListRow
           key={row.id}
-          row={row}
           selected={idx + windowStart === clamped}
-          now={now}
-        />
+          onSelect={(mouse) =>
+            mouse.dispatch({ type: "tasks_cursor_set", row: idx + windowStart })
+          }
+          onActivate={pressEnter(handleTasksTabKey)}
+        >
+          <TaskRow
+            row={row}
+            selected={idx + windowStart === clamped}
+            now={now}
+          />
+        </MouseListRow>
       ))}
       {hiddenAfter > 0 ? (
         <Text color={theme.colors.muted}>

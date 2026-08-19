@@ -147,6 +147,22 @@ Speculative batching (the runtime guessing that the model "should" have batched 
 - Tests are colocated with source: `build-prompt.test.ts` next to `build-prompt.ts`.
 - Config lives in `src/config/` — read it before touching env vars.
 
+## Mouse support
+
+The TUI is clickable. Ink has no mouse layer, so this is built in `src/tui/mouse/`:
+
+1. **Reporting** — `enableMouseTracking` writes `\x1b[?1000h\x1b[?1006h` (button events + SGR coordinates). 1002/1003 motion tracking is deliberately **not** requested: nothing in the UI hovers or drags, and motion reports are a constant wakeup stream. Paired with a `process.on("exit")` restore, like `alt-screen.ts`.
+2. **Decoding** — `decodeMouseEvents` is a pure function over a stdin chunk returning `{ events, text, rest }`. It understands SGR and legacy X10, buffers a report split across two reads, and passes a lone trailing `ESC` straight through (buffering it would delay the Escape key by one keystroke).
+3. **Stream split** — `createMouseStdin` reads the real TTY, hands Ink a `PassThrough` carrying only the keyboard bytes, and proxies `isTTY` / `setRawMode` / `ref` / `unref` to the real stdin. Without this the reports reach Ink's key parser and get typed into the chat buffer.
+4. **Hit testing** — `MouseTargetRegistry` resolves a cell to a component. Ink exposes no absolute positions, but every node keeps its Yoga node, and `absoluteRect` sums `getComputedLeft/Top` up the parent chain — the same walk `render-node-to-output.ts` does when painting, so the rectangle is exactly where the node was drawn. Ancestors with `overflow: hidden` clip the result. Ties resolve innermost-first (higher layer, then smaller box, then later mount).
+5. **Layers** — `MOUSE_LAYER_BASE` / `_PANEL` / `_MODAL`. `TuiApp` raises the registry floor to `_MODAL` whenever a modal, confirm or picker owns the keyboard (`isPanelModalOpen`, shared with `handleAppKey`), so a click cannot reach the list rendered behind a modal.
+
+**Interaction contract.** First click selects, a second click on the selected row activates. Activation and the wheel are routed through each panel's existing `*-key-bindings.ts` handler with a synthetic Enter / arrow key (`synthetic-key.ts`), so the mouse can never disagree with the keyboard about what a row does. Clicking the prompt places the caret (`rowColToCursor`, clamped to the line length).
+
+**The trade-off.** While reporting is on, the terminal stops doing its own drag-to-select (Apple Terminal has no Shift-bypass). Hence `tui.mouse` (config v38, default `true`), `--mouse` / `--no-mouse`, and `/mouse on|off` at runtime; `tui-command.ts` owns the live toggle and the config write. With mouse off the previous behaviour is intact: alternate-scroll (`\x1b[?1007h`) turns the wheel into cursor keys.
+
+**Testing.** Escape sequences, decoder and stream split are unit-tested; `mouse-app.test.tsx` drives the real Ink tree by locating a label in the rendered frame and emitting a click at those coordinates. Ink commits frames on a ~30fps throttle, so tests must wait longer than one frame before clicking a freshly rendered target.
+
 ## Module map
 
 | Folder | Responsibility |
@@ -177,6 +193,7 @@ Speculative batching (the runtime guessing that the model "should" have batched 
 | `src/channels/telegram/` | `TelegramChannel` (lifecycle + live-control), `inbound-handler` (slash commands + dispatch into `runTurn`), `outbound-sender` (chunked replies + 429 retry), `approval-bridge` (inline-keyboard approvals with 8-min auto-deny), `pairing-mode` (60s window for first-DM owner claim), `telegram-settings` (`config.json` + `.env` persistence), `telegram-bot-factory` (grammy adapter). The **only** module that imports `grammy`. See §"Telegram remote-control channel". |
 | `src/tui/telegram/` | TUI "Telegram" tab: `telegram-panel-state` + `telegram-actions` + `telegram-panel-reducer` (pure UI state slice), `tui-telegram-orchestrator` (the only TUI module that touches `runtime.telegramChannel`), `telegram-key-bindings`, and the `telegram-panel` / `telegram-token-prompt` / `telegram-pairing-modal` components. See §"Telegram remote-control channel". |
 | `src/mcp/` | MCP (Model Context Protocol) **client** subsystem. `McpManager` (lifecycle for N `McpClient` instances), `mcp-client` (the **only** file that imports `@modelcontextprotocol/sdk` — together with `mcp-sampling-handler` for SDK type shapes), `mcp-tool-adapter` (`McpToolMeta` → `ToolDefinition`), `mcp-resource-class` (per-server trust → `ResourceClass` resolver), `mcp-descriptor-builder` (rare-tier descriptors), `mcp-grammar-builder` (dynamic `mcp-server-tool` GBNF fragment), `mcp-sampling-handler` (forwards `sampling/createMessage` to `LlamaServerClient` with `slotId: -1`), `mcp-resource-tools` + `mcp-prompt-tools` (aggregate read-only `mcp.{resource,prompt}.*` tools dispatching by `server` arg). See §"MCP client". |
+| `src/tui/mouse/` | TUI mouse layer: `mouse-tracking` (1000+1006 enable/disable), `parse-mouse-events` (SGR + legacy X10 decoder), `mouse-stdin` (splits mouse bytes out of the stream Ink reads), `mouse-registry` (Yoga-based hit testing), `mouse-context` / `mouse-list-row` (React glue + the shared click-to-select-then-activate row), `synthetic-key` (wheel/second-click → the panel's own key handler). See §"Mouse support". |
 
 ## Secrets and process environment
 

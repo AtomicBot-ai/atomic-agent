@@ -662,12 +662,14 @@ export interface AtomicAgentConfig {
     maxImagesPerCall: number;
   };
   /**
-   * TUI appearance. Mirrors `UserConfigFile.tui`. `theme` is `"auto"`
-   * (OSC 11 autodetect) or a registered theme name. Consumed by the TUI
-   * startup path; the rest of the runtime ignores it.
+   * TUI appearance and input. Mirrors `UserConfigFile.tui`. `theme` is
+   * `"auto"` (OSC 11 autodetect) or a registered theme name; `mouse`
+   * toggles terminal mouse reporting. Consumed by the TUI startup path;
+   * the rest of the runtime ignores it.
    */
   tui: {
     theme: string;
+    mouse: boolean;
   };
   /**
    * Anonymous product analytics (PostHog). Mirrors
@@ -1350,9 +1352,16 @@ export interface UserConfigFile {
    * the matching GitHub theme) or a registered theme name (e.g. `dracula`,
    * `nord`). Persisted from the in-app `/theme` picker. Older files are
    * transparently upgraded with `tui: { theme: "auto" }`.
+   *
+   * `mouse` (config v38, default `true`) turns terminal mouse reporting
+   * on: clicking panels, list rows, the nav bar and the prompt, plus
+   * wheel scrolling. Turning it off restores the terminal's own
+   * drag-to-select, which mouse reporting takes over — see `/mouse` and
+   * `--no-mouse`. Older files are upgraded with `mouse: true`.
    */
   tui: {
     theme: string;
+    mouse: boolean;
   };
   /**
    * Anonymous product analytics (PostHog). Added in config v33. Older
@@ -1412,7 +1421,7 @@ export interface UserConfigFile {
 // is absent, a legacy `approvalRequired: false` maps to level 5 and
 // `true`/absent maps to level 1 — both preserve the old behaviour
 // exactly. The legacy key is never written back.
-export const USER_CONFIG_VERSION = 37 as const;
+export const USER_CONFIG_VERSION = 38 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1529,6 +1538,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   34,
   35,
   36,
+  37,
   USER_CONFIG_VERSION,
 ];
 
@@ -1767,6 +1777,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   },
   tui: {
     theme: "auto",
+    mouse: true,
   },
   analytics: {
     enabled: true,
@@ -3421,6 +3432,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         tui.theme ?? USER_CONFIG_DEFAULTS.tui.theme,
         "tui.theme",
       ),
+      mouse: parseBool(tui.mouse ?? USER_CONFIG_DEFAULTS.tui.mouse, "tui.mouse"),
     },
     analytics: {
       enabled: parseBool(

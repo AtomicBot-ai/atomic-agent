@@ -1,8 +1,13 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 
+import { applyNavSlot } from "../app-key-bindings.js";
+import { useMouseCommands } from "../mouse/mouse-context.js";
+import { MouseTarget } from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
 import {
   getCurrentSection,
+  getDefaultTabForSection,
   SECTION_ORDER,
   type TuiSection,
 } from "../section.js";
@@ -49,31 +54,70 @@ const SECTION_LABELS: Record<TuiSection, string> = {
   manage: "Manage",
 };
 
+/**
+ * The Run / Observe / Manage switcher. Each pill is its own `<Box>`
+ * rather than one flat `<Text>` run so the mouse layer can measure it:
+ * a click lands on the pill the operator actually pointed at instead of
+ * being reverse-engineered from label widths, which would break the
+ * next time a label changes.
+ */
 function SectionPills({ active }: { active: TuiSection }): ReactElement {
   return (
-    <Text>
-      {SECTION_ORDER.map((id, idx) => {
-        const isActive = id === active;
-        return (
-          <Text key={id}>
-            <Text
-              color={isActive ? theme.colors.accentSoft : theme.colors.muted}
-              bold={isActive}
-            >
-              {isActive ? `${theme.glyphs.chevronRight} ` : "  "}
-              {SECTION_LABELS[id]}
+    <Box flexWrap="wrap">
+      {SECTION_ORDER.map((id, idx) => (
+        <Box key={id} flexShrink={0}>
+          <SectionPill id={id} active={active === id} />
+          {idx < SECTION_ORDER.length - 1 ? (
+            <Text color={theme.colors.muted}>
+              {"  "}
+              {theme.glyphs.dotSeparator}
+              {"  "}
             </Text>
-            {idx < SECTION_ORDER.length - 1 ? (
-              <Text color={theme.colors.muted}>
-                {"  "}
-                {theme.glyphs.dotSeparator}
-                {"  "}
-              </Text>
-            ) : null}
-          </Text>
-        );
-      })}
+          ) : null}
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
+function SectionPill({
+  id,
+  active,
+}: {
+  id: TuiSection;
+  active: boolean;
+}): ReactElement {
+  const mouse = useMouseCommands();
+  const label = (
+    <Text
+      color={active ? theme.colors.accentSoft : theme.colors.muted}
+      bold={active}
+    >
+      {active ? `${theme.glyphs.chevronRight} ` : "  "}
+      {SECTION_LABELS[id]}
     </Text>
+  );
+  if (!mouse) return label;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        // Clicking the section you are already in is a no-op rather
+        // than a reset — it would otherwise throw away the sub-tab the
+        // operator navigated to.
+        if (!active) {
+          applyNavSlot(
+            mouse.dispatch,
+            id === "run"
+              ? { kind: "run" }
+              : { kind: "debug-tab", tab: getDefaultTabForSection(id) },
+          );
+        }
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
   );
 }
 
