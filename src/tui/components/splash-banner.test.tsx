@@ -50,16 +50,25 @@ describe("SplashBanner", () => {
     expect(frame).not.toContain("list all slash commands");
   });
 
-  it("still shows a brand mark and a tip on a 40x12 window", () => {
+  it("keeps the tips and drops the mark when four rows is all there is", () => {
+    // The mark is scaled artwork at every size now — the smallest is 4
+    // rows, so on a 4-row surface it would leave nothing for the tips
+    // and Ink would paint it over the chat above. Tips win.
     const frame = frameAt(38, 4);
-    expect(frame).toContain("+ ATOMIC AGENT");
+    expect(frame).toContain("Enter");
+    expect(frame).not.toMatch(/:::|[█▀▄]/u);
+  });
+
+  it("still shows a brand mark and a tip once there is room for both", () => {
+    const frame = frameAt(38, 8);
+    expect(frame).toMatch(/:::|[█▀▄]/u);
     expect(frame).toContain("Enter");
   });
 
   it("measures the terminal itself when no size is given", () => {
     const { lastFrame } = render(<SplashBanner />);
     const frame = strip(lastFrame() ?? "");
-    expect(frame).toContain(":::");
+    expect(frame).toMatch(/:::|[█▀▄]/u);
     expect(frame).toContain("/help");
   });
 });

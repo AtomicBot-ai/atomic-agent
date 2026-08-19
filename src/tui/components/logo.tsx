@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
+import { rasteriseMark, toInkMask } from "./logo-raster.js";
 import type { LogoVariant } from "./splash-fit.js";
 
 /**
@@ -12,9 +13,17 @@ import type { LogoVariant } from "./splash-fit.js";
  * Rendered as plain Ink primitives — no animations, no alpha. The mark
  * comes in three sizes so the same component can serve a 200-column
  * desktop terminal and a 40-column SSH window: `full` (34×20), `small`
- * (17×10) and `mini` (a single 14-column line). `SplashBanner` picks
- * one via `computeSplashFit`; callers that just want the classic
- * artwork can keep using the defaults.
+ * (20×12) and `mini` (9×5). `SplashBanner` picks one via
+ * `computeSplashFit`; callers that just want the classic artwork can
+ * keep using the defaults.
+ *
+ * Only `full` is drawn by hand. The smaller two are **measured off it**
+ * by `logo-raster.ts` — half-block glyphs at the terminal's ~2:1 cell
+ * aspect, so they are the same shape at a smaller scale rather than a
+ * second and third attempt at drawing it. The hand-drawn half-size copy
+ * they replace had lost the taper of the lower-right tail and read as a
+ * blob; a redrawn mark also drifts from the original every time either
+ * is touched, which is a maintenance cost with no upside.
  */
 export interface LogoProps {
   /** Which mark to draw. Defaults to the full 34×20 artwork. */
@@ -37,44 +46,42 @@ export interface LogoProps {
  * single line. `splash-fit.ts` mirrors these dimensions in
  * `LOGO_METRICS`; `logo-fit.test.ts` fails if the two ever disagree.
  */
-export const LOGO_ART: Readonly<Record<LogoVariant, readonly string[]>> = {
+const FULL_ART: readonly string[] = [
   // Leading padding has been uniformly trimmed so the middle bar sits
   // at column 0 — keeps the art within ~34 columns for narrow terminals.
-  full: [
-    "            -:::::::--",
-    "            -::::::::-",
-    "           -:::::::::-",
-    "          -::::::::::-",
-    "         -:::::::::::-",
-    "       -:::::::::::::-",
-    "    -::::::::::::::::-",
-    "-::::::::::::::::::::::::::::::::-",
-    "::::::::::::::::::::::::::::::::::",
-    "::::::::::::::::::::::::::::::::::",
-    "-:::::::::::::::::::::::::::::::::",
-    "=------------:::::::::::::::::---=",
-    " @@@@@@@@@@@*-::::::::::::-=+#%%@",
-    "            -:::::::::::-+#@",
-    "            -::::::::::=#@",
-    "            -:::::::::=#",
-    "            -::::::::-*",
-    "            -::::::::=",
-    "            +--------*",
-    "              %%%%%%",
-  ],
-  small: [
-    "      -:::--",
-    "      -::::-",
-    "     -:::::-",
-    "   -:::::::-",
-    "-:::::::::::::::-",
-    ":::::::::::::::::",
-    "=-----:::::::::-=",
-    " @@@@@*-::::-=#%",
-    "      -::::-*",
-    "      +----*",
-  ],
-  mini: ["+ ATOMIC AGENT"],
+  "            -:::::::--",
+  "            -::::::::-",
+  "           -:::::::::-",
+  "          -::::::::::-",
+  "         -:::::::::::-",
+  "       -:::::::::::::-",
+  "    -::::::::::::::::-",
+  "-::::::::::::::::::::::::::::::::-",
+  "::::::::::::::::::::::::::::::::::",
+  "::::::::::::::::::::::::::::::::::",
+  "-:::::::::::::::::::::::::::::::::",
+  "=------------:::::::::::::::::---=",
+  " @@@@@@@@@@@*-::::::::::::-=+#%%@",
+  "            -:::::::::::-+#@",
+  "            -::::::::::=#@",
+  "            -:::::::::=#",
+  "            -::::::::-*",
+  "            -::::::::=",
+  "            +--------*",
+  "              %%%%%%",
+];
+
+/**
+ * Mark artwork keyed by variant. `full` is the original drawing and the
+ * single source of truth; `small` and `mini` are scaled from it at load
+ * time, so all three are the same shape by construction. `splash-fit.ts`
+ * mirrors these dimensions in `LOGO_METRICS`; `logo-fit.test.ts` fails if
+ * the two ever disagree.
+ */
+export const LOGO_ART: Readonly<Record<LogoVariant, readonly string[]>> = {
+  full: FULL_ART,
+  small: rasteriseMark(toInkMask(FULL_ART), { columns: 20, rows: 12 }),
+  mini: rasteriseMark(toInkMask(FULL_ART), { columns: 7, rows: 4 }),
 };
 
 export const WORDMARK_ROWS: readonly string[] = [
@@ -92,13 +99,6 @@ export function Logo({
 }: LogoProps): ReactElement {
   const showWordmark = wordmark ?? !compact;
   const showTagline = tagline ?? showWordmark;
-  if (variant === "mini") {
-    return (
-      <Text color={theme.colors.system} bold wrap="truncate">
-        {LOGO_ART.mini[0]}
-      </Text>
-    );
-  }
   return (
     <Box flexDirection="row" alignItems="center">
       <LogoMark variant={variant} />
@@ -122,7 +122,7 @@ function LogoMark({ variant }: { variant: LogoVariant }): ReactElement {
   return (
     <Box flexDirection="column">
       {LOGO_ART[variant].map((row, idx) => (
-        <Text key={idx} color={theme.colors.system} bold wrap="truncate">
+        <Text key={idx} color={theme.colors.brandMark} bold wrap="truncate">
           {row}
         </Text>
       ))}

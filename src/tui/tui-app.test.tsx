@@ -50,8 +50,8 @@ describe("TuiApp (smoke)", () => {
     expect(text).not.toContain("Manage");
     // The splash mark scales with the window (#151); ink-testing-library's
     // stdout reports no rows, so the fallback surface gets the compact
-    // mark. Assert on what every size keeps.
-    expect(text).toContain(":::");
+    // mark, which is half-block art rather than the source shading.
+    expect(text).toMatch(/:::|[█▀▄]/u);
     expect(text).toContain("commands");
     unmount();
   });

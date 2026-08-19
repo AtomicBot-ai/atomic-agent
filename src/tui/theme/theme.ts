@@ -42,6 +42,13 @@ export interface TuiColors {
   readonly toolError: string;
   readonly accent: string;
   readonly accentSoft: string;
+  /**
+   * The brand mark's own blue — deliberately lighter and whiter than
+   * `accent`. The mark is not a control, and painting it in the same
+   * blue as every accented control made the start page read as one big
+   * highlighted widget.
+   */
+  readonly brandMark: string;
   readonly border: string;
   readonly muted: string;
   readonly error: string;

@@ -959,6 +959,7 @@ export function TuiApp({
                 state={state}
                 availableRows={menuPaneRows}
                 availableColumns={terminalSize.columns - 4}
+                onActivate={activateMenuNode}
               />
             ) : null}
           </Box>

@@ -1,8 +1,11 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 
+import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { chromeTheme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
+import type { MenuNode } from "./menu-registry.js";
 import type { MenuItemRow } from "./menu-selectors.js";
 import {
   clampMenuCursor,
@@ -26,6 +29,12 @@ interface MenuPopupProps {
   availableRows: number;
   /** Columns available in that pane. */
   availableColumns: number;
+  /**
+   * Runs a node. The very same callback `handleMenuKey` fires on Enter —
+   * passed down rather than reached through the mouse context so a click
+   * and a keypress cannot drift into two different activation paths.
+   */
+  onActivate: (node: MenuNode) => void;
 }
 
 /**
@@ -34,6 +43,11 @@ interface MenuPopupProps {
  * Rendered as a true overlay — `position="absolute"` inside the content pane,
  * so it floats **on top of** the chat log or the active panel instead of
  * displacing them. Nothing below it reflows when the menu opens or closes.
+ *
+ * It sits **centred** in that pane, both axes. A dropdown hanging off the
+ * prompt was the first shape, but this is not a dropdown: it is the app's
+ * one modal surface, and a modal belongs in the middle of the window with
+ * the app faded behind it — the same thing a web app would do.
  *
  * Terminals have no compositing and Ink has no z-index, so occlusion has to
  * be earned: every interior line is padded to the popup's exact inner width,
@@ -55,6 +69,7 @@ export function MenuPopup({
   state,
   availableRows,
   availableColumns,
+  onActivate,
 }: MenuPopupProps): ReactElement {
   const width = Math.max(28, Math.min(PREFERRED_WIDTH, availableColumns - 2));
   // Interior columns between the two border columns. Ink's own `paddingX`
@@ -75,15 +90,16 @@ export function MenuPopup({
   const visible = rows.slice(start, start + bodyRows);
   const hiddenAfter = Math.max(0, rows.length - start - visible.length);
 
-  // Anchor to the bottom of the pane so the menu sits just above the prompt,
-  // the way a dropdown hangs off the control that opened it.
+  // Centred in the pane on both axes.
   const height = visible.length + CHROME_ROWS;
-  const offsetTop = Math.max(0, availableRows - height);
+  const offsetTop = Math.max(0, Math.floor((availableRows - height) / 2));
+  const offsetLeft = Math.max(0, Math.floor((availableColumns - width) / 2));
 
   return (
     <Box
       position="absolute"
       marginTop={offsetTop}
+      marginLeft={offsetLeft}
       borderStyle="round"
       borderColor={chromeTheme.colors.accent}
       width={width}
@@ -101,6 +117,8 @@ export function MenuPopup({
             row={row}
             inner={inner}
             selected={start + idx === cursorRowIdx}
+            itemIndex={itemIndexes.indexOf(start + idx)}
+            onActivate={onActivate}
           />
         ),
       )}
@@ -139,11 +157,17 @@ function MenuItem({
   row,
   inner,
   selected,
+  itemIndex,
+  onActivate,
 }: {
   row: MenuItemRow;
   inner: number;
   selected: boolean;
+  /** Index among the *item* rows — what `menuCursor` counts. */
+  itemIndex: number;
+  onActivate: (node: MenuNode) => void;
 }): ReactElement {
+  const mouse = useMouseCommands();
   const { node } = row;
   const marker = selected ? chromeTheme.glyphs.chevronRight : " ";
   const arrow = node.kind === "submenu" ? ` ${chromeTheme.glyphs.arrowRight}` : "";
@@ -157,8 +181,8 @@ function MenuItem({
     [row.crumb, row.status].filter((part) => part.length > 0).join("  "),
     detailWidth,
   );
-  return (
-    <Box>
+  const body = (
+    <>
       <Text
         color={selected ? chromeTheme.colors.accentSoft : undefined}
         bold={selected}
@@ -167,7 +191,32 @@ function MenuItem({
       </Text>
       <Text color={chromeTheme.colors.muted}>{detail}</Text>
       <Text color={chromeTheme.colors.muted}>{chord}</Text>
-    </Box>
+    </>
+  );
+  if (!mouse) return <Box>{body}</Box>;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        // One click acts, the way a menu item does everywhere else. The
+        // rest of the mouse layer selects first and acts on the second
+        // click, because there a mis-click starts a download or switches
+        // sessions. Here the operator opened a menu to pick something —
+        // making them click twice would be the surprising choice.
+        if (itemIndex >= 0) {
+          mouse.dispatch({ type: "menu_cursor_set", cursor: itemIndex });
+        }
+        if (node.kind === "submenu") {
+          mouse.dispatch({ type: "menu_path_set", path: node.id });
+          return true;
+        }
+        mouse.dispatch({ type: "menu_closed" });
+        onActivate(node);
+        return true;
+      }}
+    >
+      {body}
+    </MouseTarget>
   );
 }
 
