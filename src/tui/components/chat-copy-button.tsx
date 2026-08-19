@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
-import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
+import { useCallback, type ReactElement } from "react";
 import { useClipboard } from "../clipboard/clipboard-context.js";
+import { useTransientStatus } from "../hooks/use-transient-status.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { theme } from "../theme/theme.js";
@@ -52,42 +53,12 @@ export function ChatCopyButton({
 }: ChatCopyButtonProps): ReactElement {
   const clipboard = useClipboard();
   const mouse = useMouseCommands();
-  const [status, setStatus] = useState<CopyStatus>("idle");
-  // Both refs exist to survive re-renders, which happen constantly here:
-  // every streamed token repaints the whole chat log. A timer id in
-  // component state would be replaced mid-flight and the old timeout
-  // would fire against a stale closure, stranding the label.
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = null;
-    };
-  }, []);
-
-  const flash = useCallback(
-    (next: CopyStatus) => {
-      if (!mountedRef.current) return;
-      setStatus(next);
-      // Restart rather than stack: a second click while `copied!` is up
-      // must extend the badge, not leave an older timeout to clear it
-      // early and blink the label back mid-feedback.
-      if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => {
-        timerRef.current = null;
-        if (mountedRef.current) setStatus("idle");
-      }, revertAfterMs);
-    },
-    [revertAfterMs],
-  );
+  const [status, flash] = useTransientStatus<CopyStatus>("idle", revertAfterMs);
 
   const copy = useCallback(() => {
     // Fire-and-forget: the click handler runs outside React's render
     // pass and the clipboard write can outlive the frame. `flash` is the
-    // only thing that touches state, and it checks `mountedRef` first.
+    // only thing that touches state, and it no-ops after unmount.
     void clipboard
       .copy(text)
       .then((ok) => flash(ok ? "copied" : "failed"))
