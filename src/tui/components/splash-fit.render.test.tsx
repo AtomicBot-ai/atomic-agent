@@ -46,8 +46,13 @@ describe("SplashBanner fit", () => {
     const widest = rendered.reduce((acc, line) => Math.max(acc, line.length), 0);
     expect(widest).toBeLessThanOrEqual(size.columns);
     expect(rendered.length).toBeLessThanOrEqual(size.rows);
-    // A splash with no recognisable brand mark is not a splash.
-    expect(rendered.join("\n")).toMatch(/ATOMIC AGENT|:::/);
+    // A splash with no recognisable brand mark is not a splash — except
+    // on a surface with no room for one, where drawing it anyway is the
+    // bug this file guards against. The mark is half-block art below
+    // full size, so match the glyphs rather than the source shading.
+    if (size.rows >= 6) {
+      expect(rendered.join("\n")).toMatch(/ATOMIC AGENT|:::|[█▀▄]/u);
+    }
   });
 
   it("renders the full artwork, wordmark and every tip when there is room", () => {
@@ -64,7 +69,7 @@ describe("SplashBanner fit", () => {
     expect(frame).toContain("/import");
   });
 
-  it("collapses to the one-line mark and bare labels on a tiny surface", () => {
+  it("collapses to the smallest mark and bare labels on a tiny surface", () => {
     const size = { columns: 24, rows: 10 };
     const { lastFrame } = render(
       <Box width={size.columns}>
@@ -72,7 +77,8 @@ describe("SplashBanner fit", () => {
       </Box>,
     );
     const frame = lines(lastFrame() ?? "").join("\n");
-    expect(frame).toContain("+ ATOMIC AGENT");
+    // The mini mark is scaled from the full drawing, not a text stand-in.
+    expect(frame).toMatch(/[█▀▄]/u);
     expect(frame).not.toContain("▄▀█ ▀█▀ █▀█");
     expect(frame).toContain("/help");
     expect(frame).not.toContain("list all slash commands");

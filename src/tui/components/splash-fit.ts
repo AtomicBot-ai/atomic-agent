@@ -21,6 +21,15 @@
 
 export type LogoVariant = "full" | "small" | "mini";
 
+/**
+ * What the splash draws for a mark. `"none"` is a real outcome, not a
+ * failure: below ~8 rows the mark and the tips cannot both fit, and Ink
+ * paints an over-tall frame *over* the rows above it rather than
+ * clipping — so drawing it anyway is what garbled the start page in the
+ * first place. The tips are the useful half at that size.
+ */
+export type LogoChoice = LogoVariant | "none";
+
 export interface SplashSize {
   columns: number;
   rows: number;
@@ -29,8 +38,8 @@ export interface SplashSize {
 export type TipDescriptions = "full" | "short" | "none";
 
 export interface SplashFit {
-  /** Which brand mark to draw. */
-  logo: LogoVariant;
+  /** Which brand mark to draw, or `"none"` when nothing fits. */
+  logo: LogoChoice;
   /** Whether the `ATOMIC AGENT` wordmark sits beside the mark. */
   wordmark: boolean;
   /** Whether the "Local AI-First Agent" tagline is drawn. */
@@ -103,8 +112,8 @@ interface LogoMetrics {
  */
 export const LOGO_METRICS: Readonly<Record<LogoVariant, LogoMetrics>> = {
   full: { width: 34, height: 20 },
-  small: { width: 17, height: 10 },
-  mini: { width: 14, height: 1 },
+  small: { width: 20, height: 12 },
+  mini: { width: 7, height: 4 },
 };
 
 /** `ATOMIC AGENT` half-block wordmark, plus the gap that precedes it. */
@@ -158,14 +167,25 @@ export function computeSplashFit(size: SplashSize): SplashFit {
   ) {
     index += 1;
   }
-  const logo = VARIANTS_WIDEST_FIRST[index]!;
+  let logo: LogoChoice = VARIANTS_WIDEST_FIRST[index]!;
+  if (
+    LOGO_METRICS[VARIANTS_WIDEST_FIRST[index]!]!.height +
+      TIP_LIST_MARGIN_ROWS +
+      1 >
+      rows ||
+    LOGO_METRICS[VARIANTS_WIDEST_FIRST[index]!]!.width > inner
+  ) {
+    logo = "none";
+  }
 
   // The wordmark is a 46-column luxury; it only rides along with the
   // full mark, and only once both fit side by side.
   const wordmark = logo === "full" && inner >= FULL_WITH_WORDMARK_WIDTH;
   const tagline = wordmark;
 
-  const spare = rows - LOGO_METRICS[logo].height - TIP_LIST_MARGIN_ROWS;
+  const markRows =
+    logo === "none" ? 0 : LOGO_METRICS[logo].height + TIP_LIST_MARGIN_ROWS;
+  const spare = rows - markRows;
   const tipCount = Math.max(0, Math.min(SPLASH_TIPS.length, spare));
   const visible = SPLASH_TIPS.slice(0, tipCount);
 

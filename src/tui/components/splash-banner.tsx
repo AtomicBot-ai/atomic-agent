@@ -49,9 +49,14 @@ export function SplashBanner({ size }: SplashBannerProps = {}): ReactElement {
   return (
     <Box flexDirection="column" flexGrow={1} alignItems="center" paddingX={2}>
       <Box flexGrow={1} />
-      <Logo variant={fit.logo} wordmark={fit.wordmark} tagline={fit.tagline} />
+      {fit.logo === "none" ? null : (
+        <Logo variant={fit.logo} wordmark={fit.wordmark} tagline={fit.tagline} />
+      )}
       {tips.length > 0 ? (
-        <Box marginTop={1} flexDirection="column">
+        <Box
+          marginTop={fit.logo === "none" ? 0 : 1}
+          flexDirection="column"
+        >
           {tips.map((tip) => (
             <Tip key={tip.label} tip={tip} fit={fit} />
           ))}
