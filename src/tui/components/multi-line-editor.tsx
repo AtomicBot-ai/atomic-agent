@@ -56,12 +56,20 @@ export interface MultiLineEditorProps {
  *
  * Key handling:
  *   - Enter submits the trimmed buffer (and emits empty-submit as no-op)
- *   - Shift+Enter inserts a newline. Alt/Meta+Enter and Ctrl+J do the
- *     same, deliberately: plenty of terminals cannot report Shift with
- *     Return at all (it needs modifyOtherKeys or the kitty protocol), and
- *     a multi-line editor that some terminals cannot reach is worse than
- *     one advertised gesture plus quiet fallbacks. The hint strip names
- *     Shift+Enter because that is what an operator expects to try.
+ *   - Ctrl+J inserts a newline, and it is what the hint strip names.
+ *     Ctrl+J is the literal LF byte, so every terminal can send it with
+ *     no negotiation at all.
+ *
+ *     Shift+Enter and Alt+Enter also insert one *where the terminal can
+ *     express them*, which is the catch that made "newline does not
+ *     work" a real report: a bare terminal sends plain CR for
+ *     Shift+Enter, indistinguishable from Enter, so it submits. Telling
+ *     them apart needs the kitty keyboard protocol or modifyOtherKeys,
+ *     which this app does not turn on — doing so changes how every key
+ *     arrives, which is not a trade to make for one gesture.
+ *
+ *     A trailing backslash before Enter also forces a newline, and works
+ *     everywhere for the same reason Ctrl+J does.
  *   - Backslash at end-of-line before Enter also forces a newline
  *   - Up/Down trigger `onHistoryPrev` / `onHistoryNext` when the cursor
  *     is at the top/bottom of the buffer

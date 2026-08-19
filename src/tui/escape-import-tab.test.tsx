@@ -49,7 +49,8 @@ describe("Esc on the Import tab", () => {
     bus.emit({ type: "ui_mode_set", mode: "debug" });
     bus.emit({ type: "tab_changed", tab: "import" });
     await settle();
-    expect(strip(lastFrame() ?? "")).toContain("Manage ▸");
+    expect(strip(lastFrame() ?? "")).toContain("\u25b8 Import");
+
 
     stdin.write(ESC);
     await settle();
@@ -57,9 +58,9 @@ describe("Esc on the Import tab", () => {
     // The configure-mode handler ends in a catch-all `return true` that
     // swallows stray letters; before the fix it swallowed Esc too, so the
     // operator was stuck on the tab with no "back" gesture at all.
-    // The breadcrumb lives on the left rail now — the top bar is gone —
-    // so "on the Run screen" is a rail line reading exactly `Run`.
-    expect(strip(lastFrame() ?? "")).toMatch(/^\s{0,3}Run\s/m);
+    // The rail dropped its breadcrumb row, so "on the Run screen" is now
+    // the run-mode strip, which only renders on the chat surface.
+    expect(strip(lastFrame() ?? "")).toContain("\u25b8 Local");
     expect(quit).toBe(0);
     unmount();
   });

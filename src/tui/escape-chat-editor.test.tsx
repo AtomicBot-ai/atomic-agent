@@ -95,9 +95,9 @@ describe("Esc in the chat editor", () => {
 
     stdin.write(ESC);
     await settle();
-    // The breadcrumb lives on the left rail now — the top bar is gone —
-    // so "on the Run screen" is a rail line reading exactly `Run`.
-    expect(strip(lastFrame() ?? "")).toMatch(/^\s{0,3}Run\s/m);
+    // The rail dropped its breadcrumb row, so "on the Run screen" is now
+    // the run-mode strip, which only renders on the chat surface.
+    expect(strip(lastFrame() ?? "")).toContain("\u25b8 Local");
     expect(counts.quit).toBe(0);
 
     stdin.write(ESC);

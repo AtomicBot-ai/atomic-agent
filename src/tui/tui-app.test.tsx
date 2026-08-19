@@ -43,7 +43,7 @@ describe("TuiApp (smoke)", () => {
     expect(text).toContain("atomic-agent");
     // The status bar shows where you are, not a menu of where you could go —
     // the three-section pill row moved into the ctrl+p menu.
-    expect(text).toContain("Run");
+    expect(text).toContain("\u25b8 Local");
     // #172 turned the section pills into a breadcrumb: the status bar
     // names where you *are*, and the ctrl+p menu is where you go.
     expect(text).not.toContain("Observe");
@@ -84,7 +84,7 @@ describe("TuiApp (smoke)", () => {
     bus.emit({ type: "ui_mode_set", mode: "debug" });
     await new Promise((r) => setTimeout(r, 10));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("Observe");
+    expect(text).toContain("Reasoning");
     expect(text).toContain("Feed");
     expect(text).toContain("Logs");
     // Manage-only tabs should not be in the Observe sub-tab strip.
@@ -103,7 +103,7 @@ describe("TuiApp (smoke)", () => {
     bus.emit({ type: "tab_changed", tab: "tasks" });
     await new Promise((r) => setTimeout(r, 10));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("Manage");
+    expect(text).toContain("Skills");
     expect(text).toContain("Tasks");
     expect(text).toContain("Skills");
     expect(text).toContain("Telegram");
@@ -153,7 +153,7 @@ describe("TuiApp (smoke)", () => {
     );
     await new Promise((r) => setTimeout(r, 10));
     const before = strip(lastFrame() ?? "");
-    expect(before).toContain("Run");
+    expect(before).toContain("\u25b8 Local");
     stdin.write("\t");
     await new Promise((r) => setTimeout(r, 10));
     const after = strip(lastFrame() ?? "");
@@ -161,12 +161,12 @@ describe("TuiApp (smoke)", () => {
     if (before.includes("SESSIONS")) {
       // Sidebar visible: Tab lands focus on the rail and stays in
       // chat mode. Ctrl+B is the dedicated key for nav cycling.
-      expect(after).toContain("Run");
-      expect(after).not.toContain("Observe \u25b8");
+      expect(after).toContain("\u25b8 Local");
+      expect(after).not.toContain("\u25b8 Feed");
     } else {
       // Sidebar collapsed (narrow runner): Tab falls back to the nav
       // cycle and lands on Observe → Feed.
-      expect(after).toContain("Observe \u25b8 Feed");
+      expect(after).toContain("\u25b8 Feed");
     }
     unmount();
   });
@@ -180,7 +180,7 @@ describe("TuiApp (smoke)", () => {
     stdin.write("\u0002");
     await new Promise((r) => setTimeout(r, 10));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("Observe \u25b8 Feed");
+    expect(text).toContain("\u25b8 Feed");
     unmount();
   });
 
@@ -199,7 +199,9 @@ describe("TuiApp (smoke)", () => {
     // one of the two drifted assertions #170 called out as the reason a
     // single menu registry exists. #172 changed the surface they
     // describe, so this is the commit that owes them a fix.
-    expect(text).toContain("Manage \u25b8");
+    // The Manage sub-tab strip is on screen (the breadcrumb that used to
+    // say so went with the top bar), and the marker sits on Privacy.
+    expect(text).toContain("Skills");
     expect(text).toContain("▸ Privacy");
     unmount();
   });
@@ -349,12 +351,12 @@ describe("TuiApp (smoke)", () => {
     bus.emit({ type: "ui_mode_set", mode: "debug" });
     bus.emit({ type: "tab_changed", tab: "tasks" });
     await new Promise((r) => setTimeout(r, 10));
-    expect(strip(lastFrame() ?? "")).toContain("Manage \u25b8");
+    expect(strip(lastFrame() ?? "")).toContain("Skills");
 
     stdin.write("\u001b");
     await new Promise((r) => setTimeout(r, 60));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("Run");
+    expect(text).toContain("\u25b8 Local");
     expect(text).not.toContain("Manage \u25b8");
     unmount();
   });
@@ -403,7 +405,7 @@ describe("TuiApp (smoke)", () => {
     stdin.write("t");
     await new Promise((r) => setTimeout(r, 30));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("Manage");
+    expect(text).toContain("Skills");
     expect(text).toContain("Tasks");
     // Ink delivers every key to every useInput, child first — so the editor
     // sees the chord letter too. If the leader did not disable it, a stray
@@ -425,7 +427,7 @@ describe("TuiApp (smoke)", () => {
     await new Promise((r) => setTimeout(r, 20));
     const text = strip(lastFrame() ?? "");
     expect(text).not.toContain("esc close");
-    expect(text).toContain("Run");
+    expect(text).toContain("\u25b8 Local");
     unmount();
   });
 

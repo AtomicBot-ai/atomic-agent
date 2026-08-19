@@ -11,7 +11,7 @@ import type { TaskSummaryRow } from "../tasks/tasks-panel-state.js";
 import { theme } from "../theme/theme.js";
 import type { SessionPickerEntry } from "../tui-state.js";
 import { getAppVersion } from "../../version.js";
-import { LOGO_ART } from "./logo.js";
+import { RAIL_MARK } from "./logo.js";
 
 export type SidebarSection = "sessions" | "tasks";
 
@@ -28,8 +28,6 @@ export interface SidebarProps {
   focused: boolean;
   /** Short session id, shown under the wordmark. */
   sessionId?: string | null;
-  /** Where the operator is, e.g. `Manage › Tasks`. */
-  location?: string;
   /**
    * Row budget for each pane, normally derived from the terminal height
    * by `computeSidebarRowBudget` in `../layout.ts`. The defaults keep
@@ -91,7 +89,6 @@ export function Sidebar(props: SidebarProps): ReactElement {
     activeSection,
     focused,
     sessionId = null,
-    location,
     maxSessionRows = DEFAULT_MAX_SESSION_ROWS,
     maxTaskRows = DEFAULT_MAX_TASK_ROWS,
   } = props;
@@ -128,10 +125,9 @@ export function Sidebar(props: SidebarProps): ReactElement {
       paddingX={1}
     >
       <RailBrand inner={inner} sessionId={sessionId} />
-      <MenuButton inner={inner} />
-      {location ? <RailLocation inner={inner} label={location} /> : null}
       <RailBlank />
       <SectionHeader title="Sessions" active={sessionsActive} inner={inner} />
+      <NewSessionButton inner={inner} />
       <SessionsList
         sessions={sessions}
         cursor={sessionsCursor}
@@ -151,7 +147,14 @@ export function Sidebar(props: SidebarProps): ReactElement {
         previewWidth={previewWidth}
         inner={inner}
       />
+      {/*
+        The menu sits at the foot of the rail, the way an application
+        parks its account or settings control: it is the thing you reach
+        for occasionally, and the lists above it are what you look at.
+        The spacer pushes it down however tall the terminal is.
+      */}
       <Box flexGrow={1} />
+      <MenuButton inner={inner} />
     </Box>
   );
 }
@@ -199,7 +202,15 @@ function RailBlank(): ReactElement {
   return <Box height={1} flexShrink={0} />;
 }
 
-/** Mark, wordmark, version, session id. */
+/**
+ * Mark, wordmark, version — the mark on the left with the text beside
+ * it, the way a product lockup is normally set. Stacked, it spent six of
+ * the rail's rows on branding before the first useful line.
+ *
+ * The session id keeps its own full-width row underneath: it is the one
+ * piece here that can be long, and squeezing it into the column beside a
+ * six-column mark would truncate it to nothing.
+ */
 function RailBrand({
   inner,
   sessionId,
@@ -207,23 +218,65 @@ function RailBrand({
   inner: number;
   sessionId: string | null;
 }): ReactElement {
-  const art = LOGO_ART.mini;
+  const art = RAIL_MARK;
+  const textWidth = Math.max(0, inner - MARK_COLUMNS - 1);
   return (
     <Box flexDirection="column">
       <RailBlank />
-      {art.map((row, idx) => (
-        <RailLine key={idx} inner={inner} color={theme.colors.brandMark} bold>
-          {row}
+      <Box>
+        <Box flexDirection="column" flexShrink={0}>
+          {art.map((row, idx) => (
+            <Text key={idx} color={theme.colors.brandMark} bold wrap="truncate">
+              {row}
+            </Text>
+          ))}
+        </Box>
+        <Box flexDirection="column" flexShrink={0} paddingLeft={1}>
+          {/* Blank rows centre the two text lines against the four-row mark. */}
+          <Text> </Text>
+          <Text color={theme.colors.railForeground} bold wrap="truncate">
+            {clip("atomic-agent", textWidth)}
+          </Text>
+          <Text color={theme.colors.railMuted} wrap="truncate">
+            {clip(`v${getAppVersion()}`, textWidth)}
+          </Text>
+        </Box>
+      </Box>
+      {sessionId ? (
+        <RailLine inner={inner} color={theme.colors.railMuted}>
+          {shortenId(sessionId)}
         </RailLine>
-      ))}
-      <RailLine inner={inner} bold>
-        {"atomic-agent"}
-      </RailLine>
-      <RailLine inner={inner} color={theme.colors.railMuted}>
-        {`v${getAppVersion()}${sessionId ? `  ·  ${shortenId(sessionId)}` : ""}`}
-      </RailLine>
-      <RailBlank />
+      ) : null}
     </Box>
+  );
+}
+
+/** Width of {@link RAIL_MARK}, kept beside it so the lockup can measure. */
+const MARK_COLUMNS = 6;
+
+/**
+ * Starts a fresh thread. It sits at the head of the session list because
+ * that is the list it adds to — and because `/new` was the only way to
+ * reach it, which is not a thing a first-time operator knows.
+ */
+function NewSessionButton({ inner }: { inner: number }): ReactElement {
+  const mouse = useMouseCommands();
+  const label = (
+    <RailLine inner={inner} color={theme.colors.accent}>
+      {"  + New session"}
+    </RailLine>
+  );
+  if (!mouse) return label;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        mouse.callbacks.onSessionNewRequested?.();
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
   );
 }
 
@@ -251,21 +304,6 @@ function MenuButton({ inner }: { inner: number }): ReactElement {
     >
       {label}
     </MouseTarget>
-  );
-}
-
-/** Where you are — the breadcrumb the removed top bar used to carry. */
-function RailLocation({
-  inner,
-  label,
-}: {
-  inner: number;
-  label: string;
-}): ReactElement {
-  return (
-    <RailLine inner={inner} color={theme.colors.railMuted}>
-      {label}
-    </RailLine>
   );
 }
 

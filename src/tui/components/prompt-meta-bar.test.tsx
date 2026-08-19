@@ -6,7 +6,6 @@ import type { TuiMouseEvent } from "../mouse/mouse-event.js";
 import { MouseTargetRegistry } from "../mouse/mouse-registry.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
-import { appendFileReference } from "./prompt-meta-bar.js";
 import { PromptShell } from "./prompt-shell.js";
 
 function strip(value: string): string {
@@ -73,21 +72,6 @@ async function mountWithMouse(node: ReactElement): Promise<{
   return { registry, frame: () => lastFrame() ?? "", unmount };
 }
 
-describe("appendFileReference", () => {
-  it("seeds an empty draft", () => {
-    expect(appendFileReference("")).toBe("file: ");
-  });
-
-  it("separates the marker from existing prose", () => {
-    expect(appendFileReference("summarise")).toBe("summarise file: ");
-  });
-
-  it("does not double the space when the draft already ends in one", () => {
-    expect(appendFileReference("summarise ")).toBe("summarise file: ");
-    expect(appendFileReference("summarise\n")).toBe("summarise\nfile: ");
-  });
-});
-
 describe("composer buttons", () => {
   it("submits the live buffer when Send is clicked", async () => {
     const sent: string[] = [];
@@ -138,21 +122,6 @@ describe("composer buttons", () => {
     unmount();
   });
 
-  it("appends the file marker when the file button is clicked", async () => {
-    const changed: string[] = [];
-    const { registry, frame, unmount } = await mountWithMouse(
-      <PromptShell
-        value="explain"
-        focus
-        onChange={(value) => changed.push(value)}
-        onSubmit={() => {}}
-      />,
-    );
-    const { x, y } = locate(frame(), "+ file");
-    expect(registry.dispatch(click(x, y))).toBe(true);
-    expect(changed).toEqual(["explain file: "]);
-    unmount();
-  });
 
   it("ignores a right-button press on Send", async () => {
     const sent: string[] = [];
@@ -177,7 +146,6 @@ describe("composer buttons", () => {
       <PromptShell value="" focus onChange={() => {}} onSubmit={() => {}} />,
     );
     const frame = strip(lastFrame() ?? "");
-    expect(frame).toContain("+ file");
     expect(frame).toContain("send");
     unmount();
   });

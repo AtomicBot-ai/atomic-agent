@@ -57,7 +57,9 @@ describe("Esc on the Observe tabs", () => {
       bus.emit({ type: "ui_mode_set", mode: "debug" });
       bus.emit({ type: "tab_changed", tab });
       await settle();
-      expect(strip(lastFrame() ?? "")).toContain("Observe ▸");
+      // The Observe sub-tab strip is what says we are on a panel; which
+      // tab is marked varies across the cases this loop drives.
+      expect(strip(lastFrame() ?? "")).toContain("Reasoning");
 
       stdin.write(ESC);
       await settle();
@@ -67,7 +69,7 @@ describe("Esc on the Observe tabs", () => {
       // reached the still-focused chat editor and quit the process.
       expect(counts.quit).toBe(0);
       expect(counts.abort).toBe(0);
-      expect(strip(lastFrame() ?? "")).toMatch(/^\s{0,3}Run\s/m);
+      expect(strip(lastFrame() ?? "")).toContain("\u25b8 Local");
       unmount();
     });
   }

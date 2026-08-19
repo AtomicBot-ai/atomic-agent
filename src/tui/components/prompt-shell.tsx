@@ -3,7 +3,7 @@ import type { ReactElement } from "react";
 import { useRotatingPlaceholder } from "../hooks/use-rotating-placeholder.js";
 import { theme } from "../theme/theme.js";
 import { MultiLineEditor, type MultiLineEditorProps } from "./multi-line-editor.js";
-import { appendFileReference, PromptMetaBar } from "./prompt-meta-bar.js";
+import { PromptMetaBar } from "./prompt-meta-bar.js";
 
 /**
  * The composer: a framed input field with a toolbar under it.
@@ -121,7 +121,6 @@ export function PromptShell(props: PromptShellProps): ReactElement {
           // place for slash-command handling and the busy-mode queue to
           // drift out of sync.
           onSend={() => onSubmit(value)}
-          onAttachFile={() => onChange(appendFileReference(value))}
         />
       </Box>
     </Box>

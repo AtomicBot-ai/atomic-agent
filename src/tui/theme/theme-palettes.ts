@@ -26,7 +26,7 @@ import type { TuiColors } from "./theme.js";
 // muted=fgColor-muted, border=borderColor-default.
 export const GITHUB_DARK_COLORS: TuiColors = {
   user: "#4493f8",
-  assistant: "#3fb950",
+  assistant: "#e6edf3",
   system: "#9198a1",
   reasoning: "#ab7df8",
   tool: "#4493f8",

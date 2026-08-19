@@ -41,8 +41,6 @@ import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import { SlashPalette } from "./components/slash-palette.js";
 import { RunModeBar } from "./components/run-mode-bar.js";
 import { StatusBar } from "./components/status-bar.js";
-import { menuPlaceByTab } from "./menu/menu-registry.js";
-import { getCurrentSection } from "./section.js";
 import { RunModePicker } from "./components/run-mode-picker.js";
 import type { RunModeName } from "../config/index.js";
 import { TasksCancelModal } from "./components/tasks-cancel-modal.js";
@@ -85,6 +83,7 @@ import { handleProvidersTabKey } from "./providers/providers-key-bindings.js";
 import { handleTelegramTabKey } from "./telegram/telegram-key-bindings.js";
 import { handlePrivacyTabKey } from "./privacy/privacy-key-bindings.js";
 import { MouseProvider } from "./mouse/mouse-context.js";
+import { isPrimaryPress } from "./mouse/mouse-event.js";
 import {
   MOUSE_LAYER_BASE,
   MOUSE_LAYER_MODAL,
@@ -428,24 +427,6 @@ const PROMPT_PLACEHOLDERS: readonly string[] = [
   "Inspect a file, run a search, draft a fix…",
 ];
 
-const SECTION_LABELS: Record<string, string> = {
-  run: "Run",
-  observe: "Observe",
-  manage: "Manage",
-};
-
-/**
- * `Manage › Tasks` — the one thing the ctrl+p menu cannot tell you,
- * because you have to open it to read it. Lived in the top bar until the
- * rail took over the app chrome.
- */
-function describeLocation(state: TuiState): string {
-  const section = SECTION_LABELS[getCurrentSection(state)] ?? "Run";
-  if (state.uiMode !== "debug") return section;
-  const tab = menuPlaceByTab(state.activeTab)?.label;
-  return tab ? `${section} ${theme.glyphs.chevronRight} ${tab}` : section;
-}
-
 export function TuiApp({
   session,
   bus,
@@ -691,6 +672,34 @@ export function TuiApp({
   // TuiApp renders the provider, so it cannot consume the context hook
   // itself — it registers on the registry it owns. The handler is read
   // through a ref so the subscription survives every re-render.
+  // Clicking away from the menu closes it, and the wheel walks it — the
+  // two gestures every windowed UI gives a modal. Registered on the root
+  // element at the modal layer: while the menu is open TuiApp raises the
+  // registry floor there, so base-layer targets (rail rows, the prompt,
+  // panels) are out of the running and only this and the popup's own
+  // rows compete. Hit testing picks the smallest box, so a click inside
+  // the popup still lands on the row it hit.
+  useEffect(
+    () =>
+      registry.register({
+        ref: contentMouseRef,
+        layer: MOUSE_LAYER_MODAL,
+        handler: (hit) => {
+          if (!stateRef.current.menuOpen) return false;
+          if (hit.event.kind === "wheel" && hit.event.wheel) {
+            dispatch({
+              type: "menu_cursor_moved",
+              delta: hit.event.wheel === "up" ? -1 : 1,
+            });
+            return true;
+          }
+          if (!isPrimaryPress(hit.event)) return false;
+          dispatch({ type: "menu_closed" });
+          return true;
+        },
+      }),
+    [registry],
+  );
   const wheelHandlerRef = useRef(wheelHandler);
   wheelHandlerRef.current = wheelHandler;
   useEffect(
@@ -944,6 +953,7 @@ export function TuiApp({
       ref={contentMouseRef}
       {...(rootHeight ? { height: rootHeight } : {})}
     >
+
       {/*
         Below the rail's width threshold there is no rail, and the top
         bar it replaced is gone — which left a narrow terminal with no
@@ -966,7 +976,6 @@ export function TuiApp({
             sessionsCursor={state.sidebarCursor}
             currentSessionId={state.session.sessionId}
             sessionId={state.session.sessionId}
-            location={describeLocation(state)}
             tasks={selectSidebarTasks(state.tasksPanel.rows)}
             tasksCursor={state.sidebarTasksCursor}
             activeSection={state.sidebarSection}
@@ -979,11 +988,6 @@ export function TuiApp({
           overflow="hidden"
           paddingLeft={2}
         >
-          {state.uiMode === "chat" ? (
-            <Box flexShrink={0}>
-              <RunModeBar panel={state.runModePanel} />
-            </Box>
-          ) : null}
           <Box
             flexDirection="column"
             flexGrow={1}
@@ -1094,6 +1098,11 @@ export function TuiApp({
             onHistoryPrev={onHistoryPrev}
             onHistoryNext={onHistoryNext}
           />
+          {state.uiMode === "chat" ? (
+            <Box flexShrink={0}>
+              <RunModeBar panel={state.runModePanel} />
+            </Box>
+          ) : null}
           <HotkeyHint
             state={state}
             ctrlCArmed={ctrlCArmed}

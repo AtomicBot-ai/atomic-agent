@@ -84,6 +84,17 @@ export const LOGO_ART: Readonly<Record<LogoVariant, readonly string[]>> = {
   mini: rasteriseMark(toInkMask(FULL_ART), { columns: 7, rows: 4 }),
 };
 
+/**
+ * The rail's own mark: smaller than `mini`, because on the rail it sits
+ * beside the wordmark rather than above it and has to leave room for the
+ * text. 6x4 is the floor at which the silhouette still reads — 6x3 and
+ * 5x3 collapse the arms into a blob.
+ */
+export const RAIL_MARK: readonly string[] = rasteriseMark(
+  toInkMask(FULL_ART),
+  { columns: 6, rows: 4 },
+);
+
 export const WORDMARK_ROWS: readonly string[] = [
   "▄▀█ ▀█▀ █▀█ █▀▄▀█ █ █▀▀   ▄▀█ █▀▀ █▀▀ █▄ █ ▀█▀",
   "█▀█  █  █▄█ █ ▀ █ █ █▄▄   █▀█ █▄█ ██▄ █ ▀█  █ ",

@@ -28,7 +28,7 @@ interface HotkeyChip {
   readonly label: string;
   /**
    * What a click on this chip does. Only chips with one unambiguous
-   * meaning get one — "shift+enter newline" or "↑↓ select" describe a
+   * meaning get one — "ctrl+j newline" or "↑↓ select" describe a
    * gesture, not a command, so they stay plain text rather than
    * pretending to be buttons.
    */
@@ -219,7 +219,7 @@ function resolveChips(
   // menu now lists Local / Cloud / Fusion outright.
   return [
     { key: "enter", label: "send" },
-    { key: "shift+enter", label: "newline" },
+    { key: "ctrl+j", label: "newline" },
     // Tab only reaches the rail when there is one; below its width
     // threshold the chip would name a surface that is not on screen.
     ...(sidebarVisible

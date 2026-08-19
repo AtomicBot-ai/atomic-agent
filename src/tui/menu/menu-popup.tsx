@@ -199,6 +199,9 @@ function MenuItem({
     <MouseTarget
       layer={MOUSE_LAYER_MODAL}
       onMouse={(hit) => {
+        // Let a wheel notch fall through to the backdrop, which owns
+        // scrolling for the whole popup.
+        if (hit.event.kind === "wheel") return false;
         if (!isPrimaryPress(hit.event)) return false;
         // One click acts, the way a menu item does everywhere else. The
         // rest of the mouse layer selects first and acts on the second

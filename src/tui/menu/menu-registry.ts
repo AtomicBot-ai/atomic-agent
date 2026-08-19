@@ -118,18 +118,6 @@ export const MENU: readonly MenuNode[] = [
     section: "run",
   },
   {
-    kind: "action",
-    id: "go.debug",
-    label: "Toggle debug pane",
-    group: "go",
-    slash: {
-      name: "debug",
-      description:
-        "toggle debug pane (feed / logs / world …)",
-      rank: 7,
-    },
-  },
-  {
     kind: "submenu",
     id: "go.observe",
     label: "Observe",
@@ -574,6 +562,18 @@ export const MENU: readonly MenuNode[] = [
       description:
         "list built-in tools (fs, shell, browser, memory, vision): `/tools` | `/tools <query>`",
       rank: 2,
+    },
+  },
+  {
+    kind: "action",
+    id: "help.debug",
+    label: "Toggle debug pane",
+    group: "help",
+    slash: {
+      name: "debug",
+      description:
+        "toggle debug pane (feed / logs / world …)",
+      rank: 7,
     },
   },
   {

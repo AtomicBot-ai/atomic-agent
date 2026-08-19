@@ -40,31 +40,9 @@ export interface PromptMetaBarProps {
   /** Whether Send has something to send; drives the primary/ghost look. */
   canSend: boolean;
   onSend: () => void;
-  onAttachFile: () => void;
-}
-
-/**
- * Marker the file button drops into the draft. It is prose, not syntax:
- * nothing in this codebase resolves it, and pretending otherwise would
- * be a lie dressed as a feature. The agent reads files by path with
- * `os.fs.read`, so a message that says `file: src/x.ts` gets the file
- * read — the button's only job is to say that affordance exists and put
- * the caret where the path goes.
- */
-const FILE_REFERENCE_MARKER = "file: ";
-
-/**
- * Append the file-reference marker to `value`, inserting a separating
- * space only when the draft does not already end in whitespace.
- */
-export function appendFileReference(value: string): string {
-  if (value.length === 0) return FILE_REFERENCE_MARKER;
-  if (/\s$/.test(value)) return `${value}${FILE_REFERENCE_MARKER}`;
-  return `${value} ${FILE_REFERENCE_MARKER}`;
 }
 
 /** Labels carry their own padding so the chip's ground reads as a button. */
-const ATTACH_LABEL = " + file ";
 const SEND_LABEL = " send → ";
 
 const MODEL_LABEL_MAX_LEN = 32;
@@ -76,7 +54,6 @@ export function PromptMetaBar({
   rightSlot,
   canSend,
   onSend,
-  onAttachFile,
 }: PromptMetaBarProps): ReactElement {
   return (
     <Box
@@ -99,13 +76,6 @@ export function PromptMetaBar({
             {rightSlot}
           </Box>
         ) : null}
-        <Box flexShrink={0} marginRight={1}>
-          <ComposerButton
-            label={ATTACH_LABEL}
-            enabled
-            onPress={onAttachFile}
-          />
-        </Box>
         <ComposerButton label={SEND_LABEL} primary enabled={canSend} onPress={onSend} />
       </Box>
     </Box>

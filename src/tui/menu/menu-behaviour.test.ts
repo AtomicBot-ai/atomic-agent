@@ -38,13 +38,18 @@ describe("menu rows", () => {
     const rows = selectMenuRows(open());
     const headers = rows.flatMap((r) => (r.kind === "header" ? [r.label] : []));
     expect(headers).toEqual(["Go", "Session", "Model", "Run", "Setup", "Help"]);
+    // `go` is where you are going. The debug pane is a diagnostic you
+    // switch on, so it lives under Help.
     const go = rows.filter((r) => r.kind === "item" && r.node.group === "go");
     expect(go.map((r) => (r.kind === "item" ? r.node.label : ""))).toEqual([
       "Run",
-      "Toggle debug pane",
       "Observe",
       "Manage",
     ]);
+    const help = rows.filter((r) => r.kind === "item" && r.node.group === "help");
+    expect(help.map((r) => (r.kind === "item" ? r.node.label : ""))).toContain(
+      "Toggle debug pane",
+    );
   });
 
   it("lists a submenu's children and titles the popup with a breadcrumb", () => {
@@ -94,8 +99,9 @@ describe("menu keys", () => {
   });
 
   it("opens a submenu with the right arrow and leaves it with the left", () => {
-    const atManage = open({ menuCursor: 2 });
-    expect(drive(atManage, "", { rightArrow: true }).actions).toEqual([
+    // Cursor 1 is Observe now that the debug toggle moved to Help.
+    const atObserve = open({ menuCursor: 1 });
+    expect(drive(atObserve, "", { rightArrow: true }).actions).toEqual([
       { type: "menu_path_set", path: "go.observe" },
       { type: "menu_cursor_set", cursor: 0 },
     ]);

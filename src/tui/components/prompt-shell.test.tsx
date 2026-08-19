@@ -29,7 +29,7 @@ describe("PromptShell", () => {
     unmount();
   });
 
-  it("shows both buttons", () => {
+  it("shows the send button", () => {
     const { lastFrame, unmount } = render(
       <PromptShell
         value=""
@@ -39,7 +39,6 @@ describe("PromptShell", () => {
       />,
     );
     const frame = strip(lastFrame() ?? "");
-    expect(frame).toContain("+ file");
     expect(frame).toContain("send");
     unmount();
   });
@@ -78,7 +77,7 @@ describe("PromptShell", () => {
    * thing allowed to give up columns — a clipped button reads as a
    * rendering bug, a clipped model name reads as a long model name.
    */
-  it("keeps both buttons whole in a 56-column chat column", () => {
+  it("keeps the send button whole in a 56-column chat column", () => {
     const { lastFrame, unmount } = render(
       // A column, like the chat surface: the composer takes the
       // column's full width rather than its own intrinsic one.
@@ -103,7 +102,6 @@ describe("PromptShell", () => {
       expect(line.length).toBeLessThanOrEqual(56);
     }
     const bar = lines[2] ?? "";
-    expect(bar).toContain(" + file ");
     expect(bar).toContain(" send → ");
     unmount();
   });

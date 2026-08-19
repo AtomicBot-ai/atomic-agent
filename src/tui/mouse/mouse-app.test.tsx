@@ -192,6 +192,13 @@ describe("TuiApp mouse", () => {
     );
     // One click acts on a menu row — the menu is the one surface where
     // the two-step select-then-activate rule would be the surprise.
+    // The debug toggle is filed under Help, which sits below the fold on
+    // a fresh menu — search for it first, the way an operator would.
+    app.stdin.write("debug");
+    await waitUntil(
+      () => app.frame().includes("Toggle debug pane"),
+      "the searched menu row",
+    );
     await clickUntil(
       app.mouse,
       () => locate(app.frame(), "Toggle debug pane"),
@@ -210,6 +217,13 @@ describe("TuiApp mouse", () => {
       () => locate(app.frame(), "Menu"),
       () => app.frame().includes("GO"),
       "click on the rail's Menu button",
+    );
+    // The debug toggle is filed under Help, which sits below the fold on
+    // a fresh menu — search for it first, the way an operator would.
+    app.stdin.write("debug");
+    await waitUntil(
+      () => app.frame().includes("Toggle debug pane"),
+      "the searched menu row",
     );
     await clickUntil(
       app.mouse,
