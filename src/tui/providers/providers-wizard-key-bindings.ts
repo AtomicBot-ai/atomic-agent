@@ -1,11 +1,8 @@
 import type { Key } from "ink";
-import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
 import { getCachedOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import { getCachedGeminiModels } from "../../llm/provider/gemini/fetch-gemini-models.js";
-import { normalizeOpenAiBaseUrl } from "../../llm/provider/openai/normalize-openai-base-url.js";
 import { PICK_WINDOW } from "../components/wizard-pick-list.js";
 import { findProviderPreset } from "./provider-presets.js";
-import { OPENAI_COMPAT_DEFAULT_BASE_URL } from "./providers-model-options.js";
 import {
   advanceWizardPhase,
   clampCursor,
@@ -19,34 +16,12 @@ import {
   presetNeedsKeyScreen,
 } from "./providers-wizard-phases.js";
 import { createProvidersWizardState } from "./providers-wizard-state.js";
+import {
+  apiKeyForWizard,
+  apiKeyPhaseError,
+  baseUrlForWizard,
+} from "./providers-wizard-target.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
-
-/** Normalized so the fetch, the cache key and the displayed URL always agree. */
-export function baseUrlForWizard(wizard: ProvidersWizardState): string {
-  return (
-    normalizeOpenAiBaseUrl(wizard.baseUrlLine) || OPENAI_COMPAT_DEFAULT_BASE_URL
-  );
-}
-
-/**
- * Typed key wins; otherwise a key already in the environment needs no
- * retyping. The fallback probe resolves the preset's own variable when
- * one is selected — reading the shared compat variable for Groq would
- * hand the wrong service's key to the model-list fetch.
- */
-export function apiKeyForWizard(
-  wizard: ProvidersWizardState,
-): string | undefined {
-  const preset = wizard.presetId ? findProviderPreset(wizard.presetId) : undefined;
-  return (
-    wizard.apiKeyBuffer.trim() ||
-    resolveLlmProviderApiKey({
-      id: "openai-compatible",
-      kind: "openai-compatible",
-      ...(preset ? { apiKeyEnvVar: preset.envVar } : {}),
-    })
-  );
-}
 
 /**
  * Chat model ids discovered from `{baseUrl}/v1/models`. Empty once the operator
@@ -140,6 +115,15 @@ export function handleProvidersWizardKey(
 
   if (wizard.phase === "api_key") {
     if (key.return) {
+      // An empty key is refused here rather than at the end of the
+      // wizard: leaving this screen blank used to cost the operator the
+      // model picker and the save round-trip before anything said so.
+      // Services that genuinely have no key (local servers, keyless
+      // listing) opt out through `apiKeyPhaseError`.
+      const missing = apiKeyPhaseError(wizard);
+      if (missing) {
+        return { handled: true, wizard: { ...wizard, error: missing } };
+      }
       return {
         handled: true,
         wizard: advanceWizardPhase(wizard),
