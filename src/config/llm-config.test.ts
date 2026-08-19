@@ -257,4 +257,98 @@ describe("llm-config", () => {
       }),
     ).toThrow(/extraBody/);
   });
+  it("accepts subscription-cli entries and round-trips subscriptionCli", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      llm: {
+        activeTextProvider: "claude-cli",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto",
+        providers: [
+          {
+            id: "local-llama",
+            kind: "llama-server",
+            url: "http://127.0.0.1:19091",
+          },
+          {
+            id: "claude-cli",
+            kind: "subscription-cli",
+            defaultChatModel: "sonnet",
+            subscriptionCli: {
+              cli: "claude",
+              binPath: "/opt/homebrew/bin/claude",
+              extraArgs: ["--effort", "high"],
+              streaming: false,
+              maxBudgetUsd: 5,
+            },
+          },
+        ],
+      },
+    });
+    const entry = parsed.llm?.providers.find((p) => p.id === "claude-cli");
+    // parseLlmProviderEntry is a whitelist that rebuilds the entry from
+    // known keys, so an unparsed field would be silently dropped on the
+    // next config rewrite. Pin the whole block, not just `cli`.
+    expect(entry?.subscriptionCli).toEqual({
+      cli: "claude",
+      binPath: "/opt/homebrew/bin/claude",
+      extraArgs: ["--effort", "high"],
+      streaming: false,
+      maxBudgetUsd: 5,
+    });
+  });
+
+  it("rejects a subscription-cli entry with no subscriptionCli block", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        llm: {
+          activeTextProvider: "claude-cli",
+          activeEmbeddingProvider: "claude-cli",
+          toolTransport: "auto",
+          providers: [{ id: "claude-cli", kind: "subscription-cli" }],
+        },
+      }),
+    ).toThrow(/subscriptionCli/);
+  });
+
+  it("rejects an unknown cli name", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        llm: {
+          activeTextProvider: "gemini-cli",
+          activeEmbeddingProvider: "gemini-cli",
+          toolTransport: "auto",
+          providers: [
+            {
+              id: "gemini-cli",
+              kind: "subscription-cli",
+              subscriptionCli: { cli: "gemini" },
+            },
+          ],
+        },
+      }),
+    ).toThrow(/subscriptionCli\.cli/);
+  });
+
+  it("rejects non-string extraArgs", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        llm: {
+          activeTextProvider: "claude-cli",
+          activeEmbeddingProvider: "claude-cli",
+          toolTransport: "auto",
+          providers: [
+            {
+              id: "claude-cli",
+              kind: "subscription-cli",
+              subscriptionCli: { cli: "claude", extraArgs: ["--effort", 3] },
+            },
+          ],
+        },
+      }),
+    ).toThrow(/extraArgs\[1\]/);
+  });
 });

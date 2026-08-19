@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -242,4 +242,28 @@ describe("saveProviderWizardToConfig", () => {
     // stole the selection.
     expect(getConfig().llm?.activeTextProvider).toBe("groq");
   });
+
+  it("saves a claude-cli provider with an empty key and writes no .env", () => {
+    const wizard = {
+      ...createProvidersWizardState("add"),
+      kind: "claude-cli" as const,
+      phase: "chat_model_line" as const,
+      apiKeyBuffer: "",
+      chatModelLine: "opus",
+      selectedEmbeddingChoiceId: LOCAL_EMBEDDING_CHOICE_ID,
+    };
+
+    // Would throw "API key is empty" for any key-based kind.
+    const built = saveProviderWizardToConfig(wizard);
+
+    expect(built.entry.kind).toBe("subscription-cli");
+    expect(built.entry.subscriptionCli).toEqual({ cli: "claude" });
+    expect(built.entry.defaultChatModel).toBe("opus");
+
+    const cfg = getConfig();
+    expect(cfg.llm?.activeTextProvider).toBe("claude-cli");
+    expect(cfg.llm?.activeEmbeddingProvider).toBe("local-llama");
+    expect(existsSync(join(stateDir, ".env"))).toBe(false);
+  });
+
 });

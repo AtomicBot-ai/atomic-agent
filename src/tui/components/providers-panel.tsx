@@ -3,6 +3,7 @@ import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
 import type { ProvidersPanelState } from "../providers/providers-panel-state.js";
 import { ProvidersWizard } from "./providers-wizard.js";
+import { SUBSCRIPTION_CLI_KIND } from "../../config/provider-auth-mode.js";
 
 export function ProvidersPanel(props: {
   panel: ProvidersPanelState;
@@ -42,7 +43,11 @@ export function ProvidersPanel(props: {
       const flags = [
         row.isActiveText ? "TEXT*" : "",
         row.isActiveEmbedding ? "EMB*" : "",
-        row.hasApiKey ? "key" : "no-key",
+        row.kind === SUBSCRIPTION_CLI_KIND
+          ? "cli auth"
+          : row.hasApiKey
+            ? "key"
+            : "no-key",
       ]
         .filter(Boolean)
         .join(" ");

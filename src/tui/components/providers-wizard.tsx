@@ -29,6 +29,7 @@ import {
   OPENAI_COMPAT_DEFAULT_BASE_URL,
   OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
 } from "../providers/providers-model-options.js";
+import { subscriptionCliForWizardKind } from "../providers/providers-wizard-state.js";
 import type {
   ProvidersWizardKind,
   ProvidersWizardState,
@@ -36,6 +37,8 @@ import type {
 import { renderPickList } from "./wizard-pick-list.js";
 
 const KIND_LABELS: Record<ProvidersWizardKind, string> = {
+  "claude-cli":
+    "Claude Code subscription (drives your signed-in `claude` CLI — no API key)",
   openrouter: "OpenRouter (cloud chat + optional cloud embed)",
   aimlapi: "AI/ML API (aimlapi.com — 500+ models, OpenAI-compatible)",
   gemini: "Gemini (Google AI)",
@@ -66,6 +69,9 @@ const KIND_OPTIONS = KIND_ROW_ORDER.map((row) => ({
  * does not use.
  */
 function envHintForWizard(w: ProvidersWizardState): string {
+  // CLI-backed providers read no env var; the key screen is skipped
+  // entirely, so there is no variable to name.
+  if (w.kind && subscriptionCliForWizardKind(w.kind)) return "";
   const preset = w.presetId ? findProviderPreset(w.presetId) : undefined;
   if (preset) return preset.envVar;
   if (w.kind === "openrouter") return "OPENROUTER_API_KEY";

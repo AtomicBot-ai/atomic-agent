@@ -7,6 +7,10 @@ export type ProviderRow = {
   kind: string;
   isActiveText: boolean;
   isActiveEmbedding: boolean;
+  /**
+   * Credentials are resolved for this entry — an API key, or the vendor
+   * CLI's own session for `subscription-cli` entries.
+   */
   hasApiKey: boolean;
   /**
    * Stored base URL for `openai-compatible` entries (`null` for curated

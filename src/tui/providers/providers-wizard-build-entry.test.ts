@@ -150,4 +150,38 @@ describe("buildProviderEntryFromWizard", () => {
     expect(built.entry.id).toBe("my-vllm");
     expect(built.entry.apiKeyEnvVar).toBeUndefined();
   });
+
+  it("maps the claude-cli row onto a keyless subscription-cli entry", () => {
+    const built = buildProviderEntryFromWizard({
+      kind: "claude-cli",
+      chatModelId: "",
+      embeddingChoiceId: "",
+      customChatModel: "opus",
+    });
+    expect(built.entry).toEqual({
+      id: "claude-cli",
+      kind: "subscription-cli",
+      defaultChatModel: "opus",
+      subscriptionCli: { cli: "claude" },
+    });
+    // No endpoint and no env var: the CLI authenticates itself, and a
+    // stray apiKeyEnvVar would make resolveLlmProviderApiKey look for a
+    // key that is never meant to exist.
+    expect(built.entry.baseUrl).toBeUndefined();
+    expect(built.entry.apiKeyEnvVar).toBeUndefined();
+    // There is no embedding endpoint behind the CLI.
+    expect(built.useLocalEmbedding).toBe(true);
+    expect(built.activateEmbeddingProviderId).toBe("local-llama");
+  });
+
+  it("falls back to the default model when nothing was typed", () => {
+    const built = buildProviderEntryFromWizard({
+      kind: "claude-cli",
+      chatModelId: "",
+      embeddingChoiceId: "",
+      customChatModel: "   ",
+    });
+    expect(built.entry.defaultChatModel).toBe("sonnet");
+  });
+
 });

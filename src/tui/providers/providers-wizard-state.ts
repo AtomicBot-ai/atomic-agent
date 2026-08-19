@@ -1,10 +1,31 @@
+import type { SubscriptionCliName } from "../../config/llm-config.js";
 import { presetForEntryId } from "./provider-presets.js";
 
 export type ProvidersWizardKind =
+  | "claude-cli"
   | "openrouter"
   | "aimlapi"
   | "gemini"
   | "openai-compatible";
+
+/**
+ * Wizard rows that map onto the single `subscription-cli` config kind.
+ * One row per vendor CLI keeps the choice on the screen the operator is
+ * already looking at, instead of adding a wizard phase whose only job is
+ * to ask "which CLI?".
+ */
+const SUBSCRIPTION_CLI_WIZARD_KINDS: Partial<
+  Record<ProvidersWizardKind, SubscriptionCliName>
+> = {
+  "claude-cli": "claude",
+};
+
+/** The vendor CLI this row drives, or null for a key-based provider. */
+export function subscriptionCliForWizardKind(
+  kind: ProvidersWizardKind,
+): SubscriptionCliName | null {
+  return SUBSCRIPTION_CLI_WIZARD_KINDS[kind] ?? null;
+}
 
 export type ProvidersWizardPhase =
   | "pick_kind"

@@ -16,12 +16,15 @@ import {
   buildProviderEntryFromWizard,
   type BuiltWizardProvider,
 } from "./providers-wizard-build-entry.js";
-import type {
-  ProvidersWizardKind,
-  ProvidersWizardState,
+import {
+  subscriptionCliForWizardKind,
+  type ProvidersWizardKind,
+  type ProvidersWizardState,
 } from "./providers-wizard-state.js";
+import { CLAUDE_CLI_DEFAULT_CHAT_MODEL } from "../../llm/provider/subscription-cli/claude-cli-models.js";
 
 function defaultChatModelForKind(kind: ProvidersWizardKind): string {
+  if (subscriptionCliForWizardKind(kind)) return CLAUDE_CLI_DEFAULT_CHAT_MODEL;
   if (kind === "aimlapi") return AIMLAPI_DEFAULT_CHAT_MODEL;
   if (kind === "gemini") return GEMINI_DEFAULT_CHAT_MODEL;
   return OPENROUTER_DEFAULT_CHAT_MODEL;
@@ -58,7 +61,11 @@ export function saveProviderWizardToConfig(
   // Local servers have no key at all, and keyless-listing services work
   // before one is entered, so an empty key is a valid state for both:
   // nothing is written to .env and requests go out without Authorization.
-  const keyOptional = Boolean(preset && (preset.local || preset.listsModelsWithoutKey));
+  // CLI-backed providers have no key by construction, so an empty key
+  // buffer is the normal case rather than an unfinished form.
+  const keyOptional =
+    Boolean(subscriptionCliForWizardKind(kind)) ||
+    Boolean(preset && (preset.local || preset.listsModelsWithoutKey));
   if (wizard.apiKeyBuffer.trim().length > 0) {
     writeProviderApiKeyToDotenv(kind, wizard.apiKeyBuffer, preset?.envVar);
   } else if (existing?.apiKey) {

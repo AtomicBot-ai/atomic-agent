@@ -725,6 +725,19 @@ export interface AtomicAgentConfig {
        * are re-applied after the merge and cannot be overridden.
        */
       extraBody?: Record<string, unknown>;
+      /**
+       * Settings for a `subscription-cli` provider: which already
+       * signed-in vendor CLI to drive (`claude`, `codex`) and how to
+       * invoke it. There is no API key on these entries — the CLI
+       * authenticates from its own session.
+       */
+      subscriptionCli?: {
+        cli: "claude" | "codex";
+        binPath?: string;
+        extraArgs?: string[];
+        streaming?: boolean;
+        maxBudgetUsd?: number;
+      };
       userModels?: ReadonlyArray<{
         id: string;
         kind: "chat" | "embedding";

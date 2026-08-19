@@ -18,6 +18,8 @@ import {
   OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
 } from "../providers/providers-model-options.js";
 import type { LocalModelsPullState } from "../local-models/local-models-panel-state.js";
+import { SUBSCRIPTION_CLI_KIND } from "../../config/provider-auth-mode.js";
+import { CLAUDE_CLI_CHAT_MODELS } from "../../llm/provider/subscription-cli/claude-cli-models.js";
 import type { TuiState } from "../tui-state.js";
 import type { LlmPanelRow } from "./llm-panel-selectors.js";
 
@@ -397,6 +399,14 @@ function inlineModelsForProvider(
   }
   if (provider.kind === "aimlapi") {
     for (const option of listAimlapiChatModels()) out.add(option.id);
+    return { models: [...out], status: "ready", error: null };
+  }
+  // subscription-cli: nothing to fetch. Falling through to the
+  // openai-compatible tail would inject `gpt-5.4-mini` as a fake row and
+  // spin on "loading" forever, because no request will ever complete for
+  // a provider that has no HTTP endpoint.
+  if (provider.kind === SUBSCRIPTION_CLI_KIND) {
+    for (const id of CLAUDE_CLI_CHAT_MODELS) out.add(id);
     return { models: [...out], status: "ready", error: null };
   }
   // gemini: no baseUrl on the entry, so the openai-compat URL-keyed cache

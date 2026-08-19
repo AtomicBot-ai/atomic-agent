@@ -89,13 +89,16 @@ describe("createProvidersWizardState configure prefill", () => {
 });
 
 describe("KIND_ROW_ORDER", () => {
-  it("lists catalogs first, presets alphabetically by label, manual last", () => {
-    expect(KIND_ROW_ORDER[0]).toBe("openrouter");
-    expect(KIND_ROW_ORDER[1]).toBe("aimlapi");
-    expect(KIND_ROW_ORDER[2]).toBe("gemini");
+  it("lists the subscription CLI first, then catalogs, presets alphabetically by label, manual last", () => {
+    // A CLI-backed provider needs no key and no endpoint, so it is the
+    // shortest path from a fresh install to a working agent.
+    expect(KIND_ROW_ORDER[0]).toBe("claude-cli");
+    expect(KIND_ROW_ORDER[1]).toBe("openrouter");
+    expect(KIND_ROW_ORDER[2]).toBe("aimlapi");
+    expect(KIND_ROW_ORDER[3]).toBe("gemini");
     expect(KIND_ROW_ORDER[KIND_ROW_ORDER.length - 1]).toBe("openai-compatible");
 
-    const presetRows = KIND_ROW_ORDER.slice(3, -1);
+    const presetRows = KIND_ROW_ORDER.slice(4, -1);
     expect(presetRows).toEqual(
       PROVIDER_PRESETS.map((preset) => ({ presetId: preset.id })),
     );
@@ -106,6 +109,19 @@ describe("KIND_ROW_ORDER", () => {
 });
 
 describe("handleProvidersWizardKey", () => {
+  it("takes the Claude CLI row straight past the API-key screen", () => {
+    let wizard = createProvidersWizardState("add");
+    wizard = { ...wizard, cursor: KIND_ROW_ORDER.indexOf("claude-cli") };
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    // There is no key to paste — the CLI authenticates from its own
+    // session — so stopping on `api_key` would be a dead end.
+    expect(wizard).toMatchObject({
+      kind: "claude-cli",
+      phase: "chat_model_line",
+    });
+    expect(wizard.presetId).toBeNull();
+  });
+
   it("takes Gemini from API key directly to model selection", () => {
     let wizard = createProvidersWizardState("add");
     wizard = { ...wizard, cursor: KIND_ROW_ORDER.indexOf("gemini") };
@@ -120,7 +136,9 @@ describe("handleProvidersWizardKey", () => {
   it("walks the aimlapi onboarding flow when the cursor lands on it", () => {
     let wizard = createProvidersWizardState("add");
 
-    wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    // Addressed by name so inserting a row above it does not silently
+    // repoint this flow at a different provider.
+    wizard = { ...wizard, cursor: KIND_ROW_ORDER.indexOf("aimlapi") };
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.kind).toBe("aimlapi");
     expect(wizard.phase).toBe("api_key");
@@ -354,6 +372,7 @@ describe("handleProvidersWizardKey", () => {
   it("walks the OpenRouter onboarding flow through model and embedding picks", () => {
     let wizard = createProvidersWizardState("add");
 
+    wizard = { ...wizard, cursor: KIND_ROW_ORDER.indexOf("openrouter") };
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.kind).toBe("openrouter");
     expect(wizard.phase).toBe("api_key");

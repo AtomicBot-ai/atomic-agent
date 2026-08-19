@@ -2,6 +2,7 @@ import { render } from "ink";
 import React from "react";
 import { getConfig, USER_CONFIG_DEFAULTS } from "../config/index.js";
 import type { UserLlmProviderEntry } from "../config/llm-config.js";
+import { usesExternalCliAuth } from "../config/provider-auth-mode.js";
 import { resolveLlmProviderApiKey } from "../config/resolve-llm-api-key.js";
 import {
   getLocalModelDef,
@@ -82,7 +83,12 @@ export function isCloudTextProviderReady(): boolean {
   const entry = cfg.llm?.providers.find((provider) => provider.id === active);
   if (!entry) return false;
   if (resolveLlmProviderApiKey(entry)) return true;
-  return isKeylessLocalProviderEntry(entry);
+  if (isKeylessLocalProviderEntry(entry)) return true;
+  // A subscription CLI carries no key and no base URL, so both checks
+  // above miss it. Reachable only for a kind that config validation
+  // rejected outright before this existed, so no pre-existing config
+  // changes behaviour here.
+  return usesExternalCliAuth(entry);
 }
 
 /**

@@ -1,5 +1,6 @@
 import { getConfig } from "../../config/index.js";
 import type { UserLlmProviderEntry } from "../../config/index.js";
+import { usesExternalCliAuth } from "../../config/provider-auth-mode.js";
 import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
 import { resolveLlmConfig } from "../../llm/provider/registry/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
@@ -210,7 +211,10 @@ export class ProvidersOrchestrator {
         kind: p.kind,
         isActiveText: p.id === resolved.activeTextProvider,
         isActiveEmbedding: p.id === resolved.activeEmbeddingProvider,
-        hasApiKey: Boolean(resolveLlmProviderApiKey(p)?.length),
+        // A CLI-backed entry has no key by design. Without this the row
+        // renders unavailable and Enter is a silent no-op.
+        hasApiKey:
+          Boolean(resolveLlmProviderApiKey(p)?.length) || usesExternalCliAuth(p),
         baseUrl: fileEntry?.baseUrl ?? null,
         chatModel: fileEntry?.defaultChatModel ?? fileEntry?.model ?? null,
         chatModelOptions: listChatModelOptionsForEntry(fileEntry),
