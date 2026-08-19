@@ -368,12 +368,53 @@ export class ChatOrchestrator {
 
   sendMessage(text: string): void {
     if (this.quitting) return;
-    this.ensureSession();
+    const session = this.ensureSession();
     if (this.currentController) {
+      // A turn is already in flight. Try to fold the message into it —
+      // it reaches the model at the next step boundary instead of
+      // waiting for the whole turn to close. `steer` returns false when
+      // that turn can no longer pick anything up (it has done its final
+      // drain, or its inbox is full), and then this queue is exactly the
+      // "own pending-message queue" AGENTS.md tells callers to fall back
+      // to. Either way the message goes somewhere.
+      if (this.runtime.steer(session.id, text)) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: "steering the running turn — the agent reads it at the next step",
+        });
+        return;
+      }
       this.queue.push(text);
       return;
     }
     void this.runOneTurn(text);
+  }
+
+  /**
+   * Re-route steering messages the turn accepted but never delivered.
+   *
+   * `RunTurnResult.undelivered` carries anything pushed after the loop's
+   * last step boundary — during the final inference, or into a turn
+   * cancelled before it stepped. AGENTS.md makes re-routing the caller's
+   * job: `steer` already answered "yes" to whoever sent these, so
+   * dropping them here would lose a message the operator watched being
+   * accepted.
+   *
+   * They go to the FRONT of the queue. They are corrections aimed at the
+   * turn that just ran, and anything already queued was typed after
+   * `steer` had refused it — i.e. later than these.
+   */
+  private rerouteUndelivered(undelivered: readonly string[] | undefined): void {
+    if (undelivered === undefined || undelivered.length === 0) return;
+    this.queue.unshift(...undelivered);
+    this.bus.emit({
+      type: "runtime_info",
+      line: `${undelivered.length} message${
+        undelivered.length === 1 ? "" : "s"
+      } arrived too late for that turn — sending ${
+        undelivered.length === 1 ? "it" : "them"
+      } next`,
+    });
   }
 
   private async runOneTurn(text: string): Promise<void> {
@@ -387,6 +428,7 @@ export class ChatOrchestrator {
         origin: "tui",
       });
       this.session = result.session;
+      this.rerouteUndelivered(result.undelivered);
       if (isFailedSessionStatus(this.session.status)) this.exitCode = 1;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
