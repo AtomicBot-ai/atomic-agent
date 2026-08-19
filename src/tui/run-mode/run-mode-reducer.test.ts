@@ -105,16 +105,6 @@ describe("reduceRunModeAction", () => {
     expect(state.runModePanel.cloudShare).toBe(40);
   });
 
-  it("does not move the mirror on a change REQUEST", () => {
-    // Only the orchestrator may change the mode; the mirror follows the
-    // `run_mode_synced` it emits afterwards.
-    const state = apply(base(), [
-      synced,
-      { type: "run_mode_change_requested", mode: "local" },
-    ]);
-    expect(state.runModePanel.effective).toBe("fusion");
-  });
-
   it("tracks busy and surfaces a settle error", () => {
     const busy = apply(base(), [{ type: "run_mode_change_started" }]);
     expect(busy.runModePanel.busy).toBe(true);

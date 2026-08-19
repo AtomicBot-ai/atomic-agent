@@ -31,11 +31,13 @@ function withPicker(): TuiState {
 
 function press(state: TuiState, input: string, key: Partial<Key> = {}) {
   const dispatch = vi.fn();
+  const onRunModeChangeRequested = vi.fn();
   const handled = handleRunModePickerKey(input, { ...KEY, ...key }, {
     state,
     dispatch,
+    callbacks: { onRunModeChangeRequested },
   });
-  return { handled, dispatch };
+  return { handled, dispatch, onRunModeChangeRequested };
 }
 
 describe("handleRunModePickerKey", () => {
@@ -47,24 +49,39 @@ describe("handleRunModePickerKey", () => {
   });
 
   it("closes on Esc without requesting a change", () => {
-    const { handled, dispatch } = press(withPicker(), "", { escape: true });
+    const { handled, dispatch, onRunModeChangeRequested } = press(
+      withPicker(),
+      "",
+      { escape: true },
+    );
     expect(handled).toBe(true);
     expect(dispatch).toHaveBeenCalledWith({ type: "run_mode_picker_closed" });
-    expect(dispatch).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: "run_mode_change_requested" }),
-    );
+    expect(onRunModeChangeRequested).not.toHaveBeenCalled();
   });
 
-  it("applies the draft on Enter and closes", () => {
-    const { dispatch } = press(withPicker(), "", { return: true });
-    expect(dispatch).toHaveBeenNthCalledWith(1, {
-      type: "run_mode_change_requested",
-      mode: "local",
-      cloudShare: 40,
+  /**
+   * Enter used to dispatch a `run_mode_change_requested` action instead
+   * of calling the callback. Nothing consumed it — the reducer returned
+   * the panel unchanged on purpose, and `dispatch` never reaches the
+   * orchestrator's bus — so applying a mode from this overlay wrote
+   * nothing and swapped nothing. Asserting the dispatch, as the old test
+   * did, passed happily the whole time.
+   */
+  it("applies the draft through the callback on Enter, then closes", () => {
+    const { dispatch, onRunModeChangeRequested } = press(withPicker(), "", {
+      return: true,
     });
-    expect(dispatch).toHaveBeenNthCalledWith(2, {
-      type: "run_mode_picker_closed",
-    });
+    expect(onRunModeChangeRequested).toHaveBeenCalledWith("local", 40);
+    expect(dispatch).toHaveBeenCalledWith({ type: "run_mode_picker_closed" });
+  });
+
+  it("applies whatever the cursor moved to, not the mode in force", () => {
+    const onFusion = apply(withPicker(), [
+      { type: "run_mode_picker_cursor_set", cursor: 2 },
+      { type: "run_mode_picker_share_set", cloudShare: 70 },
+    ]);
+    const { onRunModeChangeRequested } = press(onFusion, "", { return: true });
+    expect(onRunModeChangeRequested).toHaveBeenCalledWith("fusion", 70);
   });
 
   it("moves with arrows and with j/k", () => {

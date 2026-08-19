@@ -34,6 +34,8 @@ export class RunModeOrchestrator {
       cloudShare: resolved.fusion.cloudShare,
       localLabel: this.modelLabel(resolved.localProviderId),
       cloudLabel: this.modelLabel(resolved.cloudProviderId),
+      localProviderId: resolved.localProviderId,
+      cloudProviderId: resolved.cloudProviderId,
       cloudProviderMissing: resolved.cloudProviderId === null,
       localProviderMissing: resolved.localProviderId === null,
       degradedMessage: resolved.degraded

@@ -19,6 +19,16 @@ export interface RunModePanelState {
   localLabel: string | null;
   cloudLabel: string | null;
   /**
+   * Provider id filling each leg, as `resolveRunMode` resolved it.
+   *
+   * Separate from the labels, which carry the MODEL name: with two cloud
+   * providers configured, "the cloud leg" is a specific one of them
+   * (`llm.runMode.cloudProvider`, else the first non-llama-server entry)
+   * and an operator cannot tell which without being told its id.
+   */
+  localProviderId: string | null;
+  cloudProviderId: string | null;
+  /**
    * Whether each leg is configured at all. Tracked separately from the
    * labels because a provider can exist with no model name resolved
    * yet, and "unavailable" must not be inferred from "unnamed".
@@ -54,6 +64,8 @@ export function createInitialRunModePanelState(): RunModePanelState {
     cloudShare: 40,
     localLabel: null,
     cloudLabel: null,
+    localProviderId: null,
+    cloudProviderId: null,
     cloudProviderMissing: false,
     localProviderMissing: false,
     degradedMessage: null,
