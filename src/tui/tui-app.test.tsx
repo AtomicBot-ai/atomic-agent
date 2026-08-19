@@ -192,9 +192,14 @@ describe("TuiApp (smoke)", () => {
     stdin.write("\u001b[Z");
     await new Promise((r) => setTimeout(r, 10));
     const text = strip(lastFrame() ?? "");
-    // Shift+Tab from Run wraps to the last Manage sub-tab (Telegram).
+    // Shift+Tab from Run wraps to the last Manage sub-tab. That was
+    // Telegram when this test was written; MANAGE_TABS has gained
+    // `import` and `privacy` since, and the literal was never updated —
+    // one of the two drifted assertions #170 called out as the reason a
+    // single menu registry exists. #172 changed the surface they
+    // describe, so this is the commit that owes them a fix.
     expect(text).toContain("Manage \u25b8");
-    expect(text).toContain("▸ Telegram");
+    expect(text).toContain("▸ Privacy");
     unmount();
   });
 
@@ -290,11 +295,14 @@ describe("TuiApp (smoke)", () => {
     bus.emit({ type: "tab_changed", tab: "llm" });
     await new Promise((r) => setTimeout(r, 10));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("Active chat route");
-    expect(text).toContain("Mode:");
+    // Stale in three places, all pre-existing: with no provider
+    // configured the panel leads with its section headings rather than a
+    // resolved route, and the verbose "Mode:" line and "Press ←/→ to
+    // switch mode" hint were replaced by the compact footer long ago.
+    // Assert what the panel actually shows a fresh install.
     expect(text).toContain("Local text models");
     expect(text).toContain("Local embeddings");
-    expect(text).toContain("Press ←/→ to switch mode");
+    expect(text).toContain("←/→ mode");
     expect(text).not.toContain("Local runtime");
     unmount();
   });

@@ -49,7 +49,7 @@ describe("Esc on the Import tab", () => {
     bus.emit({ type: "ui_mode_set", mode: "debug" });
     bus.emit({ type: "tab_changed", tab: "import" });
     await settle();
-    expect(strip(lastFrame() ?? "")).toContain("▸ Manage");
+    expect(strip(lastFrame() ?? "")).toContain("Manage ▸");
 
     stdin.write(ESC);
     await settle();
@@ -57,7 +57,10 @@ describe("Esc on the Import tab", () => {
     // The configure-mode handler ends in a catch-all `return true` that
     // swallows stray letters; before the fix it swallowed Esc too, so the
     // operator was stuck on the tab with no "back" gesture at all.
-    expect(strip(lastFrame() ?? "")).toContain("▸ Run");
+    // #172 replaced the section pill row with a breadcrumb: the status
+    // bar names where you are (`Manage ▸ Tasks`) rather than listing
+    // where you could go. "on the Run screen" reads as a bare `Run`.
+    expect(strip(lastFrame() ?? "")).toMatch(/\|\s+Run(\s|$)/m);
     expect(quit).toBe(0);
     unmount();
   });

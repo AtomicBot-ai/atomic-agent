@@ -95,7 +95,10 @@ describe("Esc in the chat editor", () => {
 
     stdin.write(ESC);
     await settle();
-    expect(strip(lastFrame() ?? "")).toContain("▸ Run");
+    // #172 replaced the section pill row with a breadcrumb: the status
+    // bar names where you are (`Manage ▸ Tasks`) rather than listing
+    // where you could go. "on the Run screen" reads as a bare `Run`.
+    expect(strip(lastFrame() ?? "")).toMatch(/\|\s+Run(\s|$)/m);
     expect(counts.quit).toBe(0);
 
     stdin.write(ESC);
