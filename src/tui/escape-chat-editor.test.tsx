@@ -79,6 +79,50 @@ describe("Esc in the chat editor", () => {
     unmount();
   });
 
+  it("aborts the turn and keeps the draft when both are on the table", async () => {
+    // The precedence this branch commits to: while a turn is in flight
+    // Esc aborts and leaves the buffer alone; the *next* Esc, now idle,
+    // clears it. Abort is the destructive, time-critical action and a
+    // draft is cheap to keep, so it wins.
+    const counts = { quit: 0, abort: 0 };
+    const bus = makeTuiEventBus();
+    const { lastFrame, stdin, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={trackingCallbacks(counts)} />,
+    );
+    await settle();
+    stdin.write("draft message");
+    await settle();
+    bus.emitAgentEvent({ type: "turn_started", turnIndex: 0 });
+    await settle();
+    expect(strip(lastFrame() ?? "")).toContain("draft message");
+
+    stdin.write(ESC);
+    await settle();
+
+    expect(counts.abort).toBe(1);
+    expect(counts.quit).toBe(0);
+    // Untouched: the run stopped, the half-typed message did not.
+    expect(strip(lastFrame() ?? "")).toContain("draft message");
+
+    bus.emitAgentEvent({
+      type: "turn_finished",
+      turnIndex: 0,
+      reason: "cancelled",
+      stepCount: 0,
+      durationMs: 1,
+    });
+    await settle();
+
+    stdin.write(ESC);
+    await settle();
+
+    // Second Esc, this time idle: now the draft goes and nothing else.
+    expect(strip(lastFrame() ?? "")).not.toContain("draft message");
+    expect(counts.abort).toBe(1);
+    expect(counts.quit).toBe(0);
+    unmount();
+  });
+
   it("survives leaving a Manage panel and pressing Esc again", async () => {
     // The reported trap: Esc walks back from the panel to Run, and the
     // next Esc — the natural "and back out of here too" press — used to

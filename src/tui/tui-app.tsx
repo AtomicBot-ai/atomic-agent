@@ -353,6 +353,8 @@ const CTRL_C_WINDOW_MS = 1500;
  */
 const SIDEBAR_MIN_COLUMNS = 100;
 const SIDEBAR_WIDTH = 30;
+/** Left gutter of the whole app frame — see the root `paddingLeft`. */
+const ROOT_PADDING_COLUMNS = 2;
 
 /**
  * Rotating placeholder pool shown in the prompt's empty state. Phrasing
@@ -483,6 +485,15 @@ export function TuiApp({
   const terminalSize = useTerminalSize();
   const sidebarVisible =
     state.uiMode === "chat" && terminalSize.columns >= SIDEBAR_MIN_COLUMNS;
+  // Columns left for the main column once the frame gutter and the
+  // right rail have taken their cut — what the one-row hint strip has
+  // to fit inside.
+  const mainColumnWidth = Math.max(
+    0,
+    terminalSize.columns -
+      ROOT_PADDING_COLUMNS -
+      (sidebarVisible ? SIDEBAR_WIDTH : 0),
+  );
   const sidebarFocused = sidebarVisible && state.chatFocus === "sidebar";
   const editorFocus =
     !state.pendingApproval &&
@@ -623,19 +634,32 @@ export function TuiApp({
       dispatch({ type: "ui_mode_set", mode: "chat" });
       return;
     }
-    // Esc never quits. Everywhere else in the TUI it means cancel / back
-    // one level, so a single unannounced press killing the agent — and
-    // the half-typed message with it — was a trap: no hint strip ever
-    // advertised it, while Ctrl+C deliberately asks twice. Quitting stays
-    // on Ctrl+C twice and `/quit`; Esc just clears the draft.
-    if (canAcceptMessage(state)) {
-      if (state.inputValue.length > 0) {
-        dispatch({ type: "input_changed", value: "" });
-      }
+    // `canAcceptMessage` is `status === "idle"`, so its negation reads
+    // "a turn is in flight" — running, awaiting approval, or quitting.
+    const turnInFlight = !canAcceptMessage(state);
+    // PRECEDENCE, decided rather than inherited from branch order: while
+    // a turn is in flight **abort wins and the draft is left alone**.
+    // Abort is the destructive, time-critical action — the operator who
+    // hits Esc mid-run wants the agent stopped now — whereas a draft is
+    // cheap to keep: one more Esc, this time idle, clears it. The other
+    // order would silently eat the message while the run it was meant to
+    // stop kept going. Nothing on screen could disambiguate the two, so
+    // the running hint strip labels Esc `abort, draft kept` whenever
+    // there is a draft to keep (see `hotkey-hint.tsx`).
+    if (turnInFlight) {
+      callbacks.onAbort();
+      dispatch({ type: "abort_requested" });
       return;
     }
-    callbacks.onAbort();
-    dispatch({ type: "abort_requested" });
+    // Idle: Esc never quits. Everywhere else in the TUI it means cancel /
+    // back one level, so a single unannounced press killing the agent —
+    // and the half-typed message with it — was a trap: no hint strip ever
+    // advertised it, while Ctrl+C deliberately asks twice. Quitting stays
+    // on Ctrl+C twice and `/quit`; Esc clears the draft and no-ops on an
+    // empty buffer.
+    if (state.inputValue.length > 0) {
+      dispatch({ type: "input_changed", value: "" });
+    }
   }, [state, callbacks]);
 
   // Tab in the editor is reserved for slash-palette completion. Section
@@ -733,7 +757,7 @@ export function TuiApp({
   return (
     <Box
       flexDirection="column"
-      paddingLeft={2}
+      paddingLeft={ROOT_PADDING_COLUMNS}
       {...(rootHeight ? { height: rootHeight } : {})}
     >
       <Box flexShrink={0}>
@@ -829,7 +853,11 @@ export function TuiApp({
             onHistoryPrev={onHistoryPrev}
             onHistoryNext={onHistoryNext}
           />
-          <HotkeyHint state={state} ctrlCArmed={ctrlCArmed} />
+          <HotkeyHint
+            state={state}
+            ctrlCArmed={ctrlCArmed}
+            width={mainColumnWidth}
+          />
         </Box>
         {sidebarVisible ? (
           <Sidebar

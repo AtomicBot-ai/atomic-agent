@@ -115,13 +115,24 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
   // the callback checks the *current* focus, not the focus the subscription
   // was created with. (Render-phase write is safe: the value is derived
   // from props, never from state updated here.)
-  const activeRef = useRef(focus && !disabled);
-  activeRef.current = focus && !disabled;
+  const activeRef = useRef(focus);
+  activeRef.current = focus;
 
   useInput(
     (input, key) => {
       if (!activeRef.current) return;
-      if (disabled) return;
+      // A disabled editor rejects every key that could touch the buffer.
+      // Esc is not one of those: it is the surface-level cancel, and
+      // while the chat editor holds focus this hook owns the *only* Esc
+      // subscription — `handlePanelEscape` bows out on `editorFocus` and
+      // `handleAppKey` has no chat-mode Esc branch. Dropping it here is
+      // why the running hint strip advertised an `esc / abort` that
+      // never fired once the editor went disabled for the turn. Forward
+      // Esc, swallow the rest.
+      if (disabled) {
+        if (key.escape) onEscape?.();
+        return;
+      }
       handleKey({
         input,
         key,
@@ -138,7 +149,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
         onHistoryNext,
       });
     },
-    { isActive: focus && !disabled },
+    { isActive: focus },
   );
 
   const cursor = cursorToRowCol(value, cursorPos);
