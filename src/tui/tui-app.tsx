@@ -478,11 +478,13 @@ export function TuiApp({
     state.uiMode === "debug" && state.activeTab === "privacy";
   const terminalSize = useTerminalSize();
   const sidebarVisible =
-    state.uiMode === "chat" && isSidebarVisible(terminalSize.columns);
+    state.uiMode === "chat" &&
+    isSidebarVisible(terminalSize.columns, terminalSize.rows);
   // The rail takes a share of the terminal rather than a flat 30
   // columns, and its two panes get a row budget cut from the terminal
   // height — Ink 7 overlaps rather than clips an over-tall frame, so
-  // an unbudgeted rail garbles short windows.
+  // an unbudgeted rail garbles short windows. A window too short for
+  // even one row per pane drops the rail entirely.
   const sidebarWidth = computeSidebarWidth(terminalSize.columns);
   const sidebarRows = computeSidebarRowBudget(terminalSize.rows);
   const sidebarFocused = sidebarVisible && state.chatFocus === "sidebar";
@@ -515,9 +517,9 @@ export function TuiApp({
             state.localModelsPanel.removeConfirmId !== null)
         )));
 
-  // When the sidebar collapses below the width threshold (terminal
-  // resized smaller), focus must follow back to the editor so Tab does
-  // not strand the operator on an invisible surface.
+  // When the sidebar collapses below the width or height threshold
+  // (terminal resized smaller), focus must follow back to the editor so
+  // Tab does not strand the operator on an invisible surface.
   useEffect(() => {
     if (!sidebarVisible && state.chatFocus === "sidebar") {
       dispatch({ type: "chat_focus_set", focus: "editor" });

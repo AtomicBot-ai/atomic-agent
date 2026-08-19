@@ -34,7 +34,7 @@ const TERMINALS: ReadonlyArray<{ columns: number; rows: number }> = [
 describe("SplashBanner fit", () => {
   it.each(TERMINALS)("fits a $columns x $rows terminal", (terminal) => {
     const size = {
-      columns: computeChatWidth(terminal.columns),
+      columns: computeChatWidth(terminal.columns, terminal.rows),
       rows: computeChatViewportRows(terminal.rows),
     };
     const { lastFrame } = render(

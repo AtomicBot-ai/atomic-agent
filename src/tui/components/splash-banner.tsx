@@ -41,7 +41,7 @@ export interface SplashBannerProps {
 export function SplashBanner({ size }: SplashBannerProps = {}): ReactElement {
   const terminal = useTerminalSize();
   const surface: SplashSize = size ?? {
-    columns: computeChatWidth(terminal.columns),
+    columns: computeChatWidth(terminal.columns, terminal.rows),
     rows: computeChatViewportRows(terminal.rows, terminal.columns),
   };
   const fit = computeSplashFit(surface);

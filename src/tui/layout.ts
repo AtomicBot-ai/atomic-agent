@@ -30,12 +30,35 @@ export const SIDEBAR_MAX_WIDTH = 34;
 const SIDEBAR_WIDTH_RATIO = 0.25;
 
 /**
- * Rows the rail spends on its own chrome before a single list row is
- * drawn: the status bar above it, the two section headers, the blank
- * row between the panes, a "↓ N more" footer per pane and one row of
- * slack.
+ * Rows the rail itself spends before a single list row is drawn: the
+ * two section headers, the blank row between the panes and a "↓ N
+ * more" footer per pane. Counted off the rendered component rather
+ * than estimated — the left border costs no rows because `sidebar.tsx`
+ * turns the top and bottom edges off — and pinned by
+ * `sidebar-fit.test.tsx`, which renders the rail at a budget and
+ * asserts it comes to exactly `sessions + tasks + SIDEBAR_CHROME_ROWS`
+ * rows.
  */
-const SIDEBAR_CHROME_ROWS = 7;
+export const SIDEBAR_CHROME_ROWS = 5;
+
+/**
+ * Rows the rail costs outside its own frame: the status bar above it
+ * (one row at any width that carries the rail) plus one row of slack,
+ * so the frame lands short of the terminal height rather than exactly
+ * on it.
+ */
+const SIDEBAR_OUTER_ROWS = 2;
+
+/** Everything the row budget has to leave alone. */
+const SIDEBAR_RESERVED_ROWS = SIDEBAR_CHROME_ROWS + SIDEBAR_OUTER_ROWS;
+
+/**
+ * Shortest terminal that still fits the reserved rows plus one list
+ * row in each pane. Below this the rail is not drawn at all: Ink 7
+ * overlaps rather than clips (see `row-window.ts`), so a rail that
+ * does not fit garbles the whole frame instead of losing its tail.
+ */
+export const SIDEBAR_MIN_ROWS = SIDEBAR_RESERVED_ROWS + 2;
 
 /**
  * Rows of "chrome" outside the chat surface: status bar + prompt
@@ -73,9 +96,14 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-/** Whether the terminal is wide enough to carry the right rail. */
-export function isSidebarVisible(columns: number): boolean {
-  return columns >= SIDEBAR_MIN_COLUMNS;
+/**
+ * Whether the terminal is both wide and tall enough to carry the right
+ * rail. Height matters as much as width: a 100×8 split pane is wide
+ * enough for the rail and far too short for it, and an over-tall rail
+ * garbles the frame rather than being clipped.
+ */
+export function isSidebarVisible(columns: number, rows: number): boolean {
+  return columns >= SIDEBAR_MIN_COLUMNS && rows >= SIDEBAR_MIN_ROWS;
 }
 
 /**
@@ -96,29 +124,37 @@ export function computeSidebarWidth(columns: number): number {
  * Columns available to the chat column (and therefore to the splash)
  * once the root padding and the rail have taken their share.
  */
-export function computeChatWidth(columns: number): number {
-  const rail = isSidebarVisible(columns) ? computeSidebarWidth(columns) : 0;
+export function computeChatWidth(columns: number, rows: number): number {
+  const rail = isSidebarVisible(columns, rows)
+    ? computeSidebarWidth(columns)
+    : 0;
   return Math.max(0, columns - ROOT_PADDING_LEFT - rail);
 }
 
 /**
  * Split the rail's usable height between the Sessions and Tasks panes,
- * roughly 2:1 in favour of sessions. Both panes keep at least one row
- * so neither header is ever left dangling over an empty pane, and both
- * stay under the caps that used to be hard-coded in `sidebar.tsx`.
+ * roughly 2:1 in favour of sessions, and stay under the caps that used
+ * to be hard-coded in `sidebar.tsx`.
  *
  * Ink 7 does not clip a frame taller than the terminal — it overlaps
  * earlier lines (see `row-window.ts`) — so this budget is what keeps a
- * short window from garbling the rail.
+ * short window from garbling the rail. Nothing here floors the split
+ * above what is actually available: `sessions + tasks` never exceeds
+ * `usable`, and a window too short to seat one row in each pane is
+ * handled by `isSidebarVisible` hiding the rail outright, not by
+ * handing back a budget that does not fit.
  */
 export function computeSidebarRowBudget(rows: number): SidebarRowBudget {
-  const usable = Math.max(2, rows - SIDEBAR_CHROME_ROWS);
+  const usable = Math.max(0, rows - SIDEBAR_RESERVED_ROWS);
+  // Capping at `usable - 1` leaves the last row to Tasks, so its
+  // header is never left dangling over an empty pane while sessions
+  // still take the larger share of anything above two rows.
   const sessions = clamp(
-    Math.ceil((usable * 2) / 3),
-    1,
+    Math.min(Math.ceil((usable * 2) / 3), Math.max(1, usable - 1)),
+    0,
     SIDEBAR_MAX_SESSION_ROWS,
   );
-  const tasks = clamp(usable - sessions, 1, SIDEBAR_MAX_TASK_ROWS);
+  const tasks = clamp(usable - sessions, 0, SIDEBAR_MAX_TASK_ROWS);
   return { sessions, tasks };
 }
 
