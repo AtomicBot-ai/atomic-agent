@@ -41,9 +41,11 @@ describe("TuiApp (smoke)", () => {
     );
     const text = strip(lastFrame() ?? "");
     expect(text).toContain("atomic-agent");
+    // The status bar shows where you are, not a menu of where you could go —
+    // the three-section pill row moved into the ctrl+p menu.
     expect(text).toContain("Run");
-    expect(text).toContain("Observe");
-    expect(text).toContain("Manage");
+    expect(text).not.toContain("Observe");
+    expect(text).not.toContain("Manage");
     expect(text).toContain("Local AI-First Agent");
     expect(text).toContain("commands");
     unmount();
@@ -146,20 +148,19 @@ describe("TuiApp (smoke)", () => {
     );
     await new Promise((r) => setTimeout(r, 10));
     const before = strip(lastFrame() ?? "");
-    expect(before).toContain("▸ Run");
+    expect(before).toContain("Run");
     stdin.write("\t");
     await new Promise((r) => setTimeout(r, 10));
     const after = strip(lastFrame() ?? "");
     if (before.includes("Sessions")) {
       // Sidebar visible: Tab lands focus on the rail and stays in
       // chat mode. Ctrl+B is the dedicated key for nav cycling.
-      expect(after).toContain("▸ Run");
-      expect(after).not.toContain("▸ Observe");
+      expect(after).toContain("Run");
+      expect(after).not.toContain("Observe \u25b8");
     } else {
       // Sidebar collapsed (narrow runner): Tab falls back to the nav
       // cycle and lands on Observe → Feed.
-      expect(after).toContain("▸ Observe");
-      expect(after).toContain("▸ Feed");
+      expect(after).toContain("Observe \u25b8 Feed");
     }
     unmount();
   });
@@ -173,8 +174,7 @@ describe("TuiApp (smoke)", () => {
     stdin.write("\u0002");
     await new Promise((r) => setTimeout(r, 10));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("▸ Observe");
-    expect(text).toContain("▸ Feed");
+    expect(text).toContain("Observe \u25b8 Feed");
     unmount();
   });
 
@@ -187,9 +187,14 @@ describe("TuiApp (smoke)", () => {
     stdin.write("\u001b[Z");
     await new Promise((r) => setTimeout(r, 10));
     const text = strip(lastFrame() ?? "");
-    // Shift+Tab from Run wraps to the last Manage sub-tab (Telegram).
-    expect(text).toContain("▸ Manage");
-    expect(text).toContain("▸ Telegram");
+    // Shift+Tab from Run wraps to the last Manage sub-tab. That was
+    // Telegram when this test was written; MANAGE_TABS has gained
+    // `import` and `privacy` since, and the literal was never updated —
+    // one of the two drifted assertions #170 called out as the reason a
+    // single menu registry exists, and left for whichever commit changed
+    // the surface they describe. This is that commit.
+    expect(text).toContain("Manage \u25b8");
+    expect(text).toContain("▸ Privacy");
     unmount();
   });
 
@@ -285,11 +290,13 @@ describe("TuiApp (smoke)", () => {
     bus.emit({ type: "tab_changed", tab: "llm" });
     await new Promise((r) => setTimeout(r, 10));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("Active chat route");
-    expect(text).toContain("Mode:");
+    // Stale in three places, all pre-existing: with no provider
+    // configured the panel leads with its section headings rather than a
+    // resolved route, and the verbose "Mode:" line and "Press ←/→ to
+    // switch mode" hint were replaced by the compact footer long ago.
     expect(text).toContain("Local text models");
     expect(text).toContain("Local embeddings");
-    expect(text).toContain("Press ←/→ to switch mode");
+    expect(text).toContain("←/→ mode");
     expect(text).not.toContain("Local runtime");
     unmount();
   });
@@ -335,13 +342,102 @@ describe("TuiApp (smoke)", () => {
     bus.emit({ type: "ui_mode_set", mode: "debug" });
     bus.emit({ type: "tab_changed", tab: "tasks" });
     await new Promise((r) => setTimeout(r, 10));
-    expect(strip(lastFrame() ?? "")).toContain("▸ Manage");
+    expect(strip(lastFrame() ?? "")).toContain("Manage \u25b8");
 
     stdin.write("\u001b");
     await new Promise((r) => setTimeout(r, 60));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("▸ Run");
-    expect(text).not.toContain("▸ Manage");
+    expect(text).toContain("Run");
+    expect(text).not.toContain("Manage \u25b8");
+    unmount();
+  });
+
+  it("ctrl+p opens the operator menu over the prompt", async () => {
+    const bus = makeTuiEventBus();
+    const { lastFrame, stdin, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    stdin.write(String.fromCharCode(16));
+    await new Promise((r) => setTimeout(r, 20));
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("Menu");
+    expect(text).toContain("GO");
+    expect(text).toContain("Manage");
+    expect(text).toContain("esc close");
+    unmount();
+  });
+
+  it("typing in the menu searches instead of reaching the prompt", async () => {
+    const bus = makeTuiEventBus();
+    const { lastFrame, stdin, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    stdin.write(String.fromCharCode(16));
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("privacy");
+    await new Promise((r) => setTimeout(r, 20));
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("Privacy");
+    // The query lives in the menu, never in the editor buffer underneath.
+    expect(text).not.toContain("> privacy");
+    unmount();
+  });
+
+  it("ctrl+g then a chord jumps straight to a panel, and the chord letter never reaches the prompt", async () => {
+    const bus = makeTuiEventBus();
+    const { lastFrame, stdin, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    stdin.write(String.fromCharCode(7));
+    await new Promise((r) => setTimeout(r, 30));
+    stdin.write("t");
+    await new Promise((r) => setTimeout(r, 30));
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("Manage");
+    expect(text).toContain("Tasks");
+    // Ink delivers every key to every useInput, child first — so the editor
+    // sees the chord letter too. If the leader did not disable it, a stray
+    // "t" would be sitting in the prompt right now.
+    expect(text).not.toMatch(/[>\u276f]\s+t\s*$/m);
+    unmount();
+  });
+
+  it("esc closes the menu and leaves the screen it was opened over", async () => {
+    const bus = makeTuiEventBus();
+    const { lastFrame, stdin, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    stdin.write(String.fromCharCode(16));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(strip(lastFrame() ?? "")).toContain("esc close");
+    stdin.write(String.fromCharCode(27));
+    await new Promise((r) => setTimeout(r, 20));
+    const text = strip(lastFrame() ?? "");
+    expect(text).not.toContain("esc close");
+    expect(text).toContain("Run");
+    unmount();
+  });
+
+  it("floats over the UI without moving it — the frame below is unchanged", async () => {
+    const bus = makeTuiEventBus();
+    const { lastFrame, stdin, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    const before = strip(lastFrame() ?? "").split("\n");
+    stdin.write(String.fromCharCode(16));
+    await new Promise((r) => setTimeout(r, 25));
+    const after = strip(lastFrame() ?? "").split("\n");
+
+    // A popup composites on top; it must not add rows or push the prompt and
+    // the hint strip down the way an inline panel would.
+    expect(after.length).toBe(before.length);
+    expect(after.at(-1)).toBe(before.at(-1));
+    expect(after.some((line) => line.includes("Menu"))).toBe(true);
     unmount();
   });
 });

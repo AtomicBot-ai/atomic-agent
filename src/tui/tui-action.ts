@@ -94,6 +94,12 @@ export type TuiAction =
   | { type: "slash_palette_queried"; query: string }
   /** Close the slash palette without committing a selection. */
   | { type: "slash_palette_closed" }
+  | { type: "menu_opened" }
+  | { type: "menu_closed" }
+  | { type: "menu_query_changed"; query: string }
+  | { type: "menu_cursor_moved"; delta: number }
+  | { type: "menu_cursor_set"; cursor: number }
+  | { type: "menu_path_set"; path: string | null }
   /** Move the highlight in the open slash palette by delta rows. */
   | { type: "slash_palette_cursor_moved"; delta: 1 | -1 }
   /** Reset the slash palette highlight to a specific row. */

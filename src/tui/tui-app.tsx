@@ -11,6 +11,9 @@ import { reduceTuiState } from "./agent-event-reducer.js";
 import type { ApprovalGrantScope } from "../approval/approval-gate.js";
 import type { TuiAction } from "./tui-action.js";
 import { handleAppKey, handlePanelEscape } from "./app-key-bindings.js";
+import { APP_CHROME_ROWS } from "./components/debug-pane.js";
+import { MenuPopup } from "./menu/menu-popup.js";
+import type { MenuNode } from "./menu/menu-registry.js";
 import { ApprovalModal } from "./approval-modal.js";
 import { ChatLog } from "./components/chat-log.js";
 import { DebugPane } from "./components/debug-pane.js";
@@ -22,6 +25,7 @@ import { ThemePicker } from "./components/theme-picker.js";
 import {
   isThemeName,
   setActiveTheme,
+  setBackdropDimmed,
   theme,
   THEME_NAMES,
   THEMES,
@@ -40,7 +44,7 @@ import { UpdateRestartPrompt } from "./components/update-restart-prompt.js";
 import { useTerminalSize } from "./hooks/use-terminal-size.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { slashPrefix } from "./commands/slash-command-parser.js";
-import { handleEditorSubmit } from "./submit-handler.js";
+import { handleEditorSubmit, runSlashCommand } from "./submit-handler.js";
 import type { TaskCreateKind } from "./tasks/tasks-panel-state.js";
 import type { TaskSchedule } from "../tasks/task-types.js";
 import {
@@ -385,6 +389,7 @@ export function TuiApp({
   );
   const app = useApp();
   const [ctrlCArmed, setCtrlCArmed] = useState(false);
+  const [menuLeaderArmed, setMenuLeaderArmed] = useState(false);
   const ctrlCTimer = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => bus.subscribe(dispatch), [bus]);
@@ -490,6 +495,8 @@ export function TuiApp({
     state.uiMode === "chat" && terminalSize.columns >= SIDEBAR_MIN_COLUMNS;
   const sidebarFocused = sidebarVisible && state.chatFocus === "sidebar";
   const editorFocus =
+    !state.menuOpen &&
+    !menuLeaderArmed &&
     !state.pendingApproval &&
     // The update offer claims y / n / Esc; keep the editor unfocused so
     // those keystrokes never leak into the input buffer. The post-update
@@ -527,6 +534,31 @@ export function TuiApp({
     }
   }, [sidebarVisible, state.chatFocus]);
 
+  const activateMenuNode = useCallback(
+    (node: MenuNode) => {
+      // Nodes are activated by running a command, so the menu never grows a
+      // second dispatch path beside the slash handler. `command` carries the
+      // argument-bearing form (`/run fusion`); `slash` the bare one.
+      if (node.command) {
+        runSlashCommand(node.command, state, dispatch, callbacks);
+        return;
+      }
+      if (node.slash) {
+        runSlashCommand(`/${node.slash.name}`, state, dispatch, callbacks);
+        return;
+      }
+      if (node.kind === "place") {
+        if (node.tab) {
+          dispatch({ type: "ui_mode_set", mode: "debug" });
+          dispatch({ type: "tab_changed", tab: node.tab });
+        } else {
+          dispatch({ type: "ui_mode_set", mode: "chat" });
+        }
+      }
+    },
+    [state, callbacks],
+  );
+
   useInput((input, key) => {
     const appHandled = handleAppKey(input, key, {
       state,
@@ -535,6 +567,9 @@ export function TuiApp({
       ctrlCArmed,
       setCtrlCArmed,
       sidebarVisible,
+      menuLeaderArmed,
+      setMenuLeaderArmed,
+      activateMenuNode,
     });
     if (appHandled) return;
     // While the slash-command palette is open, let the (now-focused)
@@ -691,8 +726,16 @@ export function TuiApp({
   // the smoke tests assert against an overlapped frame. In production
   // the alt-screen + `height={rows}` combo gives us the opencode-style
   // pinned-input-at-bottom UX.
+  // Render-phase on purpose: `theme` is a read-at-render proxy, and children
+  // render after this body runs, so the flag is already correct for them.
+  setBackdropDimmed(state.menuOpen);
+
+
   const isTty = Boolean(process.stdout.isTTY);
   const rootHeight = isTty ? terminalSize.rows : undefined;
+  // Rows the content pane actually has, so the overlay can sit on its bottom
+  // edge and cap its own height. Same budget the debug pane already uses.
+  const menuPaneRows = Math.max(6, terminalSize.rows - APP_CHROME_ROWS);
   const promptLlm = selectPromptLlmMeta(state);
   // No local backend chosen yet ⇒ no local health to report. Without this the
   // splash screen of a fresh install announces that a server the user never
@@ -735,7 +778,13 @@ export function TuiApp({
       ) : null}
       <Box flexDirection="row" flexGrow={1} flexShrink={1} overflow="hidden">
         <Box flexDirection="column" flexGrow={1} overflow="hidden">
-          <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+          <Box
+            flexDirection="column"
+            flexGrow={1}
+            flexShrink={1}
+            overflow="hidden"
+            position="relative"
+          >
             {state.uiMode === "chat" ? (
               <ChatLog state={state} dispatch={dispatch} />
             ) : (
@@ -753,6 +802,15 @@ export function TuiApp({
                 }
               />
             )}
+            {state.menuOpen ? (
+              <MenuPopup
+                state={state}
+                availableRows={menuPaneRows}
+                availableColumns={
+                  terminalSize.columns - 4 - (sidebarVisible ? SIDEBAR_WIDTH : 0)
+                }
+              />
+            ) : null}
           </Box>
           {state.pendingApproval ? (
             <Box flexShrink={0}>

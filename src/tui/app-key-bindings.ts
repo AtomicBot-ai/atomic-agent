@@ -6,6 +6,13 @@ import {
   type ApprovalRequest,
 } from "../approval/approval-gate.js";
 import { formatApprovalCategory } from "../approval/approval-level.js";
+import {
+  handleMenuKey,
+  isMenuLeaderKey,
+  isMenuOpenKey,
+  resolveLeaderChord,
+} from "./menu/menu-keys.js";
+import type { MenuNode } from "./menu/menu-registry.js";
 import { cycleNavSlot, type NavSlot } from "./section.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import type { TuiAction } from "./tui-action.js";
@@ -77,6 +84,11 @@ export interface AppKeyContext {
    * the sidebar steals plain Tab.
    */
   sidebarVisible: boolean;
+  /** True while a `ctrl+g` leader is waiting for its chord key. */
+  menuLeaderArmed: boolean;
+  setMenuLeaderArmed: (armed: boolean) => void;
+  /** Navigate to a place, or run an action's slash command. */
+  activateMenuNode: (node: MenuNode) => void;
 }
 
 /**
@@ -110,6 +122,27 @@ export function handleAppKey(
   // The update offer claims only y / n / Esc; anything else (Ctrl+C in
   // particular) falls through to the normal handlers below.
   if (state.updatePrompt && handleUpdateKey(input, key, ctx)) {
+    return true;
+  }
+  // The menu and its leader sit above every panel guard on purpose: they are
+  // the way out of a panel, so a panel must never be able to swallow them.
+  if (handleMenuKey(input, key, { state, dispatch, activate: ctx.activateMenuNode })) {
+    return true;
+  }
+  if (ctx.menuLeaderArmed) {
+    ctx.setMenuLeaderArmed(false);
+    const node = resolveLeaderChord(input, key);
+    if (node) ctx.activateMenuNode(node);
+    // An unclaimed chord is swallowed rather than passed on: a mistyped
+    // leader must not leak a letter into the prompt or fire a panel hotkey.
+    return true;
+  }
+  if (!state.slashPaletteOpen && isMenuLeaderKey(input, key)) {
+    ctx.setMenuLeaderArmed(true);
+    return true;
+  }
+  if (!state.slashPaletteOpen && isMenuOpenKey(input, key)) {
+    dispatch({ type: "menu_opened" });
     return true;
   }
   if (
