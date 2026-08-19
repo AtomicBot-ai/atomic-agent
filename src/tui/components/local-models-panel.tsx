@@ -1,5 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
+import { handleLocalModelsTabKey } from "../local-models/local-models-key-bindings.js";
 import { theme } from "../theme/theme.js";
 import { computeRowWindow } from "../row-window.js";
 import {
@@ -595,7 +597,15 @@ function renderChatRow(
   // their individual colors; the badges that fall off the edge are
   // informational and reappear once the window is widened.
   return (
-    <Box key={r.id} flexDirection="row">
+    <MouseListRow
+      key={r.id}
+      selected={isCursor}
+      onSelect={(mouse) =>
+        mouse.dispatch({ type: "local_models_cursor_set", row: index })
+      }
+      onActivate={pressEnter(handleLocalModelsTabKey)}
+    >
+    <Box flexDirection="row">
       <Text
         color={rowColor}
         bold={isCursor || downloading}
@@ -629,6 +639,7 @@ function renderChatRow(
         </Text>
       ) : null}
     </Box>
+    </MouseListRow>
   );
 }
 
@@ -677,7 +688,18 @@ function renderEmbeddingRow(
   // See renderChatRow: nowrap + per-fragment truncate-end so a narrow
   // window clips the row instead of wrapping and overlapping the next.
   return (
-    <Box key={r.id} flexDirection="row">
+    <MouseListRow
+      key={r.id}
+      selected={isCursor}
+      onSelect={(mouse) =>
+        mouse.dispatch({
+          type: "local_models_cursor_set",
+          row: embOffset + index,
+        })
+      }
+      onActivate={pressEnter(handleLocalModelsTabKey)}
+    >
+    <Box flexDirection="row">
       <Text color={rowColor} bold={isCursor || downloading} wrap="truncate-end">
         {isCursor ? "> " : "  "}
         {r.active ? "* " : ""}
@@ -698,6 +720,7 @@ function renderEmbeddingRow(
         </Text>
       ) : null}
     </Box>
+    </MouseListRow>
   );
 }
 

@@ -175,6 +175,37 @@ describe("parseUserConfigFile", () => {
     expect(parsed.tui.theme).toBe("auto");
   });
 
+  it("enables tui.mouse by default when migrating from v37", () => {
+    const parsed = parseUserConfigFile({ version: 37 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.tui.mouse).toBe(true);
+  });
+
+  it("preserves tui.mouse: false so an operator's opt-out survives", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { theme: "auto", mouse: false },
+    });
+    expect(parsed.tui.mouse).toBe(false);
+  });
+
+  it("accepts the string forms parseBool understands for tui.mouse", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { mouse: "off" },
+    });
+    expect(parsed.tui.mouse).toBe(false);
+  });
+
+  it("rejects a non-boolean tui.mouse", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tui: { mouse: 42 },
+      }),
+    ).toThrow(/tui.mouse/);
+  });
+
   it("rejects a non-string tui.theme", () => {
     expect(() =>
       parseUserConfigFile({

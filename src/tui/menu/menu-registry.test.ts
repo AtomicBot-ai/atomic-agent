@@ -11,7 +11,8 @@ import {
 } from "./menu-registry.js";
 
 /**
- * The slash palette exactly as `feat/run-mode-tui` (#163) declares it by hand.
+ * The slash palette exactly as `feat/run-mode-tui` (#163) declares it by
+ * hand, plus `/mouse` from the mouse layer (#165) this branch merges.
  * `SLASH_COMMANDS` is derived from `MENU` on this branch, so this is a
  * cross-check between two independent views of the command surface rather
  * than a snapshot of my own output: if the registry and #163 ever disagree
@@ -32,6 +33,11 @@ const EXPECTED_SLASH_COMMANDS = [
     name: "tools",
     description:
       "list built-in tools (fs, shell, browser, memory, vision): `/tools` | `/tools <query>`",
+  },
+  {
+    name: "mouse",
+    description:
+      "mouse support on/off/status (off restores drag-to-select)",
   },
   {
     name: "theme",

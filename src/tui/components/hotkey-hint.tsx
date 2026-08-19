@@ -1,5 +1,13 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { applyNavSlot, decideApproval } from "../app-key-bindings.js";
+import {
+  MouseTarget,
+  useMouseCommands,
+  type MouseContextValue,
+} from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
+import { cycleNavSlot } from "../section.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 
@@ -12,6 +20,13 @@ interface HotkeyHintProps {
 interface HotkeyChip {
   readonly key: string;
   readonly label: string;
+  /**
+   * What a click on this chip does. Only chips with one unambiguous
+   * meaning get one — "alt+enter newline" or "↑↓ select" describe a
+   * gesture, not a command, so they stay plain text rather than
+   * pretending to be buttons.
+   */
+  readonly onClick?: (mouse: MouseContextValue) => void;
 }
 
 /**
@@ -30,13 +45,10 @@ const SCROLL_KEY = process.platform === "darwin" ? "fn+\u2191\u2193" : "pgup/pgd
 export function HotkeyHint({ state, ctrlCArmed }: HotkeyHintProps): ReactElement {
   const chips = resolveChips(state, ctrlCArmed ?? false);
   return (
-    <Box flexShrink={0}>
+    <Box flexShrink={0} flexWrap="wrap">
       {chips.map((chip, idx) => (
-        <Text key={chip.key}>
-          <Text color={theme.colors.accentSoft} bold>
-            [{chip.key}]
-          </Text>
-          <Text color={theme.colors.muted}> {chip.label}</Text>
+        <Box key={chip.key} flexShrink={0}>
+          <Chip chip={chip} />
           {idx < chips.length - 1 ? (
             <Text color={theme.colors.muted}>
               {"  "}
@@ -44,17 +56,57 @@ export function HotkeyHint({ state, ctrlCArmed }: HotkeyHintProps): ReactElement
               {"  "}
             </Text>
           ) : null}
-        </Text>
+        </Box>
       ))}
     </Box>
   );
 }
 
+function Chip({ chip }: { chip: HotkeyChip }): ReactElement {
+  const mouse = useMouseCommands();
+  const label = (
+    <Text>
+      <Text color={theme.colors.accentSoft} bold>
+        [{chip.key}]
+      </Text>
+      <Text color={theme.colors.muted}> {chip.label}</Text>
+    </Text>
+  );
+  if (!mouse || !chip.onClick) return label;
+  const onClick = chip.onClick;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        onClick(mouse);
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
+  );
+}
+
+/** Opens the slash palette exactly the way typing `/` does. */
+/** Click target for the `ctrl+p` chip — the operator menu. */
+function openOperatorMenu(mouse: MouseContextValue): void {
+  mouse.dispatch({ type: "menu_opened" });
+}
+
 function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
   if (state.pendingApproval) {
+    const approval = state.pendingApproval;
     return [
-      { key: "y", label: "approve" },
-      { key: "n", label: "deny" },
+      {
+        key: "y",
+        label: "approve",
+        onClick: (mouse) => decideApproval(approval, true, mouse),
+      },
+      {
+        key: "n",
+        label: "deny",
+        onClick: (mouse) => decideApproval(approval, false, mouse),
+      },
       { key: "esc", label: "abort run" },
     ];
   }
@@ -91,10 +143,24 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
     // Tab chip word-for-word, and the freed slot pays for the one hint
     // panels actually lacked — the way back to Run.
     return [
-      { key: "tab", label: "next panel" },
-      { key: "shift+tab", label: "prev panel" },
-      { key: "esc", label: "back to Run" },
-      { key: "ctrl+p", label: "menu" },
+      {
+        key: "tab",
+        label: "next panel",
+        onClick: (mouse) =>
+          applyNavSlot(mouse.dispatch, cycleNavSlot(mouse.getState(), 1)),
+      },
+      {
+        key: "shift+tab",
+        label: "prev panel",
+        onClick: (mouse) =>
+          applyNavSlot(mouse.dispatch, cycleNavSlot(mouse.getState(), -1)),
+      },
+      {
+        key: "esc",
+        label: "back to Run",
+        onClick: (mouse) => mouse.dispatch({ type: "ui_mode_set", mode: "chat" }),
+      },
+      { key: "ctrl+p", label: "menu", onClick: openOperatorMenu },
       {
         key: "ctrl+c",
         label: ctrlCArmed ? "press again to quit" : "quit",
@@ -123,9 +189,14 @@ function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
   return [
     { key: "enter", label: "send" },
     { key: "alt+enter", label: "newline" },
-    { key: "tab", label: "sidebar" },
+    {
+      key: "tab",
+      label: "sidebar",
+      onClick: (mouse) =>
+        mouse.dispatch({ type: "chat_focus_set", focus: "sidebar" }),
+    },
     { key: SCROLL_KEY, label: "scroll" },
-    { key: "ctrl+p", label: "menu" },
+    { key: "ctrl+p", label: "menu", onClick: openOperatorMenu },
     {
       key: "ctrl+c",
       label: ctrlCArmed ? "press again to quit" : "quit",

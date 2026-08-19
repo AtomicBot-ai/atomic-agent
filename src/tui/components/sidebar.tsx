@@ -1,5 +1,11 @@
 import { Box, Text } from "ink";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
+import {
+  MouseTarget,
+  useMouseCommands,
+  useMouseTarget,
+} from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
 import type { TaskSummaryRow } from "../tasks/tasks-panel-state.js";
 import { theme } from "../theme/theme.js";
 import type { SessionPickerEntry } from "../tui-state.js";
@@ -48,8 +54,22 @@ export function Sidebar(props: SidebarProps): ReactElement {
   } = props;
   const sessionsActive = focused && activeSection === "sessions";
   const tasksActive = focused && activeSection === "tasks";
+  const mouse = useMouseCommands();
+  // Wheel over the rail walks the pane that owns the cursor, so the
+  // gesture matches what ↑/↓ do once the rail has focus.
+  const wheelRef = useMouseTarget((hit) => {
+    if (hit.event.kind !== "wheel" || !mouse) return false;
+    const delta = hit.event.wheel === "up" ? -1 : 1;
+    mouse.dispatch(
+      activeSection === "tasks"
+        ? { type: "sidebar_tasks_cursor_moved", delta }
+        : { type: "sidebar_cursor_moved", delta },
+    );
+    return true;
+  });
   return (
     <Box
+      ref={wheelRef}
       width={width}
       flexDirection="column"
       borderStyle="single"
@@ -119,12 +139,21 @@ function SessionsList({
   return (
     <Box flexDirection="column">
       {visible.map((entry, idx) => (
-        <SessionRow
+        <SidebarRow
           key={entry.sessionId}
-          entry={entry}
+          section="sessions"
+          row={windowStart + idx}
           selected={focused && idx === visibleCursor}
-          current={entry.sessionId === currentSessionId}
-        />
+          onActivate={(mouse) =>
+            mouse.callbacks.onSessionSwitchRequested?.(entry.sessionId)
+          }
+        >
+          <SessionRow
+            entry={entry}
+            selected={focused && idx === visibleCursor}
+            current={entry.sessionId === currentSessionId}
+          />
+        </SidebarRow>
       ))}
       {hiddenAfter > 0 ? (
         <Text color={theme.colors.muted}>↓ {hiddenAfter} more</Text>
@@ -170,11 +199,17 @@ function TasksList({ tasks, cursor, focused }: TasksListProps): ReactElement {
   return (
     <Box flexDirection="column">
       {visible.map((row, idx) => (
-        <TaskRow
+        <SidebarRow
           key={row.id}
-          row={row}
+          section="tasks"
+          row={idx}
           selected={focused && idx === visibleCursor}
-        />
+          onActivate={(mouse) =>
+            mouse.callbacks.onSidebarTaskActivated?.(row.id)
+          }
+        >
+          <TaskRow row={row} selected={focused && idx === visibleCursor} />
+        </SidebarRow>
       ))}
     </Box>
   );
@@ -223,4 +258,52 @@ function computeWindowStart(cursor: number, total: number, size: number): number
   if (total <= size) return 0;
   if (cursor < size) return 0;
   return Math.min(cursor - size + 1, total - size);
+}
+
+interface SidebarRowProps {
+  section: SidebarSection;
+  /** Absolute index into the pane's data, not the visible window. */
+  row: number;
+  selected: boolean;
+  onActivate: (mouse: NonNullable<ReturnType<typeof useMouseCommands>>) => void;
+  children: ReactNode;
+}
+
+/**
+ * Click behaviour shared by both rails: the first click focuses the
+ * rail and moves the cursor, a click on the row that is already
+ * selected activates it. Two deliberate clicks instead of a
+ * double-click — no timing window to guess, and it matches what the
+ * keyboard does (arrow to the row, then Enter).
+ */
+function SidebarRow({
+  section,
+  row,
+  selected,
+  onActivate,
+  children,
+}: SidebarRowProps): ReactElement {
+  const mouse = useMouseCommands();
+  if (!mouse) return <>{children}</>;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        if (selected) {
+          onActivate(mouse);
+          return true;
+        }
+        mouse.dispatch({ type: "chat_focus_set", focus: "sidebar" });
+        mouse.dispatch({ type: "sidebar_section_focused", section });
+        mouse.dispatch(
+          section === "tasks"
+            ? { type: "sidebar_tasks_cursor_set", row }
+            : { type: "sidebar_cursor_set", row },
+        );
+        return true;
+      }}
+    >
+      {children}
+    </MouseTarget>
+  );
 }

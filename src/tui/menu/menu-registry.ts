@@ -603,6 +603,18 @@ export const MENU: readonly MenuNode[] = [
       rank: 6,
     },
   },
+  {
+    kind: "action",
+    id: "setup.mouse",
+    label: "Mouse support",
+    group: "setup",
+    slash: {
+      name: "mouse",
+      description:
+        "mouse support on/off/status (off restores drag-to-select)",
+      rank: 2.5,
+    },
+  },
 ];
 
 /** Every node that is also a slash command, in palette order. */

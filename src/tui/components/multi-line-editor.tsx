@@ -142,6 +142,20 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
   );
 
   const cursor = cursorToRowCol(value, cursorPos);
+  /**
+   * Place the caret where the operator clicked. `rowColToCursor` does
+   * not clamp, so a click past the end of a short line would otherwise
+   * run the offset into the following line; clamping here keeps a click
+   * in the empty space to the right of a line meaning "end of this
+   * line", which is what every editor does.
+   */
+  const placeCursorAt = (row: number, col: number): void => {
+    if (disabled) return;
+    const lines = value.split("\n");
+    const safeRow = Math.max(0, Math.min(row, lines.length - 1));
+    const safeCol = Math.max(0, Math.min(col, (lines[safeRow] ?? "").length));
+    setCursorPos(rowColToCursor(lines, safeRow, safeCol));
+  };
   if (bare) {
     return (
       <EditorBody
@@ -149,6 +163,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
         cursor={cursor}
         placeholder={placeholder ?? ""}
         focus={focus && !disabled}
+        onClickCursor={placeCursorAt}
       />
     );
   }
@@ -159,7 +174,13 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
       paddingX={1}
       flexDirection="column"
     >
-      <EditorBody value={value} cursor={cursor} placeholder={placeholder ?? ""} focus={focus && !disabled} />
+      <EditorBody
+        value={value}
+        cursor={cursor}
+        placeholder={placeholder ?? ""}
+        focus={focus && !disabled}
+        onClickCursor={placeCursorAt}
+      />
     </Box>
   );
 }

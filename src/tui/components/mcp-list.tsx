@@ -1,6 +1,8 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
+import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
+import { handleMcpTabKey } from "../mcp/mcp-key-bindings.js";
 import type {
   McpPanelState,
   McpServerRow,
@@ -30,11 +32,16 @@ export function McpList(props: McpListProps): ReactElement {
   return (
     <Box flexDirection="column">
       {slice.map((row, idx) => (
-        <Row
+        <MouseListRow
           key={row.name}
-          row={row}
-          active={start + idx === panel.cursor}
-        />
+          selected={start + idx === panel.cursor}
+          onSelect={(mouse) =>
+            mouse.dispatch({ type: "mcp_cursor_set", row: start + idx })
+          }
+          onActivate={pressEnter(handleMcpTabKey)}
+        >
+          <Row row={row} active={start + idx === panel.cursor} />
+        </MouseListRow>
       ))}
     </Box>
   );

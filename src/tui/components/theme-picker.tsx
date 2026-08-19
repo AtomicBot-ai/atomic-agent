@@ -1,6 +1,15 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import { THEME_NAMES, THEMES, theme, type ThemeName } from "../theme/theme.js";
+import { MouseListRow } from "../mouse/mouse-list-row.js";
+import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
+import { handleEditorSubmit } from "../submit-handler.js";
+import {
+  setActiveTheme,
+  THEME_NAMES,
+  THEMES,
+  theme,
+  type ThemeName,
+} from "../theme/theme.js";
 
 export interface ThemePickerProps {
   /** Highlighted row index into {@link THEME_NAMES}. */
@@ -52,12 +61,34 @@ export function ThemePicker(props: ThemePickerProps): ReactElement {
         <Text color={theme.colors.muted}>↑ {hiddenBefore} above</Text>
       ) : null}
       {visible.map((name, idx) => (
-        <ThemeRow
+        <MouseListRow
           key={name}
-          name={name}
+          layer={MOUSE_LAYER_MODAL}
           selected={idx === visibleCursor}
-          current={name === original}
-        />
+          onSelect={(mouse) => {
+            // Same live preview the arrow keys give: the palette swaps
+            // under the cursor, Enter (or a second click) commits it.
+            setActiveTheme(THEMES[name]);
+            mouse.dispatch({
+              type: "theme_picker_cursor_set",
+              row: windowStart + idx,
+            });
+          }}
+          onActivate={(mouse) =>
+            handleEditorSubmit(
+              "",
+              mouse.getState(),
+              mouse.dispatch,
+              mouse.callbacks,
+            )
+          }
+        >
+          <ThemeRow
+            name={name}
+            selected={idx === visibleCursor}
+            current={name === original}
+          />
+        </MouseListRow>
       ))}
       {hiddenAfter > 0 ? (
         <Text color={theme.colors.muted}>↓ {hiddenAfter} below</Text>

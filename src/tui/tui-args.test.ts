@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { nonInteractiveStdinError, parseTuiArgs } from "./tui-args.js";
+import { nonInteractiveStdinError, parseTuiArgs, TUI_HELP } from "./tui-args.js";
 
 describe("nonInteractiveStdinError", () => {
   it("refuses a piped stdin with an actionable sentence", () => {
@@ -23,5 +23,25 @@ describe("nonInteractiveStdinError", () => {
 describe("parseTuiArgs", () => {
   it("still reports unknown flags as usage errors", () => {
     expect(parseTuiArgs(["--definitely-not-a-flag"])).toHaveProperty("error");
+  });
+});
+
+describe("parseTuiArgs mouse flags", () => {
+  it("defers to the config by default", () => {
+    const parsed = parseTuiArgs([]);
+    expect(parsed).toMatchObject({ mouse: null });
+  });
+
+  it("--no-mouse turns reporting off for the run", () => {
+    expect(parseTuiArgs(["--no-mouse"])).toMatchObject({ mouse: false });
+  });
+
+  it("--mouse forces reporting on even when the config disabled it", () => {
+    expect(parseTuiArgs(["--mouse"])).toMatchObject({ mouse: true });
+  });
+
+  it("advertises both flags in --help", () => {
+    expect(TUI_HELP).toContain("--no-mouse");
+    expect(TUI_HELP).toContain("--mouse");
   });
 });

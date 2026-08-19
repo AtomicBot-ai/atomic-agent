@@ -32,6 +32,8 @@ export type LocalModelsAction =
       embeddingDaemon: EmbeddingDaemonInfo;
     }
   | { type: "local_models_cursor_up" }
+  /** Put the model-list cursor on an absolute row (mouse click). */
+  | { type: "local_models_cursor_set"; row: number }
   | { type: "local_models_cursor_down" }
   | {
       type: "local_models_embedding_remove_confirm_opened";

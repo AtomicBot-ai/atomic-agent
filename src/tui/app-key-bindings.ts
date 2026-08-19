@@ -188,75 +188,7 @@ export function handleAppKey(
       return true;
     }
   }
-  const tasksTabBusy =
-    state.uiMode === "debug" &&
-    state.activeTab === "tasks" &&
-    (state.tasksPanel.mode === "create" ||
-      state.tasksPanel.cancelConfirm !== null ||
-      state.tasksPanel.searchOpen);
-  const skillsTabBusy =
-    state.uiMode === "debug" &&
-    state.activeTab === "skills" &&
-    (state.skillsPanel.mode === "detail" ||
-      state.skillsPanel.mode === "hub" ||
-      state.skillsPanel.installConfirm !== null ||
-      state.skillsPanel.removeConfirm !== null);
-  const memoryTabBusy =
-    state.uiMode === "debug" &&
-    state.activeTab === "memory" &&
-    state.memoryPanel.mode === "detail";
-  const localModelsTabBusy =
-    state.uiMode === "debug" &&
-    state.activeTab === "models" &&
-    (state.localModelsPanel.mode === "backendUpdate" ||
-      state.localModelsPanel.removeConfirmId !== null);
-  // Telegram tab disables the editor outright (the panel owns letter
-  // hotkeys), so on entry Tab/Shift+Tab still cycle. The "busy" flag
-  // applies only when a modal is open and Tab/letters need to be
-  // captured by the modal layer instead of cycling away from it.
-  const telegramTabBusy =
-    state.uiMode === "debug" &&
-    state.activeTab === "telegram" &&
-    state.telegramPanel.mode !== "list";
-  // MCP tab is "busy" while a modal is open: the add-server modal
-  // owns its own MultiLineEditor and the panel must keep capturing
-  // letter/Tab keys; the remove-confirm modal claims `y`/`n` and Esc
-  // so the global nav cycler cannot eat the confirmation keystrokes.
-  const mcpTabBusy =
-    state.uiMode === "debug" &&
-    state.activeTab === "mcp" &&
-    (state.mcpPanel.addModal !== null || state.mcpPanel.removeConfirm !== null);
-  const providersTabBusy =
-    state.uiMode === "debug" &&
-    state.activeTab === "providers" &&
-    (state.providersPanel.wizard !== null ||
-      state.providersPanel.removeConfirm !== null);
-  const llmTabBusy =
-    state.uiMode === "debug" &&
-    state.activeTab === "llm" &&
-    (state.providersPanel.wizard !== null ||
-      state.providersPanel.removeConfirm !== null ||
-      state.localModelsPanel.mode === "backendUpdate" ||
-      state.localModelsPanel.pull !== null ||
-      state.localModelsPanel.removeConfirmId !== null ||
-      state.localModelsPanel.embeddingRemoveConfirmId !== null ||
-      state.localModelsPanel.embeddingOnboardingPrompt !== null ||
-      state.providersPanel.chatModelPicker !== null ||
-      state.llmPanel.externalUrlDraft !== null ||
-      state.llmPanel.stopLocalDaemonsPrompt !== null ||
-      // Focused inline model filter is a text-entry surface: Tab/Ctrl+B
-      // must not cycle the nav away mid-typing.
-      (state.llmPanel.mode === "cloud" &&
-        state.llmPanel.cloudModelFilterFocused));
-  const debugTabBusy =
-    tasksTabBusy ||
-    skillsTabBusy ||
-    memoryTabBusy ||
-    localModelsTabBusy ||
-    telegramTabBusy ||
-    mcpTabBusy ||
-    providersTabBusy ||
-    llmTabBusy;
+  const debugTabBusy = isPanelModalOpen(state);
   // Ctrl+B is the dedicated nav-cycle escape valve: it always advances
   // one nav slot forward regardless of where focus currently is. This
   // is the key power users press when they want to reach Observe /
@@ -330,6 +262,125 @@ export function handleAppKey(
     return true;
   }
   return false;
+  // Tab / Shift+Tab routing:
+  //   - In chat mode with the sidebar visible, plain Tab cycles
+  //     editor → sidebar(sessions) → sidebar(tasks) → editor so the
+  //     operator can reach the rail with a single key. The
+  //     in-sidebar transition (sessions ↔ tasks) is handled in
+  //     `handleSidebarKey`; the path here covers the "land into the
+  //     sidebar from the editor" leg.
+  //   - Shift+Tab always cycles nav slots backward — same key surface
+  //     as before so muscle memory survives.
+  //   - Outside chat (debug mode) or with sidebar collapsed, plain
+  //     Tab cycles nav slots forward as a fallback so power users on
+  //     narrow terminals are not stranded.
+  if (
+    !debugTabBusy &&
+    !state.slashPaletteOpen &&
+    key.tab &&
+    !state.pendingApproval
+  ) {
+    if (key.shift) {
+      const prev = cycleNavSlot(state, -1);
+      applyNavSlot(dispatch, prev);
+      return true;
+    }
+    if (
+      ctx.sidebarVisible &&
+      state.uiMode === "chat" &&
+      state.chatFocus === "editor"
+    ) {
+      // Land in the sidebar at the section the operator left last.
+      dispatch({ type: "chat_focus_set", focus: "sidebar" });
+      return true;
+    }
+    const next = cycleNavSlot(state, 1);
+    applyNavSlot(dispatch, next);
+    return true;
+  }
+  return false;
+}
+
+/**
+ * True while a debug panel has a modal, confirm or text-entry surface
+ * open — the state in which Tab / Ctrl+B / letter keys belong to that
+ * surface instead of the global nav cycler.
+ *
+ * Extracted from `handleAppKey` so the mouse layer can gate clicks on
+ * exactly the same condition the keyboard gates on: one predicate, no
+ * chance of the two drifting apart.
+ */
+export function isPanelModalOpen(state: TuiState): boolean {
+  const tasksTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "tasks" &&
+    (state.tasksPanel.mode === "create" ||
+      state.tasksPanel.cancelConfirm !== null ||
+      state.tasksPanel.searchOpen);
+  const skillsTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "skills" &&
+    (state.skillsPanel.mode === "detail" ||
+      state.skillsPanel.mode === "hub" ||
+      state.skillsPanel.installConfirm !== null ||
+      state.skillsPanel.removeConfirm !== null);
+  const memoryTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "memory" &&
+    state.memoryPanel.mode === "detail";
+  const localModelsTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "models" &&
+    (state.localModelsPanel.mode === "backendUpdate" ||
+      state.localModelsPanel.removeConfirmId !== null);
+  // Telegram tab disables the editor outright (the panel owns letter
+  // hotkeys), so on entry Tab/Shift+Tab still cycle. The "busy" flag
+  // applies only when a modal is open and Tab/letters need to be
+  // captured by the modal layer instead of cycling away from it.
+  const telegramTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "telegram" &&
+    state.telegramPanel.mode !== "list";
+  // MCP tab is "busy" while a modal is open: the add-server modal
+  // owns its own MultiLineEditor and the panel must keep capturing
+  // letter/Tab keys; the remove-confirm modal claims `y`/`n` and Esc
+  // so the global nav cycler cannot eat the confirmation keystrokes.
+  const mcpTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "mcp" &&
+    (state.mcpPanel.addModal !== null || state.mcpPanel.removeConfirm !== null);
+  const providersTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "providers" &&
+    (state.providersPanel.wizard !== null ||
+      state.providersPanel.removeConfirm !== null);
+  const llmTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "llm" &&
+    (state.providersPanel.wizard !== null ||
+      state.providersPanel.removeConfirm !== null ||
+      state.localModelsPanel.mode === "backendUpdate" ||
+      state.localModelsPanel.pull !== null ||
+      state.localModelsPanel.removeConfirmId !== null ||
+      state.localModelsPanel.embeddingRemoveConfirmId !== null ||
+      state.localModelsPanel.embeddingOnboardingPrompt !== null ||
+      state.providersPanel.chatModelPicker !== null ||
+      state.llmPanel.externalUrlDraft !== null ||
+      state.llmPanel.stopLocalDaemonsPrompt !== null ||
+      // Focused inline model filter is a text-entry surface: Tab/Ctrl+B
+      // must not cycle the nav away mid-typing.
+      (state.llmPanel.mode === "cloud" &&
+        state.llmPanel.cloudModelFilterFocused));
+  return (
+    tasksTabBusy ||
+    skillsTabBusy ||
+    memoryTabBusy ||
+    localModelsTabBusy ||
+    telegramTabBusy ||
+    mcpTabBusy ||
+    providersTabBusy ||
+    llmTabBusy
+  );
 }
 
 /**
@@ -450,7 +501,12 @@ function handleSidebarKey(
   return false;
 }
 
-function applyNavSlot(
+/**
+ * Apply a nav slot — the one place that knows "run" means chat mode and
+ * every other slot is a debug tab. Exported so a click on a status-bar
+ * pill lands the operator in exactly the same state Tab would.
+ */
+export function applyNavSlot(
   dispatch: (action: TuiAction) => void,
   slot: NavSlot,
 ): void {
@@ -496,6 +552,42 @@ function grantConfirmation(
   return `granted: ${formatApprovalCategory(request.category)} for this session`;
 }
 
+/**
+ * Resolve a pending approval: tell the runtime, then fold the decision
+ * into the reducer (and, for a grant, print the confirmation line).
+ * Shared by the key handler and the approval modal's clickable
+ * buttons — one implementation, so the two can never disagree about
+ * what "approve" means.
+ */
+export function decideApproval(
+  request: ApprovalRequest,
+  approved: boolean,
+  ctx: {
+    dispatch: (action: TuiAction) => void;
+    callbacks: Pick<AppKeyCallbacks, "onApprovalDecision">;
+  },
+  grant?: ApprovalGrantScope,
+): void {
+  // Call through without a trailing `undefined`: the callback's arity
+  // is observable (tests spy on it, hosts may inspect `arguments`).
+  if (grant) {
+    ctx.callbacks.onApprovalDecision(request.approvalId, approved, grant);
+  } else {
+    ctx.callbacks.onApprovalDecision(request.approvalId, approved);
+  }
+  ctx.dispatch({
+    type: "approval_resolved",
+    approvalId: request.approvalId,
+    approved,
+  });
+  if (approved && grant) {
+    ctx.dispatch({
+      type: "system_message",
+      text: grantConfirmation(request, grant),
+    });
+  }
+}
+
 function handleApprovalKey(
   input: string,
   key: Key,
@@ -504,57 +596,24 @@ function handleApprovalKey(
 ): boolean {
   const lower = input.toLowerCase();
   if (lower === "y") {
-    ctx.callbacks.onApprovalDecision(request.approvalId, true);
-    ctx.dispatch({
-      type: "approval_resolved",
-      approvalId: request.approvalId,
-      approved: true,
-    });
+    decideApproval(request, true, ctx);
     return true;
   }
   if (lower === "s" && canGrantCategory(request)) {
-    ctx.callbacks.onApprovalDecision(request.approvalId, true, "category");
-    ctx.dispatch({
-      type: "approval_resolved",
-      approvalId: request.approvalId,
-      approved: true,
-    });
-    ctx.dispatch({
-      type: "system_message",
-      text: grantConfirmation(request, "category"),
-    });
+    decideApproval(request, true, ctx, "category");
     return true;
   }
   if (lower === "a" && canGrantShape(request)) {
-    ctx.callbacks.onApprovalDecision(request.approvalId, true, "shape");
-    ctx.dispatch({
-      type: "approval_resolved",
-      approvalId: request.approvalId,
-      approved: true,
-    });
-    ctx.dispatch({
-      type: "system_message",
-      text: grantConfirmation(request, "shape"),
-    });
+    decideApproval(request, true, ctx, "shape");
     return true;
   }
   if (lower === "n") {
-    ctx.callbacks.onApprovalDecision(request.approvalId, false);
-    ctx.dispatch({
-      type: "approval_resolved",
-      approvalId: request.approvalId,
-      approved: false,
-    });
+    decideApproval(request, false, ctx);
     return true;
   }
   if (key.escape || (key.ctrl && input === "c")) {
-    ctx.callbacks.onApprovalDecision(request.approvalId, false);
+    decideApproval(request, false, ctx);
     ctx.callbacks.onAbort();
-    ctx.dispatch({
-      type: "approval_resolved",
-      approvalId: request.approvalId,
-      approved: false,
-    });
     ctx.dispatch({ type: "abort_requested" });
     return true;
   }
