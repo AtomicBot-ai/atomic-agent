@@ -10,7 +10,15 @@ import {
   OPENAI_COMPAT_DEFAULT_BASE_URL,
   OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
 } from "./providers-model-options.js";
-import type { ProvidersWizardKind } from "./providers-wizard-state.js";
+import {
+  subscriptionCliForWizardKind,
+  type ProvidersWizardKind,
+} from "./providers-wizard-state.js";
+import { SUBSCRIPTION_CLI_KIND } from "../../config/provider-auth-mode.js";
+import {
+  registerBuiltInCliAdapters,
+  resolveCliAdapter,
+} from "../../llm/provider/subscription-cli/index.js";
 
 export type BuiltWizardProvider = {
   entry: UserLlmProviderEntry;
@@ -22,6 +30,8 @@ export type BuiltWizardProvider = {
 
 /** The fixed entry id each wizard kind maps to when no preset is involved. */
 function baseIdForKind(kind: ProvidersWizardKind): string {
+  if (kind === "claude-cli") return "claude-cli";
+  if (kind === "codex-cli") return "codex-cli";
   if (kind === "openrouter") return "openrouter";
   if (kind === "aimlapi") return "aimlapi";
   if (kind === "gemini") return "gemini";
@@ -75,6 +85,31 @@ export function buildProviderEntryFromWizard(input: {
   takenProviderIds?: readonly string[];
 }): BuiltWizardProvider {
   const id = providerIdForWizardSave(input);
+  const subscriptionCli = subscriptionCliForWizardKind(input.kind);
+  if (subscriptionCli) {
+    // Several wizard rows, one config kind: the CLI name is the only
+    // thing that differs, and it rides in the entry rather than in the
+    // kind so a new vendor CLI never needs a new provider kind.
+    // Codex resolves the model server-side under a ChatGPT login and
+    // rejects explicit ids, so its descriptor default is empty and the
+    // field is omitted rather than written as "".
+    registerBuiltInCliAdapters();
+    const model =
+      input.customChatModel?.trim() ||
+      resolveCliAdapter(subscriptionCli).defaultChatModel;
+    return {
+      entry: {
+        id,
+        kind: SUBSCRIPTION_CLI_KIND,
+        ...(model ? { defaultChatModel: model } : {}),
+        subscriptionCli: { cli: subscriptionCli },
+      },
+      // No embedding endpoint exists behind these CLIs, so notes keep
+      // being embedded by the local daemon.
+      useLocalEmbedding: true,
+      activateEmbeddingProviderId: "local-llama",
+    };
+  }
   const preset = input.presetId ? findProviderPreset(input.presetId) : undefined;
   const chatModel = isCuratedCatalogKind(input.kind)
     ? input.chatModelId

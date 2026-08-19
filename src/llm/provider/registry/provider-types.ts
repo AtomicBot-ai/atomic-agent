@@ -1,5 +1,6 @@
 import type { AtomicAgentConfig } from "../../../config/index.js";
 import type { UserLlmRunModeConfig } from "../../../config/llm-run-mode-config.js";
+import type { UserSubscriptionCliOptions } from "../../../config/llm-config.js";
 import type { LlamaServerClient } from "../../llama-server-client.js";
 import type { ModelProfile } from "../../model-profile.js";
 import type { StructuredLogger } from "../../../tracing/index.js";
@@ -44,6 +45,11 @@ export type LlmProviderConfigEntry = {
    * the request from the resolved model or drop the tool contract.
    */
   extraBody?: Record<string, unknown>;
+  /**
+   * Settings for a `subscription-cli` provider — which vendor CLI to
+   * drive and how to invoke it. Absent on every other kind.
+   */
+  subscriptionCli?: UserSubscriptionCliOptions;
   userModels?: ReadonlyArray<UserModelConfigEntry>;
 };
 

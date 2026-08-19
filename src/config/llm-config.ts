@@ -3,8 +3,35 @@ import {
   parseLlmRunModeConfig,
   type UserLlmRunModeConfig,
 } from "./llm-run-mode-config.js";
+import { SUBSCRIPTION_CLI_KIND } from "./provider-auth-mode.js";
 
 export type UserLlmToolTransport = "auto" | "grammar" | "native_tools";
+
+/** Vendor CLIs a `subscription-cli` provider knows how to drive. */
+export const SUBSCRIPTION_CLIS = ["claude", "codex"] as const;
+export type SubscriptionCliName = (typeof SUBSCRIPTION_CLIS)[number];
+
+/**
+ * Settings for a provider backed by an already-signed-in vendor CLI.
+ * The CLI authenticates itself from its own session, so there is no
+ * `apiKey` / `apiKeyEnvVar` anywhere in this block.
+ */
+export type UserSubscriptionCliOptions = {
+  /** Which CLI to drive. Required when `kind` is `subscription-cli`. */
+  cli: SubscriptionCliName;
+  /** Absolute path to the binary. Omit to resolve it from `PATH`. */
+  binPath?: string;
+  /**
+   * Extra argv appended verbatim to every invocation. The escape hatch
+   * for flags we do not model (`--effort high`) and for correcting a
+   * vendor CLI whose interface moved, without waiting for a release.
+   */
+  extraArgs?: string[];
+  /** Opt out of the streaming path and always buffer. */
+  streaming?: boolean;
+  /** Passed through as the CLI's own spend ceiling where it has one. */
+  maxBudgetUsd?: number;
+};
 
 export type UserLlmProviderEntry = {
   id: string;
@@ -60,6 +87,8 @@ export type UserLlmProviderEntry = {
    * window, capabilities and pricing.
    */
   userModels?: ReadonlyArray<UserModelEntry>;
+  /** Present only on `subscription-cli` entries; see the type above. */
+  subscriptionCli?: UserSubscriptionCliOptions;
 };
 
 /**
@@ -118,6 +147,7 @@ const PROVIDER_KINDS = new Set([
   "openrouter",
   "aimlapi",
   "gemini",
+  SUBSCRIPTION_CLI_KIND,
 ]);
 
 function parseProviderId(raw: unknown, field: string): string {
@@ -173,6 +203,18 @@ export function parseLlmProviderEntry(
     throw new ConfigValidationError(
       `${field}.kind`,
       `expected one of ${[...PROVIDER_KINDS].join(", ")}`,
+    );
+  }
+  const subscriptionCli = parseSubscriptionCliOptions(
+    obj.subscriptionCli,
+    `${field}.subscriptionCli`,
+  );
+  // A `subscription-cli` entry without a `cli` has no binary to drive, so
+  // fail at load rather than at the first inference an hour into a run.
+  if (kind === SUBSCRIPTION_CLI_KIND && !subscriptionCli) {
+    throw new ConfigValidationError(
+      `${field}.subscriptionCli`,
+      `required when kind is ${SUBSCRIPTION_CLI_KIND}`,
     );
   }
   return {
@@ -236,7 +278,69 @@ export function parseLlmProviderEntry(
     ),
     extraBody: parseOptionalPlainObject(obj.extraBody, `${field}.extraBody`),
     userModels: parseOptionalUserModels(obj.userModels, `${field}.userModels`),
+    subscriptionCli,
   };
+}
+
+function parseSubscriptionCliOptions(
+  raw: unknown,
+  field: string,
+): UserSubscriptionCliOptions | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected object");
+  }
+  const obj = raw as Record<string, unknown>;
+  const cli = obj.cli;
+  if (
+    typeof cli !== "string" ||
+    !(SUBSCRIPTION_CLIS as readonly string[]).includes(cli)
+  ) {
+    throw new ConfigValidationError(
+      `${field}.cli`,
+      `expected one of ${SUBSCRIPTION_CLIS.join(", ")}`,
+    );
+  }
+  const out: UserSubscriptionCliOptions = { cli: cli as SubscriptionCliName };
+  const binPath = parseOptionalString(obj.binPath, `${field}.binPath`);
+  if (binPath !== undefined) out.binPath = binPath;
+  if (obj.extraArgs !== undefined && obj.extraArgs !== null) {
+    if (!Array.isArray(obj.extraArgs)) {
+      throw new ConfigValidationError(
+        `${field}.extraArgs`,
+        "expected array of strings",
+      );
+    }
+    out.extraArgs = obj.extraArgs.map((value, i) => {
+      if (typeof value !== "string") {
+        throw new ConfigValidationError(
+          `${field}.extraArgs[${i}]`,
+          "expected string",
+        );
+      }
+      return value;
+    });
+  }
+  if (obj.streaming !== undefined && obj.streaming !== null) {
+    if (typeof obj.streaming !== "boolean") {
+      throw new ConfigValidationError(`${field}.streaming`, "expected boolean");
+    }
+    out.streaming = obj.streaming;
+  }
+  if (obj.maxBudgetUsd !== undefined && obj.maxBudgetUsd !== null) {
+    if (
+      typeof obj.maxBudgetUsd !== "number" ||
+      !Number.isFinite(obj.maxBudgetUsd) ||
+      obj.maxBudgetUsd <= 0
+    ) {
+      throw new ConfigValidationError(
+        `${field}.maxBudgetUsd`,
+        "expected positive number",
+      );
+    }
+    out.maxBudgetUsd = obj.maxBudgetUsd;
+  }
+  return out;
 }
 
 function parseOptionalPlainObject(

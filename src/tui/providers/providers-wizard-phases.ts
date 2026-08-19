@@ -5,10 +5,11 @@ import {
   listOpenRouterChatModels,
   listOpenRouterEmbeddingModels,
 } from "./providers-model-options.js";
-import type {
-  ProvidersWizardKind,
-  ProvidersWizardPhase,
-  ProvidersWizardState,
+import {
+  subscriptionCliForWizardKind,
+  type ProvidersWizardKind,
+  type ProvidersWizardPhase,
+  type ProvidersWizardState,
 } from "./providers-wizard-state.js";
 
 /**
@@ -28,6 +29,10 @@ export type ProvidersWizardKindRow =
  * never disagree.
  */
 export const KIND_ROW_ORDER: readonly ProvidersWizardKindRow[] = [
+  // Subscription CLIs first: they need no key and no endpoint, so they
+  // are the shortest path from a fresh install to a working agent.
+  "claude-cli",
+  "codex-cli",
   "openrouter",
   "aimlapi",
   "gemini",
@@ -122,6 +127,11 @@ export function advanceWizardPhase(
 ): ProvidersWizardState {
   const { phase, kind } = wizard;
   if (phase === "pick_kind" && kind) {
+    // A CLI-backed provider has no key to paste — it authenticates from
+    // the CLI's own session — so the key screen would be a dead end.
+    if (subscriptionCliForWizardKind(kind)) {
+      return { ...wizard, phase: "chat_model_line", cursor: 0, error: null };
+    }
     return { ...wizard, phase: "api_key", cursor: 0, error: null };
   }
   if (phase === "api_key" && kind) {

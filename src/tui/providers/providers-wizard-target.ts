@@ -35,6 +35,7 @@ import {
   OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
   OPENROUTER_DEFAULT_CHAT_MODEL,
 } from "./providers-model-options.js";
+import { subscriptionCliForWizardKind } from "./providers-wizard-state.js";
 import type {
   ProvidersWizardKind,
   ProvidersWizardState,
@@ -86,6 +87,9 @@ export function apiKeyForWizard(
  * does not use.
  */
 export function envHintForWizard(wizard: ProvidersWizardState): string {
+  // CLI-backed providers read no env var: the key screen is skipped
+  // entirely, so there is no variable to name.
+  if (wizard.kind && subscriptionCliForWizardKind(wizard.kind)) return "";
   const preset = wizard.presetId ? findProviderPreset(wizard.presetId) : undefined;
   if (preset) return preset.envVar;
   if (wizard.kind === "openrouter") return "OPENROUTER_API_KEY";
@@ -101,6 +105,9 @@ export function envHintForWizard(wizard: ProvidersWizardState): string {
  * send requests without an Authorization header.
  */
 export function wizardKeyIsOptional(wizard: ProvidersWizardState): boolean {
+  // A subscription CLI authenticates through its own `login`; there is
+  // never a key to type here, so the key gate must not refuse the save.
+  if (wizard.kind && subscriptionCliForWizardKind(wizard.kind)) return true;
   const preset = wizard.presetId ? findProviderPreset(wizard.presetId) : undefined;
   return Boolean(preset && (preset.local || preset.listsModelsWithoutKey));
 }
@@ -180,6 +187,11 @@ export function verifyTargetForWizard(
 ): ProviderVerifyTarget | null {
   const kind = wizard.kind;
   if (!kind) return null;
+  // A CLI-backed subscription has no HTTP endpoint and no API key —
+  // `claude`/`codex` carry the login. Returning null here keeps the
+  // verify phase out of the flow rather than probing a URL that does
+  // not exist.
+  if (kind === "claude-cli" || kind === "codex-cli") return null;
   if (wizardKeyIsOptional(wizard)) return null;
   const apiKey = apiKeyForWizard(wizard)?.trim();
   if (!apiKey) return null;

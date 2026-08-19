@@ -42,6 +42,9 @@ export {
   type UserLlmFileConfig,
   type UserLlmFallbackConfig,
   type UserLlmProviderEntry,
+  type UserSubscriptionCliOptions,
+  type SubscriptionCliName,
+  SUBSCRIPTION_CLIS,
 } from "./llm-config.js";
 export {
   DEFAULT_FUSION_CLOUD_SHARE,
@@ -51,6 +54,10 @@ export {
   type UserLlmFusionConfig,
   type UserLlmRunModeConfig,
 } from "./llm-run-mode-config.js";
+export {
+  SUBSCRIPTION_CLI_KIND,
+  usesExternalCliAuth,
+} from "./provider-auth-mode.js";
 export type {
   DotenvLoadResult,
   DotenvReadFailure,
