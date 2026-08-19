@@ -507,5 +507,6 @@ function mapUserLlmToRuntime(
       };
     }),
     ...(llm.fallback ? { fallback: llm.fallback } : {}),
+    ...(llm.runMode ? { runMode: llm.runMode } : {}),
   };
 }

@@ -4,6 +4,7 @@ import {
   parseUserLlmFileConfig,
   type UserLlmFileConfig,
 } from "./llm-config.js";
+import type { UserLlmRunModeConfig } from "./llm-run-mode-config.js";
 
 export type { ApprovalLevel } from "../approval/approval-level.js";
 import type { DotenvLoadResult } from "./load-dotenv.js";
@@ -768,6 +769,14 @@ export interface AtomicAgentConfig {
       probeThrottleMs?: number;
       failureWindowMs?: number;
     };
+    /**
+     * Operator run mode: `local` (llama-server only), `cloud` (cloud
+     * provider only) or `fusion` (cloud orchestrates, local executes).
+     * `activeTextProvider` stays authoritative — this block is additive
+     * and is reconciled by `resolveRunMode`. See AGENTS.md §"Run modes
+     * (Local / Cloud / Fusion)".
+     */
+    runMode?: UserLlmRunModeConfig;
   };
 }
 
@@ -1412,7 +1421,12 @@ export interface UserConfigFile {
 // is absent, a legacy `approvalRequired: false` maps to level 5 and
 // `true`/absent maps to level 1 — both preserve the old behaviour
 // exactly. The legacy key is never written back.
-export const USER_CONFIG_VERSION = 37 as const;
+// v38: new optional `llm.runMode` block — the operator run mode
+// (`local` | `cloud` | `fusion`) plus the fusion cloud-share dial and
+// the sub-runner target. Absence IS the v37 behaviour: it is an
+// optional sub-key of an already-optional block, so no migration code
+// exists; the bump only records the schema change.
+export const USER_CONFIG_VERSION = 38 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1529,6 +1543,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   34,
   35,
   36,
+  37,
   USER_CONFIG_VERSION,
 ];
 

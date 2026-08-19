@@ -1,4 +1,5 @@
 import type { AtomicAgentConfig } from "../../../config/index.js";
+import type { UserLlmRunModeConfig } from "../../../config/llm-run-mode-config.js";
 import type { LlamaServerClient } from "../../llama-server-client.js";
 import type { ModelProfile } from "../../model-profile.js";
 import type { StructuredLogger } from "../../../tracing/index.js";
@@ -84,6 +85,11 @@ export type ResolvedLlmConfig = {
   providers: LlmProviderConfigEntry[];
   toolTransport: "auto" | "grammar" | "native_tools";
   fallback?: LlmFallbackConfig;
+  /**
+   * Operator run mode. Absent on the synthesized local-only config
+   * below, where `local` is the only reachable mode by construction.
+   */
+  runMode?: UserLlmRunModeConfig;
 };
 
 const factories = new Map<string, ProviderFactory>();
@@ -112,6 +118,7 @@ export function resolveLlmConfig(config: AtomicAgentConfig): ResolvedLlmConfig {
       providers: [...llm.providers],
       toolTransport: llm.toolTransport,
       ...(llm.fallback ? { fallback: llm.fallback } : {}),
+      ...(llm.runMode ? { runMode: llm.runMode } : {}),
     };
   }
   return {

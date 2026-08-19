@@ -41,6 +41,14 @@ export {
   type UserLlmFallbackConfig,
   type UserLlmProviderEntry,
 } from "./llm-config.js";
+export {
+  DEFAULT_FUSION_CLOUD_SHARE,
+  parseLlmRunModeConfig,
+  type RunModeName,
+  type RunModeSubRunners,
+  type UserLlmFusionConfig,
+  type UserLlmRunModeConfig,
+} from "./llm-run-mode-config.js";
 export type {
   DotenvLoadResult,
   DotenvReadFailure,
