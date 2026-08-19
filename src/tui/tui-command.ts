@@ -207,10 +207,19 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // parser would otherwise type them into the chat buffer.
   const mouseEnabled = parsed.mouse ?? config.tui.mouse;
   const mouseSource = makeMouseSource();
-  const mouseStdin = createMouseStdin(process.stdin, mouseSource.emit);
   let mouseTracking: MouseTrackingController | null = mouseEnabled
     ? enableMouseTracking({ stdout: process.stdout })
     : null;
+  // `mouseTracking` is the single source of truth for "is the mouse on",
+  // and it is read here on every report rather than captured, so
+  // `setMouseEnabled` reassigning it takes effect immediately. Normally
+  // a terminal that was told to stop reporting sends nothing anyway, but
+  // this keeps `/mouse off` honest for the cases where it still does:
+  // a multiplexer that swallowed the disable, or a bracketed paste whose
+  // payload happens to contain an SGR report.
+  const mouseStdin = createMouseStdin(process.stdin, (event) => {
+    if (mouseTracking) mouseSource.emit(event);
+  });
   const setMouseEnabled = (next: boolean | null): void => {
     if (next === null) {
       bus.emit({
@@ -441,7 +450,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
         },
         onMouseSupportRequested: setMouseEnabled,
       },
-      ...(mouseEnabled ? { mouse: mouseSource } : {}),
+      // Unconditional on purpose. `mouseEnabled` is a startup-time
+      // value, but `/mouse on` flips reporting *later* and cannot
+      // re-parent an already-mounted tree — gating the prop on it meant
+      // a session started with `tui.mouse: false` kept `mouse ===
+      // undefined` forever, so `TuiApp`'s subscribe effect returned
+      // early and the clicks the terminal had just started reporting
+      // went nowhere while the UI claimed mouse support was on.
+      // Subscribing costs nothing while the mouse is off: the forwarder
+      // above is what decides whether anything is ever emitted.
+      mouse: mouseSource,
     }),
     {
       stdin: mouseStdin.stdin,

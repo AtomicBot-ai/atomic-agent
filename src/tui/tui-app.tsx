@@ -360,9 +360,12 @@ export interface TuiAppProps {
   /** Optional initial debug tab / mode (e.g. after managed-mode wizard). */
   initialLayout?: InitialTuiLayoutOptions;
   /**
-   * Decoded terminal mouse reports. Supplied by `tui-command.ts` when
-   * mouse support is on; omitted (tests, `--no-mouse`) the app is
-   * keyboard-only and every clickable surface simply never fires.
+   * Decoded terminal mouse reports. `tui-command.ts` always passes it,
+   * whatever `tui.mouse` says at startup: whether reports actually flow
+   * is decided upstream by the tracking controller, which `/mouse
+   * on|off` flips live, and this prop is fixed at mount. Omitted only in
+   * tests, where the app is keyboard-only and every clickable surface
+   * simply never fires.
    */
   mouse?: MouseSource;
 }

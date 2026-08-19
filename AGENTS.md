@@ -161,7 +161,9 @@ The TUI is clickable. Ink has no mouse layer, so this is built in `src/tui/mouse
 
 **The trade-off.** While reporting is on, the terminal stops doing its own drag-to-select (Apple Terminal has no Shift-bypass). Hence `tui.mouse` (config v38, default `true`), `--mouse` / `--no-mouse`, and `/mouse on|off` at runtime; `tui-command.ts` owns the live toggle and the config write. With mouse off the previous behaviour is intact: alternate-scroll (`\x1b[?1007h`) turns the wheel into cursor keys.
 
-**Testing.** Escape sequences, decoder and stream split are unit-tested; `mouse-app.test.tsx` drives the real Ink tree by locating a label in the rendered frame and emitting a click at those coordinates. Ink commits frames on a ~30fps throttle, so tests must wait longer than one frame before clicking a freshly rendered target.
+**The toggle is not a prop.** `tui-command.ts` hands `TuiApp` the `mouse` source unconditionally, whatever `tui.mouse` said at startup. The mounted tree cannot be re-parented from a plain `let` reassignment, so gating that prop on the startup value silently made `/mouse on` a no-op for the rest of the session. The live gate is the tracking controller: it decides whether the terminal reports at all, and whether decoded reports are forwarded to the source.
+
+**Testing.** Escape sequences, decoder and stream split are unit-tested; `mouse-app.test.tsx` drives the real Ink tree by locating a label in the rendered frame and emitting a click at those coordinates. Ink commits frames on a ~30fps throttle, so tests must wait longer than one frame before clicking a freshly rendered target. `tui-command.mouse.test.ts` covers the other end — that a runtime `/mouse on` actually reaches the source the tree subscribed to at mount.
 
 ## Module map
 
