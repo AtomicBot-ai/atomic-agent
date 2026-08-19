@@ -155,6 +155,53 @@ describe("searchModels", () => {
   });
 });
 
+describe("context window terms", () => {
+  // Ids are deliberately digit-free: a row must match on its window, not
+  // because "1m" happens to be a substring or subsequence of its id.
+  const WINDOWS: readonly { id: string; entry: ModelCatalogEntry }[] = [
+    { id: "vendor/alpha", entry: entry({ contextWindow: 1_000_000 }) },
+    { id: "vendor/bravo", entry: entry({ contextWindow: 1_048_576 }) },
+    { id: "vendor/charlie", entry: entry({ contextWindow: 1_050_000 }) },
+    { id: "vendor/delta", entry: entry({ contextWindow: 1_310_720 }) },
+    { id: "vendor/echo", entry: entry({ contextWindow: 2_000_000 }) },
+    { id: "vendor/foxtrot", entry: entry({ contextWindow: 131_072 }) },
+    { id: "vendor/golf", entry: entry({ contextWindow: 204_800 }) },
+  ];
+
+  it("`1m` finds every roughly-1M window, not only the ones rendered as 1m", () => {
+    // The bug this pins: the tag used to be the display string alone, so
+    // only the exactly-1_000_000 row answered to `1m` and an operator
+    // concluded the 1.0m/1.1m/1.3m rows had no million-token variant.
+    expect(ids(searchModels(WINDOWS, "1m"))).toEqual([
+      "vendor/alpha",
+      "vendor/bravo",
+      "vendor/charlie",
+      "vendor/delta",
+    ]);
+    // Floor, not round: 2M is its own bucket and nothing under 1M leaks in.
+    expect(ids(searchModels(WINDOWS, "2m"))).toEqual(["vendor/echo"]);
+  });
+
+  it("keeps answering to the string the row displays", () => {
+    expect(ids(searchModels(WINDOWS, "1.0m"))).toEqual(["vendor/bravo"]);
+    expect(ids(searchModels(WINDOWS, "1.1m"))).toEqual(["vendor/charlie"]);
+    expect(ids(searchModels(WINDOWS, "1.3m"))).toEqual(["vendor/delta"]);
+    expect(ids(searchModels(WINDOWS, "131k"))).toEqual(["vendor/foxtrot"]);
+    expect(ids(searchModels(WINDOWS, "205k"))).toEqual(["vendor/golf"]);
+  });
+
+  it("answers to the binary reading of a power-of-two window", () => {
+    // 131_072 is sold as 128k and 204_800 as 200k; decimal rounding is
+    // what hid them.
+    expect(ids(searchModels(WINDOWS, "128k"))).toEqual(["vendor/foxtrot"]);
+    expect(ids(searchModels(WINDOWS, "200k"))).toEqual(["vendor/golf"]);
+    // A window that was never binary keeps only its decimal reading.
+    const decimal = [{ id: "vendor/hotel", entry: entry({ contextWindow: 200_000 }) }];
+    expect(ids(searchModels(decimal, "200k"))).toEqual(["vendor/hotel"]);
+    expect(searchModels(decimal, "195k")).toEqual([]);
+  });
+});
+
 describe("modelSearchTags", () => {
   it("derives tags from the entry and nothing else", () => {
     expect(modelSearchTags(undefined)).toEqual([]);
@@ -168,6 +215,20 @@ describe("modelSearchTags", () => {
         }),
       ),
     ).toEqual(["chat", "vision", "tools", "cache", "200k", "free"]);
+  });
+
+  it("tags a window as displayed, floored to the whole unit, and in binary", () => {
+    // The first three tags are kind / modality / tools; window forms follow.
+    const windowTags = (contextWindow: number): readonly string[] =>
+      modelSearchTags(entry({ contextWindow })).slice(3);
+    expect(windowTags(1_000_000)).toEqual(["1m"]);
+    expect(windowTags(1_048_576)).toEqual(["1.0m", "1m"]);
+    expect(windowTags(1_310_720)).toEqual(["1.3m", "1m"]);
+    expect(windowTags(131_072)).toEqual(["131k", "128k"]);
+    expect(windowTags(204_800)).toEqual(["205k", "204k", "200k"]);
+    expect(windowTags(200_000)).toEqual(["200k"]);
+    // Below a thousand there is no shorthand to normalise.
+    expect(windowTags(512)).toEqual(["512"]);
   });
 });
 

@@ -62,9 +62,7 @@ export function modelSearchTags(
   tags.push(entry.supportsVision ? "vision" : "text");
   if (entry.supportsTools !== "none") tags.push("tools");
   if (entry.supportsPromptCache) tags.push("cache");
-  if (entry.contextWindow > 0) {
-    tags.push(formatContextWindow(entry.contextWindow).toLowerCase());
-  }
+  if (entry.contextWindow > 0) tags.push(...contextWindowTags(entry.contextWindow));
   // Price tags mirror what the row displays, so searching for what you
   // can see works: `openrouter/auto` renders as "routed", not "free",
   // even though its list price is zero.
@@ -72,6 +70,48 @@ export function modelSearchTags(
   if (priceLabel === "free" || priceLabel === "routed") tags.push(priceLabel);
   else if (entry.pricing && entry.pricing.input > 0 && entry.pricing.input < 1) {
     tags.push("cheap");
+  }
+  return tags;
+}
+
+/**
+ * Every shorthand an operator would type for one context window.
+ *
+ * The display string alone is not enough, because it is a rounded
+ * decimal rendering and tag matching is exact: `formatContextWindow`
+ * writes 1_048_576 as "1.0m" and 131_072 as "131k", so `1m` and `128k` —
+ * the numbers those vendors actually advertise — would drop the row.
+ * The formatter stays as it is; the extra forms ride alongside it.
+ *
+ * Three forms per window, deduped:
+ *
+ * 1. the display string, so searching for what the row shows works;
+ * 2. the whole-unit **floor** in that same unit — 1_310_720 -> `1m`,
+ *    1_050_000 -> `1m`, 202_752 -> `202k`. Floor rather than round,
+ *    because a size term reads as a lower bound: `1m` means "a window of
+ *    a million or better", so it must find every row from 1M up to 2M,
+ *    and must not find a 950k row that would round up to it;
+ * 3. the **binary** reading, when the window is an exact multiple of
+ *    1024 (1024² above a million) — 131_072 -> `128k`, 204_800 ->
+ *    `200k`, 262_144 -> `256k`, 1_048_576 -> `1m`. Those windows are
+ *    power-of-two sized and are sold by the binary number; decimal
+ *    rounding is what hides it. The exact-multiple guard keeps the
+ *    reading off windows that were never binary (200_000 stays `200k`).
+ *
+ * Raw token counts (`131072`) are deliberately not tags: no surface
+ * renders one, so nobody reads it off a row to type it back.
+ */
+function contextWindowTags(tokens: number): readonly string[] {
+  const tags = [formatContextWindow(tokens).toLowerCase()];
+  const add = (tag: string): void => {
+    if (!tags.includes(tag)) tags.push(tag);
+  };
+  if (tokens >= 1_000_000) {
+    add(`${Math.floor(tokens / 1_000_000)}m`);
+    if (tokens % 1_048_576 === 0) add(`${tokens / 1_048_576}m`);
+  } else if (tokens >= 1_000) {
+    add(`${Math.floor(tokens / 1_000)}k`);
+    if (tokens % 1_024 === 0) add(`${tokens / 1_024}k`);
   }
   return tags;
 }

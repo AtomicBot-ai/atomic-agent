@@ -267,7 +267,7 @@ atomic-agent models search "1m cache" --provider openrouter --limit 10
 atomic-agent models search kimi --refresh   # pull live /models lists first
 ```
 
-Every term has to match (`claude vision` is not a substring of any id), results are ranked best-first, and the same query works in the TUI Cloud pane — press `f`.
+Every term has to match (`claude vision` is not a substring of any id), a size term reads as a lower bound whatever the row displays (`1m` also finds the 1,048,576-token windows that render as `1.0M`, `128k` finds 131,072), results are ranked best-first, and the same query works in the TUI Cloud pane — press `f`.
 
 </details>
 

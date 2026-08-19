@@ -117,6 +117,33 @@ describe("runModelsSearch", () => {
     }
   });
 
+  it("`1m` returns every million-token row, whatever its rendered size reads", async () => {
+    writeConfig();
+    // The README advertises this query. The bundled OpenRouter catalog
+    // holds 1_000_000, 1_048_576 and 1_050_000 windows, which render as
+    // `1m`, `1.0m` and `1.1m`; only the first used to answer to `1m`.
+    expect(await runModelsSearch(["1m", "--json"])).toBe(0);
+    const rows = JSON.parse(out.join("")) as {
+      id: string;
+      contextWindow: number;
+    }[];
+    const windows = new Set(rows.map((row) => row.contextWindow));
+    expect(windows).toEqual(new Set([1_000_000, 1_048_576, 1_050_000]));
+    for (const row of rows) {
+      expect(row.contextWindow).toBeGreaterThanOrEqual(1_000_000);
+      // `openrouter/auto` is 2M and belongs to `2m`, not to `1m`.
+      expect(row.contextWindow).toBeLessThan(2_000_000);
+    }
+
+    // Same normalisation one unit down: 262_144 renders as `262k` and is
+    // sold as 256k.
+    out.length = 0;
+    expect(await runModelsSearch(["256k", "--json"])).toBe(0);
+    const kilo = JSON.parse(out.join("")) as { contextWindow: number }[];
+    expect(kilo.length).toBeGreaterThan(0);
+    for (const row of kilo) expect(row.contextWindow).toBe(262_144);
+  });
+
   it("includes models an entry carries under userModels", async () => {
     // Read straight off the entry: `parseLlmProviderEntry` currently
     // drops `userModels` on the way out of config.json, so this path
