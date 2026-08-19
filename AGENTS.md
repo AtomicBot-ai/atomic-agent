@@ -207,6 +207,7 @@ Text completion, vision, embeddings, and sub-calls route through plugin-register
 - **`LlmProvider`** ([src/llm/provider/llm-provider.ts](src/llm/provider/llm-provider.ts)) — `complete`, `completeStream`, `describeImage`, `health`, `close`, `capabilities`, optional `toolCallAdapter` + `streamConsumer`.
 - **`toolTransport`** — `grammar` (GBNF on llama-server) vs `native_tools` (OpenAI `tools` / `tool_calls`). Resolved by `resolveActiveToolTransport` from `config.llm.toolTransport` (`auto` follows the active provider).
 - **Name escape** — qualified tool names use `__` for dots (`os.fs.read` → `os__fs__read`) in [openai-tool-call-adapter.ts](src/llm/provider/openai/openai-tool-call-adapter.ts). `reply` / `finish` are synthetic OpenAI functions alongside registry tools.
+- **Model search** ([src/llm/provider/model-search.ts](src/llm/provider/model-search.ts)) — one ranked, multi-term scorer over model ids plus catalog metadata (vendor, `vision`/`text`, `tools`, `cache`, context shorthand like `1m`, `free`/`cheap`/`routed`). Terms are ANDed, matches are ranked (exact id > id prefix > vendor > word start > substring > subsequence) and equal ranks keep input order so the picker does not jitter per keystroke. Used by `filterModelIds` (TUI modal picker + Cloud pane) and by `atomic-agent models search`. Row rendering is shared through [format-model-details.ts](src/llm/provider/format-model-details.ts) — do not re-implement the price/context/capability strings in a frontend.
 
 ### Bootstrap wiring
 

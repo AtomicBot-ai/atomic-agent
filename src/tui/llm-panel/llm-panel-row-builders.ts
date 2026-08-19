@@ -7,6 +7,7 @@ import { getCachedGeminiModelsForPanel } from "../../llm/provider/gemini/fetch-g
 import { GEMINI_DEFAULT_CHAT_MODEL } from "../../llm/provider/gemini/gemini-provider.js";
 import { filterModelIds, type ProviderRow } from "../providers/providers-panel-state.js";
 import {
+  catalogEntryLookupForKind,
   formatAimlapiChatModelDetails,
   formatAimlapiEmbeddingModelDetails,
   formatOpenRouterChatModelDetails,
@@ -101,6 +102,7 @@ export function selectCloudModelSection(state: TuiState): CloudModelSection {
   const filtered = filterModelIds(
     catalog.models,
     state.llmPanel.cloudModelFilter,
+    catalogEntryLookupForKind(provider.kind),
   );
   return { provider, ...catalog, filtered, sectionStart };
 }

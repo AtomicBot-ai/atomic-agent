@@ -97,7 +97,7 @@ const COMMANDS: CommandDescriptor[] = [
   {
     name: "models",
     summary:
-      "Manage the local-LLM runtime + GGUF models (list|pull|use|status|start|stop|update|remove)",
+      "Manage the local-LLM runtime + GGUF models (list|pull|use|status|...) and search cloud models (search)",
     run: modelsCommand,
   },
   {

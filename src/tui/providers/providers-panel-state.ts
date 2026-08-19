@@ -1,3 +1,7 @@
+import {
+  searchModelIds,
+  type ModelEntryLookup,
+} from "../../llm/provider/model-search.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
 
 export type ProvidersPanelMode = "list";
@@ -66,17 +70,21 @@ export function filteredPickerModels(
 }
 
 /**
- * Case-insensitive substring filter over model ids. Shared by the modal
- * picker and the inline Cloud-pane model list so both surfaces match the
- * same rows for the same query.
+ * Ranked model search over ids and, when a catalog lookup is supplied,
+ * their metadata. Shared by the modal picker and the inline Cloud-pane
+ * model list so both surfaces match the same rows for the same query.
+ *
+ * Was a single case-insensitive `includes` over the id. `searchModelIds`
+ * keeps that behaviour for a one-word query and adds multi-term AND,
+ * vendor and capability matching, subsequence fallback, and relevance
+ * ordering — see `src/llm/provider/model-search.ts`.
  */
 export function filterModelIds(
   models: readonly string[],
   query: string,
+  lookup?: ModelEntryLookup,
 ): readonly string[] {
-  const q = query.trim().toLowerCase();
-  if (q.length === 0) return models;
-  return models.filter((id) => id.toLowerCase().includes(q));
+  return searchModelIds(models, query, lookup);
 }
 
 /**
