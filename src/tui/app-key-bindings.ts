@@ -124,6 +124,23 @@ export function handleAppKey(
     return true;
   }
   setCtrlCArmed(false);
+  // Esc aborts a turn in flight — the binding the hint strip advertises
+  // for the whole time `status === "running"`. It has to be claimed here
+  // rather than in the editor's own Esc handler because the editor is
+  // `disabled` while a turn runs, which switches its `useInput` off and
+  // makes the abort branch over there unreachable. Overlays that own Esc
+  // themselves keep it; a pending approval already returned above.
+  if (
+    key.escape &&
+    state.status === "running" &&
+    !state.slashPaletteOpen &&
+    !state.themePickerOpen &&
+    !state.sessionPickerOpen
+  ) {
+    callbacks.onAbort();
+    dispatch({ type: "abort_requested" });
+    return true;
+  }
   if (
     state.uiMode === "chat" &&
     !state.slashPaletteOpen &&
