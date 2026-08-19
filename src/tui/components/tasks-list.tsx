@@ -3,45 +3,60 @@ import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
 import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
 import { handleTasksTabKey } from "../tasks/tasks-key-bindings.js";
+import {
+  computeTaskListLayout,
+  computeTasksListFit,
+  describeEmptyTaskList,
+  fitTaskListHints,
+  formatTaskListHeader,
+  formatTaskRowCells,
+  type TaskListLayout,
+} from "../tasks/tasks-list-fit.js";
+import { computeRowWindow } from "../row-window.js";
 import type {
   TaskSummaryRow,
   TasksPanelState,
 } from "../tasks/tasks-panel-state.js";
 import type { TaskStatus } from "../../tasks/task-types.js";
-import { formatRelativeMs } from "../tasks/tasks-summary.js";
 
 export interface TasksListProps {
   panel: TasksPanelState;
   visibleRows: readonly TaskSummaryRow[];
+  /** Rows the whole table may occupy, chrome included. */
   maxRows: number;
   now: number;
+  /** Columns the panel owns — see `tasks-list-fit.ts` for why it matters. */
+  width: number;
 }
 
 /**
  * Scrollable table view. `visibleRows` is already filtered + sorted by
  * the caller; this component owns only the cursor windowing and the
  * per-row rendering contract.
+ *
+ * Every column width — including the footer hints — comes from
+ * `tasks-list-fit.ts` for the panel's real width, because a row that
+ * wraps takes two terminal lines and collides its own columns into
+ * each other. `maxRows` is the budget for the *whole* table, header and
+ * hints included: the header, the scroll markers and the hint strip
+ * used to be drawn on top of it, which is how the panel outgrew the
+ * space the debug pane had reserved.
  */
 export function TasksList(props: TasksListProps): ReactElement {
-  const { panel, visibleRows, maxRows, now } = props;
+  const { panel, visibleRows, maxRows, now, width } = props;
+  const layout = computeTaskListLayout(width);
   if (visibleRows.length === 0) {
-    return (
-      <Box flexDirection="column" paddingY={1}>
-        <Text color={theme.colors.muted}>
-          no tasks match the current filter — press `n` to create one,
-          `f` to cycle filter, `r` to refresh.
-        </Text>
-      </Box>
-    );
+    return <EmptyState panel={panel} width={width} maxRows={maxRows} />;
   }
+  const fit = computeTasksListFit(maxRows, visibleRows.length);
   const clamped = Math.max(0, Math.min(panel.cursor, visibleRows.length - 1));
-  const windowStart = computeWindowStart(clamped, visibleRows.length, maxRows);
-  const pageRows = visibleRows.slice(windowStart, windowStart + maxRows);
-  const hiddenBefore = windowStart;
-  const hiddenAfter = Math.max(0, visibleRows.length - windowStart - pageRows.length);
+  const rowWindow = computeRowWindow(visibleRows.length, clamped, fit.listRows);
+  const windowStart = rowWindow.start;
+  const pageRows = visibleRows.slice(windowStart, windowStart + rowWindow.count);
+  const { hiddenBefore, hiddenAfter } = rowWindow;
   return (
     <Box flexDirection="column">
-      <HeaderRow />
+      {fit.header ? <HeaderRow layout={layout} /> : null}
       {hiddenBefore > 0 ? (
         <Text color={theme.colors.muted}>
           ↑ {hiddenBefore} above
@@ -58,6 +73,7 @@ export function TasksList(props: TasksListProps): ReactElement {
         >
           <TaskRow
             row={row}
+            layout={layout}
             selected={idx + windowStart === clamped}
             now={now}
           />
@@ -68,54 +84,101 @@ export function TasksList(props: TasksListProps): ReactElement {
           ↓ {hiddenAfter} below
         </Text>
       ) : null}
-      <HintsRow />
+      {fit.hints ? <HintsRow width={width} spacer={fit.hintsSpacer} /> : null}
     </Box>
   );
 }
 
-function HeaderRow(): ReactElement {
+/**
+ * What the tab shows before the first task exists — and the screen a
+ * first-run operator meets on `/tasks`. It carries the same hint strip
+ * as the populated table: the keys are the only thing to learn here,
+ * and hiding them until a task exists is a chicken-and-egg.
+ */
+function EmptyState({
+  panel,
+  width,
+  maxRows,
+}: {
+  panel: TasksPanelState;
+  width: number;
+  maxRows: number;
+}): ReactElement {
+  const { headline, detail } = describeEmptyTaskList({
+    totalRows: panel.rows.length,
+    filterStatus: panel.filterStatus,
+    searchQuery: panel.searchQuery,
+  });
+  // Same ladder as the table: spend rows on the message, then the
+  // context line, then the breathing room around them.
+  const roomy = maxRows >= 5;
+  return (
+    <Box flexDirection="column" paddingY={roomy ? 1 : 0}>
+      <Text color={theme.colors.muted}>{headline}</Text>
+      {detail && maxRows >= 3 ? (
+        <Text color={theme.colors.muted}>{detail}</Text>
+      ) : null}
+      {maxRows >= 4 ? (
+        <Box marginTop={roomy ? 1 : 0}>
+          <Text color={theme.colors.muted}>{fitTaskListHints(width)}</Text>
+        </Box>
+      ) : null}
+    </Box>
+  );
+}
+
+function HeaderRow({ layout }: { layout: TaskListLayout }): ReactElement {
   return (
     <Box>
-      <Text color={theme.colors.muted}>{"  "}status   schedule               next-run       session   message</Text>
+      <Text color={theme.colors.muted}>{formatTaskListHeader(layout)}</Text>
     </Box>
   );
 }
 
-function HintsRow(): ReactElement {
+function HintsRow({
+  width,
+  spacer,
+}: {
+  width: number;
+  spacer: boolean;
+}): ReactElement {
+  // The blank row above the hints is the house look for a manage panel,
+  // but it is the first thing to go when the budget is tight: a hint
+  // strip the operator can read beats the whitespace around it.
   return (
-    <Box marginTop={1}>
-      <Text color={theme.colors.muted}>
-        j/k move · Enter detail · n new · c cancel · R run-now · r refresh
-        · a auto · f filter · / search · Esc clear search
-      </Text>
+    <Box marginTop={spacer ? 1 : 0}>
+      <Text color={theme.colors.muted}>{fitTaskListHints(width)}</Text>
     </Box>
   );
 }
 
 function TaskRow({
   row,
+  layout,
   selected,
   now,
 }: {
   row: TaskSummaryRow;
+  layout: TaskListLayout;
   selected: boolean;
   now: number;
 }): ReactElement {
   const chevron = selected ? theme.glyphs.chevronRight : " ";
-  const statusText = row.status.padEnd(9);
-  const scheduleText = truncate(row.scheduleLabel, 22).padEnd(22);
-  const nextRunText = formatRelativeMs(row.scheduledFor, now).padEnd(14);
-  const sessionText = (row.sessionId ? shortId(row.sessionId) : "—").padEnd(10);
+  const cells = formatTaskRowCells(row, layout, now);
   const color = selected ? theme.colors.accentSoft : undefined;
+  // The middle columns are one `<Text>` per cell rather than one joined
+  // string so a dropped column takes its separating space with it.
   return (
     <Box>
       <Text color={color} bold={selected}>
-        {chevron} <Text color={statusColor(row.status)}>{statusText}</Text>
+        {chevron} <Text color={statusColor(row.status)}>{cells.status}</Text>
       </Text>
       <Text color={theme.colors.muted}>
-        {scheduleText} {nextRunText} {sessionText}
+        {cells.schedule ? ` ${cells.schedule}` : ""}
+        {cells.nextRun ? ` ${cells.nextRun}` : ""}
+        {cells.session ? ` ${cells.session}` : ""}
       </Text>
-      <Text color={color}>{truncate(row.userMessage, 64)}</Text>
+      <Text color={color}>{cells.message ? ` ${cells.message}` : ""}</Text>
     </Box>
   );
 }
@@ -135,20 +198,4 @@ function statusColor(status: TaskStatus): string {
     default:
       return theme.colors.muted;
   }
-}
-
-function shortId(id: string): string {
-  if (id.length <= 10) return id;
-  return `${id.slice(0, 10)}…`;
-}
-
-function truncate(text: string, max: number): string {
-  if (text.length <= max) return text;
-  return `${text.slice(0, max - 1)}…`;
-}
-
-function computeWindowStart(cursor: number, total: number, size: number): number {
-  if (total <= size) return 0;
-  if (cursor < size) return 0;
-  return Math.min(cursor - size + 1, total - size);
 }
