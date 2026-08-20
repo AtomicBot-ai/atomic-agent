@@ -124,6 +124,21 @@ export function reduceUiAction(
     }
     case "input_history_navigated":
       return navigateInputHistory(state, action.delta);
+    case "message_queued":
+      return {
+        ...state,
+        queuedMessages: [...state.queuedMessages, action.text],
+        inputValue: "",
+        inputHistoryCursor: null,
+        // A queued submit is still a submit: the parked history draft
+        // must not resurface on the next Down.
+        inputHistoryDraft: null,
+        slashPaletteOpen: false,
+        slashQuery: "",
+        slashPaletteCursor: 0,
+      };
+    case "queue_changed":
+      return { ...state, queuedMessages: [...action.queued] };
     case "chat_cleared":
       return {
         ...state,
@@ -240,6 +255,7 @@ export function reduceUiAction(
         sidebarSection: "sessions",
         sidebarCursor: 0,
         sidebarTasksCursor: 0,
+        queuedMessages: [],
       };
     default:
       return null;

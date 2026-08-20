@@ -89,15 +89,22 @@ function resolveChips(
   }
   if (state.status === "running") {
     // A long streaming answer is exactly when the operator wants to
-    // scroll back, so the hint rides along with abort.
-    return [
+    // scroll back, so the hint rides along with abort. The editor stays
+    // live during a run, so advertise what Enter does now — and how many
+    // messages are already parked behind the turn.
+    const chips: HotkeyChip[] = [
       { key: SCROLL_KEY, label: "scroll" },
+      { key: "\u23ce", label: "queue message" },
       { key: "esc", label: "abort" },
       {
         key: "ctrl+c",
         label: ctrlCArmed ? "press again to quit" : "abort",
       },
     ];
+    if (state.queuedMessages.length > 0) {
+      chips.push({ key: "/queue", label: `${state.queuedMessages.length} parked` });
+    }
+    return chips;
   }
   if (state.uiMode === "debug") {
     // Ctrl+B still cycles panels but is unadvertised: it duplicated the

@@ -180,10 +180,16 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "toggle anonymous analytics: `/analytics on|off|status`",
   },
+  // Added after v0.2.2: the mid-run message queue (#156).
+  {
+    name: "queue",
+    description:
+      "messages parked behind the running turn: `/queue` (list) | `/queue clear`",
+  },
 ];
 
 describe("menu registry", () => {
-  it("derives the v0.2.2 slash palette unchanged — same commands, same order", () => {
+  it("derives the slash palette from the registry — same commands, same order", () => {
     expect(SLASH_COMMANDS).toEqual(V0_2_2_SLASH_COMMANDS);
   });
 

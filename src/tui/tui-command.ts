@@ -210,6 +210,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           });
         },
         onMessageSubmitted: (text) => orchestrator.sendMessage(text),
+        onQueueClearRequested: () => orchestrator.clearQueue(),
         onSessionPickerRequested: () => orchestrator.openSessionPicker(),
         onSessionSwitchRequested: (id) => orchestrator.switchSession(id),
         onSessionNewRequested: () => orchestrator.newSession(),

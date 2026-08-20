@@ -128,3 +128,118 @@ describe("handleEditorSubmit", () => {
     expect(onApprovalLevelSetRequested).toHaveBeenCalledTimes(3);
   });
 });
+
+describe("handleEditorSubmit while a turn is running", () => {
+  function runningState(): TuiState {
+    return { ...createInitialTuiState(fakeSession()), status: "running" };
+  }
+
+  it("queues the message instead of dropping it", () => {
+    const dispatched: Array<{ type: string; text?: string }> = [];
+    const onMessageSubmitted = vi.fn();
+    handleEditorSubmit(
+      "and also check the logs",
+      runningState(),
+      ((a: { type: string; text?: string }) => dispatched.push(a)) as never,
+      stubCallbacks({ onMessageSubmitted }),
+    );
+    expect(onMessageSubmitted).toHaveBeenCalledWith("and also check the logs");
+    expect(dispatched).toContainEqual({
+      type: "message_queued",
+      text: "and also check the logs",
+    });
+  });
+
+  it("never dispatches message_submitted mid-run (it would wipe the live turn)", () => {
+    const dispatched: Array<{ type: string }> = [];
+    handleEditorSubmit(
+      "second thought",
+      runningState(),
+      ((a: { type: string }) => dispatched.push(a)) as never,
+      stubCallbacks(),
+    );
+    expect(dispatched.some((a) => a.type === "message_submitted")).toBe(false);
+  });
+
+  it("drops the submit entirely once the app is quitting", () => {
+    const dispatched: Array<{ type: string }> = [];
+    const onMessageSubmitted = vi.fn();
+    handleEditorSubmit(
+      "too late",
+      { ...createInitialTuiState(fakeSession()), status: "quitting" },
+      ((a: { type: string }) => dispatched.push(a)) as never,
+      stubCallbacks({ onMessageSubmitted }),
+    );
+    expect(onMessageSubmitted).not.toHaveBeenCalled();
+    expect(dispatched).toHaveLength(0);
+  });
+
+  it("still starts a turn immediately when idle", () => {
+    const dispatched: Array<{ type: string }> = [];
+    const onMessageSubmitted = vi.fn();
+    handleEditorSubmit(
+      "go",
+      createInitialTuiState(fakeSession()),
+      ((a: { type: string }) => dispatched.push(a)) as never,
+      stubCallbacks({ onMessageSubmitted }),
+    );
+    expect(dispatched.some((a) => a.type === "message_submitted")).toBe(true);
+    expect(dispatched.some((a) => a.type === "message_queued")).toBe(false);
+    expect(onMessageSubmitted).toHaveBeenCalledWith("go");
+  });
+});
+
+describe("/queue", () => {
+  it("lists the parked messages in the transcript", () => {
+    const state: TuiState = {
+      ...createInitialTuiState(fakeSession()),
+      status: "running",
+      queuedMessages: ["first", "second"],
+    };
+    const messages: string[] = [];
+    handleEditorSubmit(
+      "/queue",
+      state,
+      ((a: { type: string; text?: string }) => {
+        if (a.type === "system_message" && a.text) messages.push(a.text);
+      }) as never,
+      stubCallbacks(),
+    );
+    const joined = messages.join("\n");
+    expect(joined).toContain("queue (2 messages)");
+    expect(joined).toContain("1. first");
+    expect(joined).toContain("2. second");
+  });
+
+  it("clear empties the reducer slice and tells the orchestrator", () => {
+    const state: TuiState = {
+      ...createInitialTuiState(fakeSession()),
+      status: "running",
+      queuedMessages: ["first"],
+    };
+    const dispatched: Array<{ type: string; queued?: readonly string[] }> = [];
+    const onQueueClearRequested = vi.fn();
+    handleEditorSubmit(
+      "/queue clear",
+      state,
+      ((a: { type: string; queued?: readonly string[] }) =>
+        dispatched.push(a)) as never,
+      stubCallbacks({ onQueueClearRequested }),
+    );
+    expect(onQueueClearRequested).toHaveBeenCalledTimes(1);
+    expect(dispatched).toContainEqual({ type: "queue_changed", queued: [] });
+  });
+
+  it("says so when there is nothing parked", () => {
+    const messages: string[] = [];
+    handleEditorSubmit(
+      "/queue",
+      createInitialTuiState(fakeSession()),
+      ((a: { type: string; text?: string }) => {
+        if (a.type === "system_message" && a.text) messages.push(a.text);
+      }) as never,
+      stubCallbacks(),
+    );
+    expect(messages.join("\n")).toContain("queue: (empty)");
+  });
+});
