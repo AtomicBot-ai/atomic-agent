@@ -36,6 +36,11 @@ export interface OpenAiProviderOptions {
   apiKey: string;
   defaultChatModel: string;
   headers?: Record<string, string>;
+  /**
+   * Header that carries the API key when the service does not accept
+   * `Authorization: Bearer`. See `openai-auth-headers.ts`.
+   */
+  apiKeyHeader?: string;
   supportsVision?: boolean;
   supportsParallelTools?: boolean;
   supportsPromptCache?: boolean;
@@ -46,6 +51,12 @@ export interface OpenAiProviderOptions {
   streamConsumer?: StreamConsumer;
   apiPathPrefix?: string;
   taggedToolCompatibility?: "qwen";
+  /**
+   * Vendor-specific fields merged into every chat completion body.
+   * See `RESERVED_BODY_KEYS` in `openai-build-body.ts` for the keys
+   * this passthrough cannot override.
+   */
+  extraBody?: Record<string, unknown>;
 }
 
 export class OpenAiProvider implements LlmProvider {
@@ -59,6 +70,7 @@ export class OpenAiProvider implements LlmProvider {
   private readonly defaultChatModel: string;
   private readonly apiPathPrefix: string;
   private readonly taggedToolCompatibility: "qwen" | undefined;
+  private readonly extraBody: Record<string, unknown> | undefined;
 
   constructor(options: OpenAiProviderOptions) {
     this.id = options.id;
@@ -79,10 +91,12 @@ export class OpenAiProvider implements LlmProvider {
     this.defaultChatModel = options.defaultChatModel;
     this.apiPathPrefix = normalizeApiPathPrefix(options.apiPathPrefix ?? "/v1");
     this.taggedToolCompatibility = options.taggedToolCompatibility;
+    this.extraBody = options.extraBody;
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
       apiKey: options.apiKey,
       extraHeaders: options.headers ?? {},
+      ...(options.apiKeyHeader ? { apiKeyHeader: options.apiKeyHeader } : {}),
       requestTimeoutMs: options.requestTimeoutMs ?? 600_000,
       fetchImpl: options.fetchImpl ?? fetch,
       label: options.id,
@@ -90,7 +104,7 @@ export class OpenAiProvider implements LlmProvider {
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
-    const body = buildOpenAiChatBody(request, this.defaultChatModel, false);
+    const body = buildOpenAiChatBody(request, this.defaultChatModel, false, this.extraBody);
     const json = await openAiPostJson(
       this.http,
       `${this.apiPathPrefix}/chat/completions`,
@@ -107,7 +121,7 @@ export class OpenAiProvider implements LlmProvider {
   async *completeStream(
     request: CompletionRequest,
   ): AsyncGenerator<StreamChunk, CompletionResult, void> {
-    const body = buildOpenAiChatBody(request, this.defaultChatModel, true);
+    const body = buildOpenAiChatBody(request, this.defaultChatModel, true, this.extraBody);
     // Opening the stream (connect + status check) happens inside the
     // client's bounded retry, strictly before the first chunk exists.
     // From here on the stream is live and failures are terminal.
@@ -146,14 +160,19 @@ export class OpenAiProvider implements LlmProvider {
     if (accumulatedReasoning.length > 0 && final.reasoningContent.length === 0) {
       final.reasoningContent = accumulatedReasoning;
     }
-    if (this.taggedToolCompatibility === "qwen") {
-      // Buffer-then-adapt: the tagged `<tool_call>` payload may be split
-      // across deltas, so adapt only the fully-buffered message. Text and
-      // reasoning deltas were already yielded above for live UX; the adapt
-      // seam just rewrites the final result (content → tool_calls).
-      return adaptQwenCompletionResult(final, request);
-    }
-    return final;
+    // Tagged Qwen calls are synthesized only after the stream has been
+    // fully buffered. Apply termination safety after that adaptation seam,
+    // so native and tagged calls are judged from the same final dispatchable
+    // tool-call set. A synthetic `finishReason: "tool_calls"` from the
+    // adapter is not evidence that the provider actually terminated cleanly.
+    const adaptedFinal =
+      this.taggedToolCompatibility === "qwen"
+        ? adaptQwenCompletionResult(final, request)
+        : final;
+    return applyToolCallTerminationSafety(
+      adaptedFinal,
+      streamFinal?.terminalObserved === true,
+    );
   }
 
   async health(): Promise<ProviderHealthResult> {
@@ -219,22 +238,11 @@ function completionFromStreamFinal(
     totalTokens: 0,
   };
   const finishReason = streamFinal?.finishReason ?? null;
-  // A native tool call whose stream ended without a trustworthy terminal
-  // signal (no explicit finish_reason, no [DONE]/parser terminal event —
-  // just the connection closing) is not a confirmed completion. Treating
-  // it as an ordinary `stop` would let a mid-stream-cut tool call reach
-  // dispatch indistinguishably from a genuinely finished one. This only
-  // applies when a tool call is actually pending — a plain-text response
-  // that races the same way already has its own `stop`/`no_stop` handling
-  // downstream and is left untouched here.
-  const hasPendingToolCalls = (streamFinal?.toolCalls?.length ?? 0) > 0;
-  const ambiguousToolCallTermination =
-    hasPendingToolCalls && streamFinal?.terminalObserved !== true;
   return {
     content: streamFinal?.content ?? accumulated,
     reasoningContent: streamFinal?.reasoningContent ?? accumulatedReasoning,
-    stop: finishReason !== "length" && !ambiguousToolCallTermination,
-    truncated: finishReason === "length" || ambiguousToolCallTermination,
+    stop: finishReason !== "length",
+    truncated: finishReason === "length",
     timing: {
       promptMs: 0,
       predictedMs: 0,
@@ -247,5 +255,20 @@ function completionFromStreamFinal(
     usage,
     toolCalls: streamFinal?.toolCalls,
     finishReason,
+  };
+}
+
+function applyToolCallTerminationSafety(
+  result: CompletionResult,
+  terminalObserved: boolean,
+): CompletionResult {
+  const hasToolCalls = (result.toolCalls?.length ?? 0) > 0;
+  if (!hasToolCalls || terminalObserved || result.truncated) {
+    return result;
+  }
+  return {
+    ...result,
+    stop: false,
+    truncated: true,
   };
 }
