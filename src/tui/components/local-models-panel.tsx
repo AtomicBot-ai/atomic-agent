@@ -441,10 +441,11 @@ export function LocalModelsPanel({
               data dir: {panel.dataDir} · backend{" "}
               {panel.backend.currentTag ?? "—"}
               {panel.backend.updateAvailable === true ? " (update available)" : ""}
+              {panel.backend.autoUpdate ? "" : " · auto-update off"}
             </Text>
           ) : null}
           <Text color={theme.colors.muted}>
-            j/k move · Enter pull/activate (embedding: *row + Enter starts server) · g gguf · i info · d remove · s chat+embedding · E embeddings on/off · G gpu · B · r · L
+            j/k move · Enter pull/activate (embedding: *row + Enter starts server) · g gguf · i info · d remove · s chat+embedding · E embeddings on/off · G gpu · U auto-update · B · r · L
           </Text>
         </Box>
       ) : (

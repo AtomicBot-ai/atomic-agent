@@ -170,6 +170,7 @@ export interface TuiAppCallbacks {
   onLocalModelsRefreshRequested?(): void;
   /** Cycle the managed daemon's GPU preference (auto → devices → cpu). */
   onLocalModelsDeviceCycleRequested?(): void | Promise<void>;
+  onLocalModelsAutoUpdateToggleRequested?(): void | Promise<void>;
   onLocalModelsRemoveConfirmed?(modelId: import("../local-llm/index.js").LocalModelId): void;
   onLocalModelsStatusRequested?(): void | Promise<void>;
   /** Ask the orchestrator to (re)start the llama-server daemon. */

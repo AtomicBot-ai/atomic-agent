@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  detectModelProfile,
+  PLAIN_INSTRUCT_PROFILE,
+} from "../llm/model-profile.js";
+import { MUSE_PROPS } from "../llm/model-profile.fixtures.js";
+import {
   DEFAULT_EMBEDDING_MODEL_ID,
   DEFAULT_LLAMACPP_MODEL_ID,
   EMBEDDING_MODELS_CATALOG,
@@ -11,10 +16,10 @@ import {
 } from "./models-catalog.js";
 
 describe("models-catalog", () => {
-  it("has exactly 10 Qwen+Gemma models with unique ids", () => {
-    expect(LOCAL_MODELS_CATALOG.length).toBe(10);
+  it("has exactly 12 Qwen+Gemma+Nemotron+Muse models with unique ids", () => {
+    expect(LOCAL_MODELS_CATALOG.length).toBe(12);
     const ids = new Set(LOCAL_MODELS_CATALOG.map((m) => m.id));
-    expect(ids.size).toBe(10);
+    expect(ids.size).toBe(12);
   });
 
   it("defaults to qwen-3.5-4b", () => {
@@ -25,9 +30,16 @@ describe("models-catalog", () => {
   // no `<think>` / `enable_thinking` markers. Because `--chat-template-file`
   // is what `/props.chat_template` reports back, it demoted the profile to
   // `plain-instruct` and deadlocked the grammar. See chat-templates.test.ts.
-  it("does not override the Qwen 3.5 chat template", () => {
-    expect(getLocalModelDef("qwen-3.5-4b").chatTemplateAsset).toBeUndefined();
-    expect(getLocalModelDef("qwen-3.5-35b").chatTemplateAsset).toBeUndefined();
+  //
+  // Catalog-wide rather than per-id: any entry that grows an override is
+  // exposed to the same failure mode, so adding one has to be a deliberate
+  // act that edits this test (and states why the override keeps every
+  // reasoning marker `detectModelProfile` keys on) — not a silent field.
+  it("ships no chat template override on any catalog entry", () => {
+    for (const def of LOCAL_MODELS_CATALOG) {
+      expect(def.chatTemplateAsset, `${def.id} must not override its chat template`)
+        .toBeUndefined();
+    }
   });
 
   it("throws on unknown id", () => {
@@ -36,14 +48,41 @@ describe("models-catalog", () => {
     ).toThrow(/unknown local model id/);
   });
 
-  it("marks every catalog entry as vision-capable with mmproj URL", () => {
-    expect(LOCAL_MODELS_CATALOG.length).toBeGreaterThan(0);
-    for (const def of LOCAL_MODELS_CATALOG) {
-      expect(def.supportsVision).toBe(true);
+  it("ships mmproj URL for every vision-capable catalog entry", () => {
+    const visionModels = LOCAL_MODELS_CATALOG.filter((m) => m.supportsVision);
+    expect(visionModels.length).toBeGreaterThan(0);
+    for (const def of visionModels) {
       expect(def.mmprojUrl).toMatch(/^https:\/\//);
       expect(def.mmprojFilename).toMatch(/\.gguf$/);
       expect(typeof def.mmprojFileSizeGb).toBe("number");
     }
+  });
+
+  it("omits mmproj fields on text-only catalog entries", () => {
+    const textOnly = LOCAL_MODELS_CATALOG.filter((m) => !m.supportsVision);
+    expect(textOnly.map((m) => m.id)).toEqual(["nemotron-3.5-30b-a3b"]);
+    for (const def of textOnly) {
+      expect(def.mmprojUrl).toBeUndefined();
+      expect(def.mmprojFilename).toBeUndefined();
+      expect(def.mmprojFileSizeGb).toBeUndefined();
+    }
+  });
+
+  // Interim contract for Muse Glimmer. The catalog advertises multimodal
+  // (real: mmproj ships below) but NOT a native tool format, because there
+  // is none wired: the daemon passes `model.id` as the llama-server alias,
+  // and `muse-glimmer-30b` matches no alias hint in `selectBaseProfile`, so
+  // `/props` resolves to `plain-instruct` and tool calls run on the generic
+  // GBNF array grammar. This test is the tripwire: the day someone wires a
+  // native ATEM/Harmony profile, it fails and forces the description to be
+  // updated in the same commit instead of drifting into an over-promise.
+  it("resolves Muse Glimmer to plain-instruct, and says so in its description", () => {
+    expect(detectModelProfile(MUSE_PROPS)).toEqual(PLAIN_INSTRUCT_PROFILE);
+
+    const muse = getLocalModelDef("muse-glimmer-30b");
+    expect(muse.supportsVision).toBe(true);
+    expect(muse.description).not.toMatch(/atem|harmony/i);
+    expect(muse.description).toMatch(/generic tool calling/i);
   });
 
   it("ensures mmproj URL points at the same HF repo as the GGUF weights", () => {

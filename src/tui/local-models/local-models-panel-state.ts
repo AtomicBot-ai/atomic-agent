@@ -90,6 +90,8 @@ export interface LocalModelsBackendInfo {
   currentTag: string | null;
   latestTag: string | null;
   updateAvailable: boolean | null;
+  /** `localModels.managed.autoUpdate`; surfaced so `U` has visible state. */
+  autoUpdate: boolean;
 }
 
 export interface LocalModelsDaemonInfo {
@@ -207,7 +209,12 @@ export function createInitialLocalModelsPanelState(): LocalModelsPanelState {
     mode: "list",
     rows: [],
     cursor: 0,
-    backend: { currentTag: null, latestTag: null, updateAvailable: null },
+    backend: {
+      currentTag: null,
+      latestTag: null,
+      updateAvailable: null,
+      autoUpdate: true,
+    },
     daemon: {
       running: false,
       healthy: false,

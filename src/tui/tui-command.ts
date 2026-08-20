@@ -405,6 +405,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onLocalModelsRefreshRequested: () => void orchestrator.localModels.refresh(),
         onLocalModelsDeviceCycleRequested: () =>
           void orchestrator.localModels.cycleManagedDevice(),
+        onLocalModelsAutoUpdateToggleRequested: () =>
+          void orchestrator.localModels.toggleBackendAutoUpdate(),
         onLocalModelsRemoveConfirmed: (id) =>
           void orchestrator.localModels.removeLocalModel(id),
         onLocalModelsStatusRequested: () => orchestrator.localModels.emitStatusLine(),

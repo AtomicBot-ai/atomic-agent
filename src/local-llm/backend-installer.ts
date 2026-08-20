@@ -1,26 +1,18 @@
-import { execSync } from "node:child_process";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, join, relative } from "node:path";
-
-import JSZip from "jszip";
+import { existsSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 import { resolveBackendDir, resolveServerBinPath } from "./backend-paths.js";
+import {
+  extractBackendArchive,
+  rmDirQuiet,
+  swapInStagedBackend,
+} from "./backend-staging.js";
 import { downloadFile } from "./download-file.js";
-import { readBackendVersion, writeBackendVersion } from "./backend-version.js";
+import { readBackendVersion, writeBackendVersionAt } from "./backend-version.js";
 import { resolvePlatformAsset, UnsupportedPlatformError } from "./platform-assets.js";
 import { resolveDownloadAsset } from "./windows-backend-variant.js";
 
-const GITHUB_REPO = "AtomicBot-ai/atomic-llama-cpp-turboquant";
+const GITHUB_REPO = "AtomicBot-ai/atomic-llama-cpp-turboquant-nightly";
 
 /**
  * Anonymous GitHub API allows ~60 req/h per IP. The Models tab polls
@@ -41,16 +33,36 @@ const RELEASE_CACHE_TTL_MS = 10 * 60_000;
  */
 const RELEASES_PER_PAGE = 30;
 
+/**
+ * Timeout for the small releases-list JSON request. With auto-update on
+ * this call sits on the critical path of every managed start, and a
+ * black-holed connection (captive portal, DNS sinkhole) would otherwise
+ * hang until the OS TCP timeout — ~130s on Linux — before the daemon
+ * even begins to boot. Aborting at 5s turns that into a normal check
+ * failure and the caller starts the binary already on disk. Only the
+ * JSON request is bounded; the multi-hundred-MB asset download keeps
+ * the caller's own `opts.signal`.
+ */
+const RELEASES_FETCH_TIMEOUT_MS = 5_000;
+
 export type ReleaseAsset = { name: string; browser_download_url: string };
 
 export interface LatestReleaseInfo {
   tag: string;
   assets: ReleaseAsset[];
+  /**
+   * `published_at` (or `created_at` when a release was never published)
+   * as ISO-8601, or null when GitHub omitted both. Used to order this
+   * release against the installed one — the repo is a nightly, and its
+   * tags are not semver-sortable.
+   */
+  releasedAt: string | null;
 }
 
 interface ReleaseCacheEntry {
   fetchedAt: number;
-  release: LatestReleaseInfo;
+  /** `null` = scanned successfully, no release carries our asset. */
+  release: LatestReleaseInfo | null;
 }
 
 /**
@@ -66,9 +78,13 @@ export function resetLatestReleaseCache(): void {
   releaseCache.clear();
 }
 
+/**
+ * Resolve the newest release that ships this platform's asset, or
+ * `null` when none of the scanned releases carries it.
+ */
 export async function fetchLatestRelease(opts?: {
   force?: boolean;
-}): Promise<LatestReleaseInfo> {
+}): Promise<LatestReleaseInfo | null> {
   const { assetName } = resolveDownloadAsset();
   const cached = releaseCache.get(assetName);
   if (
@@ -86,7 +102,10 @@ export async function fetchLatestRelease(opts?: {
   const token = (process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "").trim();
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const res = await fetch(url, { headers });
+  const res = await fetch(url, {
+    headers,
+    signal: AbortSignal.timeout(RELEASES_FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) {
     if (res.status === 403 || res.status === 429) {
       throw new GithubRateLimitedError(res.status);
@@ -96,24 +115,50 @@ export async function fetchLatestRelease(opts?: {
   const data = (await res.json()) as Array<{
     tag_name: string;
     draft?: boolean;
+    published_at?: string | null;
+    created_at?: string | null;
     assets: Array<{ name: string; browser_download_url: string }>;
   }>;
-  // GitHub lists releases newest-first; pick the first (non-draft) whose
-  // assets include the asset for the current platform.
-  const match = (Array.isArray(data) ? data : []).find(
+  // GitHub lists releases newest-first *by creation*, which is not the
+  // same as newest-published: re-publishing or backfilling an old tag
+  // moves it. Collect every non-draft release carrying our platform
+  // asset and pick the one with the newest release timestamp, falling
+  // back to GitHub's own order when timestamps are missing.
+  const candidates = (Array.isArray(data) ? data : []).filter(
     (r) => !r.draft && (r.assets ?? []).some((a) => a.name === assetName),
   );
-  if (!match) {
-    throw new Error(
-      `No release found containing asset ${assetName} (scanned ${RELEASES_PER_PAGE} releases)`,
-    );
+  if (candidates.length === 0) {
+    // A rarely-built platform's newest asset can fall off page 1 of the
+    // list. That is "nothing to update to", not a hard error: throwing
+    // here would fail the check on every single start and, with the
+    // pre-staging installer, was the only thing standing between the
+    // user and a working binary already on disk.
+    releaseCache.set(assetName, { fetchedAt: Date.now(), release: null });
+    return null;
   }
+  const match = candidates.reduce((best, cur) =>
+    releaseTime(cur) > releaseTime(best) ? cur : best,
+  );
   const release: LatestReleaseInfo = {
     tag: match.tag_name,
     assets: match.assets ?? [],
+    releasedAt: match.published_at ?? match.created_at ?? null,
   };
   releaseCache.set(assetName, { fetchedAt: Date.now(), release });
   return release;
+}
+
+/**
+ * Sort key for release recency. `-Infinity` for a release with no
+ * usable timestamp so it never displaces a dated one; ties keep the
+ * earlier (GitHub-ordered) candidate because `reduce` only swaps on a
+ * strict improvement.
+ */
+function releaseTime(r: { published_at?: string | null; created_at?: string | null }): number {
+  const raw = r.published_at ?? r.created_at;
+  if (!raw) return -Infinity;
+  const t = Date.parse(raw);
+  return Number.isNaN(t) ? -Infinity : t;
 }
 
 export class GithubRateLimitedError extends Error {
@@ -127,110 +172,62 @@ export class GithubRateLimitedError extends Error {
 
 export async function checkForBackendUpdate(
   dataDir: string,
-): Promise<{ updateAvailable: boolean; latestTag: string; currentTag: string | null }> {
+): Promise<{
+  updateAvailable: boolean;
+  latestTag: string | null;
+  currentTag: string | null;
+}> {
   const current = readBackendVersion(dataDir);
   const release = await fetchLatestRelease();
   // A variant mismatch counts as an update even at the same tag: a
   // Windows box that installed the Vulkan build before its NVIDIA driver
   // was present would otherwise keep running Vulkan (and offloading to
-  // whatever device Vulkan enumerates) forever.
+  // whatever device Vulkan enumerates) forever. This is a property of
+  // the local machine, not of release ordering, so it is checked before
+  // (and independently of) the recency comparison.
   const variantStale =
     current?.asset !== undefined && current.asset !== resolveDownloadAsset().assetName;
+  if (release === null) {
+    // Nothing resolvable to update *to* — keep whatever is installed.
+    return {
+      updateAvailable: false,
+      latestTag: null,
+      currentTag: current?.tag ?? null,
+    };
+  }
   return {
-    updateAvailable: current?.tag !== release.tag || variantStale,
+    updateAvailable: variantStale || isNewerRelease(current, release),
     latestTag: release.tag,
     currentTag: current?.tag ?? null,
   };
 }
 
-function normalizeZipPath(entryName: string): string {
-  return entryName.replace(/\\/g, "/");
-}
-
 /**
- * Recursively walk `root`, return the absolute path to the first file
- * whose basename equals `name`. Used after zip extraction to find the
- * `llama-server` binary regardless of the archive's internal nesting
- * (some releases wrap it under `build/bin/`, others under a single
- * top-level folder, others drop it at the root).
+ * Is `release` genuinely newer than what is installed?
+ *
+ * A bare `current.tag !== release.tag` also fires when the resolved
+ * release is *older* — which happens for real on a nightly repo whose
+ * tags are not semver-sortable: re-publishing or backfilling a tag
+ * moves it, and every client would silently downgrade on next start.
+ * Two contending releases would additionally re-download hundreds of MB
+ * and bounce the daemon on *every* start.
+ *
+ * Release timestamps are the only defensible ordering available here,
+ * so when both sides carry one we require a strict increase. When
+ * either is missing — no install yet, or a version file written before
+ * `releasedAt` existed — we fall back to tag inequality so those users
+ * still converge onto the current build once.
  */
-function findFileByName(root: string, name: string): string | null {
-  const stack = [root];
-  while (stack.length) {
-    const cur = stack.pop()!;
-    let entries: string[];
-    try {
-      entries = readdirSync(cur);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const full = join(cur, entry);
-      let st;
-      try {
-        st = statSync(full);
-      } catch {
-        continue;
-      }
-      if (st.isDirectory()) {
-        stack.push(full);
-      } else if (entry === name) {
-        return full;
-      }
-    }
-  }
-  return null;
-}
-
-/**
- * Move every file in `from` (recursively) into `to`, flattening into
- * siblings at `to`'s root. Used to promote `backend/build/bin/*` or
- * `backend/release-root/*` up to `backend/` after extraction so the
- * `llama-server` binary lives at the path `resolveServerBinPath`
- * expects. Existing files at the destination are overwritten.
- */
-function moveContentsFlat(from: string, to: string): void {
-  const walk = (dir: string): void => {
-    const entries = readdirSync(dir);
-    for (const entry of entries) {
-      const src = join(dir, entry);
-      const st = statSync(src);
-      if (st.isDirectory()) {
-        walk(src);
-        continue;
-      }
-      const dst = join(to, entry);
-      mkdirSync(dirname(dst), { recursive: true });
-      try {
-        renameSync(src, dst);
-      } catch {
-        // Cross-device or other rename failure — fall back to copy+unlink.
-        writeFileSync(dst, readFileSync(src));
-        try {
-          rmSync(src, { force: true });
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-  };
-  walk(from);
-}
-
-/**
- * Return the first path segment under `backendRoot` leading to
- * `fileInside` — e.g. for `backendRoot=/.../backend` and
- * `fileInside=/.../backend/build/bin/llama-server` this returns
- * `/.../backend/build`. Used after the flatten step to delete the
- * now-empty wrapper tree.
- */
-function topLevelWrapper(backendRoot: string, fileInside: string): string | null {
-  const rel = relative(backendRoot, fileInside);
-  // `relative` yields platform-native separators: `/` on POSIX, `\` on
-  // Windows. Match either so the wrapper dir is cleaned up on both.
-  const firstSep = rel.search(/[/\\]/);
-  if (firstSep < 0) return null;
-  return join(backendRoot, rel.slice(0, firstSep));
+function isNewerRelease(
+  current: { tag: string; releasedAt?: string } | null,
+  release: LatestReleaseInfo,
+): boolean {
+  if (current === null) return true;
+  if (current.tag === release.tag) return false;
+  const currentAt = current.releasedAt ? Date.parse(current.releasedAt) : NaN;
+  const releaseAt = release.releasedAt ? Date.parse(release.releasedAt) : NaN;
+  if (Number.isNaN(currentAt) || Number.isNaN(releaseAt)) return true;
+  return releaseAt > currentAt;
 }
 
 export function isBackendDownloaded(dataDir: string): boolean {
@@ -253,6 +250,11 @@ export async function downloadBackend(
   // Always hit GitHub for an actual install so we don't grab a stale
   // tag from the snapshot cache.
   const release = await fetchLatestRelease({ force: true });
+  if (release === null) {
+    throw new Error(
+      `No release found containing asset ${assetName} (scanned ${RELEASES_PER_PAGE} releases)`,
+    );
+  }
   const asset = release.assets.find((a) => a.name === assetName);
   if (!asset) {
     const known = release.assets.map((a) => a.name).join(", ");
@@ -262,94 +264,49 @@ export async function downloadBackend(
   }
 
   const backendDir = resolveBackendDir(dataDir);
-  // Wipe any leftovers from a previous failed download so the flatten
-  // step can't pick up stale `bin/` or `build/` wrappers. Done before
-  // mkdir so a missing dir is fine.
+  // Download and extract into a sibling staging dir, never into the
+  // live one. The old code wiped `backend/` first and only then pulled
+  // several hundred MB, so a network drop, a Ctrl-C, a corrupt zip or a
+  // full disk left the user with no backend at all — and with
+  // auto-update this path now runs on every managed start, not just an
+  // explicit `models update`. Siblings (not tmpdir) so the final swap
+  // stays on one filesystem and can be a rename.
+  const stagingDir = `${backendDir}.next`;
+  const retiredDir = `${backendDir}.old`;
+  // A previous crash can leave either behind; both are scratch, and a
+  // stale `.next` would otherwise poison the flatten step with foreign
+  // `bin/` or `build/` wrappers.
+  rmDirQuiet(stagingDir);
+  rmDirQuiet(retiredDir);
+  mkdirSync(stagingDir, { recursive: true });
+
   try {
-    rmSync(backendDir, { recursive: true, force: true });
-  } catch {
-    /* ignore */
-  }
-  mkdirSync(backendDir, { recursive: true });
-  const archivePath = join(backendDir, assetName);
+    const archivePath = join(stagingDir, assetName);
+    await downloadFile(asset.browser_download_url, archivePath, {
+      onProgress: opts?.onProgress,
+      userAgent: "atomic-agent/local-llm-backend-download",
+      signal: opts?.signal,
+    });
 
-  await downloadFile(asset.browser_download_url, archivePath, {
-    onProgress: opts?.onProgress,
-    userAgent: "atomic-agent/local-llm-backend-download",
-    signal: opts?.signal,
-  });
+    await extractBackendArchive(archivePath, stagingDir, binaryName);
 
-  const zip = await JSZip.loadAsync(readFileSync(archivePath));
-  // Extract preserving the archive's internal layout. Flattening happens
-  // in a second pass so we can support any of:
-  //   * `llama-server` (flat)
-  //   * `release-root/llama-server` (single top folder)
-  //   * `build/bin/llama-server` (nested)
-  for (const entry of Object.values(zip.files)) {
-    if (entry.dir) continue;
-    const rel = normalizeZipPath(entry.name);
-    if (!rel || rel.endsWith("/")) continue;
-    const out = join(backendDir, rel);
-    mkdirSync(dirname(out), { recursive: true });
-    const buf = await entry.async("nodebuffer");
-    writeFileSync(out, buf);
-    try {
-      chmodSync(out, 0o755);
-    } catch {
-      /* Windows may ignore chmod */
-    }
-  }
+    // The version record lives inside `backend/`, so it is staged with
+    // the rest of the tree and rides in on the swap. It therefore never
+    // describes anything other than what is actually live, and a
+    // failure before this point leaves the old record untouched.
+    writeBackendVersionAt(stagingDir, {
+      tag: release.tag,
+      downloadedAt: new Date().toISOString(),
+      asset: assetName,
+      ...(release.releasedAt ? { releasedAt: release.releasedAt } : {}),
+    });
 
-  const foundBin = findFileByName(backendDir, binaryName);
-  if (!foundBin) {
-    throw new Error(
-      `llama-server binary not found after extract (searched for ${binaryName} under ${backendDir})`,
-    );
+    swapInStagedBackend(backendDir, stagingDir, retiredDir);
+  } catch (err) {
+    // Leave the existing install exactly as it was.
+    rmDirQuiet(stagingDir);
+    throw err;
   }
-  const expectedBin = resolveServerBinPath(dataDir, binaryName);
-  if (foundBin !== expectedBin) {
-    // Promote the binary's parent directory contents into `backendDir`
-    // so `llama-server` (and any sibling shared libs) sit at the path
-    // the daemon lifecycle expects, then remove the now-orphaned
-    // wrapper directories (e.g. `build/`, `release-root/`).
-    moveContentsFlat(dirname(foundBin), backendDir);
-    const topWrapper = topLevelWrapper(backendDir, foundBin);
-    if (topWrapper !== null) {
-      try {
-        rmSync(topWrapper, { recursive: true, force: true });
-      } catch {
-        /* ignore — stray files, not fatal */
-      }
-    }
-  }
-
-  if (process.platform === "darwin") {
-    try {
-      execSync(`xattr -cr "${backendDir}"`, { timeout: 10_000 });
-    } catch {
-      /* xattr may fail */
-    }
-  }
-
-  rmSync(archivePath, { force: true });
-
-  if (!existsSync(expectedBin)) {
-    throw new Error(
-      `llama-server binary not found after extract + flatten (expected ${binaryName} at ${expectedBin}; ` +
-        `original location was ${relative(backendDir, foundBin)})`,
-    );
-  }
-  try {
-    chmodSync(expectedBin, 0o755);
-  } catch {
-    /* Windows */
-  }
-
-  writeBackendVersion(dataDir, {
-    tag: release.tag,
-    downloadedAt: new Date().toISOString(),
-    asset: assetName,
-  });
 
   return { ok: true, tag: release.tag };
 }

@@ -15,6 +15,7 @@ vi.mock("../../local-llm/index.js", async () => {
     getEmbeddingDaemonStatus: vi.fn(),
     startEmbeddingDaemon: vi.fn(),
     stopEmbeddingDaemon: vi.fn(),
+    maybeAutoUpdateBackend: vi.fn(),
   };
 });
 
@@ -56,6 +57,10 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     vi.mocked(localLlm.getEmbeddingDaemonStatus).mockReset();
     vi.mocked(localLlm.startEmbeddingDaemon).mockReset();
     vi.mocked(localLlm.stopEmbeddingDaemon).mockReset();
+    vi.mocked(localLlm.maybeAutoUpdateBackend).mockReset();
+    vi.mocked(localLlm.maybeAutoUpdateBackend).mockResolvedValue({
+      action: "skipped",
+    });
   });
 
   afterEach(() => {
