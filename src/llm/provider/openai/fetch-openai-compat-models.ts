@@ -4,7 +4,10 @@
  * synchronously through the module cache, same shape as the OpenRouter picker.
  */
 
-import { assertAsciiApiKey } from "./ascii-header-guard.js";
+import {
+  buildOpenAiAuthHeaders,
+  type OpenAiCompatAuth,
+} from "./openai-auth-headers.js";
 import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
@@ -46,21 +49,28 @@ export function getCachedOpenAiCompatModelsForBaseUrl(
   return best?.ids;
 }
 
-/** Throws on unreachable/unauthorized servers so the caller can fall back to typing. */
+/**
+ * Throws on unreachable/unauthorized servers so the caller can fall back to typing.
+ *
+ * `auth` describes how this endpoint wants credentials presented; both a
+ * `ProviderPreset` and a saved `UserLlmProviderEntry` satisfy it
+ * structurally, so callers pass whichever they hold. It is deliberately
+ * **not** part of the cache key: the header contract is a property of the
+ * endpoint, so the same base URL always implies the same headers, and
+ * keying on it would only fragment the cache that the read-only lookups
+ * (which know a URL and a key, never a header set) share.
+ */
 export async function fetchOpenAiCompatModels(
   baseUrl: string,
   apiKey?: string,
+  auth?: OpenAiCompatAuth,
 ): Promise<readonly string[]> {
   const cached = getCachedOpenAiCompatModels(baseUrl, apiKey);
   if (cached) return cached;
 
   const base = normalizeOpenAiBaseUrl(baseUrl);
   const res = await fetch(`${base}/v1/models`, {
-    // A non-ASCII key would throw an opaque ByteString error from inside
-    // `fetch`; assert first so the failure names the key and the fix.
-    headers: apiKey
-      ? { Authorization: `Bearer ${assertAsciiApiKey(apiKey)}` }
-      : {},
+    headers: buildOpenAiAuthHeaders(apiKey, auth),
     signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) throw new Error(`http ${res.status}`);

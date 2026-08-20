@@ -63,7 +63,12 @@ export function saveProviderWizardToConfig(
   // and requests go out without Authorization.
   const keyOptional = wizardKeyIsOptional(wizard);
   if (wizard.apiKeyBuffer.trim().length > 0) {
-    if (!isAsciiOnly(wizard.apiKeyBuffer)) {
+    // Validate the value that is actually persisted: the dotenv writer
+    // trims, and `trim()` strips U+00A0/U+FEFF paste artifacts that are
+    // non-ASCII themselves. Checking the raw buffer here would refuse a
+    // key whose stored form is pure ASCII — after the key screen (which
+    // trims) already accepted it.
+    if (!isAsciiOnly(wizard.apiKeyBuffer.trim())) {
       // A non-ASCII key cannot go into an Authorization header and would
       // otherwise crash the first request with an opaque ByteString error.
       throw new Error(

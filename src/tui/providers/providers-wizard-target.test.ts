@@ -10,6 +10,7 @@ import {
   apiKeyPhaseError,
   emptyKeyMeaningForWizard,
   envHintForWizard,
+  verifyTargetForWizard,
   wizardKeyIsOptional,
 } from "./providers-wizard-target.js";
 import { createProvidersWizardState } from "./providers-wizard-state.js";
@@ -80,6 +81,39 @@ describe("apiKeyPhaseError", () => {
     expect(apiKeyPhaseError(wizard)).toContain("API key required");
   });
 
+  it("treats a hand-added loopback endpoint as keyless", () => {
+    // A raw llama-server on the operator's machine has no preset and no
+    // key. Any loopback host, at any port, opts out of the key screen.
+    for (const baseUrlLine of [
+      "http://127.0.0.1:9931",
+      "http://localhost:8080",
+      "http://0.0.0.0:1234",
+      "http://[::1]:9931",
+      "localhost:9931", // no scheme, as typed
+      "http://my-box.localhost:9931",
+    ]) {
+      const wizard = { ...wizardFor("openai-compatible"), baseUrlLine };
+      expect(wizardKeyIsOptional(wizard)).toBe(true);
+      expect(apiKeyPhaseError(wizard)).toBeNull();
+    }
+  });
+
+  it("still requires a key for a non-loopback custom URL", () => {
+    const wizard = {
+      ...wizardFor("openai-compatible"),
+      baseUrlLine: "https://api.example.com",
+    };
+    expect(wizardKeyIsOptional(wizard)).toBe(false);
+    expect(apiKeyPhaseError(wizard)).toContain("API key required");
+  });
+
+  it("refuses a non-ASCII key with a clear message", () => {
+    // A stray Cyrillic character cannot go into an Authorization header;
+    // the message names the problem instead of the raw ByteString crash.
+    const wizard = { ...wizardFor("openrouter"), apiKeyBuffer: "sk-т" };
+    expect(apiKeyPhaseError(wizard)).toContain("non-ASCII");
+  });
+
   it("accepts a typed key", () => {
     const wizard = { ...wizardFor("openrouter"), apiKeyBuffer: "sk-or-typed" };
     expect(apiKeyPhaseError(wizard)).toBeNull();
@@ -115,39 +149,6 @@ describe("apiKeyPhaseError", () => {
       expect(wizardKeyIsOptional(wizard)).toBe(true);
       expect(apiKeyPhaseError(wizard)).toBeNull();
     }
-  });
-
-  it("treats a hand-added loopback endpoint as keyless", () => {
-    // A raw llama-server on the operator's machine has no preset and no
-    // key. Any loopback host, at any port, opts out of the key screen.
-    for (const baseUrlLine of [
-      "http://127.0.0.1:9931",
-      "http://localhost:8080",
-      "http://0.0.0.0:1234",
-      "http://[::1]:9931",
-      "localhost:9931", // no scheme, as typed
-      "http://my-box.localhost:9931",
-    ]) {
-      const wizard = { ...wizardFor("openai-compatible"), baseUrlLine };
-      expect(wizardKeyIsOptional(wizard)).toBe(true);
-      expect(apiKeyPhaseError(wizard)).toBeNull();
-    }
-  });
-
-  it("still requires a key for a non-loopback custom URL", () => {
-    const wizard = {
-      ...wizardFor("openai-compatible"),
-      baseUrlLine: "https://api.example.com",
-    };
-    expect(wizardKeyIsOptional(wizard)).toBe(false);
-    expect(apiKeyPhaseError(wizard)).toContain("API key required");
-  });
-
-  it("refuses a non-ASCII key with a clear message", () => {
-    // A stray Cyrillic character cannot go into an Authorization header;
-    // the message names the problem instead of the raw ByteString crash.
-    const wizard = { ...wizardFor("openrouter"), apiKeyBuffer: "sk-т" };
-    expect(apiKeyPhaseError(wizard)).toContain("non-ASCII");
   });
 });
 
@@ -270,5 +271,56 @@ describe("envHintForWizard", () => {
     expect(envHintForWizard(wizardFor("openai-compatible"))).toBe(
       "OPENAI_COMPAT_API_KEY",
     );
+  });
+});
+
+describe("verifyTargetForWizard", () => {
+  beforeEach(() => {
+    for (const key of ENV_KEYS) delete process.env[key];
+  });
+  afterEach(() => {
+    for (const key of ENV_KEYS) delete process.env[key];
+  });
+
+  function withKey(
+    kind: ProvidersWizardKind,
+    presetId?: string,
+  ): ProvidersWizardState {
+    return { ...wizardFor(kind, presetId), apiKeyBuffer: "sk-test" };
+  }
+
+  it("bills the check as this app on OpenRouter", () => {
+    const target = verifyTargetForWizard(withKey("openrouter"));
+    expect(target).not.toBeNull();
+    expect(target?.baseUrl).toBe("https://openrouter.ai/api");
+    expect(target?.extraHeaders?.["X-Title"]).toBe("Atomic Agent");
+    // Never the free router: it answers on a key with no credit.
+    expect(target?.probeModels[0]).not.toBe("openrouter/auto");
+  });
+
+  it("knows Gemini's compatibility prefix", () => {
+    const target = verifyTargetForWizard(withKey("gemini"));
+    expect(target?.apiPathPrefix).toBe("/v1beta/openai");
+  });
+
+  it("has nothing to check for keyless and local providers", () => {
+    expect(verifyTargetForWizard(withKey("openai-compatible", "lmstudio"))).toBeNull();
+    expect(
+      verifyTargetForWizard({
+        ...withKey("openai-compatible"),
+        baseUrlLine: "http://localhost:1234",
+      }),
+    ).toBeNull();
+    expect(verifyTargetForWizard(wizardFor("openrouter"))).toBeNull();
+  });
+
+  it("probes the endpoint and model the operator is about to save", () => {
+    const target = verifyTargetForWizard({
+      ...withKey("openai-compatible"),
+      baseUrlLine: "https://vllm.example",
+      chatModelLine: "my-model",
+    });
+    expect(target?.baseUrl).toBe("https://vllm.example");
+    expect(target?.probeModels).toEqual(["my-model"]);
   });
 });

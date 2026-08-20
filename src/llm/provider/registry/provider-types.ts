@@ -26,6 +26,13 @@ export type LlmProviderConfigEntry = {
   defaultChatModel?: string;
   defaultEmbeddingModel?: string;
   headers?: Record<string, string>;
+  /**
+   * Header that carries this entry's API key when the service does not
+   * accept `Authorization: Bearer` (Anthropic wants `x-api-key`). Rides
+   * on the entry, not on the preset table, so the saved provider keeps
+   * working after a restart. See `openai/openai-auth-headers.ts`.
+   */
+  apiKeyHeader?: string;
   supportsTools?: boolean;
   supportsVision?: boolean;
   requestTimeoutMs?: number;

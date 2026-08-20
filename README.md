@@ -230,6 +230,8 @@ Handy slash commands: `/help` lists every command, `/tools` lists the built-in t
 
 Cloud provider setup pulls each provider's full live model catalog, hundreds of models, instead of a short hardcoded list; OpenAI-compatible servers are asked for their own `/v1/models`. The picker filters as you type, and `/model` switches models mid-session.
 
+A cloud key is checked before it is saved. The key screen refuses an empty key, and finishing the wizard asks the provider for a one-token completion from its cheapest model: a key that is rejected, or attached to an account with no balance, never reaches `.env` and never becomes the active provider. A provider that cannot be reached at all still saves, with a line saying the key went unverified — an offline or proxied machine stays configurable. Local servers have no account to check and are left alone.
+
 </details>
 
 <details>
@@ -255,6 +257,17 @@ atomic-agent tui --cwd /path/to/work
 Managed mode downloads the backend, pulls GGUF models, selects the active model, and starts detached chat / embedding daemons when configured.
 
 The managed chat daemon stops when the last session exits, freeing the RAM and VRAM the model was holding; set `localModels.managed.stopOnExit: false` in `config.json` to keep the model warm between sessions. Daemons started standalone with `models start` are never touched.
+
+Cloud models are searchable from the same command — by id, vendor, or capability, across every configured cloud provider:
+
+```bash
+atomic-agent models search claude vision
+atomic-agent models search free tools --json
+atomic-agent models search "1m cache" --provider openrouter --limit 10
+atomic-agent models search kimi --refresh   # pull live /models lists first
+```
+
+Every term has to match (`claude vision` is not a substring of any id), a size term reads as a lower bound whatever the row displays (`1m` also finds the 1,048,576-token windows that render as `1.0M`, `128k` finds 131,072), results are ranked best-first, and the same query works in the TUI Cloud pane — press `f`.
 
 </details>
 

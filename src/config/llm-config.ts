@@ -19,9 +19,30 @@ export type UserLlmProviderEntry = {
   defaultChatModel?: string;
   defaultEmbeddingModel?: string;
   headers?: Record<string, string>;
+  /**
+   * Header that carries this entry's API key. Set for known-service
+   * presets whose endpoint does not accept `Authorization: Bearer`
+   * (Anthropic wants `x-api-key`). Absent keeps the OpenAI convention.
+   * Stored on the entry rather than looked up from the preset table at
+   * request time, so a saved provider keeps authenticating after a
+   * restart and a hand-written entry can express the same thing.
+   */
+  apiKeyHeader?: string;
   supportsTools?: boolean;
   supportsVision?: boolean;
   requestTimeoutMs?: number;
+  /**
+   * Prompt-caching policy for this provider. Declared in the config
+   * schema and on `LlmProviderConfigEntry`; no provider reads it yet,
+   * so today it only has to survive the round-trip through config.
+   */
+  promptCache?: "auto" | "off" | "explicit-markers";
+  /**
+   * Vendor routing preferences (e.g. OpenRouter's `provider` block).
+   * Same status as `promptCache`: carried through config, not yet read
+   * by any provider.
+   */
+  providerPreferences?: Record<string, unknown>;
   /**
    * Vendor-specific fields merged into the OpenAI-compatible chat body
    * for `openai-compatible` / `qwen-openai-compatible` providers. Lets a
@@ -36,6 +57,44 @@ export type UserLlmProviderEntry = {
    * after the merge and cannot be overridden from config.
    */
   extraBody?: Record<string, unknown>;
+  /**
+   * Hand-written model metadata for this provider. `resolveModel`
+   * reads it as its highest-priority source (userModels > bundled
+   * catalog > defaults), so it is the documented way to teach the
+   * runtime about a model the bundled catalog does not know: context
+   * window, capabilities and pricing.
+   */
+  userModels?: ReadonlyArray<UserModelEntry>;
+};
+
+/**
+ * One hand-configured model on a provider entry. Mirrors
+ * `UserModelConfigEntry` in the provider registry — the shape
+ * `resolveModel` merges over the bundled catalog.
+ *
+ * Note `supportsTools` here is a support *level*, not the boolean of
+ * the same name on the provider entry: a model can advertise strict or
+ * parallel tool calling independently of whether the transport does.
+ */
+export type UserModelEntry = {
+  id: string;
+  kind: "chat" | "embedding";
+  contextWindow?: number;
+  dim?: number;
+  supportsVision?: boolean;
+  supportsTools?: "none" | "basic" | "parallel" | "strict";
+  supportsPromptCache?: boolean;
+  reasoningFormat?:
+    | "none"
+    | "delta_reasoning"
+    | "delta_thinking"
+    | "delta_reasoning_content";
+  pricing?: {
+    input: number;
+    output: number;
+    cacheRead?: number;
+    cacheWrite?: number;
+  };
 };
 
 export type UserLlmFallbackConfig = {
@@ -137,6 +196,10 @@ export function parseLlmProviderEntry(
       `${field}.defaultEmbeddingModel`,
     ),
     headers: parseOptionalHeaders(obj.headers, `${field}.headers`),
+    apiKeyHeader: parseOptionalString(
+      obj.apiKeyHeader,
+      `${field}.apiKeyHeader`,
+    ),
     supportsTools:
       obj.supportsTools === undefined
         ? undefined
@@ -172,11 +235,19 @@ export function parseLlmProviderEntry(
                 "expected positive number",
               );
             })(),
-    extraBody: parseOptionalExtraBody(obj.extraBody, `${field}.extraBody`),
+    promptCache: parseOptionalEnum<
+      NonNullable<UserLlmProviderEntry["promptCache"]>
+    >(obj.promptCache, `${field}.promptCache`, PROMPT_CACHE_MODES),
+    providerPreferences: parseOptionalPlainObject(
+      obj.providerPreferences,
+      `${field}.providerPreferences`,
+    ),
+    extraBody: parseOptionalPlainObject(obj.extraBody, `${field}.extraBody`),
+    userModels: parseOptionalUserModels(obj.userModels, `${field}.userModels`),
   };
 }
 
-function parseOptionalExtraBody(
+function parseOptionalPlainObject(
   raw: unknown,
   field: string,
 ): Record<string, unknown> | undefined {
@@ -185,6 +256,139 @@ function parseOptionalExtraBody(
     throw new ConfigValidationError(field, "expected object");
   }
   return { ...(raw as Record<string, unknown>) };
+}
+
+const PROMPT_CACHE_MODES = new Set(["auto", "off", "explicit-markers"]);
+const TOOLS_SUPPORT_LEVELS = new Set(["none", "basic", "parallel", "strict"]);
+const REASONING_FORMATS = new Set([
+  "none",
+  "delta_reasoning",
+  "delta_thinking",
+  "delta_reasoning_content",
+]);
+
+function parseOptionalBoolean(
+  raw: unknown,
+  field: string,
+): boolean | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "boolean") {
+    throw new ConfigValidationError(field, "expected boolean");
+  }
+  return raw;
+}
+
+function parseOptionalEnum<T extends string>(
+  raw: unknown,
+  field: string,
+  allowed: ReadonlySet<string>,
+): T | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "string" || !allowed.has(raw)) {
+    throw new ConfigValidationError(field, `expected ${[...allowed].join("|")}`);
+  }
+  return raw as T;
+}
+
+/**
+ * Prices are per-token rates, so 0 is legal (free tiers) but negative
+ * or non-finite is not — a NaN rate would poison every cost estimate
+ * downstream rather than fail loudly.
+ */
+function parseRate(raw: unknown, field: string): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) {
+    throw new ConfigValidationError(field, "expected a non-negative number");
+  }
+  return raw;
+}
+
+function parseUserModelPricing(
+  raw: unknown,
+  field: string,
+): UserModelEntry["pricing"] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected object");
+  }
+  const obj = raw as Record<string, unknown>;
+  const pricing: NonNullable<UserModelEntry["pricing"]> = {
+    input: parseRate(obj.input, `${field}.input`),
+    output: parseRate(obj.output, `${field}.output`),
+  };
+  if (obj.cacheRead !== undefined && obj.cacheRead !== null) {
+    pricing.cacheRead = parseRate(obj.cacheRead, `${field}.cacheRead`);
+  }
+  if (obj.cacheWrite !== undefined && obj.cacheWrite !== null) {
+    pricing.cacheWrite = parseRate(obj.cacheWrite, `${field}.cacheWrite`);
+  }
+  return pricing;
+}
+
+function parseUserModelEntry(raw: unknown, field: string): UserModelEntry {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected object");
+  }
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.id !== "string" || obj.id.length === 0) {
+    throw new ConfigValidationError(`${field}.id`, "expected non-empty string");
+  }
+  if (obj.kind !== "chat" && obj.kind !== "embedding") {
+    throw new ConfigValidationError(`${field}.kind`, "expected chat|embedding");
+  }
+  return {
+    id: obj.id,
+    kind: obj.kind,
+    contextWindow:
+      obj.contextWindow === undefined || obj.contextWindow === null
+        ? undefined
+        : parsePositiveInt(obj.contextWindow, `${field}.contextWindow`),
+    dim:
+      obj.dim === undefined || obj.dim === null
+        ? undefined
+        : parsePositiveInt(obj.dim, `${field}.dim`),
+    supportsVision: parseOptionalBoolean(
+      obj.supportsVision,
+      `${field}.supportsVision`,
+    ),
+    supportsTools: parseOptionalEnum<
+      NonNullable<UserModelEntry["supportsTools"]>
+    >(obj.supportsTools, `${field}.supportsTools`, TOOLS_SUPPORT_LEVELS),
+    supportsPromptCache: parseOptionalBoolean(
+      obj.supportsPromptCache,
+      `${field}.supportsPromptCache`,
+    ),
+    reasoningFormat: parseOptionalEnum<
+      NonNullable<UserModelEntry["reasoningFormat"]>
+    >(obj.reasoningFormat, `${field}.reasoningFormat`, REASONING_FORMATS),
+    pricing: parseUserModelPricing(obj.pricing, `${field}.pricing`),
+  };
+}
+
+function parseOptionalUserModels(
+  raw: unknown,
+  field: string,
+): UserModelEntry[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected array");
+  }
+  // `resolveModel` looks a model up by id with `.find`, so a duplicate
+  // id would silently shadow the later row. Reject it at parse time
+  // instead of serving whichever copy happens to come first.
+  const seen = new Set<string>();
+  const out: UserModelEntry[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const entry = parseUserModelEntry(raw[i], `${field}[${i}]`);
+    if (seen.has(entry.id)) {
+      throw new ConfigValidationError(
+        `${field}[${i}].id`,
+        `duplicate model id ${JSON.stringify(entry.id)}`,
+      );
+    }
+    seen.add(entry.id);
+    out.push(entry);
+  }
+  return out;
 }
 
 export function parseLlmProviders(

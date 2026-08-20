@@ -67,12 +67,14 @@ function nextPhaseAfterApiKey(
 ): ProvidersWizardPhase {
   const kind = wizard.kind;
   if (kind && isCuratedCatalogKind(kind)) return "pick_chat_model";
-  if (kind === "gemini") return "chat_model_line";
-  // A preset already knows its endpoint, so showing the URL step would
-  // ask the operator to confirm something they never typed (#69). Only
-  // the manual openai-compatible row still needs it.
-  if (wizard.presetId) return "chat_model_line";
-  return "base_url";
+  // A reconfigure run opens on the key screen, so for the manual compat
+  // row the URL step still follows it — that is the only screen where a
+  // stored endpoint can be corrected. The add flow collected the URL
+  // before the key instead. Presets and Gemini know their endpoint (#69).
+  if (kind === "openai-compatible" && !wizard.presetId && wizard.mode === "configure") {
+    return "base_url";
+  }
+  return "chat_model_line";
 }
 
 /**
@@ -134,6 +136,14 @@ export function advanceWizardPhase(
 ): ProvidersWizardState {
   const { phase, kind } = wizard;
   if (phase === "pick_kind" && kind) {
+    // The manual compat row describes its endpoint before authenticating
+    // to it: the key screen consults the base URL (a loopback server is
+    // keyless — `wizardKeyIsOptional`), so the URL has to exist first.
+    // Every other kind already knows its endpoint and goes straight to
+    // the key.
+    if (kind === "openai-compatible" && !wizard.presetId) {
+      return { ...wizard, phase: "base_url", cursor: 0, error: null };
+    }
     return { ...wizard, phase: "api_key", cursor: 0, error: null };
   }
   if (phase === "api_key" && kind) {
@@ -159,7 +169,10 @@ export function advanceWizardPhase(
     };
   }
   if (phase === "base_url" && kind === "openai-compatible") {
-    return { ...wizard, phase: "chat_model_line", cursor: 0, error: null };
+    // Adding walks URL → key; a reconfigure run opened on the key screen
+    // and edits the URL after it, so from there it proceeds to the model.
+    const next = wizard.mode === "configure" ? "chat_model_line" : "api_key";
+    return { ...wizard, phase: next, cursor: 0, error: null };
   }
   // `chat_model_line` is the last step for the compat/preset path: the
   // embedding screen is gone from the flow, embeddings stay on the local

@@ -155,7 +155,9 @@ describe("handleProvidersWizardKey", () => {
     wizard = next(wizard, "", emptyKey({ upArrow: true }));
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.kind).toBe("openai-compatible");
-    expect(wizard.phase).toBe("api_key");
+    // The endpoint comes before the key: the key screen consults the
+    // base URL (a loopback server is keyless), so it must exist first.
+    expect(wizard.phase).toBe("base_url");
   });
 
   describe("openai-compatible chat model step", () => {
@@ -178,6 +180,8 @@ describe("handleProvidersWizardKey", () => {
       });
       wizard = { ...wizard, phase: "base_url" };
       for (const ch of baseUrl) wizard = next(wizard, ch, emptyKey());
+      // URL first, then the key screen — satisfied here by the env key.
+      wizard = next(wizard, "", emptyKey({ return: true }));
       return next(wizard, "", emptyKey({ return: true }));
     }
 
@@ -521,18 +525,53 @@ describe("handleProvidersWizardKey", () => {
     expect(wizard.phase).not.toBe("base_url");
   });
 
-  it("still shows the URL screen for the manual openai-compatible row", () => {
+  it("walks the manual row URL-first, then the key, then the model line", () => {
     let wizard = createProvidersWizardState("add");
     // Manual entry is the last row.
     wizard = next(wizard, "", emptyKey({ upArrow: true }));
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.kind).toBe("openai-compatible");
     expect(wizard.presetId).toBeNull();
-    // A hand-added compat endpoint still has to declare its base URL
-    // after the key screen.
+    expect(wizard.phase).toBe("base_url");
+    // An empty URL line falls back to the default (remote) base, so the
+    // key screen that follows still demands a key.
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("api_key");
     for (const ch of "ck") wizard = next(wizard, ch, emptyKey());
     wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("chat_model_line");
+  });
+
+  it("configure still reaches the URL screen after the key", () => {
+    // Reconfiguring opens on the key screen; the URL step must follow it,
+    // or a mistyped port could never be corrected without re-adding.
+    let wizard = createProvidersWizardState("configure", {
+      providerId: "my-llama",
+      kind: "openai-compatible",
+      baseUrl: "http://127.0.0.1:9931",
+    });
+    expect(wizard.phase).toBe("api_key");
+    // Loopback endpoint: the empty key screen passes.
+    wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.phase).toBe("base_url");
+    expect(wizard.baseUrlLine).toBe("http://127.0.0.1:9931");
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("chat_model_line");
+  });
+
+  it("lets a loopback custom URL through the key screen with no key", () => {
+    // The user report behind #187: a raw llama-server on the operator's
+    // machine has no key, and the wizard used to refuse the empty screen.
+    let wizard = createProvidersWizardState("add");
+    wizard = next(wizard, "", emptyKey({ upArrow: true }));
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("base_url");
+    for (const ch of "localhost:9931") wizard = next(wizard, ch, emptyKey());
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("api_key");
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("chat_model_line");
+    expect(wizard.error).toBeNull();
   });
 
   describe("empty API key", () => {

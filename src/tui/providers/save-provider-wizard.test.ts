@@ -230,6 +230,21 @@ describe("saveProviderWizardToConfig", () => {
     ).toThrow(/API key is empty/);
   });
 
+  it("accepts a key whose only non-ASCII is a trimmable paste artifact", () => {
+    // U+00A0 from a web-page copy is non-ASCII, but the persisted value
+    // is trimmed — the save judges what it stores, not the raw buffer,
+    // so the key screen and the save agree.
+    saveProviderWizardToConfig({
+      ...createProvidersWizardState("add"),
+      kind: "openai-compatible" as const,
+      phase: "chat_model_line" as const,
+      apiKeyBuffer: "sk-clean\u00a0",
+      baseUrlLine: "https://api.example.com",
+      chatModelLine: "some-model",
+    });
+    expect(process.env.OPENAI_COMPAT_API_KEY).toBe("sk-clean");
+  });
+
   it("refuses a non-ASCII key before it can reach a header", () => {
     // A stray Cyrillic character would otherwise crash the first request
     // with an opaque ByteString error; catch it at save time instead.

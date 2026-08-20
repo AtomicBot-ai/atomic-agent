@@ -7,6 +7,7 @@ import {
 } from "../config/index.js";
 import type { LocalLlmMode, UserConfigFile } from "../config/config-schema.js";
 import { DEFAULT_EMBEDDING_MODEL_ID } from "../local-llm/index.js";
+import { isLocalProviderUrl } from "./providers/is-local-provider-url.js";
 
 /**
  * Normalise a user-typed local LLM (llama-server) base URL: trim and add
@@ -29,11 +30,11 @@ export function normalizeLocalLlmBaseUrl(raw: string): string {
 
 /**
  * True when `url`'s host is a loopback / on-machine address, at any port.
- * Covers the IPv4 loopback and unspecified addresses, `localhost` and any
- * `*.localhost` subdomain (reserved for the loopback by RFC 6761), and the
- * IPv6 loopback in both bare and bracketed forms. A URL without a scheme
- * (`localhost:9931`) parses with the host in the wrong slot, so it is
- * normalized to `http://` first, matching how the wizard stores base URLs.
+ * The host list itself lives in `isLocalProviderUrl` — one set of loopback
+ * spellings for every caller. This wrapper only absorbs the raw typed
+ * form: a URL without a scheme (`localhost:9931`) parses with the host in
+ * the wrong slot, so it is normalized to `http://` first, matching how
+ * the wizard stores base URLs.
  */
 export function isLoopbackBaseUrl(url: string): boolean {
   const trimmed = url.trim();
@@ -41,20 +42,7 @@ export function isLoopbackBaseUrl(url: string): boolean {
   const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
     ? trimmed
     : `http://${trimmed}`;
-  try {
-    const host = new URL(withScheme).hostname.toLowerCase();
-    return (
-      host === "127.0.0.1" ||
-      host === "0.0.0.0" ||
-      host === "localhost" ||
-      host.endsWith(".localhost") ||
-      host === "::1" ||
-      // `new URL` keeps IPv6 hosts bracketed.
-      host === "[::1]"
-    );
-  } catch {
-    return false;
-  }
+  return isLocalProviderUrl(withScheme);
 }
 
 /**
