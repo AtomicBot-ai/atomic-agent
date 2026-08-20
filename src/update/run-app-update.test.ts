@@ -58,6 +58,7 @@ describe("buildUpdateInvocation", () => {
       installDir: "C:\\Users\\u\\AppData\\Local\\atomic-agent",
       baseEnv: {},
     });
+    // No %SystemRoot% to resolve against: fall back to the bare name.
     expect(inv.command).toBe("powershell.exe");
     expect(inv.args).toContain("-NoProfile");
     expect(inv.args).toContain("-Command");
@@ -69,6 +70,45 @@ describe("buildUpdateInvocation", () => {
       "C:\\Users\\u\\AppData\\Local\\atomic-agent",
     );
     expect(inv.env.ATOMIC_AGENT_NO_PATH).toBe("1");
+  });
+
+  // Regression: the user's PATH decides what a bare `powershell.exe` means,
+  // and a trimmed or 2.0-engine shell there breaks the installer while the
+  // same update works from cmd (issue #174). Name the system copy outright.
+  it("runs the system PowerShell by absolute path when SystemRoot is set", () => {
+    const inv = buildUpdateInvocation({
+      platform: "win32",
+      repo: "AtomicBot-ai/atomic-agent",
+      installDir: "C:\\Users\\u\\AppData\\Local\\atomic-agent",
+      baseEnv: { SystemRoot: "C:\\Windows" },
+    });
+    expect(inv.command).toBe(
+      "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    );
+    expect(inv.args).toContain("-NoProfile");
+    expect(inv.args[inv.args.length - 1]).toContain("install.ps1");
+  });
+
+  it("accepts an upper-case SYSTEMROOT spelling", () => {
+    const inv = buildUpdateInvocation({
+      platform: "win32",
+      repo: "AtomicBot-ai/atomic-agent",
+      installDir: "C:\\x",
+      baseEnv: { SYSTEMROOT: "D:\\Windows" },
+    });
+    expect(inv.command).toBe(
+      "D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    );
+  });
+
+  it("leaves the POSIX invocation untouched when SystemRoot is present", () => {
+    const inv = buildUpdateInvocation({
+      platform: "darwin",
+      repo: "AtomicBot-ai/atomic-agent",
+      installDir: "/usr/local/bin",
+      baseEnv: { SystemRoot: "C:\\Windows" },
+    });
+    expect(inv.command).toBe("sh");
   });
 
   it("pins a version when provided", () => {
