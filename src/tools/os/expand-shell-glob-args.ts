@@ -1,6 +1,7 @@
 import { globSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { resolveUserPath } from "./expand-home.js";
+import { basenameCommand } from "./shell-command-guard/normalise.js";
 
 const MAX_GLOB_MATCHES = 10_000;
 
@@ -21,6 +22,8 @@ const RELATIVE_GLOB_CMDS = new Set([
  * Interpreters whose `-c` argument is a program, not a path. The payload
  * routinely carries `?`/`*` (regexes, URLs with query strings, glob patterns
  * meant for the inner program) and must reach the interpreter verbatim.
+ * `node`, `perl` and `ruby` are deliberately absent: their `-c` is a
+ * syntax check that takes a file path, so globbing it stays correct.
  */
 const CODE_PAYLOAD_CMDS = new Set([
   "bash",
@@ -30,13 +33,25 @@ const CODE_PAYLOAD_CMDS = new Set([
   "ksh",
   "python",
   "python3",
-  "node",
-  "perl",
-  "ruby",
 ]);
 
-/** `scheme://…` — a URL is never a filesystem glob, even with `?` and `/`. */
-const URL_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+/** Matches with the guard's view of the binary: basename, case-folded. */
+function isCodePayloadCmd(cmd: string): boolean {
+  const bin = basenameCommand(cmd).toLowerCase().replace(/\.exe$/, "");
+  if (CODE_PAYLOAD_CMDS.has(bin)) return true;
+  return /^python\d+(\.\d+)*$/.test(bin);
+}
+
+/** `-c`, a short-option cluster ending in it (`-lc`, `-ec`), or the long form. */
+function isCodePayloadFlag(arg: string): boolean {
+  return /^-[a-zA-Z]*c$/.test(arg) || arg === "--command";
+}
+
+/**
+ * `scheme://…` — a URL is never a filesystem glob, even with `?` and `/`.
+ * Two-letter minimum keeps Windows `C://…` sloppy-paths out of the rule.
+ */
+const URL_RE = /^[a-z][a-z0-9+.-]+:\/\//i;
 
 function hasGlobMetachar(arg: string): boolean {
   return /[*?]/.test(arg);
@@ -48,16 +63,20 @@ function isUrlLike(arg: string): boolean {
 
 /**
  * Indices of argv entries that are code payloads rather than paths — the
- * token right after a `-c` for a known interpreter. `bash -c '<program>'`
- * is the dominant shape; the scan stops at the first non-flag token so a
- * later positional argument is not mistaken for a payload.
+ * token right after a `-c` (or a cluster like `-lc`) for a known
+ * interpreter. `bash -c '<program>'` is the dominant shape; the scan
+ * stops at the first non-flag token so a later positional argument is not
+ * mistaken for a payload. A flag that takes a separate value (`-o
+ * pipefail`, `-X utf8`) ends the scan early — a known limit, and safe:
+ * the never-drop rule below keeps such a payload intact unless it
+ * collides with a really-matching file glob.
  */
 function codePayloadIndices(cmd: string, args: string[]): ReadonlySet<number> {
   const marked = new Set<number>();
-  if (!CODE_PAYLOAD_CMDS.has(cmd)) return marked;
+  if (!isCodePayloadCmd(cmd)) return marked;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === "-c") {
+    if (isCodePayloadFlag(arg)) {
       if (i + 1 < args.length) marked.add(i + 1);
       break;
     }

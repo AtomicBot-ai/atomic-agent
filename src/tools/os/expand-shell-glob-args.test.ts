@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expandShellGlobArgs } from "./expand-shell-glob-args.js";
@@ -90,5 +90,34 @@ describe("expandShellGlobArgs", () => {
     await writeFile(join(dir, "s1.py"), "x", "utf8");
     const out = expandShellGlobArgs("python3", ["./s1*.py"], dir);
     expect(out).toEqual([join(dir, "s1.py")]);
+  });
+
+  it("leaves a -c payload alone even when it happens to match real files", async () => {
+    // The differential case for the exemption itself: without it, this
+    // payload would be rewritten to the matched path, not passed through.
+    await mkdir(join(dir, "x"));
+    await writeFile(join(dir, "x", "y.txt"), "1", "utf8");
+    const args = ["-c", "x/*.txt"];
+    expect(expandShellGlobArgs("bash", args, dir)).toEqual(args);
+  });
+
+  it("exempts the payload for a path-invoked shell and clustered flags", async () => {
+    await mkdir(join(dir, "x"));
+    await writeFile(join(dir, "x", "y.txt"), "1", "utf8");
+    expect(expandShellGlobArgs("/bin/bash", ["-c", "x/*.txt"], dir)).toEqual([
+      "-c",
+      "x/*.txt",
+    ]);
+    expect(expandShellGlobArgs("bash", ["-lc", "x/*.txt"], dir)).toEqual([
+      "-lc",
+      "x/*.txt",
+    ]);
+  });
+
+  it("still expands -c for interpreters whose -c checks a file", async () => {
+    // perl -c is a syntax check on a script path, not an inline program.
+    await writeFile(join(dir, "s1.pl"), "x", "utf8");
+    const out = expandShellGlobArgs("perl", ["-c", "./s1*.pl"], dir);
+    expect(out).toEqual(["-c", join(dir, "s1.pl")]);
   });
 });
