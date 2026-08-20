@@ -1536,6 +1536,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   34,
   35,
   36,
+  37,
   USER_CONFIG_VERSION,
 ];
 
