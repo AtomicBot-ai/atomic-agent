@@ -375,6 +375,21 @@ function reduceStepEvent(
         },
       };
     }
+    case "step_routed": {
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: formatFeedLine({
+          type: "step_routed",
+          stepIndex: event.stepIndex,
+          role: event.role,
+          providerId: event.providerId,
+          complexity: event.complexity,
+          cloudShare: event.cloudShare,
+        }),
+        color: "blue",
+      });
+    }
     case "parse_retry": {
       const withFeed = appendFeed(state, {
         kind: "runtime_info",

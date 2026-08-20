@@ -33,6 +33,21 @@ export interface PromptCapturedTokens {
 export type StepEvent =
   | { type: "prompt_built"; prompt: BuiltPrompt; slotId: number }
   /**
+   * Fusion routing picked a leg for this step. Emitted before the slot
+   * is acquired and only while fusion is the effective run mode, so its
+   * absence is the normal single-provider case rather than a gap.
+   */
+  | {
+      type: "step_routed";
+      stepIndex: number;
+      role: "orchestrator" | "executor";
+      providerId: string;
+      /** 0-100 score from `computeStepComplexity`. */
+      complexity: number;
+      /** The operator dial in force for this decision. */
+      cloudShare: number;
+    }
+  /**
    * Trace-oriented sibling of `prompt_built`: carries the salted hash of
    * the stable prefix (so per-step records stay small) together with the
    * full variable tail, token breakdown, and cache-reuse status needed to

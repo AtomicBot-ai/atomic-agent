@@ -184,3 +184,73 @@ describe("createFallbackStreamer (real bootstrap seam)", () => {
     expect(result.servedTransport).toBe("native_tools");
   });
 });
+
+describe("fusion routing through the real seam", () => {
+  const providers = () =>
+    new Map<string, LlmProvider>([
+      ["cloud", fakeProvider("cloud", "native_tools", async () => answer("cloud"))],
+      ["local", fakeProvider("local", "grammar", async () => answer("local"))],
+    ]);
+
+  it("stamps servedProviderId with the link that answered", async () => {
+    const complete = createFallbackCompleter(seamDeps(providers()));
+    const result = await complete(baseParams);
+    expect(result.servedProviderId).toBe("cloud");
+  });
+
+  it("starts at preferredProviderId instead of the chain primary", async () => {
+    const complete = createFallbackCompleter(seamDeps(providers()));
+    const result = await complete({
+      ...baseParams,
+      preferredProviderId: "local",
+    });
+    // Load-bearing: "local" is the chain TAIL, so without the
+    // preference plumbing this would answer from "cloud".
+    expect(result.servedProviderId).toBe("local");
+    expect(result.modelId).toBe("local-model");
+    // And the transport stamp must follow the routed leg, not the primary.
+    expect(result.servedTransport).toBe("grammar");
+  });
+
+  it("still falls over on health when the preferred leg fails", async () => {
+    const map = new Map<string, LlmProvider>([
+      ["cloud", fakeProvider("cloud", "native_tools", async () => answer("cloud"))],
+      [
+        "local",
+        fakeProvider("local", "grammar", async () => {
+          throw new OpenAiHttpError("boom", 503, "http://local", false, null, "local");
+        }),
+      ],
+    ]);
+    const complete = createFallbackCompleter(seamDeps(map));
+    const result = await complete({
+      ...baseParams,
+      preferredProviderId: "local",
+    });
+    expect(result.servedProviderId).toBe("cloud");
+  });
+
+  it("prices against the served leg, not the active one", async () => {
+    // Guards the fusion cost-attribution fix in bootstrap: the recorder
+    // is handed the id of the link that answered.
+    const seen: string[] = [];
+    const deps = seamDeps(providers());
+    const complete = createFallbackCompleter({
+      ...deps,
+      recordUnaryUsage: (_params, _result, servedProviderId) => {
+        seen.push(servedProviderId);
+      },
+    });
+    await complete({ ...baseParams, preferredProviderId: "local" });
+    expect(seen).toEqual(["local"]);
+  });
+
+  it("routes the stream seam by preference and stamps the served id", async () => {
+    const stream = createFallbackStreamer(seamDeps(providers()));
+    const gen = stream({ ...baseParams, preferredProviderId: "local" });
+    let next = await gen.next();
+    while (next.done !== true) next = await gen.next();
+    expect(next.value.servedProviderId).toBe("local");
+    expect(next.value.servedTransport).toBe("grammar");
+  });
+});

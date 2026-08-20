@@ -34,8 +34,17 @@ export interface FallbackSeamDeps {
   fallbackChain: ProviderFallbackChain;
   /** Resolve the served link's provider + transport for `providerId`. */
   resolveSlice: (providerId: string) => ResolvedLinkSlice;
-  /** Fold a unary completion's usage into cost + meter (no-op when absent). */
-  recordUnaryUsage: (params: LlmStreamParams, result: CompletionResult) => void;
+  /**
+   * Fold a unary completion's usage into cost + meter (no-op when
+   * absent). `servedProviderId` names the link that answered, which is
+   * what pricing must be looked up against — under fusion it routinely
+   * differs from `llm.activeTextProvider`.
+   */
+  recordUnaryUsage: (
+    params: LlmStreamParams,
+    result: CompletionResult,
+    servedProviderId: string,
+  ) => void;
   /** Fold a streamed completion's usage into the meter. */
   recordStreamUsage: (
     sessionId: string | undefined,
@@ -92,10 +101,13 @@ export function createFallbackCompleter(
               slotId: params.slotId,
               cachePrompt: params.slotId >= 0,
             });
-      deps.recordUnaryUsage(params, result);
-      return { ...result, servedTransport: transport };
+      deps.recordUnaryUsage(params, result, providerId);
+      return { ...result, servedTransport: transport, servedProviderId: providerId };
       },
       params.sessionId,
+      { ...(params.preferredProviderId
+          ? { preferredProviderId: params.preferredProviderId }
+          : {}) },
     );
 }
 
@@ -117,6 +129,7 @@ export function createFallbackStreamer(
   ): Promise<{
     primed: PrimedStream<StreamChunk, CompletionResult>;
     transport: ToolCallTransport;
+    providerId: string;
   }> => {
     const { provider, transport } = deps.resolveSlice(providerId);
     const base = {
@@ -142,18 +155,21 @@ export function createFallbackStreamer(
             slotId: params.slotId,
             cachePrompt: params.slotId >= 0,
           });
-    return { primed: await primeStream(stream), transport };
+    return { primed: await primeStream(stream), transport, providerId };
   };
 
   return (params) => {
     async function* run(): AsyncGenerator<StreamChunk, CompletionResult, void> {
-      const { primed, transport } = await runWithFallback(
+      const { primed, transport, providerId } = await runWithFallback(
         deps.fallbackChain,
         (id) => openStreamPrimed(id, params),
         params.sessionId,
+        { ...(params.preferredProviderId
+            ? { preferredProviderId: params.preferredProviderId }
+            : {}) },
       );
       const result = yield* replayPrimedStream(primed);
-      return { ...result, servedTransport: transport };
+      return { ...result, servedTransport: transport, servedProviderId: providerId };
     }
     return meterStream(deps, params.sessionId, run());
   };

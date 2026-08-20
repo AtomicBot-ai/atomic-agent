@@ -98,6 +98,15 @@ export interface CompletionResult {
    * authoritative.
    */
   servedTransport?: ToolCallTransport;
+  /**
+   * Id of the provider that actually served this completion. Stamped by
+   * the same wrapper, and for the same reason as `servedTransport`:
+   * under fusion routing (and after any fallover) the link that answered
+   * is not necessarily `llm.activeTextProvider`, so anything that
+   * attributes the result — cost/pricing lookup above all — has to ask
+   * who served it rather than who was active.
+   */
+  servedProviderId?: string;
 }
 
 export interface OpenAiToolCall {

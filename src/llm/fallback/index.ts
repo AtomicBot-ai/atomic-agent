@@ -11,7 +11,10 @@ export {
   type ResolvedFallbackChain,
 } from "./fallback-config.js";
 export { shouldAdvance, type AdvanceDecision } from "./should-advance.js";
-export { runWithFallback } from "./run-with-fallback.js";
+export {
+  runWithFallback,
+  type RunWithFallbackOptions,
+} from "./run-with-fallback.js";
 export {
   primeStream,
   replayPrimedStream,
