@@ -50,12 +50,19 @@ export function createOpenAiStreamConsumer(
         while (true) {
           if (signal?.aborted) break;
           const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
+          if (done) {
+            // Flush TextDecoder state and treat a final non-empty SSE event
+            // as an implicit last boundary. Some providers/proxies close the
+            // response immediately after the terminal event instead of
+            // writing the conventional trailing blank line.
+            buffer += decoder.decode();
+          } else {
+            buffer += decoder.decode(value, { stream: true });
+          }
           let boundary = buffer.indexOf("\n\n");
-          while (boundary >= 0) {
-            const rawEvent = buffer.slice(0, boundary);
-            buffer = buffer.slice(boundary + 2);
+          while (boundary >= 0 || (done && buffer.trim().length > 0)) {
+            const rawEvent = boundary >= 0 ? buffer.slice(0, boundary) : buffer;
+            buffer = boundary >= 0 ? buffer.slice(boundary + 2) : "";
             const chunk = parseOpenAiSseEvent(rawEvent, reasoning, toolArgsBuffer);
             content += chunk.delta;
             reasoningContent += chunk.reasoningDelta;
@@ -103,6 +110,7 @@ export function createOpenAiStreamConsumer(
             }
             boundary = buffer.indexOf("\n\n");
           }
+          if (done) break;
         }
       } finally {
         reader.releaseLock();
