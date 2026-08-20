@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { CompletionResult } from "../llm/llama-server-client.js";
 
 import { startTestHarness, type Harness } from "./test-harness.js";
+import { MAX_PARKED_STEERS } from "./undelivered-steers.js";
 
 describe("/api/sessions", () => {
   let harness: Harness;
@@ -173,7 +174,8 @@ describe("GET|DELETE /api/sessions/{id}/steer (undelivered)", () => {
   let harness: Harness;
   let sessionId: string;
   let steerStatus: number | null;
-  let steerText: string;
+  /** What the stub steers from inside the final inference, in order. */
+  let steerTexts: string[];
 
   function replyCompletion(text: string): CompletionResult {
     return {
@@ -190,7 +192,7 @@ describe("GET|DELETE /api/sessions/{id}/steer (undelivered)", () => {
 
   beforeEach(async () => {
     steerStatus = null;
-    steerText = "stop, summarise what you have instead";
+    steerTexts = ["stop, summarise what you have instead"];
     harness = await startTestHarness({
       // Steer from inside the FINAL inference. The loop drains at the
       // top of a step; this turn replies on the step already running,
@@ -203,15 +205,17 @@ describe("GET|DELETE /api/sessions/{id}/steer (undelivered)", () => {
         // delivered normally instead of stranded.
         const agentStep = prompt.includes("### respond");
         if (turnSession === sessionId && agentStep && steerStatus === null) {
-          const accepted = await fetch(
-            `${harness.baseUrl}/api/sessions/${sessionId}/steer`,
-            {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ text: steerText }),
-            },
-          );
-          steerStatus = accepted.status;
+          for (const text of steerTexts) {
+            const accepted = await fetch(
+              `${harness.baseUrl}/api/sessions/${sessionId}/steer`,
+              {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ text }),
+              },
+            );
+            steerStatus = accepted.status;
+          }
         }
         return replyCompletion("done");
       },
@@ -265,7 +269,7 @@ describe("GET|DELETE /api/sessions/{id}/steer (undelivered)", () => {
     await runStrandingTurn();
     const body = await listUndelivered();
     expect(body.sessionId).toBe(sessionId);
-    expect(body.undelivered.map((e) => e.text)).toEqual([steerText]);
+    expect(body.undelivered.map((e) => e.text)).toEqual(steerTexts);
     expect(body.undelivered[0]?.seq).toBeGreaterThan(0);
     expect(body.discarded).toBe(0);
   });
@@ -322,6 +326,8 @@ describe("GET|DELETE /api/sessions/{id}/steer (undelivered)", () => {
       sessionId,
       acked: 1,
       remaining: 0,
+      discardsAcked: 0,
+      discarded: 0,
     });
     expect((await listUndelivered()).undelivered).toEqual([]);
   });
@@ -332,7 +338,7 @@ describe("GET|DELETE /api/sessions/{id}/steer (undelivered)", () => {
     // A second turn strands another message between the read and the
     // ack. A bare "clear" would swallow it unseen.
     steerStatus = null;
-    steerText = "and cancel the deploy";
+    steerTexts = ["and cancel the deploy"];
     await runStrandingTurn();
 
     const acked = await fetch(
@@ -343,6 +349,8 @@ describe("GET|DELETE /api/sessions/{id}/steer (undelivered)", () => {
       sessionId,
       acked: 1,
       remaining: 1,
+      discardsAcked: 0,
+      discarded: 0,
     });
     const left = await listUndelivered();
     expect(left.undelivered.map((e) => e.text)).toEqual([
@@ -350,9 +358,65 @@ describe("GET|DELETE /api/sessions/{id}/steer (undelivered)", () => {
     ]);
   });
 
+  it("keeps the discard notice when the host acks the entries it was shown", async () => {
+    // Fill the parking lot in one turn, then strand one more so the
+    // per-session cap genuinely has to throw a message away.
+    steerTexts = Array.from({ length: MAX_PARKED_STEERS }, (_, i) => `m${i}`);
+    await runStrandingTurn();
+    steerStatus = null;
+    steerTexts = ["one too many"];
+    await runStrandingTurn();
+
+    const listed = await listUndelivered();
+    expect(listed.undelivered).toHaveLength(MAX_PARKED_STEERS);
+    expect(listed.discarded).toBe(1);
+
+    // The host acks the highest seq it was given — which is all it can
+    // do about the entries, and says nothing about the loss count.
+    const acked = await fetch(
+      `${harness.baseUrl}/api/sessions/${sessionId}/steer?through=${listed.undelivered.at(-1)!.seq}`,
+      { method: "DELETE" },
+    );
+    expect((await acked.json()) as unknown).toEqual({
+      sessionId,
+      acked: MAX_PARKED_STEERS,
+      remaining: 0,
+      discardsAcked: 0,
+      discarded: 1,
+    });
+
+    // ...and is still told a message was genuinely lost, rather than
+    // being shown `discarded: 0` for a session that dropped one.
+    const after = await listUndelivered();
+    expect(after.undelivered).toEqual([]);
+    expect(after.discarded).toBe(1);
+
+    // The counter clears only through its own ack.
+    const ackedDiscard = await fetch(
+      `${harness.baseUrl}/api/sessions/${sessionId}/steer?discarded=1`,
+      { method: "DELETE" },
+    );
+    expect((await ackedDiscard.json()) as unknown).toEqual({
+      sessionId,
+      acked: 0,
+      remaining: 0,
+      discardsAcked: 1,
+      discarded: 0,
+    });
+    expect((await listUndelivered()).discarded).toBe(0);
+  });
+
   it("rejects an ack without a usable cursor", async () => {
     await runStrandingTurn();
-    for (const query of ["", "?through=", "?through=abc", "?through=-1"]) {
+    for (const query of [
+      "",
+      "?through=",
+      "?through=abc",
+      "?through=-1",
+      "?discarded=",
+      "?discarded=abc",
+      "?discarded=-1",
+    ]) {
       const response = await fetch(
         `${harness.baseUrl}/api/sessions/${sessionId}/steer${query}`,
         { method: "DELETE" },

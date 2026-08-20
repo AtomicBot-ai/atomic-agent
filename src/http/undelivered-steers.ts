@@ -23,6 +23,13 @@ import { MAX_PENDING_STEERS } from "../runtime/steering-inbox.js";
  * taken from the listing, a steer parked between the two calls has a
  * higher `seq` and survives the ack.
  *
+ * The same reasoning applies to the loss counter. `discarded` is the
+ * "N messages are gone" signal, and it is **not** covered by the entry
+ * cursor — the discarded messages have no `seq` the host ever saw. It
+ * therefore has its own ack ({@link UndeliveredSteerStore.ackDiscarded})
+ * and keeps a session's box alive on its own, so acking the entries
+ * cannot silently take the loss notice with them.
+ *
  * Single-process, in-memory, one instance per HTTP server. Parked
  * messages do not survive a restart — neither does the inbox they came
  * from (`shutdown()` calls `SteeringInbox.clearAll`).
@@ -36,11 +43,12 @@ export interface UndeliveredSteer {
 }
 
 /**
- * Per-session cap. The inbox refuses past `MAX_PENDING_STEERS`, so one
- * turn can never hand back more than that; the cap only bites when
- * several turns strand messages and nobody ever acks. Past it the
- * oldest entries go — and `discarded` counts them, so a host that comes
- * back late learns it lost some instead of quietly seeing a short list.
+ * Per-session cap on **accumulation**, not on one hand-back. The inbox
+ * refuses past `MAX_PENDING_STEERS`, so a single turn cannot strand
+ * more than that; the cap bites when several turns strand messages and
+ * nobody ever acks. Past it the oldest entries go — and `discarded`
+ * counts them, so a host that comes back late learns it lost some
+ * instead of quietly seeing a short list.
  */
 export const MAX_PARKED_STEERS = MAX_PENDING_STEERS;
 
@@ -52,6 +60,12 @@ export const MAX_PARKED_SESSIONS = 256;
 
 interface Box {
   entries: UndeliveredSteer[];
+  /**
+   * Messages lost to {@link MAX_PARKED_STEERS} that the host has not
+   * acknowledged yet. Counts down through `ackDiscarded`, never through
+   * the entry cursor: the two are separate acks because they carry
+   * separate information.
+   */
   discarded: number;
 }
 
@@ -92,7 +106,10 @@ export class UndeliveredSteerStore {
     return this.bySession.get(sessionId)?.entries ?? [];
   }
 
-  /** How many messages this session lost to `MAX_PARKED_STEERS`. */
+  /**
+   * How many messages this session lost to `MAX_PARKED_STEERS` and has
+   * not been acknowledged for. Survives `ack` — see `ackDiscarded`.
+   */
   discarded(sessionId: string): number {
     return this.bySession.get(sessionId)?.discarded ?? 0;
   }
@@ -101,6 +118,11 @@ export class UndeliveredSteerStore {
    * Drop everything with `seq <= through` and report how many went.
    * The cursor comes from a prior `list`, so a message parked in
    * between carries a higher `seq` and is not swallowed by the ack.
+   *
+   * Deliberately does **not** touch `discarded`. The cursor covers the
+   * entries the host was shown; the discarded messages were never in
+   * that listing and have no `seq` the host could point at, so nothing
+   * about acking the entries proves the loss notice was read.
    */
   ack(sessionId: string, through: number): number {
     const box = this.bySession.get(sessionId);
@@ -108,11 +130,29 @@ export class UndeliveredSteerStore {
     const before = box.entries.length;
     box.entries = box.entries.filter((entry) => entry.seq > through);
     const acked = before - box.entries.length;
-    // Everything the host was told about is now acknowledged, the
-    // discard notice included; drop the box so an idle server does not
-    // hold rows for sessions nobody is asking about.
-    if (box.entries.length === 0) this.bySession.delete(sessionId);
+    this.reapIfEmpty(sessionId, box);
     return acked;
+  }
+
+  /**
+   * Acknowledge up to `count` discarded messages and report how many
+   * that actually cleared.
+   *
+   * Separate from `ack` on purpose. A host that acks the highest `seq`
+   * it was given — before, or in the same pass as, reading `discarded`
+   * — must not thereby erase the "N messages were dropped" signal and
+   * be told on its next `GET` that nothing was lost. And it is a count,
+   * not a flag, so discards that happen between the host's `GET` and
+   * this call stay outstanding rather than being cleared unseen: the
+   * same cursor discipline as the entries, applied to a counter.
+   */
+  ackDiscarded(sessionId: string, count: number): number {
+    const box = this.bySession.get(sessionId);
+    if (!box) return 0;
+    const cleared = Math.min(Math.max(count, 0), box.discarded);
+    box.discarded -= cleared;
+    this.reapIfEmpty(sessionId, box);
+    return cleared;
   }
 
   /** Forget one session's parked messages (session purge). */
@@ -123,6 +163,28 @@ export class UndeliveredSteerStore {
   /** Forget everything (server shutdown / tests). */
   clearAll(): void {
     this.bySession.clear();
+  }
+
+  /**
+   * How many sessions currently hold a box. Introspection only — the
+   * seam that lets a test assert a box outlives its entries while a
+   * loss is unacknowledged, and is reclaimed once it is not.
+   */
+  get trackedSessions(): number {
+    return this.bySession.size;
+  }
+
+  /**
+   * Drop a box that has nothing left to say — no entries and no
+   * unacknowledged loss — so an idle server does not hold rows for
+   * sessions nobody is asking about. A box kept alive only by
+   * `discarded` is still reclaimed by `clear` (session purge) and by
+   * `MAX_PARKED_SESSIONS` eviction, so this cannot grow without bound.
+   */
+  private reapIfEmpty(sessionId: string, box: Box): void {
+    if (box.entries.length === 0 && box.discarded === 0) {
+      this.bySession.delete(sessionId);
+    }
   }
 
   private evictOldestSessions(): void {

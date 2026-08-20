@@ -152,7 +152,10 @@ export function createSteerSessionHandler(): HttpHandler {
  * `discarded` counts messages this session lost to the per-session cap
  * (`MAX_PARKED_STEERS`) because nobody acked in time. Non-zero means
  * text is genuinely gone, and the host is told rather than left to
- * assume the list is complete.
+ * assume the list is complete. It has its own ack
+ * (`DELETE ...?discarded={n}`): acking the listed entries leaves it
+ * standing, so a host that acks first and reads later still sees the
+ * loss.
  */
 export function createGetUndeliveredSteersHandler(): HttpHandler {
   return async (_req, res, ctx) => {
@@ -175,15 +178,28 @@ export function createGetUndeliveredSteersHandler(): HttpHandler {
 }
 
 /**
- * `DELETE /api/sessions/{id}/steer?through={seq}` — acknowledge parked
- * steers up to and including `seq`, which the caller read off a prior
- * `GET`.
+ * `DELETE /api/sessions/{id}/steer?through={seq}&discarded={n}` —
+ * acknowledge what a prior `GET` reported. Both parameters are
+ * optional individually; at least one must be present.
  *
- * The cursor is mandatory on purpose: a bare "clear it" would also drop
- * whatever was parked between the caller's `GET` and this call, which
- * is a message the host never saw. Anything parked since carries a
- * higher `seq` and survives. Idempotent — re-acking an already-acked
- * cursor reports `acked: 0`.
+ * `through` acks parked steers up to and including `seq`. The cursor is
+ * mandatory rather than a bare "clear it" because a bare clear would
+ * also drop whatever was parked between the caller's `GET` and this
+ * call, which is a message the host never saw. Anything parked since
+ * carries a higher `seq` and survives.
+ *
+ * `discarded` acks up to `n` of the messages the per-session cap threw
+ * away. It is a **separate** ack, and for the same reason the cursor
+ * exists: those messages have no `seq` the host was ever shown, so the
+ * entry cursor cannot stand in for having read the loss count. Acking
+ * the entries alone leaves `discarded` reporting the loss on the next
+ * `GET` instead of quietly resetting it to zero. Counting rather than
+ * clearing keeps discards that happened since the host's `GET`
+ * outstanding.
+ *
+ * Idempotent — re-acking an already-acked cursor or count reports `0`.
+ * The response repeats the loss still outstanding as `discarded`, so a
+ * host that only ever calls `DELETE` still learns about it.
  */
 export function createAckUndeliveredSteersHandler(): HttpHandler {
   return async (req, res, ctx) => {
@@ -193,9 +209,20 @@ export function createAckUndeliveredSteersHandler(): HttpHandler {
       return;
     }
     const url = new URL(req.url ?? "/", "http://localhost");
-    const raw = url.searchParams.get("through");
-    const through = raw === null ? NaN : Number.parseInt(raw, 10);
-    if (!Number.isFinite(through) || through < 0) {
+    const rawThrough = url.searchParams.get("through");
+    const rawDiscarded = url.searchParams.get("discarded");
+    if (rawThrough === null && rawDiscarded === null) {
+      sendError(
+        res,
+        400,
+        openaiError(
+          "through and/or discarded is required — use the highest seq and the discarded count returned by GET /api/sessions/{id}/steer",
+        ),
+      );
+      return;
+    }
+    const through = parseCount(rawThrough);
+    if (through === null) {
       sendError(
         res,
         400,
@@ -205,13 +232,42 @@ export function createAckUndeliveredSteersHandler(): HttpHandler {
       );
       return;
     }
-    const acked = ctx.undeliveredSteers.ack(id, through);
+    const discarded = parseCount(rawDiscarded);
+    if (discarded === null) {
+      sendError(
+        res,
+        400,
+        openaiError(
+          "discarded must be a non-negative integer — use the discarded count returned by GET /api/sessions/{id}/steer",
+        ),
+      );
+      return;
+    }
+    const acked =
+      through === undefined ? 0 : ctx.undeliveredSteers.ack(id, through);
+    const discardsAcked =
+      discarded === undefined
+        ? 0
+        : ctx.undeliveredSteers.ackDiscarded(id, discarded);
     sendJson(res, 200, {
       sessionId: id,
       acked,
       remaining: ctx.undeliveredSteers.list(id).length,
+      discardsAcked,
+      discarded: ctx.undeliveredSteers.discarded(id),
     });
   };
+}
+
+/**
+ * `undefined` when the parameter was absent, `null` when it was present
+ * but not a non-negative integer (the caller turns that into a 400).
+ */
+function parseCount(raw: string | null): number | undefined | null {
+  if (raw === null) return undefined;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
 }
 
 /**

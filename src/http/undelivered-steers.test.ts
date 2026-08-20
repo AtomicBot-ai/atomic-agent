@@ -1,15 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  MAX_PARKED_SESSIONS,
   MAX_PARKED_STEERS,
   UndeliveredSteerStore,
 } from "./undelivered-steers.js";
 
 /**
- * The store behind `GET /api/sessions/{id}/steer`. Pins the two
- * properties the route promises: reading never consumes, and acking is
- * by cursor so a message parked between the read and the ack cannot be
- * swallowed unseen.
+ * The store behind `GET /api/sessions/{id}/steer`. Pins the properties
+ * the route promises: reading never consumes, acking is by cursor so a
+ * message parked between the read and the ack cannot be swallowed
+ * unseen and the loss counter is not
+ * collateral damage of that ack.
  */
 describe("UndeliveredSteerStore", () => {
   it("keeps parked messages until they are acked", () => {
@@ -50,14 +52,74 @@ describe("UndeliveredSteerStore", () => {
 
   it("counts what the per-session cap discards instead of quietly shortening the list", () => {
     const store = new UndeliveredSteerStore();
-    const texts = Array.from({ length: MAX_PARKED_STEERS + 3 }, (_, i) => `m${i}`);
-    const parked = store.park("s1", texts);
+    // The cap bites across hand-backs: fill it, then strand three more.
+    const first = Array.from({ length: MAX_PARKED_STEERS }, (_, i) => `m${i}`);
+    store.park("s1", first);
+    const second = store.park("s1", ["late-1", "late-2", "late-3"]);
     expect(store.list("s1")).toHaveLength(MAX_PARKED_STEERS);
     expect(store.discarded("s1")).toBe(3);
-    // The oldest went; what the caller is told it can retrieve matches
-    // what is actually retrievable.
-    expect(parked.map((e) => e.text)).toEqual(texts.slice(3));
+    // The three oldest went; what the latest caller is told it can
+    // retrieve matches what is actually retrievable.
+    expect(second.map((e) => e.text)).toEqual(["late-1", "late-2", "late-3"]);
     expect(store.list("s1")[0]?.text).toBe("m3");
+    expect(store.list("s1").at(-1)?.text).toBe("late-3");
+  });
+
+  it("keeps the loss counter when the host acks the entries it was shown", () => {
+    const store = new UndeliveredSteerStore();
+    store.park("s1", Array.from({ length: MAX_PARKED_STEERS }, (_, i) => `m${i}`));
+    store.park("s1", ["late-1", "late-2", "late-3"]);
+    expect(store.discarded("s1")).toBe(3);
+    // Acking the highest seq in the listing is what a host does first;
+    // the discarded messages were never in that listing and have no
+    // seq it could point at, so this must not clear them.
+    const listed = store.list("s1");
+    store.ack("s1", listed.at(-1)!.seq);
+    expect(store.list("s1")).toEqual([]);
+    expect(store.discarded("s1")).toBe(3);
+    // The box survives the entry ack precisely so the counter can.
+    expect(store.trackedSessions).toBe(1);
+  });
+
+  it("clears the loss counter only by its own ack, and reclaims the box then", () => {
+    const store = new UndeliveredSteerStore();
+    store.park("s1", Array.from({ length: MAX_PARKED_STEERS }, (_, i) => `m${i}`));
+    store.park("s1", ["late-1", "late-2", "late-3"]);
+    store.ack("s1", store.list("s1").at(-1)!.seq);
+    // By count, not by flag: a partial ack leaves the rest outstanding,
+    // so discards that happened after the host's GET are not cleared
+    // unseen.
+    expect(store.ackDiscarded("s1", 1)).toBe(1);
+    expect(store.discarded("s1")).toBe(2);
+    expect(store.trackedSessions).toBe(1);
+    // Over-acking clamps rather than going negative, and is idempotent.
+    expect(store.ackDiscarded("s1", 99)).toBe(2);
+    expect(store.ackDiscarded("s1", 99)).toBe(0);
+    expect(store.discarded("s1")).toBe(0);
+    expect(store.trackedSessions).toBe(0);
+  });
+
+  it("still reclaims a discard-only box on purge and on session eviction", () => {
+    const store = new UndeliveredSteerStore();
+    const overflow = (id: string): void => {
+      store.park(id, Array.from({ length: MAX_PARKED_STEERS }, (_, i) => `m${i}`));
+      store.park(id, ["one too many"]);
+      store.ack(id, Number.MAX_SAFE_INTEGER);
+    };
+    overflow("purged");
+    expect(store.discarded("purged")).toBe(1);
+    store.clear("purged");
+    expect(store.discarded("purged")).toBe(0);
+    expect(store.trackedSessions).toBe(0);
+
+    // A host that never acks anything cannot pin boxes open forever:
+    // the session cap still evicts the oldest.
+    overflow("stale");
+    for (let i = 0; i < MAX_PARKED_SESSIONS; i += 1) {
+      store.park(`s${i}`, ["x"]);
+    }
+    expect(store.trackedSessions).toBe(MAX_PARKED_SESSIONS);
+    expect(store.discarded("stale")).toBe(0);
   });
 
   it("forgets a session on clear", () => {
