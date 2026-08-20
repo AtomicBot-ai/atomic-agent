@@ -743,6 +743,17 @@ export async function createAgentRuntime(
         logger,
       })
     : null;
+  /**
+   * Trace recorders keyed by session id, bounded so a long-lived runtime
+   * that serves many sessions (sidecar, HTTP server, background tasks)
+   * cannot grow this map without limit — there is no session-teardown
+   * hook to delete from it. Insertion order makes `Map` an LRU by
+   * construction: the oldest session id is evicted once over the cap.
+   * A recorder holds only counters and a `pendingCalls` map that is
+   * drained per step, so eviction costs nothing but a re-`beginSession`
+   * if that session ever speaks again.
+   */
+  const MAX_TRACE_RECORDERS = 64;
   const recorders = new Map<string, TraceRecorder>();
   /**
    * Per-turn context used to route `loopDeps.onEvent` calls back to
@@ -2152,6 +2163,11 @@ export async function createAgentRuntime(
       ...(session.metadata ? { metadata: session.metadata } : {}),
     });
     recorders.set(session.id, recorder);
+    while (recorders.size > MAX_TRACE_RECORDERS) {
+      const oldest = recorders.keys().next();
+      if (oldest.done) break;
+      recorders.delete(oldest.value);
+    }
     return recorder;
   };
 

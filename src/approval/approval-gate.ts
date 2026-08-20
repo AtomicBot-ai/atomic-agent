@@ -89,6 +89,15 @@ export class ApprovalGateError extends Error {
 interface PendingEntry {
   resolve: (decision: ApprovalDecision) => void;
   request: ApprovalRequest;
+  /**
+   * Detaches the caller's abort listener. `{ once: true }` only fires —
+   * and so only self-removes — when the signal actually aborts, which
+   * never happens on the normal approve/deny path. Without this the
+   * listener stays attached to a signal that lives for the whole turn,
+   * so every gated tool call in a turn leaks one listener plus the
+   * closure over its `request` (which carries the command preview).
+   */
+  detach: () => void;
 }
 
 /**
@@ -194,20 +203,26 @@ export class ApprovalGate {
     const auto = this.autoApproval(request);
     if (auto) return Promise.resolve({ approvalId, approved: true, reason: auto });
     return new Promise<ApprovalDecision>((resolve, reject) => {
-      this.pending.set(approvalId, { resolve, request });
-      signal?.addEventListener(
-        "abort",
-        () => {
-          this.pending.delete(approvalId);
-          reject(
-            new ApprovalGateError(
-              "approval aborted before a decision was made",
-              approvalId,
-            ),
-          );
-        },
-        { once: true },
-      );
+      const onAbort = (): void => {
+        this.pending.delete(approvalId);
+        reject(
+          new ApprovalGateError(
+            "approval aborted before a decision was made",
+            approvalId,
+          ),
+        );
+      };
+      const detach = (): void => {
+        signal?.removeEventListener("abort", onAbort);
+      };
+      this.pending.set(approvalId, { resolve, request, detach });
+      // An already-aborted signal never fires `abort`, so check before
+      // subscribing rather than hanging until the turn is torn down.
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
       this.emitter(request);
     });
   }
@@ -244,6 +259,7 @@ export class ApprovalGate {
     const entry = this.pending.get(decision.approvalId);
     if (!entry) return false;
     this.pending.delete(decision.approvalId);
+    entry.detach();
     if (decision.approved && decision.grant) {
       this.recordGrant(entry.request, decision.grant);
     }
