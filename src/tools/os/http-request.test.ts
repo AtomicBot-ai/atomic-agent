@@ -633,6 +633,28 @@ describe("os.http.request", () => {
     expect(capture.args).not.toContain("-L");
   });
 
+  it("passes --globoff so bracketed URLs are not read as curl ranges", async () => {
+    // Real failure from the field: without --globoff curl rejects the
+    // `[Dd]` character set with "curl: (3) bad range in URL position 158".
+    const url =
+      "http://web.archive.org/cdx/search/cdx?url=base-search.net" +
+      "&matchType=domain&filter=original:.*[Dd]ewey.*&collapse=urlkey";
+    const capture: { cmd?: string; args?: string[] } = {};
+    const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
+      approvals: approveAll(),
+      approvalRequired: false,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun(capture, {
+        stdout: "ok\n" + meta(200, "text/plain", 2),
+      }),
+    });
+    await tool.run({ url }, makeCtx());
+    expect(capture.args).toContain("--globoff");
+    // The bracketed URL still reaches curl verbatim as the final operand.
+    expect(capture.args![capture.args!.length - 1]).toContain("[Dd]ewey");
+  });
+
   it("re-validates redirect hops and blocks a private Location target", async () => {
     const calls: string[][] = [];
     const runCommand = async (

@@ -189,4 +189,27 @@ describe("os.web.fetch tool", () => {
     expect(result.summary).toContain("HTTP 500");
     expect(result.details.status).toBe(500);
   });
+  it("passes --globoff so bracketed URLs are not read as curl ranges", async () => {
+    // Real failure from the field: without --globoff curl rejects the
+    // `[... TO ...]` date range with "curl: (3) bad range in URL position 124".
+    const url =
+      "http://export.arxiv.org/api/query?search_query=all:%22multiwavelength%22" +
+      "+AND+submittedDate:[202102010000+TO+202104300000]&start=0&max_results=30";
+    const run = vi.fn(
+      makeRunCommand(() => ({
+        stdout: curlStdout({
+          body: "<feed></feed>",
+          status: 200,
+          contentType: "application/atom+xml",
+        }),
+      })),
+    );
+    const tool = buildOsWebFetchTool({ runCommand: run, lookup: publicLookup });
+    await tool.run({ url }, ctx());
+    expect(run).toHaveBeenCalledTimes(1);
+    const args = run.mock.calls[0]![1] as string[];
+    expect(args).toContain("--globoff");
+    // The bracketed URL still reaches curl verbatim as the final operand.
+    expect(args[args.length - 1]).toContain("[202102010000");
+  });
 });

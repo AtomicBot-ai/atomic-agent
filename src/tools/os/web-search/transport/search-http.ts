@@ -125,6 +125,9 @@ function buildCurlArgs(input: {
     : input.pinnedIp;
   const args = [
     "-sS",
+    // Send `[`, `]`, `{`, `}` in URLs literally. Without this curl reads them
+    // as its own range/set glob syntax and fails with "bad range in URL".
+    "--globoff",
     "--max-time",
     String(Math.ceil(input.timeoutMs / 1000)),
     "--max-redirs",

@@ -243,6 +243,7 @@ function buildCurlArgs(url: URL, pinnedIp: string): string[] {
   const resolveTarget = pinnedIp.includes(":") ? `[${pinnedIp}]` : pinnedIp;
   return [
     "-sS",
+    "--globoff",
     "--max-time",
     String(Math.ceil(DEFAULT_TIMEOUT_MS / 1000)),
     "--max-redirs",
