@@ -14,6 +14,7 @@ import {
   runLocalModelsUseDevice,
   runLocalModelsUseEmbedding,
 } from "./models-handlers.js";
+import { runModelsSearch } from "./models-search-command.js";
 
 const HELP =
   [
@@ -32,6 +33,12 @@ const HELP =
     "                                (stops daemon first; does not auto-restart)",
     "  remove <id>                   Delete a downloaded model (refuses if active + daemon running)",
     "",
+    "Cloud subcommands (no local runtime needed):",
+    "  search <query>                Search configured cloud providers' models by id,",
+    "                                vendor and capability (`claude vision`, `free tools`,",
+    "                                `1m cache`). Flags: --provider <id> --limit <n>",
+    "                                --json --refresh (pull live lists first)",
+    "",
     "GPU subcommands:",
     "  devices                       List GPU devices (llama-server --list-devices); active marked with *",
     "  use-device <auto|cpu|Vulkan0> Set the managed daemon's GPU (auto-picks best discrete by default)",
@@ -45,6 +52,7 @@ const HELP =
     "",
     "Examples:",
     "  atomic-agent models list",
+    "  atomic-agent models search claude vision",
     "  atomic-agent models pull qwen-3.5-4b",
     "  atomic-agent models use qwen-3.5-4b",
     "  atomic-agent models pull-embedding nomic-embed-text-v1.5",
@@ -63,6 +71,8 @@ export async function modelsCommand(args: string[]): Promise<number> {
   }
   try {
     switch (sub) {
+      case "search":
+        return await runModelsSearch(args.slice(1));
       case "list":
         return runLocalModelsList();
       case "pull":
