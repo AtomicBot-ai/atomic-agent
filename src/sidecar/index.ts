@@ -20,6 +20,7 @@ export type {
   StartSessionPayload,
   RunStepPayload,
   SendMessagePayload,
+  SteerMessagePayload,
   CancelPayload,
   ApprovalResponsePayload,
   GetSessionPayload,

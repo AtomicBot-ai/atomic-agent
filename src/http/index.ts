@@ -5,6 +5,12 @@ export { CompletionRegistry } from "./completion-registry.js";
 export type { CompletionEntry } from "./completion-registry.js";
 
 export {
+  MAX_PARKED_STEERS,
+  UndeliveredSteerStore,
+} from "./undelivered-steers.js";
+export type { UndeliveredSteer } from "./undelivered-steers.js";
+
+export {
   createHttpServer,
 } from "./http-server.js";
 export type {

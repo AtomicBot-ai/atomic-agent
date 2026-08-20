@@ -20,6 +20,7 @@ import {
   type SseWriter,
 } from "./request-context.js";
 import { deriveChatSessionId } from "./openai-session-id.js";
+import type { UndeliveredSteer } from "./undelivered-steers.js";
 import {
   buildFinalAssistantPayload,
   buildStreamChunk,
@@ -127,6 +128,7 @@ async function handleNonStream(
     // `transport`/`grammar`/`model`/`tool`/`cancelled`) come back as
     // `result.session.status === "failed"` instead of throwing — see
     // the next block.
+    parkUndelivered(ctx, env.session.id, null);
     const message = err instanceof Error ? err.message : String(err);
     sendError(
       res,
@@ -135,10 +137,13 @@ async function handleNonStream(
     );
     return;
   }
+  const parked = parkUndelivered(ctx, result.session.id, result);
   if (result.session.status === "failed") {
     // Surface classified LLM failures as HTTP 500 (matches the legacy
     // `runTurn`-throws contract that OpenAI clients depend on; an empty
     // body with finish_reason="stop" would silently strand the caller).
+    // The error envelope has no room for the parked steers; they stay
+    // in the store for `GET /api/sessions/{id}/steer`.
     sendError(
       res,
       500,
@@ -165,6 +170,14 @@ async function handleNonStream(
       },
     ],
     usage,
+    // Present only when this turn stranded a steer, so an ordinary
+    // completion stays byte-identical for OpenAI clients. These are the
+    // parked entries, not copies of them: same `seq`, so acting on this
+    // list and acking it at `DELETE /api/sessions/{id}/steer?through=`
+    // is acting on one message, not two.
+    ...(parked.length > 0
+      ? { undelivered_steers: parked.map(toWirePayload) }
+      : {}),
   };
   sendJson(res, 200, payload, {
     [SESSION_ID_HEADER]: result.session.id,
@@ -236,6 +249,11 @@ async function handleStream(
     ctx.completionRegistry.unregister(env.completionId);
   }
 
+  // Park before anything can end the stream: on the error paths below,
+  // and whenever the client is gone, the store is the only place a
+  // stranded steer can still be found.
+  const parked = parkUndelivered(ctx, env.session.id, result);
+
   if (!error && result?.session.status === "failed") {
     error = new Error(
       `Agent loop failed: ${result.session.lastError ?? "unknown error"}`,
@@ -260,6 +278,20 @@ async function handleStream(
 
   const usage = buildUsagePayload(result!);
   const final = buildFinalAssistantPayload(result!);
+  if (parked.length > 0 && env.request.extensionsEnabled) {
+    // Same name and meaning as the sidecar's `steer_undelivered`
+    // event. Extensions-off clients get nothing here — the stream stays
+    // strict OpenAI — and read the parked entries off
+    // `GET /api/sessions/{id}/steer` instead.
+    sse.writeEvent("steer_undelivered", {
+      id: env.completionId,
+      object: "chat.completion.steer_undelivered",
+      created: env.created,
+      model: env.request.model,
+      session_id: result!.session.id,
+      undelivered: parked.map(toWirePayload),
+    });
+  }
   if (env.request.extensionsEnabled) {
     sse.writeEvent("usage", {
       id: env.completionId,
@@ -361,6 +393,18 @@ function buildStreamEventHook(
       }
       return;
     }
+    if (event.type === "steer_applied") {
+      // Hosts that can observe failure (`steer_undelivered`) deserve the
+      // success signal too, or they can never render a steer inline.
+      if (env.request.extensionsEnabled) {
+        sse.writeEvent(null, {
+          object: "atomic.steer_applied",
+          text: event.text,
+          step_index: event.stepIndex,
+        });
+      }
+      return;
+    }
     if (event.type === "loop_failed") {
       emitStreamError(sse, env, event.error.message, event.category);
     }
@@ -396,6 +440,43 @@ function emitStreamError(
     null,
     openaiError(message, category ? `agent.${category}` : "server_error"),
   );
+}
+
+/**
+ * Consume `RunTurnResult.undelivered` — the steers this turn accepted
+ * but never showed the model — and park them where the host can find
+ * them.
+ *
+ * Both halves matter. The steer arrived on its own `POST
+ * .../steer` exchange, which answered `200 {steered:true}` long before
+ * the turn ended, so this response is the first chance to say anything
+ * about it at all; and this response goes to whoever owns the turn,
+ * which is not necessarily whoever sent the steer. Parking is therefore
+ * unconditional and the response payload is a fast path on top of it,
+ * carrying the very entries that were parked rather than a second copy.
+ *
+ * `result` is `null` when `runTurn` threw. The inbox is deliberately NOT
+ * touched then: on the window core the loop's own `finally` already
+ * closed this turn's window and logged anything stranded — and a request
+ * that failed BEFORE acquiring the session lock (a queued submission
+ * whose client disconnected) never owned the window at all, so a drain
+ * here would steal steers accepted for the turn still running.
+ */
+function parkUndelivered(
+  ctx: HandlerContext,
+  sessionId: string,
+  result: RunTurnResult | null,
+): UndeliveredSteer[] {
+  const texts = result ? (result.undelivered ?? []) : [];
+  return ctx.undeliveredSteers.park(sessionId, texts);
+}
+
+function toWirePayload(entry: UndeliveredSteer): {
+  seq: number;
+  text: string;
+  parked_at: number;
+} {
+  return { seq: entry.seq, text: entry.text, parked_at: entry.parkedAt };
 }
 
 function safeStringify(value: unknown): string {

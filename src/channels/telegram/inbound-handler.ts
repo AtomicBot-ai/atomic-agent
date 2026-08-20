@@ -256,11 +256,23 @@ async function dispatchToRuntime(
   progress?.start("🤔 Thinking…");
   const stopKeepalive = startTypingKeepalive(ctx, chatId);
   try {
-    await ctx.runtime.runTurn(session, text, {
+    const result = await ctx.runtime.runTurn(session, text, {
       origin: "telegram",
       signal: controller.signal,
       eventHook,
     });
+    // A steer accepted for this turn but never delivered: the chat is
+    // the host here, so tell it rather than dropping the text silently.
+    if (result.undelivered !== undefined && result.undelivered.length > 0) {
+      const lines = result.undelivered
+        .map((t) => `• ${t.length > 120 ? `${t.slice(0, 119)}…` : t}`)
+        .join("\n");
+      await sendText(
+        ctx,
+        chatId,
+        `A message arrived too late for that turn and was not applied:\n${lines}`,
+      );
+    }
   } catch (err) {
     failure = {
       error: err instanceof Error ? err : new Error(String(err)),
