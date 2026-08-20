@@ -10,11 +10,25 @@ interface HotkeyHintProps {
   ctrlCArmed?: boolean;
   /** Whether a `ctrl+g` leader is waiting for its chord key. */
   menuLeaderArmed?: boolean;
+  /**
+   * Columns the strip may occupy. This is the **chat column**, not the
+   * terminal: the caller subtracts the root gutter and the sidebar,
+   * because the strip shares a flex row with them. Required so a new
+   * call site cannot forget it and silently reintroduce the wrap.
+   */
+  width: number;
 }
 
 interface HotkeyChip {
   readonly key: string;
   readonly label: string;
+  /**
+   * Position in the shedding queue when the row does not fit `width`:
+   * chip `1` is dropped first, then `2`, and so on. A chip with no rank
+   * is essential — it stays even if the row still overflows (and is then
+   * clipped by `truncate-end` rather than wrapped).
+   */
+  readonly shed?: number;
 }
 
 /**
@@ -26,33 +40,44 @@ const SCROLL_KEY = process.platform === "darwin" ? "fn+\u2191\u2193" : "pgup/pgd
 
 /**
  * Bottom hint strip: surfaces the keybindings that are meaningful in
- * the current state so the user never has to guess. We cap to ~6 chips
- * to fit one terminal row and let slash commands take care of the long
- * tail.
+ * the current state so the user never has to guess.
+ *
+ * The strip is budgeted to **one row**. Ink does not clip an over-wide
+ * row, it wraps it — and a wrapped strip both costs a row the debug
+ * pane already budgeted away (`APP_CHROME_ROWS`) and splits chips from
+ * their separators into an unreadable two-line smear. So chips are shed
+ * in a declared order until the row fits, and `truncate-end` clips the
+ * essential remainder on a terminal too narrow even for those.
  */
 export function HotkeyHint({
   state,
   ctrlCArmed,
   menuLeaderArmed,
+  width,
 }: HotkeyHintProps): ReactElement {
-  const chips = resolveChips(state, ctrlCArmed ?? false, menuLeaderArmed ?? false);
+  const chips = fitChips(
+    resolveChips(state, ctrlCArmed ?? false, menuLeaderArmed ?? false),
+    width,
+  );
   return (
     <Box flexShrink={0}>
-      {chips.map((chip, idx) => (
-        <Text key={chip.key}>
-          <Text color={theme.colors.accentSoft} bold>
-            [{chip.key}]
-          </Text>
-          <Text color={theme.colors.muted}> {chip.label}</Text>
-          {idx < chips.length - 1 ? (
-            <Text color={theme.colors.muted}>
-              {"  "}
-              {theme.glyphs.dotSeparator}
-              {"  "}
+      <Text wrap="truncate-end">
+        {chips.map((chip, idx) => (
+          <Text key={chip.key}>
+            <Text color={theme.colors.accentSoft} bold>
+              [{chip.key}]
             </Text>
-          ) : null}
-        </Text>
-      ))}
+            <Text color={theme.colors.muted}> {chip.label}</Text>
+            {idx < chips.length - 1 ? (
+              <Text color={theme.colors.muted}>
+                {"  "}
+                {theme.glyphs.dotSeparator}
+                {"  "}
+              </Text>
+            ) : null}
+          </Text>
+        ))}
+      </Text>
     </Box>
   );
 }
@@ -62,6 +87,7 @@ function resolveChips(
   ctrlCArmed: boolean,
   menuLeaderArmed: boolean,
 ): HotkeyChip[] {
+  const hasDraft = state.inputValue.length > 0;
   if (state.pendingApproval) {
     return [
       { key: "y", label: "approve" },
@@ -88,33 +114,43 @@ function resolveChips(
     ];
   }
   if (state.status === "running") {
-    // A long streaming answer is exactly when the operator wants to
-    // scroll back, so the hint rides along with abort. The editor stays
-    // live during a run, so advertise what Enter does now — and how many
-    // messages are already parked behind the turn.
+    // Esc has exactly one meaning during a turn — abort — because abort
+    // deliberately wins over clear-draft (`handleAppKey` claims the key;
+    // see `onEscape` in `tui-app.tsx`). Say so when a draft exists: an
+    // operator who typed while the agent worked otherwise has nothing on
+    // screen telling him whether Esc also eats what he typed. The editor
+    // stays live during a run, so the strip also advertises what Enter
+    // does now — and how many messages are already parked behind the
+    // turn. Scroll sheds first (the wheel already does it), then the
+    // parked counter, then the Enter hint.
     const chips: HotkeyChip[] = [
-      { key: SCROLL_KEY, label: "scroll" },
-      { key: "\u23ce", label: "queue message" },
-      { key: "esc", label: "abort" },
+      { key: SCROLL_KEY, label: "scroll", shed: 1 },
+      { key: "⏎", label: "queue message", shed: 3 },
+      { key: "esc", label: hasDraft ? "abort, draft kept" : "abort" },
       {
         key: "ctrl+c",
         label: ctrlCArmed ? "press again to quit" : "abort",
       },
     ];
     if (state.queuedMessages.length > 0) {
-      chips.push({ key: "/queue", label: `${state.queuedMessages.length} parked` });
+      chips.push({
+        key: "/queue",
+        label: `${state.queuedMessages.length} parked`,
+        shed: 2,
+      });
     }
     return chips;
   }
   if (state.uiMode === "debug") {
     // Ctrl+B still cycles panels but is unadvertised: it duplicated the
     // Tab chip word-for-word, and the freed slot pays for the one hint
-    // panels actually lacked — the way back to Run.
+    // panels actually lacked — the way back to Run. Shift+Tab sheds
+    // first because "prev panel" is guessable from "next panel".
     return [
       { key: "tab", label: "next panel" },
-      { key: "shift+tab", label: "prev panel" },
+      { key: "shift+tab", label: "prev panel", shed: 1 },
       { key: "esc", label: "back to Run" },
-      { key: "ctrl+p", label: "menu" },
+      { key: "ctrl+p", label: "menu", shed: 2 },
       {
         key: "ctrl+c",
         label: ctrlCArmed ? "press again to quit" : "quit",
@@ -123,9 +159,9 @@ function resolveChips(
   }
   if (state.chatFocus === "sidebar") {
     return [
-      { key: "↑↓", label: "select" },
+      { key: "↑↓", label: "select", shed: 2 },
       { key: "enter", label: "open" },
-      { key: "tab", label: "next pane" },
+      { key: "tab", label: "next pane", shed: 1 },
       { key: "esc", label: "back to editor" },
       {
         key: "ctrl+c",
@@ -133,19 +169,68 @@ function resolveChips(
       },
     ];
   }
-  // Six chips is the cap for one row on narrow terminals. `ctrl+p` takes
-  // the slot `/` used to hold: the menu contains every slash command as
-  // well as every destination, so advertising the superset costs nothing
-  // and `/` keeps working for anyone who already reaches for it.
+  // The strip fits one row by shedding, not by a fixed cap. `ctrl+p`
+  // holds the slot `/` used to: the menu contains every slash command
+  // as well as every destination, and `/` keeps working for anyone who
+  // already reaches for it. Shedding order: scroll (the wheel already
+  // does it), then the sidebar (narrow terminals collapse it anyway —
+  // see `SIDEBAR_MIN_COLUMNS`), then the newline key, then the menu
+  // chip. A draft adds an `esc / clear draft` chip so the affordance is
+  // on screen exactly when it applies — `/` no longer opens the palette
+  // with a non-empty buffer, so nothing usable is displaced.
   return [
     { key: "enter", label: "send" },
-    { key: "alt+enter", label: "newline" },
-    { key: "tab", label: "sidebar" },
-    { key: SCROLL_KEY, label: "scroll" },
-    { key: "ctrl+p", label: "menu" },
+    { key: "alt+enter", label: "newline", shed: 3 },
+    { key: "tab", label: "sidebar", shed: 2 },
+    { key: SCROLL_KEY, label: "scroll", shed: 1 },
+    { key: "ctrl+p", label: "menu", shed: 4 },
+    ...(hasDraft ? [{ key: "esc", label: "clear draft" }] : []),
     {
       key: "ctrl+c",
       label: ctrlCArmed ? "press again to quit" : "quit",
     },
   ];
+}
+
+/**
+ * Drop chips — lowest `shed` rank first — until the row fits `width`.
+ * Stops once only essential (rank-less) chips remain; those overflow
+ * into `truncate-end` rather than silently disappearing.
+ */
+function fitChips(chips: HotkeyChip[], width: number): HotkeyChip[] {
+  let kept = chips;
+  while (stripWidth(kept) > width) {
+    const next = nextToShed(kept);
+    if (next < 0) break;
+    kept = kept.filter((_, idx) => idx !== next);
+  }
+  return kept;
+}
+
+function nextToShed(chips: readonly HotkeyChip[]): number {
+  let best = -1;
+  let bestRank = Number.POSITIVE_INFINITY;
+  chips.forEach((chip, idx) => {
+    if (chip.shed === undefined || chip.shed >= bestRank) return;
+    best = idx;
+    bestRank = chip.shed;
+  });
+  return best;
+}
+
+/**
+ * Rendered columns of the whole strip. Every key and label we ship is
+ * single-width (ASCII plus `↑`, `↓`, `·`), so `String.length` is the
+ * rendered width and we do not need a `string-width` dependency here —
+ * keep new chips inside that alphabet.
+ */
+function stripWidth(chips: readonly HotkeyChip[]): number {
+  if (chips.length === 0) return 0;
+  const separator = 4 + theme.glyphs.dotSeparator.length;
+  const chipWidths = chips.reduce(
+    // "[" + key + "] " + label
+    (acc, chip) => acc + chip.key.length + chip.label.length + 3,
+    0,
+  );
+  return chipWidths + (chips.length - 1) * separator;
 }
