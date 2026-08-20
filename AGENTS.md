@@ -248,6 +248,27 @@ non-429 untouched, old-curl tolerance),
 [warn-missing-search-key.test.ts](src/tools/os/web-search/tool/warn-missing-search-key.test.ts),
 and [web-search-tool.test.ts](src/tools/os/web-search/tool/web-search-tool.test.ts)
 ("warns once at construction, not once per search").
+## HTTP retry contract
+
+`os.web.fetch` and `os.http.request` both retry transient failures
+(429/502/503/504 plus curl's timeout exit 28) with exponential backoff capped
+at `retryMaxDelayMs`, honouring a server-sent `Retry-After`. The RFC 9110
+value grammar lives once in [retry-after-header.ts](src/tools/os/retry-after-header.ts)
+— both tools read the header off curl differently (`%{header_json}` vs
+`%header{retry-after}`) but normalise it through the same parser.
+
+**`os.http.request` additionally guards non-idempotent methods.** Unlike
+`web.fetch`, it can POST. An origin may already have processed a request whose
+response never arrived, so a blind replay risks a double submit — the one
+failure mode a retry layer must not introduce. A GET is replayed on any
+retryable status or a timeout; a POST is replayed **only** on 429/503 that also
+carries a `Retry-After`, which is an explicit "I did not process this, come
+back". A bare 502/504 or a timeout on a POST is returned as-is.
+
+Pinned by [http-request-retry.test.ts](src/tools/os/http-request-retry.test.ts)
+(retryable statuses, `Retry-After` precedence and clamping, give-up, stable-4xx
+passthrough, timeout handling, and the four non-idempotent-method safety cases)
+and [retry-after-header.test.ts](src/tools/os/retry-after-header.test.ts).
 
 ## Build & test
 
