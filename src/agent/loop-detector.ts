@@ -168,7 +168,16 @@ export class ToolLoopTracker {
     }
     if (isWanderingProneTool(tool)) {
       const spread = this.effectiveSpread(tool, argsHash);
-      if (spread >= this.wanderingThreshold) {
+      // The spread is a property of the whole window, so it stays above the
+      // threshold after the model stops varying its argument and settles on
+      // repeating one. Classifying THIS call as wandering would then tell it
+      // "N different attempts" about a call that is a verbatim repeat -- the
+      // same kind of false statement the wandering wording exists to avoid.
+      // A repeat falls through to the repeat detector, which describes it
+      // accurately.
+      const repeatsEarlierCall =
+        getRepeatCount(this.history, tool, argsHash) > 0;
+      if (spread >= this.wanderingThreshold && !repeatsEarlierCall) {
         return {
           level: "warn",
           count: spread,
@@ -654,10 +663,18 @@ function formatLoopGuidance(
     header = target
       ? `BLOCKED: \`${tool}\` — ${count} different attempts against \`${target}\` and still no answer.`
       : `BLOCKED: \`${tool}\` — ${count} different attempts and still no answer.`;
-  } else if (mode === "veto") {
+  } else if (mode === "veto" && count > 1) {
     header = target
       ? `BLOCKED: \`${tool}\` — ${count} consecutive calls to \`${target}\` returned the same no-progress outcome.`
       : `BLOCKED: \`${tool}\` — ${count} consecutive calls returned the same no-progress outcome.`;
+  } else if (mode === "veto") {
+    // The breaker can fire on a verdict that carries no streak of its own
+    // (a wandering episode the model ended by settling on one argument).
+    // State only what is certainly true rather than quoting a count that
+    // would read as "0 consecutive calls".
+    header = target
+      ? `BLOCKED: \`${tool}\` — repeated calls to \`${target}\` are not making progress.`
+      : `BLOCKED: \`${tool}\` — repeated calls are not making progress.`;
   } else {
     header = target
       ? `You called \`${tool}\` on \`${target}\` ${count} times with the same arguments and neither the result nor the world snapshot changed.`

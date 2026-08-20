@@ -464,8 +464,14 @@ function runSyncLoopGate(
     // A wandering escalation rides this same veto path but its `count` is
     // a spread of DISTINCT arguments; pass the detector so the wording
     // does not claim they were identical.
+    //
+    // The verdict decides, not the escalation flag. `isWanderingEscalated`
+    // answers for the whole history window, so it stays true after the model
+    // stops wandering and settles on repeating one argument -- and borrowing
+    // it there would announce "N different attempts" about a verbatim
+    // repeat, quoting a count the verdict never established.
     const detector =
-      wanderingEscalated && verdict.detector !== "no_progress"
+      wanderingEscalated && verdict.detector === "wandering"
         ? "wandering"
         : verdict.detector;
     const vetoResult = compressToolResult({

@@ -556,6 +556,54 @@ describe("executeBatch", () => {
     expect(body).not.toContain("undefined");
   });
 
+  // The wandering spread is a property of the history window, so it stays
+  // above the threshold once the model stops varying its argument. Reporting
+  // a verbatim repeat as "N different attempts" is the same false statement
+  // the wandering wording exists to avoid, in the mirror case.
+  it("stops claiming different attempts once a wandering model settles on one url", async () => {
+    const registry = buildRegistry({
+      "os.web.fetch": async () => okResult("os.web.fetch"),
+    });
+    const tracker = new ToolLoopTracker({
+      warningThreshold: 2,
+      criticalThreshold: 3,
+      wanderingThreshold: 3,
+      wanderingEscalation: 4,
+    });
+    // Wander first: four distinct URLs on one host crosses the escalation.
+    for (const path of ["a", "b", "c", "d"]) {
+      const wandered = { url: `https://web.archive.org/${path}` };
+      tracker.check("os.web.fetch", wandered);
+      tracker.recordCall("os.web.fetch", wandered);
+      tracker.recordOutcome(
+        "os.web.fetch",
+        wandered,
+        okResult("os.web.fetch", path),
+      );
+    }
+    // Then settle: the same URL, twice, so the second call is a repeat.
+    const settled = { url: "https://web.archive.org/same" };
+    tracker.check("os.web.fetch", settled);
+    tracker.recordCall("os.web.fetch", settled);
+    tracker.recordOutcome(
+      "os.web.fetch",
+      settled,
+      okResult("os.web.fetch", "same"),
+    );
+
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.web.fetch", args: settled }]),
+      registry,
+      { ...ctx(new AbortController().signal), tracker },
+    );
+    const body = out.results[0]!.compressed!.summary;
+    expect(body).toContain("BLOCKED");
+    expect(body).toContain("web.archive.org");
+    expect(body).not.toContain("different attempts");
+    // A count the verdict cannot substantiate must not be quoted either.
+    expect(body).not.toContain("0 consecutive");
+  });
+
   it("does not throw and stays generic when args are malformed", async () => {
     const registry = buildRegistry({ "os.web.fetch": async () => okResult("os.web.fetch") });
     const tracker = new ToolLoopTracker({
