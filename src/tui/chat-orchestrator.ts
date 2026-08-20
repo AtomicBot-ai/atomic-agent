@@ -81,6 +81,15 @@ export class ChatOrchestrator {
   /** Latest release version captured by `checkForUpdate`, used by `runUpdate`. */
   private pendingUpdateVersion: string | null = null;
   private readonly queue: string[] = [];
+  /**
+   * How many leading `queue` entries are steering re-routes for the turn
+   * currently in flight. New re-routes are spliced in at this index, so
+   * they stay ahead of ordinary backlog (they are corrections to the turn
+   * the operator is watching) while keeping their own typing order. Reset
+   * whenever a turn starts — a message aimed at the previous turn is
+   * ordinary backlog from the next one's point of view.
+   */
+  private steeredAhead = 0;
   public exitCode = 0;
   public readonly tasks: TasksOrchestrator;
   public readonly skills: SkillsOrchestrator;
@@ -258,7 +267,7 @@ export class ChatOrchestrator {
       return;
     }
     this.session = loaded;
-    this.queue.length = 0;
+    this.clearQueue();
     // Session grants are point exceptions scoped to the session that
     // granted them; a switch must not carry them into the next one.
     this.runtime.approvals.clearSessionGrants();
@@ -348,7 +357,7 @@ export class ChatOrchestrator {
       return;
     }
     this.session = this.runtime.createSession();
-    this.queue.length = 0;
+    this.clearQueue();
     // A fresh session starts with no point exceptions: grants never
     // outlive the session that created them.
     this.runtime.approvals.clearSessionGrants();
@@ -384,10 +393,45 @@ export class ChatOrchestrator {
         });
         return;
       }
-      this.queue.push(text);
+      // Refused, but the operator still aimed this at the turn they are
+      // watching. `currentController` is set from the moment this
+      // orchestrator commits to a turn, which is strictly WIDER than the
+      // window the loop opens: the commit happens before
+      // `turnController.enqueue`, and the loop's `open()` only runs once
+      // the submission owns the per-session lock — after a park behind an
+      // out-of-band turn on the same session, and after the previous
+      // turn's final drain but before its promise settles. A steer aimed
+      // into that span is not backlog, so it does not go behind backlog.
+      //
+      // We deliberately do NOT ask the inbox whether its window is open
+      // to tell "too late" from "not yet" from "inbox full" apart: that
+      // is a second fact read at a different moment than `steer` acted on
+      // it, which is the check-then-act this whole mechanism exists to
+      // remove. `steer`'s answer is the only fact consulted — hence a
+      // notice that is true whichever of the three it was.
+      this.queueAsSteer(text);
+      this.bus.emit({
+        type: "runtime_info",
+        line: "steering the running turn — it cannot take this one, so it runs as the next turn",
+      });
       return;
     }
     void this.runOneTurn(text);
+  }
+
+  /**
+   * Queue a message that was meant as a steer but could not be folded
+   * into the running turn — ahead of ordinary backlog, behind steers
+   * already re-routed for the same turn.
+   */
+  private queueAsSteer(text: string): void {
+    this.queue.splice(this.steeredAhead, 0, text);
+    this.steeredAhead += 1;
+  }
+
+  private clearQueue(): void {
+    this.queue.length = 0;
+    this.steeredAhead = 0;
   }
 
   /**
@@ -400,9 +444,12 @@ export class ChatOrchestrator {
    * dropping them here would lose a message the operator watched being
    * accepted.
    *
-   * They go to the FRONT of the queue. They are corrections aimed at the
-   * turn that just ran, and anything already queued was typed after
-   * `steer` had refused it — i.e. later than these.
+   * They go to the FRONT of the queue — ahead of `queueAsSteer`'s
+   * entries too. They are corrections aimed at the turn that just ran,
+   * and anything already queued was typed after `steer` had refused it:
+   * either after the window shut, or after the inbox filled. `steeredAhead`
+   * needs no adjustment here — the next turn starts synchronously below
+   * and resets it.
    */
   private rerouteUndelivered(undelivered: readonly string[] | undefined): void {
     if (undelivered === undefined || undelivered.length === 0) return;
@@ -421,6 +468,9 @@ export class ChatOrchestrator {
     if (!this.session) return;
     const controller = new AbortController();
     this.currentController = controller;
+    // A new turn is in flight: whatever is still queued was aimed at an
+    // earlier one and is ordinary backlog now.
+    this.steeredAhead = 0;
     try {
       const result = await this.runtime.runTurn(this.session, text, {
         maxSteps: this.options.maxSteps,
@@ -520,7 +570,7 @@ export class ChatOrchestrator {
   quit(): void {
     if (this.quitting) return;
     this.quitting = true;
-    this.queue.length = 0;
+    this.clearQueue();
     this.currentController?.abort();
   }
 
