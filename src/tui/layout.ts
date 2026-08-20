@@ -30,16 +30,18 @@ export const SIDEBAR_MAX_WIDTH = 34;
 const SIDEBAR_WIDTH_RATIO = 0.25;
 
 /**
- * Rows the rail itself spends before a single list row is drawn: the
- * two section headers, the blank row between the panes and a "↓ N
- * more" footer per pane. Counted off the rendered component rather
+ * Rows the rail itself spends before a single list row is drawn. Since
+ * the rail became the app frame it also carries the brand lockup, the
+ * version line and the Menu button, on top of the two section headers,
+ * the blank row between the panes and a "↓ N more" footer per pane.
+ * Counted off the rendered component rather
  * than estimated — the left border costs no rows because `sidebar.tsx`
  * turns the top and bottom edges off — and pinned by
  * `sidebar-fit.test.tsx`, which renders the rail at a budget and
  * asserts it comes to exactly `sessions + tasks + SIDEBAR_CHROME_ROWS`
  * rows.
  */
-export const SIDEBAR_CHROME_ROWS = 5;
+export const SIDEBAR_CHROME_ROWS = 13;
 
 /**
  * Rows the rail costs outside its own frame: the status bar above it

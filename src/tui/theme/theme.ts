@@ -49,6 +49,21 @@ export interface TuiColors {
    * highlighted widget.
    */
   readonly brandMark: string;
+  /**
+   * The left rail is drawn inverted — a light ground under dark text on
+   * a dark theme, and the reverse on a light one. It is the app's one
+   * piece of chrome that is always on screen, and giving it its own
+   * ground is what makes the layout read as a sidebar next to a document
+   * rather than two columns of the same text.
+   *
+   * Per-palette rather than a literal white: `#fff` would disappear on
+   * the four light palettes, and "inverted" is the property that has to
+   * hold, not the exact colour.
+   */
+  readonly railBackground: string;
+  readonly railForeground: string;
+  /** Secondary text on the rail — same role as `muted`, on the rail ground. */
+  readonly railMuted: string;
   readonly border: string;
   readonly muted: string;
   readonly error: string;
@@ -80,6 +95,8 @@ export interface TuiGlyphs {
   readonly ellipsis: string;
   readonly promptCaret: string;
   readonly chevronRight: string;
+  /** Hamburger, for the rail's menu button. */
+  readonly menuGlyph: string;
   readonly dotSeparator: string;
   readonly pipeSeparator: string;
 }
@@ -127,6 +144,7 @@ const GLYPHS: TuiGlyphs = {
   ellipsis: "…",
   promptCaret: "❯",
   chevronRight: "▸",
+  menuGlyph: "☰",
   dotSeparator: "·",
   pipeSeparator: "|",
 };

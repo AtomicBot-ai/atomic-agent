@@ -84,6 +84,15 @@ export const LOGO_ART: Readonly<Record<LogoVariant, readonly string[]>> = {
   mini: rasteriseMark(toInkMask(FULL_ART), { columns: 7, rows: 4 }),
 };
 
+/**
+ * The rail's brand mark: the same drawing as the splash, rasterised to a
+ * 6x4 cell so the rail spends four rows on branding rather than ten.
+ */
+export const RAIL_MARK: readonly string[] = rasteriseMark(
+  toInkMask(FULL_ART),
+  { columns: 6, rows: 4 },
+);
+
 export const WORDMARK_ROWS: readonly string[] = [
   "▄▀█ ▀█▀ █▀█ █▀▄▀█ █ █▀▀   ▄▀█ █▀▀ █▀▀ █▄ █ ▀█▀",
   "█▀█  █  █▄█ █ ▀ █ █ █▄▄   █▀█ █▄█ ██▄ █ ▀█  █ ",

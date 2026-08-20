@@ -11,6 +11,12 @@ import { getAppVersion } from "../../version.js";
 
 interface StatusBarProps {
   state: TuiState;
+  /**
+   * Draw the `atomic-agent vX.Y.Z` lockup. False when the rail is on
+   * screen: the rail already carries the brand and the version, and two
+   * copies of them read as a rendering bug rather than as chrome.
+   */
+  brand?: boolean;
 }
 
 /**
@@ -33,15 +39,22 @@ interface StatusBarProps {
  * between the top bar and the prompt to read the live signal. See
  * [src/tui/components/prompt-meta-status.tsx](src/tui/components/prompt-meta-status.tsx).
  */
-export function StatusBar({ state }: StatusBarProps): ReactElement {
+export function StatusBar({
+  state,
+  brand = true,
+}: StatusBarProps): ReactElement {
   const section = getCurrentSection(state);
   return (
     <Box>
-      <Text color={theme.colors.accentSoft} bold>
-        atomic-agent
-      </Text>
-      <Text color={theme.colors.muted}> v{getAppVersion()}</Text>
-      <Sep />
+      {brand ? (
+        <>
+          <Text color={theme.colors.accentSoft} bold>
+            atomic-agent
+          </Text>
+          <Text color={theme.colors.muted}> v{getAppVersion()}</Text>
+          <Sep />
+        </>
+      ) : null}
       <Breadcrumb state={state} section={section} />
       <SessionTag sessionId={state.session.sessionId} />
     </Box>

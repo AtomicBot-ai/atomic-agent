@@ -30,7 +30,11 @@ describe("github themes", () => {
     expect(c.user).toBe("#4493f8");
     expect(c.tool).toBe("#4493f8");
     expect(c.info).toBe("#4493f8");
-    expect(c.assistant).toBe("#3fb950");
+    // The assistant's prose is deliberately NOT GitHub's green. It is
+    // the bulk of what is on screen, and a saturated colour on every
+    // reply reads as a status signal — which the markers, tool cards and
+    // `toolOk` below already carry. Default foreground instead.
+    expect(c.assistant).toBe("#e6edf3");
     expect(c.toolOk).toBe("#3fb950");
     expect(c.success).toBe("#3fb950");
     expect(c.reasoning).toBe("#ab7df8");

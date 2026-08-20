@@ -6,6 +6,8 @@ import type { TuiAction } from "../tui-action.js";
 import type { ChatMessage, TuiState } from "../tui-state.js";
 import { theme } from "../theme/theme.js";
 import { AssistantBubble } from "./assistant-bubble.js";
+import { ChatCopyButton } from "./chat-copy-button.js";
+import { ChatTryAgainButton } from "./chat-try-again-button.js";
 import {
   estimateMessageHeight,
   estimateStreamingTailHeight,
@@ -170,7 +172,15 @@ function FinalisedMessage({
   toolsExpandedById,
 }: FinalisedMessageProps): ReactElement {
   if (message.role === "user") {
-    return <UserBubble text={message.text} />;
+    return (
+      <Box flexDirection="column">
+        <UserBubble text={message.text} />
+        <Box flexDirection="row">
+          <ChatCopyButton text={message.text} />
+          <ChatTryAgainButton text={message.text} />
+        </Box>
+      </Box>
+    );
   }
   if (message.role === "assistant") {
     return (
@@ -202,14 +212,18 @@ function FinalisedMessage({
           text={message.text}
           toolSteps={message.toolSteps ?? 0}
         />
+        <ChatCopyButton text={message.text} />
       </Box>
     );
   }
   return (
-    <SystemBubble
-      text={message.text}
-      warn={message.variant === "warn"}
-    />
+    <Box flexDirection="column">
+      <SystemBubble
+        text={message.text}
+        warn={message.variant === "warn"}
+      />
+      <ChatCopyButton text={message.text} />
+    </Box>
   );
 }
 

@@ -164,7 +164,8 @@ function buildManageTabs(state: TuiState): SubTab[] {
 /**
  * Height consumed by the always-on app frame OUTSIDE the debug pane:
  * the top `StatusBar` (1 row) + the `PromptShell` (≈6 rows: top margin,
- * padding, the editor line, the meta-row, and the `╹` cap) + the
+ * the rounded frame's two border rows, the editor line and the action
+ * bar) + the
  * `HotkeyHint` (1 row). Ink 7 does NOT clip a frame taller than the
  * terminal — it overlaps/garbles earlier lines instead (verified) — so
  * the per-tab budget must subtract this accurately and err generous.
