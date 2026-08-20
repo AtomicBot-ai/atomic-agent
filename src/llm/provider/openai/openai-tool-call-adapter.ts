@@ -140,8 +140,11 @@ export function openAiToolCallsToBatch(
     let args: Record<string, unknown>;
     try {
       args = parseArguments(tc.function.arguments);
-    } catch {
-      throw new ToolCallArgumentsParseError(name);
+    } catch (err) {
+      if (err instanceof SyntaxError) {
+        throw new ToolCallArgumentsParseError(name);
+      }
+      throw err;
     }
     calls.push({
       tool: name,
