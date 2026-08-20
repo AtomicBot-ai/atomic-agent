@@ -13,6 +13,7 @@ import { buildGrammar } from "../llm/grammar/build-grammar.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { replyTool } from "../tools/conversation/reply.js";
+import { resetConfigCache } from "../config/index.js";
 import type {
   CapabilitiesSummary,
   SkillCatalogEntry,
@@ -1361,5 +1362,130 @@ describe("executeStep unparseable-completion fallback", () => {
     await expect(
       runQwenStep("[SFC] 分析中 rambling that never closes"),
     ).rejects.toThrow(/tool-call/);
+  });
+});
+
+describe("parallelToolCalls derivation (issue #104)", () => {
+  const originalEnv = process.env.ATOMIC_AGENT_MAX_PARALLEL_TOOL_CALLS;
+
+  beforeEach(() => {
+    process.env.ATOMIC_AGENT_MAX_PARALLEL_TOOL_CALLS = originalEnv;
+    resetConfigCache();
+  });
+
+  /** Minimal registry with a single `os.fs.read` tool. */
+  function makeRegistry() {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "read a file",
+      readonly: true,
+      async run(args) {
+        return compressToolResult({
+          tool: "os.fs.read",
+          status: "ok",
+          output: `read ${String(args.path)}`,
+        });
+      },
+    });
+    return registry;
+  }
+
+  /**
+   * Run one native_tools step and capture the `LlmStreamParams` the
+   * executor passes to `llmComplete`. The model emits a single
+   * `os.fs.read` tool call so the request carries the tools payload.
+   */
+  async function captureStreamParams(deps?: {
+    supportsParallelTools?: boolean;
+    maxParallelToolCallsEnv?: string;
+  }) {
+    if (deps?.maxParallelToolCallsEnv !== undefined) {
+      process.env.ATOMIC_AGENT_MAX_PARALLEL_TOOL_CALLS =
+        deps.maxParallelToolCallsEnv;
+      resetConfigCache();
+    }
+    const registry = makeRegistry();
+    const session = createEmptySessionState({
+      id: "s-parallel-flag",
+      workingDir: "/w",
+    });
+    let captured: { parallelToolCalls?: boolean } | null = null;
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "read the file",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async (params) => {
+          captured = { parallelToolCalls: params.parallelToolCalls };
+          return {
+            content: JSON.stringify([
+              {
+                tool: "os.fs.read",
+                args: { path: "/w/a.txt" },
+              },
+            ]),
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
+            cacheHitTokens: 0,
+            slotId: -1,
+            modelId: "mock",
+          };
+        },
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+        ...(deps?.supportsParallelTools !== undefined
+          ? { supportsParallelTools: deps.supportsParallelTools }
+          : {}),
+      },
+    );
+    expect(outcome.toolResults[0]?.status).toBe("ok");
+    expect(captured).not.toBeNull();
+    return captured!;
+  }
+
+  it("defaults to parallelToolCalls true when the cap > 1 and the provider is capable", async () => {
+    const captured = await captureStreamParams();
+    expect(captured.parallelToolCalls).toBe(true);
+  });
+
+  it("sends parallelToolCalls false when maxParallelToolCalls is 1", async () => {
+    const captured = await captureStreamParams({
+      maxParallelToolCallsEnv: "1",
+    });
+    expect(captured.parallelToolCalls).toBe(false);
+  });
+
+  it("sends parallelToolCalls false when the provider reports supportsParallelTools false, regardless of cap", async () => {
+    const captured = await captureStreamParams({
+      supportsParallelTools: false,
+    });
+    expect(captured.parallelToolCalls).toBe(false);
+  });
+
+  it("keeps parallelToolCalls true when cap > 1 and the provider is capable", async () => {
+    const captured = await captureStreamParams({
+      supportsParallelTools: true,
+      maxParallelToolCallsEnv: "8",
+    });
+    expect(captured.parallelToolCalls).toBe(true);
   });
 });

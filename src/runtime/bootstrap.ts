@@ -1156,6 +1156,7 @@ export async function createAgentRuntime(
       transport: resolveActiveToolTransport(resolved, provider),
       adapter: provider.toolCallAdapter ?? null,
       slotAffinity: provider.capabilities.supportsSlotAffinity,
+      parallelTools: provider.capabilities.supportsParallelTools,
     };
   };
 
@@ -1859,6 +1860,10 @@ export async function createAgentRuntime(
   Object.defineProperty(loopDeps, "supportsSlotAffinity", {
     enumerable: true,
     get: () => resolveActiveLlmSlice().slotAffinity,
+  });
+  Object.defineProperty(loopDeps, "supportsParallelTools", {
+    enumerable: true,
+    get: () => resolveActiveLlmSlice().parallelTools,
   });
   const loop = new AgentLoop(
     loopDeps as typeof loopDeps & {

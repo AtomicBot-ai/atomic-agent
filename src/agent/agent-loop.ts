@@ -77,6 +77,13 @@ export interface AgentLoopDependencies {
   toolCallAdapter?: ToolCallAdapter | null;
   supportsSlotAffinity?: boolean;
   /**
+   * Whether the active native-tools provider can emit parallel tool
+   * calls. Defaults to `true` when omitted (legacy / grammar-only
+   * wiring). Combined with `agent.maxParallelToolCalls` to decide the
+   * `parallel_tool_calls` wire flag (issue #104).
+   */
+  supportsParallelTools?: boolean;
+  /**
    * Optional hot-swap supervisor. When provided, the loop re-probes
    * `/props` at the start of every turn and inspects the `modelId` of
    * each completion; if the operator swaps the model behind
@@ -577,6 +584,7 @@ export class AgentLoop {
             toolTransport: this.deps.toolTransport ?? "grammar",
             toolCallAdapter: this.deps.toolCallAdapter ?? null,
             supportsSlotAffinity: this.deps.supportsSlotAffinity ?? true,
+            supportsParallelTools: this.deps.supportsParallelTools ?? true,
             llmComplete: this.deps.llmComplete,
             ...(this.deps.llmCompleteStream
               ? { llmCompleteStream: this.deps.llmCompleteStream }
