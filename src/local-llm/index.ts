@@ -51,6 +51,10 @@ export {
   type LatestReleaseInfo,
 } from "./backend-installer.js";
 export {
+  maybeAutoUpdateBackend,
+  type AutoUpdateBackendResult,
+} from "./ensure-latest-backend.js";
+export {
   isModelDownloaded,
   isMmprojDownloaded,
   downloadModel,

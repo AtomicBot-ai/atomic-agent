@@ -1,6 +1,7 @@
 /**
- * Curated GGUF catalog (Qwen + Gemma only). URLs mirror atomic-hermes
- * desktop local LLM models; `family` replaces UI-only icon fields.
+ * Curated GGUF catalog (Qwen + Gemma + Nemotron + Muse). URLs mirror
+ * atomic-hermes desktop local LLM models; `family` replaces UI-only
+ * icon fields.
  */
 
 export type LocalModelId =
@@ -13,7 +14,9 @@ export type LocalModelId =
   | "gemma-4-e4b"
   | "gemma-4-12b"
   | "gemma-4-26b-a4b"
-  | "gemma-4-31b";
+  | "gemma-4-31b"
+  | "nemotron-3.5-30b-a3b"
+  | "muse-glimmer-30b";
 
 /**
  * Memory-v2 phase 1B. Embedding model identifiers. A separate union
@@ -43,7 +46,7 @@ export interface LocalModelDef {
   contextLabel: string;
   minRamGb: number;
   recommendedRamGb: number;
-  family: "qwen" | "gemma";
+  family: "qwen" | "gemma" | "nemotron" | "muse";
   /**
    * Jinja file under `assets/ai-models/` passed to llama-server as
    * `--chat-template-file`, overriding the template baked into the GGUF.
@@ -279,6 +282,44 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
       "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf",
     mmprojFilename: "mmproj-F16.gguf",
     mmprojFileSizeGb: 0.90,
+  },
+  {
+    id: "nemotron-3.5-30b-a3b",
+    name: "NVIDIA Nemotron 3.5 Lightning 30B-A3B GGUF",
+    filename: "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-AD-IQ4_NL.gguf",
+    huggingFaceUrl:
+      "https://huggingface.co/AtomicChat/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF/resolve/main/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-AD-IQ4_NL.gguf",
+    fileSizeGb: 19.65,
+    sizeLabel: "19.7 GB",
+    description: "Hybrid Mamba2 MoE reasoning, imatrix-calibrated",
+    maxContextLength: 262_144,
+    contextLabel: "256K",
+    minRamGb: 24,
+    recommendedRamGb: 32,
+    family: "nemotron",
+    tag: "New",
+    supportsVision: false,
+  },
+  {
+    id: "muse-glimmer-30b",
+    name: "Meta Muse Glimmer 30B GGUF",
+    filename: "Muse-Glimmer-30B-UD-Q4_K_XL.gguf",
+    huggingFaceUrl:
+      "https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF/resolve/main/Muse-Glimmer-30B-UD-Q4_K_XL.gguf",
+    fileSizeGb: 15.9,
+    sizeLabel: "15.9 GB",
+    description: "Multimodal 30B MoE (ATEM / Harmony)",
+    maxContextLength: 131_072,
+    contextLabel: "128K",
+    minRamGb: 20,
+    recommendedRamGb: 32,
+    family: "muse",
+    tag: "New",
+    supportsVision: true,
+    mmprojUrl:
+      "https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF/resolve/main/mmproj-Muse-Glimmer-30B-Q8_0.gguf",
+    mmprojFilename: "mmproj-Muse-Glimmer-30B-Q8_0.gguf",
+    mmprojFileSizeGb: 2.05,
   },
 ];
 

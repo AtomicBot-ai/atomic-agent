@@ -20,7 +20,7 @@ import { readBackendVersion, writeBackendVersion } from "./backend-version.js";
 import { resolvePlatformAsset, UnsupportedPlatformError } from "./platform-assets.js";
 import { resolveDownloadAsset } from "./windows-backend-variant.js";
 
-const GITHUB_REPO = "AtomicBot-ai/atomic-llama-cpp-turboquant";
+const GITHUB_REPO = "AtomicBot-ai/atomic-llama-cpp-turboquant-nightly";
 
 /**
  * Anonymous GitHub API allows ~60 req/h per IP. The Models tab polls

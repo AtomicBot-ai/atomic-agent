@@ -562,6 +562,38 @@ describe("parseUserConfigFile", () => {
     expect(parsed.localModels.managed.autoUpdate).toBe(true);
   });
 
+  it("defaults localModels.managed.autoUpdate to true", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.localModels.managed.autoUpdate).toBe(true);
+  });
+
+  it("migrates a pre-v41 autoUpdate:false (unused default) to true", () => {
+    const parsed = parseUserConfigFile({
+      version: 37,
+      localModels: { managed: { autoUpdate: false } },
+    });
+    expect(parsed.localModels.managed.autoUpdate).toBe(true);
+  });
+
+  // The migration gate is the LAST version that stored the dead default.
+  // v40 is the boundary: it must still migrate, v41 must be honoured.
+  // Without this pair the gate can drift off USER_CONFIG_VERSION unnoticed.
+  it("migrates a v40 autoUpdate:false (still the unused default) to true", () => {
+    const parsed = parseUserConfigFile({
+      version: 40,
+      localModels: { managed: { autoUpdate: false } },
+    });
+    expect(parsed.localModels.managed.autoUpdate).toBe(true);
+  });
+
+  it("preserves an explicit localModels.managed.autoUpdate=false on v41+", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { managed: { autoUpdate: false } },
+    });
+    expect(parsed.localModels.managed.autoUpdate).toBe(false);
+  });
+
   it("preserves an explicit localModels.managed.device override", () => {
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,

@@ -894,6 +894,14 @@ export interface UserManagedLocalLlmConfig {
   modelId: string | null;
   port: number;
   dataDirOverride: string | null;
+  /**
+   * When true, managed-mode start (TUI auto-start / `s`, CLI
+   * `models start`) checks GitHub Releases and replaces the llama.cpp
+   * zip if a newer tag (or a stale Windows variant) is available.
+   * Default `true` since config v41. Older files stored an unused
+   * `false` default — those migrate to `true`. Set `false` to pin the
+   * installed backend.
+   */
   autoUpdate: boolean;
   /**
    * Compute-device preference for the managed llama.cpp daemon:
@@ -1495,7 +1503,12 @@ export interface UserConfigFile {
 // v40: new `tui.mouse` flag gating the mouse layer. Defaults to true, so an
 // older file inherits mouse support on upgrade; `--no-mouse` and `/mouse off`
 // override it without rewriting the file.
-export const USER_CONFIG_VERSION = 40 as const;
+// v41: `localModels.managed.autoUpdate` is wired to managed start
+// (TUI auto-start / CLI `models start`) and defaults to `true`. Pre-v41
+// files stored an unused `false` default — those migrate to `true` so
+// existing installs pick up newer llama.cpp zips. Explicit `false` on
+// a v41+ file is honoured.
+export const USER_CONFIG_VERSION = 41 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1504,6 +1517,9 @@ export const USER_CONFIG_VERSION = 40 as const;
  * explicit overrides on v22+ files are still honoured.
  */
 const MEMORY_V2_OPT_IN_DEFAULTS_VERSION = 22;
+
+/** Pre-v41 `autoUpdate: false` was a dead default; force the live default. */
+const MANAGED_AUTO_UPDATE_DEFAULTS_VERSION = 41;
 
 export type RewriterGateMode = "heuristic" | "embedding" | "always";
 
@@ -1574,6 +1590,10 @@ export type RewriterGateMode = "heuristic" | "embedding" | "always";
  * v32→v33 added the optional `analytics.*` block (anonymous PostHog
  * product analytics — opt-out via `analytics.enabled: false`). Older
  * files inherit `analytics: { enabled: true }` transparently.
+ * v37→v38 wired `localModels.managed.autoUpdate` (default `true`):
+ * managed start pulls a newer llama.cpp zip from GitHub Releases when
+ * one exists. Pre-v38 files that stored the unused `false` default
+ * migrate to `true`; an explicit `false` on a v38+ file is honoured.
  * Older files are transparently upgraded by filling missing
  * blocks/fields from `USER_CONFIG_DEFAULTS`. Anything older than v5
  * is not migrated: this is active development, callers delete their
@@ -1615,6 +1635,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   37,
   38,
   39,
+  40,
   USER_CONFIG_VERSION,
 ];
 
@@ -1628,7 +1649,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       modelId: null,
       port: 19091,
       dataDirOverride: null,
-      autoUpdate: false,
+      autoUpdate: true,
       stopOnExit: true,
       device: "auto",
       contextSize: 0,
@@ -2174,6 +2195,16 @@ function parseMemoryV2FeatureEnabled(
     return true;
   }
   return parseBool(raw ?? defaultEnabled, field);
+}
+
+function resolveManagedAutoUpdate(inputVersion: number, raw: unknown): boolean {
+  if (inputVersion < MANAGED_AUTO_UPDATE_DEFAULTS_VERSION) {
+    return true;
+  }
+  return parseBool(
+    raw ?? USER_CONFIG_DEFAULTS.localModels.managed.autoUpdate,
+    "localModels.managed.autoUpdate",
+  );
 }
 
 function resolveEmbeddingModelId(
@@ -2849,10 +2880,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             rawManaged.dataDirOverride,
             "localModels.managed.dataDirOverride",
           ),
-    autoUpdate: parseBool(
-      rawManaged.autoUpdate ?? USER_CONFIG_DEFAULTS.localModels.managed.autoUpdate,
-      "localModels.managed.autoUpdate",
-    ),
+    autoUpdate: resolveManagedAutoUpdate(version, rawManaged.autoUpdate),
     stopOnExit: parseBool(
       rawManaged.stopOnExit ??
         USER_CONFIG_DEFAULTS.localModels.managed.stopOnExit,

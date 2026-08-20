@@ -61,7 +61,7 @@ export interface ReasoningTurnFraming {
 }
 
 export interface TaggedReasoningModelProfile extends BaseModelProfile {
-  id: "qwen-think" | "gemma4-think";
+  id: "qwen-think" | "gemma4-think" | "nemotron-think";
   reasoningStyle: "think-tags" | "channel-tags";
   reasoningOpenTag: string;
   reasoningCloseTag: string;
@@ -122,6 +122,21 @@ export const PLAIN_INSTRUCT_PROFILE: PlainModelProfile = {
 
 export const QWEN_THINK_PROFILE: TaggedReasoningModelProfile = {
   id: "qwen-think",
+  reasoningStyle: "think-tags",
+  reasoningOpenTag: "<think>",
+  reasoningCloseTag: "</think>",
+  requiresPromptThinkPrefix: true,
+  allowThinkPrelude: true,
+  vision: VISION_ABSENT,
+};
+
+/**
+ * Nemotron 3.5 Lightning uses ChatML with an `enable_thinking` flag and
+ * prefills `<think>` at the generation point — same open/close ownership as
+ * `qwen-think`, without Gemma-style turn framing.
+ */
+export const NEMOTRON_THINK_PROFILE: TaggedReasoningModelProfile = {
+  id: "nemotron-think",
   reasoningStyle: "think-tags",
   reasoningOpenTag: "<think>",
   reasoningCloseTag: "</think>",
@@ -225,6 +240,9 @@ function selectBaseProfile(
   if (looksLikeQwenThinkModel(modelAlias, templateLower, supportsPreserveReasoning)) {
     return QWEN_THINK_PROFILE;
   }
+  if (looksLikeNemotronThinkModel(modelAlias, templateLower)) {
+    return NEMOTRON_THINK_PROFILE;
+  }
   if (looksLikeGemma4ThinkModel(modelAlias, templateLower)) {
     return GEMMA4_THINK_PROFILE;
   }
@@ -287,6 +305,17 @@ function looksLikeQwenThinkModel(
     (templateLower.includes("enable_thinking") ||
       templateLower.includes("preserve_thinking") ||
       supportsPreserveReasoning);
+  return aliasHint && templateHint;
+}
+
+function looksLikeNemotronThinkModel(
+  modelAlias: string,
+  templateLower: string,
+): boolean {
+  const aliasHint = modelAlias.includes("nemotron");
+  const templateHint =
+    templateLower.includes("<think>") &&
+    templateLower.includes("enable_thinking");
   return aliasHint && templateHint;
 }
 

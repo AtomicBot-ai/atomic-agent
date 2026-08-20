@@ -20,6 +20,7 @@ import {
   isModelDownloaded,
   listVulkanDevices,
   LOCAL_MODELS_CATALOG,
+  maybeAutoUpdateBackend,
   readBackendVersion,
   removeModel,
   resolveChatTemplatePath,
@@ -62,14 +63,14 @@ export async function runLocalModelsList(): Promise<number> {
   const cfg = getConfig();
   const dataDir = cfg.paths.localModelsDataDir;
   process.stdout.write(
-    "ID                  | FAMILY | SIZE   | CONTEXT | DL  | ACTIVE\n",
+    "ID                   | FAMILY   | SIZE   | CONTEXT | DL  | ACTIVE\n",
   );
   for (const m of LOCAL_MODELS_CATALOG) {
     const dl = isModelDownloaded(dataDir, m) ? "yes" : "no";
     const active =
       cfg.localModels.managed.modelId === m.id && cfg.localModels.mode === "managed" ? "*" : " ";
     process.stdout.write(
-      `${m.id.padEnd(19)} | ${m.family.padEnd(6)} | ${m.sizeLabel.padEnd(6)} | ${m.contextLabel.padEnd(7)} | ${dl.padEnd(3)} | ${active}\n`,
+      `${m.id.padEnd(20)} | ${m.family.padEnd(8)} | ${m.sizeLabel.padEnd(6)} | ${m.contextLabel.padEnd(7)} | ${dl.padEnd(3)} | ${active}\n`,
     );
   }
   return 0;
@@ -218,6 +219,31 @@ export async function runLocalModelsStart(): Promise<number> {
     return 1;
   }
   const dataDir = cfg.paths.localModelsDataDir;
+  try {
+    const auto = await maybeAutoUpdateBackend(dataDir, {
+      enabled: cfg.localModels.managed.autoUpdate,
+      onProgress: (p: number, t: number, tot: number) => {
+        const line = renderPullProgress("backend zip", p, t, tot);
+        if (process.stderr.isTTY) process.stderr.write(`\r${line.padEnd(79)}`);
+        else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
+      },
+    });
+    if (auto.action === "updated") {
+      if (process.stderr.isTTY) process.stderr.write("\n");
+      process.stdout.write(
+        `backend:        updated ${auto.from ?? "none"} → ${auto.to}\n`,
+      );
+    } else if (auto.action === "check_failed") {
+      process.stderr.write(
+        `note: backend update check failed — starting current binary (${auto.error})\n`,
+      );
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`backend auto-update failed: ${msg}\n`);
+    return 1;
+  }
+
   const m = getLocalModelDef(mid);
   const tpl = resolveChatTemplatePath(m) ?? undefined;
   const mmprojFile =

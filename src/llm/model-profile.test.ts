@@ -5,6 +5,7 @@ import {
   extractTotalSlots,
   detectVisionSupport,
   GEMMA4_THINK_PROFILE,
+  NEMOTRON_THINK_PROFILE,
   PLAIN_INSTRUCT_PROFILE,
   QWEN_THINK_PROFILE,
 } from "./model-profile.js";
@@ -12,6 +13,7 @@ import {
   GEMMA4_PROPS,
   GPT_OSS_PROPS,
   LLAMA3_PROPS,
+  NEMOTRON_PROPS,
   QWEN3_PROPS,
 } from "./model-profile.fixtures.js";
 
@@ -47,6 +49,23 @@ describe("detectModelProfile", () => {
 
   it("detects gemma 4 think profile from channel tags", () => {
     expect(detectModelProfile(GEMMA4_PROPS)).toEqual(GEMMA4_THINK_PROFILE);
+  });
+
+  it("detects nemotron think profile from ChatML + enable_thinking", () => {
+    expect(detectModelProfile(NEMOTRON_PROPS)).toEqual(NEMOTRON_THINK_PROFILE);
+  });
+
+  it("does not classify a non-nemotron ChatML think template as nemotron", () => {
+    // Same markers as Nemotron (ChatML + <think> + enable_thinking) but the
+    // alias is not nemotron — must stay on the qwen path (or plain if the
+    // qwen alias hint also fails). Here the alias carries none of the
+    // qwen/nemotron hints, so the result is plain-instruct.
+    expect(
+      detectModelProfile({
+        ...NEMOTRON_PROPS,
+        model_alias: "some-other-chatml-think-model",
+      }),
+    ).toEqual(PLAIN_INSTRUCT_PROFILE);
   });
 
   it("falls back to plain profile for gpt-oss style templates", () => {
