@@ -1,3 +1,5 @@
+import Module, { createRequire } from "node:module";
+
 import type { Extractor, ExtractResult } from "./extractor-types.js";
 
 /**
@@ -22,6 +24,8 @@ export const pdfExtractor: Extractor = async (input) => {
     isEvalSupported: false,
     // 0 = ERRORS only. Suppresses the cosmetic "standardFontDataUrl not
     // provided" warning — we don't render fonts, just extract glyph runs.
+    // Note this only governs per-document warnings; import-time warnings are
+    // handled by `withQuietCanvasResolution` below.
     verbosity: 0,
   }).promise;
 
@@ -143,16 +147,106 @@ function clampPageRange(
  * resolver handles it from `node_modules` in dev — and stash the namespace
  * on `globalThis.pdfjsWorker`, which works identically in both runtimes.
  */
-let pdfJsModule: typeof import("pdfjs-dist/legacy/build/pdf.mjs") | undefined;
-async function loadPdfJs(): Promise<
+let pdfJsPromise:
+  | Promise<typeof import("pdfjs-dist/legacy/build/pdf.mjs")>
+  | undefined;
+function loadPdfJs(): Promise<
   typeof import("pdfjs-dist/legacy/build/pdf.mjs")
 > {
-  if (!pdfJsModule) {
-    const mod = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  // Memoize the *promise*, not the resolved module. Two concurrent
+  // read_document calls must share one import — otherwise both could enter
+  // the canvas shim below and the second would restore `Module._load` while
+  // the first is still importing.
+  pdfJsPromise ??= (async () => {
+    const mod = await withQuietCanvasResolution(
+      () => import("pdfjs-dist/legacy/build/pdf.mjs"),
+    );
     await ensurePdfWorkerOnMainThread();
-    pdfJsModule = mod;
+    return mod;
+  })();
+  return pdfJsPromise;
+}
+
+/**
+ * pdfjs's `node_utils` module tries to `require("@napi-rs/canvas")` at import
+ * time to polyfill `DOMMatrix`/`ImageData`/`Path2D`. That package is an
+ * *optional* dependency of pdfjs-dist and is deliberately not shipped in our
+ * SEA bundle, nor installed by `npm ci --omit=optional`. When it is absent
+ * pdfjs prints four warnings straight to stdout:
+ *
+ *   Warning: Cannot load "@napi-rs/canvas" package: ...
+ *   Warning: Cannot polyfill `DOMMatrix`, rendering may be broken.
+ *   Warning: Cannot polyfill `ImageData`, rendering may be broken.
+ *   Warning: Cannot polyfill `Path2D`, rendering may be broken.
+ *
+ * They are non-actionable for us: those three globals only matter when
+ * *rendering* pages to a canvas, and this extractor only ever reads glyph
+ * runs via `getTextContent()`. But they read like extraction failures.
+ *
+ * `verbosity: 0` on `getDocument` cannot suppress them — pdfjs keeps
+ * verbosity in a module-level variable, and the warnings above are emitted by
+ * top-level code while the module is still being imported, long before any
+ * per-document option applies. `setVerbosityLevel` is not exported, so there
+ * is no public API to mute it ahead of the import either.
+ *
+ * So we satisfy the require instead of silencing the complaint: hand pdfjs a
+ * stub carrying the three constructors it looks for. Scoped deliberately:
+ *
+ *   - Only the exact `@napi-rs/canvas` specifier is intercepted; every other
+ *     request falls through to the real loader untouched.
+ *   - `Module._load` is restored in a `finally`, so a failed import cannot
+ *     leave the hook installed.
+ *   - We never touch `console` — global console interception would hide
+ *     unrelated diagnostics and is unsafe under concurrent reads.
+ *
+ * If the real `@napi-rs/canvas` *is* installed we leave it alone, so a normal
+ * npm install keeps genuine canvas support.
+ */
+async function withQuietCanvasResolution<T>(load: () => Promise<T>): Promise<T> {
+  if (canvasPackageIsInstalled()) return load();
+
+  // `Module._load` is a private Node API, but it is the only interception
+  // point for the `createRequire(...)` call pdfjs makes internally. It has
+  // been stable across Node's entire CJS lifetime; if it ever disappears we
+  // fall back to loading normally (noisy, but never broken).
+  const nodeModule = Module as unknown as {
+    _load?: (...args: unknown[]) => unknown;
+  };
+  const originalLoad = nodeModule._load;
+  if (typeof originalLoad !== "function") return load();
+
+  nodeModule._load = function patchedLoad(...args: unknown[]) {
+    if (args[0] === CANVAS_PACKAGE) return CANVAS_STUB;
+    return originalLoad.apply(this, args);
+  };
+  try {
+    return await load();
+  } finally {
+    nodeModule._load = originalLoad;
   }
-  return pdfJsModule;
+}
+
+const CANVAS_PACKAGE = "@napi-rs/canvas";
+
+/**
+ * Minimal stand-ins for the three constructors pdfjs copies onto `globalThis`.
+ * Text extraction never instantiates them — pdfjs only reaches for them on
+ * rendering paths we do not use. They exist so the polyfill block finds
+ * something and stays quiet.
+ */
+const CANVAS_STUB = {
+  DOMMatrix: class DOMMatrixStub {},
+  ImageData: class ImageDataStub {},
+  Path2D: class Path2DStub {},
+};
+
+function canvasPackageIsInstalled(): boolean {
+  try {
+    createRequire(import.meta.url).resolve(CANVAS_PACKAGE);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // pdfjs-dist does not ship `.d.ts` declarations for the worker entry point
