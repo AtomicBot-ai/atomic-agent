@@ -355,6 +355,11 @@ export interface TuiAppCallbacks {
   onUpdateConfirmed?(): void;
   /** Self-update settled: user pressed a key to re-exec the new binary. */
   onUpdateRestart?(): void;
+  /**
+   * Ctrl+N / `/window`: open a new OS terminal window running a fresh
+   * `atomic-agent tui` in the same working directory.
+   */
+  onNewWindowRequested?(): void;
 }
 
 export interface TuiAppProps {

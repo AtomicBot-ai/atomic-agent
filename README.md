@@ -57,6 +57,9 @@ atomic-agent
 ```
 
 > [!TIP]
+> Need a second agent? Press **Ctrl+N** (or run `/window`) inside the TUI — it opens a new terminal window with a fresh atomic-agent in the same directory.
+
+> [!TIP]
 > Coming from Hermes or OpenClaw? Run `/import` in the TUI for a one-shot migration: sessions, cron jobs, and optionally your provider keys.
 
 ### Troubleshooting

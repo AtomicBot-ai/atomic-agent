@@ -202,6 +202,7 @@ export function runSlashCommand(
     }
   }
   if (result.queueVerb) runQueueVerb(result.queueVerb, state, dispatch, callbacks);
+  if (result.triggerNewWindow) callbacks.onNewWindowRequested?.();
   if (result.triggerAbort) callbacks.onAbort();
   if (result.triggerQuit) {
     callbacks.onAbort();

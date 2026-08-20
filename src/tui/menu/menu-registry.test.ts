@@ -191,6 +191,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "steer the running turn: `/steer <msg>` one-shot | bare `/steer` makes Enter steer",
   },
+  {
+    name: "window",
+    description:
+      "open a new terminal window running atomic-agent (ctrl+n)",
+    aliases: ["newwindow"],
+  },
 ];
 
 describe("menu registry", () => {

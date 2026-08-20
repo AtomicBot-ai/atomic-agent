@@ -44,6 +44,8 @@ export interface AppKeyCallbacks {
   onAbort(): void;
   /** Persist the Enter-while-busy mode after a Ctrl+T flip. */
   onWhileBusyModePersistRequested?(mode: WhileBusySubmitMode): void;
+  /** Open a fresh OS terminal window running atomic-agent (Ctrl+N, `/window`). */
+  onNewWindowRequested?(): void;
   onQuit(): void;
   /** Optional — called when Enter is pressed on the focused sidebar row. */
   onSessionSwitchRequested?(sessionId: string): void;
@@ -319,6 +321,21 @@ export function handleAppKey(
     }
   }
   const debugTabBusy = isDebugTabSurfaceBusy(state);
+  // Ctrl+N opens a fresh OS terminal window running atomic-agent in the
+  // same working dir. The editor never sees ctrl-modified letters
+  // (it handles only ctrl+a/e/u/k/w/c), so no keystroke is stolen.
+  if (
+    !debugTabBusy &&
+    !state.slashPaletteOpen &&
+    !state.pendingApproval &&
+    key.ctrl &&
+    !key.shift &&
+    !key.meta &&
+    input === "n"
+  ) {
+    callbacks.onNewWindowRequested?.();
+    return true;
+  }
   // Ctrl+B is the dedicated nav-cycle escape valve: it always advances
   // one nav slot forward regardless of where focus currently is. This
   // is the key power users press when they want to reach Observe /
@@ -512,6 +529,7 @@ function handleUpdateKey(
   key: Key,
   ctx: AppKeyContext,
 ): boolean {
+  if (key.ctrl || key.meta) return false;
   const lower = input.toLowerCase();
   if (lower === "y") {
     ctx.callbacks.onUpdateConfirmed?.();
@@ -547,6 +565,9 @@ function handleApprovalKey(
   request: ApprovalRequest,
   ctx: AppKeyContext,
 ): boolean {
+  // A ctrl/meta-modified key was never aimed at the y/n/esc prompt —
+  // letting it through turns a global chord (ctrl+n) into a silent deny.
+  if (key.ctrl || key.meta) return false;
   const lower = input.toLowerCase();
   if (lower === "y") {
     ctx.callbacks.onApprovalDecision(request.approvalId, true);
