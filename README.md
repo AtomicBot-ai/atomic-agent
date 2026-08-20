@@ -56,6 +56,12 @@ The installer downloads the release archive, verifies the checksum, and installs
 atomic-agent
 ```
 
+Both installers also drop a short alias next to the binary, so this is the same thing:
+
+```bash
+atag
+```
+
 > [!TIP]
 > Need a second agent? Press **Ctrl+N** (or run `/window`) inside the TUI — it opens a new terminal window with a fresh atomic-agent in the same directory.
 

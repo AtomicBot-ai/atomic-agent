@@ -113,6 +113,7 @@ function printHelp(): void {
     "",
     "Usage:",
     "  atomic-agent <command> [options]",
+    "  atag <command> [options]       (short alias, same binary)",
     "",
     "Commands:",
     ...COMMANDS.filter((c) => !c.hidden).map(

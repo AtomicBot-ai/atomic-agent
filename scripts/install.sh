@@ -333,6 +333,23 @@ else
   exit 1
 fi
 
+# Short alias: `atag` is the same binary under a shorter name. A relative
+# symlink keeps the install dir movable, and because it points at a sibling
+# the runtime still resolves grammars/, starter-skills/, vendor/ and
+# node_modules/ next to the binary (dirname(process.execPath)) — execPath
+# reports the resolved target, not the link. Falls back to a copy on
+# filesystems without symlinks.
+link_alias() {
+  # $1 target file name (sibling), $2 alias path
+  ln -sfn "$1" "$2" 2>/dev/null || cp -f "$INSTALL_DIR/$1" "$2"
+}
+
+if [ -f "$INSTALL_DIR/atomic-agent" ]; then
+  link_alias atomic-agent "$INSTALL_DIR/atag"
+elif [ -f "$INSTALL_DIR/atomic-agent.exe" ]; then
+  link_alias atomic-agent.exe "$INSTALL_DIR/atag.exe"
+fi
+
 replace_dir "$STAGE/grammars" "$INSTALL_DIR/grammars"
 # Built-in starter skills. The runtime resolves them next to the binary
 # (see resolveStarterSkillsSourceDir / seedStarterSkillsIfMissing) and
@@ -429,20 +446,24 @@ fi
 
 echo
 echo "installed atomic-agent to ${INSTALL_DIR}/atomic-agent"
+echo "(plus the short alias 'atag' next to it)"
 case "${PATH_STATUS:-added}" in
   present)
     echo "to run:"
     echo "  atomic-agent"
+    echo "  atag           # same thing, shorter"
     ;;
   manual)
     echo "atomic-agent is NOT on your PATH yet."
     echo "add ${INSTALL_DIR} to your PATH, then run:"
     echo "  atomic-agent"
+    echo "  atag           # same thing, shorter"
     ;;
   *)
     echo "atomic-agent was added to your PATH."
     echo "open a NEW terminal, then run:"
     echo "  atomic-agent"
+    echo "  atag           # same thing, shorter"
     if [ -n "${RC_FILE:-}" ]; then
       echo "(to use it in THIS terminal, first reload your shell config: ${RC_FILE})"
     fi
