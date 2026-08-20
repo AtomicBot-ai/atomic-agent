@@ -264,8 +264,20 @@ try {
   Remove-StaleBackups $InstallDir
   Copy-TreeTransactional $Stage $InstallDir
 
+  # Short alias: `atag` is the same CLI under a shorter name. A .cmd shim
+  # rather than a copy of the (large) SEA binary, and rather than a symlink,
+  # which needs an elevated shell or Developer Mode. %~dp0 resolves to the
+  # directory of the shim, so it always launches the atomic-agent.exe sitting
+  # next to it and asset resolution is unaffected. Rewritten on every install,
+  # so it self-heals and needs no place in the transactional copy.
+  Set-Content -LiteralPath (Join-Path $InstallDir "atag.cmd") -Encoding ASCII -Value @(
+    "@echo off",
+    "`"%~dp0atomic-agent.exe`" %*"
+  )
+
   Write-Info ""
   Write-Info "installed atomic-agent to $InstallDir\atomic-agent.exe"
+  Write-Info "(plus the short alias 'atag' next to it)"
 }
 catch {
   # A bare PowerShell error record is unreadable when the in-app updater
@@ -313,15 +325,18 @@ switch ($script:PathStatus) {
   "present" {
     Write-Info "to run:"
     Write-Info "  atomic-agent"
+    Write-Info "  atag           # same thing, shorter"
   }
   "manual" {
     Write-Info "atomic-agent is NOT on your PATH yet."
     Write-Info "add $InstallDir to your PATH, then run:"
     Write-Info "  atomic-agent"
+    Write-Info "  atag           # same thing, shorter"
   }
   default {
     Write-Info "atomic-agent was added to your PATH."
     Write-Info "it works in THIS terminal now; open a NEW terminal elsewhere, then run:"
     Write-Info "  atomic-agent"
+    Write-Info "  atag           # same thing, shorter"
   }
 }
