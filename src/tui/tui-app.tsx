@@ -676,16 +676,21 @@ export function TuiApp({
     // never sees the keypress and the editor — which stays focused there so
     // the operator can keep typing while watching the feed — used to fall
     // through to the quit branch below and kill the agent instead.
-    if (state.uiMode === "debug") {
+    // Only while idle: with a turn in flight the running hint says
+    // `[esc] abort`, and `handleAppKey` claims the key for exactly that —
+    // navigating away at the same time would make one keypress do two
+    // unrelated things.
+    if (state.uiMode === "debug" && canAcceptMessage(state)) {
       dispatch({ type: "ui_mode_set", mode: "chat" });
       return;
     }
+    // Abort is not handled here: `handleAppKey` claims Esc while a turn
+    // is running, on a subscription that survives the editor being
+    // `disabled`. Keeping a copy of the branch would fire `onAbort`
+    // twice per keypress the moment the editor stays live during a run.
     if (canAcceptMessage(state)) {
       callbacks.onQuit();
       dispatch({ type: "quit_requested" });
-    } else {
-      callbacks.onAbort();
-      dispatch({ type: "abort_requested" });
     }
   }, [state, callbacks]);
 
