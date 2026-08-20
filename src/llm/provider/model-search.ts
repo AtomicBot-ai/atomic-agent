@@ -88,9 +88,10 @@ export function modelSearchTags(
  * 1. the display string, so searching for what the row shows works;
  * 2. the whole-unit **floor** in that same unit — 1_310_720 -> `1m`,
  *    1_050_000 -> `1m`, 202_752 -> `202k`. Floor rather than round,
- *    because a size term reads as a lower bound: `1m` means "a window of
- *    a million or better", so it must find every row from 1M up to 2M,
- *    and must not find a 950k row that would round up to it;
+ *    because a size term names the bucket a window falls in: `1m` means
+ *    "a window in the millions", so it must find every row from 1M up to
+ *    2M — a 2M row answers to `2m`, not to `1m` — and must not find a
+ *    950k row that would round up to it;
  * 3. the **binary** reading, when the window is an exact multiple of
  *    1024 (1024² above a million) — 131_072 -> `128k`, 204_800 ->
  *    `200k`, 262_144 -> `256k`, 1_048_576 -> `1m`. Those windows are
