@@ -49,6 +49,11 @@ export interface UndeliveredSteer {
  * nobody ever acks. Past it the oldest entries go — and `discarded`
  * counts them, so a host that comes back late learns it lost some
  * instead of quietly seeing a short list.
+ *
+ * A single `park` batch is never trimmed, even if it alone exceeds this
+ * number: those entries are being handed back on a live response, and
+ * dropping them there would omit them from the one message that was
+ * supposed to carry them. See {@link UndeliveredSteerStore.park}.
  */
 export const MAX_PARKED_STEERS = MAX_PENDING_STEERS;
 
@@ -74,11 +79,20 @@ export class UndeliveredSteerStore {
   private readonly bySession = new Map<string, Box>();
 
   /**
-   * Take ownership of everything a turn could not deliver. Returns the
-   * entries that are now retrievable — the same objects, with the same
-   * `seq`, that `list` will report — so the caller can also mirror them
-   * onto a live response without that becoming a second copy of the
-   * message.
+   * Take ownership of everything a turn could not deliver. Returns
+   * **the whole batch** — the same objects, with the same `seq`, that
+   * `list` will report — so the caller can mirror it onto a live
+   * response without that becoming a second copy of the message.
+   *
+   * Every entry returned here is retrievable until it is acked. That
+   * matters because the return value *is* the hand-back: it becomes
+   * `undelivered_steers` on the completion body and the
+   * `steer_undelivered` SSE frame. Returning only the survivors of the
+   * cap would omit the oldest messages from the very response that
+   * exists to give them back, leaving nothing behind but a counter —
+   * so the cap never trims the batch it was just handed. It evicts only
+   * entries parked by *earlier* calls, which the host has already been
+   * told about once and can still see on `GET`.
    */
   park(sessionId: string, texts: readonly string[]): UndeliveredSteer[] {
     if (texts.length === 0) return [];
@@ -90,15 +104,20 @@ export class UndeliveredSteerStore {
       parkedAt,
     }));
     box.entries.push(...parked);
-    const overflow = box.entries.length - MAX_PARKED_STEERS;
+    // `capacity >= parked.length`, so `overflow` can never reach into
+    // the batch that was just pushed — only into what was already here.
+    // One turn cannot hand back more than `MAX_PENDING_STEERS` anyway
+    // (the inbox refuses past it), so the wider capacity is a bound the
+    // caller has to breach deliberately, not a hole in the cap.
+    const capacity = Math.max(MAX_PARKED_STEERS, parked.length);
+    const overflow = box.entries.length - capacity;
     if (overflow > 0) {
       box.discarded += overflow;
       box.entries.splice(0, overflow);
     }
     this.bySession.set(sessionId, box);
     this.evictOldestSessions();
-    const retained = new Set(box.entries);
-    return parked.filter((entry) => retained.has(entry));
+    return parked;
   }
 
   /** Non-destructive listing, oldest first. */

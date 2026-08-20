@@ -10,8 +10,8 @@ import {
  * The store behind `GET /api/sessions/{id}/steer`. Pins the properties
  * the route promises: reading never consumes, acking is by cursor so a
  * message parked between the read and the ack cannot be swallowed
- * unseen and the loss counter is not
- * collateral damage of that ack.
+ * unseen, the loss counter is not collateral damage of that ack, and a
+ * hand-back is returned whole.
  */
 describe("UndeliveredSteerStore", () => {
   it("keeps parked messages until they are acked", () => {
@@ -63,6 +63,33 @@ describe("UndeliveredSteerStore", () => {
     expect(second.map((e) => e.text)).toEqual(["late-1", "late-2", "late-3"]);
     expect(store.list("s1")[0]?.text).toBe("m3");
     expect(store.list("s1").at(-1)?.text).toBe("late-3");
+  });
+
+  it("hands a batch back whole even when it alone exceeds the cap", () => {
+    const store = new UndeliveredSteerStore();
+    const texts = Array.from({ length: MAX_PARKED_STEERS + 3 }, (_, i) => `m${i}`);
+    const parked = store.park("s1", texts);
+    // The return value IS the hand-back — it becomes
+    // `undelivered_steers` on the response — so trimming it would drop
+    // the oldest messages out of the one payload meant to carry them.
+    expect(parked.map((e) => e.text)).toEqual(texts);
+    // And everything returned is retrievable, so a host that only reads
+    // `GET .../steer` sees the same set.
+    expect(store.list("s1").map((e) => e.text)).toEqual(texts);
+    expect(store.discarded("s1")).toBe(0);
+  });
+
+  it("evicts earlier entries, never the batch it was just handed", () => {
+    const store = new UndeliveredSteerStore();
+    store.park("s1", ["old-1", "old-2"]);
+    const oversized = Array.from(
+      { length: MAX_PARKED_STEERS + 1 },
+      (_, i) => `n${i}`,
+    );
+    const parked = store.park("s1", oversized);
+    expect(parked.map((e) => e.text)).toEqual(oversized);
+    expect(store.list("s1").map((e) => e.text)).toEqual(oversized);
+    expect(store.discarded("s1")).toBe(2);
   });
 
   it("keeps the loss counter when the host acks the entries it was shown", () => {
