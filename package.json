@@ -7,6 +7,7 @@
   "main": "dist/sidecar/index.js",
   "bin": {
     "atomic-agent": "dist/cli/index.js",
+    "atag": "dist/cli/index.js",
     "atomic-agent-sidecar": "dist/sidecar/main.js"
   },
   "files": [
