@@ -30,6 +30,12 @@ export { CostAccumulator, type CostAccumulatorSnapshot } from "./cost-accumulato
 export { OpenAiProvider, type OpenAiProviderOptions } from "./openai/index.js";
 export { OpenRouterProvider } from "./openrouter/index.js";
 export {
+  CLAUDE_CLI_CHAT_MODELS,
+  CLAUDE_CLI_DEFAULT_CHAT_MODEL,
+  SubscriptionCliProvider,
+  type SubscriptionCliProviderOptions,
+} from "./subscription-cli/index.js";
+export {
   GeminiProvider,
   type GeminiProviderOptions,
   DEFAULT_GEMINI_BASE,

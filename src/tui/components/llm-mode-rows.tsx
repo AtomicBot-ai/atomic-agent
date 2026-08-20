@@ -4,9 +4,12 @@ import { selectCloudModelSection } from "../llm-panel/llm-panel-row-builders.js"
 import { activeCursor, selectLlmPanelRows, type LlmPanelRow } from "../llm-panel/llm-panel-selectors.js";
 import { classifyRamFit, classifyVramFit } from "../local-models/local-models-panel-state.js";
 import { computeRowWindow } from "../row-window.js";
+import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
+import { handleLlmPanelKey } from "../llm-panel/llm-panel-key-bindings.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { FallbackRows } from "./llm-fallback-rows.js";
+import { SUBSCRIPTION_CLI_KIND } from "../../config/provider-auth-mode.js";
 
 export function LlmModeRows({
   rows,
@@ -208,6 +211,7 @@ function CloudRows({
         rows={providerRows}
         state={state}
         empty="No cloud providers configured. Press n to add one."
+        emphasiseEmpty
       />
       <Box flexDirection="column" marginBottom={1}>
         <Text bold color={theme.colors.accentSoft}>
@@ -282,11 +286,20 @@ function RowsSection({
   rows,
   state,
   empty = "No rows in this section yet.",
+  emphasiseEmpty = false,
 }: {
   title: string;
   rows: readonly LlmPanelRow[];
   state: TuiState;
   empty?: string;
+  /**
+   * Render the empty hint bold in the terminal's default foreground instead of
+   * muted grey. For an empty state that is really a call to action — the pane
+   * is useless until you act on it — muted grey reads as "nothing to see here"
+   * and the instruction gets skipped. Left unset elsewhere: a section that is
+   * merely empty should stay quiet.
+   */
+  emphasiseEmpty?: boolean;
 }): ReactElement {
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -294,7 +307,13 @@ function RowsSection({
         {title}
       </Text>
       {rows.length === 0 ? (
-        <Text color={theme.colors.muted}>  {empty}</Text>
+        <Text
+          bold={emphasiseEmpty}
+          color={emphasiseEmpty ? undefined : theme.colors.muted}
+        >
+          {"  "}
+          {empty}
+        </Text>
       ) : (
         rows.map((row) => <Row key={row.id} row={row} state={state} />)
       )}
@@ -334,15 +353,23 @@ function Row({ row, state }: { row: LlmPanelRow; state: TuiState }): ReactElemen
   // see `LlmModeRows` — but never guarded the horizontal axis), which is
   // what garbles adjacent rows and drags rendering on a narrow window.
   return (
-    <Text color={baseColor} bold={selected} wrap="truncate-end">
-      {mark} {renderRowText(row, state)}
-      {insufficient ? (
-        <Text color={theme.colors.warn}> Not enough VRAM</Text>
-      ) : ramFit === "tight" ? (
-        <Text color={theme.colors.warn}> RAM tight</Text>
-      ) : null}
-      <Text color={theme.colors.muted}> · {row.enterEffect}</Text>
-    </Text>
+    <MouseListRow
+      selected={selected}
+      onSelect={(mouse) =>
+        mouse.dispatch({ type: "llm_cursor_set", cursor: idx })
+      }
+      onActivate={pressEnter(handleLlmPanelKey)}
+    >
+      <Text color={baseColor} bold={selected} wrap="truncate-end">
+        {mark} {renderRowText(row, state)}
+        {insufficient ? (
+          <Text color={theme.colors.warn}> Not enough VRAM</Text>
+        ) : ramFit === "tight" ? (
+          <Text color={theme.colors.warn}> RAM tight</Text>
+        ) : null}
+        <Text color={theme.colors.muted}> · {row.enterEffect}</Text>
+      </Text>
+    </MouseListRow>
   );
 }
 
@@ -357,7 +384,13 @@ function renderRowText(row: LlmPanelRow, state: TuiState): string {
     case "localBackend":
       return `llama.cpp backend [${state.localModelsPanel.backend.currentTag ?? "not installed"}]`;
     case "cloudProvider":
-      return `${row.provider.id} [${row.provider.kind}] ${row.provider.hasApiKey ? "key ok" : "missing key"}`;
+      return `${row.provider.id} [${row.provider.kind}] ${
+        row.provider.kind === SUBSCRIPTION_CLI_KIND
+          ? "cli auth"
+          : row.provider.hasApiKey
+            ? "key ok"
+            : "missing key"
+      }`;
     case "cloudChatModel":
       return `${row.providerId}/${row.modelId} [text]`;
     case "cloudEmbeddingModel":

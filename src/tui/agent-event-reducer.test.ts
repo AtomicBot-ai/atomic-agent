@@ -18,6 +18,7 @@ function fakeSession(overrides: Partial<TuiSessionInfo> = {}): TuiSessionInfo {
     approvalLevel: 5,
     maxSteps: 10,
     skillCount: 0,
+    localBackendConfigured: false,
     ...overrides,
   };
 }
@@ -383,4 +384,126 @@ describe("reduceTuiState", () => {
     });
     expect(down.session.approvalLevel).toBe(2);
   });
+
+  it("renders a mid-turn steer inline in the turn that is already running", () => {
+    const running = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "user_message", text: "deploy" } },
+      { type: "message_submitted" },
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 0 } },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: {
+            type: "tool_call_executed",
+            result: {
+              tool: "os.fs.read",
+              status: "ok",
+              summary: "read config",
+              truncated: false,
+            },
+          },
+        },
+      },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 1 } },
+    ]);
+    const feedBefore = running.feed.length;
+
+    const next = reduceTuiState(running, {
+      type: "agent_event",
+      event: { type: "steer_applied", text: "use the staging db", stepIndex: 1 },
+    });
+
+    // The operator's words show up as a user message, in the same
+    // transcript as everything else...
+    const last = next.messages[next.messages.length - 1];
+    expect(last?.role).toBe("user");
+    expect(last?.text).toBe("use the staging db");
+    // ...with a feed line tying it to the step it reached.
+    expect(next.feed.length).toBe(feedBefore + 1);
+    expect(next.feed[next.feed.length - 1]?.line).toContain("step 1");
+    // ...and none of the per-turn resets a NEW turn would bring: this
+    // is a correction to the turn in flight, not the start of one.
+    expect(next.status).toBe("running");
+    expect(next.currentStep).toBe(1);
+    expect(next.currentTurnToolSteps).toBe(running.currentTurnToolSteps);
+    expect(next.runStartedAt).toBe(running.runStartedAt);
+  });
+
+  it("reports a trimmed tool batch instead of swallowing it", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: {
+            type: "batch_trimmed",
+            stepIndex: 0,
+            originalSize: 3,
+            kept: "os.fs.write",
+            dropped: ["os.shell.run", "os.fs.trash"],
+            reason: "approval-gated-batched",
+          },
+        },
+      },
+    ]);
+    const line = next.feed[next.feed.length - 1]?.line ?? "";
+    expect(line).toContain("os.fs.write");
+    expect(line).toContain("2 of 3");
+  });
 });
+
+describe("llm health visibility", () => {
+  it("does not mark local as configured just because a probe failed", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "llm_health_updated",
+        status: "unreachable",
+        checkedAt: 1,
+        latencyMs: null,
+        error: "connect ECONNREFUSED 127.0.0.1:8080",
+      },
+    ]);
+
+    // A fresh install probes a default URL nobody chose; a refusal there is
+    // not news, and the badge stays hidden.
+    expect(state.llmHealth.status).toBe("unreachable");
+    expect(state.llmHealth.localConfigured).toBe(false);
+  });
+
+  it("latches on after a healthy probe and survives the server dying", () => {
+    const healthy = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "llm_health_updated",
+        status: "healthy",
+        checkedAt: 1,
+        latencyMs: 3,
+        error: null,
+      },
+    ]);
+    expect(healthy.llmHealth.localConfigured).toBe(true);
+
+    // Somebody who really runs llama-server keeps the signal when it stops.
+    const died = apply(healthy, [
+      {
+        type: "llm_health_updated",
+        status: "unreachable",
+        checkedAt: 2,
+        latencyMs: null,
+        error: "connect ECONNREFUSED 127.0.0.1:8080",
+      },
+    ]);
+    expect(died.llmHealth.localConfigured).toBe(true);
+    expect(died.llmHealth.status).toBe("unreachable");
+  });
+
+  it("starts visible when config already says local", () => {
+    const state = createInitialTuiState(
+      fakeSession({ localBackendConfigured: true }),
+    );
+    expect(state.llmHealth.localConfigured).toBe(true);
+  });
+});
+

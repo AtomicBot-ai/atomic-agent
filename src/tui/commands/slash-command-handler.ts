@@ -1,3 +1,4 @@
+import type { WhileBusySubmitMode } from "../../config/index.js";
 import type { TuiAction } from "../tui-action.js";
 import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";
 import { isThemeName, THEME_NAMES } from "../theme/theme.js";
@@ -28,6 +29,8 @@ export interface SlashDispatchResult {
   readonly triggerSessionPicker: boolean;
   /** When true the caller should ask the orchestrator to start a fresh session. */
   readonly triggerSessionNew: boolean;
+  /** When true the caller should open a new OS terminal window (`/window`). */
+  readonly triggerNewWindow: boolean;
   /** When true the caller should ask the orchestrator to dump the user profile. */
   readonly triggerMemoryDump: boolean;
   /** When true the caller should ask the orchestrator to list the skill catalog in chat. */
@@ -83,12 +86,41 @@ export interface SlashDispatchResult {
    */
   readonly analyticsVerb?: "enable" | "disable" | "status";
   /**
+   * `/queue` side-effect. `list` renders the parked messages into chat —
+   * the listing needs `TuiState`, which this pure dispatcher does not
+   * have, so the caller formats it. `clear` additionally asks the
+   * orchestrator to drop its own copy of the queue.
+   */
+  readonly queueVerb?: "list" | "clear";
+  /**
+   * `/steer <msg>` or `/queue <msg>`: land this one message in the given
+   * mode without touching the persisted default. Ignored when no turn is
+   * running (the caller submits it normally instead).
+   */
+  readonly submitWhileBusy?: { mode: WhileBusySubmitMode; text: string };
+  /**
+   * Bare `/steer` / `/queue`: the new Enter-while-busy default. The
+   * `while_busy_mode_changed` action flips the live state; this asks the
+   * caller to also write it to `tui.whileBusySubmit` through
+   * `onWhileBusyModePersistRequested` — the same callback Ctrl+T uses, so
+   * every route to the setting shares one persist path. Deliberately
+   * unset by the message-carrying form, which is a one-off.
+   */
+  readonly setWhileBusyMode?: WhileBusySubmitMode;
+  /**
    * `/privacy level <1..5>` side-effect (with `/privacy approve on|off`
    * kept as aliases for 5 and 1): move the approval ladder to an
    * explicit level. The caller (submit-handler) maps this to
    * `PrivacyOrchestrator.setApprovalLevel`.
    */
   readonly approvalLevelSet?: number;
+  /**
+   * `/mouse [on|off]` — flip terminal mouse reporting at runtime, or
+   * report the current state with no argument. The caller owns the
+   * escape sequences and the config write, because both live outside
+   * React (see `tui-command.ts`).
+   */
+  readonly mouseVerb?: "on" | "off" | "status";
 }
 
 /**
@@ -107,6 +139,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       triggerQuit: false,
       triggerSessionPicker: false,
       triggerSessionNew: false,
+      triggerNewWindow: false,
       triggerMemoryDump: false,
       triggerSkillCatalogDump: false,
       triggerDebugBundleDump: false,
@@ -124,6 +157,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       triggerQuit: false,
       triggerSessionPicker: false,
       triggerSessionNew: false,
+      triggerNewWindow: false,
       triggerMemoryDump: false,
       triggerSkillCatalogDump: false,
       triggerDebugBundleDump: false,
@@ -142,12 +176,18 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return pureActions([], {
         systemMessage: formatSlashCommandHelp(),
       });
+    case "mouse":
+      return dispatchMouseSub(parsed.args);
     case "theme":
       return dispatchThemeSub(parsed.args);
     case "clear":
       return pureActions([{ type: "chat_cleared" }], {
         systemMessage: "chat cleared",
       });
+    case "queue":
+      return dispatchQueueSub(parsed.args);
+    case "steer":
+      return dispatchSteerSub(parsed.args);
     case "abort":
       return pureActions([{ type: "abort_requested" }], {
         triggerAbort: true,
@@ -204,6 +244,8 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return pureActions([], { triggerSessionPicker: true });
     case "new":
       return pureActions([], { triggerSessionNew: true });
+    case "window":
+      return pureActions([], { triggerNewWindow: true });
     case "tools":
       return dispatchToolsSub(parsed.args);
     case "skills":
@@ -255,6 +297,59 @@ function formatSlashCommandHelp(): string {
   return ["slash commands:", ...lines].join("\n");
 }
 
+/**
+ * `/queue` — bare switches the Enter-while-busy mode to `queue`, persists
+ * it, and lists what is currently parked; `clear` (alias `drop`) empties
+ * it; anything else is a one-off message to park without changing the
+ * mode. The `queue_changed` action is dispatched optimistically so the
+ * strip above the prompt disappears immediately;
+ * `ChatOrchestrator.clearQueue` then re-publishes the authoritative empty
+ * queue.
+ */
+function dispatchQueueSub(args: string): SlashDispatchResult {
+  const raw = args.trim();
+  const verb = raw.toLowerCase();
+  if (verb === "clear" || verb === "drop") {
+    return pureActions([{ type: "queue_changed", queued: [] }], {
+      queueVerb: "clear",
+    });
+  }
+  if (verb === "mode" || verb === "default") {
+    return pureActions([{ type: "while_busy_mode_changed", mode: "queue" }], {
+      setWhileBusyMode: "queue",
+      systemMessage: "Enter now queues behind the running turn",
+    });
+  }
+  if (raw.length > 0) {
+    return pureActions([], {
+      submitWhileBusy: { mode: "queue", text: raw },
+    });
+  }
+  // Bare `/queue` stays a side-effect-free listing: the menu node and
+  // the `/queue N parked` chip both invite running it just to look, so
+  // looking must not silently persist a mode change.
+  return pureActions([], { queueVerb: "list" });
+}
+
+/**
+ * `/steer` — bare switches the Enter-while-busy mode to `steer` and
+ * persists it; `/steer <message>` lands one message in the running turn
+ * without changing the persisted default.
+ */
+function dispatchSteerSub(args: string): SlashDispatchResult {
+  const raw = args.trim();
+  if (raw.length > 0) {
+    return pureActions([], {
+      submitWhileBusy: { mode: "steer", text: raw },
+    });
+  }
+  return pureActions([{ type: "while_busy_mode_changed", mode: "steer" }], {
+    setWhileBusyMode: "steer",
+    systemMessage:
+      "Enter now steers the running turn (Ctrl+T or /queue switches back)",
+  });
+}
+
 function pureActions(
   actions: readonly TuiAction[],
   overrides: Partial<
@@ -268,6 +363,7 @@ function pureActions(
     triggerQuit: false,
     triggerSessionPicker: false,
     triggerSessionNew: false,
+    triggerNewWindow: false,
     triggerMemoryDump: false,
     triggerSkillCatalogDump: false,
     triggerDebugBundleDump: false,
@@ -283,6 +379,9 @@ function pureActions(
     setThemeName: undefined,
     telegramVerb: undefined,
     analyticsVerb: undefined,
+    queueVerb: undefined,
+    submitWhileBusy: undefined,
+    setWhileBusyMode: undefined,
     approvalLevelSet: undefined,
     ...overrides,
   };
@@ -295,6 +394,25 @@ function pureActions(
  * the registry and, on success, asks the caller to swap + persist + re-render.
  * Unknown names surface a usage hint instead of switching.
  */
+/**
+ * `/mouse` with no argument reports state; `on` / `off` set it. Any
+ * other word is rejected rather than guessed at — a typo'd `/mouse ff`
+ * silently disabling clicks would be a maddening bug to chase.
+ */
+function dispatchMouseSub(rawArgs: string): SlashDispatchResult {
+  const verb = rawArgs.trim().toLowerCase();
+  if (verb.length === 0) return pureActions([], { mouseVerb: "status" });
+  if (verb === "on" || verb === "enable") {
+    return pureActions([], { mouseVerb: "on" });
+  }
+  if (verb === "off" || verb === "disable") {
+    return pureActions([], { mouseVerb: "off" });
+  }
+  return pureActions([], {
+    systemMessage: `usage: /mouse [on|off] (got "${rawArgs.trim()}")`,
+  });
+}
+
 function dispatchThemeSub(rawArgs: string): SlashDispatchResult {
   const arg = rawArgs.trim().toLowerCase();
   if (arg.length === 0) {

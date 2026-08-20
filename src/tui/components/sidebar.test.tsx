@@ -72,8 +72,11 @@ describe("Sidebar", () => {
       />,
     );
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("Sessions");
-    expect(text).toContain("Tasks");
+    // Upper-case since the rail became the app frame — it carries the
+    // brand, the version and the menu button now, so its own headings
+    // read as labels rather than as content.
+    expect(text).toContain("SESSIONS");
+    expect(text).toContain("TASKS");
     expect(text).not.toContain("Workspace");
     expect(text).not.toContain("LLM");
   });
@@ -146,5 +149,86 @@ describe("Sidebar", () => {
     const text = strip(lastFrame() ?? "");
     expect(text).toContain("running task");
     expect(text).toContain("pending task");
+  });
+  it("honours the per-pane row budget instead of a fixed 10/5 split", () => {
+    const manySessions = Array.from({ length: 12 }, (_, idx) => ({
+      ...SESSIONS[0]!,
+      sessionId: `s-${idx}`,
+      preview: `session number ${idx}`,
+    }));
+    const manyTasks = Array.from({ length: 8 }, (_, idx) =>
+      taskRow({ id: `t-${idx}`, userMessage: `task number ${idx}` }),
+    );
+    const { lastFrame } = render(
+      <Sidebar
+        width={32}
+        sessions={manySessions}
+        sessionsCursor={0}
+        currentSessionId={null}
+        tasks={manyTasks}
+        tasksCursor={0}
+        activeSection="sessions"
+        focused={false}
+        maxSessionRows={3}
+        maxTaskRows={2}
+      />,
+    );
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("session number 2");
+    expect(text).not.toContain("session number 3");
+    expect(text).toContain("task number 1");
+    expect(text).not.toContain("task number 2");
+    // Both panes admit what they are hiding.
+    expect(text).toContain("9 more");
+    expect(text).toContain("6 more");
+    // Two headers + 3 sessions + 2 tasks + 2 "more" rows + spacers, plus
+    // the brand block (mark, wordmark, version), the menu button and the
+    // breadcrumb slot the rail gained when it replaced the top bar.
+    expect(strip(lastFrame() ?? "").split("\n").length).toBeLessThanOrEqual(22);
+  });
+
+  it("scrolls the Tasks pane to keep the cursor visible", () => {
+    const manyTasks = Array.from({ length: 8 }, (_, idx) =>
+      taskRow({ id: `t-${idx}`, userMessage: `task number ${idx}` }),
+    );
+    const { lastFrame } = render(
+      <Sidebar
+        width={32}
+        sessions={SESSIONS}
+        sessionsCursor={0}
+        currentSessionId={null}
+        tasks={manyTasks}
+        tasksCursor={7}
+        activeSection="tasks"
+        focused={true}
+        maxTaskRows={2}
+      />,
+    );
+    const text = strip(lastFrame() ?? "");
+    expect(text).toContain("task number 7");
+    expect(text).not.toContain("task number 0");
+    // The chevron sits on the selected row, not on whatever row 0 is.
+    expect(text).toMatch(/▸ [^\n]*task number 7/);
+  });
+
+  it("narrows the previews with the rail rather than overflowing it", () => {
+    const long = [{ ...SESSIONS[0]!, preview: "a very long session preview indeed" }];
+    const { lastFrame } = render(
+      <Sidebar
+        width={24}
+        sessions={long}
+        sessionsCursor={0}
+        currentSessionId={null}
+        tasks={[]}
+        tasksCursor={0}
+        activeSection="sessions"
+        focused={false}
+      />,
+    );
+    const widest = strip(lastFrame() ?? "")
+      .split("\n")
+      .reduce((acc, line) => Math.max(acc, line.replace(/\s+$/, "").length), 0);
+    expect(widest).toBeLessThanOrEqual(24);
+    expect(strip(lastFrame() ?? "")).toContain("…");
   });
 });

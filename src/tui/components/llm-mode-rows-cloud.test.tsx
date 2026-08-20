@@ -160,3 +160,21 @@ describe("CloudRows inline model section", () => {
     expect(frame).toContain("nous/m-000 [text]");
   });
 });
+
+describe("CloudRows empty provider list", () => {
+  // Styling is deliberately not asserted here: ink-testing-library renders at
+  // chalk level 0, so every SGR sequence is dropped before `lastFrame()` sees
+  // it — which is why every test in this file strips ANSI anyway. What is
+  // pinned is that the call to action reaches the user in the state where it
+  // is the only thing telling them what to do.
+  it("tells the user how to add a provider when none are configured", () => {
+    const frame = renderRows(cloudState([]), 30);
+    expect(frame).toContain("No cloud providers configured. Press n to add one.");
+  });
+
+  it("drops the hint once a provider exists", async () => {
+    await seedCompatCache("https://render.nous.example", ["m-000"]);
+    const frame = renderRows(cloudState([compatProvider()]), 30);
+    expect(frame).not.toContain("No cloud providers configured");
+  });
+});

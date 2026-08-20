@@ -29,7 +29,7 @@ describe("refreshOpenRouterChatCatalogFromApi", () => {
     vi.unstubAllGlobals();
   });
 
-  it("filters out Anthropic and keeps tool-capable models", async () => {
+  it("keeps Anthropic alongside every other tool-capable model", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({
@@ -78,7 +78,10 @@ describe("refreshOpenRouterChatCatalogFromApi", () => {
     expect(picks.some((p) => p.id === "openrouter/auto")).toBe(true);
     expect(picks.some((p) => p.id === "qwen/qwen3.6-35b-a3b")).toBe(true);
     expect(picks.some((p) => p.id === "qwen/qwen3.5-35b-a3b")).toBe(false);
-    expect(picks.some((p) => p.id.startsWith("anthropic/"))).toBe(false);
+    // Was `toBe(false)`: `scoreChat` used to return -1 for every
+    // `anthropic/*` id, which hid the whole Claude line from the picker.
+    // Vendor is a ranking input now, not a gate.
+    expect(picks.some((p) => p.id === "anthropic/claude-sonnet-4")).toBe(true);
   });
 
   it("keeps every advertised model instead of a capped head", async () => {

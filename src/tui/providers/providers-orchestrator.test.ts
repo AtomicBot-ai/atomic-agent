@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
+import { createProvidersWizardState } from "./providers-wizard-state.js";
+import type { ProvidersWizardState } from "./providers-wizard-state.js";
 
 vi.mock("../../config/index.js", async (importOriginal) => {
   const original = await importOriginal<typeof import("../../config/index.js")>();
@@ -170,6 +172,57 @@ describe("isCloudProviderKind", () => {
 
     expect(isCloudProviderKind("gemini")).toBe(true);
   });
+
+  it("stays false for subscription-cli, which is not a key-based cloud kind", async () => {
+    const { isCloudProviderKind } = await importFreshOrchestrator();
+
+    expect(isCloudProviderKind("subscription-cli")).toBe(false);
+  });
+});
+
+describe("configureWizardKindForRow", () => {
+  it("recovers the wizard row behind a stored subscription-cli entry", async () => {
+    const { configureWizardKindForRow } = await importFreshOrchestrator();
+
+    // Two wizard rows collapse onto one config kind, so the CLI name on
+    // the entry is the only thing that can tell them apart.
+    expect(
+      configureWizardKindForRow({
+        kind: "subscription-cli",
+        subscriptionCli: { cli: "claude" },
+      }),
+    ).toBe("claude-cli");
+    expect(
+      configureWizardKindForRow({
+        kind: "subscription-cli",
+        subscriptionCli: { cli: "codex" },
+      }),
+    ).toBe("codex-cli");
+  });
+
+  it("passes key-based cloud kinds through unchanged", async () => {
+    const { configureWizardKindForRow } = await importFreshOrchestrator();
+
+    expect(configureWizardKindForRow({ kind: "gemini" })).toBe("gemini");
+    expect(configureWizardKindForRow({ kind: "openai-compatible" })).toBe(
+      "openai-compatible",
+    );
+  });
+
+  it("has no wizard for the local daemon or an unknown CLI", async () => {
+    const { configureWizardKindForRow } = await importFreshOrchestrator();
+
+    expect(configureWizardKindForRow({ kind: "llama-server" })).toBeNull();
+    expect(
+      configureWizardKindForRow({ kind: "subscription-cli", subscriptionCli: null }),
+    ).toBeNull();
+    expect(
+      configureWizardKindForRow({
+        kind: "subscription-cli",
+        subscriptionCli: { cli: "not-a-cli" },
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("ProvidersOrchestrator.ensureInlineModels", () => {
@@ -234,5 +287,116 @@ describe("ProvidersOrchestrator.ensureInlineModels", () => {
         providerId: "gemini",
       }),
     );
+  });
+});
+
+describe("ProvidersOrchestrator.completeWizard", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  function wizardFor(kind: "openrouter" | "aimlapi"): ProvidersWizardState {
+    return {
+      ...createProvidersWizardState("add", { kind }),
+      phase: "api_key",
+      apiKeyBuffer: "sk-wizard-key",
+    };
+  }
+
+  function fakeRuntime() {
+    return {
+      providerRegistry: {
+        setActive: vi.fn(async () => {}),
+        listIds: () => [] as string[],
+      },
+      reloadLlmProvider: vi.fn(async () => {}),
+      reloadLlmProviders: vi.fn(async () => {}),
+    } as unknown as AgentRuntime;
+  }
+
+  it("refuses to save a key the provider will not honour", async () => {
+    currentConfig = configWithGemini();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: "Insufficient credits" }), {
+          status: 402,
+        }),
+      ),
+    );
+    const { ProvidersOrchestrator } = await importFreshOrchestrator();
+    const bus = fakeBus();
+    const runtime = fakeRuntime();
+    const orchestrator = new ProvidersOrchestrator(runtime, bus as never);
+
+    await orchestrator.completeWizard(wizardFor("openrouter"));
+
+    const types = bus.emit.mock.calls.map((call) => (call[0] as { type: string }).type);
+    expect(types).toContain("providers_wizard_failed");
+    expect(types).not.toContain("providers_wizard_succeeded");
+    // Nothing reloaded means nothing was written: the save never ran.
+    expect(runtime.reloadLlmProviders).not.toHaveBeenCalled();
+    expect(runtime.reloadLlmProvider).not.toHaveBeenCalled();
+  });
+
+  it("reports the failure in words the operator can act on", async () => {
+    currentConfig = configWithGemini();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: "No auth credentials found" }), {
+          status: 401,
+        }),
+      ),
+    );
+    const { ProvidersOrchestrator } = await importFreshOrchestrator();
+    const bus = fakeBus();
+    const orchestrator = new ProvidersOrchestrator(fakeRuntime(), bus as never);
+
+    await orchestrator.completeWizard(wizardFor("aimlapi"));
+
+    const failure = bus.emit.mock.calls
+      .map((call) => call[0] as { type: string; error?: string })
+      .find((action) => action.type === "providers_wizard_failed");
+    expect(failure?.error).toContain("rejected this key");
+  });
+
+  it("hands the cancel back to the wizard while a check is in flight", async () => {
+    currentConfig = configWithGemini();
+    let releaseFetch: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        await gate;
+        return new Response("{}", { status: 401 });
+      }),
+    );
+    const { ProvidersOrchestrator } = await importFreshOrchestrator();
+    const bus = fakeBus();
+    const runtime = fakeRuntime();
+    const orchestrator = new ProvidersOrchestrator(runtime, bus as never);
+
+    const running = orchestrator.completeWizard(wizardFor("openrouter"));
+    await flush();
+    // Still waiting on the provider: submitting is on, nothing saved.
+    const midTypes = bus.emit.mock.calls.map((call) => (call[0] as { type: string }).type);
+    expect(midTypes).toContain("providers_wizard_submit_started");
+    expect(midTypes).not.toContain("providers_wizard_succeeded");
+
+    orchestrator.cancelWizardVerification();
+    const cancelTypes = bus.emit.mock.calls.map((call) => (call[0] as { type: string }).type);
+    expect(cancelTypes).toContain("providers_wizard_verify_cancelled");
+
+    releaseFetch();
+    await running;
+    expect(runtime.reloadLlmProviders).not.toHaveBeenCalled();
+    // The late answer from the abandoned check stays quiet: the wizard is
+    // already back under the operator's hands.
+    const finalTypes = bus.emit.mock.calls.map((call) => (call[0] as { type: string }).type);
+    expect(finalTypes).not.toContain("providers_wizard_failed");
   });
 });

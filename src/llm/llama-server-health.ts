@@ -231,3 +231,21 @@ export async function checkLlamaServer(
   }
   return failed;
 }
+
+/**
+ * The message a human can act on when llama-server does not answer.
+ *
+ * "fetch failed" is undici's transport error verbatim: it names neither the
+ * URL that was tried, nor the fact that the missing piece is llama-server,
+ * nor what to do about it — and it is the single most common failure a new
+ * local-model user sees. Every surface that reports an unreachable llama
+ * should say this instead.
+ */
+export function formatLlamaUnreachableHint(url: string): string {
+  return [
+    `llama-server is not reachable at ${url}`,
+    "  start it with:       atomic-agent models start",
+    `  or point elsewhere:  atomic-agent config set localModels.url <url>`,
+  ].join("\n");
+}
+

@@ -17,7 +17,13 @@ export type LlmPanelRow =
       model: LocalModelRow;
       active: boolean;
       available: boolean;
-      primaryAction: "download" | "download-mmproj" | "use" | "start" | "current";
+      primaryAction:
+        | "download"
+        | "downloading"
+        | "download-mmproj"
+        | "use"
+        | "start"
+        | "current";
       enterEffect: string;
     }
   | {
@@ -27,7 +33,13 @@ export type LlmPanelRow =
       model: EmbeddingModelRow;
       active: boolean;
       available: boolean;
-      primaryAction: "download" | "use" | "enable" | "start" | "current";
+      primaryAction:
+        | "download"
+        | "downloading"
+        | "use"
+        | "enable"
+        | "start"
+        | "current";
       enterEffect: string;
     }
   | {

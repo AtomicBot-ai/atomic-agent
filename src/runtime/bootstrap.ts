@@ -11,6 +11,7 @@ import {
 
 import type { LlmStreamParams } from "../agent/step-executor.js";
 import { TurnController } from "./turn-controller.js";
+import { SteeringInbox } from "./steering-inbox.js";
 import type { TurnEventHook, TurnOrigin } from "./turn-controller.js";
 import type { ChannelStatus } from "./channel-status.js";
 
@@ -70,6 +71,7 @@ import {
   resolveLlmConfig,
 } from "../llm/provider/index.js";
 import { resolveActiveToolTransport } from "../llm/provider/registry/resolve-tool-transport.js";
+import { catalogForProvider } from "../llm/provider/catalog-for-provider.js";
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
 import {
   resolveModel,
@@ -292,6 +294,29 @@ export interface AgentRuntime {
    * funnels through this controller internally.
    */
   readonly turnController: TurnController;
+  /**
+   * Out-of-band channel for messages sent to a session whose turn is
+   * already running. `TurnController` is strictly FIFO by design, so a
+   * mid-turn message would otherwise have to wait for the turn to
+   * close; the inbox lets it reach the model at the next step boundary
+   * instead. Prefer {@link AgentRuntime.steer} over touching this
+   * directly — it is the same call with the intent documented.
+   */
+  readonly steeringInbox: SteeringInbox;
+  /**
+   * Fold `text` into the turn currently running on `sessionId`.
+   *
+   * Returns `false` — and queues nothing — when no running turn is
+   * still able to pick the message up (no turn in flight, or the turn
+   * has already done its final drain), when the text is blank, or when
+   * the inbox for that session is full. A `false` return means "not
+   * steered": the caller is expected to fall back to a normal
+   * `runTurn`, or to its own message queue. `true` means the message is
+   * either delivered at a step boundary or returned on
+   * `RunTurnResult.undelivered` — never stranded. Never starts a turn
+   * on its own.
+   */
+  steer(sessionId: string, text: string): boolean;
   /**
    * Durable user-profile store. Present even when
    * `memory.profile.enabled` is `false`, because the store owns the
@@ -658,6 +683,7 @@ export async function createAgentRuntime(
    * pointer.
    */
   const turnContext = new AsyncLocalStorage<{ sessionId: string }>();
+  const steeringInbox = new SteeringInbox();
   const turnController = new TurnController({
     onHookError: (err, ctxInfo) => {
       logger.warn("turn event hook threw", {
@@ -733,7 +759,11 @@ export async function createAgentRuntime(
     !options.overrides?.deferLlamaHealthCheck &&
     !options.overrides?.llamaComplete
   ) {
-    const health = await checkLlamaServer();
+    // One attempt, not the retry ladder: this probe exists to log a line,
+    // and with llama down the default ladder (5 attempts, exponential
+    // backoff) stalled every boot for 15.5 s before the loop then failed
+    // fast anyway. The first real completion is the retry.
+    const health = await checkLlamaServer({ retries: 0 });
     if (!health.reachable) {
       logger.warn("llama-server health check failed", {
         error: health.error,
@@ -1170,10 +1200,16 @@ export async function createAgentRuntime(
   const turnUsageMeter = new TurnUsageMeter();
 
   /**
-   * Pricing for a model id on the active provider, when the operator
-   * configured any. Cloud entries carry `userModels[].pricing`; local
-   * runners have none, which is why turn cost is reported as absent
-   * rather than zero for them.
+   * Pricing for a model id on the active provider, when any is known.
+   *
+   * Two sources, in `resolveModel`'s own precedence: a hand-configured
+   * `userModels[].pricing` first, then the provider's bundled catalog.
+   * The catalog is what makes cost work out of the box on OpenRouter and
+   * aimlapi, whose published prices ship with the agent; without it only
+   * operators who priced their models by hand ever saw a `cost_usd`.
+   *
+   * Local runners still resolve to no pricing, which is why turn cost is
+   * reported as absent rather than zero for them.
    */
   const resolveModelPricing = (
     modelId: string | null,
@@ -1184,7 +1220,7 @@ export async function createAgentRuntime(
       (p) => p.id === resolved.activeTextProvider,
     );
     if (!entry) return undefined;
-    return resolveModel(entry, modelId);
+    return resolveModel(entry, modelId, catalogForProvider(entry));
   };
 
   // Vision reuses the active text provider when it exposes describeImage.
@@ -1742,6 +1778,8 @@ export async function createAgentRuntime(
     slotManager,
     grammar,
     llmComplete,
+    // Mid-turn steering: the loop drains this at every step boundary.
+    steeringInbox,
     ...(llmCompleteStream ? { llmCompleteStream } : {}),
     toolDescriptors: effectiveToolDescriptors,
     capabilities,
@@ -1840,6 +1878,9 @@ export async function createAgentRuntime(
   const shutdown = async (): Promise<void> => {
     if (shutdownCalled) return;
     shutdownCalled = true;
+    // Nothing will drain the inbox after this point; drop pending
+    // steers so a message cannot resurface in a later process.
+    steeringInbox.clearAll();
     // Cancel any in-flight reflection before tearing down the profile
     // store — otherwise a late-arriving completion could try to write
     // into a closed SQLite connection.
@@ -2059,6 +2100,27 @@ export async function createAgentRuntime(
       return result;
     });
   };
+
+  /**
+   * Public entry point for mid-turn steering. Deliberately does NOT
+   * enqueue: the whole point is to reach the turn that is already
+   * running, and going through `turnController` would put the message
+   * behind it.
+   *
+   * One call, one decision. It deliberately does NOT pre-check
+   * `turnController.isBusy`: that is a second fact which stops being
+   * true at a different moment than "the loop will drain this again"
+   * (the loop's final drain happens inside `runTurn`, `busy.delete`
+   * later in the controller's `finally`). Guarding on it made this a
+   * check-then-act with a real lost-update window — accepted here,
+   * never delivered, and resurfacing at step 0 of some later turn under
+   * a "while you were working" notice about a turn that had already
+   * ended. `push` alone is authoritative: it accepts only while the
+   * running turn's window is open, and that window is closed by the
+   * same call that performs the final drain.
+   */
+  const steer = (sessionId: string, text: string): boolean =>
+    steeringInbox.push(sessionId, text);
 
   const runTurn = async (
     session: SessionState,
@@ -2393,6 +2455,8 @@ export async function createAgentRuntime(
     slotManager,
     sessionStore,
     turnController,
+    steeringInbox,
+    steer,
     profileStore,
     notesStore,
     lessonStore,

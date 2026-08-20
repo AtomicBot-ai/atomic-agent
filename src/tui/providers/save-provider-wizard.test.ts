@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -197,6 +197,71 @@ describe("saveProviderWizardToConfig", () => {
     expect(getConfig().llm?.activeTextProvider).toBe("lmstudio");
   });
 
+  it("saves a hand-added loopback endpoint with no key", () => {
+    // A raw llama-server on the operator's own machine: no preset, no key,
+    // just a loopback base URL. An empty key is valid here.
+    const built = saveProviderWizardToConfig({
+      ...createProvidersWizardState("add"),
+      kind: "openai-compatible" as const,
+      phase: "chat_model_line" as const,
+      apiKeyBuffer: "",
+      baseUrlLine: "http://127.0.0.1:9931",
+      chatModelLine: "qwen3-30b",
+    });
+
+    expect(built.entry.id).toBe("openai-compatible");
+    expect(built.entry.apiKey).toBeUndefined();
+    expect(process.env.OPENAI_COMPAT_API_KEY).toBeUndefined();
+    expect(getConfig().llm?.activeTextProvider).toBe("openai-compatible");
+  });
+
+  it("still refuses an empty key for a non-loopback custom URL", () => {
+    // A remote OpenAI-compatible host with no preset needs a key: the
+    // loopback exception must not weaken the check for real endpoints.
+    expect(() =>
+      saveProviderWizardToConfig({
+        ...createProvidersWizardState("add"),
+        kind: "openai-compatible" as const,
+        phase: "chat_model_line" as const,
+        apiKeyBuffer: "",
+        baseUrlLine: "https://api.example.com",
+        chatModelLine: "some-model",
+      }),
+    ).toThrow(/API key is empty/);
+  });
+
+  it("accepts a key whose only non-ASCII is a trimmable paste artifact", () => {
+    // U+00A0 from a web-page copy is non-ASCII, but the persisted value
+    // is trimmed — the save judges what it stores, not the raw buffer,
+    // so the key screen and the save agree.
+    saveProviderWizardToConfig({
+      ...createProvidersWizardState("add"),
+      kind: "openai-compatible" as const,
+      phase: "chat_model_line" as const,
+      apiKeyBuffer: "sk-clean\u00a0",
+      baseUrlLine: "https://api.example.com",
+      chatModelLine: "some-model",
+    });
+    expect(process.env.OPENAI_COMPAT_API_KEY).toBe("sk-clean");
+  });
+
+  it("refuses a non-ASCII key before it can reach a header", () => {
+    // A stray Cyrillic character would otherwise crash the first request
+    // with an opaque ByteString error; catch it at save time instead.
+    expect(() =>
+      saveProviderWizardToConfig({
+        ...createProvidersWizardState("add"),
+        kind: "openai-compatible" as const,
+        phase: "chat_model_line" as const,
+        apiKeyBuffer: "sk-т", // Cyrillic "т", code point 1090
+        baseUrlLine: "https://api.example.com",
+        chatModelLine: "some-model",
+      }),
+    ).toThrow(/non-ASCII/);
+    // Nothing was written to .env for a rejected key.
+    expect(process.env.OPENAI_COMPAT_API_KEY).toBeUndefined();
+  });
+
   it("gives a second entry for the same service a numbered id", () => {
     saveProviderWizardToConfig(groqWizard("gsk-groq"));
     const second = saveProviderWizardToConfig({
@@ -242,4 +307,28 @@ describe("saveProviderWizardToConfig", () => {
     // stole the selection.
     expect(getConfig().llm?.activeTextProvider).toBe("groq");
   });
+
+  it("saves a claude-cli provider with an empty key and writes no .env", () => {
+    const wizard = {
+      ...createProvidersWizardState("add"),
+      kind: "claude-cli" as const,
+      phase: "chat_model_line" as const,
+      apiKeyBuffer: "",
+      chatModelLine: "opus",
+      selectedEmbeddingChoiceId: LOCAL_EMBEDDING_CHOICE_ID,
+    };
+
+    // Would throw "API key is empty" for any key-based kind.
+    const built = saveProviderWizardToConfig(wizard);
+
+    expect(built.entry.kind).toBe("subscription-cli");
+    expect(built.entry.subscriptionCli).toEqual({ cli: "claude" });
+    expect(built.entry.defaultChatModel).toBe("opus");
+
+    const cfg = getConfig();
+    expect(cfg.llm?.activeTextProvider).toBe("claude-cli");
+    expect(cfg.llm?.activeEmbeddingProvider).toBe("local-llama");
+    expect(existsSync(join(stateDir, ".env"))).toBe(false);
+  });
+
 });

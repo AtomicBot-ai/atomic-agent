@@ -4,7 +4,10 @@ import { join } from "node:path";
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { SkillCatalogEntry } from "../prompt/stable-prefix.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
-import type { SessionState } from "../session/session-state.js";
+import {
+  isFailedSessionStatus,
+  type SessionState,
+} from "../session/session-state.js";
 import { checkForAppUpdate, runAppUpdate, canSelfUpdate } from "../update/index.js";
 import { clearTtyScreen } from "./clear-tty-screen.js";
 import { captureAndWriteDebugBundle } from "./debug-bundle/index.js";
@@ -26,6 +29,22 @@ import type { SessionPickerEntry, TuiState } from "./tui-state.js";
 
 const DEBUG_BUNDLE_TRACE_LIMIT = 10;
 const DEBUG_BUNDLE_DIR_NAME = "atomic-agent-debug";
+
+/**
+ * Hard cap on messages parked behind the running turn.
+ *
+ * Nothing bounded this before because nothing could reach it: the editor
+ * was dead for the duration of a turn, so the queue was a de-facto
+ * zero-length buffer. Now that typing stays live, a leaned-on Enter or a
+ * multi-line paste can pile up an arbitrary backlog, and every parked
+ * message is later replayed as a full `runTurn` — an unbounded queue is
+ * an unattended agent run nobody asked for.
+ *
+ * Twenty is past any backlog a human types while watching one turn
+ * stream, small enough that draining it stays comprehensible, and it
+ * keeps `emitQueue`'s whole-array copy bounded at 20 elements per push.
+ */
+export const MAX_QUEUED_MESSAGES = 20;
 
 export interface ChatOrchestratorOptions {
   maxSteps: number;
@@ -62,14 +81,21 @@ function formatSkillCatalogSystemMessage(
  * Owns the single live chat session. Each call to `sendMessage` queues a
  * macro-turn through `runtime.runTurn`; only one turn is in flight at any
  * time so the user can keep typing without racing the agent loop. Abort
- * cancels the current turn but keeps the session alive — that is what
- * sets chat mode apart from the legacy goal-runner.
+ * cancels the current turn and discards whatever is parked behind it,
+ * but keeps the session alive — that is what sets chat mode apart from
+ * the legacy goal-runner.
  *
  * The Tasks tab surface (list/detail/create/cancel/run-now) is delegated
  * to `TasksOrchestrator`, which is constructed here and exposed via
  * `tasks` so `tui-command.ts` can wire its callbacks without reaching
  * into runtime internals.
  */
+/** One-row preview for a dropped queue entry: flattened and elided. */
+function droppedPreview(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length <= 60 ? flat : `${flat.slice(0, 59)}…`;
+}
+
 export class ChatOrchestrator {
   private session: SessionState | null = null;
   private currentController: AbortController | null = null;
@@ -78,6 +104,21 @@ export class ChatOrchestrator {
   /** Latest release version captured by `checkForUpdate`, used by `runUpdate`. */
   private pendingUpdateVersion: string | null = null;
   private readonly queue: string[] = [];
+  /**
+   * Messages refused since the queue last had room, so a burst reads as
+   * one escalating counter instead of N identical lines. Reset by the
+   * first push that fits again.
+   */
+  private droppedWhileFull = 0;
+  /**
+   * How many leading `queue` entries are steering re-routes for the turn
+   * currently in flight. New re-routes are spliced in at this index, so
+   * they stay ahead of ordinary backlog (they are corrections to the turn
+   * the operator is watching) while keeping their own typing order. Reset
+   * whenever a turn starts — a message aimed at the previous turn is
+   * ordinary backlog from the next one's point of view.
+   */
+  private steeredAhead = 0;
   public exitCode = 0;
   public readonly tasks: TasksOrchestrator;
   public readonly skills: SkillsOrchestrator;
@@ -196,6 +237,15 @@ export class ChatOrchestrator {
    * the user to relaunch.
    */
   runUpdate(): void {
+    // Replacing the binary under a running turn is the one mid-run slash
+    // command with no safe outcome — now reachable because the editor
+    // stays live. Refuse it instead of racing the installer.
+    if (this.currentController) {
+      this.notify(
+        "update: refused while a turn is running — abort it or let it finish first",
+      );
+      return;
+    }
     this.bus.emit({ type: "update_started" });
     void (async () => {
       try {
@@ -255,7 +305,7 @@ export class ChatOrchestrator {
       return;
     }
     this.session = loaded;
-    this.queue.length = 0;
+    this.clearQueue();
     // Session grants are point exceptions scoped to the session that
     // granted them; a switch must not carry them into the next one.
     this.runtime.approvals.clearSessionGrants();
@@ -345,7 +395,7 @@ export class ChatOrchestrator {
       return;
     }
     this.session = this.runtime.createSession();
-    this.queue.length = 0;
+    this.clearQueue();
     // A fresh session starts with no point exceptions: grants never
     // outlive the session that created them.
     this.runtime.approvals.clearSessionGrants();
@@ -367,16 +417,161 @@ export class ChatOrchestrator {
     if (this.quitting) return;
     this.ensureSession();
     if (this.currentController) {
+      if (this.queue.length >= MAX_QUEUED_MESSAGES) {
+        this.droppedWhileFull += 1;
+        // Re-publish an unchanged queue on purpose: the reducer already
+        // inserted this message optimistically on `message_queued`, and
+        // only an authoritative `queue_changed` takes it back off the
+        // strip. Skipping the emit here would leave the operator looking
+        // at a parked message that is never going to run.
+        this.emitQueue();
+        // The optimistic `message_queued` already cleared the editor, so
+        // a refusal that only warned would lose the typed text entirely.
+        // Hand it back to the buffer instead.
+        this.bus.emit({ type: "input_changed", value: text });
+        this.notify(
+          `queue: full at ${MAX_QUEUED_MESSAGES} — dropped ${this.droppedWhileFull} message${
+            this.droppedWhileFull === 1 ? "" : "s"
+          } (returned to the editor); Esc stops the run, /queue clear empties it`,
+        );
+        return;
+      }
+      this.droppedWhileFull = 0;
       this.queue.push(text);
+      this.emitQueue();
       return;
     }
     void this.runOneTurn(text);
+  }
+
+  /**
+   * Fold a message into the turn already running on this session
+   * (Enter in `steer` mode, and `/steer <msg>` one-shots).
+   *
+   * Steer first; on refusal the message must still go somewhere — and
+   * not behind ordinary backlog: `currentController` is set strictly
+   * earlier than the loop opens its window, so a refusal can mean "not
+   * yet" as well as "too late" or "full". `queueAsSteer` splices it
+   * ahead of backlog, behind steers already re-routed for the same
+   * turn, so typing order survives. `steer`'s answer is the only fact
+   * consulted — see §"Mid-turn steering" in AGENTS.md.
+   */
+  steerMessage(text: string): void {
+    if (this.quitting) return;
+    const session = this.ensureSession();
+    if (this.currentController) {
+      if (session !== null && this.runtime.steer(session.id, text)) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: "steering the running turn — the agent reads it at the next step",
+        });
+        return;
+      }
+      if (this.queue.length >= MAX_QUEUED_MESSAGES) {
+        this.droppedWhileFull += 1;
+        this.emitQueue();
+        this.bus.emit({ type: "input_changed", value: text });
+        this.notify(
+          `queue: full at ${MAX_QUEUED_MESSAGES} — the steer could not be parked (returned to the editor)`,
+        );
+        return;
+      }
+      this.droppedWhileFull = 0;
+      this.queueAsSteer(text);
+      this.emitQueue();
+      this.bus.emit({
+        type: "runtime_info",
+        line: "steering the running turn — it cannot take this one, so it runs as the next turn",
+      });
+      return;
+    }
+    void this.runOneTurn(text);
+  }
+
+  /**
+   * Queue a message that was meant as a steer but could not be folded
+   * into the running turn — ahead of ordinary backlog, behind steers
+   * already re-routed for the same turn.
+   */
+  private queueAsSteer(text: string): void {
+    this.queue.splice(this.steeredAhead, 0, text);
+    this.steeredAhead += 1;
+  }
+
+  /**
+   * Re-route steering messages the turn accepted but never delivered.
+   *
+   * `RunTurnResult.undelivered` carries anything pushed after the loop's
+   * last step boundary — during the final inference, or into a turn
+   * cancelled before it stepped. AGENTS.md makes re-routing the caller's
+   * job: `steer` already answered "yes" to whoever sent these, so
+   * dropping them here would lose a message the operator watched being
+   * accepted. They go to the FRONT of the queue — ahead of
+   * `queueAsSteer`'s entries too: they are corrections aimed at the turn
+   * that just ran, and anything already queued was typed after `steer`
+   * had refused it.
+   */
+  private rerouteUndelivered(undelivered: readonly string[] | undefined): void {
+    if (undelivered === undefined || undelivered.length === 0) return;
+    this.queue.unshift(...undelivered);
+    this.emitQueue();
+    this.notify(
+      `${undelivered.length} message${
+        undelivered.length === 1 ? "" : "s"
+      } arrived too late for that turn — sending ${
+        undelivered.length === 1 ? "it" : "them"
+      } next`,
+    );
+  }
+
+  /**
+   * Drop every parked message without touching the running turn
+   * (`/queue clear`). No-op on an empty queue so the TUI is not spammed
+   * with redundant `queue_changed` frames.
+   */
+  clearQueue(): void {
+    // Even an empty queue can carry a stale steer watermark.
+    this.steeredAhead = 0;
+    if (this.queue.length === 0) return;
+    this.queue.length = 0;
+    this.emitQueue();
+  }
+
+  /**
+   * Re-publish the pending-message queue to the TUI. The orchestrator is
+   * the source of truth — the reducer mirrors this list rather than
+   * tracking pushes and drains on its own, so an optimistic UI insert can
+   * never drift from what will actually run.
+   *
+   * The whole-array copy is deliberate and now bounded: the action must
+   * not hand subscribers a live reference to `this.queue`, and
+   * `MAX_QUEUED_MESSAGES` caps the copy at 20 elements per emit. Trading
+   * it for a push/shift/clear delta would put queue arithmetic back in
+   * the reducer — the exact drift this design removed.
+   */
+  private emitQueue(): void {
+    this.bus.emit({ type: "queue_changed", queued: [...this.queue] });
+  }
+
+  /**
+   * Operator-facing notice about the queue: an event-feed line plus the
+   * same sentence as a warn message in the transcript, because the feed
+   * is not on screen in chat mode and these two events (an abort binning
+   * parked work, a refused submission) are things the operator typed and
+   * must not lose silently.
+   */
+  private notify(line: string): void {
+    this.bus.emit({ type: "runtime_info", line });
+    this.bus.emit({ type: "system_message", text: line, variant: "warn" });
   }
 
   private async runOneTurn(text: string): Promise<void> {
     if (!this.session) return;
     const controller = new AbortController();
     this.currentController = controller;
+    // A new turn is in flight: whatever is still queued was aimed at an
+    // earlier one and is ordinary backlog now.
+    this.steeredAhead = 0;
     try {
       const result = await this.runtime.runTurn(this.session, text, {
         maxSteps: this.options.maxSteps,
@@ -384,7 +579,25 @@ export class ChatOrchestrator {
         origin: "tui",
       });
       this.session = result.session;
-      if (this.session.status === "failed") this.exitCode = 1;
+      // A cancelled turn means the operator stopped the agent — Esc,
+      // Ctrl+C or /abort. Re-queueing its undelivered steers here would
+      // make the post-abort drain START a turn out of them: the exact
+      // "Esc launches the next parked message" trap the abort path
+      // exists to close. Announce the drop instead, like the queue drop.
+      if (result.reason === "cancelled") {
+        const dropped = result.undelivered ?? [];
+        if (dropped.length > 0) {
+          this.notify(
+            [
+              `aborted: dropped ${dropped.length} undelivered steer${dropped.length === 1 ? "" : "s"}`,
+              ...dropped.map((text, i) => `  ${i + 1}. ${droppedPreview(text)}`),
+            ].join("\n"),
+          );
+        }
+      } else {
+        this.rerouteUndelivered(result.undelivered);
+      }
+      if (isFailedSessionStatus(this.session.status)) this.exitCode = 1;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.bus.emit({ type: "runtime_info", line: `turn error: ${msg}` });
@@ -398,6 +611,10 @@ export class ChatOrchestrator {
       if (this.currentController === controller) this.currentController = null;
     }
     const next = this.queue.shift();
+    // Unconditional: the idle boundary re-syncs the strip even when
+    // nothing drained, so an optimistic UI insert can never outlive the
+    // turn it was parked behind.
+    this.emitQueue();
     if (next !== undefined && !this.quitting) {
       void this.runOneTurn(next);
     }
@@ -468,14 +685,41 @@ export class ChatOrchestrator {
     return ids.slice(0, DEBUG_BUNDLE_TRACE_LIMIT);
   }
 
+  /**
+   * Esc / Ctrl+C / `/abort` — stop the agent, not merely this turn.
+   *
+   * Discarding the queue is the whole point. `runOneTurn` catches the
+   * abort rejection and falls straight through to `this.queue.shift()`,
+   * so an intact backlog turned Esc into "start the next parked
+   * message"; stopping a wrong run cost one Esc per parked message.
+   * Clear first, then abort — the same order `quit()` uses below.
+   *
+   * The drop is announced: the operator typed those messages, so binning
+   * N of them silently is worse than one line in the transcript.
+   */
   abortCurrentTurn(): void {
+    const dropped = [...this.queue];
+    if (dropped.length > 0) {
+      this.queue.length = 0;
+      this.droppedWhileFull = 0;
+      this.emitQueue();
+      // The operator typed those messages; a bare count would bin their
+      // words with no way back. The transcript line carries a preview of
+      // each so anything worth keeping can be copied out.
+      this.notify(
+        [
+          `aborted: dropped ${dropped.length} parked message${dropped.length === 1 ? "" : "s"}`,
+          ...dropped.map((text, i) => `  ${i + 1}. ${droppedPreview(text)}`),
+        ].join("\n"),
+      );
+    }
     this.currentController?.abort();
   }
 
   quit(): void {
     if (this.quitting) return;
     this.quitting = true;
-    this.queue.length = 0;
+    this.clearQueue();
     this.currentController?.abort();
   }
 

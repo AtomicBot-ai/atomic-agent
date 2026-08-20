@@ -1,11 +1,16 @@
 import { Box, Text } from "ink";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import {
   canGrantCategory,
   canGrantShape,
+  type ApprovalGrantScope,
   type ApprovalRequest,
 } from "../approval/approval-gate.js";
 import { formatApprovalCategory } from "../approval/approval-level.js";
+import { decideApproval } from "./app-key-bindings.js";
+import { MouseTarget, useMouseCommands } from "./mouse/mouse-context.js";
+import { isPrimaryPress } from "./mouse/mouse-event.js";
+import { MOUSE_LAYER_MODAL } from "./mouse/mouse-registry.js";
 
 interface ApprovalModalProps {
   request: ApprovalRequest;
@@ -14,7 +19,9 @@ interface ApprovalModalProps {
 /**
  * Displayed as an in-place banner rather than a floating window to keep
  * rendering predictable across terminals. Hotkey handling lives at the
- * app root (`tui-app.tsx`) via ink's `useInput`.
+ * app root (`tui-app.tsx`) via ink's `useInput`; the `[y]` / `[s]` /
+ * `[a]` / `[n]` markers are also click targets, routed through the same
+ * `decideApproval` the keys use.
  */
 export function ApprovalModal({ request }: ApprovalModalProps): ReactElement {
   const categoryLabel = formatApprovalCategory(request.category);
@@ -59,22 +66,39 @@ export function ApprovalModal({ request }: ApprovalModalProps): ReactElement {
           </Text>
         ) : null}
       </Box>
-      <Box marginTop={1}>
-        <Text>
-          <Text color="green">[y]</Text> approve{" "}
-          {grantCategory ? (
-            <>
-              <Text color="cyan">[s]</Text> allow {categoryLabel} this session{" "}
-            </>
-          ) : null}
-          {grantShape ? (
-            <>
-              <Text color="cyan">[a]</Text> allow all {request.commandShape}{" "}
-              commands this session{" "}
-            </>
-          ) : null}
-          <Text color="red">[n]</Text> deny   <Text color="gray">[esc]</Text> abort run
-        </Text>
+      <Box marginTop={1} flexDirection="column">
+        <Box>
+          <ApprovalButton request={request} approved>
+            <Text color="green">[y]</Text>
+          </ApprovalButton>
+          <Text> approve</Text>
+        </Box>
+        {grantCategory ? (
+          <Box>
+            <ApprovalButton request={request} approved grant="category">
+              <Text color="cyan">[s]</Text>
+            </ApprovalButton>
+            <Text> allow {categoryLabel} this session</Text>
+          </Box>
+        ) : null}
+        {grantShape ? (
+          <Box>
+            <ApprovalButton request={request} approved grant="shape">
+              <Text color="cyan">[a]</Text>
+            </ApprovalButton>
+            <Text> allow all {request.commandShape} commands this session</Text>
+          </Box>
+        ) : null}
+        <Box>
+          <ApprovalButton request={request} approved={false}>
+            <Text color="red">[n]</Text>
+          </ApprovalButton>
+          <Text> deny</Text>
+        </Box>
+        <Box>
+          <Text color="gray">[esc]</Text>
+          <Text> abort run</Text>
+        </Box>
       </Box>
       <Text color="gray">{footerHint(grantCategory)}</Text>
     </Box>
@@ -91,4 +115,39 @@ function footerHint(grantable: boolean): string {
 function clip(value: string, limit: number): string {
   if (value.length <= limit) return value;
   return `${value.slice(0, limit - 1)}…`;
+}
+
+interface ApprovalButtonProps {
+  request: ApprovalRequest;
+  approved: boolean;
+  grant?: ApprovalGrantScope;
+  children: ReactNode;
+}
+
+/**
+ * A clickable decision marker. Renders as plain text when the mouse
+ * layer is absent, so the modal looks identical with `--no-mouse` and
+ * under the test renderer.
+ */
+function ApprovalButton({
+  request,
+  approved,
+  grant,
+  children,
+}: ApprovalButtonProps): ReactElement {
+  const mouse = useMouseCommands();
+  if (!mouse) return <>{children}</>;
+  return (
+    <MouseTarget
+      layer={MOUSE_LAYER_MODAL}
+      flexShrink={0}
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        decideApproval(request, approved, mouse, grant);
+        return true;
+      }}
+    >
+      {children}
+    </MouseTarget>
+  );
 }

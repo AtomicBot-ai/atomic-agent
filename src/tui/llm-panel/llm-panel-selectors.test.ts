@@ -77,7 +77,10 @@ describe("llm-panel selectors", () => {
         providerId: "openrouter",
         modelId: "qwen/qwen3.7-max",
         active: true,
-        enterEffect: expect.stringContaining("$1.25/$3.75"),
+        // Price comes from the bundled catalog, refreshed from the live
+        // OpenRouter list on 2026-08-19 ($1.475/$4.425 per 1M, shown to
+        // two decimals).
+        enterEffect: expect.stringContaining("$1.48/$4.42"),
       }),
     );
     const activeCloud = cloudRows.find(
@@ -90,7 +93,7 @@ describe("llm-panel selectors", () => {
       expect.objectContaining({
         kind: "localTextModel",
         available: true,
-        enterEffect: "Enter: use local-llama/qwen-3.5-4b",
+        enterEffect: "Enter: select model",
       }),
     );
     const route = selectLlmActiveRouteSummary(state);
@@ -163,3 +166,97 @@ function embeddingDef(id: EmbeddingModelDef["id"]): EmbeddingModelDef {
     recommendedRamGb: 1,
   };
 }
+
+describe("local model rows during a pull", () => {
+  function stateWithPull(pull: unknown, downloaded: boolean) {
+    const base = createInitialTuiState(fakeSession());
+    return {
+      ...base,
+      providersPanel: {
+        ...base.providersPanel,
+        rows: [
+          {
+            id: "local-llama",
+            kind: "llama-server" as const,
+            isActiveText: false,
+            isActiveEmbedding: false,
+            hasApiKey: false,
+            chatModel: null,
+            embeddingModel: null,
+          },
+        ],
+      },
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        pull: pull as never,
+        rows: [
+          {
+            id: "qwen-3.5-4b" as const,
+            def: localDef("qwen-3.5-4b"),
+            downloaded,
+            active: false,
+            mmprojStatus: "n/a" as const,
+          },
+        ],
+      },
+    };
+  }
+
+  const pullFor = (percent: number) => ({
+    kind: "chat" as const,
+    modelId: "qwen-3.5-4b" as const,
+    label: "qwen-3.5-4b",
+    percent,
+    transferredBytes: 1_000,
+    totalBytes: 100_000,
+    error: null,
+  });
+
+  it("says the model is downloading instead of offering the download again", () => {
+    const rows = selectLlmPanelRows(stateWithPull(pullFor(42), false), "local");
+    expect(rows).toContainEqual(
+      expect.objectContaining({
+        kind: "localTextModel",
+        primaryAction: "downloading",
+        enterEffect: "Downloading… 42%",
+        available: false,
+      }),
+    );
+  });
+
+  it("offers selection once the pull is finished", () => {
+    const rows = selectLlmPanelRows(stateWithPull(null, true), "local");
+    expect(rows).toContainEqual(
+      expect.objectContaining({
+        kind: "localTextModel",
+        primaryAction: "use",
+        enterEffect: "Enter: select model",
+        available: true,
+      }),
+    );
+  });
+
+  it("falls back to the download hint when a pull failed", () => {
+    const failed = { ...pullFor(7), error: "connection reset" };
+    const rows = selectLlmPanelRows(stateWithPull(failed, false), "local");
+    expect(rows).toContainEqual(
+      expect.objectContaining({
+        kind: "localTextModel",
+        primaryAction: "download",
+        enterEffect: "Enter: download",
+      }),
+    );
+  });
+
+  it("does not claim a different model is downloading", () => {
+    const other = { ...pullFor(50), modelId: "gemma-4-12b" as never };
+    const rows = selectLlmPanelRows(stateWithPull(other, false), "local");
+    expect(rows).toContainEqual(
+      expect.objectContaining({
+        kind: "localTextModel",
+        primaryAction: "download",
+      }),
+    );
+  });
+});
+

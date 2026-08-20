@@ -13,6 +13,7 @@ import type { PrivacyAction } from "./privacy/privacy-actions.js";
 import type { ProvidersAction } from "./providers/providers-actions.js";
 import type { LlmPanelAction } from "./llm-panel/llm-panel-actions.js";
 import type { FallbackPanelAction } from "./llm-panel/fallback/fallback-panel-actions.js";
+import type { WhileBusySubmitMode } from "../config/index.js";
 import type { ChatMessage, SessionPickerEntry, TuiTab, TuiUiMode } from "./tui-state.js";
 
 /**
@@ -58,6 +59,30 @@ export type TuiAction =
    * `user_message` agent event, so the action carries no payload.
    */
   | { type: "message_submitted" }
+  /**
+   * The operator pressed Enter while a turn was still running. Unlike
+   * `message_submitted` this must NOT reset the run state — the turn in
+   * flight owns `feed` / `reasoning` / `streamingToolCards` and wiping
+   * them mid-run would blank the screen the operator is reading. We only
+   * clear the editor and record the message as parked; the orchestrator
+   * confirms with `queue_changed` once it has actually buffered it.
+   */
+  | { type: "message_queued"; text: string }
+  /** Orchestrator re-published its pending-message queue (push/drain/clear). */
+  | { type: "queue_changed"; queued: readonly string[] }
+  /**
+   * Flip (or set) what Enter does while a turn is running. `mode`
+   * omitted toggles; the persist side-effect lives in the caller, like
+   * `theme_set`.
+   */
+  | { type: "while_busy_mode_changed"; mode?: WhileBusySubmitMode }
+  /**
+   * The operator submitted a message in `steer` mode. Clears the editor
+   * only — the user bubble is appended when the agent loop confirms
+   * delivery (`steer_applied`), so a steer that arrives too late and
+   * falls back to the queue is not rendered twice.
+   */
+  | { type: "message_steered"; text: string }
   | { type: "quit_requested" }
   | {
       type: "loaded_skill";
@@ -93,14 +118,18 @@ export type TuiAction =
   | { type: "slash_palette_queried"; query: string }
   /** Close the slash palette without committing a selection. */
   | { type: "slash_palette_closed" }
+  | { type: "menu_opened" }
+  | { type: "menu_closed" }
+  | { type: "menu_query_changed"; query: string }
+  | { type: "menu_cursor_moved"; delta: number }
+  | { type: "menu_cursor_set"; cursor: number }
+  | { type: "menu_path_set"; path: string | null }
   /** Move the highlight in the open slash palette by delta rows. */
   | { type: "slash_palette_cursor_moved"; delta: 1 | -1 }
   /** Reset the slash palette highlight to a specific row. */
   | { type: "slash_palette_cursor_set"; row: number }
   /** Navigate input history by delta (up = older, down = newer). */
   | { type: "input_history_navigated"; delta: 1 | -1 }
-  /** Restore the live editor buffer, exiting history navigation. */
-  | { type: "input_history_reset" }
   /** Clear the chat transcript (slash `/clear`). */
   | { type: "chat_cleared" }
   /** Populate + show the session picker overlay. */
@@ -109,6 +138,8 @@ export type TuiAction =
   | { type: "session_picker_closed" }
   /** Move the highlight in the open session picker by delta rows. */
   | { type: "session_picker_cursor_moved"; delta: 1 | -1 }
+  /** Put the session picker highlight on an absolute row (mouse click). */
+  | { type: "session_picker_cursor_set"; row: number }
   /**
    * Open the interactive theme picker. The reducer seeds the cursor from the
    * current `themeName` and records it in `themePickerOriginal` so Esc can
@@ -119,6 +150,8 @@ export type TuiAction =
   | { type: "theme_picker_closed" }
   /** Move the theme picker highlight by delta rows (clamped). */
   | { type: "theme_picker_cursor_moved"; delta: 1 | -1 }
+  /** Put the theme picker highlight on an absolute row (mouse click). */
+  | { type: "theme_picker_cursor_set"; row: number }
   /**
    * Hard-switch the TUI transcript to an already-loaded session. The
    * orchestrator performs the SessionStore load + swap, then dispatches
@@ -172,8 +205,12 @@ export type TuiAction =
   | { type: "sidebar_section_focused"; section: "sessions" | "tasks" }
   /** Move the sidebar's session-list cursor by N rows (clamped). */
   | { type: "sidebar_cursor_moved"; delta: 1 | -1 }
+  /** Put the sidebar's session-list cursor on an absolute row (mouse click). */
+  | { type: "sidebar_cursor_set"; row: number }
   /** Move the sidebar's tasks-list cursor by N rows (clamped). */
   | { type: "sidebar_tasks_cursor_moved"; delta: 1 | -1 }
+  /** Put the sidebar's tasks-list cursor on an absolute row (mouse click). */
+  | { type: "sidebar_tasks_cursor_set"; row: number }
   /** Scroll the chat history by N messages (positive = older). Clamped to [0, total]. */
   | { type: "chat_scrolled"; delta: number }
   /** Snap the chat scroll back to the bottom (newest message). */

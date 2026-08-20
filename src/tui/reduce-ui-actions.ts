@@ -1,3 +1,4 @@
+import { clampMenuCursor } from "./menu/menu-selectors.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import { THEME_NAMES } from "./theme/theme.js";
@@ -44,6 +45,14 @@ export function reduceUiAction(
       );
       return { ...state, themePickerCursor: next };
     }
+    case "theme_picker_cursor_set": {
+      if (!state.themePickerOpen) return state;
+      const max = THEME_NAMES.length - 1;
+      return {
+        ...state,
+        themePickerCursor: Math.min(max, Math.max(0, action.row)),
+      };
+    }
     case "tool_expand_toggled": {
       const current = state.toolsExpandedById[action.toolCardId] ?? false;
       return {
@@ -62,6 +71,37 @@ export function reduceUiAction(
       for (const card of state.streamingToolCards) next[card.id] = action.expanded;
       return { ...state, toolsExpandedById: next };
     }
+    case "menu_opened":
+      // Always reopen at the root with an empty query: a menu that resumes
+      // where it was last left makes the same keypress mean different
+      // things on different days.
+      return {
+        ...state,
+        menuOpen: true,
+        menuPath: null,
+        menuQuery: "",
+        menuCursor: 0,
+      };
+    case "menu_closed":
+      return {
+        ...state,
+        menuOpen: false,
+        menuPath: null,
+        menuQuery: "",
+        menuCursor: 0,
+      };
+    case "menu_query_changed":
+      // A query flattens the tree, so any open submenu is dropped with it.
+      return { ...state, menuQuery: action.query, menuPath: null };
+    case "menu_path_set":
+      return { ...state, menuPath: action.path };
+    case "menu_cursor_set":
+      return { ...state, menuCursor: clampMenuCursor(state, action.cursor) };
+    case "menu_cursor_moved":
+      return {
+        ...state,
+        menuCursor: clampMenuCursor(state, state.menuCursor + action.delta),
+      };
     case "slash_palette_opened":
       return {
         ...state,
@@ -92,8 +132,38 @@ export function reduceUiAction(
     }
     case "input_history_navigated":
       return navigateInputHistory(state, action.delta);
-    case "input_history_reset":
-      return { ...state, inputHistoryCursor: null };
+    case "message_queued":
+      return {
+        ...state,
+        queuedMessages: [...state.queuedMessages, action.text],
+        inputValue: "",
+        inputHistoryCursor: null,
+        // A queued submit is still a submit: the parked history draft
+        // must not resurface on the next Down.
+        inputHistoryDraft: null,
+        slashPaletteOpen: false,
+        slashQuery: "",
+        slashPaletteCursor: 0,
+      };
+    case "queue_changed":
+      return { ...state, queuedMessages: [...action.queued] };
+    case "while_busy_mode_changed": {
+      const next =
+        action.mode ?? (state.whileBusyMode === "steer" ? "queue" : "steer");
+      return { ...state, whileBusyMode: next };
+    }
+    case "message_steered":
+      return {
+        ...state,
+        inputValue: "",
+        inputHistoryCursor: null,
+        // A steered submit is still a submit: the parked history draft
+        // must not resurface on the next Down.
+        inputHistoryDraft: null,
+        slashPaletteOpen: false,
+        slashQuery: "",
+        slashPaletteCursor: 0,
+      };
     case "chat_cleared":
       return {
         ...state,
@@ -122,6 +192,13 @@ export function reduceUiAction(
         Math.max(0, state.sessionPickerCursor + action.delta),
       );
       return { ...state, sessionPickerCursor: next };
+    }
+    case "session_picker_cursor_set": {
+      const max = Math.max(0, state.sessionPickerList.length - 1);
+      return {
+        ...state,
+        sessionPickerCursor: Math.min(max, Math.max(0, action.row)),
+      };
     }
     case "llama_url_changed":
       return {
@@ -153,6 +230,13 @@ export function reduceUiAction(
       );
       return { ...state, sidebarCursor: next };
     }
+    case "sidebar_cursor_set": {
+      const max = Math.max(0, state.recentSessions.length - 1);
+      return {
+        ...state,
+        sidebarCursor: Math.min(max, Math.max(0, action.row)),
+      };
+    }
     case "sidebar_tasks_cursor_moved": {
       // Upper bound here is the **rendered** sidebar tasks list size,
       // capped by SIDEBAR_TASKS_LIMIT and the number of active/recurring
@@ -166,6 +250,13 @@ export function reduceUiAction(
         Math.max(0, state.sidebarTasksCursor + action.delta),
       );
       return { ...state, sidebarTasksCursor: next };
+    }
+    case "sidebar_tasks_cursor_set": {
+      const max = Math.max(0, selectSidebarTasks(state.tasksPanel.rows).length - 1);
+      return {
+        ...state,
+        sidebarTasksCursor: Math.min(max, Math.max(0, action.row)),
+      };
     }
     case "chat_scrolled": {
       // `chatScrollOffset` is in **lines** since the line-by-line
@@ -210,6 +301,7 @@ export function reduceUiAction(
         sidebarSection: "sessions",
         sidebarCursor: 0,
         sidebarTasksCursor: 0,
+        queuedMessages: [],
       };
     default:
       return null;
@@ -224,13 +316,23 @@ function navigateInputHistory(state: TuiState, delta: 1 | -1): TuiState {
   // buffer (Down). Cursor value equals the history index shown.
   let cursor: number | null;
   if (state.inputHistoryCursor === null) {
-    cursor = delta === -1 ? max : null;
+    // Down on the live buffer has nowhere to go — leave the draft alone.
+    if (delta === 1) return state;
+    cursor = max;
   } else {
     const candidate = state.inputHistoryCursor + delta;
     if (candidate < 0) return state;
     if (candidate > max) cursor = null;
     else cursor = candidate;
   }
-  const value = cursor === null ? "" : (history[cursor] ?? "");
-  return { ...state, inputHistoryCursor: cursor, inputValue: value };
+  // Entering recall parks the live draft; stepping back past the newest
+  // entry hands it back verbatim instead of clearing the editor.
+  const draft = state.inputHistoryCursor === null ? state.inputValue : state.inputHistoryDraft;
+  const value = cursor === null ? (draft ?? "") : (history[cursor] ?? "");
+  return {
+    ...state,
+    inputHistoryCursor: cursor,
+    inputHistoryDraft: cursor === null ? null : draft,
+    inputValue: value,
+  };
 }

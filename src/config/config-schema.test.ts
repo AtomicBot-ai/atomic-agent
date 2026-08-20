@@ -159,6 +159,27 @@ describe("parseUserConfigFile", () => {
     expect(parsed.tui.theme).toBe("auto");
   });
 
+  it("fills web.fetch defaults when migrating from v37", () => {
+    const parsed = parseUserConfigFile({
+      version: 37,
+      web: { search: { provider: "exa", timeoutMs: 15_000 } },
+    });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.web.fetch.timeoutMs).toBe(30_000);
+    expect(parsed.web.fetch.connectTimeoutMs).toBe(10_000);
+    expect(parsed.web.fetch.maxRetries).toBe(2);
+    // The version bump must not drop the settings a v37 file already carried.
+    expect(parsed.web.search.timeoutMs).toBe(15_000);
+  });
+
+  it("accepts every version between the oldest supported and the current one", () => {
+    // A bump that forgets to append the outgoing version to the supported
+    // list locks out everyone whose config is still on it.
+    for (let version = 5; version <= USER_CONFIG_VERSION; version += 1) {
+      expect(() => parseUserConfigFile({ version })).not.toThrow();
+    }
+  });
+
   it("preserves an explicit tui.theme name", () => {
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,
@@ -173,6 +194,37 @@ describe("parseUserConfigFile", () => {
       tui: { theme: "   " },
     });
     expect(parsed.tui.theme).toBe("auto");
+  });
+
+  it("enables tui.mouse by default when migrating from v37", () => {
+    const parsed = parseUserConfigFile({ version: 37 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.tui.mouse).toBe(true);
+  });
+
+  it("preserves tui.mouse: false so an operator's opt-out survives", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { theme: "auto", mouse: false },
+    });
+    expect(parsed.tui.mouse).toBe(false);
+  });
+
+  it("accepts the string forms parseBool understands for tui.mouse", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { mouse: "off" },
+    });
+    expect(parsed.tui.mouse).toBe(false);
+  });
+
+  it("rejects a non-boolean tui.mouse", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tui: { mouse: 42 },
+      }),
+    ).toThrow(/tui.mouse/);
   });
 
   it("rejects a non-string tui.theme", () => {
@@ -993,3 +1045,32 @@ describe("parseUserConfigFile", () => {
     ).toThrow(/timeoutMs/);
   });
 });
+
+describe("tui.whileBusySubmit", () => {
+  it("defaults to steer for a config file that predates the key", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { theme: "auto" },
+    });
+    expect(parsed.tui.whileBusySubmit).toBe("steer");
+  });
+
+  it("round-trips an explicit queue preference", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { theme: "nord", whileBusySubmit: "queue" },
+    });
+    expect(parsed.tui.whileBusySubmit).toBe("queue");
+    expect(parsed.tui.theme).toBe("nord");
+  });
+
+  it("rejects an unknown mode instead of silently defaulting", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tui: { theme: "auto", whileBusySubmit: "interrupt" },
+      }),
+    ).toThrow(/whileBusySubmit/);
+  });
+});
+

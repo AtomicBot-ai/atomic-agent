@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import type { Key } from "ink";
 
-import { handleAppKey } from "./app-key-bindings.js";
+import { handleAppKey, handlePanelEscape } from "./app-key-bindings.js";
+import type { MenuNode } from "./menu/menu-registry.js";
 import { createInitialTuiState, type TuiSessionInfo } from "./tui-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 
@@ -544,4 +545,274 @@ describe("handleAppKey", () => {
     });
     expect(onSidebarTaskActivated).toHaveBeenCalledWith("task-id-42");
   });
+
+  it("Esc while running aborts the turn when the chat is pinned to the bottom", () => {
+    const state = createInitialTuiState(stubSession());
+    state.status = "running";
+    const dispatch = vi.fn();
+    const onAbort = vi.fn();
+    const handled = handleAppKey("", emptyKey({ escape: true }), {
+      state,
+      dispatch,
+      callbacks: { onApprovalDecision: vi.fn(), onAbort, onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(true);
+    expect(onAbort).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith({ type: "abort_requested" });
+  });
+
+  it("Esc while running snaps the scrolled-back chat home instead of aborting", () => {
+    // Reported sequence: submit, PageUp to read back through the
+    // streaming answer, Esc. The scroll-reset rung documents that it
+    // runs "before doing anything else"; the abort claim must not eat
+    // the turn out from under an operator who was only scrolling.
+    const state = createInitialTuiState(stubSession());
+    state.status = "running";
+    state.chatScrollOffset = 8;
+    const dispatch = vi.fn();
+    const onAbort = vi.fn();
+    const handled = handleAppKey("", emptyKey({ escape: true }), {
+      state,
+      dispatch,
+      callbacks: { onApprovalDecision: vi.fn(), onAbort, onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(true);
+    expect(onAbort).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({ type: "chat_scroll_reset" });
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "abort_requested" });
+  });
+
+  it("Esc while running on a debug tab aborts even with a stale scroll offset", () => {
+    // Nothing resets `chatScrollOffset` on a mode switch, and the chat
+    // is off-screen in debug mode — snapping an invisible log back would
+    // just make Esc look dead there.
+    const state = createInitialTuiState(stubSession());
+    state.status = "running";
+    state.uiMode = "debug";
+    state.activeTab = "logs";
+    state.chatScrollOffset = 8;
+    const dispatch = vi.fn();
+    const onAbort = vi.fn();
+    const handled = handleAppKey("", emptyKey({ escape: true }), {
+      state,
+      dispatch,
+      callbacks: { onApprovalDecision: vi.fn(), onAbort, onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(true);
+    expect(onAbort).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith({ type: "abort_requested" });
+  });
 });
+
+describe("handleAppKey with the ctrl+g leader armed", () => {
+  function pressWhileArmed(
+    input: string,
+    key: Key,
+    state = createInitialTuiState(stubSession()),
+  ) {
+    const activated: MenuNode[] = [];
+    const dispatch = vi.fn();
+    const setMenuLeaderArmed = vi.fn();
+    const setCtrlCArmed = vi.fn();
+    const onAbort = vi.fn();
+    const onQuit = vi.fn();
+    const handled = handleAppKey(input, key, {
+      state,
+      dispatch,
+      callbacks: {
+        onApprovalDecision: vi.fn(),
+        onAbort,
+        onQuit,
+      },
+      ctrlCArmed: false,
+      setCtrlCArmed,
+      sidebarVisible: false,
+      menuLeaderArmed: true,
+      setMenuLeaderArmed,
+      activateMenuNode: (node) => activated.push(node),
+    });
+    return {
+      handled,
+      activated,
+      dispatch,
+      setMenuLeaderArmed,
+      setCtrlCArmed,
+      onAbort,
+      onQuit,
+    };
+  }
+
+  it("a bare chord key activates its node", () => {
+    const run = pressWhileArmed("c", emptyKey());
+    expect(run.activated.map((n) => n.id)).toEqual(["go.manage.mcp"]);
+    expect(run.handled).toBe(true);
+    expect(run.setMenuLeaderArmed).toHaveBeenCalledWith(false);
+  });
+
+  it("an unclaimed bare key is swallowed rather than leaked to the prompt", () => {
+    const run = pressWhileArmed("z", emptyKey());
+    expect(run.activated).toEqual([]);
+    expect(run.handled).toBe(true);
+  });
+
+  it("Ctrl+C disarms and aborts the turn instead of jumping to the MCP tab", () => {
+    const state = createInitialTuiState(stubSession());
+    state.status = "running";
+    const run = pressWhileArmed("c", emptyKey({ ctrl: true }), state);
+    expect(run.activated).toEqual([]);
+    expect(run.setMenuLeaderArmed).toHaveBeenCalledWith(false);
+    expect(run.setCtrlCArmed).toHaveBeenCalledWith(true);
+    expect(run.onAbort).toHaveBeenCalled();
+    expect(run.dispatch).toHaveBeenCalledWith({ type: "abort_requested" });
+    expect(run.handled).toBe(true);
+  });
+
+  it("Ctrl+Q disarms without quitting the app", () => {
+    const run = pressWhileArmed("q", emptyKey({ ctrl: true }));
+    expect(run.activated).toEqual([]);
+    expect(run.onQuit).not.toHaveBeenCalled();
+    expect(run.dispatch).not.toHaveBeenCalledWith({ type: "quit_requested" });
+    // Nothing else binds ctrl+q, so the key falls through unclaimed —
+    // which is the point: the leader no longer stands in the way.
+    expect(run.handled).toBe(false);
+  });
+
+  it("Ctrl+L disarms and falls through instead of opening the LLM tab", () => {
+    const run = pressWhileArmed("l", emptyKey({ ctrl: true }));
+    expect(run.activated).toEqual([]);
+    expect(run.dispatch).not.toHaveBeenCalled();
+    expect(run.handled).toBe(false);
+  });
+
+  it("Esc disarms and is swallowed, so it cancels the leader", () => {
+    const run = pressWhileArmed("", emptyKey({ escape: true }));
+    expect(run.activated).toEqual([]);
+    expect(run.setMenuLeaderArmed).toHaveBeenCalledWith(false);
+    expect(run.handled).toBe(true);
+  });
+});
+
+describe("handlePanelEscape", () => {
+  it("sends an unclaimed Esc home to Run", () => {
+    const dispatch = vi.fn();
+    const consumed = handlePanelEscape(emptyKey({ escape: true }), {
+      panelHandled: false,
+      editorFocus: false,
+      dispatch,
+    });
+    expect(consumed).toBe(true);
+    expect(dispatch).toHaveBeenCalledWith({ type: "ui_mode_set", mode: "chat" });
+  });
+
+  it("leaves the panel alone when its own layer already claimed Esc", () => {
+    // A modal, an open search input or a detail view returns `true` from
+    // the panel's key layer — the operator meant "close that", not
+    // "leave the panel", so the fallback must stay out of the way.
+    const dispatch = vi.fn();
+    const consumed = handlePanelEscape(emptyKey({ escape: true }), {
+      panelHandled: true,
+      editorFocus: false,
+      dispatch,
+    });
+    expect(consumed).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("defers to the chat editor when the editor holds focus", () => {
+    // On tabs that keep the editor focused, Esc already means
+    // abort / scroll-reset / quit inside the editor's own hook.
+    const dispatch = vi.fn();
+    const consumed = handlePanelEscape(emptyKey({ escape: true }), {
+      panelHandled: false,
+      editorFocus: true,
+      dispatch,
+    });
+    expect(consumed).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("ignores every key that is not Esc", () => {
+    const dispatch = vi.fn();
+    const consumed = handlePanelEscape(emptyKey({ tab: true }), {
+      panelHandled: false,
+      editorFocus: false,
+      dispatch,
+    });
+    expect(consumed).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+});
+
+describe("Ctrl+T — Enter-while-busy mode", () => {
+  function ctx(state: ReturnType<typeof createInitialTuiState>, extra = {}) {
+    return {
+      state,
+      dispatch: vi.fn(),
+      callbacks: {
+        onApprovalDecision: vi.fn(),
+        onAbort: vi.fn(),
+        onQuit: vi.fn(),
+        onWhileBusyModePersistRequested: vi.fn(),
+      },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+      ...extra,
+    };
+  }
+
+  it("toggles the mode and asks for it to be persisted", () => {
+    const state = createInitialTuiState(stubSession());
+    expect(state.whileBusyMode).toBe("steer");
+    const c = ctx(state);
+    const handled = handleAppKey("t", emptyKey({ ctrl: true }), c);
+    expect(handled).toBe(true);
+    expect(c.dispatch).toHaveBeenCalledWith({
+      type: "while_busy_mode_changed",
+      mode: "queue",
+    });
+    expect(c.callbacks.onWhileBusyModePersistRequested).toHaveBeenCalledWith(
+      "queue",
+    );
+  });
+
+  it("persists the opposite direction from queue mode", () => {
+    const state = { ...createInitialTuiState(stubSession()), whileBusyMode: "queue" as const };
+    const c = ctx(state);
+    handleAppKey("t", emptyKey({ ctrl: true }), c);
+    expect(c.callbacks.onWhileBusyModePersistRequested).toHaveBeenCalledWith(
+      "steer",
+    );
+  });
+
+  it("leaves a pending approval alone — y/n/esc own the keyboard there", () => {
+    const state = {
+      ...createInitialTuiState(stubSession()),
+      pendingApproval: pendingRequest(),
+    };
+    const c = ctx(state);
+    const handled = handleAppKey("t", emptyKey({ ctrl: true }), c);
+    expect(handled).toBe(false);
+    expect(c.dispatch).not.toHaveBeenCalledWith({
+      type: "while_busy_mode_changed",
+    });
+  });
+
+  it("ignores a plain t", () => {
+    const c = ctx(createInitialTuiState(stubSession()));
+    handleAppKey("t", emptyKey(), c);
+    expect(c.dispatch).not.toHaveBeenCalledWith({
+      type: "while_busy_mode_changed",
+    });
+  });
+});
+

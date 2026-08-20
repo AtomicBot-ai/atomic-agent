@@ -5,7 +5,8 @@ import type {
 import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
-import { isCloudProviderKind } from "../providers/providers-orchestrator.js";
+import { configureWizardKindForRow } from "../providers/providers-orchestrator.js";
+import type { ProviderRow } from "../providers/providers-panel-state.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
 import type { LlmPanelRow } from "./llm-panel-selectors.js";
 import { isLocalTextActive } from "./llm-panel-selectors.js";
@@ -59,10 +60,11 @@ export function openProviderConfig(
   state: TuiState,
   dispatch: (action: TuiAction) => void,
 ): void {
+  const configurable = (row: ProviderRow): boolean =>
+    configureWizardKindForRow(row) !== null;
   const provider =
-    state.providersPanel.rows.find(
-      (row) => isCloudProviderKind(row.kind) && row.isActiveText,
-    ) ?? state.providersPanel.rows.find((row) => isCloudProviderKind(row.kind));
+    state.providersPanel.rows.find((row) => configurable(row) && row.isActiveText) ??
+    state.providersPanel.rows.find(configurable);
   if (provider) openProviderConfigFor(provider, dispatch);
   else {
     dispatch({
@@ -114,11 +116,27 @@ function triggerCloudProvider(
   stopLocalDaemonsForCloudSelection(state, callbacks);
 }
 
+/** A pull already in flight for this exact model — pressing Enter again must not restart it. */
+function isPullInFlight(
+  state: TuiState,
+  kind: "chat" | "embedding",
+  modelId: string,
+): boolean {
+  const pull =
+    kind === "chat"
+      ? state.localModelsPanel.pull
+      : state.localModelsPanel.embeddingPull;
+  return Boolean(
+    pull && !pull.error && pull.kind === kind && pull.modelId === modelId,
+  );
+}
+
 function triggerLocalChatModel(
   model: LocalModelRow,
   state: TuiState,
   callbacks: TuiAppCallbacks,
 ): void {
+  if (isPullInFlight(state, "chat", model.id)) return;
   if (!model.downloaded) {
     callbacks.onLocalModelsPullRequested?.(model.id, "with-mmproj");
     return;
@@ -146,6 +164,7 @@ function triggerLocalEmbeddingModel(
   const localProviderActive = state.providersPanel.rows.some(
     (row) => row.id === "local-llama" && row.isActiveEmbedding,
   );
+  if (isPullInFlight(state, "embedding", model.id)) return;
   if (!model.downloaded) {
     callbacks.onLocalModelsEmbeddingPullRequested?.(model.id);
     callbacks.onProvidersSetActiveEmbedding?.("local-llama");
@@ -196,16 +215,18 @@ function triggerCloudEmbeddingModel(
 }
 
 function openProviderConfigFor(
-  provider: { id: string; kind: string; baseUrl?: string | null },
+  provider: ProviderRow,
   dispatch: (action: TuiAction) => void,
 ): void {
-  if (!isCloudProviderKind(provider.kind)) return;
+  const kind = configureWizardKindForRow(provider);
+  if (!kind) return;
   dispatch({
     type: "providers_wizard_opened",
     wizard: createProvidersWizardState("configure", {
       providerId: provider.id,
-      kind: provider.kind,
+      kind,
       ...(provider.baseUrl ? { baseUrl: provider.baseUrl } : {}),
+      ...(provider.chatModel ? { chatModel: provider.chatModel } : {}),
     }),
   });
 }

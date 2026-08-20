@@ -106,8 +106,21 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     [onChange],
   );
 
+  // Ink tears the `isActive` subscription down in a passive effect, one
+  // frame after the render that flipped `focus`. A keypress that arrives in
+  // that gap — always the case when the flip and the key are processed in
+  // the same stdin batch, e.g. Tab into a panel followed by the panel's
+  // hotkey — is still delivered here and lands in the chat buffer of an
+  // editor that is no longer focused. The ref is written during render, so
+  // the callback checks the *current* focus, not the focus the subscription
+  // was created with. (Render-phase write is safe: the value is derived
+  // from props, never from state updated here.)
+  const activeRef = useRef(focus && !disabled);
+  activeRef.current = focus && !disabled;
+
   useInput(
     (input, key) => {
+      if (!activeRef.current) return;
       if (disabled) return;
       handleKey({
         input,
@@ -129,6 +142,20 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
   );
 
   const cursor = cursorToRowCol(value, cursorPos);
+  /**
+   * Place the caret where the operator clicked. `rowColToCursor` does
+   * not clamp, so a click past the end of a short line would otherwise
+   * run the offset into the following line; clamping here keeps a click
+   * in the empty space to the right of a line meaning "end of this
+   * line", which is what every editor does.
+   */
+  const placeCursorAt = (row: number, col: number): void => {
+    if (disabled) return;
+    const lines = value.split("\n");
+    const safeRow = Math.max(0, Math.min(row, lines.length - 1));
+    const safeCol = Math.max(0, Math.min(col, (lines[safeRow] ?? "").length));
+    setCursorPos(rowColToCursor(lines, safeRow, safeCol));
+  };
   if (bare) {
     return (
       <EditorBody
@@ -136,6 +163,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
         cursor={cursor}
         placeholder={placeholder ?? ""}
         focus={focus && !disabled}
+        onClickCursor={placeCursorAt}
       />
     );
   }
@@ -146,7 +174,13 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
       paddingX={1}
       flexDirection="column"
     >
-      <EditorBody value={value} cursor={cursor} placeholder={placeholder ?? ""} focus={focus && !disabled} />
+      <EditorBody
+        value={value}
+        cursor={cursor}
+        placeholder={placeholder ?? ""}
+        focus={focus && !disabled}
+        onClickCursor={placeCursorAt}
+      />
     </Box>
   );
 }
@@ -289,7 +323,7 @@ function handleKey(ctx: KeyContext): void {
 }
 
 function isGlobalHotkey(input: string, key: Key): boolean {
-  if (key.ctrl && (input === "c" || input === "o")) return true;
+  if (key.ctrl && (input === "c" || input === "o" || input === "t")) return true;
   // F-keys and other multi-byte escape sequences we don't handle locally.
   if (input.startsWith("\u001b") && input.length > 1) return true;
   return false;

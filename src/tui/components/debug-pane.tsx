@@ -1,6 +1,9 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
+import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
+import { MOUSE_LAYER_PANEL } from "../mouse/mouse-registry.js";
 import { EventFeed } from "../event-feed.js";
 import { LogsTab } from "../logs-tab.js";
 import { ReasoningTab } from "../reasoning-tab.js";
@@ -76,29 +79,57 @@ function SubTabBar({ state, section }: SubTabBarProps): ReactElement | null {
   const tabs =
     section === "manage" ? buildManageTabs(state) : buildObserveTabs(state);
   return (
-    <Box>
-      {tabs.map((tab, idx) => {
-        const active = tab.id === state.activeTab;
-        return (
-          <Text key={tab.id}>
-            <Text
-              color={active ? theme.colors.accentSoft : theme.colors.muted}
-              bold={active}
-            >
-              {active ? `${theme.glyphs.chevronRight} ` : "  "}
-              {tab.label}
+    <Box flexWrap="wrap">
+      {tabs.map((tab, idx) => (
+        <Box key={tab.id} flexShrink={0}>
+          <SubTabLabel tab={tab} active={tab.id === state.activeTab} />
+          {idx < tabs.length - 1 ? (
+            <Text color={theme.colors.muted}>
+              {"  "}
+              {theme.glyphs.pipeSeparator}
+              {"  "}
             </Text>
-            {idx < tabs.length - 1 ? (
-              <Text color={theme.colors.muted}>
-                {"  "}
-                {theme.glyphs.pipeSeparator}
-                {"  "}
-              </Text>
-            ) : null}
-          </Text>
-        );
-      })}
+          ) : null}
+        </Box>
+      ))}
     </Box>
+  );
+}
+
+/**
+ * One sub-tab. Split out of the strip so each label owns a measurable
+ * box the mouse layer can hit — clicking a tab performs the same
+ * dispatch Tab-cycling does.
+ */
+function SubTabLabel({
+  tab,
+  active,
+}: {
+  tab: SubTab;
+  active: boolean;
+}): ReactElement {
+  const mouse = useMouseCommands();
+  const label = (
+    <Text
+      color={active ? theme.colors.accentSoft : theme.colors.muted}
+      bold={active}
+    >
+      {active ? `${theme.glyphs.chevronRight} ` : "  "}
+      {tab.label}
+    </Text>
+  );
+  if (!mouse) return label;
+  return (
+    <MouseTarget
+      layer={MOUSE_LAYER_PANEL}
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        if (!active) mouse.dispatch({ type: "tab_changed", tab: tab.id });
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
   );
 }
 
@@ -133,12 +164,13 @@ function buildManageTabs(state: TuiState): SubTab[] {
 /**
  * Height consumed by the always-on app frame OUTSIDE the debug pane:
  * the top `StatusBar` (1 row) + the `PromptShell` (≈6 rows: top margin,
- * padding, the editor line, the meta-row, and the `╹` cap) + the
+ * the rounded frame's two border rows, the editor line and the action
+ * bar) + the
  * `HotkeyHint` (1 row). Ink 7 does NOT clip a frame taller than the
  * terminal — it overlaps/garbles earlier lines instead (verified) — so
  * the per-tab budget must subtract this accurately and err generous.
  */
-const APP_CHROME_ROWS = 9;
+export const APP_CHROME_ROWS = 9;
 /**
  * Height consumed INSIDE the debug pane above the active tab: the
  * `SubTabBar` (1 row) + the `DebugDiagnosticsLine`. The diagnostics line

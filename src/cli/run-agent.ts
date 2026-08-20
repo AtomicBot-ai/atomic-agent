@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { Interface as ReadlineInterface } from "node:readline";
@@ -8,6 +9,8 @@ import {
   resolveBootApprovalLevel,
 } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
+import { formatLlamaUnreachableHint } from "../llm/llama-server-health.js";
+import { resolveLlmConfig } from "../llm/provider/registry/provider-types.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
@@ -18,7 +21,10 @@ import {
   type ApprovalRequest,
 } from "../approval/approval-gate.js";
 import { stderrSink } from "../tracing/structured-logger.js";
-import type { SessionState } from "../session/session-state.js";
+import {
+  isFailedSessionStatus,
+  type SessionState,
+} from "../session/session-state.js";
 
 interface RunArgs {
   workingDir: string;
@@ -26,18 +32,53 @@ interface RunArgs {
   noApproval: boolean;
 }
 
-function parseArgs(args: string[]): RunArgs | { error: string } {
+const HELP =
+  [
+    "atomic-agent run — chat with the agent over stdin",
+    "",
+    "Usage:",
+    "  atomic-agent run [options]           interactive: one message per line",
+    "  echo \"<goal>\" | atomic-agent run     one-shot: answer on stdout, logs on stderr",
+    "",
+    "Options:",
+    "  --cwd <dir>          Working directory for OS tools (default: current directory)",
+    "  --working-dir <dir>  Alias for --cwd",
+    "  --max-steps <n>      Step budget for one turn (default: agent.maxSteps from config)",
+    "  --no-approval        Force approval level 5: auto-approve every dangerous tool call",
+    "",
+    "In-session:  /quit exits · /abort cancels the current turn",
+    "Exit codes:  0 replied · 1 failed · 2 usage error",
+  ].join("\n") + "\n";
+
+function parseArgs(args: string[]): RunArgs | { error: string } | { help: true } {
   let workingDir: string | null = null;
   let maxSteps: number | null = null;
   let noApproval = false;
   for (let i = 0; i < args.length; i += 1) {
     const flag = args[i];
     switch (flag) {
+      case "--help":
+      case "-h":
+        return { help: true };
       case "--cwd":
       case "--working-dir": {
         const value = args[++i];
         if (!value) return { error: `${flag} requires a value` };
-        workingDir = resolve(value);
+        const resolved = resolve(value);
+        // A typo'd path used to sail through: the run booted, printed the
+        // bogus directory in its banner as though healthy, ENOENT'd on
+        // every filesystem tool until the step budget ran out — and then
+        // exited 0. Catch it before anything boots.
+        let isDirectory = false;
+        try {
+          isDirectory = statSync(resolved).isDirectory();
+        } catch {
+          isDirectory = false;
+        }
+        if (!isDirectory) {
+          return { error: `${flag} is not a directory: ${resolved}` };
+        }
+        workingDir = resolved;
         break;
       }
       case "--max-steps": {
@@ -127,7 +168,40 @@ async function promptApproval(
   }
 }
 
-function formatAgentEvent(event: AgentLoopEvent): string | null {
+/** Transport failures that mean "nothing answered at the configured URL". */
+const TRANSPORT_NO_ANSWER = /fetch failed|ECONNREFUSED|ECONNRESET|socket hang up|timeout/i;
+
+function withLlamaHint(
+  base: string,
+  category: string,
+  message: string,
+  ctx?: { llamaHint?: string | null; hintShown?: { value: boolean } },
+): string {
+  if (!ctx?.llamaHint || ctx.hintShown?.value) return base;
+  if (category !== "transport" || !TRANSPORT_NO_ANSWER.test(message)) return base;
+  if (ctx.hintShown) ctx.hintShown.value = true;
+  const indented = ctx.llamaHint
+    .split("\n")
+    .map((line) => `    ${line}`)
+    .join("\n");
+  return `${base}\n${indented}`;
+}
+
+/**
+ * Render one agent-loop event as a diagnostic stderr line, or null for
+ * events other surfaces own. Exported for tests.
+ *
+ * `ctx.llamaHint` carries the actionable llama-server message when the
+ * active text route is the local server: a transport failure there is
+ * almost always "llama-server is not running", and the raw undici string
+ * ("fetch failed") tells the operator none of URL / cause / fix. The hint
+ * is appended once per process — every retry repeating three lines of
+ * advice would bury the log.
+ */
+export function formatAgentEvent(
+  event: AgentLoopEvent,
+  ctx?: { llamaHint?: string | null; hintShown?: { value: boolean } },
+): string | null {
   switch (event.type) {
     case "user_message":
       return null;
@@ -148,15 +222,18 @@ function formatAgentEvent(event: AgentLoopEvent): string | null {
         return `  ← ${inner.result.tool} ${inner.result.status}: ${inner.result.summary}${inner.result.truncated ? " (truncated)" : ""}`;
       }
       if (inner.type === "step_error") {
-        return `  ! [${inner.category}] ${inner.error.message}`;
+        const base = `  ! [${inner.category}] ${inner.error.message}`;
+        return withLlamaHint(base, inner.category, inner.error.message, ctx);
       }
       // assistant_reply / reasoning are emitted to stdout from the chat loop instead.
       return null;
     }
     case "loop_completed":
       return null;
-    case "loop_failed":
-      return `» loop failed [${event.category}]: ${event.error.message}`;
+    case "loop_failed": {
+      const base = `» loop failed [${event.category}]: ${event.error.message}`;
+      return withLlamaHint(base, event.category, event.error.message, ctx);
+    }
     default:
       return null;
   }
@@ -286,6 +363,10 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
  */
 export async function runAgentCommand(args: string[]): Promise<number> {
   const parsed = parseArgs(args);
+  if ("help" in parsed) {
+    process.stdout.write(HELP);
+    return 0;
+  }
   if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n`);
     return 2;
@@ -298,6 +379,15 @@ export async function runAgentCommand(args: string[]): Promise<number> {
 
   let approvalChain: Promise<unknown> = Promise.resolve();
 
+  // The hint only applies when a transport failure means "local llama is
+  // down" — i.e. the active text route IS the local server. On a cloud
+  // route the same category points at the provider, not at llama.
+  const llamaHint =
+    resolveLlmConfig(config).activeTextProvider === "local-llama"
+      ? formatLlamaUnreachableHint(config.localModels.url)
+      : null;
+  const hintShown = { value: false };
+
   const runtime = await createAgentRuntime({
     workingDir: parsed.workingDir,
     approvalLevel,
@@ -308,7 +398,7 @@ export async function runAgentCommand(args: string[]): Promise<number> {
         // `eventHook` argument of `runTurn` (see `driveTurn`). This
         // global handler only feeds the diagnostic stderr stream so
         // the operator can watch the macro-turn lifecycle.
-        const line = formatAgentEvent(event);
+        const line = formatAgentEvent(event, { llamaHint, hintShown });
         if (line) process.stderr.write(`${line}\n`);
       },
       onApprovalRequest: (request) => {
@@ -371,7 +461,13 @@ export async function runAgentCommand(args: string[]): Promise<number> {
         2,
       )}\n`,
     );
-    if (finalSession.status === "failed") exitCode = 1;
+    // `stalled` means the step budget ran out with nothing produced —
+    // that is not success, and a CI job watching this exit code must not
+    // read it as one. Only `completed` (and a clean EOF on an idle
+    // session) count as 0.
+    if (isFailedSessionStatus(finalSession.status)) {
+      exitCode = 1;
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     process.stderr.write(`fatal: ${msg}\n`);

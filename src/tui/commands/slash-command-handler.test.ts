@@ -86,6 +86,18 @@ describe("dispatchSlashCommand", () => {
     expect(result.triggerSessionPicker).toBe(false);
   });
 
+  it("signals triggerNewWindow for /window and its alias", () => {
+    // `/new` restarts the session in place; `/window` is the OS-level
+    // sibling of Ctrl+N — the two must never be confused.
+    for (const buffer of ["/window", "/newwindow"]) {
+      const result = dispatchSlashCommand(buffer);
+      expect(result.triggerNewWindow).toBe(true);
+      expect(result.triggerSessionNew).toBe(false);
+      expect(result.forwardAsMessage).toBe(false);
+    }
+    expect(dispatchSlashCommand("/new").triggerNewWindow).toBe(false);
+  });
+
   it("opens the Memory tab for bare /memory", () => {
     const result = dispatchSlashCommand("/memory");
     expect(result.triggerMemoryDump).toBe(false);
@@ -371,5 +383,44 @@ describe("dispatchSlashCommand", () => {
     const result = dispatchSlashCommand("/privacy analytics off");
     expect(result.analyticsVerb).toBe("disable");
     expect(result.approvalLevelSet).toBeUndefined();
+  });
+
+  it("asks for the new default to be persisted on bare /steer and /queue", () => {
+    const steer = dispatchSlashCommand("/steer");
+    expect(steer.setWhileBusyMode).toBe("steer");
+    expect(steer.actions).toEqual([
+      { type: "while_busy_mode_changed", mode: "steer" },
+    ]);
+
+    // Bare /queue stays a side-effect-free listing — the menu node and
+    // the parked chip both invite running it just to look.
+    const queue = dispatchSlashCommand("/queue");
+    expect(queue.setWhileBusyMode).toBeUndefined();
+    expect(queue.queueVerb).toBe("list");
+    expect(queue.actions).toEqual([]);
+
+    const queueMode = dispatchSlashCommand("/queue mode");
+    expect(queueMode.setWhileBusyMode).toBe("queue");
+    expect(queueMode.actions).toEqual([
+      { type: "while_busy_mode_changed", mode: "queue" },
+    ]);
+  });
+
+  it("leaves the persisted default alone for the message-carrying forms", () => {
+    const steer = dispatchSlashCommand("/steer use the staging db");
+    expect(steer.submitWhileBusy).toEqual({
+      mode: "steer",
+      text: "use the staging db",
+    });
+    expect(steer.setWhileBusyMode).toBeUndefined();
+
+    const queue = dispatchSlashCommand("/queue then deploy");
+    expect(queue.submitWhileBusy).toEqual({
+      mode: "queue",
+      text: "then deploy",
+    });
+    expect(queue.setWhileBusyMode).toBeUndefined();
+
+    expect(dispatchSlashCommand("/queue clear").setWhileBusyMode).toBeUndefined();
   });
 });

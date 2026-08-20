@@ -42,6 +42,28 @@ export interface TuiColors {
   readonly toolError: string;
   readonly accent: string;
   readonly accentSoft: string;
+  /**
+   * The brand mark's own blue — deliberately lighter and whiter than
+   * `accent`. The mark is not a control, and painting it in the same
+   * blue as every accented control made the start page read as one big
+   * highlighted widget.
+   */
+  readonly brandMark: string;
+  /**
+   * The left rail is drawn inverted — a light ground under dark text on
+   * a dark theme, and the reverse on a light one. It is the app's one
+   * piece of chrome that is always on screen, and giving it its own
+   * ground is what makes the layout read as a sidebar next to a document
+   * rather than two columns of the same text.
+   *
+   * Per-palette rather than a literal white: `#fff` would disappear on
+   * the four light palettes, and "inverted" is the property that has to
+   * hold, not the exact colour.
+   */
+  readonly railBackground: string;
+  readonly railForeground: string;
+  /** Secondary text on the rail — same role as `muted`, on the rail ground. */
+  readonly railMuted: string;
   readonly border: string;
   readonly muted: string;
   readonly error: string;
@@ -73,6 +95,8 @@ export interface TuiGlyphs {
   readonly ellipsis: string;
   readonly promptCaret: string;
   readonly chevronRight: string;
+  /** Hamburger, for the rail's menu button. */
+  readonly menuGlyph: string;
   readonly dotSeparator: string;
   readonly pipeSeparator: string;
 }
@@ -120,6 +144,7 @@ const GLYPHS: TuiGlyphs = {
   ellipsis: "…",
   promptCaret: "❯",
   chevronRight: "▸",
+  menuGlyph: "☰",
   dotSeparator: "·",
   pipeSeparator: "|",
 };
@@ -210,11 +235,69 @@ export function getActiveThemeName(): ThemeName {
 }
 
 /**
+ * Backdrop dimming. While the operator menu is open the whole app behind it
+ * fades, so the popup reads as the foreground rather than as one more panel
+ * competing with the chat log.
+ *
+ * Implemented here rather than by threading a `dimmed` prop through every
+ * component because {@link theme} is already a read-at-render proxy — the
+ * same machinery that makes `/theme` live-preview repaint the whole UI. One
+ * flag flips every colour; the menu itself reads {@link chromeTheme}, which
+ * ignores the flag, so it stays at full contrast.
+ *
+ * Every colour collapses to the active theme's `muted`: a real terminal has
+ * no alpha channel, so "faded" has to mean "one low-contrast tone" rather
+ * than "the same colours, weaker".
+ */
+let backdropDimmed = false;
+let dimmedColorsFor: TuiColors | null = null;
+let dimmedColorsCache: TuiColors | null = null;
+
+export function setBackdropDimmed(next: boolean): void {
+  backdropDimmed = next;
+}
+
+export function isBackdropDimmed(): boolean {
+  return backdropDimmed;
+}
+
+function dimColors(colors: TuiColors): TuiColors {
+  if (dimmedColorsFor === colors && dimmedColorsCache) return dimmedColorsCache;
+  const flat = Object.fromEntries(
+    Object.keys(colors).map((key) => [key, colors.muted]),
+  ) as unknown as TuiColors;
+  dimmedColorsFor = colors;
+  dimmedColorsCache = flat;
+  return flat;
+}
+
+/**
  * The themed palette consumed across the TUI. A `Proxy` that always forwards
  * to the current {@link activeTheme}, so `theme.colors.X` reflects the active
  * theme at read time even after a `setActiveTheme` swap.
  */
 export const theme: TuiTheme = new Proxy({} as TuiTheme, {
+  get(_target, prop: string | symbol): unknown {
+    if (prop === "colors" && backdropDimmed) return dimColors(activeTheme.colors);
+    return activeTheme[prop as keyof TuiTheme];
+  },
+  has(_target, prop: string | symbol): boolean {
+    return prop in activeTheme;
+  },
+  ownKeys(): ArrayLike<string | symbol> {
+    return Reflect.ownKeys(activeTheme);
+  },
+  getOwnPropertyDescriptor(_target, prop: string | symbol) {
+    return Reflect.getOwnPropertyDescriptor(activeTheme, prop);
+  },
+});
+
+/**
+ * The palette for chrome that must stay legible while the backdrop is dimmed —
+ * i.e. the operator menu. Identical to {@link theme} except that it ignores
+ * {@link setBackdropDimmed}.
+ */
+export const chromeTheme: TuiTheme = new Proxy({} as TuiTheme, {
   get(_target, prop: string | symbol): unknown {
     return activeTheme[prop as keyof TuiTheme];
   },

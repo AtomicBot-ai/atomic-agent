@@ -4,6 +4,7 @@ import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { ApprovalBus } from "./approval-bus.js";
 import { CompletionRegistry } from "./completion-registry.js";
 import { openaiError } from "./openai-errors.js";
+import { UndeliveredSteerStore } from "./undelivered-steers.js";
 import {
   BodyParseError,
   BodyTooLargeError,
@@ -40,6 +41,7 @@ export interface HttpServerOptions {
   routes: RouteDefinition[];
   approvalBus?: ApprovalBus;
   completionRegistry?: CompletionRegistry;
+  undeliveredSteers?: UndeliveredSteerStore;
 }
 
 export interface HttpServerHandle {
@@ -48,6 +50,12 @@ export interface HttpServerHandle {
   port: number;
   approvalBus: ApprovalBus;
   completionRegistry: CompletionRegistry;
+  /**
+   * Steers the runtime accepted but no turn ever delivered. Exposed on
+   * the handle so an embedder can drain or inspect them the same way it
+   * can inspect pending approvals.
+   */
+  undeliveredSteers: UndeliveredSteerStore;
   close: () => Promise<void>;
 }
 
@@ -116,6 +124,8 @@ export function createHttpServer(
   const approvalBus = options.approvalBus ?? new ApprovalBus();
   const completionRegistry =
     options.completionRegistry ?? new CompletionRegistry();
+  const undeliveredSteers =
+    options.undeliveredSteers ?? new UndeliveredSteerStore();
   const compiled = options.routes.map(compileRoute);
 
   const server = createServer(async (req, res) => {
@@ -125,6 +135,7 @@ export function createHttpServer(
         apiKey: options.apiKey,
         approvalBus,
         completionRegistry,
+        undeliveredSteers,
       });
     } catch (err) {
       handleRouteError(res, err);
@@ -153,6 +164,7 @@ export function createHttpServer(
         port: resolvedPort,
         approvalBus,
         completionRegistry,
+        undeliveredSteers,
         close: () => closeServer(server),
       });
     };

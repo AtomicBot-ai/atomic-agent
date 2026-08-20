@@ -1,10 +1,13 @@
 import { Box, Text, measureElement, type DOMElement } from "ink";
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
+import { computeChatViewportRows } from "../layout.js";
 import type { TuiAction } from "../tui-action.js";
 import type { ChatMessage, TuiState } from "../tui-state.js";
 import { theme } from "../theme/theme.js";
 import { AssistantBubble } from "./assistant-bubble.js";
+import { ChatCopyButton } from "./chat-copy-button.js";
+import { ChatTryAgainButton } from "./chat-try-again-button.js";
 import {
   estimateMessageHeight,
   estimateStreamingTailHeight,
@@ -15,15 +18,6 @@ import { SystemBubble } from "./system-bubble.js";
 import { ThinkingIndicator } from "./thinking-indicator.js";
 import { ToolCard } from "./tool-card.js";
 import { UserBubble } from "./user-bubble.js";
-
-/**
- * Rows of "chrome" outside the chat surface: status bar + prompt
- * meta-row + prompt input + prompt tail-cap + hotkey hint + a small
- * safety pad. Used to convert `terminal.rows` into the chat-area
- * viewport height. Slightly conservative — better to leave one empty
- * row than to clip the prompt.
- */
-const CHROME_ROWS = 8;
 
 interface ChatLogProps {
   state: TuiState;
@@ -89,7 +83,10 @@ export function ChatLog({ state, dispatch }: ChatLogProps): ReactElement {
   // All hooks must run unconditionally — only the JSX branches on
   // `isEmpty`. Compute viewport / measured-K / clamp regardless,
   // even when the early return for the splash branch fires below.
-  const viewport = Math.max(5, terminalSize.rows - CHROME_ROWS);
+  const viewport = computeChatViewportRows(
+    terminalSize.rows,
+    terminalSize.columns,
+  );
   // First-frame fallback for `K` until the post-mount `measureElement`
   // call returns the truth. Estimates are unreliable (text wraps, Yoga
   // collapses some margins, reasoning blocks expand mid-turn) so we
@@ -175,7 +172,15 @@ function FinalisedMessage({
   toolsExpandedById,
 }: FinalisedMessageProps): ReactElement {
   if (message.role === "user") {
-    return <UserBubble text={message.text} />;
+    return (
+      <Box flexDirection="column">
+        <UserBubble text={message.text} />
+        <Box flexDirection="row">
+          <ChatCopyButton text={message.text} />
+          <ChatTryAgainButton text={message.text} />
+        </Box>
+      </Box>
+    );
   }
   if (message.role === "assistant") {
     return (
@@ -207,14 +212,18 @@ function FinalisedMessage({
           text={message.text}
           toolSteps={message.toolSteps ?? 0}
         />
+        <ChatCopyButton text={message.text} />
       </Box>
     );
   }
   return (
-    <SystemBubble
-      text={message.text}
-      warn={message.variant === "warn"}
-    />
+    <Box flexDirection="column">
+      <SystemBubble
+        text={message.text}
+        warn={message.variant === "warn"}
+      />
+      <ChatCopyButton text={message.text} />
+    </Box>
   );
 }
 

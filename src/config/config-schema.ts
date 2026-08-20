@@ -31,6 +31,50 @@ export type BrowserChannel = "chrome" | "msedge" | "chromium";
 
 export type WebSearchProviderName = "duckduckgo" | "searxng" | "exa" | "brave";
 
+/**
+ * Tunables for `os.web.fetch` (config v38). Before v38 the tool hard-coded a
+ * 30s overall budget with no connect timeout and no retries, so a single
+ * unreachable host burned 30s of the task budget and a transient 503 (the
+ * bulk of them from `web.archive.org`, which serves the same URL seconds
+ * later) ended the fetch outright.
+ */
+export interface WebFetchConfig {
+  /**
+   * Overall per-attempt budget in milliseconds, passed to curl `--max-time`.
+   * Kept at the historical 30_000 so unconfigured installs behave exactly as
+   * before. A per-call `timeoutMs` tool argument overrides it.
+   */
+  timeoutMs: number;
+  /**
+   * TCP/TLS connect budget in milliseconds, passed to curl `--connect-timeout`.
+   * Much smaller than `timeoutMs` because a host that has not completed a
+   * handshake in 10s is almost never merely slow — it is firewalled, dead, or
+   * blackholing packets, and waiting the full overall budget for it is pure
+   * loss. A slow but reachable server still gets the whole `timeoutMs` to
+   * stream its body, since `--connect-timeout` only covers the handshake.
+   */
+  connectTimeoutMs: number;
+  /**
+   * Extra attempts after the first for retryable failures (429/502/503/504 and
+   * curl exit 28 "operation timed out"). `0` disables retrying. Deliberately
+   * small: `os.web.fetch` is GET-only, so retries are always safe, but each one
+   * spends task budget.
+   */
+  maxRetries: number;
+  /**
+   * Base delay in milliseconds for exponential backoff between retries
+   * (attempt N waits `retryBaseDelayMs * 2^(N-1)`). A server-sent `Retry-After`
+   * header wins over the computed delay when it is shorter than the cap.
+   */
+  retryBaseDelayMs: number;
+  /**
+   * Upper bound in milliseconds on any single backoff wait, including one
+   * derived from `Retry-After`. Stops a hostile or overloaded origin from
+   * parking the agent for minutes on a header value.
+   */
+  retryMaxDelayMs: number;
+}
+
 export interface WebSearchConfig {
   enabled: boolean;
   provider: WebSearchProviderName;
@@ -293,6 +337,7 @@ export interface AtomicAgentConfig {
   };
   web: {
     search: WebSearchConfig;
+    fetch: WebFetchConfig;
   };
   /**
    * User-declared project root directories consumed by
@@ -662,12 +707,15 @@ export interface AtomicAgentConfig {
     maxImagesPerCall: number;
   };
   /**
-   * TUI appearance. Mirrors `UserConfigFile.tui`. `theme` is `"auto"`
-   * (OSC 11 autodetect) or a registered theme name. Consumed by the TUI
-   * startup path; the rest of the runtime ignores it.
+   * TUI appearance and input. Mirrors `UserConfigFile.tui`. `theme` is
+   * `"auto"` (OSC 11 autodetect) or a registered theme name; `mouse`
+   * toggles terminal mouse reporting. Consumed by the TUI startup path;
+   * the rest of the runtime ignores it.
    */
   tui: {
     theme: string;
+    whileBusySubmit: WhileBusySubmitMode;
+    mouse: boolean;
   };
   /**
    * Anonymous product analytics (PostHog). Mirrors
@@ -714,11 +762,35 @@ export interface AtomicAgentConfig {
       defaultChatModel?: string;
       defaultEmbeddingModel?: string;
       headers?: Record<string, string>;
+      /**
+       * Header carrying this entry's API key for services that do not
+       * accept `Authorization: Bearer` (Anthropic wants `x-api-key`).
+       */
+      apiKeyHeader?: string;
       supportsTools?: boolean;
       supportsVision?: boolean;
       requestTimeoutMs?: number;
       promptCache?: "auto" | "off" | "explicit-markers";
       providerPreferences?: Record<string, unknown>;
+      /**
+       * Vendor-specific fields merged into the OpenAI-compatible chat
+       * body. Reserved keys (`model`, `messages`, `stream`, `tools`)
+       * are re-applied after the merge and cannot be overridden.
+       */
+      extraBody?: Record<string, unknown>;
+      /**
+       * Settings for a `subscription-cli` provider: which already
+       * signed-in vendor CLI to drive (`claude`, `codex`) and how to
+       * invoke it. There is no API key on these entries — the CLI
+       * authenticates from its own session.
+       */
+      subscriptionCli?: {
+        cli: "claude" | "codex";
+        binPath?: string;
+        extraArgs?: string[];
+        streaming?: boolean;
+        maxBudgetUsd?: number;
+      };
       userModels?: ReadonlyArray<{
         id: string;
         kind: "chat" | "embedding";
@@ -929,6 +1001,7 @@ export interface UserConfigFile {
   };
   web: {
     search: WebSearchConfig;
+    fetch: WebFetchConfig;
   };
   /**
    * Project path resolution (config v36). `roots` lists directories
@@ -1344,9 +1417,17 @@ export interface UserConfigFile {
    * the matching GitHub theme) or a registered theme name (e.g. `dracula`,
    * `nord`). Persisted from the in-app `/theme` picker. Older files are
    * transparently upgraded with `tui: { theme: "auto" }`.
+   *
+   * `mouse` (config v38, default `true`) turns terminal mouse reporting
+   * on: clicking panels, list rows, the nav bar and the prompt, plus
+   * wheel scrolling. Turning it off restores the terminal's own
+   * drag-to-select, which mouse reporting takes over — see `/mouse` and
+   * `--no-mouse`. Older files are upgraded with `mouse: true`.
    */
   tui: {
     theme: string;
+    whileBusySubmit: WhileBusySubmitMode;
+    mouse: boolean;
   };
   /**
    * Anonymous product analytics (PostHog). Added in config v33. Older
@@ -1406,7 +1487,15 @@ export interface UserConfigFile {
 // is absent, a legacy `approvalRequired: false` maps to level 5 and
 // `true`/absent maps to level 1 — both preserve the old behaviour
 // exactly. The legacy key is never written back.
-export const USER_CONFIG_VERSION = 37 as const;
+// v39: new `web.fetch` block (`timeoutMs`, `connectTimeoutMs`, `maxRetries`,
+// `retryBaseDelayMs`, `retryMaxDelayMs`) making `os.web.fetch` timeouts and
+// retry/backoff configurable. Older files transparently inherit the defaults,
+// and `timeoutMs` keeps its historical 30_000 value, so the migration does not
+// change behaviour for anyone who does not opt in.
+// v40: new `tui.mouse` flag gating the mouse layer. Defaults to true, so an
+// older file inherits mouse support on upgrade; `--no-mouse` and `/mouse off`
+// override it without rewriting the file.
+export const USER_CONFIG_VERSION = 40 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1523,6 +1612,9 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   34,
   35,
   36,
+  37,
+  38,
+  39,
   USER_CONFIG_VERSION,
 ];
 
@@ -1583,6 +1675,13 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       brave: {
         apiKeyEnv: "BRAVE_SEARCH_API_KEY",
       },
+    },
+    fetch: {
+      timeoutMs: 30_000,
+      connectTimeoutMs: 10_000,
+      maxRetries: 2,
+      retryBaseDelayMs: 500,
+      retryMaxDelayMs: 5_000,
     },
   },
   projects: {
@@ -1761,6 +1860,8 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   },
   tui: {
     theme: "auto",
+    whileBusySubmit: "steer",
+    mouse: true,
   },
   analytics: {
     enabled: true,
@@ -2658,6 +2759,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const web = (obj.web as Record<string, unknown> | undefined) ?? {};
   const projects = (obj.projects as Record<string, unknown> | undefined) ?? {};
   const webSearch = (web.search as Record<string, unknown> | undefined) ?? {};
+  const webFetch = (web.fetch as Record<string, unknown> | undefined) ?? {};
   const webSearchProvider = parseWebSearchProviderName(
     webSearch.provider ?? USER_CONFIG_DEFAULTS.web.search.provider,
     "web.search.provider",
@@ -2945,6 +3047,33 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             "web.search.brave.apiKeyEnv",
           ),
         },
+      },
+      fetch: {
+        timeoutMs: parsePositiveInt(
+          webFetch.timeoutMs ?? USER_CONFIG_DEFAULTS.web.fetch.timeoutMs,
+          "web.fetch.timeoutMs",
+        ),
+        connectTimeoutMs: parsePositiveInt(
+          webFetch.connectTimeoutMs ??
+            USER_CONFIG_DEFAULTS.web.fetch.connectTimeoutMs,
+          "web.fetch.connectTimeoutMs",
+        ),
+        maxRetries: parseNonNegativeBoundedInt(
+          webFetch.maxRetries ?? USER_CONFIG_DEFAULTS.web.fetch.maxRetries,
+          "web.fetch.maxRetries",
+          0,
+          5,
+        ),
+        retryBaseDelayMs: parsePositiveInt(
+          webFetch.retryBaseDelayMs ??
+            USER_CONFIG_DEFAULTS.web.fetch.retryBaseDelayMs,
+          "web.fetch.retryBaseDelayMs",
+        ),
+        retryMaxDelayMs: parsePositiveInt(
+          webFetch.retryMaxDelayMs ??
+            USER_CONFIG_DEFAULTS.web.fetch.retryMaxDelayMs,
+          "web.fetch.retryMaxDelayMs",
+        ),
       },
     },
     projects: {
@@ -3415,6 +3544,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         tui.theme ?? USER_CONFIG_DEFAULTS.tui.theme,
         "tui.theme",
       ),
+      whileBusySubmit: parseWhileBusySubmit(
+        tui.whileBusySubmit ?? USER_CONFIG_DEFAULTS.tui.whileBusySubmit,
+        "tui.whileBusySubmit",
+      ),
+      mouse: parseBool(tui.mouse ?? USER_CONFIG_DEFAULTS.tui.mouse, "tui.mouse"),
     },
     analytics: {
       enabled: parseBool(
@@ -3455,6 +3589,33 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
  * only enforces the string shape — an unknown name falls back to the
  * autodetect path at startup, never crashes. Anything non-string throws.
  */
+/**
+ * What Enter does in the TUI while a turn is already running.
+ *
+ * `steer` folds the message into the turn in flight (it reaches the
+ * model at the next step boundary); `queue` parks it and runs it as its
+ * own turn once the current one closes. Default is `steer` — an
+ * operator who types *while* the agent is working is usually reacting
+ * to what they see it doing.
+ */
+export type WhileBusySubmitMode = "steer" | "queue";
+
+/**
+ * Parse `tui.whileBusySubmit` (added in config v38). Older config files predate the key and
+ * are transparently upgraded to the `steer` default by the `??` at the
+ * call site, so there is no migration step.
+ */
+export function parseWhileBusySubmit(
+  raw: unknown,
+  field: string,
+): WhileBusySubmitMode {
+  if (raw === "steer" || raw === "queue") return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected "steer" or "queue", got ${JSON.stringify(raw)}`,
+  );
+}
+
 export function parseThemeName(raw: unknown, field: string): string {
   if (typeof raw !== "string") {
     throw new ConfigValidationError(

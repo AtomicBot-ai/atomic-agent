@@ -3,7 +3,11 @@ import { isSea } from "node:sea";
 import { render } from "ink";
 import React from "react";
 import { resolveBootApprovalLevel } from "../approval/approval-level.js";
-import { formatDotenvReadWarning, getConfig } from "../config/index.js";
+import {
+  formatDotenvReadWarning,
+  getConfig,
+  type WhileBusySubmitMode,
+} from "../config/index.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { LogRecord, LogSink } from "../tracing/structured-logger.js";
@@ -11,16 +15,34 @@ import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
 import { registerSession } from "../local-llm/session-registry.js";
 import { enterAltScreen } from "./alt-screen.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
-import { parseTuiArgs } from "./tui-args.js";
+import { parseTuiArgs,
+  nonInteractiveStdinError,
+  TUI_HELP,
+} from "./tui-args.js";
 import {
   persistUserLocalLlmUrl,
   pointsAtManagedDaemon,
 } from "./persist-user-local-models-config.js";
-import { persistUserTuiTheme } from "./persist-user-tui-config.js";
 import {
+  persistUserTuiMouse,
+  persistUserTuiTheme,
+  persistUserWhileBusySubmit,
+} from "./persist-user-tui-config.js";
+import { createMouseStdin } from "./mouse/mouse-stdin.js";
+import { makeMouseSource } from "./mouse/mouse-source.js";
+import {
+  enableMouseTracking,
+  type MouseTrackingController,
+} from "./mouse/mouse-tracking.js";
+import {
+  isLocalBackendConfigured,
   isManagedModeReadyOnDisk,
   runLocalModelsStartupGateIfNeeded,
 } from "./run-local-models-config-wizard.js";
+import {
+  currentTerminalLaunchInput,
+  openAgentTerminalWindow,
+} from "./open-terminal-window.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
 import {
   detectTerminalBackground,
@@ -38,9 +60,21 @@ import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
  */
 export async function tuiCommand(args: string[]): Promise<number> {
   const parsed = parseTuiArgs(args);
+  if ("help" in parsed) {
+    process.stdout.write(TUI_HELP);
+    return 0;
+  }
   if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n`);
     return 2;
+  }
+  // A TUI needs a terminal — refuse a piped stdin with one sentence
+  // instead of letting Ink's raw-mode requirement crash with a stack
+  // trace. See `nonInteractiveStdinError` for the reasoning.
+  const stdinError = nonInteractiveStdinError();
+  if (stdinError) {
+    process.stderr.write(`${stdinError}\n`);
+    return 1;
   }
   // Theme selection BEFORE any Ink render or stdin listener (the startup-gate
   // wizard and the main render). An explicit
@@ -73,11 +107,17 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // mode is selected but nothing is ready on disk yet — they still
   // need to pick + pull a model before chat is useful. Fully-ready
   // managed setups and external-URL setups land in chat as usual.
-  const initialLayout: InitialTuiLayoutOptions | undefined =
+  const layoutBase: InitialTuiLayoutOptions | undefined =
     startupGate === "saved_managed" && !isManagedModeReadyOnDisk()
       ? { uiMode: "debug", activeTab: "llm" }
       : undefined;
   const config = getConfig();
+  // Seed what Enter does while a turn is running from the persisted
+  // preference, so a Ctrl+T flip survives a restart.
+  const initialLayout: InitialTuiLayoutOptions = {
+    ...(layoutBase ?? {}),
+    whileBusyMode: config.tui.whileBusySubmit,
+  };
   const approvalLevel = resolveBootApprovalLevel(
     parsed.noApproval,
     config.agent.approvalLevel,
@@ -137,6 +177,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
     approvalLevel,
     maxSteps,
     skillCount: runtime.skillCatalog.length,
+    // Read after the startup gate, so a local model picked in the wizard
+    // moments ago already counts as configured for this launch.
+    localBackendConfigured: isLocalBackendConfigured(),
   };
 
   const orchestrator = new ChatOrchestrator(runtime, bus, {
@@ -161,18 +204,71 @@ export async function tuiCommand(args: string[]): Promise<number> {
 
   const altScreen = enterAltScreen({ stdout: process.stdout, hideCursor: false });
 
-  // Mouse-wheel scroll relies on the terminal's alternate-scroll mode
-  // (`\x1b[?1007h`, enabled by `enterAltScreen`): while the alt screen
-  // is active the wheel is translated by the terminal into cursor
-  // up/down keys, which `handleAppKey.shouldTreatArrowAsChatScroll`
-  // routes into `chat_scrolled`. Crucially we do NOT enable SGR mouse
-  // tracking (1000 + 1006) — doing so would hand every click/drag to
-  // the app and disable the terminal's native text selection (broken
-  // entirely in Apple Terminal, which has no Shift-bypass). Keeping
-  // capture off means drag-to-copy works natively everywhere, matching
-  // opencode's default. The wheel only drives chat scroll while the
-  // editor is focused and empty — an accepted trade-off for native
-  // selection.
+  // Mouse support. Enabling SGR tracking (1000 + 1006) is what makes
+  // clicking panels, rows, tabs and the prompt work at all — the app
+  // cannot see a click the terminal never reports. The cost is real and
+  // was the reason this was previously left off: while reporting is on,
+  // the terminal stops doing its own drag-to-select (Apple Terminal has
+  // no Shift-bypass at all). So it is a toggle, not a fact of life —
+  // `tui.mouse` in the config, `--mouse` / `--no-mouse` per run, and
+  // `/mouse on|off` live. With reporting off, behaviour is exactly what
+  // it was before: alternate-scroll (`\x1b[?1007h` from
+  // `enterAltScreen`) turns the wheel into cursor keys, which
+  // `handleAppKey.shouldTreatArrowAsChatScroll` routes into
+  // `chat_scrolled`.
+  //
+  // The decoded events reach React through `mouseSource`; the bytes
+  // themselves are stripped from the stream Ink reads, because Ink's key
+  // parser would otherwise type them into the chat buffer.
+  const mouseEnabled = parsed.mouse ?? config.tui.mouse;
+  const mouseSource = makeMouseSource();
+  let mouseTracking: MouseTrackingController | null = mouseEnabled
+    ? enableMouseTracking({ stdout: process.stdout })
+    : null;
+  // `mouseTracking` is the single source of truth for "is the mouse on",
+  // and it is read here on every report rather than captured, so
+  // `setMouseEnabled` reassigning it takes effect immediately. Normally
+  // a terminal that was told to stop reporting sends nothing anyway, but
+  // this keeps `/mouse off` honest for the cases where it still does:
+  // a multiplexer that swallowed the disable, or a bracketed paste whose
+  // payload happens to contain an SGR report.
+  const mouseStdin = createMouseStdin(process.stdin, (event) => {
+    if (mouseTracking) mouseSource.emit(event);
+  });
+  const setMouseEnabled = (next: boolean | null): void => {
+    if (next === null) {
+      bus.emit({
+        type: "system_message",
+        text: `mouse support is ${mouseTracking ? "on" : "off"} — /mouse on|off to change`,
+      });
+      return;
+    }
+    if (next === Boolean(mouseTracking)) {
+      bus.emit({
+        type: "system_message",
+        text: `mouse support already ${next ? "on" : "off"}`,
+      });
+      return;
+    }
+    if (next) {
+      mouseTracking = enableMouseTracking({ stdout: process.stdout });
+    } else {
+      mouseTracking?.disable();
+      mouseTracking = null;
+    }
+    try {
+      persistUserTuiMouse(next);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      bus.emit({ type: "runtime_info", line: `mouse setting not saved: ${msg}` });
+    }
+    bus.emit({
+      type: "system_message",
+      text: next
+        ? "mouse support on — click panels, rows and the prompt; wheel scrolls"
+        : "mouse support off — the terminal's own text selection is back",
+    });
+  };
 
   const ink = render(
     React.createElement(TuiApp, {
@@ -191,9 +287,14 @@ export async function tuiCommand(args: string[]): Promise<number> {
           });
         },
         onMessageSubmitted: (text) => orchestrator.sendMessage(text),
+        onQueueClearRequested: () => orchestrator.clearQueue(),
+        onMessageSteered: (text) => orchestrator.steerMessage(text),
+        onWhileBusyModePersistRequested: (mode) =>
+          persistWhileBusyMode(mode, bus),
         onSessionPickerRequested: () => orchestrator.openSessionPicker(),
         onSessionSwitchRequested: (id) => orchestrator.switchSession(id),
         onSessionNewRequested: () => orchestrator.newSession(),
+        onNewWindowRequested: () => openNewAgentWindow(parsed.workingDir, bus),
         onMemoryDumpRequested: () => orchestrator.dumpProfile(),
         onSkillCatalogRequested: () => orchestrator.dumpSkillCatalog(),
         onPersistLlamaUrl: (nextUrl) => persistLlamaUrl(nextUrl, bus, orchestrator),
@@ -282,6 +383,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.providers.selectEmbeddingModel(providerId, modelId),
         onProvidersWizardSubmit: (wizard) =>
           void orchestrator.providers.completeWizard(wizard),
+        onProvidersWizardSubmitCancel: () =>
+          orchestrator.providers.cancelWizardVerification(),
         onProvidersRemove: (id) =>
           void orchestrator.providers.removeProviderById(id),
         onImportPreview: (form) => orchestrator.import.preview(form),
@@ -367,10 +470,21 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onUpdateRestart: () => {
           restartRequested = true;
         },
+        onMouseSupportRequested: setMouseEnabled,
       },
+      // Unconditional on purpose. `mouseEnabled` is a startup-time
+      // value, but `/mouse on` flips reporting *later* and cannot
+      // re-parent an already-mounted tree — gating the prop on it meant
+      // a session started with `tui.mouse: false` kept `mouse ===
+      // undefined` forever, so `TuiApp`'s subscribe effect returned
+      // early and the clicks the terminal had just started reporting
+      // went nowhere while the UI claimed mouse support was on.
+      // Subscribing costs nothing while the mouse is off: the forwarder
+      // above is what decides whether anything is ever emitted.
+      mouse: mouseSource,
     }),
     {
-      stdin: process.stdin,
+      stdin: mouseStdin.stdin,
       stdout: process.stdout,
       stderr: process.stderr,
       exitOnCtrlC: false,
@@ -415,6 +529,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
     process.off("SIGTERM", onSignal);
     process.off("SIGHUP", onSignal);
     try {
+      mouseTracking?.disable();
+      mouseStdin.dispose();
       altScreen.restore();
       ink.clear();
     } catch {
@@ -450,6 +566,36 @@ export async function tuiCommand(args: string[]): Promise<number> {
   return orchestrator.exitCode;
 }
 
+/**
+ * Ctrl+N / `/window`: launch a second agent in a new OS terminal window.
+ * Fire-and-forget — the result is reported into the chat log either way,
+ * because a silently ignored keystroke is the worst possible outcome
+ * here (the operator cannot tell "not implemented" from "nothing
+ * happened").
+ */
+function openNewAgentWindow(
+  workingDir: string,
+  bus: ReturnType<typeof makeTuiEventBus>,
+): void {
+  void (async () => {
+    const result = await openAgentTerminalWindow(
+      currentTerminalLaunchInput(workingDir, isSea()),
+    );
+    if (result.ok) {
+      bus.emit({
+        type: "system_message",
+        text: `opened a new atomic-agent window (${result.label})`,
+      });
+      return;
+    }
+    bus.emit({
+      type: "system_message",
+      variant: "warn",
+      text: `could not open a new terminal window: ${result.reason}`,
+    });
+  })();
+}
+
 function persistThemeChoice(
   themeName: string,
   bus: ReturnType<typeof makeTuiEventBus>,
@@ -460,6 +606,25 @@ function persistThemeChoice(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     bus.emit({ type: "runtime_info", line: `theme not saved: ${msg}` });
+  }
+}
+
+function persistWhileBusyMode(
+  mode: WhileBusySubmitMode,
+  bus: ReturnType<typeof makeTuiEventBus>,
+): void {
+  try {
+    persistUserWhileBusySubmit(mode);
+    bus.emit({
+      type: "runtime_info",
+      line:
+        mode === "steer"
+          ? "Enter now steers the running turn"
+          : "Enter now queues behind the running turn",
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    bus.emit({ type: "runtime_info", line: `mode not saved: ${msg}` });
   }
 }
 

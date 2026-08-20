@@ -1,4 +1,5 @@
 import type { AtomicAgentConfig } from "../../../config/index.js";
+import type { UserSubscriptionCliOptions } from "../../../config/llm-config.js";
 import type { LlamaServerClient } from "../../llama-server-client.js";
 import type { ModelProfile } from "../../model-profile.js";
 import type { StructuredLogger } from "../../../tracing/index.js";
@@ -26,11 +27,35 @@ export type LlmProviderConfigEntry = {
   defaultChatModel?: string;
   defaultEmbeddingModel?: string;
   headers?: Record<string, string>;
+  /**
+   * Header that carries this entry's API key when the service does not
+   * accept `Authorization: Bearer` (Anthropic wants `x-api-key`). Rides
+   * on the entry, not on the preset table, so the saved provider keeps
+   * working after a restart. See `openai/openai-auth-headers.ts`.
+   */
+  apiKeyHeader?: string;
   supportsTools?: boolean;
   supportsVision?: boolean;
   requestTimeoutMs?: number;
   promptCache?: "auto" | "off" | "explicit-markers";
   providerPreferences?: Record<string, unknown>;
+  /**
+   * Vendor-specific fields merged into the OpenAI-compatible chat
+   * completion body. Lets a deployment reach extensions that are not
+   * part of the OpenAI schema (e.g. Alibaba Model Studio's
+   * `chat_template_kwargs.enable_thinking`) without a code change per
+   * vendor.
+   *
+   * **Reserved keys win.** `model`, `messages`, `stream` and `tools`
+   * are re-applied after the merge, so a stray entry can never detach
+   * the request from the resolved model or drop the tool contract.
+   */
+  extraBody?: Record<string, unknown>;
+  /**
+   * Settings for a `subscription-cli` provider — which vendor CLI to
+   * drive and how to invoke it. Absent on every other kind.
+   */
+  subscriptionCli?: UserSubscriptionCliOptions;
   userModels?: ReadonlyArray<UserModelConfigEntry>;
 };
 

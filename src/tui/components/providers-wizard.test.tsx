@@ -1,11 +1,15 @@
 import { render } from "ink-testing-library";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { refreshAimlapiChatCatalogFromApi } from "../../llm/provider/aimlapi/fetch-aimlapi-chat-catalog.js";
 import { refreshOpenRouterChatCatalogFromApi } from "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
+import { OPENAI_COMPAT_DEFAULT_CHAT_MODEL } from "../providers/providers-model-options.js";
 import { KIND_ROW_ORDER } from "../providers/providers-wizard-phases.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
-import type { ProvidersWizardKind } from "../providers/providers-wizard-state.js";
+import type {
+  ProvidersWizardKind,
+  ProvidersWizardState,
+} from "../providers/providers-wizard-state.js";
 import { ProvidersWizard } from "./providers-wizard.js";
 
 function stripAnsi(value: string): string {
@@ -89,6 +93,34 @@ describe("ProvidersWizard chat model step", () => {
     expect(countRows(text, "model-")).toBeLessThanOrEqual(12);
   });
 
+  it("shows a rejected-submit error alongside the discovered model list", async () => {
+    // A rejected submit (empty or non-ASCII key) leaves the wizard on the
+    // chat-model step with `error` set, but the pick list has no error slot
+    // of its own. Without surfacing it here, the operator's Enter reads as
+    // doing nothing.
+    const ids = ["model-a", "model-b"];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ data: ids.map((id) => ({ id })) }),
+      })),
+    );
+
+    const wizard = {
+      ...chatModelStep("https://listed.example/v1"),
+      error: "API key contains non-ASCII characters. Use a plain ASCII key.",
+    };
+    const { lastFrame } = render(<ProvidersWizard wizard={wizard} />);
+    await flush();
+
+    const text = stripAnsi(lastFrame() ?? "");
+    // The model list still renders...
+    expect(text).toContain("model-a");
+    // ...and the submit error is visible under it.
+    expect(text).toContain("non-ASCII characters");
+  });
+
   it("explains a refused key instead of showing the raw status", async () => {
     vi.stubGlobal(
       "fetch",
@@ -124,6 +156,57 @@ describe("ProvidersWizard chat model step", () => {
 
     const text = stripAnsi(lastFrame() ?? "");
     expect(text).toContain("Groq rejected this key");
+  });
+});
+
+describe("ProvidersWizard CLI-backed configure step", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("opens a claude-cli row on its model, not on a key screen", async () => {
+    // What `c` now reaches. A CLI-backed provider has no key and no
+    // endpoint, so anything but the model id would be a dead end — and
+    // the openai-compat placeholder would name a model `claude` rejects.
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { lastFrame } = render(
+      <ProvidersWizard
+        wizard={createProvidersWizardState("configure", {
+          providerId: "claude-cli",
+          kind: "claude-cli",
+          chatModel: "opus",
+        })}
+      />,
+    );
+    await flush();
+
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("Chat model id — claude CLI");
+    expect(text).toContain("opus");
+    expect(text).toContain("the CLI uses its own session");
+    // The key screen's own copy, absent because that phase is skipped.
+    expect(text).not.toContain("Saved to");
+    expect(text).not.toContain(OPENAI_COMPAT_DEFAULT_CHAT_MODEL);
+    // No endpoint exists behind the CLI; listing must not be attempted.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("tells a codex-cli operator that an empty line is the answer", async () => {
+    const { lastFrame } = render(
+      <ProvidersWizard
+        wizard={createProvidersWizardState("configure", {
+          providerId: "codex-cli",
+          kind: "codex-cli",
+        })}
+      />,
+    );
+    await flush();
+
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("Chat model id — codex CLI");
+    expect(text).toContain("the CLI resolves the model");
   });
 });
 
@@ -285,5 +368,71 @@ describe("ProvidersWizard cloud model pickers", () => {
     expect(text).toContain("(337/337)");
     expect(countRows(text, "vendor/model-")).toBeLessThanOrEqual(12);
     expect(text).not.toContain("vendor/model-000");
+  });
+});
+
+/**
+ * Reported as "I added a random key and got stuck on embedding
+ * selection". The key check did fire and did refuse the save — nothing
+ * was written — but a list screen had nowhere to print `wizard.error`
+ * and nowhere to say a check was running, so Enter looked like a key
+ * that did nothing, forever.
+ */
+describe("ProvidersWizard surfaces the key check on list screens", () => {
+  // The chat-model case mounts `CatalogChatModelStep`, which fires a
+  // live catalog refresh on mount. Keep it offline: a real response
+  // would replace the module cache the windowing tests assert against.
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("offline");
+      }),
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function embeddingStep(overrides: Partial<ProvidersWizardState>) {
+    return {
+      ...createProvidersWizardState("add", { kind: "openrouter" }),
+      phase: "pick_embedding" as const,
+      cursor: 0,
+      ...overrides,
+    };
+  }
+
+  it("prints the refusal on the embedding screen", () => {
+    const { lastFrame } = render(
+      <ProvidersWizard
+        wizard={embeddingStep({
+          error: "OpenRouter does not recognize this key (http 401)",
+        })}
+      />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("OpenRouter does not recognize this key");
+  });
+
+  it("says a check is in flight while the save waits on the provider", () => {
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={embeddingStep({ submitting: true })} />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("checking the key with the provider");
+    expect(text).toContain("Esc cancels");
+  });
+
+  it("prints the refusal on the chat-model screen too", () => {
+    const { lastFrame } = render(
+      <ProvidersWizard
+        wizard={{
+          ...cloudPickStep("aimlapi", 0),
+          error: "AI/ML API accepted the key but the account has no balance",
+        }}
+      />,
+    );
+    expect(stripAnsi(lastFrame() ?? "")).toContain("no balance");
   });
 });

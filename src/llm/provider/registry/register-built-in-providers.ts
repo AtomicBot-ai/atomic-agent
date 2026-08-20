@@ -14,6 +14,12 @@ import {
   OPENROUTER_APP_REFERER,
   OPENROUTER_APP_TITLE,
 } from "../openrouter/openrouter-provider.js";
+import { SUBSCRIPTION_CLI_KIND } from "../../../config/provider-auth-mode.js";
+import {
+  registerBuiltInCliAdapters,
+  resolveCliAdapter,
+  SubscriptionCliProvider,
+} from "../subscription-cli/index.js";
 import { registerProviderKind } from "./provider-types.js";
 
 let registered = false;
@@ -54,9 +60,11 @@ export function registerBuiltInProviderKinds(): void {
       apiKey: entry.apiKey ?? "",
       defaultChatModel: entry.defaultChatModel,
       headers: entry.headers,
+      apiKeyHeader: entry.apiKeyHeader,
       supportsVision: entry.supportsVision ?? true,
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
+      extraBody: entry.extraBody,
     });
   });
 
@@ -73,10 +81,12 @@ export function registerBuiltInProviderKinds(): void {
       apiKey: entry.apiKey ?? "",
       defaultChatModel: entry.defaultChatModel,
       headers: entry.headers,
+      apiKeyHeader: entry.apiKeyHeader,
       supportsVision: entry.supportsVision ?? true,
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       taggedToolCompatibility: "qwen",
+      extraBody: entry.extraBody,
     });
   });
 
@@ -122,6 +132,39 @@ export function registerBuiltInProviderKinds(): void {
       supportsVision: entry.supportsVision ?? true,
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
+    });
+  });
+
+  registerProviderKind(SUBSCRIPTION_CLI_KIND, (ctx) => {
+    const entry = ctx.entry;
+    const options = entry.subscriptionCli;
+    if (!options) {
+      throw new Error(
+        `${SUBSCRIPTION_CLI_KIND} provider "${entry.id}" requires a subscriptionCli block naming the cli to drive`,
+      );
+    }
+    registerBuiltInCliAdapters();
+    const descriptor = resolveCliAdapter(options.cli);
+    return new SubscriptionCliProvider({
+      id: entry.id,
+      descriptor,
+      // The state dir, not the agent's working directory: with tools
+      // disabled there is nothing to read there anyway, and it keeps a
+      // project-level CLAUDE.md out of the completion.
+      cwd: ctx.config.paths.stateDir,
+      ...(entry.defaultChatModel ? { model: entry.defaultChatModel } : {}),
+      ...(options.binPath ? { binPath: options.binPath } : {}),
+      ...(options.extraArgs ? { extraArgs: options.extraArgs } : {}),
+      ...(options.streaming === undefined
+        ? {}
+        : { streaming: options.streaming }),
+      ...(options.maxBudgetUsd === undefined
+        ? {}
+        : { maxBudgetUsd: options.maxBudgetUsd }),
+      ...(entry.requestTimeoutMs
+        ? { requestTimeoutMs: entry.requestTimeoutMs }
+        : {}),
+      onNotice: (message) => ctx.logger.warn("llm.subscription_cli", { message }),
     });
   });
 }

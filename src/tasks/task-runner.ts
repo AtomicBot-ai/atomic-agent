@@ -335,6 +335,16 @@ export class TaskRunner {
       // surface as a `reason: "failed"` outcome instead — treat that
       // as the same retryable transport-class failure so the operator
       // sees a consistent retry curve.
+      // A steer accepted by this turn but never delivered must not vanish
+      // just because the turn belonged to the scheduler: there is no host
+      // to hand it to, so the structured log is the surface of record.
+      if (result.undelivered !== undefined && result.undelivered.length > 0) {
+        this.options.logger?.warn?.("steering messages stranded by a task turn", {
+          taskId: claimed.id,
+          count: result.undelivered.length,
+          preview: result.undelivered[0]?.slice(0, 120),
+        });
+      }
       if (result.reason === "failed") {
         return this.handleFailure(claimed, "transport", new Error("loop reported failed"));
       }

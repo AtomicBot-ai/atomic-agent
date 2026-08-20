@@ -1,7 +1,12 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Key } from "ink";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { resetConfigCache } from "../../config/index.js";
 import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { upsertLlmProvider } from "../persist-llm-provider.js";
 import { PICK_WINDOW } from "../components/wizard-pick-list.js";
 import { PROVIDER_PRESETS } from "./provider-presets.js";
 import { LOCAL_EMBEDDING_CHOICE_ID } from "./providers-model-options.js";
@@ -70,6 +75,28 @@ describe("createProvidersWizardState configure prefill", () => {
     expect(wizard.providerId).toBe("groq");
   });
 
+  it("skips the key screen for a CLI-backed entry and prefills its model", () => {
+    // No key exists for a subscription CLI, so `api_key` would be a dead
+    // end; the model id is the only thing configure can change.
+    const wizard = createProvidersWizardState("configure", {
+      providerId: "claude-cli",
+      kind: "claude-cli",
+      chatModel: "opus",
+    });
+    expect(wizard.phase).toBe("chat_model_line");
+    expect(wizard.chatModelLine).toBe("opus");
+  });
+
+  it("saves a CLI-backed model line straight from the model step", () => {
+    const wizard = createProvidersWizardState("configure", {
+      providerId: "claude-cli",
+      kind: "claude-cli",
+      chatModel: "opus",
+    });
+    const result = handleProvidersWizardKey("", emptyKey({ return: true }), wizard);
+    expect(result).toMatchObject({ handled: true, submit: true });
+  });
+
   it("recovers the preset behind a numbered entry id", () => {
     const wizard = createProvidersWizardState("configure", {
       providerId: "groq-2",
@@ -89,13 +116,17 @@ describe("createProvidersWizardState configure prefill", () => {
 });
 
 describe("KIND_ROW_ORDER", () => {
-  it("lists catalogs first, presets alphabetically by label, manual last", () => {
-    expect(KIND_ROW_ORDER[0]).toBe("openrouter");
-    expect(KIND_ROW_ORDER[1]).toBe("aimlapi");
-    expect(KIND_ROW_ORDER[2]).toBe("gemini");
+  it("lists the subscription CLI first, then catalogs, presets alphabetically by label, manual last", () => {
+    // A CLI-backed provider needs no key and no endpoint, so it is the
+    // shortest path from a fresh install to a working agent.
+    expect(KIND_ROW_ORDER[0]).toBe("claude-cli");
+    expect(KIND_ROW_ORDER[1]).toBe("codex-cli");
+    expect(KIND_ROW_ORDER[2]).toBe("openrouter");
+    expect(KIND_ROW_ORDER[3]).toBe("aimlapi");
+    expect(KIND_ROW_ORDER[4]).toBe("gemini");
     expect(KIND_ROW_ORDER[KIND_ROW_ORDER.length - 1]).toBe("openai-compatible");
 
-    const presetRows = KIND_ROW_ORDER.slice(3, -1);
+    const presetRows = KIND_ROW_ORDER.slice(5, -1);
     expect(presetRows).toEqual(
       PROVIDER_PRESETS.map((preset) => ({ presetId: preset.id })),
     );
@@ -106,12 +137,36 @@ describe("KIND_ROW_ORDER", () => {
 });
 
 describe("handleProvidersWizardKey", () => {
+  it("takes the Claude CLI row straight past the API-key screen", () => {
+    let wizard = createProvidersWizardState("add");
+    wizard = { ...wizard, cursor: KIND_ROW_ORDER.indexOf("claude-cli") };
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    // There is no key to paste — the CLI authenticates from its own
+    // session — so stopping on `api_key` would be a dead end.
+    expect(wizard).toMatchObject({
+      kind: "claude-cli",
+      phase: "chat_model_line",
+    });
+    expect(wizard.presetId).toBeNull();
+  });
+
+  it("takes the Codex CLI row straight past the API-key screen too", () => {
+    let wizard = createProvidersWizardState("add");
+    wizard = { ...wizard, cursor: KIND_ROW_ORDER.indexOf("codex-cli") };
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard).toMatchObject({
+      kind: "codex-cli",
+      phase: "chat_model_line",
+    });
+  });
+
   it("takes Gemini from API key directly to model selection", () => {
     let wizard = createProvidersWizardState("add");
     wizard = { ...wizard, cursor: KIND_ROW_ORDER.indexOf("gemini") };
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard).toMatchObject({ kind: "gemini", phase: "api_key" });
 
+    for (const ch of "gk") wizard = next(wizard, ch, emptyKey());
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.phase).toBe("chat_model_line");
     expect(wizard.phase).not.toBe("base_url");
@@ -120,7 +175,9 @@ describe("handleProvidersWizardKey", () => {
   it("walks the aimlapi onboarding flow when the cursor lands on it", () => {
     let wizard = createProvidersWizardState("add");
 
-    wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    // Addressed by name so inserting a row above it does not silently
+    // repoint this flow at a different provider.
+    wizard = { ...wizard, cursor: KIND_ROW_ORDER.indexOf("aimlapi") };
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.kind).toBe("aimlapi");
     expect(wizard.phase).toBe("api_key");
@@ -149,7 +206,9 @@ describe("handleProvidersWizardKey", () => {
     wizard = next(wizard, "", emptyKey({ upArrow: true }));
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.kind).toBe("openai-compatible");
-    expect(wizard.phase).toBe("api_key");
+    // The endpoint comes before the key: the key screen consults the
+    // base URL (a loopback server is keyless), so it must exist first.
+    expect(wizard.phase).toBe("base_url");
   });
 
   describe("openai-compatible chat model step", () => {
@@ -172,6 +231,8 @@ describe("handleProvidersWizardKey", () => {
       });
       wizard = { ...wizard, phase: "base_url" };
       for (const ch of baseUrl) wizard = next(wizard, ch, emptyKey());
+      // URL first, then the key screen — satisfied here by the env key.
+      wizard = next(wizard, "", emptyKey({ return: true }));
       return next(wizard, "", emptyKey({ return: true }));
     }
 
@@ -354,6 +415,7 @@ describe("handleProvidersWizardKey", () => {
   it("walks the OpenRouter onboarding flow through model and embedding picks", () => {
     let wizard = createProvidersWizardState("add");
 
+    wizard = { ...wizard, cursor: KIND_ROW_ORDER.indexOf("openrouter") };
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.kind).toBe("openrouter");
     expect(wizard.phase).toBe("api_key");
@@ -515,17 +577,229 @@ describe("handleProvidersWizardKey", () => {
     expect(wizard.phase).not.toBe("base_url");
   });
 
-  it("still shows the URL screen for the manual openai-compatible row", () => {
+  it("walks the manual row URL-first, then the key, then the model line", () => {
     let wizard = createProvidersWizardState("add");
     // Manual entry is the last row.
     wizard = next(wizard, "", emptyKey({ upArrow: true }));
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.kind).toBe("openai-compatible");
     expect(wizard.presetId).toBeNull();
-    // No key typed, Enter through the key screen: a hand-added compat
-    // endpoint still has to declare its base URL.
+    expect(wizard.phase).toBe("base_url");
+    // An empty URL line falls back to the default (remote) base, so the
+    // key screen that follows still demands a key.
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("api_key");
+    for (const ch of "ck") wizard = next(wizard, ch, emptyKey());
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("chat_model_line");
+  });
+
+  it("configure still reaches the URL screen after the key", () => {
+    // Reconfiguring opens on the key screen; the URL step must follow it,
+    // or a mistyped port could never be corrected without re-adding.
+    let wizard = createProvidersWizardState("configure", {
+      providerId: "my-llama",
+      kind: "openai-compatible",
+      baseUrl: "http://127.0.0.1:9931",
+    });
+    expect(wizard.phase).toBe("api_key");
+    // Loopback endpoint: the empty key screen passes.
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.phase).toBe("base_url");
+    expect(wizard.baseUrlLine).toBe("http://127.0.0.1:9931");
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("chat_model_line");
+  });
+
+  it("lets a loopback custom URL through the key screen with no key", () => {
+    // The user report behind #187: a raw llama-server on the operator's
+    // machine has no key, and the wizard used to refuse the empty screen.
+    let wizard = createProvidersWizardState("add");
+    wizard = next(wizard, "", emptyKey({ upArrow: true }));
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("base_url");
+    for (const ch of "localhost:9931") wizard = next(wizard, ch, emptyKey());
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("api_key");
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("chat_model_line");
+    expect(wizard.error).toBeNull();
+  });
+
+  describe("empty API key", () => {
+    // The gate reads the environment, so a key left over from the host
+    // shell would silently satisfy the screen under test.
+    const ENV_KEYS = [
+      "OPENROUTER_API_KEY",
+      "AIMLAPI_API_KEY",
+      "GEMINI_API_KEY",
+      "OPENAI_COMPAT_API_KEY",
+      "OPENAI_API_KEY",
+      "ATOMIC_AGENT_OPENAI_API_KEY",
+    ] as const;
+    const saved = new Map<string, string | undefined>();
+    beforeEach(() => {
+      for (const key of ENV_KEYS) {
+        saved.set(key, process.env[key]);
+        delete process.env[key];
+      }
+    });
+    afterEach(() => {
+      for (const [key, value] of saved) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      saved.clear();
+    });
+
+    it("keeps Enter on the key screen when nothing was typed", () => {
+      let wizard = createProvidersWizardState("add");
+      // The CLI rows sit at the head of the list now; aim at OpenRouter
+      // by name rather than assuming it is row 0.
+      wizard = { ...wizard, cursor: KIND_ROW_ORDER.indexOf("openrouter") };
+      wizard = next(wizard, "", emptyKey({ return: true }));
+      expect(wizard).toMatchObject({ kind: "openrouter", phase: "api_key" });
+
+      wizard = next(wizard, "", emptyKey({ return: true }));
+      expect(wizard.phase).toBe("api_key");
+      expect(wizard.error).toContain("API key required");
+      expect(wizard.error).toContain("OPENROUTER_API_KEY");
+    });
+
+    it("refuses a whitespace-only key", () => {
+      let wizard = createProvidersWizardState("add", { kind: "aimlapi" });
+      wizard = { ...wizard, phase: "api_key" };
+      for (const ch of "   ") wizard = next(wizard, ch, emptyKey());
+      wizard = next(wizard, "", emptyKey({ return: true }));
+      expect(wizard.phase).toBe("api_key");
+      expect(wizard.error).toContain("API key required");
+    });
+
+    it("clears the message on the next keystroke", () => {
+      let wizard = createProvidersWizardState("add", { kind: "openrouter" });
+      wizard = { ...wizard, phase: "api_key" };
+      wizard = next(wizard, "", emptyKey({ return: true }));
+      expect(wizard.error).not.toBeNull();
+
+      wizard = next(wizard, "s", emptyKey());
+      expect(wizard.error).toBeNull();
+      wizard = next(wizard, "", emptyKey({ return: true }));
+      expect(wizard.phase).toBe("pick_chat_model");
+    });
+
+    it("lets a keyless local preset through with no key at all", () => {
+      // LM Studio has no key to type; the wizard skips the screen
+      // entirely and the gate must not reintroduce it.
+      let wizard = createProvidersWizardState("add");
+      wizard = { ...wizard, cursor: presetRowIndex("lmstudio") };
+      wizard = next(wizard, "", emptyKey({ return: true }));
+      expect(wizard).toMatchObject({
+        presetId: "lmstudio",
+        phase: "chat_model_line",
+      });
+    });
+
+    it("accepts an empty screen when the service's key is already in .env", () => {
+      process.env.OPENROUTER_API_KEY = "sk-or-env";
+      let wizard = createProvidersWizardState("add", { kind: "openrouter" });
+      wizard = { ...wizard, phase: "api_key" };
+      wizard = next(wizard, "", emptyKey({ return: true }));
+      expect(wizard.phase).toBe("pick_chat_model");
+    });
+  });
+
+  describe("reconfiguring a saved provider", () => {
+    // Every other test here starts from `createProvidersWizardState("add", …)`,
+    // which is how a gate stricter than the save path reached review: a
+    // configure run opens on the key screen with an empty buffer, and the
+    // key it should find is in `config.json`, not `.env`.
+    let stateDir: string;
+    let previousStateDir: string | undefined;
+
+    beforeEach(() => {
+      previousStateDir = process.env.ATOMIC_AGENT_STATE_DIR;
+      stateDir = mkdtempSync(join(tmpdir(), "wizard-configure-"));
+      process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+      delete process.env.OPENROUTER_API_KEY;
+      resetConfigCache();
+    });
+
+    afterEach(() => {
+      rmSync(stateDir, { recursive: true, force: true });
+      if (previousStateDir === undefined) {
+        delete process.env.ATOMIC_AGENT_STATE_DIR;
+      } else {
+        process.env.ATOMIC_AGENT_STATE_DIR = previousStateDir;
+      }
+      delete process.env.OPENROUTER_API_KEY;
+      resetConfigCache();
+    });
+
+    it("Enter leaves the key screen when the key is already saved", () => {
+      upsertLlmProvider({
+        id: "openrouter",
+        kind: "openrouter",
+        apiKey: "sk-or-stored",
+      });
+      const wizard = createProvidersWizardState("configure", {
+        providerId: "openrouter",
+        kind: "openrouter",
+      });
+      expect(wizard.phase).toBe("api_key");
+      const next1 = next(wizard, "", emptyKey({ return: true }));
+      expect(next1.phase).toBe("pick_chat_model");
+      expect(next1.error).toBeNull();
+    });
+
+    it("Enter still refuses when the entry has no key anywhere", () => {
+      upsertLlmProvider({ id: "openrouter", kind: "openrouter" });
+      const wizard = createProvidersWizardState("configure", {
+        providerId: "openrouter",
+        kind: "openrouter",
+      });
+      const next1 = next(wizard, "", emptyKey({ return: true }));
+      expect(next1.phase).toBe("api_key");
+      expect(next1.error).toContain("API key required");
+    });
+
+    it("Esc on the key screen closes the wizard", () => {
+      // The key screen is where a configure run opens, so there is no
+      // screen behind it. Stepping "back" built a provider list this run
+      // never showed and dropped the entry's kind and base URL with it.
+      upsertLlmProvider({
+        id: "my-vllm",
+        kind: "openai-compatible",
+        baseUrl: "http://192.168.1.50:8000/v1",
+      });
+      const wizard = createProvidersWizardState("configure", {
+        providerId: "my-vllm",
+        kind: "openai-compatible",
+        baseUrl: "http://192.168.1.50:8000/v1",
+      });
+      const result = handleProvidersWizardKey(
+        "",
+        emptyKey({ escape: true }),
+        wizard,
+      );
+      expect("closed" in result && result.closed).toBe(true);
+    });
+
+    it("Esc past the key screen still steps back one screen", () => {
+      const wizard = {
+        ...createProvidersWizardState("configure", {
+          providerId: "openrouter",
+          kind: "openrouter",
+        }),
+        phase: "pick_chat_model" as const,
+      };
+      const result = handleProvidersWizardKey(
+        "",
+        emptyKey({ escape: true }),
+        wizard,
+      );
+      expect("closed" in result && result.closed).toBeFalsy();
+      expect("wizard" in result && result.wizard.phase).toBe("pick_kind");
+    });
   });
 
   it("Esc from a preset returns to the provider list, not out of the wizard", () => {

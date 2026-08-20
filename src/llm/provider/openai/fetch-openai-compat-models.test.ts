@@ -24,7 +24,7 @@ describe("fetchOpenAiCompatModels", () => {
     expect(ids).toEqual(["Qwen/Qwen3-8B", "zephyr"]);
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://vllm.example/v1/models");
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
-      headers: { Authorization: "Bearer key" },
+      headers: { authorization: "Bearer key" },
     });
 
     expect(getCachedOpenAiCompatModels("https://vllm.example/", "key")).toEqual(ids);
@@ -83,6 +83,46 @@ describe("fetchOpenAiCompatModels", () => {
     ).toBeUndefined();
   });
 
+  it("puts the key in the header the service names, not in Authorization", async () => {
+    // The blocker this parameter exists for: a service that reads
+    // `Authorization: Bearer` as an OAuth token rejects an API key sent
+    // that way, so discovery 401s before the operator ever reaches a
+    // model list. Nothing in the response shape reveals the cause.
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [{ id: "claude-opus-5" }] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchOpenAiCompatModels("https://named-header.example", "sk-test", {
+      apiKeyHeader: "x-api-key",
+      headers: { "some-version": "2023-06-01" },
+    });
+
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers["x-api-key"]).toBe("sk-test");
+    expect(headers["some-version"]).toBe("2023-06-01");
+    expect(headers.authorization).toBeUndefined();
+  });
+
+  it("still sends mandatory static headers when there is no key", async () => {
+    // A version header is part of the request contract, not part of the
+    // credential — dropping it with the key would turn a 401 into a 400.
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [{ id: "m" }] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchOpenAiCompatModels("https://keyless-static.example", undefined, {
+      apiKeyHeader: "x-api-key",
+      headers: { "some-version": "2023-06-01" },
+    });
+
+    const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers).toEqual({ "some-version": "2023-06-01" });
+  });
+
   it("throws on a rejected request so callers can fall back to typing", async () => {
     vi.stubGlobal(
       "fetch",
@@ -92,5 +132,20 @@ describe("fetchOpenAiCompatModels", () => {
       fetchOpenAiCompatModels("https://locked.example"),
     ).rejects.toThrow("http 401");
     expect(getCachedOpenAiCompatModels("https://locked.example")).toBeUndefined();
+  });
+
+  it("rejects a non-ASCII key with a readable reason, never a ByteString crash", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [{ id: "m" }] }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    // "sk-т" carries a Cyrillic character that cannot sit in a header.
+    await expect(
+      fetchOpenAiCompatModels("https://byte.example", "sk-т"),
+    ).rejects.toThrow(/non-ASCII/);
+    // The guard fires before the request, so `fetch` never runs.
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

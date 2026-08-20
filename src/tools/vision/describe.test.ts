@@ -127,6 +127,88 @@ describe("buildVisionDescribeTool", () => {
     expect(call.images[0]!.mimeType).toBe("image/png");
   });
 
+  // Issue #185: the per-call image cap was enforced but documented
+  // nowhere the model could read, so it discovered the limit only by
+  // burning a step on a failed 8/12/20-image call. The cap now appears
+  // in the tool description, and the error names the remedy.
+  it("documents the image cap in the tool description", () => {
+    const tool = buildVisionDescribeTool({
+      provider: fakeProvider(),
+      maxImagesPerCall: 4,
+      maxImageBytes: 1024,
+    });
+    expect(tool.description).toContain("At most 4 images per call");
+    expect(tool.description).toMatch(/split/i);
+  });
+
+  it("reflects a reconfigured cap in the tool description", () => {
+    const tool = buildVisionDescribeTool({
+      provider: fakeProvider(),
+      maxImagesPerCall: 7,
+      maxImageBytes: 1024,
+    });
+    expect(tool.description).toContain("At most 7 images per call");
+  });
+
+  it("rejects more images than the cap and names the split remedy", async () => {
+    const tool = buildVisionDescribeTool({
+      provider: fakeProvider(),
+      maxImagesPerCall: 4,
+      maxImageBytes: 1024,
+    });
+    const result = await tool.run(
+      {
+        prompt: "describe",
+        paths: Array.from({ length: 12 }, (_, i) => `img-${i}.png`),
+      },
+      ctx(process.cwd()),
+    );
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("at most 4 images per call (got 12)");
+    // 12 / 4 = 3 calls. The remedy is the point: the model should not
+    // have to guess how to recover from the cap.
+    expect(result.summary).toContain("split into 3 calls of at most 4");
+  });
+
+  it("rounds the suggested call count up for a partial final batch", async () => {
+    const tool = buildVisionDescribeTool({
+      provider: fakeProvider(),
+      maxImagesPerCall: 4,
+      maxImageBytes: 1024,
+    });
+    const result = await tool.run(
+      {
+        prompt: "describe",
+        paths: Array.from({ length: 13 }, (_, i) => `img-${i}.png`),
+      },
+      ctx(process.cwd()),
+    );
+    expect(result.status).toBe("error");
+    // Math.ceil(13 / 4) === 4, not 3.
+    expect(result.summary).toContain("split into 4 calls of at most 4");
+  });
+
+  it("accepts exactly the cap without erroring", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "vision-tool-"));
+    const paths: string[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      const path = join(tmp, `image-${i}.png`);
+      await writeFile(path, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+      paths.push(path);
+    }
+    const provider = fakeProvider();
+    const tool = buildVisionDescribeTool({
+      provider,
+      maxImagesPerCall: 4,
+      maxImageBytes: 1024,
+    });
+    const result = await tool.run({ prompt: "describe", paths }, ctx(tmp));
+    expect(result.status).toBe("ok");
+    const call = (provider.describeImage as ReturnType<typeof vi.fn>).mock
+      .calls[0]![0] as VisionRequest;
+    expect(call.images).toHaveLength(4);
+  });
+
   it("rejects images that exceed maxImageBytes", async () => {
     const tmp = await mkdtemp(join(tmpdir(), "vision-tool-"));
     const path = join(tmp, "big.png");

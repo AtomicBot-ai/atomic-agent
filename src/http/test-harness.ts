@@ -78,6 +78,14 @@ export class FakeBrowserBackend implements BrowserBackend {
 export interface HarnessOptions {
   /** When set, the HTTP server requires this bearer token. */
   apiKey?: string | null;
+  /**
+   * Point `localModels.url` at a specific server so llama health probes
+   * are deterministic — e.g. a stub that answers `/health`, or a port
+   * that is known to be closed. Without this the probe hits the config
+   * default (127.0.0.1:8080), which may or may not be occupied on the
+   * machine running the tests.
+   */
+  localModelsUrl?: string;
   /** Replace the llama completion implementation. Default: one `reply` turn. */
   llamaComplete?: (params: {
     prompt: string;
@@ -142,11 +150,22 @@ export async function startTestHarness(
   mkdirSync(join(workingDir, ".atomic-agent", "skills"), { recursive: true });
   process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
   process.env.ATOMIC_AGENT_GRAMMARS_DIR = join(process.cwd(), "grammars");
-  if (options.webhooks) {
+  if (options.webhooks || options.localModelsUrl) {
     writeFileSync(
       join(stateDir, "config.json"),
       JSON.stringify(
-        { ...USER_CONFIG_DEFAULTS, webhooks: options.webhooks },
+        {
+          ...USER_CONFIG_DEFAULTS,
+          ...(options.webhooks ? { webhooks: options.webhooks } : {}),
+          ...(options.localModelsUrl
+            ? {
+                localModels: {
+                  ...USER_CONFIG_DEFAULTS.localModels,
+                  url: options.localModelsUrl,
+                },
+              }
+            : {}),
+        },
         null,
         2,
       ),

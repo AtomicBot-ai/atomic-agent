@@ -40,6 +40,8 @@ export type SkillsAction =
       error: string | null;
     }
   | { type: "skills_hub_cursor_moved"; delta: 1 | -1 | number }
+  /** Put the Skills Hub cursor on an absolute row (mouse click). */
+  | { type: "skills_hub_cursor_set"; row: number }
   | { type: "skills_hub_search_focus"; editing: boolean }
   | { type: "skills_hub_query_changed"; query: string }
   | { type: "skills_install_loading"; loading: boolean }

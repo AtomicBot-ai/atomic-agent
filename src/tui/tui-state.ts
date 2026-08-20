@@ -1,4 +1,5 @@
 import type { ApprovalRequest } from "../approval/approval-gate.js";
+import type { WhileBusySubmitMode } from "../config/index.js";
 import type {
   LatestResult,
   LoadedSkillBody,
@@ -220,6 +221,13 @@ export interface TuiSessionInfo {
   approvalLevel: number;
   maxSteps: number;
   skillCount: number;
+  /**
+   * Whether the user actually opted into a local backend (see
+   * `isLocalBackendConfigured`). Decides whether the llama-server health
+   * indicator is shown at all, so a fresh install is not told that a server
+   * it never configured is down.
+   */
+  localBackendConfigured: boolean;
 }
 
 /**
@@ -296,12 +304,30 @@ export interface TuiState {
    * the newest entry at the end.
    */
   inputHistoryCursor: number | null;
+  /**
+   * The half-written draft that was in the editor when history recall
+   * started, parked so Down can hand it back. `null` whenever the editor
+   * is showing the live buffer — recall always stashes before it
+   * overwrites, and any real edit to a recalled entry drops the stash.
+   */
+  inputHistoryDraft: string | null;
   /** Is the slash-command overlay currently visible below the editor? */
   slashPaletteOpen: boolean;
   /** Current slash prefix (characters typed after the leading `/`). */
   slashQuery: string;
   /** Highlighted row in the slash palette. */
   slashPaletteCursor: number;
+  /**
+   * Operator menu (`ctrl+p`) — the browsable half of the navigation surface.
+   * `menuPath` is the id of the submenu currently open, or `null` at the
+   * root; the tree is one level deep by construction so a single id is
+   * enough. A non-empty `menuQuery` flattens the tree: search ranks across
+   * every node regardless of where it lives.
+   */
+  menuOpen: boolean;
+  menuPath: string | null;
+  menuQuery: string;
+  menuCursor: number;
   /** Which tool cards are shown expanded by the user. */
   toolsExpandedById: Readonly<Record<string, boolean>>;
   /** Is the session picker overlay visible? */
@@ -409,15 +435,45 @@ export interface TuiState {
    * loses sight of the freshest reply.
    */
   chatScrollOffset: number;
+  /**
+   * Messages the operator submitted while a turn was still running, in
+   * submission order. Mirrors `ChatOrchestrator`'s internal queue — the
+   * orchestrator is the source of truth and re-publishes the list via
+   * `queue_changed` on every mutation; this slice exists so the prompt
+   * can show what is parked without reaching into the orchestrator.
+   */
+  queuedMessages: readonly string[];
+  /**
+   * What Enter does while a turn is running: `steer` folds the message
+   * into the turn in flight, `queue` parks it for the next one. Seeded
+   * from `config.tui.whileBusySubmit` at mount and flipped in-app with
+   * Ctrl+T (persisted). Irrelevant when idle — Enter always starts a
+   * turn then.
+   */
+  whileBusyMode: WhileBusySubmitMode;
 }
 
 /**
- * Derived selector: can the user submit a new chat message right now?
- * Used by both the input component (disable when busy) and the
- * orchestrator (reject submissions sent while a turn is still in flight).
+ * Derived selector: can a new turn start *right now*? Used by the
+ * submit pipeline to decide between running the message immediately and
+ * parking it behind the turn in flight.
  */
 export function canAcceptMessage(state: TuiState): boolean {
   return state.status === "idle";
+}
+
+/**
+ * Derived selector: may the operator put characters into the editor?
+ *
+ * Deliberately weaker than {@link canAcceptMessage}. The editor used to
+ * be disabled for the whole duration of a turn, which meant a running
+ * agent swallowed every keystroke — you could not even draft the next
+ * message, let alone send it. Typing is now allowed whenever the app is
+ * not tearing down; a submission made while busy is queued rather than
+ * dropped (see `handleEditorSubmit`).
+ */
+export function canTypeMessage(state: TuiState): boolean {
+  return state.status !== "quitting";
 }
 
 export const DEFAULT_RING_BUFFER_SIZE = 500;
@@ -425,6 +481,8 @@ export const DEFAULT_RING_BUFFER_SIZE = 500;
 export interface InitialTuiLayoutOptions {
   uiMode?: TuiUiMode;
   activeTab?: TuiTab;
+  /** Seeds {@link TuiState.whileBusyMode} from the persisted user config. */
+  whileBusyMode?: WhileBusySubmitMode;
 }
 
 export function createInitialTuiState(
@@ -479,9 +537,14 @@ export function createInitialTuiState(
     inputValue: "",
     inputHistory: [],
     inputHistoryCursor: null,
+    inputHistoryDraft: null,
     slashPaletteOpen: false,
     slashQuery: "",
     slashPaletteCursor: 0,
+    menuOpen: false,
+    menuPath: null,
+    menuQuery: "",
+    menuCursor: 0,
     toolsExpandedById: {},
     sessionPickerOpen: false,
     sessionPickerList: [],
@@ -504,7 +567,11 @@ export function createInitialTuiState(
     fallbackPanel: createInitialFallbackPanelState(),
     localModelsPanel: createInitialLocalModelsPanelState(),
     localLlmLogs: createInitialLocalLlmLogsState(),
-    llmHealth: createInitialLlmHealthState(),
+    // Optional chaining on purpose: `session` is typed as required but tests
+    // call this with nothing (test files are outside tsconfig's include), and
+    // before this argument existed no field was read here, so a bare
+    // `session.` would turn those callers into a crash.
+    llmHealth: createInitialLlmHealthState(session?.localBackendConfigured),
     telegramPanel: createInitialTelegramPanelState(),
     recentSessions: [],
     chatFocus: "editor",
@@ -512,5 +579,7 @@ export function createInitialTuiState(
     sidebarCursor: 0,
     sidebarTasksCursor: 0,
     chatScrollOffset: 0,
+    queuedMessages: [],
+    whileBusyMode: layout?.whileBusyMode ?? "steer",
   };
 }
