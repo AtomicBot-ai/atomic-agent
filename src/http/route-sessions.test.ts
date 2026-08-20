@@ -145,6 +145,28 @@ describe("POST /api/sessions/{id}/steer", () => {
     expect((await steer(session.id, { text: 42 })).status).toBe(400);
   });
 
+  it("lets runtime.steer decide instead of pre-checking isBusy", async () => {
+    const session = harness.runtime.createSession();
+    // Idle by every reading the controller can offer — a
+    // `turnController.isBusy` gate in the route would 409 here without
+    // ever asking the runtime. `isBusy` and "a step boundary is still
+    // coming" are different facts that expire at different moments, so
+    // the runtime's answer is the only one worth acting on.
+    expect(harness.runtime.turnController.isBusy(session.id)).toBe(false);
+    const seen: Array<[string, string]> = [];
+    harness.runtime.steer = (id, text) => {
+      seen.push([id, text]);
+      return true;
+    };
+    const response = await steer(session.id, { text: "the runtime says yes" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      steered: true,
+      sessionId: session.id,
+    });
+    expect(seen).toEqual([[session.id, "the runtime says yes"]]);
+  });
+
   it("429s once the per-session inbox is full", async () => {
     const session = harness.runtime.createSession();
     const statuses = await whileBusy(session.id, async () => {

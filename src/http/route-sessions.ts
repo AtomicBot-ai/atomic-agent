@@ -1,3 +1,4 @@
+import { MAX_PENDING_STEERS } from "../runtime/steering-inbox.js";
 import { openaiError } from "./openai-errors.js";
 import {
   readJsonBody,
@@ -71,12 +72,21 @@ export function createGetSessionHandler(): HttpHandler {
  * already running on that session.
  *
  * This is NOT a way to send a message: it never starts a turn and never
- * queues behind one (see §"Mid-turn steering" in AGENTS.md). When the
- * session is idle there is nothing to steer, and the caller is told so
- * with `409` rather than having the message silently disappear — the
- * correct follow-up is `POST /v1/chat/completions`. `429` means the
- * per-session steering inbox is full; the turn has not read any of them
- * yet, so piling on more would only bloat one prompt.
+ * queues behind one (see §"Mid-turn steering" in AGENTS.md). When no
+ * running turn will pick the message up there is nothing to steer, and
+ * the caller is told so with `409` rather than having the message
+ * silently disappear — the correct follow-up is
+ * `POST /v1/chat/completions`. `429` means the per-session steering
+ * inbox is full; the turn has not read any of them yet, so piling on
+ * more would only bloat one prompt.
+ *
+ * `runtime.steer` decides, and this route only translates. There is no
+ * `turnController.isBusy` pre-check: "busy" and "a step boundary is
+ * still coming" stop being true at different moments (the loop's final
+ * drain happens inside `runTurn`, `busy.delete` later in the
+ * controller's `finally`), so gating on it would reject steers the
+ * runtime would have accepted. The inbox is consulted only after a
+ * refusal, to choose between 409 and 429.
  *
  * `200 {steered:true}` means accepted, **not** delivered: the loop
  * drains the inbox at step boundaries, and a turn can end before the
@@ -109,22 +119,30 @@ export function createSteerSessionHandler(): HttpHandler {
       sendError(res, 400, openaiError("text must be a non-empty string"));
       return;
     }
-    if (!ctx.runtime.turnController.isBusy(id)) {
+    if (!ctx.runtime.steer(id, text)) {
+      // `steer()` is the only authority on whether the message landed,
+      // and it already refused. The inbox read below only *names* the
+      // refusal for the status code — it never gates the attempt, so a
+      // stale read here can at worst mislabel a message that was
+      // definitively not queued, where a pre-check could have rejected
+      // one the runtime would have taken.
+      const inboxFull =
+        ctx.runtime.steeringInbox.peek(id).length >= MAX_PENDING_STEERS;
+      if (inboxFull) {
+        sendError(
+          res,
+          429,
+          openaiError(
+            `steering inbox for session ${id} is full — the running turn has not consumed the pending messages yet`,
+          ),
+        );
+        return;
+      }
       sendError(
         res,
         409,
         openaiError(
-          `session ${id} has no turn in flight — send the message with POST /v1/chat/completions instead`,
-        ),
-      );
-      return;
-    }
-    if (!ctx.runtime.steer(id, text)) {
-      sendError(
-        res,
-        429,
-        openaiError(
-          `steering inbox for session ${id} is full — the running turn has not consumed the pending messages yet`,
+          `session ${id} has no turn accepting steers — send the message with POST /v1/chat/completions instead`,
         ),
       );
       return;
