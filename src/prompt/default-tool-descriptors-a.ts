@@ -213,7 +213,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     name: "os.web.fetch",
     summary:
       "Read a web page as readable markdown/text (cf-markdown → Readability → basic). GET only, no JS, no auth; SSRF-guarded; read-only. For raw API/JSON or POST, use os.http.request.",
-    argsSchema: `{ url: string, extractMode?: "markdown" | "text", maxChars?: number, timeoutMs?: number }`,
+    argsSchema: `{ url: string, extractMode?: "markdown" | "text", maxChars?: number }`,
     examples: [
       '{"url":"https://example.com/article"}',
       '{"url":"https://docs.example.com/guide","extractMode":"text","maxChars":20000}',

@@ -2,6 +2,25 @@ import { spawn } from "node:child_process";
 
 const IS_WINDOWS = process.platform === "win32";
 
+/**
+ * Stdin errors that all mean the same thing: the far end of the pipe is
+ * gone because the child exited (or was killed) before it drained its
+ * input. Expected whenever a command rejects the request without reading
+ * it, so they are absorbed rather than raised — see the handler below.
+ */
+const BROKEN_PIPE_CODES = new Set([
+  "EPIPE",
+  "ECONNRESET",
+  "EOF",
+  "ERR_STREAM_DESTROYED",
+  "ERR_STREAM_WRITE_AFTER_END",
+]);
+
+export function isBrokenPipe(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return typeof code === "string" && BROKEN_PIPE_CODES.has(code);
+}
+
 export interface CommandOptions {
   cwd: string;
   timeoutMs?: number;
@@ -22,6 +41,14 @@ export interface CommandResult {
   durationMs: number;
   timedOut: boolean;
   truncated: boolean;
+  /**
+   * The child stopped reading before `input` was fully written, so it
+   * answered a prompt we only partially delivered. Only reachable with
+   * payloads past the pipe buffer (~64 KiB); a non-zero `exitCode`
+   * usually says why, but a CLI that exits 0 regardless would otherwise
+   * look like a clean run over a truncated prompt.
+   */
+  inputTruncated: boolean;
 }
 
 /**
@@ -57,6 +84,7 @@ export async function runCommand(
     let stdoutBytes = 0;
     let stderrBytes = 0;
     let truncated = false;
+    let inputTruncated = false;
     let timedOut = false;
     let settled = false;
 
@@ -147,7 +175,30 @@ export async function runCommand(
         durationMs: Date.now() - started,
         timedOut,
         truncated,
+        inputTruncated,
       });
+    });
+
+    // A child that rejects the request — signed out, unknown model,
+    // rate-limited — exits without draining stdin, so an `input` larger
+    // than the pipe buffer (~64 KiB) cannot flush and raises EPIPE.
+    // Node treats an `error` on a stream with no listener as fatal and
+    // `installGlobalErrorHandlers` preserves that, which would tear the
+    // whole runtime down instead of reporting the child's own failure.
+    // Absorb the broken pipe — `close` still carries the exit code and
+    // stderr that explain it, and `inputTruncated` keeps a run that
+    // exits 0 over a half-delivered prompt from passing for a good one.
+    // Any other stdin error is a genuine local failure and rejects.
+    child.stdin.on("error", (err: NodeJS.ErrnoException) => {
+      if (isBrokenPipe(err)) {
+        inputTruncated = true;
+        return;
+      }
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onAbort);
+      reject(err);
     });
 
     if (options.input) {

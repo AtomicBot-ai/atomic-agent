@@ -129,6 +129,59 @@ describe("isCloudTextProviderReady", () => {
     expect(isCloudTextProviderReady()).toBe(true);
   });
 
+  it("treats a subscription-cli entry as ready with no key and no base URL", () => {
+    const cfg = getConfig();
+    const file = ensureUserConfigFileSync(cfg.paths.userConfigFile);
+    writeUserConfigFileSync(cfg.paths.userConfigFile, {
+      ...file,
+      llm: {
+        activeTextProvider: "claude-cli",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto",
+        providers: [
+          { id: "local-llama", kind: "llama-server", url: cfg.localModels.url },
+          {
+            id: "claude-cli",
+            kind: "subscription-cli",
+            defaultChatModel: "sonnet",
+            subscriptionCli: { cli: "claude" },
+          },
+        ],
+      },
+    });
+    resetConfigCache();
+
+    // Neither existing check can see this entry: there is no API key and
+    // no loopback base URL. Without the CLI-auth branch the user would
+    // land in the local-model wizard on every single start.
+    expect(isCloudTextProviderReady()).toBe(true);
+  });
+
+  it("still refuses a keyless remote entry that is not CLI-backed", () => {
+    const cfg = getConfig();
+    const file = ensureUserConfigFileSync(cfg.paths.userConfigFile);
+    writeUserConfigFileSync(cfg.paths.userConfigFile, {
+      ...file,
+      llm: {
+        activeTextProvider: "remote-compat",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto",
+        providers: [
+          { id: "local-llama", kind: "llama-server", url: cfg.localModels.url },
+          {
+            id: "remote-compat",
+            kind: "openai-compatible",
+            baseUrl: "https://api.example.invalid",
+            defaultChatModel: "some-model",
+          },
+        ],
+      },
+    });
+    resetConfigCache();
+
+    expect(isCloudTextProviderReady()).toBe(false);
+  });
+
   it("treats a manual keyless entry with a loopback base URL as ready", () => {
     const cfg = getConfig();
     const file = ensureUserConfigFileSync(cfg.paths.userConfigFile);

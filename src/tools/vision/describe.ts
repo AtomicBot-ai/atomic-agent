@@ -55,7 +55,8 @@ export function buildVisionDescribeTool(
 ): ToolDefinition {
   return {
     name: "vision.describe",
-    description: `Describe one or more images via the configured vision LLM. Use when the user attaches an image or asks what is on a screenshot. At most ${options.maxImagesPerCall} images per call; to cover more, split them across several calls.`,
+    description:
+      "Describe one or more images via the configured vision LLM. Use when the user attaches an image or asks what is on a screenshot.",
     readonly: true,
     async run(rawArgs, ctx) {
       let parsed: ParsedArgs;
@@ -65,10 +66,8 @@ export function buildVisionDescribeTool(
         return errorResult((error as Error).message);
       }
       if (parsed.paths.length > options.maxImagesPerCall) {
-        const calls = Math.ceil(parsed.paths.length / options.maxImagesPerCall);
         return errorResult(
-          `at most ${options.maxImagesPerCall} images per call (got ${parsed.paths.length})` +
-            ` — split into ${calls} calls of at most ${options.maxImagesPerCall}`,
+          `at most ${options.maxImagesPerCall} images per call (got ${parsed.paths.length})`,
         );
       }
       if (!options.provider.capabilities.vision) {

@@ -1,5 +1,3 @@
-import { stat } from "node:fs/promises";
-import { basename, dirname } from "node:path";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
 import {
@@ -74,22 +72,9 @@ export function buildOsFsGrepTool(
         });
       }
 
-      let target: SearchTarget;
-      try {
-        target = await resolveSearchTarget(args.path, ctx.workingDir);
-      } catch (err) {
-        const reason = (err as Error).message;
-        return compressToolResult({
-          tool: "os.fs.grep",
-          status: "error",
-          output: reason,
-          details: { path: args.path, hint: reason },
-        });
-      }
-
-      const rgArgs = buildRgArgs(args, target.searchTarget);
+      const rgArgs = buildRgArgs(args);
       const result = await runCommand(rgPath, rgArgs, {
-        cwd: target.cwd,
+        cwd: args.path,
         timeoutMs: args.timeoutMs,
         signal: ctx.signal,
       });
@@ -209,49 +194,7 @@ function parseArgs(
   };
 }
 
-interface SearchTarget {
-  /** Directory the ripgrep child process is spawned in. Always a directory. */
-  cwd: string;
-  /** Positional target handed to ripgrep, relative to `cwd`. */
-  searchTarget: string;
-}
-
-/**
- * Work out where to spawn ripgrep and what to point it at.
- *
- * `spawn` requires `cwd` to be a directory, so passing a file path straight
- * through fails with `ENOTDIR` before ripgrep ever runs. A file is therefore
- * searched from its parent directory, with the file name as the positional
- * target; a directory keeps the previous behaviour (`cwd` = the directory,
- * target = `.`) so glob and type filters resolve the same way as before.
- */
-async function resolveSearchTarget(
-  path: string,
-  workingDir: string,
-): Promise<SearchTarget> {
-  let info;
-  try {
-    info = await stat(path);
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "ENOTDIR") {
-      throw new Error(`os.fs.grep: path does not exist: ${path}`);
-    }
-    throw new Error(
-      `os.fs.grep: cannot access path ${path}: ${(err as Error).message}`,
-    );
-  }
-  if (info.isDirectory()) {
-    return { cwd: path, searchTarget: "." };
-  }
-  const parent = dirname(path);
-  // `dirname` of a filesystem root returns the root itself; fall back to the
-  // working directory only when the parent is somehow unusable.
-  const cwd = parent.length > 0 ? parent : workingDir;
-  return { cwd, searchTarget: basename(path) };
-}
-
-function buildRgArgs(args: GrepArgs, searchTarget: string): string[] {
+function buildRgArgs(args: GrepArgs): string[] {
   const rg: string[] = ["--json"];
   if (args.caseInsensitive) rg.push("-i");
   if (args.multiline) {
@@ -264,7 +207,7 @@ function buildRgArgs(args: GrepArgs, searchTarget: string): string[] {
     rg.push("--glob", g);
   }
   if (args.type) rg.push("--type", args.type);
-  rg.push("--", args.pattern, searchTarget);
+  rg.push("--", args.pattern, ".");
   return rg;
 }
 

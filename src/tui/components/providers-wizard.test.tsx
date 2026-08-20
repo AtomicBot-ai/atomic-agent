@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { refreshAimlapiChatCatalogFromApi } from "../../llm/provider/aimlapi/fetch-aimlapi-chat-catalog.js";
 import { refreshOpenRouterChatCatalogFromApi } from "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
+import { OPENAI_COMPAT_DEFAULT_CHAT_MODEL } from "../providers/providers-model-options.js";
 import { KIND_ROW_ORDER } from "../providers/providers-wizard-phases.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
 import type {
@@ -155,6 +156,57 @@ describe("ProvidersWizard chat model step", () => {
 
     const text = stripAnsi(lastFrame() ?? "");
     expect(text).toContain("Groq rejected this key");
+  });
+});
+
+describe("ProvidersWizard CLI-backed configure step", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("opens a claude-cli row on its model, not on a key screen", async () => {
+    // What `c` now reaches. A CLI-backed provider has no key and no
+    // endpoint, so anything but the model id would be a dead end — and
+    // the openai-compat placeholder would name a model `claude` rejects.
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { lastFrame } = render(
+      <ProvidersWizard
+        wizard={createProvidersWizardState("configure", {
+          providerId: "claude-cli",
+          kind: "claude-cli",
+          chatModel: "opus",
+        })}
+      />,
+    );
+    await flush();
+
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("Chat model id — claude CLI");
+    expect(text).toContain("opus");
+    expect(text).toContain("the CLI uses its own session");
+    // The key screen's own copy, absent because that phase is skipped.
+    expect(text).not.toContain("Saved to");
+    expect(text).not.toContain(OPENAI_COMPAT_DEFAULT_CHAT_MODEL);
+    // No endpoint exists behind the CLI; listing must not be attempted.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("tells a codex-cli operator that an empty line is the answer", async () => {
+    const { lastFrame } = render(
+      <ProvidersWizard
+        wizard={createProvidersWizardState("configure", {
+          providerId: "codex-cli",
+          kind: "codex-cli",
+        })}
+      />,
+    );
+    await flush();
+
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("Chat model id — codex CLI");
+    expect(text).toContain("the CLI resolves the model");
   });
 });
 
