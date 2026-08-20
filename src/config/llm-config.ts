@@ -19,6 +19,15 @@ export type UserLlmProviderEntry = {
   defaultChatModel?: string;
   defaultEmbeddingModel?: string;
   headers?: Record<string, string>;
+  /**
+   * Header that carries this entry's API key. Set for known-service
+   * presets whose endpoint does not accept `Authorization: Bearer`
+   * (Anthropic wants `x-api-key`). Absent keeps the OpenAI convention.
+   * Stored on the entry rather than looked up from the preset table at
+   * request time, so a saved provider keeps authenticating after a
+   * restart and a hand-written entry can express the same thing.
+   */
+  apiKeyHeader?: string;
   supportsTools?: boolean;
   supportsVision?: boolean;
   requestTimeoutMs?: number;
@@ -187,6 +196,10 @@ export function parseLlmProviderEntry(
       `${field}.defaultEmbeddingModel`,
     ),
     headers: parseOptionalHeaders(obj.headers, `${field}.headers`),
+    apiKeyHeader: parseOptionalString(
+      obj.apiKeyHeader,
+      `${field}.apiKeyHeader`,
+    ),
     supportsTools:
       obj.supportsTools === undefined
         ? undefined

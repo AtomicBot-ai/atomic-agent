@@ -301,6 +301,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.providers.selectEmbeddingModel(providerId, modelId),
         onProvidersWizardSubmit: (wizard) =>
           void orchestrator.providers.completeWizard(wizard),
+        onProvidersWizardSubmitCancel: () =>
+          orchestrator.providers.cancelWizardVerification(),
         onProvidersRemove: (id) =>
           void orchestrator.providers.removeProviderById(id),
         onImportPreview: (form) => orchestrator.import.preview(form),

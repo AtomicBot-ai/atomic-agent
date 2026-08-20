@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { OPENROUTER_MODELS_CATALOG } from "../../llm/provider/openrouter/openrouter-models-catalog.js";
 import { reduceTuiState } from "../agent-event-reducer.js";
 import { handleLlmPanelKey } from "../llm-panel/llm-panel-key-bindings.js";
 import { selectCloudModelSection } from "../llm-panel/llm-panel-row-builders.js";
@@ -71,6 +72,25 @@ function configWithNous(baseUrl: string): AtomicAgentConfig {
           apiKey: "sk-nous-test",
           model: "nous/bytedance",
           defaultChatModel: "nous/bytedance",
+        },
+      ],
+    },
+  } as AtomicAgentConfig;
+}
+
+function configWithOpenRouter(): AtomicAgentConfig {
+  return {
+    llm: {
+      activeTextProvider: "or",
+      activeEmbeddingProvider: "local-llama-embed",
+      toolTransport: "auto",
+      providers: [
+        {
+          id: "or",
+          kind: "openrouter",
+          apiKey: "sk-or-test",
+          model: "openrouter/auto",
+          defaultChatModel: "openrouter/auto",
         },
       ],
     },
@@ -246,7 +266,7 @@ describe("inline list open flow: /model (cold /v1/models cache)", () => {
     );
     // The provider's key must ride along on the fetch.
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
-      headers: { Authorization: "Bearer sk-nous-test" },
+      headers: { authorization: "Bearer sk-nous-test" },
     });
 
     releaseFetch();
@@ -484,5 +504,36 @@ describe("inline list flow: bare /model end to end", () => {
       "delta",
       "gamma",
     ]);
+  });
+});
+
+describe("multi-term search in the Cloud pane", () => {
+  it("narrows a curated catalog on capability terms the id does not contain", () => {
+    // The bundled OpenRouter catalog backs this pane, so every row has
+    // metadata: `qwen vision` has to match on the entry, not the id.
+    currentConfig = configWithOpenRouter();
+    const h = makeHarness();
+    h.orchestrator.refresh();
+    openLlmCloudTab(h, 0);
+
+    expect(h.press("f")).toBe(true);
+    for (const ch of "qwen") h.press(ch);
+    const qwenOnly = modelRowIds(h.store.state);
+    expect(qwenOnly.length).toBeGreaterThan(1);
+    for (const id of qwenOnly) expect(id).toMatch(/qwen/);
+
+    for (const ch of " vision") h.press(ch);
+    expect(h.store.state.llmPanel.cloudModelFilter).toBe("qwen vision");
+    const narrowed = modelRowIds(h.store.state);
+    expect(narrowed.length).toBeGreaterThan(0);
+    expect(narrowed.length).toBeLessThan(qwenOnly.length);
+    for (const id of narrowed) {
+      expect(id).toMatch(/qwen/);
+      expect(OPENROUTER_MODELS_CATALOG.get(id)?.supportsVision).toBe(true);
+    }
+
+    // A term nothing satisfies empties the list rather than ignoring it.
+    for (const ch of " free") h.press(ch);
+    expect(modelRowIds(h.store.state)).toEqual([]);
   });
 });

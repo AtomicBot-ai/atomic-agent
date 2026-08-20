@@ -36,6 +36,30 @@ function blankRows(count: number): ReactElement[] {
   ));
 }
 
+/**
+ * True when one of the boxes below owns the screen.
+ *
+ * `handleLlmModalKey` returns non-null for exactly these states, i.e.
+ * the panel behind a modal cannot be driven while one is open. It must
+ * therefore not be DRAWN either: the panel already spends the whole tab
+ * budget, so drawing a modal on top of it is a frame taller than the
+ * terminal, and Ink 7 resolves that by overwriting earlier lines rather
+ * than clipping. Callers use this to hand the modal the full budget and
+ * render nothing else.
+ */
+export function hasLlmModal(state: TuiState): boolean {
+  return (
+    state.providersPanel.wizard !== null ||
+    state.providersPanel.removeConfirm !== null ||
+    state.localModelsPanel.embeddingOnboardingPrompt !== null ||
+    state.localModelsPanel.removeConfirmId !== null ||
+    state.localModelsPanel.embeddingRemoveConfirmId !== null ||
+    state.providersPanel.chatModelPicker !== null ||
+    state.llmPanel.externalUrlDraft !== null ||
+    state.llmPanel.stopLocalDaemonsPrompt !== null
+  );
+}
+
 export function LlmPanelModals({
   state,
   maxRows,
@@ -44,7 +68,12 @@ export function LlmPanelModals({
   maxRows?: number;
 }): ReactElement | null {
   if (state.providersPanel.wizard) {
-    return <ProvidersWizard wizard={state.providersPanel.wizard} />;
+    return (
+      <ProvidersWizard
+        wizard={state.providersPanel.wizard}
+        {...(maxRows === undefined ? {} : { maxRows })}
+      />
+    );
   }
   if (state.providersPanel.removeConfirm) {
     return (

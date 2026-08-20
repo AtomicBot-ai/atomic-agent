@@ -11,6 +11,9 @@ import { reduceTuiState } from "./agent-event-reducer.js";
 import type { ApprovalGrantScope } from "../approval/approval-gate.js";
 import type { TuiAction } from "./tui-action.js";
 import { handleAppKey, handlePanelEscape } from "./app-key-bindings.js";
+import { APP_CHROME_ROWS } from "./components/debug-pane.js";
+import { MenuPopup } from "./menu/menu-popup.js";
+import type { MenuNode } from "./menu/menu-registry.js";
 import { ApprovalModal } from "./approval-modal.js";
 import { ChatLog } from "./components/chat-log.js";
 import { DebugPane } from "./components/debug-pane.js";
@@ -22,6 +25,7 @@ import { ThemePicker } from "./components/theme-picker.js";
 import {
   isThemeName,
   setActiveTheme,
+  setBackdropDimmed,
   theme,
   THEME_NAMES,
   THEMES,
@@ -35,9 +39,14 @@ import { UpdateModal } from "./components/update-modal.js";
 import { UpdateIndicator } from "./components/update-indicator.js";
 import { UpdateRestartPrompt } from "./components/update-restart-prompt.js";
 import { useTerminalSize } from "./hooks/use-terminal-size.js";
+import {
+  computeSidebarRowBudget,
+  computeSidebarWidth,
+  isSidebarVisible,
+} from "./layout.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { slashPrefix } from "./commands/slash-command-parser.js";
-import { handleEditorSubmit } from "./submit-handler.js";
+import { handleEditorSubmit, runSlashCommand } from "./submit-handler.js";
 import type { TaskCreateKind } from "./tasks/tasks-panel-state.js";
 import type { TaskSchedule } from "../tasks/task-types.js";
 import {
@@ -261,6 +270,8 @@ export interface TuiAppCallbacks {
   onMcpRemoveServer?(name: string): void;
   /** Providers tab: finish the add/configure wizard. */
   onProvidersWizardSubmit?(wizard: import("./providers/providers-wizard-state.js").ProvidersWizardState): void;
+  /** Providers tab: abandon a running pre-save key check. */
+  onProvidersWizardSubmitCancel?(): void;
   /** Providers tab: remove a provider by id from config + registry. */
   onProvidersRemove?(id: string): void;
   /** Slash-command surface: enable a skill explicitly (`/skill enable <name>`). */
@@ -344,15 +355,13 @@ export interface TuiAppProps {
 
 const DEFAULT_MAX_VISIBLE_ROWS = 14;
 const CTRL_C_WINDOW_MS = 1500;
-
 /**
- * Minimum terminal width (in columns) at which the right-rail sidebar
- * is rendered. Narrower terminals collapse the layout back to the
- * single-column form so cramped sessions over SSH stay usable. Picked
- * to match opencode's threshold.
+ * How long a `ctrl+g` leader waits for its chord before disarming itself.
+ * The same window as Ctrl+C on purpose — both are "you started a two-key
+ * gesture, finish it" timers, and an armed leader is not free to leave
+ * pending: it unfocuses the editor and eats the next keystroke.
  */
-const SIDEBAR_MIN_COLUMNS = 100;
-const SIDEBAR_WIDTH = 30;
+const MENU_LEADER_WINDOW_MS = CTRL_C_WINDOW_MS;
 
 /**
  * Rotating placeholder pool shown in the prompt's empty state. Phrasing
@@ -380,7 +389,9 @@ export function TuiApp({
   );
   const app = useApp();
   const [ctrlCArmed, setCtrlCArmed] = useState(false);
+  const [menuLeaderArmed, setMenuLeaderArmed] = useState(false);
   const ctrlCTimer = useRef<NodeJS.Timeout | null>(null);
+  const menuLeaderTimer = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => bus.subscribe(dispatch), [bus]);
 
@@ -461,6 +472,19 @@ export function TuiApp({
     };
   }, [ctrlCArmed]);
 
+  // A leader that is never followed by a chord must not stay armed: it
+  // holds the editor unfocused and swallows whatever is typed next.
+  useEffect(() => {
+    if (!menuLeaderArmed) return;
+    menuLeaderTimer.current = setTimeout(
+      () => setMenuLeaderArmed(false),
+      MENU_LEADER_WINDOW_MS,
+    );
+    return () => {
+      if (menuLeaderTimer.current) clearTimeout(menuLeaderTimer.current);
+    };
+  }, [menuLeaderArmed]);
+
   const tasksTabActive =
     state.uiMode === "debug" && state.activeTab === "tasks";
   const skillsTabActive =
@@ -482,9 +506,19 @@ export function TuiApp({
     state.uiMode === "debug" && state.activeTab === "privacy";
   const terminalSize = useTerminalSize();
   const sidebarVisible =
-    state.uiMode === "chat" && terminalSize.columns >= SIDEBAR_MIN_COLUMNS;
+    state.uiMode === "chat" &&
+    isSidebarVisible(terminalSize.columns, terminalSize.rows);
+  // The rail takes a share of the terminal rather than a flat 30
+  // columns, and its two panes get a row budget cut from the terminal
+  // height — Ink 7 overlaps rather than clips an over-tall frame, so
+  // an unbudgeted rail garbles short windows. A window too short for
+  // even one row per pane drops the rail entirely.
+  const sidebarWidth = computeSidebarWidth(terminalSize.columns);
+  const sidebarRows = computeSidebarRowBudget(terminalSize.rows);
   const sidebarFocused = sidebarVisible && state.chatFocus === "sidebar";
   const editorFocus =
+    !state.menuOpen &&
+    !menuLeaderArmed &&
     !state.pendingApproval &&
     // The update offer claims y / n / Esc; keep the editor unfocused so
     // those keystrokes never leak into the input buffer. The post-update
@@ -513,14 +547,34 @@ export function TuiApp({
             state.localModelsPanel.removeConfirmId !== null)
         )));
 
-  // When the sidebar collapses below the width threshold (terminal
-  // resized smaller), focus must follow back to the editor so Tab does
-  // not strand the operator on an invisible surface.
+  // When the sidebar collapses below the width or height threshold
+  // (terminal resized smaller), focus must follow back to the editor so
+  // Tab does not strand the operator on an invisible surface.
   useEffect(() => {
     if (!sidebarVisible && state.chatFocus === "sidebar") {
       dispatch({ type: "chat_focus_set", focus: "editor" });
     }
   }, [sidebarVisible, state.chatFocus]);
+
+  const activateMenuNode = useCallback(
+    (node: MenuNode) => {
+      // A node that carries a slash name is *run as that command*, so the
+      // menu never grows a second dispatch path beside the slash handler.
+      if (node.slash) {
+        runSlashCommand(`/${node.slash.name}`, state, dispatch, callbacks);
+        return;
+      }
+      if (node.kind === "place") {
+        if (node.tab) {
+          dispatch({ type: "ui_mode_set", mode: "debug" });
+          dispatch({ type: "tab_changed", tab: node.tab });
+        } else {
+          dispatch({ type: "ui_mode_set", mode: "chat" });
+        }
+      }
+    },
+    [state, callbacks],
+  );
 
   useInput((input, key) => {
     const appHandled = handleAppKey(input, key, {
@@ -530,6 +584,9 @@ export function TuiApp({
       ctrlCArmed,
       setCtrlCArmed,
       sidebarVisible,
+      menuLeaderArmed,
+      setMenuLeaderArmed,
+      activateMenuNode,
     });
     if (appHandled) return;
     // While the slash-command palette is open, let the (now-focused)
@@ -696,8 +753,16 @@ export function TuiApp({
   // the smoke tests assert against an overlapped frame. In production
   // the alt-screen + `height={rows}` combo gives us the opencode-style
   // pinned-input-at-bottom UX.
+  // Render-phase on purpose: `theme` is a read-at-render proxy, and children
+  // render after this body runs, so the flag is already correct for them.
+  setBackdropDimmed(state.menuOpen);
+
+
   const isTty = Boolean(process.stdout.isTTY);
   const rootHeight = isTty ? terminalSize.rows : undefined;
+  // Rows the content pane actually has, so the overlay can sit on its bottom
+  // edge and cap its own height. Same budget the debug pane already uses.
+  const menuPaneRows = Math.max(6, terminalSize.rows - APP_CHROME_ROWS);
   const promptLlm = selectPromptLlmMeta(state);
   // No local backend chosen yet ⇒ no local health to report. Without this the
   // splash screen of a fresh install announces that a server the user never
@@ -735,7 +800,13 @@ export function TuiApp({
       </Box>
       <Box flexDirection="row" flexGrow={1} flexShrink={1} overflow="hidden">
         <Box flexDirection="column" flexGrow={1} overflow="hidden">
-          <Box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+          <Box
+            flexDirection="column"
+            flexGrow={1}
+            flexShrink={1}
+            overflow="hidden"
+            position="relative"
+          >
             {state.uiMode === "chat" ? (
               <ChatLog state={state} dispatch={dispatch} />
             ) : (
@@ -753,6 +824,13 @@ export function TuiApp({
                 }
               />
             )}
+            {state.menuOpen ? (
+              <MenuPopup
+                state={state}
+                availableRows={menuPaneRows}
+                availableColumns={terminalSize.columns - 4}
+              />
+            ) : null}
           </Box>
           {state.pendingApproval ? (
             <Box flexShrink={0}>
@@ -823,11 +901,17 @@ export function TuiApp({
             onHistoryPrev={onHistoryPrev}
             onHistoryNext={onHistoryNext}
           />
-          <HotkeyHint state={state} ctrlCArmed={ctrlCArmed} />
+          <HotkeyHint
+            state={state}
+            ctrlCArmed={ctrlCArmed}
+            menuLeaderArmed={menuLeaderArmed}
+          />
         </Box>
         {sidebarVisible ? (
           <Sidebar
-            width={SIDEBAR_WIDTH}
+            width={sidebarWidth}
+            maxSessionRows={sidebarRows.sessions}
+            maxTaskRows={sidebarRows.tasks}
             sessions={state.recentSessions}
             sessionsCursor={state.sidebarCursor}
             currentSessionId={state.session.sessionId}

@@ -1,6 +1,7 @@
 import { Box, Text, measureElement, type DOMElement } from "ink";
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
+import { computeChatViewportRows } from "../layout.js";
 import type { TuiAction } from "../tui-action.js";
 import type { ChatMessage, TuiState } from "../tui-state.js";
 import { theme } from "../theme/theme.js";
@@ -15,15 +16,6 @@ import { SystemBubble } from "./system-bubble.js";
 import { ThinkingIndicator } from "./thinking-indicator.js";
 import { ToolCard } from "./tool-card.js";
 import { UserBubble } from "./user-bubble.js";
-
-/**
- * Rows of "chrome" outside the chat surface: status bar + prompt
- * meta-row + prompt input + prompt tail-cap + hotkey hint + a small
- * safety pad. Used to convert `terminal.rows` into the chat-area
- * viewport height. Slightly conservative — better to leave one empty
- * row than to clip the prompt.
- */
-const CHROME_ROWS = 8;
 
 interface ChatLogProps {
   state: TuiState;
@@ -89,7 +81,10 @@ export function ChatLog({ state, dispatch }: ChatLogProps): ReactElement {
   // All hooks must run unconditionally — only the JSX branches on
   // `isEmpty`. Compute viewport / measured-K / clamp regardless,
   // even when the early return for the splash branch fires below.
-  const viewport = Math.max(5, terminalSize.rows - CHROME_ROWS);
+  const viewport = computeChatViewportRows(
+    terminalSize.rows,
+    terminalSize.columns,
+  );
   // First-frame fallback for `K` until the post-mount `measureElement`
   // call returns the truth. Estimates are unreliable (text wraps, Yoga
   // collapses some margins, reasoning blocks expand mid-turn) so we

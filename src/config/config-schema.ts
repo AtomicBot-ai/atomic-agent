@@ -714,6 +714,11 @@ export interface AtomicAgentConfig {
       defaultChatModel?: string;
       defaultEmbeddingModel?: string;
       headers?: Record<string, string>;
+      /**
+       * Header carrying this entry's API key for services that do not
+       * accept `Authorization: Bearer` (Anthropic wants `x-api-key`).
+       */
+      apiKeyHeader?: string;
       supportsTools?: boolean;
       supportsVision?: boolean;
       requestTimeoutMs?: number;

@@ -9,7 +9,7 @@ import {
 import type { LocalModelsPanelState } from "../local-models/local-models-panel-state.js";
 import { LLM_PANEL_MODES, type LlmPanelMode } from "../llm-panel/llm-panel-state.js";
 import { LlmModeRows } from "./llm-mode-rows.js";
-import { LlmPanelModals } from "./llm-panel-modals.js";
+import { hasLlmModal, LlmPanelModals } from "./llm-panel-modals.js";
 
 /**
  * Rows consumed by the full fixed chrome: RouteCard (~7) + ModeHeader (3)
@@ -47,9 +47,23 @@ export function LlmPanel({
   const useFull = maxRows >= FULL_HEADER_ROWS + FULL_HEADER_MIN_LIST;
   const headerRows = useFull ? FULL_HEADER_ROWS : COMPACT_HEADER_ROWS;
   const listBudget = Math.max(1, maxRows - headerRows);
+  // A modal takes the whole budget and the panel behind it is not drawn.
+  // The two used to be stacked, which spent the budget twice over: Ink 7
+  // does not clip an over-tall frame, it paints later lines over earlier
+  // ones, so the add-provider list arrived on screen with most of its
+  // rows overwritten by the panel underneath (reports #1 and #2). The
+  // panel is unreachable while a modal is open anyway —
+  // `handleLlmModalKey` claims every key — so nothing is lost by hiding
+  // it, and the modal finally gets a height it can size itself against.
+  if (hasLlmModal(state)) {
+    return (
+      <Box flexDirection="column" width="100%">
+        <LlmPanelModals state={state} maxRows={maxRows} />
+      </Box>
+    );
+  }
   return (
     <Box flexDirection="column" width="100%">
-      <LlmPanelModals state={state} maxRows={maxRows} />
       {/* The starting banner and active-download banners are important
           feedback — keep them visible regardless of the compact/full
           header decision. */}

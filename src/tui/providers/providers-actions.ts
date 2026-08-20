@@ -81,6 +81,7 @@ export type ProvidersAction =
   | { type: "providers_wizard_closed" }
   | { type: "providers_wizard_submit_started" }
   | { type: "providers_wizard_failed"; error: string }
+  | { type: "providers_wizard_verify_cancelled" }
   | { type: "providers_wizard_succeeded" }
   | { type: "providers_remove_opened"; id: string }
   | { type: "providers_remove_closed" }

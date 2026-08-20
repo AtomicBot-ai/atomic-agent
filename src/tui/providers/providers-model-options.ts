@@ -6,7 +6,14 @@ import {
 import { listOpenRouterChatPicks } from "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
 import { OPENROUTER_MODELS_CATALOG } from "../../llm/provider/openrouter/openrouter-models-catalog.js";
 import type { ModelCatalogEntry } from "../../llm/provider/model-resolver.js";
+import type { ModelEntryLookup } from "../../llm/provider/model-search.js";
 import { GEMINI_DEFAULT_CHAT_MODEL } from "../../llm/provider/gemini/gemini-provider.js";
+import {
+  formatCapabilitySummary,
+  formatContextWindow,
+  formatEmbeddingTokenPrice,
+  formatTokenPrice,
+} from "../../llm/provider/format-model-details.js";
 
 export type ProviderModelOption = {
   id: string;
@@ -145,54 +152,25 @@ const liveOpenRouterEntryById = createCatalogEntryResolver(
   listOpenRouterChatPicks,
 );
 
+/**
+ * Catalog lookup for a provider kind, so the Cloud pane can search on
+ * capabilities and price and not just on the id. Curated kinds resolve
+ * through the live-or-static resolvers above; `openai-compatible` and
+ * `gemini` point at operator-chosen endpoints with no bundled catalog,
+ * so they get `undefined` and search stays id-only for them.
+ */
+export function catalogEntryLookupForKind(
+  kind: string,
+): ModelEntryLookup | undefined {
+  if (kind === "openrouter") return resolveOpenRouterCatalogEntry;
+  if (kind === "aimlapi") return resolveAimlapiCatalogEntry;
+  return undefined;
+}
+
 function resolveAimlapiCatalogEntry(modelId: string): ModelCatalogEntry | undefined {
   return liveAimlapiEntryById(modelId) ?? AIMLAPI_MODELS_CATALOG.get(modelId);
 }
 
 function resolveOpenRouterCatalogEntry(modelId: string): ModelCatalogEntry | undefined {
   return liveOpenRouterEntryById(modelId) ?? OPENROUTER_MODELS_CATALOG.get(modelId);
-}
-
-function formatContextWindow(tokens: number): string {
-  if (tokens >= 1_000_000) {
-    const millions = tokens / 1_000_000;
-    return `${formatCompactNumber(millions)}M`;
-  }
-  if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}k`;
-  return `${tokens}`;
-}
-
-function formatTokenPrice(
-  modelId: string,
-  pricing: ModelCatalogEntry["pricing"],
-): string {
-  if (!pricing) return "price unknown";
-  if (modelId === "openrouter/auto") return "routed";
-  if (pricing.input === 0 && pricing.output === 0) return "free";
-  return `$${formatPrice(pricing.input)}/$${formatPrice(pricing.output)}`;
-}
-
-function formatEmbeddingTokenPrice(pricing: ModelCatalogEntry["pricing"]): string {
-  if (!pricing) return "$?";
-  if (pricing.input === 0) return "free";
-  return `$${formatPrice(pricing.input)}`;
-}
-
-function formatCapabilitySummary(entry: ModelCatalogEntry): string {
-  const modality = entry.supportsVision ? "vision" : "text";
-  const tools = entry.supportsTools === "none" ? null : "tools";
-  const cache = entry.supportsPromptCache ? "cache" : null;
-  return [modality, tools, cache].filter(Boolean).join(" · ");
-}
-
-function formatCompactNumber(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
-}
-
-function formatPrice(value: number): string {
-  if (value === 0) return "0";
-  if (value < 1) return value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
-  return Number.isInteger(value)
-    ? String(value)
-    : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
 }

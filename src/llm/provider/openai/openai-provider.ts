@@ -36,6 +36,11 @@ export interface OpenAiProviderOptions {
   apiKey: string;
   defaultChatModel: string;
   headers?: Record<string, string>;
+  /**
+   * Header that carries the API key when the service does not accept
+   * `Authorization: Bearer`. See `openai-auth-headers.ts`.
+   */
+  apiKeyHeader?: string;
   supportsVision?: boolean;
   supportsParallelTools?: boolean;
   supportsPromptCache?: boolean;
@@ -91,6 +96,7 @@ export class OpenAiProvider implements LlmProvider {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
       apiKey: options.apiKey,
       extraHeaders: options.headers ?? {},
+      ...(options.apiKeyHeader ? { apiKeyHeader: options.apiKeyHeader } : {}),
       requestTimeoutMs: options.requestTimeoutMs ?? 600_000,
       fetchImpl: options.fetchImpl ?? fetch,
       label: options.id,

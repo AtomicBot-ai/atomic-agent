@@ -26,6 +26,7 @@ import { OPENAI_COMPAT_DEFAULT_BASE_URL } from "./providers-model-options.js";
 import { isProvidersAction } from "./providers-actions.js";
 import type { ProviderRow } from "./providers-panel-state.js";
 import { saveProviderWizardToConfig } from "./save-provider-wizard.js";
+import { verifyWizardBeforeSave } from "./verify-wizard-before-save.js";
 import type {
   ProvidersWizardKind,
   ProvidersWizardState,
@@ -41,6 +42,9 @@ export class ProvidersOrchestrator {
 
   /** Backs the inline model list's stale-response guard; see `ensureInlineModels`. */
   private inlineModelsGeneration = 0;
+
+  /** Aborts the pre-save key check when the operator presses Esc. */
+  private wizardVerifyAbort: AbortController | null = null;
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -130,7 +134,10 @@ export class ProvidersOrchestrator {
     });
     try {
       const apiKey = resolveLlmProviderApiKey(provider) ?? undefined;
-      const models = await fetchOpenAiCompatModels(baseUrl, apiKey);
+      // `fileEntry` carries this service's header contract
+      // (`apiKeyHeader` / `headers`) when it came from a preset, so
+      // discovery authenticates exactly the way chat turns will.
+      const models = await fetchOpenAiCompatModels(baseUrl, apiKey, fileEntry);
       this.bus.emit({
         type: "providers_chat_model_picker_loaded",
         generation,
@@ -181,7 +188,7 @@ export class ProvidersOrchestrator {
       const models =
         provider.kind === "gemini"
           ? await fetchGeminiModels(apiKey)
-          : await fetchOpenAiCompatModels(baseUrl, apiKey);
+          : await fetchOpenAiCompatModels(baseUrl, apiKey, fileEntry);
       this.bus.emit({
         type: "providers_inline_models_loaded",
         providerId: id,
@@ -323,9 +330,37 @@ export class ProvidersOrchestrator {
     }
   }
 
+  /**
+   * Abandon the key check a `completeWizard` call is waiting on. The
+   * wizard reopens for editing; nothing has been written by this point,
+   * because the check runs before the save.
+   */
+  cancelWizardVerification(): void {
+    if (!this.wizardVerifyAbort) return;
+    this.wizardVerifyAbort.abort();
+    this.wizardVerifyAbort = null;
+    this.bus.emit({ type: "providers_wizard_verify_cancelled" });
+  }
+
   async completeWizard(wizard: ProvidersWizardState): Promise<void> {
     this.bus.emit({ type: "providers_wizard_submit_started" });
+    const abort = new AbortController();
+    this.wizardVerifyAbort = abort;
     try {
+      // The key is checked against the service before anything reaches
+      // disk: a dead or unfunded key used to be written to .env and made
+      // the active provider, and only failed on the first real message.
+      const gate = await verifyWizardBeforeSave(wizard, { signal: abort.signal });
+      // A cancel already put the wizard back in an editable state; a
+      // late verdict from the abandoned check must not overwrite it.
+      if (abort.signal.aborted) return;
+      // The check is over; from here Esc has nothing to cancel and must
+      // not interrupt the save that follows.
+      this.wizardVerifyAbort = null;
+      if (!gate.proceed) {
+        this.bus.emit({ type: "providers_wizard_failed", error: gate.error });
+        return;
+      }
       const built = saveProviderWizardToConfig(wizard);
       const exists = this.runtime.providerRegistry
         .listIds()
@@ -339,6 +374,12 @@ export class ProvidersOrchestrator {
       await this.setActiveText(built.entry.id);
 
       this.bus.emit({ type: "providers_wizard_succeeded" });
+      if (gate.warning) {
+        // Saved, but the key was never proven. Say so where the operator
+        // will see it rather than letting the first chat message find out.
+        this.bus.emit({ type: "providers_status", line: gate.warning });
+        this.bus.emit({ type: "runtime_info", line: gate.warning });
+      }
       this.bus.emit({
         type: "runtime_info",
         line: `Active text provider: ${built.entry.id} (${built.entry.defaultChatModel ?? "default model"}). Chat uses cloud native tools now.`,
@@ -349,6 +390,8 @@ export class ProvidersOrchestrator {
         type: "providers_wizard_failed",
         error: wrapLlmConfigError(err),
       });
+    } finally {
+      if (this.wizardVerifyAbort === abort) this.wizardVerifyAbort = null;
     }
   }
 
