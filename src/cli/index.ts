@@ -10,6 +10,7 @@ import { traceCommand } from "./trace-command.js";
 import { taskCommand } from "./task-command.js";
 import { modelsCommand } from "./models-command.js";
 import { importCommand } from "./import-command.js";
+import { updateCommand } from "./update-command.js";
 import { tuiCommand } from "../tui/index.js";
 import { getAppVersion } from "../version.js";
 
@@ -104,6 +105,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "import",
     summary: "Import conversation history + cron jobs from another agent (hermes)",
     run: importCommand,
+  },
+  {
+    name: "update",
+    summary: "Self-update the installed binary from GitHub Releases (--check to probe only)",
+    run: updateCommand,
   },
 ];
 
