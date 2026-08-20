@@ -93,7 +93,46 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
     );
   });
 
-  it("does not start when the update failed and no usable backend remains", async () => {
+  // `autoStartIfReady` runs the update check itself and then delegates to
+  // `startDaemon`, which runs the same check — a TUI launch used to hit
+  // GitHub twice (against a ~60 req/h anonymous budget) and start two
+  // passes racing on the same `backend.next` staging dir. The flag below
+  // is what keeps it to one; these tests fail if it stops being passed.
+  it("checks for a backend update exactly once per start", async () => {
+    prepareManagedInstall();
+    vi.mocked(localLlm.maybeAutoUpdateBackend).mockResolvedValue({
+      action: "current",
+      tag: "turboquant-07b9908",
+    });
+
+    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const startDaemon = vi
+      .spyOn(orchestrator, "startDaemon")
+      .mockResolvedValue(true);
+    vi.spyOn(orchestrator, "refresh").mockResolvedValue();
+    vi.mocked(localLlm.getDaemonStatus).mockResolvedValue({
+      running: false,
+      healthy: false,
+      loading: false,
+      pid: null,
+      port: 19091,
+    });
+
+    await orchestrator.autoStartIfReady();
+
+    expect(localLlm.maybeAutoUpdateBackend).toHaveBeenCalledTimes(1);
+    expect(startDaemon).toHaveBeenCalledWith({ backendAlreadyChecked: true });
+  });
+
+  // The flag must be opt-in: a bare `startDaemon()` (the `s` key, or a
+  // restart after a model switch) is the only update check on that path,
+  // so defaulting it to "already checked" would silently disable
+  // auto-update everywhere except TUI launch.
+  // Complements the flag test above: that one mocks `startDaemon`, so it
+  // only proves the flag is PASSED. This one calls the real method with
+  // the flag set and proves it is HONOURED — without it, the guard clause
+  // could be deleted and the pair would still look green.
+  it("skips the check when startDaemon is told the backend was checked", async () => {
     prepareManagedInstall();
     vi.mocked(localLlm.maybeAutoUpdateBackend).mockResolvedValue({
       action: "update_failed",
@@ -101,21 +140,32 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
       backendUsable: false,
     });
 
-    const actions: Emitted[] = [];
-    const orchestrator = new LocalModelsOrchestrator({
-      emit(a: unknown) {
-        actions.push(a as Emitted);
-      },
-    });
-    vi.spyOn(orchestrator, "startDaemon").mockResolvedValue(true);
+    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 
-    await orchestrator.autoStartIfReady();
+    // With the check skipped there is nothing to bail on, so the start
+    // proceeds past the point where `backendUsable: false` would stop it.
+    await orchestrator.startDaemon({ backendAlreadyChecked: true });
 
-    expect(orchestrator.startDaemon).not.toHaveBeenCalled();
-    expect(actions.map((a) => a.line).filter(Boolean)).toContain(
-      "local-llm: backend update failed and no usable backend remains — disk full",
-    );
+    expect(localLlm.maybeAutoUpdateBackend).not.toHaveBeenCalled();
+  });
+
+  it("still checks when startDaemon is invoked without the flag", async () => {
+    prepareManagedInstall();
+    vi.mocked(localLlm.maybeAutoUpdateBackend).mockResolvedValue({
+      action: "update_failed",
+      error: "disk full",
+      backendUsable: false,
+    });
+
+    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    vi.spyOn(orchestrator, "refresh").mockResolvedValue();
+
+    // `backendUsable: false` makes startDaemon bail before spawning, so
+    // this exercises the check without launching a real llama-server.
+    await expect(orchestrator.startDaemon()).resolves.toBe(false);
+
+    expect(localLlm.maybeAutoUpdateBackend).toHaveBeenCalledTimes(1);
   });
 
   /** Managed mode with backend + chat model already on disk. */

@@ -1590,10 +1590,12 @@ export type RewriterGateMode = "heuristic" | "embedding" | "always";
  * v32→v33 added the optional `analytics.*` block (anonymous PostHog
  * product analytics — opt-out via `analytics.enabled: false`). Older
  * files inherit `analytics: { enabled: true }` transparently.
- * v37→v38 wired `localModels.managed.autoUpdate` (default `true`):
+ * v40→v41 wired `localModels.managed.autoUpdate` (default `true`):
  * managed start pulls a newer llama.cpp zip from GitHub Releases when
- * one exists. Pre-v38 files that stored the unused `false` default
- * migrate to `true`; an explicit `false` on a v38+ file is honoured.
+ * one exists. Pre-v41 the field was stored but never read, so a `false`
+ * there carried no meaning and is migrated to `true` — including one a
+ * user set deliberately, since the two are indistinguishable on disk.
+ * An explicit `false` on a v41+ file is honoured.
  * Older files are transparently upgraded by filling missing
  * blocks/fields from `USER_CONFIG_DEFAULTS`. Anything older than v5
  * is not migrated: this is active development, callers delete their

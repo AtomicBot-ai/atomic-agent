@@ -237,6 +237,10 @@ export async function runLocalModelsStart(): Promise<number> {
       process.stderr.write(
         `note: backend update check failed — starting current binary (${auto.error})\n`,
       );
+    } else if (auto.action === "deferred") {
+      process.stderr.write(
+        "note: backend update deferred — another session is using the current binary\n",
+      );
     } else if (auto.action === "update_failed") {
       if (process.stderr.isTTY) process.stderr.write("\n");
       if (!auto.backendUsable) {

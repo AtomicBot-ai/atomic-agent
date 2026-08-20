@@ -118,8 +118,10 @@ export class LocalModelsOrchestrator {
    * `pullEmbeddingModel` `await this.pullBackend()` when the backend is
    * missing; without this a chat pull and an embedding pull started at the
    * same time would launch two concurrent `downloadBackend()` calls that
-   * wipe + extract into the same `<dataDir>/backend/` directory, corrupting
-   * the install. Concurrent callers share the same in-flight promise.
+   * race on the same `<dataDir>/backend.next` staging dir — each clears it
+   * before extracting, so the loser's tree is deleted mid-write and the
+   * winner can swap in a partial install. Concurrent callers share the
+   * same in-flight promise.
    */
   private backendPullInFlight: Promise<void> | null = null;
   /**
@@ -802,7 +804,16 @@ export class LocalModelsOrchestrator {
     });
   }
 
-  async startDaemon(): Promise<boolean> {
+  /**
+   * @param opts.backendAlreadyChecked set by callers that ran
+   * `applyBackendAutoUpdate` themselves. Without it a TUI launch
+   * checks GitHub twice per start — two hits against the ~60 req/h
+   * anonymous budget, and two passes racing on the same
+   * `backend.next` staging dir.
+   */
+  async startDaemon(opts?: {
+    backendAlreadyChecked?: boolean;
+  }): Promise<boolean> {
     const cfg = getConfig();
     if (cfg.localModels.mode !== "managed") {
       this.bus.emit({
@@ -838,7 +849,7 @@ export class LocalModelsOrchestrator {
       });
       return false;
     }
-    if (!justPulledBackend) {
+    if (!justPulledBackend && !opts?.backendAlreadyChecked) {
       const updated = await this.applyBackendAutoUpdate(dataDir);
       if (!updated) return false;
     }
@@ -1556,6 +1567,11 @@ export class LocalModelsOrchestrator {
           type: "runtime_info",
           line: `local-llm: backend update check failed — starting current binary (${result.error})`,
         });
+      } else if (result.action === "deferred") {
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: backend update deferred — another session is using the current binary`,
+        });
       } else if (result.action === "update_failed") {
         this.bus.emit({
           type: "local_models_pull_failed",
@@ -1624,7 +1640,8 @@ export class LocalModelsOrchestrator {
       await this.refresh();
       return;
     }
-    await this.startDaemon();
+    // The update check already ran above; `startDaemon` must not repeat it.
+    await this.startDaemon({ backendAlreadyChecked: true });
   }
 
   /**
