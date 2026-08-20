@@ -303,6 +303,13 @@ export interface TuiState {
    * the newest entry at the end.
    */
   inputHistoryCursor: number | null;
+  /**
+   * The half-written draft that was in the editor when history recall
+   * started, parked so Down can hand it back. `null` whenever the editor
+   * is showing the live buffer — recall always stashes before it
+   * overwrites, and any real edit to a recalled entry drops the stash.
+   */
+  inputHistoryDraft: string | null;
   /** Is the slash-command overlay currently visible below the editor? */
   slashPaletteOpen: boolean;
   /** Current slash prefix (characters typed after the leading `/`). */
@@ -497,6 +504,7 @@ export function createInitialTuiState(
     inputValue: "",
     inputHistory: [],
     inputHistoryCursor: null,
+    inputHistoryDraft: null,
     slashPaletteOpen: false,
     slashQuery: "",
     slashPaletteCursor: 0,

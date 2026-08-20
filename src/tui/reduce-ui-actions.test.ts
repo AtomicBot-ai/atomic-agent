@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { reduceTuiState } from "./agent-event-reducer.js";
 import { reduceUiAction } from "./reduce-ui-actions.js";
 import { THEME_NAMES } from "./theme/theme.js";
 import { createInitialTuiState, type TuiSessionInfo } from "./tui-state.js";
@@ -83,5 +84,40 @@ describe("reduceUiAction theme picker", () => {
     const closed = reduceUiAction(open, { type: "theme_picker_closed" });
     expect(closed?.themePickerOpen).toBe(false);
     expect(closed?.themePickerOriginal).toBe("");
+  });
+});
+
+describe("input history navigation", () => {
+  const withHistory = (draft: string) => ({
+    ...createInitialTuiState(SESSION),
+    inputHistory: ["first", "second"],
+    inputValue: draft,
+  });
+
+  it("preserves the in-progress draft when Up recalls history", () => {
+    const state = withHistory("draft I am typing");
+    const up = reduceTuiState(state, { type: "input_history_navigated", delta: -1 });
+    expect(up.inputValue).toBe("second");
+    const back = reduceTuiState(up, { type: "input_history_navigated", delta: 1 });
+    expect(back.inputValue).toBe("draft I am typing");
+  });
+
+  it("keeps the history cursor when the caret moves without editing", () => {
+    const state = withHistory("draft");
+    const up = reduceTuiState(state, { type: "input_history_navigated", delta: -1 });
+    expect(up.inputHistoryCursor).toBe(1);
+    const caret = reduceTuiState(up, { type: "input_changed", value: "second" });
+    expect(caret.inputHistoryCursor).toBe(1);
+    const older = reduceTuiState(caret, { type: "input_history_navigated", delta: -1 });
+    expect(older.inputValue).toBe("first");
+  });
+
+  it("drops the stashed draft once the recalled entry is edited", () => {
+    const state = withHistory("draft");
+    const up = reduceTuiState(state, { type: "input_history_navigated", delta: -1 });
+    const edited = reduceTuiState(up, { type: "input_changed", value: "second!" });
+    expect(edited.inputHistoryCursor).toBeNull();
+    const down = reduceTuiState(edited, { type: "input_history_navigated", delta: 1 });
+    expect(down.inputValue).toBe("second!");
   });
 });

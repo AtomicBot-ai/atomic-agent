@@ -128,6 +128,7 @@ export function appendUserMessage(state: TuiState, text: string): TuiState {
     ...withMessage,
     inputHistory: history,
     inputHistoryCursor: null,
+    inputHistoryDraft: null,
   };
 }
 
@@ -176,6 +177,7 @@ export function startNewRun(state: TuiState): TuiState {
     lastRunStatus: null,
     inputValue: "",
     inputHistoryCursor: null,
+    inputHistoryDraft: null,
     slashPaletteOpen: false,
     slashQuery: "",
     slashPaletteCursor: 0,

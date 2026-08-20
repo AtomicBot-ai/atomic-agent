@@ -124,8 +124,6 @@ export function reduceUiAction(
     }
     case "input_history_navigated":
       return navigateInputHistory(state, action.delta);
-    case "input_history_reset":
-      return { ...state, inputHistoryCursor: null };
     case "chat_cleared":
       return {
         ...state,
@@ -256,13 +254,23 @@ function navigateInputHistory(state: TuiState, delta: 1 | -1): TuiState {
   // buffer (Down). Cursor value equals the history index shown.
   let cursor: number | null;
   if (state.inputHistoryCursor === null) {
-    cursor = delta === -1 ? max : null;
+    // Down on the live buffer has nowhere to go — leave the draft alone.
+    if (delta === 1) return state;
+    cursor = max;
   } else {
     const candidate = state.inputHistoryCursor + delta;
     if (candidate < 0) return state;
     if (candidate > max) cursor = null;
     else cursor = candidate;
   }
-  const value = cursor === null ? "" : (history[cursor] ?? "");
-  return { ...state, inputHistoryCursor: cursor, inputValue: value };
+  // Entering recall parks the live draft; stepping back past the newest
+  // entry hands it back verbatim instead of clearing the editor.
+  const draft = state.inputHistoryCursor === null ? state.inputValue : state.inputHistoryDraft;
+  const value = cursor === null ? (draft ?? "") : (history[cursor] ?? "");
+  return {
+    ...state,
+    inputHistoryCursor: cursor,
+    inputHistoryDraft: cursor === null ? null : draft,
+    inputValue: value,
+  };
 }
