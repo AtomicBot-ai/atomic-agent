@@ -168,7 +168,16 @@ export class ToolLoopTracker {
     }
     if (isWanderingProneTool(tool)) {
       const spread = this.effectiveSpread(tool, argsHash);
-      if (spread >= this.wanderingThreshold) {
+      // The spread is a property of the whole window, so it stays above the
+      // threshold after the model stops varying its argument and settles on
+      // repeating one. Classifying THIS call as wandering would then tell it
+      // "N different attempts" about a call that is a verbatim repeat -- the
+      // same kind of false statement the wandering wording exists to avoid.
+      // A repeat falls through to the repeat detector, which describes it
+      // accurately.
+      const repeatsEarlierCall =
+        getRepeatCount(this.history, tool, argsHash) > 0;
+      if (spread >= this.wanderingThreshold && !repeatsEarlierCall) {
         return {
           level: "warn",
           count: spread,
@@ -571,19 +580,29 @@ function canonicalJson(value: unknown): string {
 export function formatRepeatNotice(verdict: {
   count: number;
   tool: string;
+  target?: string;
 }): string {
-  return formatLoopGuidance(verdict.tool, verdict.count, "notice");
+  return formatLoopGuidance(verdict.tool, verdict.count, "notice", verdict);
 }
 
 /**
  * Body of the synthetic veto tool result (critical). Same class-aware
  * guidance as the notice, plus an explicit "do not repeat" instruction.
+ *
+ * `target` names the invariant that stayed the same across the blocked
+ * attempts (host for web/HTTP calls, command name for shell). `detector`
+ * distinguishes a true no-progress repeat from a `wandering` escalation
+ * riding the same veto path — the two need opposite wording, because a
+ * wandering `count` is a spread of DISTINCT arguments, not a run of
+ * identical outcomes.
  */
 export function formatVetoInstruction(verdict: {
   count: number;
   tool: string;
+  target?: string;
+  detector?: LoopCheckVerdict["detector"];
 }): string {
-  return formatLoopGuidance(verdict.tool, verdict.count, "veto");
+  return formatLoopGuidance(verdict.tool, verdict.count, "veto", verdict);
 }
 
 /**
@@ -629,27 +648,65 @@ function formatLoopGuidance(
   tool: string,
   count: number,
   mode: "notice" | "veto",
+  context: {
+    target?: string;
+    detector?: LoopCheckVerdict["detector"];
+  } = {},
 ): string {
-  const header =
-    mode === "veto"
-      ? `BLOCKED: \`${tool}\` was vetoed as a no-progress loop (${count} identical no-progress outcomes).`
-      : `You called \`${tool}\` with the same arguments ${count} times and neither the result nor the world snapshot changed.`;
+  const target = sanitizeLoopTarget(context.target);
+  const wandering = context.detector === "wandering";
 
-  const webHint =
-    tool === "os.web.fetch" || tool === "os.http.request"
-      ? "- The URL may be dead or returning an HTTP error — read the status in the tool result and try a different source, endpoint, or search query."
-      : null;
+  let header: string;
+  if (mode === "veto" && wandering) {
+    // Wandering: `count` is a spread of DISTINCT arguments, so calling
+    // these "identical outcomes" would be flatly wrong.
+    header = target
+      ? `BLOCKED: \`${tool}\` — ${count} different attempts against \`${target}\` and still no answer.`
+      : `BLOCKED: \`${tool}\` — ${count} different attempts and still no answer.`;
+  } else if (mode === "veto" && count > 1) {
+    header = target
+      ? `BLOCKED: \`${tool}\` — ${count} consecutive calls to \`${target}\` returned the same no-progress outcome.`
+      : `BLOCKED: \`${tool}\` — ${count} consecutive calls returned the same no-progress outcome.`;
+  } else if (mode === "veto") {
+    // The breaker can fire on a verdict that carries no streak of its own
+    // (a wandering episode the model ended by settling on one argument).
+    // State only what is certainly true rather than quoting a count that
+    // would read as "0 consecutive calls".
+    header = target
+      ? `BLOCKED: \`${tool}\` — repeated calls to \`${target}\` are not making progress.`
+      : `BLOCKED: \`${tool}\` — repeated calls are not making progress.`;
+  } else {
+    header = target
+      ? `You called \`${tool}\` on \`${target}\` ${count} times with the same arguments and neither the result nor the world snapshot changed.`
+      : `You called \`${tool}\` with the same arguments ${count} times and neither the result nor the world snapshot changed.`;
+  }
+
+  // Actionable alternative, modelled on the wandering redirect: name the
+  // next move, do not restate the failure mode.
+  let webHint: string | null = null;
+  if (tool === "os.web.fetch" || tool === "os.http.request") {
+    if (wandering && target) {
+      webHint = `- Stop guessing URLs on \`${target}\`. Run \`os.web.search\` for the fact you need and fetch a result from a DIFFERENT host.`;
+    } else if (target) {
+      webHint = `- Run \`os.web.search\` for the fact you need and fetch a result from a DIFFERENT host — stop retrying \`${target}\`. The URL may be dead or returning an HTTP error; read the status in the tool result.`;
+    } else {
+      webHint =
+        "- Run `os.web.search` for the fact you need, then fetch one URL from the results — do not keep guessing URLs. The URL may be dead or returning an HTTP error; read the status in the tool result.";
+    }
+  }
   const browserHint = tool.startsWith("browser.")
     ? "- Re-read `### world` — the answer may already be on the page. Try `browser.scroll`, a different element, or `browser.navigate` to a more direct URL. An `[expanded]` element is already open."
     : null;
   const shellHint =
     tool.startsWith("os.shell.") || tool.startsWith("os.fs.")
-      ? "- Change the command, path, or arguments — repeating the same invocation will not produce a different result."
+      ? target
+        ? `- \`${target}\` will not behave differently on a re-run — change the arguments or path, or use a different command entirely.`
+        : "- Change the command, path, or arguments — repeating the same invocation will not produce a different result."
       : null;
 
   const lines = [
     header,
-    "This is a no-progress loop. Change strategy BEFORE calling any tool again:",
+    "Change strategy BEFORE calling any tool again:",
     webHint,
     browserHint,
     shellHint,
@@ -660,4 +717,60 @@ function formatLoopGuidance(
   ].filter((line): line is string => line !== null);
 
   return lines.join("\n");
+}
+
+/**
+ * Defensive cleanup for a caller-supplied invariant label before it is
+ * echoed into model context: single line, no backticks (they would break
+ * the surrounding code span), length-capped. Returns `undefined` for
+ * anything empty so callers degrade to the generic wording.
+ */
+function sanitizeLoopTarget(raw: string | undefined): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const cleaned = raw.replace(/[`\r\n]+/g, " ").trim();
+  if (cleaned.length === 0) return undefined;
+  return cleaned.length > 60 ? `${cleaned.slice(0, 57)}...` : cleaned;
+}
+
+/**
+ * Extract the invariant that stayed the same across a loop's blocked
+ * attempts, for use as the `target` label in guidance messages.
+ *
+ * Deliberately coarse: web/HTTP calls collapse to the URL's HOST and
+ * shell calls to the leading command word, so no query parameters,
+ * credentials, paths, or other potentially sensitive argument content
+ * reaches the model context. Returns `undefined` when nothing meaningful
+ * can be extracted, so the caller falls back to the generic wording.
+ * Never throws on malformed args.
+ */
+export function extractLoopTarget(
+  tool: string,
+  args: unknown,
+): string | undefined {
+  if (args === null || typeof args !== "object") return undefined;
+  const record = args as Record<string, unknown>;
+
+  if (tool === "os.web.fetch" || tool === "os.http.request") {
+    const raw = record.url ?? record.uri ?? record.endpoint;
+    if (typeof raw !== "string" || raw.length === 0) return undefined;
+    const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw)
+      ? raw
+      : `https://${raw}`;
+    try {
+      const host = new URL(candidate).hostname;
+      return host.length > 0 ? host : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  if (tool === "os.shell.run") {
+    const raw = record.command ?? record.cmd;
+    if (typeof raw !== "string") return undefined;
+    // Leading word only: the executable name, never the full argv.
+    const name = raw.trim().split(/\s+/)[0];
+    return name !== undefined && name.length > 0 ? name : undefined;
+  }
+
+  return undefined;
 }
