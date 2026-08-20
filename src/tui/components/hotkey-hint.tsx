@@ -123,9 +123,20 @@ function resolveChips(
     // does now — and how many messages are already parked behind the
     // turn. Scroll sheds first (the wheel already does it), then the
     // parked counter, then the Enter hint.
+    // An armed Ctrl+C is the one state where a mispress quits the whole
+    // app — it takes the row for itself so nothing dilutes the warning.
+    if (ctrlCArmed) {
+      return [{ key: "ctrl+c", label: "press again to quit" }];
+    }
+    const steering = state.whileBusyMode === "steer";
     const chips: HotkeyChip[] = [
       { key: SCROLL_KEY, label: "scroll", shed: 1 },
-      { key: "⏎", label: "queue message", shed: 3 },
+      { key: "⏎", label: steering ? "steer" : "queue message", shed: 3 },
+      {
+        key: "ctrl+t",
+        label: steering ? "queue mode" : "steer mode",
+        shed: 4,
+      },
       { key: "esc", label: hasDraft ? "abort, draft kept" : "abort" },
       {
         key: "ctrl+c",

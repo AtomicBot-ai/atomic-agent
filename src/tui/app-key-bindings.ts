@@ -6,6 +6,7 @@ import {
   type ApprovalRequest,
 } from "../approval/approval-gate.js";
 import { formatApprovalCategory } from "../approval/approval-level.js";
+import type { WhileBusySubmitMode } from "../config/index.js";
 import {
   handleMenuKey,
   isMenuLeaderKey,
@@ -41,6 +42,8 @@ export interface AppKeyCallbacks {
     grant?: ApprovalGrantScope,
   ): void;
   onAbort(): void;
+  /** Persist the Enter-while-busy mode after a Ctrl+T flip. */
+  onWhileBusyModePersistRequested?(mode: WhileBusySubmitMode): void;
   onQuit(): void;
   /** Optional — called when Enter is pressed on the focused sidebar row. */
   onSessionSwitchRequested?(sessionId: string): void;
@@ -242,6 +245,26 @@ export function handleAppKey(
     return true;
   }
   setCtrlCArmed(false);
+  // Ctrl+T flips what Enter does while a turn is running (steer <-> queue).
+  // Alt/Shift/Ctrl+Enter are all "insert newline" in the editor, so the
+  // mode cannot live on a Return modifier; an explicit, visible toggle is
+  // the honest alternative. Guarded like the other global claims so a
+  // panel modal or the palette never has the mode flipped under it, and
+  // placed after the Ctrl+C disarm so a flip cannot ride an armed quit.
+  if (
+    key.ctrl &&
+    !key.shift &&
+    !key.meta &&
+    input === "t" &&
+    !state.pendingApproval &&
+    !state.slashPaletteOpen &&
+    !isDebugTabSurfaceBusy(state)
+  ) {
+    const next = state.whileBusyMode === "steer" ? "queue" : "steer";
+    dispatch({ type: "while_busy_mode_changed", mode: next });
+    callbacks.onWhileBusyModePersistRequested?.(next);
+    return true;
+  }
   // Esc aborts a turn in flight — the binding the hint strip advertises
   // for the whole time `status === "running"`. It has to be claimed here
   // rather than in the editor's own Esc handler because the editor is

@@ -11,6 +11,7 @@ import type { TuiAction } from "./tui-action.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
 import { isThemeName, setActiveTheme, THEME_NAMES, THEMES } from "./theme/theme.js";
 import type { TuiAppCallbacks } from "./tui-app.js";
+import type { WhileBusySubmitMode } from "../config/index.js";
 import {
   canAcceptMessage,
   canTypeMessage,
@@ -84,13 +85,14 @@ export function handleEditorSubmit(
     return;
   }
 
-  // A turn is already in flight: park the message instead of dropping
-  // it. `ChatOrchestrator.sendMessage` has always buffered submissions
-  // made while busy — this is the path that finally reaches that queue.
+  // A turn is already in flight. Two ways to land the message, chosen
+  // by `whileBusyMode` (Ctrl+T, or `/steer` / `/queue` for one message):
+  //   steer — fold it into the running turn at its next step boundary
+  //   queue — park it and run it as its own turn afterwards
+  // Either way it is never dropped, which is the whole point.
   if (!canAcceptMessage(state)) {
     if (!canTypeMessage(state)) return;
-    dispatch({ type: "message_queued", text: trimmed });
-    callbacks.onMessageSubmitted(trimmed);
+    submitWhileBusy(trimmed, state.whileBusyMode, dispatch, callbacks);
     return;
   }
   dispatch({ type: "message_submitted" });
@@ -149,6 +151,14 @@ export function runSlashCommand(
     setActiveTheme(THEMES[result.setThemeName]);
     callbacks.onThemePersistRequested?.(result.setThemeName);
   }
+  // Bare `/steer` / `/queue` are the persisting form, so they take the same
+  // callback as Ctrl+T (`app-key-bindings.ts`) and land in the same
+  // `persistUserWhileBusySubmit` helper — one write path, one error path.
+  // `/steer <msg>` sets `submitWhileBusy` instead and never reaches here,
+  // which is what keeps a one-off from moving the default.
+  if (result.setWhileBusyMode) {
+    callbacks.onWhileBusyModePersistRequested?.(result.setWhileBusyMode);
+  }
   for (const action of result.actions) {
     if (action.type === "providers_chat_model_picker_requested") {
       // A state no-op as a reducer action: the orchestrator that owns
@@ -174,6 +184,23 @@ export function runSlashCommand(
   }
   if (result.clearBuffer) dispatch({ type: "input_changed", value: "" });
   dispatch({ type: "slash_palette_closed" });
+  if (result.submitWhileBusy) {
+    const { mode, text } = result.submitWhileBusy;
+    // `/steer foo` / `/queue foo` on an idle session is just "send foo".
+    if (canAcceptMessage(state)) {
+      dispatch({ type: "message_submitted" });
+      callbacks.onMessageSubmitted(text);
+    } else if (canTypeMessage(state)) {
+      submitWhileBusy(text, mode, dispatch, callbacks);
+    } else {
+      // Quitting: nothing can run this message any more. Say so instead
+      // of clearing the buffer over a silent drop.
+      dispatch({
+        type: "system_message",
+        text: `quitting — "${text}" was not sent`,
+      });
+    }
+  }
   if (result.queueVerb) runQueueVerb(result.queueVerb, state, dispatch, callbacks);
   if (result.triggerAbort) callbacks.onAbort();
   if (result.triggerQuit) {
@@ -228,6 +255,26 @@ export function runSlashCommand(
   if (result.approvalLevelSet !== undefined) {
     void callbacks.onApprovalLevelSetRequested?.(result.approvalLevelSet);
   }
+}
+
+/**
+ * Land a message that was submitted while a turn was running, in the
+ * requested mode. Split out so `/steer` and `/queue` can reuse it for a
+ * one-off override without flipping the persisted default.
+ */
+export function submitWhileBusy(
+  text: string,
+  mode: WhileBusySubmitMode,
+  dispatch: Dispatch,
+  callbacks: TuiAppCallbacks,
+): void {
+  if (mode === "steer" && callbacks.onMessageSteered) {
+    dispatch({ type: "message_steered", text });
+    callbacks.onMessageSteered(text);
+    return;
+  }
+  dispatch({ type: "message_queued", text });
+  callbacks.onMessageSubmitted(text);
 }
 
 /**

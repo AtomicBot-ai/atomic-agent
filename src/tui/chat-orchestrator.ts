@@ -415,26 +415,8 @@ export class ChatOrchestrator {
 
   sendMessage(text: string): void {
     if (this.quitting) return;
-    const session = this.ensureSession();
+    this.ensureSession();
     if (this.currentController) {
-      // A turn is already in flight. Try to fold the message into it —
-      // it reaches the model at the next step boundary instead of
-      // waiting for the whole turn to close. `steer` returns false when
-      // that turn can no longer pick anything up (it has done its final
-      // drain, or its inbox is full), and then this queue is exactly the
-      // "own pending-message queue" AGENTS.md tells callers to fall back
-      // to. Either way the message goes somewhere.
-      if (session !== null && this.runtime.steer(session.id, text)) {
-        // The reducer parked it optimistically; the authoritative queue
-        // never held it (it went to the inbox), so re-sync the strip —
-        // `steer_applied` renders it inline once the turn folds it in.
-        this.emitQueue();
-        this.bus.emit({
-          type: "runtime_info",
-          line: "steering the running turn — the agent reads it at the next step",
-        });
-        return;
-      }
       if (this.queue.length >= MAX_QUEUED_MESSAGES) {
         this.droppedWhileFull += 1;
         // Re-publish an unchanged queue on purpose: the reducer already
@@ -455,13 +437,46 @@ export class ChatOrchestrator {
         return;
       }
       this.droppedWhileFull = 0;
-      // Refused, but the operator still aimed this at the turn they are
-      // watching — `currentController` is set strictly earlier than the
-      // loop opens its window, so a refusal can mean "not yet" as well
-      // as "too late" or "full". Not backlog: splice it ahead of
-      // ordinary queue entries, behind steers already re-routed for the
-      // same turn, so typing order survives. `steer`'s answer is the
-      // only fact consulted — see §"Mid-turn steering" in AGENTS.md.
+      this.queue.push(text);
+      this.emitQueue();
+      return;
+    }
+    void this.runOneTurn(text);
+  }
+
+  /**
+   * Fold a message into the turn already running on this session
+   * (Enter in `steer` mode, and `/steer <msg>` one-shots).
+   *
+   * Steer first; on refusal the message must still go somewhere — and
+   * not behind ordinary backlog: `currentController` is set strictly
+   * earlier than the loop opens its window, so a refusal can mean "not
+   * yet" as well as "too late" or "full". `queueAsSteer` splices it
+   * ahead of backlog, behind steers already re-routed for the same
+   * turn, so typing order survives. `steer`'s answer is the only fact
+   * consulted — see §"Mid-turn steering" in AGENTS.md.
+   */
+  steerMessage(text: string): void {
+    if (this.quitting) return;
+    const session = this.ensureSession();
+    if (this.currentController) {
+      if (session !== null && this.runtime.steer(session.id, text)) {
+        this.bus.emit({
+          type: "runtime_info",
+          line: "steering the running turn — the agent reads it at the next step",
+        });
+        return;
+      }
+      if (this.queue.length >= MAX_QUEUED_MESSAGES) {
+        this.droppedWhileFull += 1;
+        this.emitQueue();
+        this.bus.emit({ type: "input_changed", value: text });
+        this.notify(
+          `queue: full at ${MAX_QUEUED_MESSAGES} — the steer could not be parked (returned to the editor)`,
+        );
+        return;
+      }
+      this.droppedWhileFull = 0;
       this.queueAsSteer(text);
       this.emitQueue();
       this.bus.emit({

@@ -751,3 +751,68 @@ describe("handlePanelEscape", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 });
+
+describe("Ctrl+T — Enter-while-busy mode", () => {
+  function ctx(state: ReturnType<typeof createInitialTuiState>, extra = {}) {
+    return {
+      state,
+      dispatch: vi.fn(),
+      callbacks: {
+        onApprovalDecision: vi.fn(),
+        onAbort: vi.fn(),
+        onQuit: vi.fn(),
+        onWhileBusyModePersistRequested: vi.fn(),
+      },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+      ...extra,
+    };
+  }
+
+  it("toggles the mode and asks for it to be persisted", () => {
+    const state = createInitialTuiState(stubSession());
+    expect(state.whileBusyMode).toBe("steer");
+    const c = ctx(state);
+    const handled = handleAppKey("t", emptyKey({ ctrl: true }), c);
+    expect(handled).toBe(true);
+    expect(c.dispatch).toHaveBeenCalledWith({
+      type: "while_busy_mode_changed",
+      mode: "queue",
+    });
+    expect(c.callbacks.onWhileBusyModePersistRequested).toHaveBeenCalledWith(
+      "queue",
+    );
+  });
+
+  it("persists the opposite direction from queue mode", () => {
+    const state = { ...createInitialTuiState(stubSession()), whileBusyMode: "queue" as const };
+    const c = ctx(state);
+    handleAppKey("t", emptyKey({ ctrl: true }), c);
+    expect(c.callbacks.onWhileBusyModePersistRequested).toHaveBeenCalledWith(
+      "steer",
+    );
+  });
+
+  it("leaves a pending approval alone — y/n/esc own the keyboard there", () => {
+    const state = {
+      ...createInitialTuiState(stubSession()),
+      pendingApproval: pendingRequest(),
+    };
+    const c = ctx(state);
+    const handled = handleAppKey("t", emptyKey({ ctrl: true }), c);
+    expect(handled).toBe(false);
+    expect(c.dispatch).not.toHaveBeenCalledWith({
+      type: "while_busy_mode_changed",
+    });
+  });
+
+  it("ignores a plain t", () => {
+    const c = ctx(createInitialTuiState(stubSession()));
+    handleAppKey("t", emptyKey(), c);
+    expect(c.dispatch).not.toHaveBeenCalledWith({
+      type: "while_busy_mode_changed",
+    });
+  });
+});
+
