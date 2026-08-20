@@ -1,0 +1,26 @@
+export {
+  buildUninstallPlan,
+  candidateShellRcFiles,
+  DEFAULT_UNINSTALL_SCOPES,
+  formatUninstallPlan,
+  installDirFromExecPath,
+  INSTALLED_ASSET_DIRS,
+  INSTALLED_BINARY_NAMES,
+  isEmptyPlan,
+  isSharedInstallDir,
+  PATH_MARKER,
+  stripPathBlock,
+  UNINSTALL_SCOPES,
+  type BuildUninstallPlanParams,
+  type UninstallPathEdit,
+  type UninstallPlan,
+  type UninstallScope,
+  type UninstallTarget,
+} from "./uninstall-plan.js";
+export {
+  defaultUninstallDeps,
+  formatUninstallOutcome,
+  runUninstall,
+  type RunUninstallDeps,
+  type UninstallOutcome,
+} from "./run-uninstall.js";

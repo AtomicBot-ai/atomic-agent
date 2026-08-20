@@ -206,6 +206,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "mouse support on/off/status (off restores the terminal's drag-to-select)",
   },
+  // Added after v0.3.2: uninstall (#135).
+  {
+    name: "uninstall",
+    description:
+      "remove Atomic Agent from this machine (state directory kept unless you opt in)",
+  },
 ];
 
 describe("menu registry", () => {

@@ -246,6 +246,25 @@ export interface SessionPickerEntry {
   preview: string;
 }
 
+/**
+ * State of the `/uninstall` confirmation overlay. `includeState` starts
+ * false so the destructive scope is opt-in inside the dialog too, not
+ * only on the command line: the operator must actively choose to erase
+ * their sessions and API keys.
+ */
+export interface UninstallConfirmState {
+  /** Rendered preview of exactly what will be removed. */
+  readonly preview: string;
+  /** Whether the state directory is included in the pending plan. */
+  readonly includeState: boolean;
+  /** Removal in flight — keeps a stray second `y` from double-firing. */
+  readonly submitting: boolean;
+  /** Failure text from the last attempt, if any. */
+  readonly error: string | null;
+  /** Result lines once the removal has completed. */
+  readonly done: string | null;
+}
+
 export interface TuiState {
   session: TuiSessionInfo;
   status: TuiStatus;
@@ -345,6 +364,12 @@ export interface TuiState {
    * live-preview swap on Esc (cancel). Empty string when no picker session.
    */
   themePickerOriginal: string;
+  /**
+   * Uninstall confirmation overlay (`/uninstall`). Null when closed.
+   * Destructive and irreversible, so the dialog always renders the
+   * concrete plan rather than a generic "are you sure?".
+   */
+  uninstallConfirm: UninstallConfirmState | null;
   /** User-initiated abort in flight. */
   aborting: boolean;
   /**
@@ -552,6 +577,7 @@ export function createInitialTuiState(
     themePickerOpen: false,
     themePickerCursor: 0,
     themePickerOriginal: "",
+    uninstallConfirm: null,
     aborting: false,
     updatePrompt: null,
     updateStatus: "idle",

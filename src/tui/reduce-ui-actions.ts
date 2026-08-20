@@ -36,6 +36,70 @@ export function reduceUiAction(
     }
     case "theme_picker_closed":
       return { ...state, themePickerOpen: false, themePickerOriginal: "" };
+    case "uninstall_confirm_opened":
+      return {
+        ...state,
+        uninstallConfirm: {
+          preview: action.preview,
+          includeState: action.includeState,
+          submitting: false,
+          error: null,
+          done: null,
+        },
+      };
+    case "uninstall_confirm_state_toggled": {
+      // Ignored once the removal is in flight: the plan being executed
+      // must not diverge from the plan that was confirmed.
+      if (!state.uninstallConfirm || state.uninstallConfirm.submitting) {
+        return state;
+      }
+      if (state.uninstallConfirm.done !== null) return state;
+      return {
+        ...state,
+        uninstallConfirm: {
+          ...state.uninstallConfirm,
+          preview: action.preview,
+          includeState: action.includeState,
+          error: null,
+        },
+      };
+    }
+    case "uninstall_confirm_submitting": {
+      if (!state.uninstallConfirm) return state;
+      return {
+        ...state,
+        uninstallConfirm: {
+          ...state.uninstallConfirm,
+          submitting: true,
+          error: null,
+        },
+      };
+    }
+    case "uninstall_confirm_done": {
+      if (!state.uninstallConfirm) return state;
+      return {
+        ...state,
+        uninstallConfirm: {
+          ...state.uninstallConfirm,
+          submitting: false,
+          error: null,
+          done: action.result,
+        },
+      };
+    }
+    case "uninstall_confirm_failed": {
+      if (!state.uninstallConfirm) return state;
+      return {
+        ...state,
+        uninstallConfirm: {
+          ...state.uninstallConfirm,
+          submitting: false,
+          error: action.message,
+        },
+      };
+    }
+    case "uninstall_confirm_closed":
+      return { ...state, uninstallConfirm: null };
     case "theme_picker_cursor_moved": {
       if (!state.themePickerOpen) return state;
       const max = THEME_NAMES.length - 1;

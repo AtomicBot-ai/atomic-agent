@@ -68,6 +68,37 @@ atag
 > [!TIP]
 > Coming from Hermes or OpenClaw? Run `/import` in the TUI for a one-shot migration: sessions, cron jobs, and optionally your provider keys.
 
+### Uninstall
+
+```bash
+atomic-agent uninstall
+```
+
+This removes the binary, the `atag` alias, and the asset folders the installer wrote beside them, then drops the `PATH` line it appended to your shell config. Your state directory (`~/.atomic-agent` by default) is **kept**, so reinstalling later picks up your sessions, memory and config where you left off.
+
+To preview without changing anything:
+
+```bash
+atomic-agent uninstall --dry-run --all
+```
+
+To erase everything, including sessions, memory and stored API keys:
+
+```bash
+atomic-agent uninstall --all
+```
+
+Scopes are `--app`, `--path` and `--state` (`--all` selects all three); add `--yes` to skip the confirmation in scripts. The same flow is available inside the TUI as `/uninstall`, or under **Setup** in the `Ctrl+P` menu.
+
+> [!NOTE]
+> The install directory itself is never deleted when other programs live there. On the default macOS and Linux install (`~/.local/bin`) only the files listed above are removed; your other tools are left alone.
+
+To do it by hand instead, there are three things to remove:
+
+1. From the install directory (`~/.local/bin` by default, `%LOCALAPPDATA%\atomic-agent` on Windows): the `atomic-agent` binary, the `atag` alias, and the `grammars/`, `starter-skills/`, `assets/`, `vendor/`, `prebuilds/` and `node_modules/` folders.
+2. The `# added by atomic-agent installer` block from your shell rc file. On Windows the installer edits the user `PATH` in the registry instead, so remove that entry from Settings > Environment Variables.
+3. The state directory, if you want your data gone too.
+
 ### Troubleshooting
 
 If something isn't working:

@@ -153,6 +153,29 @@ export type TuiAction =
   /** Put the theme picker highlight on an absolute row (mouse click). */
   | { type: "theme_picker_cursor_set"; row: number }
   /**
+   * Open the `/uninstall` confirmation overlay with a rendered preview of
+   * the plan. Nothing is removed until the operator confirms.
+   */
+  | {
+      type: "uninstall_confirm_opened";
+      preview: string;
+      includeState: boolean;
+    }
+  /** Toggle whether the state directory is included, re-previewing. */
+  | {
+      type: "uninstall_confirm_state_toggled";
+      preview: string;
+      includeState: boolean;
+    }
+  /** Removal started — locks the dialog against a second confirm. */
+  | { type: "uninstall_confirm_submitting" }
+  /** Removal finished; `result` is the outcome text to display. */
+  | { type: "uninstall_confirm_done"; result: string }
+  /** Removal failed; the dialog stays open showing `message`. */
+  | { type: "uninstall_confirm_failed"; message: string }
+  /** Close the uninstall overlay (cancel, or dismiss after completion). */
+  | { type: "uninstall_confirm_closed" }
+  /**
    * Hard-switch the TUI transcript to an already-loaded session. The
    * orchestrator performs the SessionStore load + swap, then dispatches
    * this action so the reducer can rebuild `messages` from stored turns

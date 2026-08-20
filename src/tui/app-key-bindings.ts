@@ -42,6 +42,10 @@ export interface AppKeyCallbacks {
     grant?: ApprovalGrantScope,
   ): void;
   onAbort(): void;
+  /** Uninstall overlay: re-preview the plan with the state scope flipped. */
+  onUninstallPreviewRequested?(includeState: boolean): void;
+  /** Uninstall overlay: run the confirmed plan. */
+  onUninstallConfirmed?(includeState: boolean): void;
   /** Persist the Enter-while-busy mode after a Ctrl+T flip. */
   onWhileBusyModePersistRequested?(mode: WhileBusySubmitMode): void;
   /** Open a fresh OS terminal window running atomic-agent (Ctrl+N, `/window`). */
@@ -184,6 +188,12 @@ export function handleAppKey(
   const { state, dispatch, callbacks, ctrlCArmed, setCtrlCArmed } = ctx;
   if (state.pendingApproval) {
     return handleApprovalKey(input, key, state.pendingApproval, ctx);
+  }
+  // The uninstall confirm claims y / s / n while it is open. Placed above
+  // every other binding so a chord cannot fire underneath a destructive
+  // dialog the operator is looking at.
+  if (state.uninstallConfirm) {
+    return handleUninstallConfirmKey(input, key, ctx);
   }
   // A settled successful self-update parks the UI on a "press any key to
   // restart" prompt. The first keystroke (whatever it is) re-execs the new
@@ -432,6 +442,7 @@ function shouldTreatArrowAsChatScroll(
   if (state.chatFocus !== "editor") return false;
   if (state.sessionPickerOpen) return false;
   if (state.themePickerOpen) return false;
+  if (state.uninstallConfirm) return false;
   if (state.inputValue.length > 0) return false;
   if (state.inputHistoryCursor !== null) return false;
   return true;
@@ -598,6 +609,51 @@ export function decideApproval(
       text: grantConfirmation(request, grant),
     });
   }
+}
+
+/**
+ * Keys for the `/uninstall` confirmation overlay: `y` runs the shown
+ * plan, `s` toggles the state directory in or out of it, `n` cancels.
+ * Esc is handled by `onEscape` in `tui-app.tsx` alongside the other
+ * overlays.
+ *
+ * Everything is ignored while a removal is in flight, so a repeated `y`
+ * cannot fire the removal twice, and once it has finished the dialog
+ * only accepts dismissal — there is nothing left to confirm.
+ */
+function handleUninstallConfirmKey(
+  input: string,
+  key: Key,
+  ctx: AppKeyContext,
+): boolean {
+  const { state, dispatch, callbacks } = ctx;
+  const confirm = state.uninstallConfirm;
+  if (!confirm) return false;
+  // A ctrl/meta-modified key was never aimed at this prompt.
+  if (key.ctrl || key.meta) return false;
+  if (confirm.submitting) return true;
+  if (confirm.done !== null) {
+    // Any of the dismissal keys closes the report.
+    if (key.return || input.toLowerCase() === "n" || input.toLowerCase() === "y") {
+      dispatch({ type: "uninstall_confirm_closed" });
+      return true;
+    }
+    return true;
+  }
+  const lower = input.toLowerCase();
+  if (lower === "y" || key.return) {
+    callbacks.onUninstallConfirmed?.(confirm.includeState);
+    return true;
+  }
+  if (lower === "s") {
+    callbacks.onUninstallPreviewRequested?.(!confirm.includeState);
+    return true;
+  }
+  if (lower === "n") {
+    dispatch({ type: "uninstall_confirm_closed" });
+    return true;
+  }
+  return true;
 }
 
 function handleApprovalKey(

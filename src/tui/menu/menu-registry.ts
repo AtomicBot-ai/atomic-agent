@@ -538,6 +538,20 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "setup.uninstall",
+    label: "Uninstall Atomic Agent…",
+    group: "setup",
+    // Deliberately no chord: a single keystroke after the leader should
+    // not open a destructive flow. Reachable by name, click, or menu.
+    slash: {
+      name: "uninstall",
+      description:
+        "remove Atomic Agent from this machine (state directory kept unless you opt in)",
+      rank: 36,
+    },
+  },
+  {
+    kind: "action",
     id: "setup.task",
     label: "Create, cancel or run a task…",
     group: "setup",

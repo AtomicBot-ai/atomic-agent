@@ -2,6 +2,7 @@ import { Box, Text, useApp, useInput, type DOMElement, type Key } from "ink";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useReducer,
   useRef,
   useState,
@@ -28,6 +29,18 @@ import { PromptShell } from "./components/prompt-shell.js";
 import { QueuedMessages } from "./components/queued-messages.js";
 import { SessionPicker } from "./components/session-picker.js";
 import { ThemePicker } from "./components/theme-picker.js";
+import { UninstallConfirm } from "./components/uninstall-confirm.js";
+import { existsSync, readFileSync } from "node:fs";
+import { canSelfUpdate } from "../update/index.js";
+import {
+  buildUninstallPlan,
+  formatUninstallOutcome,
+  formatUninstallPlan,
+  installDirFromExecPath,
+  runUninstall,
+  type UninstallScope,
+} from "../uninstall/index.js";
+import { getConfig } from "../config/index.js";
 import {
   isThemeName,
   setActiveTheme,
@@ -317,6 +330,13 @@ export interface TuiAppCallbacks {
    * event bus.
    */
   onDebugBundleExportRequested?(state: TuiState): void;
+  /**
+   * Fired by `/uninstall`: asks the orchestrator to build the removal
+   * plan and open the confirmation overlay. Nothing is removed here.
+   */
+  onUninstallPreviewRequested?(includeState: boolean): void;
+  /** Confirmed in the overlay: perform the removal for the shown plan. */
+  onUninstallConfirmed?(includeState: boolean): void;
   /** Telegram tab: refresh state mirror (token presence, owner, etc.). */
   onTelegramRefreshRequested?(): void;
   /**
@@ -436,7 +456,7 @@ const PROMPT_PLACEHOLDERS: readonly string[] = [
 export function TuiApp({
   session,
   bus,
-  callbacks,
+  callbacks: baseCallbacks,
   maxVisibleRows = DEFAULT_MAX_VISIBLE_ROWS,
   initialLayout,
   mouse,
@@ -445,6 +465,112 @@ export function TuiApp({
     createInitialTuiState(init.session, DEFAULT_RING_BUFFER_SIZE, init.initialLayout),
   );
   const app = useApp();
+  /**
+   * State directory for the uninstall planner, resolved lazily and
+   * cached. Deliberately NOT read at mount: `getConfig()` touches the
+   * filesystem (and creates a default config when none exists), and
+   * every TuiApp render — including the ones in tests that mount with a
+   * stub runtime — would pay for a dialog that is almost never opened.
+   */
+  const uninstallStateDirRef = useRef<string | null>(null);
+  const resolveUninstallStateDir = useCallback((): string => {
+    if (uninstallStateDirRef.current === null) {
+      uninstallStateDirRef.current = getConfig().paths.stateDir;
+    }
+    return uninstallStateDirRef.current;
+  }, []);
+
+  /**
+   * Build the removal plan and open (or re-preview) the confirm overlay.
+   * The plan is built here rather than in the orchestrator because the
+   * dialog is pure UI state and the planner is pure — no reason to route
+   * a filesystem read through the event bus to come back as a render.
+   */
+  const openUninstallPreview = useCallback(
+    (includeState: boolean) => {
+      const scopes: UninstallScope[] = ["app", "path"];
+      if (includeState) scopes.push("state");
+      const installed = canSelfUpdate();
+      const plan = buildUninstallPlan({
+        scopes: installed ? scopes : scopes.filter((s) => s !== "app"),
+        installDir: installDirFromExecPath(process.execPath),
+        stateDir: resolveUninstallStateDir(),
+        exists: existsSync,
+        readFile: (path) => {
+          try {
+            return readFileSync(path, "utf8");
+          } catch {
+            return null;
+          }
+        },
+      });
+      const preview = installed
+        ? formatUninstallPlan(plan)
+        : `${formatUninstallPlan(plan)}\n  note: running from a dev checkout — the installed binary scope is skipped.`;
+      dispatch(
+        state.uninstallConfirm
+          ? { type: "uninstall_confirm_state_toggled", preview, includeState }
+          : { type: "uninstall_confirm_opened", preview, includeState },
+      );
+    },
+    [state.uninstallConfirm, resolveUninstallStateDir],
+  );
+
+  const confirmUninstall = useCallback(
+    (includeState: boolean) => {
+      const scopes: UninstallScope[] = ["app", "path"];
+      if (includeState) scopes.push("state");
+      const installed = canSelfUpdate();
+      dispatch({ type: "uninstall_confirm_submitting" });
+      try {
+        const plan = buildUninstallPlan({
+          scopes: installed ? scopes : scopes.filter((s) => s !== "app"),
+          installDir: installDirFromExecPath(process.execPath),
+          stateDir: resolveUninstallStateDir(),
+          exists: existsSync,
+          readFile: (path) => {
+            try {
+              return readFileSync(path, "utf8");
+            } catch {
+              return null;
+            }
+          },
+        });
+        const outcome = runUninstall(plan);
+        if (outcome.failures.length > 0) {
+          dispatch({
+            type: "uninstall_confirm_failed",
+            message: outcome.failures
+              .map((f) => `${f.path}: ${f.reason}`)
+              .join("; "),
+          });
+          return;
+        }
+        dispatch({
+          type: "uninstall_confirm_done",
+          result: formatUninstallOutcome(outcome),
+        });
+      } catch (err) {
+        dispatch({
+          type: "uninstall_confirm_failed",
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+    [resolveUninstallStateDir],
+  );
+
+  // The uninstall handlers live here (not in the orchestrator) because
+  // they are pure UI state transitions over a pure planner.
+  const callbacks = useMemo<TuiAppCallbacks>(
+    () => ({
+      ...baseCallbacks,
+      onUninstallPreviewRequested: openUninstallPreview,
+      onUninstallConfirmed: confirmUninstall,
+    }),
+    [baseCallbacks, openUninstallPreview, confirmUninstall],
+  );
+
   const [ctrlCArmed, setCtrlCArmed] = useState(false);
   const [menuLeaderArmed, setMenuLeaderArmed] = useState(false);
   const ctrlCTimer = useRef<NodeJS.Timeout | null>(null);
@@ -688,6 +814,7 @@ export function TuiApp({
     state.updateStatus === "done" ||
     state.sessionPickerOpen ||
     state.themePickerOpen ||
+    Boolean(state.uninstallConfirm) ||
     state.slashPaletteOpen ||
     isPanelModalOpen(state);
   useEffect(() => {
@@ -772,6 +899,13 @@ export function TuiApp({
   );
 
   const onEscape = useCallback(() => {
+    if (state.uninstallConfirm) {
+      // Never abandon the dialog while the removal is in flight — the
+      // operator would be left guessing what did and did not get deleted.
+      if (state.uninstallConfirm.submitting) return;
+      dispatch({ type: "uninstall_confirm_closed" });
+      return;
+    }
     if (state.themePickerOpen) {
       // Cancel: revert the live-preview swap to the theme active on open.
       if (isThemeName(state.themePickerOriginal)) {
@@ -1039,6 +1173,11 @@ export function TuiApp({
                 cursor={state.themePickerCursor}
                 original={state.themePickerOriginal}
               />
+            </Box>
+          ) : null}
+          {state.uninstallConfirm ? (
+            <Box flexShrink={0}>
+              <UninstallConfirm confirm={state.uninstallConfirm} />
             </Box>
           ) : null}
           {state.slashPaletteOpen ? (

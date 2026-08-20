@@ -144,6 +144,11 @@ export function runSlashCommand(
   if (result.triggerDebugBundleDump) {
     callbacks.onDebugBundleExportRequested?.(state);
   }
+  // `/uninstall` only ever opens the confirmation overlay. The removal
+  // itself is behind the operator's explicit `y` in that dialog.
+  if (result.triggerUninstall) {
+    callbacks.onUninstallPreviewRequested?.(false);
+  }
   // Swap the active palette before dispatching `theme_set` so the forced
   // re-render reads the new colours through the theme proxy, then persist the
   // choice to the user config (`/theme <name>` direct path).

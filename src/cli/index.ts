@@ -10,6 +10,7 @@ import { traceCommand } from "./trace-command.js";
 import { taskCommand } from "./task-command.js";
 import { modelsCommand } from "./models-command.js";
 import { importCommand } from "./import-command.js";
+import { uninstallCommand } from "./uninstall-command.js";
 import { tuiCommand } from "../tui/index.js";
 import { getAppVersion } from "../version.js";
 
@@ -105,6 +106,12 @@ const COMMANDS: CommandDescriptor[] = [
     summary: "Import conversation history + cron jobs from another agent (hermes)",
     run: importCommand,
   },
+  {
+    name: "uninstall",
+    summary:
+      "Remove Atomic Agent from this machine (--app|--path|--state|--all, --dry-run)",
+    run: uninstallCommand,
+  },
 ];
 
 function printHelp(): void {
@@ -117,7 +124,7 @@ function printHelp(): void {
     "",
     "Commands:",
     ...COMMANDS.filter((c) => !c.hidden).map(
-      (c) => `  ${c.name.padEnd(8)} ${c.summary}`,
+      (c) => `  ${c.name.padEnd(9)} ${c.summary}`,
     ),
     "",
     "User config (edit via `atomic-agent config`):",
