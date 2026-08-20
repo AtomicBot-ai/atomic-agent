@@ -31,6 +31,7 @@ import type { ProviderVerifyTarget } from "../../llm/provider/verify/index.js";
 import { isLoopbackBaseUrl } from "../persist-user-local-models-config.js";
 import { isLocalProviderUrl } from "./is-local-provider-url.js";
 import { findProviderPreset } from "./provider-presets.js";
+import { subscriptionCliForWizardKind } from "./providers-wizard-state.js";
 import {
   AIMLAPI_DEFAULT_CHAT_MODEL,
   GEMINI_DEFAULT_CHAT_MODEL,
@@ -111,6 +112,9 @@ export function apiKeyForWizard(
  * does not use.
  */
 export function envHintForWizard(wizard: ProvidersWizardState): string {
+  // CLI-backed providers read no env var; the key screen is skipped
+  // entirely, so there is no variable to name.
+  if (wizard.kind && subscriptionCliForWizardKind(wizard.kind)) return "";
   const preset = wizard.presetId ? findProviderPreset(wizard.presetId) : undefined;
   if (preset) return preset.envVar;
   if (wizard.kind === "openrouter") return "OPENROUTER_API_KEY";
@@ -126,6 +130,9 @@ export function envHintForWizard(wizard: ProvidersWizardState): string {
  * send requests without an Authorization header.
  */
 export function wizardKeyIsOptional(wizard: ProvidersWizardState): boolean {
+  // A CLI-backed provider authenticates from the CLI's own session —
+  // there is no key by construction, not merely an optional one.
+  if (wizard.kind && subscriptionCliForWizardKind(wizard.kind)) return true;
   const preset = wizard.presetId ? findProviderPreset(wizard.presetId) : undefined;
   if (preset && (preset.local || preset.listsModelsWithoutKey)) return true;
   // A hand-added compat endpoint pointing at a loopback address is a
@@ -193,6 +200,8 @@ const KIND_SERVICE_LABELS: Record<ProvidersWizardKind, string> = {
   aimlapi: "AI/ML API",
   gemini: "Gemini",
   "openai-compatible": "this endpoint",
+  "claude-cli": "Claude Code",
+  "codex-cli": "Codex",
 };
 
 /** Service name for headings and for every sentence about a failure. */
@@ -253,6 +262,12 @@ export function verifyTargetForWizard(
 ): ProviderVerifyTarget | null {
   const kind = wizard.kind;
   if (!kind) return null;
+  // CLI-backed providers have no key and no HTTP endpoint to probe —
+  // the verify gate skips them by design (a bounded liveness probe is a
+  // possible follow-up), explicitly rather than by the accident of an
+  // unresolvable key. Spelled as literal checks so the compiler narrows
+  // `kind` to the verifiable union below.
+  if (kind === "claude-cli" || kind === "codex-cli") return null;
   if (wizardKeyIsOptional(wizard)) return null;
   const apiKey = apiKeyForWizard(wizard)?.trim();
   if (!apiKey) return null;

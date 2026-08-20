@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import type { WizardVerifyGate } from "../providers/verify-wizard-before-save.js";
 import { CloudProviderOnboarding } from "./cloud-provider-onboarding.js";
+import { KIND_ROW_ORDER } from "../providers/providers-wizard-phases.js";
 import { saveProviderWizardToConfig } from "../providers/save-provider-wizard.js";
 
 vi.mock("../../config/index.js", async (importOriginal) => {
@@ -152,6 +153,14 @@ async function mountAtSubmitPoint(): Promise<{
     <CloudProviderOnboarding onFinished={onFinished} onBack={() => {}} />,
   );
   await settleInput();
+  // The CLI-backed rows sit at the head of the list; walk down to
+  // OpenRouter by its registry position instead of assuming row 0. One
+  // settle per keypress: the component reads the wizard from a state
+  // closure, so two arrows in one tick would collapse into one step.
+  for (let i = 0; i < KIND_ROW_ORDER.indexOf("openrouter"); i += 1) {
+    stdin.write("\u001b[B");
+    await settleInput();
+  }
   stdin.write("\r"); // OpenRouter
   await settleInput();
   stdin.write("sk-onboarding-test-key");

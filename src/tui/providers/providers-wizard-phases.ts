@@ -5,10 +5,11 @@ import {
   listOpenRouterChatModels,
   listOpenRouterEmbeddingModels,
 } from "./providers-model-options.js";
-import type {
-  ProvidersWizardKind,
-  ProvidersWizardPhase,
-  ProvidersWizardState,
+import {
+  subscriptionCliForWizardKind,
+  type ProvidersWizardKind,
+  type ProvidersWizardPhase,
+  type ProvidersWizardState,
 } from "./providers-wizard-state.js";
 
 /**
@@ -28,6 +29,10 @@ export type ProvidersWizardKindRow =
  * never disagree.
  */
 export const KIND_ROW_ORDER: readonly ProvidersWizardKindRow[] = [
+  // Subscription CLIs first: they need no key and no endpoint, so they
+  // are the shortest path from a fresh install to a working agent.
+  "claude-cli",
+  "codex-cli",
   "openrouter",
   "aimlapi",
   "gemini",
@@ -98,7 +103,16 @@ export function presetNeedsKeyScreen(presetId: string): boolean {
  */
 export function isWizardFirstScreen(wizard: ProvidersWizardState): boolean {
   if (wizard.phase === "pick_kind") return true;
-  return wizard.mode === "configure" && wizard.phase === "api_key";
+  if (wizard.mode !== "configure") return false;
+  if (wizard.phase === "api_key") return true;
+  // A CLI-backed configure run opens straight on the model line (there
+  // is no key screen); Esc there must close the wizard, not rebuild a
+  // pick_kind screen the run never showed.
+  return (
+    wizard.phase === "chat_model_line" &&
+    wizard.kind !== null &&
+    subscriptionCliForWizardKind(wizard.kind) !== null
+  );
 }
 
 /**
@@ -136,14 +150,18 @@ export function advanceWizardPhase(
 ): ProvidersWizardState {
   const { phase, kind } = wizard;
   if (phase === "pick_kind" && kind) {
+    // A CLI-backed provider has no key to paste — it authenticates from
+    // the CLI's own session — so the key screen would be a dead end.
+    if (subscriptionCliForWizardKind(kind)) {
+      return { ...wizard, phase: "chat_model_line", cursor: 0, error: null };
+    }
     // The manual compat row describes its endpoint before authenticating
     // to it: the key screen consults the base URL (a loopback server is
     // keyless — `wizardKeyIsOptional`), so the URL has to exist first.
     // Every other kind already knows its endpoint and goes straight to
     // the key.
     if (kind === "openai-compatible" && !wizard.presetId) {
-      return { ...wizard, phase: "base_url", cursor: 0, error: null };
-    }
+      return { ...wizard, phase: "base_url", cursor: 0, error: null };    }
     return { ...wizard, phase: "api_key", cursor: 0, error: null };
   }
   if (phase === "api_key" && kind) {

@@ -11,7 +11,6 @@ import {
   type ResourceClass,
 } from "./tool-resource-class.js";
 import {
-  extractLoopTarget,
   formatVetoInstruction,
   LOOP_VETO_DENIED_REASON,
   type LoopCheckVerdict,
@@ -457,31 +456,14 @@ function runSyncLoopGate(
     const count = breakerTripped
       ? Math.max(verdict.count, ctx.tracker.breakerThreshold)
       : verdict.count;
-    // Name the invariant that held across the blocked attempts (host for
-    // web/HTTP, command name for shell) so the message says WHAT stayed
-    // the same instead of only that something did.
-    const target = extractLoopTarget(tool, args);
-    // A wandering escalation rides this same veto path but its `count` is
-    // a spread of DISTINCT arguments; pass the detector so the wording
-    // does not claim they were identical.
-    //
-    // The verdict decides, not the escalation flag. `isWanderingEscalated`
-    // answers for the whole history window, so it stays true after the model
-    // stops wandering and settles on repeating one argument -- and borrowing
-    // it there would announce "N different attempts" about a verbatim
-    // repeat, quoting a count the verdict never established.
-    const detector =
-      wanderingEscalated && verdict.detector === "wandering"
-        ? "wandering"
-        : verdict.detector;
     const vetoResult = compressToolResult({
       tool,
       status: "error",
-      output: formatVetoInstruction({ tool, count, target, detector }),
+      output: formatVetoInstruction({ tool, count }),
       details: {
         deniedReason: LOOP_VETO_DENIED_REASON,
         loopCount: count,
-        detector,
+        detector: verdict.detector,
       },
     });
     ctx.tracker.recordOutcome(tool, args, vetoResult);
@@ -489,7 +471,7 @@ function runSyncLoopGate(
       kind: forceBreaker ? "breaker" : "critical",
       tool,
       count,
-      detector,
+      detector: verdict.detector,
       warningKey: verdict.warningKey,
     });
     return { proceed: false, vetoResult };

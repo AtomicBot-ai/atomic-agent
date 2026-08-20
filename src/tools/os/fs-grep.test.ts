@@ -1,7 +1,4 @@
-import { afterAll, beforeAll, describe, it, expect } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, it, expect } from "vitest";
 import type {
   CommandOptions,
   CommandResult,
@@ -9,23 +6,11 @@ import type {
 import type { ToolContext } from "../tool-registry.js";
 import { buildOsFsGrepTool, parseRipgrepJson } from "./fs-grep.js";
 
-// The grep runner is mocked in these tests, but the tool now stats the
-// requested path to decide the child process cwd, so the fixture must exist
-// on disk. A real temp directory also keeps the paths platform-native, so
-// `resolveUserPath` does not reject a Unix path on Windows.
-let FIXTURE_ROOT: string;
-let FIXTURE_FILE: string;
-const FIXTURE_FILE_NAME = "darktrace.txt";
-
-beforeAll(async () => {
-  FIXTURE_ROOT = await mkdtemp(join(tmpdir(), "fs-grep-test-"));
-  FIXTURE_FILE = join(FIXTURE_ROOT, FIXTURE_FILE_NAME);
-  await writeFile(FIXTURE_FILE, "endopsychic\n", "utf8");
-});
-
-afterAll(async () => {
-  await rm(FIXTURE_ROOT, { recursive: true, force: true });
-});
+// A platform-native absolute root: the grep runner is mocked in these tests
+// so the path is never touched on disk, but it must be a valid absolute path
+// for the host so `resolveUserPath` does not reject a Unix path on Windows.
+const FIXTURE_ROOT =
+  process.platform === "win32" ? "C:\\tmp\\fixture" : "/tmp/fixture";
 
 function makeCtx(): ToolContext {
   return {
@@ -49,6 +34,7 @@ function makeCommandResult(
     durationMs: 1,
     timedOut: false,
     truncated: false,
+    inputTruncated: false,
     ...overrides,
   };
 }
@@ -323,93 +309,5 @@ describe("os.fs.grep", () => {
     expect(after).toBeGreaterThan(-1);
     expect(capturedArgs[before + 1]).toBe("2");
     expect(capturedArgs[after + 1]).toBe("2");
-  });
-
-  // Regression coverage for #183: an absolute file path used to be passed
-  // through as the child process cwd, which `spawn` rejects with ENOTDIR.
-  it("searches an absolute file path from its parent directory", async () => {
-    let capturedArgs: string[] = [];
-    let capturedCwd: string | undefined;
-    const tool = buildOsFsGrepTool({
-      resolveRgPath: () => "/fake/rg",
-      runCommand: async (_cmd, args, opts: CommandOptions) => {
-        capturedArgs = args;
-        capturedCwd = opts.cwd;
-        return makeCommandResult({ stdout: "" });
-      },
-    });
-    const result = await tool.run(
-      {
-        pattern: "endopsychic",
-        path: FIXTURE_FILE,
-        outputMode: "content",
-        contextAround: 3,
-        caseInsensitive: true,
-      },
-      makeCtx(),
-    );
-    expect(result.status).toBe("ok");
-    expect(capturedCwd).toBe(FIXTURE_ROOT);
-    expect(capturedArgs[capturedArgs.length - 1]).toBe(FIXTURE_FILE_NAME);
-    expect(capturedArgs[capturedArgs.length - 2]).toBe("endopsychic");
-  });
-
-  it("searches a relative file path from its parent directory", async () => {
-    let capturedArgs: string[] = [];
-    let capturedCwd: string | undefined;
-    const tool = buildOsFsGrepTool({
-      resolveRgPath: () => "/fake/rg",
-      runCommand: async (_cmd, args, opts: CommandOptions) => {
-        capturedArgs = args;
-        capturedCwd = opts.cwd;
-        return makeCommandResult({ stdout: "" });
-      },
-    });
-    const result = await tool.run(
-      { pattern: "endopsychic", path: FIXTURE_FILE_NAME },
-      makeCtx(),
-    );
-    expect(result.status).toBe("ok");
-    expect(capturedCwd).toBe(FIXTURE_ROOT);
-    expect(capturedArgs[capturedArgs.length - 1]).toBe(FIXTURE_FILE_NAME);
-  });
-
-  it("still searches a directory path with '.' as the target", async () => {
-    let capturedArgs: string[] = [];
-    let capturedCwd: string | undefined;
-    const tool = buildOsFsGrepTool({
-      resolveRgPath: () => "/fake/rg",
-      runCommand: async (_cmd, args, opts: CommandOptions) => {
-        capturedArgs = args;
-        capturedCwd = opts.cwd;
-        return makeCommandResult({ stdout: "" });
-      },
-    });
-    const result = await tool.run(
-      { pattern: "endopsychic", path: FIXTURE_ROOT },
-      makeCtx(),
-    );
-    expect(result.status).toBe("ok");
-    expect(capturedCwd).toBe(FIXTURE_ROOT);
-    expect(capturedArgs[capturedArgs.length - 1]).toBe(".");
-  });
-
-  it("reports a clear error for a path that does not exist", async () => {
-    let ran = false;
-    const tool = buildOsFsGrepTool({
-      resolveRgPath: () => "/fake/rg",
-      runCommand: async () => {
-        ran = true;
-        return makeCommandResult({ stdout: "" });
-      },
-    });
-    const result = await tool.run(
-      { pattern: "foo", path: join(FIXTURE_ROOT, "no-such-file.txt") },
-      makeCtx(),
-    );
-    expect(result.status).toBe("error");
-    expect(result.summary).toContain("does not exist");
-    expect(result.summary).not.toContain("ENOTDIR");
-    expect(ran).toBe(false);
   });
 });

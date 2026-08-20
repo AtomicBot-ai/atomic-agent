@@ -7,6 +7,7 @@ import { computeRowWindow } from "../row-window.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { FallbackRows } from "./llm-fallback-rows.js";
+import { SUBSCRIPTION_CLI_KIND } from "../../config/provider-auth-mode.js";
 
 export function LlmModeRows({
   rows,
@@ -373,7 +374,13 @@ function renderRowText(row: LlmPanelRow, state: TuiState): string {
     case "localBackend":
       return `llama.cpp backend [${state.localModelsPanel.backend.currentTag ?? "not installed"}]`;
     case "cloudProvider":
-      return `${row.provider.id} [${row.provider.kind}] ${row.provider.hasApiKey ? "key ok" : "missing key"}`;
+      return `${row.provider.id} [${row.provider.kind}] ${
+        row.provider.kind === SUBSCRIPTION_CLI_KIND
+          ? "cli auth"
+          : row.provider.hasApiKey
+            ? "key ok"
+            : "missing key"
+      }`;
     case "cloudChatModel":
       return `${row.providerId}/${row.modelId} [text]`;
     case "cloudEmbeddingModel":

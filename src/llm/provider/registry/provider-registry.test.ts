@@ -19,6 +19,7 @@ describe("ProviderRegistry", () => {
     expect(kinds).toContain("qwen-openai-compatible");
     expect(kinds).toContain("openrouter");
     expect(kinds).toContain("gemini");
+    expect(kinds).toContain("subscription-cli");
   });
 
   it("resolveLlmConfig synthesizes local-llama when llm block absent", () => {

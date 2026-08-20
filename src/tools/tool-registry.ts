@@ -1,5 +1,4 @@
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
-import { coerceToolArgs } from "./coerce-tool-args.js";
 
 export interface ToolContext {
   /** Working directory for OS tools and relative path resolution. */
@@ -65,10 +64,6 @@ export class ToolRegistry {
     ctx: ToolContext,
   ): Promise<CompressedToolResult> {
     const tool = this.get(name);
-    // Models sometimes emit a JSON value one level over-encoded (a
-    // number as "200000", an array as "[\"a.png\"]"). Unwrap those
-    // before dispatch; anything that cannot be coerced is passed
-    // through untouched so the tool reports its own error.
-    return tool.run(coerceToolArgs(name, args), ctx);
+    return tool.run(args, ctx);
   }
 }

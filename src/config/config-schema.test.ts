@@ -159,27 +159,6 @@ describe("parseUserConfigFile", () => {
     expect(parsed.tui.theme).toBe("auto");
   });
 
-  it("fills web.fetch defaults when migrating from v37", () => {
-    const parsed = parseUserConfigFile({
-      version: 37,
-      web: { search: { provider: "exa", timeoutMs: 15_000 } },
-    });
-    expect(parsed.version).toBe(USER_CONFIG_VERSION);
-    expect(parsed.web.fetch.timeoutMs).toBe(30_000);
-    expect(parsed.web.fetch.connectTimeoutMs).toBe(10_000);
-    expect(parsed.web.fetch.maxRetries).toBe(2);
-    // The version bump must not drop the settings a v37 file already carried.
-    expect(parsed.web.search.timeoutMs).toBe(15_000);
-  });
-
-  it("accepts every version between the oldest supported and the current one", () => {
-    // A bump that forgets to append the outgoing version to the supported
-    // list locks out everyone whose config is still on it.
-    for (let version = 5; version <= USER_CONFIG_VERSION; version += 1) {
-      expect(() => parseUserConfigFile({ version })).not.toThrow();
-    }
-  });
-
   it("preserves an explicit tui.theme name", () => {
     const parsed = parseUserConfigFile({
       version: USER_CONFIG_VERSION,

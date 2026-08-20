@@ -462,7 +462,6 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
         url: stringSchema,
         extractMode: { type: "string", enum: ["markdown", "text"] },
         maxChars: numberSchema,
-        timeoutMs: numberSchema,
       },
       ["url"],
     ),
@@ -588,12 +587,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       {
         prompt: stringSchema,
         path: stringSchema,
-        // `maxItems` mirrors the DEFAULT of `config.vision.maxImagesPerCall`
-        // (4). The runtime check in `buildVisionDescribeTool` reads the live
-        // config and stays authoritative; this bound is a hint so cloud
-        // providers and grammar-constrained decoding stop the model from
-        // emitting a 20-image call it can only discover is invalid by failing.
-        paths: { ...stringArraySchema, maxItems: 4 },
+        paths: stringArraySchema,
       },
       ["prompt"],
     ),

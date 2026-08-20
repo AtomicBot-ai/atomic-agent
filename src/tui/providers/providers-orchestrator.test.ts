@@ -172,6 +172,57 @@ describe("isCloudProviderKind", () => {
 
     expect(isCloudProviderKind("gemini")).toBe(true);
   });
+
+  it("stays false for subscription-cli, which is not a key-based cloud kind", async () => {
+    const { isCloudProviderKind } = await importFreshOrchestrator();
+
+    expect(isCloudProviderKind("subscription-cli")).toBe(false);
+  });
+});
+
+describe("configureWizardKindForRow", () => {
+  it("recovers the wizard row behind a stored subscription-cli entry", async () => {
+    const { configureWizardKindForRow } = await importFreshOrchestrator();
+
+    // Two wizard rows collapse onto one config kind, so the CLI name on
+    // the entry is the only thing that can tell them apart.
+    expect(
+      configureWizardKindForRow({
+        kind: "subscription-cli",
+        subscriptionCli: { cli: "claude" },
+      }),
+    ).toBe("claude-cli");
+    expect(
+      configureWizardKindForRow({
+        kind: "subscription-cli",
+        subscriptionCli: { cli: "codex" },
+      }),
+    ).toBe("codex-cli");
+  });
+
+  it("passes key-based cloud kinds through unchanged", async () => {
+    const { configureWizardKindForRow } = await importFreshOrchestrator();
+
+    expect(configureWizardKindForRow({ kind: "gemini" })).toBe("gemini");
+    expect(configureWizardKindForRow({ kind: "openai-compatible" })).toBe(
+      "openai-compatible",
+    );
+  });
+
+  it("has no wizard for the local daemon or an unknown CLI", async () => {
+    const { configureWizardKindForRow } = await importFreshOrchestrator();
+
+    expect(configureWizardKindForRow({ kind: "llama-server" })).toBeNull();
+    expect(
+      configureWizardKindForRow({ kind: "subscription-cli", subscriptionCli: null }),
+    ).toBeNull();
+    expect(
+      configureWizardKindForRow({
+        kind: "subscription-cli",
+        subscriptionCli: { cli: "not-a-cli" },
+      }),
+    ).toBeNull();
+  });
 });
 
 describe("ProvidersOrchestrator.ensureInlineModels", () => {

@@ -162,9 +162,9 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     // `{paths: [...]}` without `prompt` and burning a step on the
     // schema error before retrying with the right shape.
     name: "vision.describe",
-    summary: "Describe one or more images via the configured vision LLM. Only available when the active model + provider support multimodal input. Accepts at most 4 images per call by default (`vision.maxImagesPerCall`); to cover more images, split them across several calls.",
+    summary: "Describe one or more images via the configured vision LLM. Only available when the active model + provider support multimodal input.",
     argsSchema:
-      "{ prompt: string, path?: string, paths?: string[] /* png|jpg|jpeg|webp|gif; at most 4 by default */ }",
+      "{ prompt: string, path?: string, paths?: string[] /* png|jpg|jpeg|webp|gif */ }",
     examples: [
       '{"path":"./screenshot.png","prompt":"What error is shown?"}',
       '{"paths":["a.png","b.png"],"prompt":"Compare these two diagrams"}',

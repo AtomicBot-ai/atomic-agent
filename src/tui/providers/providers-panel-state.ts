@@ -11,6 +11,10 @@ export type ProviderRow = {
   kind: string;
   isActiveText: boolean;
   isActiveEmbedding: boolean;
+  /**
+   * Credentials are resolved for this entry — an API key, or the vendor
+   * CLI's own session for `subscription-cli` entries.
+   */
   hasApiKey: boolean;
   /**
    * Stored base URL for `openai-compatible` entries (`null` for curated
@@ -19,6 +23,12 @@ export type ProviderRow = {
    * silently resets a custom endpoint to the OpenAI default.
    */
   baseUrl: string | null;
+  /**
+   * Which vendor CLI a `subscription-cli` entry drives, `null` for every
+   * other kind. The panes need it because the CLIs differ in what they
+   * can offer — Claude publishes a model list, Codex does not.
+   */
+  subscriptionCli: { cli: string } | null;
   chatModel: string | null;
   chatModelOptions?: readonly string[];
   embeddingModel: string | null;
