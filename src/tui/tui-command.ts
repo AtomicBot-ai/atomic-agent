@@ -3,7 +3,11 @@ import { isSea } from "node:sea";
 import { render } from "ink";
 import React from "react";
 import { resolveBootApprovalLevel } from "../approval/approval-level.js";
-import { formatDotenvReadWarning, getConfig } from "../config/index.js";
+import {
+  formatDotenvReadWarning,
+  getConfig,
+  type WhileBusySubmitMode,
+} from "../config/index.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { LogRecord, LogSink } from "../tracing/structured-logger.js";
@@ -19,7 +23,10 @@ import {
   persistUserLocalLlmUrl,
   pointsAtManagedDaemon,
 } from "./persist-user-local-models-config.js";
-import { persistUserTuiTheme } from "./persist-user-tui-config.js";
+import {
+  persistUserTuiTheme,
+  persistUserWhileBusySubmit,
+} from "./persist-user-tui-config.js";
 import {
   isLocalBackendConfigured,
   isManagedModeReadyOnDisk,
@@ -89,11 +96,17 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // mode is selected but nothing is ready on disk yet — they still
   // need to pick + pull a model before chat is useful. Fully-ready
   // managed setups and external-URL setups land in chat as usual.
-  const initialLayout: InitialTuiLayoutOptions | undefined =
+  const layoutBase: InitialTuiLayoutOptions | undefined =
     startupGate === "saved_managed" && !isManagedModeReadyOnDisk()
       ? { uiMode: "debug", activeTab: "llm" }
       : undefined;
   const config = getConfig();
+  // Seed what Enter does while a turn is running from the persisted
+  // preference, so a Ctrl+T flip survives a restart.
+  const initialLayout: InitialTuiLayoutOptions = {
+    ...(layoutBase ?? {}),
+    whileBusyMode: config.tui.whileBusySubmit,
+  };
   const approvalLevel = resolveBootApprovalLevel(
     parsed.noApproval,
     config.agent.approvalLevel,
@@ -211,6 +224,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
         },
         onMessageSubmitted: (text) => orchestrator.sendMessage(text),
         onQueueClearRequested: () => orchestrator.clearQueue(),
+        onMessageSteered: (text) => orchestrator.steerMessage(text),
+        onWhileBusyModePersistRequested: (mode) =>
+          persistWhileBusyMode(mode, bus),
         onSessionPickerRequested: () => orchestrator.openSessionPicker(),
         onSessionSwitchRequested: (id) => orchestrator.switchSession(id),
         onSessionNewRequested: () => orchestrator.newSession(),
@@ -482,6 +498,25 @@ function persistThemeChoice(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     bus.emit({ type: "runtime_info", line: `theme not saved: ${msg}` });
+  }
+}
+
+function persistWhileBusyMode(
+  mode: WhileBusySubmitMode,
+  bus: ReturnType<typeof makeTuiEventBus>,
+): void {
+  try {
+    persistUserWhileBusySubmit(mode);
+    bus.emit({
+      type: "runtime_info",
+      line:
+        mode === "steer"
+          ? "Enter now steers the running turn"
+          : "Enter now queues behind the running turn",
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    bus.emit({ type: "runtime_info", line: `mode not saved: ${msg}` });
   }
 }
 

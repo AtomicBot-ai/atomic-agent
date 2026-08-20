@@ -434,8 +434,20 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "queue",
       description:
-        "messages parked behind the running turn: `/queue` (list) | `/queue clear`",
+        "parked messages: `/queue` list | `/queue <msg>` park one | `/queue clear` | `/queue mode` make Enter queue",
       rank: 32,
+    },
+  },
+  {
+    kind: "action",
+    id: "run.steer",
+    label: "Steer the running turn",
+    group: "run",
+    slash: {
+      name: "steer",
+      description:
+        "steer the running turn: `/steer <msg>` one-shot | bare `/steer` makes Enter steer",
+      rank: 33,
     },
   },
   {

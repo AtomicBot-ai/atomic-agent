@@ -112,7 +112,7 @@ describe("ChatOrchestrator mid-turn steering", () => {
   it("offers a message typed during a turn to that turn", async () => {
     const h = makeHarness();
     h.chat.sendMessage("do the thing");
-    h.chat.sendMessage("actually, check the logs first");
+    h.chat.steerMessage("actually, check the logs first");
 
     expect(h.steerCalls).toEqual([
       { sessionId: "s-tui", text: "actually, check the logs first" },
@@ -129,7 +129,7 @@ describe("ChatOrchestrator mid-turn steering", () => {
     const h = makeHarness();
     h.chat.sendMessage("do the thing");
     h.setSteerable(false);
-    h.chat.sendMessage("too late for this one");
+    h.chat.steerMessage("too late for this one");
 
     expect(h.steerCalls).toHaveLength(1);
     await h.finish();
@@ -153,7 +153,7 @@ describe("ChatOrchestrator mid-turn steering", () => {
     const h = makeHarness();
     h.chat.sendMessage("do the thing");
     h.setSteerable(false);
-    h.chat.sendMessage("and then deploy");
+    h.chat.steerMessage("and then deploy");
     await h.finish({ undelivered: ["stop, use staging"] });
 
     // "stop, use staging" was sent first (it was still accepted as a
@@ -328,7 +328,7 @@ describe("ChatOrchestrator steering into the commit-to-open gap", () => {
     await h.drain("scheduled digest");
     expect(h.inbox.isOpen(GAP_SESSION)).toBe(false);
 
-    h.chat.sendMessage("actually, check the logs first");
+    h.chat.steerMessage("actually, check the logs first");
     // Half the defect is the silence: the operator aimed this at a turn
     // the TUI shows as running and used to get told so.
     expect(infoLines(h.actions)).toContain(
@@ -366,7 +366,7 @@ describe("ChatOrchestrator steering into the commit-to-open gap", () => {
     // Same gap, one turn later. "stop, use staging" is a correction to
     // the turn in flight; "backlog two" was aimed at the turn before it.
     await h.drain("backlog one");
-    h.chat.sendMessage("stop, use staging");
+    h.chat.steerMessage("stop, use staging");
     await h.settle("backlog one");
     expect(h.started).toEqual([
       "do the thing",
@@ -392,12 +392,12 @@ describe("ChatOrchestrator steering into the commit-to-open gap", () => {
     // Accepted while the window was open, but no step boundary came:
     // the turn hands it back on `undelivered`.
     expect(h.inbox.isOpen(GAP_SESSION)).toBe(true);
-    h.chat.sendMessage("wait, staging");
+    h.chat.steerMessage("wait, staging");
     expect(h.inbox.peek(GAP_SESSION)).toEqual(["wait, staging"]);
 
     await h.drain("do the thing");
     // Typed after the window shut, i.e. after "wait, staging".
-    h.chat.sendMessage("and read the logs");
+    h.chat.steerMessage("and read the logs");
     await h.settle("do the thing");
 
     expect(h.started).toEqual(["do the thing", "wait, staging"]);

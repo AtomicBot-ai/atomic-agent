@@ -262,19 +262,53 @@ describe("HotkeyHint scroll key spelling per platform", () => {
 
 describe("HotkeyHint queue affordances", () => {
   it("advertises what Enter does now that the editor stays live mid-run", () => {
-    const out = renderHint(chatState({ status: "running" }));
-    expect(out).toContain("queue message");
+    const steering = renderHint(chatState({ status: "running" }));
+    expect(steering).toContain("⏎");
+    expect(steering).toContain("steer");
+    const queueing = renderHint(
+      chatState({ status: "running", whileBusyMode: "queue" }),
+    );
+    expect(queueing).toContain("queue");
+  });
+
+  it("offers ctrl+t as the way to flip to the other mode", () => {
+    const steering = renderHint(chatState({ status: "running" }));
+    expect(steering).toMatch(/ctrl\+t\]\s*queue/);
+    const queueing = renderHint(
+      chatState({ status: "running", whileBusyMode: "queue" }),
+    );
+    expect(queueing).toMatch(/ctrl\+t\]\s*steer/);
   });
 
   it("shows how many messages are parked behind the turn", () => {
     const out = renderHint(
       chatState({ status: "running", queuedMessages: ["a", "b"] }),
     );
-    expect(out).toContain("2 parked");
+    expect(out).toContain("parked");
+    expect(out).toContain("2");
   });
 
   it("hides the parked chip when the queue is empty", () => {
     const out = renderHint(chatState({ status: "running" }));
-    expect(out).not.toContain("parked");
+    expect(out).not.toContain("queued");
+  });
+
+  it("stays on one row at 80 columns while running with a full queue", () => {
+    // The strip is a single-row affordance; wrapping pushes the prompt
+    // down and reads as a layout bug.
+    const out = renderHint(
+      chatState({ status: "running", queuedMessages: ["a", "b", "c"] }),
+    );
+    expect(out.split("\n").filter((l) => l.trim().length > 0)).toHaveLength(1);
+  });
+
+  it("gives an armed ctrl+c the whole row", () => {
+    const { lastFrame, unmount } = render(
+      <HotkeyHint state={chatState({ status: "running" })} ctrlCArmed />,
+    );
+    const out = (lastFrame() ?? "").replace(ANSI, "");
+    unmount();
+    expect(out).toContain("press again to quit");
+    expect(out).not.toContain("ctrl+t");
   });
 });

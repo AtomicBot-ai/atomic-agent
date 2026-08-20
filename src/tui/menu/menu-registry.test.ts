@@ -180,11 +180,16 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "toggle anonymous analytics: `/analytics on|off|status`",
   },
-  // Added after v0.2.2: the mid-run message queue (#156).
+  // Added after v0.2.2: the mid-run message queue (#156) and steering (#159).
   {
     name: "queue",
     description:
-      "messages parked behind the running turn: `/queue` (list) | `/queue clear`",
+      "parked messages: `/queue` list | `/queue <msg>` park one | `/queue clear` | `/queue mode` make Enter queue",
+  },
+  {
+    name: "steer",
+    description:
+      "steer the running turn: `/steer <msg>` one-shot | bare `/steer` makes Enter steer",
   },
 ];
 

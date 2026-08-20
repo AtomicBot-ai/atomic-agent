@@ -993,3 +993,32 @@ describe("parseUserConfigFile", () => {
     ).toThrow(/timeoutMs/);
   });
 });
+
+describe("tui.whileBusySubmit", () => {
+  it("defaults to steer for a config file that predates the key", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { theme: "auto" },
+    });
+    expect(parsed.tui.whileBusySubmit).toBe("steer");
+  });
+
+  it("round-trips an explicit queue preference", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { theme: "nord", whileBusySubmit: "queue" },
+    });
+    expect(parsed.tui.whileBusySubmit).toBe("queue");
+    expect(parsed.tui.theme).toBe("nord");
+  });
+
+  it("rejects an unknown mode instead of silently defaulting", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tui: { theme: "auto", whileBusySubmit: "interrupt" },
+      }),
+    ).toThrow(/whileBusySubmit/);
+  });
+});
+

@@ -668,6 +668,7 @@ export interface AtomicAgentConfig {
    */
   tui: {
     theme: string;
+    whileBusySubmit: WhileBusySubmitMode;
   };
   /**
    * Anonymous product analytics (PostHog). Mirrors
@@ -1358,6 +1359,7 @@ export interface UserConfigFile {
    */
   tui: {
     theme: string;
+    whileBusySubmit: WhileBusySubmitMode;
   };
   /**
    * Anonymous product analytics (PostHog). Added in config v33. Older
@@ -1417,7 +1419,7 @@ export interface UserConfigFile {
 // is absent, a legacy `approvalRequired: false` maps to level 5 and
 // `true`/absent maps to level 1 — both preserve the old behaviour
 // exactly. The legacy key is never written back.
-export const USER_CONFIG_VERSION = 37 as const;
+export const USER_CONFIG_VERSION = 38 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1772,6 +1774,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   },
   tui: {
     theme: "auto",
+    whileBusySubmit: "steer",
   },
   analytics: {
     enabled: true,
@@ -3426,6 +3429,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         tui.theme ?? USER_CONFIG_DEFAULTS.tui.theme,
         "tui.theme",
       ),
+      whileBusySubmit: parseWhileBusySubmit(
+        tui.whileBusySubmit ?? USER_CONFIG_DEFAULTS.tui.whileBusySubmit,
+        "tui.whileBusySubmit",
+      ),
     },
     analytics: {
       enabled: parseBool(
@@ -3466,6 +3473,33 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
  * only enforces the string shape — an unknown name falls back to the
  * autodetect path at startup, never crashes. Anything non-string throws.
  */
+/**
+ * What Enter does in the TUI while a turn is already running.
+ *
+ * `steer` folds the message into the turn in flight (it reaches the
+ * model at the next step boundary); `queue` parks it and runs it as its
+ * own turn once the current one closes. Default is `steer` — an
+ * operator who types *while* the agent is working is usually reacting
+ * to what they see it doing.
+ */
+export type WhileBusySubmitMode = "steer" | "queue";
+
+/**
+ * Parse `tui.whileBusySubmit` (added in config v38). Older config files predate the key and
+ * are transparently upgraded to the `steer` default by the `??` at the
+ * call site, so there is no migration step.
+ */
+export function parseWhileBusySubmit(
+  raw: unknown,
+  field: string,
+): WhileBusySubmitMode {
+  if (raw === "steer" || raw === "queue") return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected "steer" or "queue", got ${JSON.stringify(raw)}`,
+  );
+}
+
 export function parseThemeName(raw: unknown, field: string): string {
   if (typeof raw !== "string") {
     throw new ConfigValidationError(
