@@ -93,11 +93,10 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
     );
   });
 
-  // `autoStartIfReady` runs the update check itself and then delegates to
-  // `startDaemon`, which runs the same check — a TUI launch used to hit
-  // GitHub twice (against a ~60 req/h anonymous budget) and start two
-  // passes racing on the same `backend.next` staging dir. The flag below
-  // is what keeps it to one; these tests fail if it stops being passed.
+  // `autoStartIfReady` starts the daemon and then runs one deferred
+  // update pass. A TUI launch used to hit GitHub twice (against a ~60
+  // req/h anonymous budget) and race two passes on the same
+  // `backend.next` staging dir; the flag below is what keeps it to one.
   it("checks for a backend update exactly once per start", async () => {
     prepareManagedInstall();
     vi.mocked(localLlm.maybeAutoUpdateBackend).mockResolvedValue({
@@ -122,6 +121,70 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
 
     expect(localLlm.maybeAutoUpdateBackend).toHaveBeenCalledTimes(1);
     expect(startDaemon).toHaveBeenCalledWith({ backendAlreadyChecked: true });
+  });
+
+  // The whole point of the deferral: a rendered TUI the user can type
+  // into, with no model behind it, reads as a broken agent. The daemon
+  // must be up before the (27-39 MB, possibly stalled) download starts.
+  it("starts the daemon before checking for a backend update", async () => {
+    prepareManagedInstall();
+    const order: string[] = [];
+    vi.mocked(localLlm.maybeAutoUpdateBackend).mockImplementation(async () => {
+      order.push("update");
+      return { action: "current", tag: "turboquant-07b9908" };
+    });
+
+    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    vi.spyOn(orchestrator, "startDaemon").mockImplementation(async () => {
+      order.push("start");
+      return true;
+    });
+    vi.spyOn(orchestrator, "refresh").mockResolvedValue();
+    vi.mocked(localLlm.getDaemonStatus).mockResolvedValue({
+      running: false,
+      healthy: false,
+      loading: false,
+      pid: null,
+      port: 19091,
+    });
+
+    await orchestrator.autoStartIfReady();
+    await vi.waitFor(() => expect(order).toHaveLength(2));
+
+    expect(order).toEqual(["start", "update"]);
+  });
+
+  // `hasOtherLiveSessions` skips our own pid by design, so on the
+  // deferred pass it reports "no other sessions" for the very daemon we
+  // just started. Without `keepDaemonRunning` the background update
+  // would stop the model the user is talking to.
+  it("never stops the running daemon on the deferred pass", async () => {
+    prepareManagedInstall();
+    vi.mocked(localLlm.maybeAutoUpdateBackend).mockResolvedValue({
+      action: "deferred",
+      reason: "daemon_live",
+    });
+
+    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    vi.spyOn(orchestrator, "startDaemon").mockResolvedValue(true);
+    vi.spyOn(orchestrator, "refresh").mockResolvedValue();
+    vi.mocked(localLlm.getDaemonStatus).mockResolvedValue({
+      running: false,
+      healthy: false,
+      loading: false,
+      pid: null,
+      port: 19091,
+    });
+
+    await orchestrator.autoStartIfReady();
+    await vi.waitFor(() =>
+      expect(localLlm.maybeAutoUpdateBackend).toHaveBeenCalled(),
+    );
+
+    expect(localLlm.maybeAutoUpdateBackend).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ keepDaemonRunning: true }),
+    );
   });
 
   // The flag must be opt-in: a bare `startDaemon()` (the `s` key, or a

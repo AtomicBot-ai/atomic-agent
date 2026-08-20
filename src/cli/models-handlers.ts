@@ -222,6 +222,11 @@ export async function runLocalModelsStart(): Promise<number> {
   try {
     const auto = await maybeAutoUpdateBackend(dataDir, {
       enabled: cfg.localModels.managed.autoUpdate,
+      // Unlike the TUI, `models start` is an explicit one-shot command:
+      // updating before the daemon comes up is what the operator asked
+      // for. It still needs a deadline — a stalled-open connection would
+      // otherwise pin the command forever with a progress bar at 12%.
+      signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
       onProgress: (p: number, t: number, tot: number) => {
         const line = renderPullProgress("backend zip", p, t, tot);
         if (process.stderr.isTTY) process.stderr.write(`\r${line.padEnd(79)}`);
@@ -380,6 +385,13 @@ function describeDeviceChoice(
   }
   return resolved ?? configured;
 }
+
+/**
+ * Deadline for the backend asset download. The zip is 27-39 MB, so this
+ * is generous for any working link; it exists because a stalled-but-open
+ * TCP connection never resolves on its own.
+ */
+const BACKEND_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 
 const DEVICE_ID_RE = /^[A-Za-z]+\d+$/;
 

@@ -82,6 +82,15 @@ function describeDeviceChoice(
 }
 
 /** Log-tail poll cadence while the LLM logs tab is active. */
+/**
+ * Deadline for the backend asset download on the auto-update path. The
+ * zip is 27-39 MB, so this is generous for any working link; it exists
+ * because a stalled-but-open TCP connection otherwise never resolves
+ * and the update hangs for the life of the process. A timeout is
+ * reported like any other update failure and retried on the next start.
+ */
+const BACKEND_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
+
 const LOGS_POLL_MS = 1000;
 
 /** Snapshot refresh cadence while the Models tab is idle. */
@@ -1528,10 +1537,18 @@ export class LocalModelsOrchestrator {
    * be papered over — the daemon was stopped for an update and no
    * usable backend remains.
    */
-  private async applyBackendAutoUpdate(dataDir: string): Promise<boolean> {
+  private async applyBackendAutoUpdate(
+    dataDir: string,
+    opts?: { keepDaemonRunning?: boolean },
+  ): Promise<boolean> {
     try {
       const result = await maybeAutoUpdateBackend(dataDir, {
         enabled: getConfig().localModels.managed.autoUpdate,
+        keepDaemonRunning: opts?.keepDaemonRunning,
+        // The zip is small (27-39 MB) but the link may not be. Without a
+        // deadline a stalled-open connection pins the download for the
+        // life of the process; the next start retries from scratch.
+        signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
         onWillDownload: () => {
           this.bus.emit({
             type: "local_models_pull_started",
@@ -1570,7 +1587,10 @@ export class LocalModelsOrchestrator {
       } else if (result.action === "deferred") {
         this.bus.emit({
           type: "runtime_info",
-          line: `local-llm: backend update deferred — another session is using the current binary`,
+          line:
+            result.reason === "daemon_live"
+              ? "local-llm: backend update deferred — will install on next start"
+              : "local-llm: backend update deferred — another session is using the current binary",
         });
       } else if (result.action === "update_failed") {
         this.bus.emit({
@@ -1610,9 +1630,16 @@ export class LocalModelsOrchestrator {
    * Called once at TUI startup. If the user is in managed mode AND the
    * backend + model are already on disk AND no daemon is currently
    * running, start the daemon so the user lands in a ready state
-   * without needing an extra keypress. When `autoUpdate` is on, a
-   * newer llama.cpp zip is pulled first even if a daemon is already
-   * running (it is stopped, replaced, then restarted).
+   * without needing an extra keypress.
+   *
+   * The backend auto-update runs **after** the daemon is up, never
+   * before. Checking first meant the user got a rendered TUI they
+   * could type into while no model was loaded — a prompt that silently
+   * does nothing reads as a broken agent, and the download (27-39 MB,
+   * unbounded on a stalled link) sat on that path. Starting first
+   * costs one session on the previous binary; the swap is picked up on
+   * the next start. A daemon already serving a model is left alone for
+   * the same reason.
    */
   async autoStartIfReady(): Promise<void> {
     const cfg = getConfig();
@@ -1626,8 +1653,6 @@ export class LocalModelsOrchestrator {
     if (!isBackendDownloaded(dataDir)) return;
     const def = getLocalModelDef(mid);
     if (!isModelDownloaded(dataDir, def)) return;
-    const autoOk = await this.applyBackendAutoUpdate(dataDir);
-    if (!autoOk) return;
     const running = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
     if (running.running) {
       // Already started by a previous TUI session; adopt it.
@@ -1638,10 +1663,30 @@ export class LocalModelsOrchestrator {
       // (see `ensureEmbeddingPaired`).
       await this.ensureEmbeddingPaired();
       await this.refresh();
+      this.scheduleBackendAutoUpdate(dataDir);
       return;
     }
-    // The update check already ran above; `startDaemon` must not repeat it.
+    // `startDaemon` owns the pre-start check on the path where the
+    // backend has to be replaced before a daemon exists; here it must
+    // not run one, because the deferred pass below owns it.
     await this.startDaemon({ backendAlreadyChecked: true });
+    this.scheduleBackendAutoUpdate(dataDir);
+  }
+
+  /**
+   * Run the backend auto-update once the daemon is serving, off the
+   * start path. Deliberately not awaited: the result only matters for
+   * the *next* start, so nothing the user is waiting on depends on it.
+   * `maybeAutoUpdateBackend` already defers when any daemon is live
+   * (`hasOtherLiveSessions` / `readRunningPid`), so the model we just
+   * started is not pulled out from under the user mid-turn.
+   */
+  private scheduleBackendAutoUpdate(dataDir: string): void {
+    void this.applyBackendAutoUpdate(dataDir, {
+      keepDaemonRunning: true,
+    }).catch(() => {
+      /* applyBackendAutoUpdate already reports failures on the bus */
+    });
   }
 
   /**

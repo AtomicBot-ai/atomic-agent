@@ -14,7 +14,7 @@ export type AutoUpdateBackendResult =
   | { action: "skipped" }
   | { action: "current"; tag: string | null }
   | { action: "updated"; from: string | null; to: string }
-  | { action: "deferred"; reason: "other_session" }
+  | { action: "deferred"; reason: "other_session" | "daemon_live" }
   | { action: "check_failed"; error: string }
   /**
    * The version check said "update", but stopping the daemon or
@@ -43,6 +43,20 @@ export async function maybeAutoUpdateBackend(
     enabled: boolean;
     onProgress?: DownloadProgressFn;
     onWillDownload?: () => void;
+    /**
+     * Abort the (27-39 MB) asset download. Without one a stalled but
+     * open connection never resolves and the update hangs for the
+     * lifetime of the process.
+     */
+    signal?: AbortSignal;
+    /**
+     * Never stop a running daemon to install the update. Set by the
+     * deferred pass that runs *after* start: there the live daemon is
+     * the one serving the user, and `hasOtherLiveSessions` cannot see
+     * it — it skips our own pid by design — so without this the
+     * background update would kill the model mid-turn.
+     */
+    keepDaemonRunning?: boolean;
   },
 ): Promise<AutoUpdateBackendResult> {
   if (!opts.enabled) return { action: "skipped" };
@@ -67,6 +81,9 @@ export async function maybeAutoUpdateBackend(
   // model mid-chat is worse than sitting on an old tag until next solo start.
   try {
     if (readRunningPid(dataDir) !== null) {
+      if (opts.keepDaemonRunning) {
+        return { action: "deferred", reason: "daemon_live" };
+      }
       if (hasOtherLiveSessions(dataDir)) {
         return { action: "deferred", reason: "other_session" };
       }
@@ -76,6 +93,7 @@ export async function maybeAutoUpdateBackend(
     opts.onWillDownload?.();
     const downloaded = await downloadBackend(dataDir, {
       onProgress: opts.onProgress,
+      signal: opts.signal,
     });
     return {
       action: "updated",
