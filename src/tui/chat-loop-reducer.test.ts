@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import { reduceTuiState } from "./agent-event-reducer.js";
 import { apply, fakeSession } from "./test-fixtures.js";
 import type { TuiAction } from "./tui-action.js";
-import { canAcceptMessage, createInitialTuiState } from "./tui-state.js";
+import {
+  canAcceptMessage,
+  canTypeMessage,
+  createInitialTuiState,
+} from "./tui-state.js";
 
 describe("chat loop", () => {
   it("should update inputValue on input_changed", () => {
@@ -301,5 +305,39 @@ describe("chat loop", () => {
       event: { type: "loop_completed", reason: "finish" },
     });
     expect(next.runHistory[0]?.durationMs).toBeGreaterThan(0);
+  });
+});
+
+describe("queued submissions", () => {
+  it("may be typed while a turn is running", () => {
+    const running = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "message_submitted",
+    });
+    expect(canAcceptMessage(running)).toBe(false);
+    expect(canTypeMessage(running)).toBe(true);
+  });
+
+  it("does not wipe the live turn's feed the way message_submitted does", () => {
+    // This is the regression the separate action exists for: reusing
+    // `message_submitted` for a mid-run send called startNewRun and
+    // blanked the screen the operator was reading.
+    const initial = createInitialTuiState(fakeSession());
+    const running = apply(initial, [
+      { type: "message_submitted" },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      { type: "assistant_delta", text: "partial answer" },
+    ]);
+    expect(running.feed.length).toBeGreaterThan(0);
+
+    const afterQueue = reduceTuiState(running, {
+      type: "message_queued",
+      text: "one more thing",
+    });
+
+    expect(afterQueue.feed).toEqual(running.feed);
+    expect(afterQueue.streamingAssistantText).toBe("partial answer");
+    expect(afterQueue.status).toBe("running");
+    expect(afterQueue.queuedMessages).toEqual(["one more thing"]);
+    expect(afterQueue.inputValue).toBe("");
   });
 });

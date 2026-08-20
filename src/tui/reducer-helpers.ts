@@ -124,11 +124,17 @@ export function appendChatMessage(
 export function appendUserMessage(state: TuiState, text: string): TuiState {
   const withMessage = appendChatMessage(state, { role: "user", text });
   const history = pushRing(state.inputHistory, text, state.ringBufferSize);
+  // History-navigation state is deliberately left alone: this event also
+  // fires in the BACKGROUND when a parked queue message drains into a
+  // turn, possibly while the operator is walking history in the live
+  // editor — resetting the cursor or the parked draft here would eat
+  // what they are doing. The submit actions (`message_submitted`,
+  // `message_queued`) already reset both at submit time. Appending to
+  // the END of `inputHistory` keeps an active cursor index pointing at
+  // the same entry.
   return {
     ...withMessage,
     inputHistory: history,
-    inputHistoryCursor: null,
-    inputHistoryDraft: null,
   };
 }
 

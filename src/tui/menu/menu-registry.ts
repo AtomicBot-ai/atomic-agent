@@ -428,6 +428,18 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.queue",
+    label: "Queued messages",
+    group: "run",
+    slash: {
+      name: "queue",
+      description:
+        "messages parked behind the running turn: `/queue` (list) | `/queue clear`",
+      rank: 32,
+    },
+  },
+  {
+    kind: "action",
     id: "run.expand",
     label: "Expand all tool cards",
     group: "run",

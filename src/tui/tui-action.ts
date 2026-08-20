@@ -58,6 +58,17 @@ export type TuiAction =
    * `user_message` agent event, so the action carries no payload.
    */
   | { type: "message_submitted" }
+  /**
+   * The operator pressed Enter while a turn was still running. Unlike
+   * `message_submitted` this must NOT reset the run state — the turn in
+   * flight owns `feed` / `reasoning` / `streamingToolCards` and wiping
+   * them mid-run would blank the screen the operator is reading. We only
+   * clear the editor and record the message as parked; the orchestrator
+   * confirms with `queue_changed` once it has actually buffered it.
+   */
+  | { type: "message_queued"; text: string }
+  /** Orchestrator re-published its pending-message queue (push/drain/clear). */
+  | { type: "queue_changed"; queued: readonly string[] }
   | { type: "quit_requested" }
   | {
       type: "loaded_skill";

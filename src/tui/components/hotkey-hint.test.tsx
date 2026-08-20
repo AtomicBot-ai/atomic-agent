@@ -143,3 +143,22 @@ describe("HotkeyHint scroll key spelling per platform", () => {
     expect(out).not.toContain(MAC_SCROLL_KEY);
   });
 });
+
+describe("HotkeyHint queue affordances", () => {
+  it("advertises what Enter does now that the editor stays live mid-run", () => {
+    const out = renderHint(chatState({ status: "running" }));
+    expect(out).toContain("queue message");
+  });
+
+  it("shows how many messages are parked behind the turn", () => {
+    const out = renderHint(
+      chatState({ status: "running", queuedMessages: ["a", "b"] }),
+    );
+    expect(out).toContain("2 parked");
+  });
+
+  it("hides the parked chip when the queue is empty", () => {
+    const out = renderHint(chatState({ status: "running" }));
+    expect(out).not.toContain("parked");
+  });
+});

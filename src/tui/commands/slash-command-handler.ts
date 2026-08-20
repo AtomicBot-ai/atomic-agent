@@ -83,6 +83,13 @@ export interface SlashDispatchResult {
    */
   readonly analyticsVerb?: "enable" | "disable" | "status";
   /**
+   * `/queue` side-effect. `list` renders the parked messages into chat —
+   * the listing needs `TuiState`, which this pure dispatcher does not
+   * have, so the caller formats it. `clear` additionally asks the
+   * orchestrator to drop its own copy of the queue.
+   */
+  readonly queueVerb?: "list" | "clear";
+  /**
    * `/privacy level <1..5>` side-effect (with `/privacy approve on|off`
    * kept as aliases for 5 and 1): move the approval ladder to an
    * explicit level. The caller (submit-handler) maps this to
@@ -148,6 +155,8 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return pureActions([{ type: "chat_cleared" }], {
         systemMessage: "chat cleared",
       });
+    case "queue":
+      return dispatchQueueSub(parsed.args);
     case "abort":
       return pureActions([{ type: "abort_requested" }], {
         triggerAbort: true,
@@ -255,6 +264,22 @@ function formatSlashCommandHelp(): string {
   return ["slash commands:", ...lines].join("\n");
 }
 
+/**
+ * `/queue` — bare lists what is parked, `clear` (alias `drop`) empties
+ * it. The reducer action is dispatched optimistically so the strip above
+ * the prompt disappears immediately; `ChatOrchestrator.clearQueue` then
+ * re-publishes the authoritative empty queue.
+ */
+function dispatchQueueSub(args: string): SlashDispatchResult {
+  const verb = args.trim().toLowerCase();
+  if (verb === "clear" || verb === "drop") {
+    return pureActions([{ type: "queue_changed", queued: [] }], {
+      queueVerb: "clear",
+    });
+  }
+  return pureActions([], { queueVerb: "list" });
+}
+
 function pureActions(
   actions: readonly TuiAction[],
   overrides: Partial<
@@ -283,6 +308,7 @@ function pureActions(
     setThemeName: undefined,
     telegramVerb: undefined,
     analyticsVerb: undefined,
+    queueVerb: undefined,
     approvalLevelSet: undefined,
     ...overrides,
   };
