@@ -384,6 +384,75 @@ describe("reduceTuiState", () => {
     });
     expect(down.session.approvalLevel).toBe(2);
   });
+
+  it("renders a mid-turn steer inline in the turn that is already running", () => {
+    const running = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "user_message", text: "deploy" } },
+      { type: "message_submitted" },
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 0 } },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: {
+            type: "tool_call_executed",
+            result: {
+              tool: "os.fs.read",
+              status: "ok",
+              summary: "read config",
+              truncated: false,
+            },
+          },
+        },
+      },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 1 } },
+    ]);
+    const feedBefore = running.feed.length;
+
+    const next = reduceTuiState(running, {
+      type: "agent_event",
+      event: { type: "steer_applied", text: "use the staging db", stepIndex: 1 },
+    });
+
+    // The operator's words show up as a user message, in the same
+    // transcript as everything else...
+    const last = next.messages[next.messages.length - 1];
+    expect(last?.role).toBe("user");
+    expect(last?.text).toBe("use the staging db");
+    // ...with a feed line tying it to the step it reached.
+    expect(next.feed.length).toBe(feedBefore + 1);
+    expect(next.feed[next.feed.length - 1]?.line).toContain("step 1");
+    // ...and none of the per-turn resets a NEW turn would bring: this
+    // is a correction to the turn in flight, not the start of one.
+    expect(next.status).toBe("running");
+    expect(next.currentStep).toBe(1);
+    expect(next.currentTurnToolSteps).toBe(running.currentTurnToolSteps);
+    expect(next.runStartedAt).toBe(running.runStartedAt);
+  });
+
+  it("reports a trimmed tool batch instead of swallowing it", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: {
+            type: "batch_trimmed",
+            stepIndex: 0,
+            originalSize: 3,
+            kept: "os.fs.write",
+            dropped: ["os.shell.run", "os.fs.trash"],
+            reason: "approval-gated-batched",
+          },
+        },
+      },
+    ]);
+    const line = next.feed[next.feed.length - 1]?.line ?? "";
+    expect(line).toContain("os.fs.write");
+    expect(line).toContain("2 of 3");
+  });
 });
 
 describe("llm health visibility", () => {

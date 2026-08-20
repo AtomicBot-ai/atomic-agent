@@ -110,6 +110,15 @@ export class ChatOrchestrator {
    * first push that fits again.
    */
   private droppedWhileFull = 0;
+  /**
+   * How many leading `queue` entries are steering re-routes for the turn
+   * currently in flight. New re-routes are spliced in at this index, so
+   * they stay ahead of ordinary backlog (they are corrections to the turn
+   * the operator is watching) while keeping their own typing order. Reset
+   * whenever a turn starts — a message aimed at the previous turn is
+   * ordinary backlog from the next one's point of view.
+   */
+  private steeredAhead = 0;
   public exitCode = 0;
   public readonly tasks: TasksOrchestrator;
   public readonly skills: SkillsOrchestrator;
@@ -296,8 +305,7 @@ export class ChatOrchestrator {
       return;
     }
     this.session = loaded;
-    this.queue.length = 0;
-    this.emitQueue();
+    this.clearQueue();
     // Session grants are point exceptions scoped to the session that
     // granted them; a switch must not carry them into the next one.
     this.runtime.approvals.clearSessionGrants();
@@ -387,8 +395,7 @@ export class ChatOrchestrator {
       return;
     }
     this.session = this.runtime.createSession();
-    this.queue.length = 0;
-    this.emitQueue();
+    this.clearQueue();
     // A fresh session starts with no point exceptions: grants never
     // outlive the session that created them.
     this.runtime.approvals.clearSessionGrants();
@@ -408,8 +415,26 @@ export class ChatOrchestrator {
 
   sendMessage(text: string): void {
     if (this.quitting) return;
-    this.ensureSession();
+    const session = this.ensureSession();
     if (this.currentController) {
+      // A turn is already in flight. Try to fold the message into it —
+      // it reaches the model at the next step boundary instead of
+      // waiting for the whole turn to close. `steer` returns false when
+      // that turn can no longer pick anything up (it has done its final
+      // drain, or its inbox is full), and then this queue is exactly the
+      // "own pending-message queue" AGENTS.md tells callers to fall back
+      // to. Either way the message goes somewhere.
+      if (session !== null && this.runtime.steer(session.id, text)) {
+        // The reducer parked it optimistically; the authoritative queue
+        // never held it (it went to the inbox), so re-sync the strip —
+        // `steer_applied` renders it inline once the turn folds it in.
+        this.emitQueue();
+        this.bus.emit({
+          type: "runtime_info",
+          line: "steering the running turn — the agent reads it at the next step",
+        });
+        return;
+      }
       if (this.queue.length >= MAX_QUEUED_MESSAGES) {
         this.droppedWhileFull += 1;
         // Re-publish an unchanged queue on purpose: the reducer already
@@ -430,11 +455,58 @@ export class ChatOrchestrator {
         return;
       }
       this.droppedWhileFull = 0;
-      this.queue.push(text);
+      // Refused, but the operator still aimed this at the turn they are
+      // watching — `currentController` is set strictly earlier than the
+      // loop opens its window, so a refusal can mean "not yet" as well
+      // as "too late" or "full". Not backlog: splice it ahead of
+      // ordinary queue entries, behind steers already re-routed for the
+      // same turn, so typing order survives. `steer`'s answer is the
+      // only fact consulted — see §"Mid-turn steering" in AGENTS.md.
+      this.queueAsSteer(text);
       this.emitQueue();
+      this.bus.emit({
+        type: "runtime_info",
+        line: "steering the running turn — it cannot take this one, so it runs as the next turn",
+      });
       return;
     }
     void this.runOneTurn(text);
+  }
+
+  /**
+   * Queue a message that was meant as a steer but could not be folded
+   * into the running turn — ahead of ordinary backlog, behind steers
+   * already re-routed for the same turn.
+   */
+  private queueAsSteer(text: string): void {
+    this.queue.splice(this.steeredAhead, 0, text);
+    this.steeredAhead += 1;
+  }
+
+  /**
+   * Re-route steering messages the turn accepted but never delivered.
+   *
+   * `RunTurnResult.undelivered` carries anything pushed after the loop's
+   * last step boundary — during the final inference, or into a turn
+   * cancelled before it stepped. AGENTS.md makes re-routing the caller's
+   * job: `steer` already answered "yes" to whoever sent these, so
+   * dropping them here would lose a message the operator watched being
+   * accepted. They go to the FRONT of the queue — ahead of
+   * `queueAsSteer`'s entries too: they are corrections aimed at the turn
+   * that just ran, and anything already queued was typed after `steer`
+   * had refused it.
+   */
+  private rerouteUndelivered(undelivered: readonly string[] | undefined): void {
+    if (undelivered === undefined || undelivered.length === 0) return;
+    this.queue.unshift(...undelivered);
+    this.emitQueue();
+    this.notify(
+      `${undelivered.length} message${
+        undelivered.length === 1 ? "" : "s"
+      } arrived too late for that turn — sending ${
+        undelivered.length === 1 ? "it" : "them"
+      } next`,
+    );
   }
 
   /**
@@ -443,6 +515,8 @@ export class ChatOrchestrator {
    * with redundant `queue_changed` frames.
    */
   clearQueue(): void {
+    // Even an empty queue can carry a stale steer watermark.
+    this.steeredAhead = 0;
     if (this.queue.length === 0) return;
     this.queue.length = 0;
     this.emitQueue();
@@ -480,6 +554,9 @@ export class ChatOrchestrator {
     if (!this.session) return;
     const controller = new AbortController();
     this.currentController = controller;
+    // A new turn is in flight: whatever is still queued was aimed at an
+    // earlier one and is ordinary backlog now.
+    this.steeredAhead = 0;
     try {
       const result = await this.runtime.runTurn(this.session, text, {
         maxSteps: this.options.maxSteps,
@@ -487,6 +564,24 @@ export class ChatOrchestrator {
         origin: "tui",
       });
       this.session = result.session;
+      // A cancelled turn means the operator stopped the agent — Esc,
+      // Ctrl+C or /abort. Re-queueing its undelivered steers here would
+      // make the post-abort drain START a turn out of them: the exact
+      // "Esc launches the next parked message" trap the abort path
+      // exists to close. Announce the drop instead, like the queue drop.
+      if (result.reason === "cancelled") {
+        const dropped = result.undelivered ?? [];
+        if (dropped.length > 0) {
+          this.notify(
+            [
+              `aborted: dropped ${dropped.length} undelivered steer${dropped.length === 1 ? "" : "s"}`,
+              ...dropped.map((text, i) => `  ${i + 1}. ${droppedPreview(text)}`),
+            ].join("\n"),
+          );
+        }
+      } else {
+        this.rerouteUndelivered(result.undelivered);
+      }
       if (isFailedSessionStatus(this.session.status)) this.exitCode = 1;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -609,8 +704,7 @@ export class ChatOrchestrator {
   quit(): void {
     if (this.quitting) return;
     this.quitting = true;
-    this.queue.length = 0;
-    this.emitQueue();
+    this.clearQueue();
     this.currentController?.abort();
   }
 

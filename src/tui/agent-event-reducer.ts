@@ -217,6 +217,21 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
   switch (event.type) {
     case "user_message":
       return appendUserMessage(state, event.text);
+    case "steer_applied":
+      // A message the operator sent mid-turn, folded into the prompt of
+      // the step named here. It renders INLINE in the running turn: same
+      // chat bubble as any user message, but none of the per-turn resets
+      // `user_message` implies — no `startNewRun`, no step counter reset.
+      // The feed line is what ties it to the step it actually reached.
+      return appendUserMessage(
+        appendFeed(state, {
+          kind: "runtime_info",
+          stepIndex: event.stepIndex,
+          line: `» steering applied at step ${event.stepIndex}`,
+          color: "yellow",
+        }),
+        event.text,
+      );
     case "turn_started":
       return {
         ...state,
@@ -333,8 +348,23 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         { outcome: "failed", reason: event.error.message, lastRunStatus },
       );
     }
-    default:
+    case "loop_detected":
+      // Deliberately not rendered: the loop detector's own `### notice`
+      // changes what the model does, and the operator sees the effect
+      // through the tool calls that follow. Listed explicitly so the
+      // exhaustiveness check below stays meaningful.
       return state;
+    default: {
+      // `steer_applied` shipped with a doc comment promising inline
+      // rendering and no case here, and a bare `default: return state`
+      // meant TypeScript had nothing to say about it. This makes the
+      // next new `AgentLoopEvent` a compile error instead of a silent
+      // no-op — while still returning `state` at runtime, because a UI
+      // reducer must never throw on an event it does not know.
+      const unhandled: never = event;
+      void unhandled;
+      return state;
+    }
   }
 }
 
@@ -506,7 +536,28 @@ function reduceStepEvent(
         line: `  ! [${event.category}] ${event.error.message}`,
         color: "red",
       });
-    default:
+    case "batch_trimmed":
+      // Surfaced by the exhaustiveness check below: the model asked for
+      // `originalSize` calls and only one ran. That is worth a line —
+      // otherwise the dropped calls reappear one-by-one next step with
+      // no explanation for why the batch shrank.
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: `  ~ batch trimmed to ${event.kept} (${event.dropped.length} of ${event.originalSize} deferred: ${event.reason})`,
+        color: "yellow",
+      });
+    case "prompt_built":
+    case "llm_completed":
+    case "llm_raw_completion":
+      // Raw plumbing: the whole prompt, the whole completion object,
+      // the unparsed text. The trace recorder wants them; the chat feed
+      // would drown in them. Listed so the exhaustiveness check holds.
       return state;
+    default: {
+      const unhandled: never = event;
+      void unhandled;
+      return state;
+    }
   }
 }

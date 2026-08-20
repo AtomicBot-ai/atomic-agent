@@ -282,6 +282,14 @@ export function packConversation(
   if (lastUserIndex !== -1 && lastUserIndex < startIndex) {
     startIndex = lastUserIndex;
   }
+  // A drained steer becomes the LAST user turn, which would otherwise
+  // carry the only pin — under token pressure the macro-turn's founding
+  // instruction would compress into the dropped-summary line while the
+  // correction stayed, and the model would continue from the correction
+  // alone. Pin the current macro-turn's opening user turn as well.
+  if (currentStart < startIndex && turns[currentStart]?.kind === "user") {
+    startIndex = currentStart;
+  }
 
   const droppedSlice = turns.slice(0, startIndex);
   const visibleTurns = turns.slice(startIndex);
