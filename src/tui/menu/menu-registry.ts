@@ -440,6 +440,19 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "session.window",
+    label: "New terminal window",
+    group: "session",
+    slash: {
+      name: "window",
+      description:
+        "open a new terminal window running atomic-agent (ctrl+n)",
+      aliases: ["newwindow"],
+      rank: 34,
+    },
+  },
+  {
+    kind: "action",
     id: "run.steer",
     label: "Steer the running turn",
     group: "run",

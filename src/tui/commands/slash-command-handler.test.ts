@@ -86,6 +86,18 @@ describe("dispatchSlashCommand", () => {
     expect(result.triggerSessionPicker).toBe(false);
   });
 
+  it("signals triggerNewWindow for /window and its alias", () => {
+    // `/new` restarts the session in place; `/window` is the OS-level
+    // sibling of Ctrl+N — the two must never be confused.
+    for (const buffer of ["/window", "/newwindow"]) {
+      const result = dispatchSlashCommand(buffer);
+      expect(result.triggerNewWindow).toBe(true);
+      expect(result.triggerSessionNew).toBe(false);
+      expect(result.forwardAsMessage).toBe(false);
+    }
+    expect(dispatchSlashCommand("/new").triggerNewWindow).toBe(false);
+  });
+
   it("opens the Memory tab for bare /memory", () => {
     const result = dispatchSlashCommand("/memory");
     expect(result.triggerMemoryDump).toBe(false);

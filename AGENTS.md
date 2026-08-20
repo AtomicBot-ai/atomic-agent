@@ -1370,6 +1370,24 @@ Slash commands: `/memory` opens the tab; `/memory dump` keeps the legacy profile
 4. **Note detail exposes link neighbours when `memory.links.enabled`.** `g` runs `linkStore.expand`; Enter on a neighbour opens that note by id.
 5. **Config gates surface hints, not crashes.** Disabled channels show an empty list + `channelHint` string.
 
+## New terminal window (Ctrl+N)
+
+**Ctrl+N** in the TUI (and the `/window` slash command, alias `/newwindow`) opens a **new OS terminal window** running a fresh `atomic-agent tui` in the same working directory. It is a second agent in a second process — not a second view of the current session, which the per-session runtime lock would not allow. `/new` remains the in-process "fresh session, warm runtime" reset; the two are deliberately different commands.
+
+The resolver is split so the platform logic is unit-reachable without opening windows:
+
+- [src/tui/build-terminal-launch.ts](src/tui/build-terminal-launch.ts) — **pure**. `buildTerminalLaunch({platform, execPath, argv, isSea, cwd, env, hasBinary})` → `{cmd, args, label}` or `null`. macOS drives `osascript` → `Terminal` (or `iTerm` when `TERM_PROGRAM === "iTerm.app"`); Linux probes `$ATOMIC_AGENT_TERMINAL` → `$TERMINAL` → gnome-terminal / konsole / xfce4-terminal / kitty / alacritty / wezterm / x-terminal-emulator / xterm through the injected `hasBinary`; Windows uses `wt.exe -w -1 nt` when present, else `cmd.exe /c start … cmd /k`.
+- [src/tui/open-terminal-window.ts](src/tui/open-terminal-window.ts) — the effectful half: `detached: true, stdio: "ignore"` + `unref()` so the new window outlives this process, `spawn` injectable, every failure returned as `{ok: false, reason}` and never thrown into the render loop. Also owns the `isOnPath` PATH probe (no `which` shell-out).
+
+Two details that are easy to regress:
+
+1. **`argv[1]` must be dropped for a SEA build** and kept under plain node — same reasoning as the self-update relaunch in [src/tui/tui-command.ts](src/tui/tui-command.ts); `tui` is always appended explicitly.
+2. **`ATOMIC_AGENT_STATE_DIR` travels inside the command line.** A spawned terminal starts a login shell and inherits nothing from us, so without the inline assignment the second window would silently attach to a different state dir.
+
+The POSIX command line ends with `exec "${SHELL:-sh}"` on Linux because `-e` closes the window the instant the agent exits, which would eat a startup error. macOS `do script` already leaves the shell alive, so it does not need this.
+
+Pinned by [src/tui/build-terminal-launch.test.ts](src/tui/build-terminal-launch.test.ts) (per-platform argv shapes, SEA split, state-dir passthrough, shell + AppleScript escaping, `null` on a headless box), [src/tui/open-terminal-window.test.ts](src/tui/open-terminal-window.test.ts) (detach/unref, error-as-value, PATH probe), [src/tui/app-key-bindings.test.ts](src/tui/app-key-bindings.test.ts) (Ctrl+N fires only outside modals / the slash palette / a pending approval) and [src/tui/commands/slash-command-handler.test.ts](src/tui/commands/slash-command-handler.test.ts) (`/window` vs `/new`).
+
 ## Vision (multimodal input)
 
 Image recognition is an opt-in feature wired through the active **`LlmProvider`** ([src/llm/provider/llm-provider.ts](src/llm/provider/llm-provider.ts)) — `LlamaServerProvider` for local `/v1/chat/completions`, `OpenAiProvider` / `OpenRouterProvider` for cloud. The text agent loop is unchanged — vision lives outside the conversation transcript, exposed only via the `vision.describe` tool.
