@@ -4,14 +4,18 @@ import { SplashBanner } from "./splash-banner.js";
 
 function strip(value: string): string {
   return value
-    .replace(/\u001b\[[0-9;]*m/g, "")
-    .replace(/\u001b\]8;;[^\u0007]*\u0007/g, "");
+    .replace(/\[[0-9;]*m/g, "")
+    .replace(/\]8;;[^]*/g, "");
+}
+
+function frameAt(columns: number, rows: number): string {
+  const { lastFrame } = render(<SplashBanner size={{ columns, rows }} />);
+  return strip(lastFrame() ?? "");
 }
 
 describe("SplashBanner", () => {
-  it("renders the plus-mark middle bar and the wordmark", () => {
-    const { lastFrame } = render(<SplashBanner />);
-    const frame = strip(lastFrame() ?? "");
+  it("renders the plus-mark middle bar and the wordmark on a roomy surface", () => {
+    const frame = frameAt(96, 40);
     // Middle bar of the plus — longest uninterrupted `:` run in the art.
     expect(frame).toContain("::::::::::::::::::::::::::::::::::");
     // Both halves of the `ATOMIC AGENT` half-block wordmark.
@@ -21,14 +25,50 @@ describe("SplashBanner", () => {
   });
 
   it("advertises the core slash commands and hotkeys", () => {
-    const { lastFrame } = render(<SplashBanner />);
-    const frame = strip(lastFrame() ?? "");
+    const frame = frameAt(96, 40);
     expect(frame).toContain("/help");
     expect(frame).toContain("/sessions");
     expect(frame).toContain("/new");
-    expect(frame).toContain("/observe");
-    expect(frame).toContain("/manage");
-    expect(frame).toContain("/run");
+    expect(frame).toContain("/model");
+    expect(frame).toContain("/tasks");
+    expect(frame).toContain("/import");
     expect(frame).toContain("Ctrl+C");
+  });
+
+  it("keeps the most useful tips when the surface is too short for all of them", () => {
+    const frame = frameAt(96, 16);
+    expect(frame).toContain("/help");
+    expect(frame).toContain("/sessions");
+    // The tail of the list is what gives way first.
+    expect(frame).not.toContain("/import");
+  });
+
+  it("swaps in terse descriptions on a narrow surface", () => {
+    const frame = frameAt(44, 20);
+    expect(frame).toContain("/help");
+    expect(frame).toContain("all commands");
+    expect(frame).not.toContain("list all slash commands");
+  });
+
+  it("keeps the tips and drops the mark when four rows is all there is", () => {
+    // The mark is scaled artwork at every size now — the smallest is 4
+    // rows, so on a 4-row surface it would leave nothing for the tips
+    // and Ink would paint it over the chat above. Tips win.
+    const frame = frameAt(38, 4);
+    expect(frame).toContain("Enter");
+    expect(frame).not.toMatch(/:::|[█▀▄]/u);
+  });
+
+  it("still shows a brand mark and a tip once there is room for both", () => {
+    const frame = frameAt(38, 8);
+    expect(frame).toMatch(/:::|[█▀▄]/u);
+    expect(frame).toContain("Enter");
+  });
+
+  it("measures the terminal itself when no size is given", () => {
+    const { lastFrame } = render(<SplashBanner />);
+    const frame = strip(lastFrame() ?? "");
+    expect(frame).toMatch(/:::|[█▀▄]/u);
+    expect(frame).toContain("/help");
   });
 });

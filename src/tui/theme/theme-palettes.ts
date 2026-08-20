@@ -41,6 +41,7 @@ export const GITHUB_DARK_COLORS: TuiColors = {
   warnStrong: "#db6d28",
   success: "#3fb950",
   info: "#4493f8",
+  brandMark: "#a5c9ff",
 };
 
 // GitHub Primer "light (default)" — @primer/primitives functional tokens
@@ -62,6 +63,7 @@ export const GITHUB_LIGHT_COLORS: TuiColors = {
   warnStrong: "#bc4c00",
   success: "#1a7f37",
   info: "#0969da",
+  brandMark: "#54a3ff",
 };
 
 // Catppuccin Mocha — official palette (catppuccin/palette palette.json).
@@ -84,6 +86,7 @@ export const CATPPUCCIN_MOCHA_COLORS: TuiColors = {
   warnStrong: "#fab387",
   success: "#a6e3a1",
   info: "#89b4fa",
+  brandMark: "#b4cffa",
 };
 
 // Catppuccin Latte — official palette (light flavour).
@@ -104,6 +107,7 @@ export const CATPPUCCIN_LATTE_COLORS: TuiColors = {
   warnStrong: "#fe640b",
   success: "#40a02b",
   info: "#1e66f5",
+  brandMark: "#5f9bf5",
 };
 
 // Dracula — official spec (draculatheme.com). accent=purple, green,
@@ -126,6 +130,7 @@ export const DRACULA_COLORS: TuiColors = {
   warnStrong: "#ffb86c",
   success: "#50fa7b",
   info: "#bd93f9",
+  brandMark: "#b9c9ff",
 };
 
 // Nord — official spec (nordtheme.com). accent=nord8 frost, nord14 green,
@@ -148,6 +153,7 @@ export const NORD_COLORS: TuiColors = {
   warnStrong: "#d08770",
   success: "#a3be8c",
   info: "#88c0d0",
+  brandMark: "#b3ccec",
 };
 
 // Tokyo Night ("Night" variant) — official spec
@@ -170,6 +176,7 @@ export const TOKYO_NIGHT_COLORS: TuiColors = {
   warnStrong: "#ff9e64",
   success: "#9ece6a",
   info: "#7aa2f7",
+  brandMark: "#a9c7ff",
 };
 
 // Gruvbox Dark — official "bright" palette (morhetz/gruvbox). accent=blue,
@@ -192,6 +199,7 @@ export const GRUVBOX_DARK_COLORS: TuiColors = {
   warnStrong: "#fe8019",
   success: "#b8bb26",
   info: "#83a598",
+  brandMark: "#b3d1e6",
 };
 
 // Gruvbox Light — official "faded" palette on light bg (morhetz/gruvbox).
@@ -212,6 +220,7 @@ export const GRUVBOX_LIGHT_COLORS: TuiColors = {
   warnStrong: "#af3a03",
   success: "#79740e",
   info: "#076678",
+  brandMark: "#5a9ec9",
 };
 
 // Solarized Dark — official spec (Ethan Schoonover). Accents are shared
@@ -234,6 +243,7 @@ export const SOLARIZED_DARK_COLORS: TuiColors = {
   warnStrong: "#cb4b16",
   success: "#859900",
   info: "#268bd2",
+  brandMark: "#9fc7e8",
 };
 
 // Solarized Light — same accent set, light base. base1(muted), base2(border).
@@ -254,4 +264,5 @@ export const SOLARIZED_LIGHT_COLORS: TuiColors = {
   warnStrong: "#cb4b16",
   success: "#859900",
   info: "#268bd2",
+  brandMark: "#4a95c9",
 };
