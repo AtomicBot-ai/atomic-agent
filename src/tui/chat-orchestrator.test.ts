@@ -37,6 +37,9 @@ function stubRuntime(
 ): AgentRuntime {
   return {
     createSession: () => session(),
+    // The queue tests exercise the fallback path: a steer that is always
+    // refused parks every mid-run submission in the orchestrator queue.
+    steer: () => false,
     runTurn: (_s: unknown, text: string, opts: { signal: AbortSignal }) =>
       runTurn(text, opts),
     sessionStore: { listRecent: () => [], load: () => null },
