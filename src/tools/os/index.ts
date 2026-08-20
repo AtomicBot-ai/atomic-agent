@@ -132,7 +132,7 @@ export function registerOsTools(
     }),
   );
   registry.register(buildOsWebSearchTool({ config: options.config }));
-  registry.register(buildOsWebFetchTool());
+  registry.register(buildOsWebFetchTool({ config: options.config }));
   registry.register(osClipboardReadTool);
   registry.register(osClipboardWriteTool);
   registry.register(osWindowListTool);
