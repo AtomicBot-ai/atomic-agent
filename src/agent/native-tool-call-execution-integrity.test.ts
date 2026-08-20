@@ -31,8 +31,17 @@ const tools: NonNullable<CompletionRequest["tools"]> = [
   { type: "function", function: { name: "os__fs__delete", parameters: { type: "object", properties: {} } } },
 ];
 
+const parallelTools: NonNullable<CompletionRequest["tools"]> = [
+  { type: "function", function: { name: "os__fs__read", parameters: { type: "object", properties: {} } } },
+  { type: "function", function: { name: "os__fs__grep", parameters: { type: "object", properties: {} } } },
+];
+
 function sseFrame(obj: Record<string, unknown>): string {
   return `data: ${JSON.stringify(obj)}\n\n`;
+}
+
+function sseTail(obj: Record<string, unknown>): string {
+  return `data: ${JSON.stringify(obj)}`;
 }
 
 /** Streams one tool call's arguments, then the connection just ends — no
@@ -50,6 +59,55 @@ function eofBody(toolCallArgs: string, toolName = "os__fs__delete"): string {
     }) +
     sseFrame({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: toolCallArgs } }] }, finish_reason: null }] })
   );
+}
+
+function parallelEofBody(): string {
+  return (
+    sseFrame({
+      choices: [
+        {
+          index: 0,
+          delta: {
+            role: "assistant",
+            tool_calls: [
+              { index: 0, id: "call_a", type: "function", function: { name: "os__fs__read", arguments: "" } },
+              { index: 1, id: "call_b", type: "function", function: { name: "os__fs__grep", arguments: "" } },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    }) +
+    sseFrame({
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              { index: 0, function: { arguments: '{"path":"a.txt"}' } },
+              { index: 1, function: { arguments: '{"path":"b.txt' } },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    })
+  );
+}
+
+function qwenTaggedBody(finishReason: string | null = null): string {
+  return sseFrame({
+    choices: [
+      {
+        index: 0,
+        delta: {
+          role: "assistant",
+          content: "<tool_call><function=os__fs__delete></function></tool_call>",
+        },
+        finish_reason: finishReason,
+      },
+    ],
+  });
 }
 
 function healthyBody(toolCallArgs: string, toolName = "os__fs__delete"): string {
@@ -85,9 +143,27 @@ function fetchErroringMidStream(prefixBody: string) {
   }) as unknown as typeof fetch;
 }
 
-async function drainCompleteStream(fetchImpl: typeof fetch): Promise<CompletionResult> {
-  const provider = new OpenAiProvider({ id: "test", baseUrl: "https://example.invalid", apiKey: "", defaultChatModel: "m", fetchImpl });
-  const gen = provider.completeStream({ prompt: "delete widget.txt", tools });
+async function drainCompleteStream(
+  fetchImpl: typeof fetch,
+  options?: {
+    taggedToolCompatibility?: "qwen";
+    requestTools?: NonNullable<CompletionRequest["tools"]>;
+  },
+): Promise<CompletionResult> {
+  const provider = new OpenAiProvider({
+    id: "test",
+    baseUrl: "https://example.invalid",
+    apiKey: "",
+    defaultChatModel: "m",
+    fetchImpl,
+    ...(options?.taggedToolCompatibility
+      ? { taggedToolCompatibility: options.taggedToolCompatibility }
+      : {}),
+  });
+  const gen = provider.completeStream({
+    prompt: "delete widget.txt",
+    tools: options?.requestTools ?? tools,
+  });
   let next = await gen.next();
   while (!next.done) next = await gen.next();
   return next.value;
@@ -151,8 +227,12 @@ async function runStepThroughLlmComplete(
 async function runStepFromFetch(
   fetchImpl: typeof fetch,
   registerTools: (registry: ToolRegistry) => void,
+  options?: {
+    taggedToolCompatibility?: "qwen";
+    requestTools?: NonNullable<CompletionRequest["tools"]>;
+  },
 ): Promise<{ outcomeOrError: unknown; completion: CompletionResult }> {
-  const completion = await drainCompleteStream(fetchImpl);
+  const completion = await drainCompleteStream(fetchImpl, options);
   const { outcomeOrError } = await runStepThroughLlmComplete(async () => completion, registerTools);
   return { outcomeOrError, completion };
 }
@@ -228,40 +308,21 @@ describe("native tool-call execution integrity", () => {
     expect(outcomeOrError).toBeInstanceOf(Error);
   });
 
-  it("7. parallel calls (properly resource-classed tools): A complete + B truncated, ambiguous EOF -> neither executes", async () => {
-    // os.fs.read and os.fs.grep are both real, registered `pure_read`
-    // entries in tool-resource-class.ts, so this batch is accepted by
-    // validateBatch on its own merits (not rejected as "no resource
-    // class") — isolating the truncation-safety question cleanly.
-    //
-    // truncated:true / stop:false / finishReason:null below is exactly
-    // what completionFromStreamFinal() now derives for an ambiguous EOF
-    // with pending tool calls (see openai-provider.ts). Built directly
-    // here rather than via a real fetch so this test's focus stays on
-    // the step-executor's per-call handling once that flag is set.
+  it("7. parallel calls: provider derives ambiguous EOF and neither call executes", async () => {
     const toolA = countingTool("os.fs.read");
     const toolB = countingTool("os.fs.grep");
-    const completion: CompletionResult = {
-      content: "",
-      reasoningContent: "",
-      stop: false,
-      truncated: true,
-      timing: { promptMs: 0, predictedMs: 0, promptTokens: 1, predictedTokens: 1 },
-      cacheHitTokens: 0,
-      slotId: -1,
-      modelId: "m",
-      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
-      toolCalls: [
-        { id: "call_a", type: "function", function: { name: "os__fs__read", arguments: '{"path":"a.txt"}' } },
-        { id: "call_b", type: "function", function: { name: "os__fs__grep", arguments: '{"path":"b.txt' } },
-      ],
-      finishReason: null,
-    };
-
-    const { outcomeOrError } = await runStepThroughLlmComplete(async () => completion, (registry) => {
-      toolA.register(registry);
-      toolB.register(registry);
-    });
+    const { outcomeOrError, completion } = await runStepFromFetch(
+      fetchReturning(parallelEofBody()),
+      (registry) => {
+        toolA.register(registry);
+        toolB.register(registry);
+      },
+      { requestTools: parallelTools },
+    );
+    expect(completion.toolCalls).toHaveLength(2);
+    expect(completion.finishReason).toBeNull();
+    expect(completion.truncated).toBe(true);
+    expect(completion.stop).toBe(false);
     expect(toolA.executions()).toBe(0);
     expect(toolB.executions()).toBe(0);
     expect(outcomeOrError).toBeInstanceOf(Error);
@@ -297,12 +358,64 @@ describe("native tool-call execution integrity", () => {
   });
 
   it("10. compatibility: plain text-only response with ambiguous EOF is unaffected by the tool-call fix", async () => {
-    // No tool_calls at all — hasPendingToolCalls is false, so this fix's
-    // truncated/stop computation must not touch this path at all.
     const textOnlyEofBody = sseFrame({ choices: [{ index: 0, delta: { role: "assistant", content: "hello" }, finish_reason: null }] });
     const completion = await drainCompleteStream(fetchReturning(textOnlyEofBody));
     expect(completion.toolCalls).toBeUndefined();
     expect(completion.truncated).toBe(false);
     expect(completion.stop).toBe(true);
+  });
+
+  it("11. qwen tagged tool call with ambiguous EOF is fail-closed after adaptation", async () => {
+    const tool = countingTool("os.fs.delete");
+    const { outcomeOrError, completion } = await runStepFromFetch(
+      fetchReturning(qwenTaggedBody()),
+      tool.register,
+      { taggedToolCompatibility: "qwen" },
+    );
+    expect(completion.toolCalls).toHaveLength(1);
+    expect(completion.finishReason).toBe("tool_calls");
+    expect(completion.truncated).toBe(true);
+    expect(completion.stop).toBe(false);
+    expect(tool.executions()).toBe(0);
+    expect(outcomeOrError).toBeInstanceOf(Error);
+  });
+
+  it("12. qwen tagged tool call with explicit terminal finish reason still executes", async () => {
+    const tool = countingTool("os.fs.delete");
+    const { outcomeOrError, completion } = await runStepFromFetch(
+      fetchReturning(qwenTaggedBody("stop")),
+      tool.register,
+      { taggedToolCompatibility: "qwen" },
+    );
+    expect(completion.toolCalls).toHaveLength(1);
+    expect(completion.finishReason).toBe("tool_calls");
+    expect(completion.truncated).toBe(false);
+    expect(completion.stop).toBe(true);
+    expect(tool.executions()).toBe(1);
+    expect(outcomeOrError).not.toBeInstanceOf(Error);
+  });
+
+  it("13. final finish_reason event without trailing blank line is flushed at EOF", async () => {
+    const body =
+      eofBody('{"path":"widget.txt"}') +
+      sseTail({ choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } });
+    const tool = countingTool("os.fs.delete");
+    const { outcomeOrError, completion } = await runStepFromFetch(fetchReturning(body), tool.register);
+    expect(completion.finishReason).toBe("tool_calls");
+    expect(completion.truncated).toBe(false);
+    expect(completion.stop).toBe(true);
+    expect(tool.executions()).toBe(1);
+    expect(outcomeOrError).not.toBeInstanceOf(Error);
+  });
+
+  it("14. final [DONE] event without trailing blank line is flushed at EOF", async () => {
+    const body = eofBody('{"path":"widget.txt"}') + "data: [DONE]";
+    const tool = countingTool("os.fs.delete");
+    const { outcomeOrError, completion } = await runStepFromFetch(fetchReturning(body), tool.register);
+    expect(completion.finishReason).toBeNull();
+    expect(completion.truncated).toBe(false);
+    expect(completion.stop).toBe(true);
+    expect(tool.executions()).toBe(1);
+    expect(outcomeOrError).not.toBeInstanceOf(Error);
   });
 });
