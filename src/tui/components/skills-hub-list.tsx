@@ -1,6 +1,8 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
+import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
+import { handleSkillsTabKey } from "../skills/skills-key-bindings.js";
 import { formatDownloads } from "../skills/format-downloads.js";
 import type {
   HubSkillRow,
@@ -84,11 +86,19 @@ function renderBody(panel: SkillsPanelState, maxRows: number): ReactElement {
         <Text color={theme.colors.muted}>↑ {hiddenBefore} above</Text>
       ) : null}
       {pageRows.map((row, idx) => (
-        <HubRow
+        <MouseListRow
           key={row.identifier}
-          row={row}
           selected={idx + windowStart === clamped}
-        />
+          onSelect={(mouse) =>
+            mouse.dispatch({
+              type: "skills_hub_cursor_set",
+              row: idx + windowStart,
+            })
+          }
+          onActivate={pressEnter(handleSkillsTabKey)}
+        >
+          <HubRow row={row} selected={idx + windowStart === clamped} />
+        </MouseListRow>
       ))}
       {hiddenAfter > 0 ? (
         <Text color={theme.colors.muted}>↓ {hiddenAfter} below</Text>

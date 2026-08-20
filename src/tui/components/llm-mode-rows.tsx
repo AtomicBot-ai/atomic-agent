@@ -4,6 +4,8 @@ import { selectCloudModelSection } from "../llm-panel/llm-panel-row-builders.js"
 import { activeCursor, selectLlmPanelRows, type LlmPanelRow } from "../llm-panel/llm-panel-selectors.js";
 import { classifyRamFit, classifyVramFit } from "../local-models/local-models-panel-state.js";
 import { computeRowWindow } from "../row-window.js";
+import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
+import { handleLlmPanelKey } from "../llm-panel/llm-panel-key-bindings.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { FallbackRows } from "./llm-fallback-rows.js";
@@ -351,15 +353,23 @@ function Row({ row, state }: { row: LlmPanelRow; state: TuiState }): ReactElemen
   // see `LlmModeRows` — but never guarded the horizontal axis), which is
   // what garbles adjacent rows and drags rendering on a narrow window.
   return (
-    <Text color={baseColor} bold={selected} wrap="truncate-end">
-      {mark} {renderRowText(row, state)}
-      {insufficient ? (
-        <Text color={theme.colors.warn}> Not enough VRAM</Text>
-      ) : ramFit === "tight" ? (
-        <Text color={theme.colors.warn}> RAM tight</Text>
-      ) : null}
-      <Text color={theme.colors.muted}> · {row.enterEffect}</Text>
-    </Text>
+    <MouseListRow
+      selected={selected}
+      onSelect={(mouse) =>
+        mouse.dispatch({ type: "llm_cursor_set", cursor: idx })
+      }
+      onActivate={pressEnter(handleLlmPanelKey)}
+    >
+      <Text color={baseColor} bold={selected} wrap="truncate-end">
+        {mark} {renderRowText(row, state)}
+        {insufficient ? (
+          <Text color={theme.colors.warn}> Not enough VRAM</Text>
+        ) : ramFit === "tight" ? (
+          <Text color={theme.colors.warn}> RAM tight</Text>
+        ) : null}
+        <Text color={theme.colors.muted}> · {row.enterEffect}</Text>
+      </Text>
+    </MouseListRow>
   );
 }
 

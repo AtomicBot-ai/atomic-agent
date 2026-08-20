@@ -46,6 +46,15 @@ export function reduceProvidersPanel(
           cursor: (panel.cursor + 1) % panel.rows.length,
         },
       };
+    case "providers_cursor_set":
+      if (panel.rows.length === 0) return state;
+      return {
+        ...state,
+        providersPanel: {
+          ...panel,
+          cursor: Math.min(panel.rows.length - 1, Math.max(0, action.row)),
+        },
+      };
     case "providers_cursor_up":
       if (panel.rows.length === 0) return state;
       return {

@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { MouseListRow } from "../mouse/mouse-list-row.js";
 import { theme } from "../theme/theme.js";
 import type { ProvidersPanelState } from "../providers/providers-panel-state.js";
 import { ProvidersWizard } from "./providers-wizard.js";
@@ -31,12 +32,20 @@ export function ProvidersPanel(props: {
     );
   }
 
-  const lines: string[] = ["Providers (text LLM + embeddings)", ""];
+  // Each line is its own element rather than one joined string: the
+  // provider rows have to be individually measurable for the mouse
+  // layer, and a column of one-line Texts renders identically.
+  const lines: PanelLine[] = [
+    { text: "Providers (text LLM + embeddings)" },
+    { text: "" },
+  ];
   if (props.panel.statusLine) {
-    lines.push(props.panel.statusLine, "");
+    lines.push({ text: props.panel.statusLine }, { text: "" });
   }
   if (props.panel.rows.length === 0) {
-    lines.push("(no providers — press n to add OpenRouter or OpenAI-compatible)");
+    lines.push({
+      text: "(no providers — press n to add OpenRouter or OpenAI-compatible)",
+    });
   } else {
     props.panel.rows.forEach((row, i) => {
       const mark = i === props.panel.cursor ? ">" : " ";
@@ -57,20 +66,44 @@ export function ProvidersPanel(props: {
       ]
         .filter(Boolean)
         .join(" ");
-      lines.push(
-        `${mark} ${row.id} [${row.kind}] ${flags}${models ? ` · ${models}` : ""}`,
-      );
+      lines.push({
+        text: `${mark} ${row.id} [${row.kind}] ${flags}${models ? ` · ${models}` : ""}`,
+        rowIndex: i,
+      });
     });
   }
   lines.push(
-    "",
-    "j/k move · n add · c configure cloud · d remove",
-    "t active text · e active embedding · r refresh",
+    { text: "" },
+    { text: "j/k move · n add · c configure cloud · d remove" },
+    { text: "t active text · e active embedding · r refresh" },
   );
 
   return (
     <Box flexDirection="column" width="100%">
-      <Text>{lines.join("\n")}</Text>
+      {lines.map((line, idx) =>
+        line.rowIndex === undefined ? (
+          <Text key={idx}>{line.text}</Text>
+        ) : (
+          <MouseListRow
+            key={idx}
+            selected={line.rowIndex === props.panel.cursor}
+            onSelect={(mouse) =>
+              mouse.dispatch({
+                type: "providers_cursor_set",
+                row: line.rowIndex as number,
+              })
+            }
+          >
+            <Text>{line.text}</Text>
+          </MouseListRow>
+        ),
+      )}
     </Box>
   );
+}
+
+/** One rendered line; `rowIndex` marks the clickable provider rows. */
+interface PanelLine {
+  text: string;
+  rowIndex?: number;
 }

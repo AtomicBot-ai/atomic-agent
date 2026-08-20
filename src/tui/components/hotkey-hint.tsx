@@ -1,6 +1,14 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { MENU_LEADER_LABEL } from "../menu/menu-keys.js";
+import { applyNavSlot, decideApproval } from "../app-key-bindings.js";
+import {
+  MouseTarget,
+  useMouseCommands,
+  type MouseContextValue,
+} from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
+import { cycleNavSlot } from "../section.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 
@@ -29,6 +37,14 @@ interface HotkeyChip {
    * clipped by `truncate-end` rather than wrapped).
    */
   readonly shed?: number;
+
+  /**
+   * What a click on this chip does. Only chips with one unambiguous
+   * meaning get one — "alt+enter newline" or "↑↓ select" describe a
+   * gesture, not a command, so they stay plain text rather than
+   * pretending to be buttons.
+   */
+  readonly onClick?: (mouse: MouseContextValue) => void;
 }
 
 /**
@@ -60,25 +76,45 @@ export function HotkeyHint({
     width,
   );
   return (
-    <Box flexShrink={0}>
-      <Text wrap="truncate-end">
-        {chips.map((chip, idx) => (
-          <Text key={chip.key}>
-            <Text color={theme.colors.accentSoft} bold>
-              [{chip.key}]
+    <Box flexShrink={0} overflow="hidden">
+      {chips.map((chip, idx) => (
+        <Box key={chip.key} flexShrink={0}>
+          <Chip chip={chip} />
+          {idx < chips.length - 1 ? (
+            <Text color={theme.colors.muted}>
+              {"  "}
+              {theme.glyphs.dotSeparator}
+              {"  "}
             </Text>
-            <Text color={theme.colors.muted}> {chip.label}</Text>
-            {idx < chips.length - 1 ? (
-              <Text color={theme.colors.muted}>
-                {"  "}
-                {theme.glyphs.dotSeparator}
-                {"  "}
-              </Text>
-            ) : null}
-          </Text>
-        ))}
-      </Text>
+          ) : null}
+        </Box>
+      ))}
     </Box>
+  );
+}
+
+function Chip({ chip }: { chip: HotkeyChip }): ReactElement {
+  const mouse = useMouseCommands();
+  const label = (
+    <Text>
+      <Text color={theme.colors.accentSoft} bold>
+        [{chip.key}]
+      </Text>
+      <Text color={theme.colors.muted}> {chip.label}</Text>
+    </Text>
+  );
+  if (!mouse || !chip.onClick) return label;
+  const onClick = chip.onClick;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        onClick(mouse);
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
   );
 }
 
@@ -89,9 +125,18 @@ function resolveChips(
 ): HotkeyChip[] {
   const hasDraft = state.inputValue.length > 0;
   if (state.pendingApproval) {
+    const approval = state.pendingApproval;
     return [
-      { key: "y", label: "approve" },
-      { key: "n", label: "deny" },
+      {
+        key: "y",
+        label: "approve",
+        onClick: (mouse) => decideApproval(approval, true, mouse),
+      },
+      {
+        key: "n",
+        label: "deny",
+        onClick: (mouse) => decideApproval(approval, false, mouse),
+      },
       { key: "esc", label: "abort run" },
     ];
   }
@@ -158,9 +203,24 @@ function resolveChips(
     // panels actually lacked — the way back to Run. Shift+Tab sheds
     // first because "prev panel" is guessable from "next panel".
     return [
-      { key: "tab", label: "next panel" },
-      { key: "shift+tab", label: "prev panel", shed: 1 },
-      { key: "esc", label: "back to Run" },
+      {
+        key: "tab",
+        label: "next panel",
+        onClick: (mouse) =>
+          applyNavSlot(mouse.dispatch, cycleNavSlot(mouse.getState(), 1)),
+      },
+      {
+        key: "shift+tab",
+        label: "prev panel",
+        shed: 1,
+        onClick: (mouse) =>
+          applyNavSlot(mouse.dispatch, cycleNavSlot(mouse.getState(), -1)),
+      },
+      {
+        key: "esc",
+        label: "back to Run",
+        onClick: (mouse) => mouse.dispatch({ type: "ui_mode_set", mode: "chat" }),
+      },
       { key: "ctrl+p", label: "menu", shed: 2 },
       {
         key: "ctrl+c",
@@ -192,7 +252,13 @@ function resolveChips(
   return [
     { key: "enter", label: "send" },
     { key: "alt+enter", label: "newline", shed: 3 },
-    { key: "tab", label: "sidebar", shed: 2 },
+    {
+      key: "tab",
+      label: "sidebar",
+      shed: 2,
+      onClick: (mouse) =>
+        mouse.dispatch({ type: "chat_focus_set", focus: "sidebar" }),
+    },
     { key: SCROLL_KEY, label: "scroll", shed: 1 },
     { key: "ctrl+p", label: "menu", shed: 4 },
     ...(hasDraft ? [{ key: "esc", label: "clear draft" }] : []),

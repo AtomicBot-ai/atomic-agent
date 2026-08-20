@@ -103,7 +103,7 @@ export interface AppKeyContext {
  * global claims (nav cycling, the running Esc-abort) must bow out so
  * the surface keeps its keystrokes.
  */
-function isDebugTabSurfaceBusy(state: TuiState): boolean {
+export function isPanelModalOpen(state: TuiState): boolean {
   const tasksTabBusy =
     state.uiMode === "debug" &&
     state.activeTab === "tasks" &&
@@ -260,7 +260,7 @@ export function handleAppKey(
     input === "t" &&
     !state.pendingApproval &&
     !state.slashPaletteOpen &&
-    !isDebugTabSurfaceBusy(state)
+    !isPanelModalOpen(state)
   ) {
     const next = state.whileBusyMode === "steer" ? "queue" : "steer";
     dispatch({ type: "while_busy_mode_changed", mode: next });
@@ -283,7 +283,7 @@ export function handleAppKey(
     // own cancel; aborting the run out from under it would make one
     // keypress do two unrelated things (and some of those surfaces run
     // their own useInput, which Ink fires regardless of ours).
-    !isDebugTabSurfaceBusy(state)
+    !isPanelModalOpen(state)
   ) {
     // Scroll-reset keeps its precedence: Esc with the chat scrolled away
     // from the bottom snaps back to the latest reply before doing
@@ -320,7 +320,7 @@ export function handleAppKey(
       return true;
     }
   }
-  const debugTabBusy = isDebugTabSurfaceBusy(state);
+  const debugTabBusy = isPanelModalOpen(state);
   // Ctrl+N opens a fresh OS terminal window running atomic-agent in the
   // same working dir. The editor never sees ctrl-modified letters
   // (it handles only ctrl+a/e/u/k/w/c), so no keystroke is stolen.
@@ -512,7 +512,12 @@ function handleSidebarKey(
   return false;
 }
 
-function applyNavSlot(
+/**
+ * Apply a nav slot — the one place that knows "run" means chat mode and
+ * every other slot is a debug tab. Exported so a click on a status-bar
+ * pill lands the operator in exactly the same state Tab would.
+ */
+export function applyNavSlot(
   dispatch: (action: TuiAction) => void,
   slot: NavSlot,
 ): void {
@@ -559,6 +564,42 @@ function grantConfirmation(
   return `granted: ${formatApprovalCategory(request.category)} for this session`;
 }
 
+/**
+ * Resolve a pending approval: tell the runtime, then fold the decision
+ * into the reducer (and, for a grant, print the confirmation line).
+ * Shared by the key handler and the approval modal's clickable
+ * buttons — one implementation, so the two can never disagree about
+ * what "approve" means.
+ */
+export function decideApproval(
+  request: ApprovalRequest,
+  approved: boolean,
+  ctx: {
+    dispatch: (action: TuiAction) => void;
+    callbacks: Pick<AppKeyCallbacks, "onApprovalDecision">;
+  },
+  grant?: ApprovalGrantScope,
+): void {
+  // Call through without a trailing `undefined`: the callback's arity
+  // is observable (tests spy on it, hosts may inspect `arguments`).
+  if (grant) {
+    ctx.callbacks.onApprovalDecision(request.approvalId, approved, grant);
+  } else {
+    ctx.callbacks.onApprovalDecision(request.approvalId, approved);
+  }
+  ctx.dispatch({
+    type: "approval_resolved",
+    approvalId: request.approvalId,
+    approved,
+  });
+  if (approved && grant) {
+    ctx.dispatch({
+      type: "system_message",
+      text: grantConfirmation(request, grant),
+    });
+  }
+}
+
 function handleApprovalKey(
   input: string,
   key: Key,
@@ -570,57 +611,24 @@ function handleApprovalKey(
   if (key.ctrl || key.meta) return false;
   const lower = input.toLowerCase();
   if (lower === "y") {
-    ctx.callbacks.onApprovalDecision(request.approvalId, true);
-    ctx.dispatch({
-      type: "approval_resolved",
-      approvalId: request.approvalId,
-      approved: true,
-    });
+    decideApproval(request, true, ctx);
     return true;
   }
   if (lower === "s" && canGrantCategory(request)) {
-    ctx.callbacks.onApprovalDecision(request.approvalId, true, "category");
-    ctx.dispatch({
-      type: "approval_resolved",
-      approvalId: request.approvalId,
-      approved: true,
-    });
-    ctx.dispatch({
-      type: "system_message",
-      text: grantConfirmation(request, "category"),
-    });
+    decideApproval(request, true, ctx, "category");
     return true;
   }
   if (lower === "a" && canGrantShape(request)) {
-    ctx.callbacks.onApprovalDecision(request.approvalId, true, "shape");
-    ctx.dispatch({
-      type: "approval_resolved",
-      approvalId: request.approvalId,
-      approved: true,
-    });
-    ctx.dispatch({
-      type: "system_message",
-      text: grantConfirmation(request, "shape"),
-    });
+    decideApproval(request, true, ctx, "shape");
     return true;
   }
   if (lower === "n") {
-    ctx.callbacks.onApprovalDecision(request.approvalId, false);
-    ctx.dispatch({
-      type: "approval_resolved",
-      approvalId: request.approvalId,
-      approved: false,
-    });
+    decideApproval(request, false, ctx);
     return true;
   }
   if (key.escape || (key.ctrl && input === "c")) {
-    ctx.callbacks.onApprovalDecision(request.approvalId, false);
+    decideApproval(request, false, ctx);
     ctx.callbacks.onAbort();
-    ctx.dispatch({
-      type: "approval_resolved",
-      approvalId: request.approvalId,
-      approved: false,
-    });
     ctx.dispatch({ type: "abort_requested" });
     return true;
   }
