@@ -11,6 +11,7 @@ import {
   type ResourceClass,
 } from "./tool-resource-class.js";
 import {
+  extractLoopTarget,
   formatVetoInstruction,
   LOOP_VETO_DENIED_REASON,
   type LoopCheckVerdict,
@@ -456,14 +457,25 @@ function runSyncLoopGate(
     const count = breakerTripped
       ? Math.max(verdict.count, ctx.tracker.breakerThreshold)
       : verdict.count;
+    // Name the invariant that held across the blocked attempts (host for
+    // web/HTTP, command name for shell) so the message says WHAT stayed
+    // the same instead of only that something did.
+    const target = extractLoopTarget(tool, args);
+    // A wandering escalation rides this same veto path but its `count` is
+    // a spread of DISTINCT arguments; pass the detector so the wording
+    // does not claim they were identical.
+    const detector =
+      wanderingEscalated && verdict.detector !== "no_progress"
+        ? "wandering"
+        : verdict.detector;
     const vetoResult = compressToolResult({
       tool,
       status: "error",
-      output: formatVetoInstruction({ tool, count }),
+      output: formatVetoInstruction({ tool, count, target, detector }),
       details: {
         deniedReason: LOOP_VETO_DENIED_REASON,
         loopCount: count,
-        detector: verdict.detector,
+        detector,
       },
     });
     ctx.tracker.recordOutcome(tool, args, vetoResult);
@@ -471,7 +483,7 @@ function runSyncLoopGate(
       kind: forceBreaker ? "breaker" : "critical",
       tool,
       count,
-      detector: verdict.detector,
+      detector,
       warningKey: verdict.warningKey,
     });
     return { proceed: false, vetoResult };

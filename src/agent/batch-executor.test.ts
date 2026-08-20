@@ -497,6 +497,83 @@ describe("executeBatch", () => {
     expect(out.loopSignals[0]!.detector).toBe("wandering");
   });
 
+  // Issue #186: the veto body must name the invariant that held across
+  // the blocked attempts and offer a concrete alternative.
+  it("veto body names the repeated host and offers the search-first alternative", async () => {
+    const registry = buildRegistry({ "os.web.fetch": async () => okResult("os.web.fetch") });
+    const tracker = new ToolLoopTracker({
+      warningThreshold: 2,
+      criticalThreshold: 2,
+    });
+    const args = { url: "https://web.archive.org/web/2020/https://x.test/a?k=SECRET" };
+    seedCriticalStreak(tracker, "os.web.fetch", args, 2);
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.web.fetch", args }]),
+      registry,
+      { ...ctx(new AbortController().signal), tracker },
+    );
+    const body = out.results[0]!.compressed!.summary;
+    expect(body).toContain("web.archive.org");
+    expect(body).toContain("`os.web.search`");
+    // The full URL — path, query, secret — must NOT reach model context.
+    expect(body).not.toContain("SECRET");
+    expect(body).not.toContain("/web/2020/");
+  });
+
+  it("veto body names the command for a shell loop", async () => {
+    const registry = buildRegistry({ "os.shell.run": async () => okResult("os.shell.run") });
+    const tracker = new ToolLoopTracker({
+      warningThreshold: 2,
+      criticalThreshold: 2,
+    });
+    const args = { command: "curl -s https://x.test --header 'Authorization: Bearer SECRET'" };
+    seedCriticalStreak(tracker, "os.shell.run", args, 2);
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.shell.run", args }]),
+      registry,
+      { ...ctx(new AbortController().signal), tracker },
+    );
+    const body = out.results[0]!.compressed!.summary;
+    expect(body).toContain("`curl`");
+    expect(body).not.toContain("SECRET");
+  });
+
+  it("veto body degrades to generic wording when args carry no extractable target", async () => {
+    const registry = buildRegistry({ "os.fs.read": async () => okResult("os.fs.read") });
+    const tracker = new ToolLoopTracker({
+      warningThreshold: 2,
+      criticalThreshold: 2,
+    });
+    seedCriticalStreak(tracker, "os.fs.read", { path: "a" }, 2);
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.read", args: { path: "a" } }]),
+      registry,
+      { ...ctx(new AbortController().signal), tracker },
+    );
+    const body = out.results[0]!.compressed!.summary;
+    expect(body).toContain("BLOCKED");
+    expect(body).toContain("2 consecutive calls returned the same no-progress outcome");
+    expect(body).not.toContain("undefined");
+  });
+
+  it("does not throw and stays generic when args are malformed", async () => {
+    const registry = buildRegistry({ "os.web.fetch": async () => okResult("os.web.fetch") });
+    const tracker = new ToolLoopTracker({
+      warningThreshold: 2,
+      criticalThreshold: 2,
+    });
+    const args = { url: "://not a url" };
+    seedCriticalStreak(tracker, "os.web.fetch", args, 2);
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.web.fetch", args }]),
+      registry,
+      { ...ctx(new AbortController().signal), tracker },
+    );
+    const body = out.results[0]!.compressed!.summary;
+    expect(body).toContain("BLOCKED");
+    expect(body).not.toContain("undefined");
+  });
+
   it("marks tail calls as cancelled when the signal aborts mid-serialised-group", async () => {
     const ctrl = new AbortController();
     const registry = new ToolRegistry();
