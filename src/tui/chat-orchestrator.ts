@@ -43,6 +43,7 @@ import {
   type LocalTurnGateFacts,
 } from "./local-turn-gate.js";
 import { turnsToMessages } from "./turns-to-messages.js";
+import { createHeapGuard } from "../runtime/heap-guard.js";
 import type { SessionPickerEntry, TuiState } from "./tui-state.js";
 
 const DEBUG_BUNDLE_TRACE_LIMIT = 10;
@@ -912,8 +913,24 @@ export class ChatOrchestrator {
     this.bus.emit({ type: "system_message", text: line, variant: "warn" });
   }
 
+  /**
+   * Issue #121: a long session was killed by the V8 heap ceiling with no
+   * warning, losing ~40 minutes of work. V8 cannot raise its own ceiling
+   * after startup, so the best available remedy is to say so while there
+   * is still headroom to save work and restart with a bigger heap.
+   * Checked at turn boundaries — the crash grew across turns, including
+   * long idle gaps between them.
+   */
+  private readonly heapGuard = createHeapGuard();
+
+  private announceHeapPressure(): void {
+    const status = this.heapGuard.check();
+    if (status?.message) this.notify(status.message);
+  }
+
   private async runOneTurn(text: string, fromQueue = false): Promise<void> {
     if (!this.session) return;
+    this.announceHeapPressure();
     // Pre-turn gate: a managed local model that is not on disk cannot
     // serve this turn, so fail fast with the real fix instead of
     // burning the transport retry budget against a daemon that cannot
