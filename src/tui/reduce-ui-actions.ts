@@ -1,3 +1,4 @@
+import { clampMenuCursor } from "./menu/menu-selectors.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import { THEME_NAMES } from "./theme/theme.js";
@@ -62,6 +63,37 @@ export function reduceUiAction(
       for (const card of state.streamingToolCards) next[card.id] = action.expanded;
       return { ...state, toolsExpandedById: next };
     }
+    case "menu_opened":
+      // Always reopen at the root with an empty query: a menu that resumes
+      // where it was last left makes the same keypress mean different
+      // things on different days.
+      return {
+        ...state,
+        menuOpen: true,
+        menuPath: null,
+        menuQuery: "",
+        menuCursor: 0,
+      };
+    case "menu_closed":
+      return {
+        ...state,
+        menuOpen: false,
+        menuPath: null,
+        menuQuery: "",
+        menuCursor: 0,
+      };
+    case "menu_query_changed":
+      // A query flattens the tree, so any open submenu is dropped with it.
+      return { ...state, menuQuery: action.query, menuPath: null };
+    case "menu_path_set":
+      return { ...state, menuPath: action.path };
+    case "menu_cursor_set":
+      return { ...state, menuCursor: clampMenuCursor(state, action.cursor) };
+    case "menu_cursor_moved":
+      return {
+        ...state,
+        menuCursor: clampMenuCursor(state, state.menuCursor + action.delta),
+      };
     case "slash_palette_opened":
       return {
         ...state,

@@ -1,11 +1,8 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 
-import {
-  getCurrentSection,
-  SECTION_ORDER,
-  type TuiSection,
-} from "../section.js";
+import { getCurrentSection, type TuiSection } from "../section.js";
+import { menuPlaceByTab } from "../menu/menu-registry.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { getAppVersion } from "../../version.js";
@@ -15,7 +12,13 @@ interface StatusBarProps {
 }
 
 /**
- * One-row operator status bar. Replaces the legacy `header-line` +
+ * One-row operator status bar. Shows **where you are**, not where you could
+ * go: the three-section pill row was a menu, and the menu now lives behind
+ * `ctrl+p` where it can hold every destination instead of only the top three.
+ * What is left is a breadcrumb — `Manage › Tasks` — which is the one thing
+ * the popup cannot tell you, because you have to open it to read it.
+ *
+ * Replaces the legacy `header-line` +
  * `status-line` + `footer-line` trio: only signal that needs to be
  * visible at every glance stays on screen — current section and a
  * short session id when one exists. Verbose details (full cwd, llama
@@ -37,7 +40,7 @@ export function StatusBar({ state }: StatusBarProps): ReactElement {
       </Text>
       <Text color={theme.colors.muted}> v{getAppVersion()}</Text>
       <Sep />
-      <SectionPills active={section} />
+      <Breadcrumb state={state} section={section} />
       <SessionTag sessionId={state.session.sessionId} />
     </Box>
   );
@@ -49,30 +52,26 @@ const SECTION_LABELS: Record<TuiSection, string> = {
   manage: "Manage",
 };
 
-function SectionPills({ active }: { active: TuiSection }): ReactElement {
+function Breadcrumb({
+  state,
+  section,
+}: {
+  state: TuiState;
+  section: TuiSection;
+}): ReactElement {
+  const tabLabel =
+    state.uiMode === "debug" ? menuPlaceByTab(state.activeTab)?.label : undefined;
   return (
     <Text>
-      {SECTION_ORDER.map((id, idx) => {
-        const isActive = id === active;
-        return (
-          <Text key={id}>
-            <Text
-              color={isActive ? theme.colors.accentSoft : theme.colors.muted}
-              bold={isActive}
-            >
-              {isActive ? `${theme.glyphs.chevronRight} ` : "  "}
-              {SECTION_LABELS[id]}
-            </Text>
-            {idx < SECTION_ORDER.length - 1 ? (
-              <Text color={theme.colors.muted}>
-                {"  "}
-                {theme.glyphs.dotSeparator}
-                {"  "}
-              </Text>
-            ) : null}
-          </Text>
-        );
-      })}
+      <Text color={theme.colors.accentSoft} bold>
+        {SECTION_LABELS[section]}
+      </Text>
+      {tabLabel ? (
+        <Text color={theme.colors.muted}>
+          {" "}
+          {theme.glyphs.chevronRight} <Text>{tabLabel}</Text>
+        </Text>
+      ) : null}
     </Text>
   );
 }
