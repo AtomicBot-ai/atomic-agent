@@ -38,8 +38,11 @@ describe("profile matrix", () => {
   });
 
   it("streams nemotron inline reasoning through the full agent loop", async () => {
-    // Same open/close ownership as qwen: prompt prefills `<think>`, the
-    // stream starts mid-body and closes with `</think>` before the array.
+    // Nemotron shares the qwen think-tags profile (its alias is what needs a
+    // dedicated detector, not its behaviour): the prompt prefills `<think>`,
+    // the stream starts mid-body and closes with `</think>` before the array.
+    // Without the nemotron detection branch this props payload falls through
+    // to plain-instruct and emits no reasoning at all.
     await expectScenario({
       props: NEMOTRON_PROPS,
       chunks: [

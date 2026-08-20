@@ -1,6 +1,7 @@
 import {
   checkForBackendUpdate,
   downloadBackend,
+  isBackendDownloaded,
 } from "./backend-installer.js";
 import type { DownloadProgressFn } from "./download-file.js";
 import {
@@ -14,14 +15,27 @@ export type AutoUpdateBackendResult =
   | { action: "current"; tag: string | null }
   | { action: "updated"; from: string | null; to: string }
   | { action: "deferred"; reason: "other_session" }
-  | { action: "check_failed"; error: string };
+  | { action: "check_failed"; error: string }
+  /**
+   * The version check said "update", but stopping the daemon or
+   * downloading the replacement failed. `backendUsable` reports whether
+   * a server binary is still on disk: the staged installer keeps the
+   * previous install intact, so this is almost always true and the
+   * caller should start it. False means there is genuinely nothing to
+   * run and the caller must fail.
+   */
+  | { action: "update_failed"; error: string; backendUsable: boolean };
 
 /**
  * When `enabled`, pull a newer llama.cpp backend from GitHub Releases
  * before the managed daemon starts. Missing-backend first install is
  * still owned by the TUI/CLI start paths; this only upgrades an already
- * installed zip. Check failures are fire-safe — the caller starts the
- * current binary instead of aborting the turn.
+ * installed zip. Failures anywhere in the update are fire-safe: this
+ * never throws, and every non-fatal outcome leaves the caller free to
+ * start the binary already on disk instead of aborting the turn. That
+ * matters most *after* the daemon was stopped for the update — an
+ * exception there used to leave the user with nothing running, which is
+ * strictly worse than never having attempted the update.
  */
 export async function maybeAutoUpdateBackend(
   dataDir: string,
@@ -51,20 +65,28 @@ export async function maybeAutoUpdateBackend(
   // live pid. Stop both daemons first; the caller starts them after.
   // Skip the stop when another TUI/CLI session is live — killing their
   // model mid-chat is worse than sitting on an old tag until next solo start.
-  if (readRunningPid(dataDir) !== null) {
-    if (hasOtherLiveSessions(dataDir)) {
-      return { action: "deferred", reason: "other_session" };
+  try {
+    if (readRunningPid(dataDir) !== null) {
+      if (hasOtherLiveSessions(dataDir)) {
+        return { action: "deferred", reason: "other_session" };
+      }
+      await stopChatAndEmbeddingDaemons(dataDir);
     }
-    await stopChatAndEmbeddingDaemons(dataDir);
-  }
 
-  opts.onWillDownload?.();
-  const downloaded = await downloadBackend(dataDir, {
-    onProgress: opts.onProgress,
-  });
-  return {
-    action: "updated",
-    from: check.currentTag,
-    to: downloaded.tag,
-  };
+    opts.onWillDownload?.();
+    const downloaded = await downloadBackend(dataDir, {
+      onProgress: opts.onProgress,
+    });
+    return {
+      action: "updated",
+      from: check.currentTag,
+      to: downloaded.tag,
+    };
+  } catch (err) {
+    return {
+      action: "update_failed",
+      error: err instanceof Error ? err.message : String(err),
+      backendUsable: isBackendDownloaded(dataDir),
+    };
+  }
 }

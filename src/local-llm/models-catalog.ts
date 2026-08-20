@@ -308,7 +308,14 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
       "https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF/resolve/main/Muse-Glimmer-30B-UD-Q4_K_XL.gguf",
     fileSizeGb: 15.9,
     sizeLabel: "15.9 GB",
-    description: "Multimodal 30B MoE (ATEM / Harmony)",
+    // Vision is fully wired (mmproj below). The native ATEM/Harmony tool
+    // format is NOT: the daemon passes `model.id` as the llama-server
+    // alias (`daemon-lifecycle.ts`), and `muse-glimmer-30b` matches no
+    // alias hint in `selectBaseProfile`, so this resolves to
+    // `plain-instruct` and tool calls go through the generic GBNF array
+    // grammar. Pinned by `models-catalog.test.ts`; reword only when a
+    // native profile actually lands.
+    description: "Multimodal 30B MoE, generic tool calling",
     maxContextLength: 131_072,
     contextLabel: "128K",
     minRamGb: 20,

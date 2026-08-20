@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   GEMMA4_THINK_PROFILE,
-  NEMOTRON_THINK_PROFILE,
   PLAIN_INSTRUCT_PROFILE,
   QWEN_THINK_PROFILE,
 } from "../model-profile.js";
@@ -24,7 +23,6 @@ describe("buildGrammar", () => {
     for (const profile of [
       PLAIN_INSTRUCT_PROFILE,
       QWEN_THINK_PROFILE,
-      NEMOTRON_THINK_PROFILE,
       GEMMA4_THINK_PROFILE,
     ]) {
       const grammar = await buildGrammar(profile);
@@ -42,18 +40,6 @@ describe("buildGrammar", () => {
       'think-prelude ::= think-body "</think>" prelude-trail-ws',
     );
     expect(grammar).toContain('think-fragment ::= [^<]+ | "<" [^/]');
-  });
-
-  it("builds a nemotron think grammar with the same think prelude as qwen", async () => {
-    // Nemotron prefills `<think>` in the prompt (like qwen), so the
-    // prelude must NOT force the open sentinel — only the close tag.
-    const grammar = await buildGrammar(NEMOTRON_THINK_PROFILE);
-    expect(grammar).toContain("root ::= think-prelude tool-call-array");
-    expect(grammar).toContain(
-      'think-prelude ::= think-body "</think>" prelude-trail-ws',
-    );
-    expect(grammar).toContain("prelude-trail-ws ::= ( [ \\t\\n\\r] ){0,8}");
-    expect(grammar).not.toContain('think-prelude ::= "<think>"');
   });
 
   it("builds a gemma 4 grammar with a channel prelude that forces the model-emitted open tag", async () => {
@@ -83,12 +69,6 @@ describe("buildGrammar", () => {
     const qwen = await buildGrammar(QWEN_THINK_PROFILE);
     expect(qwen).toContain("prelude-trail-ws ::= ( [ \\t\\n\\r] ){0,8}");
     expect(qwen).not.toMatch(/^think-prelude ::= think-body "<\/think>" ws$/m);
-
-    const nemotron = await buildGrammar(NEMOTRON_THINK_PROFILE);
-    expect(nemotron).toContain("prelude-trail-ws ::= ( [ \\t\\n\\r] ){0,8}");
-    expect(nemotron).not.toMatch(
-      /^think-prelude ::= think-body "<\/think>" ws$/m,
-    );
   });
 
   it("does not introduce a prelude-trail-ws rule for plain-instruct profiles", async () => {

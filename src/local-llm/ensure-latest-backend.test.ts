@@ -9,6 +9,7 @@ vi.mock("./backend-installer.js", async () => {
     ...actual,
     checkForBackendUpdate: vi.fn(),
     downloadBackend: vi.fn(),
+    isBackendDownloaded: vi.fn(),
   };
 });
 
@@ -38,6 +39,7 @@ vi.mock("./session-registry.js", async () => {
 import {
   checkForBackendUpdate,
   downloadBackend,
+  isBackendDownloaded,
 } from "./backend-installer.js";
 import {
   readRunningPid,
@@ -54,6 +56,8 @@ describe("maybeAutoUpdateBackend", () => {
     vi.mocked(stopChatAndEmbeddingDaemons).mockReset();
     vi.mocked(hasOtherLiveSessions).mockReset();
     vi.mocked(hasOtherLiveSessions).mockReturnValue(false);
+    vi.mocked(isBackendDownloaded).mockReset();
+    vi.mocked(isBackendDownloaded).mockReturnValue(true);
   });
 
   it("is a no-op when autoUpdate is off", async () => {
@@ -131,6 +135,67 @@ describe("maybeAutoUpdateBackend", () => {
     const result = await maybeAutoUpdateBackend("/tmp/data", { enabled: true });
     expect(result).toEqual({ action: "deferred", reason: "other_session" });
     expect(stopChatAndEmbeddingDaemons).not.toHaveBeenCalled();
+    expect(downloadBackend).not.toHaveBeenCalled();
+  });
+
+  it("folds a download failure into update_failed so start can continue", async () => {
+    vi.mocked(checkForBackendUpdate).mockResolvedValue({
+      updateAvailable: true,
+      latestTag: "turboquant-new",
+      currentTag: "turboquant-old",
+    });
+    vi.mocked(readRunningPid).mockReturnValue(4242);
+    vi.mocked(stopChatAndEmbeddingDaemons).mockResolvedValue();
+    vi.mocked(downloadBackend).mockRejectedValue(new Error("socket hang up"));
+    // Staged install: the previous binary survives a failed download.
+    vi.mocked(isBackendDownloaded).mockReturnValue(true);
+
+    // The daemon has already been stopped at this point, so throwing
+    // would leave the user with nothing running at all.
+    const result = await maybeAutoUpdateBackend("/tmp/data", { enabled: true });
+    expect(result).toEqual({
+      action: "update_failed",
+      error: "socket hang up",
+      backendUsable: true,
+    });
+    expect(stopChatAndEmbeddingDaemons).toHaveBeenCalledWith("/tmp/data");
+  });
+
+  it("reports backendUsable false when nothing is left to start", async () => {
+    vi.mocked(checkForBackendUpdate).mockResolvedValue({
+      updateAvailable: true,
+      latestTag: "turboquant-new",
+      currentTag: null,
+    });
+    vi.mocked(readRunningPid).mockReturnValue(null);
+    vi.mocked(downloadBackend).mockRejectedValue(new Error("disk full"));
+    vi.mocked(isBackendDownloaded).mockReturnValue(false);
+
+    const result = await maybeAutoUpdateBackend("/tmp/data", { enabled: true });
+    expect(result).toEqual({
+      action: "update_failed",
+      error: "disk full",
+      backendUsable: false,
+    });
+  });
+
+  it("folds a daemon-stop failure into update_failed rather than throwing", async () => {
+    vi.mocked(checkForBackendUpdate).mockResolvedValue({
+      updateAvailable: true,
+      latestTag: "turboquant-new",
+      currentTag: "turboquant-old",
+    });
+    vi.mocked(readRunningPid).mockReturnValue(4242);
+    vi.mocked(stopChatAndEmbeddingDaemons).mockRejectedValue(
+      new Error("kill EPERM"),
+    );
+
+    const result = await maybeAutoUpdateBackend("/tmp/data", { enabled: true });
+    expect(result).toEqual({
+      action: "update_failed",
+      error: "kill EPERM",
+      backendUsable: true,
+    });
     expect(downloadBackend).not.toHaveBeenCalled();
   });
 

@@ -641,3 +641,73 @@ export const NEMOTRON_PROPS = {
     supports_preserve_reasoning: true,
   },
 };
+
+/**
+ * Meta Muse Glimmer 30B as llama-server reports it. The alias is the
+ * catalog id verbatim — `daemon-lifecycle.ts` passes `model.id` to `-a`.
+ *
+ * The template is Harmony/ATEM channel framing, deliberately kept rich
+ * rather than stubbed: it carries `<|channel|>analysis` reasoning markers
+ * and native `<|start|>`/`<|end|>` tool framing. That is the point of the
+ * fixture — detection still falls through to `plain-instruct`, and it does
+ * so because the alias `muse-glimmer-30b` matches no hint in
+ * `selectBaseProfile` (not because the template is empty). A stub template
+ * would pass the same assertion for the wrong reason.
+ */
+export const MUSE_PROPS = {
+  model_alias: "muse-glimmer-30b",
+  chat_template: `{%- if messages[0].role == 'system' %}
+    {{- '<|start|>system<|message|>' + messages[0].content + '<|end|>' }}
+    {%- set loop_messages = messages[1:] %}
+{%- else %}
+    {%- set loop_messages = messages %}
+{%- endif %}
+{%- if tools is defined and tools | length > 0 %}
+    {{- '<|start|>developer<|message|># Tools\\n\\n' }}
+    {{- '## functions\\n\\nnamespace functions {\\n\\n' }}
+    {%- for tool in tools %}
+        {%- if tool.function is defined %}
+            {%- set tool = tool.function %}
+        {%- endif %}
+        {%- if tool.description is defined %}
+            {{- '// ' ~ (tool.description | trim) ~ '\\n' }}
+        {%- endif %}
+        {{- 'type ' ~ tool.name ~ ' = (_: ' }}
+        {{- (tool.parameters | tojson | safe) ~ ') => any;\\n\\n' }}
+    {%- endfor %}
+    {{- '} // namespace functions<|end|>' }}
+{%- endif %}
+{%- for message in loop_messages %}
+    {%- if message.role == 'assistant' %}
+        {%- if message.tool_calls is defined and message.tool_calls %}
+            {%- for tool_call in message.tool_calls %}
+                {%- if tool_call.function is defined %}
+                    {%- set tool_call = tool_call.function %}
+                {%- endif %}
+                {{- '<|start|>assistant to=functions.' ~ tool_call.name }}
+                {{- '<|channel|>commentary json<|message|>' }}
+                {{- (tool_call.arguments | tojson | safe) ~ '<|call|>' }}
+            {%- endfor %}
+        {%- else %}
+            {%- set content = message.content | default('', true) | string %}
+            {%- if '<|channel|>analysis<|message|>' in content %}
+                {%- set content = content.split('<|end|>')[-1] %}
+            {%- endif %}
+            {{- '<|start|>assistant<|channel|>final<|message|>' }}
+            {{- content | trim ~ '<|end|>' }}
+        {%- endif %}
+    {%- elif message.role == 'tool' %}
+        {{- '<|start|>functions.' ~ message.name ~ ' to=assistant' }}
+        {{- '<|channel|>commentary<|message|>' ~ message.content ~ '<|end|>' }}
+    {%- else %}
+        {{- '<|start|>' ~ message.role ~ '<|message|>' }}
+        {{- (message.content | string) ~ '<|end|>' }}
+    {%- endif %}
+{%- endfor %}
+{%- if add_generation_prompt %}
+    {{- '<|start|>assistant<|channel|>analysis<|message|>' }}
+{%- endif %}`,
+  chat_template_caps: {
+    supports_preserve_reasoning: true,
+  },
+};

@@ -5,7 +5,6 @@ import {
   extractTotalSlots,
   detectVisionSupport,
   GEMMA4_THINK_PROFILE,
-  NEMOTRON_THINK_PROFILE,
   PLAIN_INSTRUCT_PROFILE,
   QWEN_THINK_PROFILE,
 } from "./model-profile.js";
@@ -51,21 +50,45 @@ describe("detectModelProfile", () => {
     expect(detectModelProfile(GEMMA4_PROPS)).toEqual(GEMMA4_THINK_PROFILE);
   });
 
-  it("detects nemotron think profile from ChatML + enable_thinking", () => {
-    expect(detectModelProfile(NEMOTRON_PROPS)).toEqual(NEMOTRON_THINK_PROFILE);
+  // Nemotron has no profile of its own: its ChatML template is qwen-shaped,
+  // so the dedicated detector deliberately maps onto QWEN_THINK_PROFILE. The
+  // contract under test is that the Nemotron template yields the think-tags
+  // reasoning profile at all — deleting the branch drops it to plain-instruct
+  // and silently kills the reasoning channel.
+  it("maps the nemotron ChatML + enable_thinking template onto the think-tags profile", () => {
+    const profile = detectModelProfile(NEMOTRON_PROPS);
+    expect(profile).toEqual(QWEN_THINK_PROFILE);
+    expect(profile.reasoningStyle).toBe("think-tags");
   });
 
-  it("does not classify a non-nemotron ChatML think template as nemotron", () => {
-    // Same markers as Nemotron (ChatML + <think> + enable_thinking) but the
-    // alias is not nemotron — must stay on the qwen path (or plain if the
-    // qwen alias hint also fails). Here the alias carries none of the
-    // qwen/nemotron hints, so the result is plain-instruct.
+  // Pins the alias gate: the Nemotron detector must require a `nemotron`
+  // alias, not fire on the template markers alone. An alias carrying none of
+  // the qwen/qwq/deepseek-r1/nemotron hints must fall through to plain even
+  // though the template is a full ChatML + <think> + enable_thinking match.
+  it("requires a nemotron alias — template markers alone do not classify", () => {
     expect(
       detectModelProfile({
         ...NEMOTRON_PROPS,
         model_alias: "some-other-chatml-think-model",
       }),
     ).toEqual(PLAIN_INSTRUCT_PROFILE);
+  });
+
+  // Pins branch ordering. This alias satisfies BOTH gates (it contains
+  // "qwen" and "nemotron"), which is the only input where the order of the
+  // two branches is observable: whichever runs first decides. The qwen
+  // branch runs first, so the qwen gate must win. Both branches currently
+  // yield QWEN_THINK_PROFILE, so this is pinned on the gate that fired
+  // rather than on the returned object.
+  it("lets the qwen gate win when an alias matches both the qwen and nemotron hints", () => {
+    const alias = "qwen-nemotron-hybrid-think";
+    // Guard: the alias really does trip both gates, so the assertion below
+    // is about ordering and not about one gate quietly failing to match.
+    expect(alias).toContain("qwen");
+    expect(alias).toContain("nemotron");
+    expect(detectModelProfile({ ...NEMOTRON_PROPS, model_alias: alias })).toEqual(
+      QWEN_THINK_PROFILE,
+    );
   });
 
   it("falls back to plain profile for gpt-oss style templates", () => {

@@ -1508,8 +1508,14 @@ export class LocalModelsOrchestrator {
 
   /**
    * Check GitHub Releases and replace the llama.cpp zip when a newer
-   * tag exists. Check failures are fire-safe (returns true so start
-   * can use the current binary). Download errors return false.
+   * tag exists. Returns whether the caller may proceed to start.
+   *
+   * Every update failure is fire-safe: the installer stages the new
+   * build and only swaps it in once it is complete, so a failed check,
+   * stop or download leaves the previous binary on disk and start
+   * continues on it. `false` is reserved for the one case that cannot
+   * be papered over — the daemon was stopped for an update and no
+   * usable backend remains.
    */
   private async applyBackendAutoUpdate(dataDir: string): Promise<boolean> {
     try {
@@ -1549,6 +1555,23 @@ export class LocalModelsOrchestrator {
         this.bus.emit({
           type: "runtime_info",
           line: `local-llm: backend update check failed — starting current binary (${result.error})`,
+        });
+      } else if (result.action === "update_failed") {
+        this.bus.emit({
+          type: "local_models_pull_failed",
+          kind: "backend",
+          error: result.error,
+        });
+        if (!result.backendUsable) {
+          this.bus.emit({
+            type: "runtime_info",
+            line: `local-llm: backend update failed and no usable backend remains — ${result.error}`,
+          });
+          return false;
+        }
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: backend update failed — starting current binary (${result.error})`,
         });
       }
       return true;

@@ -237,6 +237,20 @@ export async function runLocalModelsStart(): Promise<number> {
       process.stderr.write(
         `note: backend update check failed — starting current binary (${auto.error})\n`,
       );
+    } else if (auto.action === "update_failed") {
+      if (process.stderr.isTTY) process.stderr.write("\n");
+      if (!auto.backendUsable) {
+        // The daemon was stopped for the update and there is no binary
+        // left to fall back to — nothing can be started.
+        process.stderr.write(
+          `backend auto-update failed and no usable backend remains: ${auto.error}\n` +
+            `run 'atomic-agent models update' once connectivity is back.\n`,
+        );
+        return 1;
+      }
+      process.stderr.write(
+        `note: backend update failed — starting current binary (${auto.error})\n`,
+      );
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -606,7 +620,14 @@ export async function runLocalModelsUpdate(): Promise<number> {
   try {
     const { updateAvailable, latestTag, currentTag } = await checkForBackendUpdate(dataDir);
     if (!updateAvailable) {
-      process.stdout.write(`backend up to date (${latestTag})\n`);
+      // `latestTag` is null when no scanned release ships this
+      // platform's asset — nothing to compare against, so the install
+      // on disk stands.
+      process.stdout.write(
+        latestTag === null
+          ? `backend unchanged (no published release for this platform)\n`
+          : `backend up to date (${latestTag})\n`,
+      );
       return 0;
     }
     process.stdout.write(`current: ${currentTag ?? "none"} → latest: ${latestTag}\n`);

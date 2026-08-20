@@ -1,6 +1,5 @@
 import {
   GEMMA4_THINK_PROFILE,
-  NEMOTRON_THINK_PROFILE,
   QWEN_THINK_PROFILE,
   getReasoningTurnFraming,
   type ModelProfile,
@@ -79,7 +78,6 @@ function escapeGrammarLiteral(text: string): string {
 function getKnownReasoningOpenTags(): string[] {
   return [
     QWEN_THINK_PROFILE.reasoningOpenTag.trimEnd(),
-    NEMOTRON_THINK_PROFILE.reasoningOpenTag.trimEnd(),
     GEMMA4_THINK_PROFILE.reasoningOpenTag.trimEnd(),
   ];
 }

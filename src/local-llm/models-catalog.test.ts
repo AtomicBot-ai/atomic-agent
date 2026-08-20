@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  detectModelProfile,
+  PLAIN_INSTRUCT_PROFILE,
+} from "../llm/model-profile.js";
+import { MUSE_PROPS } from "../llm/model-profile.fixtures.js";
+import {
   DEFAULT_EMBEDDING_MODEL_ID,
   DEFAULT_LLAMACPP_MODEL_ID,
   EMBEDDING_MODELS_CATALOG,
@@ -25,9 +30,16 @@ describe("models-catalog", () => {
   // no `<think>` / `enable_thinking` markers. Because `--chat-template-file`
   // is what `/props.chat_template` reports back, it demoted the profile to
   // `plain-instruct` and deadlocked the grammar. See chat-templates.test.ts.
-  it("does not override the Qwen 3.5 chat template", () => {
-    expect(getLocalModelDef("qwen-3.5-4b").chatTemplateAsset).toBeUndefined();
-    expect(getLocalModelDef("qwen-3.5-35b").chatTemplateAsset).toBeUndefined();
+  //
+  // Catalog-wide rather than per-id: any entry that grows an override is
+  // exposed to the same failure mode, so adding one has to be a deliberate
+  // act that edits this test (and states why the override keeps every
+  // reasoning marker `detectModelProfile` keys on) — not a silent field.
+  it("ships no chat template override on any catalog entry", () => {
+    for (const def of LOCAL_MODELS_CATALOG) {
+      expect(def.chatTemplateAsset, `${def.id} must not override its chat template`)
+        .toBeUndefined();
+    }
   });
 
   it("throws on unknown id", () => {
@@ -54,6 +66,23 @@ describe("models-catalog", () => {
       expect(def.mmprojFilename).toBeUndefined();
       expect(def.mmprojFileSizeGb).toBeUndefined();
     }
+  });
+
+  // Interim contract for Muse Glimmer. The catalog advertises multimodal
+  // (real: mmproj ships below) but NOT a native tool format, because there
+  // is none wired: the daemon passes `model.id` as the llama-server alias,
+  // and `muse-glimmer-30b` matches no alias hint in `selectBaseProfile`, so
+  // `/props` resolves to `plain-instruct` and tool calls run on the generic
+  // GBNF array grammar. This test is the tripwire: the day someone wires a
+  // native ATEM/Harmony profile, it fails and forces the description to be
+  // updated in the same commit instead of drifting into an over-promise.
+  it("resolves Muse Glimmer to plain-instruct, and says so in its description", () => {
+    expect(detectModelProfile(MUSE_PROPS)).toEqual(PLAIN_INSTRUCT_PROFILE);
+
+    const muse = getLocalModelDef("muse-glimmer-30b");
+    expect(muse.supportsVision).toBe(true);
+    expect(muse.description).not.toMatch(/atem|harmony/i);
+    expect(muse.description).toMatch(/generic tool calling/i);
   });
 
   it("ensures mmproj URL points at the same HF repo as the GGUF weights", () => {

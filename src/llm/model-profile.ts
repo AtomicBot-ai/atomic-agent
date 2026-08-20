@@ -61,7 +61,7 @@ export interface ReasoningTurnFraming {
 }
 
 export interface TaggedReasoningModelProfile extends BaseModelProfile {
-  id: "qwen-think" | "gemma4-think" | "nemotron-think";
+  id: "qwen-think" | "gemma4-think";
   reasoningStyle: "think-tags" | "channel-tags";
   reasoningOpenTag: string;
   reasoningCloseTag: string;
@@ -122,21 +122,6 @@ export const PLAIN_INSTRUCT_PROFILE: PlainModelProfile = {
 
 export const QWEN_THINK_PROFILE: TaggedReasoningModelProfile = {
   id: "qwen-think",
-  reasoningStyle: "think-tags",
-  reasoningOpenTag: "<think>",
-  reasoningCloseTag: "</think>",
-  requiresPromptThinkPrefix: true,
-  allowThinkPrelude: true,
-  vision: VISION_ABSENT,
-};
-
-/**
- * Nemotron 3.5 Lightning uses ChatML with an `enable_thinking` flag and
- * prefills `<think>` at the generation point — same open/close ownership as
- * `qwen-think`, without Gemma-style turn framing.
- */
-export const NEMOTRON_THINK_PROFILE: TaggedReasoningModelProfile = {
-  id: "nemotron-think",
   reasoningStyle: "think-tags",
   reasoningOpenTag: "<think>",
   reasoningCloseTag: "</think>",
@@ -240,8 +225,15 @@ function selectBaseProfile(
   if (looksLikeQwenThinkModel(modelAlias, templateLower, supportsPreserveReasoning)) {
     return QWEN_THINK_PROFILE;
   }
+  // Nemotron needs its own detector but not its own profile. Its ChatML
+  // template is qwen-shaped — `<think>`/`</think>` prefilled at the
+  // generation point, same open/close ownership, no turn framing — so the
+  // runtime behaviour is byte-for-byte `QWEN_THINK_PROFILE`. Only the alias
+  // gate differs: `looksLikeQwenThinkModel` requires a qwen/qwq/deepseek-r1
+  // alias, which Nemotron's does not match, so without this branch it would
+  // fall through to `plain-instruct` and lose its reasoning channel.
   if (looksLikeNemotronThinkModel(modelAlias, templateLower)) {
-    return NEMOTRON_THINK_PROFILE;
+    return QWEN_THINK_PROFILE;
   }
   if (looksLikeGemma4ThinkModel(modelAlias, templateLower)) {
     return GEMMA4_THINK_PROFILE;
