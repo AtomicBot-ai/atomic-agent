@@ -181,6 +181,9 @@ function buildPinnedCurlArgs(input: BuildPinnedCurlArgs): string[] {
     : input.pinnedIp;
   const argv: string[] = [
     "-sS",
+    // Send `[`, `]`, `{`, `}` in URLs literally. Without this curl reads them
+    // as its own range/set glob syntax and fails with "bad range in URL".
+    "--globoff",
     "--max-time",
     String(Math.ceil(input.timeoutMs / 1000)),
     // Hop-by-hop follow is owned by executeGuardedHttpRequest so each

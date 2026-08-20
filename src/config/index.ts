@@ -8,6 +8,7 @@ export type {
   TelegramParseMode,
   UserConfigFile,
   UserManagedLocalLlmConfig,
+  WebFetchConfig,
   WebSearchConfig,
   WebSearchProviderName,
   WebhookConfig,

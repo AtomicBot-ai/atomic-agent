@@ -31,6 +31,50 @@ export type BrowserChannel = "chrome" | "msedge" | "chromium";
 
 export type WebSearchProviderName = "duckduckgo" | "searxng" | "exa" | "brave";
 
+/**
+ * Tunables for `os.web.fetch` (config v38). Before v38 the tool hard-coded a
+ * 30s overall budget with no connect timeout and no retries, so a single
+ * unreachable host burned 30s of the task budget and a transient 503 (the
+ * bulk of them from `web.archive.org`, which serves the same URL seconds
+ * later) ended the fetch outright.
+ */
+export interface WebFetchConfig {
+  /**
+   * Overall per-attempt budget in milliseconds, passed to curl `--max-time`.
+   * Kept at the historical 30_000 so unconfigured installs behave exactly as
+   * before. A per-call `timeoutMs` tool argument overrides it.
+   */
+  timeoutMs: number;
+  /**
+   * TCP/TLS connect budget in milliseconds, passed to curl `--connect-timeout`.
+   * Much smaller than `timeoutMs` because a host that has not completed a
+   * handshake in 10s is almost never merely slow — it is firewalled, dead, or
+   * blackholing packets, and waiting the full overall budget for it is pure
+   * loss. A slow but reachable server still gets the whole `timeoutMs` to
+   * stream its body, since `--connect-timeout` only covers the handshake.
+   */
+  connectTimeoutMs: number;
+  /**
+   * Extra attempts after the first for retryable failures (429/502/503/504 and
+   * curl exit 28 "operation timed out"). `0` disables retrying. Deliberately
+   * small: `os.web.fetch` is GET-only, so retries are always safe, but each one
+   * spends task budget.
+   */
+  maxRetries: number;
+  /**
+   * Base delay in milliseconds for exponential backoff between retries
+   * (attempt N waits `retryBaseDelayMs * 2^(N-1)`). A server-sent `Retry-After`
+   * header wins over the computed delay when it is shorter than the cap.
+   */
+  retryBaseDelayMs: number;
+  /**
+   * Upper bound in milliseconds on any single backoff wait, including one
+   * derived from `Retry-After`. Stops a hostile or overloaded origin from
+   * parking the agent for minutes on a header value.
+   */
+  retryMaxDelayMs: number;
+}
+
 export interface WebSearchConfig {
   enabled: boolean;
   provider: WebSearchProviderName;
@@ -293,6 +337,7 @@ export interface AtomicAgentConfig {
   };
   web: {
     search: WebSearchConfig;
+    fetch: WebFetchConfig;
   };
   /**
    * User-declared project root directories consumed by
@@ -941,6 +986,7 @@ export interface UserConfigFile {
   };
   web: {
     search: WebSearchConfig;
+    fetch: WebFetchConfig;
   };
   /**
    * Project path resolution (config v36). `roots` lists directories
@@ -1419,7 +1465,12 @@ export interface UserConfigFile {
 // is absent, a legacy `approvalRequired: false` maps to level 5 and
 // `true`/absent maps to level 1 — both preserve the old behaviour
 // exactly. The legacy key is never written back.
-export const USER_CONFIG_VERSION = 38 as const;
+// v39: new `web.fetch` block (`timeoutMs`, `connectTimeoutMs`, `maxRetries`,
+// `retryBaseDelayMs`, `retryMaxDelayMs`) making `os.web.fetch` timeouts and
+// retry/backoff configurable. Older files transparently inherit the defaults,
+// and `timeoutMs` keeps its historical 30_000 value, so the migration does not
+// change behaviour for anyone who does not opt in.
+export const USER_CONFIG_VERSION = 39 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1536,6 +1587,8 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   34,
   35,
   36,
+  37,
+  38,
   USER_CONFIG_VERSION,
 ];
 
@@ -1596,6 +1649,13 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       brave: {
         apiKeyEnv: "BRAVE_SEARCH_API_KEY",
       },
+    },
+    fetch: {
+      timeoutMs: 30_000,
+      connectTimeoutMs: 10_000,
+      maxRetries: 2,
+      retryBaseDelayMs: 500,
+      retryMaxDelayMs: 5_000,
     },
   },
   projects: {
@@ -2672,6 +2732,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const web = (obj.web as Record<string, unknown> | undefined) ?? {};
   const projects = (obj.projects as Record<string, unknown> | undefined) ?? {};
   const webSearch = (web.search as Record<string, unknown> | undefined) ?? {};
+  const webFetch = (web.fetch as Record<string, unknown> | undefined) ?? {};
   const webSearchProvider = parseWebSearchProviderName(
     webSearch.provider ?? USER_CONFIG_DEFAULTS.web.search.provider,
     "web.search.provider",
@@ -2959,6 +3020,33 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             "web.search.brave.apiKeyEnv",
           ),
         },
+      },
+      fetch: {
+        timeoutMs: parsePositiveInt(
+          webFetch.timeoutMs ?? USER_CONFIG_DEFAULTS.web.fetch.timeoutMs,
+          "web.fetch.timeoutMs",
+        ),
+        connectTimeoutMs: parsePositiveInt(
+          webFetch.connectTimeoutMs ??
+            USER_CONFIG_DEFAULTS.web.fetch.connectTimeoutMs,
+          "web.fetch.connectTimeoutMs",
+        ),
+        maxRetries: parseNonNegativeBoundedInt(
+          webFetch.maxRetries ?? USER_CONFIG_DEFAULTS.web.fetch.maxRetries,
+          "web.fetch.maxRetries",
+          0,
+          5,
+        ),
+        retryBaseDelayMs: parsePositiveInt(
+          webFetch.retryBaseDelayMs ??
+            USER_CONFIG_DEFAULTS.web.fetch.retryBaseDelayMs,
+          "web.fetch.retryBaseDelayMs",
+        ),
+        retryMaxDelayMs: parsePositiveInt(
+          webFetch.retryMaxDelayMs ??
+            USER_CONFIG_DEFAULTS.web.fetch.retryMaxDelayMs,
+          "web.fetch.retryMaxDelayMs",
+        ),
       },
     },
     projects: {

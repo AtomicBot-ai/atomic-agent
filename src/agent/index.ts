@@ -21,6 +21,7 @@ export {
   formatRepeatNotice,
   formatVetoInstruction,
   formatForcedLoopReply,
+  extractLoopTarget,
   BATCH_LOOP_LABEL,
   LOOP_VETO_DENIED_REASON,
   LOOP_WARNING_BUCKET_SIZE,

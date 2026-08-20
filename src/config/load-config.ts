@@ -303,6 +303,7 @@ export function loadConfig(): AtomicAgentConfig {
     },
     web: {
       search: { ...user.web.search },
+      fetch: { ...user.web.fetch },
     },
     projects: {
       roots: [...user.projects.roots],
