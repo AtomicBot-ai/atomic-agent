@@ -26,7 +26,7 @@ import type { TuiColors } from "./theme.js";
 // muted=fgColor-muted, border=borderColor-default.
 export const GITHUB_DARK_COLORS: TuiColors = {
   user: "#4493f8",
-  assistant: "#3fb950",
+  assistant: "#e6edf3",
   system: "#9198a1",
   reasoning: "#ab7df8",
   tool: "#4493f8",
@@ -42,6 +42,9 @@ export const GITHUB_DARK_COLORS: TuiColors = {
   success: "#3fb950",
   info: "#4493f8",
   brandMark: "#a5c9ff",
+  railBackground: "#f0f6fc",
+  railForeground: "#0d1117",
+  railMuted: "#57606a",
 };
 
 // GitHub Primer "light (default)" — @primer/primitives functional tokens
@@ -64,6 +67,9 @@ export const GITHUB_LIGHT_COLORS: TuiColors = {
   success: "#1a7f37",
   info: "#0969da",
   brandMark: "#54a3ff",
+  railBackground: "#1f2328",
+  railForeground: "#f6f8fa",
+  railMuted: "#8c959f",
 };
 
 // Catppuccin Mocha — official palette (catppuccin/palette palette.json).
@@ -87,6 +93,9 @@ export const CATPPUCCIN_MOCHA_COLORS: TuiColors = {
   success: "#a6e3a1",
   info: "#89b4fa",
   brandMark: "#b4cffa",
+  railBackground: "#eff1f5",
+  railForeground: "#1e1e2e",
+  railMuted: "#6c6f85",
 };
 
 // Catppuccin Latte — official palette (light flavour).
@@ -108,6 +117,9 @@ export const CATPPUCCIN_LATTE_COLORS: TuiColors = {
   success: "#40a02b",
   info: "#1e66f5",
   brandMark: "#5f9bf5",
+  railBackground: "#1e1e2e",
+  railForeground: "#eff1f5",
+  railMuted: "#9ca0b0",
 };
 
 // Dracula — official spec (draculatheme.com). accent=purple, green,
@@ -131,6 +143,9 @@ export const DRACULA_COLORS: TuiColors = {
   success: "#50fa7b",
   info: "#bd93f9",
   brandMark: "#b9c9ff",
+  railBackground: "#f8f8f2",
+  railForeground: "#282a36",
+  railMuted: "#6272a4",
 };
 
 // Nord — official spec (nordtheme.com). accent=nord8 frost, nord14 green,
@@ -154,6 +169,9 @@ export const NORD_COLORS: TuiColors = {
   success: "#a3be8c",
   info: "#88c0d0",
   brandMark: "#b3ccec",
+  railBackground: "#eceff4",
+  railForeground: "#2e3440",
+  railMuted: "#6b7a90",
 };
 
 // Tokyo Night ("Night" variant) — official spec
@@ -177,6 +195,9 @@ export const TOKYO_NIGHT_COLORS: TuiColors = {
   success: "#9ece6a",
   info: "#7aa2f7",
   brandMark: "#a9c7ff",
+  railBackground: "#c0caf5",
+  railForeground: "#1a1b26",
+  railMuted: "#565f89",
 };
 
 // Gruvbox Dark — official "bright" palette (morhetz/gruvbox). accent=blue,
@@ -200,6 +221,9 @@ export const GRUVBOX_DARK_COLORS: TuiColors = {
   success: "#b8bb26",
   info: "#83a598",
   brandMark: "#b3d1e6",
+  railBackground: "#fbf1c7",
+  railForeground: "#282828",
+  railMuted: "#7c6f64",
 };
 
 // Gruvbox Light — official "faded" palette on light bg (morhetz/gruvbox).
@@ -221,6 +245,9 @@ export const GRUVBOX_LIGHT_COLORS: TuiColors = {
   success: "#79740e",
   info: "#076678",
   brandMark: "#5a9ec9",
+  railBackground: "#282828",
+  railForeground: "#fbf1c7",
+  railMuted: "#928374",
 };
 
 // Solarized Dark — official spec (Ethan Schoonover). Accents are shared
@@ -244,6 +271,9 @@ export const SOLARIZED_DARK_COLORS: TuiColors = {
   success: "#859900",
   info: "#268bd2",
   brandMark: "#9fc7e8",
+  railBackground: "#fdf6e3",
+  railForeground: "#002b36",
+  railMuted: "#657b83",
 };
 
 // Solarized Light — same accent set, light base. base1(muted), base2(border).
@@ -265,4 +295,7 @@ export const SOLARIZED_LIGHT_COLORS: TuiColors = {
   success: "#859900",
   info: "#268bd2",
   brandMark: "#4a95c9",
+  railBackground: "#002b36",
+  railForeground: "#fdf6e3",
+  railMuted: "#93a1a1",
 };

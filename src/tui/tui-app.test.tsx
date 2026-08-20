@@ -53,22 +53,26 @@ async function waitForFrame(
 }
 
 describe("TuiApp (smoke)", () => {
-  it("renders the chat surface with the compact operator status bar", () => {
+  it("renders the chat surface with the compact operator status bar", async () => {
     const bus = makeTuiEventBus();
     const { lastFrame, unmount } = render(
       <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
     );
+    // The rail is a second commit after the first frame, so read a settled
+    // screen rather than the first paint.
+    await new Promise((r) => setTimeout(r, 60));
     const text = strip(lastFrame() ?? "");
+    // The brand lockup lives in the rail now; the one-row bar keeps the
+    // breadcrumb and drops its own copy of the brand.
     expect(text).toContain("atomic-agent");
     // The status bar shows where you are, not a menu of where you could go —
     // the three-section pill row moved into the ctrl+p menu.
     expect(text).toContain("Run");
     expect(text).not.toContain("Observe");
     expect(text).not.toContain("Manage");
-    // The splash mark scales with the window and is drawn as a block
-    // raster, so its exact glyphs vary by size. Assert the rail the Run
-    // screen always carries instead. See `components/splash-fit.render.test.tsx`.
-    expect(text).toContain("Sessions");
+    // Both rail panes are part of the Run screen at this size.
+    expect(text).toContain("SESSIONS");
+    expect(text).toContain("TASKS");
     expect(text).toContain("commands");
     unmount();
   });
@@ -174,7 +178,9 @@ describe("TuiApp (smoke)", () => {
     stdin.write("\t");
     await new Promise((r) => setTimeout(r, 10));
     const after = strip(lastFrame() ?? "");
-    if (before.includes("Sessions")) {
+    // The rail titles its panes in caps; this is the "is the rail up?"
+    // probe, not a copy assertion.
+    if (before.includes("SESSIONS")) {
       // Sidebar visible: Tab lands focus on the rail and stays in
       // chat mode. Ctrl+B is the dedicated key for nav cycling.
       expect(after).toContain("Run");

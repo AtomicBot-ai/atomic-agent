@@ -958,10 +958,31 @@ export function TuiApp({
       ref={contentMouseRef}
       {...(rootHeight ? { height: rootHeight } : {})}
     >
+      {/*
+        The rail carries the brand, the version and the way to the menu,
+        but NOT where you are — so the one-row bar stays either way and
+        keeps the breadcrumb on screen. When the rail is up the bar drops
+        its own brand lockup, since two copies of it read as a rendering
+        bug rather than as chrome.
+      */}
       <Box flexShrink={0}>
-        <StatusBar state={state} />
+        <StatusBar state={state} brand={!sidebarVisible} />
       </Box>
       <Box flexDirection="row" flexGrow={1} flexShrink={1} overflow="hidden">
+        {sidebarVisible ? (
+          <Sidebar
+            width={sidebarWidth}
+            maxSessionRows={sidebarRows.sessions}
+            maxTaskRows={sidebarRows.tasks}
+            sessions={state.recentSessions}
+            sessionsCursor={state.sidebarCursor}
+            currentSessionId={state.session.sessionId}
+            tasks={selectSidebarTasks(state.tasksPanel.rows)}
+            tasksCursor={state.sidebarTasksCursor}
+            activeSection={state.sidebarSection}
+            focused={sidebarFocused}
+          />
+        ) : null}
         <Box flexDirection="column" flexGrow={1} overflow="hidden">
           <Box
             flexDirection="column"
@@ -1072,20 +1093,6 @@ export function TuiApp({
             width={mainColumnWidth}
           />
         </Box>
-        {sidebarVisible ? (
-          <Sidebar
-            width={sidebarWidth}
-            maxSessionRows={sidebarRows.sessions}
-            maxTaskRows={sidebarRows.tasks}
-            sessions={state.recentSessions}
-            sessionsCursor={state.sidebarCursor}
-            currentSessionId={state.session.sessionId}
-            tasks={selectSidebarTasks(state.tasksPanel.rows)}
-            tasksCursor={state.sidebarTasksCursor}
-            activeSection={state.sidebarSection}
-            focused={sidebarFocused}
-          />
-        ) : null}
       </Box>
     </Box>
     </MouseProvider>
