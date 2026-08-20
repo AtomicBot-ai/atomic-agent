@@ -10,6 +10,8 @@
  * subsequent turn with nothing in config able to correct it.
  */
 
+import { assertAsciiApiKey } from "./ascii-header-guard.js";
+
 /**
  * How a service wants credentials presented. Both fields are optional and
  * the empty object reproduces the historical behaviour exactly:
@@ -48,6 +50,11 @@ export function buildOpenAiAuthHeaders(
 ): Record<string, string> {
   const out: Record<string, string> = {};
   if (apiKey) {
+    // A non-ASCII key cannot travel in a header value — `fetch` throws an
+    // opaque ByteString conversion error from inside the call. Assert in
+    // the one place every request path passes through, so the failure
+    // names the key and the fix, on the bearer and named-header paths alike.
+    assertAsciiApiKey(apiKey);
     const named = auth?.apiKeyHeader?.trim();
     if (named) {
       out[named.toLowerCase()] = apiKey;

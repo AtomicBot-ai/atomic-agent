@@ -81,6 +81,39 @@ describe("apiKeyPhaseError", () => {
     expect(apiKeyPhaseError(wizard)).toContain("API key required");
   });
 
+  it("treats a hand-added loopback endpoint as keyless", () => {
+    // A raw llama-server on the operator's machine has no preset and no
+    // key. Any loopback host, at any port, opts out of the key screen.
+    for (const baseUrlLine of [
+      "http://127.0.0.1:9931",
+      "http://localhost:8080",
+      "http://0.0.0.0:1234",
+      "http://[::1]:9931",
+      "localhost:9931", // no scheme, as typed
+      "http://my-box.localhost:9931",
+    ]) {
+      const wizard = { ...wizardFor("openai-compatible"), baseUrlLine };
+      expect(wizardKeyIsOptional(wizard)).toBe(true);
+      expect(apiKeyPhaseError(wizard)).toBeNull();
+    }
+  });
+
+  it("still requires a key for a non-loopback custom URL", () => {
+    const wizard = {
+      ...wizardFor("openai-compatible"),
+      baseUrlLine: "https://api.example.com",
+    };
+    expect(wizardKeyIsOptional(wizard)).toBe(false);
+    expect(apiKeyPhaseError(wizard)).toContain("API key required");
+  });
+
+  it("refuses a non-ASCII key with a clear message", () => {
+    // A stray Cyrillic character cannot go into an Authorization header;
+    // the message names the problem instead of the raw ByteString crash.
+    const wizard = { ...wizardFor("openrouter"), apiKeyBuffer: "sk-т" };
+    expect(apiKeyPhaseError(wizard)).toContain("non-ASCII");
+  });
+
   it("accepts a typed key", () => {
     const wizard = { ...wizardFor("openrouter"), apiKeyBuffer: "sk-or-typed" };
     expect(apiKeyPhaseError(wizard)).toBeNull();

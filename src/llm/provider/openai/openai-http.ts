@@ -182,6 +182,26 @@ export async function openAiFetch(
   stream: boolean,
   method: "GET" | "POST" = "POST",
 ): Promise<Response> {
+  // Built before the try below, which would wrap the throw as a
+  // retryable "network error" and replace its message with a
+  // connectivity hint. Classified as a 401 instead: a key that cannot
+  // form a header is the same class as a dead key — deterministic, never
+  // retried, and a fallback chain advances past it to a link whose key
+  // may work.
+  let headers: Record<string, string>;
+  try {
+    headers = buildOpenAiHeaders(deps, stream);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new OpenAiHttpError(
+      detail,
+      401,
+      `${deps.baseUrl}${path}`,
+      false,
+      null,
+      deps.label,
+    );
+  }
   const controller = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -200,7 +220,7 @@ export async function openAiFetch(
   try {
     return await deps.fetchImpl(`${deps.baseUrl}${path}`, {
       method,
-      headers: buildOpenAiHeaders(deps, stream),
+      headers,
       ...(body && method === "POST" ? { body: JSON.stringify(body) } : {}),
       signal: controller.signal,
     });

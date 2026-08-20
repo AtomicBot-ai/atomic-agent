@@ -92,6 +92,34 @@ describe("ProvidersWizard chat model step", () => {
     expect(countRows(text, "model-")).toBeLessThanOrEqual(12);
   });
 
+  it("shows a rejected-submit error alongside the discovered model list", async () => {
+    // A rejected submit (empty or non-ASCII key) leaves the wizard on the
+    // chat-model step with `error` set, but the pick list has no error slot
+    // of its own. Without surfacing it here, the operator's Enter reads as
+    // doing nothing.
+    const ids = ["model-a", "model-b"];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ data: ids.map((id) => ({ id })) }),
+      })),
+    );
+
+    const wizard = {
+      ...chatModelStep("https://listed.example/v1"),
+      error: "API key contains non-ASCII characters. Use a plain ASCII key.",
+    };
+    const { lastFrame } = render(<ProvidersWizard wizard={wizard} />);
+    await flush();
+
+    const text = stripAnsi(lastFrame() ?? "");
+    // The model list still renders...
+    expect(text).toContain("model-a");
+    // ...and the submit error is visible under it.
+    expect(text).toContain("non-ASCII characters");
+  });
+
   it("explains a refused key instead of showing the raw status", async () => {
     vi.stubGlobal(
       "fetch",

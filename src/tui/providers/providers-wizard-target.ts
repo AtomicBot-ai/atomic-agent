@@ -18,6 +18,7 @@ import {
   GEMINI_API_PATH_PREFIX,
 } from "../../llm/provider/gemini/gemini-provider.js";
 import { getCachedOpenAiCompatModelsForBaseUrl } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { isAsciiOnly } from "../../llm/provider/openai/ascii-header-guard.js";
 import { normalizeOpenAiBaseUrl } from "../../llm/provider/openai/normalize-openai-base-url.js";
 import {
   DEFAULT_OPENROUTER_BASE,
@@ -27,6 +28,7 @@ import {
 } from "../../llm/provider/openrouter/openrouter-provider.js";
 import { pickProbeModels } from "../../llm/provider/verify/index.js";
 import type { ProviderVerifyTarget } from "../../llm/provider/verify/index.js";
+import { isLoopbackBaseUrl } from "../persist-user-local-models-config.js";
 import { isLocalProviderUrl } from "./is-local-provider-url.js";
 import { findProviderPreset } from "./provider-presets.js";
 import {
@@ -125,7 +127,13 @@ export function envHintForWizard(wizard: ProvidersWizardState): string {
  */
 export function wizardKeyIsOptional(wizard: ProvidersWizardState): boolean {
   const preset = wizard.presetId ? findProviderPreset(wizard.presetId) : undefined;
-  return Boolean(preset && (preset.local || preset.listsModelsWithoutKey));
+  if (preset && (preset.local || preset.listsModelsWithoutKey)) return true;
+  // A hand-added compat endpoint pointing at a loopback address is a
+  // local server too, even without a matching preset. A raw
+  // `llama-server` on `http://127.0.0.1:9931` needs no key, so an empty
+  // one is valid there. The wizard collects the base URL before the key
+  // screen for this kind, so the URL is known by the time this runs.
+  return wizard.kind === "openai-compatible" && isLoopbackBaseUrl(wizard.baseUrlLine);
 }
 
 /**
@@ -162,6 +170,13 @@ export function emptyKeyMeaningForWizard(wizard: ProvidersWizardState): string {
 export function apiKeyPhaseError(
   wizard: ProvidersWizardState,
 ): string | null {
+  const typed = wizard.apiKeyBuffer.trim();
+  // A non-ASCII key cannot go into an HTTP header. Refusing it here
+  // names the problem on the key screen rather than letting the first
+  // model-list fetch crash with an opaque ByteString error.
+  if (typed && !isAsciiOnly(typed)) {
+    return "API key contains non-ASCII characters. Use a plain ASCII key.";
+  }
   if (wizardKeyIsOptional(wizard)) return null;
   if (apiKeyForWizard(wizard)) return null;
   return `API key required — paste the key, or set ${envHintForWizard(wizard)} in .env first`;

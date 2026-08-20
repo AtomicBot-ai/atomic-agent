@@ -8,6 +8,7 @@ import { getUserConfigPath, writeUserConfigFileSync } from "../config/config-fil
 import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
 import { getConfig } from "../config/index.js";
 import {
+  isLoopbackBaseUrl,
   normalizeLocalLlmBaseUrl,
   persistUserLocalModelsConfig,
   persistUserLocalLlmUrl,
@@ -152,6 +153,37 @@ describe("persistUserLocalLlmUrl", () => {
     expect(written.localModels.embeddings.enabled).toBe(false);
     expect(written.localModels.embeddings.modelId).toBeNull();
     expect(written.memory.embeddings.enabled).toBe(false);
+  });
+});
+
+describe("isLoopbackBaseUrl", () => {
+  it("is true for every on-machine host at any port", () => {
+    for (const url of [
+      "http://127.0.0.1:9931",
+      "http://0.0.0.0:8080",
+      "http://localhost:1234",
+      "http://LOCALHOST:1234",
+      "http://box.localhost:9931",
+      "http://[::1]:9931",
+      "http://[::1]",
+      "localhost:9931", // typed without a scheme
+      "127.0.0.1:9931",
+    ]) {
+      expect(isLoopbackBaseUrl(url)).toBe(true);
+    }
+  });
+
+  it("is false for remote hosts and unparseable input", () => {
+    for (const url of [
+      "https://api.example.com",
+      "http://192.168.1.50:8000",
+      "http://notlocalhost.com",
+      "http://localhost.evil.com", // suffix trick must not pass
+      "",
+      "   ",
+    ]) {
+      expect(isLoopbackBaseUrl(url)).toBe(false);
+    }
   });
 });
 

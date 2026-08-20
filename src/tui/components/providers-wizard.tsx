@@ -209,6 +209,9 @@ function CompatChatModelStep(props: {
         w.submitting,
       ),
       ...(props.maxRows === undefined ? {} : { maxRows: props.maxRows }),
+      // A rejected submit (empty or non-ASCII key) leaves the wizard on
+      // this step with `error` set; the pick list renders it inside the
+      // box, so Enter never reads as doing nothing.
       error: w.error,
     });
   }
