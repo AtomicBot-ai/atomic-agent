@@ -92,6 +92,85 @@ export interface AppKeyContext {
  * function is side-effectful (calls into `callbacks`) but the state
  * mutation funnels through `dispatch`, preserving reducer purity.
  */
+/**
+ * A debug-tab surface that owns its own keys is open — a modal, a
+ * confirm dialog, a wizard, or a focused text field. While one is up,
+ * global claims (nav cycling, the running Esc-abort) must bow out so
+ * the surface keeps its keystrokes.
+ */
+function isDebugTabSurfaceBusy(state: TuiState): boolean {
+  const tasksTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "tasks" &&
+    (state.tasksPanel.mode === "create" ||
+      state.tasksPanel.cancelConfirm !== null ||
+      state.tasksPanel.searchOpen);
+  const skillsTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "skills" &&
+    (state.skillsPanel.mode === "detail" ||
+      state.skillsPanel.mode === "hub" ||
+      state.skillsPanel.installConfirm !== null ||
+      state.skillsPanel.removeConfirm !== null);
+  const memoryTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "memory" &&
+    state.memoryPanel.mode === "detail";
+  const localModelsTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "models" &&
+    (state.localModelsPanel.mode === "backendUpdate" ||
+      state.localModelsPanel.removeConfirmId !== null);
+  // Telegram tab disables the editor outright (the panel owns letter
+  // hotkeys), so on entry Tab/Shift+Tab still cycle. The "busy" flag
+  // applies only when a modal is open and Tab/letters need to be
+  // captured by the modal layer instead of cycling away from it.
+  const telegramTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "telegram" &&
+    state.telegramPanel.mode !== "list";
+  // MCP tab is "busy" while a modal is open: the add-server modal
+  // owns its own MultiLineEditor and the panel must keep capturing
+  // letter/Tab keys; the remove-confirm modal claims `y`/`n` and Esc
+  // so the global nav cycler cannot eat the confirmation keystrokes.
+  const mcpTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "mcp" &&
+    (state.mcpPanel.addModal !== null || state.mcpPanel.removeConfirm !== null);
+  const providersTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "providers" &&
+    (state.providersPanel.wizard !== null ||
+      state.providersPanel.removeConfirm !== null);
+  const llmTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "llm" &&
+    (state.providersPanel.wizard !== null ||
+      state.providersPanel.removeConfirm !== null ||
+      state.localModelsPanel.mode === "backendUpdate" ||
+      state.localModelsPanel.pull !== null ||
+      state.localModelsPanel.removeConfirmId !== null ||
+      state.localModelsPanel.embeddingRemoveConfirmId !== null ||
+      state.localModelsPanel.embeddingOnboardingPrompt !== null ||
+      state.providersPanel.chatModelPicker !== null ||
+      state.llmPanel.externalUrlDraft !== null ||
+      state.llmPanel.stopLocalDaemonsPrompt !== null ||
+      // Focused inline model filter is a text-entry surface: Tab/Ctrl+B
+      // must not cycle the nav away mid-typing.
+      (state.llmPanel.mode === "cloud" &&
+        state.llmPanel.cloudModelFilterFocused));
+  return (
+    tasksTabBusy ||
+    skillsTabBusy ||
+    memoryTabBusy ||
+    localModelsTabBusy ||
+    telegramTabBusy ||
+    mcpTabBusy ||
+    providersTabBusy ||
+    llmTabBusy
+  );
+}
+
 export function handleAppKey(
   input: string,
   key: Key,
@@ -163,6 +242,38 @@ export function handleAppKey(
     return true;
   }
   setCtrlCArmed(false);
+  // Esc aborts a turn in flight — the binding the hint strip advertises
+  // for the whole time `status === "running"`. It has to be claimed here
+  // rather than in the editor's own Esc handler because the editor is
+  // `disabled` while a turn runs, which switches its `useInput` off and
+  // makes the abort branch over there unreachable. Overlays that own Esc
+  // themselves keep it; a pending approval already returned above.
+  if (
+    key.escape &&
+    state.status === "running" &&
+    !state.slashPaletteOpen &&
+    !state.themePickerOpen &&
+    !state.sessionPickerOpen &&
+    // A panel modal / confirm / wizard / focused field owns Esc for its
+    // own cancel; aborting the run out from under it would make one
+    // keypress do two unrelated things (and some of those surfaces run
+    // their own useInput, which Ink fires regardless of ours).
+    !isDebugTabSurfaceBusy(state)
+  ) {
+    // Scroll-reset keeps its precedence: Esc with the chat scrolled away
+    // from the bottom snaps back to the latest reply before doing
+    // anything else — the rung this branch now runs ahead of, and the
+    // reason a mid-run PageUp + Esc must not destroy the turn. Only in
+    // chat mode; on a debug tab the chat is off-screen, so a stale
+    // offset there would just make Esc look dead.
+    if (state.uiMode === "chat" && state.chatScrollOffset > 0) {
+      dispatch({ type: "chat_scroll_reset" });
+      return true;
+    }
+    callbacks.onAbort();
+    dispatch({ type: "abort_requested" });
+    return true;
+  }
   if (
     state.uiMode === "chat" &&
     !state.slashPaletteOpen &&
@@ -184,75 +295,7 @@ export function handleAppKey(
       return true;
     }
   }
-  const tasksTabBusy =
-    state.uiMode === "debug" &&
-    state.activeTab === "tasks" &&
-    (state.tasksPanel.mode === "create" ||
-      state.tasksPanel.cancelConfirm !== null ||
-      state.tasksPanel.searchOpen);
-  const skillsTabBusy =
-    state.uiMode === "debug" &&
-    state.activeTab === "skills" &&
-    (state.skillsPanel.mode === "detail" ||
-      state.skillsPanel.mode === "hub" ||
-      state.skillsPanel.installConfirm !== null ||
-      state.skillsPanel.removeConfirm !== null);
-  const memoryTabBusy =
-    state.uiMode === "debug" &&
-    state.activeTab === "memory" &&
-    state.memoryPanel.mode === "detail";
-  const localModelsTabBusy =
-    state.uiMode === "debug" &&
-    state.activeTab === "models" &&
-    (state.localModelsPanel.mode === "backendUpdate" ||
-      state.localModelsPanel.removeConfirmId !== null);
-  // Telegram tab disables the editor outright (the panel owns letter
-  // hotkeys), so on entry Tab/Shift+Tab still cycle. The "busy" flag
-  // applies only when a modal is open and Tab/letters need to be
-  // captured by the modal layer instead of cycling away from it.
-  const telegramTabBusy =
-    state.uiMode === "debug" &&
-    state.activeTab === "telegram" &&
-    state.telegramPanel.mode !== "list";
-  // MCP tab is "busy" while a modal is open: the add-server modal
-  // owns its own MultiLineEditor and the panel must keep capturing
-  // letter/Tab keys; the remove-confirm modal claims `y`/`n` and Esc
-  // so the global nav cycler cannot eat the confirmation keystrokes.
-  const mcpTabBusy =
-    state.uiMode === "debug" &&
-    state.activeTab === "mcp" &&
-    (state.mcpPanel.addModal !== null || state.mcpPanel.removeConfirm !== null);
-  const providersTabBusy =
-    state.uiMode === "debug" &&
-    state.activeTab === "providers" &&
-    (state.providersPanel.wizard !== null ||
-      state.providersPanel.removeConfirm !== null);
-  const llmTabBusy =
-    state.uiMode === "debug" &&
-    state.activeTab === "llm" &&
-    (state.providersPanel.wizard !== null ||
-      state.providersPanel.removeConfirm !== null ||
-      state.localModelsPanel.mode === "backendUpdate" ||
-      state.localModelsPanel.pull !== null ||
-      state.localModelsPanel.removeConfirmId !== null ||
-      state.localModelsPanel.embeddingRemoveConfirmId !== null ||
-      state.localModelsPanel.embeddingOnboardingPrompt !== null ||
-      state.providersPanel.chatModelPicker !== null ||
-      state.llmPanel.externalUrlDraft !== null ||
-      state.llmPanel.stopLocalDaemonsPrompt !== null ||
-      // Focused inline model filter is a text-entry surface: Tab/Ctrl+B
-      // must not cycle the nav away mid-typing.
-      (state.llmPanel.mode === "cloud" &&
-        state.llmPanel.cloudModelFilterFocused));
-  const debugTabBusy =
-    tasksTabBusy ||
-    skillsTabBusy ||
-    memoryTabBusy ||
-    localModelsTabBusy ||
-    telegramTabBusy ||
-    mcpTabBusy ||
-    providersTabBusy ||
-    llmTabBusy;
+  const debugTabBusy = isDebugTabSurfaceBusy(state);
   // Ctrl+B is the dedicated nav-cycle escape valve: it always advances
   // one nav slot forward regardless of where focus currently is. This
   // is the key power users press when they want to reach Observe /
@@ -321,7 +364,8 @@ export function handleAppKey(
  * search inputs, detail views and half-typed forms consume Esc in their
  * own layer first and never reach here. `editorFocus` guards the tabs
  * that leave the chat editor focused — there the editor's own input
- * hook owns Esc (abort / scroll-reset / quit) and must not double-act.
+ * hook owns Esc (scroll-reset / quit; abort is claimed earlier, by
+ * `handleAppKey`) and must not double-act.
  *
  * Returns `true` when the key was consumed.
  */
