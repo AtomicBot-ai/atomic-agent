@@ -157,9 +157,13 @@ function CompatChatModelStep(props: {
     let alive = true;
     setStatus({ loading: true, error: null });
     const apiKey = apiKeyForWizard(w);
+    // A preset knows how its service wants credentials presented; without
+    // it this probe would 401 for a vendor that is not Bearer-authenticated
+    // and the operator would be told their valid key was rejected.
+    const preset = w.presetId ? findProviderPreset(w.presetId) : undefined;
     const fetchModels = isGemini
       ? fetchGeminiModels(apiKey)
-      : fetchOpenAiCompatModels(baseUrl, apiKey);
+      : fetchOpenAiCompatModels(baseUrl, apiKey, preset);
     fetchModels.then(
       () => {
         if (alive) setStatus({ loading: false, error: null });

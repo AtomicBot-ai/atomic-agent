@@ -1,51 +1,5 @@
 import type { ModelCatalogEntry } from "../model-resolver.js";
-
-type ChatModelSpec = {
-  id: string;
-  contextWindow: number;
-  supportsVision: boolean;
-  supportsTools?: "basic" | "parallel";
-  supportsPromptCache?: boolean;
-};
-
-type EmbeddingModelSpec = {
-  id: string;
-  contextWindow: number;
-  dim?: number;
-};
-
-function chatModel(spec: ChatModelSpec): readonly [string, ModelCatalogEntry] {
-  return [
-    spec.id,
-    {
-      id: spec.id,
-      kind: "chat",
-      contextWindow: spec.contextWindow,
-      supportsVision: spec.supportsVision,
-      supportsTools: spec.supportsTools ?? "parallel",
-      supportsPromptCache: spec.supportsPromptCache ?? false,
-      reasoningFormat: "none",
-    },
-  ];
-}
-
-function embeddingModel(
-  spec: EmbeddingModelSpec,
-): readonly [string, ModelCatalogEntry] {
-  return [
-    spec.id,
-    {
-      id: spec.id,
-      kind: "embedding",
-      contextWindow: spec.contextWindow,
-      ...(spec.dim !== undefined ? { dim: spec.dim } : {}),
-      supportsVision: false,
-      supportsTools: "none",
-      supportsPromptCache: false,
-      reasoningFormat: "none",
-    },
-  ];
-}
+import { chatModel, embeddingModel } from "../model-catalog-entry.js";
 
 /**
  * Static fallback catalog for aimlapi.com.
@@ -57,13 +11,20 @@ function embeddingModel(
  * `contextWindow` / `supportsVision` / `supportsTools` for ids that
  * have been hand-verified against the live API.
  *
- * Curated down to current-generation chat models only — legacy OpenAI
- * (gpt-4o / gpt-4.1 / o-series), all Anthropic Claude, and all Google
- * Gemini ids were retired. Every id here was verified against
- * `https://api.aimlapi.com/v1/models` with `type === "chat-completion"`.
- * Models that only expose `type: "responses"` (`openai/gpt-5-pro`,
- * `openai/gpt-5-3-codex`, etc.) are intentionally excluded — they 404
- * on `/v1/chat/completions`.
+ * Curated down to current-generation chat models only: legacy OpenAI
+ * (gpt-4o / gpt-4.1 / o-series) and the unprefixed `claude-*` /
+ * `google/gemini-2.x` ids stay retired because aimlapi no longer serves
+ * them. Claude and Gemini themselves are back — aimlapi lists them under
+ * vendor-prefixed ids (`anthropic/claude-opus-5`,
+ * `google/gemini-3.7-flash`) on the `openai/chat-completions` surface,
+ * so they work through this provider like any other row.
+ *
+ * Every id here was re-verified on 2026-08-19 against
+ * `https://api.aimlapi.com/v1/models` with `type ===
+ * "openai/chat-completions"`. Models that only expose `type:
+ * "responses"` (`openai/gpt-5-pro`, `openai/gpt-5-3-codex`) or only
+ * `anthropic/messages` are intentionally excluded — they 404 on
+ * `/v1/chat/completions`.
  */
 export const AIMLAPI_MODELS_CATALOG: ReadonlyMap<string, ModelCatalogEntry> =
   new Map<string, ModelCatalogEntry>([
@@ -112,6 +73,11 @@ export const AIMLAPI_MODELS_CATALOG: ReadonlyMap<string, ModelCatalogEntry> =
       contextWindow: 2_000_000,
       supportsVision: true,
     }),
+    chatModel({
+      id: "x-ai/grok-4-6",
+      contextWindow: 500_000,
+      supportsVision: true,
+    }),
     // DeepSeek
     chatModel({
       id: "deepseek/deepseek-v4-flash",
@@ -131,6 +97,11 @@ export const AIMLAPI_MODELS_CATALOG: ReadonlyMap<string, ModelCatalogEntry> =
       contextWindow: 262_144,
       supportsVision: false,
     }),
+    chatModel({
+      id: "moonshot/kimi-k3",
+      contextWindow: 1_048_576,
+      supportsVision: false,
+    }),
     // ByteDance Seed
     chatModel({
       id: "bytedance/dola-seed-2-0-pro",
@@ -141,6 +112,97 @@ export const AIMLAPI_MODELS_CATALOG: ReadonlyMap<string, ModelCatalogEntry> =
     chatModel({
       id: "minimax/minimax-m3",
       contextWindow: 524_288,
+      supportsVision: false,
+    }),
+    // Anthropic Claude (verified `openai/chat-completions`, not the
+    // `anthropic/messages` surface that 404s on /v1/chat/completions)
+    chatModel({
+      id: "anthropic/claude-opus-5",
+      contextWindow: 1_000_000,
+      supportsVision: true,
+    }),
+    chatModel({
+      id: "anthropic/claude-sonnet-5",
+      contextWindow: 1_000_000,
+      supportsVision: true,
+    }),
+    chatModel({
+      id: "anthropic/claude-fable-5",
+      contextWindow: 1_000_000,
+      supportsVision: true,
+    }),
+    chatModel({
+      id: "anthropic/claude-opus-4-8",
+      contextWindow: 1_000_000,
+      supportsVision: true,
+    }),
+    chatModel({
+      id: "anthropic/claude-haiku-4.5",
+      contextWindow: 200_000,
+      supportsVision: true,
+    }),
+    // Google Gemini
+    chatModel({
+      id: "google/gemini-3.7-flash",
+      contextWindow: 1_048_576,
+      supportsVision: true,
+    }),
+    chatModel({
+      id: "google/gemini-3.5-flash",
+      contextWindow: 1_048_576,
+      supportsVision: true,
+    }),
+    chatModel({
+      id: "google/gemini-3.5-flash-lite",
+      contextWindow: 1_048_576,
+      supportsVision: true,
+    }),
+    chatModel({
+      id: "google/gemini-3.1-pro-preview",
+      contextWindow: 1_000_000,
+      supportsVision: true,
+    }),
+    // Alibaba Qwen
+    chatModel({
+      id: "alibaba/qwen3.8-max",
+      contextWindow: 1_000_000,
+      supportsVision: false,
+    }),
+    chatModel({
+      id: "alibaba/qwen3.7-max",
+      contextWindow: 1_000_000,
+      supportsVision: false,
+    }),
+    chatModel({
+      id: "alibaba/qwen3.6-flash",
+      contextWindow: 1_000_000,
+      supportsVision: false,
+    }),
+    chatModel({
+      id: "alibaba/qwen3-vl-plus",
+      contextWindow: 262_144,
+      supportsVision: true,
+    }),
+    // Zhipu GLM
+    chatModel({
+      id: "zhipu/glm-5-3",
+      contextWindow: 1_024_000,
+      supportsVision: false,
+    }),
+    chatModel({
+      id: "zhipu/glm-5.2",
+      contextWindow: 1_000_000,
+      supportsVision: false,
+    }),
+    // Mistral
+    chatModel({
+      id: "mistralai/mistral-large-2512",
+      contextWindow: 262_144,
+      supportsVision: false,
+    }),
+    chatModel({
+      id: "mistralai/mistral-medium-3-5",
+      contextWindow: 262_144,
       supportsVision: false,
     }),
     // Embeddings (verified against `/v1/models`)
@@ -169,7 +231,9 @@ export const AIMLAPI_MODELS_CATALOG: ReadonlyMap<string, ModelCatalogEntry> =
     }),
   ]);
 
-/** TUI chat-picker order when offline. Verified ids only. */
+/**
+ * TUI chat-picker order when offline: catalog order, verified ids only.
+ */
 export const AIMLAPI_CHAT_MODEL_ORDER: readonly string[] = [
   "openai/gpt-5.5-2026-04-23",
   "openai/gpt-5.4-2026-03-05",
@@ -179,11 +243,30 @@ export const AIMLAPI_CHAT_MODEL_ORDER: readonly string[] = [
   "openai/gpt-oss-20b",
   "x-ai/grok-4-3",
   "x-ai/grok-4-fast-reasoning",
+  "x-ai/grok-4-6",
   "deepseek/deepseek-v4-flash",
   "deepseek/deepseek-v4-pro",
   "moonshot/kimi-k2-7-code",
+  "moonshot/kimi-k3",
   "bytedance/dola-seed-2-0-pro",
   "minimax/minimax-m3",
+  "anthropic/claude-opus-5",
+  "anthropic/claude-sonnet-5",
+  "anthropic/claude-fable-5",
+  "anthropic/claude-opus-4-8",
+  "anthropic/claude-haiku-4.5",
+  "google/gemini-3.7-flash",
+  "google/gemini-3.5-flash",
+  "google/gemini-3.5-flash-lite",
+  "google/gemini-3.1-pro-preview",
+  "alibaba/qwen3.8-max",
+  "alibaba/qwen3.7-max",
+  "alibaba/qwen3.6-flash",
+  "alibaba/qwen3-vl-plus",
+  "zhipu/glm-5-3",
+  "zhipu/glm-5.2",
+  "mistralai/mistral-large-2512",
+  "mistralai/mistral-medium-3-5",
 ];
 
 /**

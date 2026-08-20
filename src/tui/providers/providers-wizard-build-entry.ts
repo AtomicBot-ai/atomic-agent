@@ -108,10 +108,23 @@ export function buildProviderEntryFromWizard(input: {
             OPENAI_COMPAT_DEFAULT_BASE_URL,
         }
       : {}),
-    // The preset's own env var rides on the entry, so two services never
-    // resolve one shared key (see `resolveLlmProviderApiKey`).
+    // The preset's env var and header contract both ride on the entry.
+    // The env var so two services never resolve one shared key (see
+    // `resolveLlmProviderApiKey`); the headers because the entry — not
+    // the build-time preset table — is what every later request is built
+    // from. Copying them here is what makes the override survive a
+    // restart: `parseLlmProviderEntry` reads both back out of
+    // `config.json`, and `registerBuiltInProviderKinds` hands them to the
+    // provider. `headers` is cloned so the frozen preset literal cannot
+    // be mutated through the saved entry.
     ...(input.kind === "openai-compatible" && preset
-      ? { apiKeyEnvVar: preset.envVar }
+      ? {
+          apiKeyEnvVar: preset.envVar,
+          ...(preset.apiKeyHeader
+            ? { apiKeyHeader: preset.apiKeyHeader }
+            : {}),
+          ...(preset.headers ? { headers: { ...preset.headers } } : {}),
+        }
       : {}),
   };
 
