@@ -137,6 +137,53 @@ describe("handleLocalModelsTabKey — vision-aware Enter / g hotkey", () => {
     expect(onCycle).toHaveBeenCalledTimes(1);
   });
 
+  // The flag is on by default and drives a background download, so it
+  // needs an in-TUI way out: the CLI equivalent rewrites the whole
+  // config file. Like `G`, it ignores the cursor row.
+  it("'U' toggles backend auto-update regardless of the cursor row type", () => {
+    const onToggle = vi.fn();
+    const callbacks: TuiAppCallbacks = {
+      onApprovalDecision: vi.fn(),
+      onAbort: vi.fn(),
+      onQuit: vi.fn(),
+      onMessageSubmitted: vi.fn(),
+      onLocalModelsAutoUpdateToggleRequested: onToggle,
+    };
+    const state = stateWithRow(
+      makeRow("gemma-4-e4b", { downloaded: true, mmprojStatus: "downloaded" }),
+    );
+    const handled = handleLocalModelsTabKey("U", emptyKey({ shift: true }), {
+      state,
+      dispatch: vi.fn(),
+      callbacks,
+    });
+    expect(handled).toBe(true);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
+  // Lowercase must not trigger it — `u` is unbound here, and silently
+  // flipping a background-download setting on a stray keypress is the
+  // kind of surprise the uppercase convention exists to prevent.
+  it("lowercase 'u' does not toggle backend auto-update", () => {
+    const onToggle = vi.fn();
+    const callbacks: TuiAppCallbacks = {
+      onApprovalDecision: vi.fn(),
+      onAbort: vi.fn(),
+      onQuit: vi.fn(),
+      onMessageSubmitted: vi.fn(),
+      onLocalModelsAutoUpdateToggleRequested: onToggle,
+    };
+    const state = stateWithRow(
+      makeRow("gemma-4-e4b", { downloaded: true, mmprojStatus: "downloaded" }),
+    );
+    handleLocalModelsTabKey("u", emptyKey(), {
+      state,
+      dispatch: vi.fn(),
+      callbacks,
+    });
+    expect(onToggle).not.toHaveBeenCalled();
+  });
+
   it("Enter on a downloaded GGUF + missing mmproj row triggers mmproj-only pull", () => {
     const onPull = vi.fn();
     const callbacks: TuiAppCallbacks = {

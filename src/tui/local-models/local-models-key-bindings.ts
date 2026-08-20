@@ -157,6 +157,12 @@ export function handleLocalModelsTabKey(
     callbacks.onLocalModelsDeviceCycleRequested?.();
     return true;
   }
+  // `U` (uppercase) toggles backend auto-update, matching the `B`/`G`
+  // convention for panel-wide actions that ignore the cursor row.
+  if (input === "U") {
+    callbacks.onLocalModelsAutoUpdateToggleRequested?.();
+    return true;
+  }
   if (input === "r") {
     callbacks.onLocalModelsRefreshRequested?.();
     return true;

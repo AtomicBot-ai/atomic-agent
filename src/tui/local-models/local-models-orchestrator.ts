@@ -260,6 +260,7 @@ export class LocalModelsOrchestrator {
           currentTag: ver?.tag ?? null,
           latestTag,
           updateAvailable,
+          autoUpdate: cfg.localModels.managed.autoUpdate,
         },
         daemon: {
           running: daemon.running,
@@ -727,6 +728,25 @@ export class LocalModelsOrchestrator {
    * `auto → cpu → auto`. Does not restart the daemon — the operator
    * presses `s` to apply.
    */
+  /**
+   * Flip `localModels.managed.autoUpdate`. The flag is on by default and
+   * governs a background download, so it needs a way out that is not
+   * "hand-edit config.json" — the CLI equivalent takes the whole file.
+   * Takes effect on the next start; nothing in flight is cancelled.
+   */
+  async toggleBackendAutoUpdate(): Promise<void> {
+    const next = !getConfig().localModels.managed.autoUpdate;
+    persistUserLocalModelsConfig({ managed: { autoUpdate: next } });
+    resetConfigCache();
+    this.bus.emit({
+      type: "runtime_info",
+      line: next
+        ? "local-llm: backend auto-update on — a newer llama.cpp is fetched after start"
+        : "local-llm: backend auto-update off — update manually with 'B'",
+    });
+    await this.refresh();
+  }
+
   async cycleManagedDevice(): Promise<void> {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;

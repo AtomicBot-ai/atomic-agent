@@ -231,6 +231,52 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
     expect(localLlm.maybeAutoUpdateBackend).toHaveBeenCalledTimes(1);
   });
 
+  // The key binding only proves an event fires; this proves the flag is
+  // actually written and read back, which is what `U` is for.
+  it("toggleBackendAutoUpdate flips the persisted flag both ways", async () => {
+    prepareManagedInstall();
+    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    vi.spyOn(orchestrator, "refresh").mockResolvedValue();
+
+    expect(getConfig().localModels.managed.autoUpdate).toBe(true);
+
+    await orchestrator.toggleBackendAutoUpdate();
+    expect(getConfig().localModels.managed.autoUpdate).toBe(false);
+
+    await orchestrator.toggleBackendAutoUpdate();
+    expect(getConfig().localModels.managed.autoUpdate).toBe(true);
+  });
+
+  // Turning it off must actually stop the update, not just relabel it.
+  it("skips the update entirely once auto-update is toggled off", async () => {
+    prepareManagedInstall();
+    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    vi.spyOn(orchestrator, "refresh").mockResolvedValue();
+    await orchestrator.toggleBackendAutoUpdate();
+
+    vi.mocked(localLlm.maybeAutoUpdateBackend).mockResolvedValue({
+      action: "skipped",
+    });
+    vi.spyOn(orchestrator, "startDaemon").mockResolvedValue(true);
+    vi.mocked(localLlm.getDaemonStatus).mockResolvedValue({
+      running: false,
+      healthy: false,
+      loading: false,
+      pid: null,
+      port: 19091,
+    });
+
+    await orchestrator.autoStartIfReady();
+    await vi.waitFor(() =>
+      expect(localLlm.maybeAutoUpdateBackend).toHaveBeenCalled(),
+    );
+
+    expect(localLlm.maybeAutoUpdateBackend).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ enabled: false }),
+    );
+  });
+
   /** Managed mode with backend + chat model already on disk. */
   function prepareManagedInstall(): string {
     const dataDir = getConfig().paths.localModelsDataDir;
