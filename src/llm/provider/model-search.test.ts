@@ -178,7 +178,10 @@ describe("context window terms", () => {
       "vendor/charlie",
       "vendor/delta",
     ]);
-    // Floor, not round: 2M is its own bucket and nothing under 1M leaks in.
+    // Floor, not round, and a bucket rather than a `>=` filter: nothing
+    // under 1M leaks in and the 2M row answers to `2m` alone. This is the
+    // boundary the README documents, so pin it by name.
+    expect(ids(searchModels(WINDOWS, "1m"))).not.toContain("vendor/echo");
     expect(ids(searchModels(WINDOWS, "2m"))).toEqual(["vendor/echo"]);
   });
 
