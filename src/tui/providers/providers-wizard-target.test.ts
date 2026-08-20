@@ -10,6 +10,7 @@ import {
   apiKeyPhaseError,
   emptyKeyMeaningForWizard,
   envHintForWizard,
+  verifyTargetForWizard,
   wizardKeyIsOptional,
 } from "./providers-wizard-target.js";
 import { createProvidersWizardState } from "./providers-wizard-state.js";
@@ -237,5 +238,56 @@ describe("envHintForWizard", () => {
     expect(envHintForWizard(wizardFor("openai-compatible"))).toBe(
       "OPENAI_COMPAT_API_KEY",
     );
+  });
+});
+
+describe("verifyTargetForWizard", () => {
+  beforeEach(() => {
+    for (const key of ENV_KEYS) delete process.env[key];
+  });
+  afterEach(() => {
+    for (const key of ENV_KEYS) delete process.env[key];
+  });
+
+  function withKey(
+    kind: ProvidersWizardKind,
+    presetId?: string,
+  ): ProvidersWizardState {
+    return { ...wizardFor(kind, presetId), apiKeyBuffer: "sk-test" };
+  }
+
+  it("bills the check as this app on OpenRouter", () => {
+    const target = verifyTargetForWizard(withKey("openrouter"));
+    expect(target).not.toBeNull();
+    expect(target?.baseUrl).toBe("https://openrouter.ai/api");
+    expect(target?.extraHeaders?.["X-Title"]).toBe("Atomic Agent");
+    // Never the free router: it answers on a key with no credit.
+    expect(target?.probeModels[0]).not.toBe("openrouter/auto");
+  });
+
+  it("knows Gemini's compatibility prefix", () => {
+    const target = verifyTargetForWizard(withKey("gemini"));
+    expect(target?.apiPathPrefix).toBe("/v1beta/openai");
+  });
+
+  it("has nothing to check for keyless and local providers", () => {
+    expect(verifyTargetForWizard(withKey("openai-compatible", "lmstudio"))).toBeNull();
+    expect(
+      verifyTargetForWizard({
+        ...withKey("openai-compatible"),
+        baseUrlLine: "http://localhost:1234",
+      }),
+    ).toBeNull();
+    expect(verifyTargetForWizard(wizardFor("openrouter"))).toBeNull();
+  });
+
+  it("probes the endpoint and model the operator is about to save", () => {
+    const target = verifyTargetForWizard({
+      ...withKey("openai-compatible"),
+      baseUrlLine: "https://vllm.example",
+      chatModelLine: "my-model",
+    });
+    expect(target?.baseUrl).toBe("https://vllm.example");
+    expect(target?.probeModels).toEqual(["my-model"]);
   });
 });

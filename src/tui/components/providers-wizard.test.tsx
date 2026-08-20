@@ -1,11 +1,14 @@
 import { render } from "ink-testing-library";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { refreshAimlapiChatCatalogFromApi } from "../../llm/provider/aimlapi/fetch-aimlapi-chat-catalog.js";
 import { refreshOpenRouterChatCatalogFromApi } from "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
 import { KIND_ROW_ORDER } from "../providers/providers-wizard-phases.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
-import type { ProvidersWizardKind } from "../providers/providers-wizard-state.js";
+import type {
+  ProvidersWizardKind,
+  ProvidersWizardState,
+} from "../providers/providers-wizard-state.js";
 import { ProvidersWizard } from "./providers-wizard.js";
 
 function stripAnsi(value: string): string {
@@ -285,5 +288,71 @@ describe("ProvidersWizard cloud model pickers", () => {
     expect(text).toContain("(337/337)");
     expect(countRows(text, "vendor/model-")).toBeLessThanOrEqual(12);
     expect(text).not.toContain("vendor/model-000");
+  });
+});
+
+/**
+ * Reported as "I added a random key and got stuck on embedding
+ * selection". The key check did fire and did refuse the save — nothing
+ * was written — but a list screen had nowhere to print `wizard.error`
+ * and nowhere to say a check was running, so Enter looked like a key
+ * that did nothing, forever.
+ */
+describe("ProvidersWizard surfaces the key check on list screens", () => {
+  // The chat-model case mounts `CatalogChatModelStep`, which fires a
+  // live catalog refresh on mount. Keep it offline: a real response
+  // would replace the module cache the windowing tests assert against.
+  beforeEach(() => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("offline");
+      }),
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function embeddingStep(overrides: Partial<ProvidersWizardState>) {
+    return {
+      ...createProvidersWizardState("add", { kind: "openrouter" }),
+      phase: "pick_embedding" as const,
+      cursor: 0,
+      ...overrides,
+    };
+  }
+
+  it("prints the refusal on the embedding screen", () => {
+    const { lastFrame } = render(
+      <ProvidersWizard
+        wizard={embeddingStep({
+          error: "OpenRouter does not recognize this key (http 401)",
+        })}
+      />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("OpenRouter does not recognize this key");
+  });
+
+  it("says a check is in flight while the save waits on the provider", () => {
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={embeddingStep({ submitting: true })} />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("checking the key with the provider");
+    expect(text).toContain("Esc cancels");
+  });
+
+  it("prints the refusal on the chat-model screen too", () => {
+    const { lastFrame } = render(
+      <ProvidersWizard
+        wizard={{
+          ...cloudPickStep("aimlapi", 0),
+          error: "AI/ML API accepted the key but the account has no balance",
+        }}
+      />,
+    );
+    expect(stripAnsi(lastFrame() ?? "")).toContain("no balance");
   });
 });

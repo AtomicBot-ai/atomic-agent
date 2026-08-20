@@ -82,6 +82,7 @@ function nextListCursor(
 export type ProvidersWizardKeyResult =
   | { handled: true; wizard: ProvidersWizardState; submit?: false }
   | { handled: true; wizard: ProvidersWizardState; submit: true }
+  | { handled: true; wizard: ProvidersWizardState; cancelSubmit: true }
   | { handled: true; closed: true }
   | { handled: false };
 
@@ -91,6 +92,12 @@ export function handleProvidersWizardKey(
   wizard: ProvidersWizardState,
 ): ProvidersWizardKeyResult {
   if (wizard.submitting) {
+    // Esc is the one key that survives the lockout. Submitting now waits
+    // on the provider answering a key check, and a service that has gone
+    // quiet must not hold the wizard until it times out.
+    if (key.escape) {
+      return { handled: true, wizard, cancelSubmit: true };
+    }
     return { handled: true, wizard };
   }
   if (key.escape) {
