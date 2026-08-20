@@ -286,6 +286,26 @@ export async function tuiCommand(args: string[]): Promise<number> {
             ...(grant ? { grant } : {}),
           });
         },
+        onApprovalRetarget: (approvalId, path) => {
+          runtime.approvals.resolve({
+            approvalId,
+            approved: true,
+            reason: "tui-approved (retargeted)",
+            pathOverride: path,
+          });
+        },
+        onApprovalReply: (approvalId, message) => {
+          // Order matters: resolve first so the blocked tool call fails
+          // fast with the operator's words, then steer. Steering before
+          // the resolve would push the note at a turn still parked on
+          // `await approvals.request(...)`.
+          runtime.approvals.resolve({
+            approvalId,
+            approved: false,
+            reason: message,
+          });
+          orchestrator.steerMessage(message);
+        },
         onMessageSubmitted: (text) => orchestrator.sendMessage(text),
         onQueueClearRequested: () => orchestrator.clearQueue(),
         onMessageSteered: (text) => orchestrator.steerMessage(text),

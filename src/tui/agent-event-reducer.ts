@@ -87,10 +87,26 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         ...state,
         status: "awaiting_approval",
         pendingApproval: action.request,
+        // A redirect re-prompts for the new target; the previous
+        // prompt's draft must not leak into it.
+        approvalPathDraft: null,
       };
     case "approval_resolved":
       if (state.pendingApproval?.approvalId !== action.approvalId) return state;
-      return { ...state, pendingApproval: null, status: "running" };
+      return {
+        ...state,
+        pendingApproval: null,
+        approvalPathDraft: null,
+        status: "running",
+      };
+    case "approval_path_edit_opened":
+      if (!state.pendingApproval) return state;
+      return { ...state, approvalPathDraft: action.path };
+    case "approval_path_edit_changed":
+      if (state.approvalPathDraft === null) return state;
+      return { ...state, approvalPathDraft: action.value };
+    case "approval_path_edit_closed":
+      return { ...state, approvalPathDraft: null };
     case "metric":
       return applyMetric(state, action.sample);
     case "log":

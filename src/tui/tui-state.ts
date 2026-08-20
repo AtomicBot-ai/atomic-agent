@@ -273,6 +273,13 @@ export interface TuiState {
   /** Per-run list of `<think>` blocks. Cleared on `goal_submitted`. */
   reasoning: ReasoningEntry[];
   pendingApproval: ApprovalRequest | null;
+  /**
+   * Live buffer of the approval prompt's target-path field, or `null`
+   * when the field is closed. Non-null means that editor owns the
+   * keyboard: the chat composer drops focus and the y / n hotkeys stand
+   * down, so a path containing "y" cannot approve anything.
+   */
+  approvalPathDraft: string | null;
   loadedSkills: readonly LoadedSkillBody[];
   worldSnapshot: WorldSnapshot | null;
   latestResult: LatestResult | null;
@@ -511,6 +518,7 @@ export function createInitialTuiState(
     streamingToolCards: [],
     reasoning: [],
     pendingApproval: null,
+    approvalPathDraft: null,
     loadedSkills: [],
     worldSnapshot: null,
     latestResult: null,

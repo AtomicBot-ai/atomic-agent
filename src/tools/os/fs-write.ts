@@ -2,11 +2,20 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { resolveUserPath } from "./expand-home.js";
+import { categorizeFsMutation } from "./fs-approval-scope.js";
 import {
   requireFsApproval,
   type FsDangerousToolOptions,
 } from "./fs-require-approval.js";
 import type { ToolDefinition } from "../tool-registry.js";
+
+/**
+ * How many times one write may be retargeted from the approval prompt
+ * before the tool refuses. Each hop is a deliberate keystroke by the
+ * operator, so this is a runaway guard for a misbehaving host that
+ * echoes an override back forever — not a limit anyone types into.
+ */
+const MAX_REDIRECTS = 3;
 
 export function buildOsFsWriteTool(
   options: FsDangerousToolOptions,
@@ -32,34 +41,84 @@ export function buildOsFsWriteTool(
       const absolute = resolveUserPath(path, ctx.workingDir);
 
       const preview = content.length > 400 ? `${content.slice(0, 400)}…` : content;
-      await requireFsApproval(
-        options,
-        {
-          kind: "write",
-          paths: [absolute],
-          sessionId: ctx.sessionId,
-          tool: "os.fs.write",
-          reason: `${mode} ${content.length} bytes into ${absolute}`,
-          preview,
-          affectedResources: [absolute],
-          workingDir: ctx.workingDir,
-          trustConfigPaths: options.trustConfigPaths,
-        },
-        ctx.signal,
-      );
 
-      await mkdir(dirname(absolute), { recursive: true });
+      // The operator can retarget the write from the prompt ("put it in
+      // ~/Documents/apple-site instead"). A retarget is never a silent
+      // widening of what they approved: the new path is re-categorised,
+      // and only a target on the SAME rung of the ladder rides the
+      // approval just given. A different rung goes round the loop and
+      // prompts again for the new path; the agent's own config / `.env`
+      // is refused outright, since that is the one surface the ladder
+      // exists to protect and no prompt is offered for it here.
+      let target = absolute;
+      let redirects = 0;
+      for (;;) {
+        const outcome = await requireFsApproval(
+          options,
+          {
+            kind: "write",
+            paths: [target],
+            sessionId: ctx.sessionId,
+            tool: "os.fs.write",
+            reason: `${mode} ${content.length} bytes into ${target}`,
+            preview,
+            affectedResources: [target],
+            redirectablePath: target,
+            workingDir: ctx.workingDir,
+            trustConfigPaths: options.trustConfigPaths,
+          },
+          ctx.signal,
+        );
+        if (outcome.pathOverride === undefined) break;
+
+        const typed = outcome.pathOverride.trim();
+        if (typed.length === 0) {
+          throw new Error("os.fs.write: empty target path from the approval prompt");
+        }
+        if (++redirects > MAX_REDIRECTS) {
+          throw new Error(
+            `os.fs.write: target redirected more than ${MAX_REDIRECTS} times`,
+          );
+        }
+        const next = resolveUserPath(typed, ctx.workingDir);
+        const nextCategory = await categorizeFsMutation("write", [next], {
+          workingDir: ctx.workingDir,
+          ...(options.trustConfigPaths !== undefined
+            ? { trustConfigPaths: options.trustConfigPaths }
+            : {}),
+        });
+        if (nextCategory === "trust_config") {
+          throw new Error(
+            `os.fs.write: refusing to redirect into the agent's own config: ${next}`,
+          );
+        }
+        target = next;
+        if (nextCategory === outcome.category) break;
+      }
+
+      await mkdir(dirname(target), { recursive: true });
       if (mode === "append") {
         const { appendFile } = await import("node:fs/promises");
-        await appendFile(absolute, content, "utf8");
+        await appendFile(target, content, "utf8");
       } else {
-        await writeFile(absolute, content, "utf8");
+        await writeFile(target, content, "utf8");
       }
+      // The path is echoed in `output` (not just `details`) so a model
+      // that had its target moved reads where the file actually landed
+      // and keeps working against the right path.
       return compressToolResult({
         tool: "os.fs.write",
         status: "ok",
-        output: `wrote ${content.length} bytes to ${absolute} (${mode})`,
-        details: { path: absolute, bytes: content.length, mode },
+        output:
+          target === absolute
+            ? `wrote ${content.length} bytes to ${target} (${mode})`
+            : `wrote ${content.length} bytes to ${target} (${mode}); the operator moved this write from ${absolute}`,
+        details: {
+          path: target,
+          bytes: content.length,
+          mode,
+          ...(target === absolute ? {} : { requestedPath: absolute }),
+        },
       });
     },
   };

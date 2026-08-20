@@ -47,6 +47,14 @@ export interface MultiLineEditorProps {
    * editor body.
    */
   bare?: boolean;
+  /**
+   * Consulted before every keystroke: `true` means another layer owns
+   * this key and the editor must not type it. Ink delivers a keypress
+   * to every subscription, so a focused editor and a global hotkey
+   * handler would otherwise both act on it — the approval prompt uses
+   * this so `y` decides the prompt instead of landing in the buffer.
+   */
+  claimKey?: (input: string, key: Key) => boolean;
 }
 
 /**
@@ -79,6 +87,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     onShiftTab,
     onAutocomplete,
     bare = false,
+    claimKey,
   } = props;
   const [cursorPos, setCursorPos] = useState<number>(value.length);
   // Distinguish our own edits (keystrokes routed through `setBuffer`)
@@ -117,11 +126,17 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
   // from props, never from state updated here.)
   const activeRef = useRef(focus && !disabled);
   activeRef.current = focus && !disabled;
+  // Same render-phase-ref treatment as `activeRef`: the predicate reads
+  // live TUI state, and a stale closure would type a key the prompt had
+  // already claimed.
+  const claimKeyRef = useRef(claimKey);
+  claimKeyRef.current = claimKey;
 
   useInput(
     (input, key) => {
       if (!activeRef.current) return;
       if (disabled) return;
+      if (claimKeyRef.current?.(input, key)) return;
       handleKey({
         input,
         key,

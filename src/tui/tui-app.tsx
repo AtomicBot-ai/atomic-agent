@@ -12,7 +12,9 @@ import type { ApprovalGrantScope } from "../approval/approval-gate.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
 import type { TuiAction } from "./tui-action.js";
 import {
+  approvalHotkey,
   handleAppKey,
+  submitApprovalPath,
   handlePanelEscape,
   isPanelModalOpen,
 } from "./app-key-bindings.js";
@@ -101,6 +103,19 @@ export interface TuiAppCallbacks {
     approved: boolean,
     grant?: ApprovalGrantScope,
   ): void;
+  /**
+   * Approve the pending call at an operator-typed target instead of the
+   * proposed one (`[e]` on the prompt). The raw string travels to the
+   * tool, which resolves and re-categorises it — a target on a
+   * different rung of the approval ladder comes back as a fresh prompt.
+   */
+  onApprovalRetarget?(approvalId: string, path: string): void;
+  /**
+   * A chat message submitted while a prompt is up: denies that one call
+   * with the message as its reason and folds the same text into the
+   * running turn.
+   */
+  onApprovalReply?(approvalId: string, message: string): void;
   onAbort(): void;
   onQuit(): void;
   onMessageSubmitted(message: string): void;
@@ -601,7 +616,12 @@ export function TuiApp({
   const editorFocus =
     !state.menuOpen &&
     !menuLeaderArmed &&
-    !state.pendingApproval &&
+    // An approval prompt no longer takes the keyboard away: the
+    // operator answers the agent in the same field they always type in,
+    // and `approvalHotkey` decides per keystroke whether it is a
+    // decision or text. The one exception is the prompt's own target
+    // field, which owns input while it is open.
+    state.approvalPathDraft === null &&
     // The update offer claims y / n / Esc; keep the editor unfocused so
     // those keystrokes never leak into the input buffer. The post-update
     // "press any key to restart" prompt claims every key for the same reason.
@@ -789,7 +809,15 @@ export function TuiApp({
       dispatch({ type: "slash_palette_closed" });
       return;
     }
-    if (state.pendingApproval) return;
+    // Reached only with a draft in the buffer: an empty buffer means
+    // Esc was claimed as `abort` before the editor ever saw it. Clearing
+    // the draft hands the y / s / e / n keys back.
+    if (state.pendingApproval) {
+      if (state.inputValue.length > 0) {
+        dispatch({ type: "input_changed", value: "" });
+      }
+      return;
+    }
     // Esc with the chat scrolled away from the bottom snaps back to
     // the latest reply before doing anything else — avoids a confused
     // "why didn't my Esc abort?" when the operator left the scroll
@@ -832,6 +860,37 @@ export function TuiApp({
       dispatch({ type: "input_changed", value: "" });
     }
   }, [state, callbacks]);
+
+  /**
+   * The composer's stand-down rule. Ink hands a keypress to every
+   * subscription, so without this the same `y` would both answer the
+   * prompt and type itself into the buffer.
+   */
+  const composerClaimKey = useCallback(
+    (input: string, key: Key) => approvalHotkey(state, input, key) !== null,
+    [state],
+  );
+
+  const onApprovalPathOpen = useCallback(() => {
+    if (!state.pendingApproval?.redirectablePath) return;
+    dispatch({
+      type: "approval_path_edit_opened",
+      path: state.pendingApproval.redirectablePath,
+    });
+  }, [state.pendingApproval]);
+
+  const onApprovalPathSubmit = useCallback(
+    (value: string) => {
+      const request = state.pendingApproval;
+      if (!request) return;
+      const trimmed = value.trim();
+      // An empty field is not a decision: keep the prompt up rather
+      // than approving a write with no target.
+      if (trimmed.length === 0) return;
+      submitApprovalPath(request, trimmed, { dispatch, callbacks });
+    },
+    [state.pendingApproval, callbacks],
+  );
 
   // Tab in the editor is reserved for slash-palette completion. Section
   // / sub-tab cycling lives entirely in `handleAppKey` so the same key
@@ -1022,7 +1081,18 @@ export function TuiApp({
           </Box>
           {state.pendingApproval ? (
             <Box flexShrink={0}>
-              <ApprovalModal request={state.pendingApproval} />
+              <ApprovalModal
+                request={state.pendingApproval}
+                pathDraft={state.approvalPathDraft}
+                onPathOpen={onApprovalPathOpen}
+                onPathChange={(value) =>
+                  dispatch({ type: "approval_path_edit_changed", value })
+                }
+                onPathSubmit={onApprovalPathSubmit}
+                onPathCancel={() =>
+                  dispatch({ type: "approval_path_edit_closed" })
+                }
+              />
             </Box>
           ) : null}
           {state.sessionPickerOpen ? (
@@ -1082,6 +1152,7 @@ export function TuiApp({
             rightSlot={promptRightSlot}
             focus={editorFocus}
             disabled={!canTypeMessage(state)}
+            claimKey={composerClaimKey}
             onChange={onEditorChange}
             onSubmit={submit}
             onEscape={onEscape}
