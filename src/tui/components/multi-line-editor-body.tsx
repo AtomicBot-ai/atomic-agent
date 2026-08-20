@@ -1,13 +1,24 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { useMouseTarget } from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { theme } from "../theme/theme.js";
 import type { Cursor } from "./multi-line-editor-cursor.js";
+
+/** Width of the `❯ ` / `  ` gutter in front of every editor line. */
+const GUTTER_COLUMNS = 2;
 
 export interface EditorBodyProps {
   value: string;
   cursor: Cursor;
   placeholder: string;
   focus: boolean;
+  /**
+   * Move the caret to a clicked cell. `row`/`col` are already relative
+   * to the text, gutter excluded; the owner clamps and converts them to
+   * a buffer offset.
+   */
+  onClickCursor?: (row: number, col: number) => void;
 }
 
 /**
@@ -21,10 +32,19 @@ export function EditorBody({
   cursor,
   placeholder,
   focus,
+  onClickCursor,
 }: EditorBodyProps): ReactElement {
+  // One target for the whole buffer: the click's local row is the line,
+  // its local column minus the gutter is the character. Lines are not
+  // soft-wrapped here, so the mapping is exact.
+  const bodyRef = useMouseTarget((hit) => {
+    if (!isPrimaryPress(hit.event) || !onClickCursor) return false;
+    onClickCursor(hit.localY, hit.localX - GUTTER_COLUMNS);
+    return true;
+  });
   if (value.length === 0) {
     return (
-      <Box>
+      <Box ref={bodyRef}>
         <Text color={theme.colors.accent}>{theme.glyphs.promptCaret} </Text>
         {focus ? <Text inverse> </Text> : null}
         <Text color={theme.colors.muted}>{placeholder}</Text>
@@ -33,7 +53,7 @@ export function EditorBody({
   }
   const lines = value.split("\n");
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" ref={bodyRef}>
       {lines.map((line, idx) => (
         <Box key={idx}>
           <Text color={theme.colors.accent}>

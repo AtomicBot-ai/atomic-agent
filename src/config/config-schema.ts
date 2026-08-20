@@ -707,13 +707,15 @@ export interface AtomicAgentConfig {
     maxImagesPerCall: number;
   };
   /**
-   * TUI appearance. Mirrors `UserConfigFile.tui`. `theme` is `"auto"`
-   * (OSC 11 autodetect) or a registered theme name. Consumed by the TUI
-   * startup path; the rest of the runtime ignores it.
+   * TUI appearance and input. Mirrors `UserConfigFile.tui`. `theme` is
+   * `"auto"` (OSC 11 autodetect) or a registered theme name; `mouse`
+   * toggles terminal mouse reporting. Consumed by the TUI startup path;
+   * the rest of the runtime ignores it.
    */
   tui: {
     theme: string;
     whileBusySubmit: WhileBusySubmitMode;
+    mouse: boolean;
   };
   /**
    * Anonymous product analytics (PostHog). Mirrors
@@ -1415,10 +1417,17 @@ export interface UserConfigFile {
    * the matching GitHub theme) or a registered theme name (e.g. `dracula`,
    * `nord`). Persisted from the in-app `/theme` picker. Older files are
    * transparently upgraded with `tui: { theme: "auto" }`.
+   *
+   * `mouse` (config v38, default `true`) turns terminal mouse reporting
+   * on: clicking panels, list rows, the nav bar and the prompt, plus
+   * wheel scrolling. Turning it off restores the terminal's own
+   * drag-to-select, which mouse reporting takes over — see `/mouse` and
+   * `--no-mouse`. Older files are upgraded with `mouse: true`.
    */
   tui: {
     theme: string;
     whileBusySubmit: WhileBusySubmitMode;
+    mouse: boolean;
   };
   /**
    * Anonymous product analytics (PostHog). Added in config v33. Older
@@ -1483,7 +1492,10 @@ export interface UserConfigFile {
 // retry/backoff configurable. Older files transparently inherit the defaults,
 // and `timeoutMs` keeps its historical 30_000 value, so the migration does not
 // change behaviour for anyone who does not opt in.
-export const USER_CONFIG_VERSION = 39 as const;
+// v40: new `tui.mouse` flag gating the mouse layer. Defaults to true, so an
+// older file inherits mouse support on upgrade; `--no-mouse` and `/mouse off`
+// override it without rewriting the file.
+export const USER_CONFIG_VERSION = 40 as const;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1602,6 +1614,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   36,
   37,
   38,
+  39,
   USER_CONFIG_VERSION,
 ];
 
@@ -1848,6 +1861,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   tui: {
     theme: "auto",
     whileBusySubmit: "steer",
+    mouse: true,
   },
   analytics: {
     enabled: true,
@@ -3534,6 +3548,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         tui.whileBusySubmit ?? USER_CONFIG_DEFAULTS.tui.whileBusySubmit,
         "tui.whileBusySubmit",
       ),
+      mouse: parseBool(tui.mouse ?? USER_CONFIG_DEFAULTS.tui.mouse, "tui.mouse"),
     },
     analytics: {
       enabled: parseBool(

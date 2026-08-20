@@ -15,6 +15,10 @@ import {
  * refactor. `SLASH_COMMANDS` is now derived from `MENU`; this snapshot is
  * what makes "no visible change" a claim the suite can check rather than
  * a promise in a PR description.
+ *
+ * Deliberate additions since v0.2.2 are appended here as they land, so the
+ * guard keeps catching *accidental* drift: `/mouse` (the mouse layer) is
+ * the only entry that was not in the v0.2.2 palette.
  */
 const V0_2_2_SLASH_COMMANDS = [
   {
@@ -196,6 +200,11 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "open a new terminal window running atomic-agent (ctrl+n)",
     aliases: ["newwindow"],
+  },
+  {
+    name: "mouse",
+    description:
+      "mouse support on/off/status (off restores the terminal's drag-to-select)",
   },
 ];
 

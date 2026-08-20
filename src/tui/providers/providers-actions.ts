@@ -14,6 +14,8 @@ export type ProvidersAction =
   | { type: "providers_set_active_embedding"; id: string }
   | { type: "providers_cursor_down" }
   | { type: "providers_cursor_up" }
+  /** Put the provider-list cursor on an absolute row (mouse click). */
+  | { type: "providers_cursor_set"; row: number }
   | { type: "providers_status"; line: string | null }
   | { type: "providers_busy"; busy: boolean }
   | { type: "providers_wizard_opened"; wizard: ProvidersWizardState }

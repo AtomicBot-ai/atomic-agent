@@ -3,6 +3,8 @@ import type { ReactElement } from "react";
 
 import { getCurrentSection, type TuiSection } from "../section.js";
 import { menuPlaceByTab } from "../menu/menu-registry.js";
+import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { getAppVersion } from "../../version.js";
@@ -52,6 +54,17 @@ const SECTION_LABELS: Record<TuiSection, string> = {
   manage: "Manage",
 };
 
+/**
+ * Where you are: `Section › Tab`.
+ *
+ * #165 originally made a Run / Observe / Manage pill strip clickable, but
+ * #170 replaced that strip with this breadcrumb — the menu is now the one
+ * navigation surface, and re-adding pills would give the same job two
+ * competing controls. So the breadcrumb itself takes the click and opens
+ * the menu, which is exactly what `ctrl+p` does. Clicking where you
+ * already are is still meaningful here: the menu is a destination list,
+ * not a reset.
+ */
 function Breadcrumb({
   state,
   section,
@@ -59,9 +72,10 @@ function Breadcrumb({
   state: TuiState;
   section: TuiSection;
 }): ReactElement {
+  const mouse = useMouseCommands();
   const tabLabel =
     state.uiMode === "debug" ? menuPlaceByTab(state.activeTab)?.label : undefined;
-  return (
+  const label = (
     <Text>
       <Text color={theme.colors.accentSoft} bold>
         {SECTION_LABELS[section]}
@@ -73,6 +87,23 @@ function Breadcrumb({
         </Text>
       ) : null}
     </Text>
+  );
+  if (!mouse) return label;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        // Open at the top of the list, the same state `ctrl+p` produces,
+        // so the keyboard and the mouse land on one menu rather than two
+        // subtly different ones.
+        mouse.dispatch({ type: "menu_path_set", path: null });
+        mouse.dispatch({ type: "menu_cursor_set", cursor: 0 });
+        mouse.dispatch({ type: "menu_opened" });
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
   );
 }
 

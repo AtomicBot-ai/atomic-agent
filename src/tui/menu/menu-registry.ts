@@ -502,6 +502,18 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "setup.mouse",
+    label: "Mouse…",
+    group: "setup",
+    slash: {
+      name: "mouse",
+      description:
+        "mouse support on/off/status (off restores the terminal's drag-to-select)",
+      rank: 35,
+    },
+  },
+  {
+    kind: "action",
     id: "setup.analytics",
     label: "Analytics",
     group: "setup",

@@ -231,6 +231,10 @@ atomic-agent trace list --limit 10
 
 Handy slash commands: `/help` lists every command, `/tools` lists the built-in tool families, `/model` jumps to the LLM panel and reopens the model picker for the active cloud provider, `/privacy` shows what leaves the machine (`/privacy analytics off` turns analytics off). The chat log scrolls with PgUp / PgDn (fn+arrows on macOS).
 
+**Mouse.** The TUI is clickable: the breadcrumb (which opens the menu, the same as `ctrl+p`), sidebar sessions and tasks, every list row (skills, tasks, memory, MCP, models, providers), the session / theme / slash pickers, approval buttons, tool cards, and the prompt itself — clicking in the input places the caret. A click selects a row, a second click on the selected row opens it, and the wheel scrolls the chat or walks the focused panel.
+
+While mouse reporting is on the terminal hands clicks to the app, which means its own drag-to-select is unavailable (iTerm2, GNOME Terminal and Windows Terminal let you hold Shift to bypass; Apple Terminal does not). Turn it off whenever you want to select text: `/mouse off` in the app, `atomic-agent tui --no-mouse` for one run, or `"tui": { "mouse": false }` in `<stateDir>/config.json`. With mouse off, wheel scrolling still works through the terminal's alternate-scroll mode, exactly as before.
+
 Cloud provider setup pulls each provider's full live model catalog, hundreds of models, instead of a short hardcoded list; OpenAI-compatible servers are asked for their own `/v1/models`. The picker filters as you type, and `/model` switches models mid-session.
 
 A cloud key is checked before it is saved. The key screen refuses an empty key, and finishing the wizard asks the provider for a one-token completion from its cheapest model: a key that is rejected, or attached to an account with no balance, never reaches `.env` and never becomes the active provider. A provider that cannot be reached at all still saves, with a line saying the key went unverified — an offline or proxied machine stays configurable. Local servers have no account to check and are left alone.
