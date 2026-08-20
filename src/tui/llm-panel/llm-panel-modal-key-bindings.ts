@@ -25,6 +25,10 @@ export function handleLlmModalKey(
       return true;
     }
     if ("wizard" in result) {
+      if ("cancelSubmit" in result && result.cancelSubmit) {
+        callbacks.onProvidersWizardSubmitCancel?.();
+        return true;
+      }
       if ("submit" in result && result.submit) {
         void callbacks.onProvidersWizardSubmit?.(result.wizard);
         return true;

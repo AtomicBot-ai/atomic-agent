@@ -261,6 +261,8 @@ export interface TuiAppCallbacks {
   onMcpRemoveServer?(name: string): void;
   /** Providers tab: finish the add/configure wizard. */
   onProvidersWizardSubmit?(wizard: import("./providers/providers-wizard-state.js").ProvidersWizardState): void;
+  /** Providers tab: abandon a running pre-save key check. */
+  onProvidersWizardSubmitCancel?(): void;
   /** Providers tab: remove a provider by id from config + registry. */
   onProvidersRemove?(id: string): void;
   /** Slash-command surface: enable a skill explicitly (`/skill enable <name>`). */

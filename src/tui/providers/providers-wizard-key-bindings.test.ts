@@ -1,7 +1,12 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Key } from "ink";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { resetConfigCache } from "../../config/index.js";
 import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { upsertLlmProvider } from "../persist-llm-provider.js";
 import { PICK_WINDOW } from "../components/wizard-pick-list.js";
 import { PROVIDER_PRESETS } from "./provider-presets.js";
 import { LOCAL_EMBEDDING_CHOICE_ID } from "./providers-model-options.js";
@@ -112,6 +117,7 @@ describe("handleProvidersWizardKey", () => {
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard).toMatchObject({ kind: "gemini", phase: "api_key" });
 
+    for (const ch of "gk") wizard = next(wizard, ch, emptyKey());
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.phase).toBe("chat_model_line");
     expect(wizard.phase).not.toBe("base_url");
@@ -522,10 +528,184 @@ describe("handleProvidersWizardKey", () => {
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.kind).toBe("openai-compatible");
     expect(wizard.presetId).toBeNull();
-    // No key typed, Enter through the key screen: a hand-added compat
-    // endpoint still has to declare its base URL.
+    // A hand-added compat endpoint still has to declare its base URL
+    // after the key screen.
+    for (const ch of "ck") wizard = next(wizard, ch, emptyKey());
     wizard = next(wizard, "", emptyKey({ return: true }));
     expect(wizard.phase).toBe("base_url");
+  });
+
+  describe("empty API key", () => {
+    // The gate reads the environment, so a key left over from the host
+    // shell would silently satisfy the screen under test.
+    const ENV_KEYS = [
+      "OPENROUTER_API_KEY",
+      "AIMLAPI_API_KEY",
+      "GEMINI_API_KEY",
+      "OPENAI_COMPAT_API_KEY",
+      "OPENAI_API_KEY",
+      "ATOMIC_AGENT_OPENAI_API_KEY",
+    ] as const;
+    const saved = new Map<string, string | undefined>();
+    beforeEach(() => {
+      for (const key of ENV_KEYS) {
+        saved.set(key, process.env[key]);
+        delete process.env[key];
+      }
+    });
+    afterEach(() => {
+      for (const [key, value] of saved) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      saved.clear();
+    });
+
+    it("keeps Enter on the key screen when nothing was typed", () => {
+      let wizard = createProvidersWizardState("add");
+      wizard = next(wizard, "", emptyKey({ return: true }));
+      expect(wizard).toMatchObject({ kind: "openrouter", phase: "api_key" });
+
+      wizard = next(wizard, "", emptyKey({ return: true }));
+      expect(wizard.phase).toBe("api_key");
+      expect(wizard.error).toContain("API key required");
+      expect(wizard.error).toContain("OPENROUTER_API_KEY");
+    });
+
+    it("refuses a whitespace-only key", () => {
+      let wizard = createProvidersWizardState("add", { kind: "aimlapi" });
+      wizard = { ...wizard, phase: "api_key" };
+      for (const ch of "   ") wizard = next(wizard, ch, emptyKey());
+      wizard = next(wizard, "", emptyKey({ return: true }));
+      expect(wizard.phase).toBe("api_key");
+      expect(wizard.error).toContain("API key required");
+    });
+
+    it("clears the message on the next keystroke", () => {
+      let wizard = createProvidersWizardState("add", { kind: "openrouter" });
+      wizard = { ...wizard, phase: "api_key" };
+      wizard = next(wizard, "", emptyKey({ return: true }));
+      expect(wizard.error).not.toBeNull();
+
+      wizard = next(wizard, "s", emptyKey());
+      expect(wizard.error).toBeNull();
+      wizard = next(wizard, "", emptyKey({ return: true }));
+      expect(wizard.phase).toBe("pick_chat_model");
+    });
+
+    it("lets a keyless local preset through with no key at all", () => {
+      // LM Studio has no key to type; the wizard skips the screen
+      // entirely and the gate must not reintroduce it.
+      let wizard = createProvidersWizardState("add");
+      wizard = { ...wizard, cursor: presetRowIndex("lmstudio") };
+      wizard = next(wizard, "", emptyKey({ return: true }));
+      expect(wizard).toMatchObject({
+        presetId: "lmstudio",
+        phase: "chat_model_line",
+      });
+    });
+
+    it("accepts an empty screen when the service's key is already in .env", () => {
+      process.env.OPENROUTER_API_KEY = "sk-or-env";
+      let wizard = createProvidersWizardState("add", { kind: "openrouter" });
+      wizard = { ...wizard, phase: "api_key" };
+      wizard = next(wizard, "", emptyKey({ return: true }));
+      expect(wizard.phase).toBe("pick_chat_model");
+    });
+  });
+
+  describe("reconfiguring a saved provider", () => {
+    // Every other test here starts from `createProvidersWizardState("add", …)`,
+    // which is how a gate stricter than the save path reached review: a
+    // configure run opens on the key screen with an empty buffer, and the
+    // key it should find is in `config.json`, not `.env`.
+    let stateDir: string;
+    let previousStateDir: string | undefined;
+
+    beforeEach(() => {
+      previousStateDir = process.env.ATOMIC_AGENT_STATE_DIR;
+      stateDir = mkdtempSync(join(tmpdir(), "wizard-configure-"));
+      process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+      delete process.env.OPENROUTER_API_KEY;
+      resetConfigCache();
+    });
+
+    afterEach(() => {
+      rmSync(stateDir, { recursive: true, force: true });
+      if (previousStateDir === undefined) {
+        delete process.env.ATOMIC_AGENT_STATE_DIR;
+      } else {
+        process.env.ATOMIC_AGENT_STATE_DIR = previousStateDir;
+      }
+      delete process.env.OPENROUTER_API_KEY;
+      resetConfigCache();
+    });
+
+    it("Enter leaves the key screen when the key is already saved", () => {
+      upsertLlmProvider({
+        id: "openrouter",
+        kind: "openrouter",
+        apiKey: "sk-or-stored",
+      });
+      const wizard = createProvidersWizardState("configure", {
+        providerId: "openrouter",
+        kind: "openrouter",
+      });
+      expect(wizard.phase).toBe("api_key");
+      const next1 = next(wizard, "", emptyKey({ return: true }));
+      expect(next1.phase).toBe("pick_chat_model");
+      expect(next1.error).toBeNull();
+    });
+
+    it("Enter still refuses when the entry has no key anywhere", () => {
+      upsertLlmProvider({ id: "openrouter", kind: "openrouter" });
+      const wizard = createProvidersWizardState("configure", {
+        providerId: "openrouter",
+        kind: "openrouter",
+      });
+      const next1 = next(wizard, "", emptyKey({ return: true }));
+      expect(next1.phase).toBe("api_key");
+      expect(next1.error).toContain("API key required");
+    });
+
+    it("Esc on the key screen closes the wizard", () => {
+      // The key screen is where a configure run opens, so there is no
+      // screen behind it. Stepping "back" built a provider list this run
+      // never showed and dropped the entry's kind and base URL with it.
+      upsertLlmProvider({
+        id: "my-vllm",
+        kind: "openai-compatible",
+        baseUrl: "http://192.168.1.50:8000/v1",
+      });
+      const wizard = createProvidersWizardState("configure", {
+        providerId: "my-vllm",
+        kind: "openai-compatible",
+        baseUrl: "http://192.168.1.50:8000/v1",
+      });
+      const result = handleProvidersWizardKey(
+        "",
+        emptyKey({ escape: true }),
+        wizard,
+      );
+      expect("closed" in result && result.closed).toBe(true);
+    });
+
+    it("Esc past the key screen still steps back one screen", () => {
+      const wizard = {
+        ...createProvidersWizardState("configure", {
+          providerId: "openrouter",
+          kind: "openrouter",
+        }),
+        phase: "pick_chat_model" as const,
+      };
+      const result = handleProvidersWizardKey(
+        "",
+        emptyKey({ escape: true }),
+        wizard,
+      );
+      expect("closed" in result && result.closed).toBeFalsy();
+      expect("wizard" in result && result.wizard.phase).toBe("pick_kind");
+    });
   });
 
   it("Esc from a preset returns to the provider list, not out of the wizard", () => {

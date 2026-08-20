@@ -88,6 +88,18 @@ export function presetNeedsKeyScreen(presetId: string): boolean {
 }
 
 /**
+ * `true` on the screen the wizard opened at, which has no "back" inside
+ * the run. Adding starts on the provider list; reconfiguring starts on
+ * the key screen, having been opened from a row the operator already
+ * chose. Stepping back from there used to build a `pick_kind` screen
+ * that run never showed, dropping the entry's kind and base URL with it.
+ */
+export function isWizardFirstScreen(wizard: ProvidersWizardState): boolean {
+  if (wizard.phase === "pick_kind") return true;
+  return wizard.mode === "configure" && wizard.phase === "api_key";
+}
+
+/**
  * Where the cursor lands when Esc returns to the provider list: on the
  * row the operator came from, so stepping back and forth is stable.
  */
