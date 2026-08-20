@@ -10,6 +10,7 @@ export type HostRequestType =
   | "start_session"
   | "run_step"
   | "send_message"
+  | "steer_message"
   | "cancel"
   | "approval_response"
   | "get_session"
@@ -26,6 +27,8 @@ export type SidecarEventType =
   | "tool_call_started"
   | "tool_call_result"
   | "user_message"
+  | "steer_applied"
+  | "steer_undelivered"
   | "assistant_reply"
   | "assistant_delta"
   | "reasoning_delta"
@@ -89,6 +92,18 @@ export interface SendMessagePayload {
   sessionId: string;
   text: string;
   maxSteps?: number;
+}
+
+/**
+ * Fold a message into the turn already running on `sessionId`. Unlike
+ * {@link SendMessagePayload} this never starts a turn and never queues
+ * behind one — see §"Mid-turn steering" in AGENTS.md. The response's
+ * `steered: false` means the session was idle (or the inbox was full)
+ * and the host should fall back to `send_message`.
+ */
+export interface SteerMessagePayload {
+  sessionId: string;
+  text: string;
 }
 
 export interface CancelPayload {
@@ -172,6 +187,29 @@ export interface StepFinishedPayload {
 }
 
 export interface UserMessagePayload {
+  sessionId: string;
+  text: string;
+}
+
+/**
+ * A mid-turn message reached the model at `stepIndex`. Distinct from
+ * `user_message`, which marks the message that opened the turn — hosts
+ * render this one inline inside the running turn.
+ */
+export interface SteerAppliedPayload {
+  sessionId: string;
+  text: string;
+  stepIndex: number;
+}
+
+/**
+ * A steer was accepted but the turn ended before the loop could drain
+ * it (it landed during the final inference, or the turn was cancelled).
+ * The host owns it now — re-send it as a `send_message` if it still
+ * makes sense. Emitted rather than silently dropped so "the message you
+ * sent always goes somewhere" holds on this surface too.
+ */
+export interface SteerUndeliveredPayload {
   sessionId: string;
   text: string;
 }
