@@ -65,11 +65,10 @@ describe("TuiApp (smoke)", () => {
     expect(text).toContain("Run");
     expect(text).not.toContain("Observe");
     expect(text).not.toContain("Manage");
-    // The splash mark scales with the window; ink-testing-library's
-    // 100-column stdout reports no rows, so the fallback 80x24 surface
-    // gets the compact mark rather than the wordmark + tagline. Assert
-    // on what every size keeps. See `components/splash-fit.render.test.tsx`.
-    expect(text).toContain(":::");
+    // The splash mark scales with the window and is drawn as a block
+    // raster, so its exact glyphs vary by size. Assert the rail the Run
+    // screen always carries instead. See `components/splash-fit.render.test.tsx`.
+    expect(text).toContain("Sessions");
     expect(text).toContain("commands");
     unmount();
   });

@@ -49,7 +49,7 @@ describe("Esc on the Import tab", () => {
     bus.emit({ type: "ui_mode_set", mode: "debug" });
     bus.emit({ type: "tab_changed", tab: "import" });
     await settle();
-    expect(strip(lastFrame() ?? "")).toContain("▸ Manage");
+    expect(strip(lastFrame() ?? "")).toContain("Manage ▸");
 
     stdin.write(ESC);
     await settle();
@@ -57,7 +57,7 @@ describe("Esc on the Import tab", () => {
     // The configure-mode handler ends in a catch-all `return true` that
     // swallows stray letters; before the fix it swallowed Esc too, so the
     // operator was stuck on the tab with no "back" gesture at all.
-    expect(strip(lastFrame() ?? "")).toContain("▸ Run");
+    expect(strip(lastFrame() ?? "")).toContain("Run");
     expect(quit).toBe(0);
     unmount();
   });
