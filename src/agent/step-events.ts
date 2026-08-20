@@ -142,6 +142,27 @@ export type StepEvent =
       reason: "approval-gated-batched";
     }
   /**
+   * A model-emitted batch larger than `agent.maxParallelToolCalls` was
+   * mechanically split into bounded waves because every call was
+   * preflight-validated as registered, argument-schema-valid, and
+   * classified `pure_read`. No LLM repair round-trip happened — the
+   * batch executes deterministically in waves of at most `cap`. An
+   * oversized batch containing any non-`pure_read` call bypasses this
+   * (and approval trimming) and routes to `parse_retry` instead.
+   */
+  | {
+      type: "batch_wave_split";
+      stepIndex: number;
+      /** Original batch size the model emitted. Always > cap. */
+      originalSize: number;
+      /** Wave size cap (== agent.maxParallelToolCalls). */
+      cap: number;
+      /** Number of waves: ceil(originalSize / cap). */
+      waveCount: number;
+      /** Start index of each wave in the original call array. */
+      boundaries: number[];
+    }
+  /**
    * Terminal error for this step. The `category` follows the canonical
    * LLM failure taxonomy (see `src/llm/reliability/`) and is always set
    * even when the underlying error shape is a legacy `Error` — the step

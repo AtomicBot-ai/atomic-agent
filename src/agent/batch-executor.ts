@@ -83,6 +83,15 @@ export interface BatchExecutionContext {
    * is never invoked for such calls. Absent ⇒ no short-circuit.
    */
   loadedSkillNames?: ReadonlySet<string>;
+  /**
+   * When set, the `pure_read` group fans out in bounded waves of at most
+   * this many concurrent calls instead of launching the whole group at
+   * once (issue #111). Each wave is awaited before the next starts, so
+   * waves execute in original order; the per-input `batchIndex` preserves
+   * global result correlation across waves. Other groups are unaffected.
+   * Absent ⇒ legacy single-wave fan-out.
+   */
+  maxWaveSize?: number;
 }
 
 export interface BatchExecutionResult {
@@ -154,10 +163,10 @@ export function planBatch(
  *    a `CompressedToolResult{status:"error"}` and continues.
  *  - Abort: if `signal.aborted` flips while a serialised group is
  *    iterating, the remaining calls in that group are marked
- *    `cancelled` and skipped. `pure_read` calls are launched all at
- *    once before the loop checks the signal again — those that already
- *    started run to completion (their tool implementations honour the
- *    signal cooperatively).
+ *    `cancelled` and skipped. `pure_read` calls launch per wave (or all
+ *    at once when `maxWaveSize` is unset) before the loop checks the
+ *    signal again — those that already started run to completion (their
+ *    tool implementations honour the signal cooperatively).
  *  - Terminal-tail barrier: when the batch contains a `terminal` call
  *    (the validator guarantees it is at the last position), every
  *    non-terminal call completes first; the terminal call then runs
@@ -316,12 +325,17 @@ export async function executeBatch(
   const groupTasks: Array<Promise<void>> = [];
   for (const [cls, calls] of groups) {
     if (isParallelWithinGroup(cls)) {
-      // Pure-read fan-out. Launch every call immediately. Any that
-      // already started keep running on cooperative signal — already
-      // matches the legacy single-call path.
+      // Pure-read fan-out, bounded to waves of `maxWaveSize` when set
+      // (issue #111). Each wave is awaited before the next starts, so
+      // waves execute in original order; the per-input `batchIndex`
+      // keeps global result correlation intact. Absent ⇒ legacy
+      // single-wave fan-out (the whole group at once).
+      const waveSize = ctx.maxWaveSize ?? calls.length;
       groupTasks.push(
         (async (): Promise<void> => {
-          await Promise.allSettled(calls.map(invokeOne));
+          for (let i = 0; i < calls.length; i += waveSize) {
+            await Promise.allSettled(calls.slice(i, i + waveSize).map(invokeOne));
+          }
         })(),
       );
       continue;

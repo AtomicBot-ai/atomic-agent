@@ -94,6 +94,7 @@ export const METRIC_NAMES = {
   telegramMessagesSent: "agent.telegram.messages_sent",
   telegramApprovalsResolved: "agent.telegram.approvals_resolved",
   batchTrimmed: "agent.batch.trimmed",
+  batchWaveSplit: "agent.batch.wave_split",
 } as const;
 
 export type MetricName = (typeof METRIC_NAMES)[keyof typeof METRIC_NAMES];
@@ -147,6 +148,23 @@ export interface BatchTrimmedMetricSample {
   originalSize: number;
   /** Number of calls dropped (== originalSize - 1). */
   droppedCount: number;
+}
+
+/**
+ * A mechanically wave-split oversized pure-read batch (issue #111). The
+ * runtime executes it deterministically in waves of at most `cap`
+ * instead of spending an LLM repair round-trip. Tagged by original size
+ * and cap so dashboards can spot models that routinely overshoot the
+ * prompt's stated limit.
+ */
+export interface BatchWaveSplitMetricSample {
+  sessionId: string;
+  /** Original batch size the model emitted. Always > cap. */
+  originalSize: number;
+  /** Wave size cap (== agent.maxParallelToolCalls). */
+  cap: number;
+  /** Number of waves: ceil(originalSize / cap). */
+  waveCount: number;
 }
 
 /**
@@ -710,6 +728,22 @@ export class AgentMetrics {
       sessionId: sample.sessionId,
       reason: sample.reason,
       originalSize: String(sample.originalSize),
+    });
+  }
+
+  /**
+   * Record a mechanical wave split of an oversized all-`pure_read` batch
+   * (issue #111). Tagged by `originalSize` and `cap` so dashboards can
+   * distinguish a mild 9-call overshoot from a wholesale 15-call one;
+   * `waveCount` ships as a histogram value so percentile analyses are
+   * cheap.
+   */
+  recordBatchWaveSplit(sample: BatchWaveSplitMetricSample): void {
+    this.collector.counter(METRIC_NAMES.batchWaveSplit, 1, {
+      sessionId: sample.sessionId,
+      originalSize: String(sample.originalSize),
+      cap: String(sample.cap),
+      waveCount: String(sample.waveCount),
     });
   }
 
