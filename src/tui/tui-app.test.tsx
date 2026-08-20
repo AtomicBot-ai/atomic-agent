@@ -209,9 +209,13 @@ describe("TuiApp (smoke)", () => {
     stdin.write("\u001b[Z");
     await new Promise((r) => setTimeout(r, 10));
     const text = strip(lastFrame() ?? "");
-    // Shift+Tab from Run wraps to the last Manage sub-tab (Telegram).
+    // Shift+Tab from Run wraps to the LAST Manage sub-tab. That is
+    // `privacy`, not `telegram` — see `MANAGE_TABS` in `section.ts`, which
+    // gained `import` and `privacy` after this test was written.
     expect(text).toContain("Manage \u25b8");
-    expect(text).toContain("▸ Telegram");
+    // `▸` marks the ACTIVE sub-tab. A bare "Privacy" would also match the
+    // inactive chip in the strip, so it must carry the marker.
+    expect(text).toContain("▸ Privacy");
     unmount();
   });
 
@@ -307,11 +311,14 @@ describe("TuiApp (smoke)", () => {
     bus.emit({ type: "tab_changed", tab: "llm" });
     await new Promise((r) => setTimeout(r, 10));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("Active chat route");
-    expect(text).toContain("Mode:");
+    // ink-testing-library reports no rows, so the panel falls back to the
+    // 80x24 surface and picks its COMPACT header — `RouteCard` ("Active
+    // chat route") is dropped on purpose at that budget. The full/compact
+    // decision is covered directly in `components/llm-panel.test.tsx`,
+    // which drives `maxRows`; here we assert the two-mode body that every
+    // budget keeps.
     expect(text).toContain("Local text models");
     expect(text).toContain("Local embeddings");
-    expect(text).toContain("Press ←/→ to switch mode");
     expect(text).not.toContain("Local runtime");
     unmount();
   });
