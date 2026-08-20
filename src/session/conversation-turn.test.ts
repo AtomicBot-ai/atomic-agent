@@ -374,3 +374,74 @@ describe("conversation-turn helpers", () => {
     });
   });
 });
+
+// Regression: issue #121 — `packConversation` re-rendered and re-tokenised
+// every historical turn on every agent step, so a long turn burned O(N^2)
+// transient strings (~10MB across 25 steps). Costs are now memoised per
+// turn object; these tests pin the behaviour that memoisation must not change.
+describe("packConversation memoisation (issue #121)", () => {
+  function longTurns(steps: number): ConversationTurn[] {
+    const turns: ConversationTurn[] = [userTurn("go")];
+    for (let i = 0; i < steps; i += 1) {
+      turns.push(
+        assistantToolCallTurn({ tool: "os.fs.read", args: { path: `/x/${i}` } }),
+      );
+      turns.push(
+        toolResultTurn({
+          tool: "os.fs.read",
+          status: "ok",
+          summary: `body-${i} ${"s".repeat(2_000)}`,
+        }),
+      );
+    }
+    return turns;
+  }
+
+  it("returns identical results on repeated calls over the same turns", () => {
+    const turns = longTurns(20);
+    const first = packConversation(turns, 4_000);
+    const second = packConversation(turns, 4_000);
+    expect(second.droppedCount).toBe(first.droppedCount);
+    expect(second.droppedSummary).toBe(first.droppedSummary);
+    expect(second.visibleTurns).toEqual(first.visibleTurns);
+  });
+
+  it("keeps the fresh/aged distinction — a turn cached as fresh is not reused when aged", () => {
+    // `os.http.request` renders uncapped while fresh and capped once aged,
+    // so the same turn object has two different costs. Caching must key on
+    // the flag, not collapse the two.
+    const body = "h".repeat(5_000);
+    const httpResult = toolResultTurn({
+      tool: "os.http.request",
+      status: "ok",
+      summary: body,
+    });
+    const freshTurns: ConversationTurn[] = [userTurn("go"), httpResult];
+    const agedTurns: ConversationTurn[] = [
+      userTurn("go"),
+      httpResult,
+      assistantReplyTurn("done"),
+      userTurn("again"),
+    ];
+    // Pack fresh first so the fresh cost is the one cached first.
+    packConversation(freshTurns, 100_000);
+    const aged = packConversation(agedTurns, 100_000);
+    const agedRender = renderTurnForPrompt(httpResult, { inCurrentMacroTurn: false });
+    expect(agedRender.length).toBeLessThan(body.length);
+    expect(aged.visibleTurns).toHaveLength(4);
+  });
+
+  it("still drops under budget pressure and pins the last user turn", () => {
+    // Two macro-turns: the first is droppable, the second is pinned. A
+    // single-macro-turn fixture would pin everything and drop nothing.
+    const turns: ConversationTurn[] = [
+      ...longTurns(30),
+      assistantReplyTurn("first answer"),
+      ...longTurns(5),
+    ];
+    const out = packConversation(turns, 2_000);
+    expect(out.droppedCount).toBeGreaterThan(0);
+    expect(out.droppedSummary).toMatch(/^summary: \d+ older turns dropped/);
+    expect(out.visibleTurns.length).toBeGreaterThan(0);
+  });
+});
