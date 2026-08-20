@@ -99,9 +99,13 @@ A virtual environment records **absolute paths to the interpreter that built
 it**. A `.venv` created inside a container stores container paths, so it stops
 working the moment it is used from the host — and the reverse is equally true.
 Because the directory lives in the mounted project folder, it outlives the
-container and looks like an ordinary project artifact. It is not one. The same
-applies to any interpreter-bound output written into the mount: `node_modules`
-with compiled native addons, `__pycache__`, `.tox`, and Go or Rust build caches.
+container and looks like an ordinary project artifact. It is not one.
+
+Other build output written into the mount is unusable across runtimes for a
+related but distinct reason — platform and ABI mismatch rather than baked-in
+paths: `node_modules` containing compiled native addons, and Go or Rust build
+caches. `.tox` and `.nox` hit both, since they contain real virtual
+environments. Treat all of them as runtime-specific.
 
 This is normal Python behaviour, not a fault in the project or the container.
 
@@ -116,18 +120,22 @@ Create the environment inside a container against a bind mount:
 Inside the container the environment resolves correctly:
 
 ```
-/app/.venv/bin/python3 -> /usr/local/bin/python3   # exists in the image
+/app/.venv/bin/python3.12 -> /usr/local/bin/python3.12   # exists in the image
+/app/.venv/bin/python3    -> python3.12                  # relative
+/app/.venv/bin/python     -> python3.12                  # relative
 ```
 
-The interpreter path is baked in twice: as that absolute symlink, and as the
-`home` key in `pyvenv.cfg`. Back on the host neither target exists, so the very
-same `.venv` is dead:
+Note which link is absolute: the **versioned** name. `python` and `python3` are
+relative links pointing at it, so inspecting `bin/python3` alone shows a bare
+`python3.12` and reveals nothing. The interpreter path is baked in twice — in
+that versioned symlink, and in the `home` key of `pyvenv.cfg`. Back on the host
+neither target exists, so the very same `.venv` is dead:
 
 ```
-$ .venv/bin/python3 --version
-no such file or directory: .venv/bin/python3
-$ head -1 .venv/pyvenv.cfg
-home = /usr/local/bin                              # a container path
+$ .venv/bin/python --version
+.venv/bin/python: No such file or directory
+$ grep '^home' .venv/pyvenv.cfg
+home = /usr/local/bin                                    # a container path
 ```
 
 Recreate it on the host with the host interpreter — into a **separate**
@@ -145,15 +153,20 @@ reliable.
 
 - Never assume a container-created `.venv` can be activated on the host, or the
   other way round. Recreate it per runtime instead.
-- Keep the two environments in distinct paths (`.venv` vs `.venv-host`), or
-  create the container's environment outside the mount (for example
-  `/opt/venv`) so it never lands in the user's project folder.
+- **Preferred:** build the container's environment *outside* the mount — create
+  it at a path like `/opt/venv` and put `/opt/venv/bin` first on `PATH`.
+  Nothing interpreter-bound is then written into the user's project folder, so
+  the problem cannot arise at all. Fall back to distinct in-project paths
+  (`.venv` in the container vs `.venv-host` on the host) only when the
+  environment must live inside the mount.
 - Recommend that the user add `.venv/` (and any host-side variant) to
   `.gitignore`. **Do not edit `.gitignore`, or any other ignore file, unless
   the user explicitly asks** — recommend, then wait.
-- If the user reports a broken `.venv` after container work, check
-  `.venv/pyvenv.cfg` for a `home =` path that does not exist on the host. That
-  confirms this situation.
+- If the user reports a broken `.venv` after container work, read
+  `.venv/pyvenv.cfg` and check whether its `home =` directory exists on the
+  host. If it does not, this is the cause. Compare the directory itself rather
+  than matching a literal path: `/usr/local/bin` is what the official `python`
+  images use, but other images (Alpine, deadsnakes, `uv`) differ.
 
 ### Reporting
 
