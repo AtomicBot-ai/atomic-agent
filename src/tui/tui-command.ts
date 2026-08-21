@@ -6,6 +6,7 @@ import { resolveBootApprovalLevel } from "../approval/approval-level.js";
 import {
   formatDotenvReadWarning,
   getConfig,
+  setConfigNoticeSink,
   type WhileBusySubmitMode,
 } from "../config/index.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
@@ -34,11 +35,9 @@ import {
   enableMouseTracking,
   type MouseTrackingController,
 } from "./mouse/mouse-tracking.js";
-import {
-  isLocalBackendConfigured,
-  isManagedModeReadyOnDisk,
-  runLocalModelsStartupGateIfNeeded,
-} from "./run-local-models-config-wizard.js";
+import { isLocalBackendConfigured } from "./local-backend-readiness.js";
+import { needsOnboarding } from "./onboarding/needs-onboarding.js";
+import { createOnboardingState } from "./onboarding/onboarding-state.js";
 import {
   currentTerminalLaunchInput,
   openAgentTerminalWindow,
@@ -78,8 +77,17 @@ export async function tuiCommand(args: string[]): Promise<number> {
     process.stderr.write(`${stdinError}\n`);
     return 1;
   }
-  // Theme selection BEFORE any Ink render or stdin listener (the startup-gate
-  // wizard and the main render). An explicit
+  // Config diagnostics ("created default config at …", "migrated config
+  // v41 → v43 …") are collected instead of printed from here on. They are
+  // written by the first `getConfig()`, which happens two lines below —
+  // long before the alternate screen exists — so on stderr they land
+  // above the interface and stay there for the whole session. Replayed
+  // into the transcript once the app is mounted, and restored to stderr
+  // when the TUI exits.
+  const configNotices: string[] = [];
+  setConfigNoticeSink((line) => configNotices.push(line));
+  // Theme selection BEFORE any Ink render or stdin listener (the first-run
+  // flow and the main render). An explicit
   // `tui.theme` (a registered name) wins; otherwise `"auto"` (or an unknown
   // name) falls back to OSC 11 terminal-background autodetection. Running the
   // probe here means its reply is never swallowed by another stdin consumer,
@@ -98,12 +106,18 @@ export async function tuiCommand(args: string[]): Promise<number> {
   const kittyKeyboard = await detectKittyKeyboard();
   setShiftEnterNewline(kittyKeyboard);
 
-  const skipLlamaWizard =
+  // The first-run flow is a screen inside the app now, not a program
+  // that runs before it. That is what lets it sit on the alternate
+  // screen (no stray stderr above the UI), react to a resize, and hand a
+  // still-running model download over to the agent — none of which the
+  // pre-render gate could do, because neither the alt screen nor the
+  // runtime existed at the point it ran.
+  const skipOnboarding =
     parsed.skipLlamaSetup || process.env.ATOMIC_AGENT_TUI_SKIP_LLAMA_SETUP === "1";
-  const startupGate = await runLocalModelsStartupGateIfNeeded({
-    skipWizard: skipLlamaWizard,
-  });
-  if (startupGate === "aborted") return 1;
+  const onboarding =
+    !skipOnboarding && needsOnboarding()
+      ? createOnboardingState(getConfig().localModels.url)
+      : null;
   // TUI owns its own llama-server health UX (footer indicator +
   // LlmHealthPoller). Blocking `createAgentRuntime` on a startup probe
   // / `/props` fetch just freezes the terminal before the first frame
@@ -112,19 +126,11 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // `ModelProfileManager` and the manager hot-swaps to the correct
   // profile on the first turn refresh.
   const deferRuntimeHealthProbe = true;
-  // After the wizard, land the user on the LLM tab when managed
-  // mode is selected but nothing is ready on disk yet — they still
-  // need to pick + pull a model before chat is useful. Fully-ready
-  // managed setups and external-URL setups land in chat as usual.
-  const layoutBase: InitialTuiLayoutOptions | undefined =
-    startupGate === "saved_managed" && !isManagedModeReadyOnDisk()
-      ? { uiMode: "debug", activeTab: "llm" }
-      : undefined;
   const config = getConfig();
   // Seed what Enter does while a turn is running from the persisted
   // preference, so a Ctrl+T flip survives a restart.
   const initialLayout: InitialTuiLayoutOptions = {
-    ...(layoutBase ?? {}),
+    onboarding,
     whileBusyMode: config.tui.whileBusySubmit,
   };
   const approvalLevel = resolveBootApprovalLevel(
@@ -413,6 +419,14 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.providers.setActiveEmbedding(id),
         onProvidersSelectEmbeddingModel: (providerId, modelId) =>
           void orchestrator.providers.selectEmbeddingModel(providerId, modelId),
+        onOnboardingFinished: () => {
+          // The flow wrote config while the runtime was already up, so
+          // the registry still holds the old provider set. The cloud
+          // branch reloads itself inside `completeWizard`; this covers
+          // the local and custom-endpoint branches, whose llama-server
+          // URL has just changed underneath the active provider.
+          void runtime.reloadLlmProviders();
+        },
         onProvidersWizardSubmit: (wizard) =>
           void orchestrator.providers.completeWizard(wizard),
         onProvidersWizardSubmitCancel: () =>
@@ -548,6 +562,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
     type: "runtime_info",
     line: `runtime ready — local-llm ${config.localModels.url}, browser ${config.browser.channel}`,
   });
+  for (const line of configNotices) bus.emit({ type: "runtime_info", line });
+  configNotices.length = 0;
 
   // A `.env` that exists but could not be read means stored API keys were
   // silently dropped for this run (#59). The loader already wrote to
@@ -580,6 +596,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
     process.off("SIGTERM", onSignal);
     process.off("SIGHUP", onSignal);
     try {
+      // Diagnostics go back to stderr for whatever runs after the TUI.
+      setConfigNoticeSink(null);
       mouseTracking?.disable();
       mouseStdin.dispose();
       altScreen.restore();

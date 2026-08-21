@@ -716,6 +716,7 @@ export interface AtomicAgentConfig {
     theme: string;
     whileBusySubmit: WhileBusySubmitMode;
     mouse: boolean;
+    onboarding: OnboardingState;
   };
   /**
    * Anonymous product analytics (PostHog). Mirrors
@@ -1446,6 +1447,7 @@ export interface UserConfigFile {
     theme: string;
     whileBusySubmit: WhileBusySubmitMode;
     mouse: boolean;
+    onboarding: OnboardingState;
   };
   /**
    * Anonymous product analytics (PostHog). Added in config v33. Older
@@ -1518,12 +1520,18 @@ export interface UserConfigFile {
 // files stored an unused `false` default — those migrate to `true` so
 // existing installs pick up newer llama.cpp zips. Explicit `false` on
 // a v41+ file is honoured.
+// v43: new `tui.onboarding` block — four nullable ISO timestamps recording
+// that the first-run flow was seen, skipped, completed, and that the
+// "configure the other backend too" screen was already offered. Additive:
+// an older file parses with all four `null`, which reads as "never
+// onboarded" and opens the flow exactly once, instead of re-deriving the
+// answer from a health probe on every launch.
 // v42: no schema change. The bump exists to carry the forward-compat
 // rules below: a file whose `version` is *newer* than this constant is
 // now read instead of rejected, its version is preserved rather than
 // stamped down, and unknown top-level keys survive the round trip. See
 // `parseUserConfigFile` and `ensureUserConfigFileSync`.
-export const USER_CONFIG_VERSION = 42;
+export const USER_CONFIG_VERSION = 43;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1654,6 +1662,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   39,
   40,
   41,
+  42,
   USER_CONFIG_VERSION,
 ];
 
@@ -1901,6 +1910,12 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     theme: "auto",
     whileBusySubmit: "steer",
     mouse: true,
+    onboarding: {
+      completedAt: null,
+      introSeenAt: null,
+      proposedSecondBackendAt: null,
+      skippedAt: null,
+    },
   },
   analytics: {
     enabled: true,
@@ -3652,6 +3667,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         "tui.whileBusySubmit",
       ),
       mouse: parseBool(tui.mouse ?? USER_CONFIG_DEFAULTS.tui.mouse, "tui.mouse"),
+      onboarding: parseOnboardingState(tui.onboarding),
     },
     analytics: {
       enabled: parseBool(
@@ -3717,6 +3733,73 @@ export function parseWhileBusySubmit(
     field,
     `expected "steer" or "queue", got ${JSON.stringify(raw)}`,
   );
+}
+
+/**
+ * First-run flow state (config v43). Four nullable ISO-8601 timestamps,
+ * not booleans: knowing *when* a run was completed or skipped is what
+ * lets a later release decide whether an install predates a flow it
+ * would like to show again, and it costs the same byte budget.
+ *
+ * - `introSeenAt` — the splash was dismissed at least once.
+ * - `completedAt` — a backend was configured and the flow handed over to
+ *   the agent. Set for the "custom endpoint" branch too.
+ * - `skippedAt` — the operator escaped out. The flow does not reopen by
+ *   itself afterwards; before v43 nothing was written here, which is why
+ *   an escaped setup used to reappear on every single launch.
+ * - `proposedSecondBackendAt` — the "you have one, want the other too?"
+ *   screen was already offered, so it is never offered twice.
+ */
+export interface OnboardingState {
+  completedAt: string | null;
+  introSeenAt: string | null;
+  skippedAt: string | null;
+  proposedSecondBackendAt: string | null;
+}
+
+/**
+ * Parse `tui.onboarding`. Absent, `null`, or an empty object all mean a
+ * fresh install, so every field falls back to `null` rather than
+ * throwing — an older config file must never fail to load because it
+ * predates the block.
+ */
+export function parseOnboardingState(raw: unknown): OnboardingState {
+  const defaults = USER_CONFIG_DEFAULTS.tui.onboarding;
+  if (raw === undefined || raw === null) return { ...defaults };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      "tui.onboarding",
+      `expected object, got ${JSON.stringify(raw)}`,
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+  return {
+    completedAt: parseTimestampOrNull(obj.completedAt, "tui.onboarding.completedAt"),
+    introSeenAt: parseTimestampOrNull(obj.introSeenAt, "tui.onboarding.introSeenAt"),
+    skippedAt: parseTimestampOrNull(obj.skippedAt, "tui.onboarding.skippedAt"),
+    proposedSecondBackendAt: parseTimestampOrNull(
+      obj.proposedSecondBackendAt,
+      "tui.onboarding.proposedSecondBackendAt",
+    ),
+  };
+}
+
+/**
+ * An ISO-8601 instant or `null`. Validated through `Date.parse` rather
+ * than a regex so a hand-edited file with a plausible-but-unparseable
+ * stamp is rejected at load instead of producing an `Invalid Date`
+ * somewhere far away.
+ */
+export function parseTimestampOrNull(raw: unknown, field: string): string | null {
+  if (raw === undefined || raw === null) return null;
+  const s = parseNonEmptyString(raw, field);
+  if (Number.isNaN(Date.parse(s))) {
+    throw new ConfigValidationError(
+      field,
+      `expected an ISO-8601 timestamp, got ${JSON.stringify(s)}`,
+    );
+  }
+  return s;
 }
 
 export function parseThemeName(raw: unknown, field: string): string {

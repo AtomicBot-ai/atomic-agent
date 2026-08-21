@@ -92,15 +92,15 @@ describe("computeSidebarRowBudget", () => {
     // panes shrink together rather than one starving the other.
     // `+ new` moved onto the Sessions header and gave a row back; the
     // blank that lifts the Menu button off the rail's bottom edge took
-    // it again. The brand mark then went from four rows to the
-    // guidelines' five, and the gap under it from one row to three, so
-    // 24 rows now leaves 6 usable rather than 9.
+    // it again. The brand mark then went to the guidelines' five rows,
+    // and back down to three when the small mark was redrawn — which is
+    // where these two rows came from.
     const budget = computeSidebarRowBudget(24);
-    expect(budget.sessions).toBe(4);
+    expect(budget.sessions).toBe(6);
     expect(budget.tasks).toBe(2);
-    // 27 rows is the nearest height whose usable rows divide evenly, so
+    // 25 rows is the nearest height whose usable rows divide evenly, so
     // assert the ratio itself there rather than on a remainder.
-    const even = computeSidebarRowBudget(27);
+    const even = computeSidebarRowBudget(25);
     expect(even.sessions).toBe(6);
     expect(even.tasks).toBe(3);
     expect(even.sessions).toBe(even.tasks * 2);

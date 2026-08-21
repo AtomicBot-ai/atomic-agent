@@ -1,6 +1,7 @@
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
+import type { OnboardingUiState } from "./onboarding/onboarding-state.js";
 import type {
   LatestResult,
   LoadedSkillBody,
@@ -385,6 +386,11 @@ export interface TuiState {
   /** Top-level UI mode (chat vs debug). */
   uiMode: TuiUiMode;
   /**
+   * First-run flow. Non-null means it owns the whole terminal — the app
+   * chrome is not rendered behind it. `null` at every other moment.
+   */
+  onboarding: OnboardingUiState | null;
+  /**
    * Active theme name. Stored so a runtime `/theme <name>` switch triggers a
    * re-render; the palette swap itself is done via `setActiveTheme`.
    */
@@ -586,6 +592,8 @@ export const DEFAULT_RING_BUFFER_SIZE = 500;
 
 export interface InitialTuiLayoutOptions {
   uiMode?: TuiUiMode;
+  /** Seeded by `tui-command` when the first-run flow has to open. */
+  onboarding?: OnboardingUiState | null;
   activeTab?: TuiTab;
   /** Seeds {@link TuiState.whileBusyMode} from the persisted user config. */
   whileBusyMode?: WhileBusySubmitMode;
@@ -641,6 +649,7 @@ export function createInitialTuiState(
     contextUsage: EMPTY_CONTEXT_USAGE,
     logs: [],
     uiMode: layout?.uiMode ?? "chat",
+    onboarding: layout?.onboarding ?? null,
     themeName: getActiveThemeName(),
     activeTab,
     lastRunStatus: null,

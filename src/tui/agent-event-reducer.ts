@@ -26,6 +26,7 @@ import { reduceSkillsAction } from "./skills/skills-reducer.js";
 import { reduceMemoryAction } from "./memory/memory-reducer.js";
 import { reduceMcpAction } from "./mcp/mcp-reducer.js";
 import { reduceImportAction } from "./import/import-reducer.js";
+import { reduceOnboardingAction } from "./onboarding/onboarding-reducer.js";
 import { reduceProvidersPanel } from "./providers/providers-reducer.js";
 import { reduceLlmPanelAction } from "./llm-panel/llm-panel-reducer.js";
 import { reduceFallbackPanelAction } from "./llm-panel/fallback/fallback-panel-reducer.js";
@@ -37,6 +38,14 @@ import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
 export type { TuiAction } from "./tui-action.js";
 
 export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
+  // First in the chain, and only ever claims an action while the
+  // first-run flow is open. Several actions belong to two owners then —
+  // a finished model pull, a saved provider — and the flow has to see
+  // them to advance. A handled action never reaches the rest of the
+  // chain, so it delegates the panel half to the owning slice rather
+  // than duplicating it.
+  const onboardingHandled = reduceOnboardingAction(state, action);
+  if (onboardingHandled !== null) return onboardingHandled;
   const localModelsHandled = reduceLocalModelsAction(state, action);
   if (localModelsHandled !== null) return localModelsHandled;
   const tasksHandled = reduceTasksAction(state, action);

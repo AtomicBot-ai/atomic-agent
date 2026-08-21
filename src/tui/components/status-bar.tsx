@@ -5,6 +5,8 @@ import { getCurrentSection, type TuiSection } from "../section.js";
 import { menuPlaceByTab } from "../menu/menu-registry.js";
 import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
+import { useTerminalSize } from "../hooks/use-terminal-size.js";
+import { DownloadChip } from "./download-chip.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { getAppVersion } from "../../version.js";
@@ -47,6 +49,7 @@ export function StatusBar({
 }: StatusBarProps): ReactElement {
   const section = getCurrentSection(state);
   const title = currentSessionTitle(state);
+  const { columns } = useTerminalSize();
   return (
     <Box>
       {brand ? (
@@ -60,6 +63,12 @@ export function StatusBar({
       ) : null}
       <Breadcrumb state={state} section={section} />
       <SessionTag sessionId={state.session.sessionId} />
+      {state.localModelsPanel.pull ? (
+        <DownloadChip
+          pull={state.localModelsPanel.pull}
+          budget={chipBudget(columns, brand, title)}
+        />
+      ) : null}
       {title ? (
         <Text color={theme.colors.muted}>
           {"  "}
@@ -78,6 +87,22 @@ export function StatusBar({
  * the top bar beside the id. Read from the rail's own session list so
  * the two can never disagree about what the current thread is called.
  */
+/**
+ * Columns the download chip may use: what is left of the row once the
+ * brand lockup, the breadcrumb, the session tag and the title have had
+ * theirs. Approximate on purpose — the point is to keep the bar on one
+ * row, and Ink wraps rather than clips, so an over-long chip would turn
+ * the header into a paragraph and push the whole app down the screen.
+ */
+function chipBudget(columns: number, brand: boolean, title: string | null): number {
+  const BRAND = 22;
+  const BREADCRUMB = 14;
+  const SESSION_TAG = 18;
+  const used =
+    (brand ? BRAND : 0) + BREADCRUMB + SESSION_TAG + (title ? title.length + 4 : 0);
+  return Math.max(0, columns - used - 2);
+}
+
 function currentSessionTitle(state: TuiState): string | null {
   const id = state.session.sessionId;
   if (!id) return null;

@@ -37,13 +37,19 @@ describe("logo-art.ts", () => {
     expect(widths[1]).toBeGreaterThan(widths[2]!);
   });
 
-  it("draws SM at the 9x5 the guidelines specify", () => {
-    // The rail uses this verbatim, and `SIDEBAR_CHROME_ROWS` counts its
-    // five rows.
-    expect(CROSS_MARKS.block.sm).toHaveLength(5);
+  it("draws SM as the three-row sign, fillets included", () => {
+    // The rail uses this verbatim and `SIDEBAR_CHROME_ROWS` counts its
+    // rows, so a change here is a change to the rail's budget.
+    expect(CROSS_MARKS.block.sm).toHaveLength(3);
     expect(
       CROSS_MARKS.block.sm.reduce((acc, row) => Math.max(acc, row.length), 0),
-    ).toBe(9);
+    ).toBe(6);
+    // The concave pair, and only the concave pair: filleting the hard
+    // corners too would make the mark 4-fold symmetric.
+    expect(CROSS_MARKS.block.sm[0]).toContain("▗");
+    expect(CROSS_MARKS.block.sm[2]).toContain("▘");
+    expect(CROSS_MARKS.block.sm.join("")).not.toContain("▖");
+    expect(CROSS_MARKS.block.sm.join("")).not.toContain("▝");
   });
 
   it("uses only ASCII in the ascii stroke", () => {

@@ -111,13 +111,38 @@ export function writeUserConfigFileSync(path: string, data: UserConfigFile): voi
  *
  * The return value is always the validated, normalised contents.
  */
+/**
+ * Where "created default config …" and "migrated config …" go.
+ *
+ * They are diagnostics, not output, and the TUI is the one caller that
+ * cannot afford them on stderr: it prints them *before* the alternate
+ * screen is entered, so a first run opens with two raw lines above the
+ * interface — a file path and a warning, as the first thing a new user
+ * reads. A sink lets that caller collect them and replay them inside the
+ * UI instead. Every other caller (the CLI, the sidecar) keeps stderr,
+ * which is the default.
+ */
+export type ConfigNoticeSink = (line: string) => void;
+
+let configNoticeSink: ConfigNoticeSink | null = null;
+
+export function setConfigNoticeSink(sink: ConfigNoticeSink | null): void {
+  configNoticeSink = sink;
+}
+
+function emitConfigNotice(line: string): void {
+  if (configNoticeSink) {
+    configNoticeSink(line);
+    return;
+  }
+  process.stderr.write(`${line}\n`);
+}
+
 export function ensureUserConfigFileSync(path: string): UserConfigFile {
   const raw = readRawUserConfigFileSync(path);
   if (!raw) {
     writeUserConfigFileSync(path, USER_CONFIG_DEFAULTS);
-    process.stderr.write(
-      `[atomic-agent] created default config at ${path}\n`,
-    );
+    emitConfigNotice(`[atomic-agent] created default config at ${path}`);
     return USER_CONFIG_DEFAULTS;
   }
   const parsed = withConfigPathInError(path, () => parseUserConfigFile(raw.parsed));
@@ -127,8 +152,8 @@ export function ensureUserConfigFileSync(path: string): UserConfigFile {
   // turns a rollback into data loss.
   if (raw.originalVersion === null || raw.originalVersion < USER_CONFIG_VERSION) {
     writeUserConfigFileSync(path, parsed);
-    process.stderr.write(
-      `[atomic-agent] migrated config v${raw.originalVersion} → v${USER_CONFIG_VERSION} at ${path}\n`,
+    emitConfigNotice(
+      `[atomic-agent] migrated config v${raw.originalVersion} → v${USER_CONFIG_VERSION} at ${path}`,
     );
   }
   return parsed;

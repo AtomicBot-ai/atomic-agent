@@ -1,5 +1,3 @@
-import { render } from "ink";
-import React from "react";
 import { getConfig, USER_CONFIG_DEFAULTS } from "../config/index.js";
 import type { UserLlmProviderEntry } from "../config/llm-config.js";
 import { usesExternalCliAuth } from "../config/provider-auth-mode.js";
@@ -10,79 +8,20 @@ import {
   isKnownLocalModelId,
   isModelDownloaded,
 } from "../local-llm/index.js";
-import { checkLlamaServer } from "../llm/llama-server-health.js";
-import {
-  LocalModelsConfigWizard,
-  type LocalModelsWizardOutcome,
-} from "./components/local-models-config-wizard.js";
 import { isLocalProviderUrl } from "./providers/is-local-provider-url.js";
 import { presetForEntryId } from "./providers/provider-presets.js";
 
-export type LocalModelsStartupGateResult =
-  | "ok"
-  | "aborted"
-  | "saved_managed"
-  | "saved_cloud";
-
 /**
- * When llama-server is down at TUI startup, run a small Ink wizard so the
- * user can fix `llama.url` in config without leaving the terminal. Skipped
- * entirely when `ATOMIC_AGENT_TUI_SKIP_LLAMA_SETUP=1` or when health already
- * passes.
+ * "Does this install have a backend at all?" — three predicates, no UI
+ * and no network.
  *
- * The wizard only reports what the user chose — it never imposes a UI mode
- * on the main TUI. The main TUI always lands in chat mode with the splash
- * banner; managed-mode users see daemon health in the footer indicator and
- * can open the Models tab explicitly with `/models` when they need it.
- *
- * Managed mode fast-path: if the user already picked a model and both the
- * backend binary and GGUF file are on disk, we skip the wizard entirely
- * even when the daemon is currently down — `autoStartIfReady()` will spin
- * it up in the background while the user lands directly in the chat view.
- * External mode (URL) intentionally never triggers an auto-start; if the
- * configured URL is unreachable we still surface the wizard so the user
- * can fix it.
+ * They used to live next to the startup-gate wizard that consumed them.
+ * The gate is gone (the first-run flow is a screen inside the app now),
+ * but the questions outlived it: the flow asks them to decide whether to
+ * open at all, and `tui-command` asks one of them for its diagnostics
+ * line. A probe deliberately has no place here — a configured backend
+ * that happens to be down is a health problem, not an unconfigured one.
  */
-export async function runLocalModelsStartupGateIfNeeded(options: {
-  skipWizard: boolean;
-}): Promise<LocalModelsStartupGateResult> {
-  if (options.skipWizard) return "ok";
-  if (isCloudTextProviderReady()) return "ok";
-  const probe = await checkLlamaServer({ retries: 0, backoffMs: 0 });
-  if (probe.reachable) return "ok";
-  if (isManagedModeReadyOnDisk()) return "ok";
-
-  process.stderr.write(
-    `[atomic-agent] local-llm unreachable at ${getConfig().localModels.url} — starting setup…\n`,
-  );
-
-  const outcome = { value: "skipped" as LocalModelsWizardOutcome };
-  // A cloud key that saved without a completed check has something to
-  // say; it is printed after the Ink tree is torn down so the message
-  // survives the redraw.
-  let notice: string | undefined;
-  const ink = render(
-    React.createElement(LocalModelsConfigWizard, {
-      initialUrl: getConfig().localModels.url,
-      probeError: probe.error,
-      hadConfiguredBackend: isLocalBackendConfigured(),
-      onFinished: (o, n) => {
-        outcome.value = o;
-        notice = n;
-      },
-    }),
-    { stdout: process.stdout, stderr: process.stderr, exitOnCtrlC: false },
-  );
-  await ink.waitUntilExit();
-  ink.clear();
-  if (notice) process.stderr.write(`[atomic-agent] ${notice}\n`);
-
-  if (outcome.value === "aborted") return "aborted";
-  if (outcome.value === "saved_managed") return "saved_managed";
-  if (outcome.value === "saved_cloud") return "saved_cloud";
-  return "ok";
-}
-
 export function isCloudTextProviderReady(): boolean {
   const cfg = getConfig();
   const active = cfg.llm?.activeTextProvider;

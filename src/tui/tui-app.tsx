@@ -1,4 +1,5 @@
 import { ContextChip } from "./components/context-chip.js";
+import { OnboardingScreen } from "./components/onboarding-screen.js";
 import { ContextPanel } from "./components/context-panel.js";
 import { selectContextUsage } from "./select-context-usage.js";
 import { Box, Text, useApp, useInput, type DOMElement, type Key } from "ink";
@@ -367,6 +368,15 @@ export interface TuiAppCallbacks {
   onProvidersWizardSubmit?(wizard: import("./providers/providers-wizard-state.js").ProvidersWizardState): void;
   /** Providers tab: abandon a running pre-save key check. */
   onProvidersWizardSubmitCancel?(): void;
+  /**
+   * The first-run flow wrote config and is handing over to the agent.
+   * The runtime is already up by then, so its provider registry has to
+   * be reloaded — unlike the old startup gate, which ran before the
+   * runtime existed and therefore never needed this.
+   */
+  onOnboardingFinished?(
+    outcome: import("./onboarding/onboarding-state.js").OnboardingOutcome,
+  ): void;
   /** Providers tab: remove a provider by id from config + registry. */
   onProvidersRemove?(id: string): void;
   /** Slash-command surface: enable a skill explicitly (`/skill enable <name>`). */
@@ -1201,6 +1211,35 @@ export function TuiApp({
   const promptContextSlot = contextUsage ? (
     <ContextChip usage={contextUsage} />
   ) : null;
+
+  // The first-run flow replaces the app rather than layering over it.
+  // Every hook above still runs — the branch sits below all of them — but
+  // nothing of the chrome is drawn: no status bar, no rail, no composer,
+  // no hint strip but the flow's own, pinned to the last row.
+  if (state.onboarding) {
+    return (
+      <MouseProvider
+        registry={registry}
+        dispatch={dispatch}
+        callbacks={callbacks}
+        getState={getState}
+      >
+        <Box
+          flexDirection="column"
+          paddingLeft={ROOT_PADDING_COLUMNS}
+          ref={contentMouseRef}
+          {...(rootHeight ? { height: rootHeight } : {})}
+        >
+          <OnboardingScreen
+            state={state}
+            onboarding={state.onboarding}
+            dispatch={dispatch}
+            callbacks={callbacks}
+          />
+        </Box>
+      </MouseProvider>
+    );
+  }
 
   return (
     <MouseProvider
