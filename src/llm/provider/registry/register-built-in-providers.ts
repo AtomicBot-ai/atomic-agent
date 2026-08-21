@@ -62,7 +62,8 @@ export function registerBuiltInProviderKinds(): void {
       headers: entry.headers,
       apiKeyHeader: entry.apiKeyHeader,
       supportsVision: entry.supportsVision ?? true,
-      supportsParallelTools: entry.supportsTools ?? true,
+      supportsParallelTools:
+        entry.supportsParallelTools ?? entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       extraBody: entry.extraBody,
     });
@@ -83,7 +84,8 @@ export function registerBuiltInProviderKinds(): void {
       headers: entry.headers,
       apiKeyHeader: entry.apiKeyHeader,
       supportsVision: entry.supportsVision ?? true,
-      supportsParallelTools: entry.supportsTools ?? true,
+      supportsParallelTools:
+        entry.supportsParallelTools ?? entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       taggedToolCompatibility: "qwen",
       extraBody: entry.extraBody,
@@ -99,7 +101,8 @@ export function registerBuiltInProviderKinds(): void {
       defaultChatModel: entry.defaultChatModel ?? "openrouter/auto",
       headers: entry.headers,
       supportsVision: entry.supportsVision ?? true,
-      supportsParallelTools: entry.supportsTools ?? true,
+      supportsParallelTools:
+        entry.supportsParallelTools ?? entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       httpReferer: OPENROUTER_APP_REFERER,
       xTitle: OPENROUTER_APP_TITLE,
@@ -116,7 +119,8 @@ export function registerBuiltInProviderKinds(): void {
       defaultChatModel: entry.defaultChatModel ?? AIMLAPI_DEFAULT_CHAT_MODEL,
       headers: entry.headers,
       supportsVision: entry.supportsVision ?? true,
-      supportsParallelTools: entry.supportsTools ?? true,
+      supportsParallelTools:
+        entry.supportsParallelTools ?? entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
     });
   });
@@ -130,7 +134,11 @@ export function registerBuiltInProviderKinds(): void {
       defaultChatModel: entry.defaultChatModel ?? GEMINI_DEFAULT_CHAT_MODEL,
       headers: entry.headers,
       supportsVision: entry.supportsVision ?? true,
-      supportsParallelTools: entry.supportsTools ?? true,
+      // Gemini does not emit stable indices for parallel tool calls —
+      // the wire still carries parallel_tool_calls: true, but the
+      // model drops or reorders slots, breaking the batch executor.
+      // Users can override with supportsParallelTools: true in config.
+      supportsParallelTools: entry.supportsParallelTools ?? false,
       requestTimeoutMs: entry.requestTimeoutMs,
     });
   });
