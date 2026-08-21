@@ -41,7 +41,6 @@ describe("menu rows", () => {
     const go = rows.filter((r) => r.kind === "item" && r.node.group === "go");
     expect(go.map((r) => (r.kind === "item" ? r.node.label : ""))).toEqual([
       "Run",
-      "Toggle debug pane",
       "Observe",
       "Manage",
     ]);
@@ -94,9 +93,10 @@ describe("menu keys", () => {
   });
 
   it("opens a submenu with the right arrow and leaves it with the left", () => {
+    // Cursor 2 under Go: Run, Observe, Manage.
     const atManage = open({ menuCursor: 2 });
     expect(drive(atManage, "", { rightArrow: true }).actions).toEqual([
-      { type: "menu_path_set", path: "go.observe" },
+      { type: "menu_path_set", path: "go.manage" },
       { type: "menu_cursor_set", cursor: 0 },
     ]);
     const inside = open({ menuPath: "go.manage" });

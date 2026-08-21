@@ -33,9 +33,15 @@ describe("dispatchSlashCommand", () => {
     expect(exit.triggerQuit).toBe(true);
   });
 
-  it("toggles ui mode for /debug", () => {
+  /**
+   * The toggle is gone: the debug pane is reached through Observe /
+   * Manage, which name where they land instead of flipping between two
+   * unnamed states.
+   */
+  it("no longer answers /debug", () => {
     const result = dispatchSlashCommand("/debug");
-    expect(result.actions).toEqual([{ type: "ui_mode_toggled" }]);
+    expect(result.actions).toEqual([]);
+    expect(result.systemMessage).toBe("unknown command: /debug");
   });
 
   it("opens the Observe section default tab for /observe", () => {
