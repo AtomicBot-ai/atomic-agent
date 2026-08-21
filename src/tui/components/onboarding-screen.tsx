@@ -1,7 +1,19 @@
 import { Box, Text, useInput } from "ink";
-import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+} from "react";
 import { checkLlamaServer } from "../../llm/llama-server-health.js";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
+import {
+  buildLocalModelPicks,
+  hostRamGb,
+  orderLocalModelPicks,
+} from "../onboarding/local-model-picks.js";
 import {
   computeOnboardingFit,
   ONBOARDING_SIZE_ADVICE,
@@ -18,10 +30,13 @@ import { routeProvidersWizardKey } from "../providers/route-wizard-key.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
 import { theme } from "../theme/theme.js";
 import type { TuiAction } from "../tui-action.js";
+import type { LocalModelId } from "../../local-llm/index.js";
 import type { TuiState } from "../tui-state.js";
 import { OnboardingChooseStep } from "./onboarding-choose-step.js";
 import { OnboardingHeader } from "./onboarding-header.js";
+import { OnboardingDownloadStep } from "./onboarding-download-step.js";
 import { OnboardingIntroStep } from "./onboarding-intro-step.js";
+import { OnboardingLocalPickStep } from "./onboarding-local-pick-step.js";
 import { OnboardingUrlStep } from "./onboarding-url-step.js";
 import { ProvidersWizard } from "./providers-wizard.js";
 
@@ -33,11 +48,15 @@ export interface OnboardingScreenCallbacks {
   onProvidersWizardSubmitCancel?(): void;
   /** Reload the runtime's providers once the flow has written config. */
   onOnboardingFinished?(outcome: OnboardingOutcome): void;
+  /** Start a model pull. Owned by `LocalModelsOrchestrator`. */
+  onLocalModelsPullRequested?(modelId: LocalModelId): void;
 }
 
 const SUBTITLES: Record<OnboardingUiState["step"], string> = {
   intro: "",
   choose: "setup · step 1 of 2",
+  local_pick: "local models · step 2 of 2",
+  local_download: "local models · downloading",
   cloud: "cloud model · step 2 of 2",
   custom_chat_url: "custom endpoint · step 2 of 2",
   custom_embedding_url: "custom endpoint · embeddings",
@@ -63,6 +82,7 @@ export function OnboardingScreen(props: {
   const { onboarding, dispatch, callbacks } = props;
   const size = useTerminalSize();
   const fit = computeOnboardingFit(size);
+  const ramGb = useMemo(() => hostRamGb(), []);
   const settling = useRef(false);
   const [introSkipped, setIntroSkipped] = useState(false);
 
@@ -87,8 +107,10 @@ export function OnboardingScreen(props: {
         dispatch({ type: "onboarding_step_set", step: "custom_chat_url" });
         return;
       }
+      // Managed mode is recorded now so a Ctrl+C mid-download does not
+      // lose the choice; the model id follows when the pull completes.
       persistUserLocalModelsConfig({ mode: "managed" });
-      finish("local");
+      dispatch({ type: "onboarding_step_set", step: "local_pick" });
     },
     [dispatch, finish],
   );
@@ -119,6 +141,35 @@ export function OnboardingScreen(props: {
       else pick(intent.choice);
     },
     { isActive: onboarding.step === "choose" || onboarding.step === "intro" },
+  );
+
+  const picks = useMemo(
+    () => orderLocalModelPicks(buildLocalModelPicks(ramGb)),
+    [ramGb],
+  );
+
+  useInput(
+    (input, key) => {
+      if (key.escape) {
+        dispatch({ type: "onboarding_step_set", step: "choose" });
+        return;
+      }
+      if (key.upArrow || input === "k") {
+        dispatch({ type: "onboarding_cursor_moved", delta: -1, length: picks.length });
+        return;
+      }
+      if (key.downArrow || input === "j") {
+        dispatch({ type: "onboarding_cursor_moved", delta: 1, length: picks.length });
+        return;
+      }
+      if (key.return) {
+        const pick = picks[onboarding.cursor % Math.max(1, picks.length)];
+        if (!pick) return;
+        dispatch({ type: "onboarding_local_model_picked", modelId: pick.id });
+        callbacks.onLocalModelsPullRequested?.(pick.id as LocalModelId);
+      }
+    },
+    { isActive: onboarding.step === "local_pick" },
   );
 
   // The cloud step *is* the providers wizard — same keys, same
@@ -221,12 +272,6 @@ export function OnboardingScreen(props: {
       onboarding.outcome === "skipped" ? { skippedAt: now } : { completedAt: now },
     );
     callbacks.onOnboardingFinished?.(onboarding.outcome ?? "skipped");
-    if (onboarding.outcome === "local") {
-      // Until the standalone model picker lands, "local models" hands
-      // over to the LLM tab, which is where the download lives today.
-      dispatch({ type: "ui_mode_set", mode: "debug" });
-      dispatch({ type: "tab_changed", tab: "llm" });
-    }
     dispatch({ type: "onboarding_set", onboarding: null });
   }, [callbacks, dispatch, onboarding.outcome, onboarding.step]);
 
@@ -246,6 +291,20 @@ export function OnboardingScreen(props: {
         ) : null}
         {onboarding.step === "choose" ? (
           <OnboardingChooseStep cursor={onboarding.cursor} fit={fit} />
+        ) : null}
+        {onboarding.step === "local_pick" ? (
+          <OnboardingLocalPickStep
+            picks={picks}
+            cursor={onboarding.cursor % Math.max(1, picks.length)}
+            ramGb={ramGb}
+            fit={fit}
+          />
+        ) : null}
+        {onboarding.step === "local_download" ? (
+          <OnboardingDownloadStep
+            pull={props.state.localModelsPanel.pull}
+            modelLabel={onboarding.localModelId ?? "the model"}
+          />
         ) : null}
         {onboarding.step === "cloud" && wizardState ? (
           <ProvidersWizard wizard={wizardState} />
@@ -305,6 +364,10 @@ function footerFor(onboarding: OnboardingUiState): string {
       return "enter test & continue   esc back   ctrl+c quit";
     case "custom_embedding_url":
       return "enter test & save   empty enter skips embeddings   esc back   ctrl+c quit";
+    case "local_pick":
+      return "↑/↓ move   enter download   esc back   ctrl+c quit";
+    case "local_download":
+      return "ctrl+c quit";
     case "finished":
       return "";
     case "intro":

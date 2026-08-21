@@ -1,3 +1,4 @@
+import { reduceLocalModelsAction } from "../local-models/local-models-reducer.js";
 import { reduceProvidersPanel } from "../providers/providers-reducer.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
@@ -22,7 +23,15 @@ export function reduceOnboardingAction(
       if (!state.onboarding) return state;
       return {
         ...state,
-        onboarding: { ...state.onboarding, step: action.step, error: null, busy: false },
+        onboarding: {
+          ...state.onboarding,
+          step: action.step,
+          // Each list owns its own cursor; carrying the choice screen's
+          // row into the model picker would land it on an arbitrary model.
+          cursor: 0,
+          error: null,
+          busy: false,
+        },
       };
     }
     case "onboarding_cursor_moved": {
@@ -31,7 +40,11 @@ export function reduceOnboardingAction(
         ...state,
         onboarding: {
           ...state.onboarding,
-          cursor: moveOnboardingCursor(state.onboarding.cursor, action.delta),
+          cursor: moveOnboardingCursor(
+            state.onboarding.cursor,
+            action.delta,
+            action.length,
+          ),
         },
       };
     }
@@ -55,6 +68,18 @@ export function reduceOnboardingAction(
       if (!state.onboarding) return state;
       return { ...state, onboarding: { ...state.onboarding, error: action.error } };
     }
+    case "onboarding_local_model_picked": {
+      if (!state.onboarding) return state;
+      return {
+        ...state,
+        onboarding: {
+          ...state.onboarding,
+          step: "local_download",
+          localModelId: action.modelId,
+          error: null,
+        },
+      };
+    }
     case "onboarding_finished": {
       if (!state.onboarding) return state;
       return {
@@ -75,6 +100,25 @@ export function reduceOnboardingAction(
     // the owning reducer and folds its own step change on top. Without
     // the delegation the panel would never clear its wizard, because a
     // handled action never reaches the rest of the chain.
+    // The pull is owned by `LocalModelsOrchestrator`, which reports
+    // through the panel's slice; the flow listens for the same events
+    // rather than running a second download of its own.
+    case "local_models_pull_finished": {
+      if (state.onboarding?.step !== "local_download") return null;
+      if (action.kind !== "chat") return null;
+      const next = reduceLocalModelsAction(state, action) ?? state;
+      return {
+        ...next,
+        onboarding: { ...state.onboarding, step: "finished", outcome: "local" },
+      };
+    }
+    // Hybrid-recall embeddings are a second download and a second
+    // decision, and the first run does not ask for either. The offer
+    // still exists in the LLM panel, where there is room to explain it.
+    case "local_models_embedding_onboarding_opened": {
+      if (state.onboarding?.step !== "local_download") return null;
+      return state;
+    }
     case "providers_wizard_succeeded": {
       if (state.onboarding?.step !== "cloud") return null;
       const next = reduceProvidersPanel(state, action) ?? state;

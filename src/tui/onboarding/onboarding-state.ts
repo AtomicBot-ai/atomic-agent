@@ -11,6 +11,8 @@
 export type OnboardingStep =
   | "intro"
   | "choose"
+  | "local_pick"
+  | "local_download"
   | "cloud"
   | "custom_chat_url"
   | "custom_embedding_url"
@@ -25,6 +27,8 @@ export type OnboardingOutcome = "local" | "cloud" | "custom" | "skipped";
 
 export interface OnboardingUiState {
   step: OnboardingStep;
+  /** The model being pulled, once the local branch has committed to one. */
+  localModelId: string | null;
   /** Set together with the `finished` step; `null` at every other point. */
   outcome: OnboardingOutcome | null;
   /** Row cursor on the `choose` step. */
@@ -83,6 +87,7 @@ export function createOnboardingState(chatUrl: string): OnboardingUiState {
   return {
     step: "intro",
     outcome: null,
+    localModelId: null,
     cursor: 0,
     chatUrl,
     embeddingUrl: "",
@@ -91,10 +96,14 @@ export function createOnboardingState(chatUrl: string): OnboardingUiState {
   };
 }
 
-/** Wrapping row movement on the `choose` step. */
-export function moveOnboardingCursor(cursor: number, delta: number): number {
-  const count = ONBOARDING_CHOICES.length;
-  return (cursor + delta + count) % count;
+/** Wrapping row movement, over any list length. */
+export function moveOnboardingCursor(
+  cursor: number,
+  delta: number,
+  length: number = ONBOARDING_CHOICES.length,
+): number {
+  const count = Math.max(1, length);
+  return (((cursor + delta) % count) + count) % count;
 }
 
 /**
@@ -105,7 +114,7 @@ export function moveOnboardingCursor(cursor: number, delta: number): number {
  * keystroke is processed twice.
  */
 export function stepOwnsItsKeyboard(step: OnboardingStep): boolean {
-  return step !== "choose" && step !== "intro";
+  return step === "cloud" || step.startsWith("custom_");
 }
 
 /** Steps where the flow is over and the host is closing it down. */

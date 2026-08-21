@@ -38,6 +38,14 @@ import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
 export type { TuiAction } from "./tui-action.js";
 
 export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
+  // First in the chain, and only ever claims an action while the
+  // first-run flow is open. Several actions belong to two owners then —
+  // a finished model pull, a saved provider — and the flow has to see
+  // them to advance. A handled action never reaches the rest of the
+  // chain, so it delegates the panel half to the owning slice rather
+  // than duplicating it.
+  const onboardingHandled = reduceOnboardingAction(state, action);
+  if (onboardingHandled !== null) return onboardingHandled;
   const localModelsHandled = reduceLocalModelsAction(state, action);
   if (localModelsHandled !== null) return localModelsHandled;
   const tasksHandled = reduceTasksAction(state, action);
@@ -50,11 +58,6 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (mcpHandled !== null) return mcpHandled;
   const importHandled = reduceImportAction(state, action);
   if (importHandled !== null) return importHandled;
-  // Ahead of the providers slice on purpose: while the cloud step is up,
-  // the wizard's "succeeded" / "closed" also move the flow, and the
-  // onboarding reducer delegates the panel half rather than duplicating it.
-  const onboardingHandled = reduceOnboardingAction(state, action);
-  if (onboardingHandled !== null) return onboardingHandled;
   const providersHandled = reduceProvidersPanel(state, action);
   if (providersHandled !== null) return providersHandled;
   const llmPanelHandled = reduceLlmPanelAction(state, action);

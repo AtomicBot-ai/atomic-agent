@@ -6,7 +6,9 @@ import { createProvidersWizardState } from "../providers/providers-wizard-state.
 import { createOnboardingState } from "./onboarding-state.js";
 import { fakeSession } from "../test-fixtures.js";
 
-function withFlow(step: "choose" | "cloud" = "choose"): TuiState {
+function withFlow(
+  step: "choose" | "cloud" | "local_pick" | "local_download" = "choose",
+): TuiState {
   // `createOnboardingState` opens on the splash; every case here is
   // about what happens after it.
   const state = createInitialTuiState(fakeSession(), 50, {
@@ -51,6 +53,68 @@ describe("onboarding reducer", () => {
   it("finishes with the outcome the host has to act on", () => {
     const state = reduceTuiState(withFlow(), { type: "onboarding_finished", outcome: "local" });
     expect(state.onboarding).toMatchObject({ step: "finished", outcome: "local" });
+  });
+
+  describe("local branch ↔ the model orchestrator", () => {
+    it("moves to the download and remembers the model", () => {
+      const state = reduceTuiState(withFlow("local_pick"), {
+        type: "onboarding_local_model_picked",
+        modelId: "gemma-4-e4b",
+      });
+      expect(state.onboarding).toMatchObject({
+        step: "local_download",
+        localModelId: "gemma-4-e4b",
+      });
+    });
+
+    it("finishes when the chat pull completes", () => {
+      const state = reduceTuiState(withFlow("local_download"), {
+        type: "local_models_pull_finished",
+        kind: "chat",
+      });
+      expect(state.onboarding).toMatchObject({ step: "finished", outcome: "local" });
+      expect(state.localModelsPanel.pull).toBeNull();
+    });
+
+    it("ignores a finished pull of some other kind", () => {
+      const state = reduceTuiState(withFlow("local_download"), {
+        type: "local_models_pull_finished",
+        kind: "embedding",
+      });
+      expect(state.onboarding?.step).toBe("local_download");
+    });
+
+    it("keeps the embedding offer out of the first run", () => {
+      const state = reduceTuiState(withFlow("local_download"), {
+        type: "local_models_embedding_onboarding_opened",
+        modelId: "embeddinggemma-300m",
+        name: "EmbeddingGemma 300M",
+        sizeLabel: "~84 MB",
+      });
+      expect(state.localModelsPanel.embeddingOnboardingPrompt).toBeNull();
+      expect(state.onboarding?.step).toBe("local_download");
+    });
+
+    it("still lets the panel show that offer when the flow is closed", () => {
+      const base = createInitialTuiState(fakeSession(), 50);
+      const state = reduceTuiState(base, {
+        type: "local_models_embedding_onboarding_opened",
+        modelId: "embeddinggemma-300m",
+        name: "EmbeddingGemma 300M",
+        sizeLabel: "~84 MB",
+      });
+      expect(state.localModelsPanel.embeddingOnboardingPrompt).not.toBeNull();
+    });
+
+    it("resets the cursor when a new list takes the screen", () => {
+      let state = reduceTuiState(withFlow("choose"), {
+        type: "onboarding_cursor_moved",
+        delta: 2,
+      });
+      expect(state.onboarding?.cursor).toBe(2);
+      state = reduceTuiState(state, { type: "onboarding_step_set", step: "local_pick" });
+      expect(state.onboarding?.cursor).toBe(0);
+    });
   });
 
   describe("cloud step ↔ providers wizard", () => {
