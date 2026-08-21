@@ -9,6 +9,7 @@ import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { getAppVersion } from "../../version.js";
 import { Chip, tracked } from "./chip.js";
+import { sessionTitleLine } from "./session-title.js";
 
 interface StatusBarProps {
   state: TuiState;
@@ -84,10 +85,16 @@ function currentSessionTitle(state: TuiState): string | null {
   // until someone opens the picker, so reading it meant the title only
   // ever appeared after an unrelated detour through Ctrl+G U.
   const entry = state.recentSessions.find((row) => row.sessionId === id);
-  const preview = entry?.preview?.trim();
-  if (!preview) return null;
-  return preview.length > 32 ? `${preview.slice(0, 31)}…` : preview;
+  // One line, always. Previews are stored as typed, so a multi-line
+  // first prompt used to arrive here with its newlines intact and Ink
+  // grew the bar to fit them — a one-row header became a paragraph and
+  // pushed the rail, the chat and the composer down the screen.
+  const title = sessionTitleLine(entry?.preview ?? "", TITLE_COLUMNS);
+  return title.length > 0 ? title : null;
 }
+
+/** How much of the prompt the bar shows before it ellipsises. */
+const TITLE_COLUMNS = 32;
 
 const SECTION_LABELS: Record<TuiSection, string> = {
   run: "Run",
