@@ -294,6 +294,16 @@ export interface TuiState {
    */
   composerHasSelection: boolean;
   /**
+  /**
+   * A short, transient line shown in the composer's meta row — "copied
+   * 3 characters", and nothing heavier. It exists because the obvious
+   * channels are both wrong for this: `runtime_info` appends to the
+   * Observe feed, which nobody is looking at while they copy, and
+   * `system_message` writes a chat entry, which would push the start
+   * page off screen to acknowledge a keystroke.
+   */
+  composerNotice: string | null;
+  /**
    * Open "delete the session?" confirmation, or `null`. Carries the
    * preview so the dialog can name what is about to go, and the focused
    * button so Enter has an unambiguous meaning.
@@ -538,6 +548,7 @@ export function createInitialTuiState(
     reasoning: [],
     pendingApproval: null,
     composerHasSelection: false,
+    composerNotice: null,
     sessionDelete: null,
     loadedSkills: [],
     worldSnapshot: null,

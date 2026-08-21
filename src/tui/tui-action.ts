@@ -36,6 +36,8 @@ export type TuiAction =
   | { type: "approval_resolved"; approvalId: string; approved: boolean }
   /** The composer gained or lost a text selection (drives Ctrl+C's meaning). */
   | { type: "composer_selection_changed"; hasSelection: boolean }
+  /** Transient line in the composer meta row; `null` clears it. */
+  | { type: "composer_notice"; text: string | null }
   | { type: "metric"; sample: MetricSample }
   | { type: "log"; record: LogRecord }
   | { type: "skill_count_changed"; count: number }

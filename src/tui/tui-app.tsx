@@ -114,6 +114,9 @@ const RAIL_GUTTER_COLUMNS = 3;
  */
 const MODAL_CLICK_GRACE_MS = 150;
 
+/** How long a composer notice ("copied 3 characters") stays up. */
+const COMPOSER_NOTICE_MS = 2500;
+
 /**
  * A one-row hairline. `flexShrink={0}` so a tall chat never eats it, and
  * the glyph run is built from the width the caller measured rather than
@@ -1083,7 +1086,21 @@ export function TuiApp({
   // un-started one. `localConfigured` latches on as soon as local is really
   // the route (config says so, or a probe answered), so real local users keep
   // the ● / ○ signal they rely on.
-  const promptLeftSlot = promptLlm.usesLocalHealth ? (
+  // A notice outranks the health badge for the couple of seconds it is
+  // up: it is the answer to a keystroke the operator just made, and the
+  // badge is ambient.
+  useEffect(() => {
+    if (!state.composerNotice) return;
+    const timer = setTimeout(
+      () => dispatch({ type: "composer_notice", text: null }),
+      COMPOSER_NOTICE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [state.composerNotice]);
+
+  const promptLeftSlot = state.composerNotice ? (
+    <Text color={theme.colors.success}>{state.composerNotice}</Text>
+  ) : promptLlm.usesLocalHealth ? (
     state.llmHealth.localConfigured ? (
       <LlmHealthBadge health={state.llmHealth} />
     ) : null
@@ -1300,8 +1317,8 @@ export function TuiApp({
                 }
                 onCopy={(text) =>
                   dispatch({
-                    type: "runtime_info",
-                    line: `copied ${text.length} character${text.length === 1 ? "" : "s"} to the clipboard`,
+                    type: "composer_notice",
+                    text: `copied ${text.length} character${text.length === 1 ? "" : "s"}`,
                   })
                 }
                 onHistoryPrev={onHistoryPrev}
