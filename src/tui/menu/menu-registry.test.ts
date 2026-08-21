@@ -58,11 +58,6 @@ const V0_2_2_SLASH_COMMANDS = [
     aliases: ["exit"],
   },
   {
-    name: "debug",
-    description:
-      "toggle debug pane (feed / logs / world …)",
-  },
-  {
     name: "chat",
     description:
       "return to single-view chat mode",

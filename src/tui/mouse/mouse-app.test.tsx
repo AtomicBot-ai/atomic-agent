@@ -373,7 +373,7 @@ describe("TuiApp mouse", () => {
         await delay(40);
         if (!selected(app).includes("Run")) break;
       }
-      expect(selected(app)).toContain("Toggle debug pane");
+      expect(selected(app)).toContain("Observe");
       // And back up again: one notch, one row, the same as the keys.
       app.mouse.emit(wheel("up", at.x + 4, at.y + 3));
       await waitUntil(() => selected(app).includes("Run"), "the cursor back on Run");
@@ -386,7 +386,10 @@ describe("TuiApp mouse", () => {
       await clickUntil(
         app.mouse,
         () => {
-          const at = locate(app.frame(), "Toggle debug pane");
+          // `Run` is a destination, so activating it closes the menu and
+          // lands somewhere. A submenu row would only open the submenu,
+          // which is not the thing under test here.
+          const at = locate(app.frame(), "Run  ");
           return { x: at.x + 2, y: at.y };
         },
         () => !app.frame().includes("MENU"),
