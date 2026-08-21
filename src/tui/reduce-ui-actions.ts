@@ -20,6 +20,8 @@ export function reduceUiAction(
   action: TuiAction,
 ): TuiState | null {
   switch (action.type) {
+    case "ui_mode_toggled":
+      return { ...state, uiMode: state.uiMode === "chat" ? "debug" : "chat" };
     case "ui_mode_set":
       return { ...state, uiMode: action.mode };
     case "theme_set":

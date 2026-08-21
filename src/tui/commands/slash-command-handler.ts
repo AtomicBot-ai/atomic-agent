@@ -198,6 +198,8 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
         triggerQuit: true,
         systemMessage: "exiting",
       });
+    case "debug":
+      return pureActions([{ type: "ui_mode_toggled" }]);
     case "context":
       return pureActions([{ type: "context_panel_toggled" }]);
     case "chat":

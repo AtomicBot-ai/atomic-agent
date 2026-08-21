@@ -34,14 +34,13 @@ describe("dispatchSlashCommand", () => {
   });
 
   /**
-   * The toggle is gone: the debug pane is reached through Observe /
-   * Manage, which name where they land instead of flipping between two
-   * unnamed states.
+   * Off the menu, still a command: the row read badly among entries that
+   * name a destination, but typing it is an explicit act and the muscle
+   * memory is real.
    */
-  it("no longer answers /debug", () => {
+  it("toggles ui mode for /debug", () => {
     const result = dispatchSlashCommand("/debug");
-    expect(result.actions).toEqual([]);
-    expect(result.systemMessage).toBe("unknown command: /debug");
+    expect(result.actions).toEqual([{ type: "ui_mode_toggled" }]);
   });
 
   it("opens the Observe section default tab for /observe", () => {

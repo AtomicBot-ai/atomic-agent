@@ -53,6 +53,7 @@ export type TuiAction =
   | { type: "approval_level_changed"; approvalLevel: number }
   | { type: "session_created"; sessionId: string }
   | { type: "tab_changed"; tab: TuiTab }
+  | { type: "ui_mode_toggled" }
   | { type: "ui_mode_set"; mode: TuiUiMode }
   /**
    * Record the active theme name so the app re-renders after a runtime

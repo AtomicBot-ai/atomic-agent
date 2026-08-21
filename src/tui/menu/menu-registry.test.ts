@@ -58,6 +58,11 @@ const V0_2_2_SLASH_COMMANDS = [
     aliases: ["exit"],
   },
   {
+    name: "debug",
+    description:
+      "toggle debug pane (feed / logs / world …)",
+  },
+  {
     name: "chat",
     description:
       "return to single-view chat mode",
@@ -286,5 +291,27 @@ describe("menu registry", () => {
       "Import",
       "Privacy",
     ]);
+  });
+});
+
+describe("the debug toggle", () => {
+  /**
+   * Last under Go, below the three destinations. Run / Observe / Manage
+   * each name a place; this one toggles between two states whose
+   * identity depends on where you already are, so it belongs after them
+   * rather than interleaved with them.
+   */
+  it("comes last in the Go group", () => {
+    expect(menuRoots("go").map((n) => n.label)).toEqual([
+      "Run",
+      "Observe",
+      "Manage",
+      "Toggle debug pane",
+    ]);
+  });
+
+  it("is a command as well as a row", () => {
+    expect(menuNodeById("go.debug")?.kind).toBe("action");
+    expect(SLASH_COMMANDS.map((c) => c.name)).toContain("debug");
   });
 });
