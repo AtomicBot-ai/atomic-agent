@@ -269,7 +269,7 @@ function RailBrand({
 }
 
 /** Width of {@link RAIL_MARK}, kept beside it so the lockup can measure. */
-const MARK_COLUMNS = 6;
+const MARK_COLUMNS = 9;
 
 /**
  * Starts a fresh thread. It sits on the Sessions header because that is

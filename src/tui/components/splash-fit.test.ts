@@ -3,15 +3,28 @@ import {
   computeSplashFit,
   LOGO_METRICS,
   SPLASH_TIPS,
+  WORDMARK_STACK_ROWS,
   type LogoVariant,
 } from "./splash-fit.js";
+
+/** Rows the mark costs, stacked wordmark included. */
+function markRows(fit: ReturnType<typeof computeSplashFit>): number {
+  if (fit.logo === "none") return 0;
+  return (
+    LOGO_METRICS[fit.logo].height +
+    (fit.wordmarkPlacement === "below" ? WORDMARK_STACK_ROWS : 0)
+  );
+}
 
 const SIZE_ORDER: readonly LogoVariant[] = ["mini", "small", "full"];
 
 describe("computeSplashFit", () => {
-  it("gives a roomy terminal the full artwork, the wordmark and every tip", () => {
-    expect(computeSplashFit({ columns: 92, rows: 40 })).toEqual({
+  it("gives a very wide terminal the full artwork with the wordmark beside it", () => {
+    // The mark is 51 columns, so a side-by-side lockup wants 100 inner
+    // columns — roughly a 140-column terminal.
+    expect(computeSplashFit({ columns: 108, rows: 44 })).toEqual({
       logo: "full",
+      wordmarkPlacement: "beside",
       wordmark: true,
       tagline: true,
       tipCount: SPLASH_TIPS.length,
@@ -20,25 +33,40 @@ describe("computeSplashFit", () => {
     });
   });
 
-  it("drops the wordmark before the mark when the surface narrows", () => {
-    // 82 inner columns — one short of mark + gap + wordmark.
-    const fit = computeSplashFit({ columns: 86, rows: 40 });
+  it("stacks the wordmark under the mark when it will not fit beside it", () => {
+    // Below 100 inner columns the pair cannot share a line. Stacking
+    // needs only the mark's own width, so the mark keeps its name
+    // instead of going anonymous — at the price of four rows.
+    expect(computeSplashFit({ columns: 92, rows: 40 })).toEqual({
+      logo: "full",
+      wordmarkPlacement: "below",
+      wordmark: true,
+      tagline: true,
+      tipCount: SPLASH_TIPS.length,
+      labelWidth: 24,
+      descriptions: "full",
+    });
+  });
+
+  it("drops the wordmark before the mark when the rows run out", () => {
+    // Wide enough to stack, too short to afford the three rows it costs.
+    const fit = computeSplashFit({ columns: 92, rows: 30 });
     expect(fit.logo).toBe("full");
+    expect(fit.wordmarkPlacement).toBe("none");
     expect(fit.wordmark).toBe(false);
     expect(fit.tagline).toBe(false);
   });
 
   it("shrinks the mark when the surface is too short for the tall artwork", () => {
-    // A 100x24 terminal leaves the chat surface 73x16.
-    expect(computeSplashFit({ columns: 73, rows: 16 })).toEqual({
+    // `full` is 24 rows and wants 28 before the tips; 20 rows buys the
+    // 14-row `small` instead, which is the documented mark-over-tips
+    // priority working in reverse.
+    expect(computeSplashFit({ columns: 73, rows: 20 })).toEqual({
       logo: "small",
+      wordmarkPlacement: "none",
       wordmark: false,
       tagline: false,
-      // `small` is 12 rows now, not 10 — it is scaled from the full mark
-      // rather than hand-drawn, and the honest half-scale of a 20-row
-      // drawing is 12 half-block rows. Two of those rows come out of the
-      // tip list, which is the documented mark-over-tips priority.
-      tipCount: 3,
+      tipCount: 5,
       labelWidth: 24,
       descriptions: "full",
     });
@@ -47,9 +75,10 @@ describe("computeSplashFit", () => {
   it("falls back to the smallest mark and terse copy on a small window", () => {
     expect(computeSplashFit({ columns: 38, rows: 12 })).toEqual({
       logo: "mini",
+      wordmarkPlacement: "none",
       wordmark: false,
       tagline: false,
-      // 12 rows − 4 for the mark − 1 margin leaves room for all six
+      // 12 rows − 5 for the mark − 1 margin leaves room for all six
       // tips (the list lost its two hotkey rows).
       tipCount: SPLASH_TIPS.length,
       labelWidth: 10,
@@ -88,15 +117,15 @@ describe("computeSplashFit", () => {
     for (let columns = 10; columns <= 200; columns += 3) {
       for (let rows = 2; rows <= 60; rows += 3) {
         const fit = computeSplashFit({ columns, rows });
-        const markHeight =
-          fit.logo === "none" ? 0 : LOGO_METRICS[fit.logo].height;
+        const markHeight = markRows(fit);
         const height =
           markHeight +
           (fit.tipCount > 0 ? (markHeight > 0 ? 1 : 0) + fit.tipCount : 0);
         expect(height).toBeLessThanOrEqual(rows);
         expect(fit.tipCount).toBeGreaterThanOrEqual(0);
         expect(fit.labelWidth).toBeGreaterThanOrEqual(0);
-        if (fit.wordmark) expect(fit.logo).toBe("full");
+        // `mini` is nine columns; it never carries the wordmark.
+        if (fit.wordmark) expect(["full", "small"]).toContain(fit.logo);
       }
     }
   });
@@ -111,16 +140,23 @@ describe("computeSplashFit", () => {
     }
   });
 
-  it("never shows fewer tips as the terminal grows, for a fixed mark", () => {
-    // Across a variant change the count legitimately drops: a taller
-    // window buys a taller mark, which is paid for in tip rows. Within
-    // one variant the list may only grow.
-    const perVariant = new Map<string, number>();
+  it("never shows fewer tips as the terminal grows, for a fixed lockup", () => {
+    // Across a change of lockup the count legitimately drops: a taller
+    // window buys a taller mark — or buys the stacked wordmark, which
+    // costs three rows — and both are paid for in tip rows. Within one
+    // lockup the list may only grow. Keying on the variant alone is
+    // what this used to assert, and it stopped being the right key when
+    // gaining the wordmark became something a *taller* window can do.
+    const perLockup = new Map<string, number>();
     for (let rows = 2; rows <= 80; rows += 1) {
-      const { logo, tipCount } = computeSplashFit({ columns: 92, rows });
-      expect(tipCount).toBeGreaterThanOrEqual(perVariant.get(logo) ?? 0);
-      perVariant.set(logo, tipCount);
+      const { logo, wordmarkPlacement, tipCount } = computeSplashFit({
+        columns: 92,
+        rows,
+      });
+      const key = `${logo}:${wordmarkPlacement}`;
+      expect(tipCount).toBeGreaterThanOrEqual(perLockup.get(key) ?? 0);
+      perLockup.set(key, tipCount);
     }
-    expect(perVariant.get("full")).toBe(SPLASH_TIPS.length);
+    expect(perLockup.get("full:below")).toBe(SPLASH_TIPS.length);
   });
 });
