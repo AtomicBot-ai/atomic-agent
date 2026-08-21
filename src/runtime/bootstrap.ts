@@ -157,6 +157,7 @@ import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-loop.js";
 import {
   SessionStore,
   createEmptySessionState,
+  pruneSessionTurns,
   type SessionState,
 } from "../session/index.js";
 
@@ -2101,8 +2102,22 @@ export async function createAgentRuntime(
         maxSteps: runOptions.maxSteps ?? config.agent.maxSteps,
         signal: runOptions.signal ?? new AbortController().signal,
       });
-      sessionStore.save(result.session);
-      return result;
+      // Prune old turns to bound memory growth (issue #121). Without
+      // this, every tool_call / tool_result / assistant_reply is kept
+      // forever — large outputs (file reads, web fetches) push a long
+      // session past the V8 heap limit. packConversation already
+      // determines the visible window at prompt-build time; we apply
+      // the same windowing here so the persistent state stays bounded.
+      const prunedTurns = pruneSessionTurns(
+        result.session.turns,
+        config.agent.conversationMaxTokens,
+      );
+      const prunedSession =
+        prunedTurns.length === result.session.turns.length
+          ? result.session
+          : { ...result.session, turns: prunedTurns };
+      sessionStore.save(prunedSession);
+      return { ...result, session: prunedSession };
     });
   };
 

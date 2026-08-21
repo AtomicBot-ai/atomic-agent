@@ -354,3 +354,39 @@ export function appendTurn(
 ): ConversationTurn[] {
   return [...turns, next];
 }
+
+/**
+ * Prune `state.turns` to a bounded size using the same token-based
+ * windowing that `packConversation` applies at prompt-build time.
+ *
+ * This prevents unbounded memory growth in long sessions (issue #121):
+ * every `assistant_tool_call`, `tool_result`, and `assistant_reply` is
+ * appended forever; large tool outputs (file reads, web fetches) can
+ * push a 25-step session past the V8 heap limit.
+ *
+ * The function is **pure** — it returns a new turns array without
+ * mutating the input. Call it before persisting the session state.
+ *
+ * @param turns  The current (potentially unbounded) turn list.
+ * @param maxTokens  Token budget for the conversation section.
+ *                   Typically `config.agent.conversationMaxTokens` (default 32 000).
+ * @returns  A pruned turns array that fits within `maxTokens` when
+ *           rendered by `packConversation`. When the total is already
+ *           within budget the array is returned unchanged (zero copy).
+ */
+export function pruneSessionTurns(
+  turns: readonly ConversationTurn[],
+  maxTokens: number,
+): ConversationTurn[] {
+  const packed = packConversation(turns, maxTokens);
+  if (packed.droppedCount === 0) return [...turns];
+  // Replace the dropped prefix with a single summary turn so the
+  // prompt renderer and future packConversation calls still have a
+  // compact representation of the truncated history.
+  const summaryTurn: ConversationTurn = {
+    kind: "user",
+    text: packed.droppedSummary ?? "",
+    at: Date.now(),
+  };
+  return [summaryTurn, ...packed.visibleTurns];
+}

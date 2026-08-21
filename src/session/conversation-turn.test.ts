@@ -8,6 +8,7 @@ import {
   renderTurnForPrompt,
   toolResultTurn,
   trimTurnsToTokens,
+  pruneSessionTurns,
   userTurn,
   type ConversationTurn,
 } from "./conversation-turn.js";
@@ -372,5 +373,61 @@ describe("conversation-turn helpers", () => {
       expect(out.droppedCount).toBe(2);
       expect(out.droppedSummary).toMatch(/^summary: 2 older turns dropped/);
     });
+  });
+});
+
+describe("pruneSessionTurns", () => {
+  it("returns a copy of turns when within budget", () => {
+    const turns: ConversationTurn[] = [
+      userTurn("hello", 1),
+      assistantReplyTurn("hi", 2),
+    ];
+    const out = pruneSessionTurns(turns, 1000);
+    expect(out).toHaveLength(2);
+    expect(out).toEqual(turns);
+  });
+
+  it("prunes old turns and prepends a summary when over budget", () => {
+    const turns: ConversationTurn[] = [
+      userTurn("old message " .repeat(50), 1),
+      assistantReplyTurn("old reply " .repeat(50), 2),
+      userTurn("new message", 3),
+      assistantReplyTurn("new reply", 4),
+    ];
+    const out = pruneSessionTurns(turns, 50);
+    expect(out.length).toBeLessThan(turns.length);
+    // First turn should be the summary
+    expect(out[0]?.kind).toBe("user");
+    expect(out[0]?.text).toMatch(/^summary: \d+ older turns dropped/);
+    // Last turns should be preserved
+    expect(out.at(-1)?.kind).toBe("assistant_reply");
+  });
+
+  it("returns empty array for empty input", () => {
+    const out = pruneSessionTurns([], 100);
+    expect(out).toEqual([]);
+  });
+
+  it("does not mutate the input array", () => {
+    const turns: ConversationTurn[] = [
+      userTurn("a ".repeat(100), 1),
+      assistantReplyTurn("b ".repeat(100), 2),
+    ];
+    const original = [...turns];
+    pruneSessionTurns(turns, 10);
+    expect(turns).toEqual(original);
+  });
+
+  it("keeps at least the visible turns from packConversation", () => {
+    const turns: ConversationTurn[] = Array.from({ length: 100 }, (_, i) =>
+      i % 2 === 0
+        ? userTurn(`message ${i} ` .repeat(10), i)
+        : assistantReplyTurn(`reply ${i} ` .repeat(10), i),
+    );
+    const out = pruneSessionTurns(turns, 200);
+    expect(out.length).toBeLessThan(100);
+    // Should have summary + visible turns
+    expect(out[0]?.text).toMatch(/^summary:/);
+    expect(out.length).toBeGreaterThan(1);
   });
 });

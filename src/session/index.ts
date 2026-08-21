@@ -32,6 +32,7 @@ export {
   trimTurnsToTokens,
   packConversation,
   appendTurn,
+  pruneSessionTurns,
 } from "./conversation-turn.js";
 export type {
   ConversationTurn,
