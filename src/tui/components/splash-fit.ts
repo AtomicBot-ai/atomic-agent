@@ -140,7 +140,7 @@ export const LOGO_METRICS: Readonly<Record<LogoVariant, LogoMetrics>> = {
 };
 
 /** `ATOMIC AGENT` half-block wordmark, plus the gap that precedes it. */
-export const WORDMARK_WIDTH = 48;
+export const WORDMARK_WIDTH = 46;
 const WORDMARK_GAP = 3;
 
 /** `paddingX` on the splash container. */
@@ -155,12 +155,12 @@ const MIN_TIPS = 3;
 const TIP_LIST_MARGIN_ROWS = 1;
 
 /**
- * Rows a stacked wordmark costs: one blank, its own three, and the
+ * Rows a stacked wordmark costs: one blank, its own two, and the
  * tagline under it. Beside the mark all of that is free — the mark is
  * taller than the wordmark and tagline together — so this is the only
  * arrangement that has to pay for them.
  */
-export const WORDMARK_STACK_ROWS = 5;
+export const WORDMARK_STACK_ROWS = 4;
 
 const VARIANTS_WIDEST_FIRST: readonly LogoVariant[] = ["full", "small", "mini"];
 

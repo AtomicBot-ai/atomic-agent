@@ -64,7 +64,7 @@ describe("SplashBanner fit", () => {
     );
     const frame = lines(lastFrame() ?? "").join("\n");
     expect(frame).toContain("#".repeat(45));
-    expect(frame).toContain("\u2588\u2588\u2588 \u2588\u2588\u2588 \u2588\u2588\u2588 \u2588\u2588 \u2588\u2588");
+    expect(frame).toContain("\u2584\u2580\u2588 \u2580\u2588\u2580 \u2588\u2580\u2588");
     expect(frame).toContain("Local AI-First Agent");
     expect(frame).toContain("/import");
   });
@@ -80,7 +80,7 @@ describe("SplashBanner fit", () => {
     // The mini mark is its own drawing, not a text stand-in — and it is
     // the ASCII stroke, so it carries no block glyphs at all.
     expect(frame).toMatch(/#{4}/u);
-    expect(frame).not.toContain("\u2588\u2588\u2588 \u2588\u2588\u2588 \u2588\u2588\u2588 \u2588\u2588 \u2588\u2588");
+    expect(frame).not.toContain("\u2584\u2580\u2588 \u2580\u2588\u2580 \u2588\u2580\u2588");
     expect(frame).toContain("/help");
     expect(frame).not.toContain("list all slash commands");
   });

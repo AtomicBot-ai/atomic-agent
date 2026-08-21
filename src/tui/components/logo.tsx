@@ -66,25 +66,18 @@ export const LOGO_ART: Readonly<Record<LogoVariant, readonly string[]>> = {
 export const RAIL_MARK: readonly string[] = CROSS_MARKS.block.sm;
 
 /**
- * `ATOMIC AGENT`, drawn with full blocks only.
+ * `ATOMIC AGENT` — the original half-block lockup, restored.
  *
- * It used to be a two-row half-block lockup (`▄▀█ ▀█▀ █▀█ …`), which
- * breaks up on terminals whose line height does not split a cell at an
- * integer pixel row: `▀` and `▄` are exactly the glyphs that need that
- * split, so the renderer rounds and drops a scanline, and the wordmark
- * loses half of every letter. It survives at large font sizes and falls
- * apart at small ones, which is why it looked fine for so long.
- *
- * `█` has no such requirement — it fills the cell — so the letterforms
- * are built from it and spaces alone, three rows deep. `M` and `N` get
- * five columns and `G` four; at three they would be indistinguishable
- * from each other and from `O`. `WORDMARK_STACK_ROWS` in `splash-fit.ts`
- * accounts for the height.
+ * It is two rows of `▀`/`▄`, which is what gives it its weight at two
+ * rows tall. Those glyphs need the terminal to split a cell at an
+ * integer pixel row, so they are the first thing to look wrong when a
+ * font substitutes for the block range or a line height does not divide
+ * evenly — see the note on `WORDMARK_STACK_ROWS` in `splash-fit.ts` for
+ * what the layout guarantees and what it cannot.
  */
 export const WORDMARK_ROWS: readonly string[] = [
-  "\u2588\u2588\u2588 \u2588\u2588\u2588 \u2588\u2588\u2588 \u2588\u2588 \u2588\u2588 \u2588 \u2588\u2588\u2588   \u2588\u2588\u2588 \u2588\u2588\u2588\u2588 \u2588\u2588\u2588 \u2588\u2588  \u2588 \u2588\u2588\u2588",
-  "\u2588\u2588\u2588  \u2588  \u2588 \u2588 \u2588 \u2588 \u2588 \u2588 \u2588     \u2588\u2588\u2588 \u2588 \u2588\u2588 \u2588\u2588  \u2588 \u2588 \u2588  \u2588 ",
-  "\u2588 \u2588  \u2588  \u2588\u2588\u2588 \u2588   \u2588 \u2588 \u2588\u2588\u2588   \u2588 \u2588 \u2588\u2588\u2588\u2588 \u2588\u2588\u2588 \u2588  \u2588\u2588  \u2588 ",
+  "\u2584\u2580\u2588 \u2580\u2588\u2580 \u2588\u2580\u2588 \u2588\u2580\u2584\u2580\u2588 \u2588 \u2588\u2580\u2580   \u2584\u2580\u2588 \u2588\u2580\u2580 \u2588\u2580\u2580 \u2588\u2584 \u2588 \u2580\u2588\u2580",
+  "\u2588\u2580\u2588  \u2588  \u2588\u2584\u2588 \u2588 \u2580 \u2588 \u2588 \u2588\u2584\u2584   \u2588\u2580\u2588 \u2588\u2584\u2588 \u2588\u2588\u2584 \u2588 \u2580\u2588  \u2588 ",
 ];
 
 export const TAGLINE = "Local AI-First Agent";
