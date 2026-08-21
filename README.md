@@ -321,6 +321,8 @@ In the TUI, open the LLM tab, add a provider, and pick **Ollama (local)** (or **
 
 Model ids are the tags the server reports, `qwen2.5:0.5b` or `llama3.2:latest` for Ollama, so use the same name you passed to `ollama pull`. The list comes from the server's own `/v1/models`, which means anything you have pulled shows up without a restart.
 
+The preset is a fixed `http://localhost:11434` endpoint — it does not probe for a running server. If `ollama serve` isn't up when you reach the model step, the list fails to load (`could not list models from Ollama (local)`), and the wizard falls back to letting you type a model id by hand; in the LLM panel the list shows `model list unavailable` and only the current model. Start the server (`ollama serve`, then `ollama pull <model>` for anything you want) and re-open the preset.
+
 | Preset | Endpoint |
 | --- | --- |
 | Ollama (local) | `http://localhost:11434` |
