@@ -54,6 +54,19 @@ describe("contextUsageFromPrompt", () => {
   });
 
   /**
+   * The three figures behind the chip's gauge. `conversationCapEffective`
+   * is what the packer trims to; `limits.conversation` is what the
+   * operator configured, and the gap between them is the only way to say
+   * whether config or the window is holding the transcript down.
+   */
+  it("carries the transcript and both forms of its cap", () => {
+    const usage = contextUsageFromPrompt(builtPrompt());
+    expect(usage.conversationTokens).toBe(31_880);
+    expect(usage.conversationCap).toBe(14_000);
+    expect(usage.conversationCapConfigured).toBe(14_000);
+  });
+
+  /**
    * A session with no skills loaded should not have to read the word
    * "skills" to find that out.
    */

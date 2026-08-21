@@ -35,13 +35,20 @@ const STEP_MID = 66;
  * The composer's context readout: how full the model's window is, drawn
  * as a button because it behaves like one.
  *
- * **Why a gauge and not a number.** The window is the one budget an
- * operator cannot see any other way — the transcript on screen is not
- * the transcript in the prompt, because tool output is compressed on the
- * way in, old macro-turns render at a reduced footprint, and
- * `packConversation` drops the oldest turns outright when the section
- * cap bites. A bar answers "how much room is left" at a glance; the
- * exact figure is one click away.
+ * **What the gauge measures.** The transcript against the ceiling it is
+ * packed to, not the prompt against the model's window. The window is
+ * the wrong scale for a bar: a 1M-token model sits at 1% all session and
+ * the gauge never says anything. The transcript's cap is the number that
+ * moves, and reaching it is precisely when `packConversation` starts
+ * dropping the oldest turns — so the bar filling up *is* the warning.
+ *
+ * It is also the only scale that always exists. The window is unknown on
+ * any cloud model nobody has published a context length for;
+ * `conversationCapEffective` is on every built prompt, falling back to
+ * the configured cap when there is no window to clamp against.
+ *
+ * Both numbers are printed beside the bar. Nothing here is measured
+ * against a scale the operator cannot see.
  *
  * **Why the colour ramp.** Three steps of the palette's own accent, then
  * violet once the transcript has been trimmed. Violet rather than a warn
@@ -62,15 +69,16 @@ export function ContextChip({
 }): ReactElement {
   const background = groundFor(usage);
   const label =
-    usage.percent === null
-      ? // No window to divide by. The count alone is still worth having —
-        // it is the only number that says whether this session is big —
-        // but a gauge drawn against a scale nobody stated would be a
-        // fabrication.
+    usage.conversationCap === null || usage.conversationPercent === null
+      ? // No prompt has set a cap yet (or it came back as zero). The
+        // total is still worth showing — it is the only number that says
+        // whether this session is big — but a gauge drawn against a
+        // scale nobody stated would be a fabrication.
         ` context ${formatTokens(usage.tokens)} `
-      : ` context [${renderProgressBar(usage.percent, GAUGE_WIDTH)}] ${String(
-          usage.percent,
-        ).padStart(3)}% `;
+      : ` context [${renderProgressBar(
+          usage.conversationPercent,
+          GAUGE_WIDTH,
+        )}] ${pair(usage.conversationTokens, usage.conversationCap)} `;
   return (
     <Text backgroundColor={background} color={readableOn(background)} bold>
       {label}
@@ -83,17 +91,42 @@ export function groundFor(usage: ContextUsageView): string {
   if (usage.droppedTurns > 0) return theme.colors.accentAlt;
   const ground = theme.colors.railBackground;
   const accent = theme.colors.accent;
-  // Unknown fill sits at the quiet end. It is a readout of a session
-  // that has barely started, not a warning about one that has not.
-  if (usage.percent === null || usage.percent < STEP_LOW) {
-    return mixColor(accent, ground, FADE_LOW);
-  }
-  if (usage.percent < STEP_MID) return mixColor(accent, ground, FADE_MID);
+  // The ramp follows the same number the bar does: how close the
+  // transcript is to being trimmed. Unknown fill sits at the quiet end —
+  // that is a readout of a session which has barely started, not a
+  // warning about one that has not.
+  const fill = usage.conversationPercent;
+  if (fill === null || fill < STEP_LOW) return mixColor(accent, ground, FADE_LOW);
+  if (fill < STEP_MID) return mixColor(accent, ground, FADE_MID);
   return accent;
 }
 
-/** `1240` -> `1.2k`. Terminals have no room for six digits of nuance. */
-function formatTokens(tokens: number): string {
+/**
+ * `6400 / 32000` -> ` 6.4k/32k`, right-aligned in a fixed field.
+ *
+ * The padding is not cosmetic: the bar sits to the left of this text and
+ * the chip is right-anchored on the toolbar, so a tail that grew a cell
+ * as the transcript crossed 10k would shift the whole gauge sideways on
+ * an ordinary turn.
+ */
+function pair(tokens: number, cap: number): string {
+  return `${formatTokens(tokens)}/${formatTokens(cap)}`.padStart(PAIR_WIDTH);
+}
+
+/** Fits `999.9k/1.0M`; anything longer simply grows past it. */
+const PAIR_WIDTH = 10;
+
+/**
+ * `1240` -> `1.2k`, `32000` -> `32k`, `1000000` -> `1.0M`. Terminals have
+ * no room for six digits of nuance, and a round thousand reads better
+ * without the `.0` it would otherwise carry.
+ */
+export function formatTokens(tokens: number): string {
   if (tokens < 1000) return String(tokens);
-  return `${(tokens / 1000).toFixed(1)}k`;
+  if (tokens < 1_000_000) {
+    const k = tokens / 1000;
+    return Number.isInteger(k) ? `${k}k` : `${k.toFixed(1)}k`;
+  }
+  const m = tokens / 1_000_000;
+  return Number.isInteger(m) ? `${m}M` : `${m.toFixed(1)}M`;
 }

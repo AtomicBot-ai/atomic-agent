@@ -95,6 +95,10 @@ describe("PromptShell", () => {
                 tokens: 115_343,
                 contextWindow: 131_072,
                 percent: 88,
+                conversationTokens: 28_100,
+                conversationCap: 32_000,
+                conversationPercent: 88,
+                capSource: "config",
                 droppedTurns: 0,
                 sections: [],
               }}
@@ -117,7 +121,7 @@ describe("PromptShell", () => {
     const bar = lines[5] ?? "";
     expect(bar).toContain(" send → ");
     // The readout keeps its full gauge; the model name is what gives.
-    expect(bar).toContain("context [======= ]  88%");
+    expect(bar).toContain("context [======= ]  28.1k/32k");
     unmount();
   });
 

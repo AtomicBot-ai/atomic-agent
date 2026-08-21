@@ -12,9 +12,13 @@ const SGR = new RegExp("\\u001b\\[[0-9;]*m", "g");
 
 function usage(overrides: Partial<ContextUsageView> = {}): ContextUsageView {
   return {
-    tokens: 55_050,
-    contextWindow: 131_072,
-    percent: 42,
+    tokens: 14_100,
+    contextWindow: 1_000_000,
+    percent: 1,
+    conversationTokens: 6400,
+    conversationCap: 32_000,
+    conversationPercent: 20,
+    capSource: "config",
     droppedTurns: 0,
     sections: [],
     ...overrides,
@@ -34,28 +38,57 @@ function label(view: ContextUsageView): string {
 }
 
 describe("ContextChip", () => {
-  it("draws the gauge and the percentage", () => {
-    expect(label(usage())).toBe(" context [===     ]  42%");
+  /**
+   * The bar and the numbers are the same quantity: how full the
+   * transcript is against the ceiling it gets packed to. Gauging the
+   * prompt against the model's window instead would sit at 1% all
+   * session on this model and never say anything.
+   */
+  it("gauges the transcript against its cap, and prints both", () => {
+    expect(label(usage())).toBe(" context [==      ]   6.4k/32k");
   });
 
-  it("keeps a fixed width from one digit to three", () => {
+  /**
+   * The bar sits left of the numbers and the chip is right-anchored, so
+   * a tail that grew a cell at 10k would shove the gauge sideways
+   * mid-session.
+   */
+  it("holds a steady width as the numbers grow", () => {
     const widths = new Set(
-      [7, 42, 100].map((percent) => label(usage({ percent })).length),
+      [90, 6400, 31_900].map(
+        (conversationTokens) => label(usage({ conversationTokens })).length,
+      ),
     );
     expect(widths.size).toBe(1);
   });
 
+  it("fills as the transcript approaches the cap", () => {
+    expect(label(usage({ conversationPercent: 0 }))).toContain("[        ]");
+    expect(label(usage({ conversationPercent: 50 }))).toContain("[====    ]");
+    expect(label(usage({ conversationPercent: 100 }))).toContain("[========]");
+  });
+
   /**
-   * A cloud model nobody has stated a window for still has a real token
-   * count. Drawing a gauge would mean inventing the scale it is drawn
-   * against.
+   * An unknown *window* no longer costs the bar anything — the cap is
+   * on every built prompt either way. Only a session with no cap at all
+   * falls back to the bare total.
    */
-  it("shows the raw count, and no gauge, when the window is unknown", () => {
+  it("still gauges when the model's window is unknown", () => {
+    expect(label(usage({ percent: null, contextWindow: null }))).toBe(
+      " context [==      ]   6.4k/32k",
+    );
+  });
+
+  it("shows the raw count, and no gauge, when no cap is known", () => {
     expect(
-      label(usage({ percent: null, contextWindow: null, tokens: 34_812 })),
+      label(
+        usage({ conversationCap: null, conversationPercent: null, tokens: 34_812 }),
+      ),
     ).toBe(" context 34.8k");
     expect(
-      label(usage({ percent: null, contextWindow: null, tokens: 812 })),
+      label(
+        usage({ conversationCap: null, conversationPercent: null, tokens: 812 }),
+      ),
     ).toBe(" context 812");
   });
 });
@@ -65,11 +98,13 @@ describe("the chip's ground", () => {
     setActiveTheme(THEMES["github-dark"]);
     const ground = theme.colors.railBackground;
     const accent = theme.colors.accent;
-    expect(groundFor(usage({ percent: 32 }))).toBe(mixColor(accent, ground, 0.6));
-    expect(groundFor(usage({ percent: 33 }))).toBe(mixColor(accent, ground, 0.3));
-    expect(groundFor(usage({ percent: 65 }))).toBe(mixColor(accent, ground, 0.3));
-    expect(groundFor(usage({ percent: 66 }))).toBe(accent);
-    expect(groundFor(usage({ percent: 100 }))).toBe(accent);
+    const at = (conversationPercent: number): string =>
+      groundFor(usage({ conversationPercent }));
+    expect(at(32)).toBe(mixColor(accent, ground, 0.6));
+    expect(at(33)).toBe(mixColor(accent, ground, 0.3));
+    expect(at(65)).toBe(mixColor(accent, ground, 0.3));
+    expect(at(66)).toBe(accent);
+    expect(at(100)).toBe(accent);
   });
 
   /**
@@ -80,18 +115,18 @@ describe("the chip's ground", () => {
    */
   it("turns violet once the transcript has been trimmed, at any fill", () => {
     setActiveTheme(THEMES["github-dark"]);
-    expect(groundFor(usage({ percent: 12, droppedTurns: 3 }))).toBe(
+    expect(groundFor(usage({ conversationPercent: 12, droppedTurns: 3 }))).toBe(
       theme.colors.accentAlt,
     );
-    expect(groundFor(usage({ percent: 100, droppedTurns: 3 }))).toBe(
+    expect(groundFor(usage({ conversationPercent: 100, droppedTurns: 3 }))).toBe(
       theme.colors.accentAlt,
     );
   });
 
   it("sits at the quiet end when the fill is unknown", () => {
     setActiveTheme(THEMES["github-dark"]);
-    expect(groundFor(usage({ percent: null, contextWindow: null }))).toBe(
-      mixColor(theme.colors.accent, theme.colors.railBackground, 0.6),
-    );
+    expect(
+      groundFor(usage({ conversationPercent: null, conversationCap: null })),
+    ).toBe(mixColor(theme.colors.accent, theme.colors.railBackground, 0.6));
   });
 });
