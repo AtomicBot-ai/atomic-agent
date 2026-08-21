@@ -51,6 +51,19 @@ export interface TuiColors {
    */
   readonly brandMark: string;
   /**
+   * The face of the brand mark — its front plane, as opposed to the
+   * extruded walls and cast shadow, which stay in `brandMark`. Painting
+   * the two apart is what makes the mark read as a solid object rather
+   * than a flat stencil; the glyph density ramp (`#`/`+`/`.`) carries the
+   * same information when there is no colour to spend.
+   *
+   * Per-palette rather than a literal white, for the same reason
+   * `railBackground` is: `#fff` disappears on the four light palettes.
+   * What has to hold is that the face reads *brighter than the depth
+   * against the page*, not that it is any exact colour.
+   */
+  readonly brandFace: string;
+  /**
    * The left rail is drawn inverted — a light ground under dark text on
    * a dark theme, and the reverse on a light one. It is the app's one
    * piece of chrome that is always on screen, and giving it its own

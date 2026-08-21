@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
-import { CROSS_MARKS, RAIL_ART } from "./logo-art.js";
+import { CROSS_MARKS } from "./logo-art.js";
 import type { LogoVariant, WordmarkPlacement } from "./splash-fit.js";
 
 /**
@@ -59,10 +59,11 @@ export const LOGO_ART: Readonly<Record<LogoVariant, readonly string[]>> = {
 };
 
 /**
- * The rail's brand mark: block stroke, four rows, nine columns.
- * `sidebar.tsx` keeps {@link MARK_COLUMNS} in step with its width.
+ * The rail's brand mark: the guideline's SM glyph, block stroke, 9x5.
+ * `sidebar.tsx` keeps {@link MARK_COLUMNS} in step with its width, and
+ * `SIDEBAR_CHROME_ROWS` counts its five rows.
  */
-export const RAIL_MARK: readonly string[] = RAIL_ART;
+export const RAIL_MARK: readonly string[] = CROSS_MARKS.block.sm;
 
 export const WORDMARK_ROWS: readonly string[] = [
   "▄▀█ ▀█▀ █▀█ █▀▄▀█ █ █▀▀   ▄▀█ █▀▀ █▀▀ █▄ █ ▀█▀",
@@ -116,15 +117,48 @@ export function Logo({
   );
 }
 
+/**
+ * Glyphs that draw the mark's front plane. Everything else in the art is
+ * depth — extruded wall or cast shadow — and stays in `brandMark`.
+ */
+const FACE_GLYPHS = new Set(["#", "\u2588"]);
+
 function LogoMark({ variant }: { variant: LogoVariant }): ReactElement {
   return (
     <Box flexDirection="column">
       {LOGO_ART[variant].map((row, idx) => (
-        <Text key={idx} color={theme.colors.brandMark} bold wrap="truncate">
-          {row}
-        </Text>
+        <MarkRow key={idx} row={row} />
       ))}
     </Box>
+  );
+}
+
+/**
+ * One row of the mark, split into runs of face and depth so the two can
+ * be painted apart. Colour carries the front/side distinction better
+ * than glyph density does; the density ramp is still there underneath
+ * for terminals with no colour to spend.
+ */
+function MarkRow({ row }: { row: string }): ReactElement {
+  const runs: { text: string; face: boolean }[] = [];
+  for (const ch of row) {
+    const face = FACE_GLYPHS.has(ch);
+    const last = runs[runs.length - 1];
+    if (last && last.face === face) last.text += ch;
+    else runs.push({ text: ch, face });
+  }
+  return (
+    <Text wrap="truncate">
+      {runs.map((run, idx) => (
+        <Text
+          key={idx}
+          color={run.face ? theme.colors.brandFace : theme.colors.brandMark}
+          bold
+        >
+          {run.text}
+        </Text>
+      ))}
+    </Text>
   );
 }
 

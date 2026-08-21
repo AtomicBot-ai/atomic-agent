@@ -44,7 +44,7 @@ const SIDEBAR_WIDTH_RATIO = 0.25;
  * asserts it comes to exactly `sessions + tasks + SIDEBAR_CHROME_ROWS`
  * rows.
  */
-export const SIDEBAR_CHROME_ROWS = 13;
+export const SIDEBAR_CHROME_ROWS = 14;
 
 /**
  * Rows the rail costs outside its own frame: the status bar above it

@@ -160,19 +160,3 @@ export const CROSS_MARKS: Readonly<Record<MarkStroke, MarkArt>> = {
   block: BLOCK,
   ascii: ASCII,
 };
-
-/**
- * The rail's mark — 9 x 4.
- *
- * Its own drawing rather than {@link CROSS_MARKS}.block.sm, which is
- * five rows tall. The rail's row budget (`SIDEBAR_CHROME_ROWS`) is built
- * around a four-row mark, and spending a rail row on branding costs a
- * session row on every short terminal. Drawing the face with half-blocks
- * fits the same shape — flare included — into four rows.
- */
-export const RAIL_ART: readonly string[] = [
-  "   ██░",
-  "▄▄███▄▄▄░",
-  "▀▀▀███▀▀░",
-  "   ██░",
-];

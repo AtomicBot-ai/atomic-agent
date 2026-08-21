@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { CROSS_MARKS, RAIL_ART, type MarkScale } from "./logo-art.js";
+import { CROSS_MARKS, type MarkScale } from "./logo-art.js";
 
 /**
  * `logo-art.ts` is generated from `assets/logo.svg`. Hand-editing it is
@@ -37,12 +37,12 @@ describe("logo-art.ts", () => {
     expect(widths[1]).toBeGreaterThan(widths[2]!);
   });
 
-  it("keeps the rail mark inside the four rows the rail budgets for it", () => {
-    // `SIDEBAR_CHROME_ROWS` counts four rows here; a fifth would cost a
-    // session row on every short terminal.
-    expect(RAIL_ART).toHaveLength(4);
+  it("draws SM at the 9x5 the guidelines specify", () => {
+    // The rail uses this verbatim, and `SIDEBAR_CHROME_ROWS` counts its
+    // five rows.
+    expect(CROSS_MARKS.block.sm).toHaveLength(5);
     expect(
-      RAIL_ART.reduce((acc, row) => Math.max(acc, row.length), 0),
+      CROSS_MARKS.block.sm.reduce((acc, row) => Math.max(acc, row.length), 0),
     ).toBe(9);
   });
 

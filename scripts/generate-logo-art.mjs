@@ -147,28 +147,6 @@ function fullGrid(cols, aspect = ASPECT) {
   return { g, W, H, av, ah };
 }
 
-/** Half blocks: a cell carries two square pixels, doubling vertical detail. */
-function halfGrid(cols, aspect = ASPECT) {
-  let best = null;
-  for (let ah = 2; ah < 26; ah += 2) {
-    const av = Math.max(1, Math.round((ah * aspect) / 2));
-    const W = 4 * av + (av % 2);
-    const H = 4 * ah + (ah % 2);
-    if (best === null || Math.abs(W - cols) < Math.abs(best.W - cols)) {
-      best = { W, H, av, ah };
-    }
-  }
-  const { W, H, av, ah } = best;
-  const bands = [...band(W, av), ...band(H, ah)];
-  const px = new Set();
-  for (let r = 0; r < H; r += 1) {
-    for (let c = 0; c < W; c += 1) {
-      if (coverage(c, r, W, H, bands) >= 0.5) px.add(`${r},${c}`);
-    }
-  }
-  return { px, W, H, av, ah };
-}
-
 // ---------------------------------------------------------------- 3-D
 // Depth sweeps bottom-right at a true 45° ON SCREEN. A cell is `aspect`
 // times taller than wide, so that is ~2.2 columns per row — stepping one
@@ -266,31 +244,6 @@ function renderBevel(cols, ch, aspect = ASPECT) {
   return paint([[shade, ch.shade], [face, ch.face]]);
 }
 
-/** The rail mark: half-block face so the same shape fits four rows. */
-function renderRail(ch) {
-  const { px, W, H } = halfGrid(8);
-  const shade = new Set();
-  for (const k of px) {
-    const [r, c] = k.split(",").map(Number);
-    const key = `${r},${c + 1}`;
-    if (!px.has(key)) shade.add(key);
-  }
-  let maxc = 0;
-  for (const k of [...px, ...shade]) maxc = Math.max(maxc, Number(k.split(",")[1]) + 1);
-  const rows = [];
-  for (let r = 0; r < H; r += 2) {
-    let line = "";
-    for (let c = 0; c < maxc; c += 1) {
-      const t = px.has(`${r},${c}`);
-      const b = px.has(`${r + 1},${c}`);
-      const s = shade.has(`${r},${c}`) || shade.has(`${r + 1},${c}`);
-      line += t && b ? "█" : t ? "▀" : b ? "▄" : s ? ch.shade : " ";
-    }
-    rows.push(line.replace(/\s+$/, ""));
-  }
-  return rows;
-}
-
 function range(a, b) {
   const out = [];
   for (let i = a; i <= b; i += 1) out.push(i);
@@ -325,9 +278,6 @@ function block(stroke) {
     })
     .join("\n");
 }
-
-const rail = renderRail(STROKES.block);
-const railW = Math.max(...rail.map((r) => r.length));
 
 const out = `/**
  * Brand-mark artwork: the Atomic cross at three scales, in two stroke
@@ -389,19 +339,6 @@ export const CROSS_MARKS: Readonly<Record<MarkStroke, MarkArt>> = {
   block: BLOCK,
   ascii: ASCII,
 };
-
-/**
- * The rail's mark — ${railW} x ${rail.length}.
- *
- * Its own drawing rather than {@link CROSS_MARKS}.block.sm, which is
- * five rows tall. The rail's row budget (\`SIDEBAR_CHROME_ROWS\`) is built
- * around a four-row mark, and spending a rail row on branding costs a
- * session row on every short terminal. Drawing the face with half-blocks
- * fits the same shape — flare included — into four rows.
- */
-export const RAIL_ART: readonly string[] = [
-${lit(rail, 2)}
-];
 `;
 
 if (process.argv.includes("--check")) {

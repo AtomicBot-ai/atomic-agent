@@ -176,6 +176,31 @@ function lockupWidth(variant: LogoVariant): number {
  */
 const WORDMARK_VARIANTS: readonly LogoVariant[] = ["full", "small"];
 
+/**
+ * Where `variant`'s wordmark can go on this surface, if anywhere.
+ * Beside it when both fit a line, stacked underneath when they do not
+ * but the rows are there, and nowhere when neither works.
+ */
+function placementFor(
+  variant: LogoVariant,
+  inner: number,
+  rows: number,
+): WordmarkPlacement {
+  if (!WORDMARK_VARIANTS.includes(variant)) return "none";
+  if (lockupWidth(variant) <= inner) return "beside";
+  if (
+    WORDMARK_WIDTH <= inner &&
+    LOGO_METRICS[variant].height +
+      WORDMARK_STACK_ROWS +
+      TIP_LIST_MARGIN_ROWS +
+      MIN_TIPS <=
+      rows
+  ) {
+    return "below";
+  }
+  return "none";
+}
+
 function maxLength(values: readonly string[]): number {
   return values.reduce((acc, value) => Math.max(acc, value.length), 0);
 }
@@ -206,6 +231,22 @@ export function computeSplashFit(size: SplashSize): SplashFit {
   ) {
     index += 1;
   }
+  // A bigger mark is not worth going nameless for. If the mark we
+  // picked cannot carry the wordmark either way but the next size down
+  // can, step down. Without this the start page LOSES its name as the
+  // window grows — `full` is 24 rows and cannot stack the wordmark until
+  // 32 rows of chat surface, so 28 rows drew a nameless full mark while
+  // both 24 (small + wordmark) and 32 (full + wordmark) named the app.
+  // Mark-over-tips is the documented priority; mark-over-wordmark is not.
+  const nextDown = VARIANTS_WIDEST_FIRST[index + 1];
+  if (
+    nextDown !== undefined &&
+    placementFor(VARIANTS_WIDEST_FIRST[index]!, inner, rows) === "none" &&
+    placementFor(nextDown, inner, rows) !== "none"
+  ) {
+    index += 1;
+  }
+
   let logo: LogoChoice = VARIANTS_WIDEST_FIRST[index]!;
   if (
     LOGO_METRICS[VARIANTS_WIDEST_FIRST[index]!]!.height +
@@ -218,24 +259,9 @@ export function computeSplashFit(size: SplashSize): SplashFit {
   }
 
   // The wordmark is a 46-column luxury; it rides along only with a mark
-  // wide enough to balance it. Beside the mark when both fit on one
-  // line, stacked underneath when they do not but the rows are there,
-  // and dropped when neither works.
-  let wordmarkPlacement: WordmarkPlacement = "none";
-  if (logo !== "none" && WORDMARK_VARIANTS.includes(logo)) {
-    if (lockupWidth(logo) <= inner) {
-      wordmarkPlacement = "beside";
-    } else if (
-      WORDMARK_WIDTH <= inner &&
-      LOGO_METRICS[logo].height +
-        WORDMARK_STACK_ROWS +
-        TIP_LIST_MARGIN_ROWS +
-        MIN_TIPS <=
-        rows
-    ) {
-      wordmarkPlacement = "below";
-    }
-  }
+  // wide enough to balance it.
+  const wordmarkPlacement: WordmarkPlacement =
+    logo === "none" ? "none" : placementFor(logo, inner, rows);
   const wordmark = wordmarkPlacement !== "none";
   const tagline = wordmark;
 

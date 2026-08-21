@@ -48,13 +48,36 @@ describe("computeSplashFit", () => {
     });
   });
 
-  it("drops the wordmark before the mark when the rows run out", () => {
-    // Wide enough to stack, too short to afford the three rows it costs.
+  it("steps the mark down rather than draw it nameless", () => {
+    // 88 inner columns is too narrow to park the wordmark beside the
+    // 51-column `full` mark, and 30 rows too short to stack it under
+    // one. Rather than draw a nameless mark, drop to `small`, which the
+    // wordmark fits beside. Mark-over-tips is the documented priority;
+    // mark-over-wordmark is not.
     const fit = computeSplashFit({ columns: 92, rows: 30 });
-    expect(fit.logo).toBe("full");
-    expect(fit.wordmarkPlacement).toBe("none");
-    expect(fit.wordmark).toBe(false);
-    expect(fit.tagline).toBe(false);
+    expect(fit.logo).toBe("small");
+    expect(fit.wordmarkPlacement).toBe("beside");
+    expect(fit.wordmark).toBe(true);
+  });
+
+  it("never loses the wordmark as the surface grows taller", () => {
+    // Regression: `full` is 24 rows and cannot stack the wordmark until
+    // 32 rows of chat surface, so a naive "biggest mark that fits" drew
+    // a NAMELESS full mark at 28 rows while both 24 rows (small, beside)
+    // and 32 rows (full, below) named the app. Growing a window must
+    // never cost the product its name.
+    for (let columns = 60; columns <= 200; columns += 4) {
+      let seen = false;
+      for (let rows = 2; rows <= 60; rows += 1) {
+        const fit = computeSplashFit({ columns, rows });
+        if (fit.wordmark) seen = true;
+        else if (seen) {
+          throw new Error(
+            `wordmark lost at ${columns}x${rows} (logo=${fit.logo})`,
+          );
+        }
+      }
+    }
   });
 
   it("shrinks the mark when the surface is too short for the tall artwork", () => {
