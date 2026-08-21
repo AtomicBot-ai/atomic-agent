@@ -2,11 +2,13 @@ import { Box } from "ink";
 import type { ReactElement } from "react";
 import { useRotatingPlaceholder } from "../hooks/use-rotating-placeholder.js";
 import { theme } from "../theme/theme.js";
+import { ComposerSendButton } from "./composer-send-button.js";
 import { MultiLineEditor, type MultiLineEditorProps } from "./multi-line-editor.js";
 import { PromptMetaBar } from "./prompt-meta-bar.js";
 
 /**
- * The composer: a framed input field with a toolbar under it.
+ * The composer: a framed input field with Send in it and a toolbar under
+ * it.
  *
  * It used to be an opencode-style left "tail" — a single border column
  * down the left of the editor, capped by a `╹`. That reads as a quote
@@ -16,6 +18,11 @@ import { PromptMetaBar } from "./prompt-meta-bar.js";
  * knows from every other message box they have used, and it costs one
  * row *less* than the tail did: border, editor, bar, border — where the
  * tail spent a top pad, a blank row above the meta and the cap glyph.
+ *
+ * Send sits **inside** the field, on the right of the buffer row, rather
+ * than on the bar under it: it is the verb for the text beside it, and
+ * keeping it out of the bar leaves that row free for the status readouts
+ * the chat surface passes in.
  *
  * The frame is deliberately the app's only fully-boxed surface besides
  * modals. Bounded height matters: Ink 7 does not clip a frame taller
@@ -58,8 +65,10 @@ export interface PromptShellProps
    * present.
    */
   leftSlot?: ReactElement | null;
-  /** Optional content rendered just before the buttons on the right. */
+  /** Optional content rendered at the toolbar's right end. */
   rightSlot?: ReactElement | null;
+  /** Optional context readout, rendered at the action bar's right end. */
+  contextSlot?: ReactElement | null;
 }
 
 export function PromptShell(props: PromptShellProps): ReactElement {
@@ -71,6 +80,7 @@ export function PromptShell(props: PromptShellProps): ReactElement {
     provider,
     leftSlot,
     rightSlot,
+    contextSlot,
     focus,
     disabled,
     value,
@@ -116,29 +126,52 @@ export function PromptShell(props: PromptShellProps): ReactElement {
           `badgeBackground` shows through them and they read as the
           field's own padding rather than as gaps in it.
         */}
-        <Box paddingX={1} paddingY={1} flexDirection="column">
-          <MultiLineEditor
-            {...editorProps}
-            value={value}
-            focus={focus}
-            disabled={disabled}
-            onChange={onChange}
-            onSubmit={onSubmit}
-            placeholder={effectivePlaceholder}
-            bare
-          />
+        <Box
+          paddingX={1}
+          paddingY={1}
+          flexDirection="row"
+          // One line of buffer and the button is beside it either way;
+          // the choice only bites once the message grows. Bottom keeps
+          // Send next to the line being typed, which is where the eye
+          // already is — centring it against a ten-line paste would
+          // strand the button halfway up a wall of text.
+          alignItems={value.includes("\n") ? "flex-end" : "center"}
+        >
+          {/*
+            `minWidth={0}` is what lets the editor actually give up the
+            columns the button takes: a Yoga flex child defaults to its
+            content's min-width, so without this the row would overflow
+            the frame instead of the text rewrapping.
+          */}
+          <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="column">
+            <MultiLineEditor
+              {...editorProps}
+              value={value}
+              focus={focus}
+              disabled={disabled}
+              onChange={onChange}
+              onSubmit={onSubmit}
+              placeholder={effectivePlaceholder}
+              bare
+            />
+          </Box>
+          <Box flexShrink={0} marginLeft={1}>
+            <ComposerSendButton
+              enabled={canSend}
+              // Exactly the callback Enter fires, with exactly the
+              // buffer Enter would submit. A second submit path would be
+              // a second place for slash-command handling and the
+              // busy-mode queue to drift out of sync.
+              onPress={() => onSubmit(value)}
+            />
+          </Box>
         </Box>
         <PromptMetaBar
           leftSlot={leftSlot ?? null}
           model={model ?? null}
           provider={provider ?? null}
           rightSlot={rightSlot ?? null}
-          canSend={canSend}
-          // Exactly the callback Enter fires, with exactly the buffer
-          // Enter would submit. A second submit path would be a second
-          // place for slash-command handling and the busy-mode queue to
-          // drift out of sync.
-          onSend={() => onSubmit(value)}
+          contextSlot={contextSlot ?? null}
         />
       </Box>
     </Box>

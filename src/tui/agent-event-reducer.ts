@@ -1,4 +1,8 @@
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import {
+  contextUsageFromPrompt,
+  EMPTY_CONTEXT_USAGE,
+} from "./context-usage-from-prompt.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
 import { formatFeedLine } from "./format-event.js";
 import {
@@ -72,7 +76,14 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         ...(action.variant ? { variant: action.variant } : {}),
       });
     case "session_created":
-      return { ...state, session: { ...state.session, sessionId: action.sessionId } };
+      return {
+        ...state,
+        session: { ...state.session, sessionId: action.sessionId },
+        // A different thread has a different window fill. Carrying the
+        // old figure over would read as "this fresh session is already
+        // 40% full" until the first prompt lands.
+        contextUsage: EMPTY_CONTEXT_USAGE,
+      };
     case "skill_count_changed":
       return { ...state, session: { ...state.session, skillCount: action.count } };
     case "approval_level_changed":
@@ -600,11 +611,27 @@ function reduceStepEvent(
         color: "yellow",
       });
     case "prompt_built":
-    case "llm_completed":
+      // The feed still ignores the prompt text itself — it would drown
+      // the log — but the token breakdown that comes with it is the only
+      // authoritative statement of what is in the window right now.
+      return { ...state, contextUsage: contextUsageFromPrompt(event.prompt) };
+    case "llm_completed": {
+      // `prompt_built` carried an estimate (`estimateTokens` over-counts
+      // by design); the provider just reported what its own tokenizer
+      // actually counted — llama.cpp from `tokens_evaluated`, an
+      // OpenAI-compatible cloud from `usage.prompt_tokens`. Prefer it,
+      // and leave the estimate standing when nothing was reported.
+      const counted = event.completion.timing?.promptTokens ?? 0;
+      if (counted <= 0) return state;
+      return {
+        ...state,
+        contextUsage: { ...state.contextUsage, tokens: counted },
+      };
+    }
     case "llm_raw_completion":
-      // Raw plumbing: the whole prompt, the whole completion object,
-      // the unparsed text. The trace recorder wants them; the chat feed
-      // would drown in them. Listed so the exhaustiveness check holds.
+      // Raw plumbing: the whole completion object, the unparsed text.
+      // The trace recorder wants them; the chat feed would drown in
+      // them. Listed so the exhaustiveness check holds.
       return state;
     default: {
       const unhandled: never = event;

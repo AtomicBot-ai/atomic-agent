@@ -1,12 +1,10 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
-import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { theme } from "../theme/theme.js";
 
 /**
- * The composer's action bar: what the model is on the left, the two
- * buttons on the right, drawn on the same inverted ground as the rail.
+ * The composer's status bar: what the model is on the left, the live
+ * readouts on the right, drawn on the same inverted ground as the rail.
  *
  * **Why inverted.** The bar is the composer's chrome, not its content.
  * A terminal has no borders-and-shadows to say "this strip is a
@@ -17,12 +15,17 @@ import { theme } from "../theme/theme.js";
  * the whole point of the change.
  *
  * The ground is one `backgroundColor` on the bar container, which Ink 7
- * paints across the empty space between the meta text and the buttons —
+ * paints across the empty space between the meta text and the readouts —
  * no filler cells, and no risk of the row growing taller than it looks.
  *
+ * Send used to live here, at the far right. It moved into the field
+ * itself (`composer-send-button.tsx`): the bar's right end is where a
+ * status readout belongs, and the app's primary verb belongs next to
+ * the text it submits.
+ *
  * **A caveat about the slots.** `leftSlot` / `rightSlot` arrive from the
- * chat surface already coloured (the LLM health pill, the context-window
- * counter), and those colours were chosen against the *normal* ground.
+ * chat surface already coloured (the LLM health pill, the while-busy
+ * hint), and those colours were chosen against the *normal* ground.
  * On the rail ground they read as low-contrast secondary text — which is
  * what they are — but on `github-dark` and `catppuccin-mocha` the muted
  * tone is close enough to the light rail ground to be genuinely faint.
@@ -35,15 +38,16 @@ export interface PromptMetaBarProps {
   leftSlot: ReactElement | null;
   model: string | null;
   provider: string | null;
-  /** Chat-surface content rendered just before the buttons. */
+  /** Chat-surface content rendered at the bar's right end. */
   rightSlot: ReactElement | null;
-  /** Whether Send has something to send; drives the primary/ghost look. */
-  canSend: boolean;
-  onSend: () => void;
+  /**
+   * The context readout, rendered at the bar's right end. Its own prop
+   * rather than part of `rightSlot` because the two coexist: while a
+   * turn runs `rightSlot` carries the Enter-routing hint, and the window
+   * is exactly as worth watching then as when the composer is idle.
+   */
+  contextSlot: ReactElement | null;
 }
-
-/** Labels carry their own padding so the chip's ground reads as a button. */
-const SEND_LABEL = " send → ";
 
 const MODEL_LABEL_MAX_LEN = 32;
 
@@ -60,8 +64,7 @@ export function PromptMetaBar({
   model,
   provider,
   rightSlot,
-  canSend,
-  onSend,
+  contextSlot,
 }: PromptMetaBarProps): ReactElement {
   return (
     <Box
@@ -71,14 +74,14 @@ export function PromptMetaBar({
       paddingX={1}
       // Matches the buffer's own padding above. The rows carry no
       // foreground, so the bar's ground paints straight through them and
-      // the model name and Send button sit inside a block rather than on
-      // a stripe.
+      // the model name and the readouts sit inside a block rather than
+      // on a stripe.
       paddingY={1}
     >
       {/*
         The meta group is the only thing allowed to give up columns: at
-        60 the buttons must survive intact, because a half-drawn button
-        is worse than a truncated model name.
+        60 the right-hand readout must survive intact, because a
+        half-drawn chip is worse than a truncated model name.
       */}
       <Box flexShrink={1} minWidth={0}>
         <MetaLeft leftSlot={leftSlot} model={model} provider={provider} />
@@ -89,72 +92,9 @@ export function PromptMetaBar({
             {rightSlot}
           </Box>
         ) : null}
-        <ComposerButton label={SEND_LABEL} primary enabled={canSend} onPress={onSend} />
+        {contextSlot ?? null}
       </Box>
     </Box>
-  );
-}
-
-interface ComposerButtonProps {
-  label: string;
-  /** Filled in the accent colour — the bar's one primary action. */
-  primary?: boolean;
-  /** A disabled button still renders: it says the affordance exists. */
-  enabled: boolean;
-  onPress: () => void;
-}
-
-/**
- * One button chip.
- *
- * Every colour here is a *pair* taken from the theme rather than a
- * literal, and each pair is one the palette already guarantees to be
- * opposite: `border` against `railBackground`, `accent` against
- * `railForeground`. That is what keeps the chips legible across all
- * eleven palettes without a per-theme table — the tokens flip polarity
- * with the theme, so the contrast holds on light and dark alike.
- *
- * A disabled Send drops its ground entirely and dims to `railMuted`,
- * which is the terminal's version of a ghost button: still there, still
- * labelled, visibly not pressable.
- */
-function ComposerButton({
-  label,
-  primary = false,
-  enabled,
-  onPress,
-}: ComposerButtonProps): ReactElement {
-  const background = !enabled
-    ? theme.colors.badgeBackground
-    : primary
-      ? theme.colors.chipBackground
-      : theme.colors.border;
-  const foreground = !enabled
-    ? theme.colors.muted
-    : primary
-      ? theme.colors.chipForeground
-      : theme.colors.chipBackground;
-  const chip = (
-    <Text backgroundColor={background} color={foreground} bold={enabled}>
-      {label}
-    </Text>
-  );
-  const mouse = useMouseCommands();
-  // No provider (component tests, the wizard's separate Ink tree) or
-  // nothing to do: render the label and stop. Registering a target that
-  // swallows the click without acting would be worse than no target.
-  if (!mouse || !enabled) return chip;
-  return (
-    <MouseTarget
-      flexShrink={0}
-      onMouse={(hit) => {
-        if (!isPrimaryPress(hit.event)) return false;
-        onPress();
-        return true;
-      }}
-    >
-      {chip}
-    </MouseTarget>
   );
 }
 

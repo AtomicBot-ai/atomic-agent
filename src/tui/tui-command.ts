@@ -185,6 +185,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
     browserHeadless: config.browser.headless,
     approvalLevel,
     maxSteps,
+    completionMaxTokens: config.localModels.completionMaxTokens,
     skillCount: runtime.skillCatalog.length,
     // Read after the startup gate, so a local model picked in the wizard
     // moments ago already counts as configured for this launch.

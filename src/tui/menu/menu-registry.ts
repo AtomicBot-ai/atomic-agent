@@ -377,6 +377,18 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "session.context",
+    label: "Context window",
+    group: "session",
+    slash: {
+      name: "context",
+      description:
+        "show where this session's context window went",
+      rank: 36,
+    },
+  },
+  {
+    kind: "action",
     id: "session.id",
     label: "Show session id",
     group: "session",

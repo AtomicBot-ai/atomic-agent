@@ -1,3 +1,4 @@
+import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
 import type {
@@ -211,6 +212,58 @@ export interface RollingMetrics {
   toolsError: number;
 }
 
+/**
+ * What the last built prompt actually put in the model's context window.
+ *
+ * Deliberately **not** part of `RollingMetrics`: those are reset at the
+ * top of every turn (`startNewRun`), which is exactly wrong for a
+ * readout that answers "how full is the window right now". The window
+ * does not empty when you press Enter.
+ *
+ * Every field is a snapshot of the most recent `prompt_built`, refined by
+ * the completion's own token count when the provider reports one.
+ */
+export interface ContextUsageState {
+  /**
+   * Tokens in the last prompt. An estimate at `prompt_built` time
+   * (`estimateTokens` over-counts by design), replaced by the real
+   * tokenizer count once the step completes and the provider reports
+   * `promptTokens`.
+   */
+  tokens: number | null;
+  /**
+   * Physical window the prompt was built against, when the runtime knows
+   * it. `null` on cloud providers, where the model profile carries no
+   * window — the chip resolves those from the model catalogue instead.
+   */
+  contextWindow: number | null;
+  /** Turns `packConversation` dropped to make the transcript fit. */
+  droppedTurns: number;
+  /** Tokens the `### conversation` section actually rendered to. */
+  conversationTokens: number;
+  /**
+   * Ceiling that section is packed to — `conversationCapEffective`. The
+   * one number that says when older turns start being dropped, and the
+   * only budget figure that is defined even when nobody knows the
+   * physical window (the clamp falls back to the configured cap).
+   */
+  conversationCap: number | null;
+  /**
+   * The cap as configured (`agent.conversationMaxTokens`), before the
+   * window clamp. Equal to `conversationCap` when config is what binds;
+   * larger when the window is. That comparison is the only way to tell
+   * an operator which knob actually moves their limit.
+   */
+  conversationCapConfigured: number | null;
+  /** Per-section breakdown, for the detail view. Empty before the first prompt. */
+  sections: readonly ContextUsageSection[];
+}
+
+export interface ContextUsageSection {
+  label: string;
+  tokens: number;
+}
+
 export interface TuiSessionInfo {
   sessionId: string | null;
   workingDir: string;
@@ -220,6 +273,13 @@ export interface TuiSessionInfo {
   /** Live approval ladder position (1 = ask for everything … 5 = full trust). */
   approvalLevel: number;
   maxSteps: number;
+  /**
+   * Tokens the runtime holds back for the model's own reply
+   * (`localModels.completionMaxTokens`). Not part of the prompt, but the
+   * reason the prompt cannot grow into the last of the window — so the
+   * context panel accounts for it separately from free space.
+   */
+  completionMaxTokens: number;
   skillCount: number;
   /**
    * Whether the user actually opted into a local backend (see
@@ -319,6 +379,8 @@ export interface TuiState {
   worldSnapshot: WorldSnapshot | null;
   latestResult: LatestResult | null;
   metrics: RollingMetrics;
+  /** Live context-window occupancy, driving the composer's context chip. */
+  contextUsage: ContextUsageState;
   logs: LogRecord[];
   /** Top-level UI mode (chat vs debug). */
   uiMode: TuiUiMode;
@@ -367,6 +429,8 @@ export interface TuiState {
    * every node regardless of where it lives.
    */
   menuOpen: boolean;
+  /** The composer's context detail panel floats over the chat. */
+  contextPanelOpen: boolean;
   menuPath: string | null;
   menuQuery: string;
   menuCursor: number;
@@ -574,6 +638,7 @@ export function createInitialTuiState(
       toolsOk: 0,
       toolsError: 0,
     },
+    contextUsage: EMPTY_CONTEXT_USAGE,
     logs: [],
     uiMode: layout?.uiMode ?? "chat",
     themeName: getActiveThemeName(),
@@ -588,6 +653,7 @@ export function createInitialTuiState(
     slashQuery: "",
     slashPaletteCursor: 0,
     menuOpen: false,
+    contextPanelOpen: false,
     menuPath: null,
     menuQuery: "",
     menuCursor: 0,

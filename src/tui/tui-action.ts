@@ -132,6 +132,9 @@ export type TuiAction =
   | { type: "slash_palette_closed" }
   | { type: "menu_opened" }
   | { type: "menu_closed" }
+  /** Flip the composer's context detail panel (chip click, `/context`). */
+  | { type: "context_panel_toggled" }
+  | { type: "context_panel_closed" }
   | { type: "menu_query_changed"; query: string }
   | { type: "menu_cursor_moved"; delta: number }
   | { type: "menu_cursor_set"; cursor: number }
