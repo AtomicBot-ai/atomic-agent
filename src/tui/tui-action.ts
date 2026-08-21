@@ -30,6 +30,11 @@ export type TuiAction =
   | { type: "agent_event"; event: AgentLoopEvent }
   | { type: "approval_requested"; request: ApprovalRequest }
   | { type: "approval_resolved"; approvalId: string; approved: boolean }
+  /** `[e]` on an approval prompt: open the target field seeded with `path`. */
+  | { type: "approval_path_edit_opened"; path: string }
+  | { type: "approval_path_edit_changed"; value: string }
+  /** Esc in the target field, or the decision that closed the prompt. */
+  | { type: "approval_path_edit_closed" }
   | { type: "metric"; sample: MetricSample }
   | { type: "log"; record: LogRecord }
   | { type: "skill_count_changed"; count: number }

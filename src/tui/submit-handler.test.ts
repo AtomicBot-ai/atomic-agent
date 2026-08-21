@@ -33,6 +33,56 @@ function stubCallbacks(
   };
 }
 
+describe("handleEditorSubmit under an approval prompt", () => {
+  function pendingState(): TuiState {
+    return {
+      ...createInitialTuiState(fakeSession()),
+      pendingApproval: {
+        approvalId: "ap-1",
+        sessionId: "s1",
+        tool: "os.fs.write",
+        category: "fs_write_workspace",
+        reason: "replace 1337 bytes into /work/site/index.html",
+        redirectablePath: "/work/site/index.html",
+      },
+    };
+  }
+
+  it("answers the prompt with the message instead of starting a turn", () => {
+    // The operator typed prose while a call was blocked: that denies
+    // the call *with their words* and redirects the running turn — the
+    // point being that the run survives.
+    const onApprovalReply = vi.fn();
+    const onMessageSubmitted = vi.fn();
+    const dispatched: Array<{ type: string }> = [];
+    handleEditorSubmit(
+      "put it in ~/Documents/apple-site instead",
+      pendingState(),
+      ((a: { type: string }) => dispatched.push(a)) as never,
+      stubCallbacks({ onApprovalReply, onMessageSubmitted }),
+    );
+    expect(onApprovalReply).toHaveBeenCalledWith(
+      "ap-1",
+      "put it in ~/Documents/apple-site instead",
+    );
+    expect(onMessageSubmitted).not.toHaveBeenCalled();
+    expect(dispatched.map((a) => a.type)).toContain("message_steered");
+  });
+
+  it("keeps slash commands local instead of answering the prompt with them", () => {
+    // `/privacy` under a prompt is still `/privacy`; sending it to the
+    // model as a denial reason would be nonsense.
+    const onApprovalReply = vi.fn();
+    handleEditorSubmit(
+      "/clear",
+      pendingState(),
+      (() => {}) as never,
+      stubCallbacks({ onApprovalReply }),
+    );
+    expect(onApprovalReply).not.toHaveBeenCalled();
+  });
+});
+
 describe("handleEditorSubmit", () => {
   it("runs a registered command from the buffer even when the palette is closed", () => {
     const state = createInitialTuiState(fakeSession());

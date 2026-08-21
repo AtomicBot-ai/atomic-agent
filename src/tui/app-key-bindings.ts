@@ -36,6 +36,19 @@ export interface AppKeyCallbacks {
    * request's whole category, `"shape"` (`a`, shell only) silences the
    * request's command binary. Absent = this call only (`y`).
    */
+  /**
+   * Approve the pending call at a target the operator typed instead of
+   * the one proposed. The runtime hands the raw string to the tool,
+   * which resolves and re-categorises it — see `os.fs.write`.
+   */
+  onApprovalRetarget?(approvalId: string, path: string): void;
+  /**
+   * A chat message submitted while an approval prompt is up. It denies
+   * that one call with the message as its reason (so the model reads
+   * the operator's words as the tool result) and lands the same text in
+   * the running turn.
+   */
+  onApprovalReply?(approvalId: string, message: string): void;
   onApprovalDecision(
     approvalId: string,
     approved: boolean,
@@ -600,37 +613,122 @@ export function decideApproval(
   }
 }
 
+/** What a keystroke means to the approval prompt, if anything. */
+export type ApprovalHotkey =
+  | "approve"
+  | "grant_category"
+  | "grant_shape"
+  | "edit_path"
+  | "deny"
+  | "abort";
+
+/**
+ * Resolve a keystroke against the pending approval prompt — the single
+ * place that decides whether a key is a *decision* or ordinary *text*.
+ *
+ * The chat composer stays live while a prompt is up (that is how an
+ * operator answers the agent in words instead of a verdict), so `y` is
+ * ambiguous by construction. It is resolved by the buffer: with nothing
+ * typed the letters decide, and from the first character on every key
+ * is text and Enter sends it. Esc follows the same rule — with a draft
+ * in the buffer it belongs to the editor (clear the draft) and only an
+ * empty buffer lets it abort the run.
+ *
+ * Both key layers consult this: `handleApprovalKey` to act, and the
+ * composer's `claimKey` guard to stand down. One function, so the two
+ * can never disagree and double-handle a keystroke.
+ */
+export function approvalHotkey(
+  state: TuiState,
+  input: string,
+  key: Key,
+): ApprovalHotkey | null {
+  const request = state.pendingApproval;
+  if (!request) return null;
+  // The target field owns every key while it is open.
+  if (state.approvalPathDraft !== null) return null;
+  // A ctrl/meta-modified key was never aimed at the y/n/esc prompt —
+  // letting it through turns a global chord (ctrl+n) into a silent deny.
+  if (key.ctrl || key.meta) return null;
+  if (state.inputValue.length > 0) return null;
+  if (key.escape) return "abort";
+  const lower = input.toLowerCase();
+  if (lower === "y") return "approve";
+  if (lower === "s" && canGrantCategory(request)) return "grant_category";
+  if (lower === "a" && canGrantShape(request)) return "grant_shape";
+  if (lower === "e" && canEditPath(request)) return "edit_path";
+  if (lower === "n") return "deny";
+  return null;
+}
+
+/** Whether this request offers a retarget (`[e]`). */
+export function canEditPath(request: ApprovalRequest): boolean {
+  return typeof request.redirectablePath === "string"
+    && request.redirectablePath.length > 0;
+}
+
+/**
+ * Approve the pending call at `path` instead of the proposed target.
+ * The prompt closes here; whether that path needs another prompt is the
+ * tool's call, not the UI's — a target on a different rung of the
+ * ladder comes back as a fresh request.
+ */
+export function submitApprovalPath(
+  request: ApprovalRequest,
+  path: string,
+  ctx: {
+    dispatch: (action: TuiAction) => void;
+    callbacks: Pick<AppKeyCallbacks, "onApprovalRetarget">;
+  },
+): void {
+  ctx.callbacks.onApprovalRetarget?.(request.approvalId, path);
+  ctx.dispatch({ type: "approval_path_edit_closed" });
+  ctx.dispatch({
+    type: "approval_resolved",
+    approvalId: request.approvalId,
+    approved: true,
+  });
+}
+
 function handleApprovalKey(
   input: string,
   key: Key,
   request: ApprovalRequest,
   ctx: AppKeyContext,
 ): boolean {
-  // A ctrl/meta-modified key was never aimed at the y/n/esc prompt —
-  // letting it through turns a global chord (ctrl+n) into a silent deny.
-  if (key.ctrl || key.meta) return false;
-  const lower = input.toLowerCase();
-  if (lower === "y") {
-    decideApproval(request, true, ctx);
-    return true;
-  }
-  if (lower === "s" && canGrantCategory(request)) {
-    decideApproval(request, true, ctx, "category");
-    return true;
-  }
-  if (lower === "a" && canGrantShape(request)) {
-    decideApproval(request, true, ctx, "shape");
-    return true;
-  }
-  if (lower === "n") {
-    decideApproval(request, false, ctx);
-    return true;
-  }
-  if (key.escape || (key.ctrl && input === "c")) {
+  // Ctrl+C keeps aborting even with a draft in the buffer: it is the
+  // "stop everything" key, not a prompt answer.
+  if (key.ctrl && input === "c") {
     decideApproval(request, false, ctx);
     ctx.callbacks.onAbort();
     ctx.dispatch({ type: "abort_requested" });
     return true;
   }
-  return false;
+  switch (approvalHotkey(ctx.state, input, key)) {
+    case "approve":
+      decideApproval(request, true, ctx);
+      return true;
+    case "grant_category":
+      decideApproval(request, true, ctx, "category");
+      return true;
+    case "grant_shape":
+      decideApproval(request, true, ctx, "shape");
+      return true;
+    case "edit_path":
+      ctx.dispatch({
+        type: "approval_path_edit_opened",
+        path: request.redirectablePath ?? "",
+      });
+      return true;
+    case "deny":
+      decideApproval(request, false, ctx);
+      return true;
+    case "abort":
+      decideApproval(request, false, ctx);
+      ctx.callbacks.onAbort();
+      ctx.dispatch({ type: "abort_requested" });
+      return true;
+    default:
+      return false;
+  }
 }

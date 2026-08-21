@@ -85,6 +85,19 @@ export function handleEditorSubmit(
     return;
   }
 
+  // A prompt is waiting for a verdict and the operator typed prose
+  // instead. That IS the verdict: this one call is denied with their
+  // words as the reason — so the model reads "put it in ~/Documents"
+  // rather than a bare refusal — and the same text lands in the running
+  // turn, which keeps going. Slash commands are handled above and stay
+  // local to the TUI, so `/privacy` under a prompt is still just
+  // `/privacy`.
+  if (state.pendingApproval && callbacks.onApprovalReply) {
+    dispatch({ type: "message_steered", text: trimmed });
+    callbacks.onApprovalReply(state.pendingApproval.approvalId, trimmed);
+    return;
+  }
+
   // A turn is already in flight. Two ways to land the message, chosen
   // by `whileBusyMode` (Ctrl+T, or `/steer` / `/queue` for one message):
   //   steer — fold it into the running turn at its next step boundary

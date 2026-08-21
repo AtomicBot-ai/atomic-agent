@@ -30,6 +30,14 @@ export interface ApprovalRequest {
    * the shape option is not offered.
    */
   commandShape?: string;
+  /**
+   * Absolute path this request would write, when the host may offer to
+   * retarget it before approving (`[e]` in the TUI). Set only by tools
+   * whose target is a free choice rather than a file the model just
+   * read — currently `os.fs.write`. Absent means "no redirect offered",
+   * and a host that ignores the field behaves exactly as before.
+   */
+  redirectablePath?: string;
 }
 
 /**
@@ -49,6 +57,15 @@ export interface ApprovalDecision {
   reason?: string;
   /** Session grant to record alongside an approval. Ignored when denied. */
   grant?: ApprovalGrantScope;
+  /**
+   * Operator-supplied replacement for the request's `redirectablePath`,
+   * approved along with the call. The gate passes it through untouched:
+   * it is the *tool* that resolves it, re-categorises it, and decides
+   * whether the new target needs another prompt — the gate never lets a
+   * decision widen the scope it was asked about. Ignored when denied,
+   * and by every tool that did not set `redirectablePath`.
+   */
+  pathOverride?: string;
 }
 
 export type ApprovalEmitter = (request: ApprovalRequest) => void;
