@@ -80,6 +80,7 @@ import { handleProvidersTabKey } from "./providers/providers-key-bindings.js";
 import { handleTelegramTabKey } from "./telegram/telegram-key-bindings.js";
 import { handlePrivacyTabKey } from "./privacy/privacy-key-bindings.js";
 import { MouseProvider } from "./mouse/mouse-context.js";
+import { isPrimaryPress } from "./mouse/mouse-event.js";
 import {
   MOUSE_LAYER_BASE,
   MOUSE_LAYER_MODAL,
@@ -709,6 +710,7 @@ export function TuiApp({
   // raising the floor stops a click from reaching the list rendered
   // behind it. Same predicate the key layer gates on.
   const modalOwnsInput =
+    state.menuOpen ||
     Boolean(state.pendingApproval) ||
     Boolean(state.updatePrompt) ||
     state.updateStatus === "done" ||
@@ -750,6 +752,33 @@ export function TuiApp({
         ref: contentMouseRef,
         layer: MOUSE_LAYER_BASE,
         handler: (hit) => wheelHandlerRef.current(hit),
+      }),
+    [registry],
+  );
+
+  /**
+   * The menu's backdrop. Registered on the same root box as the wheel
+   * target but at the modal layer, so it is eligible exactly while the
+   * menu owns input — and, being the largest box on that layer, it is
+   * sorted last: every target inside the popup gets the event first.
+   * That ordering is what makes "click outside to close" safe to state
+   * as one rule instead of a list of exceptions.
+   */
+  const menuBackdropHandler = (hit: MouseHit): boolean => {
+    if (!state.menuOpen) return false;
+    if (hit.event.kind === "wheel") return true;
+    if (!isPrimaryPress(hit.event)) return false;
+    dispatch({ type: "menu_closed" });
+    return true;
+  };
+  const menuBackdropRef = useRef(menuBackdropHandler);
+  menuBackdropRef.current = menuBackdropHandler;
+  useEffect(
+    () =>
+      registry.register({
+        ref: contentMouseRef,
+        layer: MOUSE_LAYER_MODAL,
+        handler: (hit) => menuBackdropRef.current(hit),
       }),
     [registry],
   );

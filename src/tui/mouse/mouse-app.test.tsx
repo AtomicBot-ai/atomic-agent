@@ -229,23 +229,22 @@ describe("TuiApp mouse", () => {
       () => app.frame().includes("SESSIONS"),
       "the rail on screen",
     );
-    await clickUntil(
-      app.mouse,
-      () => {
-        const at = locate(app.frame(), "❯");
-        return { x: at.x + 2, y: at.y };
-      },
-      () => true,
-      "click in the prompt",
-    );
-    // The proof is that typing lands in the buffer rather than driving
-    // the rail's cursor.
-    app.stdin.write("typed");
-    await waitUntil(
-      () => app.frame().includes("typed"),
-      "the character typed into the prompt",
-    );
-    expect(app.frame()).toContain("typed");
+    // Click, then try to type: the proof is that a character lands in the
+    // buffer instead of being swallowed by the rail's key handler. The
+    // pair is retried together because a click that arrives before the
+    // target's registration effect has flushed simply does nothing —
+    // clicking once and then asserting is what made this flaky under a
+    // loaded test run.
+    let landed = false;
+    for (let attempt = 0; attempt < 25 && !landed; attempt += 1) {
+      const at = locate(app.frame(), "❯");
+      app.mouse.emit(click(at.x + 2, at.y));
+      await delay(60);
+      app.stdin.write("z");
+      await delay(60);
+      landed = app.frame().includes("z");
+    }
+    expect(landed).toBe(true);
     app.unmount();
   });
 
@@ -270,6 +269,88 @@ describe("TuiApp mouse", () => {
     );
     expect(app.frame()).toContain("hi!");
     app.unmount();
+  });
+
+  /**
+   * The menu is the app's one modal surface, so its mouse rules are the
+   * ones an operator will try first: spin to scroll, click a row to run
+   * it, click away to dismiss.
+   */
+  describe("operator menu", () => {
+    const openMenu = async (app: ReturnType<typeof mountApp>): Promise<void> => {
+      await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
+      app.stdin.write(String.fromCharCode(16));
+      await waitUntil(() => app.frame().includes("MENU"), "the menu");
+    };
+    /** The row the ▶ marker is sitting on. */
+    const selected = (app: ReturnType<typeof mountApp>): string =>
+      app
+        .frame()
+        .split("\n")
+        .find((line) => line.includes("▶"))
+        ?.replace(/.*▶\s*/, "")
+        .trim() ?? "";
+
+    it("walks the cursor with the wheel", async () => {
+      const app = mountApp();
+      await openMenu(app);
+      expect(selected(app)).toContain("Run");
+      const at = locate(app.frame(), "MENU");
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        app.mouse.emit(wheel("down", at.x + 4, at.y + 3));
+        await delay(40);
+        if (!selected(app).includes("Run")) break;
+      }
+      expect(selected(app)).toContain("Toggle debug pane");
+      // And back up again: one notch, one row, the same as the keys.
+      app.mouse.emit(wheel("up", at.x + 4, at.y + 3));
+      await waitUntil(() => selected(app).includes("Run"), "the cursor back on Run");
+      app.unmount();
+    });
+
+    it("runs the row that is clicked", async () => {
+      const app = mountApp();
+      await openMenu(app);
+      await clickUntil(
+        app.mouse,
+        () => {
+          const at = locate(app.frame(), "Toggle debug pane");
+          return { x: at.x + 2, y: at.y };
+        },
+        () => !app.frame().includes("MENU"),
+        "click a menu row",
+      );
+      // Acting closes the menu — the row ran rather than just selecting.
+      expect(app.frame()).not.toContain("MENU");
+      app.unmount();
+    });
+
+    it("closes when the click lands outside the panel", async () => {
+      const app = mountApp();
+      await openMenu(app);
+      // Top-left of the viewport: the status bar, well clear of a popup
+      // that is centred in the pane.
+      await clickUntil(
+        app.mouse,
+        () => ({ x: 0, y: 0 }),
+        () => !app.frame().includes("MENU"),
+        "click outside the menu",
+      );
+      expect(app.frame()).not.toContain("MENU");
+      app.unmount();
+    });
+
+    it("stays open when the click lands on the panel's own chrome", async () => {
+      const app = mountApp();
+      await openMenu(app);
+      // The title row is inside the popup: clicking it must not fall
+      // through to the backdrop.
+      const at = locate(app.frame(), "MENU");
+      app.mouse.emit(click(at.x, at.y));
+      await delay(120);
+      expect(app.frame()).toContain("MENU");
+      app.unmount();
+    });
   });
 
   it("moves a panel cursor with the wheel", async () => {

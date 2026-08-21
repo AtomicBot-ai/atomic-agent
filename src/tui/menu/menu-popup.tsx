@@ -1,7 +1,12 @@
 import { Box, Text } from "ink";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 
-import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
+import {
+  MouseTarget,
+  useMouseCommands,
+  useMouseTarget,
+  type MouseContextValue,
+} from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import { chromeTheme } from "../theme/theme.js";
@@ -98,16 +103,14 @@ export function MenuPopup({
   const offsetTop = Math.max(0, Math.floor((availableRows - height) / 2));
   const offsetLeft = Math.max(0, Math.floor((availableColumns - width) / 2));
 
+  const itemCount = itemIndexes.length;
   return (
-    <Box
-      position="absolute"
-      marginTop={offsetTop}
-      marginLeft={offsetLeft}
-      borderStyle="round"
-      borderColor={chromeTheme.colors.railMuted}
-      backgroundColor={chromeTheme.colors.railBackground}
+    <PopupFrame
+      offsetTop={offsetTop}
+      offsetLeft={offsetLeft}
       width={width}
-      flexDirection="column"
+      cursor={cursor}
+      itemCount={itemCount}
     >
       <TitleRow state={state} inner={inner} />
       {visible.map((row, idx) =>
@@ -135,8 +138,88 @@ export function MenuPopup({
       <Text color={chromeTheme.colors.railMuted}>
         {fit(` ${footer(state, hiddenAfter)}`, inner)}
       </Text>
+    </PopupFrame>
+  );
+}
+
+/**
+ * The popup's own box, plus the mouse behaviour that belongs to the
+ * panel rather than to any one row:
+ *
+ * - **Wheel** walks the cursor. The visible window is derived from the
+ *   cursor, so moving it *is* scrolling — one notch, one row, the same
+ *   as ↑/↓, which keeps the wheel and the keys on one model.
+ * - **Press** is claimed and dropped. Clicking the border, the title or
+ *   the footer must not fall through to the backdrop, which closes the
+ *   menu: a click inside the panel that shuts it would be the opposite
+ *   of what the operator meant.
+ *
+ * Row targets are smaller boxes on the same layer, so the registry
+ * offers them the event first (see `MouseTargetRegistry.dispatch`).
+ */
+function PopupFrame({
+  offsetTop,
+  offsetLeft,
+  width,
+  cursor,
+  itemCount,
+  children,
+}: {
+  offsetTop: number;
+  offsetLeft: number;
+  width: number;
+  cursor: number;
+  itemCount: number;
+  children: ReactNode;
+}): ReactElement {
+  const mouse = useMouseCommands();
+  // The ref goes on the popup box itself rather than on a `MouseTarget`
+  // wrapper: the box is absolutely positioned, and an extra Box between
+  // it and the pane would take the offsets with it.
+  const ref = useMouseTarget(
+    (hit) => {
+      if (!mouse) return false;
+      if (hit.event.kind === "wheel") {
+        moveMenuCursor(
+          mouse,
+          hit.event.wheel === "up" ? -1 : 1,
+          cursor,
+          itemCount,
+        );
+        return true;
+      }
+      return isPrimaryPress(hit.event);
+    },
+    { layer: MOUSE_LAYER_MODAL },
+  );
+  return (
+    <Box
+      ref={ref}
+      position="absolute"
+      marginTop={offsetTop}
+      marginLeft={offsetLeft}
+      borderStyle="round"
+      borderColor={chromeTheme.colors.railMuted}
+      backgroundColor={chromeTheme.colors.railBackground}
+      width={width}
+      flexDirection="column"
+    >
+      {children}
     </Box>
   );
+}
+
+/** One wheel notch, clamped — the list does not wrap on ↑/↓ either. */
+function moveMenuCursor(
+  mouse: MouseContextValue,
+  delta: number,
+  cursor: number,
+  itemCount: number,
+): void {
+  if (itemCount === 0) return;
+  const next = Math.max(0, Math.min(itemCount - 1, cursor + delta));
+  if (next === cursor) return;
+  mouse.dispatch({ type: "menu_cursor_set", cursor: next });
 }
 
 function TitleRow({
