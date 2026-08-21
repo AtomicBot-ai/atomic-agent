@@ -177,9 +177,11 @@ function buildManageTabs(state: TuiState): SubTab[] {
 export const APP_CHROME_ROWS_BASE = 3;
 /**
  * Rows the `PromptShell` costs when it is mounted: a top margin, the
- * rounded frame's two border rows, the editor line and the action bar.
+ * rounded frame's two border rows, a blank row above and below the
+ * buffer, the editor line, and the action bar with a blank row above and
+ * below it too.
  */
-export const COMPOSER_ROWS = 6;
+export const COMPOSER_ROWS = 10;
 /**
  * Height consumed by the always-on app frame OUTSIDE the debug pane.
  * Ink 7 does NOT clip a frame taller than the terminal — it overlaps /

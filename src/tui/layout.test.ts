@@ -92,11 +92,18 @@ describe("computeSidebarRowBudget", () => {
     // panes shrink together rather than one starving the other.
     // `+ new` moved onto the Sessions header and gave a row back; the
     // blank that lifts the Menu button off the rail's bottom edge took
-    // it again, so 24 rows still leaves 9 usable.
+    // it again. The brand mark then went from four rows to the
+    // guidelines' five, and the gap under it from one row to three, so
+    // 24 rows now leaves 6 usable rather than 9.
     const budget = computeSidebarRowBudget(24);
-    expect(budget.sessions).toBe(6);
-    expect(budget.tasks).toBe(3);
-    expect(budget.sessions).toBe(budget.tasks * 2);
+    expect(budget.sessions).toBe(4);
+    expect(budget.tasks).toBe(2);
+    // 27 rows is the nearest height whose usable rows divide evenly, so
+    // assert the ratio itself there rather than on a remainder.
+    const even = computeSidebarRowBudget(27);
+    expect(even.sessions).toBe(6);
+    expect(even.tasks).toBe(3);
+    expect(even.sessions).toBe(even.tasks * 2);
     const tall = computeSidebarRowBudget(40);
     expect(tall.sessions).toBe(10);
     expect(tall.tasks).toBe(5);
@@ -130,13 +137,13 @@ describe("computeSidebarRowBudget", () => {
 
 describe("computeChatViewportRows", () => {
   it("reserves the prompt chrome but never returns less than five rows", () => {
-    expect(computeChatViewportRows(40)).toBe(32);
+    expect(computeChatViewportRows(40)).toBe(28);
     expect(computeChatViewportRows(10)).toBe(4);
     expect(computeChatViewportRows(2)).toBe(4);
   });
 
   it("reserves more chrome on a narrow terminal, where it wraps", () => {
-    expect(computeChatViewportRows(24, 45)).toBe(12);
-    expect(computeChatViewportRows(24, 80)).toBe(16);
+    expect(computeChatViewportRows(24, 45)).toBe(8);
+    expect(computeChatViewportRows(24, 80)).toBe(12);
   });
 });

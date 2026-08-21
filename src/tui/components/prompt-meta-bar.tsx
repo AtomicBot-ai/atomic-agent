@@ -69,6 +69,11 @@ export function PromptMetaBar({
       justifyContent="space-between"
       backgroundColor={theme.colors.railBackground}
       paddingX={1}
+      // Matches the buffer's own padding above. The rows carry no
+      // foreground, so the bar's ground paints straight through them and
+      // the model name and Send button sit inside a block rather than on
+      // a stripe.
+      paddingY={1}
     >
       {/*
         The meta group is the only thing allowed to give up columns: at

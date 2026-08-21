@@ -44,7 +44,7 @@ const SIDEBAR_WIDTH_RATIO = 0.25;
  * asserts it comes to exactly `sessions + tasks + SIDEBAR_CHROME_ROWS`
  * rows.
  */
-export const SIDEBAR_CHROME_ROWS = 13;
+export const SIDEBAR_CHROME_ROWS = 16;
 
 /**
  * Rows the rail costs outside its own frame: the status bar above it
@@ -79,7 +79,7 @@ export const SIDEBAR_MIN_ROWS = SIDEBAR_RESERVED_ROWS + 2;
  * over the hint strip was drawn and then dropped for the same reason —
  * the composer's border already reads as the edge it would have drawn.
  */
-export const CHROME_ROWS = 8;
+export const CHROME_ROWS = 12;
 
 /**
  * Below this width the status bar, the hotkey hint strip and the prompt

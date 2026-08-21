@@ -37,10 +37,21 @@ export interface SplashSize {
 
 export type TipDescriptions = "full" | "short" | "none";
 
+/**
+ * Where the wordmark goes relative to the mark. `full` is 51 columns
+ * wide — parking a 46-column wordmark beside it needs 100 columns of
+ * chat surface, which is a 140-column terminal. Stacking it underneath
+ * needs only the mark's own width, so the big mark keeps its name on
+ * ordinary terminals instead of going anonymous above 100 columns.
+ */
+export type WordmarkPlacement = "beside" | "below" | "none";
+
 export interface SplashFit {
   /** Which brand mark to draw, or `"none"` when nothing fits. */
   logo: LogoChoice;
-  /** Whether the `ATOMIC AGENT` wordmark sits beside the mark. */
+  /** Where the `ATOMIC AGENT` wordmark sits, if it is drawn at all. */
+  wordmarkPlacement: WordmarkPlacement;
+  /** Whether the `ATOMIC AGENT` wordmark is drawn. */
   wordmark: boolean;
   /** Whether the "Local AI-First Agent" tagline is drawn. */
   tagline: boolean;
@@ -123,9 +134,9 @@ interface LogoMetrics {
  * fails if the two ever drift apart.
  */
 export const LOGO_METRICS: Readonly<Record<LogoVariant, LogoMetrics>> = {
-  full: { width: 34, height: 20 },
-  small: { width: 20, height: 12 },
-  mini: { width: 7, height: 4 },
+  full: { width: 51, height: 24 },
+  small: { width: 31, height: 14 },
+  mini: { width: 9, height: 5 },
 };
 
 /** `ATOMIC AGENT` half-block wordmark, plus the gap that precedes it. */
@@ -143,11 +154,71 @@ const MIN_TIPS = 3;
 /** One blank row separates the mark from the tip list. */
 const TIP_LIST_MARGIN_ROWS = 1;
 
+/**
+ * A row the splash never spends, so its content is always at least one
+ * row short of the pane it is rendered into.
+ *
+ * Without it the fit lands *exactly* on the pane height at roughly half
+ * of all terminal sizes — including all three at which the wordmark was
+ * reported truncated. Ink 7 overlaps rather than clips (see
+ * `../row-window.ts`), so at an exact fit any one-row disagreement
+ * between the budgeted viewport and the real pane — a wrapped hint
+ * strip, a terminal reporting one more row than it shows — is paid for
+ * by painting over a row that is already drawn, rather than by leaving
+ * a blank one empty.
+ *
+ * This is hardening, not a proven fix: the artwork itself is emitted
+ * intact at every size swept, so if the truncation survives it is
+ * downstream of the row data.
+ */
+const SPLASH_SLACK_ROWS = 1;
+
+/**
+ * Rows a stacked wordmark costs: one blank, its own two, and the
+ * tagline under it. Beside the mark all of that is free — the mark is
+ * taller than the wordmark and tagline together — so this is the only
+ * arrangement that has to pay for them.
+ */
+export const WORDMARK_STACK_ROWS = 4;
+
 const VARIANTS_WIDEST_FIRST: readonly LogoVariant[] = ["full", "small", "mini"];
 
-/** Width at which the mark and the wordmark fit side by side. */
-const FULL_WITH_WORDMARK_WIDTH =
-  LOGO_METRICS.full.width + WORDMARK_GAP + WORDMARK_WIDTH;
+/** Width at which `variant` and the wordmark fit side by side. */
+function lockupWidth(variant: LogoVariant): number {
+  return LOGO_METRICS[variant].width + WORDMARK_GAP + WORDMARK_WIDTH;
+}
+
+/**
+ * Marks big enough to carry the wordmark beside them. `mini` is nine
+ * columns; parked next to a 46-column wordmark it reads as a bullet
+ * point rather than a lockup.
+ */
+const WORDMARK_VARIANTS: readonly LogoVariant[] = ["full", "small"];
+
+/**
+ * Where `variant`'s wordmark can go on this surface, if anywhere.
+ * Beside it when both fit a line, stacked underneath when they do not
+ * but the rows are there, and nowhere when neither works.
+ */
+function placementFor(
+  variant: LogoVariant,
+  inner: number,
+  rows: number,
+): WordmarkPlacement {
+  if (!WORDMARK_VARIANTS.includes(variant)) return "none";
+  if (lockupWidth(variant) <= inner) return "beside";
+  if (
+    WORDMARK_WIDTH <= inner &&
+    LOGO_METRICS[variant].height +
+      WORDMARK_STACK_ROWS +
+      TIP_LIST_MARGIN_ROWS +
+      MIN_TIPS <=
+      rows
+  ) {
+    return "below";
+  }
+  return "none";
+}
 
 function maxLength(values: readonly string[]): number {
   return values.reduce((acc, value) => Math.max(acc, value.length), 0);
@@ -179,6 +250,22 @@ export function computeSplashFit(size: SplashSize): SplashFit {
   ) {
     index += 1;
   }
+  // A bigger mark is not worth going nameless for. If the mark we
+  // picked cannot carry the wordmark either way but the next size down
+  // can, step down. Without this the start page LOSES its name as the
+  // window grows — `full` is 24 rows and cannot stack the wordmark until
+  // 32 rows of chat surface, so 28 rows drew a nameless full mark while
+  // both 24 (small + wordmark) and 32 (full + wordmark) named the app.
+  // Mark-over-tips is the documented priority; mark-over-wordmark is not.
+  const nextDown = VARIANTS_WIDEST_FIRST[index + 1];
+  if (
+    nextDown !== undefined &&
+    placementFor(VARIANTS_WIDEST_FIRST[index]!, inner, rows) === "none" &&
+    placementFor(nextDown, inner, rows) !== "none"
+  ) {
+    index += 1;
+  }
+
   let logo: LogoChoice = VARIANTS_WIDEST_FIRST[index]!;
   if (
     LOGO_METRICS[VARIANTS_WIDEST_FIRST[index]!]!.height +
@@ -190,19 +277,29 @@ export function computeSplashFit(size: SplashSize): SplashFit {
     logo = "none";
   }
 
-  // The wordmark is a 46-column luxury; it only rides along with the
-  // full mark, and only once both fit side by side.
-  const wordmark = logo === "full" && inner >= FULL_WITH_WORDMARK_WIDTH;
+  // The wordmark is a 46-column luxury; it rides along only with a mark
+  // wide enough to balance it.
+  const wordmarkPlacement: WordmarkPlacement =
+    logo === "none" ? "none" : placementFor(logo, inner, rows);
+  const wordmark = wordmarkPlacement !== "none";
   const tagline = wordmark;
 
   const markRows =
-    logo === "none" ? 0 : LOGO_METRICS[logo].height + TIP_LIST_MARGIN_ROWS;
-  const spare = rows - markRows;
+    logo === "none"
+      ? 0
+      : LOGO_METRICS[logo].height +
+        (wordmarkPlacement === "below" ? WORDMARK_STACK_ROWS : 0) +
+        TIP_LIST_MARGIN_ROWS;
+  // Only when a mark is drawn: on a surface too small for one the tips
+  // are all there is, and spending one of two rows on slack costs half
+  // the page to guard artwork that is not on it.
+  const spare =
+    rows - markRows - (logo === "none" ? 0 : SPLASH_SLACK_ROWS);
   const tipCount = Math.max(0, Math.min(SPLASH_TIPS.length, spare));
   const visible = SPLASH_TIPS.slice(0, tipCount);
 
   if (visible.length === 0) {
-    return { logo, wordmark, tagline, tipCount: 0, labelWidth: 0, descriptions: "none" };
+    return { logo, wordmarkPlacement, wordmark, tagline, tipCount: 0, labelWidth: 0, descriptions: "none" };
   }
 
   const longestLabel = maxLength(visible.map((tip) => tip.label));
@@ -212,13 +309,13 @@ export function computeSplashFit(size: SplashSize): SplashFit {
   const budget = inner - TIP_PREFIX_WIDTH;
 
   if (budget >= TIP_LABEL_WIDE + longestFull) {
-    return { logo, wordmark, tagline, tipCount, labelWidth: TIP_LABEL_WIDE, descriptions: "full" };
+    return { logo, wordmarkPlacement, wordmark, tagline, tipCount, labelWidth: TIP_LABEL_WIDE, descriptions: "full" };
   }
   if (budget >= tightLabel + longestFull) {
-    return { logo, wordmark, tagline, tipCount, labelWidth: tightLabel, descriptions: "full" };
+    return { logo, wordmarkPlacement, wordmark, tagline, tipCount, labelWidth: tightLabel, descriptions: "full" };
   }
   if (budget >= tightLabel + longestShort) {
-    return { logo, wordmark, tagline, tipCount, labelWidth: tightLabel, descriptions: "short" };
+    return { logo, wordmarkPlacement, wordmark, tagline, tipCount, labelWidth: tightLabel, descriptions: "short" };
   }
-  return { logo, wordmark, tagline, tipCount, labelWidth: 0, descriptions: "none" };
+  return { logo, wordmarkPlacement, wordmark, tagline, tipCount, labelWidth: 0, descriptions: "none" };
 }

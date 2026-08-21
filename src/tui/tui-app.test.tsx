@@ -1,5 +1,5 @@
 import { render } from "ink-testing-library";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   makeTuiEventBus,
   TuiApp,
@@ -17,6 +17,36 @@ const SESSION: TuiSessionInfo = {
   maxSteps: 10,
   skillCount: 0,
 };
+
+/**
+ * The app pins its root height only on a TTY — see `rootHeight` in
+ * `tui-app.tsx`. Off a TTY that prop is dropped, every pane collapses to
+ * its own content, and the rendered frame is only as tall as whatever
+ * the splash happened to draw. Anything sized against the *terminal*
+ * rather than against that content — the menu popup, which caps itself
+ * at `menuPaneRows` — then overflows the collapsed pane and loses its
+ * footer. Vitest is not a TTY, so without this the smoke tests exercise
+ * a layout path production never takes, and assertions about overlay
+ * chrome silently depend on the splash's row count.
+ */
+let restoreIsTty: (() => void) | null = null;
+
+beforeEach(() => {
+  const original = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+  Object.defineProperty(process.stdout, "isTTY", {
+    value: true,
+    configurable: true,
+  });
+  restoreIsTty = () => {
+    if (original) Object.defineProperty(process.stdout, "isTTY", original);
+    else delete (process.stdout as { isTTY?: boolean }).isTTY;
+  };
+});
+
+afterEach(() => {
+  restoreIsTty?.();
+  restoreIsTty = null;
+});
 
 function noopCallbacks(): TuiAppCallbacks {
   return {

@@ -48,10 +48,10 @@ describe("SplashBanner fit", () => {
     expect(rendered.length).toBeLessThanOrEqual(size.rows);
     // A splash with no recognisable brand mark is not a splash — except
     // on a surface with no room for one, where drawing it anyway is the
-    // bug this file guards against. The mark is half-block art below
-    // full size, so match the glyphs rather than the source shading.
+    // bug this file guards against. The splash draws the ASCII stroke,
+    // so match `#` runs as well as the wordmark's block glyphs.
     if (size.rows >= 6) {
-      expect(rendered.join("\n")).toMatch(/ATOMIC AGENT|:::|[█▀▄]/u);
+      expect(rendered.join("\n")).toMatch(/ATOMIC AGENT|#{4}|[█▀▄]/u);
     }
   });
 
@@ -63,8 +63,8 @@ describe("SplashBanner fit", () => {
       </Box>,
     );
     const frame = lines(lastFrame() ?? "").join("\n");
-    expect(frame).toContain("::::::::::::::::::::::::::::::::::");
-    expect(frame).toContain("▄▀█ ▀█▀ █▀█");
+    expect(frame).toContain("#".repeat(45));
+    expect(frame).toContain("\u2584\u2580\u2588 \u2580\u2588\u2580 \u2588\u2580\u2588");
     expect(frame).toContain("Local AI-First Agent");
     expect(frame).toContain("/import");
   });
@@ -77,9 +77,10 @@ describe("SplashBanner fit", () => {
       </Box>,
     );
     const frame = lines(lastFrame() ?? "").join("\n");
-    // The mini mark is scaled from the full drawing, not a text stand-in.
-    expect(frame).toMatch(/[█▀▄]/u);
-    expect(frame).not.toContain("▄▀█ ▀█▀ █▀█");
+    // The mini mark is its own drawing, not a text stand-in — and it is
+    // the ASCII stroke, so it carries no block glyphs at all.
+    expect(frame).toMatch(/#{4}/u);
+    expect(frame).not.toContain("\u2584\u2580\u2588 \u2580\u2588\u2580 \u2588\u2580\u2588");
     expect(frame).toContain("/help");
     expect(frame).not.toContain("list all slash commands");
   });

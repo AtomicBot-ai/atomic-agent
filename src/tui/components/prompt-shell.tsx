@@ -110,8 +110,13 @@ export function PromptShell(props: PromptShellProps): ReactElement {
           Padding lives on the editor row, not on the frame: the action
           bar has to reach both borders for its ground to read as a
           toolbar rather than as a floating stripe.
+
+          `paddingY` gives the buffer a blank row above and below. The
+          rows carry no colour of their own, so the panel's
+          `badgeBackground` shows through them and they read as the
+          field's own padding rather than as gaps in it.
         */}
-        <Box paddingX={1} flexDirection="column">
+        <Box paddingX={1} paddingY={1} flexDirection="column">
           <MultiLineEditor
             {...editorProps}
             value={value}

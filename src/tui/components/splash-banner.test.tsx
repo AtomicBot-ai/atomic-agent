@@ -9,6 +9,13 @@ function strip(value: string): string {
     .replace(/\]8;;[^]*/g, "");
 }
 
+/**
+ * "Some brand mark is drawn." The splash uses the ASCII stroke and the
+ * rail the block one, so accept either — four or more `#` in a run is
+ * artwork, never prose.
+ */
+const MARK_GLYPHS = /#{4}|[█▀▄]/u;
+
 function frameAt(columns: number, rows: number): string {
   const { lastFrame } = render(<SplashBanner size={{ columns, rows }} />);
   return strip(lastFrame() ?? "");
@@ -17,11 +24,12 @@ function frameAt(columns: number, rows: number): string {
 describe("SplashBanner", () => {
   it("renders the plus-mark middle bar and the wordmark on a roomy surface", () => {
     const frame = frameAt(96, 40);
-    // Middle bar of the plus — longest uninterrupted `:` run in the art.
-    expect(frame).toContain("::::::::::::::::::::::::::::::::::");
+    // Middle bar of the cross — the widest solid run in the art. The
+    // splash draws the ASCII stroke, so this is `#`, not a block glyph.
+    expect(frame).toContain("#".repeat(45));
     // Both halves of the `ATOMIC AGENT` half-block wordmark.
-    expect(frame).toContain("▄▀█ ▀█▀ █▀█");
-    expect(frame).toContain("▄▀█ █▀▀ █▀▀");
+    expect(frame).toContain("\u2584\u2580\u2588 \u2580\u2588\u2580 \u2588\u2580\u2588");
+    expect(frame).toContain("\u2588\u2580\u2588  \u2588  \u2588\u2584\u2588");
     expect(frame).toContain("Local AI-First Agent");
   });
 
@@ -41,7 +49,11 @@ describe("SplashBanner", () => {
   });
 
   it("keeps the most useful tips when the surface is too short for all of them", () => {
-    const frame = frameAt(96, 16);
+    // 18 rows is where the list actually gives way: it buys the 14-row
+    // `small` mark and its wordmark, leaving three rows for tips. At 16
+    // rows the mark drops to `mini` and every tip fits again, which is
+    // the mark-over-tips priority, not a truncation.
+    const frame = frameAt(96, 18);
     expect(frame).toContain("/help");
     expect(frame).toContain("/sessions");
     // The tail of the list is what gives way first.
@@ -61,19 +73,19 @@ describe("SplashBanner", () => {
     // and Ink would paint it over the chat above. Tips win.
     const frame = frameAt(38, 4);
     expect(frame).toContain("/help");
-    expect(frame).not.toMatch(/:::|[█▀▄]/u);
+    expect(frame).not.toMatch(MARK_GLYPHS);
   });
 
   it("still shows a brand mark and a tip once there is room for both", () => {
     const frame = frameAt(38, 8);
-    expect(frame).toMatch(/:::|[█▀▄]/u);
+    expect(frame).toMatch(MARK_GLYPHS);
     expect(frame).toContain("/help");
   });
 
   it("measures the terminal itself when no size is given", () => {
     const { lastFrame } = render(<SplashBanner />);
     const frame = strip(lastFrame() ?? "");
-    expect(frame).toMatch(/:::|[█▀▄]/u);
+    expect(frame).toMatch(MARK_GLYPHS);
     expect(frame).toContain("/help");
   });
 

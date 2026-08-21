@@ -52,7 +52,12 @@ export function SplashBanner({ size }: SplashBannerProps = {}): ReactElement {
     <Box flexDirection="column" flexGrow={1} alignItems="center" paddingX={2}>
       <Box flexGrow={1} />
       {fit.logo === "none" ? null : (
-        <Logo variant={fit.logo} wordmark={fit.wordmark} tagline={fit.tagline} />
+        <Logo
+          variant={fit.logo}
+          wordmark={fit.wordmark}
+          tagline={fit.tagline}
+          placement={fit.wordmarkPlacement}
+        />
       )}
       {tips.length > 0 ? (
         <Box
