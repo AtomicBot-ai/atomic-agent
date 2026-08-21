@@ -10,6 +10,7 @@ import type { LocalModelsPanelState } from "../local-models/local-models-panel-s
 import { LLM_PANEL_MODES, type LlmPanelMode } from "../llm-panel/llm-panel-state.js";
 import { LlmModeRows } from "./llm-mode-rows.js";
 import { hasLlmModal, LlmPanelModals } from "./llm-panel-modals.js";
+import { renderProgressBar } from "./render-progress-bar.js";
 
 /**
  * Rows consumed by the full fixed chrome: RouteCard (~7) + ModeHeader (3)
@@ -322,11 +323,6 @@ function DownloadBanner({
       </Text>
     </Box>
   );
-}
-
-function renderProgressBar(percent: number, width: number): string {
-  const filled = Math.min(width, Math.round((percent / 100) * width));
-  return "=".repeat(filled) + " ".repeat(Math.max(0, width - filled));
 }
 
 function formatDownloadBytes(n: number): string {

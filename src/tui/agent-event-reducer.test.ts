@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import { reduceTuiState, type TuiAction } from "./agent-event-reducer.js";
 import {
   canAcceptMessage,
@@ -105,6 +106,156 @@ describe("reduceTuiState", () => {
       approved: true,
     });
     expect(next).toBe(initial);
+  });
+
+  describe("context usage", () => {
+    const prompt = (
+      overrides: Partial<BuiltPrompt> = {},
+    ): BuiltPrompt =>
+      ({
+        text: "",
+        stablePrefix: "",
+        tail: "",
+        tokens: {
+          stablePrefix: 5000,
+          loadedSkills: 0,
+          sessionFacts: 0,
+          loadedTools: 0,
+          profile: 0,
+          worldSnapshot: 0,
+          conversation: 7000,
+          recalled: 0,
+          memoryIndex: 0,
+          taskPolicy: 0,
+          total: 12_000,
+        },
+        limits: {
+          total: 40_000,
+          stablePrefix: 14_000,
+          session: 6000,
+          worldSnapshot: 6000,
+          conversation: 14_000,
+        },
+        truncated: false,
+        truncation: {
+          loadedSkills: false,
+          sessionFacts: false,
+          loadedTools: false,
+          profile: false,
+          worldSnapshot: false,
+          conversation: false,
+          recalled: false,
+          memoryIndex: false,
+        },
+        contextWindow: 32_768,
+        conversationCapEffective: 14_000,
+        droppedTurns: 0,
+        ...overrides,
+      }) as BuiltPrompt;
+
+    const promptBuilt = (overrides: Partial<BuiltPrompt> = {}): TuiAction => ({
+      type: "agent_event",
+      event: {
+        type: "llm_event",
+        event: { type: "prompt_built", prompt: prompt(overrides), slotId: 0 },
+      },
+    });
+
+    it("reads the window fill off the built prompt", () => {
+      const next = apply(createInitialTuiState(fakeSession()), [
+        promptBuilt({ droppedTurns: 3 }),
+      ]);
+      expect(next.contextUsage.tokens).toBe(12_000);
+      expect(next.contextUsage.contextWindow).toBe(32_768);
+      expect(next.contextUsage.droppedTurns).toBe(3);
+      expect(next.contextUsage.sections.map((s) => s.label)).toEqual([
+        "prompt scaffold",
+        "conversation",
+      ]);
+    });
+
+    /**
+     * `prompt_built` carries `estimateTokens`, which over-counts by
+     * design. The completion carries what the provider's own tokenizer
+     * saw, and that is the figure worth showing.
+     */
+    it("replaces the estimate with the provider's own count", () => {
+      const next = apply(createInitialTuiState(fakeSession()), [
+        promptBuilt(),
+        {
+          type: "agent_event",
+          event: {
+            type: "llm_event",
+            event: {
+              type: "llm_completed",
+              completion: {
+                timing: { promptTokens: 10_450 },
+              } as never,
+            },
+          },
+        },
+      ]);
+      expect(next.contextUsage.tokens).toBe(10_450);
+      // Everything else came from the prompt and still stands.
+      expect(next.contextUsage.contextWindow).toBe(32_768);
+    });
+
+    it("keeps the estimate when the provider reports no count", () => {
+      const next = apply(createInitialTuiState(fakeSession()), [
+        promptBuilt(),
+        {
+          type: "agent_event",
+          event: {
+            type: "llm_event",
+            event: { type: "llm_completed", completion: {} as never },
+          },
+        },
+      ]);
+      expect(next.contextUsage.tokens).toBe(12_000);
+    });
+
+    /**
+     * The regression this slice exists to avoid: `startNewRun` wipes
+     * every per-turn metric, and the window is emphatically not a
+     * per-turn metric — it does not empty when you press Enter.
+     */
+    it("survives the start of the next turn", () => {
+      const started = apply(createInitialTuiState(fakeSession()), [
+        promptBuilt(),
+        {
+          type: "agent_event",
+          event: {
+            type: "llm_event",
+            event: {
+              type: "prompt_captured",
+              stepIndex: 0,
+              stablePrefixHash: "h",
+              tail: "",
+              tokens: { total: 12_000, stablePrefix: 5000, tail: 7000 },
+              slotId: 0,
+              cacheReused: true,
+            },
+          },
+        },
+      ]);
+      // Both readouts are populated before the turn boundary…
+      expect(started.metrics.promptTokensLast).toBe(12_000);
+      expect(started.contextUsage.tokens).toBe(12_000);
+
+      const next = reduceTuiState(started, { type: "message_submitted" });
+      // …and only the per-turn metric is cleared by it.
+      expect(next.metrics.promptTokensLast).toBeNull();
+      expect(next.contextUsage.tokens).toBe(12_000);
+    });
+
+    it("resets when the transcript is cleared or the session changes", () => {
+      const built = apply(createInitialTuiState(fakeSession()), [promptBuilt()]);
+      expect(reduceTuiState(built, { type: "chat_cleared" }).contextUsage.tokens).toBeNull();
+      expect(
+        reduceTuiState(built, { type: "session_created", sessionId: "s2" })
+          .contextUsage.tokens,
+      ).toBeNull();
+    });
   });
 
   it("should track cache hits and token totals from metrics", () => {

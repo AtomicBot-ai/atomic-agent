@@ -67,6 +67,8 @@ export interface PromptShellProps
   leftSlot?: ReactElement | null;
   /** Optional content rendered at the toolbar's right end. */
   rightSlot?: ReactElement | null;
+  /** Optional context readout, rendered at the action bar's right end. */
+  contextSlot?: ReactElement | null;
 }
 
 export function PromptShell(props: PromptShellProps): ReactElement {
@@ -78,6 +80,7 @@ export function PromptShell(props: PromptShellProps): ReactElement {
     provider,
     leftSlot,
     rightSlot,
+    contextSlot,
     focus,
     disabled,
     value,
@@ -168,6 +171,7 @@ export function PromptShell(props: PromptShellProps): ReactElement {
           model={model ?? null}
           provider={provider ?? null}
           rightSlot={rightSlot ?? null}
+          contextSlot={contextSlot ?? null}
         />
       </Box>
     </Box>

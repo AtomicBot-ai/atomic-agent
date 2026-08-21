@@ -40,6 +40,13 @@ export interface PromptMetaBarProps {
   provider: string | null;
   /** Chat-surface content rendered at the bar's right end. */
   rightSlot: ReactElement | null;
+  /**
+   * The context readout, rendered at the bar's right end. Its own prop
+   * rather than part of `rightSlot` because the two coexist: while a
+   * turn runs `rightSlot` carries the Enter-routing hint, and the window
+   * is exactly as worth watching then as when the composer is idle.
+   */
+  contextSlot: ReactElement | null;
 }
 
 const MODEL_LABEL_MAX_LEN = 32;
@@ -57,6 +64,7 @@ export function PromptMetaBar({
   model,
   provider,
   rightSlot,
+  contextSlot,
 }: PromptMetaBarProps): ReactElement {
   return (
     <Box
@@ -79,7 +87,12 @@ export function PromptMetaBar({
         <MetaLeft leftSlot={leftSlot} model={model} provider={provider} />
       </Box>
       <Box flexShrink={0} flexDirection="row">
-        {rightSlot ?? null}
+        {rightSlot ? (
+          <Box flexShrink={0} marginRight={2}>
+            {rightSlot}
+          </Box>
+        ) : null}
+        {contextSlot ?? null}
       </Box>
     </Box>
   );

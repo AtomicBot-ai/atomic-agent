@@ -16,6 +16,7 @@ import {
   type RamFit,
 } from "../local-models/local-models-panel-state.js";
 import type { LocalModelDef } from "../../local-llm/index.js";
+import { renderProgressBar } from "./render-progress-bar.js";
 
 /**
  * Render the per-row availability badge that combines GGUF + mmproj
@@ -152,11 +153,6 @@ function renderEmbeddingDaemonLine(
       embeddings ! pid {info.pid} alive but /health unreachable
     </Text>
   );
-}
-
-function renderProgressBar(percent: number, width: number): string {
-  const filled = Math.min(width, Math.round((percent / 100) * width));
-  return "=".repeat(filled) + " ".repeat(Math.max(0, width - filled));
 }
 
 function ramFitColor(fit: RamFit): string {

@@ -1,3 +1,4 @@
+import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import { clampMenuCursor } from "./menu/menu-selectors.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
@@ -175,6 +176,10 @@ export function reduceUiAction(
         streamingToolCards: [],
         toolsExpandedById: {},
         lastRunStatus: null,
+        // `/clear` drops the transcript, so the window it filled is
+        // gone too. Leaving the old figure up would claim tokens that
+        // no longer exist.
+        contextUsage: EMPTY_CONTEXT_USAGE,
       };
     case "session_picker_opened":
       return {
