@@ -65,9 +65,26 @@ export const LOGO_ART: Readonly<Record<LogoVariant, readonly string[]>> = {
  */
 export const RAIL_MARK: readonly string[] = CROSS_MARKS.block.sm;
 
+/**
+ * `ATOMIC AGENT`, drawn with full blocks only.
+ *
+ * It used to be a two-row half-block lockup (`▄▀█ ▀█▀ █▀█ …`), which
+ * breaks up on terminals whose line height does not split a cell at an
+ * integer pixel row: `▀` and `▄` are exactly the glyphs that need that
+ * split, so the renderer rounds and drops a scanline, and the wordmark
+ * loses half of every letter. It survives at large font sizes and falls
+ * apart at small ones, which is why it looked fine for so long.
+ *
+ * `█` has no such requirement — it fills the cell — so the letterforms
+ * are built from it and spaces alone. Five rows instead of two is the
+ * price; `WORDMARK_STACK_ROWS` in `splash-fit.ts` accounts for it.
+ */
 export const WORDMARK_ROWS: readonly string[] = [
-  "▄▀█ ▀█▀ █▀█ █▀▄▀█ █ █▀▀   ▄▀█ █▀▀ █▀▀ █▄ █ ▀█▀",
-  "█▀█  █  █▄█ █ ▀ █ █ █▄▄   █▀█ █▄█ ██▄ █ ▀█  █ ",
+  "\u2588\u2588\u2588 \u2588\u2588\u2588 \u2588\u2588\u2588 \u2588   \u2588 \u2588 \u2588\u2588\u2588   \u2588\u2588\u2588 \u2588\u2588\u2588\u2588 \u2588\u2588\u2588 \u2588   \u2588 \u2588\u2588\u2588",
+  "\u2588 \u2588  \u2588  \u2588 \u2588 \u2588\u2588 \u2588\u2588 \u2588 \u2588     \u2588 \u2588 \u2588    \u2588   \u2588\u2588  \u2588  \u2588 ",
+  "\u2588\u2588\u2588  \u2588  \u2588 \u2588 \u2588 \u2588 \u2588 \u2588 \u2588     \u2588\u2588\u2588 \u2588 \u2588\u2588 \u2588\u2588\u2588 \u2588 \u2588 \u2588  \u2588 ",
+  "\u2588 \u2588  \u2588  \u2588 \u2588 \u2588   \u2588 \u2588 \u2588     \u2588 \u2588 \u2588  \u2588 \u2588   \u2588  \u2588\u2588  \u2588 ",
+  "\u2588 \u2588  \u2588  \u2588\u2588\u2588 \u2588   \u2588 \u2588 \u2588\u2588\u2588   \u2588 \u2588 \u2588\u2588\u2588\u2588 \u2588\u2588\u2588 \u2588   \u2588  \u2588 ",
 ];
 
 export const TAGLINE = "Local AI-First Agent";

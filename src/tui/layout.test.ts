@@ -137,13 +137,13 @@ describe("computeSidebarRowBudget", () => {
 
 describe("computeChatViewportRows", () => {
   it("reserves the prompt chrome but never returns less than five rows", () => {
-    expect(computeChatViewportRows(40)).toBe(32);
+    expect(computeChatViewportRows(40)).toBe(30);
     expect(computeChatViewportRows(10)).toBe(4);
     expect(computeChatViewportRows(2)).toBe(4);
   });
 
   it("reserves more chrome on a narrow terminal, where it wraps", () => {
-    expect(computeChatViewportRows(24, 45)).toBe(12);
-    expect(computeChatViewportRows(24, 80)).toBe(16);
+    expect(computeChatViewportRows(24, 45)).toBe(10);
+    expect(computeChatViewportRows(24, 80)).toBe(14);
   });
 });

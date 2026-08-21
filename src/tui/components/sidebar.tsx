@@ -249,7 +249,12 @@ function RailBrand({
           ))}
         </Box>
         <Box flexDirection="column" flexShrink={0} paddingLeft={1}>
-          {/* Blank rows centre the two text lines against the four-row mark. */}
+          {/*
+            Two blanks, not one: the mark is five rows and the text is
+            two, so this seats the pair on the mark's centre row — the
+            cross's own bar — rather than riding high against its top arm.
+          */}
+          <Text> </Text>
           <Text> </Text>
           <Text color={theme.colors.railForeground} bold wrap="truncate">
             {clip("atomic-agent", textWidth)}

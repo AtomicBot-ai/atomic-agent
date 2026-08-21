@@ -49,7 +49,7 @@ describe("PromptShell", () => {
    * overlap the lines above rather than clip, so a drift here is not a
    * cosmetic one.
    */
-  it("spends four rows on chrome regardless of the buffer", () => {
+  it("spends six rows on chrome regardless of the buffer", () => {
     const heightOf = (value: string): number => {
       const { lastFrame, unmount } = render(
         <PromptShell
@@ -66,8 +66,8 @@ describe("PromptShell", () => {
       unmount();
       return rows;
     };
-    expect(heightOf("one")).toBe(4);
-    expect(heightOf("one\ntwo\nthree")).toBe(6);
+    expect(heightOf("one")).toBe(6);
+    expect(heightOf("one\ntwo\nthree")).toBe(8);
   });
 
   /**
@@ -97,11 +97,12 @@ describe("PromptShell", () => {
     const lines = strip(lastFrame() ?? "")
       .split("\n")
       .filter((line) => line.trim().length > 0);
-    expect(lines).toHaveLength(4);
+    expect(lines).toHaveLength(6);
     for (const line of lines) {
       expect(line.length).toBeLessThanOrEqual(56);
     }
-    const bar = lines[2] ?? "";
+    // [0] border, [1] pad, [2] buffer, [3] pad, [4] action bar, [5] border.
+    const bar = lines[4] ?? "";
     expect(bar).toContain(" send → ");
     unmount();
   });
