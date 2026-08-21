@@ -8,6 +8,7 @@ import type { HostLookup } from "../../web-fetch-ssrf-guard.js";
 import { runWebSearchWithFallback } from "../providers/index.js";
 import { createSearchCache } from "../transport/search-cache.js";
 import type { WebSearchResult } from "../web-search-provider.js";
+import { checkMissingSearchKey } from "./warn-missing-search-key.js";
 
 const TOOL_NAME = "os.web.search";
 const MAX_RESULTS_CAP = 20;
@@ -16,6 +17,10 @@ export interface OsWebSearchOptions {
   config: Pick<AtomicAgentConfig, "web">;
   runCommand?: typeof defaultRunCommand;
   lookup?: HostLookup;
+  /** Process env source for the missing-key check; injectable for tests. */
+  env?: NodeJS.ProcessEnv;
+  /** Warning sink; defaults to stderr. Injectable for tests. */
+  warn?: (message: string) => void;
 }
 
 interface WebSearchArgs {
@@ -29,6 +34,19 @@ export function buildOsWebSearchTool(options: OsWebSearchOptions): ToolDefinitio
   // HTTP round-trip — the primary defence against provider rate-limiting.
   const cfg0 = options.config.web.search;
   const cache = createSearchCache({ ttlMs: cfg0.cacheTtlMinutes * 60_000 });
+
+  // Emitted once at construction, not per search: a keyless primary provider
+  // degrades every subsequent query, and one line at startup is what turns
+  // that from invisible into diagnosable (#179).
+  const missingKey = checkMissingSearchKey({
+    config: options.config,
+    env: options.env ?? process.env,
+  });
+  if (missingKey) {
+    const warn =
+      options.warn ?? ((message: string) => process.stderr.write(`${message}\n`));
+    warn(missingKey.message);
+  }
   return {
     name: TOOL_NAME,
     description:

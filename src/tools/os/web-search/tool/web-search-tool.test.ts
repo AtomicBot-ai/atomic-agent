@@ -190,3 +190,42 @@ describe("os.web.search", () => {
     expect(result.details.provider).toBe("duckduckgo");
   });
 });
+
+describe("buildOsWebSearchTool keyless-provider warning", () => {
+  it("warns once at construction, not once per search", async () => {
+    // Per-search warnings would flood a long autonomous run; the operator
+    // needs exactly one line telling them search is degraded (#179).
+    const warnings: string[] = [];
+    // Fail every curl immediately: this test is about warning cardinality,
+    // and a real network round-trip would make it slow and flaky.
+    const failingRunCommand = (async () => {
+      throw new Error("network disabled in test");
+    }) as unknown as typeof RunCommandType;
+    const tool = buildOsWebSearchTool({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      env: {},
+      warn: (message) => warnings.push(message),
+      runCommand: failingRunCommand,
+      lookup: publicLookup,
+    });
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("EXA_API_KEY");
+
+    await tool.run({ query: "a" }, makeCtx()).catch(() => undefined);
+    await tool.run({ query: "b" }, makeCtx()).catch(() => undefined);
+
+    expect(warnings).toHaveLength(1);
+  });
+
+  it("stays silent when the provider key is set", () => {
+    const warnings: string[] = [];
+    buildOsWebSearchTool({
+      config: makeConfig({ provider: "exa" }),
+      env: { EXA_API_KEY: "k" },
+      warn: (message) => warnings.push(message),
+    });
+
+    expect(warnings).toEqual([]);
+  });
+});

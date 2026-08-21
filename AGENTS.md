@@ -179,7 +179,7 @@ The TUI is clickable. Ink has no mouse layer, so this is built in `src/tui/mouse
 | `src/prompt/` | Prompt builder, stable prefix, token budget. See [PROMPT.md](PROMPT.md) for full anatomy of the stable prefix and variable tail. |
 | `src/session/` | Session state + sqlite persistence |
 | `src/agent/` | Agent loop + step executor + parallel batch executor (`batch-executor.ts`) + resource-class taxonomy (`tool-resource-class.ts`) + no-progress loop detector |
-| `src/tools/` | Tool registry + individual tools. OS tools: `shell.run` (direct-exec by default; routes to a `sh -c` subshell when `needsShellInterpretation` sees shell metacharacters `\| & ; > < $ \`` or a pre-joined command line in `cmd` with empty `args` — the common ENOENT trap where the model puts a whole command line in `cmd`; the guard still inspects a tokenised view of the full line so hardline/dangerous rules match), `fs.read` (w/ `offset`/`limit`/`lineNumbers`), `fs.write`, `fs.list`, `fs.glob`, `fs.locate_project` (fuzzy project-name → directory over bounded sources, see §"Project path resolution"), `fs.grep` (bundled ripgrep), `fs.edit` (atomic string replace), `fs.read_document` (PDF/DOCX/XLSX/RTF/ODT/PPTX/legacy .doc → plain text via pure-JS), `fs.archive.list` / `fs.archive.read_entry` / `fs.archive.extract` (zip/tar/tar.gz/gz via pure-JS; zip-slip + bomb guards), `fs.hash` (md5/sha1/sha256/sha512 streaming), `fs.diff` (unified diff, jsdiff), `fs.patch` (dry-run default, all-or-nothing apply), `fs.watch` (chokidar one-shot, timeout-capped), `git.status` / `git.log` / `git.diff` / `git.show` / `git.blame` / `git.branch` (read-only shell-out with structured parse), `proc.list` / `proc.kill` (ps/tasklist + approval), `http.request` (curl + host allowlist + `config.http.approvalMode`), `web.search` (configured provider; keyless DuckDuckGo by default, SearXNG/Exa/Brave selectable via `web.search.*`; Exa uses `EXA_API_KEY` when present), `web.fetch` (read a known URL as markdown/text), `clipboard.*`, `window.*`, `notify`. |
+| `src/tools/` | Tool registry + individual tools. OS tools: `shell.run` (direct-exec by default; routes to a `sh -c` subshell when `needsShellInterpretation` sees shell metacharacters `\| & ; > < $ \`` or a pre-joined command line in `cmd` with empty `args` — the common ENOENT trap where the model puts a whole command line in `cmd`; the guard still inspects a tokenised view of the full line so hardline/dangerous rules match), `fs.read` (w/ `offset`/`limit`/`lineNumbers`), `fs.write`, `fs.list`, `fs.glob`, `fs.locate_project` (fuzzy project-name → directory over bounded sources, see §"Project path resolution"), `fs.grep` (bundled ripgrep), `fs.edit` (atomic string replace), `fs.read_document` (PDF/DOCX/XLSX/RTF/ODT/PPTX/legacy .doc → plain text via pure-JS), `fs.archive.list` / `fs.archive.read_entry` / `fs.archive.extract` (zip/tar/tar.gz/gz via pure-JS; zip-slip + bomb guards), `fs.hash` (md5/sha1/sha256/sha512 streaming), `fs.diff` (unified diff, jsdiff), `fs.patch` (dry-run default, all-or-nothing apply), `fs.watch` (chokidar one-shot, timeout-capped), `git.status` / `git.log` / `git.diff` / `git.show` / `git.blame` / `git.branch` (read-only shell-out with structured parse), `proc.list` / `proc.kill` (ps/tasklist + approval), `http.request` (curl + host allowlist + `config.http.approvalMode`), `web.search` (configured provider; keyless Exa with a DuckDuckGo fallback by default, SearXNG/Brave selectable via `web.search.*`; Exa/Brave use an env API key when present, see §"Web search reliability"), `web.fetch` (read a known URL as markdown/text), `clipboard.*`, `window.*`, `notify`. |
 | `src/compressor/` | Result compressor, log summariser |
 | `src/sandbox/` | git worktree + sandboxed command runner |
 | `src/approval/` | Approval gate and event wiring |
@@ -206,6 +206,48 @@ Skills that need API keys (Notion, GitHub, etc.) read them from `process.env`. T
 The startup read is defensive about transient locks (#59). A failing read of an existing `.env` is retried up to 3 attempts with 50/150 ms backoff when the errno code is `EPERM`, `EACCES`, `EBUSY`, or `EAGAIN` (the family Windows antivirus and sync clients surface; on POSIX an `EACCES` is almost always permanent and simply costs one ~200 ms loop before the warning). Any other code fails fast, and a missing file (`ENOENT`) stays the silent no-op above. The load outcome travels on the runtime config as `config.dotenv` (`DotenvLoadResult`: the `.env` path, `exists`, `loaded`/`skipped` variable names, and `error` carrying the errno code plus attempt count; values never cross this surface, and parse diagnostics name line numbers, not line content). A failure that survives the retries is printed to stderr by the loader and repeated by the TUI as a warn-variant system chat message with platform-specific guidance, because the stderr line scrolls away before the alt screen takes over. On the write side, after `setDotenvKey` tightens the `.env` ACL via [src/config/windows-acl.ts](src/config/windows-acl.ts) (`icacls /inheritance:r /grant:r`), it probe-reads the file as the current process and rolls the ACL back with `icacls /reset` when the probe fails, so a wrong-principal grant cannot leave behind a file the agent itself can no longer read. Pinned by [src/config/load-dotenv-retry.test.ts](src/config/load-dotenv-retry.test.ts) (retry-then-success, persistent-failure warning, fail-fast codes, silent ENOENT), [src/config/load-config.test.ts](src/config/load-config.test.ts) ("carries the .env load outcome as config.dotenv" / "reports an unreadable .env in config.dotenv.error without throwing"), and [src/config/windows-acl.test.ts](src/config/windows-acl.test.ts) (tighten/probe/rollback).
 
 There is currently **no per-tool env filtering**. `runCommand` in [src/sandbox/command-runner.ts](src/sandbox/command-runner.ts) inherits the full agent `process.env`, so every spawned subprocess (`os.shell.run`, `runSkillScript`, the managed `llama-server`, future MCP servers) sees every variable loaded from `.env`. Tightening this — per-skill `env_vars` whitelist + safe-baseline filtering (`PATH`, `HOME`, `USER`, `LANG`, `TERM`, `XDG_*`) — is tracked as a separate effort and pinned by no tests yet. Do not assume isolation when designing new skills that handle highly sensitive secrets; document the shared-env reality in the skill's `SKILL.md` instead.
+
+## Web search reliability
+
+`os.web.search` defaults to `web.search.provider = "exa"` with a
+`["duckduckgo"]` fallback. Exa's MCP endpoint answers **keyless** when
+`EXA_API_KEY` is unset, and that keyless tier returns HTTP 429 under sustained
+agent load — a GAIA validation campaign logged 1341 `Exa returned HTTP 429`
+errors, 44% of all tool failures in the run (#179). Two mechanisms keep that
+from silently deciding answer quality:
+
+1. **Retry before falling through.** [transport/retry-after.ts](src/tools/os/web-search/transport/retry-after.ts)
+   owns the schedule; `searchHttp` retries a 429 against the **same** provider
+   (default 2 retries, 500 ms doubling) before returning it. Without this, one
+   transient 429 permanently downgraded a session to the weakest provider in
+   the chain, because the orchestrator advances on any throw. A server
+   `Retry-After` wins over the local schedule; both are clamped to
+   `MAX_RETRY_AFTER_MS` (10 s) so one hostile header cannot stall a turn. The
+   header rides the existing `curl -w` meta line via `%header{retry-after}`
+   (curl >= 7.83; older curl emits the literal format string, which is read as
+   absent). Retries are spent, not skipped, when the limit is real — the
+   fallback chain remains the backstop.
+2. **Name the degradation.** [tool/warn-missing-search-key.ts](src/tools/os/web-search/tool/warn-missing-search-key.ts)
+   emits one stderr line at tool construction when the primary provider reads
+   an `apiKeyEnv` that resolves to nothing. The fallback chain works as
+   designed, so nothing hard-fails; the run just produces weaker groundings
+   than configured. Warning **once at construction** (not per search) is
+   deliberate: a long autonomous run would drown in a per-query warning.
+
+`cacheTtlMinutes` stays at 15. The cache is per-process, in-memory, capped at
+256 entries, and keyed on the exact query string, so a longer TTL neither
+survives the per-task restarts a campaign does nor catches the near-miss
+rephrasings that actually burn quota — while it would serve staler results for
+time-sensitive lookups. A restart-surviving cache is the real fix and is not
+built.
+
+Pinned by [retry-after.test.ts](src/tools/os/web-search/transport/retry-after.test.ts),
+[search-http.test.ts](src/tools/os/web-search/transport/search-http.test.ts)
+(retry-then-succeed, `Retry-After` precedence, give-up-after-maxRetries,
+non-429 untouched, old-curl tolerance),
+[warn-missing-search-key.test.ts](src/tools/os/web-search/tool/warn-missing-search-key.test.ts),
+and [web-search-tool.test.ts](src/tools/os/web-search/tool/web-search-tool.test.ts)
+("warns once at construction, not once per search").
 
 ## Build & test
 

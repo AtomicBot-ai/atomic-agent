@@ -8,8 +8,15 @@ import {
   type HostLookup,
 } from "../../web-fetch-ssrf-guard.js";
 import { CurlUnavailableError, isCurlMissingError } from "../../ensure-curl.js";
+import {
+  computeRetryDelayMs,
+  DEFAULT_SEARCH_RETRY_POLICY,
+  parseRetryAfterMs,
+  type SearchRetryPolicy,
+} from "./retry-after.js";
 
 const CURL_META_MARKER = "__ATOMIC_WEB_SEARCH_META__";
+const CURL_HEADER_MARKER = "__ATOMIC_WEB_SEARCH_HEADERS__";
 const DEFAULT_MAX_RESPONSE_BYTES = 1_000_000;
 const MAX_REDIRECTS = 3;
 const USER_AGENT =
@@ -31,6 +38,12 @@ export interface SearchHttpRequest {
   maxResponseBytes?: number;
   runCommand?: typeof defaultRunCommand;
   lookup?: HostLookup;
+  /** Overrides the 429 retry schedule; `maxRetries: 0` disables retrying. */
+  retryPolicy?: SearchRetryPolicy;
+  /** Injectable sleep so tests do not spend real wall-clock in backoff. */
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** Injectable clock for deterministic `Retry-After` HTTP-date parsing. */
+  now?: () => number;
 }
 
 export interface SearchHttpResponse {
@@ -46,6 +59,7 @@ interface CurlResponse {
   status: number;
   contentType: string;
   redirectUrl: string;
+  retryAfter: string;
   body: string;
   truncated: boolean;
 }
@@ -53,6 +67,37 @@ interface CurlResponse {
 export async function searchHttp(
   request: SearchHttpRequest,
 ): Promise<SearchHttpResponse> {
+  const policy = request.retryPolicy ?? DEFAULT_SEARCH_RETRY_POLICY;
+  const sleep = request.sleep ?? defaultSleep;
+  const now = request.now ?? Date.now;
+
+  // Attempt 0 is the initial request; 1..maxRetries are 429 retries. A 429 is
+  // retried against the SAME provider before the orchestrator is allowed to
+  // advance the chain, so a transient limit cannot permanently downgrade the
+  // session to a weaker provider.
+  for (let attempt = 0; ; attempt++) {
+    const { retryAfter, ...response } = await sendOnce(request);
+    if (response.status !== 429 || attempt >= policy.maxRetries) {
+      return response;
+    }
+    const delayMs = computeRetryDelayMs({
+      attempt: attempt + 1,
+      policy,
+      retryAfterMs: parseRetryAfterMs(retryAfter, now()),
+    });
+    await sleep(delayMs, request.signal);
+  }
+}
+
+/** Internal shape: the public response plus the header the retry loop reads. */
+interface SearchHttpAttempt extends SearchHttpResponse {
+  retryAfter: string;
+}
+
+/** One full request/redirect walk. Retrying re-enters this from the top. */
+async function sendOnce(
+  request: SearchHttpRequest,
+): Promise<SearchHttpAttempt> {
   const runCommand = request.runCommand ?? defaultRunCommand;
   const method = request.method ?? "GET";
   let currentUrl = parseHttpUrl(request.url);
@@ -106,8 +151,27 @@ export async function searchHttp(
       body: response.body,
       truncated: response.truncated,
       redirectChain: chain,
+      retryAfter: response.retryAfter,
     };
   }
+}
+
+/**
+ * Abort-aware sleep. A cancelled turn must not sit out the backoff: the
+ * pending timer is cleared and the wait resolves immediately so the caller
+ * observes the abort on its next checkpoint.
+ */
+function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(finish, ms);
+    function finish(): void {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    }
+    signal.addEventListener("abort", finish, { once: true });
+  });
 }
 
 function buildCurlArgs(input: {
@@ -147,7 +211,8 @@ function buildCurlArgs(input: {
   }
   args.push(
     "-w",
-    `\n${CURL_META_MARKER}%{http_code}|%{content_type}|%{redirect_url}|%{size_download}`,
+    `\n${CURL_META_MARKER}%{http_code}|%{content_type}|%{redirect_url}|` +
+      `%{size_download}|${CURL_HEADER_MARKER}%header{retry-after}`,
     "--",
     input.url.toString(),
   );
@@ -157,16 +222,32 @@ function buildCurlArgs(input: {
 export function parseCurlMeta(stdout: string): Omit<CurlResponse, "truncated"> {
   const markerIdx = stdout.lastIndexOf(CURL_META_MARKER);
   if (markerIdx === -1) {
-    return { status: 0, contentType: "", redirectUrl: "", body: stdout };
+    return {
+      status: 0,
+      contentType: "",
+      redirectUrl: "",
+      retryAfter: "",
+      body: stdout,
+    };
   }
   const body = stdout.slice(0, markerIdx).replace(/\n$/, "");
   const meta = stdout.slice(markerIdx + CURL_META_MARKER.length).trim();
   const [statusStr = "", contentType = "", redirectUrl = ""] = meta.split("|");
   const status = Number.parseInt(statusStr, 10);
+  // Read the header block off the whole meta line rather than a fixed field:
+  // a `Retry-After` value may itself contain `|`, and the marker is the only
+  // reliable delimiter. `%header{}` is curl >= 7.83; older curl emits the
+  // literal format string, which must not be read as a value.
+  const headerIdx = meta.indexOf(CURL_HEADER_MARKER);
+  const retryAfter =
+    headerIdx === -1
+      ? ""
+      : meta.slice(headerIdx + CURL_HEADER_MARKER.length).trim();
   return {
     status: Number.isFinite(status) ? status : 0,
     contentType: contentType.trim(),
     redirectUrl: redirectUrl.trim(),
+    retryAfter: retryAfter.startsWith("%header{") ? "" : retryAfter,
     body,
   };
 }
