@@ -222,6 +222,14 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "open-weight models on custom silicon; models listed without a key",
   },
   {
+    id: "sarvam",
+    label: "Sarvam",
+    baseUrl: "https://api.sarvam.ai",
+    envVar: "SARVAM_API_KEY",
+    listsModelsWithoutKey: true,
+    note: "Sarvam AI models, OpenAI-compatible; models listed without a key",
+  },
+  {
     id: "together",
     label: "Together AI",
     baseUrl: "https://api.together.xyz",
