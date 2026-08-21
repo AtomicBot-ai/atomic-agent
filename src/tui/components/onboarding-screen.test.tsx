@@ -65,9 +65,17 @@ describe("OnboardingScreen", () => {
     const frame = strip(view.lastFrame() ?? "");
     expect(frame).toContain("atomic");
     expect(frame).toContain("setup \u00b7 step 1 of 2");
-    expect(frame).toContain("[1] Local models");
-    expect(frame).toContain("[2] Cloud models");
-    expect(frame).toContain("[3] Custom endpoint");
+    expect(frame).toContain("Local models");
+    expect(frame).toContain("Cloud models");
+    expect(frame).toContain("Custom endpoint");
+    // What each one costs the operator, on the screen rather than behind it.
+    expect(frame).toContain("Private, free per token");
+    expect(frame).toContain("needs an API key");
+    expect(frame).toContain("Nothing is downloaded");
+    // The copy describes a choice, not the health probe that used to
+    // bring this screen up.
+    expect(frame).not.toContain("not reachable");
+    expect(frame).not.toContain("ECONNREFUSED");
     // The chrome the flow deliberately does not borrow.
     expect(frame).not.toContain("R U N");
     expect(frame).not.toContain("SESSIONS");

@@ -39,7 +39,13 @@ export interface OnboardingUiState {
 export interface OnboardingChoice {
   readonly id: "local" | "cloud" | "custom";
   readonly label: string;
-  readonly detail: string;
+  /**
+   * Two lines, wrapped by hand rather than by Ink. The trade-off each
+   * backend asks the operator to make — privacy, money, time — is the
+   * thing they are actually choosing between, so it is on the screen
+   * instead of behind it.
+   */
+  readonly detail: readonly [string, string];
 }
 
 /**
@@ -50,17 +56,26 @@ export const ONBOARDING_CHOICES: readonly OnboardingChoice[] = [
   {
     id: "local",
     label: "Local models",
-    detail: "llama.cpp on this machine — download and run locally",
+    detail: [
+      "llama.cpp on this machine. Private, free per token,",
+      "one download of 2.7–22 GB.",
+    ],
   },
   {
     id: "cloud",
     label: "Cloud models",
-    detail: "configure an API key and pick a model",
+    detail: [
+      "OpenRouter, Anthropic, Gemini, Groq and 20 more.",
+      "Fastest to a working agent — needs an API key.",
+    ],
   },
   {
     id: "custom",
     label: "Custom endpoint",
-    detail: "an existing llama-server URL you already run",
+    detail: [
+      "An OpenAI-compatible or llama-server URL you already run.",
+      "Nothing is downloaded, nothing else is asked.",
+    ],
   },
 ];
 
