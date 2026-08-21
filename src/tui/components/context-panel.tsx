@@ -6,6 +6,7 @@ import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import type { ContextUsageView } from "../select-context-usage.js";
 import { chromeTheme } from "../theme/theme.js";
 import { fitToWidth } from "./fit-to-width.js";
+import { formatTokens } from "./format-tokens.js";
 import { renderProgressBar } from "./render-progress-bar.js";
 
 /** Panel width, clamped to the pane on narrow terminals. */
@@ -118,6 +119,23 @@ export function ContextPanel({
           {fitToWidth(renderRow(row, usage, largest), inner)}
         </Text>
       ))}
+      {usage.conversationCap === null ? null : (
+        <Text color={chromeTheme.colors.railMuted}>
+          {chromeTheme.glyphs.toolBoxHorizontal.repeat(Math.max(0, inner))}
+        </Text>
+      )}
+      {trimmingLines(usage).map((line, idx) => (
+        <Text
+          key={`trim-${idx}`}
+          color={
+            idx === 0
+              ? chromeTheme.colors.railForeground
+              : chromeTheme.colors.railMuted
+          }
+        >
+          {fitToWidth(line, inner)}
+        </Text>
+      ))}
       <Text color={chromeTheme.colors.railMuted}>{fitToWidth(` ${footer(usage)}`, inner)}</Text>
     </PanelFrame>
   );
@@ -180,9 +198,48 @@ function renderRow(
 
 function title(usage: ContextUsageView): string {
   if (usage.contextWindow === null) {
-    return `context · ${formatTokens(usage.tokens)} tokens · window unknown`;
+    return `context · ${formatTokens(usage.tokens)} · window unknown`;
   }
-  return `context · ${usage.percent}% of ${formatTokens(usage.contextWindow)}`;
+  return `context · ${formatTokens(usage.tokens)} of ${formatTokens(
+    usage.contextWindow,
+  )} window · ${usage.percent}%`;
+}
+
+/**
+ * Where the transcript stands against the point at which older turns
+ * start being dropped, and what is holding that point down.
+ *
+ * The second line is the actionable half. `conversationCapEffective` is
+ * `max(512, min(configured, window - everything else))`, so the number
+ * alone cannot say why it is what it is — and the two causes have
+ * opposite remedies. Config binding means raising
+ * `agent.conversationMaxTokens` moves it; the window binding means no
+ * setting will, and a bigger model is the only fix.
+ */
+function trimmingLines(usage: ContextUsageView): readonly string[] {
+  const cap = usage.conversationCap;
+  if (cap === null) return [];
+  const head = ` transcript`.padEnd(LABEL_WIDTH);
+  const lines = [
+    `${head}${formatTokens(usage.conversationTokens)} of ${formatTokens(
+      cap,
+    )} before older turns go`,
+  ];
+  const source = ` capped by`.padEnd(LABEL_WIDTH);
+  if (usage.capSource === "config") {
+    lines.push(`${source}agent.conversationMaxTokens`);
+  } else if (usage.capSource === "window") {
+    lines.push(
+      `${source}the model's window${
+        usage.contextWindow === null
+          ? ""
+          : ` (${formatTokens(usage.contextWindow)})`
+      }`,
+    );
+  } else if (usage.capSource === "floor") {
+    lines.push(`${source}window too small for this prompt`);
+  }
+  return lines;
 }
 
 /**
@@ -197,12 +254,6 @@ function footer(usage: ContextUsageView): string {
     } trimmed · esc to close`;
   }
   return "esc to close";
-}
-
-/** `31880` -> `31.9k`. Six-digit precision is noise at this width. */
-function formatTokens(tokens: number): string {
-  if (tokens < 1000) return String(tokens);
-  return `${(tokens / 1000).toFixed(1)}k`;
 }
 
 /**

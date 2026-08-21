@@ -18,6 +18,10 @@ function usage(overrides: Partial<ContextUsageView> = {}): ContextUsageView {
     tokens: 39_880,
     contextWindow: 131_072,
     percent: 30,
+    conversationTokens: 31_880,
+    conversationCap: 32_000,
+    conversationPercent: 100,
+    capSource: "config",
     droppedTurns: 0,
     sections: SECTIONS,
     ...overrides,
@@ -49,8 +53,8 @@ function lines(
 }
 
 describe("ContextPanel", () => {
-  it("titles itself with the fill and the window", () => {
-    expect(lines(usage())[1]).toContain("context · 30% of 131.1k");
+  it("titles itself with the prompt total and the window", () => {
+    expect(lines(usage())[1]).toContain("context · 39.9k of 131.1k window · 30%");
   });
 
   it("lists every section with its tokens and share", () => {
@@ -104,6 +108,8 @@ describe("ContextPanel", () => {
     expect(body).toContain("window unknown");
     expect(body).not.toContain("free");
     expect(body).not.toContain("%");
+    // The trimming block never depended on the window.
+    expect(body).toContain("6.4k of 32k before older turns go".slice(-24));
   });
 
   /**
@@ -167,5 +173,49 @@ describe("before anything has been measured", () => {
     for (const line of body) {
       expect(line.trimStart().length, line).toBe(width);
     }
+  });
+});
+
+describe("the trimming block", () => {
+  it("says how much transcript is left before older turns go", () => {
+    const body = lines(usage()).join("\n");
+    expect(body).toContain("transcript         31.9k of 32k before older turns go");
+  });
+
+  /**
+   * The actionable half. The effective cap is
+   * `max(512, min(configured, window - everything else))`, so the number
+   * alone cannot say why it is what it is — and the two causes have
+   * opposite remedies.
+   */
+  it("names the config knob when the configured cap is what binds", () => {
+    expect(lines(usage()).join("\n")).toContain(
+      "capped by          agent.conversationMaxTokens",
+    );
+  });
+
+  it("names the window, with its size, when the window binds", () => {
+    const body = lines(
+      usage({ capSource: "window", conversationCap: 9000, contextWindow: 32_768 }),
+    ).join("\n");
+    expect(body).toContain("capped by          the model's window (32.8k)");
+  });
+
+  /**
+   * The 512 floor means the window cannot hold the agent's own prompt
+   * with room to answer. Reporting that as a budget would send someone
+   * hunting for a setting that does not exist.
+   */
+  it("calls the floor what it is", () => {
+    const body = lines(usage({ capSource: "floor", conversationCap: 512 })).join(
+      "\n",
+    );
+    expect(body).toContain("window too small for this prompt");
+  });
+
+  it("is absent entirely before a prompt has set a cap", () => {
+    const body = lines(usage({ conversationCap: null, capSource: null })).join("\n");
+    expect(body).not.toContain("before older turns go");
+    expect(body).not.toContain("capped by");
   });
 });
