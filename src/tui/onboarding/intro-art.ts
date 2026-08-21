@@ -1,5 +1,9 @@
 import { CELL_ASPECT, computeOrbitField } from "./orbit-field.js";
 
+/** Blank rows and columns kept between the mark's box and the ring. */
+const RING_GAP_ROWS = 2;
+const RING_GAP_COLUMNS = 4;
+
 /** The glyph the ring is drawn with — the mark, shrunk past legibility. */
 export const ORBIT_GLYPH = "✛";
 
@@ -45,12 +49,16 @@ export function buildIntroArt(options: IntroArtOptions): string[] {
     crossCount > 0
       ? Math.min(verticalRadius * CELL_ASPECT, Math.floor(columns / 2) - 2)
       : 0;
-  // The mark's clear space is one arm width — a quarter of its box — and
-  // the ring is outside it or it is not drawn at all. A cross resting
-  // against an arm reads as a glitch in the logo, which is worse than a
-  // plain mark on a short terminal.
-  const minRadius = markWidth / 2 + markWidth / 4;
-  const radius = requested >= minRadius ? requested : 0;
+  // Clearance is checked per axis, against the mark's own box. A single
+  // radius threshold cannot express it: the ring is an ellipse and the
+  // mark is wider than it is tall, so one number is either too strict
+  // vertically or too loose horizontally — the first draft was the
+  // former and silently dropped the ring at 100×30, where it fits with
+  // room to spare. A cross resting against an arm reads as a glitch in
+  // the logo, so when either axis is short the ring is dropped whole.
+  const clearsRows = verticalRadius >= markRows.length / 2 + RING_GAP_ROWS;
+  const clearsColumns = requested >= markWidth / 2 + RING_GAP_COLUMNS;
+  const radius = clearsRows && clearsColumns ? requested : 0;
   const grid: string[][] = Array.from({ length: height }, () =>
     Array.from({ length: columns }, () => " "),
   );
