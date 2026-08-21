@@ -43,6 +43,7 @@ describe("menu rows", () => {
       "Run",
       "Observe",
       "Manage",
+      "Toggle debug pane",
     ]);
   });
 

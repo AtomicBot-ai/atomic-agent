@@ -13,6 +13,7 @@ describe("SLASH_COMMANDS registry", () => {
       "clear",
       "abort",
       "quit",
+      "debug",
       "chat",
       "feed",
       "logs",

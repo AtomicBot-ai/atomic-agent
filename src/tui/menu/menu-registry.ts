@@ -339,6 +339,23 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "go.debug",
+    label: "Toggle debug pane",
+    group: "go",
+    // Last under Go, and deliberately below the three destinations.
+    // Run / Observe / Manage each name a place; this one toggles
+    // between two states whose identity depends on where you already
+    // are, so it reads as a verb appended to the list rather than as a
+    // fourth place to go.
+    slash: {
+      name: "debug",
+      description:
+        "toggle debug pane (feed / logs / world …)",
+      rank: 7,
+    },
+  },
+  {
+    kind: "action",
     id: "session.new",
     label: "New session",
     group: "session",
