@@ -16,7 +16,7 @@ import {
   handlePanelEscape,
   isPanelModalOpen,
 } from "./app-key-bindings.js";
-import { APP_CHROME_ROWS } from "./components/debug-pane.js";
+import { appChromeRows } from "./components/debug-pane.js";
 import { MenuPopup } from "./menu/menu-popup.js";
 import type { MenuNode } from "./menu/menu-registry.js";
 import { ApprovalModal } from "./approval-modal.js";
@@ -639,6 +639,35 @@ export function TuiApp({
       (sidebarVisible ? sidebarWidth + RAIL_GUTTER_COLUMNS : 0),
   );
   const sidebarFocused = sidebarVisible && state.chatFocus === "sidebar";
+  /**
+   * The composer belongs to the Run screen. Observe and Manage are for
+   * watching and configuring, and a prompt sitting under a settings
+   * panel invites a message nobody is going to read from there.
+   *
+   * The three exceptions are surfaces whose keyboard the composer owns
+   * while they are open: the slash palette types into its buffer, and
+   * the theme and session pickers are closed by the editor's own Esc.
+   * `handleAppKey` explicitly declines Esc while the palette is open
+   * (`!state.slashPaletteOpen`), so unmounting the composer under it
+   * would leave the palette with no way out at all.
+   */
+  const composerVisible =
+    state.uiMode === "chat" ||
+    state.slashPaletteOpen ||
+    state.themePickerOpen ||
+    state.sessionPickerOpen;
+
+  /**
+   * Live mirror of {@link composerVisible}. The unmounting editor keeps
+   * the callbacks from its last render — the one where the composer was
+   * still on screen — so a guard that closed over the boolean would read
+   * `true` exactly when it matters. The ref's identity is stable, so the
+   * stale closure reads the current value through it. (Render-phase
+   * write: derived from state, never written from an effect.)
+   */
+  const composerVisibleRef = useRef(true);
+  composerVisibleRef.current = composerVisible;
+
   const editorFocus =
     !state.menuOpen &&
     !menuLeaderArmed &&
@@ -845,15 +874,41 @@ export function TuiApp({
       handlePanelEscape(key, { panelHandled, editorFocus, dispatch });
       return;
     }
+    // Esc back to Run, for the tabs that have no key layer of their own
+    // (the Observe five: feed / world / reasoning / logs / llm logs).
+    // `handlePanelEscape` above never sees their keys — it runs only
+    // when a panel handler claimed something — and this used to be the
+    // editor's job, through the `onEscape` it no longer has here.
+    if (
+      !composerVisible &&
+      key.escape &&
+      !isPanelModalOpen(state) &&
+      state.uiMode === "debug"
+    ) {
+      dispatch({ type: "ui_mode_set", mode: "chat" });
+    }
   });
 
   const submit = useCallback(
-    (buffer: string) => handleEditorSubmit(buffer, state, dispatch, callbacks),
+    (buffer: string) => {
+      // Same stale-subscription window as `onEditorChange`: an Enter
+      // that arrives while the composer is leaving must not send.
+      if (!composerVisibleRef.current) return;
+      handleEditorSubmit(buffer, state, dispatch, callbacks);
+    },
     [state, callbacks],
   );
 
   const onEditorChange = useCallback(
     (next: string) => {
+      // An editor that is unmounting keeps its `useInput` subscription
+      // until the passive effect tears it down, one tick later — so the
+      // composer leaving the screen still delivers the keystroke that
+      // took the operator off the Run screen. Refuse edits whenever the
+      // composer is not on screen: its buffer is not reachable then, and
+      // a "/" seeded into it would open the slash palette over a panel
+      // that owns that key itself.
+      if (!composerVisibleRef.current) return;
       dispatch({ type: "input_changed", value: next });
       const prefix = slashPrefix(next);
       if (prefix !== null) {
@@ -1017,7 +1072,10 @@ export function TuiApp({
   const rootHeight = isTty ? terminalSize.rows : undefined;
   // Rows the content pane actually has, so the overlay can sit on its bottom
   // edge and cap its own height. Same budget the debug pane already uses.
-  const menuPaneRows = Math.max(6, terminalSize.rows - APP_CHROME_ROWS);
+  const menuPaneRows = Math.max(
+    6,
+    terminalSize.rows - appChromeRows(composerVisible),
+  );
   const promptLlm = selectPromptLlmMeta(state);
   // No local backend chosen yet ⇒ no local health to report. Without this the
   // splash screen of a fresh install announces that a server the user never
@@ -1121,6 +1179,7 @@ export function TuiApp({
               <DebugPane
                 state={state}
                 maxVisible={maxVisibleRows}
+                composerVisible={composerVisible}
                 onMcpAddJsonChange={(json) =>
                   dispatch({ type: "mcp_add_json_changed", json })
                 }
@@ -1211,8 +1270,13 @@ export function TuiApp({
               <UpdateRestartPrompt />
             </Box>
           ) : null}
-          <QueuedMessages queued={state.queuedMessages} width={mainColumnWidth} />
-          <PromptShell
+          {composerVisible ? (
+            <>
+              <QueuedMessages
+                queued={state.queuedMessages}
+                width={mainColumnWidth}
+              />
+              <PromptShell
             value={state.inputValue}
             placeholder="Type a message or `/` for commands…"
             rotatingPlaceholders={PROMPT_PLACEHOLDERS}
@@ -1228,9 +1292,11 @@ export function TuiApp({
             onTab={onTab}
             onAutocomplete={onTab}
             onClickFocus={focusEditorFromClick}
-            onHistoryPrev={onHistoryPrev}
-            onHistoryNext={onHistoryNext}
-          />
+                onHistoryPrev={onHistoryPrev}
+                onHistoryNext={onHistoryNext}
+              />
+            </>
+          ) : null}
           <HotkeyHint
             state={state}
             ctrlCArmed={ctrlCArmed}

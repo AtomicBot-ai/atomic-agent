@@ -32,6 +32,12 @@ import { ProvidersPanel } from "./providers-panel.js";
 interface DebugPaneProps {
   state: TuiState;
   maxVisible: number;
+  /**
+   * Whether the composer is on screen below the pane. It is not, on the
+   * Manage tabs — so those panels really do have six more rows to spend,
+   * and budgeting as if it were there leaves them dead.
+   */
+  composerVisible: boolean;
   onMcpAddJsonChange?: (json: string) => void;
   onMcpAddSubmit?: (json: string) => void;
   onMcpAddCancel?: () => void;
@@ -49,6 +55,7 @@ interface DebugPaneProps {
 export function DebugPane({
   state,
   maxVisible,
+  composerVisible,
   onMcpAddJsonChange,
   onMcpAddSubmit,
   onMcpAddCancel,
@@ -61,6 +68,7 @@ export function DebugPane({
       <ActiveDebugTab
         state={state}
         maxVisible={maxVisible}
+        composerVisible={composerVisible}
         onMcpAddJsonChange={onMcpAddJsonChange}
         onMcpAddSubmit={onMcpAddSubmit}
         onMcpAddCancel={onMcpAddCancel}
@@ -162,15 +170,31 @@ function buildManageTabs(state: TuiState): SubTab[] {
 }
 
 /**
- * Height consumed by the always-on app frame OUTSIDE the debug pane:
- * the top `StatusBar` (1 row) + the `PromptShell` (≈6 rows: top margin,
- * the rounded frame's two border rows, the editor line and the action
- * bar) + the
- * `HotkeyHint` (1 row). Ink 7 does NOT clip a frame taller than the
- * terminal — it overlaps/garbles earlier lines instead (verified) — so
- * the per-tab budget must subtract this accurately and err generous.
+ * Height consumed by the always-on app frame OUTSIDE the debug pane
+ * when the composer is NOT on screen: the top `StatusBar` (1 row), the
+ * hairline under it (1) and the `HotkeyHint` (1).
  */
-export const APP_CHROME_ROWS = 9;
+export const APP_CHROME_ROWS_BASE = 3;
+/**
+ * Rows the `PromptShell` costs when it is mounted: a top margin, the
+ * rounded frame's two border rows, the editor line and the action bar.
+ */
+export const COMPOSER_ROWS = 6;
+/**
+ * Height consumed by the always-on app frame OUTSIDE the debug pane.
+ * Ink 7 does NOT clip a frame taller than the terminal — it overlaps /
+ * garbles earlier lines instead (verified) — so the per-tab budget must
+ * subtract this accurately and err generous.
+ *
+ * The composer is only on screen on the Run screen, so its rows are
+ * conditional: a Manage tab really does have six more rows to spend, and
+ * budgeting as if the composer were still there leaves them dead.
+ */
+export function appChromeRows(composerVisible: boolean): number {
+  return APP_CHROME_ROWS_BASE + (composerVisible ? COMPOSER_ROWS : 0);
+}
+/** Back-compat alias: the chat-screen total. */
+export const APP_CHROME_ROWS = APP_CHROME_ROWS_BASE + COMPOSER_ROWS;
 /**
  * Height consumed INSIDE the debug pane above the active tab: the
  * `SubTabBar` (1 row) + the `DebugDiagnosticsLine`. The diagnostics line
@@ -201,28 +225,33 @@ const MIN_LIST_ROWS = 3;
  * Total number of rows available for an active tab's own content
  * (panel chrome + its list), derived from the live terminal height.
  */
-function tabContentBudget(terminalRows: number): number {
+function tabContentBudget(terminalRows: number, composerVisible: boolean): number {
   return Math.max(
     MIN_LIST_ROWS,
-    terminalRows - APP_CHROME_ROWS - DEBUG_TAB_CHROME_ROWS - RENDER_SAFETY_ROWS,
+    terminalRows -
+      appChromeRows(composerVisible) -
+      DEBUG_TAB_CHROME_ROWS -
+      RENDER_SAFETY_ROWS,
   );
 }
 
 function ActiveDebugTab({
   state,
   maxVisible,
+  composerVisible,
   onMcpAddJsonChange,
   onMcpAddSubmit,
   onMcpAddCancel,
 }: {
   state: TuiState;
   maxVisible: number;
+  composerVisible: boolean;
   onMcpAddJsonChange?: (json: string) => void;
   onMcpAddSubmit?: (json: string) => void;
   onMcpAddCancel?: () => void;
 }): ReactElement {
   const { rows: terminalRows } = useTerminalSize();
-  const tabBudget = tabContentBudget(terminalRows);
+  const tabBudget = tabContentBudget(terminalRows, composerVisible);
   // Compact panels have a tiny fixed header, so they get the list slice
   // directly. LLM / Models own large fixed chrome (RouteCard / status
   // footer) that they collapse themselves, so they receive the full

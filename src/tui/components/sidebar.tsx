@@ -272,9 +272,14 @@ function RailBrand({
 const MARK_COLUMNS = 6;
 
 /**
- * Starts a fresh thread. It sits at the head of the session list because
- * that is the list it adds to — and because `/new` was the only way to
- * reach it, which is not a thing a first-time operator knows.
+ * Starts a fresh thread. It sits on the Sessions header because that is
+ * the list the thread joins — once it has been spoken to. A brand-new
+ * session shows no row: it has no name yet, and an unnamed row is
+ * indistinguishable from every other unnamed row. The row appears with
+ * the first prompt, named by it.
+ *
+ * `/new` does the same thing, and used to be the only way to reach it —
+ * which is not a thing a first-time operator knows.
  */
 function NewSessionButton(): ReactElement {
   const mouse = useMouseCommands();
