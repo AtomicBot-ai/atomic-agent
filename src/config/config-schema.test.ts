@@ -7,6 +7,45 @@ import {
   parseUserConfigFile,
 } from "./config-schema.js";
 
+describe("tui.onboarding (config v43)", () => {
+  it("defaults every stamp to null on a file that predates the block", () => {
+    const parsed = parseUserConfigFile({ version: 42, tui: { theme: "nord" } });
+    expect(parsed.tui.onboarding).toEqual({
+      completedAt: null,
+      introSeenAt: null,
+      skippedAt: null,
+      proposedSecondBackendAt: null,
+    });
+    expect(parsed.tui.theme).toBe("nord");
+  });
+
+  it("round-trips ISO stamps", () => {
+    const stamp = "2026-08-21T18:04:05.000Z";
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { onboarding: { completedAt: stamp, introSeenAt: stamp } },
+    });
+    expect(parsed.tui.onboarding.completedAt).toBe(stamp);
+    expect(parsed.tui.onboarding.introSeenAt).toBe(stamp);
+    expect(parsed.tui.onboarding.skippedAt).toBeNull();
+  });
+
+  it("rejects a stamp that is not a date", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tui: { onboarding: { completedAt: "soon" } },
+      }),
+    ).toThrow(ConfigValidationError);
+  });
+
+  it("rejects a non-object onboarding block", () => {
+    expect(() =>
+      parseUserConfigFile({ version: USER_CONFIG_VERSION, tui: { onboarding: true } }),
+    ).toThrow(ConfigValidationError);
+  });
+});
+
 describe("parseUserConfigFile", () => {
   it("returns defaults when all fields are missing", () => {
     const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });

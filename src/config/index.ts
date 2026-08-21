@@ -4,6 +4,7 @@ export type {
   HttpApprovalMode,
   LocalLlmMode,
   LogLevel,
+  OnboardingState,
   TelegramConfig,
   TelegramParseMode,
   UserConfigFile,
@@ -18,6 +19,7 @@ export {
   ConfigValidationError,
   USER_CONFIG_DEFAULTS,
   USER_CONFIG_VERSION,
+  parseOnboardingState,
   parseUserConfigFile,
   parseWhileBusySubmit,
 } from "./config-schema.js";
