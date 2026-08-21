@@ -228,10 +228,62 @@ function renderExtrude(cols, ch, wallGlyph, aspect = ASPECT) {
 }
 
 /**
- * SM: a one-column right bevel and no vertical offset at all. At this
- * size each arm is one row tall, so a shadow offset down lands against
- * the bar and reads as a second bar rather than as depth.
+ * SM: three rows, one-cell arms, a sub-cell fillet in each concave
+ * corner and a one-column right bevel.
+ *
+ *      ▗█░
+ *    █████░
+ *      █▘░
+ *
+ * **This one is constructed, not rasterised.** Every other size samples
+ * the bezier path; this one cannot. The arm is a quarter of the box, so
+ * a one-column arm implies a five-row box at a 2.2:1 cell — there is no
+ * sampling of the path that yields three rows with arms still on it.
+ * `fullGrid(5)` rounds straight back up to a two-column arm. So the
+ * geometry is written out here instead: arm 1 cell, bar 4×arm + 1 for
+ * centring, which is the same proportion the other sizes obey, quantised
+ * to the smallest grid that can still carry it.
+ *
+ * It is a *sign* at this size rather than a reproduction, and that is
+ * the point: it sits inline beside text — the rail lockup, the setup
+ * headers — where five rows of logo out-shout the words next to them.
+ *
+ * **The fillets.** The concave diagonal (top-left, bottom-right) is what
+ * distinguishes this mark from a plain cross, and at one cell per arm
+ * there is no room to draw it in whole cells. A quadrant block puts the
+ * ink in the corner it belongs to at half the size — the only sub-cell
+ * tool a terminal offers. The hard 90° corners (top-right, bottom-left)
+ * stay empty; filleting all four would make the mark 4-fold symmetric,
+ * which is a different logo.
+ *
+ * ASCII has no quadrant glyphs, so that stroke keeps plain cells. The
+ * charset is pinned by `logo-art.generated.test.ts`.
  */
+function renderSmall(ch, stroke) {
+  const arm = 1;
+  const width = 4 * arm + 1;
+  const armCol = Math.floor(width / 2);
+  const face = new Set([`0,${armCol}`, `2,${armCol}`]);
+  for (let c = 0; c < width; c += 1) face.add(`1,${c}`);
+  // Top-left and bottom-right only — the 180°-symmetric pair.
+  const fillets = new Map();
+  if (stroke === "block") {
+    fillets.set(`0,${armCol - 1}`, "▗");
+    fillets.set(`2,${armCol + 1}`, "▘");
+  }
+  const ink = new Set([...face, ...fillets.keys()]);
+  const shade = new Set();
+  for (const k of ink) {
+    const [r, c] = k.split(",").map(Number);
+    const key = `${r},${c + 1}`;
+    if (!ink.has(key)) shade.add(key);
+  }
+  const layers = [[shade, ch.shade], [face, ch.face]];
+  for (const [key, glyph] of fillets) layers.push([new Set([key]), glyph]);
+  return paint(layers);
+}
+
+/** Kept for reference: the five-row bevelled mark the SM size replaced. */
 function renderBevel(cols, ch, aspect = ASPECT) {
   const { g, W, H } = fullGrid(cols, aspect);
   const face = faceSet(g, W, H);
@@ -252,12 +304,13 @@ function range(a, b) {
 
 // -------------------------------------------------------------- emit
 
-const SCALES = { lg: 45, md: 29, sm: 8 };
+// `sm` takes no nominal width: it is constructed rather than sampled.
+const SCALES = { lg: 45, md: 29 };
 
 function art(scale, stroke) {
   const ch = STROKES[stroke];
   if (scale === "lg") return renderBoth(SCALES.lg, ch);
-  if (scale === "sm") return renderBevel(SCALES.sm, ch);
+  if (scale === "sm") return renderSmall(ch, stroke);
   // MD/block draws its walls in the light `░` so it matches the rail
   // mark's tone; the ASCII ramp is already low-contrast and would lose
   // the depth entirely if it dropped to `.`.

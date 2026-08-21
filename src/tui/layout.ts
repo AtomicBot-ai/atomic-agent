@@ -42,9 +42,10 @@ const SIDEBAR_WIDTH_RATIO = 0.25;
  * turns the top and bottom edges off — and pinned by
  * `sidebar-fit.test.tsx`, which renders the rail at a budget and
  * asserts it comes to exactly `sessions + tasks + SIDEBAR_CHROME_ROWS`
- * rows.
+ * rows. Two of these rows went back to the lists when the brand mark
+ * dropped from five rows to three.
  */
-export const SIDEBAR_CHROME_ROWS = 16;
+export const SIDEBAR_CHROME_ROWS = 14;
 
 /**
  * Rows the rail costs outside its own frame: the status bar above it

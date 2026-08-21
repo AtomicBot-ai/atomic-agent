@@ -257,11 +257,10 @@ function RailBrand({
         </Box>
         <Box flexDirection="column" flexShrink={0} paddingLeft={1}>
           {/*
-            Two blanks, not one: the mark is five rows and the text is
-            two, so this seats the pair on the mark's centre row — the
-            cross's own bar — rather than riding high against its top arm.
+            One blank: the mark is three rows and the text is two, so
+            this seats the pair from the mark's centre row — the cross's
+            own bar — rather than riding high against its top arm.
           */}
-          <Text> </Text>
           <Text> </Text>
           <Text color={theme.colors.railForeground} bold wrap="truncate">
             {clip("atomic-agent", textWidth)}
@@ -281,7 +280,7 @@ function RailBrand({
 }
 
 /** Width of {@link RAIL_MARK}, kept beside it so the lockup can measure. */
-const MARK_COLUMNS = 9;
+const MARK_COLUMNS = 6;
 
 /**
  * Starts a fresh thread. It sits on the Sessions header because that is

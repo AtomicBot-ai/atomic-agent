@@ -104,7 +104,7 @@ describe("computeSplashFit", () => {
       tagline: false,
       // 12 rows − 5 for the mark − 1 margin − 1 slack leaves five of the
       // six tips.
-      tipCount: 5,
+      tipCount: 6,
       labelWidth: 10,
       descriptions: "short",
     });

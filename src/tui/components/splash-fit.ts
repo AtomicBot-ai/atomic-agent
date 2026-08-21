@@ -136,7 +136,7 @@ interface LogoMetrics {
 export const LOGO_METRICS: Readonly<Record<LogoVariant, LogoMetrics>> = {
   full: { width: 51, height: 24 },
   small: { width: 31, height: 14 },
-  mini: { width: 9, height: 5 },
+  mini: { width: 6, height: 3 },
 };
 
 /** `ATOMIC AGENT` half-block wordmark, plus the gap that precedes it. */
@@ -189,7 +189,7 @@ function lockupWidth(variant: LogoVariant): number {
 }
 
 /**
- * Marks big enough to carry the wordmark beside them. `mini` is nine
+ * Marks big enough to carry the wordmark beside them. `mini` is six
  * columns; parked next to a 46-column wordmark it reads as a bullet
  * point rather than a lockup.
  */
