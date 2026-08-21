@@ -42,6 +42,7 @@ const HELP =
     "",
     "Flags:",
     "  --check              Check only: report current vs latest, install nothing",
+    "  --yes, -y            Skip confirmation prompt (required in non-TTY environments)",
     "  --version <tag>      Install a specific release tag (e.g. v0.3.2) instead of latest",
     "  -h, --help           Show this help",
     "",
@@ -60,17 +61,22 @@ const HELP =
 function parseArgs(
   args: string[],
 ):
-  | { ok: true; checkOnly: boolean; version?: string }
+  | { ok: true; checkOnly: boolean; version?: string; yes: boolean }
   | { ok: false; error: string } {
   let checkOnly = false;
   let version: string | undefined;
+  let yes = false;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === "-h" || arg === "--help") {
-      return { ok: true, checkOnly: false };
+      return { ok: true, checkOnly: false, yes: false };
     }
     if (arg === "--check") {
       checkOnly = true;
+      continue;
+    }
+    if (arg === "--yes" || arg === "-y") {
+      yes = true;
       continue;
     }
     if (arg === "--version") {
@@ -90,7 +96,7 @@ function parseArgs(
       error: "--check and --version are mutually exclusive",
     };
   }
-  return { ok: true, checkOnly, version };
+  return { ok: true, checkOnly, version, yes };
 }
 
 async function defaultConfirm(prompt: string): Promise<boolean> {
@@ -149,7 +155,13 @@ export async function updateCommand(
         return 1;
       }
       process.stdout.write(`installing ${parsed.version}…\n`);
-      if (isTTY()) {
+      if (!parsed.yes) {
+        if (!isTTY()) {
+          process.stderr.write(
+            "non-interactive update requires --yes (or -y) to confirm\n",
+          );
+          return 1;
+        }
         const ok = await confirm(`update to ${parsed.version}? [y/N] `);
         if (!ok) {
           process.stdout.write("update cancelled\n");
@@ -188,7 +200,13 @@ export async function updateCommand(
     process.stdout.write(
       `current: ${result.currentVersion} → latest: ${result.latestVersion}\n`,
     );
-    if (isTTY()) {
+    if (!parsed.yes) {
+      if (!isTTY()) {
+        process.stderr.write(
+          "non-interactive update requires --yes (or -y) to confirm\n",
+        );
+        return 1;
+      }
       const ok = await confirm(`update to ${result.latestVersion}? [y/N] `);
       if (!ok) {
         process.stdout.write("update cancelled\n");
