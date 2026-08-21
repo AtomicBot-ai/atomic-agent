@@ -75,6 +75,7 @@ describe("atomic-agent update", () => {
     expect(await updateCommand(["--help"], deps)).toBe(0);
     expect(stdout()).toMatch(/atomic-agent update/);
     expect(stdout()).toMatch(/--check/);
+    expect(stdout()).toMatch(/--yes/);
     expect(check).not.toHaveBeenCalled();
   });
 
@@ -134,8 +135,20 @@ describe("atomic-agent update", () => {
     expect(runInstaller).not.toHaveBeenCalled();
   });
 
-  it("updates in place when a newer version exists (non-interactive)", async () => {
-    expect(await updateCommand([], deps)).toBe(0);
+  it("refuses non-TTY update without --yes, exiting 1", async () => {
+    expect(await updateCommand([], deps)).toBe(1);
+    expect(stderr()).toMatch(/non-interactive.*--yes/);
+    expect(runInstaller).not.toHaveBeenCalled();
+  });
+
+  it("refuses non-TTY --version without --yes, exiting 1", async () => {
+    expect(await updateCommand(["--version", "v0.3.2"], deps)).toBe(1);
+    expect(stderr()).toMatch(/non-interactive.*--yes/);
+    expect(runInstaller).not.toHaveBeenCalled();
+  });
+
+  it("updates in place with --yes in non-TTY", async () => {
+    expect(await updateCommand(["--yes"], deps)).toBe(0);
     expect(stdout()).toMatch(/current: 0\.3\.1 → latest: 0\.3\.2/);
     expect(runInstaller).toHaveBeenCalledTimes(1);
     expect(runInstaller).toHaveBeenCalledWith(
@@ -147,6 +160,20 @@ describe("atomic-agent update", () => {
     expect(stdout()).toMatch(/updated to 0\.3\.2/);
   });
 
+  it("short flag -y works the same as --yes", async () => {
+    expect(await updateCommand(["-y"], deps)).toBe(0);
+    expect(runInstaller).toHaveBeenCalledTimes(1);
+  });
+
+  it("--yes skips the interactive prompt in TTY", async () => {
+    const confirm = vi.fn().mockResolvedValue(true);
+    expect(await updateCommand(["--yes"], { ...deps, isTTY: () => true, confirm })).toBe(
+      0,
+    );
+    expect(confirm).not.toHaveBeenCalled();
+    expect(runInstaller).toHaveBeenCalledTimes(1);
+  });
+
   it("streams installer lines prefixed with [update]", async () => {
     runInstaller.mockImplementation(
       async (opts?: { onLine?: (line: string) => void }) => {
@@ -155,7 +182,7 @@ describe("atomic-agent update", () => {
         return { ok: true, installDir: "/tmp/install" };
       },
     );
-    expect(await updateCommand([], deps)).toBe(0);
+    expect(await updateCommand(["--yes"], deps)).toBe(0);
     expect(stdout()).toMatch(/\[update\] downloading atomic-agent/);
     expect(stdout()).toMatch(/\[update\] installed atomic-agent/);
   });
@@ -184,19 +211,34 @@ describe("atomic-agent update", () => {
     runInstaller.mockRejectedValue(
       new AppUpdateError("install script exited with code 7"),
     );
-    expect(await updateCommand([], deps)).toBe(1);
+    expect(await updateCommand(["--yes"], deps)).toBe(1);
     expect(stderr()).toMatch(/install script exited with code 7/);
     expect(stdout()).not.toMatch(/updated to/);
   });
 
-  it("--version pins a specific tag even when the running version is newer", async () => {
+  it("--version pins a specific tag with --yes", async () => {
     check.mockResolvedValue(
       makeResult({ updateAvailable: false, latestTag: "v0.3.1", latestVersion: "0.3.1" }),
     );
-    expect(await updateCommand(["--version", "v0.3.2"], deps)).toBe(0);
+    expect(await updateCommand(["--version", "v0.3.2", "--yes"], deps)).toBe(0);
     expect(stdout()).toMatch(/installing v0\.3\.2/);
     expect(runInstaller).toHaveBeenCalledWith(
       expect.objectContaining({ version: "v0.3.2" }),
     );
+  });
+
+  it("--version refuses non-TTY without --yes", async () => {
+    expect(await updateCommand(["--version", "v0.3.2"], deps)).toBe(1);
+    expect(stderr()).toMatch(/non-interactive.*--yes/);
+    expect(runInstaller).not.toHaveBeenCalled();
+  });
+
+  it("--version proceeds in TTY without --yes", async () => {
+    const confirm = vi.fn().mockResolvedValue(true);
+    expect(
+      await updateCommand(["--version", "v0.3.2"], { ...deps, isTTY: () => true, confirm }),
+    ).toBe(0);
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(runInstaller).toHaveBeenCalledTimes(1);
   });
 });
