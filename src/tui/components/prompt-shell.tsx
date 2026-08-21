@@ -60,6 +60,8 @@ export interface PromptShellProps
   leftSlot?: ReactElement | null;
   /** Optional content rendered just before the buttons on the right. */
   rightSlot?: ReactElement | null;
+  /** Optional context readout, rendered at the action bar's right end. */
+  contextSlot?: ReactElement | null;
 }
 
 export function PromptShell(props: PromptShellProps): ReactElement {
@@ -71,6 +73,7 @@ export function PromptShell(props: PromptShellProps): ReactElement {
     provider,
     leftSlot,
     rightSlot,
+    contextSlot,
     focus,
     disabled,
     value,
@@ -133,6 +136,7 @@ export function PromptShell(props: PromptShellProps): ReactElement {
           model={model ?? null}
           provider={provider ?? null}
           rightSlot={rightSlot ?? null}
+          contextSlot={contextSlot ?? null}
           canSend={canSend}
           // Exactly the callback Enter fires, with exactly the buffer
           // Enter would submit. A second submit path would be a second

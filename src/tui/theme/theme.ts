@@ -44,6 +44,14 @@ export interface TuiColors {
   readonly accent: string;
   readonly accentSoft: string;
   /**
+   * The palette's violet, one hue away from `accent`. Reserved for a
+   * state that is neither "normal" nor "wrong" and must not be read as
+   * either — today, a context window whose transcript has been trimmed.
+   * A warn/error colour would say something broke; the accent would say
+   * nothing at all.
+   */
+  readonly accentAlt: string;
+  /**
    * The brand mark's own blue — deliberately lighter and whiter than
    * `accent`. The mark is not a control, and painting it in the same
    * blue as every accented control made the start page read as one big

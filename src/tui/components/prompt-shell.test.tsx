@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
+import { ContextChip } from "./context-chip.js";
 import { PromptShell } from "./prompt-shell.js";
 
 function strip(value: string): string {
@@ -88,7 +89,17 @@ describe("PromptShell", () => {
           model="qwen3-30b-a3b-instruct-2507"
           provider="llama.cpp"
           leftSlot={<Text>{"● healthy"}</Text>}
-          rightSlot={<Text>ctx 32768</Text>}
+          contextSlot={
+            <ContextChip
+              usage={{
+                tokens: 115_343,
+                contextWindow: 131_072,
+                percent: 88,
+                droppedTurns: 0,
+                sections: [],
+              }}
+            />
+          }
           onChange={() => {}}
           onSubmit={() => {}}
         />
@@ -105,6 +116,8 @@ describe("PromptShell", () => {
     // [5] action bar, [6] bar pad, [7] border.
     const bar = lines[5] ?? "";
     expect(bar).toContain(" send → ");
+    // The readout keeps its full gauge; the model name is what gives.
+    expect(bar).toContain("context [======= ]  88%");
     unmount();
   });
 

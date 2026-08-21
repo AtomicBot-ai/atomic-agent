@@ -37,6 +37,13 @@ export interface PromptMetaBarProps {
   provider: string | null;
   /** Chat-surface content rendered just before the buttons. */
   rightSlot: ReactElement | null;
+  /**
+   * The context readout, rendered at the bar's right end. Its own prop
+   * rather than part of `rightSlot` because the two coexist: while a
+   * turn runs `rightSlot` carries the Enter-routing hint, and the window
+   * is exactly as worth watching then as when the composer is idle.
+   */
+  contextSlot: ReactElement | null;
   /** Whether Send has something to send; drives the primary/ghost look. */
   canSend: boolean;
   onSend: () => void;
@@ -60,6 +67,7 @@ export function PromptMetaBar({
   model,
   provider,
   rightSlot,
+  contextSlot,
   canSend,
   onSend,
 }: PromptMetaBarProps): ReactElement {
@@ -87,6 +95,11 @@ export function PromptMetaBar({
         {rightSlot ? (
           <Box flexShrink={0} marginRight={2}>
             {rightSlot}
+          </Box>
+        ) : null}
+        {contextSlot ? (
+          <Box flexShrink={0} marginRight={2}>
+            {contextSlot}
           </Box>
         ) : null}
         <ComposerButton label={SEND_LABEL} primary enabled={canSend} onPress={onSend} />

@@ -32,6 +32,14 @@ export type ProviderRow = {
   chatModel: string | null;
   chatModelOptions?: readonly string[];
   embeddingModel: string | null;
+  /**
+   * Context window of `chatModel`, when it is actually known — from the
+   * bundled catalogue or a hand-written `userModels` entry. `null` for
+   * `llama-server` rows (the runtime probes those) and for any model
+   * nobody has stated a window for. The composer's context chip reads
+   * it to size its gauge on cloud turns.
+   */
+  contextWindow: number | null;
 };
 
 export interface ProvidersRemoveConfirmState {

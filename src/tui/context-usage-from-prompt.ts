@@ -1,0 +1,54 @@
+import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
+import type { ContextUsageSection, ContextUsageState } from "./tui-state.js";
+
+/** A window nothing has been built against yet. */
+export const EMPTY_CONTEXT_USAGE: ContextUsageState = {
+  tokens: null,
+  contextWindow: null,
+  droppedTurns: 0,
+  sections: [],
+};
+
+/**
+ * Order the sections are shown in: the fixed cost first, then the
+ * transcript, then everything the memory fabric contributed, then the
+ * small stuff. Not the order `BuiltPrompt.tokens` declares them in —
+ * that one follows the prompt's own assembly, which is not how anyone
+ * reads a bill.
+ */
+const SECTIONS: readonly {
+  key: keyof BuiltPrompt["tokens"];
+  label: string;
+}[] = [
+  { key: "stablePrefix", label: "prompt scaffold" },
+  { key: "conversation", label: "conversation" },
+  { key: "recalled", label: "recalled memory" },
+  { key: "memoryIndex", label: "memory index" },
+  { key: "worldSnapshot", label: "world snapshot" },
+  { key: "loadedTools", label: "loaded tools" },
+  { key: "loadedSkills", label: "loaded skills" },
+  { key: "sessionFacts", label: "session facts" },
+  { key: "profile", label: "profile" },
+  { key: "taskPolicy", label: "task policy" },
+];
+
+/**
+ * Project a built prompt into the readout the composer shows.
+ *
+ * Sections that cost nothing are dropped rather than listed as zeros: a
+ * session with no skills loaded should not have to read the word
+ * "skills" to find that out.
+ */
+export function contextUsageFromPrompt(prompt: BuiltPrompt): ContextUsageState {
+  const sections: ContextUsageSection[] = [];
+  for (const { key, label } of SECTIONS) {
+    const tokens = prompt.tokens[key];
+    if (tokens > 0) sections.push({ label, tokens });
+  }
+  return {
+    tokens: prompt.tokens.total,
+    contextWindow: prompt.contextWindow,
+    droppedTurns: prompt.droppedTurns,
+    sections,
+  };
+}

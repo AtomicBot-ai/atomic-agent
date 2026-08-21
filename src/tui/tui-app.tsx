@@ -1,3 +1,5 @@
+import { ContextChip } from "./components/context-chip.js";
+import { selectContextUsage } from "./select-context-usage.js";
 import { Box, Text, useApp, useInput, type DOMElement, type Key } from "ink";
 import {
   useCallback,
@@ -1170,12 +1172,15 @@ export function TuiApp({
       <Text color="gray"> {promptLlm.cloudLabel ?? "cloud"}</Text>
     </Text>
   );
-  // While a turn is running the meta-row's job changes: the operator
-  // needs to know what Enter will do to the message they are typing far
-  // more than they need the context-window size.
+  // While a turn is running the meta-row gains a second job: the operator
+  // needs to know what Enter will do to the message they are typing.
   // Running only: during a pending approval every key routes to the
   // approval modal first, so both Enter-routing and the ctrl+t flip are
   // dead there — advertising them would promise bindings that do nothing.
+  //
+  // What used to live here when idle was `ctx <window>` — the *size* of
+  // the context window, which never changes and never told anyone
+  // anything. The chip below reports how much of it is in use instead.
   const promptRightSlot =
     state.status === "running" ? (
       <Text>
@@ -1184,11 +1189,11 @@ export function TuiApp({
         </Text>
         <Text color={theme.colors.muted}> (ctrl+t)</Text>
       </Text>
-    ) : state.llmHealth.contextWindow !== null ? (
-      <Text color={theme.colors.muted}>
-        ctx {state.llmHealth.contextWindow}
-      </Text>
     ) : null;
+  const contextUsage = selectContextUsage(state);
+  const promptContextSlot = contextUsage ? (
+    <ContextChip usage={contextUsage} />
+  ) : null;
 
   return (
     <MouseProvider
@@ -1370,6 +1375,7 @@ export function TuiApp({
             provider={promptLlm.provider}
             leftSlot={promptLeftSlot}
             rightSlot={promptRightSlot}
+            contextSlot={promptContextSlot}
             focus={editorFocus}
             disabled={!canTypeMessage(state)}
             claimKey={composerClaimKey}

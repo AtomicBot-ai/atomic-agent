@@ -16,3 +16,9 @@ export type {
   TerminalBackgroundMode,
   DetectTerminalBackgroundDeps,
 } from "./detect-terminal-background.js";
+export { parseHexColor, formatHexColor } from "./parse-hex-color.js";
+export type { Rgb } from "./parse-hex-color.js";
+export { luminance } from "./color-luminance.js";
+export { relativeLuminance, contrastRatio } from "./color-contrast.js";
+export { mixColor } from "./mix-color.js";
+export { readableOn } from "./readable-foreground.js";
