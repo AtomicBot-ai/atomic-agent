@@ -239,6 +239,22 @@ export interface ContextUsageState {
   contextWindow: number | null;
   /** Turns `packConversation` dropped to make the transcript fit. */
   droppedTurns: number;
+  /** Tokens the `### conversation` section actually rendered to. */
+  conversationTokens: number;
+  /**
+   * Ceiling that section is packed to — `conversationCapEffective`. The
+   * one number that says when older turns start being dropped, and the
+   * only budget figure that is defined even when nobody knows the
+   * physical window (the clamp falls back to the configured cap).
+   */
+  conversationCap: number | null;
+  /**
+   * The cap as configured (`agent.conversationMaxTokens`), before the
+   * window clamp. Equal to `conversationCap` when config is what binds;
+   * larger when the window is. That comparison is the only way to tell
+   * an operator which knob actually moves their limit.
+   */
+  conversationCapConfigured: number | null;
   /** Per-section breakdown, for the detail view. Empty before the first prompt. */
   sections: readonly ContextUsageSection[];
 }

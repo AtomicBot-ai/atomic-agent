@@ -19,6 +19,10 @@ function usage(percent: number, droppedTurns = 0): ContextUsageView {
     tokens: 1000,
     contextWindow: 10_000,
     percent,
+    conversationTokens: percent * 10,
+    conversationCap: 1000,
+    conversationPercent: percent,
+    capSource: "config",
     droppedTurns,
     sections: [],
   };

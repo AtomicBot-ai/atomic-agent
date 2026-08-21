@@ -28,7 +28,6 @@ import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-
 import { fetchGeminiModels } from "../../llm/provider/gemini/fetch-gemini-models.js";
 import { OPENAI_COMPAT_DEFAULT_BASE_URL } from "./providers-model-options.js";
 import { isProvidersAction } from "./providers-actions.js";
-import { resolveProviderContextWindow } from "./resolve-provider-context-window.js";
 import type { ProviderRow } from "./providers-panel-state.js";
 import { saveProviderWizardToConfig } from "./save-provider-wizard.js";
 import { verifyWizardBeforeSave } from "./verify-wizard-before-save.js";
@@ -234,14 +233,6 @@ export class ProvidersOrchestrator {
         chatModel: fileEntry?.defaultChatModel ?? fileEntry?.model ?? null,
         chatModelOptions: listChatModelOptionsForEntry(fileEntry),
         embeddingModel: fileEntry?.defaultEmbeddingModel ?? null,
-        // Resolved here rather than in a selector: this is the one place
-        // that already holds the config entry the catalogue lookup needs,
-        // and it re-runs on every config write, so a model swap moves the
-        // composer's gauge with it.
-        contextWindow: resolveProviderContextWindow(
-          p,
-          fileEntry?.defaultChatModel ?? fileEntry?.model ?? null,
-        ),
       };
     });
     this.bus.emit({ type: "providers_refresh", rows });
