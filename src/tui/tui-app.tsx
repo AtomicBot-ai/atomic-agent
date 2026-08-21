@@ -96,6 +96,15 @@ export interface TuiEventBus {
 }
 
 /**
+ * Columns of air between the rail's right edge and the chat column. The
+ * rail paints its own ground, so without a gutter the transcript starts
+ * one cell after a block of colour and reads as if it were inside the
+ * panel. Subtracted from `mainColumnWidth` as well, or the hairline and
+ * the hint strip overflow the row they are measured for.
+ */
+const RAIL_GUTTER_COLUMNS = 3;
+
+/**
  * A one-row hairline. `flexShrink={0}` so a tall chat never eats it, and
  * the glyph run is built from the width the caller measured rather than
  * `width="100%"`: Ink pads a percentage-width Box with spaces, which
@@ -611,7 +620,7 @@ export function TuiApp({
     0,
     terminalSize.columns -
       ROOT_PADDING_COLUMNS -
-      (sidebarVisible ? sidebarWidth : 0),
+      (sidebarVisible ? sidebarWidth + RAIL_GUTTER_COLUMNS : 0),
   );
   const sidebarFocused = sidebarVisible && state.chatFocus === "sidebar";
   const editorFocus =
@@ -849,6 +858,16 @@ export function TuiApp({
     }
   }, [state, callbacks]);
 
+  /**
+   * Clicking the prompt takes the keyboard back from the rail. Without
+   * this the caret moved but the arrow keys still walked the session
+   * list, which is the behaviour of no other application anywhere.
+   */
+  const focusEditorFromClick = useCallback(() => {
+    if (state.chatFocus === "editor") return;
+    dispatch({ type: "chat_focus_set", focus: "editor" });
+  }, [state.chatFocus]);
+
   // Tab in the editor is reserved for slash-palette completion. Section
   // / sub-tab cycling lives entirely in `handleAppKey` so the same key
   // press cannot be acted on twice (once globally, once here through a
@@ -1007,7 +1026,12 @@ export function TuiApp({
             focused={sidebarFocused}
           />
         ) : null}
-        <Box flexDirection="column" flexGrow={1} overflow="hidden">
+        <Box
+          flexDirection="column"
+          flexGrow={1}
+          overflow="hidden"
+          {...(sidebarVisible ? { paddingLeft: RAIL_GUTTER_COLUMNS } : {})}
+        >
           <Box
             flexDirection="column"
             flexGrow={1}
@@ -1110,6 +1134,7 @@ export function TuiApp({
             onEscape={onEscape}
             onTab={onTab}
             onAutocomplete={onTab}
+            onClickFocus={focusEditorFromClick}
             onHistoryPrev={onHistoryPrev}
             onHistoryNext={onHistoryNext}
           />

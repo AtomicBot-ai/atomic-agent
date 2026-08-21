@@ -111,6 +111,8 @@ export interface TuiGlyphs {
   readonly ellipsis: string;
   readonly promptCaret: string;
   readonly chevronRight: string;
+  /** Filled marker on the operator menu's selected row. */
+  readonly menuCursor: string;
   /** Hamburger, for the rail's menu button. */
   readonly menuGlyph: string;
   readonly dotSeparator: string;
@@ -161,6 +163,7 @@ const GLYPHS: TuiGlyphs = {
   ellipsis: "…",
   promptCaret: "❯",
   chevronRight: "▸",
+  menuCursor: "▶",
   menuGlyph: "☰",
   dotSeparator: "·",
   pipeSeparator: "|",
@@ -280,10 +283,28 @@ export function isBackdropDimmed(): boolean {
   return backdropDimmed;
 }
 
+/**
+ * Roles that paint a ground rather than ink on one. Dimming these to
+ * `muted` alongside the text they sit under collapses the two into one
+ * flat slab — the rail stops being a rail and becomes a grey block. The
+ * backdrop should read as *faded*, not as *erased*: keep the grounds,
+ * fade what is written on them.
+ */
+const GROUND_ROLES = new Set<keyof TuiColors>([
+  "railBackground",
+  "badgeBackground",
+  "chipBackground",
+]);
+
 function dimColors(colors: TuiColors): TuiColors {
   if (dimmedColorsFor === colors && dimmedColorsCache) return dimmedColorsCache;
   const flat = Object.fromEntries(
-    Object.keys(colors).map((key) => [key, colors.muted]),
+    Object.keys(colors).map((key) => [
+      key,
+      GROUND_ROLES.has(key as keyof TuiColors)
+        ? colors[key as keyof TuiColors]
+        : colors.muted,
+    ]),
   ) as unknown as TuiColors;
   dimmedColorsFor = colors;
   dimmedColorsCache = flat;

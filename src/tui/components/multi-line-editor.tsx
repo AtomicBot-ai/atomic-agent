@@ -47,6 +47,13 @@ export interface MultiLineEditorProps {
    * editor body.
    */
   bare?: boolean;
+  /**
+   * The operator clicked into the buffer. Fired even when the editor is
+   * not focused — clicking an input is how every other application is
+   * told "put the keyboard here", and the editor cannot move focus
+   * itself because focus lives in the app's state.
+   */
+  onClickFocus?: () => void;
 }
 
 /**
@@ -79,6 +86,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     onShiftTab,
     onAutocomplete,
     bare = false,
+    onClickFocus,
   } = props;
   const [cursorPos, setCursorPos] = useState<number>(value.length);
   // Distinguish our own edits (keystrokes routed through `setBuffer`)
@@ -151,6 +159,9 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
    */
   const placeCursorAt = (row: number, col: number): void => {
     if (disabled) return;
+    // Ask for focus first: a click that moves a caret the operator
+    // cannot then type into is a click that did nothing.
+    onClickFocus?.();
     const lines = value.split("\n");
     const safeRow = Math.max(0, Math.min(row, lines.length - 1));
     const safeCol = Math.max(0, Math.min(col, (lines[safeRow] ?? "").length));

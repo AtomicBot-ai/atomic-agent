@@ -218,6 +218,37 @@ describe("TuiApp mouse", () => {
     app.unmount();
   });
 
+  it("takes the keyboard back from the rail when the prompt is clicked", async () => {
+    // Tab parks focus on the rail, where ↑/↓ walk the session list. A
+    // click on the input has to mean "type here" — otherwise the caret
+    // moves to a field the keys still do not reach.
+    const app = mountApp();
+    await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
+    app.stdin.write("\t");
+    await waitUntil(
+      () => app.frame().includes("SESSIONS"),
+      "the rail on screen",
+    );
+    await clickUntil(
+      app.mouse,
+      () => {
+        const at = locate(app.frame(), "❯");
+        return { x: at.x + 2, y: at.y };
+      },
+      () => true,
+      "click in the prompt",
+    );
+    // The proof is that typing lands in the buffer rather than driving
+    // the rail's cursor.
+    app.stdin.write("typed");
+    await waitUntil(
+      () => app.frame().includes("typed"),
+      "the character typed into the prompt",
+    );
+    expect(app.frame()).toContain("typed");
+    app.unmount();
+  });
+
   it("clamps a click past the end of a line to the line end", async () => {
     const app = mountApp();
     await waitUntil(() => app.frame().includes("R U N"), "the Run screen");

@@ -35,7 +35,8 @@ const SIDEBAR_WIDTH_RATIO = 0.25;
  * version line and the Menu button, on top of the two section headers,
  * the blank row between the panes and a "↓ N more" footer per pane.
  * The `+ new` control costs nothing: it sits on the Sessions header row
- * rather than on a line of its own.
+ * rather than on a line of its own; the blank row under the Menu button,
+ * which lifts it off the rail's bottom edge, does cost one.
  * Counted off the rendered component rather
  * than estimated — the left border costs no rows because `sidebar.tsx`
  * turns the top and bottom edges off — and pinned by
@@ -43,7 +44,7 @@ const SIDEBAR_WIDTH_RATIO = 0.25;
  * asserts it comes to exactly `sessions + tasks + SIDEBAR_CHROME_ROWS`
  * rows.
  */
-export const SIDEBAR_CHROME_ROWS = 12;
+export const SIDEBAR_CHROME_ROWS = 13;
 
 /**
  * Rows the rail costs outside its own frame: the status bar above it

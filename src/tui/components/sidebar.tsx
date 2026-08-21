@@ -165,6 +165,12 @@ export function Sidebar(props: SidebarProps): ReactElement {
       */}
       <Box flexGrow={1} />
       <MenuButton inner={inner} />
+      {/*
+        The design seats the Menu control above the rail's bottom edge
+        rather than on it — a control flush against the edge of its own
+        panel reads as part of the frame instead of as a button.
+      */}
+      <RailBlank />
     </Box>
   );
 }
