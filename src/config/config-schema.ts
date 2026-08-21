@@ -966,7 +966,17 @@ export interface UserManagedEmbeddingLlmConfig {
  * changes and add a migration step in `parseUserConfigFile`.
  */
 export interface UserConfigFile {
-  version: typeof USER_CONFIG_VERSION;
+  /**
+   * The on-disk schema version. Usually `USER_CONFIG_VERSION`, but a file
+   * written by a NEWER build keeps its own (higher) number all the way
+   * through parse and write-back, so an older build can never label a
+   * newer file with its own version. See `parseUserConfigFile`.
+   */
+  version: number;
+  // NB: keys from a newer schema ride along on the object at runtime (see
+  // `unknownTopLevelKeys`) but are deliberately absent from this type. An
+  // index signature here would make every property name valid on the type
+  // the whole tree writes back — `{ ...file, viison: … }` would compile.
   localModels: {
     url: string;
     mode: LocalLlmMode;
@@ -1508,7 +1518,12 @@ export interface UserConfigFile {
 // files stored an unused `false` default — those migrate to `true` so
 // existing installs pick up newer llama.cpp zips. Explicit `false` on
 // a v41+ file is honoured.
-export const USER_CONFIG_VERSION = 41 as const;
+// v42: no schema change. The bump exists to carry the forward-compat
+// rules below: a file whose `version` is *newer* than this constant is
+// now read instead of rejected, its version is preserved rather than
+// stamped down, and unknown top-level keys survive the round trip. See
+// `parseUserConfigFile` and `ensureUserConfigFileSync`.
+export const USER_CONFIG_VERSION = 42;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1638,6 +1653,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   38,
   39,
   40,
+  41,
   USER_CONFIG_VERSION,
 ];
 
@@ -2763,10 +2779,50 @@ export function parseMcpServers(
 }
 
 /**
+ * Every top-level key this build knows about. Derived from the defaults
+ * so it cannot drift when a block is added, plus `llm`, which the parse
+ * emits conditionally rather than defaulting.
+ */
+const KNOWN_TOP_LEVEL_KEYS: ReadonlySet<string> = new Set([
+  ...Object.keys(USER_CONFIG_DEFAULTS),
+  // Emitted conditionally rather than defaulted.
+  "llm",
+  // Read as the legacy alias of `tracing` and intentionally not emitted;
+  // treating it as unknown would carry a retired block forward for ever.
+  "telemetry",
+]);
+
+/**
+ * The keys of `obj` this build does not recognise — in practice, a block
+ * written by a newer schema. `parseUserConfigFile` rebuilds its result as
+ * a fixed literal, so without carrying these through explicitly the first
+ * write from an older build would delete them. `__proto__` is dropped
+ * rather than carried: `JSON.parse` can produce it as an own key and it
+ * has no business in a config file.
+ */
+function unknownTopLevelKeys(
+  obj: Record<string, unknown>,
+): Record<string, unknown> {
+  // Null prototype so `extras[key] = value` is always a plain data write.
+  // On a normal object, `extras["__proto__"] = …` hits the inherited setter
+  // and silently reparents `extras` instead of storing anything.
+  const extras = Object.create(null) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(obj)) {
+    // With the null prototype above this would otherwise become a real own
+    // key, get spread into the result, and be written back out to disk.
+    if (key === "__proto__") continue;
+    if (KNOWN_TOP_LEVEL_KEYS.has(key)) continue;
+    extras[key] = value;
+  }
+  return extras;
+}
+
+/**
  * Validate and normalise a raw JSON payload into a `UserConfigFile`.
  * Missing sub-keys are filled with defaults — this lets us add new
  * fields without breaking existing installations. Unknown top-level
- * keys are preserved silently (forward compat).
+ * keys are carried through verbatim (forward compat); unknown keys
+ * *inside* a known block are still dropped.
  */
 export function parseUserConfigFile(raw: unknown): UserConfigFile {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
@@ -2774,10 +2830,23 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   }
   const obj = raw as Record<string, unknown>;
   const version = obj.version ?? USER_CONFIG_VERSION;
-  if (
-    typeof version !== "number" ||
-    !SUPPORTED_INPUT_VERSIONS.includes(version)
-  ) {
+  if (typeof version !== "number" || !Number.isSafeInteger(version) || version < 1) {
+    throw new ConfigValidationError(
+      "version",
+      `unsupported config version ${JSON.stringify(version)}; expected a positive whole number`,
+    );
+  }
+  // A version we have never heard of is only fatal when it is OLDER than
+  // the oldest we can migrate. A NEWER one is read with this build's
+  // schema instead of throwing: every version-gated rule below is a `<`
+  // comparison, so a higher number makes all of them fall through to
+  // "take the file at its word", which is the correct reading of a file
+  // written by a build that knew more than we do. Rejecting it instead
+  // bricks every command in the CLI — `getConfig()` runs before all of
+  // them — and turns any rollback to an older build into a dead install.
+  // The newer number is preserved in the result (and unknown top-level
+  // keys with it) so writing the file back cannot downgrade it.
+  if (!SUPPORTED_INPUT_VERSIONS.includes(version) && version < USER_CONFIG_VERSION) {
     throw new ConfigValidationError(
       "version",
       `unsupported config version ${JSON.stringify(version)}; expected one of ${SUPPORTED_INPUT_VERSIONS.join(", ")}`,
@@ -2948,7 +3017,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         });
 
   return {
-    version: USER_CONFIG_VERSION,
+    // Spread first so a known key can never be shadowed by a stray one.
+    ...unknownTopLevelKeys(obj),
+    // A file from a newer build keeps its own version. Stamping ours here
+    // is what turns "read a newer file" into "silently downgrade it".
+    version: Math.max(version, USER_CONFIG_VERSION),
     localModels: {
       url: localModelsUrl,
       mode: localModelsMode,

@@ -90,6 +90,20 @@ function handleSet(args: string[]): number {
     process.stderr.write(`config set failed: invalid JSON: ${message}\n`);
     return 1;
   }
+  // Reading a version from the future is right for a file on disk — some
+  // newer build wrote it. Typing one here is not: nothing understands it,
+  // the write path will not let a later `config set` lower it again, and
+  // the file would sit permanently above every future schema, skipping
+  // every migration.
+  if (
+    typeof (parsed as { version?: unknown } | null)?.version === "number" &&
+    (parsed as { version: number }).version > USER_CONFIG_VERSION
+  ) {
+    process.stderr.write(
+      `config set failed: version ${(parsed as { version: number }).version} is newer than this build understands (${USER_CONFIG_VERSION})\n`,
+    );
+    return 1;
+  }
   const next = parseUserConfigFile(parsed);
   const path = getConfig().paths.userConfigFile;
   writeUserConfigFileSync(path, next);

@@ -84,10 +84,95 @@ describe("parseUserConfigFile", () => {
     ).toBe(1);
   });
 
-  it("rejects unsupported version", () => {
-    expect(() => parseUserConfigFile({ version: 99 })).toThrow(
+  it("rejects a non-numeric version", () => {
+    expect(() => parseUserConfigFile({ version: "41" })).toThrow(
       ConfigValidationError,
     );
+    expect(() => parseUserConfigFile({ version: Number.NaN })).toThrow(
+      ConfigValidationError,
+    );
+  });
+
+  // A build that is rolled back, or a second install sharing one state
+  // dir, meets a file from the future. Throwing here bricks every command
+  // — `getConfig()` runs before all of them — so a newer file is read
+  // with this build's schema instead.
+  it("reads a config written by a newer build instead of rejecting it", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION + 1,
+      agent: { approvalLevel: 3 },
+    });
+    expect(parsed.agent.approvalLevel).toBe(3);
+  });
+
+  it("keeps a newer version rather than stamping its own", () => {
+    expect(parseUserConfigFile({ version: USER_CONFIG_VERSION + 7 }).version).toBe(
+      USER_CONFIG_VERSION + 7,
+    );
+  });
+
+  // Every version-gated rule in the parse is a `<` comparison against the
+  // input version, so a newer file must take its stored values verbatim
+  // rather than having the pre-v41/v22/v25 defaults forced back on.
+  it("does not apply migration overrides to a newer file", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION + 1,
+      localModels: { managed: { autoUpdate: false } },
+      memory: { links: { enabled: false } },
+    });
+    expect(parsed.localModels.managed.autoUpdate).toBe(false);
+    expect(parsed.memory.links.enabled).toBe(false);
+  });
+
+  // The parse rebuilds a fixed literal, so a block added by a newer
+  // schema only survives if it is carried across explicitly.
+  // Deliberately absent from `UserConfigFile` — the keys ride along on the
+  // object without widening the type, so the test has to reach past it.
+  it("carries unknown top-level keys through the parse", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION + 1,
+      somethingFromTheFuture: { nested: [1, 2, 3] },
+    }) as unknown as Record<string, unknown>;
+    expect(parsed.somethingFromTheFuture).toEqual({ nested: [1, 2, 3] });
+  });
+
+  it("retires the legacy telemetry alias instead of carrying it forward", () => {
+    const parsed = parseUserConfigFile({
+      version: 20,
+      telemetry: { trace: { enabled: true } },
+    }) as unknown as Record<string, unknown>;
+    expect(parsed.telemetry).toBeUndefined();
+    expect(parsed.tracing).toBeDefined();
+  });
+
+  it("rejects a version that is not a plausible whole number", () => {
+    for (const version of [42.5, 1e308, 0, -1]) {
+      expect(() => parseUserConfigFile({ version })).toThrow(
+        ConfigValidationError,
+      );
+    }
+  });
+
+  // JSON.parse — unlike an object literal — makes `__proto__` a real own
+  // key, which is the only way this reaches the carry-through spread.
+  it("drops a __proto__ key instead of carrying it through", () => {
+    const raw: unknown = JSON.parse(
+      `{"version": ${USER_CONFIG_VERSION}, "__proto__": {"polluted": true}}`,
+    );
+    expect(Object.hasOwn(raw as object, "__proto__")).toBe(true);
+
+    const parsed = parseUserConfigFile(raw);
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(Object.hasOwn(parsed, "__proto__")).toBe(false);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("never lets an unknown key shadow a parsed one", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      agent: { approvalLevel: 2 },
+    });
+    expect(parsed.agent.approvalLevel).toBe(2);
   });
 
   it("rejects legacy v1/v2/v3/v4 input — migration is not supported", () => {

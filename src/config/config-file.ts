@@ -60,10 +60,32 @@ export function readUserConfigFileSync(path: string): UserConfigFile | null {
 /**
  * Atomically write the user config file: tmp file + rename. Creates
  * the parent directory as needed.
+ *
+ * The written `version` is never lower than the one already on disk. A
+ * dozen call sites build their payload by spreading a config object and
+ * writing it back, and several skip `parseUserConfigFile` entirely, so
+ * the guard lives here rather than in the parse: this is the only
+ * function in the tree that writes `config.json`. Without it, an older
+ * build that opens a newer file relabels it on the first settings
+ * toggle, and the version field is load-bearing — `version < 41` forces
+ * `localModels.managed.autoUpdate` back on, `version < 22` overrides an
+ * explicit `memory.*` opt-out, `version < 25` rewrites
+ * `http.approvalMode`. Downgrading the label silently reverts choices
+ * the user made.
  */
 export function writeUserConfigFileSync(path: string, data: UserConfigFile): void {
   mkdirSync(dirname(path), { recursive: true });
-  const payload = JSON.stringify(data, null, 2) + "\n";
+  const onDisk = readVersionFieldFromFileSync(path);
+  const raised = onDisk !== null && onDisk > data.version;
+  const version = raised ? (onDisk as number) : data.version;
+  if (raised) {
+    process.stderr.write(
+      `[atomic-agent] kept config version ${onDisk} (this build writes v${data.version}) at ${path}\n`,
+    );
+  }
+  const payload =
+    JSON.stringify(version === data.version ? data : { ...data, version }, null, 2) +
+    "\n";
   const tmp = `${path}.tmp-${process.pid}`;
   writeFileSync(tmp, payload, "utf8");
   renameSync(tmp, path);
@@ -82,6 +104,10 @@ export function writeUserConfigFileSync(path: string, data: UserConfigFile): voi
  *    blocks (e.g. `vision` in v6) are filled with defaults.
  *  - File present at the current `version`: parse and return without
  *    touching the file on disk.
+ *  - File present at a NEWER `version` (an install that was rolled back,
+ *    or two builds sharing one state dir): parse with this build's
+ *    schema and return without touching the file. Unknown top-level
+ *    blocks ride along untouched; the newer `version` is kept.
  *
  * The return value is always the validated, normalised contents.
  */
@@ -94,14 +120,37 @@ export function ensureUserConfigFileSync(path: string): UserConfigFile {
     );
     return USER_CONFIG_DEFAULTS;
   }
-  const parsed = parseUserConfigFile(raw.parsed);
-  if (raw.originalVersion !== USER_CONFIG_VERSION) {
+  const parsed = withConfigPathInError(path, () => parseUserConfigFile(raw.parsed));
+  // Migrate upward only. `!==` would treat "written by a newer build" as
+  // "needs migrating" and rewrite the file down to this build's schema at
+  // startup, before the user has touched anything — the exact move that
+  // turns a rollback into data loss.
+  if (raw.originalVersion === null || raw.originalVersion < USER_CONFIG_VERSION) {
     writeUserConfigFileSync(path, parsed);
     process.stderr.write(
       `[atomic-agent] migrated config v${raw.originalVersion} → v${USER_CONFIG_VERSION} at ${path}\n`,
     );
   }
   return parsed;
+}
+
+/**
+ * Name the file and a way out when the config is unusable. `getConfig()`
+ * runs ahead of every command, so a validation failure here is the first
+ * thing a user sees, and the bare `invalid config: version: …` it used to
+ * print names neither the file nor a remedy — leaving nothing to do but
+ * search the source.
+ */
+function withConfigPathInError<T>(path: string, read: () => T): T {
+  try {
+    return read();
+  } catch (err) {
+    if (!(err instanceof ConfigValidationError)) throw err;
+    throw new ConfigValidationError(
+      err.field,
+      `${err.reason} (in ${path}) — edit or delete that file to start from defaults, or point ATOMIC_AGENT_STATE_DIR elsewhere`,
+    );
+  }
 }
 
 interface RawUserConfigFile {
@@ -132,6 +181,21 @@ function readRawUserConfigFileSync(path: string): RawUserConfigFile | null {
     );
   }
   return { parsed, originalVersion: readVersionField(parsed) };
+}
+
+/**
+ * The `version` currently on disk, or `null` when the file is absent,
+ * unreadable, not JSON, or carries no numeric version. Deliberately
+ * total: this runs on the write path, where a malformed existing file
+ * must not stop the caller from replacing it.
+ */
+function readVersionFieldFromFileSync(path: string): number | null {
+  if (!existsSync(path)) return null;
+  try {
+    return readVersionField(JSON.parse(readFileSync(path, "utf8")));
+  } catch {
+    return null;
+  }
 }
 
 function readVersionField(parsed: unknown): number | null {
