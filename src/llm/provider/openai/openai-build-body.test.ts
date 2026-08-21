@@ -146,4 +146,29 @@ describe("buildOpenAiChatBody", () => {
     expect(body.tools).toBeUndefined();
     expect("tools" in body).toBe(false);
   });
+
+  it("serializes parallel_tool_calls: false when the executor asks for a single call (issue #104)", () => {
+    // `maxParallelToolCalls=1` (or a provider that cannot emit parallel
+    // calls) must reach the wire so the flag acts as a
+    // provider-compatibility control, not just an executor cap.
+    const body = buildOpenAiChatBody(
+      {
+        prompt: "hi",
+        tools: [{ type: "function", function: { name: "read" } }],
+        parallelToolCalls: false,
+      },
+      "gpt-5-2",
+      false,
+    );
+    expect(body.parallel_tool_calls).toBe(false);
+  });
+
+  it("does not attach parallel_tool_calls to a request without tools", () => {
+    const body = buildOpenAiChatBody(
+      { prompt: "hi", parallelToolCalls: false },
+      "gpt-5-2",
+      false,
+    );
+    expect("parallel_tool_calls" in body).toBe(false);
+  });
 });

@@ -146,6 +146,15 @@ export interface StepDependencies {
   /** When false, completions use slotId -1 (cloud providers). */
   supportsSlotAffinity: boolean;
   /**
+   * Provider capability: whether the active native-tools provider can
+   * generate parallel tool calls in one response. When false (or the
+   * configured `agent.maxParallelToolCalls` is 1), the executor asks
+   * the provider for a single tool call per response by sending
+   * `parallel_tool_calls: false`. Defaults to `true` for legacy /
+   * grammar-only wiring.
+   */
+  supportsParallelTools?: boolean;
+  /**
    * Invoked after every LLM completion (initial call and one-shot parse
    * retry alike). Used by the agent loop to feed the served `modelId`
    * into the profile manager so mid-turn model swaps can be detected.
@@ -1112,7 +1121,7 @@ function buildLlmStreamParams(args: {
   promptText: string;
   deps: Pick<
     StepDependencies,
-    "grammar" | "toolTransport" | "toolCallAdapter"
+    "grammar" | "toolTransport" | "toolCallAdapter" | "supportsParallelTools"
   >;
   slotId: number;
   sessionId: string;
@@ -1154,7 +1163,16 @@ function buildLlmStreamParams(args: {
     // that content (see invariant comment there), so the
     // one-inference-per-step contract is preserved.
     toolChoice: "auto",
-    parallelToolCalls: true,
+    // Ask the provider for a single tool call per response unless the
+    // executor cap allows more AND the provider reports it can emit
+    // parallel calls. With `maxParallelToolCalls=1` this is the
+    // provider-compatibility control: some OpenAI-compatible streams
+    // (Gemini) lack stable indices for parallel calls, so the setting
+    // must reach the wire, not just the executor's batch planner
+    // (issue #104).
+    parallelToolCalls:
+      getConfig().agent.maxParallelToolCalls > 1 &&
+      (args.deps.supportsParallelTools ?? true),
   };
 }
 
