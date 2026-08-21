@@ -155,6 +155,25 @@ const MIN_TIPS = 3;
 const TIP_LIST_MARGIN_ROWS = 1;
 
 /**
+ * A row the splash never spends, so its content is always at least one
+ * row short of the pane it is rendered into.
+ *
+ * Without it the fit lands *exactly* on the pane height at roughly half
+ * of all terminal sizes — including all three at which the wordmark was
+ * reported truncated. Ink 7 overlaps rather than clips (see
+ * `../row-window.ts`), so at an exact fit any one-row disagreement
+ * between the budgeted viewport and the real pane — a wrapped hint
+ * strip, a terminal reporting one more row than it shows — is paid for
+ * by painting over a row that is already drawn, rather than by leaving
+ * a blank one empty.
+ *
+ * This is hardening, not a proven fix: the artwork itself is emitted
+ * intact at every size swept, so if the truncation survives it is
+ * downstream of the row data.
+ */
+const SPLASH_SLACK_ROWS = 1;
+
+/**
  * Rows a stacked wordmark costs: one blank, its own two, and the
  * tagline under it. Beside the mark all of that is free — the mark is
  * taller than the wordmark and tagline together — so this is the only
@@ -271,7 +290,11 @@ export function computeSplashFit(size: SplashSize): SplashFit {
       : LOGO_METRICS[logo].height +
         (wordmarkPlacement === "below" ? WORDMARK_STACK_ROWS : 0) +
         TIP_LIST_MARGIN_ROWS;
-  const spare = rows - markRows;
+  // Only when a mark is drawn: on a surface too small for one the tips
+  // are all there is, and spending one of two rows on slack costs half
+  // the page to guard artwork that is not on it.
+  const spare =
+    rows - markRows - (logo === "none" ? 0 : SPLASH_SLACK_ROWS);
   const tipCount = Math.max(0, Math.min(SPLASH_TIPS.length, spare));
   const visible = SPLASH_TIPS.slice(0, tipCount);
 

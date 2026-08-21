@@ -89,7 +89,8 @@ describe("computeSplashFit", () => {
       wordmarkPlacement: "none",
       wordmark: false,
       tagline: false,
-      tipCount: 5,
+      // One row short of the pane by design — see SPLASH_SLACK_ROWS.
+      tipCount: 4,
       labelWidth: 24,
       descriptions: "full",
     });
@@ -101,9 +102,9 @@ describe("computeSplashFit", () => {
       wordmarkPlacement: "none",
       wordmark: false,
       tagline: false,
-      // 12 rows − 5 for the mark − 1 margin leaves room for all six
-      // tips (the list lost its two hotkey rows).
-      tipCount: SPLASH_TIPS.length,
+      // 12 rows − 5 for the mark − 1 margin − 1 slack leaves five of the
+      // six tips.
+      tipCount: 5,
       labelWidth: 10,
       descriptions: "short",
     });
