@@ -8,6 +8,7 @@ import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { getAppVersion } from "../../version.js";
+import { Chip, tracked } from "./chip.js";
 
 interface StatusBarProps {
   state: TuiState;
@@ -44,6 +45,7 @@ export function StatusBar({
   brand = true,
 }: StatusBarProps): ReactElement {
   const section = getCurrentSection(state);
+  const title = currentSessionTitle(state);
   return (
     <Box>
       {brand ? (
@@ -57,8 +59,31 @@ export function StatusBar({
       ) : null}
       <Breadcrumb state={state} section={section} />
       <SessionTag sessionId={state.session.sessionId} />
+      {title ? (
+        <Text color={theme.colors.muted}>
+          {"  "}
+          {theme.glyphs.dotSeparator}{" "}
+          <Text color={theme.colors.assistant} bold>
+            {title}
+          </Text>
+        </Text>
+      ) : null}
     </Box>
   );
+}
+
+/**
+ * The preview of the session being worked on, which the design puts in
+ * the top bar beside the id. Read from the rail's own session list so
+ * the two can never disagree about what the current thread is called.
+ */
+function currentSessionTitle(state: TuiState): string | null {
+  const id = state.session.sessionId;
+  if (!id) return null;
+  const entry = state.sessionPickerList.find((row) => row.sessionId === id);
+  const preview = entry?.preview?.trim();
+  if (!preview) return null;
+  return preview.length > 32 ? `${preview.slice(0, 31)}…` : preview;
 }
 
 const SECTION_LABELS: Record<TuiSection, string> = {
@@ -90,12 +115,12 @@ function Breadcrumb({
     state.uiMode === "debug" ? menuPlaceByTab(state.activeTab)?.label : undefined;
   const label = (
     <Text>
-      <Text color={theme.colors.accentSoft} bold>
-        {SECTION_LABELS[section]}
-      </Text>
+      <Chip label={tracked(SECTION_LABELS[section])} tone="badge" />
       {tabLabel ? (
         <Text color={theme.colors.muted}>
-          {" "}
+          {/* The badge carries its own trailing pad; a second space here
+              would set the breadcrumb a full cell off from every other
+              separator in the bar. */}
           {theme.glyphs.chevronRight} <Text>{tabLabel}</Text>
         </Text>
       ) : null}
@@ -126,14 +151,12 @@ interface SessionTagProps {
 
 function SessionTag({ sessionId }: SessionTagProps): ReactElement | null {
   if (!sessionId) return null;
+  // The design sets this as `session <id>` in plain dim type, with a dot
+  // before the title that follows — no pipe. One separator glyph in the
+  // bar, used once, reads as punctuation; two read as a table.
   return (
     <Text>
-      <Text color={theme.colors.muted}>
-        {"  "}
-        {theme.glyphs.pipeSeparator}
-        {"  "}
-        session{" "}
-      </Text>
+      <Text color={theme.colors.muted}>{"   session "}</Text>
       <Text>{shortenId(sessionId)}</Text>
     </Text>
   );

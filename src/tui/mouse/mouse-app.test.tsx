@@ -169,10 +169,10 @@ describe("TuiApp mouse", () => {
   // job and is covered by `menu-behaviour.test.ts`.
   it("opens the menu when the breadcrumb is clicked", async () => {
     const app = mountApp();
-    await waitUntil(() => app.frame().includes("Run"), "the Run screen");
+    await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
     await clickUntil(
       app.mouse,
-      () => locate(app.frame(), "Run"),
+      () => locate(app.frame(), "R U N"),
       () => app.frame().includes("Observe"),
       "click on the breadcrumb",
     );
@@ -185,7 +185,7 @@ describe("TuiApp mouse", () => {
 
   it("ignores a click that lands on no target", async () => {
     const app = mountApp();
-    await waitUntil(() => app.frame().includes("Run"), "the Run screen");
+    await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
     const before = app.frame();
     app.mouse.emit(click(0, 0));
     await delay(150);
@@ -195,7 +195,7 @@ describe("TuiApp mouse", () => {
 
   it("places the editor caret where the prompt is clicked", async () => {
     const app = mountApp();
-    await waitUntil(() => app.frame().includes("Run"), "the Run screen");
+    await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
     app.stdin.write("hello");
     await waitUntil(() => app.frame().includes("hello"), "the typed buffer");
     // Click the second "l" (index 3) then type: the character has to land
@@ -220,7 +220,7 @@ describe("TuiApp mouse", () => {
 
   it("clamps a click past the end of a line to the line end", async () => {
     const app = mountApp();
-    await waitUntil(() => app.frame().includes("Run"), "the Run screen");
+    await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
     app.stdin.write("hi");
     await waitUntil(() => app.frame().includes("hi"), "the typed buffer");
     await clickUntil(

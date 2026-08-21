@@ -8,19 +8,24 @@ interface UserBubbleProps {
 }
 
 /**
- * opencode-style user message: a colored vertical left border plus
- * generous vertical padding around the body. The role itself is
- * implied by the border color (blue = user) — there is no inline
- * "you" label, so consecutive user / assistant turns read as a
- * coloured ribbon rather than a labelled list. `marginTop=1` between
+ * A user message: a `YOU` label over a coloured left border and
+ * generous vertical padding around the body. `marginTop=1` between
  * messages prevents bubbles from touching.
+ *
+ * The label used to be absent, on the theory that the border colour is
+ * the label. Colour alone says nothing under NO_COLOR, in a pipe, or to
+ * a reader who cannot separate the two hues — and the design puts the
+ * word back, which is also the accessible answer.
  *
  * No markdown rendering — the user authored the text and expects to
  * see exactly what they typed.
  */
 export function UserBubble({ text }: UserBubbleProps): ReactElement {
   return (
-    <Box marginTop={1}>
+    <Box marginTop={1} flexDirection="column">
+      <Text color={theme.colors.user} bold>
+        {"  YOU"}
+      </Text>
       <Box
         borderStyle="single"
         borderTop={false}
@@ -28,7 +33,6 @@ export function UserBubble({ text }: UserBubbleProps): ReactElement {
         borderBottom={false}
         borderLeft
         borderColor={theme.colors.user}
-        paddingTop={1}
         paddingBottom={1}
         paddingLeft={2}
         paddingRight={1}

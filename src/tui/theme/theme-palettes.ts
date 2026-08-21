@@ -19,6 +19,44 @@
 
 import type { TuiColors } from "./theme.js";
 
+// "Atomic retro" — the house palette, and the one the app boots into.
+// Values are the design's own oklch tokens converted to sRGB; the two
+// exceptions are marked, and both exist because a browser mock can rely
+// on a page background that a terminal does not own.
+export const ATOMIC_RETRO_COLORS: TuiColors = {
+  // `primary` (oklch 42% .13 265 = #294793) is a *fill* in the design:
+  // the rail and the composer sit on it. As TEXT on a dark terminal it
+  // lands around 2:1 against the ground, so anything drawn in the accent
+  // uses the same hue lifted to oklch 68% instead. Same colour, readable.
+  user: "#7195e8",
+  assistant: "#5edb81",
+  system: "#858992",
+  reasoning: "#bb9af4",
+  tool: "#e6e8eb",
+  toolOk: "#5edb81",
+  toolError: "#eb6264",
+  accent: "#7195e8",
+  // The un-lifted fill. Anything that paints a ground (chips, the RUN
+  // badge, the composer) reaches for this, not for `accent`.
+  accentSoft: "#294793",
+  border: "#3c4048",
+  muted: "#858992",
+  error: "#eb6264",
+  warn: "#e6d35c",
+  warnStrong: "#f98f3a",
+  success: "#5edb81",
+  info: "#7195e8",
+  brandMark: "#c4d8ff",
+  // The design's sidebar is a solid indigo panel — the one place the
+  // fill colour is used as a fill, exactly as drawn.
+  railBackground: "#294793",
+  railForeground: "#e6e8eb",
+  railMuted: "#aebedf",
+  badgeBackground: "#1e2435",
+  chipBackground: "#f1f3f8",
+  chipForeground: "#13161d",
+};
+
 // GitHub Primer "dark (default)" — @primer/primitives functional tokens
 // (dist/css/functional/themes/dark.css). accent=fgColor-accent,
 // success=fgColor-success, attention=fgColor-attention,
@@ -45,6 +83,9 @@ export const GITHUB_DARK_COLORS: TuiColors = {
   railBackground: "#f0f6fc",
   railForeground: "#0d1117",
   railMuted: "#57606a",
+  badgeBackground: "#21262d",
+  chipBackground: "#f0f6fc",
+  chipForeground: "#0d1117",
 };
 
 // GitHub Primer "light (default)" — @primer/primitives functional tokens
@@ -70,6 +111,9 @@ export const GITHUB_LIGHT_COLORS: TuiColors = {
   railBackground: "#1f2328",
   railForeground: "#f6f8fa",
   railMuted: "#8c959f",
+  badgeBackground: "#eaeef2",
+  chipBackground: "#1f2328",
+  chipForeground: "#ffffff",
 };
 
 // Catppuccin Mocha — official palette (catppuccin/palette palette.json).
@@ -96,6 +140,9 @@ export const CATPPUCCIN_MOCHA_COLORS: TuiColors = {
   railBackground: "#eff1f5",
   railForeground: "#1e1e2e",
   railMuted: "#6c6f85",
+  badgeBackground: "#313244",
+  chipBackground: "#cdd6f4",
+  chipForeground: "#1e1e2e",
 };
 
 // Catppuccin Latte — official palette (light flavour).
@@ -120,6 +167,9 @@ export const CATPPUCCIN_LATTE_COLORS: TuiColors = {
   railBackground: "#1e1e2e",
   railForeground: "#eff1f5",
   railMuted: "#9ca0b0",
+  badgeBackground: "#dce0e8",
+  chipBackground: "#4c4f69",
+  chipForeground: "#eff1f5",
 };
 
 // Dracula — official spec (draculatheme.com). accent=purple, green,
@@ -146,6 +196,9 @@ export const DRACULA_COLORS: TuiColors = {
   railBackground: "#f8f8f2",
   railForeground: "#282a36",
   railMuted: "#6272a4",
+  badgeBackground: "#44475a",
+  chipBackground: "#f8f8f2",
+  chipForeground: "#282a36",
 };
 
 // Nord — official spec (nordtheme.com). accent=nord8 frost, nord14 green,
@@ -172,6 +225,9 @@ export const NORD_COLORS: TuiColors = {
   railBackground: "#eceff4",
   railForeground: "#2e3440",
   railMuted: "#6b7a90",
+  badgeBackground: "#3b4252",
+  chipBackground: "#eceff4",
+  chipForeground: "#2e3440",
 };
 
 // Tokyo Night ("Night" variant) — official spec
@@ -198,6 +254,9 @@ export const TOKYO_NIGHT_COLORS: TuiColors = {
   railBackground: "#c0caf5",
   railForeground: "#1a1b26",
   railMuted: "#565f89",
+  badgeBackground: "#292e42",
+  chipBackground: "#c0caf5",
+  chipForeground: "#1a1b26",
 };
 
 // Gruvbox Dark — official "bright" palette (morhetz/gruvbox). accent=blue,
@@ -224,6 +283,9 @@ export const GRUVBOX_DARK_COLORS: TuiColors = {
   railBackground: "#fbf1c7",
   railForeground: "#282828",
   railMuted: "#7c6f64",
+  badgeBackground: "#3c3836",
+  chipBackground: "#ebdbb2",
+  chipForeground: "#282828",
 };
 
 // Gruvbox Light — official "faded" palette on light bg (morhetz/gruvbox).
@@ -248,6 +310,9 @@ export const GRUVBOX_LIGHT_COLORS: TuiColors = {
   railBackground: "#282828",
   railForeground: "#fbf1c7",
   railMuted: "#928374",
+  badgeBackground: "#ebdbb2",
+  chipBackground: "#3c3836",
+  chipForeground: "#fbf1c7",
 };
 
 // Solarized Dark — official spec (Ethan Schoonover). Accents are shared
@@ -274,6 +339,9 @@ export const SOLARIZED_DARK_COLORS: TuiColors = {
   railBackground: "#fdf6e3",
   railForeground: "#002b36",
   railMuted: "#657b83",
+  badgeBackground: "#073642",
+  chipBackground: "#eee8d5",
+  chipForeground: "#002b36",
 };
 
 // Solarized Light — same accent set, light base. base1(muted), base2(border).
@@ -298,4 +366,7 @@ export const SOLARIZED_LIGHT_COLORS: TuiColors = {
   railBackground: "#002b36",
   railForeground: "#fdf6e3",
   railMuted: "#93a1a1",
+  badgeBackground: "#eee8d5",
+  chipBackground: "#073642",
+  chipForeground: "#fdf6e3",
 };

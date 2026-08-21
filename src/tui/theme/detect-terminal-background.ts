@@ -185,9 +185,9 @@ function classifyByLuminance(rgb: Rgb): TerminalBackgroundMode {
 
 /**
  * Map a detected background mode to the startup theme. The single switch point
- * for the autodetect feature: `dark`/`unknown` -> github-dark, `light` ->
+ * for the autodetect feature: `dark`/`unknown` -> atomic-retro, `light` ->
  * github-light.
  */
 export function resolveStartupTheme(mode: TerminalBackgroundMode): TuiTheme {
-  return mode === "light" ? THEMES["github-light"] : THEMES["github-dark"];
+  return mode === "light" ? THEMES["github-light"] : THEMES["atomic-retro"];
 }

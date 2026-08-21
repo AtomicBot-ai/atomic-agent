@@ -139,7 +139,7 @@ describe("Esc in the chat editor", () => {
 
     stdin.write(ESC);
     await settle();
-    expect(strip(lastFrame() ?? "")).toContain("Run");
+    expect(strip(lastFrame() ?? "")).toContain("R U N");
     expect(counts.quit).toBe(0);
 
     stdin.write(ESC);

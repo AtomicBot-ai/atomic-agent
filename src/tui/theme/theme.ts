@@ -19,6 +19,7 @@
  */
 
 import {
+  ATOMIC_RETRO_COLORS,
   CATPPUCCIN_LATTE_COLORS,
   CATPPUCCIN_MOCHA_COLORS,
   DRACULA_COLORS,
@@ -64,6 +65,21 @@ export interface TuiColors {
   readonly railForeground: string;
   /** Secondary text on the rail — same role as `muted`, on the rail ground. */
   readonly railMuted: string;
+  /**
+   * Ground for an accent-tinted badge — one step off the terminal's own
+   * background, always read with `accent` text on top. A terminal has no
+   * alpha, so what the design expresses as "accent at 15% over the page"
+   * is baked per palette instead.
+   */
+  readonly badgeBackground: string;
+  /**
+   * Face and label of a raised control (`+ new`, `≡ Menu`, `send →`).
+   * Its own pair rather than the rail's, because a palette may paint the
+   * rail in a colour — this design does — and a button then has to stay
+   * legible against that panel rather than merge into it.
+   */
+  readonly chipBackground: string;
+  readonly chipForeground: string;
   readonly border: string;
   readonly muted: string;
   readonly error: string;
@@ -110,6 +126,7 @@ export interface TuiTheme {
 
 /** Canonical theme identifier used by the registry and resolver. */
 export type ThemeName =
+  | "atomic-retro"
   | "github-dark"
   | "github-light"
   | "catppuccin-mocha"
@@ -173,6 +190,7 @@ function makeTheme(colors: TuiColors): TuiTheme {
 
 /** Registry of every named theme, keyed by {@link ThemeName}. */
 export const THEMES: Readonly<Record<ThemeName, TuiTheme>> = {
+  "atomic-retro": makeTheme(ATOMIC_RETRO_COLORS),
   "github-dark": makeTheme(GITHUB_DARK_COLORS),
   "github-light": makeTheme(GITHUB_LIGHT_COLORS),
   "catppuccin-mocha": makeTheme(CATPPUCCIN_MOCHA_COLORS),
@@ -188,6 +206,7 @@ export const THEMES: Readonly<Record<ThemeName, TuiTheme>> = {
 
 /** Ordered list of theme names, for palettes / help / validation. */
 export const THEME_NAMES: readonly ThemeName[] = [
+  "atomic-retro",
   "github-dark",
   "github-light",
   "catppuccin-mocha",
@@ -207,9 +226,9 @@ export function isThemeName(name: string): name is ThemeName {
 }
 
 // Module-level active theme, swapped by `setActiveTheme`. Defaults to the
-// GitHub dark baseline so the proxy is usable from import time (before
+// house palette so the proxy is usable from import time (before
 // autodetection / an explicit `/theme` switch).
-let activeTheme: TuiTheme = THEMES["github-dark"];
+let activeTheme: TuiTheme = THEMES["atomic-retro"];
 
 /**
  * Swap the active theme behind the {@link theme} proxy. Call this at startup
@@ -231,7 +250,7 @@ export function getActiveThemeName(): ThemeName {
   for (const name of THEME_NAMES) {
     if (THEMES[name] === activeTheme) return name;
   }
-  return "github-dark";
+  return "atomic-retro";
 }
 
 /**

@@ -95,6 +95,22 @@ export interface TuiEventBus {
   subscribe(listener: (action: TuiAction) => void): () => void;
 }
 
+/**
+ * A one-row hairline. `flexShrink={0}` so a tall chat never eats it, and
+ * the glyph run is built from the width the caller measured rather than
+ * `width="100%"`: Ink pads a percentage-width Box with spaces, which
+ * paints a gap in the rule wherever the row is wider than the text.
+ */
+function Rule({ width }: { width: number }): ReactElement {
+  return (
+    <Box flexShrink={0}>
+      <Text color={theme.colors.border}>
+        {theme.glyphs.toolBoxHorizontal.repeat(Math.max(0, width))}
+      </Text>
+    </Box>
+  );
+}
+
 export interface TuiAppCallbacks {
   onApprovalDecision(
     approvalId: string,
@@ -969,6 +985,13 @@ export function TuiApp({
       <Box flexShrink={0}>
         <StatusBar state={state} brand={!sidebarVisible} />
       </Box>
+      {/*
+        The design separates the top bar and the hint strip from the
+        content with a hairline. In a terminal that is a row of box-drawing
+        characters — the one honest way to draw a 1px rule when the
+        smallest unit you own is a cell.
+      */}
+      <Rule width={terminalSize.columns - ROOT_PADDING_COLUMNS} />
       <Box flexDirection="row" flexGrow={1} flexShrink={1} overflow="hidden">
         {sidebarVisible ? (
           <Sidebar

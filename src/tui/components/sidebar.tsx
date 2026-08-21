@@ -12,6 +12,7 @@ import { theme } from "../theme/theme.js";
 import type { SessionPickerEntry } from "../tui-state.js";
 import { getAppVersion } from "../../version.js";
 import { RAIL_MARK } from "./logo.js";
+import { Chip } from "./chip.js";
 
 export type SidebarSection = "sessions" | "tasks";
 
@@ -126,8 +127,12 @@ export function Sidebar(props: SidebarProps): ReactElement {
     >
       <RailBrand inner={inner} sessionId={sessionId} />
       <RailBlank />
-      <SectionHeader title="Sessions" active={sessionsActive} inner={inner} />
-      <NewSessionButton inner={inner} />
+      <SectionHeader
+        title="Sessions"
+        active={sessionsActive}
+        inner={inner}
+        trailing={<NewSessionButton />}
+      />
       <SessionsList
         sessions={sessions}
         cursor={sessionsCursor}
@@ -138,7 +143,12 @@ export function Sidebar(props: SidebarProps): ReactElement {
         inner={inner}
       />
       <RailBlank />
-      <SectionHeader title="Tasks" active={tasksActive} inner={inner} />
+      <SectionHeader
+        title="Tasks"
+        active={tasksActive}
+        inner={inner}
+        counter={`${runningCount(tasks)} running`}
+      />
       <TasksList
         tasks={tasks}
         cursor={tasksCursor}
@@ -259,13 +269,9 @@ const MARK_COLUMNS = 6;
  * that is the list it adds to — and because `/new` was the only way to
  * reach it, which is not a thing a first-time operator knows.
  */
-function NewSessionButton({ inner }: { inner: number }): ReactElement {
+function NewSessionButton(): ReactElement {
   const mouse = useMouseCommands();
-  const label = (
-    <RailLine inner={inner} color={theme.colors.accent}>
-      {"  + New session"}
-    </RailLine>
-  );
+  const label = <Chip label="+ new" />;
   if (!mouse) return label;
   return (
     <MouseTarget
@@ -289,9 +295,13 @@ function NewSessionButton({ inner }: { inner: number }): ReactElement {
 function MenuButton({ inner }: { inner: number }): ReactElement {
   const mouse = useMouseCommands();
   const label = (
-    <RailLine inner={inner} bold>
-      {`${theme.glyphs.menuGlyph} Menu${" ".repeat(Math.max(1, inner - 17))}ctrl+p`}
-    </RailLine>
+    <Box width={inner} flexShrink={0}>
+      <Chip label={`${theme.glyphs.menuGlyph} Menu`} />
+      <Box flexGrow={1} />
+      <Text color={theme.colors.railMuted} wrap="truncate">
+        ctrl+p
+      </Text>
+    </Box>
   );
   if (!mouse) return label;
   return (
@@ -316,18 +326,45 @@ interface SectionHeaderProps {
   title: string;
   active: boolean;
   inner: number;
+  /** Right-aligned status, e.g. `0 running`. */
+  counter?: string;
+  /** Right-aligned control, e.g. the `+ new` chip. */
+  trailing?: ReactNode;
 }
 
-function SectionHeader({ title, active, inner }: SectionHeaderProps): ReactElement {
+function SectionHeader({
+  title,
+  active,
+  inner,
+  counter,
+  trailing,
+}: SectionHeaderProps): ReactElement {
+  // The header is a row, not a line: the counter and the `+ new` control
+  // are pushed to the right edge of the rail the way the design sets
+  // them, which a single clipped string cannot express.
   return (
-    <RailLine
-      inner={inner}
-      bold
-      color={active ? theme.colors.accent : theme.colors.railForeground}
-    >
-      {title.toUpperCase()}
-    </RailLine>
+    <Box width={inner} flexShrink={0}>
+      <Text
+        color={active ? theme.colors.accent : theme.colors.railForeground}
+        bold
+        wrap="truncate"
+      >
+        {title.toUpperCase()}
+      </Text>
+      <Box flexGrow={1} />
+      {counter ? (
+        <Text color={theme.colors.railMuted} wrap="truncate">
+          {counter}
+        </Text>
+      ) : null}
+      {trailing ?? null}
+    </Box>
   );
+}
+
+/** Tasks the design counts in the header: the ones actually running. */
+function runningCount(tasks: readonly TaskSummaryRow[]): number {
+  return tasks.filter((row) => row.status === "running").length;
 }
 
 interface SessionsListProps {
@@ -403,15 +440,67 @@ function SessionRow({
 }: SessionRowProps): ReactElement {
   const preview = truncate(entry.preview, previewWidth);
   const marker = current ? theme.glyphs.assistantMarker : " ";
-  const chevron = selected ? theme.glyphs.chevronRight : " ";
   return (
-    <RailLine
+    <RailRow
       inner={inner}
+      // The row the thread is actually on gets the accent bar; the
+      // cursor gets the ground. They are different questions ("which
+      // session am I in" vs "which row will Enter open"), and the design
+      // answers them with two different marks.
+      bar={current}
+      filled={selected}
       bold={selected || current}
-      color={selected ? theme.colors.accent : theme.colors.railForeground}
     >
-      {`${chevron} ${marker} ${preview}`}
-    </RailLine>
+      {`${marker} ${preview}`}
+    </RailRow>
+  );
+}
+
+/**
+ * A rail list row: an optional 1-cell accent bar, then the label on an
+ * optional filled ground.
+ *
+ * The design draws the bar as a 3px rule down the left edge of the row
+ * and the selection as a translucent fill. Neither has a sub-cell
+ * equivalent, so the bar is `▎` in the accent colour and the fill is a
+ * real background on the label — the two marks the design uses, at the
+ * resolution a terminal has.
+ */
+function RailRow({
+  inner,
+  children,
+  bar,
+  filled,
+  bold,
+  color,
+}: {
+  inner: number;
+  children: string;
+  bar?: boolean;
+  filled?: boolean;
+  bold?: boolean;
+  color?: string;
+}): ReactElement {
+  const label = clip(children, Math.max(0, inner - 2));
+  // One column of chrome, three states. The cursor keeps a glyph rather
+  // than relying on the fill alone: the fill is a colour, and a colour
+  // is nothing under NO_COLOR, in a pipe, or in the test renderer — the
+  // one mark that says "Enter opens this row" has to survive all three.
+  const mark = filled ? theme.glyphs.chevronRight : bar ? "▎" : " ";
+  return (
+    <Box width={inner} flexShrink={0}>
+      <Text color={theme.colors.brandMark} bold>
+        {mark}
+      </Text>
+      <Text
+        color={color ?? theme.colors.railForeground}
+        bold={bold ?? false}
+        wrap="truncate"
+        {...(filled ? { inverse: true } : {})}
+      >
+        {` ${label} `}
+      </Text>
+    </Box>
   );
 }
 
@@ -482,16 +571,19 @@ function TaskRow({
   inner,
 }: TaskRowProps): ReactElement {
   const preview = truncate(row.userMessage, previewWidth);
-  const chevron = selected ? theme.glyphs.chevronRight : " ";
   const badge = statusBadge(row);
   return (
-    <RailLine
+    <RailRow
       inner={inner}
+      // A running task earns the bar for the same reason the current
+      // session does: it is the row that is live, not the row the cursor
+      // happens to sit on.
+      bar={row.status === "running"}
+      filled={selected}
       bold={selected}
-      color={selected ? theme.colors.accent : theme.colors.railForeground}
     >
-      {`${chevron} ${badge} ${preview}`}
-    </RailLine>
+      {`${badge} ${preview}`}
+    </RailRow>
   );
 }
 

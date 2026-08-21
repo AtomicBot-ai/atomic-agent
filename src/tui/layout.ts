@@ -34,6 +34,8 @@ const SIDEBAR_WIDTH_RATIO = 0.25;
  * the rail became the app frame it also carries the brand lockup, the
  * version line and the Menu button, on top of the two section headers,
  * the blank row between the panes and a "↓ N more" footer per pane.
+ * The `+ new` control costs nothing: it sits on the Sessions header row
+ * rather than on a line of its own.
  * Counted off the rendered component rather
  * than estimated — the left border costs no rows because `sidebar.tsx`
  * turns the top and bottom edges off — and pinned by
@@ -41,7 +43,7 @@ const SIDEBAR_WIDTH_RATIO = 0.25;
  * asserts it comes to exactly `sessions + tasks + SIDEBAR_CHROME_ROWS`
  * rows.
  */
-export const SIDEBAR_CHROME_ROWS = 13;
+export const SIDEBAR_CHROME_ROWS = 12;
 
 /**
  * Rows the rail costs outside its own frame: the status bar above it
@@ -63,11 +65,18 @@ const SIDEBAR_RESERVED_ROWS = SIDEBAR_CHROME_ROWS + SIDEBAR_OUTER_ROWS;
 export const SIDEBAR_MIN_ROWS = SIDEBAR_RESERVED_ROWS + 2;
 
 /**
- * Rows of "chrome" outside the chat surface: status bar + prompt
- * meta-row + prompt input + prompt tail-cap + hotkey hint + a small
- * safety pad. Used to convert `terminal.rows` into the chat-area
- * viewport height. Slightly conservative — better to leave one empty
- * row than to clip the prompt.
+ * Rows of "chrome" outside the chat surface: status bar + the hairline
+ * under it + prompt meta-row + prompt input + prompt tail-cap + hotkey
+ * hint + a small safety pad. Used to convert `terminal.rows` into the
+ * chat-area viewport height. Slightly conservative — better to leave one
+ * empty row than to clip the prompt.
+ *
+ * The hairline under the status bar spends the row of slack this count
+ * always carried rather than adding one: raising the number shrinks the
+ * chat viewport, and at 24 rows that came straight out of the operator
+ * menu, which sheds its own key-hint footer first. A second hairline
+ * over the hint strip was drawn and then dropped for the same reason —
+ * the composer's border already reads as the edge it would have drawn.
  */
 export const CHROME_ROWS = 8;
 
