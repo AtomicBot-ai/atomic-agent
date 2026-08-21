@@ -92,7 +92,20 @@ export function PromptShell(props: PromptShellProps): ReactElement {
   const canSend = !disabled && value.trim().length > 0;
   return (
     <Box flexDirection="column" marginTop={1} flexShrink={0}>
-      <Box borderStyle="round" borderColor={accent} flexDirection="column">
+      {/*
+        The design seats the composer on its own panel rather than on the
+        page. `badgeBackground` is the palette's one-step-off-the-ground
+        surface, so the panel reads on every theme — and, unlike painting
+        it in the accent, it leaves the editor's own (uncoloured) text
+        legible, which matters because the buffer is drawn by
+        `MultiLineEditor` with no foreground of its own.
+      */}
+      <Box
+        borderStyle="round"
+        borderColor={accent}
+        backgroundColor={theme.colors.badgeBackground}
+        flexDirection="column"
+      >
         {/*
           Padding lives on the editor row, not on the frame: the action
           bar has to reach both borders for its ground to read as a

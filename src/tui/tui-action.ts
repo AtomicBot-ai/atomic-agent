@@ -29,12 +29,20 @@ export type TuiAction =
   | { type: "system_message"; text: string; variant?: "normal" | "warn" }
   | { type: "agent_event"; event: AgentLoopEvent }
   | { type: "approval_requested"; request: ApprovalRequest }
+  /** The `x` on a rail session row: ask before removing the thread. */
+  | { type: "session_delete_requested"; sessionId: string; preview: string }
+  | { type: "session_delete_cursor_set"; cursor: "yes" | "cancel" }
+  | { type: "session_delete_closed" }
   | { type: "approval_resolved"; approvalId: string; approved: boolean }
   /** `[e]` on an approval prompt: open the target field seeded with `path`. */
   | { type: "approval_path_edit_opened"; path: string }
   | { type: "approval_path_edit_changed"; value: string }
   /** Esc in the target field, or the decision that closed the prompt. */
   | { type: "approval_path_edit_closed" }
+  /** The composer gained or lost a text selection (drives Ctrl+C's meaning). */
+  | { type: "composer_selection_changed"; hasSelection: boolean }
+  /** Transient line in the composer meta row; `null` clears it. */
+  | { type: "composer_notice"; text: string | null }
   | { type: "metric"; sample: MetricSample }
   | { type: "log"; record: LogRecord }
   | { type: "skill_count_changed"; count: number }

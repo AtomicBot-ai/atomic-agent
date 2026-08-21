@@ -6,12 +6,14 @@ import {
   useMouseTarget,
 } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
+import { MOUSE_LAYER_BASE } from "../mouse/mouse-registry.js";
 import { computeRowWindow } from "../row-window.js";
 import type { TaskSummaryRow } from "../tasks/tasks-panel-state.js";
 import { theme } from "../theme/theme.js";
 import type { SessionPickerEntry } from "../tui-state.js";
 import { getAppVersion } from "../../version.js";
 import { RAIL_MARK } from "./logo.js";
+import { Chip } from "./chip.js";
 
 export type SidebarSection = "sessions" | "tasks";
 
@@ -126,8 +128,12 @@ export function Sidebar(props: SidebarProps): ReactElement {
     >
       <RailBrand inner={inner} sessionId={sessionId} />
       <RailBlank />
-      <SectionHeader title="Sessions" active={sessionsActive} inner={inner} />
-      <NewSessionButton inner={inner} />
+      <SectionHeader
+        title="Sessions"
+        active={sessionsActive}
+        inner={inner}
+        trailing={<NewSessionButton />}
+      />
       <SessionsList
         sessions={sessions}
         cursor={sessionsCursor}
@@ -138,7 +144,12 @@ export function Sidebar(props: SidebarProps): ReactElement {
         inner={inner}
       />
       <RailBlank />
-      <SectionHeader title="Tasks" active={tasksActive} inner={inner} />
+      <SectionHeader
+        title="Tasks"
+        active={tasksActive}
+        inner={inner}
+        counter={`${runningCount(tasks)} running`}
+      />
       <TasksList
         tasks={tasks}
         cursor={tasksCursor}
@@ -155,6 +166,12 @@ export function Sidebar(props: SidebarProps): ReactElement {
       */}
       <Box flexGrow={1} />
       <MenuButton inner={inner} />
+      {/*
+        The design seats the Menu control above the rail's bottom edge
+        rather than on it — a control flush against the edge of its own
+        panel reads as part of the frame instead of as a button.
+      */}
+      <RailBlank />
     </Box>
   );
 }
@@ -255,17 +272,18 @@ function RailBrand({
 const MARK_COLUMNS = 6;
 
 /**
- * Starts a fresh thread. It sits at the head of the session list because
- * that is the list it adds to — and because `/new` was the only way to
- * reach it, which is not a thing a first-time operator knows.
+ * Starts a fresh thread. It sits on the Sessions header because that is
+ * the list the thread joins — once it has been spoken to. A brand-new
+ * session shows no row: it has no name yet, and an unnamed row is
+ * indistinguishable from every other unnamed row. The row appears with
+ * the first prompt, named by it.
+ *
+ * `/new` does the same thing, and used to be the only way to reach it —
+ * which is not a thing a first-time operator knows.
  */
-function NewSessionButton({ inner }: { inner: number }): ReactElement {
+function NewSessionButton(): ReactElement {
   const mouse = useMouseCommands();
-  const label = (
-    <RailLine inner={inner} color={theme.colors.accent}>
-      {"  + New session"}
-    </RailLine>
-  );
+  const label = <Chip label="+ new" />;
   if (!mouse) return label;
   return (
     <MouseTarget
@@ -289,9 +307,13 @@ function NewSessionButton({ inner }: { inner: number }): ReactElement {
 function MenuButton({ inner }: { inner: number }): ReactElement {
   const mouse = useMouseCommands();
   const label = (
-    <RailLine inner={inner} bold>
-      {`${theme.glyphs.menuGlyph} Menu${" ".repeat(Math.max(1, inner - 17))}ctrl+p`}
-    </RailLine>
+    <Box width={inner} flexShrink={0}>
+      <Chip label={`${theme.glyphs.menuGlyph} Menu`} />
+      <Box flexGrow={1} />
+      <Text color={theme.colors.railMuted} wrap="truncate">
+        ctrl+p
+      </Text>
+    </Box>
   );
   if (!mouse) return label;
   return (
@@ -316,18 +338,45 @@ interface SectionHeaderProps {
   title: string;
   active: boolean;
   inner: number;
+  /** Right-aligned status, e.g. `0 running`. */
+  counter?: string;
+  /** Right-aligned control, e.g. the `+ new` chip. */
+  trailing?: ReactNode;
 }
 
-function SectionHeader({ title, active, inner }: SectionHeaderProps): ReactElement {
+function SectionHeader({
+  title,
+  active,
+  inner,
+  counter,
+  trailing,
+}: SectionHeaderProps): ReactElement {
+  // The header is a row, not a line: the counter and the `+ new` control
+  // are pushed to the right edge of the rail the way the design sets
+  // them, which a single clipped string cannot express.
   return (
-    <RailLine
-      inner={inner}
-      bold
-      color={active ? theme.colors.accent : theme.colors.railForeground}
-    >
-      {title.toUpperCase()}
-    </RailLine>
+    <Box width={inner} flexShrink={0}>
+      <Text
+        color={active ? theme.colors.accent : theme.colors.railForeground}
+        bold
+        wrap="truncate"
+      >
+        {title.toUpperCase()}
+      </Text>
+      <Box flexGrow={1} />
+      {counter ? (
+        <Text color={theme.colors.railMuted} wrap="truncate">
+          {counter}
+        </Text>
+      ) : null}
+      {trailing ?? null}
+    </Box>
   );
+}
+
+/** Tasks the design counts in the header: the ones actually running. */
+function runningCount(tasks: readonly TaskSummaryRow[]): number {
+  return tasks.filter((row) => row.status === "running").length;
 }
 
 interface SessionsListProps {
@@ -401,17 +450,137 @@ function SessionRow({
   previewWidth,
   inner,
 }: SessionRowProps): ReactElement {
-  const preview = truncate(entry.preview, previewWidth);
-  const marker = current ? theme.glyphs.assistantMarker : " ";
+  // Two marks, two questions: the chevron is "Enter opens this row",
+  // the dot is "this is the thread you are in". The ground answers the
+  // first one too, but only in colour — and a colour is nothing under
+  // NO_COLOR or in a pipe, so the glyph stays.
   const chevron = selected ? theme.glyphs.chevronRight : " ";
+  const marker = current ? theme.glyphs.assistantMarker : " ";
+  // The ground runs almost the full width of the rail with one column of
+  // air either side, so a selected row reads as a row in a list rather
+  // than as a highlighted word. The close affordance lives inside that
+  // ground, at its right edge — visible only on the selected row,
+  // because an `x` on every row is a mis-click waiting to happen.
+  const groundWidth = Math.max(4, inner - 2 * ROW_MARGIN_COLUMNS);
+  const closeWidth = selected ? CLOSE_COLUMNS : 0;
+  const preview = truncate(
+    entry.preview,
+    Math.max(1, Math.min(previewWidth, groundWidth - 5 - closeWidth)),
+  );
+  const label = `${chevron} ${marker} ${preview}`;
+  // Every cell width is computed here, so nothing may flex. Yoga
+  // shrinks text children by default and Ink re-wraps a squeezed
+  // `<Text>` rather than clipping it — the trap
+  // `MouseTargetProps.flexShrink` warns about, one row away from here.
+  const ground = ` ${label}`.padEnd(Math.max(0, groundWidth - closeWidth));
   return (
-    <RailLine
-      inner={inner}
-      bold={selected || current}
-      color={selected ? theme.colors.accent : theme.colors.railForeground}
+    <Box width={inner} flexShrink={0}>
+      <Text>{" ".repeat(ROW_MARGIN_COLUMNS)}</Text>
+      <Box flexShrink={0} width={Math.max(0, groundWidth - closeWidth)}>
+        <Text
+          color={theme.colors.railForeground}
+          bold={selected || current}
+          wrap="truncate"
+          {...(selected ? { inverse: true } : {})}
+        >
+          {ground}
+        </Text>
+      </Box>
+      {selected ? <CloseSessionButton entry={entry} /> : null}
+      <Text>{" ".repeat(ROW_MARGIN_COLUMNS)}</Text>
+    </Box>
+  );
+}
+
+/** Air either side of a rail list row's ground. */
+const ROW_MARGIN_COLUMNS = 1;
+/** Cells the close affordance occupies inside the ground: `[x]` + a pad. */
+const CLOSE_COLUMNS = 4;
+
+/**
+ * The `x` at the right edge of the selected session's ground. It opens
+ * the confirmation rather than deleting: this is one click away from
+ * losing a thread, and the rail is a place people click while looking
+ * somewhere else.
+ */
+function CloseSessionButton({
+  entry,
+}: {
+  entry: SessionPickerEntry;
+}): ReactElement {
+  const mouse = useMouseCommands();
+  // `[x]`, the same mark the design uses. It sits inside the row's
+  // ground, so it carries the same inverse video as the label.
+  const glyph = (
+    <Text color={theme.colors.railForeground} bold inverse>
+      {"[x] "}
+    </Text>
+  );
+  if (!mouse) return glyph;
+  return (
+    <MouseTarget
+      layer={MOUSE_LAYER_BASE}
+      flexShrink={0}
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        mouse.dispatch({
+          type: "session_delete_requested",
+          sessionId: entry.sessionId,
+          preview: entry.preview,
+        });
+        return true;
+      }}
     >
-      {`${chevron} ${marker} ${preview}`}
-    </RailLine>
+      {glyph}
+    </MouseTarget>
+  );
+}
+
+/**
+ * A rail list row: an optional 1-cell accent bar, then the label on an
+ * optional filled ground.
+ *
+ * The design draws the bar as a 3px rule down the left edge of the row
+ * and the selection as a translucent fill. Neither has a sub-cell
+ * equivalent, so the bar is `▎` in the accent colour and the fill is a
+ * real background on the label — the two marks the design uses, at the
+ * resolution a terminal has.
+ */
+function RailRow({
+  inner,
+  children,
+  bar,
+  filled,
+  bold,
+  color,
+}: {
+  inner: number;
+  children: string;
+  bar?: boolean;
+  filled?: boolean;
+  bold?: boolean;
+  color?: string;
+}): ReactElement {
+  const label = clip(children, Math.max(0, inner - 2));
+  // One column of chrome, three states. The cursor keeps a glyph rather
+  // than relying on the fill alone: the fill is a colour, and a colour
+  // is nothing under NO_COLOR, in a pipe, or in the test renderer — the
+  // one mark that says "Enter opens this row" has to survive all three.
+  const mark = filled ? theme.glyphs.chevronRight : bar ? "▎" : " ";
+  return (
+    <Box width={inner} flexShrink={0}>
+      <Text color={theme.colors.brandMark} bold>
+        {mark}
+      </Text>
+      <Text
+        color={color ?? theme.colors.railForeground}
+        bold={bold ?? false}
+        wrap="truncate"
+        {...(filled ? { inverse: true } : {})}
+      >
+        {` ${label} `}
+      </Text>
+    </Box>
   );
 }
 
@@ -482,16 +651,19 @@ function TaskRow({
   inner,
 }: TaskRowProps): ReactElement {
   const preview = truncate(row.userMessage, previewWidth);
-  const chevron = selected ? theme.glyphs.chevronRight : " ";
   const badge = statusBadge(row);
   return (
-    <RailLine
+    <RailRow
       inner={inner}
+      // A running task earns the bar for the same reason the current
+      // session does: it is the row that is live, not the row the cursor
+      // happens to sit on.
+      bar={row.status === "running"}
+      filled={selected}
       bold={selected}
-      color={selected ? theme.colors.accent : theme.colors.railForeground}
     >
-      {`${chevron} ${badge} ${preview}`}
-    </RailLine>
+      {`${badge} ${preview}`}
+    </RailRow>
   );
 }
 

@@ -1,7 +1,12 @@
 import { Box, Text } from "ink";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 
-import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
+import {
+  MouseTarget,
+  useMouseCommands,
+  useMouseTarget,
+  type MouseContextValue,
+} from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import { chromeTheme } from "../theme/theme.js";
@@ -19,8 +24,8 @@ import { MENU_LEADER_LABEL } from "./menu-keys.js";
 const PREFERRED_WIDTH = 64;
 /** Rows of list body at most, before the window starts scrolling. */
 const MAX_BODY_ROWS = 16;
-/** Border (2) + title row + footer row. */
-const CHROME_ROWS = 4;
+/** Border (2) + title row + the footer's hairline + footer row. */
+const CHROME_ROWS = 5;
 /** Column reserved for the entry label. */
 const LABEL_WIDTH = 26;
 
@@ -56,9 +61,11 @@ interface MenuPopupProps {
  * are laid out as fixed-width columns rather than with `flexGrow` — a flexed
  * row stops at its content and lets the background show through.
  *
- * A background colour would do the same job in one line, but only by picking
- * a colour, and the TUI ships eleven themes across light and dark grounds.
- * Spaces are theme-agnostic.
+ * The redesign gives the panel a ground of its own, so the padding now
+ * carries a colour too: `railBackground` / `railForeground`, the pair every
+ * palette already guarantees to be opposite. Picking a literal colour is what
+ * the old comment here refused to do, and rightly — a role is not a literal,
+ * and it flips polarity with the theme.
  *
  * The app behind is dimmed by `setBackdropDimmed` (see `theme.ts`); this
  * component reads {@link chromeTheme}, which ignores that flag, so the menu
@@ -96,20 +103,19 @@ export function MenuPopup({
   const offsetTop = Math.max(0, Math.floor((availableRows - height) / 2));
   const offsetLeft = Math.max(0, Math.floor((availableColumns - width) / 2));
 
+  const itemCount = itemIndexes.length;
   return (
-    <Box
-      position="absolute"
-      marginTop={offsetTop}
-      marginLeft={offsetLeft}
-      borderStyle="round"
-      borderColor={chromeTheme.colors.accent}
+    <PopupFrame
+      offsetTop={offsetTop}
+      offsetLeft={offsetLeft}
       width={width}
-      flexDirection="column"
+      cursor={cursor}
+      itemCount={itemCount}
     >
       <TitleRow state={state} inner={inner} />
       {visible.map((row, idx) =>
         row.kind === "header" ? (
-          <Text key={`h-${row.label}-${idx}`} color={chromeTheme.colors.muted}>
+          <Text key={`h-${row.label}-${idx}`} color={chromeTheme.colors.railMuted}>
             {fit(` ${row.label.toUpperCase()}`, inner)}
           </Text>
         ) : (
@@ -126,11 +132,94 @@ export function MenuPopup({
       {rows.length === 0 ? (
         <Text color={chromeTheme.colors.warn}>{fit(" nothing matches", inner)}</Text>
       ) : null}
-      <Text color={chromeTheme.colors.muted}>
+      <Text color={chromeTheme.colors.railMuted}>
+        {chromeTheme.glyphs.toolBoxHorizontal.repeat(Math.max(0, inner))}
+      </Text>
+      <Text color={chromeTheme.colors.railMuted}>
         {fit(` ${footer(state, hiddenAfter)}`, inner)}
       </Text>
+    </PopupFrame>
+  );
+}
+
+/**
+ * The popup's own box, plus the mouse behaviour that belongs to the
+ * panel rather than to any one row:
+ *
+ * - **Wheel** walks the cursor. The visible window is derived from the
+ *   cursor, so moving it *is* scrolling — one notch, one row, the same
+ *   as ↑/↓, which keeps the wheel and the keys on one model.
+ * - **Press** is claimed and dropped. Clicking the border, the title or
+ *   the footer must not fall through to the backdrop, which closes the
+ *   menu: a click inside the panel that shuts it would be the opposite
+ *   of what the operator meant.
+ *
+ * Row targets are smaller boxes on the same layer, so the registry
+ * offers them the event first (see `MouseTargetRegistry.dispatch`).
+ */
+function PopupFrame({
+  offsetTop,
+  offsetLeft,
+  width,
+  cursor,
+  itemCount,
+  children,
+}: {
+  offsetTop: number;
+  offsetLeft: number;
+  width: number;
+  cursor: number;
+  itemCount: number;
+  children: ReactNode;
+}): ReactElement {
+  const mouse = useMouseCommands();
+  // The ref goes on the popup box itself rather than on a `MouseTarget`
+  // wrapper: the box is absolutely positioned, and an extra Box between
+  // it and the pane would take the offsets with it.
+  const ref = useMouseTarget(
+    (hit) => {
+      if (!mouse) return false;
+      if (hit.event.kind === "wheel") {
+        moveMenuCursor(
+          mouse,
+          hit.event.wheel === "up" ? -1 : 1,
+          cursor,
+          itemCount,
+        );
+        return true;
+      }
+      return isPrimaryPress(hit.event);
+    },
+    { layer: MOUSE_LAYER_MODAL },
+  );
+  return (
+    <Box
+      ref={ref}
+      position="absolute"
+      marginTop={offsetTop}
+      marginLeft={offsetLeft}
+      borderStyle="round"
+      borderColor={chromeTheme.colors.railMuted}
+      backgroundColor={chromeTheme.colors.railBackground}
+      width={width}
+      flexDirection="column"
+    >
+      {children}
     </Box>
   );
+}
+
+/** One wheel notch, clamped — the list does not wrap on ↑/↓ either. */
+function moveMenuCursor(
+  mouse: MouseContextValue,
+  delta: number,
+  cursor: number,
+  itemCount: number,
+): void {
+  if (itemCount === 0) return;
+  const next = Math.max(0, Math.min(itemCount - 1, cursor + delta));
+  if (next === cursor) return;
+  mouse.dispatch({ type: "menu_cursor_set", cursor: next });
 }
 
 function TitleRow({
@@ -140,16 +229,20 @@ function TitleRow({
   state: TuiState;
   inner: number;
 }): ReactElement {
-  const title = selectMenuTitle(state);
+  // Upper case, matching the rail's own section headers — the menu is
+  // chrome, and the design sets every chrome heading the same way.
+  const title = selectMenuTitle(state).toUpperCase();
   const caret = `${chromeTheme.glyphs.promptCaret} ${state.menuQuery}`;
-  const left = fit(` ${title}`, Math.min(title.length + 3, inner));
+  const left = fit(` ${title}`, Math.min(title.length + 2, inner));
   const rest = inner - left.length;
   return (
     <Box>
-      <Text color={chromeTheme.colors.accentSoft} bold>
+      <Text color={chromeTheme.colors.railForeground} bold>
         {left}
       </Text>
-      <Text color={chromeTheme.colors.muted}>{fit(caret, Math.max(0, rest))}</Text>
+      <Text color={chromeTheme.colors.railMuted}>
+        {fit(caret, Math.max(0, rest))}
+      </Text>
     </Box>
   );
 }
@@ -170,28 +263,33 @@ function MenuItem({
 }): ReactElement {
   const mouse = useMouseCommands();
   const { node } = row;
-  const marker = selected ? chromeTheme.glyphs.chevronRight : " ";
+  const marker = selected ? chromeTheme.glyphs.menuCursor : " ";
   const arrow = node.kind === "submenu" ? ` ${chromeTheme.glyphs.arrowRight}` : "";
   // Leading and trailing space are part of the row, not Box padding, so the
   // whole line is opaque edge to edge.
   const label = fit(` ${marker} ${node.label}${arrow}`, Math.min(LABEL_WIDTH, inner));
-  const chordText = node.chord ? `${MENU_LEADER_LABEL} ${node.chord} ` : " ";
-  const chord = fit(chordText, Math.min(chordText.length, Math.max(0, inner - label.length)));
-  const detailWidth = Math.max(0, inner - label.length - chord.length);
+  // The shortcut is flush right, as drawn: it is a column the eye scans
+  // down, so it cannot float behind a label of whatever length.
+  const chordText = node.chord ? `${MENU_LEADER_LABEL} ${node.chord} ` : "";
+  const chordWidth = Math.min(chordText.length, Math.max(0, inner - label.length));
+  const chord = chordText.padStart(chordWidth).slice(0, chordWidth);
+  const detailWidth = Math.max(0, inner - label.length - chordWidth);
   const detail = fit(
     [row.crumb, row.status].filter((part) => part.length > 0).join("  "),
     detailWidth,
   );
   const body = (
     <>
-      <Text
-        color={selected ? chromeTheme.colors.accentSoft : undefined}
-        bold={selected}
-      >
+      {/*
+        Selection is weight plus the marker, not a second colour: on a
+        painted panel a colour swap either fights the ground or is too
+        faint to see, and the marker is the part that survives NO_COLOR.
+      */}
+      <Text color={chromeTheme.colors.railForeground} bold={selected}>
         {label}
       </Text>
-      <Text color={chromeTheme.colors.muted}>{detail}</Text>
-      <Text color={chromeTheme.colors.muted}>{chord}</Text>
+      <Text color={chromeTheme.colors.railMuted}>{detail}</Text>
+      <Text color={chromeTheme.colors.railMuted}>{chord}</Text>
     </>
   );
   if (!mouse) return <Box>{body}</Box>;

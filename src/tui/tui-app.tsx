@@ -18,7 +18,7 @@ import {
   handlePanelEscape,
   isPanelModalOpen,
 } from "./app-key-bindings.js";
-import { APP_CHROME_ROWS } from "./components/debug-pane.js";
+import { appChromeRows } from "./components/debug-pane.js";
 import { MenuPopup } from "./menu/menu-popup.js";
 import type { MenuNode } from "./menu/menu-registry.js";
 import { ApprovalModal } from "./approval-modal.js";
@@ -28,6 +28,7 @@ import { HotkeyHint } from "./components/hotkey-hint.js";
 import { LlmHealthBadge } from "./components/llm-health-badge.js";
 import { PromptShell } from "./components/prompt-shell.js";
 import { QueuedMessages } from "./components/queued-messages.js";
+import { SessionDeleteModal } from "./components/session-delete-modal.js";
 import { SessionPicker } from "./components/session-picker.js";
 import { ThemePicker } from "./components/theme-picker.js";
 import {
@@ -82,6 +83,7 @@ import { handleProvidersTabKey } from "./providers/providers-key-bindings.js";
 import { handleTelegramTabKey } from "./telegram/telegram-key-bindings.js";
 import { handlePrivacyTabKey } from "./privacy/privacy-key-bindings.js";
 import { MouseProvider } from "./mouse/mouse-context.js";
+import { isPrimaryPress } from "./mouse/mouse-event.js";
 import {
   MOUSE_LAYER_BASE,
   MOUSE_LAYER_MODAL,
@@ -95,6 +97,42 @@ export { makeTuiEventBus } from "./make-event-bus.js";
 
 export interface TuiEventBus {
   subscribe(listener: (action: TuiAction) => void): () => void;
+}
+
+/**
+ * Columns of air between the rail's right edge and the chat column. The
+ * rail paints its own ground, so without a gutter the transcript starts
+ * one cell after a block of colour and reads as if it were inside the
+ * panel. Subtracted from `mainColumnWidth` as well, or the hairline and
+ * the hint strip overflow the row they are measured for.
+ */
+const RAIL_GUTTER_COLUMNS = 3;
+
+/**
+ * How long after a modal opens its backdrop refuses to dismiss it. One
+ * frame is enough for the modal's own click targets to register; 150ms
+ * covers a loaded machine without being long enough to swallow a
+ * deliberate click away.
+ */
+const MODAL_CLICK_GRACE_MS = 150;
+
+/** How long a composer notice ("copied 3 characters") stays up. */
+const COMPOSER_NOTICE_MS = 2500;
+
+/**
+ * A one-row hairline. `flexShrink={0}` so a tall chat never eats it, and
+ * the glyph run is built from the width the caller measured rather than
+ * `width="100%"`: Ink pads a percentage-width Box with spaces, which
+ * paints a gap in the rule wherever the row is wider than the text.
+ */
+function Rule({ width }: { width: number }): ReactElement {
+  return (
+    <Box flexShrink={0}>
+      <Text color={theme.colors.border}>
+        {theme.glyphs.toolBoxHorizontal.repeat(Math.max(0, width))}
+      </Text>
+    </Box>
+  );
 }
 
 export interface TuiAppCallbacks {
@@ -116,6 +154,12 @@ export interface TuiAppCallbacks {
    * running turn.
    */
   onApprovalReply?(approvalId: string, message: string): void;
+   /**
+   * Remove a session for good. Confirmed by the operator in the dialog
+   * the rail's `x` opens — the host does the deleting and decides where
+   * the UI lands if the current thread was the one removed.
+   */
+  onSessionDeleteConfirmed?(sessionId: string): void;
   onAbort(): void;
   onQuit(): void;
   onMessageSubmitted(message: string): void;
@@ -610,9 +654,38 @@ export function TuiApp({
     0,
     terminalSize.columns -
       ROOT_PADDING_COLUMNS -
-      (sidebarVisible ? sidebarWidth : 0),
+      (sidebarVisible ? sidebarWidth + RAIL_GUTTER_COLUMNS : 0),
   );
   const sidebarFocused = sidebarVisible && state.chatFocus === "sidebar";
+  /**
+   * The composer belongs to the Run screen. Observe and Manage are for
+   * watching and configuring, and a prompt sitting under a settings
+   * panel invites a message nobody is going to read from there.
+   *
+   * The three exceptions are surfaces whose keyboard the composer owns
+   * while they are open: the slash palette types into its buffer, and
+   * the theme and session pickers are closed by the editor's own Esc.
+   * `handleAppKey` explicitly declines Esc while the palette is open
+   * (`!state.slashPaletteOpen`), so unmounting the composer under it
+   * would leave the palette with no way out at all.
+   */
+  const composerVisible =
+    state.uiMode === "chat" ||
+    state.slashPaletteOpen ||
+    state.themePickerOpen ||
+    state.sessionPickerOpen;
+
+  /**
+   * Live mirror of {@link composerVisible}. The unmounting editor keeps
+   * the callbacks from its last render — the one where the composer was
+   * still on screen — so a guard that closed over the boolean would read
+   * `true` exactly when it matters. The ref's identity is stable, so the
+   * stale closure reads the current value through it. (Render-phase
+   * write: derived from state, never written from an effect.)
+   */
+  const composerVisibleRef = useRef(true);
+  composerVisibleRef.current = composerVisible;
+
   const editorFocus =
     !state.menuOpen &&
     !menuLeaderArmed &&
@@ -704,6 +777,8 @@ export function TuiApp({
   // raising the floor stops a click from reaching the list rendered
   // behind it. Same predicate the key layer gates on.
   const modalOwnsInput =
+    state.menuOpen ||
+    Boolean(state.sessionDelete) ||
     Boolean(state.pendingApproval) ||
     Boolean(state.updatePrompt) ||
     state.updateStatus === "done" ||
@@ -749,6 +824,56 @@ export function TuiApp({
     [registry],
   );
 
+  /**
+   * The menu's backdrop. Registered on the same root box as the wheel
+   * target but at the modal layer, so it is eligible exactly while the
+   * menu owns input — and, being the largest box on that layer, it is
+   * sorted last: every target inside the popup gets the event first.
+   * That ordering is what makes "click outside to close" safe to state
+   * as one rule instead of a list of exceptions.
+   */
+  const menuBackdropHandler = (hit: MouseHit): boolean => {
+    const open = state.menuOpen || Boolean(state.sessionDelete);
+    if (!open) return false;
+    if (hit.event.kind === "wheel") return true;
+    if (!isPrimaryPress(hit.event)) return false;
+    // A modal's own targets register in an effect that flushes a frame
+    // after it first paints. In that window the backdrop is the only
+    // eligible target, so a second click arriving fast — a double-click
+    // on the rail's `[x]`, or an impatient one on `ctrl+p` — would be
+    // read as "clicked outside" and dismiss the surface that just
+    // opened. Ignore presses until the modal has had that frame.
+    if (Date.now() - modalOpenedAtRef.current < MODAL_CLICK_GRACE_MS) {
+      return true;
+    }
+    // Clicking away from a destructive confirmation cancels it — the
+    // same dismissal the menu gets, and the safe outcome either way.
+    dispatch(
+      state.sessionDelete
+        ? { type: "session_delete_closed" }
+        : { type: "menu_closed" },
+    );
+    return true;
+  };
+  // Stamped when a backdrop-owning surface opens; read by the handler
+  // above. A ref rather than state: it must not trigger a render.
+  const modalOpenedAtRef = useRef(0);
+  const backdropOwner = state.menuOpen || Boolean(state.sessionDelete);
+  useEffect(() => {
+    if (backdropOwner) modalOpenedAtRef.current = Date.now();
+  }, [backdropOwner]);
+  const menuBackdropRef = useRef(menuBackdropHandler);
+  menuBackdropRef.current = menuBackdropHandler;
+  useEffect(
+    () =>
+      registry.register({
+        ref: contentMouseRef,
+        layer: MOUSE_LAYER_MODAL,
+        handler: (hit) => menuBackdropRef.current(hit),
+      }),
+    [registry],
+  );
+
   useInput((input, key) => {
     const appHandled = handleAppKey(input, key, {
       state,
@@ -772,15 +897,41 @@ export function TuiApp({
       handlePanelEscape(key, { panelHandled, editorFocus, dispatch });
       return;
     }
+    // Esc back to Run, for the tabs that have no key layer of their own
+    // (the Observe five: feed / world / reasoning / logs / llm logs).
+    // `handlePanelEscape` above never sees their keys — it runs only
+    // when a panel handler claimed something — and this used to be the
+    // editor's job, through the `onEscape` it no longer has here.
+    if (
+      !composerVisible &&
+      key.escape &&
+      !isPanelModalOpen(state) &&
+      state.uiMode === "debug"
+    ) {
+      dispatch({ type: "ui_mode_set", mode: "chat" });
+    }
   });
 
   const submit = useCallback(
-    (buffer: string) => handleEditorSubmit(buffer, state, dispatch, callbacks),
+    (buffer: string) => {
+      // Same stale-subscription window as `onEditorChange`: an Enter
+      // that arrives while the composer is leaving must not send.
+      if (!composerVisibleRef.current) return;
+      handleEditorSubmit(buffer, state, dispatch, callbacks);
+    },
     [state, callbacks],
   );
 
   const onEditorChange = useCallback(
     (next: string) => {
+      // An editor that is unmounting keeps its `useInput` subscription
+      // until the passive effect tears it down, one tick later — so the
+      // composer leaving the screen still delivers the keystroke that
+      // took the operator off the Run screen. Refuse edits whenever the
+      // composer is not on screen: its buffer is not reachable then, and
+      // a "/" seeded into it would open the slash palette over a panel
+      // that owns that key itself.
+      if (!composerVisibleRef.current) return;
       dispatch({ type: "input_changed", value: next });
       const prefix = slashPrefix(next);
       if (prefix !== null) {
@@ -854,11 +1005,19 @@ export function TuiApp({
     // back one level, so a single unannounced press killing the agent —
     // and the half-typed message with it — was a trap: no hint strip ever
     // advertised it, while Ctrl+C deliberately asks twice. Quitting stays
-    // on Ctrl+C twice and `/quit`; Esc clears the draft and no-ops on an
-    // empty buffer.
+    // on Ctrl+C twice and `/quit`; Esc clears the draft first.
     if (state.inputValue.length > 0) {
       dispatch({ type: "input_changed", value: "" });
+      return;
     }
+    // Nothing left to cancel: Esc opens the menu. It is the LAST branch
+    // on purpose — abort, close, back and clear-draft all outrank it, so
+    // the key keeps every meaning it already had and gains one only when
+    // it would otherwise have done nothing. `ctrl+p` still opens the
+    // menu from anywhere, including mid-turn.
+    dispatch({ type: "menu_path_set", path: null });
+    dispatch({ type: "menu_cursor_set", cursor: 0 });
+    dispatch({ type: "menu_opened" });
   }, [state, callbacks]);
 
   /**
@@ -891,6 +1050,15 @@ export function TuiApp({
     },
     [state.pendingApproval, callbacks],
   );
+   /**
+   * Clicking the prompt takes the keyboard back from the rail. Without
+   * this the caret moved but the arrow keys still walked the session
+   * list, which is the behaviour of no other application anywhere.
+   */
+  const focusEditorFromClick = useCallback(() => {
+    if (state.chatFocus === "editor") return;
+    dispatch({ type: "chat_focus_set", focus: "editor" });
+  }, [state.chatFocus]);
 
   // Tab in the editor is reserved for slash-palette completion. Section
   // / sub-tab cycling lives entirely in `handleAppKey` so the same key
@@ -965,7 +1133,10 @@ export function TuiApp({
   const rootHeight = isTty ? terminalSize.rows : undefined;
   // Rows the content pane actually has, so the overlay can sit on its bottom
   // edge and cap its own height. Same budget the debug pane already uses.
-  const menuPaneRows = Math.max(6, terminalSize.rows - APP_CHROME_ROWS);
+  const menuPaneRows = Math.max(
+    6,
+    terminalSize.rows - appChromeRows(composerVisible),
+  );
   const promptLlm = selectPromptLlmMeta(state);
   // No local backend chosen yet ⇒ no local health to report. Without this the
   // splash screen of a fresh install announces that a server the user never
@@ -973,7 +1144,21 @@ export function TuiApp({
   // un-started one. `localConfigured` latches on as soon as local is really
   // the route (config says so, or a probe answered), so real local users keep
   // the ● / ○ signal they rely on.
-  const promptLeftSlot = promptLlm.usesLocalHealth ? (
+  // A notice outranks the health badge for the couple of seconds it is
+  // up: it is the answer to a keystroke the operator just made, and the
+  // badge is ambient.
+  useEffect(() => {
+    if (!state.composerNotice) return;
+    const timer = setTimeout(
+      () => dispatch({ type: "composer_notice", text: null }),
+      COMPOSER_NOTICE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [state.composerNotice]);
+
+  const promptLeftSlot = state.composerNotice ? (
+    <Text color={theme.colors.success}>{state.composerNotice}</Text>
+  ) : promptLlm.usesLocalHealth ? (
     state.llmHealth.localConfigured ? (
       <LlmHealthBadge health={state.llmHealth} />
     ) : null
@@ -1028,6 +1213,13 @@ export function TuiApp({
       <Box flexShrink={0}>
         <StatusBar state={state} brand={!sidebarVisible} />
       </Box>
+      {/*
+        The design separates the top bar and the hint strip from the
+        content with a hairline. In a terminal that is a row of box-drawing
+        characters — the one honest way to draw a 1px rule when the
+        smallest unit you own is a cell.
+      */}
+      <Rule width={terminalSize.columns - ROOT_PADDING_COLUMNS} />
       <Box flexDirection="row" flexGrow={1} flexShrink={1} overflow="hidden">
         {sidebarVisible ? (
           <Sidebar
@@ -1043,7 +1235,12 @@ export function TuiApp({
             focused={sidebarFocused}
           />
         ) : null}
-        <Box flexDirection="column" flexGrow={1} overflow="hidden">
+        <Box
+          flexDirection="column"
+          flexGrow={1}
+          overflow="hidden"
+          {...(sidebarVisible ? { paddingLeft: RAIL_GUTTER_COLUMNS } : {})}
+        >
           <Box
             flexDirection="column"
             flexGrow={1}
@@ -1057,6 +1254,7 @@ export function TuiApp({
               <DebugPane
                 state={state}
                 maxVisible={maxVisibleRows}
+                composerVisible={composerVisible}
                 onMcpAddJsonChange={(json) =>
                   dispatch({ type: "mcp_add_json_changed", json })
                 }
@@ -1068,6 +1266,23 @@ export function TuiApp({
                 }
               />
             )}
+            {state.sessionDelete ? (
+              <SessionDeleteModal
+                confirm={state.sessionDelete}
+                availableRows={menuPaneRows}
+                availableColumns={
+                  terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
+                }
+                onConfirm={(sessionId) => {
+                  callbacks.onSessionDeleteConfirmed?.(sessionId);
+                  dispatch({ type: "session_delete_closed" });
+                }}
+                onCancel={() => dispatch({ type: "session_delete_closed" })}
+                onFocus={(cursor) =>
+                  dispatch({ type: "session_delete_cursor_set", cursor })
+                }
+              />
+            ) : null}
             {state.menuOpen ? (
               <MenuPopup
                 state={state}
@@ -1141,8 +1356,13 @@ export function TuiApp({
               <UpdateRestartPrompt />
             </Box>
           ) : null}
-          <QueuedMessages queued={state.queuedMessages} width={mainColumnWidth} />
-          <PromptShell
+          {composerVisible ? (
+            <>
+              <QueuedMessages
+                queued={state.queuedMessages}
+                width={mainColumnWidth}
+              />
+              <PromptShell
             value={state.inputValue}
             placeholder="Type a message or `/` for commands…"
             rotatingPlaceholders={PROMPT_PLACEHOLDERS}
@@ -1158,9 +1378,24 @@ export function TuiApp({
             onEscape={onEscape}
             onTab={onTab}
             onAutocomplete={onTab}
-            onHistoryPrev={onHistoryPrev}
-            onHistoryNext={onHistoryNext}
-          />
+                onClickFocus={focusEditorFromClick}
+                onSelectionChange={(hasSelection) =>
+                  dispatch({
+                    type: "composer_selection_changed",
+                    hasSelection,
+                  })
+                }
+                onCopy={(text) =>
+                  dispatch({
+                    type: "composer_notice",
+                    text: `copied ${text.length} character${text.length === 1 ? "" : "s"}`,
+                  })
+                }
+                onHistoryPrev={onHistoryPrev}
+                onHistoryNext={onHistoryNext}
+              />
+            </>
+          ) : null}
           <HotkeyHint
             state={state}
             ctrlCArmed={ctrlCArmed}

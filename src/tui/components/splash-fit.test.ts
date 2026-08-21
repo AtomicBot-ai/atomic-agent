@@ -49,8 +49,9 @@ describe("computeSplashFit", () => {
       logo: "mini",
       wordmark: false,
       tagline: false,
-      // 12 rows − 4 for the mark − 1 margin leaves 7 of the 8 tips.
-      tipCount: SPLASH_TIPS.length - 1,
+      // 12 rows − 4 for the mark − 1 margin leaves room for all six
+      // tips (the list lost its two hotkey rows).
+      tipCount: SPLASH_TIPS.length,
       labelWidth: 10,
       descriptions: "short",
     });

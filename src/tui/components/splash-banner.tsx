@@ -2,6 +2,8 @@ import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
 import { computeChatViewportRows, computeChatWidth } from "../layout.js";
+import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { theme } from "../theme/theme.js";
 import { Logo } from "./logo.js";
 import {
@@ -17,7 +19,7 @@ import {
  * Welcome screen shown in place of an empty chat-log. Renders the brand
  * `Logo` (atomic-plus mark + wordmark) vertically centred via flexGrow
  * spacers, with a compact tip-list underneath that surfaces the most
- * useful slash commands and hotkeys.
+ * useful slash commands.
  *
  * Everything on it is sized against the live terminal: the mark shrinks
  * (34×20 → 17×10 → one line) as the window narrows or shortens, the tip
@@ -75,12 +77,36 @@ interface TipProps {
 function Tip({ tip, fit }: TipProps): ReactElement {
   const label =
     fit.labelWidth > 0 ? tip.label.padEnd(fit.labelWidth, " ") : tip.label;
-  return (
+  const mouse = useMouseCommands();
+  const row = (
     <Text wrap="truncate">
       <Text color={theme.colors.muted}>  {theme.glyphs.bullet} </Text>
       <Text color={theme.colors.accent}>{label}</Text>
       <Text color={theme.colors.muted}>{description(tip, fit.descriptions)}</Text>
     </Text>
+  );
+  if (!mouse) return row;
+  return (
+    <MouseTarget
+      flexShrink={0}
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        // Put the command in the composer rather than running it: the
+        // row is a suggestion, and Enter is the operator's to press.
+        // `/model` and friends take arguments, and a click that fired
+        // them outright would rob a mis-click of its undo.
+        if (mouse.getState().chatFocus !== "editor") {
+          mouse.dispatch({ type: "chat_focus_set", focus: "editor" });
+        }
+        // Trailing space, matching the palette's own completion: it
+        // leaves the caret past the command and keeps `slashPrefix`
+        // from re-opening the palette over the buffer we just seeded.
+        mouse.dispatch({ type: "input_changed", value: `${tip.command} ` });
+        return true;
+      }}
+    >
+      {row}
+    </MouseTarget>
   );
 }
 

@@ -82,6 +82,24 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       };
     case "agent_event":
       return reduceAgentEvent(state, action.event);
+    case "session_delete_requested":
+      return {
+        ...state,
+        sessionDelete: {
+          sessionId: action.sessionId,
+          preview: action.preview,
+          // Destructive default: the dialog opens on Cancel.
+          cursor: "cancel",
+        },
+      };
+    case "session_delete_cursor_set":
+      if (!state.sessionDelete) return state;
+      return {
+        ...state,
+        sessionDelete: { ...state.sessionDelete, cursor: action.cursor },
+      };
+    case "session_delete_closed":
+      return { ...state, sessionDelete: null };
     case "approval_requested":
       return {
         ...state,
@@ -107,6 +125,13 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       return { ...state, approvalPathDraft: action.value };
     case "approval_path_edit_closed":
       return { ...state, approvalPathDraft: null };
+      return { ...state, pendingApproval: null, status: "running" };
+    case "composer_notice":
+      if (state.composerNotice === action.text) return state;
+      return { ...state, composerNotice: action.text };
+    case "composer_selection_changed":
+      if (state.composerHasSelection === action.hasSelection) return state;
+      return { ...state, composerHasSelection: action.hasSelection };
     case "metric":
       return applyMetric(state, action.sample);
     case "log":

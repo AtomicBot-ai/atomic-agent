@@ -246,6 +246,17 @@ export interface SessionPickerEntry {
   preview: string;
 }
 
+/**
+ * The pending session deletion. `cursor` is the focused button, and it
+ * starts on `cancel`: Enter on a dialog nobody read must not delete a
+ * thread.
+ */
+export interface SessionDeleteConfirm {
+  sessionId: string;
+  preview: string;
+  cursor: "yes" | "cancel";
+}
+
 export interface TuiState {
   session: TuiSessionInfo;
   status: TuiStatus;
@@ -280,6 +291,30 @@ export interface TuiState {
    * down, so a path containing "y" cannot approve anything.
    */
   approvalPathDraft: string | null;
+  /**
+   * Whether the composer currently holds a text selection. Lifted out of
+   * the editor for exactly one reason: Ctrl+C means "copy" while text is
+   * selected and "stop / quit" otherwise, and the two handlers live in
+   * different layers — the app's global key layer would arm the quit
+   * chord before the editor ever saw the key.
+   */
+  composerHasSelection: boolean;
+  /**
+  /**
+   * A short, transient line shown in the composer's meta row — "copied
+   * 3 characters", and nothing heavier. It exists because the obvious
+   * channels are both wrong for this: `runtime_info` appends to the
+   * Observe feed, which nobody is looking at while they copy, and
+   * `system_message` writes a chat entry, which would push the start
+   * page off screen to acknowledge a keystroke.
+   */
+  composerNotice: string | null;
+  /**
+   * Open "delete the session?" confirmation, or `null`. Carries the
+   * preview so the dialog can name what is about to go, and the focused
+   * button so Enter has an unambiguous meaning.
+   */
+  sessionDelete: SessionDeleteConfirm | null;
   loadedSkills: readonly LoadedSkillBody[];
   worldSnapshot: WorldSnapshot | null;
   latestResult: LatestResult | null;
@@ -519,6 +554,9 @@ export function createInitialTuiState(
     reasoning: [],
     pendingApproval: null,
     approvalPathDraft: null,
+    composerHasSelection: false,
+    composerNotice: null,
+    sessionDelete: null,
     loadedSkills: [],
     worldSnapshot: null,
     latestResult: null,

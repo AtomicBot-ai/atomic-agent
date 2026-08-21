@@ -3,7 +3,7 @@
  * many tips to keep, and how wide the tip columns may be for a given
  * chat-surface size.
  *
- * The splash used to be a fixed 83×20 mark plus eight fixed tip rows,
+ * The splash used to be a fixed 83×20 mark plus the fixed tip rows,
  * i.e. it needed 90 columns and ~29 rows no matter what the terminal
  * offered. Ink 7 does not clip an over-tall frame — it overlaps
  * earlier lines (see `../row-window.ts`) — so a short window garbled
@@ -58,6 +58,14 @@ export interface SplashTip {
   description: string;
   /** Terse copy for narrow surfaces. */
   short: string;
+  /**
+   * What a click on the row puts in the composer. Every tip is a slash
+   * command now — the two rows that were plain hotkeys (`Enter`,
+   * `Ctrl+C ×2`) are gone, because a hint you cannot click reads as a
+   * broken control next to seven you can, and the hint strip already
+   * carries both keys at the foot of the screen.
+   */
+  command: string;
 }
 
 /**
@@ -67,36 +75,40 @@ export interface SplashTip {
  */
 export const SPLASH_TIPS: readonly SplashTip[] = [
   {
-    label: "Enter",
-    description: "submit message to the agent",
-    short: "send message",
-  },
-  {
     label: "/help",
     description: "list all slash commands",
     short: "all commands",
+    command: "/help",
   },
   {
     label: "/sessions",
     description: "switch to a previous thread",
     short: "past threads",
+    command: "/sessions",
   },
-  { label: "/new", description: "start a fresh session", short: "new session" },
-  { label: "/model", description: "change the chat model", short: "pick model" },
+  {
+    label: "/new",
+    description: "start a fresh session",
+    short: "new session",
+    command: "/new",
+  },
+  {
+    label: "/model",
+    description: "change the chat model",
+    short: "pick model",
+    command: "/model",
+  },
   {
     label: "/tasks",
     description: "jump to the Tasks tab (cron + ingress UI)",
     short: "Tasks tab",
+    command: "/tasks",
   },
   {
     label: "/import",
     description: "open the Import tab (Hermes migration)",
     short: "Hermes import",
-  },
-  {
-    label: "Ctrl+C ×2",
-    description: "quit (once aborts a running turn)",
-    short: "quit",
+    command: "/import",
   },
 ];
 

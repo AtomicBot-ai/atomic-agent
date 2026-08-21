@@ -9,6 +9,7 @@ import {
 } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { cycleNavSlot } from "../section.js";
+import { hasShiftEnterNewline } from "../shift-enter-support.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 
@@ -251,7 +252,15 @@ function resolveChips(
   // with a non-empty buffer, so nothing usable is displaced.
   return [
     { key: "enter", label: "send" },
-    { key: "alt+enter", label: "newline", shed: 3 },
+    // Shift+Enter only exists as a keystroke where the terminal speaks
+    // the kitty keyboard protocol; everywhere else it is byte-identical
+    // to Enter and would submit. Alt+Enter works in both worlds, so it
+    // is what the strip promises when the protocol is absent.
+    {
+      key: hasShiftEnterNewline() ? "shift+enter" : "alt+enter",
+      label: "newline",
+      shed: 3,
+    },
     {
       key: "tab",
       label: "sidebar",
@@ -260,8 +269,13 @@ function resolveChips(
         mouse.dispatch({ type: "chat_focus_set", focus: "sidebar" }),
     },
     { key: SCROLL_KEY, label: "scroll", shed: 1 },
+    // Esc opens the menu only on an empty buffer — with a draft it
+    // clears the draft — so the strip advertises whichever one the next
+    // press will actually do.
+    ...(hasDraft
+      ? [{ key: "esc", label: "clear draft" }]
+      : [{ key: "esc", label: "menu", shed: 5 }]),
     { key: "ctrl+p", label: "menu", shed: 4 },
-    ...(hasDraft ? [{ key: "esc", label: "clear draft" }] : []),
     {
       key: "ctrl+c",
       label: ctrlCArmed ? "press again to quit" : "quit",

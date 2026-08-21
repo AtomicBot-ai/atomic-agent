@@ -269,22 +269,111 @@ export class ChatOrchestrator {
   }
 
   openSessionPicker(): void {
-    const sessions = this.runtime.sessionStore
-      .listRecent(25)
-      .map((s) => toPickerEntry(s));
-    this.bus.emit({ type: "session_picker_opened", sessions });
+    // Same list the rail shows. The menu's `N recent` badge counts the
+    // rail's entries, so a picker with its own idea of the set would
+    // open contradicting the number that advertised it.
+    this.bus.emit({
+      type: "session_picker_opened",
+      sessions: this.railSessions(),
+    });
   }
 
   /**
-   * Refreshes the always-on sidebar's session list. Called on TUI
-   * mount + after `session_created` / `session_switched` so the rail
-   * stays in sync without the user having to open the modal picker.
+   * The rail lists threads, not allocations. A session exists the moment
+   * `+ new` mints it — `runtime.createSession` persists it immediately,
+   * and scheduled tasks, webhooks and Telegram all depend on that — but
+   * an unnamed row is noise: it says "(empty)" until someone types, and
+   * two of them are indistinguishable.
+   *
+   * So the list shows sessions that have been *spoken to*. The catch is
+   * timing: the first user turn only reaches SQLite when the whole turn
+   * finishes (`executeTurn` saves after the loop returns), so a
+   * store-backed refresh at prompt time still sees nothing. `pendingRow`
+   * bridges that window with an entry built from the submitted text, and
+   * retires itself as soon as the store can answer for the same id.
    */
+  private pendingRow: SessionPickerEntry | null = null;
+
   refreshRecentSessions(): void {
-    const sessions = this.runtime.sessionStore
+    this.bus.emit({
+      type: "recent_sessions_updated",
+      sessions: this.railSessions(),
+    });
+  }
+
+  /** Stored threads that have a first prompt, plus the pending one. */
+  private railSessions(): SessionPickerEntry[] {
+    const stored = this.runtime.sessionStore
       .listRecent(25)
+      .filter((state) => hasFirstPrompt(state))
       .map((s) => toPickerEntry(s));
-    this.bus.emit({ type: "recent_sessions_updated", sessions });
+    const pending = this.pendingRow;
+    if (!pending) return stored;
+    // The store caught up: drop the stand-in rather than render the
+    // same session twice (the rail keys rows by session id).
+    if (stored.some((entry) => entry.sessionId === pending.sessionId)) {
+      this.pendingRow = null;
+      return stored;
+    }
+    return [pending, ...stored];
+  }
+
+  /**
+   * Put the current session on the rail the instant its first prompt is
+   * sent, named by that prompt. Called from `runOneTurn`, which is the
+   * one funnel every first turn passes through — `sendMessage` and
+   * `steerMessage` both land there, and hooking either alone would miss
+   * `/steer <text>` as an opening prompt.
+   */
+  private noteFirstPrompt(text: string): void {
+    const session = this.session;
+    if (!session) return;
+    if (this.pendingRow?.sessionId === session.id) return;
+    if (hasFirstPrompt(session)) return;
+    this.pendingRow = {
+      sessionId: session.id,
+      workingDir: session.workingDir,
+      turnCount: 1,
+      stepCount: 0,
+      updatedAt: Date.now(),
+      preview: text,
+    };
+    this.refreshRecentSessions();
+  }
+
+  /**
+   * Remove a session for good, from the rail's `x` (confirmed).
+   *
+   * Deleting the thread the operator is *in* would leave the app
+   * pointed at a row that no longer exists, so that case rolls straight
+   * into a fresh session — the same landing `/new` gives. Deleting any
+   * other thread only refreshes the list.
+   *
+   * Refused mid-turn for the same reason switching is: the running turn
+   * writes its transcript back to the store when it finishes, which
+   * would resurrect the row that was just deleted.
+   */
+  deleteSession(sessionId: string): void {
+    if (this.quitting) return;
+    if (this.currentController) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: "cannot delete a session while a turn is running — press Ctrl+C first",
+      });
+      return;
+    }
+    const deletingCurrent = this.session?.id === sessionId;
+    if (this.pendingRow?.sessionId === sessionId) this.pendingRow = null;
+    this.runtime.sessionStore.delete(sessionId);
+    this.bus.emit({
+      type: "system_message",
+      text: `session deleted${deletingCurrent ? " — started a fresh one" : ""}`,
+    });
+    if (deletingCurrent) {
+      this.newSession();
+      return;
+    }
+    this.refreshRecentSessions();
   }
 
   switchSession(sessionId: string): void {
@@ -567,6 +656,7 @@ export class ChatOrchestrator {
 
   private async runOneTurn(text: string): Promise<void> {
     if (!this.session) return;
+    this.noteFirstPrompt(text);
     const controller = new AbortController();
     this.currentController = controller;
     // A new turn is in flight: whatever is still queued was aimed at an
@@ -609,6 +699,9 @@ export class ChatOrchestrator {
       this.exitCode = 1;
     } finally {
       if (this.currentController === controller) this.currentController = null;
+      // The turn wrote the session back, so the stored row can now
+      // answer for itself and the stand-in retires.
+      this.refreshRecentSessions();
     }
     const next = this.queue.shift();
     // Unconditional: the idle boundary re-syncs the strip even when
@@ -741,6 +834,16 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+/**
+ * Has anyone spoken to this session? The rail and the picker list only
+ * threads that have a first user turn — that turn is what gives a
+ * session its name, and an unnamed row is indistinguishable from every
+ * other unnamed row.
+ */
+function hasFirstPrompt(state: SessionState): boolean {
+  return state.turns.some((turn) => turn.kind === "user");
 }
 
 function toPickerEntry(state: SessionState): SessionPickerEntry {

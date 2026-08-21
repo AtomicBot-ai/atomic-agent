@@ -49,6 +49,8 @@ export interface AppKeyCallbacks {
    * the running turn.
    */
   onApprovalReply?(approvalId: string, message: string): void;
+  /** The operator confirmed "delete the session?" for this thread. */
+  onSessionDeleteConfirmed?(sessionId: string): void;
   onApprovalDecision(
     approvalId: string,
     approved: boolean,
@@ -195,6 +197,9 @@ export function handleAppKey(
   ctx: AppKeyContext,
 ): boolean {
   const { state, dispatch, callbacks, ctrlCArmed, setCtrlCArmed } = ctx;
+  if (state.sessionDelete) {
+    return handleSessionDeleteKey(input, key, ctx);
+  }
   if (state.pendingApproval) {
     return handleApprovalKey(input, key, state.pendingApproval, ctx);
   }
@@ -246,6 +251,11 @@ export function handleAppKey(
     if (handleSidebarKey(input, key, ctx)) return true;
   }
   if (key.ctrl && input === "c") {
+    // With text selected in the composer, Ctrl+C copies it — the
+    // convention every terminal-adjacent editor follows. The editor owns
+    // that; arming the quit chord here would make the same keystroke
+    // mean two things at once.
+    if (state.composerHasSelection) return false;
     if (ctrlCArmed) {
       callbacks.onAbort();
       callbacks.onQuit();
@@ -688,6 +698,52 @@ export function submitApprovalPath(
     approvalId: request.approvalId,
     approved: true,
   });
+}
+
+/**
+ * Keys for the "delete the session?" dialog. `y` deletes, `n` / Esc
+ * cancels, ←/→ and Tab move between the two controls, Enter runs the
+ * focused one — which starts on Cancel, so a reflexive Enter is a
+ * no-op rather than a lost thread.
+ *
+ * Every other key is swallowed: while a destructive confirmation is up,
+ * a stray letter must not reach the rail or the composer behind it.
+ */
+function handleSessionDeleteKey(
+  input: string,
+  key: Key,
+  ctx: AppKeyContext,
+): boolean {
+  const { state, dispatch, callbacks } = ctx;
+  const confirm = state.sessionDelete;
+  if (!confirm) return false;
+  if (key.ctrl || key.meta) return false;
+  const lower = input.toLowerCase();
+  const close = (): void => dispatch({ type: "session_delete_closed" });
+  if (key.escape || lower === "n") {
+    close();
+    return true;
+  }
+  if (lower === "y") {
+    callbacks.onSessionDeleteConfirmed?.(confirm.sessionId);
+    close();
+    return true;
+  }
+  if (key.leftArrow || key.rightArrow || key.tab) {
+    dispatch({
+      type: "session_delete_cursor_set",
+      cursor: confirm.cursor === "yes" ? "cancel" : "yes",
+    });
+    return true;
+  }
+  if (key.return) {
+    if (confirm.cursor === "yes") {
+      callbacks.onSessionDeleteConfirmed?.(confirm.sessionId);
+    }
+    close();
+    return true;
+  }
+  return true;
 }
 
 function handleApprovalKey(

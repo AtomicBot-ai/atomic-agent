@@ -120,15 +120,15 @@ function ComposerButton({
   onPress,
 }: ComposerButtonProps): ReactElement {
   const background = !enabled
-    ? theme.colors.railBackground
+    ? theme.colors.badgeBackground
     : primary
-      ? theme.colors.accent
+      ? theme.colors.chipBackground
       : theme.colors.border;
   const foreground = !enabled
-    ? theme.colors.railMuted
+    ? theme.colors.muted
     : primary
-      ? theme.colors.railForeground
-      : theme.colors.railBackground;
+      ? theme.colors.chipForeground
+      : theme.colors.chipBackground;
   const chip = (
     <Text backgroundColor={background} color={foreground} bold={enabled}>
       {label}

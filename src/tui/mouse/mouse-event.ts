@@ -14,7 +14,13 @@
 
 export type MouseButton = "left" | "middle" | "right" | "none";
 
-export type MouseEventKind = "press" | "release" | "wheel";
+/**
+ * `motion` is a report sent while a button is held (DECSET 1002). It is
+ * a separate kind on purpose: the terminal encodes it as a press with
+ * bit 5 set, and folding it into `press` would make a drag across the
+ * UI fire a click per cell it crossed.
+ */
+export type MouseEventKind = "press" | "release" | "wheel" | "motion";
 
 export type WheelDirection = "up" | "down";
 
@@ -36,6 +42,8 @@ export interface TuiMouseEvent {
 /** True for a plain (unmodified) left-button press — the "click" gesture. */
 export function isPrimaryPress(event: TuiMouseEvent): boolean {
   return (
+    // `motion` is excluded by construction: it is its own kind, so every
+    // existing handler that gates on this keeps ignoring drags.
     event.kind === "press" &&
     event.button === "left" &&
     !event.shift &&

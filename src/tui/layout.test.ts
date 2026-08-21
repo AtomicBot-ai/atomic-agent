@@ -90,6 +90,9 @@ describe("computeSidebarRowBudget", () => {
     // app frame (brand lockup, version, Menu button) and so spends more of
     // the height on itself. What this pins is the 2:1 ratio, and that both
     // panes shrink together rather than one starving the other.
+    // `+ new` moved onto the Sessions header and gave a row back; the
+    // blank that lifts the Menu button off the rail's bottom edge took
+    // it again, so 24 rows still leaves 9 usable.
     const budget = computeSidebarRowBudget(24);
     expect(budget.sessions).toBe(6);
     expect(budget.tasks).toBe(3);

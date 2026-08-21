@@ -67,9 +67,9 @@ describe("TuiApp (smoke)", () => {
     expect(text).toContain("atomic-agent");
     // The status bar shows where you are, not a menu of where you could go —
     // the three-section pill row moved into the ctrl+p menu.
-    expect(text).toContain("Run");
-    expect(text).not.toContain("Observe");
-    expect(text).not.toContain("Manage");
+    expect(text).toContain("R U N");
+    expect(text).not.toContain("OBSERVE");
+    expect(text).not.toContain("MANAGE");
     // Both rail panes are part of the Run screen at this size.
     expect(text).toContain("SESSIONS");
     expect(text).toContain("TASKS");
@@ -105,7 +105,7 @@ describe("TuiApp (smoke)", () => {
     bus.emit({ type: "ui_mode_set", mode: "debug" });
     await new Promise((r) => setTimeout(r, 10));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("Observe");
+    expect(text).toContain("OBSERVE");
     expect(text).toContain("Feed");
     expect(text).toContain("Logs");
     // Manage-only tabs should not be in the Observe sub-tab strip.
@@ -124,7 +124,7 @@ describe("TuiApp (smoke)", () => {
     bus.emit({ type: "tab_changed", tab: "tasks" });
     await new Promise((r) => setTimeout(r, 10));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("Manage");
+    expect(text).toContain("MANAGE");
     expect(text).toContain("Tasks");
     expect(text).toContain("Skills");
     expect(text).toContain("Telegram");
@@ -174,7 +174,7 @@ describe("TuiApp (smoke)", () => {
     );
     await new Promise((r) => setTimeout(r, 10));
     const before = strip(lastFrame() ?? "");
-    expect(before).toContain("Run");
+    expect(before).toContain("R U N");
     stdin.write("\t");
     await new Promise((r) => setTimeout(r, 10));
     const after = strip(lastFrame() ?? "");
@@ -183,12 +183,12 @@ describe("TuiApp (smoke)", () => {
     if (before.includes("SESSIONS")) {
       // Sidebar visible: Tab lands focus on the rail and stays in
       // chat mode. Ctrl+B is the dedicated key for nav cycling.
-      expect(after).toContain("Run");
-      expect(after).not.toContain("Observe \u25b8");
+      expect(after).toContain("R U N");
+      expect(after).not.toContain("OBSERVE \u25b8");
     } else {
       // Sidebar collapsed (narrow runner): Tab falls back to the nav
       // cycle and lands on Observe → Feed.
-      expect(after).toContain("Observe \u25b8 Feed");
+      expect(after).toContain("OBSERVE \u25b8 Feed");
     }
     unmount();
   });
@@ -202,7 +202,7 @@ describe("TuiApp (smoke)", () => {
     stdin.write("\u0002");
     await new Promise((r) => setTimeout(r, 10));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("Observe \u25b8 Feed");
+    expect(text).toContain("OBSERVE \u25b8 Feed");
     unmount();
   });
 
@@ -218,7 +218,7 @@ describe("TuiApp (smoke)", () => {
     // Shift+Tab from Run wraps to the LAST Manage sub-tab. That is
     // `privacy`, not `telegram` — see `MANAGE_TABS` in `section.ts`, which
     // gained `import` and `privacy` after this test was written.
-    expect(text).toContain("Manage \u25b8");
+    expect(text).toContain("MANAGE \u25b8");
     // `▸` marks the ACTIVE sub-tab. A bare "Privacy" would also match the
     // inactive chip in the strip, so it must carry the marker.
     expect(text).toContain("▸ Privacy");
@@ -370,13 +370,13 @@ describe("TuiApp (smoke)", () => {
     bus.emit({ type: "ui_mode_set", mode: "debug" });
     bus.emit({ type: "tab_changed", tab: "tasks" });
     await new Promise((r) => setTimeout(r, 10));
-    expect(strip(lastFrame() ?? "")).toContain("Manage \u25b8");
+    expect(strip(lastFrame() ?? "")).toContain("MANAGE \u25b8");
 
     stdin.write("\u001b");
     await new Promise((r) => setTimeout(r, 60));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("Run");
-    expect(text).not.toContain("Manage \u25b8");
+    expect(text).toContain("R U N");
+    expect(text).not.toContain("MANAGE \u25b8");
     unmount();
   });
 
@@ -424,7 +424,7 @@ describe("TuiApp (smoke)", () => {
     stdin.write("t");
     await new Promise((r) => setTimeout(r, 30));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("Manage");
+    expect(text).toContain("MANAGE");
     expect(text).toContain("Tasks");
     // Ink delivers every key to every useInput, child first — so the editor
     // sees the chord letter too. If the leader did not disable it, a stray
@@ -457,7 +457,7 @@ describe("TuiApp (smoke)", () => {
     // chip key, not its label: a narrow runner wraps the strip and can split
     // "menu" off its own chip.
     expect(idle).toContain("[ctrl+p]");
-    expect(idle).not.toContain("Manage ▸");
+    expect(idle).not.toContain("MANAGE ▸");
     unmount();
   });
 
@@ -474,7 +474,7 @@ describe("TuiApp (smoke)", () => {
     await new Promise((r) => setTimeout(r, 20));
     const text = strip(lastFrame() ?? "");
     expect(text).not.toContain("esc close");
-    expect(text).toContain("Run");
+    expect(text).toContain("R U N");
     unmount();
   });
 
