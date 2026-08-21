@@ -246,6 +246,17 @@ export interface SessionPickerEntry {
   preview: string;
 }
 
+/**
+ * The pending session deletion. `cursor` is the focused button, and it
+ * starts on `cancel`: Enter on a dialog nobody read must not delete a
+ * thread.
+ */
+export interface SessionDeleteConfirm {
+  sessionId: string;
+  preview: string;
+  cursor: "yes" | "cancel";
+}
+
 export interface TuiState {
   session: TuiSessionInfo;
   status: TuiStatus;
@@ -273,6 +284,12 @@ export interface TuiState {
   /** Per-run list of `<think>` blocks. Cleared on `goal_submitted`. */
   reasoning: ReasoningEntry[];
   pendingApproval: ApprovalRequest | null;
+  /**
+   * Open "delete the session?" confirmation, or `null`. Carries the
+   * preview so the dialog can name what is about to go, and the focused
+   * button so Enter has an unambiguous meaning.
+   */
+  sessionDelete: SessionDeleteConfirm | null;
   loadedSkills: readonly LoadedSkillBody[];
   worldSnapshot: WorldSnapshot | null;
   latestResult: LatestResult | null;
@@ -511,6 +528,7 @@ export function createInitialTuiState(
     streamingToolCards: [],
     reasoning: [],
     pendingApproval: null,
+    sessionDelete: null,
     loadedSkills: [],
     worldSnapshot: null,
     latestResult: null,

@@ -287,6 +287,40 @@ export class ChatOrchestrator {
     this.bus.emit({ type: "recent_sessions_updated", sessions });
   }
 
+  /**
+   * Remove a session for good, from the rail's `x` (confirmed).
+   *
+   * Deleting the thread the operator is *in* would leave the app
+   * pointed at a row that no longer exists, so that case rolls straight
+   * into a fresh session — the same landing `/new` gives. Deleting any
+   * other thread only refreshes the list.
+   *
+   * Refused mid-turn for the same reason switching is: the running turn
+   * writes its transcript back to the store when it finishes, which
+   * would resurrect the row that was just deleted.
+   */
+  deleteSession(sessionId: string): void {
+    if (this.quitting) return;
+    if (this.currentController) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: "cannot delete a session while a turn is running — press Ctrl+C first",
+      });
+      return;
+    }
+    const deletingCurrent = this.session?.id === sessionId;
+    this.runtime.sessionStore.delete(sessionId);
+    this.bus.emit({
+      type: "system_message",
+      text: `session deleted${deletingCurrent ? " — started a fresh one" : ""}`,
+    });
+    if (deletingCurrent) {
+      this.newSession();
+      return;
+    }
+    this.refreshRecentSessions();
+  }
+
   switchSession(sessionId: string): void {
     if (this.quitting) return;
     if (this.currentController) {

@@ -117,7 +117,10 @@ describe("HotkeyHint draft chips", () => {
     expect(out).not.toContain("clear draft");
     expect(out).toContain("[ctrl+p]");
     expect(out).toContain("menu");
-    expect(chipCount(out)).toBe(6);
+    // On an empty buffer Esc opens the menu, so the strip says so — the
+    // same slot that carries `clear draft` once there is a draft.
+    expect(out).toContain("[esc]");
+    expect(chipCount(out)).toBe(7);
   });
 
   it("tells the operator the draft survives an abort mid-turn", () => {

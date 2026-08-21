@@ -6,6 +6,7 @@ import {
   useMouseTarget,
 } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
+import { MOUSE_LAYER_BASE } from "../mouse/mouse-registry.js";
 import { computeRowWindow } from "../row-window.js";
 import type { TaskSummaryRow } from "../tasks/tasks-panel-state.js";
 import { theme } from "../theme/theme.js";
@@ -444,21 +445,89 @@ function SessionRow({
   previewWidth,
   inner,
 }: SessionRowProps): ReactElement {
-  const preview = truncate(entry.preview, previewWidth);
+  // Two marks, two questions: the chevron is "Enter opens this row",
+  // the dot is "this is the thread you are in". The ground answers the
+  // first one too, but only in colour — and a colour is nothing under
+  // NO_COLOR or in a pipe, so the glyph stays.
+  const chevron = selected ? theme.glyphs.chevronRight : " ";
   const marker = current ? theme.glyphs.assistantMarker : " ";
+  // The ground runs almost the full width of the rail with one column of
+  // air either side, so a selected row reads as a row in a list rather
+  // than as a highlighted word. The close affordance lives inside that
+  // ground, at its right edge — visible only on the selected row,
+  // because an `x` on every row is a mis-click waiting to happen.
+  const groundWidth = Math.max(4, inner - 2 * ROW_MARGIN_COLUMNS);
+  const closeWidth = selected ? CLOSE_COLUMNS : 0;
+  const preview = truncate(
+    entry.preview,
+    Math.max(1, Math.min(previewWidth, groundWidth - 5 - closeWidth)),
+  );
+  const label = `${chevron} ${marker} ${preview}`;
+  // Every cell width is computed here, so nothing may flex. Yoga
+  // shrinks text children by default and Ink re-wraps a squeezed
+  // `<Text>` rather than clipping it — the trap
+  // `MouseTargetProps.flexShrink` warns about, one row away from here.
+  const ground = ` ${label}`.padEnd(Math.max(0, groundWidth - closeWidth));
   return (
-    <RailRow
-      inner={inner}
-      // The row the thread is actually on gets the accent bar; the
-      // cursor gets the ground. They are different questions ("which
-      // session am I in" vs "which row will Enter open"), and the design
-      // answers them with two different marks.
-      bar={current}
-      filled={selected}
-      bold={selected || current}
+    <Box width={inner} flexShrink={0}>
+      <Text>{" ".repeat(ROW_MARGIN_COLUMNS)}</Text>
+      <Box flexShrink={0} width={Math.max(0, groundWidth - closeWidth)}>
+        <Text
+          color={theme.colors.railForeground}
+          bold={selected || current}
+          wrap="truncate"
+          {...(selected ? { inverse: true } : {})}
+        >
+          {ground}
+        </Text>
+      </Box>
+      {selected ? <CloseSessionButton entry={entry} /> : null}
+      <Text>{" ".repeat(ROW_MARGIN_COLUMNS)}</Text>
+    </Box>
+  );
+}
+
+/** Air either side of a rail list row's ground. */
+const ROW_MARGIN_COLUMNS = 1;
+/** Cells the close affordance occupies inside the ground: `[x]` + a pad. */
+const CLOSE_COLUMNS = 4;
+
+/**
+ * The `x` at the right edge of the selected session's ground. It opens
+ * the confirmation rather than deleting: this is one click away from
+ * losing a thread, and the rail is a place people click while looking
+ * somewhere else.
+ */
+function CloseSessionButton({
+  entry,
+}: {
+  entry: SessionPickerEntry;
+}): ReactElement {
+  const mouse = useMouseCommands();
+  // `[x]`, the same mark the design uses. It sits inside the row's
+  // ground, so it carries the same inverse video as the label.
+  const glyph = (
+    <Text color={theme.colors.railForeground} bold inverse>
+      {"[x] "}
+    </Text>
+  );
+  if (!mouse) return glyph;
+  return (
+    <MouseTarget
+      layer={MOUSE_LAYER_BASE}
+      flexShrink={0}
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        mouse.dispatch({
+          type: "session_delete_requested",
+          sessionId: entry.sessionId,
+          preview: entry.preview,
+        });
+        return true;
+      }}
     >
-      {`${marker} ${preview}`}
-    </RailRow>
+      {glyph}
+    </MouseTarget>
   );
 }
 

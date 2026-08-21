@@ -29,6 +29,10 @@ export type TuiAction =
   | { type: "system_message"; text: string; variant?: "normal" | "warn" }
   | { type: "agent_event"; event: AgentLoopEvent }
   | { type: "approval_requested"; request: ApprovalRequest }
+  /** The `x` on a rail session row: ask before removing the thread. */
+  | { type: "session_delete_requested"; sessionId: string; preview: string }
+  | { type: "session_delete_cursor_set"; cursor: "yes" | "cancel" }
+  | { type: "session_delete_closed" }
   | { type: "approval_resolved"; approvalId: string; approved: boolean }
   | { type: "metric"; sample: MetricSample }
   | { type: "log"; record: LogRecord }

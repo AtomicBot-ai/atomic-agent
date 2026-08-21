@@ -294,6 +294,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSessionPickerRequested: () => orchestrator.openSessionPicker(),
         onSessionSwitchRequested: (id) => orchestrator.switchSession(id),
         onSessionNewRequested: () => orchestrator.newSession(),
+        onSessionDeleteConfirmed: (sessionId) =>
+          orchestrator.deleteSession(sessionId),
         onNewWindowRequested: () => openNewAgentWindow(parsed.workingDir, bus),
         onMemoryDumpRequested: () => orchestrator.dumpProfile(),
         onSkillCatalogRequested: () => orchestrator.dumpSkillCatalog(),

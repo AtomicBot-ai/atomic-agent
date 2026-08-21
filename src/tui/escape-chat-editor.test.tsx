@@ -44,6 +44,45 @@ function trackingCallbacks(counts: { quit: number; abort: number }): TuiAppCallb
 }
 
 describe("Esc in the chat editor", () => {
+  it("opens the menu when there is nothing left to cancel", async () => {
+    // Esc keeps every meaning it had; opening the menu is the last
+    // branch, reached only when the key would otherwise have done
+    // nothing at all.
+    const counts = { quit: 0, abort: 0 };
+    const bus = makeTuiEventBus();
+    const { lastFrame, stdin, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={trackingCallbacks(counts)} />,
+    );
+    await settle();
+    stdin.write(ESC);
+    await settle();
+    expect(strip(lastFrame() ?? "")).toContain("MENU");
+    expect(counts.quit).toBe(0);
+    expect(counts.abort).toBe(0);
+    unmount();
+  });
+
+  it("clears a draft first — the menu only opens on an empty buffer", async () => {
+    const counts = { quit: 0, abort: 0 };
+    const bus = makeTuiEventBus();
+    const { lastFrame, stdin, unmount } = render(
+      <TuiApp session={SESSION} bus={bus} callbacks={trackingCallbacks(counts)} />,
+    );
+    await settle();
+    stdin.write("half a thought");
+    await settle();
+    stdin.write(ESC);
+    await settle();
+    const afterFirst = strip(lastFrame() ?? "");
+    expect(afterFirst).not.toContain("half a thought");
+    expect(afterFirst).not.toContain("MENU");
+    // Second Esc, now with nothing to clear, is the one that opens it.
+    stdin.write(ESC);
+    await settle();
+    expect(strip(lastFrame() ?? "")).toContain("MENU");
+    unmount();
+  });
+
   it("does not quit an idle agent", async () => {
     const counts = { quit: 0, abort: 0 };
     const bus = makeTuiEventBus();

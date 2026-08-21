@@ -133,6 +133,39 @@ describe("Sidebar", () => {
     expect(chevronCount).toBe(1);
   });
 
+  it("puts the close mark on the selected session row only", () => {
+    // An `x` on every row is a mis-click waiting to happen, so it rides
+    // the row the cursor is already on.
+    const focused = render(
+      <Sidebar
+        width={32}
+        sessions={SESSIONS}
+        sessionsCursor={0}
+        currentSessionId="abcdef1234"
+        tasks={TASKS}
+        tasksCursor={0}
+        activeSection="sessions"
+        focused={true}
+      />,
+    );
+    const text = strip(focused.lastFrame() ?? "");
+    expect((text.match(/\[x\]/g) ?? []).length).toBe(1);
+
+    const blurred = render(
+      <Sidebar
+        width={32}
+        sessions={SESSIONS}
+        sessionsCursor={0}
+        currentSessionId="abcdef1234"
+        tasks={TASKS}
+        tasksCursor={0}
+        activeSection="sessions"
+        focused={false}
+      />,
+    );
+    expect(strip(blurred.lastFrame() ?? "")).not.toContain("[x]");
+  });
+
   it("renders task rows with status badges", () => {
     const { lastFrame } = render(
       <Sidebar

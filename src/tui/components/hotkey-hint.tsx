@@ -260,8 +260,13 @@ function resolveChips(
         mouse.dispatch({ type: "chat_focus_set", focus: "sidebar" }),
     },
     { key: SCROLL_KEY, label: "scroll", shed: 1 },
+    // Esc opens the menu only on an empty buffer — with a draft it
+    // clears the draft — so the strip advertises whichever one the next
+    // press will actually do.
+    ...(hasDraft
+      ? [{ key: "esc", label: "clear draft" }]
+      : [{ key: "esc", label: "menu", shed: 5 }]),
     { key: "ctrl+p", label: "menu", shed: 4 },
-    ...(hasDraft ? [{ key: "esc", label: "clear draft" }] : []),
     {
       key: "ctrl+c",
       label: ctrlCArmed ? "press again to quit" : "quit",

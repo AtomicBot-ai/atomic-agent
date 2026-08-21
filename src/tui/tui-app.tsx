@@ -26,6 +26,7 @@ import { HotkeyHint } from "./components/hotkey-hint.js";
 import { LlmHealthBadge } from "./components/llm-health-badge.js";
 import { PromptShell } from "./components/prompt-shell.js";
 import { QueuedMessages } from "./components/queued-messages.js";
+import { SessionDeleteModal } from "./components/session-delete-modal.js";
 import { SessionPicker } from "./components/session-picker.js";
 import { ThemePicker } from "./components/theme-picker.js";
 import {
@@ -106,6 +107,14 @@ export interface TuiEventBus {
 const RAIL_GUTTER_COLUMNS = 3;
 
 /**
+ * How long after a modal opens its backdrop refuses to dismiss it. One
+ * frame is enough for the modal's own click targets to register; 150ms
+ * covers a loaded machine without being long enough to swallow a
+ * deliberate click away.
+ */
+const MODAL_CLICK_GRACE_MS = 150;
+
+/**
  * A one-row hairline. `flexShrink={0}` so a tall chat never eats it, and
  * the glyph run is built from the width the caller measured rather than
  * `width="100%"`: Ink pads a percentage-width Box with spaces, which
@@ -127,6 +136,12 @@ export interface TuiAppCallbacks {
     approved: boolean,
     grant?: ApprovalGrantScope,
   ): void;
+  /**
+   * Remove a session for good. Confirmed by the operator in the dialog
+   * the rail's `x` opens — the host does the deleting and decides where
+   * the UI lands if the current thread was the one removed.
+   */
+  onSessionDeleteConfirmed?(sessionId: string): void;
   onAbort(): void;
   onQuit(): void;
   onMessageSubmitted(message: string): void;
@@ -711,6 +726,7 @@ export function TuiApp({
   // behind it. Same predicate the key layer gates on.
   const modalOwnsInput =
     state.menuOpen ||
+    Boolean(state.sessionDelete) ||
     Boolean(state.pendingApproval) ||
     Boolean(state.updatePrompt) ||
     state.updateStatus === "done" ||
@@ -765,12 +781,35 @@ export function TuiApp({
    * as one rule instead of a list of exceptions.
    */
   const menuBackdropHandler = (hit: MouseHit): boolean => {
-    if (!state.menuOpen) return false;
+    const open = state.menuOpen || Boolean(state.sessionDelete);
+    if (!open) return false;
     if (hit.event.kind === "wheel") return true;
     if (!isPrimaryPress(hit.event)) return false;
-    dispatch({ type: "menu_closed" });
+    // A modal's own targets register in an effect that flushes a frame
+    // after it first paints. In that window the backdrop is the only
+    // eligible target, so a second click arriving fast — a double-click
+    // on the rail's `[x]`, or an impatient one on `ctrl+p` — would be
+    // read as "clicked outside" and dismiss the surface that just
+    // opened. Ignore presses until the modal has had that frame.
+    if (Date.now() - modalOpenedAtRef.current < MODAL_CLICK_GRACE_MS) {
+      return true;
+    }
+    // Clicking away from a destructive confirmation cancels it — the
+    // same dismissal the menu gets, and the safe outcome either way.
+    dispatch(
+      state.sessionDelete
+        ? { type: "session_delete_closed" }
+        : { type: "menu_closed" },
+    );
     return true;
   };
+  // Stamped when a backdrop-owning surface opens; read by the handler
+  // above. A ref rather than state: it must not trigger a render.
+  const modalOpenedAtRef = useRef(0);
+  const backdropOwner = state.menuOpen || Boolean(state.sessionDelete);
+  useEffect(() => {
+    if (backdropOwner) modalOpenedAtRef.current = Date.now();
+  }, [backdropOwner]);
   const menuBackdropRef = useRef(menuBackdropHandler);
   menuBackdropRef.current = menuBackdropHandler;
   useEffect(
@@ -880,11 +919,19 @@ export function TuiApp({
     // back one level, so a single unannounced press killing the agent —
     // and the half-typed message with it — was a trap: no hint strip ever
     // advertised it, while Ctrl+C deliberately asks twice. Quitting stays
-    // on Ctrl+C twice and `/quit`; Esc clears the draft and no-ops on an
-    // empty buffer.
+    // on Ctrl+C twice and `/quit`; Esc clears the draft first.
     if (state.inputValue.length > 0) {
       dispatch({ type: "input_changed", value: "" });
+      return;
     }
+    // Nothing left to cancel: Esc opens the menu. It is the LAST branch
+    // on purpose — abort, close, back and clear-draft all outrank it, so
+    // the key keeps every meaning it already had and gains one only when
+    // it would otherwise have done nothing. `ctrl+p` still opens the
+    // menu from anywhere, including mid-turn.
+    dispatch({ type: "menu_path_set", path: null });
+    dispatch({ type: "menu_cursor_set", cursor: 0 });
+    dispatch({ type: "menu_opened" });
   }, [state, callbacks]);
 
   /**
@@ -1085,6 +1132,23 @@ export function TuiApp({
                 }
               />
             )}
+            {state.sessionDelete ? (
+              <SessionDeleteModal
+                confirm={state.sessionDelete}
+                availableRows={menuPaneRows}
+                availableColumns={
+                  terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
+                }
+                onConfirm={(sessionId) => {
+                  callbacks.onSessionDeleteConfirmed?.(sessionId);
+                  dispatch({ type: "session_delete_closed" });
+                }}
+                onCancel={() => dispatch({ type: "session_delete_closed" })}
+                onFocus={(cursor) =>
+                  dispatch({ type: "session_delete_cursor_set", cursor })
+                }
+              />
+            ) : null}
             {state.menuOpen ? (
               <MenuPopup
                 state={state}

@@ -117,15 +117,23 @@ function mountApp(): {
   mouse: MouseSourceEmitter;
   stdin: { write: (data: string) => void };
   openSkillsPanel: () => void;
+  /** Put two threads in the rail so its rows are clickable. */
+  seedSessions: () => void;
+  /** Session ids the app asked the host to delete. */
+  deleted: string[];
   unmount: () => void;
 } {
   const bus = makeTuiEventBus();
   const mouse = makeMouseSource();
+  const deleted: string[] = [];
   const { lastFrame, stdin, unmount } = render(
     <TuiApp
       session={SESSION}
       bus={bus}
-      callbacks={noopCallbacks()}
+      callbacks={{
+        ...noopCallbacks(),
+        onSessionDeleteConfirmed: (sessionId) => deleted.push(sessionId),
+      }}
       mouse={mouse}
     />,
   );
@@ -133,6 +141,30 @@ function mountApp(): {
     frame: () => strip(lastFrame() ?? ""),
     mouse,
     stdin,
+    deleted,
+    seedSessions: () => {
+      bus.emit({
+        type: "recent_sessions_updated",
+        sessions: [
+          {
+            sessionId: "s-1",
+            workingDir: "/tmp/smoke",
+            turnCount: 1,
+            stepCount: 1,
+            updatedAt: 2,
+            preview: "first thread",
+          },
+          {
+            sessionId: "s-2",
+            workingDir: "/tmp/smoke",
+            turnCount: 1,
+            stepCount: 1,
+            updatedAt: 1,
+            preview: "second thread",
+          },
+        ],
+      });
+    },
     openSkillsPanel: () => {
       bus.emit({ type: "ui_mode_set", mode: "debug" });
       bus.emit({ type: "tab_changed", tab: "skills" });
@@ -349,6 +381,80 @@ describe("TuiApp mouse", () => {
       app.mouse.emit(click(at.x, at.y));
       await delay(120);
       expect(app.frame()).toContain("MENU");
+      app.unmount();
+    });
+  });
+
+  /**
+   * The rail's close mark and the confirmation it opens. Deleting a
+   * thread is the most destructive thing the mouse can reach, so the
+   * path from click to gone is pinned end to end.
+   */
+  describe("session delete", () => {
+    const openDialog = async (
+      app: ReturnType<typeof mountApp>,
+    ): Promise<void> => {
+      await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
+      app.seedSessions();
+      await waitUntil(() => app.frame().includes("first thread"), "the rail rows");
+      app.stdin.write("\t");
+      await waitUntil(() => app.frame().includes("[x]"), "the selected row");
+      await clickUntil(
+        app.mouse,
+        () => {
+          const at = locate(app.frame(), "[x]");
+          return { x: at.x + 1, y: at.y };
+        },
+        () => app.frame().includes("DELETE THE SESSION?"),
+        "click the close mark",
+      );
+    };
+
+    it("opens the confirmation from the row's close mark", async () => {
+      const app = mountApp();
+      await openDialog(app);
+      expect(app.frame()).toContain("DELETE THE SESSION?");
+      expect(app.frame()).toContain("Cancel");
+      expect(app.deleted).toEqual([]);
+      app.unmount();
+    });
+
+    it("deletes only when Yes is clicked", async () => {
+      const app = mountApp();
+      await openDialog(app);
+      // Retry against the OUTCOME, not against the dialog disappearing:
+      // a click that arrives before the button's registration effect
+      // has flushed falls through to the backdrop, which dismisses the
+      // dialog — that would satisfy a "dialog is gone" predicate while
+      // deleting nothing. Re-open and try again until something is
+      // actually deleted.
+      for (let attempt = 0; attempt < 20 && app.deleted.length === 0; attempt += 1) {
+        if (!app.frame().includes("DELETE THE SESSION?")) {
+          await openDialog(app);
+        }
+        // The dialog's buttons register their targets in an effect that
+        // flushes a frame after the panel first paints; clicking inside
+        // that window falls through to the backdrop.
+        await delay(150);
+        const at = locate(app.frame(), "Yes");
+        app.mouse.emit(click(at.x + 1, at.y));
+        await delay(80);
+      }
+      expect(app.deleted).toEqual(["s-1"]);
+      expect(app.frame()).not.toContain("DELETE THE SESSION?");
+      app.unmount();
+    });
+
+    it("cancels on a click outside the panel, deleting nothing", async () => {
+      const app = mountApp();
+      await openDialog(app);
+      await clickUntil(
+        app.mouse,
+        () => ({ x: 0, y: 0 }),
+        () => !app.frame().includes("DELETE THE SESSION?"),
+        "click outside the dialog",
+      );
+      expect(app.deleted).toEqual([]);
       app.unmount();
     });
   });
