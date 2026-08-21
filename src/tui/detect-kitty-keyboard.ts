@@ -63,18 +63,25 @@ export function detectKittyKeyboard(
     let timer: NodeJS.Timeout | undefined;
 
     const hadRaw = stdin.isRaw === true;
+    const wasPaused =
+      typeof stdin.isPaused === "function" ? stdin.isPaused() : false;
     const cleanup = (): void => {
       if (timer) clearTimeout(timer);
       stdin.removeListener("data", onData);
       if (typeof stdin.setRawMode === "function") stdin.setRawMode(hadRaw);
-      // Pause unless somebody else is still reading. `resume()` above put
-      // the stream in flowing mode; leaving it there with no listener
-      // means every chunk is emitted to nobody and dropped — and the gap
-      // between this probe and Ink's `render()` spans the whole runtime
-      // bootstrap, so an operator who starts typing immediately loses it.
-      // Paused, the bytes buffer and Ink gets them when it attaches.
-      const stillRead = stdin.listenerCount("data") > 0;
-      if (!stillRead && typeof stdin.pause === "function") stdin.pause();
+      // Leave the stream exactly as we found it — flowing if it was
+      // flowing. This is the one thing this function must not get wrong:
+      // an explicit `pause()` here is NOT undone by Ink attaching its
+      // own listener (Node only auto-resumes a stream that was never
+      // explicitly paused), so pausing kills every keystroke AND every
+      // mouse report for the life of the process. That shipped in 0.3.3
+      // and made the app completely unresponsive.
+      //
+      // The cost is the one `detectTerminalBackground` has always paid:
+      // anything typed between this probe and Ink's `render()` is read
+      // by nobody and dropped. Losing type-ahead is a papercut; losing
+      // the keyboard is the app.
+      if (wasPaused && typeof stdin.pause === "function") stdin.pause();
     };
 
     const finish = (supported: boolean): void => {
