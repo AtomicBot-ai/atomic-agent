@@ -76,15 +76,15 @@ export const RAIL_MARK: readonly string[] = CROSS_MARKS.block.sm;
  * apart at small ones, which is why it looked fine for so long.
  *
  * `█` has no such requirement — it fills the cell — so the letterforms
- * are built from it and spaces alone. Five rows instead of two is the
- * price; `WORDMARK_STACK_ROWS` in `splash-fit.ts` accounts for it.
+ * are built from it and spaces alone, three rows deep. `M` and `N` get
+ * five columns and `G` four; at three they would be indistinguishable
+ * from each other and from `O`. `WORDMARK_STACK_ROWS` in `splash-fit.ts`
+ * accounts for the height.
  */
 export const WORDMARK_ROWS: readonly string[] = [
-  "\u2588\u2588\u2588 \u2588\u2588\u2588 \u2588\u2588\u2588 \u2588   \u2588 \u2588 \u2588\u2588\u2588   \u2588\u2588\u2588 \u2588\u2588\u2588\u2588 \u2588\u2588\u2588 \u2588   \u2588 \u2588\u2588\u2588",
-  "\u2588 \u2588  \u2588  \u2588 \u2588 \u2588\u2588 \u2588\u2588 \u2588 \u2588     \u2588 \u2588 \u2588    \u2588   \u2588\u2588  \u2588  \u2588 ",
-  "\u2588\u2588\u2588  \u2588  \u2588 \u2588 \u2588 \u2588 \u2588 \u2588 \u2588     \u2588\u2588\u2588 \u2588 \u2588\u2588 \u2588\u2588\u2588 \u2588 \u2588 \u2588  \u2588 ",
-  "\u2588 \u2588  \u2588  \u2588 \u2588 \u2588   \u2588 \u2588 \u2588     \u2588 \u2588 \u2588  \u2588 \u2588   \u2588  \u2588\u2588  \u2588 ",
-  "\u2588 \u2588  \u2588  \u2588\u2588\u2588 \u2588   \u2588 \u2588 \u2588\u2588\u2588   \u2588 \u2588 \u2588\u2588\u2588\u2588 \u2588\u2588\u2588 \u2588   \u2588  \u2588 ",
+  "\u2588\u2588\u2588 \u2588\u2588\u2588 \u2588\u2588\u2588 \u2588\u2588 \u2588\u2588 \u2588 \u2588\u2588\u2588   \u2588\u2588\u2588 \u2588\u2588\u2588\u2588 \u2588\u2588\u2588 \u2588\u2588  \u2588 \u2588\u2588\u2588",
+  "\u2588\u2588\u2588  \u2588  \u2588 \u2588 \u2588 \u2588 \u2588 \u2588 \u2588     \u2588\u2588\u2588 \u2588 \u2588\u2588 \u2588\u2588  \u2588 \u2588 \u2588  \u2588 ",
+  "\u2588 \u2588  \u2588  \u2588\u2588\u2588 \u2588   \u2588 \u2588 \u2588\u2588\u2588   \u2588 \u2588 \u2588\u2588\u2588\u2588 \u2588\u2588\u2588 \u2588  \u2588\u2588  \u2588 ",
 ];
 
 export const TAGLINE = "Local AI-First Agent";
