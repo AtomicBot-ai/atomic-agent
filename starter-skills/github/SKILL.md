@@ -1,7 +1,7 @@
 ---
 name: github
 description: Drive GitHub via the official `gh` CLI — repos, issues, pull requests, releases, gists, Actions runs, and raw REST through `gh api`. Use when the user asks to inspect or manage GitHub.
-version: 1.1.0
+version: 1.1.1
 requires_tools:
   - os.shell.run
 dangerous: true
@@ -34,7 +34,8 @@ dump install docs on the user.
 
 Reply (solo `reply` step):
 
-> «GitHub CLI (`gh`) не установлен. Могу поставить через Homebrew (`brew install gh`) — потребуется подтверждение. Поставить?»
+> "The GitHub CLI (`gh`) is not installed. I can install it with Homebrew
+> (`brew install gh`) — you will be asked to confirm. Install it?"
 
 On yes:
 
@@ -50,7 +51,9 @@ https://cli.github.com/ for their platform, then stop.
 `gh auth login` is interactive (opens a browser / device flow) and cannot run
 from a non-interactive tool shell. Reply:
 
-> «`gh` установлен, но не авторизован. Запустите в своём терминале `gh auth login`, пройдите device flow, потом скажите "готово" — я повторю проверку.»
+> "`gh` is installed but not authenticated. Run `gh auth login` in your own
+> terminal and complete the device flow, then tell me when you are done and I
+> will re-check."
 
 Do NOT attempt `gh auth login` through `os.shell.run`; it will hang.
 

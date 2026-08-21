@@ -1,7 +1,7 @@
 ---
 name: ffmpeg
 description: Process audio and video with the `ffmpeg` / `ffprobe` CLIs — convert, trim, extract audio, resize, change format, make GIFs, inspect media. Use for any audio/video transformation.
-version: 1.0.0
+version: 1.0.1
 requires_tools:
   - os.shell.run
 dangerous: false
@@ -31,7 +31,7 @@ Outcome map:
 
 Reply (solo `reply` step):
 
-> «`ffmpeg` не установлен. Могу поставить: `brew install ffmpeg`. Поставить?»
+> "`ffmpeg` is not installed. I can install it: `brew install ffmpeg`. Install it?"
 
 On yes:
 

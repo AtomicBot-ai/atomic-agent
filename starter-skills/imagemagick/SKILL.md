@@ -1,7 +1,7 @@
 ---
 name: imagemagick
 description: Edit and convert images with the ImageMagick `magick` CLI — resize, crop, convert format, compress, rotate, montage, annotate. Use for any still-image transformation.
-version: 1.0.0
+version: 1.0.1
 requires_tools:
   - os.shell.run
   - vision.describe
@@ -36,7 +36,7 @@ Outcome map:
 
 Reply (solo `reply` step):
 
-> «ImageMagick не установлен. Могу поставить: `brew install imagemagick`. Поставить?»
+> "ImageMagick is not installed. I can install it: `brew install imagemagick`. Install it?"
 
 On yes:
 
