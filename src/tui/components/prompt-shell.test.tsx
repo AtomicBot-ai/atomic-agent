@@ -29,7 +29,7 @@ describe("PromptShell", () => {
     unmount();
   });
 
-  it("shows the send button", () => {
+  it("shows the send button inside the field", () => {
     const { lastFrame, unmount } = render(
       <PromptShell
         value=""
@@ -77,7 +77,7 @@ describe("PromptShell", () => {
    * thing allowed to give up columns — a clipped button reads as a
    * rendering bug, a clipped model name reads as a long model name.
    */
-  it("keeps the send button whole in a 56-column chat column", () => {
+  it("keeps the send button whole, on the buffer row, at 56 columns", () => {
     const { lastFrame, unmount } = render(
       // A column, like the chat surface: the composer takes the
       // column's full width rather than its own intrinsic one.
@@ -102,9 +102,39 @@ describe("PromptShell", () => {
       expect(line.length).toBeLessThanOrEqual(56);
     }
     // [0] border, [1] pad, [2] buffer, [3] pad, [4] bar pad,
-    // [5] action bar, [6] bar pad, [7] border.
-    const bar = lines[5] ?? "";
-    expect(bar).toContain(" send → ");
+    // [5] status bar, [6] bar pad, [7] border.
+    expect(lines[2] ?? "").toContain(" send → ");
+    // The bar is where Send used to live; the readout owns that end now.
+    expect(lines[5] ?? "").not.toContain("send");
+    unmount();
+  });
+
+  /**
+   * Send rides the *last* line of a multi-line buffer, not the first:
+   * it is the verb for the message being typed, and the caret is at the
+   * bottom by the time the buffer has grown.
+   */
+  it("drops the send button to the last row of a multi-line buffer", () => {
+    const { lastFrame, unmount } = render(
+      <Box width={56} flexDirection="column">
+        <PromptShell
+          value={"first line\nsecond line\nthird line"}
+          focus
+          onChange={() => {}}
+          onSubmit={() => {}}
+        />
+      </Box>,
+    );
+    const lines = strip(lastFrame() ?? "")
+      .split("\n")
+      .filter((line) => line.trim().length > 0);
+    // [0] border, [1] pad, [2..4] buffer, [5] pad, …
+    expect(lines[2] ?? "").not.toContain("send");
+    expect(lines[3] ?? "").not.toContain("send");
+    expect(lines[4] ?? "").toContain(" send → ");
+    for (const line of lines) {
+      expect(line.length).toBeLessThanOrEqual(56);
+    }
     unmount();
   });
 
