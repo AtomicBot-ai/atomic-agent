@@ -38,6 +38,8 @@ import {
   getToolDescriptorByName,
   isRareToolName,
 } from "../prompt/tool-descriptors.js";
+import { getDefaultArgsJsonSchema } from "../prompt/default-tool-args-schemas.js";
+import { validateJsonSchemaValue } from "../llm/provider/openai/coerce-json-schema-value.js";
 import { buildPrompt } from "../prompt/build-prompt.js";
 import type { BuiltPrompt } from "../prompt/build-prompt.js";
 import { formatCurrentDate } from "../prompt/current-date.js";
@@ -248,6 +250,15 @@ export interface StepOutcome {
    * happened for the trim.
    */
   trimmedBatchNotice?: string;
+  /**
+   * Notice text injected into the NEXT step's `transientNotice` when
+   * `executeStepInner` mechanically split an oversized pure-read batch
+   * into bounded waves (issue #111). Same lifecycle as
+   * `trimmedBatchNotice`: set only when the split fires, left undefined
+   * otherwise so the agent loop does not overwrite a higher-priority
+   * pending notice.
+   */
+  waveSplitNotice?: string;
 }
 
 /** Validation failure for a multi-call batch (forbidden tool / oversized / unknown). */
@@ -413,6 +424,12 @@ async function executeStepInner(
   // overwrite a higher-priority pending notice (loop-detector hint).
   let trimmedBatchNotice: string | undefined;
 
+  // Same lifecycle for the wave-split path: when an oversized pure-read
+  // batch was mechanically split (issue #111), tell the model on the
+  // next step so it understands its array ran in bounded waves rather
+  // than all-at-once.
+  let waveSplitNotice: string | undefined;
+
   /**
    * Inline helper: if a `BatchValidationError` is purely about
    * approval-gated tools batched together, trim the batch to the first
@@ -426,6 +443,14 @@ async function executeStepInner(
     batch: ToolCallBatch,
     error: BatchValidationError,
   ): { ok: true; batch: ToolCallBatch } | null => {
+    // An oversized batch is never trim-eligible, even when its only
+    // per-call reason is approval-gated (e.g. `[os.fs.write, 13 reads]`
+    // with a cap of 8). Trimming would keep the write solo and silently
+    // drop the 13 reads the model asked for; the oversized case must go
+    // through the LLM repair path (or the wave split below) instead.
+    if (batch.calls.length > getConfig().agent.maxParallelToolCalls) {
+      return null;
+    }
     if (!isApprovalGatedOnlyFailure(error)) return null;
     const trim = trimBatchToFirstApprovalGated(batch);
     if (trim === null) return null;
@@ -457,6 +482,60 @@ async function executeStepInner(
     };
   };
 
+  /**
+   * Inline helper: mechanically split an oversized pure-read batch into
+   * bounded waves (issue #111). Eligibility is strict — the batch must
+   * be larger than `agent.maxParallelToolCalls` AND every call must
+   * preflight as registered, argument-schema-valid, and classified
+   * `pure_read`. A single non-`pure_read` call (approval-gated,
+   * terminal, unknown class) or a schema-invalid arg kicks the batch
+   * back to the LLM repair path, because wave-splitting would execute
+   * calls the runtime is not allowed to batch (consent / ordering /
+   * semantic intent the model is better placed to reconcile).
+   */
+  const trySplitPureReadWaves = (
+    batch: ToolCallBatch,
+  ): { ok: true; batch: ToolCallBatch } | null => {
+    const cap = getConfig().agent.maxParallelToolCalls;
+    const calls = batch.calls;
+    if (calls.length <= cap) return null;
+    for (const call of calls) {
+      if (resourceClassFor(call.tool) !== "pure_read") return null;
+      if (!callArgsSchemaValid(call, ctx.toolDescriptors)) return null;
+    }
+    const waveCount = Math.ceil(calls.length / cap);
+    const boundaries = Array.from(
+      { length: waveCount },
+      (_, i) => i * cap,
+    );
+    waveSplitNotice = formatWaveSplitNotice(calls.length, cap, waveCount);
+    deps.onEvent?.({
+      type: "batch_wave_split",
+      stepIndex: ctx.stepIndex,
+      originalSize: calls.length,
+      cap,
+      waveCount,
+      boundaries,
+    });
+    deps.metrics?.recordBatchWaveSplit({
+      sessionId: ctx.session.id,
+      originalSize: calls.length,
+      cap,
+      waveCount,
+    });
+    deps.logger?.info("oversized pure-read batch split into bounded waves", {
+      sessionId: ctx.session.id,
+      stepIndex: ctx.stepIndex,
+      originalSize: calls.length,
+      cap,
+      waveCount,
+    });
+    return {
+      ok: true,
+      batch: { ...batch, maxWaveSize: cap },
+    };
+  };
+
   let parsed = tryParseToolCalls(
     completion,
     deps.profile,
@@ -465,17 +544,26 @@ async function executeStepInner(
   if (parsed.ok) {
     const validation = validateBatch(parsed.batch, deps.registry);
     if (!validation.ok) {
-      // Try the cheap mechanical fix first. If the only reason the
-      // batch failed is "approval-gated tools must be solo", we trim
-      // to the first approval-gated call and proceed — no LLM repair
-      // round-trip, no `parse_retry`. Anything else (terminal verbs in
-      // a batch, oversized, unknown resource class) still routes
-      // through the model so it can re-plan.
-      const trimmed = tryTrimApprovalGated(parsed.batch, validation.error);
-      if (trimmed !== null) {
-        parsed = trimmed;
+      // Try the cheap mechanical fixes first, in order:
+      //   1. Wave split (issue #111): an oversized batch whose calls
+      //      are ALL `pure_read` and schema-valid runs deterministically
+      //      in bounded waves — no LLM repair round-trip.
+      //   2. Approval-gated trim: a batch whose only failure is
+      //      "approval-gated tools must be solo" (and is NOT oversized)
+      //      trims to the first approval-gated call.
+      // Anything else (terminal verbs in a batch, oversized mixed
+      // batches, unknown resource class) still routes through the model
+      // so it can re-plan.
+      const split = trySplitPureReadWaves(parsed.batch);
+      if (split !== null) {
+        parsed = split;
       } else {
-        parsed = { ok: false, error: validation.error };
+        const trimmed = tryTrimApprovalGated(parsed.batch, validation.error);
+        if (trimmed !== null) {
+          parsed = trimmed;
+        } else {
+          parsed = { ok: false, error: validation.error };
+        }
       }
     }
   }
@@ -582,15 +670,21 @@ async function executeStepInner(
     if (parsed.ok) {
       const validation = validateBatch(parsed.batch, deps.registry);
       if (!validation.ok) {
-        // Same trim shortcut for the post-repair attempt: if the model
-        // came back from repair with another approval-gated batch,
-        // mechanically split it instead of escalating to `GrammarError`.
-        // Surfaces in the same `batch_trimmed` event/metric.
-        const trimmed = tryTrimApprovalGated(parsed.batch, validation.error);
-        if (trimmed !== null) {
-          parsed = trimmed;
+        // Same mechanical-fix shortcuts for the post-repair attempt:
+        // if the model came back from repair with another oversized
+        // pure-read batch (wave split) or another approval-gated batch
+        // (trim), fix it mechanically instead of escalating to
+        // `GrammarError`. Surfaces in the same event/metric pair.
+        const split = trySplitPureReadWaves(parsed.batch);
+        if (split !== null) {
+          parsed = split;
         } else {
-          parsed = { ok: false, error: validation.error };
+          const trimmed = tryTrimApprovalGated(parsed.batch, validation.error);
+          if (trimmed !== null) {
+            parsed = trimmed;
+          } else {
+            parsed = { ok: false, error: validation.error };
+          }
         }
       }
     }
@@ -668,6 +762,7 @@ async function executeStepInner(
     stepIndex: ctx.stepIndex,
     signal: ctx.signal,
     ...(deps.tracker ? { tracker: deps.tracker } : {}),
+    ...(batch.maxWaveSize !== undefined ? { maxWaveSize: batch.maxWaveSize } : {}),
     ...(loadedSkillNames.size > 0 ? { loadedSkillNames } : {}),
     onCallFinished: ({ batchIndex, result, durationMs }) => {
       deps.onEvent?.({
@@ -801,6 +896,7 @@ async function executeStepInner(
     terminal,
     loopSignals: batchOutcome.loopSignals,
     ...(trimmedBatchNotice !== undefined ? { trimmedBatchNotice } : {}),
+    ...(waveSplitNotice !== undefined ? { waveSplitNotice } : {}),
   };
 }
 
@@ -1343,6 +1439,47 @@ export function formatBatchTrimNotice(trim: BatchTrimResult): string {
     `Your previous emission contained ${trim.originalSize} calls including approval-gated tools that must be solo (length-1 array). The runtime auto-executed \`${trim.kept.tool}\` and dropped the rest: ${droppedNames}.`,
     "Retry the dropped calls now, one per step, each as a length-1 array. Do not re-batch them.",
   ].join(" ");
+}
+
+/**
+ * Render the `### notice` text the model sees on the next step after an
+ * oversized pure-read batch was mechanically split into bounded waves.
+ * Unlike the trim notice, nothing was dropped — every call ran, just in
+ * waves of at most `cap` instead of one all-at-once fan-out. The notice
+ * exists so the model understands the array was honoured in full and
+ * does not re-emit the calls.
+ */
+export function formatWaveSplitNotice(
+  originalSize: number,
+  cap: number,
+  waveCount: number,
+): string {
+  return `Your previous emission contained ${originalSize} reads that exceeded the parallel-call cap of ${cap}. The runtime executed all of them in ${waveCount} bounded wave${waveCount === 1 ? "" : "s"} — nothing was dropped. Do not re-emit those calls.`;
+}
+
+/**
+ * Preflight for wave splitting (issue #111): does the call's `args`
+ * satisfy the tool's registered JSON schema? The schema is taken from
+ * the effective descriptor list first (covers dynamic MCP descriptors
+ * carrying server-supplied `inputSchema`), falling back to the static
+ * default-args map. A tool with no registered schema passes — there is
+ * nothing to validate against. An unsupported schema construct fails
+ * closed (no wave split) so we never execute a call the runtime cannot
+ * vouch for.
+ */
+export function callArgsSchemaValid(
+  call: ToolCallPayload,
+  descriptors: readonly ToolDescriptor[],
+): boolean {
+  const descriptor = descriptors.find((d) => d.name === call.tool);
+  const schema =
+    descriptor?.argsJsonSchema ?? getDefaultArgsJsonSchema(call.tool);
+  if (!schema) return true;
+  try {
+    return validateJsonSchemaValue(call.args, schema);
+  } catch {
+    return false;
+  }
 }
 
 /**

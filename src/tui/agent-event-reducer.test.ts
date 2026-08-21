@@ -453,6 +453,30 @@ describe("reduceTuiState", () => {
     expect(line).toContain("os.fs.write");
     expect(line).toContain("2 of 3");
   });
+
+  it("reports a wave-split batch without implying anything was dropped", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: {
+            type: "batch_wave_split",
+            stepIndex: 0,
+            originalSize: 14,
+            cap: 8,
+            waveCount: 2,
+            boundaries: [0, 8],
+          },
+        },
+      },
+    ]);
+    const line = next.feed[next.feed.length - 1]?.line ?? "";
+    expect(line).toContain("14 reads");
+    expect(line).toContain("2 waves");
+    expect(line).toContain("nothing dropped");
+  });
 });
 
 describe("llm health visibility", () => {

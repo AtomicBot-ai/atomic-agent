@@ -60,6 +60,15 @@ export interface ToolCallBatch {
   kind: "single" | "batch";
   calls: ToolCallPayload[];
   reasoning?: string;
+  /**
+   * Set by the step executor when an oversized pure-read batch is
+   * mechanically split into bounded waves (issue #111). Absent ⇒ the
+   * batch executes under the default fan-out rules. `executeBatch`
+   * reads this and runs `pure_read` groups in waves of at most this
+   * many calls instead of one `Promise.allSettled` over the whole
+   * group.
+   */
+  maxWaveSize?: number;
 }
 
 export interface ReasoningTagOptions {

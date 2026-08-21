@@ -111,6 +111,109 @@ describe("executeBatch", () => {
     expect(elapsed).toBeLessThan(250);
   });
 
+  it("chunks pure_read fan-out into bounded waves when maxWaveSize is set", async () => {
+    // 5 reads with a wave size of 2 → waves of [0,1], [2,3], [4]. Track
+    // peak concurrency: it must never exceed 2, and all 5 must run.
+    let inflight = 0;
+    let peak = 0;
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "read",
+      readonly: true,
+      run: async () => {
+        inflight += 1;
+        peak = Math.max(peak, inflight);
+        await new Promise((r) => setTimeout(r, 30));
+        inflight -= 1;
+        return okResult("os.fs.read");
+      },
+    });
+    const inputs = toBatchInputs(
+      [0, 1, 2, 3, 4].map((i) => ({
+        tool: "os.fs.read",
+        args: { path: String(i) },
+      })),
+    );
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      maxWaveSize: 2,
+    });
+    expect(out.results).toHaveLength(5);
+    expect(out.results.every((r) => r.compressed?.status === "ok")).toBe(true);
+    expect(out.cancelled).toBe(false);
+    expect(peak).toBeLessThanOrEqual(2);
+    // Result order still matches the original batch-index order.
+    expect(out.results.map((r) => r.batchIndex)).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it("runs a single wave when maxWaveSize covers the whole group", async () => {
+    let inflight = 0;
+    let peak = 0;
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "read",
+      readonly: true,
+      run: async () => {
+        inflight += 1;
+        peak = Math.max(peak, inflight);
+        await new Promise((r) => setTimeout(r, 30));
+        inflight -= 1;
+        return okResult("os.fs.read");
+      },
+    });
+    const inputs = toBatchInputs(
+      [0, 1, 2].map((i) => ({
+        tool: "os.fs.read",
+        args: { path: String(i) },
+      })),
+    );
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      maxWaveSize: 10,
+    });
+    expect(out.results).toHaveLength(3);
+    expect(out.results.every((r) => r.compressed?.status === "ok")).toBe(true);
+    // All three ran concurrently — a single wave.
+    expect(peak).toBe(3);
+  });
+
+  it("preserves batch-index correlation across waves", async () => {
+    const order: number[] = [];
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "read",
+      readonly: true,
+      run: async (args) => {
+        await new Promise((r) => setTimeout(r, 10));
+        order.push(args.path as number);
+        return okResult("os.fs.read", `read ${args.path}`);
+      },
+    });
+    const inputs = toBatchInputs(
+      [3, 1, 4, 0, 2].map((p) => ({
+        tool: "os.fs.read",
+        args: { path: p },
+      })),
+    );
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      maxWaveSize: 2,
+    });
+    // `results[i]` must correspond to `inputs[i]` regardless of wave
+    // execution order.
+    expect(out.results.map((r) => r.batchIndex)).toEqual([0, 1, 2, 3, 4]);
+    expect(out.results.map((r) => r.compressed?.summary)).toEqual([
+      "read 3",
+      "read 1",
+      "read 4",
+      "read 0",
+      "read 2",
+    ]);
+  });
+
   it("serialises browser calls in batch-index order", async () => {
     const order: number[] = [];
     const make = (idx: number) =>

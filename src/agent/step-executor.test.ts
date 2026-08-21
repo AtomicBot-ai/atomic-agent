@@ -1098,6 +1098,250 @@ describe("executeStep batch handling", () => {
   });
 });
 
+describe("executeStep pure-read wave splitting (#111)", () => {
+  let grammarsDir: string;
+
+  beforeEach(() => {
+    grammarsDir = join(process.cwd(), "grammars");
+  });
+
+  // `makeRegistry` in the batch-handling describe is lexically scoped
+  // there; this describe needs its own registry with the same tools.
+  function makeRegistry() {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "read",
+      readonly: true,
+      async run(args) {
+        return compressToolResult({
+          tool: "os.fs.read",
+          status: "ok",
+          output: `read ${args.path}`,
+        });
+      },
+    });
+    registry.register({
+      name: "os.fs.write",
+      description: "write",
+      readonly: false,
+      async run(args) {
+        return compressToolResult({
+          tool: "os.fs.write",
+          status: "ok",
+          output: `wrote ${args.path}`,
+        });
+      },
+    });
+    registry.register({
+      name: "os.fs.edit",
+      description: "edit",
+      readonly: false,
+      async run(args) {
+        return compressToolResult({
+          tool: "os.fs.edit",
+          status: "ok",
+          output: `edited ${args.path}`,
+        });
+      },
+    });
+    registry.register({
+      name: "reply",
+      description: "reply",
+      readonly: true,
+      async run(args) {
+        return compressToolResult({
+          tool: "reply",
+          status: "ok",
+          output: String(args.text ?? ""),
+        });
+      },
+    });
+    return registry;
+  }
+
+  // Default cap is 8 (ENV_DEFAULTS.MAX_PARALLEL_TOOL_CALLS). 14 reads
+  // is the issue's canonical oversized case → waves of 8 and 6.
+  function reads(n: number): Array<{ tool: string; args: Record<string, unknown> }> {
+    return Array.from({ length: n }, (_, i) => ({
+      tool: "os.fs.read",
+      args: { path: `f${i}` },
+    }));
+  }
+
+  async function runWithBody(
+    body: string,
+    opts?: {
+      envCap?: number;
+      repairBody?: string;
+      extraRegistry?: (reg: ToolRegistry) => void;
+    },
+  ) {
+    const registry = makeRegistry();
+    opts?.extraRegistry?.(registry);
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const session = createEmptySessionState({ id: "s-wave", workingDir: "/w" });
+    const events: Array<{ type: string; [k: string]: unknown }> = [];
+    let llmCalls = 0;
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "x",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async () => {
+          llmCalls += 1;
+          return {
+            content: llmCalls > 1 && opts?.repairBody ? opts.repairBody : body,
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+          };
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        onEvent: (ev) => {
+          if (
+            ev.type === "batch_wave_split" ||
+            ev.type === "parse_retry" ||
+            ev.type === "batch_trimmed"
+          ) {
+            events.push(ev as { type: string; [k: string]: unknown });
+          }
+        },
+      },
+    );
+    return { outcome, events, llmCalls };
+  }
+
+  it("wave-splits a 14-read oversized pure-read batch without an LLM repair", async () => {
+    const { outcome, events, llmCalls } = await runWithBody(
+      JSON.stringify(reads(14)),
+    );
+    // All 14 executed, correlated by original batch index.
+    expect(outcome.toolCalls).toHaveLength(14);
+    expect(outcome.toolResults).toHaveLength(14);
+    expect(outcome.toolResults.map((r) => r.summary)).toEqual(
+      Array.from({ length: 14 }, (_, i) => `read f${i}`),
+    );
+    // One `batch_wave_split` event with the full plan; no repair.
+    const waves = events.filter((e) => e.type === "batch_wave_split");
+    const retries = events.filter((e) => e.type === "parse_retry");
+    expect(waves).toHaveLength(1);
+    expect(retries).toHaveLength(0);
+    expect(llmCalls).toBe(1);
+    expect(waves[0]).toMatchObject({
+      originalSize: 14,
+      cap: 8,
+      waveCount: 2,
+      boundaries: [0, 8],
+    });
+  });
+
+  it("executes an exact-cap batch in a single wave (no split, no repair)", async () => {
+    const { outcome, events, llmCalls } = await runWithBody(
+      JSON.stringify(reads(8)),
+    );
+    expect(outcome.toolResults).toHaveLength(8);
+    expect(llmCalls).toBe(1);
+    expect(events.filter((e) => e.type === "batch_wave_split")).toHaveLength(0);
+    expect(events.filter((e) => e.type === "parse_retry")).toHaveLength(0);
+  });
+
+  it("wave-splits into 14 single-call waves when the cap is 1", async () => {
+    process.env.ATOMIC_AGENT_MAX_PARALLEL_TOOL_CALLS = "1";
+    resetConfigCache();
+    try {
+      const { outcome, events, llmCalls } = await runWithBody(
+        JSON.stringify(reads(14)),
+      );
+      expect(outcome.toolResults).toHaveLength(14);
+      expect(llmCalls).toBe(1);
+      const waves = events.filter((e) => e.type === "batch_wave_split");
+      expect(waves).toHaveLength(1);
+      expect(waves[0]).toMatchObject({
+        originalSize: 14,
+        cap: 1,
+        waveCount: 14,
+        boundaries: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+      });
+    } finally {
+      delete process.env.ATOMIC_AGENT_MAX_PARALLEL_TOOL_CALLS;
+      resetConfigCache();
+    }
+  });
+
+  it("routes a schema-invalid oversized pure-read batch to repair (no wave split)", async () => {
+    // One read carries args that fail the `os.fs.read` JSON schema
+    // (`path` is required and must be a string). The batch is not
+    // wave-splittable — preflight fails — so it goes through repair.
+    const calls = reads(13);
+    calls.push({ tool: "os.fs.read", args: { path: 123 } });
+    const { outcome, events, llmCalls } = await runWithBody(
+      JSON.stringify(calls),
+      { repairBody: JSON.stringify(reads(1)) },
+    );
+    expect(events.filter((e) => e.type === "batch_wave_split")).toHaveLength(0);
+    expect(events.filter((e) => e.type === "parse_retry")).toHaveLength(1);
+    expect(llmCalls).toBe(2);
+    // The repaired response ran; the original 14 never dispatched.
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolResults[0]!.summary).toBe("read f0");
+  });
+
+  it("routes an oversized [approval_gated, pure_read, ...] batch to repair, bypassing approval trim", async () => {
+    // Explicit issue case: an oversized batch whose first call is
+    // approval-gated must bypass BOTH wave splitting AND approval
+    // trimming — parse_retry, no original call dispatched.
+    const calls = [{ tool: "os.fs.write", args: { path: "a.ts", content: "x" } }];
+    calls.push(...reads(13));
+    const { outcome, events, llmCalls } = await runWithBody(
+      JSON.stringify(calls),
+      { repairBody: JSON.stringify(reads(1)) },
+    );
+    expect(events.filter((e) => e.type === "batch_wave_split")).toHaveLength(0);
+    expect(events.filter((e) => e.type === "parse_retry")).toHaveLength(1);
+    expect(events.filter((e) => e.type === "batch_trimmed")).toHaveLength(0);
+    expect(llmCalls).toBe(2);
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0]!.tool).toBe("os.fs.read");
+  });
+
+  it.each([
+    ["terminal mid-batch", [{ tool: "reply", args: { text: "hi" } }], 13],
+    ["unknown class", [{ tool: "mystery.tool", args: {} }], 13],
+  ] as const)(
+    "routes an oversized batch containing %s to repair (no wave split, no trim)",
+    async (_label, first, rest) => {
+      const calls = [...first, ...reads(rest)];
+      const { outcome, events, llmCalls } = await runWithBody(
+        JSON.stringify(calls),
+        { repairBody: JSON.stringify(reads(1)) },
+      );
+      expect(events.filter((e) => e.type === "batch_wave_split")).toHaveLength(0);
+      expect(events.filter((e) => e.type === "parse_retry")).toHaveLength(1);
+      expect(llmCalls).toBe(2);
+      expect(outcome.toolCalls).toHaveLength(1);
+    },
+  );
+});
+
 describe("executeStep streaming reasoning accumulator", () => {
   // Regression for the Fix B side of the "degenerate-loop + empty
   // reasoningContent" investigation. Before the fix `consumeStream` only

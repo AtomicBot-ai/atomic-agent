@@ -547,6 +547,17 @@ function reduceStepEvent(
         line: `  ~ batch trimmed to ${event.kept} (${event.dropped.length} of ${event.originalSize} deferred: ${event.reason})`,
         color: "yellow",
       });
+    case "batch_wave_split":
+      // Issue #111: an oversized pure-read batch ran in bounded waves.
+      // Nothing was dropped — every call executed — so the feed line
+      // says so explicitly (otherwise the follow-up step's tool calls
+      // look like a re-run of the same reads).
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: `  ~ ${event.originalSize} reads split into ${event.waveCount} waves of ≤ ${event.cap} (nothing dropped)`,
+        color: "yellow",
+      });
     case "prompt_built":
     case "llm_completed":
     case "llm_raw_completion":

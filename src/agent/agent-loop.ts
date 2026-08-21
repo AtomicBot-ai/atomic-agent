@@ -654,9 +654,14 @@ export class AgentLoop {
         // loop-signal path below may overwrite this with a repeat
         // notice — that is intentional: a loop hint outranks a trim
         // hint since the loop indicates the model failed to make
-        // progress over multiple steps.
+        // progress over multiple steps. A wave-split step (issue #111)
+        // seeds its notice the same way — nothing was dropped, but the
+        // model should know its oversized read array ran in bounded
+        // waves.
         if (outcome.trimmedBatchNotice !== undefined) {
           pendingNotice = outcome.trimmedBatchNotice;
+        } else if (outcome.waveSplitNotice !== undefined) {
+          pendingNotice = outcome.waveSplitNotice;
         }
 
         // The synchronous batch gate (inside `executeStep`) already
