@@ -1,3 +1,4 @@
+import { handleContextPanelKey } from "./context-panel-keys.js";
 import type { Key } from "ink";
 import {
   canGrantCategory,
@@ -219,6 +220,11 @@ export function handleAppKey(
   // The menu and its leader sit above every panel guard on purpose: they are
   // the way out of a panel, so a panel must never be able to swallow them.
   if (handleMenuKey(input, key, { state, dispatch, activate: ctx.activateMenuNode })) {
+    return true;
+  }
+  // Below the menu on purpose: ctrl+p should still reach the menu from
+  // an open context panel, and opening the menu closes the panel.
+  if (handleContextPanelKey(input, key, { state, dispatch })) {
     return true;
   }
   if (ctx.menuLeaderArmed) {

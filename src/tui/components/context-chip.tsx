@@ -1,9 +1,12 @@
 import { Text } from "ink";
 import type { ReactElement } from "react";
+import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
 import type { ContextUsageView } from "../select-context-usage.js";
 import { mixColor } from "../theme/mix-color.js";
 import { readableOn } from "../theme/readable-foreground.js";
 import { theme } from "../theme/theme.js";
+import { formatTokens } from "./format-tokens.js";
 import { renderProgressBar } from "./render-progress-bar.js";
 
 /** Cells of gauge. Eight reads as a bar and still fits a 56-column bar. */
@@ -61,6 +64,9 @@ const STEP_MID = 66;
  * falls when the packer trims and when the memory fabric lifts facts out
  * of the transcript. A cumulative token counter would climb past 100%
  * and answer a question nobody asked.
+ *
+ * Clicking it opens the breakdown — see `context-panel.tsx`. That is
+ * what makes the button ground honest rather than decorative.
  */
 export function ContextChip({
   usage,
@@ -79,10 +85,27 @@ export function ContextChip({
           usage.conversationPercent,
           GAUGE_WIDTH,
         )}] ${pair(usage.conversationTokens, usage.conversationCap)} `;
-  return (
+  const chip = (
     <Text backgroundColor={background} color={readableOn(background)} bold>
       {label}
     </Text>
+  );
+  const mouse = useMouseCommands();
+  // No provider (component tests, the wizard's separate Ink tree):
+  // render the label and stop. A target that swallows the click without
+  // acting would be worse than no target.
+  if (!mouse) return chip;
+  return (
+    <MouseTarget
+      flexShrink={0}
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        mouse.dispatch({ type: "context_panel_toggled" });
+        return true;
+      }}
+    >
+      {chip}
+    </MouseTarget>
   );
 }
 
@@ -116,17 +139,3 @@ function pair(tokens: number, cap: number): string {
 /** Fits `999.9k/1.0M`; anything longer simply grows past it. */
 const PAIR_WIDTH = 10;
 
-/**
- * `1240` -> `1.2k`, `32000` -> `32k`, `1000000` -> `1.0M`. Terminals have
- * no room for six digits of nuance, and a round thousand reads better
- * without the `.0` it would otherwise carry.
- */
-export function formatTokens(tokens: number): string {
-  if (tokens < 1000) return String(tokens);
-  if (tokens < 1_000_000) {
-    const k = tokens / 1000;
-    return Number.isInteger(k) ? `${k}k` : `${k.toFixed(1)}k`;
-  }
-  const m = tokens / 1_000_000;
-  return Number.isInteger(m) ? `${m}M` : `${m.toFixed(1)}M`;
-}

@@ -9,6 +9,7 @@ import {
 } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
+import { fitToWidth } from "../components/fit-to-width.js";
 import { chromeTheme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import type { MenuNode } from "./menu-registry.js";
@@ -116,7 +117,7 @@ export function MenuPopup({
       {visible.map((row, idx) =>
         row.kind === "header" ? (
           <Text key={`h-${row.label}-${idx}`} color={chromeTheme.colors.railMuted}>
-            {fit(` ${row.label.toUpperCase()}`, inner)}
+            {fitToWidth(` ${row.label.toUpperCase()}`, inner)}
           </Text>
         ) : (
           <MenuItem
@@ -130,13 +131,13 @@ export function MenuPopup({
         ),
       )}
       {rows.length === 0 ? (
-        <Text color={chromeTheme.colors.warn}>{fit(" nothing matches", inner)}</Text>
+        <Text color={chromeTheme.colors.warn}>{fitToWidth(" nothing matches", inner)}</Text>
       ) : null}
       <Text color={chromeTheme.colors.railMuted}>
         {chromeTheme.glyphs.toolBoxHorizontal.repeat(Math.max(0, inner))}
       </Text>
       <Text color={chromeTheme.colors.railMuted}>
-        {fit(` ${footer(state, hiddenAfter)}`, inner)}
+        {fitToWidth(` ${footer(state, hiddenAfter)}`, inner)}
       </Text>
     </PopupFrame>
   );
@@ -240,7 +241,7 @@ function TitleRow({
   // chrome, and the design sets every chrome heading the same way.
   const title = selectMenuTitle(state).toUpperCase();
   const caret = `${chromeTheme.glyphs.promptCaret} ${state.menuQuery}`;
-  const left = fit(` ${title}`, Math.min(title.length + 2, inner));
+  const left = fitToWidth(` ${title}`, Math.min(title.length + 2, inner));
   const rest = inner - left.length;
   return (
     <Box>
@@ -248,7 +249,7 @@ function TitleRow({
         {left}
       </Text>
       <Text color={chromeTheme.colors.railMuted}>
-        {fit(caret, Math.max(0, rest))}
+        {fitToWidth(caret, Math.max(0, rest))}
       </Text>
     </Box>
   );
@@ -274,14 +275,14 @@ function MenuItem({
   const arrow = node.kind === "submenu" ? ` ${chromeTheme.glyphs.arrowRight}` : "";
   // Leading and trailing space are part of the row, not Box padding, so the
   // whole line is opaque edge to edge.
-  const label = fit(` ${marker} ${node.label}${arrow}`, Math.min(LABEL_WIDTH, inner));
+  const label = fitToWidth(` ${marker} ${node.label}${arrow}`, Math.min(LABEL_WIDTH, inner));
   // The shortcut is flush right, as drawn: it is a column the eye scans
   // down, so it cannot float behind a label of whatever length.
   const chordText = node.chord ? `${MENU_LEADER_LABEL} ${node.chord} ` : "";
   const chordWidth = Math.min(chordText.length, Math.max(0, inner - label.length));
   const chord = chordText.padStart(chordWidth).slice(0, chordWidth);
   const detailWidth = Math.max(0, inner - label.length - chordWidth);
-  const detail = fit(
+  const detail = fitToWidth(
     [row.crumb, row.status].filter((part) => part.length > 0).join("  "),
     detailWidth,
   );
@@ -348,14 +349,6 @@ function footer(state: TuiState, hiddenAfter: number): string {
  * Pad or truncate to exactly `width` columns. Every interior line goes
  * through this — it is what makes the popup opaque.
  */
-function fit(text: string, width: number): string {
-  if (width <= 0) return "";
-  if (text.length > width) {
-    return width <= 1 ? text.slice(0, width) : `${text.slice(0, width - 1)}…`;
-  }
-  return text.padEnd(width);
-}
-
 /** Scroll window that keeps the cursor row visible. */
 function windowStart(total: number, cursorRowIdx: number, size: number): number {
   if (total <= size || cursorRowIdx < 0) return 0;
