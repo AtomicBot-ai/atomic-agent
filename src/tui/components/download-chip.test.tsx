@@ -29,6 +29,35 @@ describe("DownloadChip", () => {
     expect(frame.split("\n").filter((line) => line.trim().length > 0)).toHaveLength(1);
   });
 
+  /** Two samples, so the rate — and therefore the ETA — exists. */
+  async function frameAt(budget: number): Promise<string> {
+    const view = render(
+      <DownloadChip pull={pull({ transferredBytes: 2_000_000_000 })} budget={budget} />,
+    );
+    view.rerender(<DownloadChip pull={pull()} budget={budget} />);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    return strip(view.lastFrame() ?? "");
+  }
+
+  it("sheds the ETA, then the bar, as the row fills up", async () => {
+    const wide = await frameAt(60);
+    expect(wide).toContain("█");
+    expect(wide).toMatch(/minute|second/);
+
+    const medium = await frameAt(30);
+    expect(medium).toContain("█");
+    expect(medium).not.toMatch(/minute|second/);
+
+    const tight = await frameAt(14);
+    expect(tight).toContain("61%");
+    expect(tight).not.toContain("█");
+  });
+
+  it("disappears rather than wrapping the one-row bar", () => {
+    const view = render(<DownloadChip pull={pull()} budget={6} />);
+    expect(strip(view.lastFrame() ?? "").trim()).toBe("");
+  });
+
   it("names the runtime rather than a model id during the backend pull", () => {
     const view = render(<DownloadChip pull={pull({ kind: "backend", modelId: "_backend" })} />);
     expect(strip(view.lastFrame() ?? "")).toContain("llama.cpp");
