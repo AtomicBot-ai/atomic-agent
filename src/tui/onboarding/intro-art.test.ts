@@ -26,6 +26,19 @@ describe("buildIntroArt", () => {
     expect(art.join("\n")).toContain(ORBIT_GLYPH);
   });
 
+  it("rings it at the size the flow actually opens at", () => {
+    // 100×30 minus the intro's own chrome. A single-radius clearance
+    // rule silently dropped the ring here — the ellipse is wider than
+    // it is tall, so clearance has to be checked per axis.
+    const art = buildIntroArt({ columns: 96, rows: 21, markRows: MARK, crossCount: 14 });
+    expect(art.join("\n")).toContain(ORBIT_GLYPH);
+  });
+
+  it("drops the ring when the rows are too tight for it, however wide the window", () => {
+    const art = buildIntroArt({ columns: 200, rows: 16, markRows: MARK, crossCount: 14 });
+    expect(art.join("\n")).not.toContain(ORBIT_GLYPH);
+  });
+
   it("drops the ring rather than resting a cross against an arm", () => {
     // 40 columns cannot hold the mark's clear space, let alone a ring.
     const art = buildIntroArt({ columns: 40, rows: 26, markRows: MARK, crossCount: 14 });
