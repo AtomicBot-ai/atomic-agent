@@ -16,6 +16,7 @@ export type OnboardingStep =
   | "cloud"
   | "custom_chat_url"
   | "custom_embedding_url"
+  | "propose_second"
   | "finished";
 
 /**
@@ -27,6 +28,8 @@ export type OnboardingOutcome = "local" | "cloud" | "custom" | "skipped";
 
 export interface OnboardingUiState {
   step: OnboardingStep;
+  /** Which backend the "want the other too?" screen is offering. */
+  offer: "local" | "cloud" | null;
   /** The model being pulled, once the local branch has committed to one. */
   localModelId: string | null;
   /** Set together with the `finished` step; `null` at every other point. */
@@ -86,6 +89,7 @@ export const ONBOARDING_CHOICES: readonly OnboardingChoice[] = [
 export function createOnboardingState(chatUrl: string): OnboardingUiState {
   return {
     step: "intro",
+    offer: null,
     outcome: null,
     localModelId: null,
     cursor: 0,

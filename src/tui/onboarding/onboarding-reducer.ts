@@ -80,6 +80,20 @@ export function reduceOnboardingAction(
         },
       };
     }
+    case "onboarding_second_backend_offered": {
+      if (!state.onboarding) return state;
+      return {
+        ...state,
+        onboarding: {
+          ...state.onboarding,
+          step: "propose_second",
+          offer: action.offer,
+          cursor: 0,
+          error: null,
+          busy: false,
+        },
+      };
+    }
     case "onboarding_finished": {
       if (!state.onboarding) return state;
       return {

@@ -20,5 +20,7 @@ export type OnboardingAction =
   | { type: "onboarding_error_set"; error: string | null }
   /** The local branch committed to a model and moved to the download. */
   | { type: "onboarding_local_model_picked"; modelId: string }
+  /** Offer the other backend once the first one works. */
+  | { type: "onboarding_second_backend_offered"; offer: "local" | "cloud" }
   /** The flow reached its end; the host persists and closes it. */
   | { type: "onboarding_finished"; outcome: OnboardingOutcome };

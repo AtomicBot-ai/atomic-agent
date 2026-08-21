@@ -7,7 +7,12 @@ import {
   useState,
   type ReactElement,
 } from "react";
+import { getConfig } from "../../config/index.js";
 import { checkLlamaServer } from "../../llm/llama-server-health.js";
+import {
+  isCloudTextProviderReady,
+  isLocalBackendConfigured,
+} from "../local-backend-readiness.js";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
 import {
   buildLocalModelPicks,
@@ -19,6 +24,7 @@ import {
   ONBOARDING_SIZE_ADVICE,
 } from "../onboarding/onboarding-fit.js";
 import { handleOnboardingKey } from "../onboarding/onboarding-key-bindings.js";
+import { decideSecondBackendOffer } from "../onboarding/propose-second-backend.js";
 import type { OnboardingOutcome, OnboardingUiState } from "../onboarding/onboarding-state.js";
 import {
   normalizeLocalLlmBaseUrl,
@@ -37,6 +43,7 @@ import { OnboardingHeader } from "./onboarding-header.js";
 import { OnboardingDownloadStep } from "./onboarding-download-step.js";
 import { OnboardingIntroStep } from "./onboarding-intro-step.js";
 import { OnboardingLocalPickStep } from "./onboarding-local-pick-step.js";
+import { OnboardingProposeStep } from "./onboarding-propose-step.js";
 import { OnboardingUrlStep } from "./onboarding-url-step.js";
 import { ProvidersWizard } from "./providers-wizard.js";
 
@@ -57,6 +64,7 @@ const SUBTITLES: Record<OnboardingUiState["step"], string> = {
   choose: "setup · step 1 of 2",
   local_pick: "local models · step 2 of 2",
   local_download: "local models · downloading",
+  propose_second: "one more thing",
   cloud: "cloud model · step 2 of 2",
   custom_chat_url: "custom endpoint · step 2 of 2",
   custom_embedding_url: "custom endpoint · embeddings",
@@ -172,6 +180,40 @@ export function OnboardingScreen(props: {
     { isActive: onboarding.step === "local_pick" },
   );
 
+  useInput(
+    (input, key) => {
+      if (key.escape) {
+        finish(onboarding.outcome ?? "skipped");
+        return;
+      }
+      if (key.upArrow || key.downArrow || input === "j" || input === "k") {
+        dispatch({
+          type: "onboarding_cursor_moved",
+          delta: key.upArrow || input === "k" ? -1 : 1,
+          length: 2,
+        });
+        return;
+      }
+      if (key.return) {
+        if (onboarding.cursor !== 0) {
+          finish(onboarding.outcome ?? "skipped");
+          return;
+        }
+        if (onboarding.offer === "local") {
+          persistUserLocalModelsConfig({ mode: "managed" });
+          dispatch({ type: "onboarding_step_set", step: "local_pick" });
+          return;
+        }
+        dispatch({
+          type: "providers_wizard_opened",
+          wizard: createProvidersWizardState("add"),
+        });
+        dispatch({ type: "onboarding_step_set", step: "cloud" });
+      }
+    },
+    { isActive: onboarding.step === "propose_second" },
+  );
+
   // The cloud step *is* the providers wizard — same keys, same
   // verification, same hot-swap — so it routes through the panel's own
   // handler rather than a second implementation of it.
@@ -266,12 +308,25 @@ export function OnboardingScreen(props: {
   // on the next launch, so it is written before the surface unmounts.
   useEffect(() => {
     if (onboarding.step !== "finished" || settling.current) return;
+    const outcome = onboarding.outcome ?? "skipped";
+    const config = getConfig();
+    const offer = decideSecondBackendOffer({
+      outcome,
+      cloudReady: isCloudTextProviderReady(),
+      localReady: isLocalBackendConfigured(),
+      alreadyProposed: config.tui.onboarding.proposedSecondBackendAt !== null,
+    });
+    if (offer) {
+      // Recorded when it is shown, not when it is answered: the offer
+      // was made either way, and a declined offer must not come back.
+      persistOnboardingState({ proposedSecondBackendAt: new Date().toISOString() });
+      dispatch({ type: "onboarding_second_backend_offered", offer });
+      return;
+    }
     settling.current = true;
     const now = new Date().toISOString();
-    persistOnboardingState(
-      onboarding.outcome === "skipped" ? { skippedAt: now } : { completedAt: now },
-    );
-    callbacks.onOnboardingFinished?.(onboarding.outcome ?? "skipped");
+    persistOnboardingState(outcome === "skipped" ? { skippedAt: now } : { completedAt: now });
+    callbacks.onOnboardingFinished?.(outcome);
     dispatch({ type: "onboarding_set", onboarding: null });
   }, [callbacks, dispatch, onboarding.outcome, onboarding.step]);
 
@@ -298,6 +353,13 @@ export function OnboardingScreen(props: {
             cursor={onboarding.cursor % Math.max(1, picks.length)}
             ramGb={ramGb}
             fit={fit}
+          />
+        ) : null}
+        {onboarding.step === "propose_second" && onboarding.offer ? (
+          <OnboardingProposeStep
+            offer={onboarding.offer}
+            configuredLabel={configuredLabel(onboarding.outcome)}
+            cursor={onboarding.cursor % 2}
           />
         ) : null}
         {onboarding.step === "local_download" ? (
@@ -354,6 +416,13 @@ export function OnboardingScreen(props: {
   );
 }
 
+/** What the flow just finished setting up, named on the offer screen. */
+function configuredLabel(outcome: OnboardingOutcome | null): string {
+  if (outcome === "local") return "Local model ready";
+  if (outcome === "cloud") return "Cloud model ready";
+  return "Backend ready";
+}
+
 function footerFor(onboarding: OnboardingUiState): string {
   switch (onboarding.step) {
     case "choose":
@@ -368,6 +437,8 @@ function footerFor(onboarding: OnboardingUiState): string {
       return "↑/↓ move   enter download   esc back   ctrl+c quit";
     case "local_download":
       return "ctrl+c quit";
+    case "propose_second":
+      return "↑/↓ move   enter select   esc skip   ctrl+c quit";
     case "finished":
       return "";
     case "intro":
