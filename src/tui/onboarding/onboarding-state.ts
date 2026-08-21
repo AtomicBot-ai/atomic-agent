@@ -17,6 +17,7 @@ export type OnboardingStep =
   | "custom_chat_url"
   | "custom_embedding_url"
   | "propose_second"
+  | "wait_or_jump"
   | "finished";
 
 /**
@@ -30,6 +31,11 @@ export interface OnboardingUiState {
   step: OnboardingStep;
   /** Which backend the "want the other too?" screen is offering. */
   offer: "local" | "cloud" | null;
+  /**
+   * The cloud wizard was opened *from* a running download, so finishing
+   * it returns to the download rather than to the agent.
+   */
+  resumeAfterCloud: boolean;
   /** The model being pulled, once the local branch has committed to one. */
   localModelId: string | null;
   /** Set together with the `finished` step; `null` at every other point. */
@@ -90,6 +96,7 @@ export function createOnboardingState(chatUrl: string): OnboardingUiState {
   return {
     step: "intro",
     offer: null,
+    resumeAfterCloud: false,
     outcome: null,
     localModelId: null,
     cursor: 0,

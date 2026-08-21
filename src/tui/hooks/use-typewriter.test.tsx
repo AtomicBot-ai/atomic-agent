@@ -24,7 +24,9 @@ function Probe(props: { text: string; skip?: boolean }): React.ReactElement {
  * progresses and settles, not how fast it does so.
  */
 async function waitFor(read: () => string, match: (frame: string) => boolean): Promise<string> {
-  const deadline = Date.now() + 3000;
+  // Generous: under a full parallel test run Ink commits frames far
+  // slower than the reveal interval, and this waits on frames.
+  const deadline = Date.now() + 10_000;
   for (;;) {
     const frame = read();
     if (match(frame)) return frame;
@@ -36,9 +38,9 @@ async function waitFor(read: () => string, match: (frame: string) => boolean): P
 describe("useTypewriter", () => {
   it("reveals the text one character at a time", async () => {
     const view = render(<Probe text="atomic" />);
-    const early = view.lastFrame() ?? "";
-    expect(early).toContain("typing");
-    expect(early.split("|")[0]?.length ?? 99).toBeLessThan("atomic".length);
+    // The very first frame is the empty reveal; asserting on any later
+    // frame would be a race against the commit rate, not the hook.
+    expect(view.lastFrame() ?? "").toContain("|typing");
     const finished = await waitFor(
       () => view.lastFrame() ?? "",
       (frame) => frame.includes("done"),

@@ -5,6 +5,7 @@ import { getCurrentSection, type TuiSection } from "../section.js";
 import { menuPlaceByTab } from "../menu/menu-registry.js";
 import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
+import { DownloadChip } from "./download-chip.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { getAppVersion } from "../../version.js";
@@ -59,6 +60,9 @@ export function StatusBar({
       ) : null}
       <Breadcrumb state={state} section={section} />
       <SessionTag sessionId={state.session.sessionId} />
+      {state.localModelsPanel.pull ? (
+        <DownloadChip pull={state.localModelsPanel.pull} />
+      ) : null}
       {title ? (
         <Text color={theme.colors.muted}>
           {"  "}

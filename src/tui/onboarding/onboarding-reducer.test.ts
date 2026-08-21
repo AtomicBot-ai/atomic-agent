@@ -7,7 +7,12 @@ import { createOnboardingState } from "./onboarding-state.js";
 import { fakeSession } from "../test-fixtures.js";
 
 function withFlow(
-  step: "choose" | "cloud" | "local_pick" | "local_download" = "choose",
+  step:
+    | "choose"
+    | "cloud"
+    | "local_pick"
+    | "local_download"
+    | "wait_or_jump" = "choose",
 ): TuiState {
   // `createOnboardingState` opens on the splash; every case here is
   // about what happens after it.
@@ -114,6 +119,83 @@ describe("onboarding reducer", () => {
       expect(state.onboarding?.cursor).toBe(2);
       state = reduceTuiState(state, { type: "onboarding_step_set", step: "local_pick" });
       expect(state.onboarding?.cursor).toBe(0);
+    });
+  });
+
+  describe("cloud while the model downloads", () => {
+    const pulling = (state: TuiState): TuiState =>
+      reduceTuiState(state, {
+        type: "local_models_pull_started",
+        pull: {
+          kind: "chat",
+          modelId: "gemma-4-e4b",
+          label: "Gemma 4 E4B",
+          percent: 38,
+          transferredBytes: 1_600_000_000,
+          totalBytes: 4_220_000_000,
+          error: null,
+        },
+      });
+
+    it("opens the wizard and remembers where it came from", () => {
+      const state = reduceTuiState(pulling(withFlow("local_download")), {
+        type: "onboarding_cloud_meanwhile_opened",
+      });
+      expect(state.onboarding).toMatchObject({ step: "cloud", resumeAfterCloud: true });
+    });
+
+    it("asks wait-or-jump when the key lands while the pull is still running", () => {
+      let state = reduceTuiState(pulling(withFlow("local_download")), {
+        type: "onboarding_cloud_meanwhile_opened",
+      });
+      state = reduceTuiState(state, {
+        type: "providers_wizard_opened",
+        wizard: createProvidersWizardState("add"),
+      });
+      state = reduceTuiState(state, { type: "providers_wizard_succeeded" });
+      expect(state.onboarding).toMatchObject({
+        step: "wait_or_jump",
+        outcome: "cloud",
+        resumeAfterCloud: false,
+      });
+    });
+
+    it("finishes instead when the pull already landed", () => {
+      let state = reduceTuiState(withFlow("local_download"), {
+        type: "onboarding_cloud_meanwhile_opened",
+      });
+      state = reduceTuiState(state, { type: "providers_wizard_succeeded" });
+      expect(state.onboarding?.step).toBe("finished");
+    });
+
+    it("backs out to the download, not to a choice already made", () => {
+      let state = reduceTuiState(pulling(withFlow("local_download")), {
+        type: "onboarding_cloud_meanwhile_opened",
+      });
+      state = reduceTuiState(state, { type: "providers_wizard_closed" });
+      expect(state.onboarding).toMatchObject({
+        step: "local_download",
+        resumeAfterCloud: false,
+      });
+    });
+
+    it("closes the flow when the pull lands while wait-or-jump is up", () => {
+      let state = pulling(withFlow("wait_or_jump"));
+      state = reduceTuiState(state, {
+        type: "onboarding_finished",
+        outcome: "cloud",
+      });
+      // (a finished outcome is what the jump row dispatches; the wait
+      //  row leaves the flow open until the pull reports in)
+      expect(state.onboarding?.step).toBe("finished");
+
+      let waiting = pulling(withFlow("wait_or_jump"));
+      waiting = reduceTuiState(waiting, {
+        type: "local_models_pull_finished",
+        kind: "chat",
+      });
+      expect(waiting.onboarding?.step).toBe("finished");
+      expect(waiting.localModelsPanel.pull).toBeNull();
     });
   });
 

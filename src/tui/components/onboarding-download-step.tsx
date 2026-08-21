@@ -24,6 +24,8 @@ const BAR_WIDTH = 36;
 export function OnboardingDownloadStep(props: {
   pull: LocalModelsPullState | null;
   modelLabel: string;
+  /** Hidden once a cloud provider is configured — nothing left to offer. */
+  offerCloudMeanwhile?: boolean;
 }): ReactElement {
   const pull = props.pull;
   const { bytesPerSecond, etaSeconds } = useTransferRate(
@@ -66,6 +68,23 @@ export function OnboardingDownloadStep(props: {
           <Text color={theme.colors.error}>{pull.error}</Text>
         </Box>
       ) : null}
+      {props.offerCloudMeanwhile === false ? null : (
+        <Box flexDirection="column" marginTop={2}>
+          {/*
+            Accent-marked because it is an offer, not a status line: the
+            wait is measured in minutes and a cloud model takes about
+            one. The download is owned by the orchestrator, so setting
+            one up does not pause or restart it.
+          */}
+          <Text color={theme.colors.accent}>
+            ┃  Don{"\u2019"}t want to wait? Set up a cloud model in the meantime —
+          </Text>
+          <Text color={theme.colors.accent}>
+            ┃  it takes about a minute, and the download keeps running.
+            <Text bold>{"    press c"}</Text>
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 }

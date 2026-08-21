@@ -44,6 +44,7 @@ import { OnboardingDownloadStep } from "./onboarding-download-step.js";
 import { OnboardingIntroStep } from "./onboarding-intro-step.js";
 import { OnboardingLocalPickStep } from "./onboarding-local-pick-step.js";
 import { OnboardingProposeStep } from "./onboarding-propose-step.js";
+import { OnboardingWaitOrJumpStep } from "./onboarding-wait-or-jump-step.js";
 import { OnboardingUrlStep } from "./onboarding-url-step.js";
 import { ProvidersWizard } from "./providers-wizard.js";
 
@@ -65,6 +66,7 @@ const SUBTITLES: Record<OnboardingUiState["step"], string> = {
   local_pick: "local models · step 2 of 2",
   local_download: "local models · downloading",
   propose_second: "one more thing",
+  wait_or_jump: "almost there",
   cloud: "cloud model · step 2 of 2",
   custom_chat_url: "custom endpoint · step 2 of 2",
   custom_embedding_url: "custom endpoint · embeddings",
@@ -91,6 +93,12 @@ export function OnboardingScreen(props: {
   const size = useTerminalSize();
   const fit = computeOnboardingFit(size);
   const ramGb = useMemo(() => hostRamGb(), []);
+  // Read once per step change rather than per render: it only moves when
+  // the flow itself writes config.
+  const cloudAlreadyConfigured = useMemo(
+    () => isCloudTextProviderReady(),
+    [onboarding.step],
+  );
   const settling = useRef(false);
   const [introSkipped, setIntroSkipped] = useState(false);
 
@@ -178,6 +186,37 @@ export function OnboardingScreen(props: {
       }
     },
     { isActive: onboarding.step === "local_pick" },
+  );
+
+  useInput(
+    (input, key) => {
+      if (input === "c" && !key.ctrl) {
+        dispatch({
+          type: "providers_wizard_opened",
+          wizard: createProvidersWizardState("add"),
+        });
+        dispatch({ type: "onboarding_cloud_meanwhile_opened" });
+      }
+    },
+    { isActive: onboarding.step === "local_download" },
+  );
+
+  useInput(
+    (input, key) => {
+      if (key.upArrow || key.downArrow || input === "j" || input === "k") {
+        dispatch({
+          type: "onboarding_cursor_moved",
+          delta: key.upArrow || input === "k" ? -1 : 1,
+          length: 2,
+        });
+        return;
+      }
+      if (key.return) {
+        if (onboarding.cursor % 2 === 0) finish(onboarding.outcome ?? "cloud");
+        else dispatch({ type: "onboarding_step_set", step: "local_download" });
+      }
+    },
+    { isActive: onboarding.step === "wait_or_jump" },
   );
 
   useInput(
@@ -362,10 +401,18 @@ export function OnboardingScreen(props: {
             cursor={onboarding.cursor % 2}
           />
         ) : null}
+        {onboarding.step === "wait_or_jump" ? (
+          <OnboardingWaitOrJumpStep
+            pull={props.state.localModelsPanel.pull}
+            cloudLabel="Cloud model ready"
+            cursor={onboarding.cursor % 2}
+          />
+        ) : null}
         {onboarding.step === "local_download" ? (
           <OnboardingDownloadStep
             pull={props.state.localModelsPanel.pull}
             modelLabel={onboarding.localModelId ?? "the model"}
+            offerCloudMeanwhile={!cloudAlreadyConfigured}
           />
         ) : null}
         {onboarding.step === "cloud" && wizardState ? (
@@ -436,9 +483,11 @@ function footerFor(onboarding: OnboardingUiState): string {
     case "local_pick":
       return "↑/↓ move   enter download   esc back   ctrl+c quit";
     case "local_download":
-      return "ctrl+c quit";
+      return "c set up cloud meanwhile   ctrl+c quit";
     case "propose_second":
       return "↑/↓ move   enter select   esc skip   ctrl+c quit";
+    case "wait_or_jump":
+      return "↑/↓ move   enter select   ctrl+c quit";
     case "finished":
       return "";
     case "intro":

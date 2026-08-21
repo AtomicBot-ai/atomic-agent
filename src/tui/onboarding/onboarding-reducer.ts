@@ -80,6 +80,19 @@ export function reduceOnboardingAction(
         },
       };
     }
+    case "onboarding_cloud_meanwhile_opened": {
+      if (!state.onboarding) return state;
+      return {
+        ...state,
+        onboarding: {
+          ...state.onboarding,
+          step: "cloud",
+          resumeAfterCloud: true,
+          cursor: 0,
+          error: null,
+        },
+      };
+    }
     case "onboarding_second_backend_offered": {
       if (!state.onboarding) return state;
       return {
@@ -118,35 +131,66 @@ export function reduceOnboardingAction(
     // through the panel's slice; the flow listens for the same events
     // rather than running a second download of its own.
     case "local_models_pull_finished": {
-      if (state.onboarding?.step !== "local_download") return null;
+      const step = state.onboarding?.step;
+      if (step !== "local_download" && step !== "wait_or_jump") return null;
       if (action.kind !== "chat") return null;
       const next = reduceLocalModelsAction(state, action) ?? state;
       return {
         ...next,
-        onboarding: { ...state.onboarding, step: "finished", outcome: "local" },
+        onboarding: {
+          ...state.onboarding!,
+          step: "finished",
+          // A cloud model configured mid-download is the outcome that
+          // matters for what happens next; the local one has landed
+          // either way.
+          outcome: state.onboarding!.outcome ?? "local",
+        },
       };
     }
     // Hybrid-recall embeddings are a second download and a second
     // decision, and the first run does not ask for either. The offer
     // still exists in the LLM panel, where there is room to explain it.
     case "local_models_embedding_onboarding_opened": {
-      if (state.onboarding?.step !== "local_download") return null;
+      const active = state.onboarding?.step;
+      if (active !== "local_download" && active !== "wait_or_jump" && active !== "cloud") {
+        return null;
+      }
       return state;
     }
     case "providers_wizard_succeeded": {
       if (state.onboarding?.step !== "cloud") return null;
       const next = reduceProvidersPanel(state, action) ?? state;
+      // Came from a running download: the operator now has a working
+      // cloud model *and* an unfinished local one, which is a question
+      // — wait, or start using the agent — not a conclusion.
+      const stillPulling = next.localModelsPanel.pull !== null;
+      const step =
+        state.onboarding.resumeAfterCloud && stillPulling ? "wait_or_jump" : "finished";
       return {
         ...next,
-        onboarding: { ...state.onboarding, step: "finished", outcome: "cloud" },
+        onboarding: {
+          ...state.onboarding,
+          step,
+          outcome: "cloud",
+          resumeAfterCloud: false,
+        },
       };
     }
     case "providers_wizard_closed": {
       if (state.onboarding?.step !== "cloud") return null;
       const next = reduceProvidersPanel(state, action) ?? state;
+      // Backing out of a wizard opened mid-download returns to the
+      // download, not to a backend choice that has already been made.
+      const step = state.onboarding.resumeAfterCloud ? "local_download" : "choose";
       return {
         ...next,
-        onboarding: { ...state.onboarding, step: "choose", error: null, busy: false },
+        onboarding: {
+          ...state.onboarding,
+          step,
+          resumeAfterCloud: false,
+          error: null,
+          busy: false,
+        },
       };
     }
     default:
