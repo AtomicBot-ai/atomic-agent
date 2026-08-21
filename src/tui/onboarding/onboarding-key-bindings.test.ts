@@ -11,8 +11,10 @@ const NO_KEY: Key = {
 } as Key;
 
 const key = (over: Partial<Key>): Key => ({ ...NO_KEY, ...over });
+/** The flow opens on the splash; these cases are about the choice screen. */
 const base = (over: Partial<OnboardingUiState> = {}): OnboardingUiState => ({
   ...createOnboardingState("http://127.0.0.1:8080"),
+  step: "choose",
   ...over,
 });
 
@@ -47,6 +49,20 @@ describe("handleOnboardingKey", () => {
       handled: true,
       actions: [],
       intent: { kind: "skip" },
+    });
+  });
+
+  it("claims every key on the splash, Esc included", () => {
+    const intro = base({ step: "intro" });
+    expect(handleOnboardingKey("x", NO_KEY, intro)).toEqual({
+      handled: true,
+      actions: [],
+      intent: { kind: "intro_key" },
+    });
+    expect(handleOnboardingKey("", key({ escape: true }), intro)).toEqual({
+      handled: true,
+      actions: [],
+      intent: { kind: "intro_key" },
     });
   });
 

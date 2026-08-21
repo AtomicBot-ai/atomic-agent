@@ -26,7 +26,7 @@ const STATE_DIR_ENV = "ATOMIC_AGENT_STATE_DIR";
 const strip = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, "");
 const ESCAPE_KEY = "\u001b";
 
-function renderFlow(step: "choose" | "custom_chat_url" = "choose") {
+function renderFlow(step: "intro" | "choose" | "custom_chat_url" = "choose") {
   const actions: TuiAction[] = [];
   const onboarding = { ...createOnboardingState("http://127.0.0.1:8080"), step };
   const state = { ...createInitialTuiState(fakeSession(), 50), onboarding };
@@ -94,6 +94,33 @@ describe("OnboardingScreen", () => {
     view.stdin.write(ESCAPE_KEY);
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(actions).toContainEqual({ type: "onboarding_finished", outcome: "skipped" });
+  });
+
+  it("opens on the splash: mark, wordmark, tagline and the promise it makes", () => {
+    const { view } = renderFlow("intro");
+    const frame = strip(view.lastFrame() ?? "");
+    expect(frame).toContain("\u2588"); // the mark
+    expect(frame).toContain("press any key to continue");
+    // The wordmark's first row, `ATOMIC` only — not `ATOMIC AGENT`.
+    expect(frame).toContain("\u2584\u2580\u2588 \u2580\u2588\u2580 \u2588\u2580\u2588");
+    expect(frame).not.toContain("setup \u00b7 step 1 of 2");
+  });
+
+  it("takes two keys off the splash: one to finish the reveal, one to move on", async () => {
+    const { view, actions } = renderFlow("intro");
+    view.stdin.write("x");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(actions).toEqual([]);
+    view.stdin.write("x");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(actions).toContainEqual({ type: "onboarding_step_set", step: "choose" });
+  });
+
+  it("does not let Esc skip setup from a screen that has not offered it yet", async () => {
+    const { view, actions } = renderFlow("intro");
+    view.stdin.write(ESCAPE_KEY);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(actions).not.toContainEqual({ type: "onboarding_finished", outcome: "skipped" });
   });
 
   it("moves the cursor on a keypress", async () => {

@@ -7,16 +7,20 @@ import { createOnboardingState } from "./onboarding-state.js";
 import { fakeSession } from "../test-fixtures.js";
 
 function withFlow(step: "choose" | "cloud" = "choose"): TuiState {
+  // `createOnboardingState` opens on the splash; every case here is
+  // about what happens after it.
   const state = createInitialTuiState(fakeSession(), 50, {
     onboarding: createOnboardingState("http://127.0.0.1:8080"),
   });
-  return step === "choose"
-    ? state
-    : reduceTuiState(state, { type: "onboarding_step_set", step: "cloud" });
+  return reduceTuiState(state, { type: "onboarding_step_set", step });
 }
 
 describe("onboarding reducer", () => {
-  it("opens and closes on `onboarding_set`", () => {
+  it("opens on the splash, and closes on `onboarding_set`", () => {
+    const fresh = createInitialTuiState(fakeSession(), 50, {
+      onboarding: createOnboardingState("http://127.0.0.1:8080"),
+    });
+    expect(fresh.onboarding?.step).toBe("intro");
     const opened = withFlow();
     expect(opened.onboarding?.step).toBe("choose");
     const closed = reduceTuiState(opened, { type: "onboarding_set", onboarding: null });

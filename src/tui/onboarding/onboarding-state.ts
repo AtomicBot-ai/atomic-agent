@@ -9,6 +9,7 @@
  * every one of them. Nothing branches on a slice it does not read.
  */
 export type OnboardingStep =
+  | "intro"
   | "choose"
   | "cloud"
   | "custom_chat_url"
@@ -65,7 +66,7 @@ export const ONBOARDING_CHOICES: readonly OnboardingChoice[] = [
 
 export function createOnboardingState(chatUrl: string): OnboardingUiState {
   return {
-    step: "choose",
+    step: "intro",
     outcome: null,
     cursor: 0,
     chatUrl,
@@ -89,7 +90,7 @@ export function moveOnboardingCursor(cursor: number, delta: number): number {
  * keystroke is processed twice.
  */
 export function stepOwnsItsKeyboard(step: OnboardingStep): boolean {
-  return step !== "choose";
+  return step !== "choose" && step !== "intro";
 }
 
 /** Steps where the flow is over and the host is closing it down. */

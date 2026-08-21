@@ -14,7 +14,9 @@ import {
  */
 export type OnboardingIntent =
   | { kind: "pick"; choice: "local" | "cloud" | "custom" }
-  | { kind: "skip" };
+  | { kind: "skip" }
+  /** Any key on the splash: finish the reveal, or move on if it is done. */
+  | { kind: "intro_key" };
 
 export type OnboardingKeyResult =
   | { handled: false }
@@ -35,6 +37,12 @@ export function handleOnboardingKey(
 ): OnboardingKeyResult {
   if (key.ctrl && input === "c") return { handled: false };
   if (stepOwnsItsKeyboard(onboarding.step)) return { handled: true, actions: [] };
+  // The splash promises "press any key", so it claims every key there is
+  // — including Esc, which must not skip setup from a screen that has
+  // not yet said setup is what comes next.
+  if (onboarding.step === "intro") {
+    return { handled: true, actions: [], intent: { kind: "intro_key" } };
+  }
 
   if (key.escape) {
     return { handled: true, actions: [], intent: { kind: "skip" } };

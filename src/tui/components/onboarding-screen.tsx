@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from "ink";
-import { useCallback, useEffect, useRef, type ReactElement } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { checkLlamaServer } from "../../llm/llama-server-health.js";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
 import {
@@ -21,6 +21,7 @@ import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
 import { OnboardingChooseStep } from "./onboarding-choose-step.js";
 import { OnboardingHeader } from "./onboarding-header.js";
+import { OnboardingIntroStep } from "./onboarding-intro-step.js";
 import { OnboardingUrlStep } from "./onboarding-url-step.js";
 import { ProvidersWizard } from "./providers-wizard.js";
 
@@ -35,6 +36,7 @@ export interface OnboardingScreenCallbacks {
 }
 
 const SUBTITLES: Record<OnboardingUiState["step"], string> = {
+  intro: "",
   choose: "setup · step 1 of 2",
   cloud: "cloud model · step 2 of 2",
   custom_chat_url: "custom endpoint · step 2 of 2",
@@ -62,6 +64,7 @@ export function OnboardingScreen(props: {
   const size = useTerminalSize();
   const fit = computeOnboardingFit(size);
   const settling = useRef(false);
+  const [introSkipped, setIntroSkipped] = useState(false);
 
   const finish = useCallback(
     (outcome: OnboardingOutcome) => {
@@ -95,11 +98,27 @@ export function OnboardingScreen(props: {
       const result = handleOnboardingKey(input, key, onboarding);
       if (!result.handled) return;
       for (const action of result.actions) dispatch(action);
-      if (!result.intent) return;
-      if (result.intent.kind === "skip") finish("skipped");
-      else pick(result.intent.choice);
+      const intent = result.intent;
+      if (!intent) return;
+      if (intent.kind === "intro_key") {
+        // First key finishes the reveal, second moves on: a splash that
+        // cannot be hurried is a wait, and one that vanishes on the key
+        // that was meant to hurry it is a screen nobody ever reads.
+        if (!introSkipped) {
+          setIntroSkipped(true);
+          return;
+        }
+        // Recorded as it is dismissed, not at the end of the flow: an
+        // operator who quits at the backend choice has still seen the
+        // splash, and a later release may want to know that.
+        persistOnboardingState({ introSeenAt: new Date().toISOString() });
+        dispatch({ type: "onboarding_step_set", step: "choose" });
+        return;
+      }
+      if (intent.kind === "skip") finish("skipped");
+      else pick(intent.choice);
     },
-    { isActive: onboarding.step === "choose" },
+    { isActive: onboarding.step === "choose" || onboarding.step === "intro" },
   );
 
   // The cloud step *is* the providers wizard — same keys, same
@@ -199,9 +218,7 @@ export function OnboardingScreen(props: {
     settling.current = true;
     const now = new Date().toISOString();
     persistOnboardingState(
-      onboarding.outcome === "skipped"
-        ? { skippedAt: now }
-        : { completedAt: now, introSeenAt: now },
+      onboarding.outcome === "skipped" ? { skippedAt: now } : { completedAt: now },
     );
     callbacks.onOnboardingFinished?.(onboarding.outcome ?? "skipped");
     if (onboarding.outcome === "local") {
@@ -215,10 +232,18 @@ export function OnboardingScreen(props: {
 
   return (
     <Box flexDirection="column" flexGrow={1} paddingTop={1}>
-      {fit.mark || fit.tier !== "minimal" ? (
+      {onboarding.step === "intro" ? null : (
         <OnboardingHeader subtitle={SUBTITLES[onboarding.step]} mark={fit.mark} />
-      ) : null}
+      )}
       <Box flexDirection="column" marginTop={1} flexShrink={0}>
+        {onboarding.step === "intro" ? (
+          <OnboardingIntroStep
+            columns={Math.max(20, size.columns - 4)}
+            rows={size.rows}
+            fit={fit}
+            skipAnimation={introSkipped}
+          />
+        ) : null}
         {onboarding.step === "choose" ? (
           <OnboardingChooseStep cursor={onboarding.cursor} fit={fit} />
         ) : null}
@@ -282,5 +307,7 @@ function footerFor(onboarding: OnboardingUiState): string {
       return "enter test & save   empty enter skips embeddings   esc back   ctrl+c quit";
     case "finished":
       return "";
+    case "intro":
+      return "ctrl+c quit";
   }
 }
