@@ -198,6 +198,14 @@ export function handleAppKey(
   ctx: AppKeyContext,
 ): boolean {
   const { state, dispatch, callbacks, ctrlCArmed, setCtrlCArmed } = ctx;
+  // The first-run flow owns the whole terminal while it is up: there is
+  // no chat, no panel and no menu behind it for a key to reach, and the
+  // screen subscribes to `useInput` itself. Swallow everything here so a
+  // keystroke is never acted on twice — except Ctrl+C, which must quit
+  // from setup exactly as it quits from anywhere else.
+  if (state.onboarding && !(key.ctrl && input === "c")) {
+    return true;
+  }
   if (state.sessionDelete) {
     return handleSessionDeleteKey(input, key, ctx);
   }

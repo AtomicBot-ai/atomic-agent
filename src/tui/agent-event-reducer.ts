@@ -26,6 +26,7 @@ import { reduceSkillsAction } from "./skills/skills-reducer.js";
 import { reduceMemoryAction } from "./memory/memory-reducer.js";
 import { reduceMcpAction } from "./mcp/mcp-reducer.js";
 import { reduceImportAction } from "./import/import-reducer.js";
+import { reduceOnboardingAction } from "./onboarding/onboarding-reducer.js";
 import { reduceProvidersPanel } from "./providers/providers-reducer.js";
 import { reduceLlmPanelAction } from "./llm-panel/llm-panel-reducer.js";
 import { reduceFallbackPanelAction } from "./llm-panel/fallback/fallback-panel-reducer.js";
@@ -49,6 +50,11 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (mcpHandled !== null) return mcpHandled;
   const importHandled = reduceImportAction(state, action);
   if (importHandled !== null) return importHandled;
+  // Ahead of the providers slice on purpose: while the cloud step is up,
+  // the wizard's "succeeded" / "closed" also move the flow, and the
+  // onboarding reducer delegates the panel half rather than duplicating it.
+  const onboardingHandled = reduceOnboardingAction(state, action);
+  if (onboardingHandled !== null) return onboardingHandled;
   const providersHandled = reduceProvidersPanel(state, action);
   if (providersHandled !== null) return providersHandled;
   const llmPanelHandled = reduceLlmPanelAction(state, action);

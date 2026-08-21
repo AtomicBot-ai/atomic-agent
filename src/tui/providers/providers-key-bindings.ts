@@ -3,7 +3,7 @@ import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
 import { createProvidersWizardState } from "./providers-wizard-state.js";
-import { handleProvidersWizardKey } from "./providers-wizard-key-bindings.js";
+import { routeProvidersWizardKey } from "./route-wizard-key.js";
 import { configureWizardKindForRow } from "./providers-orchestrator.js";
 
 export interface ProvidersTabKeyContext {
@@ -24,24 +24,11 @@ export function handleProvidersTabKey(
   const panel = state.providersPanel;
 
   if (panel.wizard !== null) {
-    const result = handleProvidersWizardKey(input, key, panel.wizard);
-    if (!result.handled) return false;
-    if ("closed" in result && result.closed) {
-      dispatch({ type: "providers_wizard_closed" });
-      return true;
-    }
-    if ("wizard" in result) {
-      if ("cancelSubmit" in result && result.cancelSubmit) {
-        callbacks.onProvidersWizardSubmitCancel?.();
-        return true;
-      }
-      if ("submit" in result && result.submit) {
-        void callbacks.onProvidersWizardSubmit?.(result.wizard);
-        return true;
-      }
-      dispatch({ type: "providers_wizard_updated", wizard: result.wizard });
-    }
-    return true;
+    return routeProvidersWizardKey(input, key, panel.wizard, {
+      dispatch,
+      onSubmit: (wizard) => void callbacks.onProvidersWizardSubmit?.(wizard),
+      onSubmitCancel: () => callbacks.onProvidersWizardSubmitCancel?.(),
+    });
   }
 
   if (panel.removeConfirm !== null) {

@@ -3,7 +3,7 @@ import {
   isCloudTextProviderReady,
   isLocalBackendConfigured,
   isManagedModeReadyOnDisk,
-} from "../run-local-models-config-wizard.js";
+} from "../local-backend-readiness.js";
 
 /** Why the first-run flow is (or is not) opening. Surfaced for tests and logs. */
 export type OnboardingDecision =

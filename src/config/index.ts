@@ -23,8 +23,10 @@ export {
   parseUserConfigFile,
   parseWhileBusySubmit,
 } from "./config-schema.js";
+export type { ConfigNoticeSink } from "./config-file.js";
 export {
   ensureUserConfigFileSync,
+  setConfigNoticeSink,
   getDotenvPath,
   getTrustConfigPaths,
   getUserConfigPath,

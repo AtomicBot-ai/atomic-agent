@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   ensureUserConfigFileSync,
@@ -17,25 +17,7 @@ import {
 import {
   isCloudTextProviderReady,
   isLocalBackendConfigured,
-  runLocalModelsStartupGateIfNeeded,
-} from "./run-local-models-config-wizard.js";
-
-const inkRender = vi.hoisted(() => vi.fn());
-
-vi.mock("ink", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("ink")>()),
-  render: inkRender,
-}));
-
-vi.mock("../llm/llama-server-health.js", () => ({
-  checkLlamaServer: vi.fn(async () => ({
-    reachable: false,
-    status: null,
-    kind: "unknown",
-    error: "connect ECONNREFUSED 127.0.0.1:8080",
-    latencyMs: 1,
-  })),
-}));
+} from "./local-backend-readiness.js";
 
 describe("isCloudTextProviderReady", () => {
   let stateDir: string;
@@ -344,47 +326,5 @@ describe("isLocalBackendConfigured", () => {
     });
 
     expect(isLocalBackendConfigured()).toBe(false);
-  });
-});
-
-describe("runLocalModelsStartupGateIfNeeded", () => {
-  let stateDir: string;
-  let stderrWrite: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(() => {
-    stateDir = mkdtempSync(join(tmpdir(), "startup-gate-"));
-    process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
-    resetConfigCache();
-    inkRender.mockReset();
-    inkRender.mockReturnValue({
-      waitUntilExit: async () => {},
-      clear: () => {},
-    });
-    stderrWrite = vi
-      .spyOn(process.stderr, "write")
-      .mockImplementation(() => true);
-  });
-
-  afterEach(() => {
-    stderrWrite.mockRestore();
-    rmSync(stateDir, { recursive: true, force: true });
-    delete process.env.ATOMIC_AGENT_STATE_DIR;
-    resetConfigCache();
-  });
-
-  it("tells the wizard the backend was never configured on a fresh install", async () => {
-    await runLocalModelsStartupGateIfNeeded({ skipWizard: false });
-
-    expect(inkRender).toHaveBeenCalledTimes(1);
-    expect(inkRender.mock.calls[0][0].props.hadConfiguredBackend).toBe(false);
-  });
-
-  it("tells the wizard the backend was configured when the user picked one", async () => {
-    persistUserLocalLlmUrl("http://192.168.1.50:9090");
-
-    await runLocalModelsStartupGateIfNeeded({ skipWizard: false });
-
-    expect(inkRender).toHaveBeenCalledTimes(1);
-    expect(inkRender.mock.calls[0][0].props.hadConfiguredBackend).toBe(true);
   });
 });
