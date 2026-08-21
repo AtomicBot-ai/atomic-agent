@@ -1295,7 +1295,7 @@ export function TuiApp({
                 }
               />
             ) : null}
-            {state.contextPanelOpen && contextUsage ? (
+            {state.contextPanelOpen ? (
               <ContextPanel
                 usage={contextUsage}
                 availableRows={menuPaneRows}

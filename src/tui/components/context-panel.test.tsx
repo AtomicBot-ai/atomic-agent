@@ -25,7 +25,7 @@ function usage(overrides: Partial<ContextUsageView> = {}): ContextUsageView {
 }
 
 function lines(
-  view: ContextUsageView,
+  view: ContextUsageView | null,
   columns = 100,
   rows = 24,
   reserved: number | null = 4096,
@@ -144,6 +144,28 @@ describe("ContextPanel", () => {
   it("never grows taller than the pane it floats over", () => {
     for (const rows of [8, 12, 24]) {
       expect(lines(usage(), 100, rows).length).toBeLessThanOrEqual(rows);
+    }
+  });
+});
+
+describe("before anything has been measured", () => {
+  /**
+   * The panel is reachable from the menu and from `/context` on a fresh
+   * session, where no prompt has been built yet. It takes the keyboard
+   * either way, so it has to paint something — an invisible modal is a
+   * stuck terminal from the operator's side.
+   */
+  it("says so rather than rendering nothing", () => {
+    const body = lines(null, 100, 24, null);
+    expect(body.join("\n")).toContain("not measured yet");
+    expect(body.join("\n")).toContain("esc to close");
+  });
+
+  it("still paints every cell of its own box", () => {
+    const body = lines(null, 100, 24, null);
+    const width = body[0]?.trimStart().length ?? 0;
+    for (const line of body) {
+      expect(line.trimStart().length, line).toBe(width);
     }
   });
 });

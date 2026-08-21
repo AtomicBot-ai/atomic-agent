@@ -22,7 +22,13 @@ const PERCENT_WIDTH = 5;
 const ROW_GAUGE = 10;
 
 export interface ContextPanelProps {
-  usage: ContextUsageView;
+  /**
+   * `null` before the first prompt of the session has been built. The
+   * panel still renders: it is reachable from the menu and from
+   * `/context`, and a surface that takes the keyboard and then paints
+   * nothing is worse than one that says it has nothing yet.
+   */
+  usage: ContextUsageView | null;
   /** Rows available in the pane the panel floats over. */
   availableRows: number;
   /** Columns available in that pane. */
@@ -58,6 +64,30 @@ export function ContextPanel({
 }: ContextPanelProps): ReactElement {
   const width = Math.max(32, Math.min(PREFERRED_WIDTH, availableColumns - 2));
   const inner = width - 2;
+  if (usage === null) {
+    return (
+      <PanelFrame
+        offsetTop={Math.max(0, Math.floor((availableRows - 7) / 2))}         offsetLeft={Math.max(0, Math.floor((availableColumns - width) / 2))}
+        width={width}
+      >
+        <Text color={chromeTheme.colors.railForeground} bold>
+          {fitToWidth(" context · not measured yet", inner)}
+        </Text>
+        <Text color={chromeTheme.colors.railMuted}>
+          {chromeTheme.glyphs.toolBoxHorizontal.repeat(Math.max(0, inner))}
+        </Text>
+        <Text color={chromeTheme.colors.railMuted}>
+          {fitToWidth(" send a message — the breakdown comes from the", inner)}
+        </Text>
+        <Text color={chromeTheme.colors.railMuted}>
+          {fitToWidth(" prompt the agent actually builds", inner)}
+        </Text>
+        <Text color={chromeTheme.colors.railMuted}>
+          {fitToWidth(" esc to close", inner)}
+        </Text>
+      </PanelFrame>
+    );
+  }
   const rows = buildRows(usage, reservedForReply);
   // Row gauges are scaled to the biggest section, not to the window.
   // Against the window every bar but one rounds to nothing — the
