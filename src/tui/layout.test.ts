@@ -93,14 +93,14 @@ describe("computeSidebarRowBudget", () => {
     // `+ new` moved onto the Sessions header and gave a row back; the
     // blank that lifts the Menu button off the rail's bottom edge took
     // it again. The brand mark then went from four rows to the
-    // guidelines' five, so 24 rows now leaves 8 usable rather than 9 —
-    // and 8 does not divide 2:1, so Tasks carries the odd row's loss.
+    // guidelines' five, and the gap under it from one row to three, so
+    // 24 rows now leaves 6 usable rather than 9.
     const budget = computeSidebarRowBudget(24);
-    expect(budget.sessions).toBe(6);
+    expect(budget.sessions).toBe(4);
     expect(budget.tasks).toBe(2);
-    // 25 rows is the nearest height whose usable rows divide evenly, so
+    // 27 rows is the nearest height whose usable rows divide evenly, so
     // assert the ratio itself there rather than on a remainder.
-    const even = computeSidebarRowBudget(25);
+    const even = computeSidebarRowBudget(27);
     expect(even.sessions).toBe(6);
     expect(even.tasks).toBe(3);
     expect(even.sessions).toBe(even.tasks * 2);
@@ -137,13 +137,13 @@ describe("computeSidebarRowBudget", () => {
 
 describe("computeChatViewportRows", () => {
   it("reserves the prompt chrome but never returns less than five rows", () => {
-    expect(computeChatViewportRows(40)).toBe(30);
+    expect(computeChatViewportRows(40)).toBe(28);
     expect(computeChatViewportRows(10)).toBe(4);
     expect(computeChatViewportRows(2)).toBe(4);
   });
 
   it("reserves more chrome on a narrow terminal, where it wraps", () => {
-    expect(computeChatViewportRows(24, 45)).toBe(10);
-    expect(computeChatViewportRows(24, 80)).toBe(14);
+    expect(computeChatViewportRows(24, 45)).toBe(8);
+    expect(computeChatViewportRows(24, 80)).toBe(12);
   });
 });

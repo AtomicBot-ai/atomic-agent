@@ -127,6 +127,13 @@ export function Sidebar(props: SidebarProps): ReactElement {
       paddingX={1}
     >
       <RailBrand inner={inner} sessionId={sessionId} />
+      {/*
+        Three rows, not one. Sessions and Tasks read as a list the rail
+        holds rather than as a continuation of the lockup, and the gap
+        below the mark matches the one the composer now sets.
+      */}
+      <RailBlank />
+      <RailBlank />
       <RailBlank />
       <SectionHeader
         title="Sessions"
