@@ -25,7 +25,7 @@ describe("SplashBanner", () => {
     expect(frame).toContain("Local AI-First Agent");
   });
 
-  it("advertises the core slash commands and hotkeys", () => {
+  it("advertises the core slash commands", () => {
     const frame = frameAt(96, 40);
     expect(frame).toContain("/help");
     expect(frame).toContain("/sessions");
@@ -33,7 +33,11 @@ describe("SplashBanner", () => {
     expect(frame).toContain("/model");
     expect(frame).toContain("/tasks");
     expect(frame).toContain("/import");
-    expect(frame).toContain("Ctrl+C");
+    // The two plain-hotkey rows (Enter, Ctrl+C x2) are gone: every row
+    // is now a command a click can put in the composer, and the hint
+    // strip carries both keys at the foot of the screen anyway.
+    expect(frame).not.toContain("Ctrl+C");
+    expect(frame).not.toMatch(/•\s+Enter/u);
   });
 
   it("keeps the most useful tips when the surface is too short for all of them", () => {
@@ -56,14 +60,14 @@ describe("SplashBanner", () => {
     // rows, so on a 4-row surface it would leave nothing for the tips
     // and Ink would paint it over the chat above. Tips win.
     const frame = frameAt(38, 4);
-    expect(frame).toContain("Enter");
+    expect(frame).toContain("/help");
     expect(frame).not.toMatch(/:::|[█▀▄]/u);
   });
 
   it("still shows a brand mark and a tip once there is room for both", () => {
     const frame = frameAt(38, 8);
     expect(frame).toMatch(/:::|[█▀▄]/u);
-    expect(frame).toContain("Enter");
+    expect(frame).toContain("/help");
   });
 
   it("measures the terminal itself when no size is given", () => {

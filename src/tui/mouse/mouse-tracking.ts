@@ -6,10 +6,16 @@
  * terminal in reporting mode (where every click would print garbage
  * into the user's shell).
  *
- * We request **1000 (normal tracking)** plus **1006 (SGR encoding)**
- * only. 1002/1003 (drag / any-motion) are intentionally left off: the
- * app has no hover or drag affordance, and motion reports are a
- * constant stream of wakeups for a UI that does not use them.
+ * We request **1002 (button-event tracking)** plus **1006 (SGR
+ * encoding)**. 1002 is 1000 plus motion reports *while a button is
+ * held*, which is what makes drag-to-select in the composer possible;
+ * the parser decodes the motion bit into its own event kind so a drag
+ * cannot be mistaken for a click per cell it crosses.
+ *
+ * **1003 (any-motion) stays off.** It reports every pointer movement
+ * whether or not a button is down — a constant stream of wakeups, and
+ * the hit-test walks the Yoga tree for every registered target on each
+ * event. Nothing in this UI hovers, so there is nothing to spend it on.
  *
  * The trade-off this mode forces — the terminal stops doing its own
  * drag-to-select while reporting is on — is why mouse support is a
@@ -19,9 +25,9 @@
  */
 import type { Writable } from "node:stream";
 
-/** Normal tracking: press + release, no motion. */
-const ENABLE_BUTTON_TRACKING = "\u001B[?1000h";
-const DISABLE_BUTTON_TRACKING = "\u001B[?1000l";
+/** Button-event tracking: press, release, and motion while held. */
+const ENABLE_BUTTON_TRACKING = "\u001B[?1002h";
+const DISABLE_BUTTON_TRACKING = "\u001B[?1002l";
 /** SGR extended reports — required past column 223. */
 const ENABLE_SGR_REPORTS = "\u001B[?1006h";
 const DISABLE_SGR_REPORTS = "\u001B[?1006l";

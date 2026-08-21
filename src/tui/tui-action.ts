@@ -34,6 +34,8 @@ export type TuiAction =
   | { type: "session_delete_cursor_set"; cursor: "yes" | "cancel" }
   | { type: "session_delete_closed" }
   | { type: "approval_resolved"; approvalId: string; approved: boolean }
+  /** The composer gained or lost a text selection (drives Ctrl+C's meaning). */
+  | { type: "composer_selection_changed"; hasSelection: boolean }
   | { type: "metric"; sample: MetricSample }
   | { type: "log"; record: LogRecord }
   | { type: "skill_count_changed"; count: number }

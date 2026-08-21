@@ -285,6 +285,15 @@ export interface TuiState {
   reasoning: ReasoningEntry[];
   pendingApproval: ApprovalRequest | null;
   /**
+  /**
+   * Whether the composer currently holds a text selection. Lifted out of
+   * the editor for exactly one reason: Ctrl+C means "copy" while text is
+   * selected and "stop / quit" otherwise, and the two handlers live in
+   * different layers — the app's global key layer would arm the quit
+   * chord before the editor ever saw the key.
+   */
+  composerHasSelection: boolean;
+  /**
    * Open "delete the session?" confirmation, or `null`. Carries the
    * preview so the dialog can name what is about to go, and the focused
    * button so Enter has an unambiguous meaning.
@@ -528,6 +537,7 @@ export function createInitialTuiState(
     streamingToolCards: [],
     reasoning: [],
     pendingApproval: null,
+    composerHasSelection: false,
     sessionDelete: null,
     loadedSkills: [],
     worldSnapshot: null,

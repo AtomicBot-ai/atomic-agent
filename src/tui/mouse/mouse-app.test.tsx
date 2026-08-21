@@ -1,5 +1,6 @@
 import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
+import { ClipboardProvider } from "../clipboard/clipboard-context.js";
 import { makeTuiEventBus, TuiApp, type TuiAppCallbacks } from "../tui-app.js";
 import type { TuiSessionInfo } from "../tui-state.js";
 import { makeMouseSource, type MouseSourceEmitter } from "./mouse-source.js";
@@ -49,6 +50,33 @@ function click(x: number, y: number): TuiMouseEvent {
   return {
     kind: "press",
     button: "left",
+    wheel: null,
+    x,
+    y,
+    shift: false,
+    alt: false,
+    ctrl: false,
+  };
+}
+
+/** A motion report sent while the left button is held (DECSET 1002). */
+function drag(x: number, y: number): TuiMouseEvent {
+  return {
+    kind: "motion",
+    button: "left",
+    wheel: null,
+    x,
+    y,
+    shift: false,
+    alt: false,
+    ctrl: false,
+  };
+}
+
+function release(x: number, y: number): TuiMouseEvent {
+  return {
+    kind: "release",
+    button: "none",
     wheel: null,
     x,
     y,
@@ -114,6 +142,8 @@ async function clickUntil(
 
 function mountApp(): {
   frame: () => string;
+  /** Text the app asked the clipboard to hold. */
+  copied: string[];
   mouse: MouseSourceEmitter;
   stdin: { write: (data: string) => void };
   openSkillsPanel: () => void;
@@ -126,7 +156,15 @@ function mountApp(): {
   const bus = makeTuiEventBus();
   const mouse = makeMouseSource();
   const deleted: string[] = [];
+  const copied: string[] = [];
+  const clipboard = {
+    copy: async (text: string) => {
+      copied.push(text);
+      return true;
+    },
+  };
   const { lastFrame, stdin, unmount } = render(
+    <ClipboardProvider writer={clipboard}>
     <TuiApp
       session={SESSION}
       bus={bus}
@@ -135,13 +173,15 @@ function mountApp(): {
         onSessionDeleteConfirmed: (sessionId) => deleted.push(sessionId),
       }}
       mouse={mouse}
-    />,
+    />
+    </ClipboardProvider>,
   );
   return {
     frame: () => strip(lastFrame() ?? ""),
     mouse,
     stdin,
     deleted,
+    copied,
     seedSessions: () => {
       bus.emit({
         type: "recent_sessions_updated",
@@ -457,6 +497,50 @@ describe("TuiApp mouse", () => {
       expect(app.deleted).toEqual([]);
       app.unmount();
     });
+  });
+
+  it("puts a start-page tip in the composer when it is clicked", async () => {
+    // The rows are suggestions, not buttons: the command lands in the
+    // buffer with a trailing space and Enter stays the operator's.
+    const app = mountApp();
+    await waitUntil(() => app.frame().includes("/sessions"), "the start page");
+    await delay(150);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const at = locate(app.frame(), "/sessions");
+      app.mouse.emit(click(at.x + 2, at.y));
+      await delay(70);
+      if (app.frame().includes("❯ /sessions")) break;
+    }
+    expect(app.frame()).toContain("❯ /sessions");
+    // Seeded, not run: no palette over the buffer we just filled.
+    expect(app.frame()).not.toContain("/dump");
+    app.unmount();
+  });
+
+  it("selects composer text by dragging, and copies it with ctrl+c", async () => {
+    // The terminal stops doing its own drag-to-select the moment mouse
+    // reporting is on, so this gesture is the replacement for it.
+    const app = mountApp();
+    await waitUntil(() => app.frame().includes("R U N"), "the Run screen");
+    app.stdin.write("hello world");
+    await waitUntil(() => app.frame().includes("hello world"), "the buffer");
+    await delay(150);
+
+    const at = locate(app.frame(), "hello world");
+    // Press on "w", drag to the end of the word, release.
+    app.mouse.emit(click(at.x + 6, at.y));
+    await delay(60);
+    app.mouse.emit(drag(at.x + 9, at.y));
+    await delay(60);
+    app.mouse.emit(release(at.x + 9, at.y));
+    await delay(60);
+
+    app.stdin.write(String.fromCharCode(3));
+    await delay(120);
+    expect(app.copied).toEqual(["wor"]);
+    // The quit chord must not have been armed by that Ctrl+C.
+    expect(app.frame()).not.toContain("press again to quit");
+    app.unmount();
   });
 
   it("moves a panel cursor with the wheel", async () => {

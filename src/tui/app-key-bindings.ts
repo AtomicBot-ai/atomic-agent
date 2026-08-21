@@ -238,6 +238,11 @@ export function handleAppKey(
     if (handleSidebarKey(input, key, ctx)) return true;
   }
   if (key.ctrl && input === "c") {
+    // With text selected in the composer, Ctrl+C copies it — the
+    // convention every terminal-adjacent editor follows. The editor owns
+    // that; arming the quit chord here would make the same keystroke
+    // mean two things at once.
+    if (state.composerHasSelection) return false;
     if (ctrlCArmed) {
       callbacks.onAbort();
       callbacks.onQuit();

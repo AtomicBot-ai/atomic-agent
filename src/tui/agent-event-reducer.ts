@@ -109,6 +109,9 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
     case "approval_resolved":
       if (state.pendingApproval?.approvalId !== action.approvalId) return state;
       return { ...state, pendingApproval: null, status: "running" };
+    case "composer_selection_changed":
+      if (state.composerHasSelection === action.hasSelection) return state;
+      return { ...state, composerHasSelection: action.hasSelection };
     case "metric":
       return applyMetric(state, action.sample);
     case "log":

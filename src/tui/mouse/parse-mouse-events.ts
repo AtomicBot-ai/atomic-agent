@@ -28,6 +28,12 @@ const SHIFT_BIT = 4;
 const ALT_BIT = 8;
 /** Bit 4. */
 const CTRL_BIT = 16;
+/**
+ * Bit 5 — set on reports the terminal sends while a button is held
+ * (DECSET 1002 button-event tracking). Without decoding it, a drag
+ * report is indistinguishable from a fresh press.
+ */
+const MOTION_BIT = 32;
 /** Bit 6 — wheel reports arrive as buttons 64 (up) / 65 (down). */
 const WHEEL_BIT = 64;
 
@@ -126,9 +132,18 @@ function buildEvent(
   released: boolean,
 ): TuiMouseEvent {
   const wheeling = (code & WHEEL_BIT) !== 0;
+  const dragging = !wheeling && !released && (code & MOTION_BIT) !== 0;
   const low = code & 3;
   return {
-    kind: wheeling ? "wheel" : released ? "release" : "press",
+    kind: wheeling
+      ? "wheel"
+      : released
+        ? "release"
+        : dragging
+          ? "motion"
+          : "press",
+    // A motion report still names the button being held, which is what
+    // lets a drag be attributed to the gesture that started it.
     button: wheeling || released ? "none" : buttonFromLowBits(low),
     wheel: wheeling ? (low === 0 ? "up" : "down") : null,
     // Terminals report 1-based cells; the layout engine is 0-based.

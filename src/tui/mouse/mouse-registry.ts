@@ -63,6 +63,17 @@ export class MouseTargetRegistry {
   private readonly targets = new Map<number, RegisteredTarget>();
   private nextId = 1;
   private minLayer = MOUSE_LAYER_BASE;
+  /**
+   * The target holding the pointer for the duration of a drag, if any.
+   *
+   * Hit-testing by position is right for clicks and wrong for drags: a
+   * selection that starts in the composer and travels up into the chat
+   * log would otherwise deliver its motion — and its terminating
+   * release — to whatever sits under the cursor, so the selection would
+   * stop extending and never end. While captured, every event goes to
+   * the capturing target and to nobody else.
+   */
+  private captured: RegisteredTarget | null = null;
 
   /** Registers a target and returns its unregister function. */
   register(options: MouseTargetOptions): () => void {
@@ -83,10 +94,49 @@ export class MouseTargetRegistry {
    */
   setMinLayer(layer: number): void {
     this.minLayer = layer;
+    // A modal opening mid-drag ends the drag: the surface underneath is
+    // no longer eligible, and a capture that outlived it would keep
+    // feeding it events from behind the modal.
+    if (this.captured && this.captured.layer < layer) this.captured = null;
+  }
+
+  /**
+   * Route every event to `target` until {@link releasePointer}. Called
+   * by a target from inside its own press handler.
+   */
+  capturePointer(ref: RefObject<DOMElement | null>): void {
+    for (const target of this.targets.values()) {
+      if (target.ref === ref) {
+        this.captured = target;
+        return;
+      }
+    }
+  }
+
+  /** Hand routing back to hit-testing. Safe to call when nothing is captured. */
+  releasePointer(): void {
+    this.captured = null;
   }
 
   /** Offers `event` to the matching targets; `true` when one claimed it. */
   dispatch(event: TuiMouseEvent): boolean {
+    const captured = this.captured;
+    if (captured) {
+      // A captured target that has unmounted (or whose layer is now
+      // below the floor) cannot receive anything — drop the capture
+      // rather than swallow every event for the rest of the session.
+      const rect = absoluteRect(captured.ref.current);
+      if (!rect || captured.layer < this.minLayer) {
+        this.captured = null;
+      } else {
+        return captured.handler({
+          event,
+          localX: event.x - rect.left,
+          localY: event.y - rect.top,
+          rect,
+        });
+      }
+    }
     const hits: Array<{ target: RegisteredTarget; rect: MouseRect }> = [];
     for (const target of this.targets.values()) {
       if (target.layer < this.minLayer) continue;

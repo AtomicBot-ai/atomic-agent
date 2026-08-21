@@ -43,6 +43,8 @@ import {
   currentTerminalLaunchInput,
   openAgentTerminalWindow,
 } from "./open-terminal-window.js";
+import { detectKittyKeyboard } from "./detect-kitty-keyboard.js";
+import { setShiftEnterNewline } from "./shift-enter-support.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
 import {
   detectTerminalBackground,
@@ -89,6 +91,13 @@ export async function tuiCommand(args: string[]): Promise<number> {
   } else {
     setActiveTheme(resolveStartupTheme(await detectTerminalBackground()));
   }
+  // Ask the terminal whether it speaks the kitty keyboard protocol
+  // BEFORE Ink starts reading stdin — see `detectKittyKeyboard`. It
+  // decides two things: whether Shift+Enter can mean "newline" at all,
+  // and therefore what the hint strip is allowed to promise.
+  const kittyKeyboard = await detectKittyKeyboard();
+  setShiftEnterNewline(kittyKeyboard);
+
   const skipLlamaWizard =
     parsed.skipLlamaSetup || process.env.ATOMIC_AGENT_TUI_SKIP_LLAMA_SETUP === "1";
   const startupGate = await runLocalModelsStartupGateIfNeeded({
@@ -492,6 +501,23 @@ export async function tuiCommand(args: string[]): Promise<number> {
       stdout: process.stdout,
       stderr: process.stderr,
       exitOnCtrlC: false,
+      // `disambiguateEscapeCodes` alone: it is what makes Shift+Enter a
+      // distinct keystroke (`ESC [ 13 ; 2 u`). `reportAllKeysAsEscapeCodes`
+      // would reroute ordinary typing through CSI u as well, putting the
+      // paste and text-insert paths at risk for nothing.
+      //
+      // `mode: "enabled"` rather than `"auto"`: Ink's own probe and the
+      // App's reader both see the terminal's reply, so auto can type
+      // `[?1u` into the composer before the first render. We already
+      // asked, above, on a stdin nobody else was reading.
+      ...(kittyKeyboard
+        ? {
+            kittyKeyboard: {
+              mode: "enabled" as const,
+              flags: ["disambiguateEscapeCodes" as const],
+            },
+          }
+        : {}),
     },
   );
 

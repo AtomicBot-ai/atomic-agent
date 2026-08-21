@@ -19,8 +19,8 @@ function makeStdout(isTty: boolean): FakeStdout {
   };
 }
 
-const ENABLE_TRACKING = "\u001B[?1000h";
-const DISABLE_TRACKING = "\u001B[?1000l";
+const ENABLE_TRACKING = "\u001B[?1002h";
+const DISABLE_TRACKING = "\u001B[?1002l";
 const ENABLE_SGR = "\u001B[?1006h";
 const DISABLE_SGR = "\u001B[?1006l";
 
@@ -31,13 +31,19 @@ describe("enableMouseTracking", () => {
     expect(stdout.writes).toEqual([ENABLE_TRACKING, ENABLE_SGR]);
   });
 
-  it("never asks for motion tracking", () => {
+  it("asks for button-event tracking but never any-motion", () => {
+    // 1002 reports motion only while a button is held, which is what
+    // drag-to-select in the composer needs. 1003 reports every pointer
+    // movement — a constant stream of wakeups, and the hit test walks
+    // the layout tree per event. Nothing here hovers.
     const stdout = makeStdout(true);
     const controller = enableMouseTracking({
       stdout: stdout as unknown as NodeJS.WriteStream,
     });
+    const enabling = stdout.writes.join("");
+    expect(enabling).toContain("1002");
+    expect(enabling).not.toContain("1003");
     controller.disable();
-    expect(stdout.writes.join("")).not.toContain("1002");
     expect(stdout.writes.join("")).not.toContain("1003");
   });
 

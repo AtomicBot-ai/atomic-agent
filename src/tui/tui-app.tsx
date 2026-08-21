@@ -1291,7 +1291,19 @@ export function TuiApp({
             onEscape={onEscape}
             onTab={onTab}
             onAutocomplete={onTab}
-            onClickFocus={focusEditorFromClick}
+                onClickFocus={focusEditorFromClick}
+                onSelectionChange={(hasSelection) =>
+                  dispatch({
+                    type: "composer_selection_changed",
+                    hasSelection,
+                  })
+                }
+                onCopy={(text) =>
+                  dispatch({
+                    type: "runtime_info",
+                    line: `copied ${text.length} character${text.length === 1 ? "" : "s"} to the clipboard`,
+                  })
+                }
                 onHistoryPrev={onHistoryPrev}
                 onHistoryNext={onHistoryNext}
               />
