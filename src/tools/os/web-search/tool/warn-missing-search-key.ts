@@ -55,11 +55,30 @@ export function checkMissingSearchKey(input: {
   };
 }
 
+/**
+ * Providers that actually have a keyless tier. Exa falls back to the
+ * public MCP endpoint without a key; Brave has no such tier, so a
+ * keyless Brave is not "degraded" — `isProviderUsable` skips it outright
+ * and the chain never sends it a request. Telling that operator to
+ * expect 429s points them at a rate limit that cannot happen instead of
+ * at the real problem: their configured primary is disabled.
+ */
+const KEYLESS_TIER_PROVIDERS = new Set<WebSearchProviderName>(["exa"]);
+
 function buildMessage(
   provider: WebSearchProviderName,
   apiKeyEnv: string,
   fallback: WebSearchProviderName[],
 ): string {
+  const destination =
+    fallback.length > 0 ? fallback.join(", ") : "no other provider";
+  if (!KEYLESS_TIER_PROVIDERS.has(provider)) {
+    return (
+      `web.search: provider "${provider}" is configured but ${apiKeyEnv} is not set, ` +
+      `so it is skipped entirely — every search goes to ${destination}. ` +
+      `Set ${apiKeyEnv} to use it.`
+    );
+  }
   const consequence =
     fallback.length > 0
       ? `expect HTTP 429 and silent degradation to ${fallback.join(", ")}`

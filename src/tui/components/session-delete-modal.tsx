@@ -82,7 +82,13 @@ export function SessionDeleteModal({
       </Text>
       <Text>{fit("", inner)}</Text>
       <Text color={chromeTheme.colors.railForeground}>
-        {fit(` ${confirm.preview}`, inner)}
+        {/*
+          One line, always: the preview is the thread's first prompt, and
+          a pasted multi-line one would grow a panel whose height is a
+          constant — pushing Yes and Cancel out of the pane the dialog is
+          centred in.
+        */}
+        {fit(` ${oneLine(confirm.preview)}`, inner)}
       </Text>
       <Text>{fit("", inner)}</Text>
       <Box width={inner}>
@@ -171,6 +177,11 @@ function ConfirmButton({
       {body}
     </MouseTarget>
   );
+}
+
+/** Collapse every newline and run of blanks into single spaces. */
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
 }
 
 /** Pad or truncate to exactly `width` columns, so the panel is opaque. */

@@ -63,14 +63,18 @@ export function detectKittyKeyboard(
     let timer: NodeJS.Timeout | undefined;
 
     const hadRaw = stdin.isRaw === true;
-    const wasPaused =
-      typeof stdin.isPaused === "function" ? stdin.isPaused() : false;
-
     const cleanup = (): void => {
       if (timer) clearTimeout(timer);
       stdin.removeListener("data", onData);
       if (typeof stdin.setRawMode === "function") stdin.setRawMode(hadRaw);
-      if (wasPaused && typeof stdin.pause === "function") stdin.pause();
+      // Pause unless somebody else is still reading. `resume()` above put
+      // the stream in flowing mode; leaving it there with no listener
+      // means every chunk is emitted to nobody and dropped — and the gap
+      // between this probe and Ink's `render()` spans the whole runtime
+      // bootstrap, so an operator who starts typing immediately loses it.
+      // Paused, the bytes buffer and Ink gets them when it attaches.
+      const stillRead = stdin.listenerCount("data") > 0;
+      if (!stillRead && typeof stdin.pause === "function") stdin.pause();
     };
 
     const finish = (supported: boolean): void => {

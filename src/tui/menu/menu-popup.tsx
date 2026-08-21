@@ -213,12 +213,19 @@ function PopupFrame({
 function moveMenuCursor(
   mouse: MouseContextValue,
   delta: number,
-  cursor: number,
+  _cursor: number,
   itemCount: number,
 ): void {
   if (itemCount === 0) return;
-  const next = Math.max(0, Math.min(itemCount - 1, cursor + delta));
-  if (next === cursor) return;
+  // Read the cursor LIVE, not from the render closure. `createMouseStdin`
+  // forwards every report decoded from one stdin read in a synchronous
+  // loop, so a trackpad flick delivers several notches before React
+  // re-renders — and each one would otherwise compute the same
+  // destination from the same stale index, moving the cursor one row for
+  // the whole gesture.
+  const current = clampMenuCursor(mouse.getState(), mouse.getState().menuCursor);
+  const next = Math.max(0, Math.min(itemCount - 1, current + delta));
+  if (next === current) return;
   mouse.dispatch({ type: "menu_cursor_set", cursor: next });
 }
 

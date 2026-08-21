@@ -133,6 +133,12 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     if (value === lastInternalValue.current) return;
     lastInternalValue.current = value;
     setCursorPos(value.length);
+    // The buffer was replaced from outside — history recall, an Esc that
+    // cleared the draft, a seeded slash command, a submit. Whatever was
+    // selected no longer exists, and an anchor left pointing into the old
+    // text makes the next keystroke replace a span the operator cannot
+    // see (and can point past the end of a shorter buffer).
+    setAnchor(null);
   }, [value]);
 
   /** `[start, end)` in buffer offsets, or `null` when nothing is picked. */
@@ -143,6 +149,12 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
   const hasSelection = selection !== null;
   useEffect(() => {
     onSelectionChange?.(hasSelection);
+    // Unmounting with a live selection strands the app's copy of the
+    // flag, and the flag is what makes Ctrl+C mean "copy": the global
+    // layer would stand down for an editor that no longer exists, so
+    // Ctrl+C would abort nothing and quit nothing for the rest of the
+    // session. The composer unmounts on every Observe / Manage tab.
+    return () => onSelectionChange?.(false);
   }, [hasSelection, onSelectionChange]);
 
   const setBuffer = useCallback(
@@ -444,25 +456,44 @@ function handleKey(ctx: KeyContext): void {
     }
     return;
   }
+  // The emacs bindings all move the caret or shorten the buffer, and a
+  // selection cannot survive either: an anchor left behind points into
+  // text that has moved (so Ctrl+C copies the wrong span) or past the
+  // end of a shorter buffer (so the next character replaces everything
+  // from the anchor onwards). Each one collapses it first.
   if (key.ctrl && input === "a") {
+    ctx.setAnchor(null);
     setBuffer(value, lineStart(value, cursor));
     return;
   }
   if (key.ctrl && input === "e") {
+    ctx.setAnchor(null);
     setBuffer(value, lineEnd(value, cursor));
     return;
   }
   if (key.ctrl && input === "u") {
+    if (selection) {
+      deleteSelection(ctx);
+      return;
+    }
     const start = lineStart(value, cursor);
     setBuffer(value.slice(0, start) + value.slice(cursor), start);
     return;
   }
   if (key.ctrl && input === "k") {
+    if (selection) {
+      deleteSelection(ctx);
+      return;
+    }
     const end = lineEnd(value, cursor);
     setBuffer(value.slice(0, cursor) + value.slice(end), cursor);
     return;
   }
   if (key.ctrl && input === "w") {
+    if (selection) {
+      deleteSelection(ctx);
+      return;
+    }
     const wordStart = findWordStart(value, cursor);
     setBuffer(value.slice(0, wordStart) + value.slice(cursor), wordStart);
     return;

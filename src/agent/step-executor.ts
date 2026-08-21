@@ -261,6 +261,14 @@ export interface StepOutcome {
   waveSplitNotice?: string;
 }
 
+/**
+ * Most tool calls one emission may run after a wave split. Generous
+ * enough for any honest fan-out (a repo-wide read, a batch of searches)
+ * and small enough that a hallucinated array goes back to the model
+ * instead of hitting the network 120 times.
+ */
+const MAX_WAVE_SPLIT_CALLS = 32;
+
 /** Validation failure for a multi-call batch (forbidden tool / oversized / unknown). */
 export class BatchValidationError extends Error {
   constructor(
@@ -499,6 +507,20 @@ async function executeStepInner(
     const cap = getConfig().agent.maxParallelToolCalls;
     const calls = batch.calls;
     if (calls.length <= cap) return null;
+    // A ceiling, because "run it in waves" is not a licence to execute
+    // an arbitrary array. A model that derails and emits 120 searches
+    // would otherwise have every one run — 120 live requests and 240
+    // transcript turns out of a single hallucinated emission — and the
+    // loop detector cannot intervene: its gate runs once, before the
+    // first call of the batch. Past the ceiling the batch goes back to
+    // the model, which is what an oversized batch did before waves
+    // existed.
+    //
+    // The ceiling counts CALLS, not waves: with a cap of 1 a fan-out of
+    // fourteen reads is fourteen waves and perfectly reasonable, while
+    // with a cap of 8 the same wave count would be 112 live requests.
+    // What matters is how much work one emission can start.
+    if (calls.length > MAX_WAVE_SPLIT_CALLS) return null;
     for (const call of calls) {
       if (resourceClassFor(call.tool) !== "pure_read") return null;
       if (!callArgsSchemaValid(call, ctx.toolDescriptors)) return null;

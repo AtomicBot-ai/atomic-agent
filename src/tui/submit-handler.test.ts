@@ -69,6 +69,26 @@ describe("handleEditorSubmit under an approval prompt", () => {
     expect(dispatched.map((a) => a.type)).toContain("message_steered");
   });
 
+  it("closes the prompt it answered", () => {
+    // The reply IS the verdict. Without `approval_resolved` the runtime
+    // resolves the call but the UI stays in approval mode forever: every
+    // key routes into the approval handler, so there is no menu, no Tab,
+    // and Ctrl+C aborts instead of arming the quit chord — the TUI
+    // cannot be quit at all.
+    const dispatched: Array<{ type: string }> = [];
+    handleEditorSubmit(
+      "put it somewhere else",
+      pendingState(),
+      ((a: { type: string }) => dispatched.push(a)) as never,
+      stubCallbacks({ onApprovalReply: vi.fn() }),
+    );
+    expect(dispatched).toContainEqual({
+      type: "approval_resolved",
+      approvalId: "ap-1",
+      approved: false,
+    });
+  });
+
   it("keeps slash commands local instead of answering the prompt with them", () => {
     // `/privacy` under a prompt is still `/privacy`; sending it to the
     // model as a denial reason would be nonsense.

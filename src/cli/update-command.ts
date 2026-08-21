@@ -18,7 +18,13 @@ export interface UpdateCommandDeps {
   canSelfUpdate?: typeof canSelfUpdate;
   /** Resolves the `update.repo` config value. Defaults to `getConfig().update.repo`. */
   getRepo?: () => string;
-  /** Whether the command is attached to a TTY. Defaults to stdout. */
+  /**
+   * Whether an interactive answer is possible. Defaults to **stdin**
+   * being a TTY, not stdout: the prompt is printed to stdout but the
+   * answer is read from stdin, and `atomic-agent update < /dev/null`
+   * (or any wrapper that gives stdout a pty and stdin a pipe) would
+   * otherwise print the question and hang on a stream already at EOF.
+   */
   isTTY?: () => boolean;
   /** Interactive y/n confirmation. Defaults to a readline prompt. */
   confirm?: (prompt: string) => Promise<boolean>;
@@ -110,7 +116,10 @@ export async function updateCommand(
   const run = deps.runAppUpdate ?? runAppUpdate;
   const canSelf = deps.canSelfUpdate ?? canSelfUpdate;
   const getRepo = deps.getRepo ?? (() => getConfig().update.repo);
-  const isTTY = deps.isTTY ?? (() => process.stdout.isTTY === true);
+  // stdin, not stdout: the answer comes from stdin, so that is the
+  // stream whose interactivity decides whether asking is possible.
+  const isTTY =
+    deps.isTTY ?? (() => process.stdin.isTTY === true && process.stdout.isTTY === true);
   const confirm = deps.confirm ?? defaultConfirm;
   const repo = getRepo();
 

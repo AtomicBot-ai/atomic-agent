@@ -80,7 +80,10 @@ export function StatusBar({
 function currentSessionTitle(state: TuiState): string | null {
   const id = state.session.sessionId;
   if (!id) return null;
-  const entry = state.sessionPickerList.find((row) => row.sessionId === id);
+  // The rail's list, not the picker's: `sessionPickerList` is empty
+  // until someone opens the picker, so reading it meant the title only
+  // ever appeared after an unrelated detour through Ctrl+G U.
+  const entry = state.recentSessions.find((row) => row.sessionId === id);
   const preview = entry?.preview?.trim();
   if (!preview) return null;
   return preview.length > 32 ? `${preview.slice(0, 31)}…` : preview;

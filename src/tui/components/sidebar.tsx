@@ -462,21 +462,26 @@ function SessionRow({
   // ground, at its right edge — visible only on the selected row,
   // because an `x` on every row is a mis-click waiting to happen.
   const groundWidth = Math.max(4, inner - 2 * ROW_MARGIN_COLUMNS);
-  const closeWidth = selected ? CLOSE_COLUMNS : 0;
+  // The close columns are reserved on EVERY row, painted only on the
+  // selected one. Sizing the preview by whether the row happens to be
+  // selected made the mark materialise on top of text the operator was
+  // already pointing at: the second click of the ordinary
+  // select-then-open gesture landed on `[x]` and asked to delete the
+  // thread instead of opening it.
   const preview = truncate(
     entry.preview,
-    Math.max(1, Math.min(previewWidth, groundWidth - 5 - closeWidth)),
+    Math.max(1, Math.min(previewWidth, groundWidth - 5 - CLOSE_COLUMNS)),
   );
   const label = `${chevron} ${marker} ${preview}`;
   // Every cell width is computed here, so nothing may flex. Yoga
   // shrinks text children by default and Ink re-wraps a squeezed
   // `<Text>` rather than clipping it — the trap
   // `MouseTargetProps.flexShrink` warns about, one row away from here.
-  const ground = ` ${label}`.padEnd(Math.max(0, groundWidth - closeWidth));
+  const ground = ` ${label}`.padEnd(Math.max(0, groundWidth - CLOSE_COLUMNS));
   return (
     <Box width={inner} flexShrink={0}>
       <Text>{" ".repeat(ROW_MARGIN_COLUMNS)}</Text>
-      <Box flexShrink={0} width={Math.max(0, groundWidth - closeWidth)}>
+      <Box flexShrink={0} width={Math.max(0, groundWidth - CLOSE_COLUMNS)}>
         <Text
           color={theme.colors.railForeground}
           bold={selected || current}
@@ -486,7 +491,11 @@ function SessionRow({
           {ground}
         </Text>
       </Box>
-      {selected ? <CloseSessionButton entry={entry} /> : null}
+      {selected ? (
+        <CloseSessionButton entry={entry} />
+      ) : (
+        <Text>{" ".repeat(CLOSE_COLUMNS)}</Text>
+      )}
       <Text>{" ".repeat(ROW_MARGIN_COLUMNS)}</Text>
     </Box>
   );

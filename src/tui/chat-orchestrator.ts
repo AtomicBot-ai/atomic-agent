@@ -303,10 +303,17 @@ export class ChatOrchestrator {
 
   /** Stored threads that have a first prompt, plus the pending one. */
   private railSessions(): SessionPickerEntry[] {
+    // Read deeper than we show, because the filter runs HERE and the
+    // limit runs in SQL. Every `+ new` and every scheduled task mints a
+    // persisted, unnamed session; filtering a 25-row window would let
+    // those invisible rows squat it and push real conversations out —
+    // permanently, since a thread only re-enters the window by being
+    // spoken to, which you cannot do once it has no row.
     const stored = this.runtime.sessionStore
-      .listRecent(25)
+      .listRecent(RAIL_SCAN_LIMIT)
       .filter((state) => hasFirstPrompt(state))
-      .map((s) => toPickerEntry(s));
+      .map((s) => toPickerEntry(s))
+      .slice(0, RAIL_SESSION_LIMIT);
     const pending = this.pendingRow;
     if (!pending) return stored;
     // The store caught up: drop the stand-in rather than render the
@@ -357,8 +364,24 @@ export class ChatOrchestrator {
     if (this.quitting) return;
     if (this.currentController) {
       this.bus.emit({
-        type: "runtime_info",
-        line: "cannot delete a session while a turn is running — press Ctrl+C first",
+        type: "system_message",
+        text: "cannot delete a session while a turn is running — press Ctrl+C first",
+        variant: "warn",
+      });
+      return;
+    }
+    // …and not only OUR turn. The same store is written by turns this
+    // orchestrator never sees: a scheduled task, a Telegram message, an
+    // HTTP call. Deleting a session while one of those is mid-turn does
+    // not stick — `executeTurn` saves the finished session afterwards,
+    // and `save()` is an upsert, so the thread reappears on the rail
+    // with its whole transcript. The turn controller is the one place
+    // that knows about every origin.
+    if (this.runtime.turnController.isBusy(sessionId)) {
+      this.bus.emit({
+        type: "system_message",
+        text: "cannot delete that session — a turn is running on it (a scheduled task, Telegram, or the HTTP API)",
+        variant: "warn",
       });
       return;
     }
@@ -842,6 +865,15 @@ function formatBytes(bytes: number): string {
  * session its name, and an unnamed row is indistinguishable from every
  * other unnamed row.
  */
+/** Rows the rail and the picker show. */
+const RAIL_SESSION_LIMIT = 25;
+/**
+ * How deep to read before filtering. Generous rather than exact: unnamed
+ * sessions accumulate (one per `+ new`, one per scheduled task) and each
+ * one would otherwise cost a real thread its place in the list.
+ */
+const RAIL_SCAN_LIMIT = 200;
+
 function hasFirstPrompt(state: SessionState): boolean {
   return state.turns.some((turn) => turn.kind === "user");
 }

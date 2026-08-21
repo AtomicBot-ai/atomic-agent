@@ -86,6 +86,12 @@ export async function searchHttp(
       retryAfterMs: parseRetryAfterMs(retryAfter, now()),
     });
     await sleep(delayMs, request.signal);
+    // The operator pressed Esc (or the turn was aborted) while we were
+    // waiting out a rate limit. Sleeping through the abort and then
+    // firing the next request anyway spends the user's quota on a turn
+    // that no longer exists — and the request it starts cannot be
+    // cancelled by the same signal it just ignored.
+    if (request.signal?.aborted) return response;
   }
 }
 

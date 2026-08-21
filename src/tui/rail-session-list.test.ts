@@ -44,7 +44,9 @@ function stubRuntime(
         ? Promise.resolve({ session, reason: "reply", stepCount: 1 })
         : new Promise(() => {}),
     sessionStore: {
-      listRecent: () => stored,
+      // Honour the limit like SQL does — a stub that ignores it cannot
+      // see a filter running on the wrong side of the window.
+      listRecent: (limit: number) => stored.slice(0, limit),
       load: (id: string) => stored.find((s) => s.id === id) ?? null,
       delete: (id: string) => {
         const at = stored.findIndex((s) => s.id === id);
@@ -52,6 +54,8 @@ function stubRuntime(
       },
     },
     approvals: { clearSessionGrants: () => undefined },
+    // Deleting checks every origin's turns, not just the TUI's.
+    turnController: { isBusy: () => false },
     config: {
       update: { checkOnStartup: false, repo: "x/y" },
       tracing: { trace: { dir: "/tmp", enabled: false } },
@@ -129,6 +133,22 @@ describe("rail session list", () => {
     const ids = rail().map((entry) => entry.sessionId);
     expect(ids).toEqual(["s-new-1", "s-old"]);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("does not let unnamed sessions push real threads out of the list", () => {
+    // Every `+ new` persists an unnamed session, and scheduled tasks
+    // mint one each. Filtering after the store's limit would let those
+    // invisible rows squat the window — and a thread pushed out can
+    // never come back, because it only re-enters by being spoken to.
+    const stored = [
+      ...Array.from({ length: 60 }, (_, i) => blank(`s-blank-${i}`)),
+      ...Array.from({ length: 30 }, (_, i) => spokenTo(`s-real-${i}`, `thread ${i}`)),
+    ];
+    const { orchestrator, rail } = harness(stored);
+    orchestrator.refreshRecentSessions();
+    const rows = rail();
+    expect(rows).toHaveLength(25);
+    expect(rows.every((entry) => entry.sessionId.startsWith("s-real-"))).toBe(true);
   });
 
   it("opens the picker on the same list the rail shows", () => {

@@ -225,6 +225,34 @@ const MIN_LIST_ROWS = 3;
  * Total number of rows available for an active tab's own content
  * (panel chrome + its list), derived from the live terminal height.
  */
+/**
+ * Rows offered to the panels that collapse in STEPS rather than
+ * continuously (LLM / Models): they render a fixed short form up to 15
+ * rows and a fixed tall form from 16, so a budget of 16..19 makes them
+ * overshoot the pane — and Ink 7 paints an over-tall frame over the rows
+ * above instead of clipping it.
+ *
+ * Exported for the test that sweeps every terminal height: the invariant
+ * is "whatever we offer, the panel's rendered height still fits".
+ */
+export function steppedPanelRows(
+  terminalRows: number,
+  composerVisible: boolean,
+): number {
+  return Math.min(
+    tabContentBudget(terminalRows, composerVisible),
+    tabContentBudget(terminalRows, true),
+  );
+}
+
+/** Height the stepped panels actually render at a given budget. */
+export function steppedPanelRendered(maxRows: number): number {
+  return maxRows >= STEPPED_PANEL_TALL_ROWS ? STEPPED_PANEL_TALL_ROWS : STEPPED_PANEL_SHORT_ROWS;
+}
+
+const STEPPED_PANEL_SHORT_ROWS = 9;
+const STEPPED_PANEL_TALL_ROWS = 20;
+
 function tabContentBudget(terminalRows: number, composerVisible: boolean): number {
   return Math.max(
     MIN_LIST_ROWS,
@@ -252,6 +280,23 @@ function ActiveDebugTab({
 }): ReactElement {
   const { rows: terminalRows } = useTerminalSize();
   const tabBudget = tabContentBudget(terminalRows, composerVisible);
+  /**
+   * The budget the LLM and Models panels are told about.
+   *
+   * Those two do not scale continuously: they render a fixed ~9 rows up
+   * to `maxRows` 15 and jump to a fixed ~20 the moment they are offered
+   * 16, so any budget in 16..19 makes them overshoot — and Ink 7 paints
+   * an over-tall frame over the rows above rather than clipping it. The
+   * composer's six reclaimed rows land a default 80x24 / 100x24 terminal
+   * squarely in that band, which turned a clean frame into a garbled one
+   * on exactly the screens most people run.
+   *
+   * Until those panels collapse smoothly, they keep the pre-reclaim
+   * budget: the extra rows go unused rather than overlapping the status
+   * bar. The compact panels (Tasks / Skills / Memory / MCP) window a
+   * list row by row and take the real budget.
+   */
+  const steppedPanelBudget = steppedPanelRows(terminalRows, composerVisible);
   // Compact panels have a tiny fixed header, so they get the list slice
   // directly. LLM / Models own large fixed chrome (RouteCard / status
   // footer) that they collapse themselves, so they receive the full
@@ -290,9 +335,14 @@ function ActiveDebugTab({
     case "providers":
       return <ProvidersPanel panel={state.providersPanel} />;
     case "llm":
-      return <LlmPanel state={state} maxRows={tabBudget} />;
+      return <LlmPanel state={state} maxRows={steppedPanelBudget} />;
     case "models":
-      return <LocalModelsPanel panel={state.localModelsPanel} maxRows={tabBudget} />;
+      return (
+        <LocalModelsPanel
+          panel={state.localModelsPanel}
+          maxRows={steppedPanelBudget}
+        />
+      );
     case "llm-logs":
       return <LocalLlmLogsPanel logs={state.localLlmLogs} maxLines={maxVisible} />;
     case "telegram":

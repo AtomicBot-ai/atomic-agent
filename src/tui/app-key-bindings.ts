@@ -255,7 +255,11 @@ export function handleAppKey(
     // convention every terminal-adjacent editor follows. The editor owns
     // that; arming the quit chord here would make the same keystroke
     // mean two things at once.
-    if (state.composerHasSelection) return false;
+    // …but only while the composer is actually on screen to receive it.
+    // The flag is set by a component that unmounts on every Observe /
+    // Manage tab, and a stranded `true` here would leave Ctrl+C claimed
+    // by nobody: no abort, no quit, for the rest of the session.
+    if (state.composerHasSelection && state.uiMode === "chat") return false;
     if (ctrlCArmed) {
       callbacks.onAbort();
       callbacks.onQuit();
@@ -514,6 +518,25 @@ function handleSidebarKey(
     }
     return true;
   }
+  // FINDING: deleting a thread was mouse-only, while the `[x]` is
+  // painted whether or not mouse reporting is on — `/mouse off`, a
+  // terminal without reporting, or simply keyboard-first operators had
+  // a visible control they could not reach. Delete / `x` opens the same
+  // confirmation the mark does.
+  if (
+    state.sidebarSection === "sessions" &&
+    (key.delete || (!key.ctrl && !key.meta && input.toLowerCase() === "x"))
+  ) {
+    const entry = state.recentSessions[state.sidebarCursor];
+    if (entry) {
+      dispatch({
+        type: "session_delete_requested",
+        sessionId: entry.sessionId,
+        preview: entry.preview,
+      });
+    }
+    return true;
+  }
   if (key.return) {
     if (state.sidebarSection === "tasks") {
       const visible = selectSidebarTasks(state.tasksPanel.rows);
@@ -717,6 +740,14 @@ function handleSessionDeleteKey(
   const { state, dispatch, callbacks } = ctx;
   const confirm = state.sessionDelete;
   if (!confirm) return false;
+  // Ctrl+C is "stop everything", and while this dialog was up it reached
+  // no layer at all — the operator could not abort a running turn or arm
+  // the quit chord without dismissing the dialog first. Close it and let
+  // the global handler have the key.
+  if (key.ctrl && input === "c") {
+    dispatch({ type: "session_delete_closed" });
+    return false;
+  }
   if (key.ctrl || key.meta) return false;
   const lower = input.toLowerCase();
   const close = (): void => dispatch({ type: "session_delete_closed" });

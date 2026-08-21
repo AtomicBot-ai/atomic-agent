@@ -93,8 +93,15 @@ export function handleEditorSubmit(
   // local to the TUI, so `/privacy` under a prompt is still just
   // `/privacy`.
   if (state.pendingApproval && callbacks.onApprovalReply) {
+    const { approvalId } = state.pendingApproval;
     dispatch({ type: "message_steered", text: trimmed });
-    callbacks.onApprovalReply(state.pendingApproval.approvalId, trimmed);
+    callbacks.onApprovalReply(approvalId, trimmed);
+    // The reply IS the verdict, so the prompt has to close here. Without
+    // this the runtime resolves the call but the UI stays in approval
+    // mode forever: `handleAppKey` keeps routing every key into
+    // `handleApprovalKey` (no menu, no Tab, no quit chord) and
+    // `modalOwnsInput` keeps every base-layer click inert.
+    dispatch({ type: "approval_resolved", approvalId, approved: false });
     return;
   }
 

@@ -1,5 +1,5 @@
 import { Box, Text } from "ink";
-import type { ReactElement } from "react";
+import { useRef, type ReactElement } from "react";
 import { useMouseCommands, useMouseTarget } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { theme } from "../theme/theme.js";
@@ -53,6 +53,14 @@ export function EditorBody({
   // its local column minus the gutter is the character. Lines are not
   // soft-wrapped here, so the mapping is exact.
   const mouse = useMouseCommands();
+  /**
+   * Whether the drag in progress started here. Motion and release are
+   * hit-tested by position like any other event, so a drag that began in
+   * the chat log and merely passes over the composer would otherwise
+   * move its caret — and, with a selection live, silently re-point one
+   * end of it. Only a press on this target opens the gesture.
+   */
+  const draggingRef = useRef(false);
   const bodyRef = useMouseTarget((hit) => {
     const row = hit.localY;
     const col = hit.localX - GUTTER_COLUMNS;
@@ -67,14 +75,17 @@ export function EditorBody({
       // otherwise deliver its motion — and its release — to whatever
       // sits under the cursor, leaving the selection neither extended
       // nor ended.
+      draggingRef.current = true;
       mouse?.registry.capturePointer(bodyRef);
       return true;
     }
+    if (!draggingRef.current) return false;
     if (hit.event.kind === "motion" && hit.event.button === "left") {
       onDragMove?.(row, col);
       return true;
     }
     if (hit.event.kind === "release") {
+      draggingRef.current = false;
       mouse?.registry.releasePointer();
       onDragEnd?.();
       return true;
