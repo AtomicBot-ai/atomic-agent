@@ -1,4 +1,5 @@
 import { ContextChip } from "./components/context-chip.js";
+import { ContextPanel } from "./components/context-panel.js";
 import { selectContextUsage } from "./select-context-usage.js";
 import { Box, Text, useApp, useInput, type DOMElement, type Key } from "ink";
 import {
@@ -690,6 +691,7 @@ export function TuiApp({
 
   const editorFocus =
     !state.menuOpen &&
+    !state.contextPanelOpen &&
     !menuLeaderArmed &&
     // An approval prompt no longer takes the keyboard away: the
     // operator answers the agent in the same field they always type in,
@@ -780,6 +782,7 @@ export function TuiApp({
   // behind it. Same predicate the key layer gates on.
   const modalOwnsInput =
     state.menuOpen ||
+    state.contextPanelOpen ||
     Boolean(state.sessionDelete) ||
     Boolean(state.pendingApproval) ||
     Boolean(state.updatePrompt) ||
@@ -835,7 +838,8 @@ export function TuiApp({
    * as one rule instead of a list of exceptions.
    */
   const menuBackdropHandler = (hit: MouseHit): boolean => {
-    const open = state.menuOpen || Boolean(state.sessionDelete);
+    const open =
+      state.menuOpen || state.contextPanelOpen || Boolean(state.sessionDelete);
     if (!open) return false;
     if (hit.event.kind === "wheel") return true;
     if (!isPrimaryPress(hit.event)) return false;
@@ -853,14 +857,17 @@ export function TuiApp({
     dispatch(
       state.sessionDelete
         ? { type: "session_delete_closed" }
-        : { type: "menu_closed" },
+        : state.contextPanelOpen
+          ? { type: "context_panel_closed" }
+          : { type: "menu_closed" },
     );
     return true;
   };
   // Stamped when a backdrop-owning surface opens; read by the handler
   // above. A ref rather than state: it must not trigger a render.
   const modalOpenedAtRef = useRef(0);
-  const backdropOwner = state.menuOpen || Boolean(state.sessionDelete);
+  const backdropOwner =
+    state.menuOpen || state.contextPanelOpen || Boolean(state.sessionDelete);
   useEffect(() => {
     if (backdropOwner) modalOpenedAtRef.current = Date.now();
   }, [backdropOwner]);
@@ -1128,7 +1135,7 @@ export function TuiApp({
   // pinned-input-at-bottom UX.
   // Render-phase on purpose: `theme` is a read-at-render proxy, and children
   // render after this body runs, so the flag is already correct for them.
-  setBackdropDimmed(state.menuOpen);
+  setBackdropDimmed(state.menuOpen || state.contextPanelOpen);
 
 
   const isTty = Boolean(process.stdout.isTTY);
@@ -1286,6 +1293,16 @@ export function TuiApp({
                 onFocus={(cursor) =>
                   dispatch({ type: "session_delete_cursor_set", cursor })
                 }
+              />
+            ) : null}
+            {state.contextPanelOpen && contextUsage ? (
+              <ContextPanel
+                usage={contextUsage}
+                availableRows={menuPaneRows}
+                availableColumns={
+                  terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
+                }
+                reservedForReply={state.session.completionMaxTokens}
               />
             ) : null}
             {state.menuOpen ? (

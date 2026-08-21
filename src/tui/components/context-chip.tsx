@@ -1,5 +1,7 @@
 import { Text } from "ink";
 import type { ReactElement } from "react";
+import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
 import type { ContextUsageView } from "../select-context-usage.js";
 import { mixColor } from "../theme/mix-color.js";
 import { readableOn } from "../theme/readable-foreground.js";
@@ -54,6 +56,9 @@ const STEP_MID = 66;
  * falls when the packer trims and when the memory fabric lifts facts out
  * of the transcript. A cumulative token counter would climb past 100%
  * and answer a question nobody asked.
+ *
+ * Clicking it opens the breakdown — see `context-panel.tsx`. That is
+ * what makes the button ground honest rather than decorative.
  */
 export function ContextChip({
   usage,
@@ -71,10 +76,27 @@ export function ContextChip({
       : ` context [${renderProgressBar(usage.percent, GAUGE_WIDTH)}] ${String(
           usage.percent,
         ).padStart(3)}% `;
-  return (
+  const chip = (
     <Text backgroundColor={background} color={readableOn(background)} bold>
       {label}
     </Text>
+  );
+  const mouse = useMouseCommands();
+  // No provider (component tests, the wizard's separate Ink tree):
+  // render the label and stop. A target that swallows the click without
+  // acting would be worse than no target.
+  if (!mouse) return chip;
+  return (
+    <MouseTarget
+      flexShrink={0}
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        mouse.dispatch({ type: "context_panel_toggled" });
+        return true;
+      }}
+    >
+      {chip}
+    </MouseTarget>
   );
 }
 

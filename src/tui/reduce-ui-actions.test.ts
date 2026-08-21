@@ -12,6 +12,7 @@ const SESSION: TuiSessionInfo = {
   browserHeadless: true,
   approvalLevel: 5,
   maxSteps: 10,
+  completionMaxTokens: 2048,
   skillCount: 0,
 };
 
@@ -218,3 +219,34 @@ describe("reduceUiAction while_busy_mode_changed", () => {
   });
 });
 
+
+describe("the context panel", () => {
+  const open = (): ReturnType<typeof reduceTuiState> =>
+    reduceTuiState(createInitialTuiState(SESSION), {
+      type: "context_panel_toggled",
+    });
+
+  it("toggles", () => {
+    const opened = open();
+    expect(opened.contextPanelOpen).toBe(true);
+    expect(
+      reduceTuiState(opened, { type: "context_panel_toggled" }).contextPanelOpen,
+    ).toBe(false);
+  });
+
+  it("closes explicitly", () => {
+    expect(
+      reduceTuiState(open(), { type: "context_panel_closed" }).contextPanelOpen,
+    ).toBe(false);
+  });
+
+  /**
+   * Two absolutely-positioned panels in a terminal do not stack, they
+   * interleave. Opening the menu takes the floor.
+   */
+  it("gives way to the menu", () => {
+    const next = reduceTuiState(open(), { type: "menu_opened" });
+    expect(next.menuOpen).toBe(true);
+    expect(next.contextPanelOpen).toBe(false);
+  });
+});

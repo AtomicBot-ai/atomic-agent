@@ -1,5 +1,11 @@
 import { render } from "ink-testing-library";
 import { afterAll, describe, expect, it } from "vitest";
+import { MouseProvider } from "../mouse/mouse-context.js";
+import type { TuiMouseEvent } from "../mouse/mouse-event.js";
+import { MouseTargetRegistry } from "../mouse/mouse-registry.js";
+import type { TuiAction } from "../tui-action.js";
+import type { TuiAppCallbacks } from "../tui-app.js";
+import type { TuiState } from "../tui-state.js";
 import type { ContextUsageView } from "../select-context-usage.js";
 import { mixColor } from "../theme/mix-color.js";
 import { getActiveTheme, setActiveTheme, THEMES, theme } from "../theme/theme.js";
@@ -93,5 +99,66 @@ describe("the chip's ground", () => {
     expect(groundFor(usage({ percent: null, contextWindow: null }))).toBe(
       mixColor(theme.colors.accent, theme.colors.railBackground, 0.6),
     );
+  });
+});
+
+function press(x: number, y: number, button: "left" | "right" = "left"): TuiMouseEvent {
+  return {
+    kind: "press",
+    button,
+    wheel: null,
+    x,
+    y,
+    shift: false,
+    alt: false,
+    ctrl: false,
+  };
+}
+
+describe("clicking the chip", () => {
+  /**
+   * Mounted in a real registry so the click goes through genuine Yoga
+   * hit-testing rather than a hand-fed rectangle — the same shape as
+   * `prompt-meta-bar.test.tsx`.
+   */
+  async function mount(): Promise<{
+    registry: MouseTargetRegistry;
+    actions: TuiAction[];
+    frame: () => string;
+    unmount: () => void;
+  }> {
+    const registry = new MouseTargetRegistry();
+    const actions: TuiAction[] = [];
+    const { lastFrame, unmount } = render(
+      <MouseProvider
+        registry={registry}
+        dispatch={(action) => actions.push(action)}
+        callbacks={{} as TuiAppCallbacks}
+        getState={() => ({}) as TuiState}
+      >
+        <ContextChip usage={usage()} />
+      </MouseProvider>,
+    );
+    // Ink commits on its own throttle and React registers the target in
+    // the effect after that commit, so a freshly mounted chip is not
+    // hit-testable on the very first tick.
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    return { registry, actions, frame: () => (lastFrame() ?? "").replace(SGR, ""), unmount };
+  }
+
+  it("opens the detail panel", async () => {
+    const { registry, actions, frame, unmount } = await mount();
+    const x = frame().indexOf("context");
+    expect(registry.dispatch(press(x, 0))).toBe(true);
+    expect(actions).toEqual([{ type: "context_panel_toggled" }]);
+    unmount();
+  });
+
+  it("ignores a right-button press", async () => {
+    const { registry, actions, frame, unmount } = await mount();
+    const x = frame().indexOf("context");
+    expect(registry.dispatch(press(x, 0, "right"))).toBe(false);
+    expect(actions).toEqual([]);
+    unmount();
   });
 });

@@ -206,6 +206,10 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "mouse support on/off/status (off restores the terminal's drag-to-select)",
   },
+  {
+    name: "context",
+    description: "show where this session's context window went",
+  },
 ];
 
 describe("menu registry", () => {

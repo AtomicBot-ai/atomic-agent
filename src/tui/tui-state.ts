@@ -257,6 +257,13 @@ export interface TuiSessionInfo {
   /** Live approval ladder position (1 = ask for everything … 5 = full trust). */
   approvalLevel: number;
   maxSteps: number;
+  /**
+   * Tokens the runtime holds back for the model's own reply
+   * (`localModels.completionMaxTokens`). Not part of the prompt, but the
+   * reason the prompt cannot grow into the last of the window — so the
+   * context panel accounts for it separately from free space.
+   */
+  completionMaxTokens: number;
   skillCount: number;
   /**
    * Whether the user actually opted into a local backend (see
@@ -406,6 +413,8 @@ export interface TuiState {
    * every node regardless of where it lives.
    */
   menuOpen: boolean;
+  /** The composer's context detail panel floats over the chat. */
+  contextPanelOpen: boolean;
   menuPath: string | null;
   menuQuery: string;
   menuCursor: number;
@@ -628,6 +637,7 @@ export function createInitialTuiState(
     slashQuery: "",
     slashPaletteCursor: 0,
     menuOpen: false,
+    contextPanelOpen: false,
     menuPath: null,
     menuQuery: "",
     menuCursor: 0,

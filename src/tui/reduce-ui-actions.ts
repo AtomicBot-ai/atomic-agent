@@ -82,6 +82,9 @@ export function reduceUiAction(
         menuPath: null,
         menuQuery: "",
         menuCursor: 0,
+        // One overlay at a time. Two absolutely-positioned panels in a
+        // terminal do not stack, they interleave.
+        contextPanelOpen: false,
       };
     case "menu_closed":
       return {
@@ -91,6 +94,10 @@ export function reduceUiAction(
         menuQuery: "",
         menuCursor: 0,
       };
+    case "context_panel_toggled":
+      return { ...state, contextPanelOpen: !state.contextPanelOpen };
+    case "context_panel_closed":
+      return { ...state, contextPanelOpen: false };
     case "menu_query_changed":
       // A query flattens the tree, so any open submenu is dropped with it.
       return { ...state, menuQuery: action.query, menuPath: null };
