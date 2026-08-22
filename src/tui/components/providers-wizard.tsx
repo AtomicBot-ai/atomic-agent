@@ -120,11 +120,13 @@ function listActionsHint(base: string, submitting: boolean): string {
 /**
  * One labelled single-line field.
  *
- * The blue in this file — borders, titles, the typed value, the masked
- * key — is all ink, so it reads `accent`. `accentSoft` is the house
- * palette's fill (`#294793`), which the design lifts to `accent` the
- * moment the same hue has to be read rather than sat on; painting ink
- * with it put these screens at roughly 2:1 against the terminal.
+ * The text in this file — titles, the typed value, the masked key —
+ * reads `accent`. `accentSoft` is the house palette's fill (`#294793`),
+ * which the design lifts to `accent` the moment the same hue has to be
+ * read rather than sat on; painting text with it put these screens at
+ * roughly 2:1 against the terminal. Box borders keep the fill tone:
+ * the brief fences the lift to text, and a frame is chrome — looked
+ * at, not read.
  */
 function renderLineField(props: {
   title: string;
@@ -139,7 +141,7 @@ function renderLineField(props: {
     <Box
       flexDirection="column"
       borderStyle="round"
-      borderColor={theme.colors.accent}
+      borderColor={theme.colors.accentSoft}
       paddingX={1}
       marginY={1}
       width="100%"
@@ -374,7 +376,7 @@ export function ProvidersWizard(props: {
       <Box
         flexDirection="column"
         borderStyle="round"
-        borderColor={theme.colors.accent}
+        borderColor={theme.colors.accentSoft}
         paddingX={1}
         marginY={1}
         width="100%"

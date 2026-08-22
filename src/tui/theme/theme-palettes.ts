@@ -39,8 +39,8 @@ export const ATOMIC_RETRO_COLORS: TuiColors = {
   accentAlt: "#bb9af4",
   // The un-lifted fill. Anything that paints a ground (chips, the RUN
   // badge, the composer) reaches for this, not for `accent`; anything
-  // that paints ink on a ground — text, and the box-drawing glyphs a
-  // border is made of — reaches for `accent`, not for this.
+  // that paints *text* on a ground reaches for `accent`, not for this.
+  // Borders and other chrome may sit at either — looked at, not read.
   accentSoft: "#294793",
   border: "#3c4048",
   muted: "#858992",

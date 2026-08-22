@@ -138,8 +138,8 @@ describe("renderPickList colours", () => {
   it("paints the selected row in the text-safe accent, and only that row", () => {
     const frame = coloured().lastFrame() ?? "";
     // Asserted on the sequence immediately before the label rather than
-    // on the whole line: every row is bracketed by the box border, which
-    // now carries the accent too and would satisfy a line-wide match.
+    // on the whole line: every row is bracketed by the box border's own
+    // SGRs, which a line-wide match would confuse with the row's.
     expect(frame).toContain(`${foregroundSgr(house.accent)}> second-model`);
     expect(frame).not.toContain(
       `${foregroundSgr(house.accentSoft)}> second-model`,
@@ -150,11 +150,12 @@ describe("renderPickList colours", () => {
     expect(frame).not.toContain(`${foregroundSgr(house.accent)}  first-model`);
   });
 
-  it("draws the frame in the text-safe accent too", () => {
-    // A border is box-drawing glyphs, not a ground, so it is measured
-    // against the terminal like any other ink.
+  it("keeps the border on the fill tone", () => {
+    // The lift is fenced to text. A border is chrome — looked at, not
+    // read — so it stays on `accentSoft`, and the quiet frame is what
+    // leaves the accent to the title and the cursor row.
     const frame = coloured().lastFrame() ?? "";
-    expect(lineWith(frame, "╭")).toContain(foregroundSgr(house.accent));
-    expect(frame).not.toContain(foregroundSgr(house.accentSoft));
+    expect(lineWith(frame, "╭")).toContain(foregroundSgr(house.accentSoft));
+    expect(lineWith(frame, "╭")).not.toContain(foregroundSgr(house.accent));
   });
 });

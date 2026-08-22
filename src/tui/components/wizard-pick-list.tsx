@@ -104,14 +104,16 @@ export function renderPickList(props: {
   const visible = props.options.slice(start, start + window);
   const position = total === 0 ? "(0/0)" : `(${clamped + 1}/${total})`;
   return (
-    // Every blue here is ink — border glyphs, the title, the cursor row —
-    // so it reads `accent`, never `accentSoft`. The latter is the house
-    // palette's *fill*, and as ink on a dark terminal it lands near 2:1,
-    // which is what made this box and its selection nearly unreadable.
+    // The text here — title and cursor row — is ink and reads `accent`;
+    // `accentSoft` is the house palette's *fill*, and as ink on a dark
+    // terminal it lands near 2:1, which is what made this box and its
+    // selection nearly unreadable. The border alone keeps the fill tone:
+    // the brief fenced the lift to text, and the quiet frame leaves the
+    // accent to the rows that are read.
     <Box
       flexDirection="column"
       borderStyle="round"
-      borderColor={theme.colors.accent}
+      borderColor={theme.colors.accentSoft}
       paddingX={1}
       marginY={1}
       width="100%"

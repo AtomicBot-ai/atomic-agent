@@ -78,8 +78,13 @@ export function OnboardingIntroStep(props: {
         <ArtRow key={index} row={row} />
       ))}
       <Box flexDirection="column" marginTop={1}>
+        {/*
+          The wordmark is read, not looked at — it is the product's name
+          in letterforms — so it takes the text-safe `accent`. The
+          `accentSoft` fill lands near 2:1 as ink on a dark page.
+        */}
         {wordmark.map((row, index) => (
-          <Text key={index} bold color={theme.colors.accentSoft} wrap="truncate">
+          <Text key={index} bold color={theme.colors.accent} wrap="truncate">
             {pad(row)}
           </Text>
         ))}
@@ -124,6 +129,12 @@ function ArtRow({ row }: { row: string }): ReactElement {
         <Text
           key={index}
           bold={run.kind !== "ring"}
+          // The ring keeps the `accentSoft` fill ON PURPOSE: its crosses
+          // are the mark shrunk past legibility — decoration, not text —
+          // and the intro reads by depth: white face, light-blue walls,
+          // accent wordmark, dim ring at the back. Lifted to `accent`,
+          // fourteen crosses would sit at the wordmark's own brightness
+          // and compete with the two lines that are actually read.
           color={
             run.kind === "ring"
               ? theme.colors.accentSoft
