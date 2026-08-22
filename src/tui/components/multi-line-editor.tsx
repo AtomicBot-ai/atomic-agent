@@ -72,6 +72,18 @@ export interface MultiLineEditorProps {
   onSelectionChange?: (hasSelection: boolean) => void;
   /** Text was copied to the clipboard, so the app can say so. */
   onCopy?: (text: string) => void;
+  /**
+   * Growth cap, in buffer lines painted at once — see
+   * `EditorBodyProps.maxVisibleLines`. The buffer itself is unbounded;
+   * only the paint is windowed.
+   */
+  maxVisibleLines?: number;
+  /**
+   * Mouse layer for the editor's click target — see
+   * `EditorBodyProps.mouseLayer`. The composer overlay passes
+   * `MOUSE_LAYER_PANEL` so its clicks beat the chat controls it covers.
+   */
+  mouseLayer?: number;
 }
 
 /**
@@ -108,6 +120,8 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     onClickFocus,
     onSelectionChange,
     onCopy,
+    maxVisibleLines,
+    mouseLayer,
   } = props;
   const [cursorPos, setCursorPos] = useState<number>(value.length);
   /**
@@ -288,6 +302,8 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
         onDragStart={beginDrag}
         onDragMove={extendDrag}
         onDragEnd={endDrag}
+        maxVisibleLines={maxVisibleLines}
+        mouseLayer={mouseLayer}
       />
     );
   }
@@ -308,6 +324,8 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
         onDragStart={beginDrag}
         onDragMove={extendDrag}
         onDragEnd={endDrag}
+        maxVisibleLines={maxVisibleLines}
+        mouseLayer={mouseLayer}
       />
     </Box>
   );

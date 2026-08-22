@@ -86,6 +86,7 @@ export function PromptShell(props: PromptShellProps): ReactElement {
     value,
     onChange,
     onSubmit,
+    mouseLayer,
     ...editorProps
   } = props;
   const rotated = useRotatingPlaceholder(
@@ -152,12 +153,17 @@ export function PromptShell(props: PromptShellProps): ReactElement {
               onChange={onChange}
               onSubmit={onSubmit}
               placeholder={effectivePlaceholder}
+              mouseLayer={mouseLayer}
               bare
             />
           </Box>
           <Box flexShrink={0} marginLeft={1}>
             <ComposerSendButton
               enabled={canSend}
+              // The shell floats over the chat log, so its controls
+              // register on the same raised layer as the overlay's
+              // backstop — see `composer-overlay.tsx`.
+              layer={mouseLayer}
               // Exactly the callback Enter fires, with exactly the
               // buffer Enter would submit. A second submit path would be
               // a second place for slash-command handling and the

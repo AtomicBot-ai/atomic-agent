@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import { useRef, type ReactElement } from "react";
 import { useMouseCommands, useMouseTarget } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
+import { computeRowWindow } from "../row-window.js";
 import { theme } from "../theme/theme.js";
 import type { Cursor } from "./multi-line-editor-cursor.js";
 
@@ -30,6 +31,21 @@ export interface EditorBodyProps {
    * a buffer offset.
    */
   onClickCursor?: (row: number, col: number) => void;
+  /**
+   * Most buffer lines painted at once. Beyond it the body renders a
+   * cursor-tracking window (`computeRowWindow`, the same mechanism the
+   * manage panels use) instead of every line: the composer overlay this
+   * body sits in must stop growing before it climbs under the status
+   * bar. Omitted (component tests, the wizard) means unbounded.
+   */
+  maxVisibleLines?: number;
+  /**
+   * Mouse layer for the body's click target. The composer overlay
+   * paints over the chat log, so its editor registers above
+   * `MOUSE_LAYER_BASE` — otherwise a small chat control underneath
+   * would win the innermost-first sort and steal the click.
+   */
+  mouseLayer?: number;
 }
 
 /**
@@ -48,6 +64,8 @@ export function EditorBody({
   onDragStart,
   onDragMove,
   onDragEnd,
+  maxVisibleLines,
+  mouseLayer,
 }: EditorBodyProps): ReactElement {
   // One target for the whole buffer: the click's local row is the line,
   // its local column minus the gutter is the character. Lines are not
@@ -61,8 +79,19 @@ export function EditorBody({
    * end of it. Only a press on this target opens the gesture.
    */
   const draggingRef = useRef(false);
+  const lines = value.split("\n");
+  // The visible slice of the buffer. `computeRowWindow` keeps the
+  // cursor's line in view, which is the line every keystroke edits, so
+  // typing at the cap scrolls the window rather than the composer.
+  const lineWindow = computeRowWindow(
+    lines.length,
+    cursor.row,
+    maxVisibleLines ?? lines.length,
+  );
   const bodyRef = useMouseTarget((hit) => {
-    const row = hit.localY;
+    // Local rows are window rows: the body only paints the slice, so a
+    // click's line index is offset by everything scrolled off above.
+    const row = lineWindow.start + hit.localY;
     const col = hit.localX - GUTTER_COLUMNS;
     // A press starts a drag AND places the caret: press-move-release is
     // one gesture, and a press that turns out to be a plain click has
@@ -91,7 +120,7 @@ export function EditorBody({
       return true;
     }
     return false;
-  });
+  }, { layer: mouseLayer });
   if (value.length === 0) {
     return (
       <Box ref={bodyRef}>
@@ -101,7 +130,6 @@ export function EditorBody({
       </Box>
     );
   }
-  const lines = value.split("\n");
   // Buffer offset of each line's first character; +1 per newline.
   const lineStarts: number[] = [];
   let offset = 0;
@@ -109,24 +137,31 @@ export function EditorBody({
     lineStarts.push(offset);
     offset += line.length + 1;
   }
+  const visible = lines.slice(lineWindow.start, lineWindow.start + lineWindow.count);
   return (
     <Box flexDirection="column" ref={bodyRef}>
-      {lines.map((line, idx) => (
-        <Box key={idx}>
-          <Text color={theme.colors.accent}>
-            {idx === 0 ? `${theme.glyphs.promptCaret} ` : "  "}
-          </Text>
-          {renderLine({
-            line,
-            cursorCol: idx === cursor.row ? cursor.col : -1,
-            focus,
-            // Offsets of this line within the buffer, so the selection
-            // (which is buffer-relative) can be clipped to it.
-            lineStart: lineStarts[idx] ?? 0,
-            selection,
-          })}
-        </Box>
-      ))}
+      {visible.map((line, sliceIdx) => {
+        // Everything buffer-relative — the caret glyph, the cursor row,
+        // the selection clip — keys off the real line index, not the
+        // slice position, or scrolling the window would move them all.
+        const idx = lineWindow.start + sliceIdx;
+        return (
+          <Box key={idx}>
+            <Text color={theme.colors.accent}>
+              {idx === 0 ? `${theme.glyphs.promptCaret} ` : "  "}
+            </Text>
+            {renderLine({
+              line,
+              cursorCol: idx === cursor.row ? cursor.col : -1,
+              focus,
+              // Offsets of this line within the buffer, so the selection
+              // (which is buffer-relative) can be clipped to it.
+              lineStart: lineStarts[idx] ?? 0,
+              selection,
+            })}
+          </Box>
+        );
+      })}
     </Box>
   );
 }

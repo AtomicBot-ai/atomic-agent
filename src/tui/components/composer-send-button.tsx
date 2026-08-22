@@ -11,6 +11,12 @@ export interface ComposerSendButtonProps {
   /** A disabled button still renders: it says the affordance exists. */
   enabled: boolean;
   onPress: () => void;
+  /**
+   * Mouse layer for the click target. The composer overlay floats over
+   * the chat log, so its button registers above the base layer —
+   * otherwise a covered chat control could win the click.
+   */
+  layer?: number;
 }
 
 /**
@@ -34,6 +40,7 @@ export interface ComposerSendButtonProps {
 export function ComposerSendButton({
   enabled,
   onPress,
+  layer,
 }: ComposerSendButtonProps): ReactElement {
   const background = enabled
     ? theme.colors.chipBackground
@@ -54,6 +61,7 @@ export function ComposerSendButton({
   return (
     <MouseTarget
       flexShrink={0}
+      layer={layer}
       onMouse={(hit) => {
         if (!isPrimaryPress(hit.event)) return false;
         onPress();
