@@ -6,9 +6,10 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OnboardingScreen } from "./onboarding-screen.js";
-import { resetConfigCache } from "../../config/index.js";
+import { getConfig, resetConfigCache } from "../../config/index.js";
 import { ROOT_PADDING_LEFT } from "../layout.js";
 import { createOnboardingState } from "../onboarding/onboarding-state.js";
+import { decideSecondBackendOffer } from "../onboarding/propose-second-backend.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
 import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
 import { createInitialTuiState } from "../tui-state.js";
@@ -30,7 +31,12 @@ const STATE_DIR_ENV = "ATOMIC_AGENT_STATE_DIR";
 const strip = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, "");
 const ESCAPE_KEY = "\u001b";
 
-type Step = "intro" | "choose" | "custom_chat_url" | "propose_second";
+type Step =
+  | "intro"
+  | "choose"
+  | "local_pick"
+  | "custom_chat_url"
+  | "propose_second";
 
 function flowElement(
   step: Step,
@@ -105,6 +111,16 @@ function renderCloud(wizard: ProvidersWizardState) {
       callbacks={{}}
     />,
   );
+}
+
+// Effects fire after commit, so a persisted side effect is awaited by
+// polling config — never by trusting how fast a frame landed.
+async function untilStamped(read: () => boolean, timeoutMs = 1000): Promise<void> {
+  const start = Date.now();
+  while (!read()) {
+    if (Date.now() - start > timeoutMs) throw new Error("stamp never persisted");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 describe("OnboardingScreen", () => {
@@ -331,5 +347,38 @@ describe("OnboardingScreen", () => {
     view.stdin.write("j");
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(actions).toContainEqual({ type: "onboarding_cursor_moved", delta: 1 });
+  });
+
+  it("stamps localSetupSeenAt the moment the model list is reached", async () => {
+    expect(getConfig().tui.onboarding.localSetupSeenAt).toBeNull();
+    renderFlow("local_pick");
+    await untilStamped(() => getConfig().tui.onboarding.localSetupSeenAt !== null);
+    // The stamp is the exact input the next decision reads: with it,
+    // the "set up local models too" pitch stays away for good.
+    expect(
+      decideSecondBackendOffer({
+        outcome: "cloud",
+        cloudReady: true,
+        localReady: false,
+        alreadyProposed: false,
+        localSetupSeen: getConfig().tui.onboarding.localSetupSeenAt !== null,
+      }),
+    ).toBeNull();
+  });
+
+  it("leaves localSetupSeenAt null off the local branch, so the offer stands", async () => {
+    renderFlow("choose");
+    // Long enough for the stamping effect to have fired were it going to.
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(getConfig().tui.onboarding.localSetupSeenAt).toBeNull();
+    expect(
+      decideSecondBackendOffer({
+        outcome: "cloud",
+        cloudReady: true,
+        localReady: false,
+        alreadyProposed: false,
+        localSetupSeen: getConfig().tui.onboarding.localSetupSeenAt !== null,
+      }),
+    ).toBe("local");
   });
 });
