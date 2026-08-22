@@ -45,6 +45,10 @@ import { OnboardingIntroStep } from "./onboarding-intro-step.js";
 import { OnboardingLocalPickStep } from "./onboarding-local-pick-step.js";
 import { OnboardingProposeStep } from "./onboarding-propose-step.js";
 import { OnboardingWaitOrJumpStep } from "./onboarding-wait-or-jump-step.js";
+import {
+  layOutOnboardingSurface,
+  SURFACE_PADDING_TOP,
+} from "./onboarding-surface-layout.js";
 import { OnboardingUrlStep } from "./onboarding-url-step.js";
 import { ProvidersWizard } from "./providers-wizard.js";
 
@@ -59,6 +63,9 @@ export interface OnboardingScreenCallbacks {
   /** Start a model pull. Owned by `LocalModelsOrchestrator`. */
   onLocalModelsPullRequested?(modelId: LocalModelId): void;
 }
+
+/** Named once — the offer screens quote it back at the operator. */
+const CLOUD_READY_LABEL = "Cloud model ready";
 
 const SUBTITLES: Record<OnboardingUiState["step"], string> = {
   intro: "",
@@ -163,6 +170,7 @@ export function OnboardingScreen(props: {
     () => orderLocalModelPicks(buildLocalModelPicks(ramGb)),
     [ramGb],
   );
+  const pickCursor = onboarding.cursor % Math.max(1, picks.length);
 
   useInput(
     (input, key) => {
@@ -369,90 +377,142 @@ export function OnboardingScreen(props: {
     dispatch({ type: "onboarding_set", onboarding: null });
   }, [callbacks, dispatch, onboarding.outcome, onboarding.step]);
 
+  // Both axes are centred on the block as a whole, never line by line:
+  // a column of options whose rows each find their own centre is ragged
+  // to scan, and every row would move whenever its text changed.
+  const placement = layOutOnboardingSurface({
+    columns: size.columns,
+    rows: size.rows,
+    step: onboarding.step,
+    fit,
+    subtitle: SUBTITLES[onboarding.step],
+    picks,
+    cursor: pickCursor,
+    ramGb,
+    offer: onboarding.offer,
+    configuredLabel: configuredLabel(onboarding.outcome),
+    modelLabel: onboarding.localModelId ?? "the model",
+    offerCloudMeanwhile: !cloudAlreadyConfigured,
+    pull: props.state.localModelsPanel.pull,
+    cloudLabel: CLOUD_READY_LABEL,
+  });
+
   return (
-    <Box flexDirection="column" flexGrow={1} paddingTop={1}>
-      {onboarding.step === "intro" ? null : (
-        <OnboardingHeader subtitle={SUBTITLES[onboarding.step]} mark={fit.mark} />
-      )}
-      <Box flexDirection="column" marginTop={1} flexShrink={0}>
-        {onboarding.step === "intro" ? (
-          <OnboardingIntroStep
-            columns={Math.max(20, size.columns - 4)}
-            rows={size.rows}
-            fit={fit}
-            skipAnimation={introSkipped}
-          />
-        ) : null}
-        {onboarding.step === "choose" ? (
-          <OnboardingChooseStep cursor={onboarding.cursor} fit={fit} />
-        ) : null}
-        {onboarding.step === "local_pick" ? (
-          <OnboardingLocalPickStep
-            picks={picks}
-            cursor={onboarding.cursor % Math.max(1, picks.length)}
-            ramGb={ramGb}
-            fit={fit}
-          />
-        ) : null}
-        {onboarding.step === "propose_second" && onboarding.offer ? (
-          <OnboardingProposeStep
-            offer={onboarding.offer}
-            configuredLabel={configuredLabel(onboarding.outcome)}
-            cursor={onboarding.cursor % 2}
-          />
-        ) : null}
-        {onboarding.step === "wait_or_jump" ? (
-          <OnboardingWaitOrJumpStep
-            pull={props.state.localModelsPanel.pull}
-            cloudLabel="Cloud model ready"
-            cursor={onboarding.cursor % 2}
-          />
-        ) : null}
-        {onboarding.step === "local_download" ? (
-          <OnboardingDownloadStep
-            pull={props.state.localModelsPanel.pull}
-            modelLabel={onboarding.localModelId ?? "the model"}
-            offerCloudMeanwhile={!cloudAlreadyConfigured}
-          />
-        ) : null}
-        {onboarding.step === "cloud" && wizardState ? (
-          <ProvidersWizard wizard={wizardState} />
-        ) : null}
-        {onboarding.step === "custom_chat_url" ? (
-          <OnboardingUrlStep
-            kind="chat"
-            value={onboarding.chatUrl}
-            busy={onboarding.busy}
-            error={onboarding.error}
-            onChange={(value) =>
-              dispatch({ type: "onboarding_url_changed", field: "chat", value })
-            }
-            onSubmit={(value) => void probeAndAdvance(value)}
-            onBack={() => dispatch({ type: "onboarding_step_set", step: "choose" })}
-          />
-        ) : null}
-        {onboarding.step === "custom_embedding_url" ? (
-          <OnboardingUrlStep
-            kind="embedding"
-            value={onboarding.embeddingUrl}
-            busy={onboarding.busy}
-            error={onboarding.error}
-            onChange={(value) =>
-              dispatch({ type: "onboarding_url_changed", field: "embedding", value })
-            }
-            onSubmit={(value) => void saveEmbeddingUrl(value)}
-            onBack={() =>
-              dispatch({ type: "onboarding_step_set", step: "custom_chat_url" })
-            }
-          />
-        ) : null}
+    <Box flexDirection="column" flexGrow={1} paddingTop={SURFACE_PADDING_TOP}>
+      {/*
+        Two spacers rather than `justifyContent="center"`: flex hands out
+        free space only when there is some, so a step taller than the
+        budget collapses them and starts at the top instead of hanging
+        equally off both ends. `overflow` then keeps its tail away from
+        the hint strip — Ink 7 paints over earlier rows rather than
+        clipping a frame that does not fit.
+      */}
+      <Box
+        flexDirection="column"
+        flexShrink={0}
+        height={placement.rows}
+        overflow="hidden"
+      >
+        <Box flexGrow={1} flexShrink={1} />
+        <Box
+          flexDirection="column"
+          flexShrink={0}
+          marginLeft={placement.left}
+          width={placement.width}
+        >
+          {onboarding.step === "intro" ? null : (
+            <OnboardingHeader subtitle={SUBTITLES[onboarding.step]} mark={fit.mark} />
+          )}
+          {/*
+            The gap under the header, which the splash does not draw one
+            of. Spending the row anyway cost the intro its last line.
+          */}
+          <Box
+            flexDirection="column"
+            marginTop={onboarding.step === "intro" ? 0 : 1}
+            flexShrink={0}
+          >
+            {onboarding.step === "intro" ? (
+              <OnboardingIntroStep
+                columns={Math.max(20, size.columns - 4)}
+                rows={placement.rows}
+                fit={fit}
+                skipAnimation={introSkipped}
+              />
+            ) : null}
+            {onboarding.step === "choose" ? (
+              <OnboardingChooseStep cursor={onboarding.cursor} fit={fit} />
+            ) : null}
+            {onboarding.step === "local_pick" ? (
+              <OnboardingLocalPickStep
+                picks={picks}
+                cursor={pickCursor}
+                ramGb={ramGb}
+                fit={fit}
+              />
+            ) : null}
+            {onboarding.step === "propose_second" && onboarding.offer ? (
+              <OnboardingProposeStep
+                offer={onboarding.offer}
+                configuredLabel={configuredLabel(onboarding.outcome)}
+                cursor={onboarding.cursor % 2}
+              />
+            ) : null}
+            {onboarding.step === "wait_or_jump" ? (
+              <OnboardingWaitOrJumpStep
+                pull={props.state.localModelsPanel.pull}
+                cloudLabel={CLOUD_READY_LABEL}
+                cursor={onboarding.cursor % 2}
+              />
+            ) : null}
+            {onboarding.step === "local_download" ? (
+              <OnboardingDownloadStep
+                pull={props.state.localModelsPanel.pull}
+                modelLabel={onboarding.localModelId ?? "the model"}
+                offerCloudMeanwhile={!cloudAlreadyConfigured}
+              />
+            ) : null}
+            {onboarding.step === "cloud" && wizardState ? (
+              <ProvidersWizard wizard={wizardState} />
+            ) : null}
+            {onboarding.step === "custom_chat_url" ? (
+              <OnboardingUrlStep
+                kind="chat"
+                value={onboarding.chatUrl}
+                busy={onboarding.busy}
+                error={onboarding.error}
+                onChange={(value) =>
+                  dispatch({ type: "onboarding_url_changed", field: "chat", value })
+                }
+                onSubmit={(value) => void probeAndAdvance(value)}
+                onBack={() => dispatch({ type: "onboarding_step_set", step: "choose" })}
+              />
+            ) : null}
+            {onboarding.step === "custom_embedding_url" ? (
+              <OnboardingUrlStep
+                kind="embedding"
+                value={onboarding.embeddingUrl}
+                busy={onboarding.busy}
+                error={onboarding.error}
+                onChange={(value) =>
+                  dispatch({ type: "onboarding_url_changed", field: "embedding", value })
+                }
+                onSubmit={(value) => void saveEmbeddingUrl(value)}
+                onBack={() =>
+                  dispatch({ type: "onboarding_step_set", step: "custom_chat_url" })
+                }
+              />
+            ) : null}
+          </Box>
+        </Box>
+        <Box flexGrow={1} flexShrink={1} />
       </Box>
       {/*
-        The spacer is what pins the hints to the true bottom: the root Box
-        is sized to the terminal, so everything above is pushed up and the
-        strip lands on the last row instead of trailing the content.
+        The budgeted viewport above is what pins the hints to the true
+        bottom: the root Box is sized to the terminal, the viewport takes
+        every row but this one, and the strip lands on the last row
+        instead of trailing the content.
       */}
-      <Box flexGrow={1} />
       <Box flexShrink={0}>
         <Text color={theme.colors.muted} wrap="truncate">
           {footerFor(onboarding)}
@@ -466,7 +526,7 @@ export function OnboardingScreen(props: {
 /** What the flow just finished setting up, named on the offer screen. */
 function configuredLabel(outcome: OnboardingOutcome | null): string {
   if (outcome === "local") return "Local model ready";
-  if (outcome === "cloud") return "Cloud model ready";
+  if (outcome === "cloud") return CLOUD_READY_LABEL;
   return "Backend ready";
 }
 

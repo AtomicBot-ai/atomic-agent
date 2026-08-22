@@ -11,10 +11,17 @@ import { WORDMARK_ROWS, TAGLINE } from "./logo.js";
 export const TAGLINE_MS_PER_CHAR = 45;
 /**
  * Rows the intro spends on everything that is not the ring: two of
- * wordmark, the tagline, the "press any key" line, their margins, and
- * the pinned footer. The art gets what is left.
+ * wordmark, the tagline, the "press any key" line and their margins.
+ * The art gets what is left of the budget it is handed.
+ *
+ * The pinned footer and the surface's top padding are not counted here
+ * any more — `OnboardingScreen` takes both off the budget before it
+ * passes it down. Counting the footer but neither the padding nor the
+ * gap under the header is what made the splash come out two rows taller
+ * than the terminal, which Ink 7 paints over the rows above rather than
+ * clipping.
  */
-export const INTRO_CHROME_ROWS = 9;
+export const INTRO_CHROME_ROWS = 8;
 /** `ATOMIC` is the first 23 columns of the shipped `ATOMIC AGENT` wordmark. */
 const WORDMARK_ATOMIC_COLUMNS = 23;
 

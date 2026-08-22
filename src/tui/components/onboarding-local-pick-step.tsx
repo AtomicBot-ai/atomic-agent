@@ -1,11 +1,68 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { widestLine } from "../onboarding/centre-onboarding-block.js";
 import type { LocalModelPick } from "../onboarding/local-model-picks.js";
 import type { OnboardingFit } from "../onboarding/onboarding-fit.js";
+import { ROW_INDENT, rowPrefix } from "../onboarding/onboarding-rows.js";
 import { theme } from "../theme/theme.js";
 
 /** Rows drawn at once; the rest are counted in a trailing line. */
 export const LOCAL_PICK_WINDOW = 6;
+
+/** Model-name column, wide enough for the catalog's longest id plus a gap. */
+const LABEL_COLUMNS = 18;
+/** Size column, right-aligned so the numbers compare down the column. */
+const SIZE_COLUMNS = 8;
+/** Gap between the size and the note that follows it. */
+const NOTE_GAP = "    ";
+
+function explainerLine(ramGb: number): string {
+  return `One download, then it runs offline. This machine reports ${ramGb} GB of RAM.`;
+}
+
+function pickRow(pick: LocalModelPick, selected: boolean, fit: OnboardingFit): string {
+  return (
+    `${rowPrefix(selected)}${pick.label.padEnd(LABEL_COLUMNS)}` +
+    `${pick.sizeLabel.padStart(SIZE_COLUMNS)}${NOTE_GAP}${note(pick, fit)}`
+  );
+}
+
+function moreLine(below: number): string {
+  return `${ROW_INDENT}↓ ${below} more`;
+}
+
+/**
+ * The rows actually on screen, and how many are left below them. Shared
+ * with the measure so the block is never sized for a row the list is
+ * not drawing.
+ */
+export function windowLocalPicks(
+  picks: readonly LocalModelPick[],
+  cursor: number,
+): { visible: readonly LocalModelPick[]; below: number } {
+  const start = Math.max(
+    0,
+    Math.min(cursor - LOCAL_PICK_WINDOW + 2, picks.length - LOCAL_PICK_WINDOW),
+  );
+  const visible = picks.slice(start, start + LOCAL_PICK_WINDOW);
+  return { visible, below: picks.length - (start + visible.length) };
+}
+
+/** Widest line this step draws, for the block that centres it. */
+export function measureOnboardingLocalPickStep(props: {
+  picks: readonly LocalModelPick[];
+  cursor: number;
+  ramGb: number;
+  fit: OnboardingFit;
+}): number {
+  const { visible, below } = windowLocalPicks(props.picks, props.cursor);
+  const lines: string[] = props.fit.explainer ? [explainerLine(props.ramGb)] : [];
+  // Measured as if every row were selected: the marker is the same width
+  // as the blank indent, so this only spares the caller a cursor lookup.
+  for (const pick of visible) lines.push(pickRow(pick, true, props.fit));
+  if (below > 0) lines.push(moreLine(below));
+  return widestLine(lines);
+}
 
 /**
  * Pick a model to download. This used to be the Manage ▸ LLM panel —
@@ -19,19 +76,12 @@ export function OnboardingLocalPickStep(props: {
   ramGb: number;
   fit: OnboardingFit;
 }): ReactElement {
-  const start = Math.max(
-    0,
-    Math.min(props.cursor - LOCAL_PICK_WINDOW + 2, props.picks.length - LOCAL_PICK_WINDOW),
-  );
-  const visible = props.picks.slice(start, start + LOCAL_PICK_WINDOW);
-  const below = props.picks.length - (start + visible.length);
+  const { visible, below } = windowLocalPicks(props.picks, props.cursor);
   return (
     <Box flexDirection="column" flexShrink={0}>
       {props.fit.explainer ? (
         <Box marginBottom={1}>
-          <Text color={theme.colors.muted}>
-            {`One download, then it runs offline. This machine reports ${props.ramGb} GB of RAM.`}
-          </Text>
+          <Text color={theme.colors.muted}>{explainerLine(props.ramGb)}</Text>
         </Box>
       ) : null}
       {visible.map((pick) => {
@@ -43,13 +93,13 @@ export function OnboardingLocalPickStep(props: {
             bold={selected}
             wrap="truncate"
           >
-            {`${selected ? "›  " : "   "}${pick.label.padEnd(18)}${pick.sizeLabel.padStart(8)}    `}
+            {`${rowPrefix(selected)}${pick.label.padEnd(LABEL_COLUMNS)}${pick.sizeLabel.padStart(SIZE_COLUMNS)}${NOTE_GAP}`}
             <Text color={noteColour(pick)}>{note(pick, props.fit)}</Text>
           </Text>
         );
       })}
       {below > 0 ? (
-        <Text color={theme.colors.muted}>{`${" ".repeat(3)}↓ ${below} more`}</Text>
+        <Text color={theme.colors.muted}>{moreLine(below)}</Text>
       ) : null}
     </Box>
   );

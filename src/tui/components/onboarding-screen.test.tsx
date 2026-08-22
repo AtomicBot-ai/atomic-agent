@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OnboardingScreen } from "./onboarding-screen.js";
 import { resetConfigCache } from "../../config/index.js";
+import { ROOT_PADDING_LEFT } from "../layout.js";
 import { createOnboardingState } from "../onboarding/onboarding-state.js";
 import { createInitialTuiState } from "../tui-state.js";
 import type { TuiAction } from "../tui-action.js";
@@ -23,12 +24,20 @@ vi.mock("../../llm/llama-server-health.js", () => ({
 }));
 
 const STATE_DIR_ENV = "ATOMIC_AGENT_STATE_DIR";
+/** `ink-testing-library` renders into a fixed 100-column stdout. */
+const TEST_COLUMNS = 100;
 const strip = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, "");
 const ESCAPE_KEY = "\u001b";
 
-function renderFlow(step: "intro" | "choose" | "custom_chat_url" = "choose") {
+type Step = "intro" | "choose" | "custom_chat_url" | "propose_second";
+
+function renderFlow(step: Step = "choose") {
   const actions: TuiAction[] = [];
-  const onboarding = { ...createOnboardingState("http://127.0.0.1:8080"), step };
+  const onboarding = {
+    ...createOnboardingState("http://127.0.0.1:8080"),
+    step,
+    offer: "local" as const,
+  };
   const state = { ...createInitialTuiState(fakeSession(), 50), onboarding };
   const view = render(
     <OnboardingScreen
@@ -88,6 +97,48 @@ describe("OnboardingScreen", () => {
     const last = lines.filter((line) => line.trim().length > 0).at(-1) ?? "";
     expect(last).toContain("move");
     expect(last).toContain("ctrl+c quit");
+  });
+
+  it("centres the content block horizontally, leaving the hints on the last row", () => {
+    for (const step of ["choose", "propose_second"] as const) {
+      const { view } = renderFlow(step);
+      const lines = strip(view.lastFrame() ?? "").split("\n");
+      // The strip is the last line of the frame, not merely the last one
+      // with anything on it: the block above it is padded out to its own
+      // row budget, so a trailing blank row would mean it had overrun.
+      expect(lines.at(-1)).toContain("ctrl+c quit");
+      const drawn = lines.slice(0, -1).filter((line) => line.trim().length > 0);
+      // The block's own left edge, not the widest line's: the widest
+      // line is often an option row, and its three-cell marker column is
+      // part of the block rather than space around it.
+      const leading = Math.min(
+        ...drawn.map((line) => line.length - line.trimStart().length),
+      );
+      const width =
+        Math.max(...drawn.map((line) => line.trimEnd().length)) - leading;
+      // Counted back to the window: the surface is rendered here without
+      // the root inset the real app draws it inside.
+      const balance = (TEST_COLUMNS - width) / 2;
+      expect(Math.abs(leading + ROOT_PADDING_LEFT - balance)).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("centres the content block vertically, above the pinned hints", () => {
+    const { view } = renderFlow();
+    const lines = strip(view.lastFrame() ?? "").split("\n");
+    const body = lines.slice(0, -1);
+    const filled = body
+      .map((line, index) => ({ line, index }))
+      .filter((row) => row.line.trim().length > 0);
+    const first = filled[0]?.index ?? -1;
+    const last = filled.at(-1)?.index ?? -1;
+    expect(first).toBeGreaterThan(0);
+    // One row of the gap above is the surface's own top padding, and the
+    // gap below carries the last option row's bottom margin, so the two
+    // halves land within a row of each other rather than dead equal.
+    const above = first - 1;
+    const below = body.length - 1 - last;
+    expect(Math.abs(above - below)).toBeLessThanOrEqual(1);
   });
 
   it("names the step it is on", () => {
