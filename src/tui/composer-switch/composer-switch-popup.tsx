@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import type { ReactElement, ReactNode } from "react";
 
 import { fitToWidth } from "../components/fit-to-width.js";
+import { PasteFieldTarget } from "../context-menu/paste-field-target.js";
 import {
   MouseTarget,
   useMouseCommands,
@@ -9,8 +10,10 @@ import {
 } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
+import { plainKey } from "../mouse/synthetic-key.js";
 import { chromeTheme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
+import { handleComposerSwitchKey } from "./composer-switch-key-bindings.js";
 import {
   clampComposerSwitchCursor,
   selectComposerSwitchRows,
@@ -107,7 +110,9 @@ export function ComposerSwitchPopup({
           )}
         </Text>
       ) : null}
-      {showFilter ? <FilterLine filter={open.filter} inner={inner} /> : null}
+      {showFilter ? (
+        <FilterLine filter={open.filter} inner={inner} onActivate={onActivate} />
+      ) : null}
       {visible.map((row, idx) => (
         <SwitchRow
           key={row.id}
@@ -151,27 +156,46 @@ export function ComposerSwitchPopup({
 function FilterLine({
   filter,
   inner,
+  onActivate,
 }: {
   filter: string;
   inner: number;
+  onActivate: (row: ComposerSwitchRow) => void;
 }): ReactElement {
   const label = " filter: ";
-  if (filter.length === 0) {
-    return (
+  const line =
+    filter.length === 0 ? (
       <Text color={chromeTheme.colors.railMuted}>
         {fitToWidth(`${label}type to filter`, inner)}
       </Text>
-    );
-  }
-  return (
-    <Text>
-      <Text color={chromeTheme.colors.railMuted}>{label}</Text>
-      {/* The query is text being actively read back, so it gets the
-          rail's full text tone, not the muted one. */}
-      <Text color={chromeTheme.colors.railForeground}>
-        {fitToWidth(`${filter}▏`, Math.max(0, inner - label.length))}
+    ) : (
+      <Text>
+        <Text color={chromeTheme.colors.railMuted}>{label}</Text>
+        {/* The query is text being actively read back, so it gets the
+            rail's full text tone, not the muted one. */}
+        <Text color={chromeTheme.colors.railForeground}>
+          {fitToWidth(`${filter}▏`, Math.max(0, inner - label.length))}
+        </Text>
       </Text>
-    </Text>
+    );
+  return (
+    // Right-click paste types into the filter through the switch's own
+    // key layer — a text burst can only append, never activate a row.
+    // `insideOverlay`: this field IS the open overlay the shared guard
+    // would otherwise refuse to serve.
+    <PasteFieldTarget
+      insideOverlay
+      onPasteText={(text, mouse) => {
+        handleComposerSwitchKey(text, plainKey(), {
+          state: mouse.getState(),
+          dispatch: mouse.dispatch,
+          activate: onActivate,
+          canOpen: false,
+        });
+      }}
+    >
+      {line}
+    </PasteFieldTarget>
   );
 }
 

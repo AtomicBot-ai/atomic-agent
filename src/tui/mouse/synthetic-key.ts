@@ -50,6 +50,10 @@ export function returnKey(): Key {
  * No key at all — the `Key` half of a synthesised printable character.
  * For surfaces whose affordance is a letter (the download screen's
  * "press c"), so a click can send the same `input` the keyboard would.
+ * Also the shape a multi-character paste burst arrives with: the
+ * context-menu paste feeds clipboard text through a field's own key
+ * handler as `(text, plainKey())`, exactly the way a terminal delivers a
+ * bracketed paste, so the field's own append/sanitise rules apply.
  */
 export function plainKey(): Key {
   return { ...NO_KEY };

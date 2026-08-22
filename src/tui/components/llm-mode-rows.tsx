@@ -1,5 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { PasteFieldTarget } from "../context-menu/paste-field-target.js";
+import { pasteIntoCloudModelFilter } from "../llm-panel/llm-panel-paste.js";
 import { selectCloudModelSection } from "../llm-panel/llm-panel-row-builders.js";
 import { activeCursor, selectLlmPanelRows, type LlmPanelRow } from "../llm-panel/llm-panel-selectors.js";
 import { classifyRamFit, classifyVramFit } from "../local-models/local-models-panel-state.js";
@@ -223,16 +225,20 @@ function CloudRows({
             {section.provider?.id ?? "none"}
           </Text>
         </Text>
-        <Text color={theme.colors.muted}>
-          {"filter: "}
-          <Text color={filterFocused ? theme.colors.accent : undefined}>
-            {filter}
+        {/* Right-click paste lands in the filter (focusing it first),
+            through the same key path typing takes. */}
+        <PasteFieldTarget onPasteText={pasteIntoCloudModelFilter}>
+          <Text color={theme.colors.muted}>
+            {"filter: "}
+            <Text color={filterFocused ? theme.colors.accent : undefined}>
+              {filter}
+            </Text>
+            {filterFocused ? <Text color={theme.colors.muted}>▏</Text> : null}
+            {!filterFocused && filter.length === 0 ? (
+              <Text color={theme.colors.muted}>f to filter</Text>
+            ) : null}
           </Text>
-          {filterFocused ? <Text color={theme.colors.muted}>▏</Text> : null}
-          {!filterFocused && filter.length === 0 ? (
-            <Text color={theme.colors.muted}>f to filter</Text>
-          ) : null}
-        </Text>
+        </PasteFieldTarget>
         {section.status === "loading" ? (
           <Text color={theme.colors.muted}>  fetching model list…</Text>
         ) : null}

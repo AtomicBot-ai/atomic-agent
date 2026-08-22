@@ -98,10 +98,12 @@ import type { ImportFormState } from "./import/import-panel-state.js";
 import { handleProvidersTabKey } from "./providers/providers-key-bindings.js";
 import { handleTelegramTabKey } from "./telegram/telegram-key-bindings.js";
 import { handlePrivacyTabKey } from "./privacy/privacy-key-bindings.js";
+import { ContextMenuPopup, ContextMenuProvider } from "./context-menu/index.js";
 import { MouseProvider } from "./mouse/mouse-context.js";
 import { isPrimaryPress } from "./mouse/mouse-event.js";
 import {
   MOUSE_LAYER_BASE,
+  MOUSE_LAYER_CONTEXT_MENU,
   MOUSE_LAYER_MODAL,
   MOUSE_LAYER_PANEL,
   MouseTargetRegistry,
@@ -733,6 +735,10 @@ export function TuiApp({
   const editorFocus =
     !state.menuOpen &&
     !state.contextPanelOpen &&
+    // The right-click menu owns the NEXT keystroke (it closes the menu,
+    // `handleAppKey`), so the editor stands down for it — otherwise Esc
+    // would clear the draft on its way to closing the menu.
+    state.contextMenu === null &&
     // A route switch owns ↑↓ / ←→ / Enter while it is up; the editor
     // keeping focus would act on the same keystroke a second time.
     state.composerSwitch === null &&
@@ -842,9 +848,21 @@ export function TuiApp({
     state.themePickerOpen ||
     state.slashPaletteOpen ||
     isPanelModalOpen(state);
+  // The context menu sits on its OWN rung above the modal floor, and is
+  // deliberately absent from `modalOwnsInput`: joining it would collapse
+  // the composer to one line (`composerMaxEditorLines`), shifting the
+  // very cell the menu is anchored to — and the selection it acts on —
+  // out from under the popup.
+  const contextMenuOpen = state.contextMenu !== null;
   useEffect(() => {
-    registry.setMinLayer(modalOwnsInput ? MOUSE_LAYER_MODAL : MOUSE_LAYER_BASE);
-  }, [registry, modalOwnsInput]);
+    registry.setMinLayer(
+      contextMenuOpen
+        ? MOUSE_LAYER_CONTEXT_MENU
+        : modalOwnsInput
+          ? MOUSE_LAYER_MODAL
+          : MOUSE_LAYER_BASE,
+    );
+  }, [registry, modalOwnsInput, contextMenuOpen]);
 
   /**
    * Whole-viewport wheel target. Scrolling over the chat moves the
@@ -938,6 +956,44 @@ export function TuiApp({
         ref: contentMouseRef,
         layer: MOUSE_LAYER_MODAL,
         handler: (hit) => menuBackdropRef.current(hit),
+      }),
+    [registry],
+  );
+
+  /**
+   * The context menu's backdrop, one rung above the modal one so it is
+   * the only fallthrough while the menu's floor is raised. Any press
+   * outside the popup dismisses it — left, right or middle, because a
+   * press elsewhere plainly means "not one of these verbs".
+   *
+   * No `MODAL_CLICK_GRACE_MS` here, unlike the operator menu's backdrop
+   * above. The opening right-press cannot bounce off this handler: it
+   * was claimed by the surface underneath before the menu existed, and
+   * its release carries `button: "none"`. A press CAN outrun the popup
+   * rows' registration (their targets mount in passive effects, one
+   * scheduler hop after the frame), but a timestamp guard cannot cover
+   * that hop: its stamp lands in the same passive flush the rows do, so
+   * inside the window the guard reads a stale stamp and waves the press
+   * through anyway — measured A/B with the guard in and out, identical
+   * dismissal counts. All a grace achieves here is swallowing genuine
+   * click-outside-to-close for its duration; the hop itself is one
+   * macrotask, which only a test harness clicks inside.
+   */
+  const contextMenuBackdropHandler = (hit: MouseHit): boolean => {
+    if (!state.contextMenu) return false;
+    if (hit.event.kind === "wheel") return true;
+    if (hit.event.kind !== "press") return false;
+    dispatch({ type: "context_menu_closed" });
+    return true;
+  };
+  const contextMenuBackdropRef = useRef(contextMenuBackdropHandler);
+  contextMenuBackdropRef.current = contextMenuBackdropHandler;
+  useEffect(
+    () =>
+      registry.register({
+        ref: contentMouseRef,
+        layer: MOUSE_LAYER_CONTEXT_MENU,
+        handler: (hit) => contextMenuBackdropRef.current(hit),
       }),
     [registry],
   );
@@ -1295,6 +1351,7 @@ export function TuiApp({
         callbacks={callbacks}
         getState={getState}
       >
+        <ContextMenuProvider>
         {/*
           No paddingLeft here, unlike the chat frame below: the flow owns
           the gutter itself (see the screen's root box), so its splash
@@ -1312,7 +1369,17 @@ export function TuiApp({
             callbacks={callbacks}
             ctrlCArmed={ctrlCArmed}
           />
+          {/* The flow's root box sits at the terminal origin with no
+              padding, so the click cell needs no pane offset here. */}
+          <ContextMenuPopup
+            menu={state.contextMenu}
+            paneLeft={0}
+            paneTop={0}
+            availableRows={terminalSize.rows}
+            availableColumns={terminalSize.columns}
+          />
         </Box>
+        </ContextMenuProvider>
       </MouseProvider>
     );
   }
@@ -1324,6 +1391,7 @@ export function TuiApp({
       callbacks={callbacks}
       getState={getState}
     >
+    <ContextMenuProvider>
     <Box
       flexDirection="column"
       paddingLeft={ROOT_PADDING_COLUMNS}
@@ -1572,6 +1640,32 @@ export function TuiApp({
               </ComposerOverlay>
             </>
           ) : null}
+          {/*
+            Last child of the stage, so it paints over everything the
+            stage holds — the composer overlay included, which is where
+            most right-clicks land. The pane offsets are the stage's
+            screen cell, derived from the same numbers that lay it out:
+            2 chrome rows above (status bar + hairline), and the root
+            padding plus the rail and its gutter to the left. The menu
+            is anchored to an absolute click cell, and Ink margins
+            offset from the parent box, so the popup subtracts these.
+          */}
+          <ContextMenuPopup
+            menu={state.contextMenu}
+            paneLeft={
+              ROOT_PADDING_COLUMNS +
+              (sidebarVisible ? sidebarWidth + RAIL_GUTTER_COLUMNS : 0)
+            }
+            paneTop={2}
+            availableRows={
+              menuPaneRows + (composerVisible ? COMPOSER_COLLAPSED_ROWS : 0)
+            }
+            availableColumns={
+              terminalSize.columns -
+              ROOT_PADDING_COLUMNS -
+              (sidebarVisible ? sidebarWidth + RAIL_GUTTER_COLUMNS : 0)
+            }
+          />
           </Box>
           <HotkeyHint
             state={state}
@@ -1582,6 +1676,7 @@ export function TuiApp({
         </Box>
       </Box>
     </Box>
+    </ContextMenuProvider>
     </MouseProvider>
   );
 }

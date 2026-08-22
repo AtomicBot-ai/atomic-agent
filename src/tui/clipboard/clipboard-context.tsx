@@ -22,10 +22,16 @@ import {
   createClipboardWriter,
   type ClipboardWriter,
 } from "./copy-to-clipboard.js";
+import {
+  createClipboardReader,
+  type ClipboardReader,
+} from "./read-clipboard.js";
 
 const ClipboardContext = createContext<ClipboardWriter | null>(null);
+const ClipboardReaderContext = createContext<ClipboardReader | null>(null);
 
 let defaultWriter: ClipboardWriter | null = null;
+let defaultReader: ClipboardReader | null = null;
 
 /**
  * The process-wide writer used when no provider is mounted. Lazy so that
@@ -56,4 +62,37 @@ export function ClipboardProvider({
 /** The active clipboard writer — the provider's, or the shared default. */
 export function useClipboard(): ClipboardWriter {
   return useContext(ClipboardContext) ?? getDefaultClipboardWriter();
+}
+
+/**
+ * The reader mirrors the writer's wiring exactly, and for the same
+ * reasons: a lazy shared default so the real TUI needs no provider, a
+ * non-TTY guard inside `createClipboardReader` so a component test that
+ * happens to trigger a paste never reads the developer's actual
+ * clipboard, and a provider for tests that want to hand paste a text.
+ */
+export function getDefaultClipboardReader(): ClipboardReader {
+  defaultReader ??= createClipboardReader();
+  return defaultReader;
+}
+
+export interface ClipboardReaderProviderProps {
+  readonly reader: ClipboardReader;
+  readonly children: ReactNode;
+}
+
+export function ClipboardReaderProvider({
+  reader,
+  children,
+}: ClipboardReaderProviderProps): ReactElement {
+  return (
+    <ClipboardReaderContext.Provider value={reader}>
+      {children}
+    </ClipboardReaderContext.Provider>
+  );
+}
+
+/** The active clipboard reader — the provider's, or the shared default. */
+export function useClipboardReader(): ClipboardReader {
+  return useContext(ClipboardReaderContext) ?? getDefaultClipboardReader();
 }

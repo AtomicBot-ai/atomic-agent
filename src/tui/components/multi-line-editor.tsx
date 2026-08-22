@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState, type ReactElement } from "rea
 import { useClipboard } from "../clipboard/clipboard-context.js";
 import { theme } from "../theme/theme.js";
 import { EditorBody } from "./multi-line-editor-body.js";
+import { useEditorClipboard } from "./multi-line-editor-clipboard.js";
 import { cursorToRowCol } from "./multi-line-editor-cursor.js";
 import { handleKey } from "./multi-line-editor-keys.js";
 import { createEditorPointer } from "./multi-line-editor-pointer.js";
@@ -218,6 +219,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
         anchor,
         setAnchor,
         copySelection,
+        onPaste: pasteClipboard,
         onSubmit,
         onEscape,
         onInterrupt,
@@ -247,6 +249,16 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     onCopy?.(text);
   };
 
+  // The async clipboard side: the paste chord and the right-click menu
+  // (whose verbs land frames after the gesture, so the hook re-reads
+  // this render's context through a render-refreshed ref).
+  const { pasteClipboard, openMenuAt } = useEditorClipboard({
+    disabled,
+    hasSelection,
+    edit: { value, cursor: cursorPos, setBuffer, selection, anchor, setAnchor },
+    copySelection,
+  });
+
   const { placeCursorAt, beginDrag, extendDrag, endDrag } =
     createEditorPointer({
       value,
@@ -256,23 +268,23 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
       setAnchor,
       onClickFocus,
     });
-  if (bare) {
-    return (
-      <EditorBody
-        value={value}
-        cursor={cursor}
-        placeholder={placeholder ?? ""}
-        focus={focus && !disabled}
-        selection={selection}
-        onClickCursor={placeCursorAt}
-        onDragStart={beginDrag}
-        onDragMove={extendDrag}
-        onDragEnd={endDrag}
-        maxVisibleLines={maxVisibleLines}
-        mouseLayer={mouseLayer}
-      />
-    );
-  }
+  const body = (
+    <EditorBody
+      value={value}
+      cursor={cursor}
+      placeholder={placeholder ?? ""}
+      focus={focus && !disabled}
+      selection={selection}
+      onClickCursor={placeCursorAt}
+      onSecondaryPress={openMenuAt}
+      onDragStart={beginDrag}
+      onDragMove={extendDrag}
+      onDragEnd={endDrag}
+      maxVisibleLines={maxVisibleLines}
+      mouseLayer={mouseLayer}
+    />
+  );
+  if (bare) return body;
   return (
     <Box
       borderStyle="round"
@@ -280,19 +292,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
       paddingX={1}
       flexDirection="column"
     >
-      <EditorBody
-        value={value}
-        cursor={cursor}
-        placeholder={placeholder ?? ""}
-        focus={focus && !disabled}
-        selection={selection}
-        onClickCursor={placeCursorAt}
-        onDragStart={beginDrag}
-        onDragMove={extendDrag}
-        onDragEnd={endDrag}
-        maxVisibleLines={maxVisibleLines}
-        mouseLayer={mouseLayer}
-      />
+      {body}
     </Box>
   );
 }

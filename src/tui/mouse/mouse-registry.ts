@@ -28,6 +28,15 @@ export const MOUSE_LAYER_BASE = 0;
 export const MOUSE_LAYER_PANEL = 1;
 /** Modals, confirms and pickers — claim clicks exclusively while open. */
 export const MOUSE_LAYER_MODAL = 2;
+/**
+ * The right-click cut/copy/paste menu. Above MODAL because it can open
+ * on top of a modal's own text field (the approval path, the MCP JSON
+ * editor), and on its OWN rung rather than joining `modalOwnsInput`
+ * deliberately: joining would collapse the composer to one line
+ * (`composerMaxEditorLines`), which shifts the very cell the menu is
+ * anchored to out from under it.
+ */
+export const MOUSE_LAYER_CONTEXT_MENU = 3;
 
 export interface MouseRect {
   readonly left: number;

@@ -31,6 +31,12 @@ export interface KeyContext {
   setAnchor: (anchor: number | null) => void;
   /** Copy the current selection; the caller keeps or clears it. */
   copySelection: () => void;
+  /**
+   * Paste the system clipboard at the caret (replacing any selection).
+   * Owned by the component because reading the clipboard is async and
+   * this grammar is synchronous by design.
+   */
+  onPaste?: () => void;
   onSubmit: (value: string) => void;
   onEscape?: () => void;
   onInterrupt?: () => void;
@@ -55,6 +61,15 @@ function isCopyChord(input: string, key: Key): boolean {
 
 function isCutChord(input: string, key: Key): boolean {
   return (key.ctrl || key.super) && input === "x";
+}
+
+/**
+ * Ctrl+V / Cmd+V. This chord exists because the right-click menu cannot
+ * be the only route to paste: Terminal.app and default iTerm2 swallow
+ * the right button for their own menus and the TUI never sees it.
+ */
+function isPasteChord(input: string, key: Key): boolean {
+  return (key.ctrl || key.super) && input === "v";
 }
 
 export function handleKey(ctx: KeyContext): void {
@@ -88,6 +103,10 @@ export function handleKey(ctx: KeyContext): void {
     // Returning without acting does not starve other layers: Ink hands
     // every keypress to every subscription, so a future global claim on
     // Ctrl+X would still see it.
+    return;
+  }
+  if (isPasteChord(input, key)) {
+    ctx.onPaste?.();
     return;
   }
   // Ignore keys owned by the global app-level handler so the editor

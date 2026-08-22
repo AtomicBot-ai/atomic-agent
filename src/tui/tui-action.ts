@@ -3,6 +3,7 @@ import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { MetricSample } from "../tracing/metrics-collector.js";
 import type { LogRecord } from "../tracing/structured-logger.js";
 import type { ComposerSwitchAction } from "./composer-switch/composer-switch-actions.js";
+import type { ContextMenuState } from "./context-menu/context-menu-state.js";
 import type { LocalModelsAction } from "./local-models/local-models-actions.js";
 import type { TasksAction } from "./tasks/tasks-actions.js";
 import type { SkillsAction } from "./skills/skills-actions.js";
@@ -53,6 +54,9 @@ export type TuiAction =
   | { type: "approval_path_edit_closed" }
   /** The composer gained or lost a text selection (drives Ctrl+C's meaning). */
   | { type: "composer_selection_changed"; hasSelection: boolean }
+  /** Right-click on a text surface: open the cut/copy/paste menu there. */
+  | { type: "context_menu_opened"; menu: ContextMenuState }
+  | { type: "context_menu_closed" }
   /** Transient line in the composer meta row; `null` clears it. */
   | { type: "composer_notice"; text: string | null }
   | { type: "metric"; sample: MetricSample }
