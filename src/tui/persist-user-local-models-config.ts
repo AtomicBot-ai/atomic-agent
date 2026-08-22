@@ -118,8 +118,30 @@ export function persistUserRemoteLlmUrls(options: {
   const path = getConfig().paths.userConfigFile;
   const prev = ensureUserConfigFileSync(path);
   const hasEmbeddingUrl = options.embeddingUrl !== undefined;
+  // Route chat at the URL being saved. Without this, a file whose `llm`
+  // block has some other `activeTextProvider` keeps it, and the wizard's
+  // "Remote llama.cpp" choice writes an address nothing uses. Reachable
+  // only when the startup gate opened at all — i.e. no ready cloud
+  // provider — which is exactly when the operator's intent is "this
+  // llama-server is my route now". A file without an `llm` block already
+  // routes at local-llama via the synthesized default entry. A
+  // hand-edited block missing the built-in entry gets it re-added, or
+  // validation would reject the new active id.
+  const llmBlock = prev.llm
+    ? {
+        ...prev.llm,
+        activeTextProvider: "local-llama",
+        providers: prev.llm.providers.some((p) => p.id === "local-llama")
+          ? prev.llm.providers
+          : [
+              ...prev.llm.providers,
+              { id: "local-llama", kind: "llama-server", url: options.chatUrl },
+            ],
+      }
+    : undefined;
   const draft: UserConfigFile = {
     ...prev,
+    ...(llmBlock ? { llm: llmBlock } : {}),
     localModels: {
       ...prev.localModels,
       mode: "external",

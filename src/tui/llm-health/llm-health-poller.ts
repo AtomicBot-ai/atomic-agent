@@ -1,4 +1,6 @@
+import { getConfig } from "../../config/index.js";
 import { checkLlamaServer } from "../../llm/llama-server-health.js";
+import { llamaEndpointUrl } from "../../llm/llama-endpoint-url.js";
 import type { TuiAction } from "../tui-action.js";
 
 /**
@@ -174,16 +176,23 @@ export class LlmHealthPoller {
   }
 
   private async fetchModelLabel(): Promise<void> {
-    const url = new URL("/props", this.url).toString();
+    const url = llamaEndpointUrl(this.url, "/props");
     const controller = new AbortController();
     const timer = setTimeout(
       () => controller.abort(),
       LLM_PROPS_PROBE_TIMEOUT_MS,
     );
     try {
+      // Same auth as real requests: llama.cpp guards /props behind
+      // --api-key, so an unauthenticated label fetch would leave the
+      // footer nameless on exactly the servers that need the key.
+      const apiKey = getConfig().localModels.apiKey;
       const response = await this.fetchImpl(url, {
         method: "GET",
-        headers: { accept: "application/json" },
+        headers: {
+          accept: "application/json",
+          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+        },
         signal: controller.signal,
       });
       if (!response.ok) return;

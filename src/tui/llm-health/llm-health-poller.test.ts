@@ -358,4 +358,38 @@ describe("LlmHealthPoller", () => {
     );
     expect(healthy).toHaveLength(0);
   });
+
+  it("fetches the model label from /props under a reverse-proxy prefix", async () => {
+    // Same defect as every other llama endpoint: "/props" used to
+    // resolve against the origin, so a prefixed server never showed a
+    // model name — half of the "does not recognize my models" report.
+    spy.mockResolvedValue({
+      reachable: true,
+      status: 200,
+      error: null,
+      latencyMs: 1,
+      kind: "llama-server",
+    } satisfies HealthResult);
+    const urls: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify({ model_alias: "my-model" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(
+      capture,
+      "https://box.example/llama",
+      10_000,
+      fetchImpl,
+    );
+    poller.start();
+    await sleep(30);
+    poller.stop();
+    expect(urls).toEqual(["https://box.example/llama/props"]);
+    const modelEvents = capture.actions.filter((a) => a.type === "llm_model_updated");
+    expect(modelEvents.at(-1)).toMatchObject({ model: "my-model" });
+  });
 });

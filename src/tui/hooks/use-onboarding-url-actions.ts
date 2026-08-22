@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { describeLlamaHealthFailure } from "../../llm/describe-llama-health-failure.js";
 import { checkLlamaServer } from "../../llm/llama-server-health.js";
 import type {
   OnboardingOutcome,
@@ -43,11 +44,15 @@ export function useOnboardingUrlActions(args: {
           retries: 0,
           backoffMs: 0,
           timeoutMs: 5000,
+          // A --api-key server passes /health (key-exempt) and then
+          // rejects every completion; catch it while the operator is
+          // still on this screen.
+          verifyAuth: true,
         });
         if (!health.reachable) {
           dispatch({
             type: "onboarding_error_set",
-            error: health.error ?? "health check failed",
+            error: describeLlamaHealthFailure(health, base),
           });
           return;
         }
@@ -83,11 +88,12 @@ export function useOnboardingUrlActions(args: {
           retries: 0,
           backoffMs: 0,
           timeoutMs: 5000,
+          verifyAuth: true,
         });
         if (!health.reachable) {
           dispatch({
             type: "onboarding_error_set",
-            error: health.error ?? "health check failed",
+            error: describeLlamaHealthFailure(health, embeddingUrl),
           });
           return;
         }

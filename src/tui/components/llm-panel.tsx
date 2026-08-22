@@ -230,6 +230,13 @@ function StatusLines({
     if (state.localModelsPanel.daemonError) {
       lines.push(`local daemon: ${state.localModelsPanel.daemonError}`);
     }
+  } else if (state.llmPanel.mode === "external") {
+    // The External pane's status messages (probe verdicts from the URL
+    // save) describe an external llama.cpp, so the "cloud providers:"
+    // prefix would mislabel exactly the line the operator must act on.
+    if (state.providersPanel.statusLine) {
+      lines.push(state.providersPanel.statusLine);
+    }
   } else {
     if (state.providersPanel.busy) lines.push("cloud providers: updating");
     if (state.providersPanel.statusLine) {

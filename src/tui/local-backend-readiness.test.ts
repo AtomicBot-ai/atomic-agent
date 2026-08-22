@@ -239,6 +239,36 @@ describe("isCloudTextProviderReady", () => {
     expect(isCloudTextProviderReady()).toBe(false);
   });
 
+  it("does not treat a keyless LAN openai-compatible entry as ready", () => {
+    // The reachability premise for persistUserRemoteLlmUrls routing chat
+    // at local-llama: a LAN box is not loopback and has no key, so the
+    // startup gate does NOT return early — the wizard is reachable while
+    // an llm block with a non-local active provider exists. (A keyed or
+    // loopback entry short-circuits the gate and the wizard never runs.)
+    const cfg = getConfig();
+    const file = ensureUserConfigFileSync(cfg.paths.userConfigFile);
+    writeUserConfigFileSync(cfg.paths.userConfigFile, {
+      ...file,
+      llm: {
+        activeTextProvider: "lan-compat",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto",
+        providers: [
+          { id: "local-llama", kind: "llama-server", url: cfg.localModels.url },
+          {
+            id: "lan-compat",
+            kind: "openai-compatible",
+            baseUrl: "http://192.168.1.50:8080/v1",
+            defaultChatModel: "some-model",
+          },
+        ],
+      },
+    });
+    resetConfigCache();
+
+    expect(isCloudTextProviderReady()).toBe(false);
+  });
+
   it("does not treat an active cloud text provider without a key as ready", () => {
     const cfg = getConfig();
     const file = ensureUserConfigFileSync(cfg.paths.userConfigFile);
