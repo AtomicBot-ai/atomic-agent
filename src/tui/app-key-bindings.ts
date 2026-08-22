@@ -192,6 +192,25 @@ export function isPanelModalOpen(state: TuiState): boolean {
   );
 }
 
+/**
+ * True when this Ctrl+C will be seen by the composer as "copy": a live
+ * selection AND a focused editor. The conditions after the flag mirror
+ * the states of `editorFocus` (tui-app.tsx) a selection can coexist
+ * with — sidebar focus, an open menu / context panel, and an armed
+ * leader all leave the selection standing while taking the keyboard
+ * away, and Ctrl+C must keep its global meaning there.
+ */
+function composerOwnsCtrlC(state: TuiState, menuLeaderArmed: boolean): boolean {
+  return (
+    state.composerHasSelection &&
+    state.uiMode === "chat" &&
+    state.chatFocus === "editor" &&
+    !state.menuOpen &&
+    !state.contextPanelOpen &&
+    !menuLeaderArmed
+  );
+}
+
 export function handleAppKey(
   input: string,
   key: Key,
@@ -261,11 +280,15 @@ export function handleAppKey(
     // convention every terminal-adjacent editor follows. The editor owns
     // that; arming the quit chord here would make the same keystroke
     // mean two things at once.
-    // …but only while the composer is actually on screen to receive it.
-    // The flag is set by a component that unmounts on every Observe /
-    // Manage tab, and a stranded `true` here would leave Ctrl+C claimed
-    // by nobody: no abort, no quit, for the rest of the session.
-    if (state.composerHasSelection && state.uiMode === "chat") return false;
+    // …but only while the composer is actually FOCUSED to receive it.
+    // The flag alone is not enough: it is set by a component that
+    // unmounts on every Observe / Manage tab, and it survives Tab into
+    // the sidebar, an open menu, or an armed leader — all states where
+    // the editor's own handler is inactive. Standing down then would
+    // leave Ctrl+C claimed by nobody: no abort, no quit, until focus
+    // returned. Mirror the parts of `editorFocus` that can coexist with
+    // a live selection.
+    if (composerOwnsCtrlC(state, ctx.menuLeaderArmed)) return false;
     if (ctrlCArmed) {
       callbacks.onAbort();
       callbacks.onQuit();

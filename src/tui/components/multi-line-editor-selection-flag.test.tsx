@@ -1,5 +1,6 @@
 import { render } from "ink-testing-library";
 import { describe, expect, it, vi } from "vitest";
+import { useState, type ReactElement } from "react";
 
 import { MultiLineEditor } from "./multi-line-editor.js";
 
@@ -73,6 +74,38 @@ describe("composer selection flag", () => {
       await settle();
     }
     expect(onSelectionChange).toHaveBeenLastCalledWith(false);
+    app.unmount();
+  });
+
+  it("reports each transition once even with a fresh callback every render", async () => {
+    // Recreates the app wiring: tui-app passes an inline arrow whose
+    // identity changes every render AND whose call re-renders the app.
+    // With the callback in the selection effect deps, the first `true`
+    // re-ran the effect, whose cleanup reported `false`, re-rendering
+    // again — a dispatch ping-pong that hit React's "Maximum update
+    // depth exceeded" the moment a selection existed in the real TUI.
+    const calls: boolean[] = [];
+    function AppLike(): ReactElement {
+      const [, setFlag] = useState(false);
+      return (
+        <MultiLineEditor
+          value="hello"
+          focus
+          onChange={() => {}}
+          onSubmit={() => {}}
+          onSelectionChange={(has) => {
+            calls.push(has);
+            setFlag(has);
+          }}
+        />
+      );
+    }
+    const app = render(<AppLike />);
+    await settle();
+    app.stdin.write(SHIFT_LEFT);
+    // Give a would-be loop ample time to blow past React's budget.
+    for (let i = 0; i < 5; i += 1) await settle();
+    expect(calls.filter((c) => c)).toHaveLength(1);
     app.unmount();
   });
 });
