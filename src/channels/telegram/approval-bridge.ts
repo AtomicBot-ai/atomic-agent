@@ -1,5 +1,5 @@
-import type { ApprovalGate, ApprovalRequest } from "../../approval/index.js";
-import { formatApprovalCategory } from "../../approval/index.js";
+import type { ApprovalGate, ApprovalGrantScope, ApprovalRequest } from "../../approval/index.js";
+import { canGrantCategory, canGrantShape, formatApprovalCategory } from "../../approval/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import { withThread, type TelegramApi } from "./outbound-sender.js";
@@ -71,7 +71,7 @@ interface PendingState {
  *
  *  - one outbound message per pending approval (sent via `dispatch`);
  *  - one auto-deny timer per pending approval (default 8 min);
- *  - the `callback_query` parser that decodes `appr:<id>:y|n`.
+ *  - the `callback_query` parser that decodes `appr:<id>:y|n|s|a`.
  *
  * Locked invariants — pinned by the colocated test file:
  *
@@ -154,7 +154,7 @@ export class ApprovalBridge {
         chatId,
         formatApprovalText(request),
         withThread(
-          { reply_markup: buildKeyboard(request.approvalId) },
+          { reply_markup: buildKeyboard(request) },
           threadId,
         ),
       );
@@ -211,8 +211,18 @@ export class ApprovalBridge {
     const parts = data.slice(CALLBACK_PREFIX.length).split(":");
     if (parts.length !== 2) return;
     const [approvalId, kind] = parts;
-    if (!approvalId || (kind !== "y" && kind !== "n")) return;
-    const approved = kind === "y";
+    if (!approvalId || (kind !== "y" && kind !== "n" && kind !== "s" && kind !== "a")) return;
+    let approved: boolean;
+    let grant: ApprovalGrantScope | undefined;
+    if (kind === "y") {
+      approved = true;
+    } else if (kind === "n") {
+      approved = false;
+    } else {
+      // grant buttons: always approve, scope depends on kind
+      approved = true;
+      grant = kind === "s" ? "category" : "shape";
+    }
 
     const pending = this.pending.get(approvalId);
     if (!pending) {
@@ -228,10 +238,12 @@ export class ApprovalBridge {
     const resolved = this.deps.approvals.resolve({
       approvalId,
       approved,
+      grant,
       reason: "telegram",
     });
 
-    await this.acknowledge(update.id, approved ? "Approved" : "Denied");
+    const grantLabel = grant === "category" ? " (category granted for session)" : grant === "shape" ? " (shape granted for session)" : "";
+    await this.acknowledge(update.id, approved ? `Approved${grantLabel}` : "Denied");
     if (resolved) {
       await this.editFinal(
         pending.chatId,
@@ -313,23 +325,38 @@ export class ApprovalBridge {
   }
 }
 
-function buildKeyboard(approvalId: string): {
+function buildKeyboard(request: ApprovalRequest): {
   inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
 } {
-  return {
-    inline_keyboard: [
-      [
-        {
-          text: "✅ Approve",
-          callback_data: `${CALLBACK_PREFIX}${approvalId}:y`,
-        },
-        {
-          text: "❌ Deny",
-          callback_data: `${CALLBACK_PREFIX}${approvalId}:n`,
-        },
-      ],
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [
+    [
+      {
+        text: "✅ Approve",
+        callback_data: `${CALLBACK_PREFIX}${request.approvalId}:y`,
+      },
+      {
+        text: "❌ Deny",
+        callback_data: `${CALLBACK_PREFIX}${request.approvalId}:n`,
+      },
     ],
-  };
+  ];
+  if (canGrantCategory(request)) {
+    rows.push([
+      {
+        text: "🔓 Grant category for session",
+        callback_data: `${CALLBACK_PREFIX}${request.approvalId}:s`,
+      },
+    ]);
+  }
+  if (canGrantShape(request)) {
+    rows.push([
+      {
+        text: `🔓 Grant "${request.commandShape}" for session`,
+        callback_data: `${CALLBACK_PREFIX}${request.approvalId}:a`,
+      },
+    ]);
+  }
+  return { inline_keyboard: rows };
 }
 
 /**
