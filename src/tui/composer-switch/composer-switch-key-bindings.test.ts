@@ -52,7 +52,11 @@ describe("opening the strip", () => {
   it("ctrl+r opens it on the backend control, cursor on the live route", () => {
     const app = driver(localState("external"));
     expect(app.press("r", { ctrl: true })).toBe(true);
-    expect(app.at().composerSwitch).toEqual({ kind: "backend", cursor: 2 });
+    expect(app.at().composerSwitch).toEqual({
+      kind: "backend",
+      cursor: 2,
+      filter: "",
+    });
   });
 
   it("declines while another surface owns the keyboard", () => {
@@ -106,7 +110,11 @@ describe("driving an open strip", () => {
     app.press("r", { ctrl: true });
     app.press("", { rightArrow: true });
     // openrouter is the active provider and the first row.
-    expect(app.at().composerSwitch).toEqual({ kind: "provider", cursor: 0 });
+    expect(app.at().composerSwitch).toEqual({
+      kind: "provider",
+      cursor: 0,
+      filter: "",
+    });
   });
 
   it("Enter hands the selected row to the activator", () => {
@@ -138,10 +146,73 @@ describe("driving an open strip", () => {
     expect(app.press("p", { ctrl: true })).toBe(false);
   });
 
-  it("swallows ordinary typing so it cannot leak into the composer", () => {
+  it("consumes ordinary typing so it cannot leak into the composer", () => {
     const app = driver(cloudState());
     app.press("r", { ctrl: true });
     expect(app.press("x")).toBe(true);
     expect(app.press("", { tab: true })).toBe(true);
+  });
+});
+
+describe("the typed filter", () => {
+  it("printable keys narrow the list and re-seat the cursor on top", () => {
+    const app = driver(cloudState());
+    app.press("r", { ctrl: true });
+    app.press("", { downArrow: true });
+    app.press("l");
+    app.press("o");
+    expect(app.at().composerSwitch).toEqual({
+      kind: "backend",
+      cursor: 0,
+      filter: "lo",
+    });
+  });
+
+  it("filters what Enter picks, not just what is drawn", () => {
+    const app = driver(cloudState());
+    app.press("r", { ctrl: true });
+    // "loc" leaves only the local backend of cloud/local/custom.
+    for (const ch of "loc") app.press(ch);
+    app.press("", { return: true });
+    expect(app.picked.map((row) => row.label)).toEqual(["local"]);
+  });
+
+  it("backspace shortens the query one character at a time", () => {
+    const app = driver(cloudState());
+    app.press("r", { ctrl: true });
+    app.press("c");
+    app.press("u");
+    app.press("", { backspace: true });
+    expect(app.at().composerSwitch?.filter).toBe("c");
+    // At an empty query backspace is a no-op, not a close.
+    app.press("", { backspace: true });
+    app.press("", { backspace: true });
+    expect(app.at().composerSwitch).not.toBeNull();
+  });
+
+  it("Esc clears the filter first and closes only when it is empty", () => {
+    const app = driver(cloudState());
+    app.press("r", { ctrl: true });
+    app.press("q");
+    expect(app.press("", { escape: true })).toBe(true);
+    expect(app.at().composerSwitch).toEqual({
+      kind: "backend",
+      cursor: 0,
+      filter: "",
+    });
+    app.press("", { escape: true });
+    expect(app.at().composerSwitch).toBeNull();
+  });
+
+  it("walking to another control drops the previous control's filter", () => {
+    const app = driver(cloudState());
+    app.press("r", { ctrl: true });
+    app.press("z");
+    app.press("", { rightArrow: true });
+    expect(app.at().composerSwitch).toEqual({
+      kind: "provider",
+      cursor: 0,
+      filter: "",
+    });
   });
 });

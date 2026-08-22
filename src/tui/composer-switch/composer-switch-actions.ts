@@ -6,7 +6,9 @@ export type ComposerSwitchAction =
   | { type: "composer_switch_closed" }
   | { type: "composer_switch_cursor_moved"; delta: number }
   /** Put the cursor on an absolute row (mouse hover-then-click). */
-  | { type: "composer_switch_cursor_set"; cursor: number };
+  | { type: "composer_switch_cursor_set"; cursor: number }
+  /** Replace the typed filter (append and backspace both land here). */
+  | { type: "composer_switch_filter_set"; filter: string };
 
 export function isComposerSwitchAction(action: {
   type: string;
@@ -15,6 +17,7 @@ export function isComposerSwitchAction(action: {
     action.type === "composer_switch_opened" ||
     action.type === "composer_switch_closed" ||
     action.type === "composer_switch_cursor_moved" ||
-    action.type === "composer_switch_cursor_set"
+    action.type === "composer_switch_cursor_set" ||
+    action.type === "composer_switch_filter_set"
   );
 }

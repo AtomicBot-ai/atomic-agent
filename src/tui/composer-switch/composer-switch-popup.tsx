@@ -11,7 +11,6 @@ import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import { chromeTheme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
-import { COMPOSER_SWITCH_KEY_LABEL } from "./composer-switch-key-bindings.js";
 import {
   clampComposerSwitchCursor,
   selectComposerSwitchRows,
@@ -23,9 +22,7 @@ import {
 const PREFERRED_WIDTH = 52;
 /** Rows of list body at most, before the window starts scrolling. */
 const MAX_BODY_ROWS = 10;
-/** Border (2) + title row + the footer's hairline + footer row. */
-const CHROME_ROWS = 5;
-/** Column reserved for the entry label. */
+/** Column reserved for the entry label when a detail column follows it. */
 const LABEL_WIDTH = 24;
 
 export interface ComposerSwitchPopupProps {
@@ -75,23 +72,42 @@ export function ComposerSwitchPopup({
 
   const rows = selectComposerSwitchRows(state, open.kind);
   const cursor = clampComposerSwitchCursor(state, open.cursor);
+  // Optional chrome, shed when the pane cannot hold it: the two border
+  // rows and one body row are the floor, and past that the hairline
+  // goes first (ornament), then the footer (every key keeps working
+  // undocumented), then the filter line, then the title — the title
+  // outlives the rest because it names the switch and carries the
+  // position counter.
+  const chromeSlots = Math.min(4, Math.max(0, availableRows - 3));
+  const showTitle = chromeSlots >= 1;
+  const showFilter = chromeSlots >= 2;
+  const showFooter = chromeSlots >= 3;
+  const showHairline = chromeSlots >= 4;
   const bodyRows = Math.max(
     1,
-    Math.min(MAX_BODY_ROWS, availableRows - CHROME_ROWS),
+    Math.min(MAX_BODY_ROWS, availableRows - 2 - chromeSlots),
   );
   const start = windowStart(rows.length, cursor, bodyRows);
   const visible = rows.slice(start, start + bodyRows);
-  const hiddenAfter = Math.max(0, rows.length - start - visible.length);
-  const height = Math.max(1, visible.length) + CHROME_ROWS;
+  const height = 2 + chromeSlots + Math.max(1, visible.length);
+  // `(cursor+1/total)` is the "there is more" affordance: the old
+  // footer's `↓ n more` tail was exactly the part `fitToWidth` cut off.
+  const counter = `(${rows.length === 0 ? 0 : cursor + 1}/${rows.length})`;
 
   return (
     <PopupFrame
       offsetTop={Math.max(0, availableRows - height)}
       width={width}
     >
-      <Text color={chromeTheme.colors.railForeground} bold>
-        {fitToWidth(` ${selectComposerSwitchTitle(open.kind).toUpperCase()}`, inner)}
-      </Text>
+      {showTitle ? (
+        <Text color={chromeTheme.colors.railForeground} bold>
+          {fitToWidth(
+            ` ${selectComposerSwitchTitle(open.kind).toUpperCase()} ${counter}`,
+            inner,
+          )}
+        </Text>
+      ) : null}
+      {showFilter ? <FilterLine filter={open.filter} inner={inner} /> : null}
       {visible.map((row, idx) => (
         <SwitchRow
           key={row.id}
@@ -104,16 +120,58 @@ export function ComposerSwitchPopup({
       ))}
       {rows.length === 0 ? (
         <Text color={chromeTheme.colors.warn}>
-          {fitToWidth(" nothing to switch to", inner)}
+          {fitToWidth(
+            open.filter.length > 0
+              ? ` no match for "${open.filter}" — backspace to widen`
+              : " nothing to switch to",
+            inner,
+          )}
         </Text>
       ) : null}
-      <Text color={chromeTheme.colors.railMuted}>
-        {chromeTheme.glyphs.toolBoxHorizontal.repeat(Math.max(0, inner))}
-      </Text>
-      <Text color={chromeTheme.colors.railMuted}>
-        {fitToWidth(` ${footer(hiddenAfter)}`, inner)}
-      </Text>
+      {showHairline ? (
+        <Text color={chromeTheme.colors.railMuted}>
+          {chromeTheme.glyphs.toolBoxHorizontal.repeat(Math.max(0, inner))}
+        </Text>
+      ) : null}
+      {showFooter ? (
+        <Text color={chromeTheme.colors.railMuted}>
+          {fitToWidth(` ${footer(open.filter)}`, inner)}
+        </Text>
+      ) : null}
     </PopupFrame>
+  );
+}
+
+/**
+ * The filter row under the title. Drawn even before anything is typed —
+ * the operator has to see that the list is typeable before they would
+ * think to type — and padded to the full inner width like every other
+ * line, so the chat log cannot show through it.
+ */
+function FilterLine({
+  filter,
+  inner,
+}: {
+  filter: string;
+  inner: number;
+}): ReactElement {
+  const label = " filter: ";
+  if (filter.length === 0) {
+    return (
+      <Text color={chromeTheme.colors.railMuted}>
+        {fitToWidth(`${label}type to filter`, inner)}
+      </Text>
+    );
+  }
+  return (
+    <Text>
+      <Text color={chromeTheme.colors.railMuted}>{label}</Text>
+      {/* The query is text being actively read back, so it gets the
+          rail's full text tone, not the muted one. */}
+      <Text color={chromeTheme.colors.railForeground}>
+        {fitToWidth(`${filter}▏`, Math.max(0, inner - label.length))}
+      </Text>
+    </Text>
   );
 }
 
@@ -169,10 +227,12 @@ function SwitchRow({
   const mouse = useMouseCommands();
   const marker = selected ? chromeTheme.glyphs.menuCursor : " ";
   const check = row.active ? `${chromeTheme.glyphs.check} ` : "";
-  const label = fitToWidth(
-    ` ${marker} ${check}${row.label}`,
-    Math.min(LABEL_WIDTH, inner),
-  );
+  // The label column is reserved only when there is a detail column to
+  // align: catalog ids differ past column 24, and truncating them
+  // against an empty right half made neighbouring rows read identical.
+  const labelBudget =
+    row.detail.length > 0 ? Math.min(LABEL_WIDTH, inner) : inner;
+  const label = fitToWidth(` ${marker} ${check}${row.label}`, labelBudget);
   const detail = fitToWidth(` ${row.detail}`, Math.max(0, inner - label.length));
   const body = (
     <>
@@ -205,15 +265,17 @@ function SwitchRow({
   );
 }
 
-function footer(hiddenAfter: number): string {
-  const parts = [
-    "↑↓ move",
-    "←→ switch",
-    "enter pick",
-    `esc/${COMPOSER_SWITCH_KEY_LABEL} close`,
-  ];
-  if (hiddenAfter > 0) parts.push(`↓ ${hiddenAfter} more`);
-  return parts.join("   ");
+/**
+ * Two footers, not one: a typed filter changes what Esc does, and each
+ * variant is kept short enough to survive `fitToWidth` at the popup's
+ * full 50-column interior — the five-part footer this replaces ran to
+ * 52 and lost its own tail.
+ */
+function footer(filter: string): string {
+  if (filter.length > 0) {
+    return ["↑↓ move", "enter pick", "esc clears, again closes"].join("   ");
+  }
+  return ["↑↓ move", "←→ switch", "enter pick", "esc close"].join("   ");
 }
 
 /** Scroll window that keeps the cursor row visible. */

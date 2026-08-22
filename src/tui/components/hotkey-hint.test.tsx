@@ -102,14 +102,14 @@ describe("HotkeyHint scroll chip", () => {
 describe("HotkeyHint draft chips", () => {
   it("adds an esc / clear-draft chip once a draft exists", () => {
     // The ctrl+p chip is not inert with a draft (the menu opens either
-    // way), so nothing is swapped out: the affordance rides as a seventh
+    // way), so nothing is swapped out: the affordance rides as an extra
     // chip on a wide surface and the shed ranks pay for it when the row
-    // narrows.
+    // narrows. Eight with the ctrl+r route chip.
     const out = renderHint(chatState({ inputValue: "half a thought" }));
     expect(out).toContain("[esc]");
     expect(out).toContain("clear draft");
     expect(out).toContain("[ctrl+p]");
-    expect(chipCount(out)).toBe(7);
+    expect(chipCount(out)).toBe(8);
   });
 
   it("keeps the empty idle footer free of the clear-draft chip", () => {
@@ -120,7 +120,11 @@ describe("HotkeyHint draft chips", () => {
     // On an empty buffer Esc opens the menu, so the strip says so — the
     // same slot that carries `clear draft` once there is a draft.
     expect(out).toContain("[esc]");
-    expect(chipCount(out)).toBe(7);
+    expect(chipCount(out)).toBe(8);
+    // The keyboard route to the composer's three controls is written
+    // down here, not only inside the popup it opens.
+    expect(out).toContain("[ctrl+r]");
+    expect(out).toContain("route");
   });
 
   it("tells the operator the draft survives an abort mid-turn", () => {

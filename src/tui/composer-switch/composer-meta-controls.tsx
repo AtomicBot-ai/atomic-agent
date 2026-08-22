@@ -16,7 +16,8 @@ export interface ComposerMetaControlsProps {
 
 /**
  * The composer toolbar's route statement, as three controls:
- * `● cloud · anthropic · claude-opus-5`.
+ * `● cloud · anthropic · claude-opus-5` — and, on a probed local
+ * backend, the probe's word after the dot: `○ local down · …`.
  *
  * **Order.** Where it runs, who serves it, which model — the order the
  * route is actually decided in. The model used to come first, which put
@@ -69,18 +70,85 @@ export function ComposerMetaControls({
   );
 }
 
+export interface ComposerBackendLook {
+  readonly glyph: string;
+  readonly color: string;
+  /** Status word after the backend label, `null` when the dot alone is honest. */
+  readonly word: string | null;
+}
+
+/**
+ * What the backend control shows for its status — or `null` for silence.
+ *
+ * `unknown` draws nothing at all: the shared glyph table's `·` is the
+ * very character the row uses as a separator, and the old health pill
+ * never appeared in this state either (`localConfigured` gated it), so
+ * silence *is* the pill's information content. Cloud keeps its
+ * historical green dot but no word — there is no probe behind it, and
+ * printing "healthy" would claim an observation nobody made. Local and
+ * custom carry the probe's word (healthy / probing / down / error) the
+ * way the pill did. `unreachable`'s grey is swapped for the rail-aware
+ * token: `theme.colors.muted` was picked against the normal ground and
+ * lands near 2.5:1 on the rail (the caveat `prompt-meta-bar.tsx`
+ * documents).
+ */
+export function composerBackendLook(
+  backend: ComposerBackendMeta,
+): ComposerBackendLook | null {
+  if (backend.status === "unknown") return null;
+  const look = llmHealthLook(backend.status);
+  return {
+    glyph: look.glyph,
+    color:
+      backend.status === "unreachable" ? theme.colors.railMuted : look.color,
+    word: backend.kind === "cloud" ? null : look.label,
+  };
+}
+
 function BackendControl({
   backend,
 }: {
   backend: ComposerBackendMeta;
 }): ReactElement {
-  const look = llmHealthLook(backend.status);
+  const look = composerBackendLook(backend);
   return (
-    <Control
-      kind="backend"
-      label={backend.kind}
-      glyph={<Text color={look.color} bold>{`${look.glyph} `}</Text>}
-    />
+    <>
+      <Control
+        kind="backend"
+        label={backend.kind}
+        glyph={
+          look ? (
+            <Text color={look.color} bold>{`${look.glyph} `}</Text>
+          ) : undefined
+        }
+      />
+      {look?.word ? <StatusWord word={look.word} /> : null}
+    </>
+  );
+}
+
+/**
+ * The probe's word after the backend label — "a word where space
+ * allows", literally: its own flex item with a `flexShrink` above the
+ * model's, so it is the first thing on the row to give up columns, and
+ * the dot still carries the status once it has.
+ */
+function StatusWord({ word }: { word: string }): ReactElement {
+  const mouse = useMouseCommands();
+  // Clicking the word opens the same switch as the label it annotates —
+  // a dead cell in the middle of a clickable phrase reads as a bug.
+  const ref = useMouseTarget((hit) => {
+    if (!mouse || !isPrimaryPress(hit.event)) return false;
+    mouse.dispatch({ type: "composer_switch_opened", kind: "backend" });
+    return true;
+  });
+  return (
+    <Box ref={ref} flexShrink={4} minWidth={0}>
+      <Text wrap="truncate" color={theme.colors.railMuted}>
+        {" "}
+        {word}
+      </Text>
+    </Box>
   );
 }
 

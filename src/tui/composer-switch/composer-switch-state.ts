@@ -34,6 +34,13 @@ export interface ComposerSwitchState {
   readonly kind: ComposerSwitchKind;
   /** Index among the rows of `kind`, clamped by the selectors. */
   readonly cursor: number;
+  /**
+   * Substring filter typed straight into the open switch. Lives here
+   * rather than in a panel slice because it means nothing once the
+   * popup closes — the model switch lists 300+ catalog rows in a
+   * ten-row window, and typing is the only sane way across them.
+   */
+  readonly filter: string;
 }
 
 /** Title drawn on the popup, and the word the control itself reads as. */

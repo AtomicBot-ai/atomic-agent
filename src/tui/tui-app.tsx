@@ -1172,6 +1172,14 @@ export function TuiApp({
     6,
     terminalSize.rows - appChromeRows(composerVisible),
   );
+  // The switch popup gets the pane's *real* row count, floor of none:
+  // it sheds its own chrome down to a three-row frame, and handing it
+  // the menu's 6-row floor on a shorter pane made it paint over the
+  // composer instead of shrinking.
+  const switchPaneRows = Math.max(
+    0,
+    terminalSize.rows - appChromeRows(composerVisible),
+  );
   const promptLlm = selectPromptLlmMeta(state);
   // The backend control carries the health dot the standalone pill used
   // to: `selectComposerBackendMeta` keeps the `localConfigured` guard
@@ -1321,7 +1329,7 @@ export function TuiApp({
             ) : null}
             <ComposerSwitchPopup
               state={state}
-              availableRows={menuPaneRows}
+              availableRows={switchPaneRows}
               availableColumns={
                 terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
               }

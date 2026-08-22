@@ -92,8 +92,33 @@ async function mount(state: TuiState) {
 function open(
   kind: "backend" | "provider" | "model",
   cursor = 0,
+  filter = "",
 ): TuiState {
-  return { ...cloudState(), composerSwitch: { kind, cursor } };
+  return { ...cloudState(), composerSwitch: { kind, cursor, filter } };
+}
+
+/**
+ * A cloud route whose provider serves a catalog bigger than the window.
+ * A codex subscription-cli provider on purpose: it is the one cloud
+ * kind whose model list is exactly the entry's own options, so the
+ * bundled OpenRouter/aimlapi catalogs cannot leak extra rows into the
+ * counts these tests assert.
+ */
+function catalogState(size: number, filter = ""): TuiState {
+  const models = Array.from(
+    { length: size },
+    (_unused, i) => `vendor-${i % 7}/model-${i}`,
+  );
+  return {
+    ...cloudState({
+      id: "codex",
+      kind: "subscription-cli",
+      subscriptionCli: { cli: "codex" },
+      chatModelOptions: models,
+      chatModel: "vendor-0/model-0",
+    }),
+    composerSwitch: { kind: "model", cursor: 0, filter },
+  };
 }
 
 describe("the switch popup", () => {
@@ -152,7 +177,58 @@ describe("the switch popup", () => {
     app.unmount();
   });
 
-  it("fits its own budget on a pane with almost no rows", async () => {
+  it("counts the operator's place in a catalog the window cannot show", async () => {
+    const app = await mount(catalogState(345));
+    const frame = app.frame();
+    expect(frame).toContain("MODEL (1/345)");
+    // The window itself stays capped: ten body rows, not 345.
+    expect(frame).not.toContain("model-10");
+    app.unmount();
+  });
+
+  it("shows the typed filter, the narrowed count and only matching rows", async () => {
+    const app = await mount(catalogState(345, "vendor-6"));
+    const frame = app.frame();
+    expect(frame).toContain("filter: vendor-6");
+    // 345 rows over 7 vendors: vendor-6 owns 49 of them.
+    expect(frame).toContain("MODEL (1/49)");
+    expect(frame).toContain("vendor-6/model-6");
+    expect(frame).not.toContain("vendor-0/");
+    app.unmount();
+  });
+
+  it("invites typing before anything is typed", async () => {
+    const app = await mount(open("model"));
+    expect(app.frame()).toContain("filter: type to filter");
+    app.unmount();
+  });
+
+  it("names the query when it empties the list", async () => {
+    const app = await mount(catalogState(345, "zzz"));
+    const frame = app.frame();
+    expect(frame).toContain('no match for "zzz"');
+    expect(frame).toContain("MODEL (0/0)");
+    app.unmount();
+  });
+
+  it("gives a row without a detail column the whole line", async () => {
+    // 30 columns of id: longer than the 24-column label budget.
+    const id = "anthropic/claude-opus-5-x-long";
+    const app = await mount({
+      ...cloudState({
+        id: "codex",
+        kind: "subscription-cli",
+        subscriptionCli: { cli: "codex" },
+        chatModelOptions: [id],
+        chatModel: id,
+      }),
+      composerSwitch: { kind: "model", cursor: 0, filter: "" },
+    });
+    expect(app.frame()).toContain(id);
+    app.unmount();
+  });
+
+  function mountShort(availableRows: number): readonly string[] {
     const state = open("model");
     const registry = new MouseTargetRegistry();
     const { lastFrame, unmount } = render(
@@ -162,10 +238,15 @@ describe("the switch popup", () => {
         callbacks={{} as TuiAppCallbacks}
         getState={() => state}
       >
-        <Box flexDirection="column" position="relative" width={30} height={7}>
+        <Box
+          flexDirection="column"
+          position="relative"
+          width={30}
+          height={availableRows}
+        >
           <ComposerSwitchPopup
             state={state}
-            availableRows={7}
+            availableRows={availableRows}
             availableColumns={30}
             onActivate={() => {}}
           />
@@ -173,10 +254,24 @@ describe("the switch popup", () => {
       </MouseProvider>,
     );
     const lines = strip(lastFrame() ?? "").split("\n");
+    unmount();
+    return lines;
+  }
+
+  it("fits its own budget on a pane with almost no rows", () => {
+    const lines = mountShort(7);
     expect(lines.length).toBeLessThanOrEqual(7);
     expect(Math.max(...lines.map((line) => line.length))).toBeLessThanOrEqual(
       30,
     );
-    unmount();
+  });
+
+  it("sheds its chrome rather than overlap a pane shorter than it", () => {
+    // 4 rows can hold the border, one body row and one chrome line —
+    // the old fixed-chrome frame was never shorter than 6 and painted
+    // over the two lines above the pane.
+    for (const rows of [4, 3]) {
+      expect(mountShort(rows).length).toBeLessThanOrEqual(rows);
+    }
   });
 });

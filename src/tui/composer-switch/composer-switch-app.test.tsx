@@ -224,18 +224,29 @@ describe("the composer's route controls inside the app", () => {
       () => app.frame().includes("WHERE IT RUNS"),
       "the backend switch",
     );
-    // Swallowed while the switch owns the keyboard…
+    // While the switch owns the keyboard, letters type into its
+    // filter, not into the composer…
     app.stdin.write("zzz");
-    await delay(120);
-    expect(app.frame()).not.toContain("zzz");
+    await waitUntil(
+      () => app.frame().includes("filter: zzz"),
+      "the typed filter",
+    );
+    // …Esc pays the filter before it pays the popup…
+    app.stdin.write(ESC);
+    await waitUntil(
+      () => app.frame().includes("filter: type to filter"),
+      "the filter to clear",
+    );
     app.stdin.write(ESC);
     await waitUntil(
       () => !app.frame().includes("WHERE IT RUNS"),
       "the switch to close",
     );
-    // …and typed normally after it lets go.
+    // …and the composer types normally after it lets go, without the
+    // filter text having leaked into its buffer.
     app.stdin.write("hello");
     await waitUntil(() => app.frame().includes("hello"), "the typed buffer");
+    expect(app.frame()).not.toContain("zzz");
     app.unmount();
   });
 });

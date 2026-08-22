@@ -7,6 +7,7 @@ import {
 import type { LlmHealthStatus } from "../llm-health/llm-health-state.js";
 import type { LlmPanelRow } from "../llm-panel/llm-panel-selectors.js";
 import type { TuiState } from "../tui-state.js";
+import { filterSwitchRows } from "./composer-switch-filter.js";
 import {
   COMPOSER_SWITCH_TITLES,
   type ComposerBackendKind,
@@ -170,9 +171,18 @@ export function selectComposerSwitchRows(
   state: TuiState,
   kind: ComposerSwitchKind,
 ): readonly ComposerSwitchRow[] {
-  if (kind === "backend") return backendRows(state);
-  if (kind === "provider") return providerRows(state);
-  return modelRows(state);
+  const rows =
+    kind === "backend"
+      ? backendRows(state)
+      : kind === "provider"
+        ? providerRows(state)
+        : modelRows(state);
+  const open = state.composerSwitch;
+  // The typed filter is applied here, not in the renderer: cursor
+  // clamping, Enter and the popup must all see the same narrowed list,
+  // or the row picked would not be the row highlighted.
+  if (!open || open.kind !== kind) return rows;
+  return filterSwitchRows(rows, open.filter);
 }
 
 /** Row the cursor sits on, or `null` when the switch has no rows at all. */

@@ -106,6 +106,44 @@ describe("the switch rows", () => {
     });
   });
 
+  it("narrows to the open switch's typed filter, terms ANDed", () => {
+    // codex subscription-cli: the one cloud kind whose model list is
+    // exactly the entry's own options, so the bundled catalogs cannot
+    // leak extra rows into the counts below.
+    const base = cloudState({
+      id: "codex",
+      kind: "subscription-cli",
+      subscriptionCli: { cli: "codex" },
+      chatModelOptions: [
+        "qwen/qwen3.7-max",
+        "qwen/qwen3-coder",
+        "anthropic/claude-opus-5",
+      ],
+      chatModel: "qwen/qwen3.7-max",
+    });
+    const state: TuiState = {
+      ...base,
+      composerSwitch: { kind: "model", cursor: 0, filter: "qwen coder" },
+    };
+    expect(selectComposerSwitchRows(state, "model").map((r) => r.label)).toEqual(
+      ["qwen/qwen3-coder"],
+    );
+    // The filter belongs to the switch that is open, never to a sibling.
+    expect(selectComposerSwitchRows(state, "provider").length).toBe(3);
+  });
+
+  it("matches on the detail column when the label cannot answer", () => {
+    const base = cloudState();
+    const state: TuiState = {
+      ...base,
+      composerSwitch: { kind: "provider", cursor: 0, filter: "wizard" },
+    };
+    // "opens the wizard" is the detail of the add-provider row.
+    expect(
+      selectComposerSwitchRows(state, "provider").map((r) => r.label),
+    ).toEqual(["Add a new provider"]);
+  });
+
   it("is unaffected by a filter left typed in the Cloud pane", () => {
     const base = cloudState();
     const filtered = {

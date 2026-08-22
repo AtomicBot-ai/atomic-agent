@@ -1,5 +1,6 @@
 import type { Key } from "ink";
 
+import { isPrintableFilterInput } from "../llm-panel/llm-panel-modal-key-bindings.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
 import {
@@ -45,6 +46,10 @@ export function isComposerSwitchOpenKey(input: string, key: Key): boolean {
  * by side on one row, and an operator who opened the wrong one should
  * not have to close, aim and reopen.
  *
+ * Printable keys type into a substring filter (`composer-switch-filter`)
+ * and Esc clears it before it closes anything — the model switch lists
+ * 300+ catalog rows, and arrows alone were the only way across them.
+ *
  * Ctrl- and Meta-chords deliberately fall through — `ctrl+p` is the way
  * out of every surface in this app, and a switch that swallowed it would
  * be the one place that rule stopped holding.
@@ -69,7 +74,14 @@ export function handleComposerSwitchKey(
   }
   if (key.ctrl || key.meta) return false;
   if (key.escape) {
-    dispatch({ type: "composer_switch_closed" });
+    // Esc pays the filter before it pays the popup, the way the
+    // wizard's search box does: undoing a mistyped query must not cost
+    // the operator the list they were narrowing.
+    if (open.filter.length > 0) {
+      dispatch({ type: "composer_switch_filter_set", filter: "" });
+    } else {
+      dispatch({ type: "composer_switch_closed" });
+    }
     return true;
   }
   if (key.downArrow) {
@@ -88,8 +100,26 @@ export function handleComposerSwitchKey(
     activateSelection(ctx);
     return true;
   }
-  // Everything else (Tab, letters, page keys) is swallowed so the
-  // composer underneath cannot act on a key aimed at the switch.
+  if (key.backspace || key.delete) {
+    if (open.filter.length > 0) {
+      dispatch({
+        type: "composer_switch_filter_set",
+        filter: open.filter.slice(0, -1),
+      });
+    }
+    return true;
+  }
+  // Printable keys type into the filter — no `/` prefix, because unlike
+  // the wizard's lists nothing here ever used letters for movement.
+  if (input.length > 0 && isPrintableFilterInput(input)) {
+    dispatch({
+      type: "composer_switch_filter_set",
+      filter: open.filter + input,
+    });
+    return true;
+  }
+  // Everything else (Tab, page keys) is swallowed so the composer
+  // underneath cannot act on a key aimed at the switch.
   return true;
 }
 

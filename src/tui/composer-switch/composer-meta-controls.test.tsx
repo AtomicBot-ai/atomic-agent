@@ -66,7 +66,7 @@ describe("the composer's route line", () => {
     expect(out).not.toContain(ink(theme.colors.accentSoft));
   });
 
-  it("keeps the health dot's own colour in front of the backend", () => {
+  it("pairs the dot with the probe's word on a local backend", () => {
     const { lastFrame, unmount } = render(
       <Box>
         <ComposerMetaControls
@@ -78,8 +78,38 @@ describe("the composer's route line", () => {
     );
     const out = lastFrame() ?? "";
     unmount();
-    expect(plain(out)).toContain("○ local");
-    expect(out).toContain(ink(theme.colors.muted));
+    // The old health pill said "○ down"; the control keeps that word so
+    // colour is never the only carrier of the status.
+    expect(plain(out)).toContain("○ local down");
+    // Rail-aware grey: `muted` was chosen against the normal ground and
+    // reads at ~2.5:1 on the rail.
+    expect(out).toContain(ink(theme.colors.railMuted));
+    expect(out).not.toContain(ink(theme.colors.muted));
+  });
+
+  it("stays silent — no dot, no word — while nothing has been probed", () => {
+    const { lastFrame, unmount } = render(
+      <Box>
+        <ComposerMetaControls
+          backend={{ kind: "custom", status: "unknown" }}
+          provider="llama.cpp"
+          model={null}
+        />
+      </Box>,
+    );
+    const out = plain(lastFrame() ?? "");
+    unmount();
+    // The unknown glyph is the same `·` the row separates words with;
+    // drawing it made the status indistinguishable from punctuation.
+    expect(out.trimStart().startsWith("custom")).toBe(true);
+    expect(out).not.toContain("· custom");
+    expect(out).not.toContain("unknown");
+  });
+
+  it("gives cloud its dot but never a word no probe stands behind", () => {
+    const out = plain(frame());
+    expect(out).toContain("● cloud");
+    expect(out).not.toContain("healthy");
   });
 
   it("renders nothing at all when there is no route to state", () => {
