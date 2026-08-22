@@ -1,32 +1,27 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import type { OnboardingMark } from "../onboarding/onboarding-fit.js";
 import { theme } from "../theme/theme.js";
-import { CROSS_MARKS } from "./logo-art.js";
-
-const FACE_GLYPHS = new Set(["#", "█"]);
+import { CROSS_MARKS, FACE_GLYPHS } from "./logo-art.js";
 
 /**
- * Brand lockup for the first-run screens: the small mark, the product
- * name, and where in the flow the operator is. Deliberately not the
+ * Brand lockup for the first-run screens: the mark, the product name,
+ * and where in the flow the operator is. Deliberately not the
  * `StatusBar` — during setup there is no session, no breadcrumb and no
  * tab to name, and borrowing the app's chrome would advertise
  * navigation that does not exist yet.
  */
 export function OnboardingHeader(props: {
   subtitle: string;
-  mark?: boolean;
+  /**
+   * Which mark to draw, from the fit tiers. The minimal tier passes
+   * `xs` rather than dropping the mark: the two-row sign costs no more
+   * height than the bare text lockup it replaced, so even the tiniest
+   * terminal keeps the brand.
+   */
+  mark?: OnboardingMark;
 }): ReactElement {
-  const rows = CROSS_MARKS.block.sm;
-  if (props.mark === false) {
-    return (
-      <Box flexDirection="column" flexShrink={0}>
-        <Text bold color={theme.colors.accent}>
-          atomic
-        </Text>
-        <Text color={theme.colors.muted}>{props.subtitle}</Text>
-      </Box>
-    );
-  }
+  const rows = CROSS_MARKS.block[props.mark ?? "sm"];
   return (
     <Box flexDirection="row" flexShrink={0}>
       <Box flexDirection="column">

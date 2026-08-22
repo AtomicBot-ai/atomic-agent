@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
-import { CROSS_MARKS } from "./logo-art.js";
+import { CROSS_MARKS, FACE_GLYPHS } from "./logo-art.js";
 import type { LogoVariant, WordmarkPlacement } from "./splash-fit.js";
 
 /**
@@ -11,9 +11,9 @@ import type { LogoVariant, WordmarkPlacement } from "./splash-fit.js";
  * landing surface) without copying the row data.
  *
  * Rendered as plain Ink primitives — no animations, no alpha. The mark
- * comes in three sizes so the same component can serve a 200-column
+ * comes in four sizes so the same component can serve a 200-column
  * desktop terminal and a 40-column SSH window: `full` (51×24), `small`
- * (31×14) and `mini` (9×5). `SplashBanner` picks one via
+ * (31×14), `mini` (6×3) and `tiny` (4×2). `SplashBanner` picks one via
  * `computeSplashFit`.
  *
  * **Every size is its own drawing** — see `logo-art.ts`. They used to be
@@ -56,6 +56,7 @@ export const LOGO_ART: Readonly<Record<LogoVariant, readonly string[]>> = {
   full: CROSS_MARKS.ascii.lg,
   small: CROSS_MARKS.ascii.md,
   mini: CROSS_MARKS.ascii.sm,
+  tiny: CROSS_MARKS.ascii.xs,
 };
 
 /**
@@ -126,12 +127,6 @@ export function Logo({
     </Box>
   );
 }
-
-/**
- * Glyphs that draw the mark's front plane. Everything else in the art is
- * depth — extruded wall or cast shadow — and stays in `brandMark`.
- */
-const FACE_GLYPHS = new Set(["#", "\u2588"]);
 
 function LogoMark({ variant }: { variant: LogoVariant }): ReactElement {
   return (

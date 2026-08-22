@@ -13,14 +13,21 @@ export type OnboardingTier = "full" | "reduced" | "minimal";
 /** Below this the surface drops to `reduced` and advertises the fact. */
 export const ONBOARDING_FULL_COLUMNS = 100;
 export const ONBOARDING_FULL_ROWS = 30;
-/** Below this even the reduced treatment has to shed its mark. */
+/** Below this the reduced treatment trades its mark for the XS sign. */
 export const ONBOARDING_MINIMAL_COLUMNS = 72;
 export const ONBOARDING_MINIMAL_ROWS = 18;
 
+/**
+ * Which mark the header draws. Never "none": the two-row XS sign is no
+ * taller than the bare two-line text lockup that used to replace the
+ * mark, so even the minimal tier keeps the brand for free.
+ */
+export type OnboardingMark = "sm" | "xs";
+
 export interface OnboardingFit {
   tier: OnboardingTier;
-  /** Draw the brand lockup at all. */
-  mark: boolean;
+  /** Which brand mark the header draws. */
+  mark: OnboardingMark;
   /** Two-line explainer above the choices, dropped when rows are tight. */
   explainer: boolean;
   /** Per-row detail text next to each choice. */
@@ -38,7 +45,7 @@ export function computeOnboardingFit(size: {
   if (minimal) {
     return {
       tier: "minimal",
-      mark: false,
+      mark: "xs",
       explainer: false,
       rowDetails: false,
       sizeAdvice: true,
@@ -49,7 +56,7 @@ export function computeOnboardingFit(size: {
   if (full) {
     return {
       tier: "full",
-      mark: true,
+      mark: "sm",
       explainer: true,
       rowDetails: true,
       sizeAdvice: false,
@@ -57,7 +64,7 @@ export function computeOnboardingFit(size: {
   }
   return {
     tier: "reduced",
-    mark: true,
+    mark: "sm",
     explainer: size.rows >= 22,
     rowDetails: size.columns >= 84,
     sizeAdvice: true,

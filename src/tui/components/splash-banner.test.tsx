@@ -68,12 +68,21 @@ describe("SplashBanner", () => {
   });
 
   it("keeps the tips and drops the mark when four rows is all there is", () => {
-    // The mark is scaled artwork at every size now — the smallest is 4
-    // rows, so on a 4-row surface it would leave nothing for the tips
-    // and Ink would paint it over the chat above. Tips win.
+    // Even the two-row tiny sign spends margin and slack rows, so on a
+    // 4-row surface it would leave nothing for the tips and Ink would
+    // paint it over the chat above. Tips win.
     const frame = frameAt(38, 4);
     expect(frame).toContain("/help");
     expect(frame).not.toMatch(MARK_GLYPHS);
+  });
+
+  it("draws the tiny sign and keeps a tip once a fifth row exists", () => {
+    // Five rows used to buy the three-row mini at the cost of every
+    // tip; the two-row xs sign leaves room for `/help` beside it.
+    const frame = frameAt(38, 5);
+    expect(frame).toContain(" #.");
+    expect(frame).toContain("###.");
+    expect(frame).toContain("/help");
   });
 
   it("still shows a brand mark and a tip once there is room for both", () => {
