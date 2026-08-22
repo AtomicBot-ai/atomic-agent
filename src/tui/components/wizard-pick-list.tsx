@@ -1,5 +1,9 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { MouseListRow } from "../mouse/mouse-list-row.js";
+import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
+import { returnKey } from "../mouse/synthetic-key.js";
+import { routeProvidersWizardKey } from "../providers/route-wizard-key.js";
 import { theme } from "../theme/theme.js";
 
 /**
@@ -200,13 +204,46 @@ export function renderPickList(props: {
         const index = start + i;
         const mark = index === clamped ? ">" : " ";
         return (
-          <Text
+          /*
+            First click selects, second activates the wizard's own Enter
+            — `routeProvidersWizardKey`, the same routing every keyboard
+            site uses, so a click saves or advances exactly what Enter
+            would. The live wizard is read off state at click time
+            because this render function only ever sees rows and a
+            cursor. Registered on the MODAL layer: in the Providers/LLM
+            panels the open wizard raises the mouse floor to MODAL, and
+            a PANEL-layer row would be below it and unclickable.
+          */
+          <MouseListRow
             key={`${index}-${opt.label}`}
-            color={index === clamped ? theme.colors.accent : undefined}
-            wrap="truncate-end"
+            selected={index === clamped}
+            layer={MOUSE_LAYER_MODAL}
+            onSelect={(mouse) => {
+              const wizard = mouse.getState().providersPanel.wizard;
+              if (!wizard) return;
+              mouse.dispatch({
+                type: "providers_wizard_updated",
+                wizard: { ...wizard, cursor: index },
+              });
+            }}
+            onActivate={(mouse) => {
+              const wizard = mouse.getState().providersPanel.wizard;
+              if (!wizard) return;
+              routeProvidersWizardKey("", returnKey(), wizard, {
+                dispatch: mouse.dispatch,
+                onSubmit: (w) => mouse.callbacks.onProvidersWizardSubmit?.(w),
+                onSubmitCancel: () =>
+                  mouse.callbacks.onProvidersWizardSubmitCancel?.(),
+              });
+            }}
           >
-            {mark} {opt.label}
-          </Text>
+            <Text
+              color={index === clamped ? theme.colors.accent : undefined}
+              wrap="truncate-end"
+            >
+              {mark} {opt.label}
+            </Text>
+          </MouseListRow>
         );
       })}
       {errors.map((line, i) => (

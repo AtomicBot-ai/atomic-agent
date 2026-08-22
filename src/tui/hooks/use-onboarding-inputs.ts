@@ -1,224 +1,30 @@
 import { useInput } from "ink";
-import { useCallback } from "react";
 import type { OnboardingScreenCallbacks } from "../components/onboarding-screen.js";
-import {
-  waitOrJumpPullStatus,
-  waitOrJumpRowCount,
-} from "../components/onboarding-wait-or-jump-step.js";
-import type { LocalModelsPullState } from "../local-models/local-models-panel-state.js";
-import type { LocalPickRow } from "../onboarding/local-model-picks.js";
-import { handleOnboardingKey } from "../onboarding/onboarding-key-bindings.js";
-import type {
-  OnboardingOutcome,
-  OnboardingUiState,
-} from "../onboarding/onboarding-state.js";
-import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
-import { routeProvidersWizardKey } from "../providers/route-wizard-key.js";
-import {
-  createProvidersWizardState,
-  type ProvidersWizardState,
-} from "../providers/providers-wizard-state.js";
+import { handleOnboardingStepKey } from "../onboarding/onboarding-step-keys.js";
 import type { TuiAction } from "../tui-action.js";
-import type { LocalModelId } from "../../local-llm/index.js";
+import type { TuiState } from "../tui-state.js";
 
 /**
- * Every key the first-run flow answers to, one `useInput` per step so a
- * screen's handler is active exactly while that screen is up. Extracted
- * from `OnboardingScreen` whole: the screen keeps layout and effects,
- * this hook keeps the keys, and neither has to scroll past the other.
+ * Every key the first-run flow answers to. One `useInput` for the whole
+ * flow: the step table lives in `onboarding-step-keys.ts`, in the
+ * panels' `handle…(input, key, ctx)` shape, so `MouseListRow` +
+ * `pressEnter` drive exactly the code the keyboard does — this hook is
+ * only the keyboard's way in.
  *
- * The splash is the one screen missing here: it promises "press any
- * key" and has to honour clicks, the wheel and pastes too, so its
- * input lives in `useIntroInput` beside the mouse target it needs.
+ * Steps that hand the keyboard to a child return `false` in the router
+ * and are ignored here: the cloud step's wizard editor, the URL and
+ * Hugging Face reference editors. The splash is the other absentee: it
+ * promises "press any key" and has to honour clicks, the wheel and
+ * pastes too, so its input lives in `useIntroInput` beside the
+ * surface-wide mouse target it needs.
  */
 export function useOnboardingInputs(args: {
-  onboarding: OnboardingUiState;
+  state: TuiState;
   dispatch(action: TuiAction): void;
   callbacks: OnboardingScreenCallbacks;
-  /** The curated picks plus the trailing Hugging Face row. */
-  pickRows: readonly LocalPickRow[];
-  wizardState: ProvidersWizardState | null;
-  /** The live pull and its error line, which size the wait/jump rows. */
-  pull: LocalModelsPullState | null;
-  pullError: string | null;
-  finish(outcome: OnboardingOutcome): void;
 }): void {
-  const { onboarding, dispatch, callbacks, pickRows, wizardState, finish } = args;
-
-  // The screen's claim about the pull, and with it the number of rows:
-  // a failed pull adds "Retry the download". Derived here as well as in
-  // the step component so the keyboard and the frame cannot disagree.
-  const waitOrJumpRows = waitOrJumpRowCount(
-    waitOrJumpPullStatus(args.pull, args.pullError),
-  );
-
-  const pick = useCallback(
-    (choice: "local" | "cloud" | "custom") => {
-      if (choice === "cloud") {
-        dispatch({
-          type: "providers_wizard_opened",
-          wizard: createProvidersWizardState("add"),
-        });
-        dispatch({ type: "onboarding_step_set", step: "cloud" });
-        return;
-      }
-      if (choice === "custom") {
-        dispatch({ type: "onboarding_step_set", step: "custom_chat_url" });
-        return;
-      }
-      // Managed mode is recorded now so a Ctrl+C mid-download does not
-      // lose the choice; the model id follows when the pull completes.
-      persistUserLocalModelsConfig({ mode: "managed" });
-      dispatch({ type: "onboarding_step_set", step: "local_pick" });
-    },
-    [dispatch],
-  );
-
-  useInput(
-    (input, key) => {
-      const result = handleOnboardingKey(input, key, onboarding);
-      if (!result.handled) return;
-      for (const action of result.actions) dispatch(action);
-      const intent = result.intent;
-      if (!intent) return;
-      if (intent.kind === "intro_key") return;
-      if (intent.kind === "skip") finish("skipped");
-      else pick(intent.choice);
-    },
-    { isActive: onboarding.step === "choose" },
-  );
-
-  useInput(
-    (input, key) => {
-      if (key.escape) {
-        dispatch({ type: "onboarding_step_set", step: "choose" });
-        return;
-      }
-      if (key.upArrow || input === "k") {
-        dispatch({ type: "onboarding_cursor_moved", delta: -1, length: pickRows.length });
-        return;
-      }
-      if (key.downArrow || input === "j") {
-        dispatch({ type: "onboarding_cursor_moved", delta: 1, length: pickRows.length });
-        return;
-      }
-      if (key.return) {
-        const row = pickRows[onboarding.cursor % Math.max(1, pickRows.length)];
-        if (!row) return;
-        if (row.kind === "hugging_face") {
-          dispatch({ type: "onboarding_step_set", step: "local_hf_ref" });
-          return;
-        }
-        dispatch({ type: "onboarding_local_model_picked", modelId: row.pick.id });
-        callbacks.onLocalModelsPullRequested?.(row.pick.id as LocalModelId);
-      }
-    },
-    { isActive: onboarding.step === "local_pick" },
-  );
-
-  useInput(
-    (input, key) => {
-      if (input === "c" && !key.ctrl) {
-        dispatch({
-          type: "providers_wizard_opened",
-          wizard: createProvidersWizardState("add"),
-        });
-        dispatch({ type: "onboarding_cloud_meanwhile_opened" });
-      }
-    },
-    { isActive: onboarding.step === "local_download" },
-  );
-
-  useInput(
-    (input, key) => {
-      if (key.upArrow || key.downArrow || input === "j" || input === "k") {
-        dispatch({
-          type: "onboarding_cursor_moved",
-          delta: key.upArrow || input === "k" ? -1 : 1,
-          length: waitOrJumpRows,
-        });
-        return;
-      }
-      if (key.return) {
-        const row = onboarding.cursor % waitOrJumpRows;
-        if (row === 0) {
-          finish(onboarding.outcome ?? "cloud");
-          return;
-        }
-        if (row === 1) {
-          // The same wizard the cloud step runs, opened a second time;
-          // the reducer sends its result back to this screen because
-          // this is the step the action was dispatched from.
-          dispatch({
-            type: "providers_wizard_opened",
-            wizard: createProvidersWizardState("add"),
-          });
-          dispatch({ type: "onboarding_cloud_meanwhile_opened" });
-          return;
-        }
-        // The retry row, shown only for a failed pull: run the same
-        // pull again through the orchestrator that owns it. The
-        // resulting pull_started event clears the error and flips this
-        // screen back to its running state.
-        if (onboarding.localModelId) {
-          // Stored by `onboarding_local_model_picked` from a catalog
-          // pick, so the id round-trips through state as a string.
-          callbacks.onLocalModelsPullRequested?.(
-            onboarding.localModelId as LocalModelId,
-          );
-        }
-      }
-    },
-    { isActive: onboarding.step === "wait_or_jump" },
-  );
-
-  useInput(
-    (input, key) => {
-      if (key.escape) {
-        finish(onboarding.outcome ?? "skipped");
-        return;
-      }
-      if (key.upArrow || key.downArrow || input === "j" || input === "k") {
-        dispatch({
-          type: "onboarding_cursor_moved",
-          delta: key.upArrow || input === "k" ? -1 : 1,
-          length: 2,
-        });
-        return;
-      }
-      if (key.return) {
-        if (onboarding.cursor !== 0) {
-          finish(onboarding.outcome ?? "skipped");
-          return;
-        }
-        if (onboarding.offer === "local") {
-          persistUserLocalModelsConfig({ mode: "managed" });
-          dispatch({ type: "onboarding_step_set", step: "local_pick" });
-          return;
-        }
-        dispatch({
-          type: "providers_wizard_opened",
-          wizard: createProvidersWizardState("add"),
-        });
-        dispatch({ type: "onboarding_step_set", step: "cloud" });
-      }
-    },
-    { isActive: onboarding.step === "propose_second" },
-  );
-
-  // The cloud step *is* the providers wizard — same keys, same
-  // verification, same hot-swap — so it routes through the panel's own
-  // handler rather than a second implementation of it.
-  useInput(
-    (input, key) => {
-      if (!wizardState) return;
-      routeProvidersWizardKey(input, key, wizardState, {
-        dispatch,
-        onSubmit: (wizard) => callbacks.onProvidersWizardSubmit?.(wizard),
-        onSubmitCancel: () => callbacks.onProvidersWizardSubmitCancel?.(),
-      });
-    },
-    { isActive: onboarding.step === "cloud" && wizardState !== null },
-  );
-
+  const { state, dispatch, callbacks } = args;
+  useInput((input, key) => {
+    handleOnboardingStepKey(input, key, { state, dispatch, callbacks });
+  });
 }

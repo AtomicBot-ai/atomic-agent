@@ -38,4 +38,4 @@ export {
   type MouseContextValue,
 } from "./mouse-context.js";
 export { MouseListRow, pressEnter } from "./mouse-list-row.js";
-export { arrowKey, returnKey } from "./synthetic-key.js";
+export { arrowKey, plainKey, returnKey } from "./synthetic-key.js";

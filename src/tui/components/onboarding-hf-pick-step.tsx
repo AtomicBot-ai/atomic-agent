@@ -1,7 +1,9 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { ramWarningFor } from "../../local-llm/index.js";
+import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
 import { widestLine } from "../onboarding/centre-onboarding-block.js";
+import { handleOnboardingStepKey } from "../onboarding/onboarding-step-keys.js";
 import type { OnboardingHuggingFaceRepo } from "../onboarding/onboarding-state.js";
 import { theme } from "../theme/theme.js";
 
@@ -77,14 +79,27 @@ export function OnboardingHuggingFacePickStep(props: {
       {visible.map((choice, index) => {
         const active = start + index === cursor;
         return (
-          <Text
+          // First click selects, second downloads — the same Enter the
+          // keyboard sends, through the flow's own key table.
+          <MouseListRow
             key={choice.path}
-            color={active ? theme.colors.accent : undefined}
-            bold={active}
-            wrap="truncate"
+            selected={active}
+            onSelect={(mouse) =>
+              mouse.dispatch({
+                type: "onboarding_cursor_set",
+                cursor: start + index,
+              })
+            }
+            onActivate={pressEnter(handleOnboardingStepKey)}
           >
-            {`${active ? "›  " : "   "}${choice.filename.padEnd(44)}${choice.sizeLabel.padStart(9)}`}
-          </Text>
+            <Text
+              color={active ? theme.colors.accent : undefined}
+              bold={active}
+              wrap="truncate"
+            >
+              {`${active ? "›  " : "   "}${choice.filename.padEnd(44)}${choice.sizeLabel.padStart(9)}`}
+            </Text>
+          </MouseListRow>
         );
       })}
       {below > 0 ? (

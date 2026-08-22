@@ -24,7 +24,9 @@ import {
   computeOnboardingFit,
   ONBOARDING_SIZE_ADVICE,
 } from "../onboarding/onboarding-fit.js";
+import { handleOnboardingStepKey } from "../onboarding/onboarding-step-keys.js";
 import { useIntroInput } from "../onboarding/use-intro-input.js";
+import { arrowKey } from "../mouse/synthetic-key.js";
 import {
   decideSecondBackendOffer,
   isLocalSetupStep,
@@ -105,8 +107,20 @@ export function OnboardingScreen(props: {
     dispatch({ type: "onboarding_step_set", step: "choose" });
   }, [dispatch]);
   // The splash answers to keys, clicks, the wheel and pastes alike, so
-  // all four live in one hook rather than in the flow's key hook.
-  const intro = useIntroInput({ onboarding, onDismiss: dismissIntro });
+  // all four live in one hook rather than in the flow's key hook. The
+  // same hook keeps the whole-surface mouse target registered on every
+  // step; a wheel notch outside the splash walks the current list
+  // through the same key table the arrows use.
+  const intro = useIntroInput({
+    onboarding,
+    onDismiss: dismissIntro,
+    onSurfaceWheel: (direction) =>
+      handleOnboardingStepKey("", arrowKey(direction), {
+        state: props.state,
+        dispatch,
+        callbacks,
+      }),
+  });
 
   const finish = useCallback(
     (outcome: OnboardingOutcome) => {
@@ -123,16 +137,7 @@ export function OnboardingScreen(props: {
   const pickCursor = onboarding.cursor % Math.max(1, pickRows.length);
   const wizardState = props.state.providersPanel.wizard;
 
-  useOnboardingInputs({
-    onboarding,
-    dispatch,
-    callbacks,
-    pickRows,
-    wizardState,
-    pull: props.state.localModelsPanel.pull,
-    pullError: props.state.localModelsPanel.errorLine,
-    finish,
-  });
+  useOnboardingInputs({ state: props.state, dispatch, callbacks });
   const { probeAndAdvance, saveEmbeddingUrl } = useOnboardingUrlActions({
     onboarding,
     dispatch,
@@ -257,7 +262,6 @@ export function OnboardingScreen(props: {
             terminalRows={size.rows}
             blockWidth={placement.width}
             dispatch={dispatch}
-            onPullRequested={callbacks.onLocalModelsPullRequested}
             onChatUrlSubmit={(value) => void probeAndAdvance(value)}
             onEmbeddingUrlSubmit={(value) => void saveEmbeddingUrl(value)}
           />

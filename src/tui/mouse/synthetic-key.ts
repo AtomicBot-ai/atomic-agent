@@ -45,3 +45,12 @@ export function arrowKey(direction: "up" | "down"): Key {
 export function returnKey(): Key {
   return { ...NO_KEY, return: true };
 }
+
+/**
+ * No key at all — the `Key` half of a synthesised printable character.
+ * For surfaces whose affordance is a letter (the download screen's
+ * "press c"), so a click can send the same `input` the keyboard would.
+ */
+export function plainKey(): Key {
+  return { ...NO_KEY };
+}

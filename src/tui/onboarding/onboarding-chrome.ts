@@ -48,11 +48,14 @@ export function onboardingFooterFor(
       return `enter test & save   empty enter skips embeddings   esc back   ${quit}`;
     case "local_pick":
       return `↑/↓ move   enter select   esc back   ${quit}`;
-    case "local_hf_ref":
+    case "local_hf_ref": {
       // While the lookup runs, esc is the only live key — say so.
-      return onboarding.busy
-        ? `esc cancel the lookup   ${quit}`
-        : `enter look it up   esc back   ${quit}`;
+      if (onboarding.busy) return `esc cancel the lookup   ${quit}`;
+      // Advertised only while there is something to clear, exactly like
+      // the on-screen `[ clear ]` control it names the chord for.
+      const clear = onboarding.hfReference.length > 0 ? "ctrl+l clear   " : "";
+      return `enter look it up   ${clear}esc back   ${quit}`;
+    }
     case "local_hf_pick":
       return `↑/↓ move   enter download   esc back   ${quit}`;
     case "local_download":

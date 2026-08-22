@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
 import { widestLine } from "../onboarding/centre-onboarding-block.js";
 import {
   HUGGING_FACE_ROW_LABEL,
@@ -7,6 +8,7 @@ import {
   type LocalModelPick,
 } from "../onboarding/local-model-picks.js";
 import type { OnboardingFit } from "../onboarding/onboarding-fit.js";
+import { handleOnboardingStepKey } from "../onboarding/onboarding-step-keys.js";
 import { ROW_INDENT, rowPrefix } from "../onboarding/onboarding-rows.js";
 import { theme } from "../theme/theme.js";
 
@@ -107,30 +109,52 @@ export function OnboardingLocalPickStep(props: {
       {visible.map((pick, index) => {
         const selected = !onHuggingFace && start + index === props.cursor;
         return (
-          <Text
+          // First click selects, second starts the download — the same
+          // Enter the keyboard sends, through the flow's own key table.
+          <MouseListRow
             key={pick.id}
-            color={selected ? theme.colors.accent : undefined}
-            bold={selected}
-            wrap="truncate"
+            selected={selected}
+            onSelect={(mouse) =>
+              mouse.dispatch({
+                type: "onboarding_cursor_set",
+                cursor: start + index,
+              })
+            }
+            onActivate={pressEnter(handleOnboardingStepKey)}
           >
-            {`${rowPrefix(selected)}${pick.label.padEnd(LABEL_COLUMNS)}${pick.sizeLabel.padStart(SIZE_COLUMNS)}${NOTE_GAP}`}
-            <Text color={noteColour(pick)}>{note(pick, props.fit)}</Text>
-          </Text>
+            <Text
+              color={selected ? theme.colors.accent : undefined}
+              bold={selected}
+              wrap="truncate"
+            >
+              {`${rowPrefix(selected)}${pick.label.padEnd(LABEL_COLUMNS)}${pick.sizeLabel.padStart(SIZE_COLUMNS)}${NOTE_GAP}`}
+              <Text color={noteColour(pick)}>{note(pick, props.fit)}</Text>
+            </Text>
+          </MouseListRow>
         );
       })}
       {below > 0 ? (
         <Text color={theme.colors.muted}>{moreLine(below)}</Text>
       ) : null}
-      <Text
-        color={onHuggingFace ? theme.colors.accent : undefined}
-        bold={onHuggingFace}
-        wrap="truncate"
+      <MouseListRow
+        selected={onHuggingFace}
+        onSelect={(mouse) =>
+          // The pinned row sits past the curated picks in cursor space.
+          mouse.dispatch({ type: "onboarding_cursor_set", cursor: props.picks.length })
+        }
+        onActivate={pressEnter(handleOnboardingStepKey)}
       >
-        {`${rowPrefix(onHuggingFace)}${HUGGING_FACE_ROW_LABEL}`}
-        {props.fit.rowDetails ? (
-          <Text color={theme.colors.muted}>{`   ${HUGGING_FACE_ROW_NOTE}`}</Text>
-        ) : null}
-      </Text>
+        <Text
+          color={onHuggingFace ? theme.colors.accent : undefined}
+          bold={onHuggingFace}
+          wrap="truncate"
+        >
+          {`${rowPrefix(onHuggingFace)}${HUGGING_FACE_ROW_LABEL}`}
+          {props.fit.rowDetails ? (
+            <Text color={theme.colors.muted}>{`   ${HUGGING_FACE_ROW_NOTE}`}</Text>
+          ) : null}
+        </Text>
+      </MouseListRow>
     </Box>
   );
 }

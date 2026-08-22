@@ -97,6 +97,7 @@ describe("OnboardingHuggingFaceRefStep", () => {
         error={null}
         onChange={() => {}}
         onSubmit={() => {}}
+        onClear={() => {}}
         onBack={() => {}}
       />,
     );
@@ -105,6 +106,8 @@ describe("OnboardingHuggingFaceRefStep", () => {
     expect(frame).toContain("it has to be a GGUF build");
     expect(frame).toContain("unsloth/Qwen3.5-4B-GGUF");
     expect(frame).toContain("https://huggingface.co/owner/repo");
+    // Nothing typed yet, so there is nothing to clear.
+    expect(frame).not.toContain("[ clear ]");
   });
 
   it("prints the refusal on the screen that asked the question", () => {
@@ -115,10 +118,19 @@ describe("OnboardingHuggingFaceRefStep", () => {
         error="Hugging Face returned 404: no repo or revision by that name."
         onChange={() => {}}
         onSubmit={() => {}}
+        onClear={() => {}}
         onBack={() => {}}
       />,
     );
-    expect(strip(view.lastFrame() ?? "")).toContain("no repo or revision by that name");
+    const frame = strip(view.lastFrame() ?? "");
+    expect(frame).toContain("no repo or revision by that name");
+    // The control sits between the editor and the error box, offering
+    // to drop both the reference and the refusal it earned.
+    const lines = frame.split("\n");
+    const clearRow = lines.findIndex((line) => line.includes("[ clear ]"));
+    const errorRow = lines.findIndex((line) => line.includes("no repo or revision"));
+    expect(clearRow).toBeGreaterThan(-1);
+    expect(clearRow).toBeLessThan(errorRow);
   });
 
   it("says what it is waiting for while the lookup is in flight", () => {
@@ -129,10 +141,15 @@ describe("OnboardingHuggingFaceRefStep", () => {
         error={null}
         onChange={() => {}}
         onSubmit={() => {}}
+        onClear={() => {}}
         onBack={() => {}}
       />,
     );
-    expect(strip(view.lastFrame() ?? "")).toContain("asking huggingface.co");
+    const frame = strip(view.lastFrame() ?? "");
+    expect(frame).toContain("asking huggingface.co");
+    // Esc owns the busy screen; a clear control there would fight the
+    // read-only editor.
+    expect(frame).not.toContain("[ clear ]");
   });
 });
 

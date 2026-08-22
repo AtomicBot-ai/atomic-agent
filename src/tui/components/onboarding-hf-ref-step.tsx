@@ -1,5 +1,8 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { MouseTarget } from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
+import { MOUSE_LAYER_PANEL } from "../mouse/mouse-registry.js";
 import { widestLine } from "../onboarding/centre-onboarding-block.js";
 import { theme } from "../theme/theme.js";
 import { MultiLineEditor } from "./multi-line-editor.js";
@@ -33,6 +36,8 @@ export function OnboardingHuggingFaceRefStep(props: {
   error: string | null;
   onChange(value: string): void;
   onSubmit(value: string): void;
+  /** Empty the reference AND drop its error — `[ clear ]` / ctrl+l. */
+  onClear(): void;
   onBack(): void;
 }): ReactElement {
   return (
@@ -50,8 +55,37 @@ export function OnboardingHuggingFaceRefStep(props: {
           onChange={props.onChange}
           onSubmit={props.onSubmit}
           onEscape={props.onBack}
+          // On the flow's own layer, or the whole-surface backstop —
+          // same layer, far bigger box — would swallow the click before
+          // click-to-caret could see it.
+          mouseLayer={MOUSE_LAYER_PANEL}
         />
       </Box>
+      {/*
+        Below the input, above the error box. Hidden while the lookup
+        runs (the editor is read-only then and Esc already cancels) and
+        while there is nothing to clear. A row wrapper so the target hugs
+        the label instead of claiming the whole line — see
+        `ChatCopyButton` for the precedent. The chord lives in the
+        footer; the click and ctrl+l share one handler upstream.
+      */}
+      {!props.busy && props.value.length > 0 ? (
+        <Box flexDirection="row">
+          <MouseTarget
+            layer={MOUSE_LAYER_PANEL}
+            flexShrink={0}
+            onMouse={(hit) => {
+              if (!isPrimaryPress(hit.event)) return false;
+              props.onClear();
+              return true;
+            }}
+          >
+            <Text color={theme.colors.muted} dimColor>
+              [ clear ]
+            </Text>
+          </MouseTarget>
+        </Box>
+      ) : null}
       {props.busy ? (
         <Text color={theme.colors.muted}>asking huggingface.co…</Text>
       ) : null}

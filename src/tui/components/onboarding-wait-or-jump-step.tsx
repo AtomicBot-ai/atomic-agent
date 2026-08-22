@@ -1,8 +1,10 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import type { LocalModelsPullState } from "../local-models/local-models-panel-state.js";
+import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
 import { widestLine } from "../onboarding/centre-onboarding-block.js";
 import type { OnboardingFit } from "../onboarding/onboarding-fit.js";
+import { handleOnboardingStepKey } from "../onboarding/onboarding-step-keys.js";
 import { ROW_INDENT, rowPrefix } from "../onboarding/onboarding-rows.js";
 import { theme } from "../theme/theme.js";
 import {
@@ -156,17 +158,20 @@ export function OnboardingWaitOrJumpStep(props: {
       <Box flexDirection="column" marginTop={1}>
         <Row
           selected={cursor === 0}
+          index={0}
           label={ROW_COPY.jump.label}
           detail={props.fit.rowDetails ? jumpDetail : null}
         />
         <Row
           selected={cursor === 1}
+          index={1}
           label={ROW_COPY.add.label}
           detail={props.fit.rowDetails ? addDetail : null}
         />
         {status === "failed" ? (
           <Row
             selected={cursor === 2}
+            index={2}
             label={ROW_COPY.retry.label}
             detail={props.fit.rowDetails ? ROW_COPY.retry.detail : null}
           />
@@ -178,17 +183,29 @@ export function OnboardingWaitOrJumpStep(props: {
 
 function Row(props: {
   selected: boolean;
+  /** This row's place in the screen's cursor space, for click-to-select. */
+  index: number;
   label: string;
   detail: string | null;
 }): ReactElement {
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Text color={props.selected ? theme.colors.accent : undefined} bold={props.selected}>
-        {`${rowPrefix(props.selected)}${props.label}`}
-      </Text>
-      {props.detail ? (
-        <Text color={theme.colors.muted}>{`${ROW_INDENT}${props.detail}`}</Text>
-      ) : null}
-    </Box>
+    // First click selects, second activates — the same Enter the
+    // keyboard sends, through the flow's own key table.
+    <MouseListRow
+      selected={props.selected}
+      onSelect={(mouse) =>
+        mouse.dispatch({ type: "onboarding_cursor_set", cursor: props.index })
+      }
+      onActivate={pressEnter(handleOnboardingStepKey)}
+    >
+      <Box flexDirection="column" marginBottom={1}>
+        <Text color={props.selected ? theme.colors.accent : undefined} bold={props.selected}>
+          {`${rowPrefix(props.selected)}${props.label}`}
+        </Text>
+        {props.detail ? (
+          <Text color={theme.colors.muted}>{`${ROW_INDENT}${props.detail}`}</Text>
+        ) : null}
+      </Box>
+    </MouseListRow>
   );
 }

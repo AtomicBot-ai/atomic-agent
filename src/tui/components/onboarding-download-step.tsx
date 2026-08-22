@@ -4,6 +4,11 @@ import { useAtomField } from "../hooks/use-atom-field.js";
 import { atomPopulation } from "../onboarding/atom-field.js";
 import type { LocalModelsPullState } from "../local-models/local-models-panel-state.js";
 import { widestLine } from "../onboarding/centre-onboarding-block.js";
+import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
+import { MOUSE_LAYER_PANEL } from "../mouse/mouse-registry.js";
+import { plainKey } from "../mouse/synthetic-key.js";
+import { handleOnboardingStepKey } from "../onboarding/onboarding-step-keys.js";
 import { theme } from "../theme/theme.js";
 import { OnboardingAtomField } from "./onboarding-atom-field.js";
 import {
@@ -83,6 +88,7 @@ export function OnboardingDownloadStep(props: {
   atomStepMs?: number;
 }): ReactElement {
   const pull = props.pull;
+  const mouse = useMouseCommands();
   const phase = pull?.kind === "backend" ? "runtime" : "weights";
   // A failed pull nulls itself and reports through `errorLine`; the
   // headline and the offer must not keep claiming a running download.
@@ -126,27 +132,45 @@ export function OnboardingDownloadStep(props: {
         <OnboardingDownloadProgress pull={pull} error={props.pullError} />
       </Box>
       {offerCloud ? (
-        <Box flexDirection="column" marginTop={2}>
+        <Box flexDirection="row" marginTop={2}>
           {/*
             Accent-marked because it is an offer, not a status line: the
             wait is measured in minutes and a cloud model takes about
             one. The download is owned by the orchestrator, so setting
-            one up does not pause or restart it.
+            one up does not pause or restart it. Clicking the block
+            sends the same `c` it advertises, through the flow's own key
+            table — the row wrapper keeps the target hugging the text
+            instead of claiming the whole terminal width.
           */}
-          {failed ? (
-            <Text color={theme.colors.accent} wrap="truncate">
-              {CLOUD_OFFER_FAILED}
-              <Text bold>{CLOUD_OFFER_KEY}</Text>
-            </Text>
-          ) : (
-            <>
-              <Text color={theme.colors.accent}>{CLOUD_OFFER[0]}</Text>
-              <Text color={theme.colors.accent}>
-                {CLOUD_OFFER[1]}
-                <Text bold>{CLOUD_OFFER_KEY}</Text>
-              </Text>
-            </>
-          )}
+          <MouseTarget
+            layer={MOUSE_LAYER_PANEL}
+            onMouse={(hit) => {
+              if (!mouse || !isPrimaryPress(hit.event)) return false;
+              handleOnboardingStepKey("c", plainKey(), {
+                state: mouse.getState(),
+                dispatch: mouse.dispatch,
+                callbacks: mouse.callbacks,
+              });
+              return true;
+            }}
+          >
+            <Box flexDirection="column">
+              {failed ? (
+                <Text color={theme.colors.accent} wrap="truncate">
+                  {CLOUD_OFFER_FAILED}
+                  <Text bold>{CLOUD_OFFER_KEY}</Text>
+                </Text>
+              ) : (
+                <>
+                  <Text color={theme.colors.accent}>{CLOUD_OFFER[0]}</Text>
+                  <Text color={theme.colors.accent}>
+                    {CLOUD_OFFER[1]}
+                    <Text bold>{CLOUD_OFFER_KEY}</Text>
+                  </Text>
+                </>
+              )}
+            </Box>
+          </MouseTarget>
         </Box>
       ) : null}
       {waiting && atomRows >= MIN_ATOM_ROWS ? (

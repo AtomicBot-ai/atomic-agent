@@ -1,32 +1,27 @@
 import { useInput } from "ink";
 import { useCallback, useEffect, useRef } from "react";
 
-import { addCustomModel } from "../../config/custom-models-store.js";
-import {
-  buildCustomModelDef,
-  resolveHuggingFaceGgufChoices,
-  type LocalModelId,
-} from "../../local-llm/index.js";
+import { resolveHuggingFaceGgufChoices } from "../../local-llm/index.js";
 import type { OnboardingUiState } from "../onboarding/onboarding-state.js";
 import type { TuiAction } from "../tui-action.js";
 
 /**
- * The two effects behind the "add a model from Hugging Face" branch:
- * asking the repo what it holds, and turning the chosen file into a
- * catalog entry the ordinary pull can take.
+ * The effect behind the "add a model from Hugging Face" branch: asking
+ * the repo what it holds. A hook rather than more body in
+ * `OnboardingScreen` because it is a network write with a cancel path,
+ * and the screen is already the longest module in the flow.
  *
- * A hook rather than more body in `OnboardingScreen` because both are
- * writes — one to the network, one to the user config — and the screen
- * is already the longest module in the flow. The file-list keys live
- * here too, so the whole branch is one thing to read.
+ * The file list's keys — and the catalog write its Enter performs — live
+ * in `onboarding-hf-keys.ts` with the rest of the flow's key table, so
+ * the mouse and the keyboard share one activation path. What stays here
+ * is what needs the lookup's AbortController: starting it, cancelling
+ * it, and the clear affordance on the reference editor.
  */
 export function useOnboardingHuggingFace(args: {
   onboarding: OnboardingUiState;
   dispatch(action: TuiAction): void;
-  onPullRequested?(modelId: LocalModelId): void;
-}): { resolveReference(raw: string): void } {
-  const { onboarding, dispatch, onPullRequested } = args;
-  const choiceCount = onboarding.hfRepo?.choices.length ?? 0;
+}): { resolveReference(raw: string): void; clearReference(): void } {
+  const { onboarding, dispatch } = args;
 
   /**
    * The lookup currently in flight, if any. Cancelling bumps past it by
@@ -80,6 +75,35 @@ export function useOnboardingHuggingFace(args: {
     [dispatch, onboarding.busy],
   );
 
+  /**
+   * Empty the reference editor AND drop the error it earned: the error
+   * describes the reference it stood under, and keeping it over an empty
+   * editor would blame text that is no longer there. One function so the
+   * ctrl+l chord and the `[ clear ]` click cannot come to mean different
+   * things.
+   */
+  const clearReference = useCallback(() => {
+    dispatch({ type: "onboarding_hf_reference_changed", value: "" });
+    dispatch({ type: "onboarding_error_set", error: null });
+  }, [dispatch]);
+
+  // Ctrl+l, not ctrl+u: the editor binds ctrl+u to kill-to-line-start,
+  // and Ink handlers do not consume — a screen-level ctrl+u would
+  // double-fire against the focused editor. The editor ignores unknown
+  // ctrl chords, so ctrl+l is this screen's alone. Gated exactly like
+  // the on-screen control: nothing to clear, no key.
+  useInput(
+    (input, key) => {
+      if (key.ctrl && input === "l") clearReference();
+    },
+    {
+      isActive:
+        onboarding.step === "local_hf_ref" &&
+        !onboarding.busy &&
+        onboarding.hfReference.length > 0,
+    },
+  );
+
   // While the lookup runs the reference editor is unfocused and the
   // app-level handler swallows everything, so without this reader the
   // operator has no key at all until the 15 s timeout — esc cancels and
@@ -93,55 +117,5 @@ export function useOnboardingHuggingFace(args: {
     { isActive: onboarding.step === "local_hf_ref" && onboarding.busy },
   );
 
-  /**
-   * Record the chosen file as a catalog entry, then hand it to the same
-   * pull the curated rows use — which is what lands an added model on
-   * the ordinary download screen rather than a second one built for it.
-   */
-  const startPull = useCallback(() => {
-    const repo = onboarding.hfRepo;
-    if (!repo || repo.choices.length === 0) return;
-    const choice = repo.choices[onboarding.cursor % repo.choices.length];
-    if (!choice) return;
-    try {
-      const def = buildCustomModelDef({
-        repoId: repo.repoId,
-        revision: repo.revision,
-        file: { path: choice.path, sizeBytes: choice.sizeBytes },
-        mmproj: repo.mmproj,
-      });
-      // Written before the pull starts: `pullModel` resolves the id
-      // through the catalog registry, and the registry is loaded from
-      // the file this call writes.
-      addCustomModel(def);
-      dispatch({ type: "onboarding_local_model_picked", modelId: def.id });
-      onPullRequested?.(def.id);
-    } catch (err) {
-      dispatch({
-        type: "onboarding_error_set",
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }, [dispatch, onPullRequested, onboarding.cursor, onboarding.hfRepo]);
-
-  useInput(
-    (input, key) => {
-      if (key.escape) {
-        dispatch({ type: "onboarding_step_set", step: "local_hf_ref" });
-        return;
-      }
-      if (key.upArrow || key.downArrow || input === "j" || input === "k") {
-        dispatch({
-          type: "onboarding_cursor_moved",
-          delta: key.upArrow || input === "k" ? -1 : 1,
-          length: choiceCount,
-        });
-        return;
-      }
-      if (key.return) startPull();
-    },
-    { isActive: onboarding.step === "local_hf_pick" },
-  );
-
-  return { resolveReference };
+  return { resolveReference, clearReference };
 }

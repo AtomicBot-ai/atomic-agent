@@ -1,6 +1,8 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
 import { widestLine } from "../onboarding/centre-onboarding-block.js";
+import { handleOnboardingStepKey } from "../onboarding/onboarding-step-keys.js";
 import { ROW_INDENT, rowPrefix } from "../onboarding/onboarding-rows.js";
 import type { SecondBackendOffer } from "../onboarding/propose-second-backend.js";
 import { theme } from "../theme/theme.js";
@@ -74,9 +76,10 @@ export function OnboardingProposeStep(props: {
           </Text>
         ))}
       </Box>
-      <Row selected={props.cursor === 0} label={accept.label} detail={accept.detail} />
+      <Row selected={props.cursor === 0} index={0} label={accept.label} detail={accept.detail} />
       <Row
         selected={props.cursor === 1}
+        index={1}
         label={SKIP_ROW.label}
         detail={SKIP_ROW.detail}
       />
@@ -84,13 +87,29 @@ export function OnboardingProposeStep(props: {
   );
 }
 
-function Row(props: { selected: boolean; label: string; detail: string }): ReactElement {
+function Row(props: {
+  selected: boolean;
+  /** This row's place in the two-row cursor space, for click-to-select. */
+  index: number;
+  label: string;
+  detail: string;
+}): ReactElement {
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Text color={props.selected ? theme.colors.accent : undefined} bold={props.selected}>
-        {`${rowPrefix(props.selected)}${props.label}`}
-      </Text>
-      <Text color={theme.colors.muted}>{`${ROW_INDENT}${props.detail}`}</Text>
-    </Box>
+    // First click selects, second activates — the same Enter the
+    // keyboard sends, through the flow's own key table.
+    <MouseListRow
+      selected={props.selected}
+      onSelect={(mouse) =>
+        mouse.dispatch({ type: "onboarding_cursor_set", cursor: props.index })
+      }
+      onActivate={pressEnter(handleOnboardingStepKey)}
+    >
+      <Box flexDirection="column" marginBottom={1}>
+        <Text color={props.selected ? theme.colors.accent : undefined} bold={props.selected}>
+          {`${rowPrefix(props.selected)}${props.label}`}
+        </Text>
+        <Text color={theme.colors.muted}>{`${ROW_INDENT}${props.detail}`}</Text>
+      </Box>
+    </MouseListRow>
   );
 }

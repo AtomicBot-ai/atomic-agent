@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { MOUSE_LAYER_PANEL } from "../mouse/mouse-registry.js";
 import { widestLine } from "../onboarding/centre-onboarding-block.js";
 import { theme } from "../theme/theme.js";
 import { MultiLineEditor } from "./multi-line-editor.js";
@@ -76,6 +77,10 @@ export function OnboardingUrlStep(props: {
           onChange={props.onChange}
           onSubmit={props.onSubmit}
           onEscape={props.onBack}
+          // On the flow's own layer, or the whole-surface backstop —
+          // same layer, far bigger box — would swallow the click before
+          // click-to-caret could see it.
+          mouseLayer={MOUSE_LAYER_PANEL}
         />
       </Box>
       {props.busy ? <Text color={theme.colors.muted}>{PROBING}</Text> : null}

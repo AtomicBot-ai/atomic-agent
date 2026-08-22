@@ -7,7 +7,6 @@ import type { OnboardingUiState } from "../onboarding/onboarding-state.js";
 import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
 import type { TuiAction } from "../tui-action.js";
 import { describeDownloadingModel } from "../onboarding/local-model-picks.js";
-import type { LocalModelId } from "../../local-llm/index.js";
 import { OnboardingChooseStep } from "./onboarding-choose-step.js";
 import { OnboardingDownloadStep } from "./onboarding-download-step.js";
 import { OnboardingHuggingFaceFlow } from "./onboarding-hf-flow.js";
@@ -58,8 +57,6 @@ export function OnboardingStepBody(props: {
   configuredLabel: string;
   cloudLabel: string;
   dispatch(action: TuiAction): void;
-  /** Start a model pull. Owned by `LocalModelsOrchestrator`. */
-  onPullRequested?(modelId: LocalModelId): void;
   onChatUrlSubmit(value: string): void;
   onEmbeddingUrlSubmit(value: string): void;
 }): ReactElement {
@@ -106,7 +103,6 @@ export function OnboardingStepBody(props: {
           onboarding={onboarding}
           dispatch={dispatch}
           ramGb={props.ramGb}
-          onPullRequested={props.onPullRequested}
         />
         {onboarding.step === "propose_second" && onboarding.offer ? (
           <OnboardingProposeStep

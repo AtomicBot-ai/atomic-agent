@@ -1,7 +1,9 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
 import { widestLine } from "../onboarding/centre-onboarding-block.js";
 import type { OnboardingFit } from "../onboarding/onboarding-fit.js";
+import { handleOnboardingStepKey } from "../onboarding/onboarding-step-keys.js";
 import { ROW_MARKER, rowPrefix } from "../onboarding/onboarding-rows.js";
 import { ONBOARDING_CHOICES } from "../onboarding/onboarding-state.js";
 import { theme } from "../theme/theme.js";
@@ -76,21 +78,32 @@ export function OnboardingChooseStep(props: {
       {ONBOARDING_CHOICES.map((choice, idx) => {
         const selected = idx === props.cursor;
         return (
-          <Box key={choice.id} flexDirection="column" marginBottom={1}>
-            <Box flexDirection="row">
-              <Text color={selected ? theme.colors.accent : undefined} bold={selected}>
-                {labelCell(selected, choice.label, props.fit)}
-              </Text>
+          // First click selects, second activates — the same Enter the
+          // keyboard sends, routed through the flow's own key table.
+          <MouseListRow
+            key={choice.id}
+            selected={selected}
+            onSelect={(mouse) =>
+              mouse.dispatch({ type: "onboarding_cursor_set", cursor: idx })
+            }
+            onActivate={pressEnter(handleOnboardingStepKey)}
+          >
+            <Box flexDirection="column" marginBottom={1}>
+              <Box flexDirection="row">
+                <Text color={selected ? theme.colors.accent : undefined} bold={selected}>
+                  {labelCell(selected, choice.label, props.fit)}
+                </Text>
+                {props.fit.rowDetails ? (
+                  <Text color={theme.colors.muted}>{choice.detail[0]}</Text>
+                ) : null}
+              </Box>
               {props.fit.rowDetails ? (
-                <Text color={theme.colors.muted}>{choice.detail[0]}</Text>
+                <Text color={theme.colors.muted}>
+                  {`${" ".repeat(DETAIL_COLUMN)}${choice.detail[1]}`}
+                </Text>
               ) : null}
             </Box>
-            {props.fit.rowDetails ? (
-              <Text color={theme.colors.muted}>
-                {`${" ".repeat(DETAIL_COLUMN)}${choice.detail[1]}`}
-              </Text>
-            ) : null}
-          </Box>
+          </MouseListRow>
         );
       })}
     </Box>
