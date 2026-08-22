@@ -23,6 +23,16 @@ export function measureOnboardingHeader(
 }
 
 /**
+ * Rows the lockup spends: the mark column, or the two-line
+ * wordmark-plus-subtitle beside it, whichever is taller. Derived from
+ * the same art the render maps over, so the count cannot drift from
+ * the drawing the way a hand-written number would.
+ */
+export function countOnboardingHeaderRows(mark: OnboardingMark): number {
+  return Math.max(CROSS_MARKS.block[mark].length, 2);
+}
+
+/**
  * Brand lockup for the first-run screens: the mark, the product name,
  * and where in the flow the operator is. Deliberately not the
  * `StatusBar` — during setup there is no session, no breadcrumb and no

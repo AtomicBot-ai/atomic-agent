@@ -23,6 +23,7 @@ import type {
 } from "../onboarding/onboarding-state.js";
 import type { SecondBackendOffer } from "../onboarding/propose-second-backend.js";
 import { measureOnboardingChooseStep } from "./onboarding-choose-step.js";
+import { measureOnboardingDownloadStep } from "./onboarding-download-step.js";
 import { measureOnboardingHeader } from "./onboarding-header.js";
 import { measureOnboardingHfPickStep } from "./onboarding-hf-pick-step.js";
 import { measureOnboardingHfRefStep } from "./onboarding-hf-ref-step.js";
@@ -103,10 +104,14 @@ function measureStepBody(input: MeasureInput): number {
         fit: input.fit,
       });
     case "local_download":
-      // The download screen fills its idle rows with the atom field, an
-      // ambient full-width piece like the splash's sky — so the block
-      // takes the whole measure rather than the width of its text.
-      return input.available;
+      // The text block centres like any other step. The atom field is
+      // the surface's ambience now — drawn outside this block, at full
+      // terminal width, by `OnboardingDownloadAmbient` — so the measure
+      // is the text's own rather than the whole terminal.
+      return measureOnboardingDownloadStep({
+        modelLabel: input.modelLabel,
+        offerCloudMeanwhile: input.offerCloudMeanwhile,
+      });
     case "cloud":
       // The wizard's deterministic lines, measured beside the strings it
       // draws; its live catalog rows truncate inside the box by design.

@@ -1,13 +1,10 @@
 import { Box, Text } from "ink";
-import { useCallback, useEffect, useMemo, useRef, type ReactElement } from "react";
-import { getConfig } from "../../config/index.js";
-import {
-  isCloudTextProviderReady,
-  isLocalBackendConfigured,
-} from "../local-backend-readiness.js";
+import { useCallback, useMemo, type ReactElement } from "react";
+import { isCloudTextProviderReady } from "../local-backend-readiness.js";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
 import { ROOT_PADDING_LEFT } from "../layout.js";
 import { useOnboardingInputs } from "../hooks/use-onboarding-inputs.js";
+import { useOnboardingLifecycle } from "../hooks/use-onboarding-lifecycle.js";
 import { useOnboardingUrlActions } from "../hooks/use-onboarding-url-actions.js";
 import {
   buildLocalModelPicks,
@@ -27,10 +24,6 @@ import {
 import { handleOnboardingStepKey } from "../onboarding/onboarding-step-keys.js";
 import { useIntroInput } from "../onboarding/use-intro-input.js";
 import { arrowKey } from "../mouse/synthetic-key.js";
-import {
-  decideSecondBackendOffer,
-  isLocalSetupStep,
-} from "../onboarding/propose-second-backend.js";
 import type {
   OnboardingOutcome,
   OnboardingUiState,
@@ -40,6 +33,7 @@ import { theme } from "../theme/theme.js";
 import type { TuiAction } from "../tui-action.js";
 import type { LocalModelId } from "../../local-llm/index.js";
 import type { TuiState } from "../tui-state.js";
+import { OnboardingDownloadAmbient } from "./onboarding-download-ambient.js";
 import { OnboardingStepBody } from "./onboarding-step-body.js";
 import {
   layOutOnboardingSurface,
@@ -68,9 +62,10 @@ const CLOUD_READY_LABEL = "Cloud model ready";
  * that strip is pinned to the real last row rather than trailing the
  * content.
  *
- * The screen itself is the flow's shell — placement, effects and the
- * footer. The keys live in `useOnboardingInputs`, the endpoint writes in
- * `useOnboardingUrlActions`, and the step switch in `OnboardingStepBody`;
+ * The screen itself is the flow's shell — placement and the footer. The
+ * keys live in `useOnboardingInputs`, the endpoint writes in
+ * `useOnboardingUrlActions`, the persistence effects in
+ * `useOnboardingLifecycle`, and the step switch in `OnboardingStepBody`;
  * the reducer stays pure so the step machine can be tested as a table.
  */
 export function OnboardingScreen(props: {
@@ -97,7 +92,6 @@ export function OnboardingScreen(props: {
     () => isCloudTextProviderReady(),
     [onboarding.step],
   );
-  const settling = useRef(false);
 
   const dismissIntro = useCallback(() => {
     // Recorded as it is dismissed, not at the end of the flow: an
@@ -144,42 +138,13 @@ export function OnboardingScreen(props: {
     finish,
   });
 
-  // Stamped on arrival rather than on success, and before anything is
-  // downloaded: an operator who opened the model list and pressed esc
-  // has already read everything the later "set up local models too"
-  // screen would tell them.
-  useEffect(() => {
-    if (!isLocalSetupStep(onboarding.step)) return;
-    if (getConfig().tui.onboarding.localSetupSeenAt !== null) return;
-    persistOnboardingState({ localSetupSeenAt: new Date().toISOString() });
-  }, [onboarding.step]);
-
-  // Closing down runs once. The stamp is what stops the flow reopening
-  // on the next launch, so it is written before the surface unmounts.
-  useEffect(() => {
-    if (onboarding.step !== "finished" || settling.current) return;
-    const outcome = onboarding.outcome ?? "skipped";
-    const config = getConfig();
-    const offer = decideSecondBackendOffer({
-      outcome,
-      cloudReady: isCloudTextProviderReady(),
-      localReady: isLocalBackendConfigured(),
-      alreadyProposed: config.tui.onboarding.proposedSecondBackendAt !== null,
-      localSetupSeen: config.tui.onboarding.localSetupSeenAt !== null,
-    });
-    if (offer) {
-      // Recorded when it is shown, not when it is answered: the offer
-      // was made either way, and a declined offer must not come back.
-      persistOnboardingState({ proposedSecondBackendAt: new Date().toISOString() });
-      dispatch({ type: "onboarding_second_backend_offered", offer });
-      return;
-    }
-    settling.current = true;
-    const now = new Date().toISOString();
-    persistOnboardingState(outcome === "skipped" ? { skippedAt: now } : { completedAt: now });
-    callbacks.onOnboardingFinished?.(outcome);
-    dispatch({ type: "onboarding_set", onboarding: null });
-  }, [callbacks, dispatch, onboarding.outcome, onboarding.step]);
+  useOnboardingLifecycle({
+    onboarding,
+    dispatch,
+    ...(callbacks.onOnboardingFinished === undefined
+      ? {}
+      : { onFinished: callbacks.onOnboardingFinished }),
+  });
 
   // Both axes are centred on the block as a whole, never line by line:
   // a column of options whose rows each find their own centre is ragged
@@ -236,7 +201,7 @@ export function OnboardingScreen(props: {
         height={placement.rows}
         overflow="hidden"
       >
-        <Box flexGrow={1} flexShrink={1} />
+        <Box flexGrow={1} flexShrink={1} flexBasis={0} />
         <Box
           flexDirection="column"
           flexShrink={0}
@@ -259,14 +224,37 @@ export function OnboardingScreen(props: {
             introSkipped={intro.skipAnimation}
             configuredLabel={configuredLabel(onboarding.outcome)}
             cloudLabel={CLOUD_READY_LABEL}
-            terminalRows={size.rows}
-            blockWidth={placement.width}
             dispatch={dispatch}
             onChatUrlSubmit={(value) => void probeAndAdvance(value)}
             onEmbeddingUrlSubmit={(value) => void saveEmbeddingUrl(value)}
           />
         </Box>
-        <Box flexGrow={1} flexShrink={1} />
+        {/*
+          The download's ambient atoms live in the bottom spacer, not in
+          the centred block: the block owns only its text now, and a
+          full-terminal-width field cannot fit inside it. `flexBasis` is
+          pinned to zero on both spacers so the field's own height never
+          counts as this spacer's base size — with `auto` it would, and
+          the block would ride up off centre by half the field.
+        */}
+        <Box
+          flexGrow={1}
+          flexShrink={1}
+          flexBasis={0}
+          flexDirection="column"
+          justifyContent="flex-end"
+        >
+          {onboarding.step === "local_download" ? (
+            <OnboardingDownloadAmbient
+              pull={props.state.localModelsPanel.pull}
+              pullError={props.state.localModelsPanel.errorLine}
+              columns={Math.max(0, size.columns - ROOT_PADDING_LEFT)}
+              viewportRows={placement.rows}
+              mark={fit.mark}
+              offerCloud={!cloudAlreadyConfigured}
+            />
+          ) : null}
+        </Box>
       </Box>
       {/*
         The budgeted viewport above is what pins the hints to the true

@@ -1,7 +1,5 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import { useAtomField } from "../hooks/use-atom-field.js";
-import { atomPopulation } from "../onboarding/atom-field.js";
 import type { LocalModelsPullState } from "../local-models/local-models-panel-state.js";
 import { widestLine } from "../onboarding/centre-onboarding-block.js";
 import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
@@ -9,8 +7,9 @@ import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MOUSE_LAYER_PANEL } from "../mouse/mouse-registry.js";
 import { plainKey } from "../mouse/synthetic-key.js";
 import { handleOnboardingStepKey } from "../onboarding/onboarding-step-keys.js";
+import type { OnboardingMark } from "../onboarding/onboarding-fit.js";
 import { theme } from "../theme/theme.js";
-import { OnboardingAtomField } from "./onboarding-atom-field.js";
+import { countOnboardingHeaderRows } from "./onboarding-header.js";
 import {
   OnboardingDownloadProgress,
   PROGRESS_TEMPLATE_LINE,
@@ -45,28 +44,39 @@ export function measureOnboardingDownloadStep(props: {
   ]);
 }
 
+/**
+ * Rows the centred download block spends while a pull is running: the
+ * header and its gap (drawn by `OnboardingStepBody`), the headline, the
+ * bars, the rate line, their margins, and the meanwhile offer. The
+ * ambient atom field sizes itself from what the placement leaves after
+ * these — see `OnboardingDownloadAmbient` — and the full-screen frame
+ * test is what keeps the count honest against the JSX below. Only the
+ * running shape is counted: a failed pull swaps the bars for an error
+ * line, and the field has already stopped by then.
+ */
+export function countOnboardingDownloadBlockRows(input: {
+  mark: OnboardingMark;
+  offerCloud: boolean;
+}): number {
+  // The gap under the header (1), the headline (1), the progress top
+  // margin (1), the two bars (2), the rate line and its margin (2), and
+  // the offer's top margin plus two lines when it shows.
+  return countOnboardingHeaderRows(input.mark) + 7 + (input.offerCloud ? 4 : 0);
+}
+
 function headingLine(modelLabel: string): string {
   return `Downloading ${modelLabel}. You can leave this running.`;
 }
-
-/**
- * Fixed rather than drawn from the clock: the field is ambience, so
- * there is nothing to gain from a different arrangement each launch, and
- * a reproducible one can be asserted in a test and described in a bug
- * report.
- */
-const ATOM_SEED = 20260821;
-
-/** Below this the free space is a gap, not a field, and stays empty. */
-const MIN_ATOM_ROWS = 3;
 
 /**
  * The download, as its own screen.
  *
  * The bars, the rate and the ETA are shared with the "almost there"
  * screen — see {@link OnboardingDownloadProgress}. What this screen adds
- * is the offer to spend the wait setting up a cloud model instead, and
- * the atom field drifting in whatever rows a live pull leaves free.
+ * is the offer to spend the wait setting up a cloud model instead. The
+ * atom field that used to live here is the surface's ambience now
+ * (`OnboardingDownloadAmbient`): it spans the full terminal below this
+ * block, which a block centred to its own text cannot contain.
  */
 export function OnboardingDownloadStep(props: {
   pull: LocalModelsPullState | null;
@@ -79,47 +89,13 @@ export function OnboardingDownloadStep(props: {
   modelLabel: string;
   /** Hidden once a cloud provider is configured — nothing left to offer. */
   offerCloudMeanwhile?: boolean;
-  /** Terminal size, so the atom field knows what space it is allowed. */
-  columns: number;
-  rows: number;
-  /** True while the header draws the brand mark, which is three rows tall. */
-  markHeader: boolean;
-  /** Test seam: the field's step interval. Defaults to the ambient rate. */
-  atomStepMs?: number;
 }): ReactElement {
   const pull = props.pull;
   const mouse = useMouseCommands();
-  const phase = pull?.kind === "backend" ? "runtime" : "weights";
   // A failed pull nulls itself and reports through `errorLine`; the
   // headline and the offer must not keep claiming a running download.
   const failed = pull === null && props.pullError !== null;
   const offerCloud = props.offerCloudMeanwhile !== false;
-  const atomRows = atomRowBudget({
-    rows: props.rows,
-    markHeader: props.markHeader,
-    hasError: props.pullError != null,
-    offerCloud,
-  });
-  // Stopped when there is nothing left to wait for. Unmounting on a
-  // finished pull would clear the interval anyway, but a failed one
-  // leaves this screen up with a dead download on it, and a field still
-  // drifting under a stalled bar would suggest work is happening. The
-  // failure signal is `pullError`: a failed pull nulls `pull` itself,
-  // and `pull.error` is never set by any event the app emits.
-  const waiting =
-    props.pullError == null && !(phase === "weights" && (pull?.percent ?? 0) >= 100);
-  // One column short of the terminal: a run that fills the last cell
-  // wraps on some terminals, which would cost a row the budget has
-  // already spent.
-  const fieldColumns = Math.max(0, props.columns - 1);
-  const field = useAtomField({
-    active: waiting && atomRows >= MIN_ATOM_ROWS,
-    columns: fieldColumns,
-    rows: atomRows,
-    count: atomPopulation({ columns: fieldColumns, rows: atomRows }),
-    seed: ATOM_SEED,
-    ...(props.atomStepMs === undefined ? {} : { stepMs: props.atomStepMs }),
-  });
 
   return (
     <Box flexDirection="column" flexShrink={0}>
@@ -173,36 +149,6 @@ export function OnboardingDownloadStep(props: {
           </MouseTarget>
         </Box>
       ) : null}
-      {waiting && atomRows >= MIN_ATOM_ROWS ? (
-        <Box marginTop={1} flexShrink={0}>
-          <OnboardingAtomField field={field} columns={fieldColumns} rows={atomRows} />
-        </Box>
-      ) : null}
     </Box>
   );
-}
-
-/**
- * Rows left over below the offer, once everything above it has been paid
- * for. Ink 7 overlaps rather than clips, so this is what keeps the field
- * off the bars: the atoms get the remainder, or they get nothing.
- *
- * Counted rather than measured, because there is nothing to measure at
- * render time — the numbers are this screen's own fixed chrome, and the
- * frame test is what keeps them honest.
- */
-export function atomRowBudget(input: {
-  rows: number;
-  markHeader: boolean;
-  hasError: boolean;
-  offerCloud: boolean;
-}): number {
-  // The host's top padding; the header (three rows with the mark, two
-  // without); the step's own top margin; the "Downloading …" line; the
-  // two bars and their margin; the rate line and its margin; the field's
-  // top margin; the pinned footer.
-  const chrome = 1 + (input.markHeader ? 3 : 2) + 1 + 1 + 3 + 2 + 1 + 1;
-  const error = input.hasError ? 2 : 0;
-  const offer = input.offerCloud ? 4 : 0;
-  return Math.max(0, input.rows - chrome - error - offer);
 }

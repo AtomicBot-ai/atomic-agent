@@ -36,14 +36,6 @@ export function OnboardingStepBody(props: {
   columns: number;
   /** Rows the surface's viewport allows the block. */
   viewportRows: number;
-  /**
-   * Full terminal height. The download screen's atom-field budget counts
-   * the surface's own padding and footer, so it wants the whole measure
-   * rather than the viewport.
-   */
-  terminalRows: number;
-  /** Width the centred block was actually given. */
-  blockWidth: number;
   subtitle: string;
   picks: readonly LocalModelPick[];
   pickCursor: number;
@@ -130,9 +122,6 @@ export function OnboardingStepBody(props: {
             pullError={props.pullError}
             modelLabel={describeDownloadingModel(onboarding.localModelId)}
             offerCloudMeanwhile={props.offerCloudMeanwhile}
-            columns={props.blockWidth}
-            rows={props.terminalRows}
-            markHeader={props.fit.mark === "sm"}
           />
         ) : null}
         {onboarding.step === "cloud" && props.wizardState ? (
