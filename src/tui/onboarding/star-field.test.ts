@@ -97,11 +97,16 @@ describe("computeStarField", () => {
       { row: 10, from: 28, to: 66 },
       { row: 0, from: -5, to: 4 },
       { row: 19, from: 90, to: 200 },
+      // A second span on a row already claimed above, so the assertion
+      // below is exercised against more than one span per row.
+      { row: 9, from: 2, to: 9 },
     ];
     for (const star of computeStarField({ ...CANVAS, clearSpans: spans })) {
-      const span = spans.find((candidate) => candidate.row === star.row);
-      if (!span) continue;
-      expect(star.column < span.from || star.column > span.to).toBe(true);
+      // Every span on the row, not just the first: the option is an
+      // arbitrary list, and a second span on one row must also hold.
+      for (const span of spans.filter((candidate) => candidate.row === star.row)) {
+        expect(star.column < span.from || star.column > span.to).toBe(true);
+      }
     }
   });
 

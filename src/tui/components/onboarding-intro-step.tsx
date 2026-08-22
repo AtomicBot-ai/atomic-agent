@@ -46,6 +46,13 @@ const SKY_BY_TIER: Readonly<Record<OnboardingFit["tier"], SkyTier>> = {
 
 const FACE_GLYPHS = new Set(["█", "#"]);
 const PRESS_ANY_KEY = "[ press any key to continue ]";
+/**
+ * The no-mark fallback must be this one shared instance: `markRows` sits
+ * in the sky's `useMemo` dependency list, and a fresh `[]` per render
+ * would re-run `buildIntroArt` on every tagline tick — the exact churn
+ * that memo exists to prevent.
+ */
+const NO_MARK: readonly string[] = [];
 
 /**
  * The first screen of a first run: the mark in a field of stars, the
@@ -73,7 +80,7 @@ export function OnboardingIntroStep(props: {
       ? CROSS_MARKS.block.md
       : budget >= CROSS_MARKS.block.sm.length
         ? CROSS_MARKS.block.sm
-        : [];
+        : NO_MARK;
   const sky = SKY_BY_TIER[fit.tier];
   const columns = Math.max(20, props.columns);
   const rows = Math.max(markRows.length, budget);
