@@ -24,7 +24,10 @@ import {
   ONBOARDING_SIZE_ADVICE,
 } from "../onboarding/onboarding-fit.js";
 import { handleOnboardingKey } from "../onboarding/onboarding-key-bindings.js";
-import { decideSecondBackendOffer } from "../onboarding/propose-second-backend.js";
+import {
+  decideSecondBackendOffer,
+  isLocalSetupStep,
+} from "../onboarding/propose-second-backend.js";
 import type { OnboardingOutcome, OnboardingUiState } from "../onboarding/onboarding-state.js";
 import {
   normalizeLocalLlmBaseUrl,
@@ -343,6 +346,16 @@ export function OnboardingScreen(props: {
     [dispatch, finish, onboarding.busy, onboarding.chatUrl],
   );
 
+  // Stamped on arrival rather than on success, and before anything is
+  // downloaded: an operator who opened the model list and pressed esc
+  // has already read everything the later "set up local models too"
+  // screen would tell them.
+  useEffect(() => {
+    if (!isLocalSetupStep(onboarding.step)) return;
+    if (getConfig().tui.onboarding.localSetupSeenAt !== null) return;
+    persistOnboardingState({ localSetupSeenAt: new Date().toISOString() });
+  }, [onboarding.step]);
+
   // Closing down runs once. The stamp is what stops the flow reopening
   // on the next launch, so it is written before the surface unmounts.
   useEffect(() => {
@@ -354,6 +367,7 @@ export function OnboardingScreen(props: {
       cloudReady: isCloudTextProviderReady(),
       localReady: isLocalBackendConfigured(),
       alreadyProposed: config.tui.onboarding.proposedSecondBackendAt !== null,
+      localSetupSeen: config.tui.onboarding.localSetupSeenAt !== null,
     });
     if (offer) {
       // Recorded when it is shown, not when it is answered: the offer

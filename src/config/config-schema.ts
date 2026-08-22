@@ -1531,7 +1531,14 @@ export interface UserConfigFile {
 // now read instead of rejected, its version is preserved rather than
 // stamped down, and unknown top-level keys survive the round trip. See
 // `parseUserConfigFile` and `ensureUserConfigFileSync`.
-export const USER_CONFIG_VERSION = 43;
+// v44: a fifth stamp in `tui.onboarding` — `localSetupSeenAt`, written
+// when the first run reaches the local model list rather than when a
+// model comes out of it. It is what stops the "set up local models too"
+// screen being pitched to an operator who already walked through that
+// list and walked back out. Additive: a v43 file parses with it `null`,
+// which reads as "never opened", the same answer that file has always
+// implied.
+export const USER_CONFIG_VERSION = 44;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1663,6 +1670,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   40,
   41,
   42,
+  43,
   USER_CONFIG_VERSION,
 ];
 
@@ -1913,6 +1921,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     onboarding: {
       completedAt: null,
       introSeenAt: null,
+      localSetupSeenAt: null,
       proposedSecondBackendAt: null,
       skippedAt: null,
     },
@@ -3736,10 +3745,11 @@ export function parseWhileBusySubmit(
 }
 
 /**
- * First-run flow state (config v43). Four nullable ISO-8601 timestamps,
- * not booleans: knowing *when* a run was completed or skipped is what
- * lets a later release decide whether an install predates a flow it
- * would like to show again, and it costs the same byte budget.
+ * First-run flow state (config v43, extended in v44). Five nullable
+ * ISO-8601 timestamps, not booleans: knowing *when* a run was completed
+ * or skipped is what lets a later release decide whether an install
+ * predates a flow it would like to show again, and it costs the same
+ * byte budget.
  *
  * - `introSeenAt` — the splash was dismissed at least once.
  * - `completedAt` — a backend was configured and the flow handed over to
@@ -3749,12 +3759,18 @@ export function parseWhileBusySubmit(
  *   an escaped setup used to reappear on every single launch.
  * - `proposedSecondBackendAt` — the "you have one, want the other too?"
  *   screen was already offered, so it is never offered twice.
+ * - `localSetupSeenAt` — the local model list was reached, whether or
+ *   not a model came out of it. Recorded rather than derived because
+ *   backing out of that list leaves no trace anywhere else, and it
+ *   survives a launch: an interrupted first run is exactly the case
+ *   where an operator would otherwise be shown it twice.
  */
 export interface OnboardingState {
   completedAt: string | null;
   introSeenAt: string | null;
   skippedAt: string | null;
   proposedSecondBackendAt: string | null;
+  localSetupSeenAt: string | null;
 }
 
 /**
@@ -3780,6 +3796,10 @@ export function parseOnboardingState(raw: unknown): OnboardingState {
     proposedSecondBackendAt: parseTimestampOrNull(
       obj.proposedSecondBackendAt,
       "tui.onboarding.proposedSecondBackendAt",
+    ),
+    localSetupSeenAt: parseTimestampOrNull(
+      obj.localSetupSeenAt,
+      "tui.onboarding.localSetupSeenAt",
     ),
   };
 }

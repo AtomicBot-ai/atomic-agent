@@ -7,7 +7,7 @@ import {
   parseUserConfigFile,
 } from "./config-schema.js";
 
-describe("tui.onboarding (config v43)", () => {
+describe("tui.onboarding (config v43, extended in v44)", () => {
   it("defaults every stamp to null on a file that predates the block", () => {
     const parsed = parseUserConfigFile({ version: 42, tui: { theme: "nord" } });
     expect(parsed.tui.onboarding).toEqual({
@@ -15,8 +15,37 @@ describe("tui.onboarding (config v43)", () => {
       introSeenAt: null,
       skippedAt: null,
       proposedSecondBackendAt: null,
+      localSetupSeenAt: null,
     });
     expect(parsed.tui.theme).toBe("nord");
+  });
+
+  it("reads a v43 file as never having opened the local list", () => {
+    const stamp = "2026-08-21T18:04:05.000Z";
+    const parsed = parseUserConfigFile({
+      version: 43,
+      tui: { onboarding: { completedAt: stamp } },
+    });
+    expect(parsed.tui.onboarding.completedAt).toBe(stamp);
+    expect(parsed.tui.onboarding.localSetupSeenAt).toBeNull();
+  });
+
+  it("round-trips localSetupSeenAt", () => {
+    const stamp = "2026-08-22T07:15:00.000Z";
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { onboarding: { localSetupSeenAt: stamp } },
+    });
+    expect(parsed.tui.onboarding.localSetupSeenAt).toBe(stamp);
+  });
+
+  it("rejects a localSetupSeenAt that is not a date", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tui: { onboarding: { localSetupSeenAt: "earlier" } },
+      }),
+    ).toThrow(ConfigValidationError);
   });
 
   it("round-trips ISO stamps", () => {

@@ -45,7 +45,15 @@ describe("persistOnboardingState", () => {
       introSeenAt: STAMP,
       skippedAt: null,
       proposedSecondBackendAt: null,
+      localSetupSeenAt: null,
     });
+  });
+
+  it("round-trips localSetupSeenAt through the file", () => {
+    persistOnboardingState({ localSetupSeenAt: STAMP });
+    const onDisk = JSON.parse(readFileSync(getConfig().paths.userConfigFile, "utf8"));
+    expect(onDisk.tui.onboarding.localSetupSeenAt).toBe(STAMP);
+    expect(getConfig().tui.onboarding.localSetupSeenAt).toBe(STAMP);
   });
 
   it("leaves the rest of tui alone", () => {
