@@ -19,13 +19,16 @@ export const TAGLINE_MS_PER_CHAR = 45;
  *
  * The pinned footer and the surface's top padding are not counted here
  * any more — `OnboardingScreen` takes both off the budget before it
- * passes it down. Counting the footer but neither the padding nor the
- * gap under the header is what made the splash come out two rows taller
- * than the terminal. (And the sky pays for every row it is given: the
- * old ring's blank top and bottom lines measured zero rows in Ink and
- * quietly absorbed part of this chrome — a star field does not.)
+ * passes it down. What is left is exactly the rows this component draws
+ * below the art: three one-row gaps, two rows of wordmark, the tagline,
+ * and the press-any-key line — seven. The eighth this constant used to
+ * carry was the surface padding counted a second time, and it cost the
+ * 60×11 intro its mark: the xs ladder rung needs two rows, and the
+ * double count left it one. (The sky pays for every row it is given:
+ * the old ring's blank top and bottom lines measured zero rows in Ink
+ * and quietly absorbed miscounts like this one — a star field does not.)
  */
-export const INTRO_CHROME_ROWS = 8;
+export const INTRO_CHROME_ROWS = 7;
 /** `ATOMIC` is the first 23 columns of the shipped `ATOMIC AGENT` wordmark. */
 const WORDMARK_ATOMIC_COLUMNS = 23;
 
