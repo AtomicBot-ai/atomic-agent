@@ -3,10 +3,13 @@ export {
   DEFAULT_LLAMACPP_MODEL_ID,
   getLocalModelDef,
   isKnownLocalModelId,
+  listLocalModels,
+  setCustomLocalModels,
   EMBEDDING_MODELS_CATALOG,
   DEFAULT_EMBEDDING_MODEL_ID,
   getEmbeddingModelDef,
   isKnownEmbeddingModelId,
+  type CuratedLocalModelId,
   type LocalModelId,
   type LocalModelDef,
   type EmbeddingModelId,
@@ -99,3 +102,36 @@ export {
   type StartBothResult,
 } from "./daemon-lifecycle.js";
 export { readLogTail, type LogTailResult } from "./log-tail.js";
+
+export {
+  huggingFaceToken,
+  listHuggingFaceGgufFiles,
+  resolveHuggingFaceFileUrl,
+  type HuggingFaceFile,
+} from "./huggingface-api.js";
+export {
+  describeRejectedGgufFiles,
+  isFullPrecisionGguf,
+  isMmprojFile,
+  isMtpCompanionFile,
+  isShardedGguf,
+  judgeGgufFile,
+  ramWarningFor,
+  type GgufJudgement,
+  type GgufVerdict,
+} from "./huggingface-fit.js";
+export {
+  buildCustomModelDef,
+  buildCustomModelId,
+  formatGgufSize,
+  ggufSizeGb,
+} from "./huggingface-model-def.js";
+export {
+  parseHuggingFaceModelRef,
+  type HuggingFaceModelRef,
+} from "./huggingface-ref.js";
+export {
+  resolveHuggingFaceGgufChoices,
+  type HuggingFaceGgufChoice,
+  type HuggingFaceRepoChoices,
+} from "./huggingface-resolve.js";

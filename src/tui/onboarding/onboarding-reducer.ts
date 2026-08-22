@@ -80,6 +80,27 @@ export function reduceOnboardingAction(
         },
       };
     }
+    case "onboarding_hf_reference_changed": {
+      if (!state.onboarding) return state;
+      return {
+        ...state,
+        onboarding: { ...state.onboarding, hfReference: action.value },
+      };
+    }
+    case "onboarding_hf_repo_resolved": {
+      if (!state.onboarding) return state;
+      return {
+        ...state,
+        onboarding: {
+          ...state.onboarding,
+          step: "local_hf_pick",
+          hfRepo: action.repo,
+          cursor: 0,
+          busy: false,
+          error: null,
+        },
+      };
+    }
     case "onboarding_cloud_meanwhile_opened": {
       if (!state.onboarding) return state;
       return {

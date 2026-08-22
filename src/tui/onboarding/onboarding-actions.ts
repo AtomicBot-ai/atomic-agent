@@ -1,4 +1,5 @@
 import type {
+  OnboardingHuggingFaceRepo,
   OnboardingOutcome,
   OnboardingStep,
   OnboardingUiState,
@@ -20,6 +21,14 @@ export type OnboardingAction =
   | { type: "onboarding_error_set"; error: string | null }
   /** The local branch committed to a model and moved to the download. */
   | { type: "onboarding_local_model_picked"; modelId: string }
+  /** Keystrokes in the Hugging Face reference editor. */
+  | { type: "onboarding_hf_reference_changed"; value: string }
+  /**
+   * The repo answered. Carries the step change with it: resolving and
+   * arriving on the file list are one event, and splitting them would
+   * leave a frame showing an empty list under the old step's footer.
+   */
+  | { type: "onboarding_hf_repo_resolved"; repo: OnboardingHuggingFaceRepo }
   /** `c` on the download screen: set up cloud while the pull runs. */
   | { type: "onboarding_cloud_meanwhile_opened" }
   /** Offer the other backend once the first one works. */

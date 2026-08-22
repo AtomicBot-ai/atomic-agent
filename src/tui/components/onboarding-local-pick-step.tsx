@@ -1,6 +1,10 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import type { LocalModelPick } from "../onboarding/local-model-picks.js";
+import {
+  HUGGING_FACE_ROW_LABEL,
+  HUGGING_FACE_ROW_NOTE,
+  type LocalModelPick,
+} from "../onboarding/local-model-picks.js";
 import type { OnboardingFit } from "../onboarding/onboarding-fit.js";
 import { theme } from "../theme/theme.js";
 
@@ -12,13 +16,20 @@ export const LOCAL_PICK_WINDOW = 6;
  * tab strip, `kv —`, `tools 0ok/0err` and a `status: ready` header over
  * an install with nothing on disk. What a first run needs from that
  * screen is one decision, so this is that decision and nothing else.
+ *
+ * The curated list is titled as a recommendation because that is what it
+ * is; the row under it opens the whole of Hugging Face. That row is
+ * pinned outside the scrolling window, since an operator who scrolled
+ * past it would never learn it was there.
  */
 export function OnboardingLocalPickStep(props: {
   picks: readonly LocalModelPick[];
+  /** Index over the picks plus the trailing Hugging Face row. */
   cursor: number;
   ramGb: number;
   fit: OnboardingFit;
 }): ReactElement {
+  const onHuggingFace = props.cursor >= props.picks.length;
   const start = Math.max(
     0,
     Math.min(props.cursor - LOCAL_PICK_WINDOW + 2, props.picks.length - LOCAL_PICK_WINDOW),
@@ -34,8 +45,9 @@ export function OnboardingLocalPickStep(props: {
           </Text>
         </Box>
       ) : null}
-      {visible.map((pick) => {
-        const selected = props.picks[props.cursor]?.id === pick.id;
+      <Text bold>Recommended models</Text>
+      {visible.map((pick, index) => {
+        const selected = !onHuggingFace && start + index === props.cursor;
         return (
           <Text
             key={pick.id}
@@ -51,6 +63,16 @@ export function OnboardingLocalPickStep(props: {
       {below > 0 ? (
         <Text color={theme.colors.muted}>{`${" ".repeat(3)}↓ ${below} more`}</Text>
       ) : null}
+      <Text
+        color={onHuggingFace ? theme.colors.accent : undefined}
+        bold={onHuggingFace}
+        wrap="truncate"
+      >
+        {`${onHuggingFace ? "›  " : "   "}${HUGGING_FACE_ROW_LABEL}`}
+        {props.fit.rowDetails ? (
+          <Text color={theme.colors.muted}>{`   ${HUGGING_FACE_ROW_NOTE}`}</Text>
+        ) : null}
+      </Text>
     </Box>
   );
 }

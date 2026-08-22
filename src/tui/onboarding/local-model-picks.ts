@@ -1,5 +1,11 @@
 import { totalmem } from "node:os";
-import { LOCAL_MODELS_CATALOG, type LocalModelDef, type LocalModelId } from "../../local-llm/index.js";
+import {
+  getLocalModelDef,
+  isKnownLocalModelId,
+  LOCAL_MODELS_CATALOG,
+  type LocalModelDef,
+  type LocalModelId,
+} from "../../local-llm/index.js";
 
 /** Host physical RAM in whole decimal GB, the same measure the panel uses. */
 export function hostRamGb(): number {
@@ -77,6 +83,47 @@ function fitFor(def: LocalModelDef, ramGb: number): LocalModelPick["fit"] {
   if (def.recommendedRamGb <= ramGb) return "fits";
   if (def.minRamGb <= ramGb) return "tight";
   return "over";
+}
+
+/**
+ * The escape hatch under the curated list. It is a row rather than a
+ * hotkey because an operator who came here to fetch a specific model has
+ * to be able to see that the option exists — the curated set is a
+ * recommendation, not the boundary of what runs.
+ */
+export const HUGGING_FACE_ROW_LABEL = "Add a model from Hugging Face…";
+export const HUGGING_FACE_ROW_NOTE = "paste an owner/repo id or a huggingface.co URL";
+
+export type LocalPickRow =
+  | { kind: "model"; pick: LocalModelPick }
+  | { kind: "hugging_face" };
+
+/**
+ * The picker's rows in cursor order. The Hugging Face row is last and is
+ * counted in the cursor length, so `moveOnboardingCursor` wraps from it
+ * back to the first recommendation.
+ */
+export function buildLocalPickRows(
+  picks: readonly LocalModelPick[],
+): LocalPickRow[] {
+  return [
+    ...picks.map((pick): LocalPickRow => ({ kind: "model", pick })),
+    { kind: "hugging_face" },
+  ];
+}
+
+/**
+ * What the download screen calls the model it is pulling. A curated id
+ * is already the name people use for it; a `custom-` slug is not — it
+ * carries the owner, the repo and the quant, and reads as machinery. The
+ * bare filename says the same thing in the space a curated id takes.
+ */
+export function describeDownloadingModel(id: string | null): string {
+  if (!id) return "the model";
+  if (!isKnownLocalModelId(id)) return id;
+  const def = getLocalModelDef(id);
+  if (def.family !== "custom") return def.id;
+  return def.filename.replace(/\.gguf$/i, "");
 }
 
 /** Rows ordered for the first run: the recommendation first, then by size. */

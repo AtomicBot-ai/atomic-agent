@@ -7,7 +7,11 @@ import {
 
 export type { ApprovalLevel } from "../approval/approval-level.js";
 import type { DotenvLoadResult } from "./load-dotenv.js";
-import { isKnownLocalModelId } from "../local-llm/models-catalog.js";
+import {
+  isKnownLocalModelId,
+  type LocalModelDef,
+} from "../local-llm/models-catalog.js";
+import { parseCustomLocalModels } from "./custom-models-schema.js";
 import {
   MCP_SERVER_NAME_MAX_LENGTH,
   MCP_SERVER_NAME_RE,
@@ -996,6 +1000,14 @@ export interface UserConfigFile {
      * `{ enabled: false, modelId: null, port: 19092 }`.
      */
     embeddings: UserManagedEmbeddingLlmConfig;
+    /**
+     * GGUF models the operator added from an arbitrary Hugging Face repo
+     * (config v44). Each entry is a whole `LocalModelDef` with a
+     * `custom-` prefixed id; `loadConfig()` publishes them to the catalog
+     * registry so curated and added models resolve through one lookup.
+     * Older files inherit `[]`.
+     */
+    customModels: LocalModelDef[];
   };
   log: { level: LogLevel };
   agent: {
@@ -1531,7 +1543,10 @@ export interface UserConfigFile {
 // now read instead of rejected, its version is preserved rather than
 // stamped down, and unknown top-level keys survive the round trip. See
 // `parseUserConfigFile` and `ensureUserConfigFileSync`.
-export const USER_CONFIG_VERSION = 43;
+// v44: localModels gains `customModels` — GGUF models the operator pointed
+// at on Hugging Face, stored as full catalog entries. Older files inherit
+// `[]`, which is exactly the behaviour they had before the key existed.
+export const USER_CONFIG_VERSION = 44;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1663,6 +1678,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   40,
   41,
   42,
+  43,
   USER_CONFIG_VERSION,
 ];
 
@@ -1687,6 +1703,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       port: 19092,
       url: "http://127.0.0.1:19092",
     },
+    customModels: [],
   },
   log: { level: "info" },
   agent: {
@@ -2013,10 +2030,18 @@ export function parseLocalLlmMode(raw: unknown, field: string): LocalLlmMode {
   );
 }
 
-function parseOptionalManagedModelId(raw: unknown, field: string): string | null {
+function parseOptionalManagedModelId(
+  raw: unknown,
+  field: string,
+  customModels: readonly LocalModelDef[],
+): string | null {
   if (raw === null || raw === undefined) return null;
   const s = parseNonEmptyString(raw, field);
-  if (!isKnownLocalModelId(s)) {
+  // The added models come out of the same file, so they are checked
+  // against that array rather than the module registry: a config that
+  // adds a model and selects it in one write has to validate before
+  // anything has had the chance to publish it.
+  if (!isKnownLocalModelId(s) && !customModels.some((m) => m.id === s)) {
     throw new ConfigValidationError(
       field,
       `unknown managed local model id: ${JSON.stringify(s)}`,
@@ -2948,12 +2973,20 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (obj.analytics as Record<string, unknown> | undefined) ?? {};
   const mcp = (obj.mcp as Record<string, unknown> | undefined) ?? {};
 
+  // Parsed before `managed.modelId` so a file that adds a model and
+  // activates it in one write validates.
+  const customModels = parseCustomLocalModels(
+    localModels.customModels,
+    "localModels.customModels",
+  );
+
   const rawManaged =
     (localModels.managed as Record<string, unknown> | undefined) ?? {};
   const managed: UserManagedLocalLlmConfig = {
     modelId: parseOptionalManagedModelId(
       rawManaged.modelId,
       "localModels.managed.modelId",
+      customModels,
     ),
     port: parsePositiveInt(
       rawManaged.port ?? USER_CONFIG_DEFAULTS.localModels.managed.port,
@@ -3049,6 +3082,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       ),
       managed,
       embeddings: embeddingsDaemon,
+      customModels,
     },
     log: {
       level: parseLogLevel(log.level ?? USER_CONFIG_DEFAULTS.log.level, "log.level"),

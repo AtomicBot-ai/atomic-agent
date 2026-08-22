@@ -13,9 +13,12 @@ import {
   isCloudTextProviderReady,
   isLocalBackendConfigured,
 } from "../local-backend-readiness.js";
+import { useOnboardingHuggingFace } from "../hooks/use-onboarding-huggingface.js";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
 import {
   buildLocalModelPicks,
+  buildLocalPickRows,
+  describeDownloadingModel,
   hostRamGb,
   orderLocalModelPicks,
 } from "../onboarding/local-model-picks.js";
@@ -41,6 +44,8 @@ import type { TuiState } from "../tui-state.js";
 import { OnboardingChooseStep } from "./onboarding-choose-step.js";
 import { OnboardingHeader } from "./onboarding-header.js";
 import { OnboardingDownloadStep } from "./onboarding-download-step.js";
+import { OnboardingHuggingFacePickStep } from "./onboarding-hf-pick-step.js";
+import { OnboardingHuggingFaceRefStep } from "./onboarding-hf-ref-step.js";
 import { OnboardingIntroStep } from "./onboarding-intro-step.js";
 import { OnboardingLocalPickStep } from "./onboarding-local-pick-step.js";
 import { OnboardingProposeStep } from "./onboarding-propose-step.js";
@@ -64,6 +69,8 @@ const SUBTITLES: Record<OnboardingUiState["step"], string> = {
   intro: "",
   choose: "setup · step 1 of 2",
   local_pick: "local models · step 2 of 2",
+  local_hf_ref: "local models · hugging face",
+  local_hf_pick: "local models · choose a file",
   local_download: "local models · downloading",
   propose_second: "one more thing",
   wait_or_jump: "almost there",
@@ -163,6 +170,7 @@ export function OnboardingScreen(props: {
     () => orderLocalModelPicks(buildLocalModelPicks(ramGb)),
     [ramGb],
   );
+  const pickRows = useMemo(() => buildLocalPickRows(picks), [picks]);
 
   useInput(
     (input, key) => {
@@ -171,22 +179,33 @@ export function OnboardingScreen(props: {
         return;
       }
       if (key.upArrow || input === "k") {
-        dispatch({ type: "onboarding_cursor_moved", delta: -1, length: picks.length });
+        dispatch({ type: "onboarding_cursor_moved", delta: -1, length: pickRows.length });
         return;
       }
       if (key.downArrow || input === "j") {
-        dispatch({ type: "onboarding_cursor_moved", delta: 1, length: picks.length });
+        dispatch({ type: "onboarding_cursor_moved", delta: 1, length: pickRows.length });
         return;
       }
       if (key.return) {
-        const pick = picks[onboarding.cursor % Math.max(1, picks.length)];
-        if (!pick) return;
-        dispatch({ type: "onboarding_local_model_picked", modelId: pick.id });
-        callbacks.onLocalModelsPullRequested?.(pick.id as LocalModelId);
+        const row = pickRows[onboarding.cursor % Math.max(1, pickRows.length)];
+        if (!row) return;
+        if (row.kind === "hugging_face") {
+          dispatch({ type: "onboarding_step_set", step: "local_hf_ref" });
+          return;
+        }
+        dispatch({ type: "onboarding_local_model_picked", modelId: row.pick.id });
+        callbacks.onLocalModelsPullRequested?.(row.pick.id);
       }
     },
     { isActive: onboarding.step === "local_pick" },
   );
+
+  const hfChoices = onboarding.hfRepo?.choices ?? [];
+  const huggingFace = useOnboardingHuggingFace({
+    onboarding,
+    dispatch,
+    onPullRequested: callbacks.onLocalModelsPullRequested,
+  });
 
   useInput(
     (input, key) => {
@@ -389,9 +408,29 @@ export function OnboardingScreen(props: {
         {onboarding.step === "local_pick" ? (
           <OnboardingLocalPickStep
             picks={picks}
-            cursor={onboarding.cursor % Math.max(1, picks.length)}
+            cursor={onboarding.cursor % Math.max(1, pickRows.length)}
             ramGb={ramGb}
             fit={fit}
+          />
+        ) : null}
+        {onboarding.step === "local_hf_ref" ? (
+          <OnboardingHuggingFaceRefStep
+            value={onboarding.hfReference}
+            busy={onboarding.busy}
+            error={onboarding.error}
+            onChange={(value) =>
+              dispatch({ type: "onboarding_hf_reference_changed", value })
+            }
+            onSubmit={huggingFace.resolveReference}
+            onBack={() => dispatch({ type: "onboarding_step_set", step: "local_pick" })}
+          />
+        ) : null}
+        {onboarding.step === "local_hf_pick" && onboarding.hfRepo ? (
+          <OnboardingHuggingFacePickStep
+            repo={onboarding.hfRepo}
+            cursor={onboarding.cursor % Math.max(1, hfChoices.length)}
+            ramGb={ramGb}
+            error={onboarding.error}
           />
         ) : null}
         {onboarding.step === "propose_second" && onboarding.offer ? (
@@ -411,7 +450,7 @@ export function OnboardingScreen(props: {
         {onboarding.step === "local_download" ? (
           <OnboardingDownloadStep
             pull={props.state.localModelsPanel.pull}
-            modelLabel={onboarding.localModelId ?? "the model"}
+            modelLabel={describeDownloadingModel(onboarding.localModelId)}
             offerCloudMeanwhile={!cloudAlreadyConfigured}
           />
         ) : null}
@@ -481,6 +520,10 @@ function footerFor(onboarding: OnboardingUiState): string {
     case "custom_embedding_url":
       return "enter test & save   empty enter skips embeddings   esc back   ctrl+c quit";
     case "local_pick":
+      return "↑/↓ move   enter select   esc back   ctrl+c quit";
+    case "local_hf_ref":
+      return "enter look it up   esc back   ctrl+c quit";
+    case "local_hf_pick":
       return "↑/↓ move   enter download   esc back   ctrl+c quit";
     case "local_download":
       return "c set up cloud meanwhile   ctrl+c quit";

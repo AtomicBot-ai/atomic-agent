@@ -1,3 +1,8 @@
+import type {
+  HuggingFaceFile,
+  HuggingFaceGgufChoice,
+} from "../../local-llm/index.js";
+
 /**
  * First-run flow state. Lives on `TuiState.onboarding` and is `null`
  * whenever the flow is not on screen, which is also the render switch:
@@ -12,6 +17,10 @@ export type OnboardingStep =
   | "intro"
   | "choose"
   | "local_pick"
+  /** Type a Hugging Face repo id or URL, for a model nobody curated. */
+  | "local_hf_ref"
+  /** Choose which GGUF in that repo to pull. */
+  | "local_hf_pick"
   | "local_download"
   | "cloud"
   | "custom_chat_url"
@@ -26,6 +35,8 @@ export type OnboardingStep =
  * out of the reducer, which cannot write files.
  */
 export type OnboardingOutcome = "local" | "cloud" | "custom" | "skipped";
+
+
 
 export interface OnboardingUiState {
   step: OnboardingStep;
@@ -47,6 +58,24 @@ export interface OnboardingUiState {
   /** A `/health` probe is in flight; the editor is read-only until it lands. */
   busy: boolean;
   error: string | null;
+  /** What the operator typed on the Hugging Face step. */
+  hfReference: string;
+  /** The repo those choices came from; `null` before anything resolves. */
+  hfRepo: OnboardingHuggingFaceRepo | null;
+}
+
+/**
+ * A resolved Hugging Face repo and the GGUFs in it that this agent could
+ * serve. Held on the flow's own slice rather than in the screen, so the
+ * pick step is a pure render of state like every other step.
+ */
+export interface OnboardingHuggingFaceRepo {
+  repoId: string;
+  revision: string;
+  choices: readonly HuggingFaceGgufChoice[];
+  mmproj: HuggingFaceFile | null;
+  /** One line naming the files that were filtered out, when any were. */
+  hidden: string | null;
 }
 
 export interface OnboardingChoice {
@@ -104,6 +133,8 @@ export function createOnboardingState(chatUrl: string): OnboardingUiState {
     embeddingUrl: "",
     busy: false,
     error: null,
+    hfReference: "",
+    hfRepo: null,
   };
 }
 
@@ -125,7 +156,7 @@ export function moveOnboardingCursor(
  * keystroke is processed twice.
  */
 export function stepOwnsItsKeyboard(step: OnboardingStep): boolean {
-  return step === "cloud" || step.startsWith("custom_");
+  return step === "cloud" || step === "local_hf_ref" || step.startsWith("custom_");
 }
 
 /** Steps where the flow is over and the host is closing it down. */
