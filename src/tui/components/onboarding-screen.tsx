@@ -246,10 +246,13 @@ export function OnboardingScreen(props: {
             ramGb={ramGb}
             offerCloudMeanwhile={!cloudAlreadyConfigured}
             pull={props.state.localModelsPanel.pull}
+            pullError={props.state.localModelsPanel.errorLine}
             wizardState={wizardState}
             introSkipped={intro.skipAnimation}
             configuredLabel={configuredLabel(onboarding.outcome)}
             cloudLabel={CLOUD_READY_LABEL}
+            terminalRows={size.rows}
+            blockWidth={placement.width}
             dispatch={dispatch}
             onPullRequested={callbacks.onLocalModelsPullRequested}
             onChatUrlSubmit={(value) => void probeAndAdvance(value)}

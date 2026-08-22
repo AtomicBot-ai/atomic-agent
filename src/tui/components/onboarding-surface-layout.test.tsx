@@ -171,7 +171,15 @@ const cases: { name: string; measured: number; element: ReactElement; exact: boo
       offerCloudMeanwhile: true,
     }),
     element: (
-      <OnboardingDownloadStep pull={null} modelLabel="qwen3-4b-instruct" offerCloudMeanwhile />
+      <OnboardingDownloadStep
+        pull={null}
+        pullError={null}
+        modelLabel="qwen3-4b-instruct"
+        offerCloudMeanwhile
+        columns={100}
+        rows={12}
+        markHeader
+      />
     ),
     exact: false,
   },
