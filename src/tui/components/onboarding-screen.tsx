@@ -33,7 +33,9 @@ import {
 } from "../persist-user-local-models-config.js";
 import { persistOnboardingState } from "../persist-onboarding-state.js";
 import { routeProvidersWizardKey } from "../providers/route-wizard-key.js";
+import { isListPhase } from "../providers/providers-wizard-phases.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
+import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
 import { theme } from "../theme/theme.js";
 import type { TuiAction } from "../tui-action.js";
 import type { LocalModelId } from "../../local-llm/index.js";
@@ -455,7 +457,7 @@ export function OnboardingScreen(props: {
       <Box flexGrow={1} />
       <Box flexShrink={0}>
         <Text color={theme.colors.muted} wrap="truncate">
-          {footerFor(onboarding)}
+          {footerFor(onboarding, wizardState)}
           {fit.sizeAdvice ? `   ·   ${ONBOARDING_SIZE_ADVICE}` : ""}
         </Text>
       </Box>
@@ -470,12 +472,19 @@ function configuredLabel(outcome: OnboardingOutcome | null): string {
   return "Backend ready";
 }
 
-function footerFor(onboarding: OnboardingUiState): string {
+function footerFor(
+  onboarding: OnboardingUiState,
+  wizard: ProvidersWizardState | null,
+): string {
   switch (onboarding.step) {
     case "choose":
       return "↑/↓ move   enter select   1–3 jump   esc skip   ctrl+c quit";
     case "cloud":
-      return "↑/↓ move   / search   enter select   esc back   ctrl+c quit";
+      // "/ search" tracks the wizard phase, not the onboarding step: on
+      // the key/URL/model text screens `/` is just a typed character.
+      return wizard !== null && isListPhase(wizard.phase)
+        ? "↑/↓ move   / search   enter select   esc back   ctrl+c quit"
+        : "↑/↓ move   enter select   esc back   ctrl+c quit";
     case "custom_chat_url":
       return "enter test & continue   esc back   ctrl+c quit";
     case "custom_embedding_url":

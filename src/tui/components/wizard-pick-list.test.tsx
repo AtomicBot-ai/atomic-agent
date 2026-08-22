@@ -57,7 +57,10 @@ describe("renderPickList narrow-width rendering", () => {
     const options = Array.from({ length: 40 }, (_, i) => ({
       label: `model-${i}`,
     }));
-    const height = (search: string | null | undefined): number => {
+    const height = (
+      search: string | null | undefined,
+      maxRows: number | undefined,
+    ): number => {
       const { lastFrame } = narrow(
         renderPickList({
           title: "Chat model",
@@ -65,16 +68,22 @@ describe("renderPickList narrow-width rendering", () => {
           cursor: 0,
           moveHint: "j/k move",
           actionsHint: "Enter pick · Esc cancel",
-          maxRows: 14,
+          ...(maxRows === undefined ? {} : { maxRows }),
           ...(search === undefined ? {} : { search }),
         }),
         60,
       );
       return (lastFrame() ?? "").split("\n").length;
     };
-    expect(height(undefined)).toBeLessThanOrEqual(14);
-    expect(height(null)).toBe(height(undefined));
-    expect(height("mo")).toBe(height(undefined));
+    // Both callers exist: budgeted (the LLM panel passes the tab budget)
+    // and unbudgeted (onboarding and the Providers panel size their
+    // screens to the fixed viewport). The search line must come out of
+    // the option rows on each, or the box grows and eats what is below.
+    for (const budget of [14, undefined]) {
+      expect(height(null, budget)).toBe(height(undefined, budget));
+      expect(height("mo", budget)).toBe(height(undefined, budget));
+    }
+    expect(height(undefined, 14)).toBeLessThanOrEqual(14);
   });
 
   it("names the query instead of drawing an empty box", () => {

@@ -36,7 +36,13 @@ export function pickWindowRows(
   maxRows: number | undefined,
   extraChromeRows = 0,
 ): number {
-  if (maxRows === undefined) return PICK_WINDOW;
+  // The fixed viewport pays for extra chrome too: the unbudgeted callers
+  // (first-run onboarding, the Providers panel) sized their screens to a
+  // 12-option box, so a search or error line that ADDED a row instead of
+  // taking one pushed their bottom row off a 24-row terminal.
+  if (maxRows === undefined) {
+    return Math.max(PICK_MIN_WINDOW, PICK_WINDOW - extraChromeRows);
+  }
   return Math.max(
     PICK_MIN_WINDOW,
     Math.min(PICK_WINDOW, maxRows - PICK_CHROME_ROWS - extraChromeRows),
@@ -169,7 +175,10 @@ export function renderPickList(props: {
           {props.search === null ? (
             "/ to search"
           ) : (
-            <Text color={theme.colors.accentSoft}>
+            // `accent`, never `accentSoft`: the query is text the
+            // operator is actively reading, and the un-lifted fill sits
+            // near 2:1 against a dark ground (see theme-palettes.ts).
+            <Text color={theme.colors.accent}>
               {props.search}
               <Text color={theme.colors.muted}>▏</Text>
             </Text>
