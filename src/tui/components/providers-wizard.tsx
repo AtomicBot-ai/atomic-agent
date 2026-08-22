@@ -19,22 +19,20 @@ import {
 } from "../providers/providers-wizard-target.js";
 import { theme } from "../theme/theme.js";
 import { findProviderPreset } from "../providers/provider-presets.js";
-import { listChatModelsForKind } from "../providers/providers-wizard-phases.js";
+import {
+  visibleKindRows,
+  visibleRowsForPhase,
+} from "../providers/providers-wizard-phases.js";
 import {
   GEMINI_DEFAULT_CHAT_MODEL,
-  listAimlapiEmbeddingModels,
-  listOpenRouterEmbeddingModels,
   OPENAI_COMPAT_DEFAULT_BASE_URL,
   OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
 } from "../providers/providers-model-options.js";
 import { CLAUDE_CLI_DEFAULT_CHAT_MODEL } from "../../llm/provider/subscription-cli/claude-cli-models.js";
 import { subscriptionCliForWizardKind } from "../providers/providers-wizard-state.js";
 import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
-import {
-  CHECKING_KEY_HINT,
-  KIND_OPTIONS,
-} from "./providers-wizard-measure.js";
-import { renderPickList } from "./wizard-pick-list.js";
+import { CHECKING_KEY_HINT } from "./providers-wizard-measure.js";
+import { pickListHints, renderPickList } from "./wizard-pick-list.js";
 
 /** Service name for headings: the preset label wins over the raw kind. */
 function providerLabelForWizard(w: ProvidersWizardState): string {
@@ -285,17 +283,27 @@ function CatalogChatModelStep(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind]);
 
-  const title =
+  const service =
     kind === "openrouter" ? "Chat model (OpenRouter)" : "Chat model (AI/ML API)";
-  const actionsHint = loading
-    ? "PgUp/PgDn jump · Enter select · Esc back · updating model list from API…"
-    : "PgUp/PgDn jump · Enter select · Esc back";
+  // The refresh notice rides on the title rather than the hint line: it
+  // describes the list, not a key, and the hint already runs to the edge
+  // of a 100-column terminal once the search box has had its say.
+  const title = loading
+    ? `${service} · updating model list from API…`
+    : service;
+  const hints = pickListHints(
+    w.search,
+    "PgUp/PgDn jump · Enter select",
+    "Esc back",
+    "Esc clears search, again backs out",
+  );
   return renderPickList({
     title,
-    options: listChatModelsForKind(kind),
+    options: visibleRowsForPhase(w),
     cursor: w.cursor,
-    moveHint: "j/k move",
-    actionsHint: listActionsHint(actionsHint, w.submitting),
+    moveHint: hints.moveHint,
+    actionsHint: listActionsHint(hints.actionsHint, w.submitting),
+    search: w.search,
     ...(props.maxRows === undefined ? {} : { maxRows: props.maxRows }),
     error: w.error,
   });
@@ -322,10 +330,15 @@ export function ProvidersWizard(props: {
   if (w.phase === "pick_kind") {
     return renderPickList({
       title: `LLM provider — ${modeLabel}`,
-      options: KIND_OPTIONS,
+      options: visibleKindRows(w.search),
       cursor: w.cursor,
-      moveHint: "j/k move",
-      actionsHint: "Enter pick · Esc cancel",
+      ...pickListHints(
+        w.search,
+        "Enter pick",
+        "Esc cancel",
+        "Esc clears search, again cancels",
+      ),
+      search: w.search,
       ...maxRows,
       error: w.error,
     });
@@ -376,20 +389,21 @@ export function ProvidersWizard(props: {
     w.phase === "pick_embedding" &&
     (w.kind === "openrouter" || w.kind === "aimlapi")
   ) {
+    // This is the last screen of the curated flow, so Enter here is the
+    // save — and the save is what runs the key check.
+    const hints = pickListHints(
+      w.search,
+      "PgUp/PgDn jump · Enter finish",
+      "Esc back",
+      "Esc clears search, again backs out",
+    );
     return renderPickList({
       title: "Embedding backend",
-      options:
-        w.kind === "openrouter"
-          ? listOpenRouterEmbeddingModels()
-          : listAimlapiEmbeddingModels(),
+      options: visibleRowsForPhase(w),
       cursor: w.cursor,
-      moveHint: "j/k move",
-      // This is the last screen of the curated flow, so Enter here is
-      // the save — and the save is what runs the key check.
-      actionsHint: listActionsHint(
-        "PgUp/PgDn jump · Enter finish · Esc back",
-        w.submitting,
-      ),
+      moveHint: hints.moveHint,
+      actionsHint: listActionsHint(hints.actionsHint, w.submitting),
+      search: w.search,
       ...maxRows,
       error: w.error,
     });

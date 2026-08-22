@@ -1,5 +1,10 @@
 import { findProviderPreset, PROVIDER_PRESETS } from "./provider-presets.js";
 import {
+  filterWizardRows,
+  type WizardFilterRow,
+} from "./providers-wizard-filter.js";
+import { kindRowId, labelForKindRow } from "./providers-wizard-kind-labels.js";
+import {
   listAimlapiChatModels,
   listAimlapiEmbeddingModels,
   listOpenRouterChatModels,
@@ -40,11 +45,34 @@ export const KIND_ROW_ORDER: readonly ProvidersWizardKindRow[] = [
   "openai-compatible",
 ];
 
-const KIND_COUNT = KIND_ROW_ORDER.length;
+/** A `pick_kind` row with the two strings the search box matches on. */
+export interface WizardKindOption extends WizardFilterRow {
+  readonly row: ProvidersWizardKindRow;
+}
 
-/** Maps the `pick_kind` cursor index to the row (kind or preset). */
-export function kindRowAtCursor(cursor: number): ProvidersWizardKindRow {
-  return KIND_ROW_ORDER[cursor] ?? "openrouter";
+/**
+ * The provider rows as the screen shows them, in `KIND_ROW_ORDER`.
+ * Labels are built here rather than in the component because the key
+ * bindings now take Enter's row from a *filtered* list: the two sides
+ * can only land on the same row if they filter the same labels.
+ */
+export const KIND_OPTIONS: readonly WizardKindOption[] = KIND_ROW_ORDER.map(
+  (row) => ({ row, id: kindRowId(row), label: labelForKindRow(row) }),
+);
+
+/** The provider rows left after the search box, in list order. */
+export function visibleKindRows(
+  search: string | null,
+): readonly WizardKindOption[] {
+  return filterWizardRows(KIND_OPTIONS, search);
+}
+
+/** Maps the `pick_kind` cursor index to the row of the filtered list. */
+export function kindRowAtCursor(
+  cursor: number,
+  search: string | null,
+): ProvidersWizardKindRow {
+  return visibleKindRows(search)[cursor]?.row ?? "openrouter";
 }
 
 export function isCuratedCatalogKind(
@@ -145,6 +173,35 @@ export function clampCursor(cursor: number, length: number): number {
   return Math.min(Math.max(cursor, 0), length - 1);
 }
 
+/**
+ * Rows the current list screen shows, after the search box.
+ *
+ * Every read of `wizard.cursor` on a list phase goes through this one
+ * list: the counter, the highlight, and whatever Enter selects all have
+ * to name the same row, and that list shrinks as the operator types.
+ * Returns `[]` for the phases that are not lists.
+ */
+export function visibleRowsForPhase(
+  wizard: ProvidersWizardState,
+): readonly WizardFilterRow[] {
+  const { phase, kind, search } = wizard;
+  if (phase === "pick_kind") return visibleKindRows(search);
+  if (phase === "pick_chat_model" && kind && isCuratedCatalogKind(kind)) {
+    return filterWizardRows(listChatModelsForKind(kind), search);
+  }
+  if (phase === "pick_embedding" && kind && isCuratedCatalogKind(kind)) {
+    return filterWizardRows(listEmbeddingModelsForKind(kind), search);
+  }
+  return [];
+}
+
+/**
+ * State every phase change resets. A query typed to find one row must
+ * not still be narrowing the next screen's list, where the operator has
+ * no reason to expect it and nothing they typed is on show.
+ */
+const PHASE_ENTRY = { cursor: 0, search: null, error: null } as const;
+
 export function advanceWizardPhase(
   wizard: ProvidersWizardState,
 ): ProvidersWizardState {
@@ -153,7 +210,7 @@ export function advanceWizardPhase(
     // A CLI-backed provider has no key to paste — it authenticates from
     // the CLI's own session — so the key screen would be a dead end.
     if (subscriptionCliForWizardKind(kind)) {
-      return { ...wizard, phase: "chat_model_line", cursor: 0, error: null };
+      return { ...wizard, ...PHASE_ENTRY, phase: "chat_model_line" };
     }
     // The manual compat row describes its endpoint before authenticating
     // to it: the key screen consults the base URL (a loopback server is
@@ -161,56 +218,38 @@ export function advanceWizardPhase(
     // Every other kind already knows its endpoint and goes straight to
     // the key.
     if (kind === "openai-compatible" && !wizard.presetId) {
-      return { ...wizard, phase: "base_url", cursor: 0, error: null };    }
-    return { ...wizard, phase: "api_key", cursor: 0, error: null };
+      return { ...wizard, ...PHASE_ENTRY, phase: "base_url" };
+    }
+    return { ...wizard, ...PHASE_ENTRY, phase: "api_key" };
   }
   if (phase === "api_key" && kind) {
-    return {
-      ...wizard,
-      phase: nextPhaseAfterApiKey(wizard),
-      cursor: 0,
-      error: null,
-    };
+    return { ...wizard, ...PHASE_ENTRY, phase: nextPhaseAfterApiKey(wizard) };
   }
   if (phase === "pick_chat_model" && kind && isCuratedCatalogKind(kind)) {
-    const models = listChatModelsForKind(kind);
-    // Clamped, not `?? models[0]`: when the catalog shrank under the
-    // cursor, the highlighted row is the last one, and Enter must select
-    // exactly what is highlighted.
+    const models = visibleRowsForPhase(wizard);
+    // Clamped, not `?? models[0]`: when the list shrank under the cursor
+    // — a catalog TTL refresh landing, or the search box narrowing it —
+    // the highlighted row is the last one, and Enter must select exactly
+    // what is highlighted.
     const picked = models[clampCursor(wizard.cursor, models.length)]?.id ?? null;
     return {
       ...wizard,
+      ...PHASE_ENTRY,
       phase: "pick_embedding",
-      cursor: 0,
       selectedChatModelId: picked,
-      error: null,
     };
   }
   if (phase === "base_url" && kind === "openai-compatible") {
     // Adding walks URL → key; a reconfigure run opened on the key screen
     // and edits the URL after it, so from there it proceeds to the model.
     const next = wizard.mode === "configure" ? "chat_model_line" : "api_key";
-    return { ...wizard, phase: next, cursor: 0, error: null };
+    return { ...wizard, ...PHASE_ENTRY, phase: next };
   }
   // `chat_model_line` is the last step for the compat/preset path: the
   // embedding screen is gone from the flow, embeddings stay on the local
   // daemon (which keeps notes on the machine) and remain changeable in
   // the LLM tab. Submitting from here is handled in the key bindings.
   return wizard;
-}
-
-export function listLengthForPhase(
-  phase: ProvidersWizardPhase,
-  kind: ProvidersWizardState["kind"],
-): number {
-  if (phase === "pick_kind") return KIND_COUNT;
-  if (phase === "pick_chat_model" && kind && isCuratedCatalogKind(kind)) {
-    return listChatModelsForKind(kind).length;
-  }
-  if (phase === "pick_embedding" && kind && isCuratedCatalogKind(kind)) {
-    return listEmbeddingModelsForKind(kind).length;
-  }
-  return 0;
 }
 
 export function isListPhase(phase: ProvidersWizardPhase): boolean {

@@ -67,6 +67,13 @@ export interface ProvidersWizardState {
    */
   presetId: string | null;
   cursor: number;
+  /**
+   * The list screens' search box: `null` while it is closed, the typed
+   * query (possibly empty) while it is open and owns printable keys.
+   * One field for all three list phases because only one is ever on
+   * screen, and `advanceWizardPhase` clears it on the way out.
+   */
+  search: string | null;
   apiKeyBuffer: string;
   baseUrlLine: string;
   chatModelLine: string;
@@ -125,6 +132,7 @@ export function createProvidersWizardState(
     providerId: opts?.providerId ?? null,
     presetId,
     cursor: 0,
+    search: null,
     apiKeyBuffer: "",
     baseUrlLine: opts?.baseUrl ?? "",
     chatModelLine: cliBacked ? (opts?.chatModel ?? "") : "",

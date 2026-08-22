@@ -25,6 +25,8 @@ import type {
   OnboardingUiState,
 } from "../onboarding/onboarding-state.js";
 import { persistOnboardingState } from "../persist-onboarding-state.js";
+import { isListPhase } from "../providers/providers-wizard-phases.js";
+import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
 import { theme } from "../theme/theme.js";
 import type { TuiAction } from "../tui-action.js";
 import type { LocalModelId } from "../../local-llm/index.js";
@@ -248,7 +250,7 @@ export function OnboardingScreen(props: {
       */}
       <Box flexShrink={0}>
         <Text color={theme.colors.muted} wrap="truncate">
-          {footerFor(onboarding, props.ctrlCArmed ?? false)}
+          {footerFor(onboarding, props.ctrlCArmed ?? false, wizardState)}
           {fit.sizeAdvice ? `   ·   ${ONBOARDING_SIZE_ADVICE}` : ""}
         </Text>
       </Box>
@@ -263,7 +265,11 @@ function configuredLabel(outcome: OnboardingOutcome | null): string {
   return "Backend ready";
 }
 
-function footerFor(onboarding: OnboardingUiState, ctrlCArmed: boolean): string {
+function footerFor(
+  onboarding: OnboardingUiState,
+  ctrlCArmed: boolean,
+  wizard: ProvidersWizardState | null,
+): string {
   // Same flip the chat hint strip's ctrl+c chip makes while armed (see
   // hotkey-hint.tsx) — the flow replaces that strip, not its semantics.
   const quit = ctrlCArmed ? "ctrl+c press again to quit" : "ctrl+c quit";
@@ -271,7 +277,11 @@ function footerFor(onboarding: OnboardingUiState, ctrlCArmed: boolean): string {
     case "choose":
       return `↑/↓ move   enter select   1–3 jump   esc skip   ${quit}`;
     case "cloud":
-      return `↑/↓ move   enter select   esc back   ${quit}`;
+      // "/ search" tracks the wizard phase, not the onboarding step: on
+      // the key/URL/model text screens `/` is just a typed character.
+      return wizard !== null && isListPhase(wizard.phase)
+        ? `↑/↓ move   / search   enter select   esc back   ${quit}`
+        : `↑/↓ move   enter select   esc back   ${quit}`;
     case "custom_chat_url":
       return `enter test & continue   esc back   ${quit}`;
     case "custom_embedding_url":
