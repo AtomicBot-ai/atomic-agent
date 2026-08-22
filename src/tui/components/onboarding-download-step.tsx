@@ -24,6 +24,19 @@ const CLOUD_OFFER_FAILED = "┃  Set up a cloud model instead — it takes about
 /** Set bold on the second offer line: it is the key, not the sentence. */
 const CLOUD_OFFER_KEY = "    press c";
 
+const SKIP_OFFER = [
+  "┃  Or skip the wait — start using the agent now. The download",
+  "┃  keeps running; progress shows in the top bar.",
+] as const;
+/**
+ * The failed variant promises nothing about a download that is not
+ * running — leaving with no working local model is still legitimate,
+ * and the turn gate explains the state if they try to chat before
+ * fixing it.
+ */
+const SKIP_OFFER_FAILED = "┃  Or skip — start using the agent without a local model.";
+const SKIP_OFFER_KEY = "    press s";
+
 /**
  * Widest line this step draws, for the block that centres it.
  *
@@ -41,6 +54,12 @@ export function measureOnboardingDownloadStep(props: {
     ...(props.offerCloudMeanwhile === false
       ? []
       : [CLOUD_OFFER[0], `${CLOUD_OFFER[1]}${CLOUD_OFFER_KEY}`]),
+    SKIP_OFFER[0],
+    `${SKIP_OFFER[1]}${SKIP_OFFER_KEY}`,
+    // Unlike the error line, the failed skip row is a fixed string, so
+    // measuring it cannot resize the screen around a message — and
+    // leaving it out would wrap it when the cloud offer is hidden.
+    `${SKIP_OFFER_FAILED}${SKIP_OFFER_KEY}`,
   ]);
 }
 
@@ -59,9 +78,10 @@ export function countOnboardingDownloadBlockRows(input: {
   offerCloud: boolean;
 }): number {
   // The gap under the header (1), the headline (1), the progress top
-  // margin (1), the two bars (2), the rate line and its margin (2), and
-  // the offer's top margin plus two lines when it shows.
-  return countOnboardingHeaderRows(input.mark) + 7 + (input.offerCloud ? 4 : 0);
+  // margin (1), the two bars (2), the rate line and its margin (2), the
+  // skip row's margin plus its two lines (3, always drawn), and the
+  // cloud offer's top margin plus two lines when it shows.
+  return countOnboardingHeaderRows(input.mark) + 10 + (input.offerCloud ? 4 : 0);
 }
 
 function headingLine(modelLabel: string): string {
@@ -149,6 +169,45 @@ export function OnboardingDownloadStep(props: {
           </MouseTarget>
         </Box>
       ) : null}
+      {/*
+        Always drawn, cloud offer or not: leaving for the agent is
+        legitimate in every state of this screen, failed pull included.
+        Muted rather than accent — it is the quieter second exit, under
+        the offer that actually adds a backend. The click synthesises
+        the same `s` the row advertises, through the flow's key table,
+        so the mouse and the keyboard cannot drift apart.
+      */}
+      <Box flexDirection="row" marginTop={1}>
+        <MouseTarget
+          layer={MOUSE_LAYER_PANEL}
+          onMouse={(hit) => {
+            if (!mouse || !isPrimaryPress(hit.event)) return false;
+            handleOnboardingStepKey("s", plainKey(), {
+              state: mouse.getState(),
+              dispatch: mouse.dispatch,
+              callbacks: mouse.callbacks,
+            });
+            return true;
+          }}
+        >
+          <Box flexDirection="column">
+            {failed ? (
+              <Text color={theme.colors.muted} wrap="truncate">
+                {SKIP_OFFER_FAILED}
+                <Text bold>{SKIP_OFFER_KEY}</Text>
+              </Text>
+            ) : (
+              <>
+                <Text color={theme.colors.muted}>{SKIP_OFFER[0]}</Text>
+                <Text color={theme.colors.muted}>
+                  {SKIP_OFFER[1]}
+                  <Text bold>{SKIP_OFFER_KEY}</Text>
+                </Text>
+              </>
+            )}
+          </Box>
+        </MouseTarget>
+      </Box>
     </Box>
   );
 }

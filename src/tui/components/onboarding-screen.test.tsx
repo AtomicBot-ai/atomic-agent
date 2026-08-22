@@ -460,6 +460,61 @@ describe("OnboardingScreen", () => {
     expect(actions).toContainEqual({ type: "onboarding_cursor_moved", delta: 1 });
   });
 
+  describe("the download screen's skip exit", () => {
+    /**
+     * The finished step with the bypass flag as the skip exit leaves it:
+     * outcome local, no cloud provider on disk (fresh state dir), so
+     * `decideSecondBackendOffer` WOULD pitch cloud — the flag is the
+     * only thing standing between the operator and a second pitch.
+     */
+    function renderFinished(skipSecondOffer: boolean) {
+      const actions: TuiAction[] = [];
+      const onboarding = {
+        ...createOnboardingState("http://127.0.0.1:8080"),
+        step: "finished" as const,
+        outcome: "local" as const,
+        localModelId: "gemma-4-e4b",
+        skipSecondOffer,
+      };
+      const state = { ...createInitialTuiState(fakeSession(), 50), onboarding };
+      const view = render(
+        <OnboardingScreen
+          state={state}
+          onboarding={onboarding}
+          dispatch={(action) => actions.push(action)}
+          callbacks={{}}
+        />,
+      );
+      return { view, actions };
+    }
+
+    it("closes straight to the agent: completed, no second pitch, no stamp", async () => {
+      const { actions } = renderFinished(true);
+      // Skip = completing setup with a download in flight, not
+      // abandoning it — so the flow stamps completedAt, not skippedAt.
+      await untilStamped(() => getConfig().tui.onboarding.completedAt !== null);
+      expect(actions).toContainEqual({ type: "onboarding_set", onboarding: null });
+      expect(
+        actions.every((action) => action.type !== "onboarding_second_backend_offered"),
+      ).toBe(true);
+      // The bypass must not masquerade as "the offer was made": the
+      // propose screen was never shown, so its stamp stays unset.
+      expect(getConfig().tui.onboarding.proposedSecondBackendAt).toBeNull();
+      expect(getConfig().tui.onboarding.skippedAt).toBeNull();
+    });
+
+    it("a plain local finish still gets the cloud pitch", async () => {
+      const { actions } = renderFinished(false);
+      await untilStamped(
+        () => getConfig().tui.onboarding.proposedSecondBackendAt !== null,
+      );
+      expect(actions).toContainEqual({
+        type: "onboarding_second_backend_offered",
+        offer: "cloud",
+      });
+    });
+  });
+
   it("stamps localSetupSeenAt the moment the model list is reached", async () => {
     expect(getConfig().tui.onboarding.localSetupSeenAt).toBeNull();
     renderFlow("local_pick");

@@ -145,6 +145,10 @@ export function reduceOnboardingAction(
           ...state.onboarding,
           step: "finished",
           outcome: action.outcome,
+          // Only this action can request the bypass; the other two
+          // finished transitions (pull landed, wizard succeeded) keep
+          // the default and still get the offer they deserve.
+          skipSecondOffer: action.skipSecondOffer ?? false,
           busy: false,
           error: null,
         },

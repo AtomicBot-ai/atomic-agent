@@ -150,6 +150,19 @@ describe("handleOnboardingStepKey", () => {
     ]);
   });
 
+  it("local_download: s skips straight to the agent, without the second pitch", () => {
+    const driven = drive(stateAt("local_download"));
+    expect(driven.handle("s", { ...plainKey(), ctrl: true })).toBe(false);
+    expect(driven.actions).toEqual([]);
+    expect(driven.handle("s", plainKey())).toBe(true);
+    // One action, flagged: the finished effect must not raise the
+    // propose-second screen on this exit — the download screen already
+    // made the cloud pitch itself.
+    expect(driven.actions).toEqual([
+      { type: "onboarding_finished", outcome: "local", skipSecondOffer: true },
+    ]);
+  });
+
   it("wait_or_jump: the row count tracks the pull, retry included", () => {
     const failedState = stateAt("wait_or_jump", { localModelId: "gemma-4-e4b" });
     failedState.localModelsPanel = {

@@ -58,7 +58,27 @@ describe("onboarding reducer", () => {
 
   it("finishes with the outcome the host has to act on", () => {
     const state = reduceTuiState(withFlow(), { type: "onboarding_finished", outcome: "local" });
-    expect(state.onboarding).toMatchObject({ step: "finished", outcome: "local" });
+    // A plain finish never bypasses the second-backend offer.
+    expect(state.onboarding).toMatchObject({
+      step: "finished",
+      outcome: "local",
+      skipSecondOffer: false,
+    });
+  });
+
+  it("carries the skip exit's bypass flag onto the finished state", () => {
+    // The finished effect runs a commit after the action is gone, so
+    // the flag has to survive on state for it to read.
+    const state = reduceTuiState(withFlow("local_download"), {
+      type: "onboarding_finished",
+      outcome: "local",
+      skipSecondOffer: true,
+    });
+    expect(state.onboarding).toMatchObject({
+      step: "finished",
+      outcome: "local",
+      skipSecondOffer: true,
+    });
   });
 
   describe("local branch ↔ the model orchestrator", () => {

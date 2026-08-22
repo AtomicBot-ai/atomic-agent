@@ -172,6 +172,21 @@ function handleDownloadKey(
     ctx.dispatch({ type: "onboarding_cloud_meanwhile_opened" });
     return true;
   }
+  if (input === "s" && !key.ctrl) {
+    // Skip the wait: complete setup with the download still in flight.
+    // Outcome "local" because local is the backend the operator
+    // committed to — the pull is owned by the session-scoped
+    // orchestrator, survives this screen, and reports through the
+    // status bar's download chip. `skipSecondOffer` because this very
+    // screen already pitched cloud ("press c") right above the skip
+    // row; a second pitch on the way out would be nagging.
+    ctx.dispatch({
+      type: "onboarding_finished",
+      outcome: "local",
+      skipSecondOffer: true,
+    });
+    return true;
+  }
   return false;
 }
 

@@ -59,6 +59,14 @@ export interface OnboardingUiState {
   localModelId: string | null;
   /** Set together with the `finished` step; `null` at every other point. */
   outcome: OnboardingOutcome | null;
+  /**
+   * The finish asked to go straight to the agent — the finished effect
+   * skips the propose-second offer. Carried on state rather than read
+   * off the action because the effect runs a commit later, when the
+   * action is gone; see `useOnboardingLifecycle` for why the bypass is
+   * this flag and not a `proposedSecondBackendAt` stamp.
+   */
+  skipSecondOffer: boolean;
   /** Row cursor on the `choose` step. */
   cursor: number;
   chatUrl: string;
@@ -135,6 +143,7 @@ export function createOnboardingState(chatUrl: string): OnboardingUiState {
     offer: null,
     resumeAfterCloud: null,
     outcome: null,
+    skipSecondOffer: false,
     localModelId: null,
     cursor: 0,
     chatUrl,

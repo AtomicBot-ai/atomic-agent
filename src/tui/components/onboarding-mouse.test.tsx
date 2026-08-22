@@ -294,6 +294,23 @@ describe("onboarding mouse", () => {
     view.unmount();
   });
 
+  it("download: clicking the skip row sends the s it advertises", async () => {
+    const view = mount(
+      "local_download",
+      { localModelId: "gemma-4-e4b" },
+      (state) => {
+        state.localModelsPanel = { ...state.localModelsPanel, pull: { ...PULL } };
+      },
+    );
+    await sendUntilClaimed(view, "Or skip the wait");
+    // The click reaches the step-key router as a plain `s`, so it
+    // dispatches exactly what the keyboard test pins for that key.
+    expect(view.actions).toEqual([
+      { type: "onboarding_finished", outcome: "local", skipSecondOffer: true },
+    ]);
+    view.unmount();
+  });
+
   it("download: a wheel notch is claimed and dropped — no list, no chat scroll", async () => {
     const view = mount(
       "local_download",

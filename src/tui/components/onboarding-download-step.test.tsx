@@ -94,6 +94,24 @@ describe("OnboardingDownloadStep", () => {
     expect(frame).not.toContain("░");
     // The cloud offer survives the failure — it is the working way out.
     expect(frame).toContain("press c");
+    // So does the skip exit, honest about what it leaves behind.
+    expect(frame).toContain("without a local model");
+    expect(frame).toContain("press s");
+  });
+
+  it("offers the skip exit while the download runs, top bar promise included", () => {
+    const view = mount(step());
+    const frame = strip(view.lastFrame() ?? "");
+    expect(frame).toContain("Or skip the wait");
+    expect(frame).toContain("progress shows in the top bar");
+    expect(frame).toContain("press s");
+  });
+
+  it("keeps the skip exit even when there is no cloud left to offer", () => {
+    const view = mount(step({ offerCloudMeanwhile: false }));
+    const frame = strip(view.lastFrame() ?? "");
+    expect(frame).not.toContain("press c");
+    expect(frame).toContain("press s");
   });
 
   it("estimates a rate once a second sample arrives", async () => {
@@ -117,7 +135,8 @@ describe("countOnboardingDownloadBlockRows", () => {
     const view = mount(step());
     const lines = strip(view.lastFrame() ?? "").split("\n");
     // headline + margin + 2 bars + margin + rate + 2-row margin + offer
-    expect(lines.length).toBe(10);
+    // + the skip row's margin and two lines
+    expect(lines.length).toBe(13);
     const withMark = countOnboardingDownloadBlockRows({ mark: "sm", offerCloud: true });
     const noMark = countOnboardingDownloadBlockRows({ mark: "xs", offerCloud: true });
     expect(withMark).toBe(lines.length + 3 + 1);
@@ -128,7 +147,8 @@ describe("countOnboardingDownloadBlockRows", () => {
     const withOffer = countOnboardingDownloadBlockRows({ mark: "sm", offerCloud: true });
     const without = countOnboardingDownloadBlockRows({ mark: "sm", offerCloud: false });
     expect(withOffer - without).toBe(4);
+    // The skip row stays: 6 progress rows plus its margin and two lines.
     const view = mount(step({ offerCloudMeanwhile: false }));
-    expect(strip(view.lastFrame() ?? "").split("\n").length).toBe(6);
+    expect(strip(view.lastFrame() ?? "").split("\n").length).toBe(9);
   });
 });

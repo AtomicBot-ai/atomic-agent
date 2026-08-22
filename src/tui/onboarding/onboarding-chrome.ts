@@ -59,7 +59,9 @@ export function onboardingFooterFor(
     case "local_hf_pick":
       return `↑/↓ move   enter download   esc back   ${quit}`;
     case "local_download":
-      return `c set up cloud meanwhile   ${quit}`;
+      // `s skip` matches the on-screen row; the wait_or_jump screen is
+      // a different surface with its own rows and does not take `s`.
+      return `c set up cloud meanwhile   s skip to the agent   ${quit}`;
     case "propose_second":
       return `↑/↓ move   enter select   esc skip   ${quit}`;
     case "wait_or_jump":

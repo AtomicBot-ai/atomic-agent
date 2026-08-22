@@ -5,6 +5,10 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { OnboardingScreen } from "./onboarding-screen.js";
+import {
+  downloadAmbientRows,
+  MIN_ATOM_ROWS,
+} from "./onboarding-download-ambient.js";
 import { countOnboardingDownloadBlockRows } from "./onboarding-download-step.js";
 import { resetConfigCache } from "../../config/index.js";
 import { ATOM_GLYPH } from "../onboarding/atom-field.js";
@@ -118,21 +122,37 @@ describe("the download screen's frame", () => {
         SURFACE_PADDING_TOP + Math.floor((viewportRows - BLOCK_ROWS) / 2);
       expect(Math.abs(firstDrawn - expectedTop)).toBeLessThanOrEqual(1);
 
-      // The atoms drift below the text, never over it: every atom row
-      // is under the offer's key line, and no atom row carries any of
-      // the block's own content.
+      // The skip row is the block's last line, under the cloud offer.
       const offerRow = lines.findIndex((line) => line.includes("press c"));
+      const skipRow = lines.findIndex((line) => line.includes("press s"));
+      expect(offerRow).toBeGreaterThan(0);
+      expect(skipRow).toBeGreaterThan(offerRow);
+
+      // The atoms drift below the text, never over it — when the budget
+      // clears the field's minimum at all. The skip row costs the block
+      // three rows, and at 80×24 that squeezes the ambience below
+      // `MIN_ATOM_ROWS`: decoration yields to content, so the frame is
+      // asserted against the same budget the field reads.
+      const budget = downloadAmbientRows({
+        viewportRows: size.rows - SURFACE_PADDING_TOP - FOOTER_ROWS,
+        mark: "sm",
+        offerCloud: true,
+      });
       const atomRows = lines
         .map((line, index) => ({ line, index }))
         .filter((row) => row.line.includes(ATOM_GLYPH));
-      expect(offerRow).toBeGreaterThan(0);
-      expect(atomRows.length).toBeGreaterThan(0);
+      if (budget >= MIN_ATOM_ROWS) {
+        expect(atomRows.length).toBeGreaterThan(0);
+      } else {
+        expect(atomRows.length).toBe(0);
+      }
       for (const row of atomRows) {
-        expect(row.index).toBeGreaterThan(offerRow);
+        expect(row.index).toBeGreaterThan(skipRow);
         expect(row.line).not.toContain("█");
         expect(row.line).not.toContain("░");
         expect(row.line).not.toContain("Downloading");
         expect(row.line).not.toContain("press c");
+        expect(row.line).not.toContain("press s");
       }
     });
   }

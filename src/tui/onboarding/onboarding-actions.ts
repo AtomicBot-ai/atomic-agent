@@ -34,4 +34,14 @@ export type OnboardingAction =
   /** Offer the other backend once the first one works. */
   | { type: "onboarding_second_backend_offered"; offer: "local" | "cloud" }
   /** The flow reached its end; the host persists and closes it. */
-  | { type: "onboarding_finished"; outcome: OnboardingOutcome };
+  | {
+      type: "onboarding_finished";
+      outcome: OnboardingOutcome;
+      /**
+       * Go straight to the agent: the finished effect must not raise the
+       * propose-second screen on the way out. Set by the download
+       * screen's skip exit, whose own surface already made the cloud
+       * pitch — see `handleDownloadKey`.
+       */
+      skipSecondOffer?: boolean;
+    };

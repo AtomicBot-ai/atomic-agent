@@ -45,13 +45,23 @@ export function useOnboardingLifecycle(input: {
     if (onboarding.step !== "finished" || settling.current) return;
     const outcome = onboarding.outcome ?? "skipped";
     const config = getConfig();
-    const offer = decideSecondBackendOffer({
-      outcome,
-      cloudReady: isCloudTextProviderReady(),
-      localReady: isLocalBackendConfigured(),
-      alreadyProposed: config.tui.onboarding.proposedSecondBackendAt !== null,
-      localSetupSeen: config.tui.onboarding.localSetupSeenAt !== null,
-    });
+    // The download screen's skip exit goes straight to the agent: that
+    // screen pitched cloud ("press c") right above the skip row, so
+    // replaying the pitch here would be nagging. The bypass is this
+    // explicit flag and NOT a `proposedSecondBackendAt` stamp — the
+    // stamp means "the propose screen was shown once", which it was
+    // not; and since `completedAt` below retires the flow anyway, the
+    // stamp could only ever act on a re-run after a reset, where
+    // suppressing a screen the operator never saw would be wrong.
+    const offer = onboarding.skipSecondOffer
+      ? null
+      : decideSecondBackendOffer({
+          outcome,
+          cloudReady: isCloudTextProviderReady(),
+          localReady: isLocalBackendConfigured(),
+          alreadyProposed: config.tui.onboarding.proposedSecondBackendAt !== null,
+          localSetupSeen: config.tui.onboarding.localSetupSeenAt !== null,
+        });
     if (offer) {
       // Recorded when it is shown, not when it is answered: the offer
       // was made either way, and a declined offer must not come back.
@@ -64,5 +74,11 @@ export function useOnboardingLifecycle(input: {
     persistOnboardingState(outcome === "skipped" ? { skippedAt: now } : { completedAt: now });
     onFinished?.(outcome);
     dispatch({ type: "onboarding_set", onboarding: null });
-  }, [dispatch, onFinished, onboarding.outcome, onboarding.step]);
+  }, [
+    dispatch,
+    onFinished,
+    onboarding.outcome,
+    onboarding.skipSecondOffer,
+    onboarding.step,
+  ]);
 }
