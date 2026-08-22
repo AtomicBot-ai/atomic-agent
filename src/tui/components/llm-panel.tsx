@@ -234,12 +234,20 @@ function StatusLines({
     // The External pane's status messages (probe verdicts from the URL
     // save) describe an external llama.cpp, so the "cloud providers:"
     // prefix would mislabel exactly the line the operator must act on.
-    if (state.providersPanel.statusLine) {
+    // Only external-sourced lines render here: a cloud catalog refresh
+    // reporting on this pane, unprefixed, read as a verdict on the URL.
+    if (
+      state.providersPanel.statusLine &&
+      state.providersPanel.statusLineSource === "external"
+    ) {
       lines.push(state.providersPanel.statusLine);
     }
   } else {
     if (state.providersPanel.busy) lines.push("cloud providers: updating");
-    if (state.providersPanel.statusLine) {
+    if (
+      state.providersPanel.statusLine &&
+      state.providersPanel.statusLineSource === "cloud"
+    ) {
       lines.push(`cloud providers: ${state.providersPanel.statusLine}`);
     }
   }

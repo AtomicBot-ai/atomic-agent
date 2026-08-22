@@ -16,7 +16,17 @@ export type ProvidersAction =
   | { type: "providers_cursor_up" }
   /** Put the provider-list cursor on an absolute row (mouse click). */
   | { type: "providers_cursor_set"; row: number }
-  | { type: "providers_status"; line: string | null }
+  | {
+      /**
+       * `source` says which pane the line belongs to: the cloud
+       * providers list (default), or the External pane's URL-save
+       * verdicts. Without it the External pane rendered every
+       * cloud-provider status verbatim — catalog refreshes included.
+       */
+      type: "providers_status";
+      line: string | null;
+      source?: "cloud" | "external";
+    }
   | { type: "providers_busy"; busy: boolean }
   | { type: "providers_wizard_opened"; wizard: ProvidersWizardState }
   | {

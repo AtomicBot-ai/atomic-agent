@@ -123,6 +123,8 @@ export interface ProvidersPanelState {
   cursor: number;
   rows: readonly ProviderRow[];
   statusLine: string | null;
+  /** Which pane `statusLine` belongs to; see the `providers_status` action. */
+  statusLineSource: "cloud" | "external";
   busy: boolean;
   wizard: ProvidersWizardState | null;
   removeConfirm: ProvidersRemoveConfirmState | null;
@@ -139,6 +141,7 @@ export function createInitialProvidersPanelState(): ProvidersPanelState {
     cursor: 0,
     rows: [],
     statusLine: null,
+    statusLineSource: "cloud",
     busy: false,
     wizard: null,
     removeConfirm: null,

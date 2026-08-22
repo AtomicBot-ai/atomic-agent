@@ -712,7 +712,7 @@ function persistLlamaUrl(
   // rendered anywhere on the panel).
   const report = (line: string): void => {
     bus.emit({ type: "runtime_info", line });
-    bus.emit({ type: "providers_status", line });
+    bus.emit({ type: "providers_status", line, source: "external" });
   };
   void (async () => {
     try {

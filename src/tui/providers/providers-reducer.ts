@@ -68,7 +68,11 @@ export function reduceProvidersPanel(
     case "providers_status":
       return {
         ...state,
-        providersPanel: { ...panel, statusLine: action.line },
+        providersPanel: {
+          ...panel,
+          statusLine: action.line,
+          statusLineSource: action.source ?? "cloud",
+        },
       };
     case "providers_busy":
       return {

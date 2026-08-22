@@ -213,3 +213,58 @@ describe("model picker fixed height", () => {
     );
   });
 });
+
+describe("the status line's pane routing", () => {
+  function stateWithStatus(
+    mode: "external" | "cloud",
+    source: "cloud" | "external",
+    line: string,
+  ): TuiState {
+    const base = createInitialTuiState(fakeSession());
+    return {
+      ...base,
+      uiMode: "debug" as const,
+      activeTab: "llm" as const,
+      llmPanel: { ...base.llmPanel, mode },
+      providersPanel: {
+        ...base.providersPanel,
+        statusLine: line,
+        statusLineSource: source,
+      },
+    };
+  }
+
+  it("shows an external-save verdict, unprefixed, on the External pane", () => {
+    const { lastFrame } = render(
+      <LlmPanel
+        state={stateWithStatus("external", "external", "probing http://10.0.0.5:8080…")}
+        maxRows={30}
+      />,
+    );
+    const frame = stripAnsi(lastFrame() ?? "");
+    expect(frame).toContain("probing http://10.0.0.5:8080…");
+    expect(frame).not.toContain("cloud providers:");
+  });
+
+  it("keeps a cloud-provider line off the External pane", () => {
+    // The regression: a catalog refresh reporting through the same slot
+    // rendered bare on the External pane and read as a URL verdict.
+    const { lastFrame } = render(
+      <LlmPanel
+        state={stateWithStatus("external", "cloud", "updating model catalog")}
+        maxRows={30}
+      />,
+    );
+    expect(stripAnsi(lastFrame() ?? "")).not.toContain("updating model catalog");
+  });
+
+  it("keeps an external verdict off the cloud pane's prefixed slot", () => {
+    const { lastFrame } = render(
+      <LlmPanel
+        state={stateWithStatus("cloud", "external", "probing http://10.0.0.5:8080…")}
+        maxRows={30}
+      />,
+    );
+    expect(stripAnsi(lastFrame() ?? "")).not.toContain("probing http://10.0.0.5:8080…");
+  });
+});
