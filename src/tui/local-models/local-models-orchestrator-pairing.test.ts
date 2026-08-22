@@ -82,6 +82,7 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
       emit(a: unknown) {
         actions.push(a as Emitted);
       },
+      subscribe: () => () => {},
     });
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 
@@ -103,7 +104,7 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     stubChatStatus(false);
     stubEmbeddingStatus(false);
 
-    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 
     await orchestrator.setActiveEmbedding("bge-m3");
@@ -121,7 +122,7 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     vi.mocked(localLlm.stopEmbeddingDaemon).mockResolvedValue();
     vi.mocked(localLlm.startEmbeddingDaemon).mockResolvedValue({ pid: 9090 });
 
-    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 
     await orchestrator.setActiveEmbedding("bge-m3");
@@ -142,7 +143,7 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     stubEmbeddingStatus(true);
     vi.mocked(localLlm.stopEmbeddingDaemon).mockResolvedValue();
 
-    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 
     await orchestrator.toggleEmbeddingEnabled();
@@ -169,7 +170,7 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     stubEmbeddingStatus(false);
     vi.mocked(localLlm.startEmbeddingDaemon).mockResolvedValue({ pid: 11195 });
 
-    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 
     await orchestrator.autoStartIfReady();
@@ -208,7 +209,7 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     });
     resetConfigCache();
 
-    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
     vi.spyOn(orchestrator, "startDaemon").mockResolvedValue(true);
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 

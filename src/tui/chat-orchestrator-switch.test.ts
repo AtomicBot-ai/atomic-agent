@@ -6,7 +6,17 @@ import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { SWITCHED_AWAY_APPROVAL_REASON } from "./detached-turns.js";
 import { makeTuiEventBus } from "./make-event-bus.js";
+import type { LocalTurnGateFacts } from "./local-turn-gate.js";
 import type { TuiAction } from "./tui-action.js";
+
+/** Hermetic gate facts: never read the developer's real config/disk. */
+const cloudGateFacts = (): LocalTurnGateFacts => ({
+  activeProviderIsLocal: false,
+  managedMode: false,
+  modelId: null,
+  modelDownloaded: true,
+  fallbackChainLength: 1,
+});
 
 /**
  * Detach semantics: creating or switching sessions while a turn is
@@ -95,7 +105,7 @@ function makeHarness(
   bus.subscribe((a) => actions.push(a));
   const orchestrator = new ChatOrchestrator(runtime, bus, {
     maxSteps: 5,
-    llamaUrl: "http://127.0.0.1:8080",
+    llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
   });
   return {
     orchestrator,

@@ -229,6 +229,28 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
     }
     case "message_submitted":
       return startNewRun(state);
+    case "turn_gate_blocked": {
+      const withMessage = appendChatMessage(
+        appendFeed(state, {
+          kind: "runtime_info",
+          stepIndex: null,
+          line: `» blocked: ${action.text.split("\n")[0] ?? action.text}`,
+          color: "yellow",
+        }),
+        { role: "system", text: action.text, variant: "warn" },
+      );
+      // A drained queue message is gated after the previous turn already
+      // returned the app to idle — nothing to finish then. The fresh
+      // submit path arrives here `running` (from `message_submitted`)
+      // with no turn behind it, so finishRun is what hands the composer
+      // back.
+      if (state.status !== "running") return withMessage;
+      return finishRun(withMessage, {
+        outcome: "failed",
+        reason: "local model not ready",
+        lastRunStatus: "blocked: local model not ready",
+      });
+    }
     case "quit_requested":
       return { ...state, status: "quitting", aborting: true };
     case "loaded_skill": {
@@ -434,6 +456,14 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       const chatError = formatAgentErrorForChat(
         event.category,
         event.error.message,
+        {
+          // Same "is local the active text route" fact the LLM panel
+          // reads; rows land at TUI start via the providers refresh.
+          activeProviderIsLocal: state.providersPanel.rows.some(
+            (row) => row.id === "local-llama" && row.isActiveText,
+          ),
+          llamaUrl: state.session.llamaUrl,
+        },
       );
       return finishRun(
         appendChatMessage(

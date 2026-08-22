@@ -73,6 +73,7 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
       emit(a: unknown) {
         actions.push(a as Emitted);
       },
+      subscribe: () => () => {},
     });
     vi.spyOn(orchestrator, "startDaemon").mockResolvedValue(true);
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
@@ -104,7 +105,7 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
       tag: "turboquant-07b9908",
     });
 
-    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
     const startDaemon = vi
       .spyOn(orchestrator, "startDaemon")
       .mockResolvedValue(true);
@@ -134,7 +135,7 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
       return { action: "current", tag: "turboquant-07b9908" };
     });
 
-    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
     vi.spyOn(orchestrator, "startDaemon").mockImplementation(async () => {
       order.push("start");
       return true;
@@ -165,7 +166,7 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
       reason: "daemon_live",
     });
 
-    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
     vi.spyOn(orchestrator, "startDaemon").mockResolvedValue(true);
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
     vi.mocked(localLlm.getDaemonStatus).mockResolvedValue({
@@ -203,7 +204,7 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
       backendUsable: false,
     });
 
-    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 
     // With the check skipped there is nothing to bail on, so the start
@@ -221,7 +222,7 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
       backendUsable: false,
     });
 
-    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 
     // `backendUsable: false` makes startDaemon bail before spawning, so
@@ -235,7 +236,7 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
   // actually written and read back, which is what `U` is for.
   it("toggleBackendAutoUpdate flips the persisted flag both ways", async () => {
     prepareManagedInstall();
-    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 
     expect(getConfig().localModels.managed.autoUpdate).toBe(true);
@@ -250,7 +251,7 @@ describe("LocalModelsOrchestrator backend auto-update", () => {
   // Turning it off must actually stop the update, not just relabel it.
   it("skips the update entirely once auto-update is toggled off", async () => {
     prepareManagedInstall();
-    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
     await orchestrator.toggleBackendAutoUpdate();
 

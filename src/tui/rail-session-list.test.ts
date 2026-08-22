@@ -5,8 +5,18 @@ import { userTurn } from "../session/conversation-turn.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { makeTuiEventBus } from "./make-event-bus.js";
+import type { LocalTurnGateFacts } from "./local-turn-gate.js";
 import type { TuiAction } from "./tui-action.js";
 import type { SessionPickerEntry } from "./tui-state.js";
+
+/** Hermetic gate facts: never read the developer's real config/disk. */
+const cloudGateFacts = (): LocalTurnGateFacts => ({
+  activeProviderIsLocal: false,
+  managedMode: false,
+  modelId: null,
+  modelDownloaded: true,
+  fallbackChainLength: 1,
+});
 
 /**
  * The rail lists threads that have been spoken to. `+ new` mints a
@@ -74,7 +84,7 @@ function harness(stored: ReturnType<typeof blank>[], settleTurns = false) {
   bus.subscribe((a) => actions.push(a));
   const orchestrator = new ChatOrchestrator(stubRuntime(stored, settleTurns), bus, {
     maxSteps: 5,
-    llamaUrl: "http://127.0.0.1:8080",
+    llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
   });
   const rail = (): readonly SessionPickerEntry[] => {
     for (let i = actions.length - 1; i >= 0; i -= 1) {

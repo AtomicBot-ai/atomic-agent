@@ -717,3 +717,39 @@ describe("llm health visibility", () => {
   });
 });
 
+
+describe("turn_gate_blocked", () => {
+  it("after a fresh submit: prints the warn message and hands the composer back", () => {
+    const submitted = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+    ]);
+    expect(submitted.status).toBe("running");
+
+    const blocked = reduceTuiState(submitted, {
+      type: "turn_gate_blocked",
+      text: "local model qwen-3.5-4b is not downloaded — open Models (/local) and press Enter on it to download",
+    });
+
+    expect(blocked.status).toBe("idle");
+    expect(canAcceptMessage(blocked)).toBe(true);
+    const last = blocked.messages.at(-1);
+    expect(last?.role).toBe("system");
+    expect(last?.variant).toBe("warn");
+    expect(last?.text).toContain("qwen-3.5-4b");
+    expect(blocked.feed.at(-1)?.line).toContain("blocked:");
+  });
+
+  it("at drain time (already idle): message only, no phantom run-history entry", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const blocked = reduceTuiState(initial, {
+      type: "turn_gate_blocked",
+      text: "local model qwen-3.5-4b is not downloaded\n  dropped: second",
+    });
+
+    expect(blocked.status).toBe("idle");
+    expect(blocked.runHistory).toHaveLength(0);
+    expect(blocked.messages.at(-1)?.text).toContain("dropped: second");
+    // The feed line stays single-line even for a multi-line message.
+    expect(blocked.feed.at(-1)?.line).not.toContain("\n");
+  });
+});

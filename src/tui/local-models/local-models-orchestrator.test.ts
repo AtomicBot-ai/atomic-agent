@@ -73,7 +73,7 @@ describe("LocalModelsOrchestrator", () => {
     orchestrator: LocalModelsOrchestrator;
     stopped: () => number;
   } {
-    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
     (orchestrator as unknown as { daemonSupervised: boolean }).daemonSupervised =
       true;
     const spy = vi
@@ -130,6 +130,7 @@ describe("LocalModelsOrchestrator", () => {
       emit(action: unknown) {
         actions.push(action as EmittedAction);
       },
+      subscribe: () => () => {},
     };
     const orchestrator = new LocalModelsOrchestrator(bus);
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
@@ -216,6 +217,7 @@ describe("LocalModelsOrchestrator", () => {
       emit(action: unknown) {
         actions.push(action as EmittedAction);
       },
+      subscribe: () => () => {},
     };
     const orchestrator = new LocalModelsOrchestrator(bus);
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
@@ -248,6 +250,7 @@ describe("LocalModelsOrchestrator", () => {
       emit(action: unknown) {
         actions.push(action as EmittedAction);
       },
+      subscribe: () => () => {},
     };
     const orchestrator = new LocalModelsOrchestrator(bus);
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
@@ -350,6 +353,7 @@ describe("LocalModelsOrchestrator", () => {
         emit(action: unknown) {
           actions.push(action as EmittedAction);
         },
+        subscribe: () => () => {},
       });
       await orchestrator.refresh();
       const snapshot = actions.find(
