@@ -3,6 +3,7 @@ import type { Key } from "ink";
 
 import { handleAppKey, handlePanelEscape } from "./app-key-bindings.js";
 import type { MenuNode } from "./menu/menu-registry.js";
+import { createOnboardingState } from "./onboarding/onboarding-state.js";
 import { createInitialTuiState, type TuiSessionInfo } from "./tui-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 
@@ -816,3 +817,58 @@ describe("Ctrl+T — Enter-while-busy mode", () => {
   });
 });
 
+
+describe("handleAppKey during onboarding", () => {
+  function splashState() {
+    // The splash is the first onboarding step; the quit path must not
+    // depend on which step is up, but intro is where the gap was seen.
+    const onboarding = createOnboardingState("http://127.0.0.1:8080");
+    return { ...createInitialTuiState(stubSession()), onboarding };
+  }
+
+  function ctx(
+    state: ReturnType<typeof createInitialTuiState>,
+    extra: Record<string, unknown> = {},
+  ) {
+    return {
+      state,
+      dispatch: vi.fn(),
+      callbacks: {
+        onApprovalDecision: vi.fn(),
+        onAbort: vi.fn(),
+        onQuit: vi.fn(),
+      },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+      ...extra,
+    };
+  }
+
+  it("first Ctrl+C on the splash arms the quit chord, exactly as in chat", () => {
+    const c = ctx(splashState());
+    const handled = handleAppKey("c", emptyKey({ ctrl: true }), c);
+    expect(handled).toBe(true);
+    expect(c.setCtrlCArmed).toHaveBeenCalledWith(true);
+    expect(c.callbacks.onQuit).not.toHaveBeenCalled();
+    expect(c.dispatch).not.toHaveBeenCalledWith({ type: "quit_requested" });
+  });
+
+  it("second Ctrl+C inside the window quits from the splash", () => {
+    const c = ctx(splashState(), { ctrlCArmed: true });
+    const handled = handleAppKey("c", emptyKey({ ctrl: true }), c);
+    expect(handled).toBe(true);
+    expect(c.callbacks.onAbort).toHaveBeenCalled();
+    expect(c.callbacks.onQuit).toHaveBeenCalled();
+    expect(c.dispatch).toHaveBeenCalledWith({ type: "quit_requested" });
+  });
+
+  it("any other key is swallowed and breaks an armed chord, as chat keys do", () => {
+    const c = ctx(splashState(), { ctrlCArmed: true });
+    const handled = handleAppKey("x", emptyKey(), c);
+    expect(handled).toBe(true);
+    expect(c.setCtrlCArmed).toHaveBeenCalledWith(false);
+    expect(c.callbacks.onQuit).not.toHaveBeenCalled();
+    expect(c.dispatch).not.toHaveBeenCalled();
+  });
+});

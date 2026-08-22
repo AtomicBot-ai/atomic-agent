@@ -201,6 +201,17 @@ describe("useIntroInput", () => {
     view.unmount();
   });
 
+  it("counts a click in the root-inset gutter, column zero included", async () => {
+    // The two inset columns are padding on the screen's own root box —
+    // inside its measured rect — precisely so this click is not a miss.
+    const view = mountSplash();
+    await sendUntilClaimed(view);
+    const { y } = pressAnyKeyPoint(view.frame());
+    expect(view.registry.dispatch(mouseEvent({ x: 0, y }))).toBe(true);
+    expect(dismissed(view.actions)).toBe(true);
+    view.unmount();
+  });
+
   it("advances on Escape, which Ink delivers 20ms late", async () => {
     const view = mountSplash();
     view.stdin.write(ESCAPE_KEY);

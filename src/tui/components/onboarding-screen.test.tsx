@@ -26,7 +26,10 @@ const STATE_DIR_ENV = "ATOMIC_AGENT_STATE_DIR";
 const strip = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, "");
 const ESCAPE_KEY = "\u001b";
 
-function renderFlow(step: "intro" | "choose" | "custom_chat_url" = "choose") {
+function renderFlow(
+  step: "intro" | "choose" | "custom_chat_url" = "choose",
+  options: { ctrlCArmed?: boolean } = {},
+) {
   const actions: TuiAction[] = [];
   const onboarding = { ...createOnboardingState("http://127.0.0.1:8080"), step };
   const state = { ...createInitialTuiState(fakeSession(), 50), onboarding };
@@ -36,6 +39,9 @@ function renderFlow(step: "intro" | "choose" | "custom_chat_url" = "choose") {
       onboarding={onboarding}
       dispatch={(action) => actions.push(action)}
       callbacks={{}}
+      {...(options.ctrlCArmed === undefined
+        ? {}
+        : { ctrlCArmed: options.ctrlCArmed })}
     />,
   );
   return { view, actions };
@@ -88,6 +94,18 @@ describe("OnboardingScreen", () => {
     const last = lines.filter((line) => line.trim().length > 0).at(-1) ?? "";
     expect(last).toContain("move");
     expect(last).toContain("ctrl+c quit");
+  });
+
+  it("mirrors chat's armed Ctrl+C hint so the first press is visible", () => {
+    // Same flip the chat hint strip makes: without it the first press
+    // looks like a no-op, the second lands after the window disarmed,
+    // and "ctrl+c quit" reads as broken during setup.
+    const idle = renderFlow("intro");
+    expect(strip(idle.view.lastFrame() ?? "")).toContain("ctrl+c quit");
+    const armed = renderFlow("intro", { ctrlCArmed: true });
+    const frame = strip(armed.view.lastFrame() ?? "");
+    expect(frame).toContain("ctrl+c press again to quit");
+    expect(frame).not.toContain("ctrl+c quit");
   });
 
   it("names the step it is on", () => {
