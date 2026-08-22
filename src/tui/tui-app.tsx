@@ -1157,9 +1157,19 @@ export function TuiApp({
   // plus the composer's own reserved slot. The growth cap is derived
   // from the stage so the expanded composer always stops short of the
   // hairline under the status bar — see `composer-overlay.tsx`.
-  const composerMaxEditorLines = maxComposerEditorLines(
-    menuPaneRows + COMPOSER_COLLAPSED_ROWS,
-  );
+  //
+  // While a modal-layer surface is up (`modalOwnsInput` — the same
+  // predicate that raises the mouse floor above) the overlay clamps to
+  // its collapsed shape instead. The menu and the pickers float over
+  // the very pane the composer grows into, and the composer paints
+  // *after* them, so a tall draft would overpaint the modal's bottom
+  // rows — while the raised floor keeps routing clicks on those
+  // composer pixels to the invisible modal rows underneath. Collapsing
+  // for the modal's lifetime removes both fights; the untouched buffer
+  // re-expands the moment the modal closes.
+  const composerMaxEditorLines = modalOwnsInput
+    ? 1
+    : maxComposerEditorLines(menuPaneRows + COMPOSER_COLLAPSED_ROWS);
   const promptLlm = selectPromptLlmMeta(state);
   // No local backend chosen yet ⇒ no local health to report. Without this the
   // splash screen of a fresh install announces that a server the user never

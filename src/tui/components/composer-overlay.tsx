@@ -5,12 +5,12 @@ import { useMouseTarget } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MOUSE_LAYER_PANEL } from "../mouse/mouse-registry.js";
 /**
- * The composer's chrome: every row `PromptShell` costs besides the
- * editor lines themselves — the top margin (1), the frame's two
- * borders, the blank row above and below the buffer, and the meta bar
- * with its own padding row above and below (3). Counted off the
- * rendered component and pinned by the collapsed-shape frame test in
- * `composer-overlay.test.tsx`.
+ * The composer's chrome: every row the overlay costs besides the
+ * editor lines themselves — the see-through spacer above the frame
+ * (1), the frame's two borders, the blank row above and below the
+ * buffer, and the meta bar with its own padding row above and below
+ * (3). Counted off the rendered component and pinned by the
+ * collapsed-shape frame test in `composer-overlay.test.tsx`.
  *
  * Deliberately NOT derived from `debug-pane.tsx`'s `COMPOSER_ROWS`:
  * that is a *budget* and errs one row generous on purpose (the same
@@ -80,13 +80,18 @@ export function ComposerSlot(): ReactElement {
  * - Opacity comes from `PromptShell`'s own frame: Ink 7 paints a box's
  *   `backgroundColor` across its full interior (`render-background.js`
  *   fills every row with spaces), so the frame occludes edge to edge
- *   without per-line padding. The one see-through row is the shell's
- *   top margin, which sits *above* the frame and is meant to show the
- *   content behind.
+ *   without per-line padding. The one see-through row is the spacer
+ *   above the frame (the top margin the shell used to carry), which is
+ *   meant to show the content behind.
  *
- * The mouse backstop is the popup-frame pattern: the overlay's box
- * claims every press at `MOUSE_LAYER_PANEL`, so a click on composer
- * pixels can never fall through to the chat controls painted beneath.
+ * The mouse backstop is the popup-frame pattern: a box claims every
+ * press at `MOUSE_LAYER_PANEL`, so a click on composer pixels can never
+ * fall through to the chat controls painted beneath. The backstop
+ * hugs the *frame*, not the whole overlay: the see-through spacer row
+ * shows live content, so a control painted there must keep receiving
+ * its clicks — which is why the spacer is a sibling row outside the
+ * backstop box rather than a margin inside it (a child's margin counts
+ * into the parent's rectangle).
  * The composer's own targets (editor body, Send, the context chip)
  * register on the same layer as smaller boxes, so the registry offers
  * them the press first. Wheel is declined on purpose — the whole-app
@@ -103,14 +108,21 @@ export function ComposerOverlay({
   });
   return (
     <Box
-      ref={backstopRef}
       position="absolute"
       bottom={0}
       left={0}
       right={0}
       flexDirection="column"
     >
-      {children}
+      {/*
+        The shell's old `marginTop`, hoisted here so the click-dead
+        backstop rectangle starts at the frame's top border instead of
+        one row above it.
+      */}
+      <Box height={1} flexShrink={0} />
+      <Box ref={backstopRef} flexDirection="column">
+        {children}
+      </Box>
     </Box>
   );
 }

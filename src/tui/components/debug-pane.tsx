@@ -176,10 +176,10 @@ function buildManageTabs(state: TuiState): SubTab[] {
  */
 export const APP_CHROME_ROWS_BASE = 3;
 /**
- * Rows the `PromptShell` costs when it is mounted: a top margin, the
- * rounded frame's two border rows, a blank row above and below the
- * buffer, the editor line, and the action bar with a blank row above and
- * below it too.
+ * Rows the composer overlay costs when it is mounted: the see-through
+ * spacer above the frame, the rounded frame's two border rows, a blank
+ * row above and below the buffer, the editor line, and the action bar
+ * with a blank row above and below it too.
  */
 export const COMPOSER_ROWS = 10;
 /**

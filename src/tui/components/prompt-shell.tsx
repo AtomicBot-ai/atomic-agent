@@ -102,7 +102,11 @@ export function PromptShell(props: PromptShellProps): ReactElement {
   // pressed is a bug report waiting to happen.
   const canSend = !disabled && value.trim().length > 0;
   return (
-    <Box flexDirection="column" marginTop={1} flexShrink={0}>
+    // The breathing row that used to be `marginTop={1}` here lives in
+    // `ComposerOverlay` now: a margin inside the overlay's mouse
+    // backstop would count into its rectangle and turn the one
+    // see-through row above the frame click-dead.
+    <Box flexDirection="column" flexShrink={0}>
       {/*
         The design seats the composer on its own panel rather than on the
         page. `badgeBackground` is the palette's one-step-off-the-ground

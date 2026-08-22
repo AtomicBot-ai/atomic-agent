@@ -156,7 +156,7 @@ describe("composer overlay growth", () => {
     // The frame is opaque: the second message's `[copy]` control sat on
     // a row the expanded frame now covers, so only the first message's
     // copy row survives. (The row directly above the frame still shows
-    // through — that is the shell's top margin, deliberately open.)
+    // through — that is the overlay's spacer row, deliberately open.)
     const copyRows = (frame: string): number =>
       frame.split("\n").filter((line) => line.includes("[copy]")).length;
     expect(copyRows(before)).toBe(2);
@@ -173,6 +173,51 @@ describe("composer overlay growth", () => {
     await waitUntil(
       () => app.frame() === before,
       "original frame after shrink",
+    );
+    app.unmount();
+  });
+
+  it("clamps to its slot while the menu is open and re-expands on close", async () => {
+    const app = mount();
+    await waitUntil(() => app.frame().includes("send"), "composer on screen");
+    seedChat(app.bus);
+    await waitUntil(
+      () => app.frame().includes("OMEGA-COVERED"),
+      "seeded transcript",
+    );
+    app.stdin.write("abc");
+    await waitUntil(() => app.frame().includes("abc"), "typed text");
+    const collapsedTop = lastRowOf(app.frame(), "╭");
+
+    // Nine newlines: a ten-line draft, deep enough that the expanded
+    // frame's rectangle overlaps the rows where the menu paints.
+    app.stdin.write("\n".repeat(9));
+    await waitUntil(
+      () => lastRowOf(app.frame(), "╭") === collapsedTop - 9,
+      "expanded composer",
+    );
+
+    // Ctrl+P: the menu owns the keyboard, so the overlay must stop
+    // fighting it for the stage — the composer paints after the menu,
+    // and un-clamped it would bury the menu's bottom rows while the
+    // raised mouse floor kept routing clicks there.
+    app.stdin.write("\u0010");
+    await waitUntil(() => app.frame().includes("enter go"), "menu open");
+    const withMenu = app.frame();
+    // The composer fell back to its collapsed slot…
+    expect(lastRowOf(withMenu, "╭")).toBe(collapsedTop);
+    // …so the whole menu is on screen: its bottom border (the first ╰
+    // from the top — the composer's own is the last) closes strictly
+    // above the composer's frame instead of vanishing under it.
+    const menuBottom = rowOf(withMenu, "╰");
+    expect(menuBottom).toBeGreaterThan(0);
+    expect(menuBottom).toBeLessThan(lastRowOf(withMenu, "╭"));
+
+    // Esc: the modal is gone, the untouched draft re-expands.
+    app.stdin.write("\u001b");
+    await waitUntil(
+      () => lastRowOf(app.frame(), "╭") === collapsedTop - 9,
+      "composer re-expanded after the menu closed",
     );
     app.unmount();
   });

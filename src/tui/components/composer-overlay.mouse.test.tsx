@@ -173,4 +173,72 @@ describe("composer overlay mouse", () => {
     }, "copy click to land again after shrink");
     app.unmount();
   });
+
+  it("keeps the see-through row above the frame clickable while expanded", async () => {
+    const app = mountApp();
+    await waitUntil(() => app.frame().includes("send"), "composer on screen");
+    app.reply("REF-ALPHA anchor line");
+    app.reply("OMEGA-COVERED bottom line");
+    await waitUntil(() => copyRows(app.frame()) === 2, "two copy rows");
+    const collapsedTop = locateLast(app.frame(), "\u256d").y;
+
+    // A two-line draft grows the frame exactly one row, which parks the
+    // second reply's `[copy]` in the see-through spacer row directly
+    // above the top border — live pixels, so they must take clicks.
+    app.stdin.write("abc\n");
+    await waitUntil(
+      () => locateLast(app.frame(), "\u256d").y === collapsedTop - 1,
+      "composer one row taller",
+    );
+    const spot = locateLast(app.frame(), "[copy]");
+    expect(spot.y).toBe(collapsedTop - 2);
+
+    // The backstop hugs the frame, not the whole overlay: a rectangle
+    // that included the spacer row would eat this click at
+    // MOUSE_LAYER_PANEL and the visible control would go dead.
+    await waitUntil(() => {
+      app.mouse.emit(click(spot.x + 1, spot.y));
+      return app.copied.length > 0;
+    }, "copy click to land in the spacer row");
+    expect(app.copied[0]).toBe("OMEGA-COVERED bottom line");
+    app.unmount();
+  });
+
+  it("keeps the open menu's rows visible and clickable over a tall draft", async () => {
+    const app = mountApp();
+    await waitUntil(() => app.frame().includes("send"), "composer on screen");
+    app.stdin.write("abc");
+    await waitUntil(() => app.frame().includes("abc"), "typed text");
+    const collapsedTop = locateLast(app.frame(), "\u256d").y;
+    app.stdin.write("\n".repeat(9));
+    await waitUntil(
+      () => locateLast(app.frame(), "\u256d").y === collapsedTop - 9,
+      "expanded composer",
+    );
+
+    // Ctrl+P. The menu owns input; the overlay clamps to its slot, so
+    // every menu row is painted — including `Manage`, which the
+    // ten-line frame's rectangle used to bury.
+    app.stdin.write("\u0010");
+    await waitUntil(() => app.frame().includes("enter go"), "menu open");
+    // The row is visible at all — this locate is the half a regression
+    // breaks first: un-clamped, `Manage` is overpainted and not on
+    // screen, so there is nothing honest to click.
+    const manage = locateLast(app.frame(), "Manage");
+    // Wait out the backdrop's click grace so a click cannot be read as
+    // "clicked outside" while the menu's own targets register.
+    await delay(200);
+    await waitUntil(() => {
+      // Re-emit only while still on the root menu: once MANAGE opens,
+      // more clicks at these coordinates would drill into its rows.
+      if (!app.frame().includes("MANAGE")) {
+        app.mouse.emit(click(manage.x + 1, manage.y));
+      }
+      return app.frame().includes("MANAGE");
+    }, "the visible Manage row to take the click");
+    // The click drove the menu, not the composer behind it: nothing
+    // was submitted and the draft is intact for when the menu closes.
+    expect(app.submitted.length).toBe(0);
+    app.unmount();
+  });
 });
