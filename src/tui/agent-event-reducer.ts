@@ -3,6 +3,7 @@ import {
   contextUsageFromPrompt,
   EMPTY_CONTEXT_USAGE,
 } from "./context-usage-from-prompt.js";
+import { formatBackgroundApprovalNotice } from "./detached-turns.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
 import { formatFeedLine } from "./format-event.js";
 import {
@@ -104,6 +105,18 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         session: { ...state.session, approvalLevel: action.approvalLevel },
       };
     case "agent_event":
+      // Events from a turn running on a *different* session — one the
+      // operator backgrounded by switching away, or a scheduler /
+      // Telegram / HTTP turn — must not paint into the transcript on
+      // screen (or flip `status`, which is what used to freeze the
+      // composer). An untagged event was emitted outside a turn frame
+      // (global notices) and passes through as before.
+      if (
+        action.sessionId !== undefined &&
+        action.sessionId !== state.session.sessionId
+      ) {
+        return state;
+      }
       return reduceAgentEvent(state, action.event);
     case "session_delete_requested":
       return {
@@ -124,6 +137,22 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
     case "session_delete_closed":
       return { ...state, sessionDelete: null };
     case "approval_requested":
+      // A request raised by a session that is NOT on screen must never
+      // arm the modal: every approval key (and the prose-deny submit)
+      // answers whatever `pendingApproval` holds, so parking a
+      // background thread's question here would let a reflexive Ctrl+C
+      // deny a tool call the operator cannot even see — and abort the
+      // visible turn in the same press. The request stays pending at
+      // the gate; the transcript gets a pointer naming the owner, and
+      // `switchSession` re-raises the prompt once that owner is
+      // visible.
+      if (action.request.sessionId !== state.session.sessionId) {
+        return appendChatMessage(state, {
+          role: "system",
+          text: formatBackgroundApprovalNotice(action.request),
+          variant: "warn",
+        });
+      }
       return {
         ...state,
         status: "awaiting_approval",
@@ -138,7 +167,14 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         ...state,
         pendingApproval: null,
         approvalPathDraft: null,
-        status: "running",
+        // Resolving the visible turn's request resumes that turn:
+        // `running`. Resolving a background turn's request resumes a
+        // turn this transcript is not showing — the visible status
+        // (idle, or a run of its own) is left alone.
+        status:
+          state.pendingApproval.sessionId === state.session.sessionId
+            ? "running"
+            : state.status,
       };
     case "approval_path_edit_opened":
       if (!state.pendingApproval) return state;

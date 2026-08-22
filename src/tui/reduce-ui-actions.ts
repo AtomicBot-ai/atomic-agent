@@ -284,7 +284,15 @@ export function reduceUiAction(
     }
     case "chat_scroll_reset":
       return { ...state, chatScrollOffset: 0 };
-    case "session_switched":
+    case "session_switched": {
+      // Any pending approval closes with the transcript it asked
+      // about. The one the LEFT thread owned is denied at the gate by
+      // the orchestrator on switch-away; one owned by the thread being
+      // switched INTO is re-raised (`approval_requested`) right after
+      // this action, once its owner is actually on screen. The slot
+      // must not carry a request across the swap — an armed approval
+      // for an off-screen session is what let a reflexive keystroke
+      // answer another thread's question.
       return {
         ...state,
         session: {
@@ -292,6 +300,13 @@ export function reduceUiAction(
           sessionId: action.sessionId,
           workingDir: action.workingDir,
         },
+        // `running` means a turn is already in flight on the target
+        // session (backgrounded by an earlier switch-away, or driven by
+        // another origin). The composer then offers steer/queue instead
+        // of pretending the thread is idle. The run clock restarts —
+        // this surface did not watch the turn start, so "elapsed since
+        // re-attach" is the honest figure it can show.
+        status: action.running ? "running" : "idle",
         messages: [...action.messages],
         reasoning: [],
         feed: [],
@@ -303,8 +318,9 @@ export function reduceUiAction(
         currentTurnToolSteps: 0,
         currentStep: 0,
         stepStartedAt: null,
-        runStartedAt: null,
+        runStartedAt: action.running ? Date.now() : null,
         pendingApproval: null,
+        approvalPathDraft: null,
         lastRunStatus: null,
         runHistory: [],
         sessionPickerOpen: false,
@@ -316,6 +332,7 @@ export function reduceUiAction(
         sidebarTasksCursor: 0,
         queuedMessages: [],
       };
+    }
     default:
       return null;
   }

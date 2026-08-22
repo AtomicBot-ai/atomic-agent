@@ -10,6 +10,18 @@ import {
 } from "../session/session-state.js";
 import { checkForAppUpdate, runAppUpdate, canSelfUpdate } from "../update/index.js";
 import { clearTtyScreen } from "./clear-tty-screen.js";
+import {
+  DetachedTurns,
+  droppedPreview,
+  formatBackgroundTurnFailed,
+  formatBackgroundTurnFinished,
+  formatDetachedTurnNotice,
+  formatDroppedQueueOnSwitchNotice,
+  formatDroppedSteersNotice,
+  formatReplayGapNotice,
+  SWITCHED_AWAY_APPROVAL_REASON,
+  TurnEventBuffer,
+} from "./detached-turns.js";
 import { captureAndWriteDebugBundle } from "./debug-bundle/index.js";
 import { LlmHealthPoller } from "./llm-health/llm-health-poller.js";
 import { LocalModelsOrchestrator } from "./local-models/local-models-orchestrator.js";
@@ -90,12 +102,6 @@ function formatSkillCatalogSystemMessage(
  * `tasks` so `tui-command.ts` can wire its callbacks without reaching
  * into runtime internals.
  */
-/** One-row preview for a dropped queue entry: flattened and elided. */
-function droppedPreview(text: string): string {
-  const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length <= 60 ? flat : `${flat.slice(0, 59)}…`;
-}
-
 export class ChatOrchestrator {
   private session: SessionState | null = null;
   private currentController: AbortController | null = null;
@@ -119,6 +125,32 @@ export class ChatOrchestrator {
    * ordinary backlog from the next one's point of view.
    */
   private steeredAhead = 0;
+  /**
+   * Abort handles of turns the operator switched away from — see
+   * `detachRunningTurn`. Switching back re-attaches the handle; quit
+   * aborts everything still parked here.
+   */
+  private readonly detachedTurns = new DetachedTurns();
+  /**
+   * Rolling log of the agent events emitted by this orchestrator's
+   * running turns, keyed by session — what a switch-back replays so a
+   * re-attached thread shows its own prompt and feed instead of the
+   * empty stored snapshot. Fed by the bus tap in the constructor,
+   * started per turn in `runOneTurn`, dropped when the turn ends.
+   */
+  private readonly turnEvents = new TurnEventBuffer();
+  /**
+   * Guards the bus tap against recording its own replay — without it a
+   * second switch-back would replay every event twice.
+   */
+  private replayingTurnEvents = false;
+  /**
+   * The visible turn was re-attached by a switch-back mid-run. While
+   * the operator was away its events were dropped (the reducer filters
+   * by visible session), so when it finishes the transcript is
+   * re-emitted from the saved session instead of trusting the stream.
+   */
+  private reattachedMidTurn = false;
   public exitCode = 0;
   public readonly tasks: TasksOrchestrator;
   public readonly skills: SkillsOrchestrator;
@@ -160,6 +192,17 @@ export class ChatOrchestrator {
     });
     this.telegram = new TuiTelegramOrchestrator(runtime, bus);
     this.privacy = new PrivacyOrchestrator(runtime, bus);
+    // Tap the bus rather than the runtime handler: what the reducer was
+    // offered is exactly what a switch-back may need to replay, session
+    // tags included. `record` no-ops for sessions without a running
+    // TUI turn, so scheduler/HTTP-origin events cost one Map miss.
+    bus.subscribe((action) => {
+      if (this.replayingTurnEvents) return;
+      if (action.type !== "agent_event" || action.sessionId === undefined) {
+        return;
+      }
+      this.turnEvents.record(action.sessionId, action.event);
+    });
   }
 
   /**
@@ -240,9 +283,9 @@ export class ChatOrchestrator {
     // Replacing the binary under a running turn is the one mid-run slash
     // command with no safe outcome — now reachable because the editor
     // stays live. Refuse it instead of racing the installer.
-    if (this.currentController) {
+    if (this.currentController || this.detachedTurns.size > 0) {
       this.notify(
-        "update: refused while a turn is running — abort it or let it finish first",
+        "update: refused while a turn is running (foreground or background) — abort it or let it finish first",
       );
       return;
     }
@@ -288,11 +331,19 @@ export class ChatOrchestrator {
    * So the list shows sessions that have been *spoken to*. The catch is
    * timing: the first user turn only reaches SQLite when the whole turn
    * finishes (`executeTurn` saves after the loop returns), so a
-   * store-backed refresh at prompt time still sees nothing. `pendingRow`
-   * bridges that window with an entry built from the submitted text, and
-   * retires itself as soon as the store can answer for the same id.
+   * store-backed refresh at prompt time still sees nothing. These
+   * entries bridge that window with a row built from the submitted
+   * text, each retiring as soon as the store can answer for its id.
+   *
+   * A map, not a single slot: with a turn detached in the background,
+   * the NEXT thread's first prompt would otherwise evict the detached
+   * thread's stand-in — making the one session the operator most needs
+   * to find again invisible in the rail and the picker until its turn
+   * finishes. Bounded by construction: one entry per session whose
+   * first turn has not been saved yet, i.e. at most the visible thread
+   * plus the detached ones.
    */
-  private pendingRow: SessionPickerEntry | null = null;
+  private readonly pendingRows = new Map<string, SessionPickerEntry>();
 
   refreshRecentSessions(): void {
     this.bus.emit({
@@ -301,7 +352,7 @@ export class ChatOrchestrator {
     });
   }
 
-  /** Stored threads that have a first prompt, plus the pending one. */
+  /** Stored threads that have a first prompt, plus the pending ones. */
   private railSessions(): SessionPickerEntry[] {
     // Read deeper than we show, because the filter runs HERE and the
     // limit runs in SQL. Every `+ new` and every scheduled task mints a
@@ -314,15 +365,21 @@ export class ChatOrchestrator {
       .filter((state) => hasFirstPrompt(state))
       .map((s) => toPickerEntry(s))
       .slice(0, RAIL_SESSION_LIMIT);
-    const pending = this.pendingRow;
-    if (!pending) return stored;
-    // The store caught up: drop the stand-in rather than render the
-    // same session twice (the rail keys rows by session id).
-    if (stored.some((entry) => entry.sessionId === pending.sessionId)) {
-      this.pendingRow = null;
-      return stored;
+    if (this.pendingRows.size === 0) return stored;
+    const storedIds = new Set(stored.map((entry) => entry.sessionId));
+    const pending: SessionPickerEntry[] = [];
+    for (const [sessionId, entry] of this.pendingRows) {
+      // The store caught up: drop the stand-in rather than render the
+      // same session twice (the rail keys rows by session id).
+      if (storedIds.has(sessionId)) {
+        this.pendingRows.delete(sessionId);
+        continue;
+      }
+      pending.push(entry);
     }
-    return [pending, ...stored];
+    // Newest stand-in first, matching the store's recency order.
+    pending.reverse();
+    return [...pending, ...stored];
   }
 
   /**
@@ -335,16 +392,16 @@ export class ChatOrchestrator {
   private noteFirstPrompt(text: string): void {
     const session = this.session;
     if (!session) return;
-    if (this.pendingRow?.sessionId === session.id) return;
+    if (this.pendingRows.has(session.id)) return;
     if (hasFirstPrompt(session)) return;
-    this.pendingRow = {
+    this.pendingRows.set(session.id, {
       sessionId: session.id,
       workingDir: session.workingDir,
       turnCount: 1,
       stepCount: 0,
       updatedAt: Date.now(),
       preview: text,
-    };
+    });
     this.refreshRecentSessions();
   }
 
@@ -362,10 +419,22 @@ export class ChatOrchestrator {
    */
   deleteSession(sessionId: string): void {
     if (this.quitting) return;
-    if (this.currentController) {
+    // Scoped to the thread being deleted: a running turn elsewhere is
+    // no reason to refuse. The visible controller covers the window
+    // before the queued turn reaches `isBusy`; `detachedTurns` covers
+    // the same window for a backgrounded one.
+    if (this.currentController && this.session?.id === sessionId) {
       this.bus.emit({
         type: "system_message",
-        text: "cannot delete a session while a turn is running — press Ctrl+C first",
+        text: "cannot delete this session while its turn is running — press Esc to stop it first",
+        variant: "warn",
+      });
+      return;
+    }
+    if (this.detachedTurns.has(sessionId)) {
+      this.bus.emit({
+        type: "system_message",
+        text: "cannot delete that session — its turn is still running in the background (switch to it and press Esc to stop it)",
         variant: "warn",
       });
       return;
@@ -386,7 +455,7 @@ export class ChatOrchestrator {
       return;
     }
     const deletingCurrent = this.session?.id === sessionId;
-    if (this.pendingRow?.sessionId === sessionId) this.pendingRow = null;
+    this.pendingRows.delete(sessionId);
     this.runtime.sessionStore.delete(sessionId);
     this.bus.emit({
       type: "system_message",
@@ -401,10 +470,16 @@ export class ChatOrchestrator {
 
   switchSession(sessionId: string): void {
     if (this.quitting) return;
-    if (this.currentController) {
+    if (this.currentController && this.session?.id === sessionId) {
+      // Enter on the picker row that is already open, mid-run.
+      // Re-loading would replace the live transcript with the stale
+      // stored copy (a running turn saves only when it finishes), and
+      // detaching first would drop the queue and deny the approval for
+      // nothing — so this is a no-op, not a round-trip.
+      this.bus.emit({ type: "session_picker_closed" });
       this.bus.emit({
         type: "runtime_info",
-        line: "cannot switch sessions while a turn is running — press Ctrl+C first",
+        line: `already on session ${sessionId}`,
       });
       return;
     }
@@ -416,22 +491,150 @@ export class ChatOrchestrator {
       });
       return;
     }
+    const notices = this.leaveCurrentSession();
     this.session = loaded;
-    this.clearQueue();
-    // Session grants are point exceptions scoped to the session that
-    // granted them; a switch must not carry them into the next one.
-    this.runtime.approvals.clearSessionGrants();
+    // Switching back into a thread whose turn we backgrounded earlier
+    // re-attaches the abort handle: Esc aborts, Enter steers, exactly
+    // as if the operator had never left.
+    const resumed = this.detachedTurns.take(sessionId);
+    if (resumed) {
+      this.currentController = resumed;
+      this.reattachedMidTurn = true;
+    }
+    // `isBusy` additionally catches turns from other origins (a
+    // scheduled task, Telegram, HTTP) so the composer offers steer
+    // instead of pretending the thread is idle.
+    const running =
+      resumed !== null || this.runtime.turnController.isBusy(sessionId);
     this.bus.emit({
       type: "session_switched",
       sessionId: loaded.id,
       workingDir: loaded.workingDir,
       messages: turnsToMessages(loaded.turns),
+      running,
     });
+    // The stored snapshot above misses everything the still-running
+    // turn has said (a turn saves only when it finishes — for a thread
+    // mid-first-turn the snapshot is EMPTY, prompt included). Repaint
+    // from the event log before anything else lands in the transcript.
+    if (resumed) this.replayTurnEvents(loaded.id);
     this.refreshRecentSessions();
     this.bus.emit({
       type: "runtime_info",
-      line: `switched to session ${loaded.id} (${loaded.turnCount} turn${loaded.turnCount === 1 ? "" : "s"})`,
+      line: `switched to session ${loaded.id} (${loaded.turnCount} turn${loaded.turnCount === 1 ? "" : "s"})${
+        running ? " — a turn is still running here" : ""
+      }`,
     });
+    // After `session_switched`, so they land in the new transcript
+    // rather than the one that was just replaced.
+    for (const notice of notices) this.notify(notice);
+    // A turn parked on an approval in THIS thread asked its question
+    // while another transcript was on screen, where it surfaced only as
+    // a pointer notice (approval keys never answer for an off-screen
+    // thread). Its owner is visible now — re-raise the actual prompt.
+    const parkedApproval = this.runtime.approvals.pendingRequestForSession(
+      loaded.id,
+    );
+    if (parkedApproval) {
+      this.bus.emit({ type: "approval_requested", request: parkedApproval });
+    }
+  }
+
+  /**
+   * Re-offer the re-attached turn's buffered events to the reducer.
+   * They are tagged with the now-visible session, so they apply; live
+   * events continue from where the buffer ends. When the ring cap ate
+   * the head of the turn the gap is announced rather than papered over
+   * — and the end-of-turn re-emit from the saved session restores the
+   * authoritative transcript either way.
+   */
+  private replayTurnEvents(sessionId: string): void {
+    const buffered = this.turnEvents.snapshot(sessionId);
+    if (!buffered) return;
+    this.replayingTurnEvents = true;
+    try {
+      if (buffered.dropped > 0) {
+        this.bus.emit({
+          type: "system_message",
+          text: formatReplayGapNotice(buffered.dropped),
+          variant: "warn",
+        });
+      }
+      for (const event of buffered.events) {
+        this.bus.emit({ type: "agent_event", event, sessionId });
+      }
+    } finally {
+      this.replayingTurnEvents = false;
+    }
+  }
+
+  /**
+   * Book the visible session out before another takes its place, and
+   * return the notices to show once the new transcript is up.
+   *
+   * With a turn in flight this is a DETACH, not an abort: the
+   * concurrency contract gives every session its own FIFO and runs
+   * sessions in parallel (AGENTS.md §"Concurrency contract"), so the
+   * turn keeps executing against its own session and saves its
+   * transcript there. What must not follow the operator to the new
+   * thread:
+   *
+   * - the abort handle — Esc in the new thread must abort nothing;
+   *   parked in `detachedTurns` and restored on switch-back;
+   * - parked queue messages — aimed at the old thread; announced drop
+   *   with previews, same shape as the abort path, never silent;
+   * - a pending approval — the modal closes with the transcript it
+   *   asks about, so the request is denied at the gate with an
+   *   explicit reason; left unresolved it would park the turn forever
+   *   on `await request()`;
+   * - session grants — deferred, not dropped: the running turn keeps
+   *   the exceptions the operator granted it, and `runOneTurn` clears
+   *   them when the backgrounded turn finishes. Yanking them here
+   *   would make the background turn re-prompt from off screen.
+   *
+   * With no turn of OURS in flight, the approval deny and the grant
+   * clear still apply — scoped to the thread being left. The deny does
+   * not depend on who started the turn: a scheduler/HTTP-origin turn's
+   * pending approval is just as unanswerable once its transcript is
+   * gone, and skipping it would park that turn forever.
+   */
+  private leaveCurrentSession(): string[] {
+    const notices: string[] = [];
+    const previous = this.session;
+    if (!previous) return notices;
+    // Denied for ANY pending approval on the thread being left, not
+    // only when the parked turn is ours: a scheduler/HTTP/Telegram-
+    // origin turn parks on the same gate, and the switch drops its
+    // modal exactly the same way — left unanswered, that turn waits on
+    // `await request()` forever and its session stays busy for good.
+    // `denyPendingForSession` is session-scoped and a counted no-op
+    // when nothing is pending.
+    const denied = this.runtime.approvals.denyPendingForSession(
+      previous.id,
+      SWITCHED_AWAY_APPROVAL_REASON,
+    );
+    if (denied > 0) {
+      notices.push(
+        "the pending approval was denied — you switched away while it waited for an answer",
+      );
+    }
+    if (!this.currentController) {
+      this.runtime.approvals.clearSessionGrants(previous.id);
+      return notices;
+    }
+    const dropped = [...this.queue];
+    if (dropped.length > 0) {
+      this.queue.length = 0;
+      this.droppedWhileFull = 0;
+      this.emitQueue();
+      notices.push(formatDroppedQueueOnSwitchNotice(dropped));
+    }
+    this.steeredAhead = 0;
+    this.detachedTurns.park(previous.id, this.currentController);
+    this.currentController = null;
+    this.reattachedMidTurn = false;
+    notices.push(formatDetachedTurnNotice(previous.id));
+    return notices;
   }
 
   dumpProfile(): void {
@@ -499,18 +702,13 @@ export class ChatOrchestrator {
 
   newSession(): void {
     if (this.quitting) return;
-    if (this.currentController) {
-      this.bus.emit({
-        type: "runtime_info",
-        line: "cannot create a new session while a turn is running — press Ctrl+C first",
-      });
-      return;
-    }
+    // A running turn keeps running in its old thread — see
+    // `leaveCurrentSession`. A fresh session starts with no point
+    // exceptions of its own; the previous thread's grants are cleared
+    // on leave (or, if its turn is still running, when that turn ends).
+    const notices = this.leaveCurrentSession();
     this.session = this.runtime.createSession();
     this.clearQueue();
-    // A fresh session starts with no point exceptions: grants never
-    // outlive the session that created them.
-    this.runtime.approvals.clearSessionGrants();
     clearTtyScreen(process.stdout);
     this.bus.emit({
       type: "session_switched",
@@ -523,6 +721,7 @@ export class ChatOrchestrator {
       type: "runtime_info",
       line: `new session ${this.session.id} created`,
     });
+    for (const notice of notices) this.notify(notice);
   }
 
   sendMessage(text: string): void {
@@ -571,14 +770,19 @@ export class ChatOrchestrator {
   steerMessage(text: string): void {
     if (this.quitting) return;
     const session = this.ensureSession();
+    // Offered to the inbox unconditionally: `steer`'s return value is
+    // the one authoritative fact (AGENTS.md §"Mid-turn steering"), and
+    // since threads stay switchable mid-run, the turn running on this
+    // session is not necessarily one this orchestrator started — a
+    // scheduled task's or Telegram's turn is just as steerable.
+    if (this.runtime.steer(session.id, text)) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: "steering the running turn — the agent reads it at the next step",
+      });
+      return;
+    }
     if (this.currentController) {
-      if (session !== null && this.runtime.steer(session.id, text)) {
-        this.bus.emit({
-          type: "runtime_info",
-          line: "steering the running turn — the agent reads it at the next step",
-        });
-        return;
-      }
       if (this.queue.length >= MAX_QUEUED_MESSAGES) {
         this.droppedWhileFull += 1;
         this.emitQueue();
@@ -679,9 +883,18 @@ export class ChatOrchestrator {
 
   private async runOneTurn(text: string): Promise<void> {
     if (!this.session) return;
+    // The operator can switch threads while this runs; every
+    // this-session decision below re-checks against the id the turn
+    // started on rather than trusting the live pointer.
+    const turnSessionId = this.session.id;
     this.noteFirstPrompt(text);
     const controller = new AbortController();
     this.currentController = controller;
+    // Start the replay log for this turn now, before any event lands:
+    // a switch-back rebuilds the transcript from the STORE, which will
+    // not carry this turn until it finishes, so the events are the only
+    // way to repaint it (see `TurnEventBuffer`).
+    this.turnEvents.begin(turnSessionId);
     // A new turn is in flight: whatever is still queued was aimed at an
     // earlier one and is ordinary backlog now.
     this.steeredAhead = 0;
@@ -691,7 +904,11 @@ export class ChatOrchestrator {
         signal: controller.signal,
         origin: "tui",
       });
-      this.session = result.session;
+      const attached = this.session?.id === turnSessionId;
+      // A detached turn's result must not clobber the thread the
+      // operator switched to — its state is already saved to its own
+      // session by `executeTurn`.
+      if (attached) this.session = result.session;
       // A cancelled turn means the operator stopped the agent — Esc,
       // Ctrl+C or /abort. Re-queueing its undelivered steers here would
       // make the post-abort drain START a turn out of them: the exact
@@ -707,24 +924,64 @@ export class ChatOrchestrator {
             ].join("\n"),
           );
         }
-      } else {
+      } else if (attached) {
         this.rerouteUndelivered(result.undelivered);
+      } else if (result.undelivered !== undefined && result.undelivered.length > 0) {
+        // Detached: the visible queue feeds another thread now, so
+        // re-queueing would aim old-thread corrections at the new one.
+        // Announced with previews — never silent.
+        this.notify(formatDroppedSteersNotice(turnSessionId, result.undelivered));
       }
-      if (isFailedSessionStatus(this.session.status)) this.exitCode = 1;
+      if (isFailedSessionStatus(result.session.status)) this.exitCode = 1;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.bus.emit({ type: "runtime_info", line: `turn error: ${msg}` });
-      this.bus.emit({
-        type: "system_message",
-        text: formatAgentErrorForChat("runtime", msg),
-        variant: "warn",
-      });
+      if (this.session?.id === turnSessionId) {
+        this.bus.emit({ type: "runtime_info", line: `turn error: ${msg}` });
+        this.bus.emit({
+          type: "system_message",
+          text: formatAgentErrorForChat("runtime", msg),
+          variant: "warn",
+        });
+      } else {
+        // The failure belongs to a thread that is off screen; a bare
+        // "turn error" would read as the visible thread's. Name it.
+        this.notify(formatBackgroundTurnFailed(turnSessionId, msg));
+      }
       this.exitCode = 1;
     } finally {
       if (this.currentController === controller) this.currentController = null;
+      // The turn saved its session, which answers for the transcript
+      // now — the replay log has nothing left to add.
+      this.turnEvents.end(turnSessionId);
+      if (this.detachedTurns.release(turnSessionId, controller)) {
+        // End of the backgrounded turn ends its session grants — the
+        // deferred half of the switch-time clear (see
+        // `leaveCurrentSession`).
+        this.runtime.approvals.clearSessionGrants(turnSessionId);
+      }
       // The turn wrote the session back, so the stored row can now
       // answer for itself and the stand-in retires.
       this.refreshRecentSessions();
+    }
+    if (this.session?.id !== turnSessionId) {
+      // Finished in the background: the reply is saved in its own
+      // session (the rail just refreshed). The visible thread's queue
+      // is not this turn's to drain.
+      this.notify(formatBackgroundTurnFinished(turnSessionId));
+      return;
+    }
+    if (this.reattachedMidTurn) {
+      // Events emitted while the operator was away were dropped by the
+      // reducer's session filter, so the on-screen transcript has a
+      // hole where this turn's tail should be. The turn just saved
+      // authoritative state — re-emit it the way a switch does.
+      this.reattachedMidTurn = false;
+      this.bus.emit({
+        type: "session_switched",
+        sessionId: turnSessionId,
+        workingDir: this.session.workingDir,
+        messages: turnsToMessages(this.session.turns),
+      });
     }
     const next = this.queue.shift();
     // Unconditional: the idle boundary re-syncs the strip even when
@@ -837,10 +1094,12 @@ export class ChatOrchestrator {
     this.quitting = true;
     this.clearQueue();
     this.currentController?.abort();
+    this.detachedTurns.abortAll();
   }
 
   async shutdown(): Promise<void> {
     this.abortCurrentTurn();
+    this.detachedTurns.abortAll();
     this.tasks.shutdown();
     this.skills.shutdown();
     this.memory.shutdown();

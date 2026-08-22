@@ -79,5 +79,116 @@ describe("session picker reducer", () => {
     expect(switched.sessionPickerOpen).toBe(false);
     expect(switched.runHistory).toEqual([]);
     expect(switched.feed).toEqual([]);
+    // No `running` flag: the target thread is idle.
+    expect(switched.status).toBe("idle");
   });
+
+  it("session_switched with running=true resumes the running posture", () => {
+    // Switching back into a thread whose turn was backgrounded (or one
+    // busy with a scheduler/Telegram/HTTP turn): the composer must
+    // offer steer/queue, not pretend the thread is idle.
+    const initial = createInitialTuiState(fakeSession());
+    const switched = reduceTuiState(initial, {
+      type: "session_switched",
+      sessionId: "busy",
+      workingDir: "/w",
+      messages: [],
+      running: true,
+    });
+    expect(switched.status).toBe("running");
+    expect(switched.runStartedAt).not.toBeNull();
+  });
+
+  it("a background session's approval never arms the modal — it lands as a pointer notice", () => {
+    // Every approval key answers whatever `pendingApproval` holds, so a
+    // request from an off-screen thread must never occupy the slot: a
+    // reflexive Ctrl+C would deny a tool call the operator cannot see
+    // and abort the visible turn in the same press.
+    const base = apply(createInitialTuiState(fakeSession()), [
+      { type: "session_created", sessionId: "s-visible" },
+    ]);
+    const next = reduceTuiState(base, {
+      type: "approval_requested",
+      request: request("a-bg", "s-elsewhere"),
+    });
+    expect(next.pendingApproval).toBeNull();
+    expect(next.status).toBe(base.status);
+    const notice = next.messages.at(-1);
+    expect(notice?.role).toBe("system");
+    expect(notice?.text).toContain("s-elsewhere");
+    expect(notice?.text).toContain("switch to it to answer");
+  });
+
+  it("session_switched clears the slot; the re-raised request arms it for the new owner", () => {
+    const base = apply(createInitialTuiState(fakeSession()), [
+      { type: "session_created", sessionId: "s-visible" },
+    ]);
+    // The LEFT thread's own request is dropped with its transcript —
+    // the orchestrator denies it at the gate on switch-away, so the
+    // modal would ask a question nobody can answer any more.
+    const leavingOwn = apply(base, [
+      { type: "approval_requested", request: request("a-own", "s-visible") },
+      {
+        type: "session_switched",
+        sessionId: "s-next",
+        workingDir: "/w",
+        messages: [],
+      },
+    ]);
+    expect(leavingOwn.pendingApproval).toBeNull();
+    // Switching INTO the owner: the orchestrator re-emits the parked
+    // request right after the switch (`pendingRequestForSession`), and
+    // only then — with its owner on screen — it arms the modal.
+    const intoOwner = apply(base, [
+      { type: "approval_requested", request: request("a-bg", "s-elsewhere") },
+      {
+        type: "session_switched",
+        sessionId: "s-elsewhere",
+        workingDir: "/w",
+        messages: [],
+        running: true,
+      },
+      { type: "approval_requested", request: request("a-bg", "s-elsewhere") },
+    ]);
+    expect(intoOwner.pendingApproval?.approvalId).toBe("a-bg");
+    expect(intoOwner.status).toBe("awaiting_approval");
+  });
+});
+
+function request(id: string, sessionId: string) {
+  return {
+    approvalId: id,
+    sessionId,
+    tool: "os.shell.run",
+    category: "shell" as const,
+    reason: "r",
+  };
+}
+
+describe("agent_event session filter", () => {
+  const userEvent = { type: "user_message", text: "hi" } as const;
+
+  it.each([
+    // [tag on the event, visible session, applied?]
+    ["s-visible", "s-visible", true],
+    ["s-background", "s-visible", false],
+    [undefined, "s-visible", true],
+  ])(
+    "event tagged %s with %s visible applied=%s",
+    (tag, visible, applied) => {
+      const base = apply(createInitialTuiState(fakeSession()), [
+        { type: "session_created", sessionId: visible },
+      ]);
+      const next = reduceTuiState(base, {
+        type: "agent_event",
+        event: userEvent,
+        ...(tag === undefined ? {} : { sessionId: tag }),
+      });
+      if (applied) {
+        expect(next.messages.some((m) => m.text === "hi")).toBe(true);
+      } else {
+        expect(next).toBe(base);
+      }
+    },
+  );
 });

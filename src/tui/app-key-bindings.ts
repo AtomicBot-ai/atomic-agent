@@ -237,7 +237,17 @@ export function handleAppKey(
   if (state.sessionDelete) {
     return handleSessionDeleteKey(input, key, ctx);
   }
-  if (state.pendingApproval) {
+  // Only the visible thread's question is answerable from the
+  // keyboard. The reducer never arms `pendingApproval` for another
+  // session (a background request surfaces as a notice instead), but
+  // the keys must not trust that invariant blind: a foreign request
+  // here would otherwise turn Ctrl+C into a cross-session deny plus a
+  // visible-turn abort in one press. Unmatched, keys fall through to
+  // their ordinary meanings.
+  if (
+    state.pendingApproval &&
+    state.pendingApproval.sessionId === state.session.sessionId
+  ) {
     return handleApprovalKey(input, key, state.pendingApproval, ctx);
   }
   // A settled successful self-update parks the UI on a "press any key to
@@ -745,6 +755,10 @@ export function approvalHotkey(
 ): ApprovalHotkey | null {
   const request = state.pendingApproval;
   if (!request) return null;
+  // Never a verdict on another session's request — same scope guard as
+  // `handleAppKey`, kept here too because the composer's claimKey
+  // consults this function directly.
+  if (request.sessionId !== state.session.sessionId) return null;
   // The target field owns every key while it is open.
   if (state.approvalPathDraft !== null) return null;
   // A ctrl/meta-modified key was never aimed at the y/n/esc prompt —

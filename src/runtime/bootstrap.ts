@@ -196,7 +196,15 @@ import {
 import { getAppVersion } from "../version.js";
 
 export interface RuntimeEventHandlers {
-  onAgentEvent?: (event: AgentLoopEvent) => void;
+  /**
+   * Global event sink, fired for every turn on every session. The
+   * second argument names the session the event belongs to (from the
+   * per-turn `AsyncLocalStorage` frame) so a host rendering a single
+   * session — the TUI — can drop events from turns running in the
+   * background instead of painting them into the wrong transcript. It
+   * is absent for events emitted outside a turn frame.
+   */
+  onAgentEvent?: (event: AgentLoopEvent, sessionId?: string) => void;
   onApprovalRequest?: (request: ApprovalRequest) => void;
   onSkillRegistryChange?: (entries: SkillCatalogEntry[]) => void;
   /**
@@ -715,7 +723,7 @@ export async function createAgentRuntime(
         category: event.category,
       });
     }
-    options.handlers?.onAgentEvent?.(event);
+    options.handlers?.onAgentEvent?.(event, ctx?.sessionId);
   };
 
   // Cross-provider fallover breaker. Owns no timer — every decision is
@@ -2141,7 +2149,23 @@ export async function createAgentRuntime(
     const submission = {
       sessionId: session.id,
       origin,
-      run: () => executeTurn(session, userMessage, runOptions),
+      // Re-read the freshest stored session when the queue hands over
+      // the lock, not when the caller enqueued: between those moments a
+      // turn from another origin (scheduler, HTTP, a TUI thread the
+      // operator backgrounded) can finish and save, and running on the
+      // caller's snapshot would make whichever turn saves last clobber
+      // the other's transcript. This is the contract's own rule — never
+      // hold a stale `SessionState` between enqueue and run; re-read
+      // inside the queued callback (§"Concurrency contract"). A session
+      // the store cannot answer for (never persisted, or deleted while
+      // parked) falls back to the caller's copy, the pre-existing
+      // behaviour.
+      run: () =>
+        executeTurn(
+          sessionStore.load(session.id) ?? session,
+          userMessage,
+          runOptions,
+        ),
       ...(runOptions.eventHook ? { eventHook: runOptions.eventHook } : {}),
       ...(runOptions.signal ? { signal: runOptions.signal } : {}),
     } as const;

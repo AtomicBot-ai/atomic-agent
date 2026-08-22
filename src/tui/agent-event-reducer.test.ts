@@ -78,9 +78,42 @@ describe("reduceTuiState", () => {
       reason: "dangerous shell command",
       preview: "rm -rf /tmp/x",
     };
-    const next = reduceTuiState(initial, { type: "approval_requested", request });
+    const next = apply(initial, [
+      // The request freezes the composer only when it was raised by the
+      // session on screen.
+      { type: "session_created", sessionId: "s-1" },
+      { type: "approval_requested", request },
+    ]);
     expect(next.status).toBe("awaiting_approval");
     expect(next.pendingApproval?.approvalId).toBe("a-1");
+  });
+
+  it("points at a background session's approval instead of arming the modal", () => {
+    // A turn the operator switched away from (or a scheduled task's
+    // turn) can still raise an approval, but it must NOT occupy
+    // `pendingApproval`: every approval key answers whatever that slot
+    // holds, so a reflexive Ctrl+C would deny a call the operator
+    // cannot see. The transcript gets a pointer naming the owner; the
+    // orchestrator re-raises the prompt when that session is switched
+    // into.
+    const initial = createInitialTuiState(fakeSession());
+    const request = {
+      approvalId: "a-bg",
+      sessionId: "s-background",
+      tool: "os.shell.exec",
+      category: "shell" as const,
+      reason: "dangerous shell command",
+    };
+    const next = apply(initial, [
+      { type: "session_created", sessionId: "s-visible" },
+      { type: "approval_requested", request },
+    ]);
+    expect(next.pendingApproval).toBeNull();
+    expect(next.status).toBe("idle");
+    const notice = next.messages.at(-1);
+    expect(notice?.role).toBe("system");
+    expect(notice?.text).toContain("s-background");
+    expect(notice?.text).toContain("switch to it to answer");
   });
 
   it("should clear pending approval after resolve and restore running", () => {
@@ -92,6 +125,7 @@ describe("reduceTuiState", () => {
       reason: "fs write",
     };
     const next = apply(initial, [
+      { type: "session_created", sessionId: "s-1" },
       { type: "approval_requested", request },
       { type: "approval_resolved", approvalId: "a-1", approved: true },
     ]);

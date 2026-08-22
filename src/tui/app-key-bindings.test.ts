@@ -418,6 +418,46 @@ describe("handleAppKey", () => {
     expect(onApprovalDecision).toHaveBeenCalledWith("ap-1", true);
   });
 
+  it("keys never answer a background session's approval — Ctrl+C keeps its normal meaning", () => {
+    // A request owned by an off-screen session (the reducer keeps it
+    // out of the slot, but the keys must not trust that blind): Ctrl+C
+    // must behave exactly as it does with no prompt up — abort the
+    // visible run — and NOT deny the background session's tool call.
+    const state = createInitialTuiState(stubSession());
+    state.pendingApproval = pendingRequest({ sessionId: "s-background" });
+    state.status = "running";
+    const onApprovalDecision = vi.fn();
+    const onAbort = vi.fn();
+    const dispatch = vi.fn();
+    const handled = handleAppKey("c", emptyKey({ ctrl: true }), {
+      state,
+      dispatch,
+      callbacks: { onApprovalDecision, onAbort, onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(true);
+    expect(onApprovalDecision).not.toHaveBeenCalled();
+    expect(onAbort).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith({ type: "abort_requested" });
+  });
+
+  it("y is not a verdict on a background session's approval", () => {
+    const state = createInitialTuiState(stubSession());
+    state.pendingApproval = pendingRequest({ sessionId: "s-background" });
+    const onApprovalDecision = vi.fn();
+    handleAppKey("y", emptyKey(), {
+      state,
+      dispatch: vi.fn(),
+      callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(onApprovalDecision).not.toHaveBeenCalled();
+  });
+
   it("s on a grantable approval resolves with a category grant and confirms it", () => {
     const state = createInitialTuiState(stubSession());
     state.pendingApproval = pendingRequest();
@@ -614,6 +654,31 @@ describe("handleAppKey", () => {
   });
 });
 
+describe("handleAppKey while a turn is running", () => {
+  it("Ctrl+P still opens the menu mid-run", () => {
+    const state = createInitialTuiState(stubSession());
+    state.status = "running";
+    const dispatch = vi.fn();
+    const handled = handleAppKey("p", emptyKey({ ctrl: true }), {
+      state,
+      dispatch,
+      callbacks: {
+        onApprovalDecision: vi.fn(),
+        onAbort: vi.fn(),
+        onQuit: vi.fn(),
+      },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+      menuLeaderArmed: false,
+      setMenuLeaderArmed: vi.fn(),
+      activateMenuNode: vi.fn(),
+    });
+    expect(handled).toBe(true);
+    expect(dispatch).toHaveBeenCalledWith({ type: "menu_opened" });
+  });
+});
+
 describe("handleAppKey with the ctrl+g leader armed", () => {
   function pressWhileArmed(
     input: string,
@@ -657,6 +722,23 @@ describe("handleAppKey with the ctrl+g leader armed", () => {
     expect(run.activated.map((n) => n.id)).toEqual(["go.manage.mcp"]);
     expect(run.handled).toBe(true);
     expect(run.setMenuLeaderArmed).toHaveBeenCalledWith(false);
+  });
+
+  it("the new-session and switch-session chords fire while a turn is running", () => {
+    // The controls-stay-live rule: a running turn must not block
+    // creating or switching sessions — the semantics (detach, keep the
+    // turn running in its thread) live in the orchestrator, so the key
+    // table's only job is to still deliver the activation.
+    for (const [chord, nodeId] of [
+      ["n", "session.new"],
+      ["u", "session.switch"],
+    ] as const) {
+      const state = createInitialTuiState(stubSession());
+      state.status = "running";
+      const run = pressWhileArmed(chord, emptyKey(), state);
+      expect(run.activated.map((n) => n.id)).toEqual([nodeId]);
+      expect(run.handled).toBe(true);
+    }
   });
 
   it("an unclaimed bare key is swallowed rather than leaked to the prompt", () => {
