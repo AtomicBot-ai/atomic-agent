@@ -21,14 +21,14 @@ function pull(over: Partial<LocalModelsPullState> = {}): LocalModelsPullState {
 
 describe("OnboardingDownloadStep", () => {
   it("says what is happening before the first progress event lands", () => {
-    const view = render(<OnboardingDownloadStep pull={null} modelLabel="gemma-4-e4b" />);
+    const view = render(<OnboardingDownloadStep pull={null} error={null} modelLabel="gemma-4-e4b" />);
     const frame = strip(view.lastFrame() ?? "");
     expect(frame).toContain("Downloading gemma-4-e4b");
     expect(frame).toContain("starting");
   });
 
   it("reports bytes and percent for the phase in flight", () => {
-    const view = render(<OnboardingDownloadStep pull={pull()} modelLabel="gemma-4-e4b" />);
+    const view = render(<OnboardingDownloadStep pull={pull()} error={null} modelLabel="gemma-4-e4b" />);
     const frame = strip(view.lastFrame() ?? "");
     expect(frame).toContain("model weights");
     expect(frame).toContain("38%");
@@ -36,7 +36,7 @@ describe("OnboardingDownloadStep", () => {
   });
 
   it("shows the runtime phase as done once the weights start", () => {
-    const view = render(<OnboardingDownloadStep pull={pull()} modelLabel="gemma-4-e4b" />);
+    const view = render(<OnboardingDownloadStep pull={pull()} error={null} modelLabel="gemma-4-e4b" />);
     const line = strip(view.lastFrame() ?? "")
       .split("\n")
       .find((row) => row.includes("llama.cpp runtime"));
@@ -47,6 +47,7 @@ describe("OnboardingDownloadStep", () => {
     const view = render(
       <OnboardingDownloadStep
         pull={pull({ kind: "backend", modelId: "_backend", percent: 6 })}
+        error={null}
         modelLabel="gemma-4-e4b"
       />,
     );
@@ -57,22 +58,33 @@ describe("OnboardingDownloadStep", () => {
   });
 
   it("surfaces a failed pull instead of a silent stall", () => {
+    // The reducer nulls the pull on failure and reports through the
+    // panel's errorLine — the shape this screen actually receives.
     const view = render(
       <OnboardingDownloadStep
-        pull={pull({ error: "connection reset" })}
+        pull={null}
+        error="connection reset"
         modelLabel="gemma-4-e4b"
       />,
     );
-    expect(strip(view.lastFrame() ?? "")).toContain("connection reset");
+    const frame = strip(view.lastFrame() ?? "");
+    expect(frame).toContain("connection reset");
+    expect(frame).toContain("download failed");
+    // No claim of a download that is not running.
+    expect(frame).not.toContain("starting");
+    expect(frame).not.toContain("keeps running");
+    expect(frame).not.toContain("░");
+    // The cloud offer survives the failure — it is the working way out.
+    expect(frame).toContain("press c");
   });
 
   it("estimates a rate once a second sample arrives", async () => {
     const view = render(
-      <OnboardingDownloadStep pull={pull({ transferredBytes: 1_000_000_000 })} modelLabel="m" />,
+      <OnboardingDownloadStep pull={pull({ transferredBytes: 1_000_000_000 })} error={null} modelLabel="m" />,
     );
     expect(strip(view.lastFrame() ?? "")).toContain("estimating");
     view.rerender(
-      <OnboardingDownloadStep pull={pull({ transferredBytes: 1_400_000_000 })} modelLabel="m" />,
+      <OnboardingDownloadStep pull={pull({ transferredBytes: 1_400_000_000 })} error={null} modelLabel="m" />,
     );
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(strip(view.lastFrame() ?? "")).toMatch(/\/s /);

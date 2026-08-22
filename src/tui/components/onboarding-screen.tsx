@@ -44,7 +44,11 @@ import { OnboardingDownloadStep } from "./onboarding-download-step.js";
 import { OnboardingIntroStep } from "./onboarding-intro-step.js";
 import { OnboardingLocalPickStep } from "./onboarding-local-pick-step.js";
 import { OnboardingProposeStep } from "./onboarding-propose-step.js";
-import { OnboardingWaitOrJumpStep } from "./onboarding-wait-or-jump-step.js";
+import {
+  OnboardingWaitOrJumpStep,
+  waitOrJumpPullStatus,
+  waitOrJumpRowCount,
+} from "./onboarding-wait-or-jump-step.js";
 import { OnboardingUrlStep } from "./onboarding-url-step.js";
 import { ProvidersWizard } from "./providers-wizard.js";
 
@@ -201,29 +205,53 @@ export function OnboardingScreen(props: {
     { isActive: onboarding.step === "local_download" },
   );
 
+  // The screen's claim about the pull, and with it the number of rows:
+  // a failed pull adds "Retry the download". Derived here as well as in
+  // the step component so the keyboard and the frame cannot disagree.
+  const waitOrJumpStatus = waitOrJumpPullStatus(
+    props.state.localModelsPanel.pull,
+    props.state.localModelsPanel.errorLine,
+  );
+  const waitOrJumpRows = waitOrJumpRowCount(waitOrJumpStatus);
+
   useInput(
     (input, key) => {
       if (key.upArrow || key.downArrow || input === "j" || input === "k") {
         dispatch({
           type: "onboarding_cursor_moved",
           delta: key.upArrow || input === "k" ? -1 : 1,
-          length: 2,
+          length: waitOrJumpRows,
         });
         return;
       }
       if (key.return) {
-        if (onboarding.cursor % 2 === 0) {
+        const row = onboarding.cursor % waitOrJumpRows;
+        if (row === 0) {
           finish(onboarding.outcome ?? "cloud");
           return;
         }
-        // The same wizard the cloud step runs, opened a second time; the
-        // reducer sends its result back to this screen because this is
-        // the step the action was dispatched from.
-        dispatch({
-          type: "providers_wizard_opened",
-          wizard: createProvidersWizardState("add"),
-        });
-        dispatch({ type: "onboarding_cloud_meanwhile_opened" });
+        if (row === 1) {
+          // The same wizard the cloud step runs, opened a second time;
+          // the reducer sends its result back to this screen because
+          // this is the step the action was dispatched from.
+          dispatch({
+            type: "providers_wizard_opened",
+            wizard: createProvidersWizardState("add"),
+          });
+          dispatch({ type: "onboarding_cloud_meanwhile_opened" });
+          return;
+        }
+        // The retry row, shown only for a failed pull: run the same
+        // pull again through the orchestrator that owns it. The
+        // resulting pull_started event clears the error and flips this
+        // screen back to its running state.
+        if (onboarding.localModelId) {
+          // Stored by `onboarding_local_model_picked` from a catalog
+          // pick, so the id round-trips through state as a string.
+          callbacks.onLocalModelsPullRequested?.(
+            onboarding.localModelId as LocalModelId,
+          );
+        }
       }
     },
     { isActive: onboarding.step === "wait_or_jump" },
@@ -414,15 +442,17 @@ export function OnboardingScreen(props: {
         {onboarding.step === "wait_or_jump" ? (
           <OnboardingWaitOrJumpStep
             pull={props.state.localModelsPanel.pull}
+            pullError={props.state.localModelsPanel.errorLine}
             cloudLabel="Cloud model ready"
             modelLabel={onboarding.localModelId ?? "the model"}
-            cursor={onboarding.cursor % 2}
+            cursor={onboarding.cursor}
             fit={fit}
           />
         ) : null}
         {onboarding.step === "local_download" ? (
           <OnboardingDownloadStep
             pull={props.state.localModelsPanel.pull}
+            error={props.state.localModelsPanel.errorLine}
             modelLabel={onboarding.localModelId ?? "the model"}
             offerCloudMeanwhile={!cloudAlreadyConfigured}
           />

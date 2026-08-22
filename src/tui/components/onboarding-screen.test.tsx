@@ -38,8 +38,13 @@ const ESCAPE_KEY = "\u001b";
 
 type FlowStep = "intro" | "choose" | "custom_chat_url" | "wait_or_jump";
 
-function renderFlow(step: FlowStep = "choose", cursor = 0) {
+function renderFlow(
+  step: FlowStep = "choose",
+  cursor = 0,
+  panel: { pull?: typeof PULL | null; errorLine?: string | null } = {},
+) {
   const actions: TuiAction[] = [];
+  const pullRequests: string[] = [];
   const onboarding = {
     ...createOnboardingState("http://127.0.0.1:8080"),
     step,
@@ -49,7 +54,11 @@ function renderFlow(step: FlowStep = "choose", cursor = 0) {
   const base = createInitialTuiState(fakeSession(), 50);
   const state = {
     ...base,
-    localModelsPanel: { ...base.localModelsPanel, pull: PULL },
+    localModelsPanel: {
+      ...base.localModelsPanel,
+      pull: panel.pull === undefined ? PULL : panel.pull,
+      errorLine: panel.errorLine ?? null,
+    },
     onboarding,
   };
   const view = render(
@@ -57,10 +66,12 @@ function renderFlow(step: FlowStep = "choose", cursor = 0) {
       state={state}
       onboarding={onboarding}
       dispatch={(action) => actions.push(action)}
-      callbacks={{}}
+      callbacks={{
+        onLocalModelsPullRequested: (modelId) => pullRequests.push(modelId),
+      }}
     />,
   );
-  return { view, actions };
+  return { view, actions, pullRequests };
 }
 
 describe("OnboardingScreen", () => {
@@ -195,6 +206,37 @@ describe("OnboardingScreen", () => {
         delta: 1,
         length: 2,
       });
+    });
+
+    it("says the local model landed once the pull is gone without an error", () => {
+      const { view } = renderFlow("wait_or_jump", 0, { pull: null });
+      const frame = strip(view.lastFrame() ?? "");
+      expect(frame).toContain("local model is ready");
+      expect(frame).not.toContain("Still downloading");
+      expect(frame).not.toContain("starting");
+      expect(frame).not.toContain("waiting");
+    });
+
+    it("offers a third row after a failed pull, and enter on it re-runs the pull", async () => {
+      const { view, actions, pullRequests } = renderFlow("wait_or_jump", 2, {
+        pull: null,
+        errorLine: "connection reset",
+      });
+      const frame = strip(view.lastFrame() ?? "");
+      expect(frame).toContain("download failed");
+      expect(frame).toContain("connection reset");
+      expect(frame).toContain("Retry the download");
+      view.stdin.write("j");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      // Three rows now, and the keyboard knows it.
+      expect(actions).toContainEqual({
+        type: "onboarding_cursor_moved",
+        delta: 1,
+        length: 3,
+      });
+      view.stdin.write("\r");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(pullRequests).toEqual(["gemma-4-e4b"]);
     });
   });
 

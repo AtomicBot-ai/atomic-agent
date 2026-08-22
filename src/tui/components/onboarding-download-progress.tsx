@@ -18,15 +18,32 @@ const BAR_WIDTH = 36;
  * currently reporting. Rate and ETA come from the same events: a
  * percentage cannot answer "how long", which is the question a
  * multi-gigabyte pull actually raises.
+ *
+ * A failure never arrives inside `pull` — the reducer nulls the pull and
+ * moves the message to the panel's `errorLine` — so the error comes in
+ * as its own prop, and it replaces the bars rather than joining them:
+ * a 0% bar under an error would claim a download that is not running,
+ * and the extra rows would blow the step's budget on a short terminal.
  */
 export function OnboardingDownloadProgress(props: {
   pull: LocalModelsPullState | null;
+  /** The pull's failure, from the panel's `errorLine`. */
+  error: string | null;
 }): ReactElement {
   const pull = props.pull;
   const { bytesPerSecond, etaSeconds } = useTransferRate(
     pull?.transferredBytes ?? 0,
     pull?.totalBytes ?? 0,
   );
+  if (pull === null && props.error !== null) {
+    return (
+      <Box flexDirection="column" flexShrink={0}>
+        <Text wrap="truncate" color={theme.colors.error}>
+          {`${theme.glyphs.cross}  ${props.error}`}
+        </Text>
+      </Box>
+    );
+  }
   const phase = pull?.kind === "backend" ? "runtime" : "weights";
 
   return (
@@ -51,11 +68,6 @@ export function OnboardingDownloadProgress(props: {
           <Text color={theme.colors.muted}>starting…</Text>
         )}
       </Box>
-      {pull?.error ? (
-        <Box marginTop={1}>
-          <Text color={theme.colors.error}>{pull.error}</Text>
-        </Box>
-      ) : null}
     </Box>
   );
 }
