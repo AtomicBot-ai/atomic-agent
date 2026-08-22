@@ -221,6 +221,16 @@ export function handleAppKey(
   ctx: AppKeyContext,
 ): boolean {
   const { state, dispatch, callbacks, ctrlCArmed, setCtrlCArmed } = ctx;
+  // The right-click cut/copy/paste menu is dismissed by the next
+  // keystroke, whatever it is — the way GUI menus behave. Esc is
+  // consumed (its only meaning was "close this"); every other key falls
+  // through and keeps its ordinary meaning after the close. Above the
+  // onboarding swallow on purpose: the menu opens on onboarding editors
+  // too, and the flow's key hook never learns it exists.
+  if (state.contextMenu) {
+    dispatch({ type: "context_menu_closed" });
+    if (key.escape) return true;
+  }
   // The first-run flow owns the whole terminal while it is up: there is
   // no chat, no panel and no menu behind it for a key to reach, and the
   // screen subscribes to `useInput` itself. Swallow everything here so a

@@ -13,7 +13,19 @@ export {
 } from "./copy-to-clipboard.js";
 export {
   ClipboardProvider,
+  ClipboardReaderProvider,
+  getDefaultClipboardReader,
   getDefaultClipboardWriter,
   useClipboard,
+  useClipboardReader,
   type ClipboardProviderProps,
+  type ClipboardReaderProviderProps,
 } from "./clipboard-context.js";
+export {
+  createClipboardReader,
+  createNullClipboardReader,
+  createStaticClipboardReader,
+  type ClipboardReader,
+  type ClipboardReaderOptions,
+  type ClipboardReadFn,
+} from "./read-clipboard.js";

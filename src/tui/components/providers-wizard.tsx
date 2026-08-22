@@ -17,6 +17,8 @@ import {
   emptyKeyMeaningForWizard,
   envHintForWizard,
 } from "../providers/providers-wizard-target.js";
+import { PasteFieldTarget } from "../context-menu/paste-field-target.js";
+import { pasteIntoProvidersWizard } from "../providers/providers-wizard-paste.js";
 import { theme } from "../theme/theme.js";
 import { findProviderPreset } from "../providers/provider-presets.js";
 import {
@@ -109,12 +111,14 @@ function renderLineField(props: {
       <Text bold color={theme.colors.accent}>
         {props.title}
       </Text>
-      <Box>
+      {/* Right-click paste on the value line: every wizard mount routes
+          the clipboard through the wizard's own key grammar. */}
+      <PasteFieldTarget onPasteText={pasteIntoProvidersWizard}>
         <Text color={theme.colors.muted}>{"> "}</Text>
         <Text color={muted ? theme.colors.muted : theme.colors.accent}>
           {display}
         </Text>
-      </Box>
+      </PasteFieldTarget>
       {props.error ? (
         <Text color={theme.colors.error}>! {props.error}</Text>
       ) : null}
@@ -363,10 +367,12 @@ export function ProvidersWizard(props: {
           Saved to <Text color={theme.colors.accent}>{".env"}</Text> as{" "}
           {envHint} (mode 0600). {emptyMeans}
         </Text>
-        <Box>
+        {/* The api_key screen is where paste matters most: keys are
+            never typed by hand. Same adapter, same burst path. */}
+        <PasteFieldTarget onPasteText={pasteIntoProvidersWizard}>
           <Text color={theme.colors.muted}>{"> "}</Text>
           <Text color={theme.colors.accent}>{maskedKey(w.apiKeyBuffer)}</Text>
-        </Box>
+        </PasteFieldTarget>
         {w.error ? (
           <Text color={theme.colors.error}>! {w.error}</Text>
         ) : null}

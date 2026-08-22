@@ -9,7 +9,9 @@ import {
 } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
+import { plainKey } from "../mouse/synthetic-key.js";
 import { fitToWidth } from "../components/fit-to-width.js";
+import { PasteFieldTarget } from "../context-menu/paste-field-target.js";
 import { chromeTheme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import type { MenuNode } from "./menu-registry.js";
@@ -19,7 +21,7 @@ import {
   selectMenuRows,
   selectMenuTitle,
 } from "./menu-selectors.js";
-import { MENU_LEADER_LABEL } from "./menu-keys.js";
+import { handleMenuKey, MENU_LEADER_LABEL } from "./menu-keys.js";
 
 /** Popup width, clamped to the terminal on narrow windows. */
 const PREFERRED_WIDTH = 64;
@@ -113,7 +115,7 @@ export function MenuPopup({
       cursor={cursor}
       itemCount={itemCount}
     >
-      <TitleRow state={state} inner={inner} />
+      <TitleRow state={state} inner={inner} onActivate={onActivate} />
       {visible.map((row, idx) =>
         row.kind === "header" ? (
           <Text key={`h-${row.label}-${idx}`} color={chromeTheme.colors.railMuted}>
@@ -233,9 +235,11 @@ function moveMenuCursor(
 function TitleRow({
   state,
   inner,
+  onActivate,
 }: {
   state: TuiState;
   inner: number;
+  onActivate: (node: MenuNode) => void;
 }): ReactElement {
   // Upper case, matching the rail's own section headers — the menu is
   // chrome, and the design sets every chrome heading the same way.
@@ -244,14 +248,26 @@ function TitleRow({
   const left = fitToWidth(` ${title}`, Math.min(title.length + 2, inner));
   const rest = inner - left.length;
   return (
-    <Box>
+    // Right-click paste types into the search query through the menu's
+    // own key layer — a text burst appends, it can never activate.
+    // `insideOverlay`: the query field IS the open menu.
+    <PasteFieldTarget
+      insideOverlay
+      onPasteText={(text, mouse) => {
+        handleMenuKey(text, plainKey(), {
+          state: mouse.getState(),
+          dispatch: mouse.dispatch,
+          activate: onActivate,
+        });
+      }}
+    >
       <Text color={chromeTheme.colors.railForeground} bold>
         {left}
       </Text>
       <Text color={chromeTheme.colors.railMuted}>
         {fitToWidth(caret, Math.max(0, rest))}
       </Text>
-    </Box>
+    </PasteFieldTarget>
   );
 }
 

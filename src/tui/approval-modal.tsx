@@ -99,6 +99,11 @@ export function ApprovalModal({
               onChange={onPathChange}
               onSubmit={onPathSubmit}
               onEscape={onPathCancel}
+              // While the prompt is up the mouse floor is raised to the
+              // modal layer; without this the field's click target sits
+              // below the floor and neither caret clicks nor the
+              // right-click paste menu can reach it.
+              mouseLayer={MOUSE_LAYER_MODAL}
             />
           </Box>
           <Text color="gray">

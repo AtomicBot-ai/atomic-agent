@@ -1,5 +1,6 @@
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import type { ComposerSwitchState } from "./composer-switch/composer-switch-state.js";
+import type { ContextMenuState } from "./context-menu/context-menu-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
 import type { OnboardingUiState } from "./onboarding/onboarding-state.js";
@@ -444,6 +445,15 @@ export interface TuiState {
    * `null` when the row is just a label, which is most of the time.
    */
   composerSwitch: ComposerSwitchState | null;
+  /**
+   * The right-click cut/copy/paste menu: the clicked cell and what it
+   * targets, or `null`. Deliberately NOT part of `modalOwnsInput` — the
+   * menu has its own registry floor (`MOUSE_LAYER_CONTEXT_MENU`) so the
+   * composer keeps its viewport, and with it the anchor cell, while the
+   * menu is up. The verbs themselves live outside the reducer, parked
+   * on the `ContextMenuProvider` handle by whichever surface opened it.
+   */
+  contextMenu: ContextMenuState | null;
   menuPath: string | null;
   menuQuery: string;
   menuCursor: number;
@@ -671,6 +681,7 @@ export function createInitialTuiState(
     menuOpen: false,
     contextPanelOpen: false,
     composerSwitch: null,
+    contextMenu: null,
     menuPath: null,
     menuQuery: "",
     menuCursor: 0,

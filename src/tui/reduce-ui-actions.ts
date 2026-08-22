@@ -99,6 +99,12 @@ export function reduceUiAction(
       return { ...state, contextPanelOpen: !state.contextPanelOpen };
     case "context_panel_closed":
       return { ...state, contextPanelOpen: false };
+    case "context_menu_opened":
+      // Re-opening while open simply moves the menu: the second
+      // right-click already parked fresh actions on the provider handle.
+      return { ...state, contextMenu: action.menu };
+    case "context_menu_closed":
+      return { ...state, contextMenu: null };
     case "menu_query_changed":
       // A query flattens the tree, so any open submenu is dropped with it.
       return { ...state, menuQuery: action.query, menuPath: null };

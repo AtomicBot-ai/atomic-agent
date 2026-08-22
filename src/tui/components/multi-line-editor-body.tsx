@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import { useRef, type ReactElement } from "react";
 import { useMouseCommands, useMouseTarget } from "../mouse/mouse-context.js";
-import { isPrimaryPress } from "../mouse/mouse-event.js";
+import { isPrimaryPress, isSecondaryPress } from "../mouse/mouse-event.js";
 import { computeRowWindow } from "../row-window.js";
 import { theme } from "../theme/theme.js";
 import type { Cursor } from "./multi-line-editor-cursor.js";
@@ -32,6 +32,13 @@ export interface EditorBodyProps {
    */
   onClickCursor?: (row: number, col: number) => void;
   /**
+   * Right button pressed on the buffer. `cell` is the ABSOLUTE screen
+   * cell (not text-relative like the click callbacks): it anchors the
+   * context menu, which floats in screen space. Return whether the
+   * press was consumed — the owner declines when no menu can open.
+   */
+  onSecondaryPress?: (cell: { x: number; y: number }) => boolean;
+  /**
    * Most buffer lines painted at once. Beyond it the body renders a
    * cursor-tracking window (`computeRowWindow`, the same mechanism the
    * manage panels use) instead of every line: the composer overlay this
@@ -61,6 +68,7 @@ export function EditorBody({
   focus,
   selection = null,
   onClickCursor,
+  onSecondaryPress,
   onDragStart,
   onDragMove,
   onDragEnd,
@@ -93,6 +101,17 @@ export function EditorBody({
     // click's line index is offset by everything scrolled off above.
     const row = lineWindow.start + hit.localY;
     const col = hit.localX - GUTTER_COLUMNS;
+    if (isSecondaryPress(hit.event)) {
+      // The menu anchors at the clicked SCREEN cell, so the local
+      // coordinates are folded back into absolutes here — the one place
+      // that has both the rect and the local offsets.
+      return (
+        onSecondaryPress?.({
+          x: hit.rect.left + hit.localX,
+          y: hit.rect.top + hit.localY,
+        }) ?? false
+      );
+    }
     // A press starts a drag AND places the caret: press-move-release is
     // one gesture, and a press that turns out to be a plain click has
     // already done the right thing by the time the release arrives.

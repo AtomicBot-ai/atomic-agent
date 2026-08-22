@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import { theme } from "../theme/theme.js";
 import type { McpAddModalState } from "../mcp/mcp-panel-state.js";
 import { MultiLineEditor } from "./multi-line-editor.js";
@@ -93,6 +94,10 @@ export function McpAddModal({
           onSubmit={(buffer) => onSubmit(buffer)}
           onEscape={onCancel}
           onInterrupt={onCancel}
+          // The modal raises the mouse floor; the field registers on the
+          // modal layer so caret clicks and the right-click paste menu
+          // still reach it.
+          mouseLayer={MOUSE_LAYER_MODAL}
         />
       </Box>
       {state.error ? (

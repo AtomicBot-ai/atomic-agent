@@ -45,3 +45,13 @@ export function arrowKey(direction: "up" | "down"): Key {
 export function returnKey(): Key {
   return { ...NO_KEY, return: true };
 }
+
+/**
+ * No key at all: the shape a multi-character paste burst arrives with.
+ * The context-menu paste feeds clipboard text through a field's own key
+ * handler as `(text, plainKey())`, exactly the way a terminal delivers a
+ * bracketed paste, so the field's own append/sanitise rules apply.
+ */
+export function plainKey(): Key {
+  return { ...NO_KEY };
+}

@@ -51,3 +51,19 @@ export function isPrimaryPress(event: TuiMouseEvent): boolean {
     !event.ctrl
   );
 }
+
+/**
+ * True for a plain right-button press — the "context menu" gesture.
+ * Recognised on the press, like the primary click: the release report
+ * does not name the button that came up (SGR encodes it, the legacy
+ * encoding does not), so the press is the only cross-terminal signal.
+ */
+export function isSecondaryPress(event: TuiMouseEvent): boolean {
+  return (
+    event.kind === "press" &&
+    event.button === "right" &&
+    !event.shift &&
+    !event.alt &&
+    !event.ctrl
+  );
+}

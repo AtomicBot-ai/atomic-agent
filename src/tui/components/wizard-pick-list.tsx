@@ -1,5 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { PasteFieldTarget } from "../context-menu/paste-field-target.js";
+import { pasteIntoProvidersWizard } from "../providers/providers-wizard-paste.js";
 import { theme } from "../theme/theme.js";
 
 /**
@@ -175,20 +177,27 @@ export function renderPickList(props: {
       <Text bold color={theme.colors.accent}>
         {props.title}
       </Text>
-      {searchShown ? (
-        <Text color={theme.colors.muted} wrap="truncate-end">
-          {"search: "}
-          {props.search === null ? (
-            "/ to search"
-          ) : (
-            // `accent`, never `accentSoft`: the query is text the
-            // operator is actively reading, and the un-lifted fill sits
-            // near 2:1 against a dark ground (see theme-palettes.ts).
+      {searchShown && props.search !== null ? (
+        // Right-click paste only while the box is OPEN: on a closed box
+        // a text burst would fall through to the list phase, where the
+        // vim movement letters live. `renderPickList` is exclusively
+        // the providers wizard's, so the wizard adapter is exact.
+        <PasteFieldTarget onPasteText={pasteIntoProvidersWizard}>
+          <Text color={theme.colors.muted} wrap="truncate-end">
+            {"search: "}
+            {/* `accent`, never `accentSoft`: the query is text the
+                operator is actively reading, and the un-lifted fill sits
+                near 2:1 against a dark ground (see theme-palettes.ts). */}
             <Text color={theme.colors.accent}>
               {props.search}
               <Text color={theme.colors.muted}>▏</Text>
             </Text>
-          )}
+          </Text>
+        </PasteFieldTarget>
+      ) : null}
+      {searchShown && props.search === null ? (
+        <Text color={theme.colors.muted} wrap="truncate-end">
+          {"search: / to search"}
         </Text>
       ) : null}
       {total === 0 ? (
