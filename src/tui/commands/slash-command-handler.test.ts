@@ -241,6 +241,19 @@ describe("dispatchSlashCommand", () => {
     ]);
   });
 
+  it("deep-links /llm fallback straight to the Fallback pane", () => {
+    const result = dispatchSlashCommand("/llm fallback");
+    expect(result.actions).toEqual([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "llm" },
+      { type: "llm_mode_set", mode: "fallback" },
+      // Same refresh as bare /llm: the deep link reaches the tab via
+      // reducer actions (not onProvidersTabRefresh), so it must request
+      // its own re-read or the chain mirror can arrive stale.
+      { type: "providers_refresh_requested" },
+    ]);
+  });
+
   it("signals triggerLocalModelsStatus for /models status", () => {
     const result = dispatchSlashCommand("/models status");
     expect(result.triggerLocalModelsStatus).toBe(true);

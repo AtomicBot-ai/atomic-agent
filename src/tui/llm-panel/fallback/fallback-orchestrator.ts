@@ -11,19 +11,22 @@ import {
   removeLink,
   type ChainEditResult,
 } from "./fallback-chain-edits.js";
-import { isFallbackPanelAction } from "./fallback-panel-actions.js";
 import { buildFallbackChainView } from "./fallback-panel-selectors.js";
 
 /**
  * The only TUI module that writes `llm.fallback.chain` /
- * `llm.fallback.appendLocal`. Mirrors `ProvidersOrchestrator`: it
- * listens on the event bus for the side-effectful fallback intents,
- * turns each into a config write via `setFallbackChainInConfig`, and
- * emits a `fallback_refresh` re-mirroring the effective chain the loader
- * now resolves. The engine re-reads config every turn (`resetConfigCache`
- * inside the persist), so a write takes effect on the next completion
- * without a restart — nothing else writes this block, so there is no
- * contention with the runtime `ProviderFallbackChain`.
+ * `llm.fallback.appendLocal`. Mirrors `ProvidersOrchestrator`: the edit
+ * methods (`move`/`add`/`remove`/`toggleAppendLocal`) are called through
+ * the `TuiAppCallbacks.onFallback*` callbacks wired in `tui-command.ts` —
+ * NOT via dispatched reducer actions, which never reach this class (the
+ * bus→dispatch bridge is one-way; that trap is why the pane's edits were
+ * silent no-ops before). Each edit becomes a config write via
+ * `setFallbackChainInConfig`, followed by a `fallback_refresh` emitted on
+ * the bus re-mirroring the effective chain the loader now resolves. The
+ * engine re-reads config every turn (`resetConfigCache` inside the
+ * persist), so a write takes effect on the next completion without a
+ * restart — nothing else writes this block, so there is no contention
+ * with the runtime `ProviderFallbackChain`.
  */
 export class FallbackOrchestrator {
   constructor(
@@ -39,28 +42,6 @@ export class FallbackOrchestrator {
         (action as { type: string }).type === "providers_refresh"
       ) {
         this.refresh();
-        return;
-      }
-      if (!isFallbackPanelAction(action)) return;
-      switch (action.type) {
-        case "fallback_move_requested":
-          this.applyEdit(() =>
-            moveLink(this.currentLinks(), action.providerId, action.delta),
-          );
-          break;
-        case "fallback_add_requested":
-          this.applyEdit(() => addLink(this.currentLinks(), action.providerId));
-          break;
-        case "fallback_remove_requested":
-          this.applyEdit(() =>
-            removeLink(this.currentLinks(), action.providerId),
-          );
-          break;
-        case "fallback_append_local_toggle_requested":
-          this.toggleAppendLocal();
-          break;
-        default:
-          break;
       }
     });
   }
@@ -76,6 +57,32 @@ export class FallbackOrchestrator {
     });
   }
 
+  /** Move `providerId` one slot up (−1) or down (+1) and persist. */
+  move(providerId: string, delta: -1 | 1): void {
+    this.applyEdit(() => moveLink(this.currentLinks(), providerId, delta));
+  }
+
+  /** Append `providerId` to the declared chain tail and persist. */
+  add(providerId: string): void {
+    this.applyEdit(() => addLink(this.currentLinks(), providerId));
+  }
+
+  /** Drop `providerId` from the declared chain and persist. */
+  remove(providerId: string): void {
+    this.applyEdit(() => removeLink(this.currentLinks(), providerId));
+  }
+
+  /** Flip `llm.fallback.appendLocal` and persist. */
+  toggleAppendLocal(): void {
+    const view = buildFallbackChainView(resolveLlmConfig(getConfig()));
+    // Persist the operator's explicit chain (the displayed links minus
+    // the auto-appended local one) with the flag flipped.
+    const declared = view.links
+      .filter((l) => !l.isAppendedLocal)
+      .map((l) => l.providerId);
+    this.persist(declared, !view.appendLocal);
+  }
+
   private currentLinks() {
     return buildFallbackChainView(resolveLlmConfig(getConfig())).links;
   }
@@ -88,16 +95,6 @@ export class FallbackOrchestrator {
       return;
     }
     this.persist(chain, view.appendLocal);
-  }
-
-  private toggleAppendLocal(): void {
-    const view = buildFallbackChainView(resolveLlmConfig(getConfig()));
-    // Persist the operator's explicit chain (the displayed links minus
-    // the auto-appended local one) with the flag flipped.
-    const declared = view.links
-      .filter((l) => !l.isAppendedLocal)
-      .map((l) => l.providerId);
-    this.persist(declared, !view.appendLocal);
   }
 
   private persist(chain: readonly string[], appendLocal: boolean): void {

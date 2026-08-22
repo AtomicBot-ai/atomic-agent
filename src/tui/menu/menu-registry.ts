@@ -282,7 +282,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "llm",
       description:
-        "open LLM Local/Cloud/External panel · `/llm provider <id>` switch text provider",
+        "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm fallback` edit the fallover chain",
       rank: 23,
     },
     section: "manage",

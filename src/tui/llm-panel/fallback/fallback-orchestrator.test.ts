@@ -11,9 +11,10 @@ const STATE_DIR_ENV = "ATOMIC_AGENT_STATE_DIR";
 
 /**
  * A minimal event bus: `subscribe` collects listeners, `emit` fans out.
- * The orchestrator both listens (for intents) and emits (`fallback_refresh`,
- * `fallback_status`), so a single shared bus lets a test dispatch an intent
- * and read back the mirror the orchestrator produced.
+ * Edits are direct public-method calls (the same surface the
+ * `TuiAppCallbacks.onFallback*` callbacks hit); the bus is where the
+ * orchestrator emits its `fallback_refresh`/`fallback_status` mirror and
+ * where it hears `providers_refresh`.
  */
 function makeBus() {
   const listeners = new Set<(action: TuiAction) => void>();
@@ -89,37 +90,33 @@ describe("FallbackOrchestrator persistence", () => {
     ).toEqual(["cloud-a", "cloud-b"]);
   });
 
-  it("a move intent reorders and persists the declared chain", () => {
+  it("a move edit reorders and persists the declared chain", () => {
     seedConfig(stateDir, { chain: ["cloud-a", "cloud-b"], appendLocal: false });
     const bus = makeBus();
-    new FallbackOrchestrator(bus);
-    bus.emit({ type: "fallback_move_requested", providerId: "cloud-b", delta: -1 });
+    new FallbackOrchestrator(bus).move("cloud-b", -1);
     // cloud-b moved above cloud-a in the declared chain; the loader still
     // hoists the active provider (cloud-a) to head on read.
     expect(readFallback(stateDir)?.chain).toEqual(["cloud-b", "cloud-a"]);
   });
 
-  it("an add intent appends and persists a new link", () => {
+  it("an add edit appends and persists a new link", () => {
     seedConfig(stateDir, { chain: ["cloud-a"], appendLocal: false });
     const bus = makeBus();
-    new FallbackOrchestrator(bus);
-    bus.emit({ type: "fallback_add_requested", providerId: "cloud-b" });
+    new FallbackOrchestrator(bus).add("cloud-b");
     expect(readFallback(stateDir)?.chain).toEqual(["cloud-a", "cloud-b"]);
   });
 
-  it("a remove intent drops the link and persists", () => {
+  it("a remove edit drops the link and persists", () => {
     seedConfig(stateDir, { chain: ["cloud-a", "cloud-b"], appendLocal: false });
     const bus = makeBus();
-    new FallbackOrchestrator(bus);
-    bus.emit({ type: "fallback_remove_requested", providerId: "cloud-b" });
+    new FallbackOrchestrator(bus).remove("cloud-b");
     expect(readFallback(stateDir)?.chain).toEqual(["cloud-a"]);
   });
 
   it("the appendLocal toggle flips and persists the flag", () => {
     seedConfig(stateDir, { chain: ["cloud-a"], appendLocal: true });
     const bus = makeBus();
-    new FallbackOrchestrator(bus);
-    bus.emit({ type: "fallback_append_local_toggle_requested" });
+    new FallbackOrchestrator(bus).toggleAppendLocal();
     expect(readFallback(stateDir)?.appendLocal).toBe(false);
     expect(readFallback(stateDir)?.chain).toEqual(["cloud-a"]);
   });
@@ -132,8 +129,7 @@ describe("FallbackOrchestrator persistence", () => {
       cooldownMs: [1000, 2000],
     });
     const bus = makeBus();
-    new FallbackOrchestrator(bus);
-    bus.emit({ type: "fallback_add_requested", providerId: "local-llama" });
+    new FallbackOrchestrator(bus).add("local-llama");
     const fb = readFallback(stateDir)!;
     expect(fb.chain).toEqual(["cloud-a", "cloud-b", "local-llama"]);
     expect(fb.failureThreshold).toBe(5);
@@ -143,10 +139,10 @@ describe("FallbackOrchestrator persistence", () => {
   it("surfaces a status line and does not write when a refused edit slips through", () => {
     seedConfig(stateDir, { chain: ["cloud-a", "cloud-b"], appendLocal: false });
     const bus = makeBus();
-    new FallbackOrchestrator(bus);
+    const orch = new FallbackOrchestrator(bus);
     // Removing the active head is refused by the edit algebra → no-op,
     // no write, no status error.
-    bus.emit({ type: "fallback_remove_requested", providerId: "cloud-a" });
+    orch.remove("cloud-a");
     expect(readFallback(stateDir)?.chain).toEqual(["cloud-a", "cloud-b"]);
   });
 
@@ -157,8 +153,7 @@ describe("FallbackOrchestrator persistence", () => {
     // Effective chain is [cloud-a, local-llama]; only cloud-a is declared.
     seedConfig(stateDir, { chain: ["cloud-a"], appendLocal: true });
     const bus = makeBus();
-    new FallbackOrchestrator(bus);
-    bus.emit({ type: "fallback_add_requested", providerId: "cloud-b" });
+    new FallbackOrchestrator(bus).add("cloud-b");
     const fb = readFallback(stateDir)!;
     // cloud-b appended to the DECLARED chain; local-llama stays out of it
     // (still synthesised on the next read via appendLocal).
@@ -170,9 +165,8 @@ describe("FallbackOrchestrator persistence", () => {
   it("does not persist the synthesised local link when appendLocal is on (move)", () => {
     seedConfig(stateDir, { chain: ["cloud-a", "cloud-b"], appendLocal: true });
     const bus = makeBus();
-    new FallbackOrchestrator(bus);
-    // Effective order is [cloud-a, cloud-b, local-llama]; move cloud-b up.
-    bus.emit({ type: "fallback_move_requested", providerId: "cloud-b", delta: -1 });
+    new FallbackOrchestrator(bus).move("cloud-b", -1);
+    // Effective order was [cloud-a, cloud-b, local-llama]; cloud-b moved up.
     const fb = readFallback(stateDir)!;
     expect(fb.chain).toEqual(["cloud-b", "cloud-a"]);
     expect(fb.chain).not.toContain("local-llama");
@@ -181,10 +175,9 @@ describe("FallbackOrchestrator persistence", () => {
   it("treats a move of the appended-local tail as a no-op", () => {
     seedConfig(stateDir, { chain: ["cloud-a", "cloud-b"], appendLocal: true });
     const bus = makeBus();
-    new FallbackOrchestrator(bus);
     // local-llama is the synthesised tail (not a declared link): trying to
     // move it does not touch the declared chain.
-    bus.emit({ type: "fallback_move_requested", providerId: "local-llama", delta: -1 });
+    new FallbackOrchestrator(bus).move("local-llama", -1);
     expect(readFallback(stateDir)?.chain).toEqual(["cloud-a", "cloud-b"]);
   });
 
