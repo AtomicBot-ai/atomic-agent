@@ -195,9 +195,19 @@ describe("POST /v1/chat/completions concurrency contract", () => {
     let userCallCount = 0;
     const llamaComplete = async (params: {
       sessionId: string;
+      prompt: string;
     }): Promise<CompletionResult> => {
       if (params.sessionId.startsWith("reflection:")) {
         return instantReply("nope");
+      }
+      // Only the agent loop's own step blocks on the gate. The memory
+      // machinery makes further completions under the same session id —
+      // the recall query rewriter fires on the second turn now that the
+      // queue re-reads the stored session at run time and turn 2 really
+      // sees turn 1's history — and gating those would deadlock the test
+      // against calls it never planned to release.
+      if (!params.prompt.includes("You are atomic-agent")) {
+        return instantReply("aside");
       }
       userCallCount += 1;
       const tag = `c${userCallCount}`;
