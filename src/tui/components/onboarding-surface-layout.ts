@@ -17,11 +17,16 @@ import {
 } from "../onboarding/centre-onboarding-block.js";
 import type { LocalModelPick } from "../onboarding/local-model-picks.js";
 import type { OnboardingFit } from "../onboarding/onboarding-fit.js";
-import type { OnboardingStep } from "../onboarding/onboarding-state.js";
+import type {
+  OnboardingHuggingFaceRepo,
+  OnboardingStep,
+} from "../onboarding/onboarding-state.js";
 import type { SecondBackendOffer } from "../onboarding/propose-second-backend.js";
 import { measureOnboardingChooseStep } from "./onboarding-choose-step.js";
 import { measureOnboardingDownloadStep } from "./onboarding-download-step.js";
 import { measureOnboardingHeader } from "./onboarding-header.js";
+import { measureOnboardingHfPickStep } from "./onboarding-hf-pick-step.js";
+import { measureOnboardingHfRefStep } from "./onboarding-hf-ref-step.js";
 import { measureOnboardingLocalPickStep } from "./onboarding-local-pick-step.js";
 import { measureOnboardingProposeStep } from "./onboarding-propose-step.js";
 import { measureProvidersWizard } from "./providers-wizard-measure.js";
@@ -48,6 +53,10 @@ export interface OnboardingBlockInput {
   offerCloudMeanwhile: boolean;
   pull: LocalModelsPullState | null;
   cloudLabel: string;
+  /** The resolved Hugging Face repo, while the flow is on its file list. */
+  hfRepo: OnboardingHuggingFaceRepo | null;
+  /** The reference screen's error, which widens its block when long. */
+  hfError?: string | null;
 }
 
 export function layOutOnboardingSurface(
@@ -105,6 +114,13 @@ function measureStepBody(input: MeasureInput): number {
       return measureOnboardingUrlStep("chat");
     case "custom_embedding_url":
       return measureOnboardingUrlStep("embedding");
+    case "local_hf_ref":
+      return Math.min(input.available, measureOnboardingHfRefStep(input.hfError ?? null));
+    case "local_hf_pick":
+      return Math.min(
+        input.available,
+        measureOnboardingHfPickStep(input.hfRepo, input.cursor),
+      );
     case "propose_second":
       return input.offer
         ? measureOnboardingProposeStep({

@@ -1,7 +1,7 @@
 import { useInput } from "ink";
 import { useCallback } from "react";
 import type { OnboardingScreenCallbacks } from "../components/onboarding-screen.js";
-import type { LocalModelPick } from "../onboarding/local-model-picks.js";
+import type { LocalPickRow } from "../onboarding/local-model-picks.js";
 import { handleOnboardingKey } from "../onboarding/onboarding-key-bindings.js";
 import type {
   OnboardingOutcome,
@@ -30,11 +30,12 @@ export function useOnboardingInputs(args: {
   onboarding: OnboardingUiState;
   dispatch(action: TuiAction): void;
   callbacks: OnboardingScreenCallbacks;
-  picks: readonly LocalModelPick[];
+  /** The curated picks plus the trailing Hugging Face row. */
+  pickRows: readonly LocalPickRow[];
   wizardState: ProvidersWizardState | null;
   finish(outcome: OnboardingOutcome): void;
 }): void {
-  const { onboarding, dispatch, callbacks, picks, wizardState, finish } = args;
+  const { onboarding, dispatch, callbacks, pickRows, wizardState, finish } = args;
 
   const pick = useCallback(
     (choice: "local" | "cloud" | "custom") => {
@@ -79,18 +80,22 @@ export function useOnboardingInputs(args: {
         return;
       }
       if (key.upArrow || input === "k") {
-        dispatch({ type: "onboarding_cursor_moved", delta: -1, length: picks.length });
+        dispatch({ type: "onboarding_cursor_moved", delta: -1, length: pickRows.length });
         return;
       }
       if (key.downArrow || input === "j") {
-        dispatch({ type: "onboarding_cursor_moved", delta: 1, length: picks.length });
+        dispatch({ type: "onboarding_cursor_moved", delta: 1, length: pickRows.length });
         return;
       }
       if (key.return) {
-        const chosen = picks[onboarding.cursor % Math.max(1, picks.length)];
-        if (!chosen) return;
-        dispatch({ type: "onboarding_local_model_picked", modelId: chosen.id });
-        callbacks.onLocalModelsPullRequested?.(chosen.id as LocalModelId);
+        const row = pickRows[onboarding.cursor % Math.max(1, pickRows.length)];
+        if (!row) return;
+        if (row.kind === "hugging_face") {
+          dispatch({ type: "onboarding_step_set", step: "local_hf_ref" });
+          return;
+        }
+        dispatch({ type: "onboarding_local_model_picked", modelId: row.pick.id });
+        callbacks.onLocalModelsPullRequested?.(row.pick.id as LocalModelId);
       }
     },
     { isActive: onboarding.step === "local_pick" },

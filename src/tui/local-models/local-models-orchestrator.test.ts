@@ -36,6 +36,10 @@ type EmittedAction =
   | {
       type: "local_models_pull_started";
       pull: { modelId: string };
+    }
+  | {
+      type: "local_models_snapshot_loaded";
+      rows: { id: string; active: boolean }[];
     };
 
 describe("LocalModelsOrchestrator", () => {
@@ -317,6 +321,51 @@ describe("LocalModelsOrchestrator", () => {
     expect(
       existsSync(resolveModelFilePath(dataDir, embeddingDef.id, embeddingDef.filename)),
     ).toBe(true);
+  });
+
+  describe("refresh model rows", () => {
+    it("lists an operator-added Hugging Face model on the same snapshot, active", async () => {
+      writeUserConfig({
+        localModels: {
+          mode: "managed",
+          customModels: [
+            {
+              id: "custom-unsloth-qwen3-0.6b-gguf-qwen3-0.6b-ud-q4_k_xl",
+              filename: "Qwen3-0.6B-UD-Q4_K_XL.gguf",
+              huggingFaceUrl:
+                "https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-UD-Q4_K_XL.gguf",
+            },
+          ],
+          managed: {
+            modelId: "custom-unsloth-qwen3-0.6b-gguf-qwen3-0.6b-ud-q4_k_xl",
+          },
+        },
+      });
+      // The backend-release probe is the only network in refresh();
+      // offline it resolves to "unknown", which is fine here.
+      globalThis.fetch = (() =>
+        Promise.reject(new Error("offline"))) as typeof fetch;
+      const actions: EmittedAction[] = [];
+      const orchestrator = new LocalModelsOrchestrator({
+        emit(action: unknown) {
+          actions.push(action as EmittedAction);
+        },
+      });
+      await orchestrator.refresh();
+      const snapshot = actions.find(
+        (action): action is Extract<EmittedAction, { type: "local_models_snapshot_loaded" }> =>
+          action.type === "local_models_snapshot_loaded",
+      );
+      const rows = snapshot?.rows ?? [];
+      const custom = rows.find((row) => row.id.startsWith("custom-"));
+      // The added model rides the snapshot the panel draws from, and the
+      // active mark lands on it — not on no row at all.
+      expect(custom).toMatchObject({
+        id: "custom-unsloth-qwen3-0.6b-gguf-qwen3-0.6b-ud-q4_k_xl",
+        active: true,
+      });
+      expect(rows.filter((row) => row.active)).toHaveLength(1);
+    });
   });
 });
 

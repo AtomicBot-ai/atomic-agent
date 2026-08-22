@@ -80,6 +80,32 @@ export function reduceOnboardingAction(
         },
       };
     }
+    case "onboarding_hf_reference_changed": {
+      if (!state.onboarding) return state;
+      return {
+        ...state,
+        onboarding: { ...state.onboarding, hfReference: action.value },
+      };
+    }
+    case "onboarding_hf_repo_resolved": {
+      if (!state.onboarding) return state;
+      // Lookups take seconds; the operator may cancel or walk to another
+      // step before one lands. Only the step that asked may receive the
+      // answer — a late resolve must not yank the flow onto a file list
+      // nobody is waiting for.
+      if (state.onboarding.step !== "local_hf_ref") return state;
+      return {
+        ...state,
+        onboarding: {
+          ...state.onboarding,
+          step: "local_hf_pick",
+          hfRepo: action.repo,
+          cursor: 0,
+          busy: false,
+          error: null,
+        },
+      };
+    }
     case "onboarding_cloud_meanwhile_opened": {
       if (!state.onboarding) return state;
       return {

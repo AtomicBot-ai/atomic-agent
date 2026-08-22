@@ -61,3 +61,8 @@ export type {
 } from "./load-dotenv.js";
 export { DotenvWriterError, setDotenvKey } from "./dotenv-writer.js";
 export type { SetDotenvKeyResult } from "./dotenv-writer.js";
+export { addCustomModel, removeCustomModel } from "./custom-models-store.js";
+export {
+  parseCustomLocalModel,
+  parseCustomLocalModels,
+} from "./custom-models-schema.js";

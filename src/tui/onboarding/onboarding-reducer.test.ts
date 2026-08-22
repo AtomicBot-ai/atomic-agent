@@ -11,6 +11,7 @@ function withFlow(
     | "choose"
     | "cloud"
     | "local_pick"
+    | "local_hf_ref"
     | "local_download"
     | "wait_or_jump" = "choose",
 ): TuiState {
@@ -231,6 +232,87 @@ describe("onboarding reducer", () => {
       state = reduceTuiState(state, { type: "providers_wizard_succeeded" });
       expect(state.onboarding).toBeNull();
       expect(state.providersPanel.wizard).toBeNull();
+    });
+  });
+
+  describe("the Hugging Face branch", () => {
+    const REPO = {
+      repoId: "unsloth/Qwen3.5-4B-GGUF",
+      revision: "main",
+      choices: [
+        {
+          path: "Qwen3.5-4B-UD-Q4_K_XL.gguf",
+          filename: "Qwen3.5-4B-UD-Q4_K_XL.gguf",
+          sizeBytes: 2_899_102_924,
+          fileSizeGb: 2.7,
+          sizeLabel: "2.7 GB",
+        },
+      ],
+      mmproj: null,
+      hidden: null,
+    } as const;
+
+    it("keeps the typed reference so a failed lookup can be corrected", () => {
+      let state = withFlow("local_hf_ref");
+      state = reduceTuiState(state, {
+        type: "onboarding_hf_reference_changed",
+        value: "unsloth/Qwen",
+      });
+      expect(state.onboarding?.hfReference).toBe("unsloth/Qwen");
+      state = reduceTuiState(state, {
+        type: "onboarding_error_set",
+        error: "Hugging Face returned 404: no repo or revision by that name.",
+      });
+      expect(state.onboarding?.hfReference).toBe("unsloth/Qwen");
+      expect(state.onboarding?.step).toBe("local_hf_ref");
+    });
+
+    // Resolving and arriving on the file list are one event: split, a
+    // frame would render an empty list under the editor's own footer.
+    it("lands on the file list, cursor reset, in a single action", () => {
+      let state = withFlow("local_hf_ref");
+      state = reduceTuiState(state, { type: "onboarding_cursor_moved", delta: 3, length: 9 });
+      state = reduceTuiState(state, { type: "onboarding_busy_set", busy: true });
+      state = reduceTuiState(state, { type: "onboarding_hf_repo_resolved", repo: REPO });
+      expect(state.onboarding?.step).toBe("local_hf_pick");
+      expect(state.onboarding?.cursor).toBe(0);
+      expect(state.onboarding?.busy).toBe(false);
+      expect(state.onboarding?.hfRepo?.repoId).toBe("unsloth/Qwen3.5-4B-GGUF");
+    });
+
+    it("sends an added model to the same download screen as a curated one", () => {
+      let state = withFlow("local_hf_ref");
+      state = reduceTuiState(state, { type: "onboarding_hf_repo_resolved", repo: REPO });
+      state = reduceTuiState(state, {
+        type: "onboarding_local_model_picked",
+        modelId: "custom-unsloth-qwen3.5-4b-gguf-qwen3.5-4b-ud-q4_k_xl",
+      });
+      expect(state.onboarding?.step).toBe("local_download");
+      expect(state.onboarding?.localModelId).toBe(
+        "custom-unsloth-qwen3.5-4b-gguf-qwen3.5-4b-ud-q4_k_xl",
+      );
+    });
+
+    // The lookup takes seconds and esc can cancel it; a resolve landing
+    // on any step but the one that asked is dropped whole, or the flow
+    // would be yanked onto a file list nobody is waiting for.
+    it("ignores a resolution landing on a step that did not ask", () => {
+      const state = withFlow("local_pick");
+      const next = reduceTuiState(state, {
+        type: "onboarding_hf_repo_resolved",
+        repo: REPO,
+      });
+      expect(next.onboarding?.step).toBe("local_pick");
+      expect(next.onboarding?.hfRepo).toBeNull();
+    });
+
+    it("ignores a late resolution once the flow has closed", () => {
+      const closed = createInitialTuiState(fakeSession(), 50);
+      const next = reduceTuiState(closed, {
+        type: "onboarding_hf_repo_resolved",
+        repo: REPO,
+      });
+      expect(next.onboarding).toBeNull();
     });
   });
 });

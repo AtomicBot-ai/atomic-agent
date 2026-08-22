@@ -11,9 +11,15 @@ import { useOnboardingInputs } from "../hooks/use-onboarding-inputs.js";
 import { useOnboardingUrlActions } from "../hooks/use-onboarding-url-actions.js";
 import {
   buildLocalModelPicks,
+  buildLocalPickRows,
+  describeDownloadingModel,
   hostRamGb,
   orderLocalModelPicks,
 } from "../onboarding/local-model-picks.js";
+import {
+  ONBOARDING_SUBTITLES,
+  onboardingFooterFor,
+} from "../onboarding/onboarding-chrome.js";
 import {
   computeOnboardingFit,
   ONBOARDING_SIZE_ADVICE,
@@ -25,8 +31,6 @@ import type {
   OnboardingUiState,
 } from "../onboarding/onboarding-state.js";
 import { persistOnboardingState } from "../persist-onboarding-state.js";
-import { isListPhase } from "../providers/providers-wizard-phases.js";
-import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
 import { theme } from "../theme/theme.js";
 import type { TuiAction } from "../tui-action.js";
 import type { LocalModelId } from "../../local-llm/index.js";
@@ -52,18 +56,6 @@ export interface OnboardingScreenCallbacks {
 /** Named once — the offer screens quote it back at the operator. */
 const CLOUD_READY_LABEL = "Cloud model ready";
 
-const SUBTITLES: Record<OnboardingUiState["step"], string> = {
-  intro: "",
-  choose: "setup · step 1 of 2",
-  local_pick: "local models · step 2 of 2",
-  local_download: "local models · downloading",
-  propose_second: "one more thing",
-  wait_or_jump: "almost there",
-  cloud: "cloud model · step 2 of 2",
-  custom_chat_url: "custom endpoint · step 2 of 2",
-  custom_embedding_url: "custom endpoint · embeddings",
-  finished: "setting up…",
-};
 
 /**
  * The whole first-run surface. It owns the terminal while it is mounted:
@@ -124,14 +116,15 @@ export function OnboardingScreen(props: {
     () => orderLocalModelPicks(buildLocalModelPicks(ramGb)),
     [ramGb],
   );
-  const pickCursor = onboarding.cursor % Math.max(1, picks.length);
+  const pickRows = useMemo(() => buildLocalPickRows(picks), [picks]);
+  const pickCursor = onboarding.cursor % Math.max(1, pickRows.length);
   const wizardState = props.state.providersPanel.wizard;
 
   useOnboardingInputs({
     onboarding,
     dispatch,
     callbacks,
-    picks,
+    pickRows,
     wizardState,
     finish,
   });
@@ -170,21 +163,29 @@ export function OnboardingScreen(props: {
   // Both axes are centred on the block as a whole, never line by line:
   // a column of options whose rows each find their own centre is ragged
   // to scan, and every row would move whenever its text changed.
+  // The Hugging Face file list runs its own cursor over the repo's
+  // choices; every other list shares the pick rows' modulus.
+  const blockCursor =
+    onboarding.step === "local_hf_pick" && onboarding.hfRepo
+      ? onboarding.cursor % Math.max(1, onboarding.hfRepo.choices.length)
+      : pickCursor;
   const placement = layOutOnboardingSurface({
     columns: size.columns,
     rows: size.rows,
     step: onboarding.step,
     fit,
-    subtitle: SUBTITLES[onboarding.step],
+    subtitle: ONBOARDING_SUBTITLES[onboarding.step],
     picks,
-    cursor: pickCursor,
+    cursor: blockCursor,
     ramGb,
     offer: onboarding.offer,
     configuredLabel: configuredLabel(onboarding.outcome),
-    modelLabel: onboarding.localModelId ?? "the model",
+    modelLabel: describeDownloadingModel(onboarding.localModelId),
     offerCloudMeanwhile: !cloudAlreadyConfigured,
     pull: props.state.localModelsPanel.pull,
     cloudLabel: CLOUD_READY_LABEL,
+    hfRepo: onboarding.hfRepo,
+    hfError: onboarding.step === "local_hf_ref" ? onboarding.error : null,
   });
 
   return (
@@ -225,7 +226,7 @@ export function OnboardingScreen(props: {
             fit={fit}
             columns={size.columns}
             viewportRows={placement.rows}
-            subtitle={SUBTITLES[onboarding.step]}
+            subtitle={ONBOARDING_SUBTITLES[onboarding.step]}
             picks={picks}
             pickCursor={pickCursor}
             ramGb={ramGb}
@@ -236,6 +237,7 @@ export function OnboardingScreen(props: {
             configuredLabel={configuredLabel(onboarding.outcome)}
             cloudLabel={CLOUD_READY_LABEL}
             dispatch={dispatch}
+            onPullRequested={callbacks.onLocalModelsPullRequested}
             onChatUrlSubmit={(value) => void probeAndAdvance(value)}
             onEmbeddingUrlSubmit={(value) => void saveEmbeddingUrl(value)}
           />
@@ -250,7 +252,7 @@ export function OnboardingScreen(props: {
       */}
       <Box flexShrink={0}>
         <Text color={theme.colors.muted} wrap="truncate">
-          {footerFor(onboarding, props.ctrlCArmed ?? false, wizardState)}
+          {onboardingFooterFor(onboarding, props.ctrlCArmed ?? false, wizardState)}
           {fit.sizeAdvice ? `   ·   ${ONBOARDING_SIZE_ADVICE}` : ""}
         </Text>
       </Box>
@@ -263,40 +265,4 @@ function configuredLabel(outcome: OnboardingOutcome | null): string {
   if (outcome === "local") return "Local model ready";
   if (outcome === "cloud") return CLOUD_READY_LABEL;
   return "Backend ready";
-}
-
-function footerFor(
-  onboarding: OnboardingUiState,
-  ctrlCArmed: boolean,
-  wizard: ProvidersWizardState | null,
-): string {
-  // Same flip the chat hint strip's ctrl+c chip makes while armed (see
-  // hotkey-hint.tsx) — the flow replaces that strip, not its semantics.
-  const quit = ctrlCArmed ? "ctrl+c press again to quit" : "ctrl+c quit";
-  switch (onboarding.step) {
-    case "choose":
-      return `↑/↓ move   enter select   1–3 jump   esc skip   ${quit}`;
-    case "cloud":
-      // "/ search" tracks the wizard phase, not the onboarding step: on
-      // the key/URL/model text screens `/` is just a typed character.
-      return wizard !== null && isListPhase(wizard.phase)
-        ? `↑/↓ move   / search   enter select   esc back   ${quit}`
-        : `↑/↓ move   enter select   esc back   ${quit}`;
-    case "custom_chat_url":
-      return `enter test & continue   esc back   ${quit}`;
-    case "custom_embedding_url":
-      return `enter test & save   empty enter skips embeddings   esc back   ${quit}`;
-    case "local_pick":
-      return `↑/↓ move   enter download   esc back   ${quit}`;
-    case "local_download":
-      return `c set up cloud meanwhile   ${quit}`;
-    case "propose_second":
-      return `↑/↓ move   enter select   esc skip   ${quit}`;
-    case "wait_or_jump":
-      return `↑/↓ move   enter select   ${quit}`;
-    case "finished":
-      return "";
-    case "intro":
-      return quit;
-  }
 }

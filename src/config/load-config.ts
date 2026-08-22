@@ -13,6 +13,7 @@ import {
   ensureUserConfigFileSync,
   getUserConfigPath,
 } from "./config-file.js";
+import { setCustomLocalModels } from "../local-llm/models-catalog.js";
 import { loadDotenvFromStateDir } from "./load-dotenv.js";
 import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
 import type { UserLlmFileConfig } from "./llm-config.js";
@@ -113,6 +114,10 @@ export function loadConfig(): AtomicAgentConfig {
   const dotenv = loadDotenvFromStateDir(stateDir);
   const userConfigFile = getUserConfigPath(stateDir);
   const user = ensureUserConfigFileSync(userConfigFile);
+  // Publish the operator's own models to the catalog registry, so that
+  // `getLocalModelDef` and `isKnownLocalModelId` resolve them everywhere
+  // a curated id already works.
+  setCustomLocalModels(user.localModels.customModels);
   const grammarsDir = resolveAssetDir("ATOMIC_AGENT_GRAMMARS_DIR", "grammars");
 
   const browserChannel: BrowserChannel = readBrowserChannel(

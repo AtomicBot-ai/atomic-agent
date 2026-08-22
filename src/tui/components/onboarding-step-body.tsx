@@ -6,8 +6,11 @@ import type { OnboardingFit } from "../onboarding/onboarding-fit.js";
 import type { OnboardingUiState } from "../onboarding/onboarding-state.js";
 import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
 import type { TuiAction } from "../tui-action.js";
+import { describeDownloadingModel } from "../onboarding/local-model-picks.js";
+import type { LocalModelId } from "../../local-llm/index.js";
 import { OnboardingChooseStep } from "./onboarding-choose-step.js";
 import { OnboardingDownloadStep } from "./onboarding-download-step.js";
+import { OnboardingHuggingFaceFlow } from "./onboarding-hf-flow.js";
 import { OnboardingHeader } from "./onboarding-header.js";
 import { OnboardingIntroStep } from "./onboarding-intro-step.js";
 import { OnboardingLocalPickStep } from "./onboarding-local-pick-step.js";
@@ -41,6 +44,8 @@ export function OnboardingStepBody(props: {
   configuredLabel: string;
   cloudLabel: string;
   dispatch(action: TuiAction): void;
+  /** Start a model pull. Owned by `LocalModelsOrchestrator`. */
+  onPullRequested?(modelId: LocalModelId): void;
   onChatUrlSubmit(value: string): void;
   onEmbeddingUrlSubmit(value: string): void;
 }): ReactElement {
@@ -78,6 +83,17 @@ export function OnboardingStepBody(props: {
             fit={props.fit}
           />
         ) : null}
+        {/*
+          Mounted on every step and rendering `null` off its own two —
+          the hook inside subscribes to `useInput`, and hooks cannot sit
+          behind an early return in the parent.
+        */}
+        <OnboardingHuggingFaceFlow
+          onboarding={onboarding}
+          dispatch={dispatch}
+          ramGb={props.ramGb}
+          onPullRequested={props.onPullRequested}
+        />
         {onboarding.step === "propose_second" && onboarding.offer ? (
           <OnboardingProposeStep
             offer={onboarding.offer}
@@ -95,7 +111,7 @@ export function OnboardingStepBody(props: {
         {onboarding.step === "local_download" ? (
           <OnboardingDownloadStep
             pull={props.pull}
-            modelLabel={onboarding.localModelId ?? "the model"}
+            modelLabel={describeDownloadingModel(onboarding.localModelId)}
             offerCloudMeanwhile={props.offerCloudMeanwhile}
           />
         ) : null}

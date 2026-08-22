@@ -1,7 +1,11 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { widestLine } from "../onboarding/centre-onboarding-block.js";
-import type { LocalModelPick } from "../onboarding/local-model-picks.js";
+import {
+  HUGGING_FACE_ROW_LABEL,
+  HUGGING_FACE_ROW_NOTE,
+  type LocalModelPick,
+} from "../onboarding/local-model-picks.js";
 import type { OnboardingFit } from "../onboarding/onboarding-fit.js";
 import { ROW_INDENT, rowPrefix } from "../onboarding/onboarding-rows.js";
 import { theme } from "../theme/theme.js";
@@ -39,13 +43,19 @@ function moreLine(below: number): string {
 export function windowLocalPicks(
   picks: readonly LocalModelPick[],
   cursor: number,
-): { visible: readonly LocalModelPick[]; below: number } {
+): { visible: readonly LocalModelPick[]; below: number; start: number } {
   const start = Math.max(
     0,
     Math.min(cursor - LOCAL_PICK_WINDOW + 2, picks.length - LOCAL_PICK_WINDOW),
   );
   const visible = picks.slice(start, start + LOCAL_PICK_WINDOW);
-  return { visible, below: picks.length - (start + visible.length) };
+  return { visible, below: picks.length - (start + visible.length), start };
+}
+
+/** The pinned last row: the door out of the curated set. */
+function huggingFaceRow(selected: boolean, fit: OnboardingFit): string {
+  const note = fit.rowDetails ? `   ${HUGGING_FACE_ROW_NOTE}` : "";
+  return `${rowPrefix(selected)}${HUGGING_FACE_ROW_LABEL}${note}`;
 }
 
 /** Widest line this step draws, for the block that centres it. */
@@ -57,10 +67,12 @@ export function measureOnboardingLocalPickStep(props: {
 }): number {
   const { visible, below } = windowLocalPicks(props.picks, props.cursor);
   const lines: string[] = props.fit.explainer ? [explainerLine(props.ramGb)] : [];
+  lines.push("Recommended models");
   // Measured as if every row were selected: the marker is the same width
   // as the blank indent, so this only spares the caller a cursor lookup.
   for (const pick of visible) lines.push(pickRow(pick, true, props.fit));
   if (below > 0) lines.push(moreLine(below));
+  lines.push(huggingFaceRow(true, props.fit));
   return widestLine(lines);
 }
 
@@ -69,14 +81,21 @@ export function measureOnboardingLocalPickStep(props: {
  * tab strip, `kv —`, `tools 0ok/0err` and a `status: ready` header over
  * an install with nothing on disk. What a first run needs from that
  * screen is one decision, so this is that decision and nothing else.
+ *
+ * The curated list is titled as a recommendation because that is what it
+ * is; the row under it opens the whole of Hugging Face. That row is
+ * pinned outside the scrolling window, since an operator who scrolled
+ * past it would never learn it was there.
  */
 export function OnboardingLocalPickStep(props: {
   picks: readonly LocalModelPick[];
+  /** Index over the picks plus the trailing Hugging Face row. */
   cursor: number;
   ramGb: number;
   fit: OnboardingFit;
 }): ReactElement {
-  const { visible, below } = windowLocalPicks(props.picks, props.cursor);
+  const onHuggingFace = props.cursor >= props.picks.length;
+  const { visible, below, start } = windowLocalPicks(props.picks, props.cursor);
   return (
     <Box flexDirection="column" flexShrink={0}>
       {props.fit.explainer ? (
@@ -84,8 +103,9 @@ export function OnboardingLocalPickStep(props: {
           <Text color={theme.colors.muted}>{explainerLine(props.ramGb)}</Text>
         </Box>
       ) : null}
-      {visible.map((pick) => {
-        const selected = props.picks[props.cursor]?.id === pick.id;
+      <Text bold>Recommended models</Text>
+      {visible.map((pick, index) => {
+        const selected = !onHuggingFace && start + index === props.cursor;
         return (
           <Text
             key={pick.id}
@@ -101,6 +121,16 @@ export function OnboardingLocalPickStep(props: {
       {below > 0 ? (
         <Text color={theme.colors.muted}>{moreLine(below)}</Text>
       ) : null}
+      <Text
+        color={onHuggingFace ? theme.colors.accent : undefined}
+        bold={onHuggingFace}
+        wrap="truncate"
+      >
+        {`${rowPrefix(onHuggingFace)}${HUGGING_FACE_ROW_LABEL}`}
+        {props.fit.rowDetails ? (
+          <Text color={theme.colors.muted}>{`   ${HUGGING_FACE_ROW_NOTE}`}</Text>
+        ) : null}
+      </Text>
     </Box>
   );
 }

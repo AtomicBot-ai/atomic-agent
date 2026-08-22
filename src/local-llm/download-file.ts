@@ -2,6 +2,8 @@ import * as fs from "node:fs";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
+import { huggingFaceToken } from "./huggingface-api.js";
+
 export type DownloadProgressFn = (
   percent: number,
   transferred: number,
@@ -41,6 +43,11 @@ export async function downloadFile(
     url.includes("github.com") || url.includes("githubusercontent.com");
   if (isGitHub) {
     const token = (process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "").trim();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  } else if (url.includes("huggingface.co")) {
+    // Gated repos answer 401 without this; public ones ignore it, so it
+    // costs nothing to send whenever the operator has a token exported.
+    const token = huggingFaceToken();
     if (token) headers.Authorization = `Bearer ${token}`;
   }
 
