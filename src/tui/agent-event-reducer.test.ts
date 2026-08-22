@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import { reduceTuiState, type TuiAction } from "./agent-event-reducer.js";
+import { providerRow } from "./composer-switch/composer-switch-fixtures.js";
 import {
   canAcceptMessage,
   createInitialTuiState,
@@ -350,6 +351,65 @@ describe("reduceTuiState", () => {
       (m) => m.role === "system" && m.variant === "warn",
     );
     expect(errMsg?.text).toBe("Turn failed [tool]: boom");
+  });
+
+  it("appends the llama hint on transport failure for a custom-id llama-server route", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      {
+        type: "providers_refresh",
+        rows: [
+          // KIND is what makes the route local — the id is deliberately
+          // not `local-llama`.
+          providerRow({
+            id: "my-llama",
+            kind: "llama-server",
+            isActiveText: true,
+            hasApiKey: false,
+            chatModel: null,
+            chatModelOptions: [],
+          }),
+        ],
+      },
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+    ]);
+    const errMsg = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(errMsg?.text).toContain(
+      "llama-server is not reachable at http://127.0.0.1:8080",
+    );
+  });
+
+  it("keeps the llama hint off a cloud route's transport failure", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      {
+        type: "providers_refresh",
+        rows: [providerRow({ id: "openrouter", kind: "openrouter", isActiveText: true })],
+      },
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+    ]);
+    const errMsg = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(errMsg?.text).toBe("Turn failed [transport]: fetch failed");
   });
 
   it("maps loop_completed reason failed to failed outcome", () => {
@@ -737,6 +797,27 @@ describe("turn_gate_blocked", () => {
     expect(last?.variant).toBe("warn");
     expect(last?.text).toContain("qwen-3.5-4b");
     expect(blocked.feed.at(-1)?.line).toContain("blocked:");
+  });
+
+  it("a blocked fresh submit makes no run-history entry — it never ran", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      // A full earlier turn, so the trap has bait: the blocked text
+      // never reaches `state.messages`, and a history entry minted for
+      // the block would carry THIS message instead.
+      { type: "agent_event", event: { type: "user_message", text: "earlier turn" } },
+      { type: "message_submitted" },
+      { type: "agent_event", event: { type: "loop_completed", reason: "finish" } },
+      { type: "message_submitted" },
+      {
+        type: "turn_gate_blocked",
+        text: "local model qwen-3.5-4b is not downloaded (message returned to the editor)",
+      },
+    ]);
+    expect(next.status).toBe("idle");
+    expect(next.lastRunStatus).toBe("blocked: local model not ready");
+    expect(next.runHistory).toHaveLength(1);
+    expect(next.runHistory[0]?.outcome).toBe("completed");
+    expect(next.runHistory[0]?.message).toBe("earlier turn");
   });
 
   it("at drain time (already idle): message only, no phantom run-history entry", () => {

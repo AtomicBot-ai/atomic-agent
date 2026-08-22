@@ -5,7 +5,10 @@ import {
   isModelDownloaded,
 } from "../local-llm/index.js";
 import { resolveFallbackChain } from "../llm/fallback/index.js";
-import { resolveLlmConfig } from "../llm/provider/registry/index.js";
+import {
+  resolveLlmConfig,
+  type ResolvedLlmConfig,
+} from "../llm/provider/registry/index.js";
 import { formatBytes } from "./hooks/use-transfer-rate.js";
 import type { LocalModelsPullState } from "./local-models/local-models-panel-state.js";
 import type { TuiAction } from "./tui-action.js";
@@ -23,7 +26,8 @@ import type { TuiAction } from "./tui-action.js";
  * Scope (deliberately narrow):
  *  - managed mode only — external mode has no "on disk" notion, a dead
  *    external URL is a health problem the transport hint covers;
- *  - active text provider `local-llama` only — cloud turns never gate;
+ *  - a `llama-server`-KIND active text provider only — cloud turns
+ *    never gate;
  *  - with a fallback chain of more than one configured link the gate
  *    only leaves a notice: the chain exists to save exactly this turn,
  *    so blocking it would fight the failover that would have worked;
@@ -49,15 +53,30 @@ export type LocalTurnGateDecision =
   | { kind: "block"; text: string };
 
 /**
+ * KIND-based local detection, mirroring `selectComposerBackend`: any
+ * `llama-server` entry is the local route, because `LlamaServerProvider`
+ * accepts a custom id (`options.id`) — keying on the literal
+ * `local-llama` id would leave a renamed entry ungated. An active id
+ * that resolves to no entry reads as local too, matching the composer's
+ * no-active-row rule (and the no-`llm`-block default, which
+ * `resolveLlmConfig` synthesizes as a `llama-server` entry anyway).
+ */
+export function activeTextProviderIsLlamaServer(
+  llm: ResolvedLlmConfig,
+): boolean {
+  const active = llm.providers.find((p) => p.id === llm.activeTextProvider);
+  return active === undefined || active.kind === "llama-server";
+}
+
+/**
  * Read the live facts from config + disk. Cheap on the happy path: the
  * disk stat runs only for a managed local provider, and the fallback
  * chain is resolved only once the model is already known to be missing.
  */
 export function readLocalTurnGateFacts(): LocalTurnGateFacts {
   const cfg = getConfig();
-  const active = cfg.llm?.activeTextProvider;
-  // No llm block resolves to the default `local-llama` primary.
-  const activeProviderIsLocal = !active || active === "local-llama";
+  const llm = resolveLlmConfig(cfg);
+  const activeProviderIsLocal = activeTextProviderIsLlamaServer(llm);
   const managedMode = cfg.localModels.mode === "managed";
   const inScope = activeProviderIsLocal && managedMode;
   const modelId = cfg.localModels.managed.modelId;
@@ -73,7 +92,7 @@ export function readLocalTurnGateFacts(): LocalTurnGateFacts {
     modelDownloaded,
     fallbackChainLength:
       inScope && !modelDownloaded
-        ? resolveFallbackChain(resolveLlmConfig(cfg)).chain.length
+        ? resolveFallbackChain(llm).chain.length
         : 1,
   };
 }

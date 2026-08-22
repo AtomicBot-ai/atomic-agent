@@ -15,6 +15,7 @@ import {
   beginStreamingToolCall,
   finalizeStreamingToolCall,
   finishRun,
+  finishRunWithoutHistory,
   finishTurn,
   pushRing,
   startNewRun,
@@ -22,6 +23,7 @@ import {
 } from "./reducer-helpers.js";
 import { reduceUiAction } from "./reduce-ui-actions.js";
 import { reduceComposerSwitchAction } from "./composer-switch/composer-switch-reducer.js";
+import { selectComposerBackend } from "./composer-switch/composer-switch-rows.js";
 import { reduceLocalModelsAction } from "./local-models/local-models-reducer.js";
 import { reduceTasksAction } from "./tasks/tasks-reducer.js";
 import { reduceSkillsAction } from "./skills/skills-reducer.js";
@@ -242,14 +244,15 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       // A drained queue message is gated after the previous turn already
       // returned the app to idle — nothing to finish then. The fresh
       // submit path arrives here `running` (from `message_submitted`)
-      // with no turn behind it, so finishRun is what hands the composer
-      // back.
+      // with no turn behind it, so the idle reset is what hands the
+      // composer back — WITHOUT a run-history entry: the blocked text
+      // never reached `state.messages`, so an entry would carry the
+      // previous turn's message, and a refused submit is not a run.
       if (state.status !== "running") return withMessage;
-      return finishRun(withMessage, {
-        outcome: "failed",
-        reason: "local model not ready",
-        lastRunStatus: "blocked: local model not ready",
-      });
+      return finishRunWithoutHistory(
+        withMessage,
+        "blocked: local model not ready",
+      );
     }
     case "quit_requested":
       return { ...state, status: "quitting", aborting: true };
@@ -457,11 +460,12 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         event.category,
         event.error.message,
         {
-          // Same "is local the active text route" fact the LLM panel
-          // reads; rows land at TUI start via the providers refresh.
-          activeProviderIsLocal: state.providersPanel.rows.some(
-            (row) => row.id === "local-llama" && row.isActiveText,
-          ),
+          // The same "is the chat route a llama-server" answer the
+          // composer's backend control renders — KIND-based, so a
+          // llama-server entry under a custom id still earns the hint;
+          // only a `cloud` route must not (the hint names the llama
+          // URL). Rows land at TUI start via the providers refresh.
+          activeProviderIsLocal: selectComposerBackend(state) !== "cloud",
           llamaUrl: state.session.llamaUrl,
         },
       );

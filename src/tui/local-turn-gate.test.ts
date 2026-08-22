@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import type { ResolvedLlmConfig } from "../llm/provider/registry/index.js";
 import type { LocalModelsPullState } from "./local-models/local-models-panel-state.js";
 import {
+  activeTextProviderIsLlamaServer,
   downloadProgressFor,
   evaluateLocalTurnGate,
   reduceChatPull,
@@ -30,6 +32,53 @@ const pull = (
   totalBytes: 4_200_000_000,
   error: null,
   ...over,
+});
+
+const llmConfig = (over: Partial<ResolvedLlmConfig> = {}): ResolvedLlmConfig => ({
+  activeTextProvider: "local-llama",
+  activeEmbeddingProvider: "local-llama-embed",
+  providers: [
+    { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080" },
+  ],
+  toolTransport: "auto",
+  ...over,
+});
+
+describe("activeTextProviderIsLlamaServer — detection is by KIND, not id", () => {
+  it("a llama-server entry under a custom id is still the local route", () => {
+    expect(
+      activeTextProviderIsLlamaServer(
+        llmConfig({
+          activeTextProvider: "my-llama",
+          providers: [
+            { id: "my-llama", kind: "llama-server", url: "http://10.0.0.4:9090" },
+          ],
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("a cloud provider is not, even with a llama entry alongside", () => {
+    expect(
+      activeTextProviderIsLlamaServer(
+        llmConfig({
+          activeTextProvider: "openrouter",
+          providers: [
+            { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080" },
+            { id: "openrouter", kind: "openrouter" },
+          ],
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("an active id resolving to no entry reads as local (composer's no-active-row rule)", () => {
+    expect(
+      activeTextProviderIsLlamaServer(
+        llmConfig({ activeTextProvider: "ghost", providers: [] }),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("evaluateLocalTurnGate — scope (managed local only)", () => {

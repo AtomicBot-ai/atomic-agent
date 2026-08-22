@@ -223,6 +223,28 @@ export function finishRun(
   });
 }
 
+/**
+ * Hand the composer back WITHOUT minting a run-history entry. For a
+ * submit that never became a turn (the pre-turn gate refused it): its
+ * text never reached `state.messages`, so `withRunHistoryEntry` would
+ * snapshot the PREVIOUS turn's user message (or "" on first use) as the
+ * entry's message — a lie in `/history`, which records turns that ran.
+ */
+export function finishRunWithoutHistory(
+  state: TuiState,
+  lastRunStatus: string,
+): TuiState {
+  return {
+    ...state,
+    status: "idle",
+    runStartedAt: null,
+    stepStartedAt: null,
+    aborting: false,
+    lastRunStatus,
+    currentTurnToolSteps: 0,
+  };
+}
+
 function withRunHistoryEntry(
   state: TuiState,
   params: {
@@ -241,14 +263,8 @@ function withRunHistoryEntry(
     finishedAt: Date.now(),
   };
   return {
-    ...state,
-    status: "idle",
-    runStartedAt: null,
-    stepStartedAt: null,
-    aborting: false,
-    lastRunStatus: params.lastRunStatus,
+    ...finishRunWithoutHistory(state, params.lastRunStatus),
     runHistory: pushRing(state.runHistory, entry, state.ringBufferSize),
-    currentTurnToolSteps: 0,
   };
 }
 
