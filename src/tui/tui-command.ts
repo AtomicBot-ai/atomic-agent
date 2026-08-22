@@ -152,7 +152,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
     approvalLevel,
     traceDefault: true,
     handlers: {
-      onAgentEvent: (event) => bus.emitAgentEvent(event),
+      onAgentEvent: (event, sessionId) => bus.emitAgentEvent(event, sessionId),
       onApprovalRequest: (request) => bus.emitApproval(request),
       onSkillRegistryChange: (entries) =>
         bus.emit({ type: "skill_count_changed", count: entries.length }),

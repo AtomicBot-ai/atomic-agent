@@ -290,6 +290,30 @@ export class ApprovalGate {
     return this.resolve({ approvalId, approved: false, reason });
   }
 
+  /**
+   * Deny every request `sessionId` has pending, with `reason` as the
+   * decision reason the blocked tool call reports back to the model.
+   *
+   * For hosts whose approval surface stops watching a session while a
+   * turn keeps running on it — the TUI switching threads mid-turn is the
+   * case in point. An unresolved request would park that turn forever on
+   * `await request()`: nobody is left to answer, and the per-session
+   * FIFO would hold the session busy until process exit. Denying with an
+   * explicit reason is the same shape as the Telegram bridge's auto-deny
+   * timeout: the turn continues, the transcript says why.
+   *
+   * Returns how many requests were denied so the caller can tell the
+   * operator what switching away did.
+   */
+  denyPendingForSession(sessionId: string, reason: string): number {
+    const ids: string[] = [];
+    for (const [approvalId, entry] of this.pending) {
+      if (entry.request.sessionId === sessionId) ids.push(approvalId);
+    }
+    for (const approvalId of ids) this.reject(approvalId, reason);
+    return ids.length;
+  }
+
   pendingCount(): number {
     return this.pending.size;
   }

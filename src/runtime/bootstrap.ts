@@ -196,7 +196,15 @@ import {
 import { getAppVersion } from "../version.js";
 
 export interface RuntimeEventHandlers {
-  onAgentEvent?: (event: AgentLoopEvent) => void;
+  /**
+   * Global event sink, fired for every turn on every session. The
+   * second argument names the session the event belongs to (from the
+   * per-turn `AsyncLocalStorage` frame) so a host rendering a single
+   * session — the TUI — can drop events from turns running in the
+   * background instead of painting them into the wrong transcript. It
+   * is absent for events emitted outside a turn frame.
+   */
+  onAgentEvent?: (event: AgentLoopEvent, sessionId?: string) => void;
   onApprovalRequest?: (request: ApprovalRequest) => void;
   onSkillRegistryChange?: (entries: SkillCatalogEntry[]) => void;
   /**
@@ -715,7 +723,7 @@ export async function createAgentRuntime(
         category: event.category,
       });
     }
-    options.handlers?.onAgentEvent?.(event);
+    options.handlers?.onAgentEvent?.(event, ctx?.sessionId);
   };
 
   // Cross-provider fallover breaker. Owns no timer — every decision is

@@ -6,6 +6,40 @@ import {
 } from "./approval-gate.js";
 
 describe("ApprovalGate", () => {
+  it("denyPendingForSession denies only that session's requests, with the reason", async () => {
+    const emittedIds: string[] = [];
+    const gate = new ApprovalGate({
+      emit: (req) => emittedIds.push(req.approvalId),
+    });
+    const mine = gate.request({
+      sessionId: "s-leaving",
+      tool: "t",
+      category: "shell",
+      reason: "r",
+    });
+    const other = gate.request({
+      sessionId: "s-staying",
+      tool: "t",
+      category: "shell",
+      reason: "r",
+    });
+    const denied = gate.denyPendingForSession("s-leaving", "operator switched away");
+    expect(denied).toBe(1);
+    const decision = await mine;
+    expect(decision.approved).toBe(false);
+    expect(decision.reason).toBe("operator switched away");
+    // The other session's request is untouched and still answerable.
+    expect(gate.pendingCount()).toBe(1);
+    const stayingId = emittedIds[1] ?? "";
+    expect(gate.resolve({ approvalId: stayingId, approved: true })).toBe(true);
+    await expect(other).resolves.toMatchObject({ approved: true });
+  });
+
+  it("denyPendingForSession with nothing pending is a counted no-op", () => {
+    const gate = new ApprovalGate({ emit: () => undefined });
+    expect(gate.denyPendingForSession("s-any", "reason")).toBe(0);
+  });
+
   it("emits a request and resolves with the host decision", async () => {
     let capturedId = "";
     const gate = new ApprovalGate({

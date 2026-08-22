@@ -53,7 +53,10 @@ function stubRuntime(
         if (at >= 0) stored.splice(at, 1);
       },
     },
-    approvals: { clearSessionGrants: () => undefined },
+    approvals: {
+      clearSessionGrants: () => undefined,
+      denyPendingForSession: () => 0,
+    },
     // Deleting checks every origin's turns, not just the TUI's.
     turnController: { isBusy: () => false },
     config: {
@@ -174,6 +177,27 @@ describe("rail session list", () => {
     await new Promise((r) => setTimeout(r, 5));
     orchestrator.deleteSession("s-new-1");
     expect(rail().map((e) => e.sessionId)).not.toContain("s-new-1");
+  });
+});
+
+describe("rail session list — detached turns", () => {
+  it("keeps the detached thread's stand-in when the next thread's first prompt lands", () => {
+    // A single pending-row slot used to be enough because switching was
+    // refused mid-turn. With detach, the old thread's first turn is
+    // still unsaved when the new thread's first prompt arrives — and
+    // evicting its stand-in would make the one session the operator
+    // most needs to find again invisible until its turn finishes.
+    const stored: ReturnType<typeof blank>[] = [];
+    const { orchestrator, rail } = harness(stored);
+    orchestrator.newSession();
+    orchestrator.sendMessage("first thread work");
+    orchestrator.newSession();
+    orchestrator.sendMessage("second thread work");
+    const rows = rail();
+    expect(rows.map((e) => e.preview)).toEqual([
+      "second thread work",
+      "first thread work",
+    ]);
   });
 });
 

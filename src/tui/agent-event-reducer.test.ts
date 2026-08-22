@@ -78,9 +78,42 @@ describe("reduceTuiState", () => {
       reason: "dangerous shell command",
       preview: "rm -rf /tmp/x",
     };
-    const next = reduceTuiState(initial, { type: "approval_requested", request });
+    const next = apply(initial, [
+      // The request freezes the composer only when it was raised by the
+      // session on screen.
+      { type: "session_created", sessionId: "s-1" },
+      { type: "approval_requested", request },
+    ]);
     expect(next.status).toBe("awaiting_approval");
     expect(next.pendingApproval?.approvalId).toBe("a-1");
+  });
+
+  it("shows a background session's approval without freezing the visible status", () => {
+    // A turn the operator switched away from (or a scheduled task's
+    // turn) can still raise an approval; the modal must appear — this
+    // process is the only surface that can answer — but the visible
+    // session's lifecycle stays its own.
+    const initial = createInitialTuiState(fakeSession());
+    const request = {
+      approvalId: "a-bg",
+      sessionId: "s-background",
+      tool: "os.shell.exec",
+      reason: "dangerous shell command",
+    };
+    const next = apply(initial, [
+      { type: "session_created", sessionId: "s-visible" },
+      { type: "approval_requested", request },
+    ]);
+    expect(next.pendingApproval?.approvalId).toBe("a-bg");
+    expect(next.status).toBe("idle");
+    const resolved = reduceTuiState(next, {
+      type: "approval_resolved",
+      approvalId: "a-bg",
+      approved: true,
+    });
+    expect(resolved.pendingApproval).toBeNull();
+    // Resolving it resumes the BACKGROUND turn, not a visible one.
+    expect(resolved.status).toBe("idle");
   });
 
   it("should clear pending approval after resolve and restore running", () => {
@@ -92,6 +125,7 @@ describe("reduceTuiState", () => {
       reason: "fs write",
     };
     const next = apply(initial, [
+      { type: "session_created", sessionId: "s-1" },
       { type: "approval_requested", request },
       { type: "approval_resolved", approvalId: "a-1", approved: true },
     ]);

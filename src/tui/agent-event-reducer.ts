@@ -92,6 +92,18 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         session: { ...state.session, approvalLevel: action.approvalLevel },
       };
     case "agent_event":
+      // Events from a turn running on a *different* session — one the
+      // operator backgrounded by switching away, or a scheduler /
+      // Telegram / HTTP turn — must not paint into the transcript on
+      // screen (or flip `status`, which is what used to freeze the
+      // composer). An untagged event was emitted outside a turn frame
+      // (global notices) and passes through as before.
+      if (
+        action.sessionId !== undefined &&
+        action.sessionId !== state.session.sessionId
+      ) {
+        return state;
+      }
       return reduceAgentEvent(state, action.event);
     case "session_delete_requested":
       return {
@@ -114,7 +126,15 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
     case "approval_requested":
       return {
         ...state,
-        status: "awaiting_approval",
+        // Only a request raised by the visible session parks the UI in
+        // `awaiting_approval`. A background turn's request still shows
+        // the modal (its turn is blocked on the answer and this process
+        // is the only surface that can give one), but the visible
+        // session's own lifecycle must not freeze over it.
+        status:
+          action.request.sessionId === state.session.sessionId
+            ? "awaiting_approval"
+            : state.status,
         pendingApproval: action.request,
         // A redirect re-prompts for the new target; the previous
         // prompt's draft must not leak into it.
@@ -126,7 +146,14 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         ...state,
         pendingApproval: null,
         approvalPathDraft: null,
-        status: "running",
+        // Resolving the visible turn's request resumes that turn:
+        // `running`. Resolving a background turn's request resumes a
+        // turn this transcript is not showing — the visible status
+        // (idle, or a run of its own) is left alone.
+        status:
+          state.pendingApproval.sessionId === state.session.sessionId
+            ? "running"
+            : state.status,
       };
     case "approval_path_edit_opened":
       if (!state.pendingApproval) return state;

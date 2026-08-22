@@ -27,7 +27,17 @@ export type TuiAction =
   | { type: "runtime_info"; line: string }
   /** Append a local system message directly into the chat transcript. */
   | { type: "system_message"; text: string; variant?: "normal" | "warn" }
-  | { type: "agent_event"; event: AgentLoopEvent }
+  | {
+      type: "agent_event";
+      event: AgentLoopEvent;
+      /**
+       * Session the event's turn runs on (absent when the runtime
+       * emitted it outside a turn frame). Events from a session other
+       * than the visible one are dropped by the reducer — they belong
+       * to a background turn's transcript, not the one on screen.
+       */
+      sessionId?: string;
+    }
   | { type: "approval_requested"; request: ApprovalRequest }
   /** The `x` on a rail session row: ask before removing the thread. */
   | { type: "session_delete_requested"; sessionId: string; preview: string }
@@ -180,6 +190,14 @@ export type TuiAction =
       sessionId: string;
       workingDir: string;
       messages: readonly ChatMessage[];
+      /**
+       * True when a turn is already running on the target session — a
+       * turn the operator backgrounded by switching away, or one driven
+       * by another origin (scheduler, Telegram, HTTP). The reducer sets
+       * `status` from it so the composer offers steer/queue instead of
+       * pretending the session is idle. Absent means idle.
+       */
+      running?: boolean;
     }
   /** Header/runtime: user saved a new llama-server base URL (e.g. via /llama). */
   | { type: "llama_url_changed"; url: string }
