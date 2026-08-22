@@ -1,4 +1,5 @@
 import { getConfig } from "../config/index.js";
+import { llamaEndpointUrl } from "./llama-endpoint-url.js";
 import type {
   CompletionRequest,
   CompletionResult,
@@ -172,7 +173,7 @@ export class LlamaServerClient {
   async fetchProps(): Promise<LlamaServerProps> {
     const config = getConfig();
     const base = this.baseUrlOverride ?? config.localModels.url;
-    const url = new URL("/props", base).toString();
+    const url = llamaEndpointUrl(base, "/props");
     const controller = new AbortController();
     const timer = setTimeout(
       () => controller.abort(),
@@ -412,7 +413,7 @@ export class LlamaServerClient {
   ): { url: string; headers: Record<string, string>; body: string } {
     const config = getConfig();
     const base = this.baseUrlOverride ?? config.localModels.url;
-    const url = new URL(config.localModels.completionPath, base).toString();
+    const url = llamaEndpointUrl(base, config.localModels.completionPath);
     const headers = this.buildHeaders(stream);
     const payload: Record<string, unknown> = {
       prompt: request.prompt,

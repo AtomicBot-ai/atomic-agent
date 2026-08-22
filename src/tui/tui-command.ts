@@ -9,7 +9,8 @@ import {
   type WhileBusySubmitMode,
 } from "../config/index.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
-import { createAgentRuntime } from "../runtime/bootstrap.js";
+import { describeLlamaHealthFailure } from "../llm/describe-llama-health-failure.js";
+import { createAgentRuntime, type AgentRuntime } from "../runtime/bootstrap.js";
 import type { LogRecord, LogSink } from "../tracing/structured-logger.js";
 import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
 import { registerSession } from "../local-llm/session-registry.js";
@@ -329,7 +330,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onNewWindowRequested: () => openNewAgentWindow(parsed.workingDir, bus),
         onMemoryDumpRequested: () => orchestrator.dumpProfile(),
         onSkillCatalogRequested: () => orchestrator.dumpSkillCatalog(),
-        onPersistLlamaUrl: (nextUrl) => persistLlamaUrl(nextUrl, bus, orchestrator),
+        onPersistLlamaUrl: (nextUrl) => persistLlamaUrl(nextUrl, bus, orchestrator, runtime),
         onThemePersistRequested: (themeName) => persistThemeChoice(themeName, bus),
         onTasksAutoRefreshStart: () => orchestrator.tasks.startAutoRefresh(),
         onTasksRefreshRequested: () => orchestrator.tasks.refresh(),
@@ -683,56 +684,42 @@ function persistLlamaUrl(
   nextUrl: string,
   bus: ReturnType<typeof makeTuiEventBus>,
   orchestrator: ChatOrchestrator,
+  runtime: AgentRuntime,
 ): void {
+  // Every verdict goes to BOTH channels: `runtime_info` keeps the feed
+  // history, `providers_status` is the LLM panel's own status line — the
+  // only line the operator can actually see while saving from the
+  // External pane. Feed-only reporting is how a refused save looked like
+  // "nothing happened" (stub-verified: the 404/steer verdicts never
+  // rendered anywhere on the panel).
+  const report = (line: string): void => {
+    bus.emit({ type: "runtime_info", line });
+    bus.emit({ type: "providers_status", line });
+  };
   void (async () => {
     try {
       // Immediate feedback: the probe can take up to 8s against a dead
       // host, and a silent gap reads as a freeze (#65).
-      bus.emit({
-        type: "runtime_info",
-        line: `probing ${nextUrl}…`,
-      });
+      report(`probing ${nextUrl}…`);
       const health = await checkLlamaServer({
         url: nextUrl,
         retries: 0,
         backoffMs: 0,
         timeoutMs: 8000,
+        // Catch a --api-key server here, where the operator can act,
+        // instead of on the first completion (llama.cpp exempts /health
+        // from the key, so the plain probe passes).
+        verifyAuth: true,
       });
       if (!health.reachable) {
-        // An OpenAI-compatible runner (KoboldCpp, LM Studio, vLLM) is a
-        // real server, just not one the external llama.cpp route can
-        // drive. Say so and point at the path that works, instead of
-        // letting a false pass switch the route onto it and hang (#65,
-        // #66).
-        if (health.kind === "openai-compat") {
-          bus.emit({
-            type: "runtime_info",
-            line:
-              `${nextUrl} answers like an OpenAI-compatible server, not ` +
-              `llama.cpp. Add it as a cloud provider instead: LLM tab -> ` +
-              `Cloud -> n (add provider) -> openai-compatible, base URL ${nextUrl}.`,
-          });
-          return;
-        }
-        // A 503 with llama.cpp's loading body is the right server at a
-        // wrong moment; telling the operator to reconfigure would be a
-        // lie. Just say to come back once the model is up.
-        if (health.kind === "llama-loading") {
-          bus.emit({
-            type: "runtime_info",
-            line:
-              `${nextUrl} is a llama.cpp server that is still loading its ` +
-              `model. Give it a minute and save the URL again.`,
-          });
-          return;
-        }
-        bus.emit({
-          type: "runtime_info",
-          line: `local-llm /health failed at ${nextUrl}: ${health.error ?? "unknown"}`,
-        });
+        report(describeLlamaHealthFailure(health, nextUrl));
         return;
       }
       persistUserLocalLlmUrl(nextUrl);
+      // Rebuild the registered provider: its base URL was frozen at boot
+      // (health/vision requests would keep hitting the old address until
+      // a restart). The config write above already reset the cache.
+      await runtime.reloadLlmProvider("local-llama");
       bus.emit({ type: "llama_url_changed", url: nextUrl });
       orchestrator.updateLlamaUrl(nextUrl);
       // The URL only takes effect if the chat route points at
@@ -754,13 +741,10 @@ function persistLlamaUrl(
       } else {
         await orchestrator.localModels.stopChatDaemonOnly();
       }
-      bus.emit({
-        type: "runtime_info",
-        line: `local-llm URL saved (${health.latencyMs}ms)`,
-      });
+      report(`local-llm URL saved (${health.latencyMs}ms)`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      bus.emit({ type: "runtime_info", line: `local-llm URL not saved: ${msg}` });
+      report(`local-llm URL not saved: ${msg}`);
     }
   })();
 }

@@ -1,4 +1,5 @@
 import { getConfig } from "../../../config/index.js";
+import { llamaEndpointUrl } from "../../llama-endpoint-url.js";
 import type { ModelProfile } from "../../model-profile.js";
 import type { ProviderCapabilities } from "../llm-provider.js";
 import type { VisionRequest, VisionResult } from "../llm-provider.js";
@@ -94,7 +95,7 @@ export async function describeImageViaLlamaServer(opts: {
   }
 
   const config = getConfig();
-  const url = new URL("/v1/chat/completions", opts.baseUrl).toString();
+  const url = llamaEndpointUrl(opts.baseUrl, "/v1/chat/completions");
 
   const userContent: Array<
     | { type: "image_url"; image_url: { url: string } }

@@ -1,6 +1,7 @@
 import { Box, Text, useApp, useInput } from "ink";
 import { useCallback, useState, type ReactElement } from "react";
 import { checkLlamaServer } from "../../llm/llama-server-health.js";
+import { describeLlamaHealthFailure } from "../../llm/describe-llama-health-failure.js";
 import {
   normalizeLocalLlmBaseUrl,
   persistUserLocalModelsConfig,
@@ -143,9 +144,13 @@ export function LocalModelsConfigWizard({
           retries: 0,
           backoffMs: 0,
           timeoutMs: 5000,
+          // A --api-key server passes /health (key-exempt) and then
+          // rejects every completion; catch it while the operator is
+          // still on this screen.
+          verifyAuth: true,
         });
         if (!health.reachable) {
-          setHint(health.error ?? "health check failed");
+          setHint(describeLlamaHealthFailure(health, base));
           return;
         }
         setChatUrlLine(base);
@@ -179,9 +184,10 @@ export function LocalModelsConfigWizard({
           retries: 0,
           backoffMs: 0,
           timeoutMs: 5000,
+          verifyAuth: true,
         });
         if (!health.reachable) {
-          setHint(health.error ?? "health check failed");
+          setHint(describeLlamaHealthFailure(health, embeddingUrl));
           return;
         }
         persistUserRemoteLlmUrls({ chatUrl, embeddingUrl });
