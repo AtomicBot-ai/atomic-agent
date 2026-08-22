@@ -91,6 +91,14 @@ describe("computeStarField", () => {
   });
 
   it("keeps out of every span the mark claims", () => {
+    // Seed 1, not the default: verified by sweeping seeds against a
+    // mutant that honours only the first span per row — under seed 1
+    // that mutant puts a star inside the second row-9 span below, so
+    // this test actually fails on it. Under the default seed the sky
+    // happened to leave those eight cells empty and the multi-span
+    // assertion was vacuously green.
+    const seed = 1;
+    const secondRowNineSpan: ClearSpan = { row: 9, from: 2, to: 9 };
     const spans: ClearSpan[] = [
       { row: 8, from: 28, to: 66 },
       { row: 9, from: 28, to: 66 },
@@ -99,9 +107,22 @@ describe("computeStarField", () => {
       { row: 19, from: 90, to: 200 },
       // A second span on a row already claimed above, so the assertion
       // below is exercised against more than one span per row.
-      { row: 9, from: 2, to: 9 },
+      secondRowNineSpan,
     ];
-    for (const star of computeStarField({ ...CANVAS, clearSpans: spans })) {
+    // The fixture proves it still bites: with only the second row-9
+    // span withheld, the same seed puts a star inside its range. If a
+    // regenerated field ever stops doing so, this fails loudly instead
+    // of letting the main loop go vacuous again.
+    const withheld = spans.filter((span) => span !== secondRowNineSpan);
+    expect(
+      computeStarField({ ...CANVAS, seed, clearSpans: withheld }).some(
+        (star) =>
+          star.row === secondRowNineSpan.row &&
+          star.column >= secondRowNineSpan.from &&
+          star.column <= secondRowNineSpan.to,
+      ),
+    ).toBe(true);
+    for (const star of computeStarField({ ...CANVAS, seed, clearSpans: spans })) {
       // Every span on the row, not just the first: the option is an
       // arbitrary list, and a second span on one row must also hold.
       for (const span of spans.filter((candidate) => candidate.row === star.row)) {
