@@ -52,17 +52,55 @@ describe("handleOnboardingKey", () => {
     });
   });
 
-  it("claims every key on the splash, Esc included", () => {
-    const intro = base({ step: "intro" });
-    expect(handleOnboardingKey("x", NO_KEY, intro)).toEqual({
-      handled: true,
-      actions: [],
-      intent: { kind: "intro_key" },
+  /**
+   * The whole inventory of what a terminal can send, as Ink reports it
+   * after `parse-keypress.ts`. Every one of them has to dismiss the
+   * splash, because the splash says "any key" and means it.
+   */
+  const INTRO_INVENTORY: readonly { name: string; input: string; key: Partial<Key> }[] = [
+    { name: "a letter", input: "x", key: {} },
+    { name: "a digit", input: "7", key: {} },
+    { name: "space", input: " ", key: {} },
+    { name: "enter", input: "", key: { return: true } },
+    { name: "escape", input: "", key: { escape: true } },
+    { name: "tab", input: "", key: { tab: true } },
+    { name: "shift+tab", input: "", key: { tab: true, shift: true } },
+    { name: "backspace", input: "", key: { backspace: true } },
+    { name: "delete", input: "", key: { delete: true } },
+    { name: "up", input: "", key: { upArrow: true } },
+    { name: "down", input: "", key: { downArrow: true } },
+    { name: "left", input: "", key: { leftArrow: true } },
+    { name: "right", input: "", key: { rightArrow: true } },
+    { name: "home", input: "", key: { home: true } },
+    { name: "end", input: "", key: { end: true } },
+    { name: "page up", input: "", key: { pageUp: true } },
+    { name: "page down", input: "", key: { pageDown: true } },
+    // F1–F12 and Insert have no field on Ink's `Key` and their input is
+    // blanked by `nonAlphanumericKeys`, so this all-empty shape is what
+    // the handler actually receives for them.
+    { name: "a function key", input: "", key: {} },
+    { name: "alt+f", input: "f", key: { meta: true } },
+    { name: "a ctrl chord that is not ctrl+c", input: "d", key: { ctrl: true } },
+  ];
+
+  for (const testCase of INTRO_INVENTORY) {
+    it(`dismisses the splash on ${testCase.name}`, () => {
+      const result = handleOnboardingKey(
+        testCase.input,
+        key(testCase.key),
+        base({ step: "intro" }),
+      );
+      expect(result).toEqual({
+        handled: true,
+        actions: [],
+        intent: { kind: "intro_key" },
+      });
     });
-    expect(handleOnboardingKey("", key({ escape: true }), intro)).toEqual({
-      handled: true,
-      actions: [],
-      intent: { kind: "intro_key" },
+  }
+
+  it("does not claim ctrl+c on the splash either", () => {
+    expect(handleOnboardingKey("c", key({ ctrl: true }), base({ step: "intro" }))).toEqual({
+      handled: false,
     });
   });
 

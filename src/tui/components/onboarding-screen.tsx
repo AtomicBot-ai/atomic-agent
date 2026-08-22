@@ -4,7 +4,6 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
   type ReactElement,
 } from "react";
 import { getConfig } from "../../config/index.js";
@@ -14,6 +13,7 @@ import {
   isLocalBackendConfigured,
 } from "../local-backend-readiness.js";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
+import { ROOT_PADDING_LEFT } from "../layout.js";
 import {
   buildLocalModelPicks,
   hostRamGb,
@@ -24,6 +24,7 @@ import {
   ONBOARDING_SIZE_ADVICE,
 } from "../onboarding/onboarding-fit.js";
 import { handleOnboardingKey } from "../onboarding/onboarding-key-bindings.js";
+import { useIntroInput } from "../onboarding/use-intro-input.js";
 import { decideSecondBackendOffer } from "../onboarding/propose-second-backend.js";
 import type { OnboardingOutcome, OnboardingUiState } from "../onboarding/onboarding-state.js";
 import {
@@ -88,6 +89,14 @@ export function OnboardingScreen(props: {
   onboarding: OnboardingUiState;
   dispatch(action: TuiAction): void;
   callbacks: OnboardingScreenCallbacks;
+  /**
+   * Whether the app-level Ctrl+C quit chord is armed. The flow draws its
+   * own footer instead of the chat hint strip, so it must make the same
+   * "press again to quit" promise the strip makes — without it the first
+   * press looks like it did nothing and the second lands after the
+   * 1.5s window has disarmed it, which reads as "Ctrl+C is broken".
+   */
+  ctrlCArmed?: boolean;
 }): ReactElement {
   const { onboarding, dispatch, callbacks } = props;
   const size = useTerminalSize();
@@ -100,7 +109,17 @@ export function OnboardingScreen(props: {
     [onboarding.step],
   );
   const settling = useRef(false);
-  const [introSkipped, setIntroSkipped] = useState(false);
+
+  const dismissIntro = useCallback(() => {
+    // Recorded as it is dismissed, not at the end of the flow: an
+    // operator who quits at the backend choice has still seen the
+    // splash, and a later release may want to know that.
+    persistOnboardingState({ introSeenAt: new Date().toISOString() });
+    dispatch({ type: "onboarding_step_set", step: "choose" });
+  }, [dispatch]);
+  // The splash answers to keys, clicks, the wheel and pastes alike, so
+  // all four live in one hook rather than in this screen's key handler.
+  const intro = useIntroInput({ onboarding, onDismiss: dismissIntro });
 
   const finish = useCallback(
     (outcome: OnboardingOutcome) => {
@@ -138,25 +157,10 @@ export function OnboardingScreen(props: {
       for (const action of result.actions) dispatch(action);
       const intent = result.intent;
       if (!intent) return;
-      if (intent.kind === "intro_key") {
-        // First key finishes the reveal, second moves on: a splash that
-        // cannot be hurried is a wait, and one that vanishes on the key
-        // that was meant to hurry it is a screen nobody ever reads.
-        if (!introSkipped) {
-          setIntroSkipped(true);
-          return;
-        }
-        // Recorded as it is dismissed, not at the end of the flow: an
-        // operator who quits at the backend choice has still seen the
-        // splash, and a later release may want to know that.
-        persistOnboardingState({ introSeenAt: new Date().toISOString() });
-        dispatch({ type: "onboarding_step_set", step: "choose" });
-        return;
-      }
       if (intent.kind === "skip") finish("skipped");
-      else pick(intent.choice);
+      else if (intent.kind === "pick") pick(intent.choice);
     },
-    { isActive: onboarding.step === "choose" || onboarding.step === "intro" },
+    { isActive: onboarding.step === "choose" },
   );
 
   const picks = useMemo(
@@ -370,7 +374,17 @@ export function OnboardingScreen(props: {
   }, [callbacks, dispatch, onboarding.outcome, onboarding.step]);
 
   return (
-    <Box flexDirection="column" flexGrow={1} paddingTop={1}>
+    // The root gutter is padding on THIS box, not on the app frame the
+    // screen mounts into: padding sits inside the border box, so the
+    // splash's mouse target measures the full terminal width and a
+    // click in the two inset columns counts like any other.
+    <Box
+      flexDirection="column"
+      flexGrow={1}
+      paddingTop={1}
+      paddingLeft={ROOT_PADDING_LEFT}
+      ref={intro.ref}
+    >
       {onboarding.step === "intro" ? null : (
         <OnboardingHeader subtitle={SUBTITLES[onboarding.step]} mark={fit.mark} />
       )}
@@ -380,7 +394,7 @@ export function OnboardingScreen(props: {
             columns={Math.max(20, size.columns - 4)}
             rows={size.rows}
             fit={fit}
-            skipAnimation={introSkipped}
+            skipAnimation={intro.skipAnimation}
           />
         ) : null}
         {onboarding.step === "choose" ? (
@@ -455,7 +469,7 @@ export function OnboardingScreen(props: {
       <Box flexGrow={1} />
       <Box flexShrink={0}>
         <Text color={theme.colors.muted} wrap="truncate">
-          {footerFor(onboarding)}
+          {footerFor(onboarding, props.ctrlCArmed ?? false)}
           {fit.sizeAdvice ? `   ·   ${ONBOARDING_SIZE_ADVICE}` : ""}
         </Text>
       </Box>
@@ -470,27 +484,30 @@ function configuredLabel(outcome: OnboardingOutcome | null): string {
   return "Backend ready";
 }
 
-function footerFor(onboarding: OnboardingUiState): string {
+function footerFor(onboarding: OnboardingUiState, ctrlCArmed: boolean): string {
+  // Same flip the chat hint strip's ctrl+c chip makes while armed (see
+  // hotkey-hint.tsx) — the flow replaces that strip, not its semantics.
+  const quit = ctrlCArmed ? "ctrl+c press again to quit" : "ctrl+c quit";
   switch (onboarding.step) {
     case "choose":
-      return "↑/↓ move   enter select   1–3 jump   esc skip   ctrl+c quit";
+      return `↑/↓ move   enter select   1–3 jump   esc skip   ${quit}`;
     case "cloud":
-      return "↑/↓ move   enter select   esc back   ctrl+c quit";
+      return `↑/↓ move   enter select   esc back   ${quit}`;
     case "custom_chat_url":
-      return "enter test & continue   esc back   ctrl+c quit";
+      return `enter test & continue   esc back   ${quit}`;
     case "custom_embedding_url":
-      return "enter test & save   empty enter skips embeddings   esc back   ctrl+c quit";
+      return `enter test & save   empty enter skips embeddings   esc back   ${quit}`;
     case "local_pick":
-      return "↑/↓ move   enter download   esc back   ctrl+c quit";
+      return `↑/↓ move   enter download   esc back   ${quit}`;
     case "local_download":
-      return "c set up cloud meanwhile   ctrl+c quit";
+      return `c set up cloud meanwhile   ${quit}`;
     case "propose_second":
-      return "↑/↓ move   enter select   esc skip   ctrl+c quit";
+      return `↑/↓ move   enter select   esc skip   ${quit}`;
     case "wait_or_jump":
-      return "↑/↓ move   enter select   ctrl+c quit";
+      return `↑/↓ move   enter select   ${quit}`;
     case "finished":
       return "";
     case "intro":
-      return "ctrl+c quit";
+      return quit;
   }
 }

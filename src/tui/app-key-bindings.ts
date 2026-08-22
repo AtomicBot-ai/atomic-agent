@@ -204,6 +204,11 @@ export function handleAppKey(
   // keystroke is never acted on twice — except Ctrl+C, which must quit
   // from setup exactly as it quits from anywhere else.
   if (state.onboarding && !(key.ctrl && input === "c")) {
+    // Any other key breaks an armed quit chord here too — the swallow
+    // below never reaches the disarm that chat keys pass through, and
+    // ctrl+c, x, ctrl+c must not quit during setup when it would not
+    // have quit from chat.
+    setCtrlCArmed(false);
     return true;
   }
   if (state.sessionDelete) {

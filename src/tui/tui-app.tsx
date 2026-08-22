@@ -1224,9 +1224,13 @@ export function TuiApp({
         callbacks={callbacks}
         getState={getState}
       >
+        {/*
+          No paddingLeft here, unlike the chat frame below: the flow owns
+          the gutter itself (see the screen's root box), so its splash
+          click target spans the full terminal width, inset included.
+        */}
         <Box
           flexDirection="column"
-          paddingLeft={ROOT_PADDING_COLUMNS}
           ref={contentMouseRef}
           {...(rootHeight ? { height: rootHeight } : {})}
         >
@@ -1235,6 +1239,7 @@ export function TuiApp({
             onboarding={state.onboarding}
             dispatch={dispatch}
             callbacks={callbacks}
+            ctrlCArmed={ctrlCArmed}
           />
         </Box>
       </MouseProvider>
