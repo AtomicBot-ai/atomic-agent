@@ -160,6 +160,18 @@ re-runs onboarding where an item needs it.
 - [ ] HF reference screen has a `[ clear ]` control below the input (click or ctrl+l)
       that empties the field
 
+### R3.1b · Skip the download
+
+- [ ] The download screen shows "press s — skip, start using the agent now" below the
+      cloud offer (and on the failed variant, with honest copy — no "keeps running" claim)
+- [ ] `s` or clicking the row lands on the home screen with the download chip in the
+      top bar; the pull continues
+- [ ] Skipping does NOT trigger the "set up the other backend?" screen on the way out,
+      and does not suppress it for future runs (completedAt stamped; nothing else)
+- [ ] Known limit: the "keeps running" promise is session-scoped — quitting the app
+      mid-download does not resume the pull on relaunch (the turn gate explains the
+      state if you chat before re-downloading)
+
 ### R3.2 · Centred download screen + ambient atoms
 
 - [ ] The download step's text block (headline, bars, offer) is centred like every
