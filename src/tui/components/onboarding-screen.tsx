@@ -129,6 +129,8 @@ export function OnboardingScreen(props: {
     callbacks,
     pickRows,
     wizardState,
+    pull: props.state.localModelsPanel.pull,
+    pullError: props.state.localModelsPanel.errorLine,
     finish,
   });
   const { probeAndAdvance, saveEmbeddingUrl } = useOnboardingUrlActions({
@@ -197,6 +199,7 @@ export function OnboardingScreen(props: {
     modelLabel: describeDownloadingModel(onboarding.localModelId),
     offerCloudMeanwhile: !cloudAlreadyConfigured,
     pull: props.state.localModelsPanel.pull,
+    pullError: props.state.localModelsPanel.errorLine,
     cloudLabel: CLOUD_READY_LABEL,
     hfRepo: onboarding.hfRepo,
     hfError: onboarding.step === "local_hf_ref" ? onboarding.error : null,

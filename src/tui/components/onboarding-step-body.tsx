@@ -16,7 +16,11 @@ import { OnboardingIntroStep } from "./onboarding-intro-step.js";
 import { OnboardingLocalPickStep } from "./onboarding-local-pick-step.js";
 import { OnboardingProposeStep } from "./onboarding-propose-step.js";
 import { OnboardingUrlStep } from "./onboarding-url-step.js";
-import { OnboardingWaitOrJumpStep } from "./onboarding-wait-or-jump-step.js";
+import {
+  OnboardingWaitOrJumpStep,
+  waitOrJumpPullStatus,
+  waitOrJumpRowCount,
+} from "./onboarding-wait-or-jump-step.js";
 import { ProvidersWizard } from "./providers-wizard.js";
 
 /**
@@ -114,8 +118,14 @@ export function OnboardingStepBody(props: {
         {onboarding.step === "wait_or_jump" ? (
           <OnboardingWaitOrJumpStep
             pull={props.pull}
+            pullError={props.pullError}
             cloudLabel={props.cloudLabel}
-            cursor={onboarding.cursor % 2}
+            modelLabel={describeDownloadingModel(onboarding.localModelId)}
+            cursor={
+              onboarding.cursor %
+              waitOrJumpRowCount(waitOrJumpPullStatus(props.pull, props.pullError))
+            }
+            fit={props.fit}
           />
         ) : null}
         {onboarding.step === "local_download" ? (

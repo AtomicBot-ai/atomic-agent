@@ -60,7 +60,7 @@ export function onboardingFooterFor(
     case "propose_second":
       return `↑/↓ move   enter select   esc skip   ${quit}`;
     case "wait_or_jump":
-      return `↑/↓ move   enter select   ${quit}`;
+      return `↑/↓ move   enter start or add a provider   ${quit}`;
     case "finished":
       return "";
     case "intro":

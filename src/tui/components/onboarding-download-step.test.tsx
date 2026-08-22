@@ -89,7 +89,15 @@ describe("OnboardingDownloadStep", () => {
     // The state a real failure leaves behind: `local_models_pull_failed`
     // nulls the pull and parks the message on the panel's error line.
     const view = mount(step({ pull: null, pullError: "connection reset" }));
-    expect(strip(view.lastFrame() ?? "")).toContain("connection reset");
+    const frame = strip(view.lastFrame() ?? "");
+    expect(frame).toContain("connection reset");
+    expect(frame).toContain("download failed");
+    // No claim of a download that is not running.
+    expect(frame).not.toContain("starting");
+    expect(frame).not.toContain("keeps running");
+    expect(frame).not.toContain("░");
+    // The cloud offer survives the failure — it is the working way out.
+    expect(frame).toContain("press c");
   });
 
   it("estimates a rate once a second sample arrives", async () => {

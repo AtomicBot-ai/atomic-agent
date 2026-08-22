@@ -2,7 +2,7 @@ import { reduceLocalModelsAction } from "../local-models/local-models-reducer.js
 import { reduceProvidersPanel } from "../providers/providers-reducer.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
-import { moveOnboardingCursor } from "./onboarding-state.js";
+import { moveOnboardingCursor, type OnboardingCloudReturn } from "./onboarding-state.js";
 
 /**
  * Folds the first-run actions. Returns `null` when the action is not
@@ -108,12 +108,16 @@ export function reduceOnboardingAction(
     }
     case "onboarding_cloud_meanwhile_opened": {
       if (!state.onboarding) return state;
+      // Both mid-download screens open the wizard with this action, and
+      // whichever asked is the one to come back to.
+      const from: OnboardingCloudReturn =
+        state.onboarding.step === "wait_or_jump" ? "wait_or_jump" : "local_download";
       return {
         ...state,
         onboarding: {
           ...state.onboarding,
           step: "cloud",
-          resumeAfterCloud: true,
+          resumeAfterCloud: from,
           cursor: 0,
           error: null,
         },
@@ -188,17 +192,30 @@ export function reduceOnboardingAction(
       const next = reduceProvidersPanel(state, action) ?? state;
       // Came from a running download: the operator now has a working
       // cloud model *and* an unfinished local one, which is a question
-      // — wait, or start using the agent — not a conclusion.
-      const stillPulling = next.localModelsPanel.pull !== null;
+      // — wait, or start using the agent — not a conclusion. A pull
+      // that *failed* while the wizard was up is the same question plus
+      // a retry, so it lands on the same screen rather than ending the
+      // flow with the failure unsaid; only a pull that landed cleanly
+      // leaves nothing to come back for. (A failed pull nulls itself
+      // and reports through the panel's `errorLine`.)
+      const pullFailed =
+        next.localModelsPanel.pull === null &&
+        next.localModelsPanel.errorLine !== null;
+      const stillOpen = next.localModelsPanel.pull !== null || pullFailed;
       const step =
-        state.onboarding.resumeAfterCloud && stillPulling ? "wait_or_jump" : "finished";
+        state.onboarding.resumeAfterCloud !== null && stillOpen
+          ? "wait_or_jump"
+          : "finished";
       return {
         ...next,
         onboarding: {
           ...state.onboarding,
           step,
           outcome: "cloud",
-          resumeAfterCloud: false,
+          resumeAfterCloud: null,
+          // A second provider added from that screen lands on it again,
+          // so the row it left from must not still be selected.
+          cursor: 0,
         },
       };
     }
@@ -206,14 +223,34 @@ export function reduceOnboardingAction(
       if (state.onboarding?.step !== "cloud") return null;
       const next = reduceProvidersPanel(state, action) ?? state;
       // Backing out of a wizard opened mid-download returns to the
-      // download, not to a backend choice that has already been made.
-      const step = state.onboarding.resumeAfterCloud ? "local_download" : "choose";
+      // screen that opened it, not to a backend choice already made —
+      // unless the pull landed cleanly while the wizard was up. The
+      // wait-or-jump screen reports a finished or failed pull honestly,
+      // so it can always be returned to; the download step cannot show
+      // a download that is over, and a clean landing there is exactly
+      // what `local_models_pull_finished` would have concluded had the
+      // wizard not been covering the step: the flow is done.
+      const resume = state.onboarding.resumeAfterCloud;
+      const pullLandedCleanly =
+        next.localModelsPanel.pull === null &&
+        next.localModelsPanel.errorLine === null;
+      const step =
+        resume === null
+          ? "choose"
+          : resume === "local_download" && pullLandedCleanly
+            ? "finished"
+            : resume;
       return {
         ...next,
         onboarding: {
           ...state.onboarding,
           step,
-          resumeAfterCloud: false,
+          outcome:
+            step === "finished"
+              ? (state.onboarding.outcome ?? "local")
+              : state.onboarding.outcome,
+          resumeAfterCloud: null,
+          cursor: 0,
           error: null,
           busy: false,
         },

@@ -31,30 +31,67 @@ const STATE_DIR_ENV = "ATOMIC_AGENT_STATE_DIR";
 const strip = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, "");
 const ESCAPE_KEY = "\u001b";
 
+/** A pull in flight, so the wait-or-jump step has a bar to draw. */
+const PULL = {
+  kind: "chat",
+  modelId: "gemma-4-e4b",
+  label: "Gemma 4 E4B",
+  percent: 61,
+  transferredBytes: 2_600_000_000,
+  totalBytes: 4_220_000_000,
+  error: null,
+} as const;
+
 type Step =
   | "intro"
   | "choose"
   | "local_pick"
   | "custom_chat_url"
-  | "propose_second";
+  | "propose_second"
+  | "wait_or_jump";
+
+interface FlowOptions {
+  ctrlCArmed?: boolean;
+  cursor?: number;
+  /** The wait-or-jump screens read the pull off the panel state. */
+  panel?: { pull?: typeof PULL | null; errorLine?: string | null };
+}
 
 function flowElement(
   step: Step,
   actions: TuiAction[],
-  options: { ctrlCArmed?: boolean } = {},
+  options: FlowOptions = {},
+  pullRequests: string[] = [],
 ) {
   const onboarding = {
     ...createOnboardingState("http://127.0.0.1:8080"),
     step,
     offer: "local" as const,
+    cursor: options.cursor ?? 0,
+    localModelId: step === "wait_or_jump" ? "gemma-4-e4b" : null,
   };
-  const state = { ...createInitialTuiState(fakeSession(), 50), onboarding };
+  const base = createInitialTuiState(fakeSession(), 50);
+  const panel = options.panel;
+  const state = {
+    ...base,
+    localModelsPanel:
+      panel === undefined
+        ? base.localModelsPanel
+        : {
+            ...base.localModelsPanel,
+            pull: panel.pull === undefined ? PULL : panel.pull,
+            errorLine: panel.errorLine ?? null,
+          },
+    onboarding,
+  };
   return (
     <OnboardingScreen
       state={state}
       onboarding={onboarding}
       dispatch={(action) => actions.push(action)}
-      callbacks={{}}
+      callbacks={{
+        onLocalModelsPullRequested: (modelId) => pullRequests.push(modelId),
+      }}
       {...(options.ctrlCArmed === undefined
         ? {}
         : { ctrlCArmed: options.ctrlCArmed })}
@@ -62,13 +99,11 @@ function flowElement(
   );
 }
 
-function renderFlow(
-  step: Step = "choose",
-  options: { ctrlCArmed?: boolean } = {},
-) {
+function renderFlow(step: Step = "choose", options: FlowOptions = {}) {
   const actions: TuiAction[] = [];
-  const view = render(flowElement(step, actions, options));
-  return { view, actions };
+  const pullRequests: string[] = [];
+  const view = render(flowElement(step, actions, options, pullRequests));
+  return { view, actions, pullRequests };
 }
 
 /** The same flow in a terminal whose stdout reports both dimensions. */
@@ -340,6 +375,82 @@ describe("OnboardingScreen", () => {
     expect(frame).toContain("API key");
     expect(frame).not.toContain("/ search");
     expect(frame).toContain("ctrl+c quit");
+  });
+
+  describe("the almost-there screen", () => {
+    it("draws the bar it promises and drops the row that only waits", () => {
+      const { view } = renderFlow("wait_or_jump", { panel: {} });
+      const frame = strip(view.lastFrame() ?? "");
+      expect(frame).toContain("almost there");
+      expect(frame).toContain("Still downloading gemma-4-e4b");
+      expect(frame).toContain("61%");
+      expect(frame).toContain("2.6 GB / 4.2 GB");
+      expect(frame).toContain("\u2588");
+      expect(frame).toContain("Start using the agent now");
+      expect(frame).toContain("Add another cloud provider");
+      expect(frame).not.toContain("Wait here");
+      const last = frame.split("\n").filter((line) => line.trim().length > 0).at(-1) ?? "";
+      expect(last).toContain("start or add a provider");
+    });
+
+    it("leaves for the agent on the first row", async () => {
+      const { view, actions } = renderFlow("wait_or_jump", { panel: {} });
+      view.stdin.write("\r");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(actions).toContainEqual({ type: "onboarding_finished", outcome: "cloud" });
+    });
+
+    it("opens the providers wizard again on the second row", async () => {
+      const { view, actions } = renderFlow("wait_or_jump", { cursor: 1, panel: {} });
+      view.stdin.write("\r");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(actions.map((action) => action.type)).toEqual([
+        "providers_wizard_opened",
+        "onboarding_cloud_meanwhile_opened",
+      ]);
+    });
+
+    it("moves between the two rows", async () => {
+      const { view, actions } = renderFlow("wait_or_jump", { panel: {} });
+      view.stdin.write("j");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(actions).toContainEqual({
+        type: "onboarding_cursor_moved",
+        delta: 1,
+        length: 2,
+      });
+    });
+
+    it("says the local model landed once the pull is gone without an error", () => {
+      const { view } = renderFlow("wait_or_jump", { panel: { pull: null } });
+      const frame = strip(view.lastFrame() ?? "");
+      expect(frame).toContain("local model is ready");
+      expect(frame).not.toContain("Still downloading");
+      expect(frame).not.toContain("starting");
+      expect(frame).not.toContain("waiting");
+    });
+
+    it("offers a third row after a failed pull, and enter on it re-runs the pull", async () => {
+      const { view, actions, pullRequests } = renderFlow("wait_or_jump", {
+        cursor: 2,
+        panel: { pull: null, errorLine: "connection reset" },
+      });
+      const frame = strip(view.lastFrame() ?? "");
+      expect(frame).toContain("download failed");
+      expect(frame).toContain("connection reset");
+      expect(frame).toContain("Retry the download");
+      view.stdin.write("j");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      // Three rows now, and the keyboard knows it.
+      expect(actions).toContainEqual({
+        type: "onboarding_cursor_moved",
+        delta: 1,
+        length: 3,
+      });
+      view.stdin.write("\r");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(pullRequests).toEqual(["gemma-4-e4b"]);
+    });
   });
 
   it("moves the cursor on a keypress", async () => {

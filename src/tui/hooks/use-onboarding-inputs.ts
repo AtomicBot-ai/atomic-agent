@@ -1,6 +1,11 @@
 import { useInput } from "ink";
 import { useCallback } from "react";
 import type { OnboardingScreenCallbacks } from "../components/onboarding-screen.js";
+import {
+  waitOrJumpPullStatus,
+  waitOrJumpRowCount,
+} from "../components/onboarding-wait-or-jump-step.js";
+import type { LocalModelsPullState } from "../local-models/local-models-panel-state.js";
 import type { LocalPickRow } from "../onboarding/local-model-picks.js";
 import { handleOnboardingKey } from "../onboarding/onboarding-key-bindings.js";
 import type {
@@ -33,9 +38,19 @@ export function useOnboardingInputs(args: {
   /** The curated picks plus the trailing Hugging Face row. */
   pickRows: readonly LocalPickRow[];
   wizardState: ProvidersWizardState | null;
+  /** The live pull and its error line, which size the wait/jump rows. */
+  pull: LocalModelsPullState | null;
+  pullError: string | null;
   finish(outcome: OnboardingOutcome): void;
 }): void {
   const { onboarding, dispatch, callbacks, pickRows, wizardState, finish } = args;
+
+  // The screen's claim about the pull, and with it the number of rows:
+  // a failed pull adds "Retry the download". Derived here as well as in
+  // the step component so the keyboard and the frame cannot disagree.
+  const waitOrJumpRows = waitOrJumpRowCount(
+    waitOrJumpPullStatus(args.pull, args.pullError),
+  );
 
   const pick = useCallback(
     (choice: "local" | "cloud" | "custom") => {
@@ -120,13 +135,38 @@ export function useOnboardingInputs(args: {
         dispatch({
           type: "onboarding_cursor_moved",
           delta: key.upArrow || input === "k" ? -1 : 1,
-          length: 2,
+          length: waitOrJumpRows,
         });
         return;
       }
       if (key.return) {
-        if (onboarding.cursor % 2 === 0) finish(onboarding.outcome ?? "cloud");
-        else dispatch({ type: "onboarding_step_set", step: "local_download" });
+        const row = onboarding.cursor % waitOrJumpRows;
+        if (row === 0) {
+          finish(onboarding.outcome ?? "cloud");
+          return;
+        }
+        if (row === 1) {
+          // The same wizard the cloud step runs, opened a second time;
+          // the reducer sends its result back to this screen because
+          // this is the step the action was dispatched from.
+          dispatch({
+            type: "providers_wizard_opened",
+            wizard: createProvidersWizardState("add"),
+          });
+          dispatch({ type: "onboarding_cloud_meanwhile_opened" });
+          return;
+        }
+        // The retry row, shown only for a failed pull: run the same
+        // pull again through the orchestrator that owns it. The
+        // resulting pull_started event clears the error and flips this
+        // screen back to its running state.
+        if (onboarding.localModelId) {
+          // Stored by `onboarding_local_model_picked` from a catalog
+          // pick, so the id round-trips through state as a string.
+          callbacks.onLocalModelsPullRequested?.(
+            onboarding.localModelId as LocalModelId,
+          );
+        }
       }
     },
     { isActive: onboarding.step === "wait_or_jump" },

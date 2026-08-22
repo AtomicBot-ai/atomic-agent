@@ -52,6 +52,8 @@ export interface OnboardingBlockInput {
   offerCloudMeanwhile: boolean;
   pull: LocalModelsPullState | null;
   cloudLabel: string;
+  /** The pull's failure, from the panel's `errorLine`. */
+  pullError?: string | null;
   /** The resolved Hugging Face repo, while the flow is on its file list. */
   hfRepo: OnboardingHuggingFaceRepo | null;
   /** The reference screen's error, which widens its block when long. */
@@ -130,7 +132,10 @@ function measureStepBody(input: MeasureInput): number {
     case "wait_or_jump":
       return measureOnboardingWaitOrJumpStep({
         pull: input.pull,
+        pullError: input.pullError ?? null,
         cloudLabel: input.cloudLabel,
+        modelLabel: input.modelLabel,
+        fit: input.fit,
       });
     // The flow is closing down and draws nothing but its own footer.
     case "finished":
