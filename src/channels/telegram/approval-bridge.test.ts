@@ -92,7 +92,7 @@ function req(approvalId = "abc"): ApprovalRequest {
 
 function callback(
   approvalId: string,
-  kind: "y" | "n",
+  kind: "y" | "n" | "s" | "a",
   fromId: number = 42,
 ): InboundCallbackUpdate {
   return {
@@ -104,9 +104,38 @@ function callback(
 }
 
 describe("ApprovalBridge.dispatch", () => {
-  it("sends a 2-button inline keyboard with the right callback_data", async () => {
+  it("sends inline keyboard with grant buttons when applicable", async () => {
     const h = makeHarness();
-    await h.bridge.dispatch(req("abc"), 7);
+    const r = req("abc");
+    r.commandShape = "git";
+    await h.bridge.dispatch(r, 7);
+
+    expect(h.api.sendMessage).toHaveBeenCalledTimes(1);
+    const opts = h.api.sendMessage.mock.calls[0]![2] as { reply_markup: { inline_keyboard: Array<Array<{ text: string }>> } };
+    const buttons = opts.reply_markup.inline_keyboard.flat().map(b => b.text);
+    // Shell commands get the shape (a) and category (s) grant rows
+    expect(buttons).toContain("✅ Approve");
+    expect(buttons).toContain("❌ Deny");
+    expect(buttons).toContain("🔓 Grant category for session");
+    expect(buttons).toContain(`🔓 Grant "git" for session`);
+  });
+
+  it("omits grant buttons when not applicable (trust_config)", async () => {
+    const h = makeHarness();
+    const r = req("abc");
+    // trust_config is the only non-grantable category — no s or a buttons
+    r.category = "trust_config";
+    await h.bridge.dispatch(r, 7);
+
+    const opts = h.api.sendMessage.mock.calls[0]![2] as { reply_markup: { inline_keyboard: Array<Array<{ text: string }>> } };
+    const buttons = opts.reply_markup.inline_keyboard.flat().map(b => b.text);
+    expect(buttons).toEqual(["✅ Approve", "❌ Deny"]);
+  });
+
+  it("sends an inline keyboard with approve, deny, and grant buttons", async () => {
+    const h = makeHarness();
+    const r = req("abc");
+    await h.bridge.dispatch(r, 7);
 
     expect(h.api.sendMessage).toHaveBeenCalledTimes(1);
     const args = h.api.sendMessage.mock.calls[0]!;
@@ -114,15 +143,18 @@ describe("ApprovalBridge.dispatch", () => {
     const text = args[1] as string;
     expect(text).toContain("Approval requested");
     expect(text).toContain("os.shell.run");
-    // R5: the ladder category is surfaced to the Telegram operator.
     expect(text).toContain("kind: shell command");
     expect(text).toContain("git push");
     const opts = args[2] as { reply_markup: unknown };
+    // Shell requests get approve/deny + grant-category row (no shape button without commandShape)
     expect(opts.reply_markup).toEqual({
       inline_keyboard: [
         [
           { text: "✅ Approve", callback_data: "appr:abc:y" },
           { text: "❌ Deny", callback_data: "appr:abc:n" },
+        ],
+        [
+          { text: "🔓 Grant category for session", callback_data: "appr:abc:s" },
         ],
       ],
     });
@@ -237,6 +269,38 @@ describe("ApprovalBridge.handleCallback", () => {
     });
 
     expect(h.approvals.decisions).toEqual([]);
+  });
+
+  it("grants category on `s` callback", async () => {
+    const h = makeHarness();
+    const r = req("abc");
+    r.commandShape = "git";
+    await h.bridge.dispatch(r, 7);
+
+    await h.bridge.handleCallback(callback("abc", "s"));
+
+    expect(h.approvals.decisions).toEqual([
+      { approvalId: "abc", approved: true, grant: "category", reason: "telegram" },
+    ]);
+    expect(h.api.answerCallbackQuery).toHaveBeenCalledWith("cb-1", {
+      text: "Approved (category granted for session)",
+    });
+  });
+
+  it("grants shape on `a` callback", async () => {
+    const h = makeHarness();
+    const r = req("abc");
+    r.commandShape = "git";
+    await h.bridge.dispatch(r, 7);
+
+    await h.bridge.handleCallback(callback("abc", "a"));
+
+    expect(h.approvals.decisions).toEqual([
+      { approvalId: "abc", approved: true, grant: "shape", reason: "telegram" },
+    ]);
+    expect(h.api.answerCallbackQuery).toHaveBeenCalledWith("cb-1", {
+      text: "Approved (shape granted for session)",
+    });
   });
 
   it("drops a malformed callback (wrong kind)", async () => {
