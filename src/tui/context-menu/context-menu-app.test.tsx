@@ -168,7 +168,7 @@ async function actViaMenu(
     // ~4fps tick here, so a click issued the instant the row is
     // visible can race the row's own registration. One tick of grace
     // mirrors a human, who cannot click a menu the same millisecond it
-    // appears. (The real backdrop grace covers the residual window.)
+    // appears; the retry loop around this covers the residual window.
     await delay(120);
     const spot = locate(app.frame(), row(label));
     // +2 skips the border glyph and its gutter — the label's cell.

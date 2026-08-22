@@ -947,29 +947,26 @@ export function TuiApp({
    * outside the popup dismisses it — left, right or middle, because a
    * press elsewhere plainly means "not one of these verbs".
    *
-   * The OPENING right-press needs no guard (it was dispatched once,
-   * before this menu existed, and the release carries `button: "none"`)
-   * — but the popup's rows register their targets in an effect a frame
-   * after the popup paints, and in that window this backdrop is the
-   * only eligible target. A fast click on a visible row would be read
-   * as "clicked outside" and dismiss the menu instead of acting — the
-   * exact race the operator menu's backdrop guards with
-   * `MODAL_CLICK_GRACE_MS`, observed here the same way.
+   * No `MODAL_CLICK_GRACE_MS` here, unlike the operator menu's backdrop
+   * above. The opening right-press cannot bounce off this handler: it
+   * was claimed by the surface underneath before the menu existed, and
+   * its release carries `button: "none"`. A press CAN outrun the popup
+   * rows' registration (their targets mount in passive effects, one
+   * scheduler hop after the frame), but a timestamp guard cannot cover
+   * that hop: its stamp lands in the same passive flush the rows do, so
+   * inside the window the guard reads a stale stamp and waves the press
+   * through anyway — measured A/B with the guard in and out, identical
+   * dismissal counts. All a grace achieves here is swallowing genuine
+   * click-outside-to-close for its duration; the hop itself is one
+   * macrotask, which only a test harness clicks inside.
    */
   const contextMenuBackdropHandler = (hit: MouseHit): boolean => {
     if (!state.contextMenu) return false;
     if (hit.event.kind === "wheel") return true;
     if (hit.event.kind !== "press") return false;
-    if (Date.now() - contextMenuOpenedAtRef.current < MODAL_CLICK_GRACE_MS) {
-      return true;
-    }
     dispatch({ type: "context_menu_closed" });
     return true;
   };
-  const contextMenuOpenedAtRef = useRef(0);
-  useEffect(() => {
-    if (contextMenuOpen) contextMenuOpenedAtRef.current = Date.now();
-  }, [contextMenuOpen]);
   const contextMenuBackdropRef = useRef(contextMenuBackdropHandler);
   contextMenuBackdropRef.current = contextMenuBackdropHandler;
   useEffect(
