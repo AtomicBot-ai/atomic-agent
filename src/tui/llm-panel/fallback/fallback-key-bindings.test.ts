@@ -29,8 +29,6 @@ function emptyKey(overrides: Partial<Key> = {}): Key {
   };
 }
 
-const noopCallbacks: TuiAppCallbacks = {};
-
 function link(providerId: string, over: Partial<FallbackLinkRow> = {}): FallbackLinkRow {
   return {
     providerId,
@@ -64,49 +62,59 @@ function fallbackState(over: Partial<TuiState> = {}): TuiState {
   };
 }
 
+/**
+ * Runs a key through the panel handler recording BOTH channels: the pure
+ * UI actions it dispatches and the edit callbacks it fires. The edits
+ * must be callbacks — a dispatched edit intent would dead-end in the
+ * reducer and never reach `FallbackOrchestrator` (the original defect).
+ */
 function press(input: string, key: Key, state: TuiState) {
   const dispatched: TuiAction[] = [];
+  const calls: unknown[][] = [];
+  const callbacks: TuiAppCallbacks = {
+    onFallbackMoveRequested: (providerId, delta) =>
+      calls.push(["move", providerId, delta]),
+    onFallbackAddRequested: (providerId) => calls.push(["add", providerId]),
+    onFallbackRemoveRequested: (providerId) =>
+      calls.push(["remove", providerId]),
+    onFallbackAppendLocalToggleRequested: () => calls.push(["toggleLocal"]),
+  };
   const handled = handleLlmPanelKey(input, key, {
     state,
     dispatch: (action) => dispatched.push(action),
-    callbacks: noopCallbacks,
+    callbacks,
   });
-  return { handled, dispatched };
+  return { handled, dispatched, calls };
 }
 
 describe("fallback pane key routing", () => {
-  it("moves the selected link down with >", () => {
-    const { handled, dispatched } = press(">", emptyKey(), fallbackState());
+  it("moves the selected link down with > via the callback, not dispatch", () => {
+    const { handled, dispatched, calls } = press(">", emptyKey(), fallbackState());
     expect(handled).toBe(true);
-    expect(dispatched).toEqual([
-      { type: "fallback_move_requested", providerId: "cloud-b", delta: 1 },
-    ]);
+    expect(calls).toEqual([["move", "cloud-b", 1]]);
+    expect(dispatched).toEqual([]);
   });
 
   it("moves the selected link up with <", () => {
-    const { dispatched } = press("<", emptyKey(), fallbackState());
-    expect(dispatched).toEqual([
-      { type: "fallback_move_requested", providerId: "cloud-b", delta: -1 },
-    ]);
+    const { calls } = press("<", emptyKey(), fallbackState());
+    expect(calls).toEqual([["move", "cloud-b", -1]]);
   });
 
   it("removes the selected link with d", () => {
-    const { dispatched } = press("d", emptyKey(), fallbackState());
-    expect(dispatched).toEqual([
-      { type: "fallback_remove_requested", providerId: "cloud-b" },
-    ]);
+    const { dispatched, calls } = press("d", emptyKey(), fallbackState());
+    expect(calls).toEqual([["remove", "cloud-b"]]);
+    expect(dispatched).toEqual([]);
   });
 
   it("toggles appendLocal with l", () => {
-    const { dispatched } = press("l", emptyKey(), fallbackState());
-    expect(dispatched).toEqual([
-      { type: "fallback_append_local_toggle_requested" },
-    ]);
+    const { calls } = press("l", emptyKey(), fallbackState());
+    expect(calls).toEqual([["toggleLocal"]]);
   });
 
-  it("opens the add-link picker with a", () => {
-    const { dispatched } = press("a", emptyKey(), fallbackState());
+  it("opens the add-link picker with a (pure UI, dispatched)", () => {
+    const { dispatched, calls } = press("a", emptyKey(), fallbackState());
     expect(dispatched).toEqual([{ type: "fallback_add_picker_opened" }]);
+    expect(calls).toEqual([]);
   });
 
   it("moves the row cursor with j (clamped to the row count)", () => {
@@ -115,18 +123,16 @@ describe("fallback pane key routing", () => {
     expect(dispatched).toEqual([{ type: "llm_cursor_set", cursor: 2 }]);
   });
 
-  it("adds the picked provider on Enter inside the picker", () => {
+  it("adds the picked provider on Enter inside the picker via the callback", () => {
     const state = fallbackState({
       fallbackPanel: {
         ...fallbackState().fallbackPanel,
         addPicker: { cursor: 0 },
       },
     });
-    const { dispatched } = press("", emptyKey({ return: true }), state);
-    expect(dispatched).toEqual([
-      { type: "fallback_add_requested", providerId: "cloud-c" },
-      { type: "fallback_add_picker_closed" },
-    ]);
+    const { dispatched, calls } = press("", emptyKey({ return: true }), state);
+    expect(calls).toEqual([["add", "cloud-c"]]);
+    expect(dispatched).toEqual([{ type: "fallback_add_picker_closed" }]);
   });
 
   it("lets the shared pane-switch key fall through (does not consume [ )", () => {

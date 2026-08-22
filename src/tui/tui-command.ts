@@ -420,6 +420,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.providers.setActiveEmbedding(id),
         onProvidersSelectEmbeddingModel: (providerId, modelId) =>
           void orchestrator.providers.selectEmbeddingModel(providerId, modelId),
+        // Fallback pane edits: callbacks, not dispatched actions — only
+        // this layer reaches the orchestrator that writes llm.fallback.*.
+        onFallbackMoveRequested: (providerId, delta) =>
+          orchestrator.fallback.move(providerId, delta),
+        onFallbackAddRequested: (providerId) =>
+          orchestrator.fallback.add(providerId),
+        onFallbackRemoveRequested: (providerId) =>
+          orchestrator.fallback.remove(providerId),
+        onFallbackAppendLocalToggleRequested: () =>
+          orchestrator.fallback.toggleAppendLocal(),
         onOnboardingFinished: () => {
           // The flow wrote config while the runtime was already up, so
           // the registry still holds the old provider set. The cloud

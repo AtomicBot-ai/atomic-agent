@@ -5,6 +5,8 @@ import {
   type FallbackPaneRow,
 } from "../llm-panel/fallback/fallback-rows.js";
 import type { FallbackLinkRow } from "../llm-panel/fallback/fallback-panel-state.js";
+import { handleLlmPanelKey } from "../llm-panel/llm-panel-key-bindings.js";
+import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 
@@ -15,6 +17,10 @@ import type { TuiState } from "../tui-state.js";
  * and `llmPanel.fallbackCursor`. The chain shown is the *effective* order
  * — the active text provider is always the head, and the auto-appended
  * local last resort is flagged.
+ *
+ * Rows are `selectFallbackPaneRows` verbatim — including the `+ add
+ * link` row on an EMPTY chain, where the cursor's row model would
+ * otherwise point at something the screen never drew.
  */
 export function FallbackRows({ state }: { state: TuiState }): ReactElement {
   const panel = state.fallbackPanel;
@@ -35,17 +41,16 @@ export function FallbackRows({ state }: { state: TuiState }): ReactElement {
         {panel.links.length === 0 ? (
           <Text color={theme.colors.muted}>
             {"  "}No chain configured. Falls back to the active provider only.
-            Press a to add a link to fail over to.
           </Text>
-        ) : (
-          rows.map((row, index) => (
-            <FallbackRow
-              key={rowKey(row)}
-              row={row}
-              selected={index === cursor}
-            />
-          ))
-        )}
+        ) : null}
+        {rows.map((row, index) => (
+          <FallbackRow
+            key={rowKey(row)}
+            row={row}
+            index={index}
+            selected={index === cursor}
+          />
+        ))}
       </Box>
       <Box flexDirection="column">
         <Text color={theme.colors.muted}>
@@ -106,34 +111,49 @@ function StatusLine({ state }: { state: TuiState }): ReactElement {
   );
 }
 
+/**
+ * One pane row. `MouseListRow` gives it the TUI-wide click contract —
+ * first click moves the cursor here, a second click on the selected row
+ * replays Enter through `handleLlmPanelKey`, so the mouse runs the exact
+ * key path (open the add picker) and can never drift from the keyboard.
+ */
 function FallbackRow({
   row,
+  index,
   selected,
 }: {
   row: FallbackPaneRow;
+  index: number;
   selected: boolean;
 }): ReactElement {
-  if (row.kind === "add") {
-    return (
-      <Text
-        color={selected ? theme.colors.accentSoft : theme.colors.muted}
-        bold={selected}
-        wrap="truncate-end"
-      >
-        {selected ? ">" : " "} + add link{" "}
-        <Text color={theme.colors.muted}>· Enter or a to choose a provider</Text>
-      </Text>
-    );
-  }
   return (
-    <Text
-      color={selected ? theme.colors.accentSoft : undefined}
-      bold={selected}
-      wrap="truncate-end"
+    <MouseListRow
+      selected={selected}
+      onSelect={(mouse) =>
+        mouse.dispatch({ type: "llm_cursor_set", cursor: index })
+      }
+      onActivate={pressEnter(handleLlmPanelKey)}
     >
-      {selected ? ">" : " "} {formatLink(row.link, row.index)}
-      <Text color={theme.colors.muted}> · {linkNote(row.link)}</Text>
-    </Text>
+      {row.kind === "add" ? (
+        <Text
+          color={selected ? theme.colors.accentSoft : theme.colors.muted}
+          bold={selected}
+          wrap="truncate-end"
+        >
+          {selected ? ">" : " "} + add link{" "}
+          <Text color={theme.colors.muted}>· Enter or a to choose a provider</Text>
+        </Text>
+      ) : (
+        <Text
+          color={selected ? theme.colors.accentSoft : undefined}
+          bold={selected}
+          wrap="truncate-end"
+        >
+          {selected ? ">" : " "} {formatLink(row.link, row.index)}
+          <Text color={theme.colors.muted}> · {linkNote(row.link)}</Text>
+        </Text>
+      )}
+    </MouseListRow>
   );
 }
 
@@ -162,14 +182,25 @@ function AddLinkPicker({ state }: { state: TuiState }): ReactElement {
         </Text>
       ) : (
         addableProviderIds.map((id, index) => (
-          <Text
+          <MouseListRow
             key={id}
-            color={index === cursor ? theme.colors.accentSoft : undefined}
-            bold={index === cursor}
-            wrap="truncate-end"
+            selected={index === cursor}
+            onSelect={(mouse) =>
+              mouse.dispatch({
+                type: "fallback_add_picker_cursor_set",
+                cursor: index,
+              })
+            }
+            onActivate={pressEnter(handleLlmPanelKey)}
           >
-            {index === cursor ? ">" : " "} {id}
-          </Text>
+            <Text
+              color={index === cursor ? theme.colors.accentSoft : undefined}
+              bold={index === cursor}
+              wrap="truncate-end"
+            >
+              {index === cursor ? ">" : " "} {id}
+            </Text>
+          </MouseListRow>
         ))
       )}
       <Text color={theme.colors.muted}>{"  "}↑/↓ move · Enter add · Esc cancel</Text>

@@ -33,6 +33,39 @@ describe("fallback panel reducer", () => {
     expect(next.fallbackPanel.appendLocal).toBe(false);
   });
 
+  it("re-clamps the pane cursor when a refresh shrinks the row list", () => {
+    const base = createInitialTuiState(fakeSession());
+    // Cursor parked on row 3 of a 3-links+add layout, then the chain
+    // shrinks to one link with nothing addable: only row 0 exists now.
+    const parked = {
+      ...base,
+      llmPanel: { ...base.llmPanel, mode: "fallback" as const, fallbackCursor: 3 },
+    };
+    const next = reduceTuiState(parked, {
+      type: "fallback_refresh",
+      links: [link("cloud-a", { isActive: true })],
+      addableProviderIds: [],
+      appendLocal: false,
+    });
+    expect(next.llmPanel.fallbackCursor).toBe(0);
+  });
+
+  it("keeps the cursor on the add row when only links shrink", () => {
+    const base = createInitialTuiState(fakeSession());
+    const parked = {
+      ...base,
+      llmPanel: { ...base.llmPanel, mode: "fallback" as const, fallbackCursor: 3 },
+    };
+    const next = reduceTuiState(parked, {
+      type: "fallback_refresh",
+      links: [link("cloud-a", { isActive: true })],
+      addableProviderIds: ["cloud-b"],
+      appendLocal: false,
+    });
+    // 1 link + the add row = rows 0..1.
+    expect(next.llmPanel.fallbackCursor).toBe(1);
+  });
+
   it("opens, moves, and closes the add-link picker", () => {
     const base = createInitialTuiState(fakeSession());
     const withAddable = reduceTuiState(base, {

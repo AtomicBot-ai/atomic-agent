@@ -1,17 +1,16 @@
 import type { TuiAction } from "../../tui-action.js";
 import type { TuiState } from "../../tui-state.js";
 import { isFallbackPanelAction } from "./fallback-panel-actions.js";
+import { clampFallbackCursor } from "./fallback-rows.js";
 
 /**
  * Reducer for the Fallback pane. Handles the mirror-refresh from the
  * orchestrator (`fallback_refresh`), the add-link picker's pure UI
  * transitions, the status line and the last-switch capture. The
- * side-effectful intents (`fallback_move_requested`,
- * `fallback_add_requested`, `fallback_remove_requested`,
- * `fallback_append_local_toggle_requested`) are handled by
- * `FallbackOrchestrator` off the event bus — they only reach the reducer
- * as a follow-up `fallback_refresh`, so this reducer treats them as
- * no-ops (returns state unchanged) to keep the pane responsive.
+ * side-effectful edits (move/add/remove/toggle appendLocal) are not
+ * reducer actions at all — they travel as `TuiAppCallbacks.onFallback*`
+ * callbacks into `FallbackOrchestrator`, whose config write comes back
+ * here as a `fallback_refresh` (see `fallback-panel-actions.ts`).
  */
 export function reduceFallbackPanelAction(
   state: TuiState,
@@ -32,7 +31,7 @@ export function reduceFallbackPanelAction(
               ),
             }
           : null;
-      return {
+      const next = {
         ...state,
         fallbackPanel: {
           ...panel,
@@ -40,6 +39,19 @@ export function reduceFallbackPanelAction(
           addableProviderIds: action.addableProviderIds,
           appendLocal: action.appendLocal,
           addPicker,
+        },
+      };
+      // A refresh can shrink the row list (a removed link, the add row
+      // disappearing); re-clamp the pane cursor against the NEW rows so
+      // it can never point past the end at nothing.
+      return {
+        ...next,
+        llmPanel: {
+          ...next.llmPanel,
+          fallbackCursor: clampFallbackCursor(
+            next,
+            next.llmPanel.fallbackCursor,
+          ),
         },
       };
     }
@@ -75,13 +87,10 @@ export function reduceFallbackPanelAction(
         ...state,
         fallbackPanel: { ...panel, lastSwitch: action.lastSwitch },
       };
-    // Side-effectful intents are consumed by the orchestrator; they land
-    // back here only as a `fallback_refresh`.
-    case "fallback_move_requested":
-    case "fallback_add_requested":
-    case "fallback_remove_requested":
-    case "fallback_append_local_toggle_requested":
-      return state;
+    // No intent cases here on purpose: the edits are callbacks into
+    // `FallbackOrchestrator` (`TuiAppCallbacks.onFallback*`), never
+    // dispatched actions — a dispatched intent would dead-end in this
+    // reducer without ever reaching the orchestrator's bus.
     default:
       return state;
   }

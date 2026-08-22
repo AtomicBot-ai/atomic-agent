@@ -140,8 +140,10 @@ const V0_2_2_SLASH_COMMANDS = [
   },
   {
     name: "llm",
+    // Updated when the Fallback pane got its deep link: the palette must
+    // advertise all four panes, not the three that predate it.
     description:
-      "open LLM Local/Cloud/External panel · `/llm provider <id>` switch text provider",
+      "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm fallback` edit the fallover chain",
   },
   {
     name: "mcp",

@@ -359,6 +359,22 @@ export interface TuiAppCallbacks {
   onProvidersSetActiveEmbedding?(id: string): void;
   /** Providers tab / LLM panel: select an exact embedding model. */
   onProvidersSelectEmbeddingModel?(providerId: string, modelId: string): void;
+  /**
+   * Fallback pane edits. Callbacks into `FallbackOrchestrator`'s public
+   * methods for the same reason as the picker request above: the
+   * orchestrator that writes `llm.fallback.*` listens on the event bus,
+   * dispatch feeds the React reducer only, and the bus→dispatch bridge
+   * is one-way — a dispatched edit intent dies in the reducer without
+   * ever persisting anything (the pane's original defect).
+   */
+  /** Fallback pane: move a link one slot up (−1) or down (+1). */
+  onFallbackMoveRequested?(providerId: string, delta: -1 | 1): void;
+  /** Fallback pane: append an addable provider to the chain tail. */
+  onFallbackAddRequested?(providerId: string): void;
+  /** Fallback pane: drop a link from the chain. */
+  onFallbackRemoveRequested?(providerId: string): void;
+  /** Fallback pane: flip `llm.fallback.appendLocal`. */
+  onFallbackAppendLocalToggleRequested?(): void;
   /** MCP tab: open detail view for a server by name. */
   onMcpDetailRequested?(serverName: string): void;
   /**
