@@ -247,6 +247,10 @@ describe("dispatchSlashCommand", () => {
       { type: "ui_mode_set", mode: "debug" },
       { type: "tab_changed", tab: "llm" },
       { type: "llm_mode_set", mode: "fallback" },
+      // Same refresh as bare /llm: the deep link reaches the tab via
+      // reducer actions (not onProvidersTabRefresh), so it must request
+      // its own re-read or the chain mirror can arrive stale.
+      { type: "providers_refresh_requested" },
     ]);
   });
 

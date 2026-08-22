@@ -628,13 +628,17 @@ function dispatchLlmSub(rawArgs: string): SlashDispatchResult {
   }
   // `/llm fallback` deep-links to the fourth pane — the pane switcher
   // (`[`/`]`) is invisible from the chat surface, so without this the
-  // Fallback pane is only reachable by keyboard exploration. The chain
-  // mirror itself refreshes on LLM-tab entry (`onProvidersTabRefresh`).
+  // Fallback pane is only reachable by keyboard exploration. The refresh
+  // matches bare `/llm`: the slash path enters the tab via reducer
+  // actions, bypassing `onProvidersTabRefresh`, so without it the chain
+  // mirror shows whatever the last refresh produced (stale if config
+  // changed externally mid-session).
   if (/^fallback$/i.test(argPart)) {
     return pureActions([
       { type: "ui_mode_set", mode: "debug" },
       { type: "tab_changed", tab: "llm" },
       { type: "llm_mode_set", mode: "fallback" },
+      { type: "providers_refresh_requested" },
     ]);
   }
   return pureActions([], {
