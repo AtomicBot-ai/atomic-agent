@@ -1546,14 +1546,16 @@ export interface UserConfigFile {
 // v44: localModels gains `customModels` — GGUF models the operator pointed
 // at on Hugging Face, stored as full catalog entries. Older files inherit
 // `[]`, which is exactly the behaviour they had before the key existed.
-// v44: a fifth stamp in `tui.onboarding` — `localSetupSeenAt`, written
+// v45: a fifth stamp in `tui.onboarding` — `localSetupSeenAt`, written
 // when the first run reaches the local model list rather than when a
 // model comes out of it. It is what stops the "set up local models too"
 // screen being pitched to an operator who already walked through that
 // list and walked back out. Additive: a v43 file parses with it `null`,
 // which reads as "never opened", the same answer that file has always
-// implied.
-export const USER_CONFIG_VERSION = 44;
+// implied. (It was drafted as a second v44, but v44 was already spent on
+// `customModels` in the same release — the stamp ships as v45 so the two
+// additive changes keep distinct numbers.)
+export const USER_CONFIG_VERSION = 45;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1686,6 +1688,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   41,
   42,
   43,
+  44,
   USER_CONFIG_VERSION,
 ];
 

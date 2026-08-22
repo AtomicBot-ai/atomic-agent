@@ -7,7 +7,7 @@ import {
   parseUserConfigFile,
 } from "./config-schema.js";
 
-describe("tui.onboarding (config v43, extended in v44)", () => {
+describe("tui.onboarding (config v43, extended in v45)", () => {
   it("defaults every stamp to null on a file that predates the block", () => {
     const parsed = parseUserConfigFile({ version: 42, tui: { theme: "nord" } });
     expect(parsed.tui.onboarding).toEqual({
@@ -18,6 +18,12 @@ describe("tui.onboarding (config v43, extended in v44)", () => {
       localSetupSeenAt: null,
     });
     expect(parsed.tui.theme).toBe("nord");
+  });
+
+  it("still accepts a v44 file — the customModels release — as input", () => {
+    const parsed = parseUserConfigFile({ version: 44, tui: { theme: "nord" } });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.tui.onboarding.localSetupSeenAt).toBeNull();
   });
 
   it("reads a v43 file as never having opened the local list", () => {
