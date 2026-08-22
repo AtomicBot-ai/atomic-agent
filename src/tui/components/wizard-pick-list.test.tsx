@@ -50,6 +50,50 @@ describe("renderPickList narrow-width rendering", () => {
     expect(frame).toContain("Short one");
   });
 
+  it("spends a row on the search box without outgrowing the budget", () => {
+    // Ink 7 paints an over-tall frame over the rows above it instead of
+    // clipping, so the search line has to come out of the option
+    // viewport rather than out of the terminal.
+    const options = Array.from({ length: 40 }, (_, i) => ({
+      label: `model-${i}`,
+    }));
+    const height = (search: string | null | undefined): number => {
+      const { lastFrame } = narrow(
+        renderPickList({
+          title: "Chat model",
+          options,
+          cursor: 0,
+          moveHint: "j/k move",
+          actionsHint: "Enter pick · Esc cancel",
+          maxRows: 14,
+          ...(search === undefined ? {} : { search }),
+        }),
+        60,
+      );
+      return (lastFrame() ?? "").split("\n").length;
+    };
+    expect(height(undefined)).toBeLessThanOrEqual(14);
+    expect(height(null)).toBe(height(undefined));
+    expect(height("mo")).toBe(height(undefined));
+  });
+
+  it("names the query instead of drawing an empty box", () => {
+    const { lastFrame } = narrow(
+      renderPickList({
+        title: "Chat model",
+        options: [],
+        cursor: 0,
+        moveHint: "↑/↓ move",
+        actionsHint: "Enter pick",
+        search: "zzzz",
+      }),
+      60,
+    );
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain('no match for "zzzz"');
+    expect(frame).toContain("(0/0)");
+  });
+
   it("leaves a short option intact", () => {
     const { lastFrame } = narrow(
       renderPickList({

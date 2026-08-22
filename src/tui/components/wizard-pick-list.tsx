@@ -47,6 +47,16 @@ export function pickWindowRows(
 const MAX_ERROR_ROWS = 2;
 
 /**
+ * What a list with nothing in it says. A bordered box with no rows reads
+ * as a rendering fault; naming the query that emptied it, and the key
+ * that undoes it, points at the fix instead.
+ */
+function emptyRowLine(search: string | null | undefined): string {
+  if (search) return `no match for "${search}" — Backspace to widen it`;
+  return "nothing to show here";
+}
+
+/**
  * Break a refusal into at most two truncated lines, split at the first
  * sentence end.
  *
@@ -61,6 +71,30 @@ function errorLines(error: string): readonly string[] {
   const split = error.indexOf(". ");
   if (split === -1) return [error];
   return [error.slice(0, split + 1), error.slice(split + 2)];
+}
+
+/**
+ * Movement and action hints for a filterable list, in its two states.
+ *
+ * The hint line is the only place either state is written down. Closed,
+ * `j`/`k` move and `/` opens the search box. Open, every printable key
+ * types into it, movement drops to the arrows, and Esc empties the box
+ * before it will leave the screen — so the open form names both meanings
+ * of Esc rather than letting the second one look like a dead key.
+ */
+export function pickListHints(
+  search: string | null,
+  actions: string,
+  escClosed: string,
+  escOpen: string,
+): { moveHint: string; actionsHint: string } {
+  if (search === null) {
+    return {
+      moveHint: "j/k move",
+      actionsHint: `${actions} · / search · ${escClosed}`,
+    };
+  }
+  return { moveHint: "↑/↓ move", actionsHint: `${actions} · ${escOpen}` };
 }
 
 /**
@@ -87,6 +121,15 @@ export function renderPickList(props: {
   /** Total terminal rows this box may occupy; omit for the fixed viewport. */
   maxRows?: number;
   /**
+   * The search box above the options. Three states, not two: `undefined`
+   * on a list that cannot be filtered (the compat picker, where typing
+   * edits the model id instead), `null` on a filterable list whose box is
+   * closed, and the query while it is open. A closed box still draws its
+   * line — the operator has to be able to see that the list is
+   * searchable before they would think to press `/`.
+   */
+  search?: string | null;
+  /**
    * Why the last action was refused. A list screen used to have nowhere
    * to say this, so a save the key check rejected looked exactly like a
    * keypress that did nothing — the whole of report #3.
@@ -96,7 +139,12 @@ export function renderPickList(props: {
   const total = props.options.length;
   const clamped = Math.min(Math.max(props.cursor, 0), Math.max(0, total - 1));
   const errors = props.error ? errorLines(props.error).slice(0, MAX_ERROR_ROWS) : [];
-  const window = pickWindowRows(props.maxRows, errors.length);
+  const searchShown = props.search !== undefined;
+  // The search line and the empty-list line are chrome for the row
+  // budget in the same way the error lines are: Ink 7 paints an over-tall
+  // frame over the rows above it rather than clipping.
+  const chrome = errors.length + (searchShown ? 1 : 0) + (total === 0 ? 1 : 0);
+  const window = pickWindowRows(props.maxRows, chrome);
   const start = Math.min(
     Math.max(0, clamped - Math.floor(window / 2)),
     Math.max(0, total - window),
@@ -115,6 +163,24 @@ export function renderPickList(props: {
       <Text bold color={theme.colors.accentSoft}>
         {props.title}
       </Text>
+      {searchShown ? (
+        <Text color={theme.colors.muted} wrap="truncate-end">
+          {"search: "}
+          {props.search === null ? (
+            "/ to search"
+          ) : (
+            <Text color={theme.colors.accentSoft}>
+              {props.search}
+              <Text color={theme.colors.muted}>▏</Text>
+            </Text>
+          )}
+        </Text>
+      ) : null}
+      {total === 0 ? (
+        <Text color={theme.colors.muted} wrap="truncate-end">
+          {emptyRowLine(props.search)}
+        </Text>
+      ) : null}
       {visible.map((opt, i) => {
         const index = start + i;
         const mark = index === clamped ? ">" : " ";

@@ -1,20 +1,21 @@
 import type { Key } from "ink";
 import { getCachedOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import { getCachedGeminiModels } from "../../llm/provider/gemini/fetch-gemini-models.js";
-import { PICK_WINDOW } from "../components/wizard-pick-list.js";
 import { findProviderPreset } from "./provider-presets.js";
+import {
+  handleWizardSearchKey,
+  nextListCursor,
+} from "./providers-wizard-list-keys.js";
 import {
   advanceWizardPhase,
   clampCursor,
   cursorForPreviousPick,
-  isCuratedCatalogKind,
   isLinePhase,
   isListPhase,
   isWizardFirstScreen,
   kindRowAtCursor,
-  listEmbeddingModelsForKind,
-  listLengthForPhase,
   presetNeedsKeyScreen,
+  visibleRowsForPhase,
 } from "./providers-wizard-phases.js";
 import { createProvidersWizardState } from "./providers-wizard-state.js";
 import {
@@ -48,37 +49,6 @@ export function listCompatChatModelPicks(
   return [];
 }
 
-/**
- * Cursor after one list-navigation key, or `null` when the key is not a
- * navigation key. Every result starts from the clamped cursor so a
- * catalog that shrank under an open wizard cannot leave the cursor
- * pointing past the end (see `clampCursor`). Arrows wrap like before;
- * PgUp/PgDn jump one viewport (`PICK_WINDOW`) and stop at the edges,
- * Home/End go straight to them. Arrow-only travel to row 250 of a 300+
- * catalog was the alternative.
- */
-function nextListCursor(
-  input: string,
-  key: Key,
-  cursor: number,
-  length: number,
-  withVimKeys: boolean,
-): number | null {
-  const current = clampCursor(cursor, length);
-  const last = Math.max(0, length - 1);
-  if (key.downArrow || (withVimKeys && input === "j")) {
-    return (current + 1) % length;
-  }
-  if (key.upArrow || (withVimKeys && input === "k")) {
-    return (current - 1 + length) % length;
-  }
-  if (key.pageDown) return Math.min(current + PICK_WINDOW, last);
-  if (key.pageUp) return Math.max(current - PICK_WINDOW, 0);
-  if (key.home) return 0;
-  if (key.end) return last;
-  return null;
-}
-
 export type ProvidersWizardKeyResult =
   | { handled: true; wizard: ProvidersWizardState; submit?: false }
   | { handled: true; wizard: ProvidersWizardState; submit: true }
@@ -99,6 +69,13 @@ export function handleProvidersWizardKey(
       return { handled: true, wizard, cancelSubmit: true };
     }
     return { handled: true, wizard };
+  }
+  // The search box owns printable keys, Backspace and Esc while it is
+  // open, so it is asked before the screen-level Esc and before list
+  // movement. It declines every key on the phases that have no list.
+  const searched = handleWizardSearchKey(input, key, wizard);
+  if (searched !== null) {
+    return { handled: true, wizard: searched };
   }
   if (key.escape) {
     // Esc steps back one screen rather than abandoning the whole wizard:
@@ -224,18 +201,31 @@ export function handleProvidersWizardKey(
     return { handled: false };
   }
 
-  const len = listLengthForPhase(wizard.phase, wizard.kind);
+  // One list for the whole screen: the render highlights row `cursor` of
+  // exactly this array, so movement and Enter have to read it too, or a
+  // narrowed list would select something the operator never saw.
+  const rows = visibleRowsForPhase(wizard);
+  const len = rows.length;
   if (len === 0) {
     return { handled: true, wizard };
   }
 
-  const moved = nextListCursor(input, key, wizard.cursor, len, true);
+  // With the search box open `j` and `k` are query characters, and the
+  // branch above already consumed them; passing that through keeps the
+  // two halves from ever disagreeing about which they are.
+  const moved = nextListCursor(
+    input,
+    key,
+    wizard.cursor,
+    len,
+    wizard.search === null,
+  );
   if (moved !== null) {
     return { handled: true, wizard: { ...wizard, cursor: moved } };
   }
   if (key.return) {
     if (wizard.phase === "pick_kind") {
-      const row = kindRowAtCursor(clampCursor(wizard.cursor, len));
+      const row = kindRowAtCursor(clampCursor(wizard.cursor, len), wizard.search);
       if (typeof row === "object") {
         const preset = findProviderPreset(row.presetId);
         if (!preset) return { handled: true, wizard };
@@ -255,6 +245,7 @@ export function handleProvidersWizardKey(
             baseUrlLine: preset.baseUrl,
             phase: needsKey ? "api_key" : "chat_model_line",
             cursor: 0,
+            search: null,
           },
         };
       }
@@ -266,14 +257,8 @@ export function handleProvidersWizardKey(
         }),
       };
     }
-    if (
-      wizard.phase === "pick_embedding" &&
-      wizard.kind &&
-      isCuratedCatalogKind(wizard.kind)
-    ) {
-      const models = listEmbeddingModelsForKind(wizard.kind);
-      const picked =
-        models[clampCursor(wizard.cursor, models.length)]?.id ?? null;
+    if (wizard.phase === "pick_embedding") {
+      const picked = rows[clampCursor(wizard.cursor, len)]?.id ?? null;
       return {
         handled: true,
         wizard: {

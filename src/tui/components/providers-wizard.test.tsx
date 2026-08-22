@@ -228,8 +228,55 @@ describe("ProvidersWizard pick list counter", () => {
     );
     const text = stripAnsi(lastFrame() ?? "");
     expect(text).toContain(
-      `j/k move (1/${KIND_ROW_ORDER.length}) · Enter pick · Esc cancel`,
+      `j/k move (1/${KIND_ROW_ORDER.length}) · Enter pick · / search · Esc cancel`,
     );
+  });
+});
+
+describe("ProvidersWizard search box", () => {
+  function providerList(search: string | null, cursor = 0) {
+    return { ...createProvidersWizardState("add"), search, cursor };
+  }
+
+  it("advertises the search box on the closed provider list", () => {
+    const { lastFrame } = render(<ProvidersWizard wizard={providerList(null)} />);
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("search: / to search");
+  });
+
+  it("shows the query, the surviving rows, and a counter over the filtered set", () => {
+    const { lastFrame } = render(<ProvidersWizard wizard={providerList("cli")} />);
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("search: cli");
+    // Both subscription CLI rows survive "cli"; nothing else does.
+    expect(text).toContain("Claude Code subscription");
+    expect(text).toContain("OpenAI Codex subscription");
+    expect(text).not.toContain("OpenRouter (cloud chat");
+    // The counter names the filtered list, not the 25 rows behind it.
+    expect(text).toContain("(1/2)");
+    // With the box open, j/k are characters and Esc empties it first.
+    expect(text).toContain("↑/↓ move (1/2) · Enter pick · Esc clears search");
+  });
+
+  it("says so instead of drawing an empty box when nothing matches", () => {
+    const { lastFrame } = render(
+      <ProvidersWizard wizard={providerList("no-such-provider")} />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain('no match for "no-such-provider"');
+    expect(text).toContain("Backspace to widen it");
+    expect(text).toContain("(0/0)");
+    expect(text).not.toContain("Gemini (Google AI)");
+  });
+
+  it("highlights the clamped row when the cursor outlives the rows", () => {
+    // Nothing in the flow leaves a cursor past the end, but a catalog
+    // refresh landing between two keypresses can, and the highlight has
+    // to stay on a row that exists — it is what Enter selects.
+    const { lastFrame } = render(<ProvidersWizard wizard={providerList("cli", 9)} />);
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("> OpenAI Codex subscription");
+    expect(text).toContain("(2/2)");
   });
 });
 

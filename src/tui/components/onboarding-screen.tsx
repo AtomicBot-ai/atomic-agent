@@ -475,7 +475,7 @@ function footerFor(onboarding: OnboardingUiState): string {
     case "choose":
       return "↑/↓ move   enter select   1–3 jump   esc skip   ctrl+c quit";
     case "cloud":
-      return "↑/↓ move   enter select   esc back   ctrl+c quit";
+      return "↑/↓ move   / search   enter select   esc back   ctrl+c quit";
     case "custom_chat_url":
       return "enter test & continue   esc back   ctrl+c quit";
     case "custom_embedding_url":
