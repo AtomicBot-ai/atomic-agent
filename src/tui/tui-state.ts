@@ -1,4 +1,5 @@
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
+import type { ComposerSwitchState } from "./composer-switch/composer-switch-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
 import type {
@@ -431,6 +432,12 @@ export interface TuiState {
   menuOpen: boolean;
   /** The composer's context detail panel floats over the chat. */
   contextPanelOpen: boolean;
+  /**
+   * Which of the composer meta row's three controls has its switch open
+   * (backend kind / provider / model), and where its cursor sits.
+   * `null` when the row is just a label, which is most of the time.
+   */
+  composerSwitch: ComposerSwitchState | null;
   menuPath: string | null;
   menuQuery: string;
   menuCursor: number;
@@ -654,6 +661,7 @@ export function createInitialTuiState(
     slashPaletteCursor: 0,
     menuOpen: false,
     contextPanelOpen: false,
+    composerSwitch: null,
     menuPath: null,
     menuQuery: "",
     menuCursor: 0,

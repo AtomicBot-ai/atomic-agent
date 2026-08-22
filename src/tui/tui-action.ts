@@ -2,6 +2,7 @@ import type { AgentLoopEvent } from "../agent/agent-loop.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { MetricSample } from "../tracing/metrics-collector.js";
 import type { LogRecord } from "../tracing/structured-logger.js";
+import type { ComposerSwitchAction } from "./composer-switch/composer-switch-actions.js";
 import type { LocalModelsAction } from "./local-models/local-models-actions.js";
 import type { TasksAction } from "./tasks/tasks-actions.js";
 import type { SkillsAction } from "./skills/skills-actions.js";
@@ -239,6 +240,7 @@ export type TuiAction =
   | { type: "update_started" }
   /** The install script settled. */
   | { type: "update_finished"; ok: boolean; version?: string; error?: string }
+  | ComposerSwitchAction
   | LocalModelsAction
   | TasksAction
   | SkillsAction

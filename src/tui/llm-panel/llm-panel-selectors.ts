@@ -111,11 +111,16 @@ export interface LlmActiveRouteSummary {
   usesLocalHealth: boolean;
 }
 
+/**
+ * The two labels the composer's meta row states. The backend kind and
+ * the health dot that used to ride along here (`cloudLabel`,
+ * `usesLocalHealth`) moved to `selectComposerBackendMeta`, which reads
+ * `localModels.mode` as well and can therefore tell `local` from
+ * `custom` — a distinction this selector never made.
+ */
 export interface PromptLlmMeta {
   model: string | null;
   provider: string | null;
-  usesLocalHealth: boolean;
-  cloudLabel: string | null;
 }
 
 export function selectLlmPanelRows(
@@ -174,18 +179,11 @@ export function selectLlmActiveRouteSummary(
 export function selectPromptLlmMeta(state: TuiState): PromptLlmMeta {
   const active = state.providersPanel.rows.find((row) => row.isActiveText) ?? null;
   if (active && active.kind !== "llama-server") {
-    return {
-      model: active.chatModel,
-      provider: active.id,
-      usesLocalHealth: false,
-      cloudLabel: "cloud",
-    };
+    return { model: active.chatModel, provider: active.id };
   }
   return {
     model: state.llmHealth.model ?? active?.chatModel ?? null,
     provider: "llama.cpp",
-    usesLocalHealth: true,
-    cloudLabel: null,
   };
 }
 

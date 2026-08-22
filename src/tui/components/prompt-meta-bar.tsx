@@ -1,9 +1,11 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { ComposerMetaControls } from "../composer-switch/composer-meta-controls.js";
+import type { ComposerBackendMeta } from "../composer-switch/composer-switch-rows.js";
 import { theme } from "../theme/theme.js";
 
 /**
- * The composer's status bar: what the model is on the left, the live
+ * The composer's status bar: the chat route on the left, the live
  * readouts on the right, drawn on the same inverted ground as the rail.
  *
  * **Why inverted.** The bar is the composer's chrome, not its content.
@@ -24,7 +26,7 @@ import { theme } from "../theme/theme.js";
  * the text it submits.
  *
  * **A caveat about the slots.** `leftSlot` / `rightSlot` arrive from the
- * chat surface already coloured (the LLM health pill, the while-busy
+ * chat surface already coloured (the composer notice, the while-busy
  * hint), and those colours were chosen against the *normal* ground.
  * On the rail ground they read as low-contrast secondary text — which is
  * what they are — but on `github-dark` and `catppuccin-mocha` the muted
@@ -34,8 +36,14 @@ import { theme } from "../theme/theme.js";
  * stays legible, so the signal survives even where the label dims.
  */
 export interface PromptMetaBarProps {
-  /** Chat-surface content rendered first — normally the LLM health pill. */
+  /**
+   * Chat-surface content rendered first — today only the transient
+   * composer notice. The LLM health pill that used to live here folded
+   * into the backend control, which now carries the same dot.
+   */
   leftSlot: ReactElement | null;
+  /** The route's backend kind and its health dot; `null` hides it. */
+  backend: ComposerBackendMeta | null;
   model: string | null;
   provider: string | null;
   /** Chat-surface content rendered at the bar's right end. */
@@ -61,6 +69,7 @@ const PAIR_SEPARATOR = " ⇄ ";
 
 export function PromptMetaBar({
   leftSlot,
+  backend,
   model,
   provider,
   rightSlot,
@@ -83,8 +92,13 @@ export function PromptMetaBar({
         60 the right-hand readout must survive intact, because a
         half-drawn chip is worse than a truncated model name.
       */}
-      <Box flexShrink={1} minWidth={0}>
-        <MetaLeft leftSlot={leftSlot} model={model} provider={provider} />
+      <Box flexShrink={1} minWidth={0} overflow="hidden">
+        <MetaLeft
+          leftSlot={leftSlot}
+          backend={backend}
+          model={model}
+          provider={provider}
+        />
       </Box>
       <Box flexShrink={0} flexDirection="row">
         {rightSlot ? (
@@ -100,45 +114,55 @@ export function PromptMetaBar({
 
 interface MetaLeftProps {
   leftSlot: ReactElement | null;
+  backend: ComposerBackendMeta | null;
   model: string | null;
   provider: string | null;
 }
 
-function MetaLeft({ leftSlot, model, provider }: MetaLeftProps): ReactElement {
-  if (!leftSlot && !model && !provider) {
+/**
+ * A row of Boxes rather than one `<Text>` of spans, because the three
+ * route labels are clickable and a click target is a Box — Ink cannot
+ * nest one inside a `<Text>`.
+ *
+ * That costs the free truncation the single `<Text wrap="truncate">`
+ * used to give the whole group, so the row has to fit by shrinking: the
+ * notice and its separator never give a column, and the route labels
+ * truncate in the order `ComposerMetaControls` sets. Every `<Text>` in
+ * here is `truncate` for the same reason — one that wrapped would take
+ * the composer's bottom border down a line with it.
+ */
+function MetaLeft({
+  leftSlot,
+  backend,
+  model,
+  provider,
+}: MetaLeftProps): ReactElement {
+  if (!leftSlot && !backend && !model && !provider) {
     return <Text> </Text>;
   }
   const cleanModel = model ? formatModel(model) : null;
-  // Wrap the optional `leftSlot` in a `<Text>` so neighbouring spans
-  // (a leading dot separator before the model) stay on the same line
-  // without Yoga inserting an inline break between Box children.
-  // `truncate` rather than wrap: a second line here would push the
-  // frame's bottom border down and change the composer's height, which
-  // is exactly the kind of drift a bounded frame exists to prevent.
+  const hasRoute = Boolean(backend || provider || cleanModel);
   return (
-    <Text wrap="truncate">
-      {leftSlot ? <Text>{leftSlot}</Text> : null}
-      {leftSlot && (cleanModel || provider) ? (
-        <Text color={theme.colors.railMuted}>
-          {" "}
-          {theme.glyphs.dotSeparator}{" "}
-        </Text>
+    <Box flexDirection="row" flexShrink={1} minWidth={0}>
+      {leftSlot ? (
+        <Box flexShrink={0}>
+          <Text wrap="truncate">{leftSlot}</Text>
+        </Box>
       ) : null}
-      {cleanModel ? (
-        <Text color={theme.colors.accent} bold>
-          {cleanModel}
-        </Text>
+      {leftSlot && hasRoute ? (
+        <Box flexShrink={0}>
+          <Text color={theme.colors.railMuted} wrap="truncate">
+            {" "}
+            {theme.glyphs.dotSeparator}{" "}
+          </Text>
+        </Box>
       ) : null}
-      {cleanModel && provider ? (
-        <Text color={theme.colors.railMuted}>
-          {" "}
-          {theme.glyphs.dotSeparator}{" "}
-        </Text>
-      ) : null}
-      {provider ? (
-        <Text color={theme.colors.railMuted}>{provider}</Text>
-      ) : null}
-    </Text>
+      <ComposerMetaControls
+        backend={backend}
+        provider={provider}
+        model={cleanModel}
+      />
+    </Box>
   );
 }
 

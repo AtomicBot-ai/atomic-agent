@@ -85,6 +85,7 @@ export function reduceUiAction(
         // One overlay at a time. Two absolutely-positioned panels in a
         // terminal do not stack, they interleave.
         contextPanelOpen: false,
+        composerSwitch: null,
       };
     case "menu_closed":
       return {

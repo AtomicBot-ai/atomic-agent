@@ -1,5 +1,6 @@
 import { Box } from "ink";
 import type { ReactElement } from "react";
+import type { ComposerBackendMeta } from "../composer-switch/composer-switch-rows.js";
 import { useRotatingPlaceholder } from "../hooks/use-rotating-placeholder.js";
 import { theme } from "../theme/theme.js";
 import { ComposerSendButton } from "./composer-send-button.js";
@@ -51,6 +52,11 @@ export interface PromptShellProps
   rotatingPlaceholders?: readonly string[];
   /** Rotation period in milliseconds. Defaults to 4000. */
   placeholderRotationMs?: number;
+  /**
+   * The route's backend kind (cloud / local / custom) and its health
+   * dot, rendered as the first of the action bar's three controls.
+   */
+  backend?: ComposerBackendMeta | null;
   /** Active model alias rendered into the action bar (e.g. `qwen3-30b`). */
   model?: string | null;
   /**
@@ -76,6 +82,7 @@ export function PromptShell(props: PromptShellProps): ReactElement {
     placeholder,
     rotatingPlaceholders,
     placeholderRotationMs = 4000,
+    backend,
     model,
     provider,
     leftSlot,
@@ -168,6 +175,7 @@ export function PromptShell(props: PromptShellProps): ReactElement {
         </Box>
         <PromptMetaBar
           leftSlot={leftSlot ?? null}
+          backend={backend ?? null}
           model={model ?? null}
           provider={provider ?? null}
           rightSlot={rightSlot ?? null}
