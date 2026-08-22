@@ -141,7 +141,10 @@ describe("onboarding reducer", () => {
       const state = reduceTuiState(pulling(withFlow("local_download")), {
         type: "onboarding_cloud_meanwhile_opened",
       });
-      expect(state.onboarding).toMatchObject({ step: "cloud", resumeAfterCloud: true });
+      expect(state.onboarding).toMatchObject({
+        step: "cloud",
+        resumeAfterCloud: "local_download",
+      });
     });
 
     it("asks wait-or-jump when the key lands while the pull is still running", () => {
@@ -156,7 +159,7 @@ describe("onboarding reducer", () => {
       expect(state.onboarding).toMatchObject({
         step: "wait_or_jump",
         outcome: "cloud",
-        resumeAfterCloud: false,
+        resumeAfterCloud: null,
       });
     });
 
@@ -175,8 +178,57 @@ describe("onboarding reducer", () => {
       state = reduceTuiState(state, { type: "providers_wizard_closed" });
       expect(state.onboarding).toMatchObject({
         step: "local_download",
-        resumeAfterCloud: false,
+        resumeAfterCloud: null,
       });
+    });
+
+    it("comes back to wait-or-jump when a second provider is added from it", () => {
+      let state = pulling(withFlow("wait_or_jump"));
+      state = reduceTuiState(state, { type: "onboarding_cloud_meanwhile_opened" });
+      expect(state.onboarding).toMatchObject({
+        step: "cloud",
+        resumeAfterCloud: "wait_or_jump",
+      });
+      state = reduceTuiState(state, {
+        type: "providers_wizard_opened",
+        wizard: createProvidersWizardState("add"),
+      });
+      state = reduceTuiState(state, { type: "providers_wizard_succeeded" });
+      expect(state.onboarding).toMatchObject({
+        step: "wait_or_jump",
+        outcome: "cloud",
+        resumeAfterCloud: null,
+        cursor: 0,
+      });
+      expect(state.providersPanel.wizard).toBeNull();
+    });
+
+    it("backs out of the second wizard to wait-or-jump, not to the download", () => {
+      let state = pulling(withFlow("wait_or_jump"));
+      state = reduceTuiState(state, { type: "onboarding_cloud_meanwhile_opened" });
+      state = reduceTuiState(state, {
+        type: "providers_wizard_opened",
+        wizard: createProvidersWizardState("add"),
+      });
+      state = reduceTuiState(state, { type: "providers_wizard_closed" });
+      expect(state.onboarding).toMatchObject({
+        step: "wait_or_jump",
+        resumeAfterCloud: null,
+      });
+    });
+
+    it("finishes from wait-or-jump when the second wizard outlives the pull", () => {
+      let state = pulling(withFlow("wait_or_jump"));
+      state = reduceTuiState(state, { type: "onboarding_cloud_meanwhile_opened" });
+      state = reduceTuiState(state, {
+        type: "providers_wizard_opened",
+        wizard: createProvidersWizardState("add"),
+      });
+      // The orchestrator reports in while the wizard is up: nothing is
+      // left to come back for, so the flow ends instead.
+      state = reduceTuiState(state, { type: "local_models_pull_finished", kind: "chat" });
+      state = reduceTuiState(state, { type: "providers_wizard_succeeded" });
+      expect(state.onboarding).toMatchObject({ step: "finished", outcome: "cloud" });
     });
 
     it("closes the flow when the pull lands while wait-or-jump is up", () => {

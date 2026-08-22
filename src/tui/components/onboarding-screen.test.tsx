@@ -23,13 +23,35 @@ vi.mock("../../llm/llama-server-health.js", () => ({
 }));
 
 const STATE_DIR_ENV = "ATOMIC_AGENT_STATE_DIR";
+/** A pull in flight, so the wait-or-jump step has a bar to draw. */
+const PULL = {
+  kind: "chat",
+  modelId: "gemma-4-e4b",
+  label: "Gemma 4 E4B",
+  percent: 61,
+  transferredBytes: 2_600_000_000,
+  totalBytes: 4_220_000_000,
+  error: null,
+} as const;
 const strip = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, "");
 const ESCAPE_KEY = "\u001b";
 
-function renderFlow(step: "intro" | "choose" | "custom_chat_url" = "choose") {
+type FlowStep = "intro" | "choose" | "custom_chat_url" | "wait_or_jump";
+
+function renderFlow(step: FlowStep = "choose", cursor = 0) {
   const actions: TuiAction[] = [];
-  const onboarding = { ...createOnboardingState("http://127.0.0.1:8080"), step };
-  const state = { ...createInitialTuiState(fakeSession(), 50), onboarding };
+  const onboarding = {
+    ...createOnboardingState("http://127.0.0.1:8080"),
+    step,
+    cursor,
+    localModelId: "gemma-4-e4b",
+  };
+  const base = createInitialTuiState(fakeSession(), 50);
+  const state = {
+    ...base,
+    localModelsPanel: { ...base.localModelsPanel, pull: PULL },
+    onboarding,
+  };
   const view = render(
     <OnboardingScreen
       state={state}
@@ -129,6 +151,51 @@ describe("OnboardingScreen", () => {
     view.stdin.write(ESCAPE_KEY);
     await new Promise((resolve) => setTimeout(resolve, 40));
     expect(actions).not.toContainEqual({ type: "onboarding_finished", outcome: "skipped" });
+  });
+
+  describe("the almost-there screen", () => {
+    it("draws the bar it promises and drops the row that only waits", () => {
+      const { view } = renderFlow("wait_or_jump");
+      const frame = strip(view.lastFrame() ?? "");
+      expect(frame).toContain("almost there");
+      expect(frame).toContain("Still downloading gemma-4-e4b");
+      expect(frame).toContain("61%");
+      expect(frame).toContain("2.6 GB / 4.2 GB");
+      expect(frame).toContain("\u2588");
+      expect(frame).toContain("Start using the agent now");
+      expect(frame).toContain("Add another cloud provider");
+      expect(frame).not.toContain("Wait here");
+      const last = frame.split("\n").filter((line) => line.trim().length > 0).at(-1) ?? "";
+      expect(last).toContain("start or add a provider");
+    });
+
+    it("leaves for the agent on the first row", async () => {
+      const { view, actions } = renderFlow("wait_or_jump");
+      view.stdin.write("\r");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(actions).toContainEqual({ type: "onboarding_finished", outcome: "cloud" });
+    });
+
+    it("opens the providers wizard again on the second row", async () => {
+      const { view, actions } = renderFlow("wait_or_jump", 1);
+      view.stdin.write("\r");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(actions.map((action) => action.type)).toEqual([
+        "providers_wizard_opened",
+        "onboarding_cloud_meanwhile_opened",
+      ]);
+    });
+
+    it("moves between the two rows", async () => {
+      const { view, actions } = renderFlow("wait_or_jump");
+      view.stdin.write("j");
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(actions).toContainEqual({
+        type: "onboarding_cursor_moved",
+        delta: 1,
+        length: 2,
+      });
+    });
   });
 
   it("moves the cursor on a keypress", async () => {

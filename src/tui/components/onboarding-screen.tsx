@@ -212,8 +212,18 @@ export function OnboardingScreen(props: {
         return;
       }
       if (key.return) {
-        if (onboarding.cursor % 2 === 0) finish(onboarding.outcome ?? "cloud");
-        else dispatch({ type: "onboarding_step_set", step: "local_download" });
+        if (onboarding.cursor % 2 === 0) {
+          finish(onboarding.outcome ?? "cloud");
+          return;
+        }
+        // The same wizard the cloud step runs, opened a second time; the
+        // reducer sends its result back to this screen because this is
+        // the step the action was dispatched from.
+        dispatch({
+          type: "providers_wizard_opened",
+          wizard: createProvidersWizardState("add"),
+        });
+        dispatch({ type: "onboarding_cloud_meanwhile_opened" });
       }
     },
     { isActive: onboarding.step === "wait_or_jump" },
@@ -405,7 +415,9 @@ export function OnboardingScreen(props: {
           <OnboardingWaitOrJumpStep
             pull={props.state.localModelsPanel.pull}
             cloudLabel="Cloud model ready"
+            modelLabel={onboarding.localModelId ?? "the model"}
             cursor={onboarding.cursor % 2}
+            fit={fit}
           />
         ) : null}
         {onboarding.step === "local_download" ? (
@@ -487,7 +499,7 @@ function footerFor(onboarding: OnboardingUiState): string {
     case "propose_second":
       return "↑/↓ move   enter select   esc skip   ctrl+c quit";
     case "wait_or_jump":
-      return "↑/↓ move   enter select   ctrl+c quit";
+      return "↑/↓ move   enter start or add a provider   ctrl+c quit";
     case "finished":
       return "";
     case "intro":

@@ -27,15 +27,24 @@ export type OnboardingStep =
  */
 export type OnboardingOutcome = "local" | "cloud" | "custom" | "skipped";
 
+/**
+ * The screens a cloud wizard can be opened from while a pull is still
+ * running: the download itself, and the "almost there" screen a first
+ * cloud round-trip already led to. Adding a second provider from there
+ * has to come back there, not to the download it never left.
+ */
+export type OnboardingCloudReturn = "local_download" | "wait_or_jump";
+
 export interface OnboardingUiState {
   step: OnboardingStep;
   /** Which backend the "want the other too?" screen is offering. */
   offer: "local" | "cloud" | null;
   /**
-   * The cloud wizard was opened *from* a running download, so finishing
-   * it returns to the download rather than to the agent.
+   * The cloud wizard was opened *from* a running download, and this is
+   * the screen it returns to. `null` when it was reached from the
+   * backend choice, which is the one path that ends the flow instead.
    */
-  resumeAfterCloud: boolean;
+  resumeAfterCloud: OnboardingCloudReturn | null;
   /** The model being pulled, once the local branch has committed to one. */
   localModelId: string | null;
   /** Set together with the `finished` step; `null` at every other point. */
@@ -96,7 +105,7 @@ export function createOnboardingState(chatUrl: string): OnboardingUiState {
   return {
     step: "intro",
     offer: null,
-    resumeAfterCloud: false,
+    resumeAfterCloud: null,
     outcome: null,
     localModelId: null,
     cursor: 0,
