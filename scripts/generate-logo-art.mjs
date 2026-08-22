@@ -283,6 +283,56 @@ function renderSmall(ch, stroke) {
   return paint(layers);
 }
 
+/**
+ * XS: two rows, a half-cell cross for terminals where even the SM sign
+ * is too tall — the minimal onboarding tier, a splash pane a few rows
+ * high.
+ *
+ *    ▗█▄░
+ *    ▀█▘░
+ *
+ * Constructed like SM — there is no grid this small the sampler can
+ * land on. The horizontal bar is drawn in half-cells so it can sit
+ * *between* the two rows: `▄` (bottom half) and `▀` (top half) fuse
+ * across the row seam into a three-cell bar vertically centred on the
+ * full-cell arm running through the middle column.
+ *
+ * The identity survives in the bar's corners: `▗` pulls the top-left
+ * tip in and `▘` the bottom-right — the same concave pair SM fillets —
+ * so the sign stays 180°-symmetric rather than 4-fold, which is the
+ * one property separating this mark from a generic plus.
+ *
+ * ASCII has no sub-cell glyphs (charset pinned by the generated test),
+ * so that stroke degrades to a one-cell stub over a bar: the same thin
+ * plus its SM already draws, one row shorter.
+ */
+function renderTiny(ch, stroke) {
+  const width = 3;
+  const armCol = 1;
+  const face = new Set();
+  const partials = new Map();
+  if (stroke === "block") {
+    face.add(`0,${armCol}`).add(`1,${armCol}`);
+    partials.set(`0,${armCol - 1}`, "▗");
+    partials.set(`0,${armCol + 1}`, "▄");
+    partials.set(`1,${armCol - 1}`, "▀");
+    partials.set(`1,${armCol + 1}`, "▘");
+  } else {
+    face.add(`0,${armCol}`);
+    for (let c = 0; c < width; c += 1) face.add(`1,${c}`);
+  }
+  const ink = new Set([...face, ...partials.keys()]);
+  const shade = new Set();
+  for (const k of ink) {
+    const [r, c] = k.split(",").map(Number);
+    const key = `${r},${c + 1}`;
+    if (!ink.has(key)) shade.add(key);
+  }
+  const layers = [[shade, ch.shade], [face, ch.face]];
+  for (const [key, glyph] of partials) layers.push([new Set([key]), glyph]);
+  return paint(layers);
+}
+
 /** Kept for reference: the five-row bevelled mark the SM size replaced. */
 function renderBevel(cols, ch, aspect = ASPECT) {
   const { g, W, H } = fullGrid(cols, aspect);
@@ -304,13 +354,14 @@ function range(a, b) {
 
 // -------------------------------------------------------------- emit
 
-// `sm` takes no nominal width: it is constructed rather than sampled.
+// `sm` and `xs` take no nominal width: they are constructed, not sampled.
 const SCALES = { lg: 45, md: 29 };
 
 function art(scale, stroke) {
   const ch = STROKES[stroke];
   if (scale === "lg") return renderBoth(SCALES.lg, ch);
   if (scale === "sm") return renderSmall(ch, stroke);
+  if (scale === "xs") return renderTiny(ch, stroke);
   // MD/block draws its walls in the light `░` so it matches the rail
   // mark's tone; the ASCII ramp is already low-contrast and would lose
   // the depth entirely if it dropped to `.`.
@@ -323,7 +374,7 @@ function lit(rows, indent) {
 }
 
 function block(stroke) {
-  return ["lg", "md", "sm"]
+  return ["lg", "md", "sm", "xs"]
     .map((scale) => {
       const rows = art(scale, stroke);
       const w = Math.max(...rows.map((r) => r.length));
@@ -333,7 +384,7 @@ function block(stroke) {
 }
 
 const out = `/**
- * Brand-mark artwork: the Atomic cross at three scales, in two stroke
+ * Brand-mark artwork: the Atomic cross at four scales, in two stroke
  * systems, plus a dedicated rail mark.
  *
  * GENERATED FROM \`assets/logo.svg\` by \`scripts/generate-logo-art.mjs\`.
@@ -367,7 +418,7 @@ const out = `/**
  */
 
 /** Which drawing to use. A bigger scale is not a scaled-up smaller one. */
-export type MarkScale = "lg" | "md" | "sm";
+export type MarkScale = "lg" | "md" | "sm" | "xs";
 
 /**
  * Glyph system. \`block\` uses Unicode block elements; \`ascii\` stays in
@@ -377,6 +428,22 @@ export type MarkScale = "lg" | "md" | "sm";
 export type MarkStroke = "block" | "ascii";
 
 export type MarkArt = Readonly<Record<MarkScale, readonly string[]>>;
+
+/**
+ * Glyphs that draw a mark's front plane, sub-cell face ink included —
+ * SM's fillets, XS's half-cell bar. Everything else in the art is
+ * depth (extruded wall, cast shadow) or blank. Exported from here so
+ * every renderer colours the same glyphs as face instead of keeping a
+ * private copy that drifts when the art gains a glyph.
+ */
+export const FACE_GLYPHS: ReadonlySet<string> = new Set([
+  "#",
+  "\\u2588", // █ full block
+  "\\u2597", // ▗ SM/XS concave fillet, top-left
+  "\\u2598", // ▘ SM/XS concave fillet, bottom-right
+  "\\u2584", // ▄ lower half block — XS bar, top row
+  "\\u2580", // ▀ upper half block — XS bar, bottom row
+]);
 
 /** \`█\` face, \`▓\` wall, \`░\` shadow. */
 const BLOCK: MarkArt = {

@@ -1,5 +1,5 @@
 /**
- * Brand-mark artwork: the Atomic cross at three scales, in two stroke
+ * Brand-mark artwork: the Atomic cross at four scales, in two stroke
  * systems, plus a dedicated rail mark.
  *
  * GENERATED FROM `assets/logo.svg` by `scripts/generate-logo-art.mjs`.
@@ -33,7 +33,7 @@
  */
 
 /** Which drawing to use. A bigger scale is not a scaled-up smaller one. */
-export type MarkScale = "lg" | "md" | "sm";
+export type MarkScale = "lg" | "md" | "sm" | "xs";
 
 /**
  * Glyph system. `block` uses Unicode block elements; `ascii` stays in
@@ -43,6 +43,22 @@ export type MarkScale = "lg" | "md" | "sm";
 export type MarkStroke = "block" | "ascii";
 
 export type MarkArt = Readonly<Record<MarkScale, readonly string[]>>;
+
+/**
+ * Glyphs that draw a mark's front plane, sub-cell face ink included —
+ * SM's fillets, XS's half-cell bar. Everything else in the art is
+ * depth (extruded wall, cast shadow) or blank. Exported from here so
+ * every renderer colours the same glyphs as face instead of keeping a
+ * private copy that drifts when the art gains a glyph.
+ */
+export const FACE_GLYPHS: ReadonlySet<string> = new Set([
+  "#",
+  "\u2588", // █ full block
+  "\u2597", // ▗ SM/XS concave fillet, top-left
+  "\u2598", // ▘ SM/XS concave fillet, bottom-right
+  "\u2584", // ▄ lower half block — XS bar, top row
+  "\u2580", // ▀ upper half block — XS bar, bottom row
+]);
 
 /** `█` face, `▓` wall, `░` shadow. */
 const BLOCK: MarkArt = {
@@ -95,6 +111,11 @@ const BLOCK: MarkArt = {
     " ▗█░",
     "█████░",
     "  █▘░",
+  ],
+  // 4 x 2
+  xs: [
+    "▗█▄░",
+    "▀█▘░",
   ],
 };
 
@@ -149,6 +170,11 @@ const ASCII: MarkArt = {
     "  #.",
     "#####.",
     "  #.",
+  ],
+  // 4 x 2
+  xs: [
+    " #.",
+    "###.",
   ],
 };
 

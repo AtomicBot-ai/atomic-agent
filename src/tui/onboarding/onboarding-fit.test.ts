@@ -5,7 +5,7 @@ describe("computeOnboardingFit", () => {
   it("draws everything at 100×30 and says nothing about the size", () => {
     expect(computeOnboardingFit({ columns: 100, rows: 30 })).toEqual({
       tier: "full",
-      mark: true,
+      mark: "sm",
       explainer: true,
       rowDetails: true,
       sizeAdvice: false,
@@ -16,7 +16,7 @@ describe("computeOnboardingFit", () => {
     const fit = computeOnboardingFit({ columns: 86, rows: 26 });
     expect(fit.tier).toBe("reduced");
     expect(fit.sizeAdvice).toBe(true);
-    expect(fit.mark).toBe(true);
+    expect(fit.mark).toBe("sm");
   });
 
   it("drops row details when the columns cannot carry them", () => {
@@ -28,10 +28,12 @@ describe("computeOnboardingFit", () => {
     expect(computeOnboardingFit({ columns: 90, rows: 20 }).explainer).toBe(false);
   });
 
-  it("sheds the mark on a genuinely tiny terminal, and still advises", () => {
+  it("swaps to the tiny sign on a genuinely tiny terminal, and still advises", () => {
+    // The mark never disappears any more: XS is two rows, the same
+    // height as the bare text lockup the minimal tier used to draw.
     const fit = computeOnboardingFit({ columns: 60, rows: 14 });
     expect(fit.tier).toBe("minimal");
-    expect(fit.mark).toBe(false);
+    expect(fit.mark).toBe("xs");
     expect(fit.sizeAdvice).toBe(true);
   });
 });

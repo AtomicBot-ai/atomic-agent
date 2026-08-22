@@ -17,7 +17,7 @@ describe("logo-art.ts", () => {
     ).not.toThrow();
   });
 
-  const scales: readonly MarkScale[] = ["lg", "md", "sm"];
+  const scales: readonly MarkScale[] = ["lg", "md", "sm", "xs"];
 
   it.each(scales)("draws %s the same size in both strokes", (scale) => {
     const block = CROSS_MARKS.block[scale];
@@ -35,6 +35,7 @@ describe("logo-art.ts", () => {
     );
     expect(widths[0]).toBeGreaterThan(widths[1]!);
     expect(widths[1]).toBeGreaterThan(widths[2]!);
+    expect(widths[2]).toBeGreaterThan(widths[3]!);
   });
 
   it("draws SM as the three-row sign, fillets included", () => {
@@ -50,6 +51,24 @@ describe("logo-art.ts", () => {
     expect(CROSS_MARKS.block.sm[2]).toContain("▘");
     expect(CROSS_MARKS.block.sm.join("")).not.toContain("▖");
     expect(CROSS_MARKS.block.sm.join("")).not.toContain("▝");
+  });
+
+  it("draws XS as the two-row half-cell sign", () => {
+    // The onboarding header's minimal tier and the splash's shortest
+    // band both budget for exactly this footprint: 4 columns, 2 rows.
+    const xs = CROSS_MARKS.block.xs;
+    expect(xs).toHaveLength(2);
+    expect(xs.reduce((acc, row) => Math.max(acc, row.length), 0)).toBe(4);
+    // Same concave pair as SM — the corners that keep the sign
+    // 180°-symmetric instead of collapsing into a generic 4-fold plus.
+    expect(xs[0]).toContain("▗");
+    expect(xs[1]).toContain("▘");
+    expect(xs.join("")).not.toContain("▖");
+    expect(xs.join("")).not.toContain("▝");
+    // Face, half-cell face, shade — no wall tone at this size.
+    for (const row of xs) {
+      expect(row).toMatch(/^[ █░▗▘▄▀]*$/u);
+    }
   });
 
   it("uses only ASCII in the ascii stroke", () => {

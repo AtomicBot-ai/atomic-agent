@@ -4,7 +4,7 @@ import { useTypewriter } from "../hooks/use-typewriter.js";
 import { buildIntroArt, ORBIT_GLYPH } from "../onboarding/intro-art.js";
 import type { OnboardingFit } from "../onboarding/onboarding-fit.js";
 import { theme } from "../theme/theme.js";
-import { CROSS_MARKS } from "./logo-art.js";
+import { CROSS_MARKS, FACE_GLYPHS } from "./logo-art.js";
 import { WORDMARK_ROWS, TAGLINE } from "./logo.js";
 
 /** Milliseconds per revealed character. ~0.9s for the whole tagline. */
@@ -18,7 +18,6 @@ export const INTRO_CHROME_ROWS = 9;
 /** `ATOMIC` is the first 23 columns of the shipped `ATOMIC AGENT` wordmark. */
 const WORDMARK_ATOMIC_COLUMNS = 23;
 
-const FACE_GLYPHS = new Set(["█", "#"]);
 const PRESS_ANY_KEY = "[ press any key to continue ]";
 
 /**
@@ -47,7 +46,9 @@ export function OnboardingIntroStep(props: {
       ? CROSS_MARKS.block.md
       : budget >= CROSS_MARKS.block.sm.length
         ? CROSS_MARKS.block.sm
-        : [];
+        : budget >= CROSS_MARKS.block.xs.length
+          ? CROSS_MARKS.block.xs
+          : [];
   const crossCount = fit.tier === "full" ? 14 : fit.tier === "reduced" ? 8 : 0;
   const art = buildIntroArt({
     columns: Math.max(20, props.columns),

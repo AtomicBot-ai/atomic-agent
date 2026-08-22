@@ -15,7 +15,7 @@ function measure(rows: readonly string[]): { width: number; height: number } {
  * breakpoints silently start lying, so measure the real rows here.
  */
 describe("logo artwork", () => {
-  const variants: readonly LogoVariant[] = ["full", "small", "mini"];
+  const variants: readonly LogoVariant[] = ["full", "small", "mini", "tiny"];
 
   it.each(variants)("matches the declared metrics for %s", (variant) => {
     expect(measure(LOGO_ART[variant])).toEqual(LOGO_METRICS[variant]);
@@ -24,8 +24,10 @@ describe("logo artwork", () => {
   it("orders the variants strictly smallest-last", () => {
     expect(LOGO_METRICS.full.width).toBeGreaterThan(LOGO_METRICS.small.width);
     expect(LOGO_METRICS.small.width).toBeGreaterThan(LOGO_METRICS.mini.width);
+    expect(LOGO_METRICS.mini.width).toBeGreaterThan(LOGO_METRICS.tiny.width);
     expect(LOGO_METRICS.full.height).toBeGreaterThan(LOGO_METRICS.small.height);
     expect(LOGO_METRICS.small.height).toBeGreaterThan(LOGO_METRICS.mini.height);
+    expect(LOGO_METRICS.mini.height).toBeGreaterThan(LOGO_METRICS.tiny.height);
   });
 
   it("matches the declared wordmark width and keeps the tagline narrower", () => {

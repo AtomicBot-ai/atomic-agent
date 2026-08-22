@@ -19,14 +19,17 @@
  * unit-tested as a table instead of through rendered frames.
  */
 
-export type LogoVariant = "full" | "small" | "mini";
+export type LogoVariant = "full" | "small" | "mini" | "tiny";
 
 /**
- * What the splash draws for a mark. `"none"` is a real outcome, not a
- * failure: below ~8 rows the mark and the tips cannot both fit, and Ink
- * paints an over-tall frame *over* the rows above it rather than
- * clipping — so drawing it anyway is what garbled the start page in the
- * first place. The tips are the useful half at that size.
+ * What the splash draws for a mark. `"none"` is still a real outcome,
+ * not a failure: on a surface where even the two-row `tiny` sign would
+ * evict every tip, Ink paints the over-tall frame *over* the rows above
+ * it rather than clipping — so drawing it anyway is what garbled the
+ * start page in the first place. The tips are the useful half at that
+ * size. `tiny` narrows the "none" band: eight-column surfaces where
+ * `mini` (6×3) could not draw at all now get a mark, and five-row ones
+ * get a mark *and* a tip where mini used to evict the whole list.
  */
 export type LogoChoice = LogoVariant | "none";
 
@@ -137,6 +140,7 @@ export const LOGO_METRICS: Readonly<Record<LogoVariant, LogoMetrics>> = {
   full: { width: 51, height: 24 },
   small: { width: 31, height: 14 },
   mini: { width: 6, height: 3 },
+  tiny: { width: 4, height: 2 },
 };
 
 /** `ATOMIC AGENT` half-block wordmark, plus the gap that precedes it. */
@@ -181,7 +185,12 @@ const SPLASH_SLACK_ROWS = 1;
  */
 export const WORDMARK_STACK_ROWS = 4;
 
-const VARIANTS_WIDEST_FIRST: readonly LogoVariant[] = ["full", "small", "mini"];
+const VARIANTS_WIDEST_FIRST: readonly LogoVariant[] = [
+  "full",
+  "small",
+  "mini",
+  "tiny",
+];
 
 /** Width at which `variant` and the wordmark fit side by side. */
 function lockupWidth(variant: LogoVariant): number {
@@ -190,8 +199,8 @@ function lockupWidth(variant: LogoVariant): number {
 
 /**
  * Marks big enough to carry the wordmark beside them. `mini` is six
- * columns; parked next to a 46-column wordmark it reads as a bullet
- * point rather than a lockup.
+ * columns and `tiny` four; parked next to a 46-column wordmark either
+ * reads as a bullet point rather than a lockup.
  */
 const WORDMARK_VARIANTS: readonly LogoVariant[] = ["full", "small"];
 
@@ -267,9 +276,16 @@ export function computeSplashFit(size: SplashSize): SplashFit {
   }
 
   let logo: LogoChoice = VARIANTS_WIDEST_FIRST[index]!;
+  // "Room for the mark" must mean a tip still survives it: any drawn
+  // mark also spends SPLASH_SLACK_ROWS, so leaving that out let the
+  // two-row tiny sign land on a four-row surface and evict every tip —
+  // exactly the mark-over-useful-half inversion "none" exists to stop.
+  // For every bigger variant the downgrade loop above already demanded
+  // MIN_TIPS, which is stricter, so only the smallest rung feels this.
   if (
     LOGO_METRICS[VARIANTS_WIDEST_FIRST[index]!]!.height +
       TIP_LIST_MARGIN_ROWS +
+      SPLASH_SLACK_ROWS +
       1 >
       rows ||
     LOGO_METRICS[VARIANTS_WIDEST_FIRST[index]!]!.width > inner

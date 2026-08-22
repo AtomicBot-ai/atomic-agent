@@ -16,7 +16,7 @@ function markRows(fit: ReturnType<typeof computeSplashFit>): number {
   );
 }
 
-const SIZE_ORDER: readonly LogoVariant[] = ["mini", "small", "full"];
+const SIZE_ORDER: readonly LogoVariant[] = ["tiny", "mini", "small", "full"];
 
 describe("computeSplashFit", () => {
   it("gives a very wide terminal the full artwork with the wordmark beside it", () => {
@@ -118,6 +118,19 @@ describe("computeSplashFit", () => {
     expect(fit.tipCount).toBeGreaterThan(0);
   });
 
+  it("draws the tiny sign where mini was too big to earn its rows", () => {
+    // Five rows used to buy mini at the cost of every tip; the two-row
+    // sign keeps a tip on screen beside the brand.
+    const short = computeSplashFit({ columns: 38, rows: 5 });
+    expect(short.logo).toBe("tiny");
+    expect(short.tipCount).toBe(1);
+    // Nine columns (five inner): mini is six wide and could not draw at
+    // all here — this band really did render no mark before.
+    const narrow = computeSplashFit({ columns: 9, rows: 24 });
+    expect(narrow.logo).toBe("tiny");
+    expect(narrow.wordmark).toBe(false);
+  });
+
   it("drops the mark rather than overflow a two-row surface", () => {
     // Reversed deliberately. The old floor was a one-line text mark, so
     // the tips were what got dropped. The mark is real artwork at every
@@ -148,7 +161,7 @@ describe("computeSplashFit", () => {
         expect(height).toBeLessThanOrEqual(rows);
         expect(fit.tipCount).toBeGreaterThanOrEqual(0);
         expect(fit.labelWidth).toBeGreaterThanOrEqual(0);
-        // `mini` is nine columns; it never carries the wordmark.
+        // `mini` and `tiny` are bullet-sized; they never carry the wordmark.
         if (fit.wordmark) expect(["full", "small"]).toContain(fit.logo);
       }
     }
