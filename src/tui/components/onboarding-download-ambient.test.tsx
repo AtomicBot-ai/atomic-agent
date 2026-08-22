@@ -6,7 +6,7 @@ import {
   MIN_ATOM_ROWS,
   OnboardingDownloadAmbient,
 } from "./onboarding-download-ambient.js";
-import { ATOM_GLYPH } from "../onboarding/atom-field.js";
+import { ATOM_COLLISION_GLYPH, ATOM_GLYPH } from "../onboarding/atom-field.js";
 import type { LocalModelsPullState } from "../local-models/local-models-panel-state.js";
 
 type View = ReturnType<typeof render>;
@@ -176,5 +176,44 @@ describe("OnboardingDownloadAmbient", () => {
     view.rerender(ambient({ pull: null, pullError: "connection reset", atomStepMs: 20 }));
     expect(strip(view.lastFrame() ?? "")).not.toContain(ATOM_GLYPH);
     expect(await frameMoves(view, 500)).toBe(false);
+  });
+
+  /** Atoms visible in a frame, hot or cold — a collision is still an atom. */
+  const atomsDrawn = (frame: string): number =>
+    frame.split(ATOM_GLYPH).length + frame.split(ATOM_COLLISION_GLYPH).length - 2;
+
+  it("thins the population when the pane is only just tall enough", () => {
+    // 22 viewport rows budget three rows of field, the smallest that
+    // draws at all (the table above). A full population there is hot 22%
+    // of the time; two keep the collision an event (measured 2% — see
+    // atom-field.test.ts). The default geometry's 97×6 pane earns more.
+    const small = atomsDrawn(strip(mount(ambient({ viewportRows: 22 })).lastFrame() ?? ""));
+    const full = atomsDrawn(strip(mount(ambient()).lastFrame() ?? ""));
+    expect(small).toBeGreaterThan(0);
+    expect(small).toBeLessThanOrEqual(2);
+    expect(full).toBeGreaterThan(2);
+  });
+
+  it("re-fits the population when the terminal shrinks mid-download", async () => {
+    // The interval survives a resize by design; the population must
+    // not. The step is parked hours out so the only thing that can
+    // change the frame is the resize rebuild itself: the settled frame
+    // must be the very placement a fresh mount at the small geometry
+    // draws — same seed, same count arithmetic — not the old field
+    // clipped to fewer rows.
+    const PARKED_STEP_MS = 3_600_000;
+    const fresh = strip(
+      mount(ambient({ viewportRows: 22, atomStepMs: PARKED_STEP_MS })).lastFrame() ?? "",
+    );
+    expect(atomsDrawn(fresh)).toBe(2);
+    const view = mount(ambient({ atomStepMs: PARKED_STEP_MS }));
+    expect(atomsDrawn(strip(view.lastFrame() ?? ""))).toBe(3);
+    view.rerender(ambient({ viewportRows: 22, atomStepMs: PARKED_STEP_MS }));
+    // The rebuild lands in an effect, one Ink commit after the resize.
+    const until = Date.now() + 4000;
+    while (strip(view.lastFrame() ?? "") !== fresh && Date.now() < until) {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    expect(strip(view.lastFrame() ?? "")).toBe(fresh);
   });
 });
