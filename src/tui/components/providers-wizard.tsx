@@ -117,6 +117,15 @@ function listActionsHint(base: string, submitting: boolean): string {
   return submitting ? CHECKING_KEY_HINT : base;
 }
 
+/**
+ * One labelled single-line field.
+ *
+ * The blue in this file — borders, titles, the typed value, the masked
+ * key — is all ink, so it reads `accent`. `accentSoft` is the house
+ * palette's fill (`#294793`), which the design lifts to `accent` the
+ * moment the same hue has to be read rather than sat on; painting ink
+ * with it put these screens at roughly 2:1 against the terminal.
+ */
 function renderLineField(props: {
   title: string;
   value: string;
@@ -130,17 +139,17 @@ function renderLineField(props: {
     <Box
       flexDirection="column"
       borderStyle="round"
-      borderColor={theme.colors.accentSoft}
+      borderColor={theme.colors.accent}
       paddingX={1}
       marginY={1}
       width="100%"
     >
-      <Text bold color={theme.colors.accentSoft}>
+      <Text bold color={theme.colors.accent}>
         {props.title}
       </Text>
       <Box>
         <Text color={theme.colors.muted}>{"> "}</Text>
-        <Text color={muted ? theme.colors.muted : theme.colors.accentSoft}>
+        <Text color={muted ? theme.colors.muted : theme.colors.accent}>
           {display}
         </Text>
       </Box>
@@ -365,21 +374,21 @@ export function ProvidersWizard(props: {
       <Box
         flexDirection="column"
         borderStyle="round"
-        borderColor={theme.colors.accentSoft}
+        borderColor={theme.colors.accent}
         paddingX={1}
         marginY={1}
         width="100%"
       >
-        <Text bold color={theme.colors.accentSoft}>
+        <Text bold color={theme.colors.accent}>
           API key — {providerLabelForWizard(w)}
         </Text>
         <Text color={theme.colors.muted}>
-          Saved to <Text color={theme.colors.accentSoft}>{".env"}</Text> as{" "}
+          Saved to <Text color={theme.colors.accent}>{".env"}</Text> as{" "}
           {envHint} (mode 0600). {emptyMeans}
         </Text>
         <Box>
           <Text color={theme.colors.muted}>{"> "}</Text>
-          <Text color={theme.colors.accentSoft}>{maskedKey(w.apiKeyBuffer)}</Text>
+          <Text color={theme.colors.accent}>{maskedKey(w.apiKeyBuffer)}</Text>
         </Box>
         {w.error ? (
           <Text color={theme.colors.error}>! {w.error}</Text>

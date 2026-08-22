@@ -127,7 +127,8 @@ export function CloudProviderOnboarding(props: {
 
   return (
     <Box flexDirection="column" padding={1}>
-      <Text bold color={theme.colors.accentSoft}>
+      {/* Ink, not a ground: `accent`, for the reason `renderLineField` gives. */}
+      <Text bold color={theme.colors.accent}>
         Cloud LLM provider setup
       </Text>
       <Text color={theme.colors.muted}>

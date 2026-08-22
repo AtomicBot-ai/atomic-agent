@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { THEMES, type ThemeName, type TuiColors } from "./theme.js";
+import { contrastRatio } from "./color-contrast.js";
+import { THEMES, THEME_NAMES, type ThemeName, type TuiColors } from "./theme.js";
 
 const COLOR_KEYS: (keyof TuiColors)[] = [
   "user",
@@ -137,4 +138,44 @@ describe("third-party theme palettes", () => {
       });
     });
   }
+});
+
+/**
+ * `accentSoft` is a ground and `accent` is the ink read on top of it.
+ * A component that reaches for `accentSoft` to paint text or a border
+ * inherits whatever contrast the palette picked for a fill, which on the
+ * house palette is under 2:1 — the whole of the unreadable cloud setup
+ * screens. These pin the property that lets a call site move from one to
+ * the other without checking twelve palettes by hand.
+ */
+describe("accent ink against accentSoft ground", () => {
+  for (const name of THEME_NAMES) {
+    const c = THEMES[name].colors;
+
+    it(`${name}: accent reads at least as well as accentSoft on the page`, () => {
+      // `badgeBackground` is the palette's own "one step off the
+      // terminal background, read with accent text on top", so it stands
+      // in for the ground the ink actually lands on — light or dark.
+      expect(contrastRatio(c.accent, c.badgeBackground)).toBeGreaterThanOrEqual(
+        contrastRatio(c.accentSoft, c.badgeBackground),
+      );
+    });
+  }
+
+  it("only the house palette separates the two", () => {
+    // Everywhere else the hexes are identical, so moving a call site from
+    // `accentSoft` to `accent` cannot change a single pixel — including on
+    // github-light, catppuccin-latte, gruvbox-light and solarized-light,
+    // where a brighter blue would have been the thing to worry about.
+    const separated = THEME_NAMES.filter(
+      (name) => THEMES[name].colors.accentSoft !== THEMES[name].colors.accent,
+    );
+    expect(separated).toEqual(["atomic-retro"]);
+  });
+
+  it("the house palette's ink clears AA where its fill does not", () => {
+    const c = THEMES["atomic-retro"].colors;
+    expect(contrastRatio(c.accent, c.badgeBackground)).toBeGreaterThan(4.5);
+    expect(contrastRatio(c.accentSoft, c.badgeBackground)).toBeLessThan(2);
+  });
 });

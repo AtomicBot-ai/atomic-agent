@@ -42,6 +42,13 @@ export interface TuiColors {
   readonly toolOk: string;
   readonly toolError: string;
   readonly accent: string;
+  /**
+   * The accent hue as a *ground* — the tone a chip, badge or panel is
+   * painted in, with `accent` ink read on top of it. A palette is free
+   * to make it much darker than `accent` (the house one does: `#294793`
+   * against `#7195e8`), so it is never a text colour. Anything drawn as
+   * ink, borders included, reads `accent`.
+   */
   readonly accentSoft: string;
   /**
    * The palette's violet, one hue away from `accent`. Reserved for a
