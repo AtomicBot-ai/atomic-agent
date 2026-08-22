@@ -1,3 +1,4 @@
+import { Box } from "ink";
 import { render } from "ink-testing-library";
 import React, { type ReactElement } from "react";
 import { describe, expect, it } from "vitest";
@@ -31,13 +32,17 @@ const FULL = computeOnboardingFit({ columns: 100, rows: 30 });
 const MINIMAL = computeOnboardingFit({ columns: 60, rows: 14 });
 const PICKS = orderLocalModelPicks(buildLocalModelPicks(16));
 
-function drawnWidth(element: ReactElement): number {
-  const view = render(element);
+function drawnLines(element: ReactElement, width?: number): string[] {
+  const view = render(
+    width === undefined ? element : <Box width={width}>{element}</Box>,
+  );
   const frame = (view.lastFrame() ?? "").replace(/\[[0-9;]*m/g, "");
   view.unmount();
-  return frame
-    .split("\n")
-    .reduce((widest, line) => Math.max(widest, line.trimEnd().length), 0);
+  return frame.split("\n");
+}
+
+function widestDrawn(lines: readonly string[]): number {
+  return lines.reduce((max, line) => Math.max(max, line.trimEnd().length), 0);
 }
 
 /**
@@ -175,10 +180,24 @@ const cases: { name: string; measured: number; element: ReactElement; exact: boo
 describe("the per-step block measures", () => {
   for (const testCase of cases) {
     it(`measures ${testCase.name}`, () => {
-      const drawn = drawnWidth(testCase.element);
+      const drawn = widestDrawn(drawnLines(testCase.element));
       expect(drawn).toBeGreaterThan(0);
       if (testCase.exact) expect(Math.min(testCase.measured, TEST_COLUMNS)).toBe(drawn);
       else expect(testCase.measured).toBeGreaterThanOrEqual(drawn);
+    });
+
+    // The failure the width check alone cannot see: a step whose lines
+    // carry trailing pad cells measures narrow but draws wide, and once
+    // the block is pinned to `width={measured}` Ink wraps the invisible
+    // cells into extra rows instead of clipping them. Same line count
+    // pinned and free means nothing wrapped inside the measure.
+    it(`draws ${testCase.name} without wrapping inside its own measure`, () => {
+      const free = drawnLines(testCase.element);
+      const pinned = drawnLines(
+        testCase.element,
+        Math.min(testCase.measured, TEST_COLUMNS),
+      );
+      expect(pinned.length).toBe(free.length);
     });
   }
 });

@@ -1,19 +1,13 @@
-import { Box, Text, useInput } from "ink";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactElement,
-} from "react";
+import { Box, Text } from "ink";
+import { useCallback, useEffect, useMemo, useRef, type ReactElement } from "react";
 import { getConfig } from "../../config/index.js";
-import { checkLlamaServer } from "../../llm/llama-server-health.js";
 import {
   isCloudTextProviderReady,
   isLocalBackendConfigured,
 } from "../local-backend-readiness.js";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
+import { useOnboardingInputs } from "../hooks/use-onboarding-inputs.js";
+import { useOnboardingUrlActions } from "../hooks/use-onboarding-url-actions.js";
 import {
   buildLocalModelPicks,
   hostRamGb,
@@ -23,34 +17,21 @@ import {
   computeOnboardingFit,
   ONBOARDING_SIZE_ADVICE,
 } from "../onboarding/onboarding-fit.js";
-import { handleOnboardingKey } from "../onboarding/onboarding-key-bindings.js";
 import { decideSecondBackendOffer } from "../onboarding/propose-second-backend.js";
-import type { OnboardingOutcome, OnboardingUiState } from "../onboarding/onboarding-state.js";
-import {
-  normalizeLocalLlmBaseUrl,
-  persistUserLocalModelsConfig,
-  persistUserRemoteLlmUrls,
-} from "../persist-user-local-models-config.js";
+import type {
+  OnboardingOutcome,
+  OnboardingUiState,
+} from "../onboarding/onboarding-state.js";
 import { persistOnboardingState } from "../persist-onboarding-state.js";
-import { routeProvidersWizardKey } from "../providers/route-wizard-key.js";
-import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
 import { theme } from "../theme/theme.js";
 import type { TuiAction } from "../tui-action.js";
 import type { LocalModelId } from "../../local-llm/index.js";
 import type { TuiState } from "../tui-state.js";
-import { OnboardingChooseStep } from "./onboarding-choose-step.js";
-import { OnboardingHeader } from "./onboarding-header.js";
-import { OnboardingDownloadStep } from "./onboarding-download-step.js";
-import { OnboardingIntroStep } from "./onboarding-intro-step.js";
-import { OnboardingLocalPickStep } from "./onboarding-local-pick-step.js";
-import { OnboardingProposeStep } from "./onboarding-propose-step.js";
-import { OnboardingWaitOrJumpStep } from "./onboarding-wait-or-jump-step.js";
+import { OnboardingStepBody } from "./onboarding-step-body.js";
 import {
   layOutOnboardingSurface,
   SURFACE_PADDING_TOP,
 } from "./onboarding-surface-layout.js";
-import { OnboardingUrlStep } from "./onboarding-url-step.js";
-import { ProvidersWizard } from "./providers-wizard.js";
 
 export interface OnboardingScreenCallbacks {
   /** Verify + save + hot-swap the cloud provider (the panel's own path). */
@@ -86,9 +67,10 @@ const SUBTITLES: Record<OnboardingUiState["step"], string> = {
  * that strip is pinned to the real last row rather than trailing the
  * content.
  *
- * Effects live here rather than in the reducer — persisting config and
- * probing a URL are writes, and the reducer stays pure so the step
- * machine can be tested as a table.
+ * The screen itself is the flow's shell — placement, effects and the
+ * footer. The keys live in `useOnboardingInputs`, the endpoint writes in
+ * `useOnboardingUrlActions`, and the step switch in `OnboardingStepBody`;
+ * the reducer stays pure so the step machine can be tested as a table.
  */
 export function OnboardingScreen(props: {
   state: TuiState;
@@ -107,7 +89,6 @@ export function OnboardingScreen(props: {
     [onboarding.step],
   );
   const settling = useRef(false);
-  const [introSkipped, setIntroSkipped] = useState(false);
 
   const finish = useCallback(
     (outcome: OnboardingOutcome) => {
@@ -116,240 +97,26 @@ export function OnboardingScreen(props: {
     [dispatch],
   );
 
-  const pick = useCallback(
-    (choice: "local" | "cloud" | "custom") => {
-      if (choice === "cloud") {
-        dispatch({
-          type: "providers_wizard_opened",
-          wizard: createProvidersWizardState("add"),
-        });
-        dispatch({ type: "onboarding_step_set", step: "cloud" });
-        return;
-      }
-      if (choice === "custom") {
-        dispatch({ type: "onboarding_step_set", step: "custom_chat_url" });
-        return;
-      }
-      // Managed mode is recorded now so a Ctrl+C mid-download does not
-      // lose the choice; the model id follows when the pull completes.
-      persistUserLocalModelsConfig({ mode: "managed" });
-      dispatch({ type: "onboarding_step_set", step: "local_pick" });
-    },
-    [dispatch, finish],
-  );
-
-  useInput(
-    (input, key) => {
-      const result = handleOnboardingKey(input, key, onboarding);
-      if (!result.handled) return;
-      for (const action of result.actions) dispatch(action);
-      const intent = result.intent;
-      if (!intent) return;
-      if (intent.kind === "intro_key") {
-        // First key finishes the reveal, second moves on: a splash that
-        // cannot be hurried is a wait, and one that vanishes on the key
-        // that was meant to hurry it is a screen nobody ever reads.
-        if (!introSkipped) {
-          setIntroSkipped(true);
-          return;
-        }
-        // Recorded as it is dismissed, not at the end of the flow: an
-        // operator who quits at the backend choice has still seen the
-        // splash, and a later release may want to know that.
-        persistOnboardingState({ introSeenAt: new Date().toISOString() });
-        dispatch({ type: "onboarding_step_set", step: "choose" });
-        return;
-      }
-      if (intent.kind === "skip") finish("skipped");
-      else pick(intent.choice);
-    },
-    { isActive: onboarding.step === "choose" || onboarding.step === "intro" },
-  );
-
   const picks = useMemo(
     () => orderLocalModelPicks(buildLocalModelPicks(ramGb)),
     [ramGb],
   );
   const pickCursor = onboarding.cursor % Math.max(1, picks.length);
-
-  useInput(
-    (input, key) => {
-      if (key.escape) {
-        dispatch({ type: "onboarding_step_set", step: "choose" });
-        return;
-      }
-      if (key.upArrow || input === "k") {
-        dispatch({ type: "onboarding_cursor_moved", delta: -1, length: picks.length });
-        return;
-      }
-      if (key.downArrow || input === "j") {
-        dispatch({ type: "onboarding_cursor_moved", delta: 1, length: picks.length });
-        return;
-      }
-      if (key.return) {
-        const pick = picks[onboarding.cursor % Math.max(1, picks.length)];
-        if (!pick) return;
-        dispatch({ type: "onboarding_local_model_picked", modelId: pick.id });
-        callbacks.onLocalModelsPullRequested?.(pick.id as LocalModelId);
-      }
-    },
-    { isActive: onboarding.step === "local_pick" },
-  );
-
-  useInput(
-    (input, key) => {
-      if (input === "c" && !key.ctrl) {
-        dispatch({
-          type: "providers_wizard_opened",
-          wizard: createProvidersWizardState("add"),
-        });
-        dispatch({ type: "onboarding_cloud_meanwhile_opened" });
-      }
-    },
-    { isActive: onboarding.step === "local_download" },
-  );
-
-  useInput(
-    (input, key) => {
-      if (key.upArrow || key.downArrow || input === "j" || input === "k") {
-        dispatch({
-          type: "onboarding_cursor_moved",
-          delta: key.upArrow || input === "k" ? -1 : 1,
-          length: 2,
-        });
-        return;
-      }
-      if (key.return) {
-        if (onboarding.cursor % 2 === 0) finish(onboarding.outcome ?? "cloud");
-        else dispatch({ type: "onboarding_step_set", step: "local_download" });
-      }
-    },
-    { isActive: onboarding.step === "wait_or_jump" },
-  );
-
-  useInput(
-    (input, key) => {
-      if (key.escape) {
-        finish(onboarding.outcome ?? "skipped");
-        return;
-      }
-      if (key.upArrow || key.downArrow || input === "j" || input === "k") {
-        dispatch({
-          type: "onboarding_cursor_moved",
-          delta: key.upArrow || input === "k" ? -1 : 1,
-          length: 2,
-        });
-        return;
-      }
-      if (key.return) {
-        if (onboarding.cursor !== 0) {
-          finish(onboarding.outcome ?? "skipped");
-          return;
-        }
-        if (onboarding.offer === "local") {
-          persistUserLocalModelsConfig({ mode: "managed" });
-          dispatch({ type: "onboarding_step_set", step: "local_pick" });
-          return;
-        }
-        dispatch({
-          type: "providers_wizard_opened",
-          wizard: createProvidersWizardState("add"),
-        });
-        dispatch({ type: "onboarding_step_set", step: "cloud" });
-      }
-    },
-    { isActive: onboarding.step === "propose_second" },
-  );
-
-  // The cloud step *is* the providers wizard — same keys, same
-  // verification, same hot-swap — so it routes through the panel's own
-  // handler rather than a second implementation of it.
   const wizardState = props.state.providersPanel.wizard;
-  useInput(
-    (input, key) => {
-      if (!wizardState) return;
-      routeProvidersWizardKey(input, key, wizardState, {
-        dispatch,
-        onSubmit: (wizard) => callbacks.onProvidersWizardSubmit?.(wizard),
-        onSubmitCancel: () => callbacks.onProvidersWizardSubmitCancel?.(),
-      });
-    },
-    { isActive: onboarding.step === "cloud" && wizardState !== null },
-  );
 
-  const probeAndAdvance = useCallback(
-    async (raw: string) => {
-      if (onboarding.busy) return;
-      dispatch({ type: "onboarding_busy_set", busy: true });
-      dispatch({ type: "onboarding_error_set", error: null });
-      try {
-        const base = normalizeLocalLlmBaseUrl(raw);
-        const health = await checkLlamaServer({
-          url: base,
-          retries: 0,
-          backoffMs: 0,
-          timeoutMs: 5000,
-        });
-        if (!health.reachable) {
-          dispatch({
-            type: "onboarding_error_set",
-            error: health.error ?? "health check failed",
-          });
-          return;
-        }
-        dispatch({ type: "onboarding_url_changed", field: "chat", value: base });
-        dispatch({ type: "onboarding_step_set", step: "custom_embedding_url" });
-      } catch (err) {
-        dispatch({
-          type: "onboarding_error_set",
-          error: err instanceof Error ? err.message : String(err),
-        });
-      } finally {
-        dispatch({ type: "onboarding_busy_set", busy: false });
-      }
-    },
-    [dispatch, onboarding.busy],
-  );
-
-  const saveEmbeddingUrl = useCallback(
-    async (raw: string) => {
-      if (onboarding.busy) return;
-      const chatUrl = normalizeLocalLlmBaseUrl(onboarding.chatUrl);
-      if (raw.trim().length === 0) {
-        persistUserRemoteLlmUrls({ chatUrl });
-        finish("custom");
-        return;
-      }
-      dispatch({ type: "onboarding_busy_set", busy: true });
-      dispatch({ type: "onboarding_error_set", error: null });
-      try {
-        const embeddingUrl = normalizeLocalLlmBaseUrl(raw);
-        const health = await checkLlamaServer({
-          url: embeddingUrl,
-          retries: 0,
-          backoffMs: 0,
-          timeoutMs: 5000,
-        });
-        if (!health.reachable) {
-          dispatch({
-            type: "onboarding_error_set",
-            error: health.error ?? "health check failed",
-          });
-          return;
-        }
-        persistUserRemoteLlmUrls({ chatUrl, embeddingUrl });
-        finish("custom");
-      } catch (err) {
-        dispatch({
-          type: "onboarding_error_set",
-          error: err instanceof Error ? err.message : String(err),
-        });
-      } finally {
-        dispatch({ type: "onboarding_busy_set", busy: false });
-      }
-    },
-    [dispatch, finish, onboarding.busy, onboarding.chatUrl],
-  );
+  const { introSkipped } = useOnboardingInputs({
+    onboarding,
+    dispatch,
+    callbacks,
+    picks,
+    wizardState,
+    finish,
+  });
+  const { probeAndAdvance, saveEmbeddingUrl } = useOnboardingUrlActions({
+    onboarding,
+    dispatch,
+    finish,
+  });
 
   // Closing down runs once. The stamp is what stops the flow reopening
   // on the next launch, so it is written before the surface unmounts.
@@ -420,90 +187,25 @@ export function OnboardingScreen(props: {
           marginLeft={placement.left}
           width={placement.width}
         >
-          {onboarding.step === "intro" ? null : (
-            <OnboardingHeader subtitle={SUBTITLES[onboarding.step]} mark={fit.mark} />
-          )}
-          {/*
-            The gap under the header, which the splash does not draw one
-            of. Spending the row anyway cost the intro its last line.
-          */}
-          <Box
-            flexDirection="column"
-            marginTop={onboarding.step === "intro" ? 0 : 1}
-            flexShrink={0}
-          >
-            {onboarding.step === "intro" ? (
-              <OnboardingIntroStep
-                columns={Math.max(20, size.columns - 4)}
-                rows={placement.rows}
-                fit={fit}
-                skipAnimation={introSkipped}
-              />
-            ) : null}
-            {onboarding.step === "choose" ? (
-              <OnboardingChooseStep cursor={onboarding.cursor} fit={fit} />
-            ) : null}
-            {onboarding.step === "local_pick" ? (
-              <OnboardingLocalPickStep
-                picks={picks}
-                cursor={pickCursor}
-                ramGb={ramGb}
-                fit={fit}
-              />
-            ) : null}
-            {onboarding.step === "propose_second" && onboarding.offer ? (
-              <OnboardingProposeStep
-                offer={onboarding.offer}
-                configuredLabel={configuredLabel(onboarding.outcome)}
-                cursor={onboarding.cursor % 2}
-              />
-            ) : null}
-            {onboarding.step === "wait_or_jump" ? (
-              <OnboardingWaitOrJumpStep
-                pull={props.state.localModelsPanel.pull}
-                cloudLabel={CLOUD_READY_LABEL}
-                cursor={onboarding.cursor % 2}
-              />
-            ) : null}
-            {onboarding.step === "local_download" ? (
-              <OnboardingDownloadStep
-                pull={props.state.localModelsPanel.pull}
-                modelLabel={onboarding.localModelId ?? "the model"}
-                offerCloudMeanwhile={!cloudAlreadyConfigured}
-              />
-            ) : null}
-            {onboarding.step === "cloud" && wizardState ? (
-              <ProvidersWizard wizard={wizardState} />
-            ) : null}
-            {onboarding.step === "custom_chat_url" ? (
-              <OnboardingUrlStep
-                kind="chat"
-                value={onboarding.chatUrl}
-                busy={onboarding.busy}
-                error={onboarding.error}
-                onChange={(value) =>
-                  dispatch({ type: "onboarding_url_changed", field: "chat", value })
-                }
-                onSubmit={(value) => void probeAndAdvance(value)}
-                onBack={() => dispatch({ type: "onboarding_step_set", step: "choose" })}
-              />
-            ) : null}
-            {onboarding.step === "custom_embedding_url" ? (
-              <OnboardingUrlStep
-                kind="embedding"
-                value={onboarding.embeddingUrl}
-                busy={onboarding.busy}
-                error={onboarding.error}
-                onChange={(value) =>
-                  dispatch({ type: "onboarding_url_changed", field: "embedding", value })
-                }
-                onSubmit={(value) => void saveEmbeddingUrl(value)}
-                onBack={() =>
-                  dispatch({ type: "onboarding_step_set", step: "custom_chat_url" })
-                }
-              />
-            ) : null}
-          </Box>
+          <OnboardingStepBody
+            onboarding={onboarding}
+            fit={fit}
+            columns={size.columns}
+            viewportRows={placement.rows}
+            subtitle={SUBTITLES[onboarding.step]}
+            picks={picks}
+            pickCursor={pickCursor}
+            ramGb={ramGb}
+            offerCloudMeanwhile={!cloudAlreadyConfigured}
+            pull={props.state.localModelsPanel.pull}
+            wizardState={wizardState}
+            introSkipped={introSkipped}
+            configuredLabel={configuredLabel(onboarding.outcome)}
+            cloudLabel={CLOUD_READY_LABEL}
+            dispatch={dispatch}
+            onChatUrlSubmit={(value) => void probeAndAdvance(value)}
+            onEmbeddingUrlSubmit={(value) => void saveEmbeddingUrl(value)}
+          />
         </Box>
         <Box flexGrow={1} flexShrink={1} />
       </Box>

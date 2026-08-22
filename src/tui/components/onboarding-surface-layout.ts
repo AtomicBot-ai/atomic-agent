@@ -24,6 +24,7 @@ import { measureOnboardingDownloadStep } from "./onboarding-download-step.js";
 import { measureOnboardingHeader } from "./onboarding-header.js";
 import { measureOnboardingLocalPickStep } from "./onboarding-local-pick-step.js";
 import { measureOnboardingProposeStep } from "./onboarding-propose-step.js";
+import { measureProvidersWizard } from "./providers-wizard-measure.js";
 import { measureOnboardingUrlStep } from "./onboarding-url-step.js";
 import { measureOnboardingWaitOrJumpStep } from "./onboarding-wait-or-jump-step.js";
 
@@ -31,19 +32,6 @@ import { measureOnboardingWaitOrJumpStep } from "./onboarding-wait-or-jump-step.
 export const SURFACE_PADDING_TOP = 1;
 /** The hint strip: one row, pinned to the last line of the terminal. */
 export const FOOTER_ROWS = 1;
-
-/**
- * What the providers wizard is allowed to claim on a wide terminal.
- *
- * Unlike every other step, the wizard draws a `width: 100%` bordered
- * panel whose contents — live model catalogs, per-provider hints — are
- * not knowable from here, so there is nothing to measure. Its widest
- * line is a pick-list hint (movement keys, position counter, actions),
- * which runs to about ninety columns; capping the panel just above that
- * centres it on a wide window without truncating anything that already
- * fitted on the 100-column terminal the flow asks for.
- */
-export const PROVIDERS_WIZARD_COLUMNS = 96;
 
 export interface OnboardingBlockInput {
   step: OnboardingStep;
@@ -110,7 +98,9 @@ function measureStepBody(input: MeasureInput): number {
         offerCloudMeanwhile: input.offerCloudMeanwhile,
       });
     case "cloud":
-      return Math.min(input.available, PROVIDERS_WIZARD_COLUMNS);
+      // The wizard's deterministic lines, measured beside the strings it
+      // draws; its live catalog rows truncate inside the box by design.
+      return Math.min(input.available, measureProvidersWizard());
     case "custom_chat_url":
       return measureOnboardingUrlStep("chat");
     case "custom_embedding_url":

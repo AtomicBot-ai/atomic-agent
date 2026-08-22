@@ -27,14 +27,21 @@ const EDITOR_CHROME_COLUMNS = 4;
  * the whole screen left one column per character. The error line is left
  * out for the same reason the download screen leaves its own out — it
  * carries arbitrary text and wraps inside the block instead.
+ *
+ * The editor's chrome is added as a number, not as trailing spaces:
+ * `widestLine` trims trailing pads (they are invisible, so counting
+ * them would centre the block on cells nobody sees), which would strip
+ * the reservation straight back off.
  */
 export function measureOnboardingUrlStep(kind: "chat" | "embedding"): number {
-  return widestLine([
-    `${TITLES[kind]}${HEALTH_NOTE}`,
-    ...(kind === "embedding" ? [EMBEDDING_NOTE] : []),
-    `${PLACEHOLDERS[kind]}${" ".repeat(EDITOR_CHROME_COLUMNS)}`,
-    PROBING,
-  ]);
+  return Math.max(
+    widestLine([
+      `${TITLES[kind]}${HEALTH_NOTE}`,
+      ...(kind === "embedding" ? [EMBEDDING_NOTE] : []),
+      PROBING,
+    ]),
+    PLACEHOLDERS[kind].length + EDITOR_CHROME_COLUMNS,
+  );
 }
 
 /**

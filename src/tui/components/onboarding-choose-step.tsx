@@ -33,16 +33,27 @@ const EXPLAINER: readonly string[] = [
 /** Where a choice row's detail column starts. */
 const DETAIL_COLUMN = ROW_MARKER.length + LABEL_COLUMNS;
 
+/**
+ * The marker-and-label cell exactly as the row draws it. Shared by the
+ * measure and the render so the two cannot disagree: the label is padded
+ * out to the detail column only when a detail actually follows it —
+ * blocks are centred on their measured width, and padding a line the
+ * measure trims makes Ink wrap the invisible pad cells instead of
+ * clipping them, growing the block taller than it was measured.
+ */
+function labelCell(selected: boolean, label: string, fit: OnboardingFit): string {
+  return `${rowPrefix(selected)}${fit.rowDetails ? label.padEnd(LABEL_COLUMNS) : label}`;
+}
+
 /** Widest line this step draws, for the block that centres it. */
 export function measureOnboardingChooseStep(fit: OnboardingFit): number {
   const lines: string[] = fit.explainer ? [...EXPLAINER] : [];
   for (const choice of ONBOARDING_CHOICES) {
-    if (!fit.rowDetails) {
-      lines.push(`${ROW_MARKER}${choice.label}`);
-      continue;
-    }
-    lines.push(`${" ".repeat(DETAIL_COLUMN)}${choice.detail[0]}`);
-    lines.push(`${" ".repeat(DETAIL_COLUMN)}${choice.detail[1]}`);
+    // Measured as selected: the marker and the indent are the same width.
+    lines.push(
+      `${labelCell(true, choice.label, fit)}${fit.rowDetails ? choice.detail[0] : ""}`,
+    );
+    if (fit.rowDetails) lines.push(`${" ".repeat(DETAIL_COLUMN)}${choice.detail[1]}`);
   }
   return widestLine(lines);
 }
@@ -68,7 +79,7 @@ export function OnboardingChooseStep(props: {
           <Box key={choice.id} flexDirection="column" marginBottom={1}>
             <Box flexDirection="row">
               <Text color={selected ? theme.colors.accent : undefined} bold={selected}>
-                {`${rowPrefix(selected)}${choice.label.padEnd(LABEL_COLUMNS)}`}
+                {labelCell(selected, choice.label, props.fit)}
               </Text>
               {props.fit.rowDetails ? (
                 <Text color={theme.colors.muted}>{choice.detail[0]}</Text>
