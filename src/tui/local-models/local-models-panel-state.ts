@@ -204,7 +204,21 @@ export function totalRowCount(panel: LocalModelsPanelState): number {
   return panel.rows.length + panel.embeddingRows.length;
 }
 
-export function createInitialLocalModelsPanelState(): LocalModelsPanelState {
+/**
+ * Config-derived facts worth knowing before the first snapshot. The
+ * orchestrator only refreshes this slice while the Models tab is open,
+ * but the composer's route controls render on the *home* screen from
+ * frame one — unseeded, a managed install reads `custom` and shows no
+ * chosen model until the operator happens to visit the tab once.
+ */
+export interface LocalModelsPanelSeed {
+  configMode: LocalModelsPanelState["configMode"];
+  activeModelId: LocalModelsPanelState["activeModelId"];
+}
+
+export function createInitialLocalModelsPanelState(
+  seed?: LocalModelsPanelSeed,
+): LocalModelsPanelState {
   return {
     mode: "list",
     rows: [],
@@ -224,8 +238,8 @@ export function createInitialLocalModelsPanelState(): LocalModelsPanelState {
     },
     daemonPhase: "idle",
     daemonError: null,
-    configMode: "external",
-    activeModelId: null,
+    configMode: seed?.configMode ?? "external",
+    activeModelId: seed?.activeModelId ?? null,
     pull: null,
     embeddingPull: null,
     lastRefreshedAt: null,

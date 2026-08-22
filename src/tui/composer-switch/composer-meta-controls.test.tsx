@@ -122,3 +122,43 @@ describe("the composer's route line", () => {
     unmount();
   });
 });
+
+describe("the managed-local status control", () => {
+  it("states the daemon word and its RAM after the chosen model", () => {
+    const { lastFrame, unmount } = render(
+      <Box>
+        <ComposerMetaControls
+          backend={{ kind: "local", status: "healthy" }}
+          provider={null}
+          model="qwen-3.5-4b"
+          localStatus={{ word: "healthy", ramLabel: "4.4 GB" }}
+        />
+      </Box>,
+    );
+    const out = plain(lastFrame() ?? "");
+    unmount();
+    expect(out).toContain("qwen-3.5-4b · healthy · 4.4 GB");
+    // The status word moved to the third control; repeating it right
+    // after the backend label would state the same fact twice.
+    expect(out).not.toContain("local healthy");
+    // The dot still rides on the backend control.
+    expect(out).toContain("● local");
+  });
+
+  it("drops the RAM segment when there is nothing to measure", () => {
+    const { lastFrame, unmount } = render(
+      <Box>
+        <ComposerMetaControls
+          backend={{ kind: "local", status: "unreachable" }}
+          provider={null}
+          model="qwen-3.5-4b"
+          localStatus={{ word: "down", ramLabel: null }}
+        />
+      </Box>,
+    );
+    const out = plain(lastFrame() ?? "");
+    unmount();
+    expect(out).toContain("qwen-3.5-4b · down");
+    expect(out).not.toContain("GB");
+  });
+});

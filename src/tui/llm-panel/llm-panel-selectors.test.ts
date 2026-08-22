@@ -129,6 +129,64 @@ describe("llm-panel selectors", () => {
       provider: "openrouter",
     });
   });
+
+  it("shows the picked catalog id, not the GGUF name, on managed local", () => {
+    const base = createInitialTuiState(fakeSession());
+    const state = {
+      ...base,
+      // `/props` reports a file name; the catalog id is what the
+      // operator picked. Catalog FIRST — deliberately the reverse of
+      // the external branch below.
+      llmHealth: { ...base.llmHealth, model: "qwen3.5-4b-q4_k_m.gguf" },
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        configMode: "managed" as const,
+        activeModelId: "qwen-3.5-4b" as LocalModelDef["id"],
+      },
+    };
+    // No provider word: the second control is the model itself, and the
+    // backend word `local` already names the runtime.
+    expect(selectPromptLlmMeta(state)).toEqual({
+      model: "qwen-3.5-4b",
+      provider: null,
+    });
+  });
+
+  it("falls back to the probe's label while no catalog id is chosen", () => {
+    const base = createInitialTuiState(fakeSession());
+    const state = {
+      ...base,
+      llmHealth: { ...base.llmHealth, model: "something-served.gguf" },
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        configMode: "managed" as const,
+        activeModelId: null,
+      },
+    };
+    expect(selectPromptLlmMeta(state)).toEqual({
+      model: "something-served.gguf",
+      provider: null,
+    });
+  });
+
+  it("keeps the probe-first label and the llama.cpp word on external", () => {
+    const base = createInitialTuiState(fakeSession());
+    const state = {
+      ...base,
+      llmHealth: { ...base.llmHealth, model: "their-server.gguf" },
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        configMode: "external" as const,
+        // A leftover managed pick must not shadow what the external
+        // server actually reports.
+        activeModelId: "qwen-3.5-4b" as LocalModelDef["id"],
+      },
+    };
+    expect(selectPromptLlmMeta(state)).toEqual({
+      model: "their-server.gguf",
+      provider: "llama.cpp",
+    });
+  });
 });
 
 function localDef(id: LocalModelDef["id"]): LocalModelDef {

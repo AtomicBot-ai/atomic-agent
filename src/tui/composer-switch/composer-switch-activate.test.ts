@@ -14,12 +14,14 @@ function harness(state: TuiState) {
     onProvidersSetActiveText: vi.fn(),
     onProvidersSelectChatModel: vi.fn(),
     onLocalModelsSetActiveRequested: vi.fn(),
+    onLocalModelsUseManagedRequested: vi.fn(),
     onLocalModelsDaemonStartRequested: vi.fn(),
     onLocalModelsDaemonStopRequested: vi.fn(),
   } as unknown as TuiAppCallbacks & {
     onProvidersSetActiveText: ReturnType<typeof vi.fn>;
     onProvidersSelectChatModel: ReturnType<typeof vi.fn>;
     onLocalModelsSetActiveRequested: ReturnType<typeof vi.fn>;
+    onLocalModelsUseManagedRequested: ReturnType<typeof vi.fn>;
   };
   const pick = (kind: ComposerSwitchKind, label: string): void => {
     const row = selectComposerSwitchRows(state, kind).find(
@@ -133,6 +135,23 @@ describe("picking a backend", () => {
     });
   });
 
+  it("local with nothing downloaded still writes mode: managed", () => {
+    // Regression: this branch has no model to set active, and set-active
+    // was the only writer of `localModels.mode` — so the config kept
+    // saying `external` and the control mislabelled the route `custom`.
+    const app = harness(cloudState());
+    app.pick("backend", "local");
+    expect(app.callbacks.onLocalModelsUseManagedRequested).toHaveBeenCalled();
+  });
+
+  it("local with a downloaded model leaves the mode write to set-active", () => {
+    const app = harness(localState("external"));
+    app.pick("backend", "local");
+    // `onLocalModelsSetActiveRequested` persists `mode: "managed"`
+    // itself; a second writer racing it would be redundant at best.
+    expect(app.callbacks.onLocalModelsUseManagedRequested).not.toHaveBeenCalled();
+  });
+
   it("custom opens the external base-URL editor where it is drawn", () => {
     const app = harness(cloudState());
     app.pick("backend", "custom");
@@ -147,5 +166,19 @@ describe("picking a backend", () => {
       type: "llm_external_url_draft_set",
       value: "http://127.0.0.1:8080",
     });
+  });
+});
+
+describe("the download deep link", () => {
+  it("sends the operator to Manage › LLM › Local", () => {
+    const app = harness(localState());
+    app.pick("model", "Download more models…");
+    expect(app.actions.map((action) => action.type)).toEqual([
+      "composer_switch_closed",
+      "ui_mode_set",
+      "tab_changed",
+      "llm_mode_set",
+    ]);
+    expect(app.actions.at(-1)).toEqual({ type: "llm_mode_set", mode: "local" });
   });
 });

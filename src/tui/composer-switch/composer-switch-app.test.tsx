@@ -90,6 +90,7 @@ function mountApp() {
   const bus = makeTuiEventBus();
   const mouse = makeMouseSource();
   const activated: string[] = [];
+  let localRefreshes = 0;
   const { lastFrame, stdin, unmount } = render(
     <TuiApp
       session={SESSION}
@@ -101,6 +102,9 @@ function mountApp() {
           onQuit: () => {},
           onMessageSubmitted: () => {},
           onProvidersSetActiveText: (id: string) => activated.push(id),
+          onLocalModelsRefreshRequested: () => {
+            localRefreshes += 1;
+          },
         } as TuiAppCallbacks
       }
       mouse={mouse}
@@ -124,6 +128,7 @@ function mountApp() {
     mouse,
     stdin,
     activated,
+    localRefreshes: () => localRefreshes,
     unmount,
   };
 }
@@ -194,6 +199,23 @@ describe("the composer's route controls inside the app", () => {
       "click on the provider control",
     );
     expect(app.frame()).toContain("Add a new provider");
+    app.unmount();
+  });
+
+  it("requests a local-models refresh the moment a switch opens", async () => {
+    // Fresh state: the local slice has never been refreshed (that loop
+    // belongs to the Models/LLM tab). Opening the switch must fetch it,
+    // or the model list would claim nothing is downloaded on exactly
+    // the installs that have models on disk.
+    const app = mountApp();
+    await waitUntil(() => app.frame().includes("openrouter"), "the route line");
+    expect(app.localRefreshes()).toBe(0);
+    app.stdin.write(CTRL_R);
+    await waitUntil(
+      () => app.localRefreshes() > 0,
+      "the local-models refresh request",
+    );
+    expect(app.frame()).toContain("WHERE IT RUNS");
     app.unmount();
   });
 
