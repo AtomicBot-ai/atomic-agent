@@ -3,16 +3,9 @@ import { useCallback, useEffect, useRef, useState, type ReactElement } from "rea
 import { useClipboard } from "../clipboard/clipboard-context.js";
 import { theme } from "../theme/theme.js";
 import { EditorBody } from "./multi-line-editor-body.js";
-import {
-  cursorToRowCol,
-  findWordStart,
-  isOnFirstLine,
-  isOnLastLine,
-  lineEnd,
-  lineStart,
-  rowColToCursor,
-} from "./multi-line-editor-cursor.js";
-import { normalizeInsertText } from "./multi-line-editor-input.js";
+import { cursorToRowCol } from "./multi-line-editor-cursor.js";
+import { handleKey } from "./multi-line-editor-keys.js";
+import { createEditorPointer } from "./multi-line-editor-pointer.js";
 
 export interface MultiLineEditorProps {
   value: string;
@@ -147,15 +140,28 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
       ? null
       : [Math.min(anchor, cursorPos), Math.max(anchor, cursorPos)];
   const hasSelection = selection !== null;
+  // Same render-phase-ref idiom as `activeRef` below, and load-bearing:
+  // `tui-app` passes an inline arrow, so the prop has a new identity
+  // every render. With the callback in the deps, the first `true` this
+  // effect reports re-rendered the app, which re-ran the effect, whose
+  // CLEANUP reported `false`, which re-rendered the app… a dispatch
+  // ping-pong that hit React's "Maximum update depth exceeded" the
+  // moment a selection existed in the real TUI. Depending only on
+  // `hasSelection` reports each transition exactly once, whatever the
+  // parent does with the prop's identity.
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  onSelectionChangeRef.current = onSelectionChange;
   useEffect(() => {
-    onSelectionChange?.(hasSelection);
+    onSelectionChangeRef.current?.(hasSelection);
+  }, [hasSelection]);
+  useEffect(() => {
     // Unmounting with a live selection strands the app's copy of the
     // flag, and the flag is what makes Ctrl+C mean "copy": the global
     // layer would stand down for an editor that no longer exists, so
     // Ctrl+C would abort nothing and quit nothing for the rest of the
     // session. The composer unmounts on every Observe / Manage tab.
-    return () => onSelectionChange?.(false);
-  }, [hasSelection, onSelectionChange]);
+    return () => onSelectionChangeRef.current?.(false);
+  }, []);
 
   const setBuffer = useCallback(
     (next: string, nextCursor: number) => {
@@ -212,42 +218,6 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
   );
 
   const cursor = cursorToRowCol(value, cursorPos);
-  /**
-   * Place the caret where the operator clicked. `rowColToCursor` does
-   * not clamp, so a click past the end of a short line would otherwise
-   * run the offset into the following line; clamping here keeps a click
-   * in the empty space to the right of a line meaning "end of this
-   * line", which is what every editor does.
-   */
-  /** Buffer offset for a clicked cell, clamped to the line. */
-  const offsetAt = (row: number, col: number): number => {
-    const lines = value.split("\n");
-    const safeRow = Math.max(0, Math.min(row, lines.length - 1));
-    const safeCol = Math.max(0, Math.min(col, (lines[safeRow] ?? "").length));
-    return rowColToCursor(lines, safeRow, safeCol);
-  };
-
-  /**
-   * Press: drop the anchor and take the pointer. Capture matters because
-   * hit-testing routes by position — without it, a drag that wanders out
-   * of the composer would deliver its motion, and its release, to
-   * whatever sits under the cursor, and the selection would neither
-   * extend nor end.
-   */
-  const beginDrag = (row: number, col: number): void => {
-    if (disabled) return;
-    setAnchor(offsetAt(row, col));
-  };
-
-  const extendDrag = (row: number, col: number): void => {
-    if (disabled) return;
-    setCursorPos(offsetAt(row, col));
-  };
-
-  const endDrag = (): void => {
-    // A drag that never moved is a click, not a selection.
-    setAnchor((current) => (current === null || current === cursorPos ? null : current));
-  };
 
   /**
    * Copy the selection. Both mechanisms in `copy-to-clipboard` are
@@ -263,19 +233,15 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     onCopy?.(text);
   };
 
-  const placeCursorAt = (row: number, col: number): void => {
-    if (disabled) return;
-    // Ask for focus first: a click that moves a caret the operator
-    // cannot then type into is a click that did nothing.
-    onClickFocus?.();
-    // A fresh press collapses whatever was selected — `beginDrag` sets
-    // the new anchor immediately afterwards.
-    setAnchor(null);
-    const lines = value.split("\n");
-    const safeRow = Math.max(0, Math.min(row, lines.length - 1));
-    const safeCol = Math.max(0, Math.min(col, (lines[safeRow] ?? "").length));
-    setCursorPos(rowColToCursor(lines, safeRow, safeCol));
-  };
+  const { placeCursorAt, beginDrag, extendDrag, endDrag } =
+    createEditorPointer({
+      value,
+      cursorPos,
+      disabled,
+      setCursorPos,
+      setAnchor,
+      onClickFocus,
+    });
   if (bare) {
     return (
       <EditorBody
@@ -312,267 +278,3 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     </Box>
   );
 }
-
-interface KeyContext {
-  input: string;
-  key: Key;
-  value: string;
-  cursor: number;
-  setBuffer: (next: string, cursor: number) => void;
-  /** Selected span in buffer offsets, or `null`. */
-  selection: readonly [number, number] | null;
-  /** Where the selection was started; `null` means none is active. */
-  anchor: number | null;
-  setAnchor: (anchor: number | null) => void;
-  /** Copy the current selection; the caller keeps or clears it. */
-  copySelection: () => void;
-  onSubmit: (value: string) => void;
-  onEscape?: () => void;
-  onInterrupt?: () => void;
-  onTab?: () => void;
-  onShiftTab?: () => void;
-  onAutocomplete?: () => void;
-  onHistoryPrev?: () => void;
-  onHistoryNext?: () => void;
-}
-
-function handleKey(ctx: KeyContext): void {
-  const { input, key, value, cursor, setBuffer, selection } = ctx;
-  if (key.ctrl && input === "c") {
-    // Selected text turns Ctrl+C into copy, the way it behaves in every
-    // editor people arrive from. With nothing selected it is still the
-    // interrupt — `app-key-bindings` stands down for the first case, so
-    // one keystroke never means both.
-    if (selection) {
-      ctx.copySelection();
-      ctx.setAnchor(null);
-      return;
-    }
-    if (ctx.onInterrupt) {
-      ctx.onInterrupt();
-      return;
-    }
-  }
-  // Ignore keys owned by the global app-level handler so the editor
-  // never inserts Ctrl+C as "c" or swallows F-key escape sequences.
-  if (isGlobalHotkey(input, key)) return;
-  if (key.escape) {
-    ctx.onEscape?.();
-    return;
-  }
-  if (key.tab && key.shift) {
-    ctx.onShiftTab?.();
-    return;
-  }
-  if (key.tab) {
-    ctx.onTab?.();
-    return;
-  }
-  // Ctrl+J is a documented newline binding. In the legacy encoding it
-  // arrives as a literal "\n" and falls through to the text-insert path
-  // below; under the kitty protocol it arrives as `ctrl` + `j` and would
-  // otherwise be dropped by the catch-all, silently losing the binding.
-  if (key.ctrl && input === "j") {
-    insertText(ctx, "\n");
-    return;
-  }
-  if (key.return) {
-    const newline = key.meta || key.shift || key.ctrl;
-    const trailingBackslash = value.endsWith("\\") && cursor === value.length;
-    if (newline) {
-      insertText(ctx, "\n");
-      return;
-    }
-    if (trailingBackslash) {
-      const withoutSlash = value.slice(0, -1);
-      setBuffer(`${withoutSlash}\n`, withoutSlash.length + 1);
-      return;
-    }
-    ctx.onSubmit(value);
-    return;
-  }
-  if (key.upArrow) {
-    // Shift+Up on the first line extends to the start of the buffer
-    // instead of recalling history — history would replace the very
-    // text being selected.
-    if (isOnFirstLine(value, cursor) && !key.shift) {
-      ctx.onHistoryPrev?.();
-      return;
-    }
-    updateAnchorForMove(ctx);
-    if (isOnFirstLine(value, cursor)) {
-      setBuffer(value, 0);
-      return;
-    }
-    moveCursorVertically(ctx, -1);
-    return;
-  }
-  if (key.downArrow) {
-    if (isOnLastLine(value, cursor) && !key.shift) {
-      ctx.onHistoryNext?.();
-      return;
-    }
-    updateAnchorForMove(ctx);
-    if (isOnLastLine(value, cursor)) {
-      setBuffer(value, value.length);
-      return;
-    }
-    moveCursorVertically(ctx, 1);
-    return;
-  }
-  if (key.leftArrow) {
-    updateAnchorForMove(ctx);
-    setBuffer(value, Math.max(0, cursor - 1));
-    return;
-  }
-  if (key.rightArrow) {
-    // Shift+Right extends the selection to the end of the buffer rather
-    // than accepting a completion: the operator is picking text, not
-    // asking for the rest of a command.
-    if (cursor >= value.length && ctx.onAutocomplete && !key.shift) {
-      ctx.onAutocomplete();
-      return;
-    }
-    updateAnchorForMove(ctx);
-    setBuffer(value, Math.min(value.length, cursor + 1));
-    return;
-  }
-  if (key.backspace || key.delete) {
-    if (selection) {
-      deleteSelection(ctx);
-      return;
-    }
-    if (key.delete && !key.backspace) {
-      // Forward delete
-      if (cursor < value.length) {
-        const next = value.slice(0, cursor) + value.slice(cursor + 1);
-        setBuffer(next, cursor);
-      }
-      return;
-    }
-    if (cursor > 0) {
-      const next = value.slice(0, cursor - 1) + value.slice(cursor);
-      setBuffer(next, cursor - 1);
-    }
-    return;
-  }
-  // The emacs bindings all move the caret or shorten the buffer, and a
-  // selection cannot survive either: an anchor left behind points into
-  // text that has moved (so Ctrl+C copies the wrong span) or past the
-  // end of a shorter buffer (so the next character replaces everything
-  // from the anchor onwards). Each one collapses it first.
-  if (key.ctrl && input === "a") {
-    ctx.setAnchor(null);
-    setBuffer(value, lineStart(value, cursor));
-    return;
-  }
-  if (key.ctrl && input === "e") {
-    ctx.setAnchor(null);
-    setBuffer(value, lineEnd(value, cursor));
-    return;
-  }
-  if (key.ctrl && input === "u") {
-    if (selection) {
-      deleteSelection(ctx);
-      return;
-    }
-    const start = lineStart(value, cursor);
-    setBuffer(value.slice(0, start) + value.slice(cursor), start);
-    return;
-  }
-  if (key.ctrl && input === "k") {
-    if (selection) {
-      deleteSelection(ctx);
-      return;
-    }
-    const end = lineEnd(value, cursor);
-    setBuffer(value.slice(0, cursor) + value.slice(end), cursor);
-    return;
-  }
-  if (key.ctrl && input === "w") {
-    if (selection) {
-      deleteSelection(ctx);
-      return;
-    }
-    const wordStart = findWordStart(value, cursor);
-    setBuffer(value.slice(0, wordStart) + value.slice(cursor), wordStart);
-    return;
-  }
-  // Drop any other modifier chord (Ctrl+<letter>, Meta+<letter>) so the
-  // editor does not insert it as literal text.
-  if (key.ctrl || key.meta) return;
-  if (input.length === 0) return;
-  // A single control char pressed on its own is ignored — but a
-  // multi-char paste burst is always sanitised and inserted, even when
-  // its first byte is a CR/control, because `normalizeInsertText` strips
-  // the offending bytes.
-  if (
-    input.length === 1 &&
-    input.charCodeAt(0) < 0x20 &&
-    input !== "\n" &&
-    input !== "\t"
-  ) {
-    return;
-  }
-  insertText(ctx, input);
-}
-
-function isGlobalHotkey(input: string, key: Key): boolean {
-  if (key.ctrl && (input === "c" || input === "o" || input === "t")) return true;
-  // F-keys and other multi-byte escape sequences we don't handle locally.
-  if (input.startsWith("\u001b") && input.length > 1) return true;
-  return false;
-}
-
-function insertText(ctx: KeyContext, text: string): void {
-  const { value, cursor, setBuffer, selection } = ctx;
-  const clean = normalizeInsertText(text);
-  if (clean.length === 0) return;
-  // Typing over a selection replaces it, which is what every editor
-  // does and what makes select-then-retype work.
-  if (selection) {
-    const [from, to] = selection;
-    ctx.setAnchor(null);
-    const next = value.slice(0, from) + clean + value.slice(to);
-    setBuffer(next, from + clean.length);
-    return;
-  }
-  const next = value.slice(0, cursor) + clean + value.slice(cursor);
-  setBuffer(next, cursor + clean.length);
-}
-
-/** Remove the selected span and put the caret where it started. */
-function deleteSelection(ctx: KeyContext): void {
-  const { value, setBuffer, selection } = ctx;
-  if (!selection) return;
-  const [from, to] = selection;
-  ctx.setAnchor(null);
-  setBuffer(value.slice(0, from) + value.slice(to), from);
-}
-
-/**
- * Called before every caret move. Shift keeps (or drops) an anchor so
- * the move extends a selection; an unshifted move collapses it. Holding
- * the anchor rather than a range is what lets one rule cover every
- * movement key.
- */
-function updateAnchorForMove(ctx: KeyContext): void {
-  if (ctx.key.shift) {
-    if (ctx.anchor === null) ctx.setAnchor(ctx.cursor);
-    return;
-  }
-  if (ctx.anchor !== null) ctx.setAnchor(null);
-}
-
-function moveCursorVertically(ctx: KeyContext, direction: -1 | 1): void {
-  const { value, cursor, setBuffer } = ctx;
-  const { row, col } = cursorToRowCol(value, cursor);
-  const lines = value.split("\n");
-  const nextRow = row + direction;
-  if (nextRow < 0 || nextRow >= lines.length) return;
-  const nextLine = lines[nextRow] ?? "";
-  const nextCol = Math.min(col, nextLine.length);
-  const nextOffset = rowColToCursor(lines, nextRow, nextCol);
-  setBuffer(value, nextOffset);
-}
-

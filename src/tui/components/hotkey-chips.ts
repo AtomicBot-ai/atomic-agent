@@ -39,6 +39,24 @@ export interface HotkeyChip {
  */
 const SCROLL_KEY = process.platform === "darwin" ? "fn+\u2191\u2193" : "pgup/pgdn";
 
+/**
+ * A live composer selection flips what Ctrl+C will actually do (copy,
+ * not abort/quit — see `composerOwnsCtrlC` in app-key-bindings) and
+ * gives Ctrl+X a meaning (cut). The strip must say so, but only while
+ * the editor really has the keyboard: the selection flag survives Tab
+ * into the sidebar and an open menu/panel, where Ctrl+C keeps its
+ * global meaning.
+ */
+function composerSelectionActive(state: TuiState): boolean {
+  return (
+    state.composerHasSelection &&
+    state.chatFocus === "editor" &&
+    !state.menuOpen &&
+    !state.contextPanelOpen
+  );
+}
+
+
 export function resolveChips(
   state: TuiState,
   ctrlCArmed: boolean,
@@ -104,10 +122,17 @@ export function resolveChips(
         shed: 4,
       },
       { key: "esc", label: hasDraft ? "abort, draft kept" : "abort" },
-      {
-        key: "ctrl+c",
-        label: ctrlCArmed ? "press again to quit" : "abort",
-      },
+      ...(composerSelectionActive(state)
+        ? [
+            { key: "ctrl+x", label: "cut", shed: 5 },
+            { key: "ctrl+c", label: "copy" },
+          ]
+        : [
+            {
+              key: "ctrl+c",
+              label: ctrlCArmed ? "press again to quit" : "abort",
+            },
+          ]),
     ];
     if (state.queuedMessages.length > 0) {
       chips.push({
@@ -208,10 +233,19 @@ export function resolveChips(
       ? [{ key: "esc", label: "clear draft" }]
       : [{ key: "esc", label: "menu", shed: 6 }]),
     { key: "ctrl+p", label: "menu", shed: 5 },
-    {
-      key: "ctrl+c",
-      label: ctrlCArmed ? "press again to quit" : "quit",
-    },
+    // A selection can only exist over a non-empty buffer, so the
+    // clear-draft Esc chip is always alongside these two.
+    ...(composerSelectionActive(state)
+      ? [
+          { key: "ctrl+x", label: "cut" },
+          { key: "ctrl+c", label: "copy" },
+        ]
+      : [
+          {
+            key: "ctrl+c",
+            label: ctrlCArmed ? "press again to quit" : "quit",
+          },
+        ]),
   ];
 }
 
