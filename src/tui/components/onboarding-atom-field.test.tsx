@@ -3,6 +3,7 @@ import React from "react";
 import { describe, expect, it } from "vitest";
 import { ATOM_COLLISION_COLOR, OnboardingAtomField } from "./onboarding-atom-field.js";
 import {
+  ATOM_COLLISION_GLYPH,
   ATOM_GLYPH,
   COLLISION_STEPS,
   type Atom,
@@ -42,11 +43,11 @@ describe("OnboardingAtomField", () => {
     view.unmount();
   });
 
-  it("draws a collided atom in the same cells as a resting one", () => {
-    // Colour is the only difference, and `ink-testing-library` renders
-    // with colour off, so the frame can only say that the collision
-    // changes nothing about the geometry. Which cells go hot is asserted
-    // on `buildAtomRows`, where it is a value rather than an escape code.
+  it("shows a collision as a different glyph in the same cells", () => {
+    // `ink-testing-library` renders with colour off, and so do NO_COLOR
+    // terminals and monochrome ones — which is exactly why the stripped
+    // frame has to carry the collision by itself. Shape changes, cells
+    // do not: swapping the marker back yields the resting frame.
     const cold = render(<OnboardingAtomField field={field()} columns={40} rows={6} />);
     const hot = render(
       <OnboardingAtomField
@@ -55,7 +56,12 @@ describe("OnboardingAtomField", () => {
         rows={6}
       />,
     );
-    expect(strip(hot.lastFrame() ?? "")).toBe(strip(cold.lastFrame() ?? ""));
+    const coldFrame = strip(cold.lastFrame() ?? "");
+    const hotFrame = strip(hot.lastFrame() ?? "");
+    expect(coldFrame).toContain(ATOM_GLYPH);
+    expect(hotFrame).toContain(ATOM_COLLISION_GLYPH);
+    expect(hotFrame).not.toContain(ATOM_GLYPH);
+    expect(hotFrame.replace(ATOM_COLLISION_GLYPH, ATOM_GLYPH)).toBe(coldFrame);
     cold.unmount();
     hot.unmount();
   });

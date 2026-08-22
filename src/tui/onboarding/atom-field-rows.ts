@@ -1,4 +1,9 @@
-import { ATOM_GLYPH, type AtomBounds, type AtomFieldState } from "./atom-field.js";
+import {
+  ATOM_COLLISION_GLYPH,
+  ATOM_GLYPH,
+  type AtomBounds,
+  type AtomFieldState,
+} from "./atom-field.js";
 
 /**
  * The field, flattened into rows a renderer can emit one `<Text>` at a
@@ -40,13 +45,22 @@ export function buildAtomRows(
     const row = Math.round(atom.row);
     if (row < 0 || row >= rows) continue;
     const left = Math.round(atom.column);
-    for (const [offset, glyph] of [...ATOM_GLYPH].entries()) {
+    // A hot atom changes shape, not just colour: the swap is what keeps
+    // the collision visible on a terminal that drops the green.
+    const shape = atom.hotSteps > 0 ? ATOM_COLLISION_GLYPH : ATOM_GLYPH;
+    for (const [offset, glyph] of [...shape].entries()) {
       const column = left + offset;
       if (column < 0 || column >= columns) continue;
-      glyphs[row]![column] = glyph;
-      // Hot wins over cold where two atoms overlap: a collision is the
-      // one thing on this screen worth looking at.
-      if (atom.hotSteps > 0) hot[row]![column] = true;
+      // Hot wins over cold where two atoms overlap — glyph and colour
+      // both, so a later cold atom cannot repaint a green cell with the
+      // resting shape. A collision is the one thing on this screen
+      // worth looking at.
+      if (atom.hotSteps > 0) {
+        glyphs[row]![column] = glyph;
+        hot[row]![column] = true;
+      } else if (hot[row]?.[column] !== true) {
+        glyphs[row]![column] = glyph;
+      }
     }
   }
   return glyphs.map((cells, index) => compressRow(cells, hot[index] ?? []));

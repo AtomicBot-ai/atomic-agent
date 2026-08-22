@@ -9,7 +9,9 @@ import { theme } from "../theme/theme.js";
  * token and deliberately outside every palette: the design asks for one
  * jolt of toxic green in an otherwise muted pane, and no palette owns a
  * colour whose whole job is to not belong. It is never used for state,
- * so it carries no meaning a themed colour would have to preserve.
+ * so it carries no meaning a themed colour would have to preserve. The
+ * colour is emphasis only — the collision's load-bearing signal is the
+ * glyph swap in `atom-field-rows.ts`, which survives NO_COLOR.
  */
 export const ATOM_COLLISION_COLOR = "#39ff14";
 

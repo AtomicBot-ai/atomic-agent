@@ -411,6 +411,7 @@ export function OnboardingScreen(props: {
         {onboarding.step === "local_download" ? (
           <OnboardingDownloadStep
             pull={props.state.localModelsPanel.pull}
+            pullError={props.state.localModelsPanel.errorLine}
             modelLabel={onboarding.localModelId ?? "the model"}
             offerCloudMeanwhile={!cloudAlreadyConfigured}
             columns={size.columns}

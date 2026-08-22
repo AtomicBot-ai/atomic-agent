@@ -2,7 +2,7 @@ import { render } from "ink-testing-library";
 import React from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { atomRowBudget, OnboardingDownloadStep } from "./onboarding-download-step.js";
-import { ATOM_GLYPH } from "../onboarding/atom-field.js";
+import { ATOM_COLLISION_GLYPH, ATOM_GLYPH } from "../onboarding/atom-field.js";
 import type { LocalModelsPullState } from "../local-models/local-models-panel-state.js";
 
 type View = ReturnType<typeof render>;
@@ -41,6 +41,7 @@ function step(props: Partial<React.ComponentProps<typeof OnboardingDownloadStep>
   return (
     <OnboardingDownloadStep
       pull={pull()}
+      pullError={null}
       modelLabel="gemma-4-e4b"
       columns={100}
       rows={30}
@@ -85,7 +86,9 @@ describe("OnboardingDownloadStep", () => {
   });
 
   it("surfaces a failed pull instead of a silent stall", () => {
-    const view = mount(step({ pull: pull({ error: "connection reset" }) }));
+    // The state a real failure leaves behind: `local_models_pull_failed`
+    // nulls the pull and parks the message on the panel's error line.
+    const view = mount(step({ pull: null, pullError: "connection reset" }));
     expect(strip(view.lastFrame() ?? "")).toContain("connection reset");
   });
 
@@ -209,11 +212,52 @@ describe("the atom field under the bars", () => {
     expect(frame).not.toContain(ATOM_GLYPH);
   });
 
-  it("goes still the moment there is nothing left to wait for", async () => {
-    // A failed pull ends the wait: no field, and no interval left
-    // repainting a screen under a bar that will never move again.
-    const stalled = mount(step({ pull: pull({ error: "connection reset" }), atomStepMs: 20 }));
-    expect(strip(stalled.lastFrame() ?? "")).not.toContain(ATOM_GLYPH);
-    expect(await frameMoves(stalled, 500)).toBe(false);
+  it("goes still the moment the pull fails", async () => {
+    // Driven the way a real failure arrives, not hand-built: the pull
+    // runs, then `local_models_pull_failed` nulls it and sets the
+    // panel's error line. The field must leave with it — no atoms, and
+    // no interval repainting a screen under a bar that will never move
+    // again.
+    const view = mount(step({ atomStepMs: 20 }));
+    expect(strip(view.lastFrame() ?? "")).toContain(ATOM_GLYPH);
+    view.rerender(step({ pull: null, pullError: "connection reset", atomStepMs: 20 }));
+    const failed = strip(view.lastFrame() ?? "");
+    expect(failed).toContain("connection reset");
+    expect(failed).not.toContain(ATOM_GLYPH);
+    expect(await frameMoves(view, 500)).toBe(false);
+  });
+
+  /** Atoms visible in a frame, hot or cold — a collision is still an atom. */
+  const atomsDrawn = (frame: string): number =>
+    frame.split(ATOM_GLYPH).length + frame.split(ATOM_COLLISION_GLYPH).length - 2;
+
+  it("thins the population when the pane is only just tall enough", () => {
+    // 90×20: three rows of field, the smallest that draws at all. A
+    // full five-atom population there is hot 22% of the time; two keep
+    // the collision an event (measured 2% — see atom-field.test.ts).
+    const small = atomsDrawn(strip(mount(step({ columns: 90, rows: 20 })).lastFrame() ?? ""));
+    const full = atomsDrawn(strip(mount(step()).lastFrame() ?? ""));
+    expect(small).toBeGreaterThan(0);
+    expect(small).toBeLessThanOrEqual(2);
+    expect(full).toBeGreaterThan(2);
+  });
+
+  it("re-fits the population when the terminal shrinks mid-download", async () => {
+    // The interval survives a resize by design; the population must
+    // not. Polls for the settled frame rather than sleeping: Ink
+    // commits at its own pace under the testing library.
+    const view = mount(step({ atomStepMs: 20 }));
+    view.rerender(step({ columns: 90, rows: 20, atomStepMs: 20 }));
+    const until = Date.now() + 4000;
+    let drawn = Number.MAX_SAFE_INTEGER;
+    while (Date.now() < until) {
+      drawn = atomsDrawn(strip(view.lastFrame() ?? ""));
+      // Between 1 and 2: zero could be two atoms mid-dormancy, which is
+      // the field breathing, not the population re-fitting.
+      if (drawn >= 1 && drawn <= 2) break;
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    expect(drawn).toBeLessThanOrEqual(2);
+    expect(drawn).toBeGreaterThan(0);
   });
 });

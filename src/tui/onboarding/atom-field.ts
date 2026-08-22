@@ -26,6 +26,15 @@ import { CELL_ASPECT } from "./orbit-field.js";
 export const ATOM_GLYPH = "(•)";
 export const ATOM_WIDTH = 3;
 
+/**
+ * What a collided atom is drawn as while it is hot. The collision must
+ * survive the loss of colour — NO_COLOR, a monochrome terminal, a
+ * red-green-colourblind operator — so the glyph itself changes; the
+ * toxic green is the emphasis, not the signal. Same width as the
+ * resting glyph, so a collision never changes the field's geometry.
+ */
+export const ATOM_COLLISION_GLYPH = "(*)";
+
 /** One step per this many milliseconds. Ambience, not animation. */
 export const ATOM_STEP_MS = 620;
 
@@ -115,6 +124,26 @@ function spawnAtom(
     atom: { id, column, row, columnVelocity, rowVelocity, hotSteps: 0, lifeSteps, dormantSteps: 0 },
     seed: cursor,
   };
+}
+
+/**
+ * How many atoms a pane of this size gets.
+ *
+ * One fixed population does not survive the range of panes this screen
+ * produces: five atoms that are "rarely" green in thirteen rows are
+ * green 22% of the time in three (measured over 2000 steps at the
+ * production seed). Collisions scale with pairs over area, so the
+ * population steps down with the area until the measured hot-step rate
+ * stays in single digits at every geometry the row budget can emit —
+ * see the rarity table in the test. A sparser field on a short
+ * terminal is the accepted cost.
+ */
+export function atomPopulation(bounds: AtomBounds): number {
+  const cells = Math.max(0, bounds.columns) * Math.max(0, bounds.rows);
+  if (cells >= 900) return 5;
+  if (cells >= 600) return 4;
+  if (cells >= 380) return 3;
+  return 2;
 }
 
 export function createAtomField(options: {

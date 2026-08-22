@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { useAtomField } from "../hooks/use-atom-field.js";
+import { atomPopulation } from "../onboarding/atom-field.js";
 import {
   formatBytes,
   formatEta,
@@ -11,13 +12,6 @@ import { theme } from "../theme/theme.js";
 import { OnboardingAtomField } from "./onboarding-atom-field.js";
 
 const BAR_WIDTH = 36;
-
-/**
- * How many atoms drift under the bars. Enough that a retirement never
- * empties the pane, few enough that two of them meeting stays an event
- * rather than a texture.
- */
-const ATOM_COUNT = 5;
 
 /**
  * Fixed rather than drawn from the clock: the field is ambience, so
@@ -43,6 +37,12 @@ const MIN_ATOM_ROWS = 3;
  */
 export function OnboardingDownloadStep(props: {
   pull: LocalModelsPullState | null;
+  /**
+   * The panel's `errorLine`. This — not `pull.error` — is how a failed
+   * pull actually arrives: `local_models_pull_failed` nulls the pull
+   * and leaves the message here, and the next `pull_started` clears it.
+   */
+  pullError: string | null;
   modelLabel: string;
   /** Hidden once a cloud provider is configured — nothing left to offer. */
   offerCloudMeanwhile?: boolean;
@@ -64,22 +64,26 @@ export function OnboardingDownloadStep(props: {
   const atomRows = atomRowBudget({
     rows: props.rows,
     markHeader: props.markHeader,
-    hasError: pull?.error != null,
+    hasError: props.pullError != null,
     offerCloud,
   });
   // Stopped when there is nothing left to wait for. Unmounting on a
   // finished pull would clear the interval anyway, but a failed one
   // leaves this screen up with a dead download on it, and a field still
-  // drifting under a stalled bar would suggest work is happening.
-  const waiting = pull?.error == null && !(phase === "weights" && (pull?.percent ?? 0) >= 100);
+  // drifting under a stalled bar would suggest work is happening. The
+  // failure signal is `pullError`: a failed pull nulls `pull` itself,
+  // and `pull.error` is never set by any event the app emits.
+  const waiting =
+    props.pullError == null && !(phase === "weights" && (pull?.percent ?? 0) >= 100);
+  // One column short of the terminal: a run that fills the last cell
+  // wraps on some terminals, which would cost a row the budget has
+  // already spent.
+  const fieldColumns = Math.max(0, props.columns - 1);
   const field = useAtomField({
     active: waiting && atomRows >= MIN_ATOM_ROWS,
-    // One column short of the terminal: a run that fills the last cell
-    // wraps on some terminals, which would cost a row the budget has
-    // already spent.
-    columns: Math.max(0, props.columns - 1),
+    columns: fieldColumns,
     rows: atomRows,
-    count: ATOM_COUNT,
+    count: atomPopulation({ columns: fieldColumns, rows: atomRows }),
     seed: ATOM_SEED,
     ...(props.atomStepMs === undefined ? {} : { stepMs: props.atomStepMs }),
   });
@@ -113,9 +117,9 @@ export function OnboardingDownloadStep(props: {
           <Text color={theme.colors.muted}>starting…</Text>
         </Box>
       )}
-      {pull?.error ? (
+      {props.pullError ? (
         <Box marginTop={1}>
-          <Text color={theme.colors.error}>{pull.error}</Text>
+          <Text color={theme.colors.error}>{props.pullError}</Text>
         </Box>
       ) : null}
       {offerCloud ? (
@@ -137,11 +141,7 @@ export function OnboardingDownloadStep(props: {
       ) : null}
       {waiting && atomRows >= MIN_ATOM_ROWS ? (
         <Box marginTop={1} flexShrink={0}>
-          <OnboardingAtomField
-            field={field}
-            columns={Math.max(0, props.columns - 1)}
-            rows={atomRows}
-          />
+          <OnboardingAtomField field={field} columns={fieldColumns} rows={atomRows} />
         </Box>
       ) : null}
     </Box>

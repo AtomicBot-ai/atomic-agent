@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildAtomRows } from "./atom-field-rows.js";
 import {
+  ATOM_COLLISION_GLYPH,
   ATOM_GLYPH,
   COLLISION_STEPS,
   createAtomField,
@@ -59,8 +60,38 @@ describe("buildAtomRows", () => {
   it("marks a collided atom's cells hot and leaves the rest cold", () => {
     const runs = buildAtomRows(field([atom({ hotSteps: COLLISION_STEPS })]), BOUNDS);
     const hot = runs[2]!.filter((run) => run.hot);
-    expect(hot.map((run) => run.text).join("")).toBe(ATOM_GLYPH);
+    expect(hot.map((run) => run.text).join("")).toBe(ATOM_COLLISION_GLYPH);
     expect(runs[0]!.some((run) => run.hot)).toBe(false);
+  });
+
+  it("swaps the glyph while hot, so a collision reads without colour", () => {
+    const cold = text(buildAtomRows(field([atom()]), BOUNDS));
+    const hot = text(buildAtomRows(field([atom({ hotSteps: COLLISION_STEPS })]), BOUNDS));
+    expect(cold[2]).toContain(ATOM_GLYPH);
+    expect(hot[2]).toContain(ATOM_COLLISION_GLYPH);
+    expect(hot[2]).not.toContain(ATOM_GLYPH);
+    // Same cells, different marker: shape is the signal, never position.
+    expect(hot[2]!.replace(ATOM_COLLISION_GLYPH, ATOM_GLYPH)).toBe(cold[2]);
+  });
+
+  it("keeps a hot cell's glyph when a cold atom drifts over it", () => {
+    // Later atoms paint over earlier ones cell by cell; hot must win
+    // for the shape as well as the colour, or the overlap would show a
+    // green resting glyph — a signal wearing the wrong uniform.
+    const overlapped = buildAtomRows(
+      field([
+        atom({ id: 1, column: 10, hotSteps: COLLISION_STEPS }),
+        atom({ id: 2, column: 11, hotSteps: 0 }),
+      ]),
+      BOUNDS,
+    );
+    const row = overlapped[2]!;
+    for (const run of row) {
+      if (!run.hot) continue;
+      for (const glyph of [...run.text]) {
+        expect([...ATOM_COLLISION_GLYPH]).toContain(glyph);
+      }
+    }
   });
 
   it("clips an atom against the right edge rather than widening the row", () => {

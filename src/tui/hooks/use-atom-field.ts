@@ -39,6 +39,18 @@ export function useAtomField(options: {
     boundsRef.current = { columns, rows };
   }, [columns, rows]);
 
+  // The population follows the pane, so a resize can change `count`
+  // mid-run. Rebuilt rather than patched: minting or culling atoms in
+  // place would need its own rules, a resize already redraws the whole
+  // screen, and a field kept at its old population on a shrunken pane
+  // is exactly the crowding the count exists to prevent.
+  const populationRef = useRef(count);
+  useEffect(() => {
+    if (populationRef.current === count) return;
+    populationRef.current = count;
+    setField(createAtomField({ bounds: boundsRef.current, count, seed }));
+  }, [count, seed]);
+
   useEffect(() => {
     if (!active) return;
     const handle = setInterval(() => {
