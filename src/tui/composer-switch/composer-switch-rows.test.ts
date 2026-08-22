@@ -129,6 +129,38 @@ describe("the switch rows", () => {
     expect(rows.at(-1)?.intent).toEqual({ kind: "localModelsPanel" });
   });
 
+  it("shows a loading row while the local slice has never landed", () => {
+    // Fresh boot: the slice is only refreshed by the Models/LLM tab's
+    // loop (plus the switch-open effect), so `rows` being empty says
+    // nothing about the disk yet — an empty list would read as
+    // "nothing downloaded" on exactly the installs that have models.
+    const base = localState();
+    const state: TuiState = {
+      ...base,
+      localModelsPanel: { ...base.localModelsPanel, rows: [] },
+    };
+    const rows = selectComposerSwitchRows(state, "model");
+    expect(rows.map((row) => row.label)).toEqual([
+      "loading…",
+      "Download more models…",
+    ]);
+  });
+
+  it("drops the loading row once a snapshot reports nothing on disk", () => {
+    const base = localState();
+    const state: TuiState = {
+      ...base,
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        rows: [],
+        lastRefreshedAt: Date.now(),
+      },
+    };
+    expect(
+      selectComposerSwitchRows(state, "model").map((row) => row.label),
+    ).toEqual(["Download more models…"]);
+  });
+
   it("keeps the full catalog, download offers included, on custom", () => {
     // The custom route's model switch predates this split and still
     // shows the whole managed catalog — the local-mode filtering must

@@ -25,6 +25,16 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Instant no-model `/props` stub. The default `fetchImpl` is the real
+ * global fetch, and a healthy first probe follows up with `/props` —
+ * on the fake hostnames below that meant a real DNS lookup racing the
+ * tests' 30ms sleeps, which lost often enough under a loaded test run
+ * to flake the updateUrl assertions.
+ */
+const stubProps: typeof fetch = () =>
+  Promise.resolve(new Response("{}", { status: 404 }));
+
+/**
  * `LlmHealthPoller` drives the always-on footer health indicator. These
  * tests lock in observable behaviours the reducer depends on: first-probe
  * probing state, steady-healthy polls without probing flicker, in-flight
@@ -125,7 +135,12 @@ describe("LlmHealthPoller", () => {
         latencyMs: 2,
       } satisfies HealthResult);
     const capture = makeCapture();
-    const poller = new LlmHealthPoller(capture, "http://first:9000", 60_000);
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://first:9000",
+      60_000,
+      stubProps,
+    );
     poller.start();
     await sleep(30);
     poller.updateUrl("http://second:9000");
@@ -192,7 +207,12 @@ describe("LlmHealthPoller", () => {
         latencyMs: 7,
       } satisfies HealthResult);
     const capture = makeCapture();
-    const poller = new LlmHealthPoller(capture, "http://old:9000", 10_000);
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://old:9000",
+      10_000,
+      stubProps,
+    );
     poller.start();
     await new Promise((resolve) => setTimeout(resolve, 10));
     poller.updateUrl("http://new:9000");
@@ -422,6 +442,53 @@ describe("LlmHealthPoller", () => {
       type: "llm_daemon_rss_updated",
       rssBytes: 4_500_000_000,
     });
+  });
+
+  it("never lets a slow sample from an earlier tick overwrite a fresher one", async () => {
+    // `emitDaemonRss` is fired un-awaited each probe tick, and `ps` can
+    // outlive an interval: unguarded, tick N's stale figure would land
+    // *after* tick N+1 already emitted and win. The in-flight guard
+    // makes overlapping ticks skip instead, so samples land in the
+    // order they were taken.
+    spy.mockResolvedValue({
+      reachable: true,
+      status: 200,
+      error: null,
+      latencyMs: 1,
+    } satisfies HealthResult);
+    let calls = 0;
+    let resolveFirst: ((rss: number | null) => void) | null = null;
+    const sampler = (): Promise<number | null> => {
+      calls += 1;
+      if (calls === 1) {
+        return new Promise((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      return Promise.resolve(5_000_000_000);
+    };
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://127.0.0.1:19091",
+      50,
+      stubProps,
+      sampler,
+    );
+    poller.start();
+    // Several intervals pass while the first sample hangs: without the
+    // guard each would spawn its own `ps` (calls > 1) and emit before
+    // the hung one resolved.
+    await sleep(180);
+    expect(calls).toBe(1);
+    resolveFirst?.(4_000_000_000);
+    // The hung sample settles, then the next tick measures afresh.
+    await sleep(180);
+    poller.stop();
+    const rss = capture.actions
+      .filter((a) => a.type === "llm_daemon_rss_updated")
+      .map((a) => (a as { rssBytes: number | null }).rssBytes);
+    expect(rss).toEqual([4_000_000_000, 5_000_000_000]);
   });
 
   it("stays silent about RSS when there is nothing to measure", async () => {

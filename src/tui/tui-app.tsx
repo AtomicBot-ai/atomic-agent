@@ -619,6 +619,17 @@ export function TuiApp({
     }
   }, [state.uiMode, state.activeTab, callbacks]);
 
+  // The composer's switches read the local-models slice, but only the
+  // Models/LLM tab's loop refreshes it — without this a fresh boot's
+  // model switch would list nothing but the download deep link even
+  // with models on disk. One shot per open keeps the popup truthful
+  // from anywhere; until the snapshot lands the rows selector shows a
+  // loading row instead (`composer-switch-rows.ts`).
+  const composerSwitchOpen = state.composerSwitch !== null;
+  useEffect(() => {
+    if (composerSwitchOpen) callbacks.onLocalModelsRefreshRequested?.();
+  }, [composerSwitchOpen, callbacks]);
+
   useEffect(() => {
     const onLogsTab =
       state.uiMode === "debug" && state.activeTab === "llm-logs";

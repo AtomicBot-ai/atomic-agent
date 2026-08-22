@@ -178,6 +178,7 @@ function modelRows(state: TuiState): readonly ComposerSwitchRow[] {
         intent: { kind: "llmRow" as const, row },
       }));
     return [
+      ...localSliceLoadingRows(state),
       ...downloaded,
       {
         id: "model:local:download-more",
@@ -188,15 +189,43 @@ function modelRows(state: TuiState): readonly ComposerSwitchRow[] {
       },
     ];
   }
-  return selectLocalRows(state)
-    .filter((row) => row.kind === "localTextModel")
-    .map((row) => ({
-      id: `model:local:${row.model.id}`,
-      label: row.model.id,
-      detail: row.model.downloaded ? "" : "not downloaded",
-      active: row.active,
-      intent: { kind: "llmRow" as const, row },
-    }));
+  return [
+    ...localSliceLoadingRows(state),
+    ...selectLocalRows(state)
+      .filter((row) => row.kind === "localTextModel")
+      .map((row) => ({
+        id: `model:local:${row.model.id}`,
+        label: row.model.id,
+        detail: row.model.downloaded ? "" : "not downloaded",
+        active: row.active,
+        intent: { kind: "llmRow" as const, row },
+      })),
+  ];
+}
+
+/**
+ * One "loading…" row until the first local-models snapshot lands. The
+ * slice is refreshed by the Models/LLM tab's loop and, since the switch
+ * must be truthful from anywhere, by the switch-open effect in
+ * `tui-app.tsx` — but right after boot `rows` is still empty even with
+ * models on disk, and an empty list here would read as "nothing
+ * downloaded". Enter on the row deep-links to the pane the list lives
+ * in, same as the download row.
+ */
+function localSliceLoadingRows(
+  state: TuiState,
+): readonly ComposerSwitchRow[] {
+  const panel = state.localModelsPanel;
+  if (panel.lastRefreshedAt !== null || panel.rows.length > 0) return [];
+  return [
+    {
+      id: "model:local:loading",
+      label: "loading…",
+      detail: "reading what is on disk",
+      active: false,
+      intent: { kind: "localModelsPanel" as const },
+    },
+  ];
 }
 
 export function selectComposerSwitchRows(

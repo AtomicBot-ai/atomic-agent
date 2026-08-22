@@ -68,6 +68,15 @@ export class LlmHealthPoller {
    * external, daemon down) does not re-emit `null` every interval.
    */
   private lastRssBytes: number | null = null;
+  /**
+   * True while an RSS sample is in flight. `emitDaemonRss` is fired
+   * un-awaited from the probe's finally-block, and `ps` can outlive an
+   * interval — without this guard a slow sample started on tick N could
+   * resolve after tick N+1 already emitted and overwrite the fresher
+   * figure with a stale one. Overlapping ticks skip instead, matching
+   * the `probing` guard the health probe itself uses.
+   */
+  private rssSampling = false;
   private readonly fetchImpl: typeof fetch;
   private readonly rssSampler: DaemonRssSampler;
 
@@ -193,16 +202,21 @@ export class LlmHealthPoller {
   }
 
   private async emitDaemonRss(): Promise<void> {
-    if (this.stopped) return;
-    let rssBytes: number | null = null;
+    if (this.stopped || this.rssSampling) return;
+    this.rssSampling = true;
     try {
-      rssBytes = await this.rssSampler();
-    } catch {
-      rssBytes = null;
+      let rssBytes: number | null = null;
+      try {
+        rssBytes = await this.rssSampler();
+      } catch {
+        rssBytes = null;
+      }
+      if (this.stopped || rssBytes === this.lastRssBytes) return;
+      this.lastRssBytes = rssBytes;
+      this.emitter.emit({ type: "llm_daemon_rss_updated", rssBytes });
+    } finally {
+      this.rssSampling = false;
     }
-    if (this.stopped || rssBytes === this.lastRssBytes) return;
-    this.lastRssBytes = rssBytes;
-    this.emitter.emit({ type: "llm_daemon_rss_updated", rssBytes });
   }
 
   private async fetchModelLabel(): Promise<void> {
