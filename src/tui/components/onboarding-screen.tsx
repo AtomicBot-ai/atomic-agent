@@ -413,6 +413,9 @@ export function OnboardingScreen(props: {
             pull={props.state.localModelsPanel.pull}
             modelLabel={onboarding.localModelId ?? "the model"}
             offerCloudMeanwhile={!cloudAlreadyConfigured}
+            columns={size.columns}
+            rows={size.rows}
+            markHeader={fit.mark}
           />
         ) : null}
         {onboarding.step === "cloud" && wizardState ? (
