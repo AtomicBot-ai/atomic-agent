@@ -392,4 +392,60 @@ describe("LlmHealthPoller", () => {
     const modelEvents = capture.actions.filter((a) => a.type === "llm_model_updated");
     expect(modelEvents.at(-1)).toMatchObject({ model: "my-model" });
   });
+
+  it("samples the managed daemon's RSS on the probe tick, no second timer", async () => {
+    spy.mockResolvedValue({
+      reachable: true,
+      status: 200,
+      error: null,
+      latencyMs: 1,
+    } satisfies HealthResult);
+    const samples: Array<number | null> = [4_400_000_000, 4_500_000_000];
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://127.0.0.1:19091",
+      100,
+      fetch,
+      async () => samples.shift() ?? null,
+    );
+    poller.start();
+    await sleep(180);
+    poller.stop();
+    const rss = capture.actions.filter((a) => a.type === "llm_daemon_rss_updated");
+    // One emission per changed sample — the poll cadence is the only clock.
+    expect(rss[0]).toEqual({
+      type: "llm_daemon_rss_updated",
+      rssBytes: 4_400_000_000,
+    });
+    expect(rss[1]).toEqual({
+      type: "llm_daemon_rss_updated",
+      rssBytes: 4_500_000_000,
+    });
+  });
+
+  it("stays silent about RSS when there is nothing to measure", async () => {
+    spy.mockResolvedValue({
+      reachable: false,
+      status: null,
+      error: "down",
+      latencyMs: 1,
+    } satisfies HealthResult);
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://127.0.0.1:19091",
+      50,
+      fetch,
+      async () => null,
+    );
+    poller.start();
+    await sleep(140);
+    poller.stop();
+    // The slice starts at `null`; re-emitting `null` every interval
+    // would re-render the composer for no visible change.
+    expect(
+      capture.actions.filter((a) => a.type === "llm_daemon_rss_updated"),
+    ).toEqual([]);
+  });
 });

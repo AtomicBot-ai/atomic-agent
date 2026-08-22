@@ -117,6 +117,11 @@ export interface LlmActiveRouteSummary {
  * `usesLocalHealth`) moved to `selectComposerBackendMeta`, which reads
  * `localModels.mode` as well and can therefore tell `local` from
  * `custom` — a distinction this selector never made.
+ *
+ * On the managed-local route `provider` is `null`: "llama.cpp" named
+ * the runtime the backend word `local` already names, so the row spends
+ * that control on the chosen model instead, and the daemon-status
+ * control (`selectComposerLocalStatus`) takes the third slot.
  */
 export interface PromptLlmMeta {
   model: string | null;
@@ -180,6 +185,16 @@ export function selectPromptLlmMeta(state: TuiState): PromptLlmMeta {
   const active = state.providersPanel.rows.find((row) => row.isActiveText) ?? null;
   if (active && active.kind !== "llama-server") {
     return { model: active.chatModel, provider: active.id };
+  }
+  if (state.localModelsPanel.configMode === "managed") {
+    // Catalog id FIRST, `/props` label second — the reverse of the
+    // priority below, on purpose: the control is a switch over the
+    // catalog, so it shows the id the operator picked (optimistically,
+    // while the daemon restarts) rather than a GGUF file name.
+    return {
+      model: state.localModelsPanel.activeModelId ?? state.llmHealth.model,
+      provider: null,
+    };
   }
   return {
     model: state.llmHealth.model ?? active?.chatModel ?? null,

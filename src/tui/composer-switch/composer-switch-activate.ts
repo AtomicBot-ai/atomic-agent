@@ -57,7 +57,22 @@ export function activateComposerSwitchRow(
     openAddProvider(dispatch);
     return;
   }
+  if (row.intent.kind === "localModelsPanel") {
+    openLocalModelsPane(dispatch);
+    return;
+  }
   activateBackend(row.intent.backend, state, dispatch, callbacks);
+}
+
+/**
+ * Manage › LLM › Local — where models are downloaded and removed. The
+ * model switch's "Download more models…" row and the composer's
+ * daemon-status control both land here, one deep link for both.
+ */
+export function openLocalModelsPane(
+  dispatch: (action: TuiAction) => void,
+): void {
+  goToLlmPane(dispatch, "local");
 }
 
 function activateBackend(
@@ -115,8 +130,9 @@ function activateCloud(
  *
  * With nothing downloaded there is no honest one-key answer — a
  * multi-gigabyte pull is not what "switch to local" promised — so the
- * route is pointed at `local-llama` and the model switch is opened on
- * the catalog, where each row states its own download.
+ * route is pointed at `local-llama` and the model switch opens, whose
+ * "Download more models…" row leads to the pane where pulls are stated
+ * per row.
  */
 function activateLocal(
   state: TuiState,
@@ -129,6 +145,11 @@ function activateLocal(
     rows.find((row) => row.model.downloaded);
   if (!ready) {
     callbacks.onProvidersSetActiveText?.("local-llama");
+    // With no model to set active, nothing downstream would write
+    // `localModels.mode: "managed"` — and the config still saying
+    // `external` is exactly the bug where this control read `custom`
+    // right after the operator picked `local`.
+    callbacks.onLocalModelsUseManagedRequested?.();
     dispatch({ type: "composer_switch_opened", kind: "model" });
     return;
   }
@@ -154,7 +175,7 @@ function isLocalTextRow(
 /** Manage › LLM, on the pane whose modals the caller is about to open. */
 function goToLlmPane(
   dispatch: (action: TuiAction) => void,
-  mode: "cloud" | "external",
+  mode: "cloud" | "external" | "local",
 ): void {
   dispatch({ type: "ui_mode_set", mode: "debug" });
   dispatch({ type: "tab_changed", tab: "llm" });

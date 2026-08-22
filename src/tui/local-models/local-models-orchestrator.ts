@@ -630,6 +630,21 @@ export class LocalModelsOrchestrator {
   }
 
   /**
+   * Persist `localModels.mode: "managed"` on its own. `setActive` is
+   * the usual writer of that mode, but the composer can switch the
+   * route to "local" while nothing is downloaded yet — no model id to
+   * set active — and without this the config would still say
+   * `external`, so the backend control would mislabel the route
+   * `custom` on the very next frame.
+   */
+  async useManagedMode(): Promise<void> {
+    if (getConfig().localModels.mode === "managed") return;
+    persistUserLocalModelsConfig({ mode: "managed" });
+    resetConfigCache();
+    await this.refresh();
+  }
+
+  /**
    * Persist the active managed model and restart the daemon so the new
    * model is actually served. If the daemon was not running before we
    * still start it — the user's intent in selecting a model is "make

@@ -2,6 +2,10 @@ import { getConfig } from "../../config/index.js";
 import { checkLlamaServer } from "../../llm/llama-server-health.js";
 import { llamaEndpointUrl } from "../../llm/llama-endpoint-url.js";
 import type { TuiAction } from "../tui-action.js";
+import {
+  sampleManagedDaemonRss,
+  type DaemonRssSampler,
+} from "./daemon-rss.js";
 
 /**
  * Interval between background `/health` probes. Kept short enough that
@@ -59,15 +63,23 @@ export class LlmHealthPoller {
    * `updateUrl` so a hot-swap of the base URL re-discovers the model.
    */
   private modelFetchedForUrl = false;
+  /**
+   * Last RSS emitted, so a route with nothing to measure (cloud,
+   * external, daemon down) does not re-emit `null` every interval.
+   */
+  private lastRssBytes: number | null = null;
   private readonly fetchImpl: typeof fetch;
+  private readonly rssSampler: DaemonRssSampler;
 
   constructor(
     private readonly emitter: LlmHealthEmitter,
     private url: string,
     private readonly intervalMs: number = LLM_HEALTH_POLL_INTERVAL_MS,
     fetchImpl: typeof fetch = fetch,
+    rssSampler: DaemonRssSampler = sampleManagedDaemonRss,
   ) {
     this.fetchImpl = fetchImpl;
+    this.rssSampler = rssSampler;
   }
 
   start(): void {
@@ -172,7 +184,25 @@ export class LlmHealthPoller {
       });
     } finally {
       this.probing = false;
+      // Piggybacks on the probe cadence — the RAM readout in the
+      // composer's status control needs no second timer to stay live.
+      // Fired after the lock drops, un-awaited: a slow `ps` must not
+      // debounce the next health tick or an `updateUrl` re-probe.
+      void this.emitDaemonRss();
     }
+  }
+
+  private async emitDaemonRss(): Promise<void> {
+    if (this.stopped) return;
+    let rssBytes: number | null = null;
+    try {
+      rssBytes = await this.rssSampler();
+    } catch {
+      rssBytes = null;
+    }
+    if (this.stopped || rssBytes === this.lastRssBytes) return;
+    this.lastRssBytes = rssBytes;
+    this.emitter.emit({ type: "llm_daemon_rss_updated", rssBytes });
   }
 
   private async fetchModelLabel(): Promise<void> {

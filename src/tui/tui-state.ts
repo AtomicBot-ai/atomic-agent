@@ -20,6 +20,7 @@ import {
 } from "./local-models/local-llm-logs-state.js";
 import {
   createInitialLocalModelsPanelState,
+  type LocalModelsPanelSeed,
   type LocalModelsPanelState,
 } from "./local-models/local-models-panel-state.js";
 import {
@@ -604,6 +605,12 @@ export interface InitialTuiLayoutOptions {
   activeTab?: TuiTab;
   /** Seeds {@link TuiState.whileBusyMode} from the persisted user config. */
   whileBusyMode?: WhileBusySubmitMode;
+  /**
+   * Seeds the local-models slice's config-derived facts (mode + chosen
+   * model), so the composer's route controls are right on the home
+   * screen before the Models tab ever refreshes the slice.
+   */
+  localModels?: LocalModelsPanelSeed;
 }
 
 export function createInitialTuiState(
@@ -694,7 +701,7 @@ export function createInitialTuiState(
     providersPanel: createInitialProvidersPanelState(),
     llmPanel,
     fallbackPanel: createInitialFallbackPanelState(),
-    localModelsPanel: createInitialLocalModelsPanelState(),
+    localModelsPanel: createInitialLocalModelsPanelState(layout?.localModels),
     localLlmLogs: createInitialLocalLlmLogsState(),
     // Optional chaining on purpose: `session` is typed as required but tests
     // call this with nothing (test files are outside tsconfig's include), and

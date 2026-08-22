@@ -19,6 +19,19 @@ export const COMPOSER_SWITCH_KINDS: readonly ComposerSwitchKind[] = [
 ];
 
 /**
+ * Which switches the strip actually has on a given backend. The
+ * managed-local route draws no provider control — its second control
+ * *is* the model, and the third (daemon status) is a deep link, not a
+ * switch — so the ←/→ walk must not stop on a popup with no control
+ * under it.
+ */
+export function composerSwitchKindsFor(
+  backend: ComposerBackendKind,
+): readonly ComposerSwitchKind[] {
+  return backend === "local" ? ["backend", "model"] : COMPOSER_SWITCH_KINDS;
+}
+
+/**
  * Where the chat route runs.
  *
  * `cloud` is a key-based API provider. `local` and `custom` are both the
@@ -54,11 +67,12 @@ export const COMPOSER_SWITCH_TITLES: Record<ComposerSwitchKind, string> = {
 export function neighbourSwitchKind(
   kind: ComposerSwitchKind,
   delta: number,
+  kinds: readonly ComposerSwitchKind[] = COMPOSER_SWITCH_KINDS,
 ): ComposerSwitchKind {
-  const at = COMPOSER_SWITCH_KINDS.indexOf(kind);
-  const next = Math.min(
-    COMPOSER_SWITCH_KINDS.length - 1,
-    Math.max(0, at + delta),
-  );
-  return COMPOSER_SWITCH_KINDS[next] ?? kind;
+  const at = kinds.indexOf(kind);
+  // A kind outside the walk (a provider switch somehow open on the
+  // local route) steps back onto the strip rather than nowhere.
+  if (at < 0) return kinds[0] ?? kind;
+  const next = Math.min(kinds.length - 1, Math.max(0, at + delta));
+  return kinds[next] ?? kind;
 }

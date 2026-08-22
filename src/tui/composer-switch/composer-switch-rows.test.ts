@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { fakeSession } from "../test-fixtures.js";
 import { createInitialTuiState, type TuiState } from "../tui-state.js";
-import { cloudState, localState } from "./composer-switch-fixtures.js";
+import { cloudState, localModelDef, localState } from "./composer-switch-fixtures.js";
 import {
   initialComposerSwitchCursor,
   selectComposerBackend,
@@ -97,13 +97,47 @@ describe("the switch rows", () => {
     ).toBe(true);
   });
 
-  it("lists the local models on disk when local is the route", () => {
-    const rows = selectComposerSwitchRows(localState(), "model");
-    expect(rows.map((row) => row.label)).toEqual(["qwen-3.5-4b"]);
+  it("lists only downloaded models, then the download deep link, on local", () => {
+    const base = localState();
+    const state: TuiState = {
+      ...base,
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        rows: [
+          ...base.localModelsPanel.rows,
+          // A catalog entry not on disk: listing it would put a
+          // multi-gigabyte pull one Enter from "switch model".
+          {
+            id: "qwen-3.5-30b" as (typeof base.localModelsPanel.rows)[number]["id"],
+            def: localModelDef("qwen-3.5-30b"),
+            downloaded: false,
+            active: false,
+            mmprojStatus: "n/a" as const,
+          },
+        ],
+      },
+    };
+    const rows = selectComposerSwitchRows(state, "model");
+    expect(rows.map((row) => row.label)).toEqual([
+      "qwen-3.5-4b",
+      "Download more models…",
+    ]);
     expect(rows[0]?.intent).toMatchObject({
       kind: "llmRow",
       row: { kind: "localTextModel" },
     });
+    expect(rows.at(-1)?.intent).toEqual({ kind: "localModelsPanel" });
+  });
+
+  it("keeps the full catalog, download offers included, on custom", () => {
+    // The custom route's model switch predates this split and still
+    // shows the whole managed catalog — the local-mode filtering must
+    // not leak into it.
+    const rows = selectComposerSwitchRows(localState("external"), "model");
+    expect(rows.map((row) => row.label)).toEqual(["qwen-3.5-4b"]);
+    expect(rows.some((row) => row.intent.kind === "localModelsPanel")).toBe(
+      false,
+    );
   });
 
   it("narrows to the open switch's typed filter, terms ANDed", () => {

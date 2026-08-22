@@ -24,7 +24,13 @@ import {
 export type ComposerSwitchIntent =
   | { readonly kind: "backend"; readonly backend: ComposerBackendKind }
   | { readonly kind: "llmRow"; readonly row: LlmPanelRow }
-  | { readonly kind: "addProvider" };
+  | { readonly kind: "addProvider" }
+  /**
+   * Deep link to Manage › LLM › Local — the pane where models are
+   * downloaded. The local model switch lists only what is on disk, so
+   * this row is its way of saying "more exists than you see here".
+   */
+  | { readonly kind: "localModelsPanel" };
 
 export interface ComposerSwitchRow {
   readonly id: string;
@@ -144,7 +150,8 @@ function providerRows(state: TuiState): readonly ComposerSwitchRow[] {
  * filter left typed there must not silently shorten this list.
  */
 function modelRows(state: TuiState): readonly ComposerSwitchRow[] {
-  if (selectComposerBackend(state) === "cloud") {
+  const backend = selectComposerBackend(state);
+  if (backend === "cloud") {
     const section = selectCloudModelSection(state);
     const provider = section.provider;
     if (!provider) return [];
@@ -155,6 +162,31 @@ function modelRows(state: TuiState): readonly ComposerSwitchRow[] {
       active: provider.isActiveText && provider.chatModel === modelId,
       intent: { kind: "llmRow" as const, row: cloudChatRow(provider, modelId) },
     }));
+  }
+  if (backend === "local") {
+    // Only what is on disk: a catalog row here would put a
+    // multi-gigabyte download one Enter away from "switch model". The
+    // catalog stays reachable through the deep-link row instead.
+    const downloaded = selectLocalRows(state)
+      .filter((row) => row.kind === "localTextModel")
+      .filter((row) => row.model.downloaded)
+      .map((row) => ({
+        id: `model:local:${row.model.id}`,
+        label: row.model.id,
+        detail: "",
+        active: row.active,
+        intent: { kind: "llmRow" as const, row },
+      }));
+    return [
+      ...downloaded,
+      {
+        id: "model:local:download-more",
+        label: "Download more models…",
+        detail: "opens the local models pane",
+        active: false,
+        intent: { kind: "localModelsPanel" as const },
+      },
+    ];
   }
   return selectLocalRows(state)
     .filter((row) => row.kind === "localTextModel")

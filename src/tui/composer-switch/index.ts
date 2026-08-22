@@ -3,7 +3,12 @@ export {
   type ComposerSwitchAction,
 } from "./composer-switch-actions.js";
 export {
+  selectComposerLocalStatus,
+  type ComposerLocalStatus,
+} from "./composer-local-status.js";
+export {
   activateComposerSwitchRow,
+  openLocalModelsPane,
   runComposerSwitchRow,
 } from "./composer-switch-activate.js";
 export {

@@ -4,10 +4,12 @@ import { isPrintableFilterInput } from "../llm-panel/llm-panel-modal-key-binding
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
 import {
+  selectComposerBackend,
   selectComposerSwitchRow,
   type ComposerSwitchRow,
 } from "./composer-switch-rows.js";
 import {
+  composerSwitchKindsFor,
   neighbourSwitchKind,
   type ComposerSwitchKind,
 } from "./composer-switch-state.js";
@@ -93,7 +95,7 @@ export function handleComposerSwitchKey(
     return true;
   }
   if (key.leftArrow || key.rightArrow) {
-    moveSwitch(open.kind, key.rightArrow ? 1 : -1, dispatch);
+    moveSwitch(state, open.kind, key.rightArrow ? 1 : -1, dispatch);
     return true;
   }
   if (key.return) {
@@ -124,11 +126,15 @@ export function handleComposerSwitchKey(
 }
 
 function moveSwitch(
+  state: TuiState,
   kind: ComposerSwitchKind,
   delta: number,
   dispatch: (action: TuiAction) => void,
 ): void {
-  const next = neighbourSwitchKind(kind, delta);
+  // The walk visits the controls the strip draws for this backend —
+  // on the managed-local route that is backend ⇄ model, no provider.
+  const kinds = composerSwitchKindsFor(selectComposerBackend(state));
+  const next = neighbourSwitchKind(kind, delta, kinds);
   if (next === kind) return;
   dispatch({ type: "composer_switch_opened", kind: next });
 }

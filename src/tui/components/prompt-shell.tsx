@@ -1,5 +1,6 @@
 import { Box } from "ink";
 import type { ReactElement } from "react";
+import type { ComposerLocalStatus } from "../composer-switch/composer-local-status.js";
 import type { ComposerBackendMeta } from "../composer-switch/composer-switch-rows.js";
 import { useRotatingPlaceholder } from "../hooks/use-rotating-placeholder.js";
 import { theme } from "../theme/theme.js";
@@ -64,6 +65,8 @@ export interface PromptShellProps
    * Falls back to a single dot separator when both are present.
    */
   provider?: string | null;
+  /** Managed-local daemon status + RAM readout; `null` off that route. */
+  localStatus?: ComposerLocalStatus | null;
   /**
    * Optional content rendered at the start of the action bar, before the
    * model/provider labels. Used by the chat surface to show the live
@@ -85,6 +88,7 @@ export function PromptShell(props: PromptShellProps): ReactElement {
     backend,
     model,
     provider,
+    localStatus,
     leftSlot,
     rightSlot,
     contextSlot,
@@ -188,6 +192,7 @@ export function PromptShell(props: PromptShellProps): ReactElement {
           backend={backend ?? null}
           model={model ?? null}
           provider={provider ?? null}
+          localStatus={localStatus ?? null}
           rightSlot={rightSlot ?? null}
           contextSlot={contextSlot ?? null}
           // Same raised layer as the overlay backstop behind the bar —

@@ -37,6 +37,7 @@ import {
   ComposerSwitchPopup,
   runComposerSwitchRow,
   selectComposerBackendMeta,
+  selectComposerLocalStatus,
   type ComposerSwitchRow,
 } from "./composer-switch/index.js";
 import { DebugPane } from "./components/debug-pane.js";
@@ -241,6 +242,13 @@ export interface TuiAppCallbacks {
     mode?: "with-mmproj" | "gguf-only" | "mmproj-only",
   ): void;
   onLocalModelsSetActiveRequested?(modelId: import("../local-llm/index.js").LocalModelId): void;
+  /**
+   * Persist `localModels.mode: "managed"` without picking a model — the
+   * composer's way of switching to "local" while nothing is downloaded
+   * yet, where a set-active call (the usual writer of that mode) has no
+   * model id to name.
+   */
+  onLocalModelsUseManagedRequested?(): void | Promise<void>;
   onLocalModelsBackendPullRequested?(): void;
   onLocalModelsRefreshRequested?(): void;
   /** Cycle the managed daemon's GPU preference (auto → devices → cpu). */
@@ -1221,6 +1229,9 @@ export function TuiApp({
   // that stops a fresh install from announcing a server nobody
   // configured is down.
   const promptBackend = selectComposerBackendMeta(state);
+  // Managed-local only: the daemon's status word + RAM as the row's
+  // third control (the model switch is the second).
+  const promptLocalStatus = selectComposerLocalStatus(state);
   // A notice outranks the route for the couple of seconds it is up: it
   // is the answer to a keystroke the operator just made, and the route
   // is ambient.
@@ -1517,6 +1528,7 @@ export function TuiApp({
             backend={promptBackend}
             model={promptLlm.model}
             provider={promptLlm.provider}
+            localStatus={promptLocalStatus}
             leftSlot={promptLeftSlot}
             rightSlot={promptRightSlot}
             contextSlot={promptContextSlot}

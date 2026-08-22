@@ -14,6 +14,7 @@ import { describeLlamaHealthFailure } from "../llm/describe-llama-health-failure
 import { createAgentRuntime, type AgentRuntime } from "../runtime/bootstrap.js";
 import type { LogRecord, LogSink } from "../tracing/structured-logger.js";
 import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
+import { isKnownLocalModelId } from "../local-llm/index.js";
 import { registerSession } from "../local-llm/session-registry.js";
 import { enterAltScreen } from "./alt-screen.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
@@ -133,6 +134,18 @@ export async function tuiCommand(args: string[]): Promise<number> {
   const initialLayout: InitialTuiLayoutOptions = {
     onboarding,
     whileBusyMode: config.tui.whileBusySubmit,
+    // The composer's route controls read these on the home screen, and
+    // the local-models slice only refreshes while the Models tab is
+    // open — unseeded, a managed install mislabels itself `custom`
+    // until the operator visits that tab once.
+    localModels: {
+      configMode: config.localModels.mode,
+      activeModelId:
+        config.localModels.managed.modelId &&
+        isKnownLocalModelId(config.localModels.managed.modelId)
+          ? config.localModels.managed.modelId
+          : null,
+    },
   };
   const approvalLevel = resolveBootApprovalLevel(
     parsed.noApproval,
@@ -447,6 +460,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.localModels.pullModel(id, mode),
         onLocalModelsSetActiveRequested: (id) =>
           void orchestrator.localModels.setActive(id),
+        onLocalModelsUseManagedRequested: () =>
+          void orchestrator.localModels.useManagedMode(),
         onLocalModelsBackendPullRequested: () =>
           void orchestrator.localModels.pullBackend(),
         onLocalModelsRefreshRequested: () => void orchestrator.localModels.refresh(),

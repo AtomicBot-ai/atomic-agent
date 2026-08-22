@@ -105,6 +105,19 @@ describe("driving an open strip", () => {
     expect(app.at().composerSwitch?.kind).toBe("provider");
   });
 
+  it("←→ skip the provider switch on the managed-local route", () => {
+    // That route draws no provider control — its second control is the
+    // model and the third (daemon status) is a deep link, not a switch —
+    // so the walk stepping onto "provider" would open a popup with no
+    // control under it.
+    const app = driver(localState());
+    app.press("r", { ctrl: true });
+    app.press("", { rightArrow: true });
+    expect(app.at().composerSwitch?.kind).toBe("model");
+    app.press("", { leftArrow: true });
+    expect(app.at().composerSwitch?.kind).toBe("backend");
+  });
+
   it("moving to another control re-seats the cursor on its live row", () => {
     const app = driver(cloudState());
     app.press("r", { ctrl: true });

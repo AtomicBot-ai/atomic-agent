@@ -5,6 +5,8 @@ import { llmHealthLook } from "../components/llm-health-badge.js";
 import { useMouseCommands, useMouseTarget } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { theme } from "../theme/theme.js";
+import { LocalStatusControl } from "./composer-local-status-control.js";
+import type { ComposerLocalStatus } from "./composer-local-status.js";
 import type { ComposerBackendMeta } from "./composer-switch-rows.js";
 import type { ComposerSwitchKind } from "./composer-switch-state.js";
 
@@ -12,6 +14,13 @@ export interface ComposerMetaControlsProps {
   backend: ComposerBackendMeta | null;
   provider: string | null;
   model: string | null;
+  /**
+   * The managed-local route's third control: daemon status word + RAM
+   * (`healthy · 4.4 GB`). Non-null only on that route; when present it
+   * also owns the status word, so the backend control shows its dot
+   * alone instead of saying the same word twice.
+   */
+  localStatus?: ComposerLocalStatus | null;
   /**
    * Mouse layer the click targets register on. The composer floats over
    * the chat log with a `MOUSE_LAYER_PANEL` backstop behind it (see
@@ -53,12 +62,19 @@ export function ComposerMetaControls({
   backend,
   provider,
   model,
+  localStatus,
   mouseLayer,
 }: ComposerMetaControlsProps): ReactElement | null {
-  if (!backend && !provider && !model) return null;
+  if (!backend && !provider && !model && !localStatus) return null;
   return (
     <>
-      {backend ? <BackendControl backend={backend} mouseLayer={mouseLayer} /> : null}
+      {backend ? (
+        <BackendControl
+          backend={backend}
+          showWord={!localStatus}
+          mouseLayer={mouseLayer}
+        />
+      ) : null}
       {provider ? (
         <Control
           kind="provider"
@@ -74,6 +90,13 @@ export function ComposerMetaControls({
           label={model}
           lead={Boolean(backend || provider)}
           shrink={3}
+          mouseLayer={mouseLayer}
+        />
+      ) : null}
+      {localStatus ? (
+        <LocalStatusControl
+          status={localStatus}
+          lead={Boolean(backend || provider || model)}
           mouseLayer={mouseLayer}
         />
       ) : null}
@@ -118,9 +141,16 @@ export function composerBackendLook(
 
 function BackendControl({
   backend,
+  showWord,
   mouseLayer,
 }: {
   backend: ComposerBackendMeta;
+  /**
+   * False on the managed-local route, where the daemon-status control
+   * at the row's end carries the word — repeating it here would state
+   * the same fact twice on one line. The dot stays either way.
+   */
+  showWord: boolean;
   mouseLayer?: number;
 }): ReactElement {
   const look = composerBackendLook(backend);
@@ -136,7 +166,9 @@ function BackendControl({
         }
         mouseLayer={mouseLayer}
       />
-      {look?.word ? <StatusWord word={look.word} mouseLayer={mouseLayer} /> : null}
+      {showWord && look?.word ? (
+        <StatusWord word={look.word} mouseLayer={mouseLayer} />
+      ) : null}
     </>
   );
 }

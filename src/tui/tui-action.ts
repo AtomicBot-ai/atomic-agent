@@ -231,6 +231,12 @@ export type TuiAction =
        */
       contextWindow?: number | null;
     }
+  /**
+   * RSS of the managed llama-server child, sampled by `LlmHealthPoller`
+   * on the health-probe cadence. `null` clears the readout (external
+   * mode, daemon down, unsupported platform).
+   */
+  | { type: "llm_daemon_rss_updated"; rssBytes: number | null }
   /** Refresh the always-on sidebar session list (orchestrator drives the load). */
   | { type: "recent_sessions_updated"; sessions: readonly SessionPickerEntry[] }
   /** Toggle keyboard focus between editor and sidebar. */
