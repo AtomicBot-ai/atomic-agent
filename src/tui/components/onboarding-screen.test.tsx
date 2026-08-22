@@ -6,8 +6,9 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OnboardingScreen } from "./onboarding-screen.js";
-import { resetConfigCache } from "../../config/index.js";
+import { getConfig, resetConfigCache } from "../../config/index.js";
 import { createOnboardingState } from "../onboarding/onboarding-state.js";
+import { decideSecondBackendOffer } from "../onboarding/propose-second-backend.js";
 import { createInitialTuiState } from "../tui-state.js";
 import type { TuiAction } from "../tui-action.js";
 import { fakeSession } from "../test-fixtures.js";
@@ -26,7 +27,7 @@ const STATE_DIR_ENV = "ATOMIC_AGENT_STATE_DIR";
 const strip = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, "");
 const ESCAPE_KEY = "\u001b";
 
-function renderFlow(step: "intro" | "choose" | "custom_chat_url" = "choose") {
+function renderFlow(step: "intro" | "choose" | "local_pick" | "custom_chat_url" = "choose") {
   const actions: TuiAction[] = [];
   const onboarding = { ...createOnboardingState("http://127.0.0.1:8080"), step };
   const state = { ...createInitialTuiState(fakeSession(), 50), onboarding };
@@ -39,6 +40,16 @@ function renderFlow(step: "intro" | "choose" | "custom_chat_url" = "choose") {
     />,
   );
   return { view, actions };
+}
+
+// Effects fire after commit, so a persisted side effect is awaited by
+// polling config — never by trusting how fast a frame landed.
+async function untilStamped(read: () => boolean, timeoutMs = 1000): Promise<void> {
+  const start = Date.now();
+  while (!read()) {
+    if (Date.now() - start > timeoutMs) throw new Error("stamp never persisted");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 describe("OnboardingScreen", () => {
@@ -136,5 +147,38 @@ describe("OnboardingScreen", () => {
     view.stdin.write("j");
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(actions).toContainEqual({ type: "onboarding_cursor_moved", delta: 1 });
+  });
+
+  it("stamps localSetupSeenAt the moment the model list is reached", async () => {
+    expect(getConfig().tui.onboarding.localSetupSeenAt).toBeNull();
+    renderFlow("local_pick");
+    await untilStamped(() => getConfig().tui.onboarding.localSetupSeenAt !== null);
+    // The stamp is the exact input the next decision reads: with it,
+    // the "set up local models too" pitch stays away for good.
+    expect(
+      decideSecondBackendOffer({
+        outcome: "cloud",
+        cloudReady: true,
+        localReady: false,
+        alreadyProposed: false,
+        localSetupSeen: getConfig().tui.onboarding.localSetupSeenAt !== null,
+      }),
+    ).toBeNull();
+  });
+
+  it("leaves localSetupSeenAt null off the local branch, so the offer stands", async () => {
+    renderFlow("choose");
+    // Long enough for the stamping effect to have fired were it going to.
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(getConfig().tui.onboarding.localSetupSeenAt).toBeNull();
+    expect(
+      decideSecondBackendOffer({
+        outcome: "cloud",
+        cloudReady: true,
+        localReady: false,
+        alreadyProposed: false,
+        localSetupSeen: getConfig().tui.onboarding.localSetupSeenAt !== null,
+      }),
+    ).toBe("local");
   });
 });
