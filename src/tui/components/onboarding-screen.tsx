@@ -4,7 +4,6 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
   type ReactElement,
 } from "react";
 import { getConfig } from "../../config/index.js";
@@ -24,6 +23,7 @@ import {
   ONBOARDING_SIZE_ADVICE,
 } from "../onboarding/onboarding-fit.js";
 import { handleOnboardingKey } from "../onboarding/onboarding-key-bindings.js";
+import { useIntroInput } from "../onboarding/use-intro-input.js";
 import { decideSecondBackendOffer } from "../onboarding/propose-second-backend.js";
 import type { OnboardingOutcome, OnboardingUiState } from "../onboarding/onboarding-state.js";
 import {
@@ -100,7 +100,17 @@ export function OnboardingScreen(props: {
     [onboarding.step],
   );
   const settling = useRef(false);
-  const [introSkipped, setIntroSkipped] = useState(false);
+
+  const dismissIntro = useCallback(() => {
+    // Recorded as it is dismissed, not at the end of the flow: an
+    // operator who quits at the backend choice has still seen the
+    // splash, and a later release may want to know that.
+    persistOnboardingState({ introSeenAt: new Date().toISOString() });
+    dispatch({ type: "onboarding_step_set", step: "choose" });
+  }, [dispatch]);
+  // The splash answers to keys, clicks, the wheel and pastes alike, so
+  // all four live in one hook rather than in this screen's key handler.
+  const intro = useIntroInput({ onboarding, onDismiss: dismissIntro });
 
   const finish = useCallback(
     (outcome: OnboardingOutcome) => {
@@ -138,25 +148,10 @@ export function OnboardingScreen(props: {
       for (const action of result.actions) dispatch(action);
       const intent = result.intent;
       if (!intent) return;
-      if (intent.kind === "intro_key") {
-        // First key finishes the reveal, second moves on: a splash that
-        // cannot be hurried is a wait, and one that vanishes on the key
-        // that was meant to hurry it is a screen nobody ever reads.
-        if (!introSkipped) {
-          setIntroSkipped(true);
-          return;
-        }
-        // Recorded as it is dismissed, not at the end of the flow: an
-        // operator who quits at the backend choice has still seen the
-        // splash, and a later release may want to know that.
-        persistOnboardingState({ introSeenAt: new Date().toISOString() });
-        dispatch({ type: "onboarding_step_set", step: "choose" });
-        return;
-      }
       if (intent.kind === "skip") finish("skipped");
-      else pick(intent.choice);
+      else if (intent.kind === "pick") pick(intent.choice);
     },
-    { isActive: onboarding.step === "choose" || onboarding.step === "intro" },
+    { isActive: onboarding.step === "choose" },
   );
 
   const picks = useMemo(
@@ -370,7 +365,7 @@ export function OnboardingScreen(props: {
   }, [callbacks, dispatch, onboarding.outcome, onboarding.step]);
 
   return (
-    <Box flexDirection="column" flexGrow={1} paddingTop={1}>
+    <Box flexDirection="column" flexGrow={1} paddingTop={1} ref={intro.ref}>
       {onboarding.step === "intro" ? null : (
         <OnboardingHeader subtitle={SUBTITLES[onboarding.step]} mark={fit.mark} />
       )}
@@ -380,7 +375,7 @@ export function OnboardingScreen(props: {
             columns={Math.max(20, size.columns - 4)}
             rows={size.rows}
             fit={fit}
-            skipAnimation={introSkipped}
+            skipAnimation={intro.skipAnimation}
           />
         ) : null}
         {onboarding.step === "choose" ? (
