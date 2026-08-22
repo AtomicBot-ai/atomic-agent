@@ -1,3 +1,5 @@
+import { handleComposerSwitchKey } from "./composer-switch/composer-switch-key-bindings.js";
+import type { ComposerSwitchRow } from "./composer-switch/composer-switch-rows.js";
 import { handleContextPanelKey } from "./context-panel-keys.js";
 import type { Key } from "ink";
 import {
@@ -105,6 +107,8 @@ export interface AppKeyContext {
   setMenuLeaderArmed: (armed: boolean) => void;
   /** Navigate to a place, or run an action's slash command. */
   activateMenuNode: (node: MenuNode) => void;
+  /** Run the row picked in one of the composer's route switches. */
+  activateComposerSwitch: (row: ComposerSwitchRow) => void;
 }
 
 /**
@@ -238,6 +242,27 @@ export function handleAppKey(
   // Below the menu on purpose: ctrl+p should still reach the menu from
   // an open context panel, and opening the menu closes the panel.
   if (handleContextPanelKey(input, key, { state, dispatch })) {
+    return true;
+  }
+  // Same rung, same reason: the composer's route switches let ctrl-chords
+  // through so the menu stays reachable from inside one. They open only
+  // where the composer is the surface the operator is looking at — on a
+  // Manage tab the row is off screen, and a switch anchored to it would
+  // be a popup with no visible owner.
+  if (
+    handleComposerSwitchKey(input, key, {
+      state,
+      dispatch,
+      activate: ctx.activateComposerSwitch,
+      canOpen:
+        state.uiMode === "chat" &&
+        !state.slashPaletteOpen &&
+        !state.pendingApproval &&
+        !state.themePickerOpen &&
+        !state.sessionPickerOpen &&
+        !isPanelModalOpen(state),
+    })
+  ) {
     return true;
   }
   if (ctx.menuLeaderArmed) {

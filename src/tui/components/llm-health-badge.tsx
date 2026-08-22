@@ -1,7 +1,10 @@
 import { Text } from "ink";
 import type { ReactElement } from "react";
 
-import type { LlmHealthState } from "../llm-health/llm-health-state.js";
+import type {
+  LlmHealthState,
+  LlmHealthStatus,
+} from "../llm-health/llm-health-state.js";
 import { theme } from "../theme/theme.js";
 
 /**
@@ -19,7 +22,7 @@ export interface LlmHealthBadgeProps {
 }
 
 export function LlmHealthBadge({ health }: LlmHealthBadgeProps): ReactElement {
-  const { color, glyph, label } = resolveBadge(health);
+  const { color, glyph, label } = llmHealthLook(health.status);
   return (
     <Text>
       <Text color={color} bold>
@@ -30,14 +33,19 @@ export function LlmHealthBadge({ health }: LlmHealthBadgeProps): ReactElement {
   );
 }
 
-interface BadgeLook {
+export interface LlmHealthLook {
   color: string;
   glyph: string;
   label: string;
 }
 
-function resolveBadge(health: LlmHealthState): BadgeLook {
-  switch (health.status) {
+/**
+ * The ●/◐/○/✕/· vocabulary, resolved from a status alone so the
+ * composer's backend control can paint the same dot this badge does
+ * without either surface inventing a second glyph table.
+ */
+export function llmHealthLook(status: LlmHealthStatus): LlmHealthLook {
+  switch (status) {
     case "healthy":
       return { color: theme.colors.success, glyph: "●", label: "healthy" };
     case "probing":

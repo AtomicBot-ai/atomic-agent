@@ -20,6 +20,7 @@ import {
   upsertReasoning,
 } from "./reducer-helpers.js";
 import { reduceUiAction } from "./reduce-ui-actions.js";
+import { reduceComposerSwitchAction } from "./composer-switch/composer-switch-reducer.js";
 import { reduceLocalModelsAction } from "./local-models/local-models-reducer.js";
 import { reduceTasksAction } from "./tasks/tasks-reducer.js";
 import { reduceSkillsAction } from "./skills/skills-reducer.js";
@@ -68,6 +69,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (telegramHandled !== null) return telegramHandled;
   const privacyHandled = reducePrivacyAction(state, action);
   if (privacyHandled !== null) return privacyHandled;
+  const composerSwitchHandled = reduceComposerSwitchAction(state, action);
+  if (composerSwitchHandled !== null) return composerSwitchHandled;
   const uiHandled = reduceUiAction(state, action);
   if (uiHandled !== null) return uiHandled;
   switch (action.type) {

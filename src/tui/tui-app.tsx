@@ -27,9 +27,14 @@ import { MenuPopup } from "./menu/menu-popup.js";
 import type { MenuNode } from "./menu/menu-registry.js";
 import { ApprovalModal } from "./approval-modal.js";
 import { ChatLog } from "./components/chat-log.js";
+import {
+  ComposerSwitchPopup,
+  runComposerSwitchRow,
+  selectComposerBackendMeta,
+  type ComposerSwitchRow,
+} from "./composer-switch/index.js";
 import { DebugPane } from "./components/debug-pane.js";
 import { HotkeyHint } from "./components/hotkey-hint.js";
-import { LlmHealthBadge } from "./components/llm-health-badge.js";
 import { PromptShell } from "./components/prompt-shell.js";
 import { QueuedMessages } from "./components/queued-messages.js";
 import { SessionDeleteModal } from "./components/session-delete-modal.js";
@@ -702,6 +707,9 @@ export function TuiApp({
   const editorFocus =
     !state.menuOpen &&
     !state.contextPanelOpen &&
+    // A route switch owns ↑↓ / ←→ / Enter while it is up; the editor
+    // keeping focus would act on the same keystroke a second time.
+    state.composerSwitch === null &&
     !menuLeaderArmed &&
     // An approval prompt no longer takes the keyboard away: the
     // operator answers the agent in the same field they always type in,
@@ -765,6 +773,12 @@ export function TuiApp({
     [state, callbacks],
   );
 
+  const activateComposerSwitch = useCallback(
+    (row: ComposerSwitchRow) =>
+      runComposerSwitchRow(row, state, dispatch, callbacks),
+    [state, callbacks],
+  );
+
   /**
    * Routes a key to whichever Observe / Manage panel is on screen.
    * Returns `null` when no panel owns the surface (chat mode), `true` /
@@ -793,6 +807,7 @@ export function TuiApp({
   const modalOwnsInput =
     state.menuOpen ||
     state.contextPanelOpen ||
+    state.composerSwitch !== null ||
     Boolean(state.sessionDelete) ||
     Boolean(state.pendingApproval) ||
     Boolean(state.updatePrompt) ||
@@ -849,7 +864,10 @@ export function TuiApp({
    */
   const menuBackdropHandler = (hit: MouseHit): boolean => {
     const open =
-      state.menuOpen || state.contextPanelOpen || Boolean(state.sessionDelete);
+      state.menuOpen ||
+      state.contextPanelOpen ||
+      state.composerSwitch !== null ||
+      Boolean(state.sessionDelete);
     if (!open) return false;
     if (hit.event.kind === "wheel") return true;
     if (!isPrimaryPress(hit.event)) return false;
@@ -869,7 +887,9 @@ export function TuiApp({
         ? { type: "session_delete_closed" }
         : state.contextPanelOpen
           ? { type: "context_panel_closed" }
-          : { type: "menu_closed" },
+          : state.composerSwitch
+            ? { type: "composer_switch_closed" }
+            : { type: "menu_closed" },
     );
     return true;
   };
@@ -877,7 +897,10 @@ export function TuiApp({
   // above. A ref rather than state: it must not trigger a render.
   const modalOpenedAtRef = useRef(0);
   const backdropOwner =
-    state.menuOpen || state.contextPanelOpen || Boolean(state.sessionDelete);
+    state.menuOpen ||
+    state.contextPanelOpen ||
+    state.composerSwitch !== null ||
+    Boolean(state.sessionDelete);
   useEffect(() => {
     if (backdropOwner) modalOpenedAtRef.current = Date.now();
   }, [backdropOwner]);
@@ -904,6 +927,7 @@ export function TuiApp({
       menuLeaderArmed,
       setMenuLeaderArmed,
       activateMenuNode,
+      activateComposerSwitch,
     });
     if (appHandled) return;
     // While the slash-command palette is open, let the (now-focused)
@@ -1145,7 +1169,9 @@ export function TuiApp({
   // pinned-input-at-bottom UX.
   // Render-phase on purpose: `theme` is a read-at-render proxy, and children
   // render after this body runs, so the flag is already correct for them.
-  setBackdropDimmed(state.menuOpen || state.contextPanelOpen);
+  setBackdropDimmed(
+    state.menuOpen || state.contextPanelOpen || state.composerSwitch !== null,
+  );
 
 
   const isTty = Boolean(process.stdout.isTTY);
@@ -1156,16 +1182,23 @@ export function TuiApp({
     6,
     terminalSize.rows - appChromeRows(composerVisible),
   );
+  // The switch popup gets the pane's *real* row count, floor of none:
+  // it sheds its own chrome down to a three-row frame, and handing it
+  // the menu's 6-row floor on a shorter pane made it paint over the
+  // composer instead of shrinking.
+  const switchPaneRows = Math.max(
+    0,
+    terminalSize.rows - appChromeRows(composerVisible),
+  );
   const promptLlm = selectPromptLlmMeta(state);
-  // No local backend chosen yet ⇒ no local health to report. Without this the
-  // splash screen of a fresh install announces that a server the user never
-  // configured is down, which reads as a broken install rather than an
-  // un-started one. `localConfigured` latches on as soon as local is really
-  // the route (config says so, or a probe answered), so real local users keep
-  // the ● / ○ signal they rely on.
-  // A notice outranks the health badge for the couple of seconds it is
-  // up: it is the answer to a keystroke the operator just made, and the
-  // badge is ambient.
+  // The backend control carries the health dot the standalone pill used
+  // to: `selectComposerBackendMeta` keeps the `localConfigured` guard
+  // that stops a fresh install from announcing a server nobody
+  // configured is down.
+  const promptBackend = selectComposerBackendMeta(state);
+  // A notice outranks the route for the couple of seconds it is up: it
+  // is the answer to a keystroke the operator just made, and the route
+  // is ambient.
   useEffect(() => {
     if (!state.composerNotice) return;
     const timer = setTimeout(
@@ -1177,18 +1210,7 @@ export function TuiApp({
 
   const promptLeftSlot = state.composerNotice ? (
     <Text color={theme.colors.success}>{state.composerNotice}</Text>
-  ) : promptLlm.usesLocalHealth ? (
-    state.llmHealth.localConfigured ? (
-      <LlmHealthBadge health={state.llmHealth} />
-    ) : null
-  ) : (
-    <Text>
-      <Text color="green" bold>
-        ●
-      </Text>
-      <Text color="gray"> {promptLlm.cloudLabel ?? "cloud"}</Text>
-    </Text>
-  );
+  ) : null;
   // While a turn is running the meta-row gains a second job: the operator
   // needs to know what Enter will do to the message they are typing.
   // Running only: during a pending approval every key routes to the
@@ -1349,6 +1371,14 @@ export function TuiApp({
                 reservedForReply={state.session.completionMaxTokens}
               />
             ) : null}
+            <ComposerSwitchPopup
+              state={state}
+              availableRows={switchPaneRows}
+              availableColumns={
+                terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
+              }
+              onActivate={activateComposerSwitch}
+            />
             {state.menuOpen ? (
               <MenuPopup
                 state={state}
@@ -1432,6 +1462,7 @@ export function TuiApp({
             value={state.inputValue}
             placeholder="Type a message or `/` for commands…"
             rotatingPlaceholders={PROMPT_PLACEHOLDERS}
+            backend={promptBackend}
             model={promptLlm.model}
             provider={promptLlm.provider}
             leftSlot={promptLeftSlot}

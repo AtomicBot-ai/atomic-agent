@@ -283,7 +283,13 @@ function buildLocalEmbeddingRow(
   };
 }
 
-function cloudProviderRow(provider: ProviderRow): LlmPanelRow {
+/**
+ * Exported for the composer's provider switch, which lists the same
+ * cloud providers this pane does and hands the chosen row straight to
+ * `triggerLlmPrimary`. Building the row here rather than there is what
+ * keeps one definition of "available", "active" and what Enter does.
+ */
+export function cloudProviderRow(provider: ProviderRow): LlmPanelRow {
   if (!provider.hasApiKey) {
     return {
       kind: "cloudProvider",
@@ -310,7 +316,8 @@ function cloudProviderRow(provider: ProviderRow): LlmPanelRow {
   };
 }
 
-function cloudChatRow(provider: ProviderRow, modelId: string): LlmPanelRow {
+/** Exported for the composer's model switch — see `cloudProviderRow`. */
+export function cloudChatRow(provider: ProviderRow, modelId: string): LlmPanelRow {
   const active = provider.isActiveText && provider.chatModel === modelId;
   return {
     kind: "cloudChatModel",

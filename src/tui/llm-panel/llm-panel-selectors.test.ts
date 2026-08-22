@@ -127,8 +127,6 @@ describe("llm-panel selectors", () => {
     expect(selectPromptLlmMeta(state)).toEqual({
       model: "openai/gpt-4o-mini",
       provider: "openrouter",
-      usesLocalHealth: false,
-      cloudLabel: "cloud",
     });
   });
 });
