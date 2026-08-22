@@ -90,6 +90,33 @@ describe("handleEditorSubmit under an approval prompt", () => {
     });
   });
 
+  it("never answers a background session's prompt with typed prose", () => {
+    // The visible thread is s1; the parked request belongs to another
+    // session. The words the operator typed are a message for THEIR
+    // thread, not a model-visible deny reason for a question they
+    // cannot even see — so the submit takes the ordinary path.
+    const onApprovalReply = vi.fn();
+    const onMessageSubmitted = vi.fn();
+    const state: TuiState = {
+      ...createInitialTuiState(fakeSession()),
+      pendingApproval: {
+        approvalId: "ap-bg",
+        sessionId: "s-background",
+        tool: "os.shell.run",
+        category: "shell",
+        reason: "r",
+      },
+    };
+    handleEditorSubmit(
+      "carry on with the plan",
+      state,
+      (() => {}) as never,
+      stubCallbacks({ onApprovalReply, onMessageSubmitted }),
+    );
+    expect(onApprovalReply).not.toHaveBeenCalled();
+    expect(onMessageSubmitted).toHaveBeenCalledWith("carry on with the plan");
+  });
+
   it("keeps slash commands local instead of answering the prompt with them", () => {
     // `/privacy` under a prompt is still `/privacy`; sending it to the
     // model as a denial reason would be nonsense.

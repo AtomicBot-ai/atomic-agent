@@ -92,7 +92,16 @@ export function handleEditorSubmit(
   // turn, which keeps going. Slash commands are handled above and stay
   // local to the TUI, so `/privacy` under a prompt is still just
   // `/privacy`.
-  if (state.pendingApproval && callbacks.onApprovalReply) {
+  // Scoped to the visible session's own request: typed prose must never
+  // become the model-visible deny reason for a question some background
+  // thread asked (the reducer keeps foreign requests out of the slot;
+  // this guard keeps the submit honest even if one slipped in). A
+  // foreign request falls through to the ordinary steer/queue path.
+  if (
+    state.pendingApproval &&
+    state.pendingApproval.sessionId === state.session.sessionId &&
+    callbacks.onApprovalReply
+  ) {
     const { approvalId } = state.pendingApproval;
     dispatch({ type: "message_steered", text: trimmed });
     callbacks.onApprovalReply(approvalId, trimmed);

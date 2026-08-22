@@ -417,6 +417,46 @@ describe("handleAppKey", () => {
     expect(onApprovalDecision).toHaveBeenCalledWith("ap-1", true);
   });
 
+  it("keys never answer a background session's approval — Ctrl+C keeps its normal meaning", () => {
+    // A request owned by an off-screen session (the reducer keeps it
+    // out of the slot, but the keys must not trust that blind): Ctrl+C
+    // must behave exactly as it does with no prompt up — abort the
+    // visible run — and NOT deny the background session's tool call.
+    const state = createInitialTuiState(stubSession());
+    state.pendingApproval = pendingRequest({ sessionId: "s-background" });
+    state.status = "running";
+    const onApprovalDecision = vi.fn();
+    const onAbort = vi.fn();
+    const dispatch = vi.fn();
+    const handled = handleAppKey("c", emptyKey({ ctrl: true }), {
+      state,
+      dispatch,
+      callbacks: { onApprovalDecision, onAbort, onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(true);
+    expect(onApprovalDecision).not.toHaveBeenCalled();
+    expect(onAbort).toHaveBeenCalledTimes(1);
+    expect(dispatch).toHaveBeenCalledWith({ type: "abort_requested" });
+  });
+
+  it("y is not a verdict on a background session's approval", () => {
+    const state = createInitialTuiState(stubSession());
+    state.pendingApproval = pendingRequest({ sessionId: "s-background" });
+    const onApprovalDecision = vi.fn();
+    handleAppKey("y", emptyKey(), {
+      state,
+      dispatch: vi.fn(),
+      callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(onApprovalDecision).not.toHaveBeenCalled();
+  });
+
   it("s on a grantable approval resolves with a category grant and confirms it", () => {
     const state = createInitialTuiState(stubSession());
     state.pendingApproval = pendingRequest();

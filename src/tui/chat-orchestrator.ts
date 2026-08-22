@@ -18,7 +18,9 @@ import {
   formatDetachedTurnNotice,
   formatDroppedQueueOnSwitchNotice,
   formatDroppedSteersNotice,
+  formatReplayGapNotice,
   SWITCHED_AWAY_APPROVAL_REASON,
+  TurnEventBuffer,
 } from "./detached-turns.js";
 import { captureAndWriteDebugBundle } from "./debug-bundle/index.js";
 import { LlmHealthPoller } from "./llm-health/llm-health-poller.js";
@@ -130,6 +132,19 @@ export class ChatOrchestrator {
    */
   private readonly detachedTurns = new DetachedTurns();
   /**
+   * Rolling log of the agent events emitted by this orchestrator's
+   * running turns, keyed by session — what a switch-back replays so a
+   * re-attached thread shows its own prompt and feed instead of the
+   * empty stored snapshot. Fed by the bus tap in the constructor,
+   * started per turn in `runOneTurn`, dropped when the turn ends.
+   */
+  private readonly turnEvents = new TurnEventBuffer();
+  /**
+   * Guards the bus tap against recording its own replay — without it a
+   * second switch-back would replay every event twice.
+   */
+  private replayingTurnEvents = false;
+  /**
    * The visible turn was re-attached by a switch-back mid-run. While
    * the operator was away its events were dropped (the reducer filters
    * by visible session), so when it finishes the transcript is
@@ -177,6 +192,17 @@ export class ChatOrchestrator {
     });
     this.telegram = new TuiTelegramOrchestrator(runtime, bus);
     this.privacy = new PrivacyOrchestrator(runtime, bus);
+    // Tap the bus rather than the runtime handler: what the reducer was
+    // offered is exactly what a switch-back may need to replay, session
+    // tags included. `record` no-ops for sessions without a running
+    // TUI turn, so scheduler/HTTP-origin events cost one Map miss.
+    bus.subscribe((action) => {
+      if (this.replayingTurnEvents) return;
+      if (action.type !== "agent_event" || action.sessionId === undefined) {
+        return;
+      }
+      this.turnEvents.record(action.sessionId, action.event);
+    });
   }
 
   /**
@@ -487,6 +513,11 @@ export class ChatOrchestrator {
       messages: turnsToMessages(loaded.turns),
       running,
     });
+    // The stored snapshot above misses everything the still-running
+    // turn has said (a turn saves only when it finishes — for a thread
+    // mid-first-turn the snapshot is EMPTY, prompt included). Repaint
+    // from the event log before anything else lands in the transcript.
+    if (resumed) this.replayTurnEvents(loaded.id);
     this.refreshRecentSessions();
     this.bus.emit({
       type: "runtime_info",
@@ -497,6 +528,44 @@ export class ChatOrchestrator {
     // After `session_switched`, so they land in the new transcript
     // rather than the one that was just replaced.
     for (const notice of notices) this.notify(notice);
+    // A turn parked on an approval in THIS thread asked its question
+    // while another transcript was on screen, where it surfaced only as
+    // a pointer notice (approval keys never answer for an off-screen
+    // thread). Its owner is visible now — re-raise the actual prompt.
+    const parkedApproval = this.runtime.approvals.pendingRequestForSession(
+      loaded.id,
+    );
+    if (parkedApproval) {
+      this.bus.emit({ type: "approval_requested", request: parkedApproval });
+    }
+  }
+
+  /**
+   * Re-offer the re-attached turn's buffered events to the reducer.
+   * They are tagged with the now-visible session, so they apply; live
+   * events continue from where the buffer ends. When the ring cap ate
+   * the head of the turn the gap is announced rather than papered over
+   * — and the end-of-turn re-emit from the saved session restores the
+   * authoritative transcript either way.
+   */
+  private replayTurnEvents(sessionId: string): void {
+    const buffered = this.turnEvents.snapshot(sessionId);
+    if (!buffered) return;
+    this.replayingTurnEvents = true;
+    try {
+      if (buffered.dropped > 0) {
+        this.bus.emit({
+          type: "system_message",
+          text: formatReplayGapNotice(buffered.dropped),
+          variant: "warn",
+        });
+      }
+      for (const event of buffered.events) {
+        this.bus.emit({ type: "agent_event", event, sessionId });
+      }
+    } finally {
+      this.replayingTurnEvents = false;
+    }
   }
 
   /**
@@ -523,25 +592,23 @@ export class ChatOrchestrator {
    *   them when the backgrounded turn finishes. Yanking them here
    *   would make the background turn re-prompt from off screen.
    *
-   * With no turn in flight, only the grant clear applies — scoped to
-   * the thread being left, as before.
+   * With no turn of OURS in flight, the approval deny and the grant
+   * clear still apply — scoped to the thread being left. The deny does
+   * not depend on who started the turn: a scheduler/HTTP-origin turn's
+   * pending approval is just as unanswerable once its transcript is
+   * gone, and skipping it would park that turn forever.
    */
   private leaveCurrentSession(): string[] {
-    const previous = this.session;
-    if (!previous) return [];
-    if (!this.currentController) {
-      this.runtime.approvals.clearSessionGrants(previous.id);
-      return [];
-    }
     const notices: string[] = [];
-    const dropped = [...this.queue];
-    if (dropped.length > 0) {
-      this.queue.length = 0;
-      this.droppedWhileFull = 0;
-      this.emitQueue();
-      notices.push(formatDroppedQueueOnSwitchNotice(dropped));
-    }
-    this.steeredAhead = 0;
+    const previous = this.session;
+    if (!previous) return notices;
+    // Denied for ANY pending approval on the thread being left, not
+    // only when the parked turn is ours: a scheduler/HTTP/Telegram-
+    // origin turn parks on the same gate, and the switch drops its
+    // modal exactly the same way — left unanswered, that turn waits on
+    // `await request()` forever and its session stays busy for good.
+    // `denyPendingForSession` is session-scoped and a counted no-op
+    // when nothing is pending.
     const denied = this.runtime.approvals.denyPendingForSession(
       previous.id,
       SWITCHED_AWAY_APPROVAL_REASON,
@@ -551,6 +618,18 @@ export class ChatOrchestrator {
         "the pending approval was denied — you switched away while it waited for an answer",
       );
     }
+    if (!this.currentController) {
+      this.runtime.approvals.clearSessionGrants(previous.id);
+      return notices;
+    }
+    const dropped = [...this.queue];
+    if (dropped.length > 0) {
+      this.queue.length = 0;
+      this.droppedWhileFull = 0;
+      this.emitQueue();
+      notices.push(formatDroppedQueueOnSwitchNotice(dropped));
+    }
+    this.steeredAhead = 0;
     this.detachedTurns.park(previous.id, this.currentController);
     this.currentController = null;
     this.reattachedMidTurn = false;
@@ -811,6 +890,11 @@ export class ChatOrchestrator {
     this.noteFirstPrompt(text);
     const controller = new AbortController();
     this.currentController = controller;
+    // Start the replay log for this turn now, before any event lands:
+    // a switch-back rebuilds the transcript from the STORE, which will
+    // not carry this turn until it finishes, so the events are the only
+    // way to repaint it (see `TurnEventBuffer`).
+    this.turnEvents.begin(turnSessionId);
     // A new turn is in flight: whatever is still queued was aimed at an
     // earlier one and is ordinary backlog now.
     this.steeredAhead = 0;
@@ -866,6 +950,9 @@ export class ChatOrchestrator {
       this.exitCode = 1;
     } finally {
       if (this.currentController === controller) this.currentController = null;
+      // The turn saved its session, which answers for the transcript
+      // now — the replay log has nothing left to add.
+      this.turnEvents.end(turnSessionId);
       if (this.detachedTurns.release(turnSessionId, controller)) {
         // End of the backgrounded turn ends its session grants — the
         // deferred half of the switch-time clear (see

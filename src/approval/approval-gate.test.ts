@@ -35,6 +35,21 @@ describe("ApprovalGate", () => {
     await expect(other).resolves.toMatchObject({ approved: true });
   });
 
+  it("pendingRequestForSession returns that session's parked request only", () => {
+    const gate = new ApprovalGate({ emit: () => undefined });
+    void gate.request({
+      sessionId: "s-owner",
+      tool: "os.fs.write",
+      category: "fs_write_workspace",
+      reason: "r",
+    });
+    expect(gate.pendingRequestForSession("s-owner")?.tool).toBe("os.fs.write");
+    // No cross-session leak, and no request means null.
+    expect(gate.pendingRequestForSession("s-other")).toBeNull();
+    gate.denyPendingForSession("s-owner", "cleared");
+    expect(gate.pendingRequestForSession("s-owner")).toBeNull();
+  });
+
   it("denyPendingForSession with nothing pending is a counted no-op", () => {
     const gate = new ApprovalGate({ emit: () => undefined });
     expect(gate.denyPendingForSession("s-any", "reason")).toBe(0);

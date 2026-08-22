@@ -3,6 +3,7 @@ import {
   contextUsageFromPrompt,
   EMPTY_CONTEXT_USAGE,
 } from "./context-usage-from-prompt.js";
+import { formatBackgroundApprovalNotice } from "./detached-turns.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
 import { formatFeedLine } from "./format-event.js";
 import {
@@ -124,17 +125,25 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
     case "session_delete_closed":
       return { ...state, sessionDelete: null };
     case "approval_requested":
+      // A request raised by a session that is NOT on screen must never
+      // arm the modal: every approval key (and the prose-deny submit)
+      // answers whatever `pendingApproval` holds, so parking a
+      // background thread's question here would let a reflexive Ctrl+C
+      // deny a tool call the operator cannot even see — and abort the
+      // visible turn in the same press. The request stays pending at
+      // the gate; the transcript gets a pointer naming the owner, and
+      // `switchSession` re-raises the prompt once that owner is
+      // visible.
+      if (action.request.sessionId !== state.session.sessionId) {
+        return appendChatMessage(state, {
+          role: "system",
+          text: formatBackgroundApprovalNotice(action.request),
+          variant: "warn",
+        });
+      }
       return {
         ...state,
-        // Only a request raised by the visible session parks the UI in
-        // `awaiting_approval`. A background turn's request still shows
-        // the modal (its turn is blocked on the answer and this process
-        // is the only surface that can give one), but the visible
-        // session's own lifecycle must not freeze over it.
-        status:
-          action.request.sessionId === state.session.sessionId
-            ? "awaiting_approval"
-            : state.status,
+        status: "awaiting_approval",
         pendingApproval: action.request,
         // A redirect re-prompts for the new target; the previous
         // prompt's draft must not leak into it.

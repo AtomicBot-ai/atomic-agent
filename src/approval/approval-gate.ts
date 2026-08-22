@@ -314,6 +314,23 @@ export class ApprovalGate {
     return ids.length;
   }
 
+  /**
+   * The request `sessionId` is currently parked on, if any.
+   *
+   * For hosts whose approval surface follows the visible session: a
+   * request raised by an off-screen session is only *pointed at* there
+   * (answering keys must never act across sessions), so when the
+   * operator navigates into the owning session the host needs the
+   * original request back to re-raise the prompt. At most one request
+   * is pending per session by design, so first match is the match.
+   */
+  pendingRequestForSession(sessionId: string): ApprovalRequest | null {
+    for (const entry of this.pending.values()) {
+      if (entry.request.sessionId === sessionId) return entry.request;
+    }
+    return null;
+  }
+
   pendingCount(): number {
     return this.pending.size;
   }

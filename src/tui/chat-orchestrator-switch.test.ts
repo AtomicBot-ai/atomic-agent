@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { ApprovalGate } from "../approval/approval-gate.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
+import { SWITCHED_AWAY_APPROVAL_REASON } from "./detached-turns.js";
 import { makeTuiEventBus } from "./make-event-bus.js";
 import type { TuiAction } from "./tui-action.js";
 
@@ -27,7 +29,13 @@ interface TurnHandle {
   }) => void;
 }
 
-function makeHarness(opts: { busySessions?: readonly string[] } = {}) {
+function makeHarness(
+  opts: {
+    busySessions?: readonly string[];
+    /** Real gate (or richer stub) for approval-lifecycle tests. */
+    approvals?: ApprovalGate;
+  } = {},
+) {
   const turns: TurnHandle[] = [];
   const stored = [session("s-a"), session("s-b")];
   let created = 0;
@@ -67,7 +75,11 @@ function makeHarness(opts: { busySessions?: readonly string[] } = {}) {
       load: (id: string) => stored.find((s) => s.id === id) ?? null,
       delete: () => undefined,
     },
-    approvals: { clearSessionGrants, denyPendingForSession },
+    approvals: opts.approvals ?? {
+      clearSessionGrants,
+      denyPendingForSession,
+      pendingRequestForSession: () => null,
+    },
     turnController: {
       isBusy: (id: string) => (opts.busySessions ?? []).includes(id),
     },
@@ -85,7 +97,22 @@ function makeHarness(opts: { busySessions?: readonly string[] } = {}) {
     maxSteps: 5,
     llamaUrl: "http://127.0.0.1:8080",
   });
-  return { orchestrator, actions, turns, denyPendingForSession, clearSessionGrants };
+  return {
+    orchestrator,
+    actions,
+    turns,
+    bus,
+    denyPendingForSession,
+    clearSessionGrants,
+  };
+}
+
+/** Actions emitted after the most recent `session_switched`. */
+function actionsAfterLastSwitch(actions: readonly TuiAction[]): TuiAction[] {
+  for (let i = actions.length - 1; i >= 0; i -= 1) {
+    if (actions[i]?.type === "session_switched") return actions.slice(i + 1);
+  }
+  return [...actions];
 }
 
 function lastSwitch(actions: readonly TuiAction[]) {
@@ -269,5 +296,105 @@ describe("ChatOrchestrator new/switch session while a turn is running", () => {
     expect(turns[0]?.signal.aborted).toBe(false);
     orchestrator.quit();
     expect(turns[0]?.signal.aborted).toBe(true);
+  });
+
+  it("leaving a session denies a foreign-origin turn's pending approval too", async () => {
+    // The operator is READING s-a while a scheduler/HTTP-origin turn
+    // runs on it: no TUI controller exists, only the foreign turn's
+    // request parked at the gate. Leaving must still answer it — the
+    // reducer drops the surface either way, and an unanswered request
+    // parks that turn on `await request()` forever.
+    const gate = new ApprovalGate({ emit: () => undefined });
+    const { orchestrator, actions } = makeHarness({
+      approvals: gate,
+      busySessions: ["s-a"],
+    });
+    orchestrator.switchSession("s-a");
+    const request = gate.request({
+      sessionId: "s-a",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "no guard rule matched",
+    });
+    orchestrator.switchSession("s-b");
+    const decision = await request;
+    expect(decision.approved).toBe(false);
+    expect(decision.reason).toBe(SWITCHED_AWAY_APPROVAL_REASON);
+    // Nothing is left parked: the foreign turn can finish.
+    expect(gate.pendingCount()).toBe(0);
+    expect(
+      warnTexts(actions).some((t) => t.includes("pending approval was denied")),
+    ).toBe(true);
+  });
+
+  it("switching into the session that owns a parked approval re-raises the prompt", () => {
+    const gate = new ApprovalGate({ emit: () => undefined });
+    const { orchestrator, actions } = makeHarness({
+      approvals: gate,
+      busySessions: ["s-b"],
+    });
+    // A foreign-origin turn on the off-screen s-b asked its question;
+    // the reducer showed only a pointer notice. Walking into s-b must
+    // put the actual prompt up, or it could never be answered.
+    void gate.request({
+      sessionId: "s-b",
+      tool: "os.fs.write",
+      category: "fs_write_workspace",
+      reason: "write outside the workspace",
+    });
+    orchestrator.switchSession("s-b");
+    const raised = actionsAfterLastSwitch(actions).find(
+      (a): a is Extract<TuiAction, { type: "approval_requested" }> =>
+        a.type === "approval_requested",
+    );
+    expect(raised?.request.sessionId).toBe("s-b");
+    expect(raised?.request.tool).toBe("os.fs.write");
+  });
+
+  it("switching back into a running thread replays the turn's events so far", () => {
+    // The stored snapshot of a session mid-FIRST-turn is empty (a turn
+    // saves only when it finishes), so without the replay the operator
+    // returns to a spinner over a blank page — their own prompt gone.
+    const h = makeHarness();
+    h.orchestrator.sendMessage("first prompt");
+    const sid = h.turns[0]?.sessionId ?? "";
+    // The runtime streams session-tagged events for the running turn.
+    h.bus.emitAgentEvent({ type: "user_message", text: "first prompt" }, sid);
+    h.bus.emitAgentEvent({ type: "step_started", stepIndex: 0 }, sid);
+
+    h.orchestrator.newSession();
+    h.orchestrator.switchSession(sid);
+
+    const replayed = actionsAfterLastSwitch(h.actions).filter(
+      (a): a is Extract<TuiAction, { type: "agent_event" }> =>
+        a.type === "agent_event" && a.sessionId === sid,
+    );
+    expect(replayed.map((a) => a.event.type)).toEqual([
+      "user_message",
+      "step_started",
+    ]);
+    const userEvent = replayed[0]?.event;
+    expect(userEvent?.type === "user_message" && userEvent.text).toBe(
+      "first prompt",
+    );
+  });
+
+  it("a second switch-back replays the turn once, not twice", () => {
+    // The replay is emitted on the same bus the recorder taps; without
+    // the guard each round trip would double the log.
+    const h = makeHarness();
+    h.orchestrator.sendMessage("first prompt");
+    const sid = h.turns[0]?.sessionId ?? "";
+    h.bus.emitAgentEvent({ type: "user_message", text: "first prompt" }, sid);
+
+    h.orchestrator.newSession();
+    h.orchestrator.switchSession(sid);
+    h.orchestrator.newSession();
+    h.orchestrator.switchSession(sid);
+
+    const replayed = actionsAfterLastSwitch(h.actions).filter(
+      (a) => a.type === "agent_event",
+    );
+    expect(replayed).toHaveLength(1);
   });
 });

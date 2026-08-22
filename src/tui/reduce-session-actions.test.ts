@@ -99,32 +99,33 @@ describe("session picker reducer", () => {
     expect(switched.runStartedAt).not.toBeNull();
   });
 
-  it("session_switched keeps a background thread's pending approval, drops the left thread's", () => {
-    const request = (id: string, sessionId: string) => ({
-      approvalId: id,
-      sessionId,
-      tool: "os.shell.exec",
-      reason: "r",
-    });
+  it("a background session's approval never arms the modal — it lands as a pointer notice", () => {
+    // Every approval key answers whatever `pendingApproval` holds, so a
+    // request from an off-screen thread must never occupy the slot: a
+    // reflexive Ctrl+C would deny a tool call the operator cannot see
+    // and abort the visible turn in the same press.
     const base = apply(createInitialTuiState(fakeSession()), [
       { type: "session_created", sessionId: "s-visible" },
     ]);
-    // An approval raised by some OTHER thread survives the switch: its
-    // turn is still parked on the answer and this process is the only
-    // surface that can give one.
-    const withForeign = apply(base, [
-      { type: "approval_requested", request: request("a-bg", "s-elsewhere") },
-      {
-        type: "session_switched",
-        sessionId: "s-next",
-        workingDir: "/w",
-        messages: [],
-      },
+    const next = reduceTuiState(base, {
+      type: "approval_requested",
+      request: request("a-bg", "s-elsewhere"),
+    });
+    expect(next.pendingApproval).toBeNull();
+    expect(next.status).toBe(base.status);
+    const notice = next.messages.at(-1);
+    expect(notice?.role).toBe("system");
+    expect(notice?.text).toContain("s-elsewhere");
+    expect(notice?.text).toContain("switch to it to answer");
+  });
+
+  it("session_switched clears the slot; the re-raised request arms it for the new owner", () => {
+    const base = apply(createInitialTuiState(fakeSession()), [
+      { type: "session_created", sessionId: "s-visible" },
     ]);
-    expect(withForeign.pendingApproval?.approvalId).toBe("a-bg");
-    // One raised by the thread being LEFT is dropped — the orchestrator
-    // denies it at the gate on switch-away, so the modal would ask a
-    // question nobody can answer any more.
+    // The LEFT thread's own request is dropped with its transcript —
+    // the orchestrator denies it at the gate on switch-away, so the
+    // modal would ask a question nobody can answer any more.
     const leavingOwn = apply(base, [
       { type: "approval_requested", request: request("a-own", "s-visible") },
       {
@@ -135,8 +136,9 @@ describe("session picker reducer", () => {
       },
     ]);
     expect(leavingOwn.pendingApproval).toBeNull();
-    // Switching INTO the thread that owns the pending approval resumes
-    // the awaiting posture.
+    // Switching INTO the owner: the orchestrator re-emits the parked
+    // request right after the switch (`pendingRequestForSession`), and
+    // only then — with its owner on screen — it arms the modal.
     const intoOwner = apply(base, [
       { type: "approval_requested", request: request("a-bg", "s-elsewhere") },
       {
@@ -146,11 +148,22 @@ describe("session picker reducer", () => {
         messages: [],
         running: true,
       },
+      { type: "approval_requested", request: request("a-bg", "s-elsewhere") },
     ]);
     expect(intoOwner.pendingApproval?.approvalId).toBe("a-bg");
     expect(intoOwner.status).toBe("awaiting_approval");
   });
 });
+
+function request(id: string, sessionId: string) {
+  return {
+    approvalId: id,
+    sessionId,
+    tool: "os.shell.run",
+    category: "shell" as const,
+    reason: "r",
+  };
+}
 
 describe("agent_event session filter", () => {
   const userEvent = { type: "user_message", text: "hi" } as const;

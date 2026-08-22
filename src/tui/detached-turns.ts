@@ -1,3 +1,7 @@
+import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import type { ApprovalRequest } from "../approval/approval-gate.js";
+import { DEFAULT_RING_BUFFER_SIZE } from "./tui-state.js";
+
 /**
  * Bookkeeping for turns the operator switched away from mid-run.
  *
@@ -60,6 +64,81 @@ export class DetachedTurns {
     for (const controller of this.bySession.values()) controller.abort();
     this.bySession.clear();
   }
+}
+
+/**
+ * Rolling per-session log of the agent events emitted by a turn this
+ * TUI started, kept so switching back into a detached thread can
+ * repaint what the turn has said so far. `session_switched` rebuilds
+ * the transcript from the STORED session, and a running turn saves only
+ * when it finishes — so a thread backgrounded mid-first-turn would
+ * otherwise reload as an empty page holding nothing but a spinner, the
+ * operator's own prompt included.
+ *
+ * Recording starts when the turn starts, not when it is detached: the
+ * switch-back wipes everything that was painted before the operator
+ * left, so a replay must cover the whole turn, not just the away span.
+ *
+ * Bounded per session at the transcript's own ring size
+ * (`DEFAULT_RING_BUFFER_SIZE`). On overflow the OLDEST events are
+ * dropped and counted; the replay announces the gap instead of passing
+ * the reconstruction off as whole, and the end-of-turn re-emit from the
+ * saved session restores the authoritative transcript regardless.
+ */
+export class TurnEventBuffer {
+  private readonly bySession = new Map<
+    string,
+    { events: AgentLoopEvent[]; dropped: number }
+  >();
+
+  /** Start (or restart) recording the turn running on `sessionId`. */
+  begin(sessionId: string): void {
+    this.bySession.set(sessionId, { events: [], dropped: 0 });
+  }
+
+  /** Append one event; a no-op for sessions not being recorded. */
+  record(sessionId: string, event: AgentLoopEvent): void {
+    const log = this.bySession.get(sessionId);
+    if (!log) return;
+    if (log.events.length >= DEFAULT_RING_BUFFER_SIZE) {
+      log.events.shift();
+      log.dropped += 1;
+    }
+    log.events.push(event);
+  }
+
+  /** Everything recorded so far, or `null` when nothing is recording. */
+  snapshot(
+    sessionId: string,
+  ): { events: readonly AgentLoopEvent[]; dropped: number } | null {
+    const log = this.bySession.get(sessionId);
+    if (!log) return null;
+    return { events: [...log.events], dropped: log.dropped };
+  }
+
+  /** The turn ended — the saved session answers for it from here on. */
+  end(sessionId: string): void {
+    this.bySession.delete(sessionId);
+  }
+}
+
+/** The switch-back replay lost its head to the ring cap. */
+export function formatReplayGapNotice(dropped: number): string {
+  return `re-attached mid-turn — the earliest ${dropped} event${
+    dropped === 1 ? "" : "s"
+  } of this turn no longer fit the replay buffer and were dropped; the full transcript returns when the turn finishes`;
+}
+
+/**
+ * A session that is not on screen is parked on an approval. The request
+ * stays pending at the gate — keys must never answer for an off-screen
+ * thread — so the visible transcript gets this pointer instead, and
+ * switching into the owner re-raises the actual prompt.
+ */
+export function formatBackgroundApprovalNotice(
+  request: ApprovalRequest,
+): string {
+  return `session ${request.sessionId} is waiting for an approval (${request.tool}) — switch to it to answer; its turn is paused until you do`;
 }
 
 /**

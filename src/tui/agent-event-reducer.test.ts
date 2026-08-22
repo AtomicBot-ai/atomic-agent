@@ -88,32 +88,32 @@ describe("reduceTuiState", () => {
     expect(next.pendingApproval?.approvalId).toBe("a-1");
   });
 
-  it("shows a background session's approval without freezing the visible status", () => {
+  it("points at a background session's approval instead of arming the modal", () => {
     // A turn the operator switched away from (or a scheduled task's
-    // turn) can still raise an approval; the modal must appear — this
-    // process is the only surface that can answer — but the visible
-    // session's lifecycle stays its own.
+    // turn) can still raise an approval, but it must NOT occupy
+    // `pendingApproval`: every approval key answers whatever that slot
+    // holds, so a reflexive Ctrl+C would deny a call the operator
+    // cannot see. The transcript gets a pointer naming the owner; the
+    // orchestrator re-raises the prompt when that session is switched
+    // into.
     const initial = createInitialTuiState(fakeSession());
     const request = {
       approvalId: "a-bg",
       sessionId: "s-background",
       tool: "os.shell.exec",
+      category: "shell" as const,
       reason: "dangerous shell command",
     };
     const next = apply(initial, [
       { type: "session_created", sessionId: "s-visible" },
       { type: "approval_requested", request },
     ]);
-    expect(next.pendingApproval?.approvalId).toBe("a-bg");
+    expect(next.pendingApproval).toBeNull();
     expect(next.status).toBe("idle");
-    const resolved = reduceTuiState(next, {
-      type: "approval_resolved",
-      approvalId: "a-bg",
-      approved: true,
-    });
-    expect(resolved.pendingApproval).toBeNull();
-    // Resolving it resumes the BACKGROUND turn, not a visible one.
-    expect(resolved.status).toBe("idle");
+    const notice = next.messages.at(-1);
+    expect(notice?.role).toBe("system");
+    expect(notice?.text).toContain("s-background");
+    expect(notice?.text).toContain("switch to it to answer");
   });
 
   it("should clear pending approval after resolve and restore running", () => {
