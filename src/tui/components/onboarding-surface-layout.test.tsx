@@ -157,10 +157,23 @@ const cases: { name: string; measured: number; element: ReactElement; exact: boo
     exact: true,
   },
   {
-    name: "the wait-or-jump question before any progress lands",
-    measured: measureOnboardingWaitOrJumpStep({ pull: null, cloudLabel: "Cloud model ready" }),
+    name: "the wait-or-jump question once the pull has landed",
+    measured: measureOnboardingWaitOrJumpStep({
+      pull: null,
+      pullError: null,
+      cloudLabel: "Cloud model ready",
+      modelLabel: "qwen3-4b-instruct",
+      fit: FULL,
+    }),
     element: (
-      <OnboardingWaitOrJumpStep pull={null} cloudLabel="Cloud model ready" cursor={0} />
+      <OnboardingWaitOrJumpStep
+        pull={null}
+        pullError={null}
+        cloudLabel="Cloud model ready"
+        modelLabel="qwen3-4b-instruct"
+        cursor={0}
+        fit={FULL}
+      />
     ),
     exact: true,
   },

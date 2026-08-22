@@ -12,6 +12,14 @@ export interface ComposerMetaControlsProps {
   backend: ComposerBackendMeta | null;
   provider: string | null;
   model: string | null;
+  /**
+   * Mouse layer the click targets register on. The composer floats over
+   * the chat log with a `MOUSE_LAYER_PANEL` backstop behind it (see
+   * `composer-overlay.tsx`), and a control left on the base layer would
+   * lose every click to that backstop — the registry offers higher
+   * layers first.
+   */
+  mouseLayer?: number;
 }
 
 /**
@@ -45,17 +53,19 @@ export function ComposerMetaControls({
   backend,
   provider,
   model,
+  mouseLayer,
 }: ComposerMetaControlsProps): ReactElement | null {
   if (!backend && !provider && !model) return null;
   return (
     <>
-      {backend ? <BackendControl backend={backend} /> : null}
+      {backend ? <BackendControl backend={backend} mouseLayer={mouseLayer} /> : null}
       {provider ? (
         <Control
           kind="provider"
           label={provider}
           lead={Boolean(backend)}
           shrink={1}
+          mouseLayer={mouseLayer}
         />
       ) : null}
       {model ? (
@@ -64,6 +74,7 @@ export function ComposerMetaControls({
           label={model}
           lead={Boolean(backend || provider)}
           shrink={3}
+          mouseLayer={mouseLayer}
         />
       ) : null}
     </>
@@ -107,8 +118,10 @@ export function composerBackendLook(
 
 function BackendControl({
   backend,
+  mouseLayer,
 }: {
   backend: ComposerBackendMeta;
+  mouseLayer?: number;
 }): ReactElement {
   const look = composerBackendLook(backend);
   return (
@@ -121,8 +134,9 @@ function BackendControl({
             <Text color={look.color} bold>{`${look.glyph} `}</Text>
           ) : undefined
         }
+        mouseLayer={mouseLayer}
       />
-      {look?.word ? <StatusWord word={look.word} /> : null}
+      {look?.word ? <StatusWord word={look.word} mouseLayer={mouseLayer} /> : null}
     </>
   );
 }
@@ -133,15 +147,24 @@ function BackendControl({
  * model's, so it is the first thing on the row to give up columns, and
  * the dot still carries the status once it has.
  */
-function StatusWord({ word }: { word: string }): ReactElement {
+function StatusWord({
+  word,
+  mouseLayer,
+}: {
+  word: string;
+  mouseLayer?: number;
+}): ReactElement {
   const mouse = useMouseCommands();
   // Clicking the word opens the same switch as the label it annotates —
   // a dead cell in the middle of a clickable phrase reads as a bug.
-  const ref = useMouseTarget((hit) => {
-    if (!mouse || !isPrimaryPress(hit.event)) return false;
-    mouse.dispatch({ type: "composer_switch_opened", kind: "backend" });
-    return true;
-  });
+  const ref = useMouseTarget(
+    (hit) => {
+      if (!mouse || !isPrimaryPress(hit.event)) return false;
+      mouse.dispatch({ type: "composer_switch_opened", kind: "backend" });
+      return true;
+    },
+    mouseLayer === undefined ? {} : { layer: mouseLayer },
+  );
   return (
     <Box ref={ref} flexShrink={4} minWidth={0}>
       <Text wrap="truncate" color={theme.colors.railMuted}>
@@ -158,6 +181,7 @@ function Control({
   glyph,
   lead = false,
   shrink = 0,
+  mouseLayer,
 }: {
   kind: ComposerSwitchKind;
   label: string;
@@ -175,17 +199,22 @@ function Control({
    * that name the whole route, and losing it costs more than either.
    */
   shrink?: number;
+  /** See `ComposerMetaControlsProps.mouseLayer`. */
+  mouseLayer?: number;
 }): ReactElement {
   const mouse = useMouseCommands();
   // `useMouseTarget` rather than the `MouseTarget` wrapper: the box needs
   // `minWidth={0}` for Yoga to shrink it at all, and outside a provider
   // (component tests, the wizard's separate Ink tree) the hook hands back
   // an inert ref, so one code path covers both worlds.
-  const ref = useMouseTarget((hit) => {
-    if (!mouse || !isPrimaryPress(hit.event)) return false;
-    mouse.dispatch({ type: "composer_switch_opened", kind });
-    return true;
-  });
+  const ref = useMouseTarget(
+    (hit) => {
+      if (!mouse || !isPrimaryPress(hit.event)) return false;
+      mouse.dispatch({ type: "composer_switch_opened", kind });
+      return true;
+    },
+    mouseLayer === undefined ? {} : { layer: mouseLayer },
+  );
   return (
     <Box ref={ref} flexShrink={shrink} minWidth={0}>
       <Text wrap="truncate">

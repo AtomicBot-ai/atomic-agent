@@ -190,6 +190,9 @@ export function PromptShell(props: PromptShellProps): ReactElement {
           provider={provider ?? null}
           rightSlot={rightSlot ?? null}
           contextSlot={contextSlot ?? null}
+          // Same raised layer as the overlay backstop behind the bar —
+          // see `composer-overlay.tsx`.
+          mouseLayer={mouseLayer}
         />
       </Box>
     </Box>

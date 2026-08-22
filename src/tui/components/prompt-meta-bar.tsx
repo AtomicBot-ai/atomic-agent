@@ -55,6 +55,13 @@ export interface PromptMetaBarProps {
    * is exactly as worth watching then as when the composer is idle.
    */
   contextSlot: ReactElement | null;
+  /**
+   * Layer the route controls register their click targets on. The
+   * composer floats over the chat log behind a raised mouse backstop
+   * (see `composer-overlay.tsx`); controls left on the base layer would
+   * lose every click to it.
+   */
+  mouseLayer?: number;
 }
 
 const MODEL_LABEL_MAX_LEN = 32;
@@ -74,6 +81,7 @@ export function PromptMetaBar({
   provider,
   rightSlot,
   contextSlot,
+  mouseLayer,
 }: PromptMetaBarProps): ReactElement {
   return (
     <Box
@@ -98,6 +106,7 @@ export function PromptMetaBar({
           backend={backend}
           model={model}
           provider={provider}
+          mouseLayer={mouseLayer}
         />
       </Box>
       <Box flexShrink={0} flexDirection="row">
@@ -117,6 +126,7 @@ interface MetaLeftProps {
   backend: ComposerBackendMeta | null;
   model: string | null;
   provider: string | null;
+  mouseLayer?: number;
 }
 
 /**
@@ -136,6 +146,7 @@ function MetaLeft({
   backend,
   model,
   provider,
+  mouseLayer,
 }: MetaLeftProps): ReactElement {
   if (!leftSlot && !backend && !model && !provider) {
     return <Text> </Text>;
@@ -161,6 +172,7 @@ function MetaLeft({
         backend={backend}
         provider={provider}
         model={cleanModel}
+        mouseLayer={mouseLayer}
       />
     </Box>
   );

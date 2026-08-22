@@ -274,6 +274,9 @@ describe("handleLlmPanelKey", () => {
           embeddingModelLine: "",
           selectedChatModelId: null,
           selectedEmbeddingChoiceId: null,
+          // Closed, not missing: an absent field reads as an open search
+          // box to `handleWizardSearchKey`, which then eats the `j`.
+          search: null,
           error: null,
           submitting: false,
         },
