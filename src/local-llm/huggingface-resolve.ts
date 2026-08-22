@@ -30,7 +30,11 @@ export interface HuggingFaceGgufChoice {
 export interface HuggingFaceRepoChoices {
   repoId: string;
   revision: string;
-  /** Smallest first: the one most likely to run here leads the list. */
+  /**
+   * Best-known quantisation first (see `QUANT_PREFERENCE`), then by
+   * size within a rank — the file most likely to run well here leads
+   * the list, and that is rarely the smallest one.
+   */
   choices: readonly HuggingFaceGgufChoice[];
   /** The projector to pull alongside, when the repo ships one. */
   mmproj: HuggingFaceFile | null;
@@ -72,9 +76,10 @@ function pickMmproj(files: readonly HuggingFaceFile[]): HuggingFaceFile | null {
  */
 export async function resolveHuggingFaceGgufChoices(
   reference: string,
+  opts?: { signal?: AbortSignal },
 ): Promise<HuggingFaceRepoChoices> {
   const ref = parseHuggingFaceModelRef(reference);
-  const files = await listHuggingFaceGgufFiles(ref.repoId, ref.revision);
+  const files = await listHuggingFaceGgufFiles(ref.repoId, ref.revision, opts);
   if (files.length === 0) {
     throw new Error(
       `No .gguf files in ${ref.repoId} — that is the original model, not a ` +

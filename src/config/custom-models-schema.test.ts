@@ -25,6 +25,10 @@ describe("parseCustomLocalModel", () => {
     // The id becomes a directory name under `<dataDir>/models/`.
     { name: "an id with a path separator", entry: { ...MINIMAL, id: "custom-a/b" }, field: /e\.id/ },
     { name: "an id without the prefix", entry: { ...MINIMAL, id: "qwen-3.5-4b" }, field: /e\.id/ },
+    // Filenames land in a path join under the model's own directory.
+    { name: "a filename with a path separator", entry: { ...MINIMAL, filename: "a/b.gguf" }, field: /e\.filename/ },
+    { name: "a filename that climbs out", entry: { ...MINIMAL, filename: "../../../x.gguf" }, field: /e\.filename/ },
+    { name: "a backslashed filename", entry: { ...MINIMAL, filename: "..\\x.gguf" }, field: /e\.filename/ },
     { name: "an unparseable URL", entry: { ...MINIMAL, huggingFaceUrl: "nope" }, field: /huggingFaceUrl/ },
     { name: "a negative size", entry: { ...MINIMAL, fileSizeGb: -1 }, field: /fileSizeGb/ },
     { name: "a bare string", entry: "custom-x", field: /^invalid config: e/ },
@@ -35,6 +39,20 @@ describe("parseCustomLocalModel", () => {
       expect(() => parseCustomLocalModel(row.entry, "e")).toThrow(row.field);
     });
   }
+
+  it("holds the projector filename to the same rule as the weights'", () => {
+    expect(() =>
+      parseCustomLocalModel(
+        {
+          ...MINIMAL,
+          supportsVision: true,
+          mmprojUrl: "https://huggingface.co/u/r/resolve/main/mmproj.gguf",
+          mmprojFilename: "../mmproj.gguf",
+        },
+        "e",
+      ),
+    ).toThrow(/e\.mmprojFilename/);
+  });
 
   it("demands the projector fields once vision is claimed", () => {
     expect(() =>

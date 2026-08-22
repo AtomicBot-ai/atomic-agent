@@ -1,6 +1,7 @@
 import { totalmem } from "node:os";
 
 import { getConfig, resetConfigCache } from "../../config/index.js";
+import { removeCustomModel } from "../../config/custom-models-store.js";
 import { hasOtherLiveSessions } from "../../local-llm/session-registry.js";
 import {
   checkForBackendUpdate,
@@ -22,8 +23,8 @@ import {
   isKnownLocalModelId,
   isMmprojDownloaded,
   isModelDownloaded,
+  listLocalModels,
   listVulkanDevices,
-  LOCAL_MODELS_CATALOG,
   maybeAutoUpdateBackend,
   probeNvidiaVramMiB,
   readBackendVersion,
@@ -212,7 +213,10 @@ export class LocalModelsOrchestrator {
     try {
       const cfg = getConfig();
       const dataDir = cfg.paths.localModelsDataDir;
-      const rows = LOCAL_MODELS_CATALOG.map((def) => ({
+      // The full model list — curated catalog plus the operator's own
+      // Hugging Face additions — so a model added on first run has a
+      // panel row to be marked active, re-pulled or deleted from.
+      const rows = listLocalModels().map((def) => ({
         id: def.id,
         def,
         downloaded: isModelDownloaded(dataDir, def),
@@ -696,6 +700,11 @@ export class LocalModelsOrchestrator {
     }
     try {
       await removeModel(dataDir, id);
+      // A curated row survives its files' deletion — the catalog is the
+      // product. A custom row exists only because the operator added it,
+      // so deleting the model undoes the add too; otherwise the row
+      // would linger with no other way to drop it from the list.
+      if (def.family === "custom") removeCustomModel(id);
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: ${def.name} removed`,

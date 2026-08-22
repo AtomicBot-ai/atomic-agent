@@ -89,6 +89,11 @@ export function reduceOnboardingAction(
     }
     case "onboarding_hf_repo_resolved": {
       if (!state.onboarding) return state;
+      // Lookups take seconds; the operator may cancel or walk to another
+      // step before one lands. Only the step that asked may receive the
+      // answer — a late resolve must not yank the flow onto a file list
+      // nobody is waiting for.
+      if (state.onboarding.step !== "local_hf_ref") return state;
       return {
         ...state,
         onboarding: {

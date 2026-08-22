@@ -22,6 +22,23 @@ function requireString(raw: unknown, field: string): string {
   return raw;
 }
 
+/**
+ * Filenames land in a path join under `<dataDir>/models/<id>/` (see
+ * `backend-paths.ts`), so they get the same treatment the id gets for
+ * becoming a directory name: no separators, no dot-dot, nothing that
+ * can climb out of the model's own directory.
+ */
+function requireSafeFilename(raw: unknown, field: string): string {
+  const str = requireString(raw, field);
+  if (str.includes("/") || str.includes("\\") || str.startsWith(".")) {
+    throw new ConfigValidationError(
+      field,
+      `expected a bare filename (no path separators, no leading dot), got ${JSON.stringify(str)}`,
+    );
+  }
+  return str;
+}
+
 function requireUrl(raw: unknown, field: string): string {
   const str = requireString(raw, field);
   try {
@@ -65,7 +82,7 @@ export function parseCustomLocalModel(raw: unknown, field: string): LocalModelDe
   const def: LocalModelDef = {
     id: id as LocalModelDef["id"],
     name: optionalString(entry.name, id),
-    filename: requireString(entry.filename, `${field}.filename`),
+    filename: requireSafeFilename(entry.filename, `${field}.filename`),
     huggingFaceUrl: requireUrl(entry.huggingFaceUrl, `${field}.huggingFaceUrl`),
     fileSizeGb,
     sizeLabel: optionalString(entry.sizeLabel, `${fileSizeGb.toFixed(1)} GB`),
@@ -89,7 +106,7 @@ export function parseCustomLocalModel(raw: unknown, field: string): LocalModelDe
   return {
     ...def,
     mmprojUrl: requireUrl(entry.mmprojUrl, `${field}.mmprojUrl`),
-    mmprojFilename: requireString(entry.mmprojFilename, `${field}.mmprojFilename`),
+    mmprojFilename: requireSafeFilename(entry.mmprojFilename, `${field}.mmprojFilename`),
     mmprojFileSizeGb: optionalNumber(
       entry.mmprojFileSizeGb,
       `${field}.mmprojFileSizeGb`,

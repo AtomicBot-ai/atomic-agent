@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { getConfig, resetConfigCache } from "../config/index.js";
 import { ensureUserConfigFileSync, writeUserConfigFileSync } from "../config/config-file.js";
+import { removeCustomModel } from "../config/custom-models-store.js";
 import type { UserConfigFile } from "../config/config-schema.js";
 import {
   checkForBackendUpdate,
@@ -18,8 +19,8 @@ import {
   isKnownLocalModelId,
   isMmprojDownloaded,
   isModelDownloaded,
+  listLocalModels,
   listVulkanDevices,
-  LOCAL_MODELS_CATALOG,
   maybeAutoUpdateBackend,
   readBackendVersion,
   removeModel,
@@ -65,7 +66,10 @@ export async function runLocalModelsList(): Promise<number> {
   process.stdout.write(
     "ID                   | FAMILY   | SIZE   | CONTEXT | DL  | ACTIVE\n",
   );
-  for (const m of LOCAL_MODELS_CATALOG) {
+  // Curated catalog plus the operator's own Hugging Face additions —
+  // a model added on first run must show up (and be markable active)
+  // in the same list as the curated ones.
+  for (const m of listLocalModels()) {
     const dl = isModelDownloaded(dataDir, m) ? "yes" : "no";
     const active =
       cfg.localModels.managed.modelId === m.id && cfg.localModels.mode === "managed" ? "*" : " ";
@@ -79,7 +83,7 @@ export async function runLocalModelsList(): Promise<number> {
 export async function runLocalModelsPull(idArg: string | undefined): Promise<number> {
   if (!idArg || !isKnownLocalModelId(idArg)) {
     process.stderr.write(
-      `unknown model id. Valid: ${LOCAL_MODELS_CATALOG.map((m) => m.id).join(", ")}\n`,
+      `unknown model id. Valid: ${listLocalModels().map((m) => m.id).join(", ")}\n`,
     );
     return 1;
   }
@@ -120,7 +124,7 @@ export async function runLocalModelsPull(idArg: string | undefined): Promise<num
 export async function runLocalModelsUse(idArg: string | undefined): Promise<number> {
   if (!idArg || !isKnownLocalModelId(idArg)) {
     process.stderr.write(
-      `unknown model id. Valid: ${LOCAL_MODELS_CATALOG.map((m) => m.id).join(", ")}\n`,
+      `unknown model id. Valid: ${listLocalModels().map((m) => m.id).join(", ")}\n`,
     );
     return 1;
   }
@@ -669,7 +673,7 @@ export async function runLocalModelsUpdate(): Promise<number> {
 export async function runLocalModelsRemove(idArg: string | undefined): Promise<number> {
   if (!idArg || !isKnownLocalModelId(idArg)) {
     process.stderr.write(
-      `unknown model id. Valid: ${LOCAL_MODELS_CATALOG.map((m) => m.id).join(", ")}\n`,
+      `unknown model id. Valid: ${listLocalModels().map((m) => m.id).join(", ")}\n`,
     );
     return 1;
   }
@@ -687,7 +691,13 @@ export async function runLocalModelsRemove(idArg: string | undefined): Promise<n
       return 1;
     }
   }
+  const wasCustom = getLocalModelDef(idArg).family === "custom";
   await removeModel(dataDir, idArg);
+  // A curated row survives its files' deletion — the catalog is the
+  // product. A custom row exists only because the operator added it, so
+  // removing the model undoes the add too; otherwise the row would
+  // linger in `models list` with no other way to drop it.
+  if (wasCustom) removeCustomModel(idArg);
   process.stdout.write(`removed ${idArg}\n`);
   return 0;
 }

@@ -293,6 +293,19 @@ describe("onboarding reducer", () => {
       );
     });
 
+    // The lookup takes seconds and esc can cancel it; a resolve landing
+    // on any step but the one that asked is dropped whole, or the flow
+    // would be yanked onto a file list nobody is waiting for.
+    it("ignores a resolution landing on a step that did not ask", () => {
+      const state = withFlow("local_pick");
+      const next = reduceTuiState(state, {
+        type: "onboarding_hf_repo_resolved",
+        repo: REPO,
+      });
+      expect(next.onboarding?.step).toBe("local_pick");
+      expect(next.onboarding?.hfRepo).toBeNull();
+    });
+
     it("ignores a late resolution once the flow has closed", () => {
       const closed = createInitialTuiState(fakeSession(), 50);
       const next = reduceTuiState(closed, {

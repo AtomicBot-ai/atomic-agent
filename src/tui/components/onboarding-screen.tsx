@@ -13,7 +13,6 @@ import {
   isCloudTextProviderReady,
   isLocalBackendConfigured,
 } from "../local-backend-readiness.js";
-import { useOnboardingHuggingFace } from "../hooks/use-onboarding-huggingface.js";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
 import {
   buildLocalModelPicks,
@@ -22,6 +21,10 @@ import {
   hostRamGb,
   orderLocalModelPicks,
 } from "../onboarding/local-model-picks.js";
+import {
+  ONBOARDING_SUBTITLES,
+  onboardingFooterFor,
+} from "../onboarding/onboarding-chrome.js";
 import {
   computeOnboardingFit,
   ONBOARDING_SIZE_ADVICE,
@@ -44,8 +47,7 @@ import type { TuiState } from "../tui-state.js";
 import { OnboardingChooseStep } from "./onboarding-choose-step.js";
 import { OnboardingHeader } from "./onboarding-header.js";
 import { OnboardingDownloadStep } from "./onboarding-download-step.js";
-import { OnboardingHuggingFacePickStep } from "./onboarding-hf-pick-step.js";
-import { OnboardingHuggingFaceRefStep } from "./onboarding-hf-ref-step.js";
+import { OnboardingHuggingFaceFlow } from "./onboarding-hf-flow.js";
 import { OnboardingIntroStep } from "./onboarding-intro-step.js";
 import { OnboardingLocalPickStep } from "./onboarding-local-pick-step.js";
 import { OnboardingProposeStep } from "./onboarding-propose-step.js";
@@ -64,21 +66,6 @@ export interface OnboardingScreenCallbacks {
   /** Start a model pull. Owned by `LocalModelsOrchestrator`. */
   onLocalModelsPullRequested?(modelId: LocalModelId): void;
 }
-
-const SUBTITLES: Record<OnboardingUiState["step"], string> = {
-  intro: "",
-  choose: "setup · step 1 of 2",
-  local_pick: "local models · step 2 of 2",
-  local_hf_ref: "local models · hugging face",
-  local_hf_pick: "local models · choose a file",
-  local_download: "local models · downloading",
-  propose_second: "one more thing",
-  wait_or_jump: "almost there",
-  cloud: "cloud model · step 2 of 2",
-  custom_chat_url: "custom endpoint · step 2 of 2",
-  custom_embedding_url: "custom endpoint · embeddings",
-  finished: "setting up…",
-};
 
 /**
  * The whole first-run surface. It owns the terminal while it is mounted:
@@ -199,13 +186,6 @@ export function OnboardingScreen(props: {
     },
     { isActive: onboarding.step === "local_pick" },
   );
-
-  const hfChoices = onboarding.hfRepo?.choices ?? [];
-  const huggingFace = useOnboardingHuggingFace({
-    onboarding,
-    dispatch,
-    onPullRequested: callbacks.onLocalModelsPullRequested,
-  });
 
   useInput(
     (input, key) => {
@@ -391,7 +371,7 @@ export function OnboardingScreen(props: {
   return (
     <Box flexDirection="column" flexGrow={1} paddingTop={1}>
       {onboarding.step === "intro" ? null : (
-        <OnboardingHeader subtitle={SUBTITLES[onboarding.step]} mark={fit.mark} />
+        <OnboardingHeader subtitle={ONBOARDING_SUBTITLES[onboarding.step]} mark={fit.mark} />
       )}
       <Box flexDirection="column" marginTop={1} flexShrink={0}>
         {onboarding.step === "intro" ? (
@@ -413,26 +393,12 @@ export function OnboardingScreen(props: {
             fit={fit}
           />
         ) : null}
-        {onboarding.step === "local_hf_ref" ? (
-          <OnboardingHuggingFaceRefStep
-            value={onboarding.hfReference}
-            busy={onboarding.busy}
-            error={onboarding.error}
-            onChange={(value) =>
-              dispatch({ type: "onboarding_hf_reference_changed", value })
-            }
-            onSubmit={huggingFace.resolveReference}
-            onBack={() => dispatch({ type: "onboarding_step_set", step: "local_pick" })}
-          />
-        ) : null}
-        {onboarding.step === "local_hf_pick" && onboarding.hfRepo ? (
-          <OnboardingHuggingFacePickStep
-            repo={onboarding.hfRepo}
-            cursor={onboarding.cursor % Math.max(1, hfChoices.length)}
-            ramGb={ramGb}
-            error={onboarding.error}
-          />
-        ) : null}
+        <OnboardingHuggingFaceFlow
+          onboarding={onboarding}
+          dispatch={dispatch}
+          ramGb={ramGb}
+          onPullRequested={callbacks.onLocalModelsPullRequested}
+        />
         {onboarding.step === "propose_second" && onboarding.offer ? (
           <OnboardingProposeStep
             offer={onboarding.offer}
@@ -494,7 +460,7 @@ export function OnboardingScreen(props: {
       <Box flexGrow={1} />
       <Box flexShrink={0}>
         <Text color={theme.colors.muted} wrap="truncate">
-          {footerFor(onboarding)}
+          {onboardingFooterFor(onboarding)}
           {fit.sizeAdvice ? `   ·   ${ONBOARDING_SIZE_ADVICE}` : ""}
         </Text>
       </Box>
@@ -507,33 +473,4 @@ function configuredLabel(outcome: OnboardingOutcome | null): string {
   if (outcome === "local") return "Local model ready";
   if (outcome === "cloud") return "Cloud model ready";
   return "Backend ready";
-}
-
-function footerFor(onboarding: OnboardingUiState): string {
-  switch (onboarding.step) {
-    case "choose":
-      return "↑/↓ move   enter select   1–3 jump   esc skip   ctrl+c quit";
-    case "cloud":
-      return "↑/↓ move   enter select   esc back   ctrl+c quit";
-    case "custom_chat_url":
-      return "enter test & continue   esc back   ctrl+c quit";
-    case "custom_embedding_url":
-      return "enter test & save   empty enter skips embeddings   esc back   ctrl+c quit";
-    case "local_pick":
-      return "↑/↓ move   enter select   esc back   ctrl+c quit";
-    case "local_hf_ref":
-      return "enter look it up   esc back   ctrl+c quit";
-    case "local_hf_pick":
-      return "↑/↓ move   enter download   esc back   ctrl+c quit";
-    case "local_download":
-      return "c set up cloud meanwhile   ctrl+c quit";
-    case "propose_second":
-      return "↑/↓ move   enter select   esc skip   ctrl+c quit";
-    case "wait_or_jump":
-      return "↑/↓ move   enter select   ctrl+c quit";
-    case "finished":
-      return "";
-    case "intro":
-      return "ctrl+c quit";
-  }
 }

@@ -18,8 +18,12 @@ export function huggingFaceToken(): string | null {
   return raw.length > 0 ? raw : null;
 }
 
-async function fetchHfJson(path: string, timeoutMs = 15_000): Promise<unknown> {
+async function fetchHfJson(
+  path: string,
+  opts?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<unknown> {
   const token = huggingFaceToken();
+  const timeout = AbortSignal.timeout(opts?.timeoutMs ?? 15_000);
   let res: Response;
   try {
     res = await fetch(`${HF_API}${path}`, {
@@ -27,9 +31,13 @@ async function fetchHfJson(path: string, timeoutMs = 15_000): Promise<unknown> {
         "User-Agent": "atomic-agent/local-llm",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: opts?.signal ? AbortSignal.any([opts.signal, timeout]) : timeout,
     });
   } catch (err) {
+    // The caller's own cancellation is not a network failure — let it
+    // through untranslated so the screen that cancelled can tell the
+    // difference from huggingface.co being down.
+    if (opts?.signal?.aborted) throw err;
     throw new Error(
       `Could not reach huggingface.co: ${err instanceof Error ? err.message : String(err)}`,
     );
@@ -55,9 +63,11 @@ async function fetchHfJson(path: string, timeoutMs = 15_000): Promise<unknown> {
 export async function listHuggingFaceGgufFiles(
   repoId: string,
   revision = "main",
+  opts?: { signal?: AbortSignal },
 ): Promise<HuggingFaceFile[]> {
   const raw = await fetchHfJson(
     `/models/${repoId}/tree/${encodeURIComponent(revision)}?recursive=true`,
+    opts,
   );
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((entry) => {
