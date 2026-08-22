@@ -23,6 +23,12 @@ import {
   isPanelModalOpen,
 } from "./app-key-bindings.js";
 import { appChromeRows } from "./components/debug-pane.js";
+import {
+  COMPOSER_COLLAPSED_ROWS,
+  ComposerOverlay,
+  ComposerSlot,
+  maxComposerEditorLines,
+} from "./components/composer-overlay.js";
 import { MenuPopup } from "./menu/menu-popup.js";
 import type { MenuNode } from "./menu/menu-registry.js";
 import { ApprovalModal } from "./approval-modal.js";
@@ -96,6 +102,7 @@ import { isPrimaryPress } from "./mouse/mouse-event.js";
 import {
   MOUSE_LAYER_BASE,
   MOUSE_LAYER_MODAL,
+  MOUSE_LAYER_PANEL,
   MouseTargetRegistry,
   type MouseHit,
 } from "./mouse/mouse-registry.js";
@@ -1190,6 +1197,24 @@ export function TuiApp({
     0,
     terminalSize.rows - appChromeRows(composerVisible),
   );
+
+  // Rows of the stage the composer overlay floats in: the content pane
+  // plus the composer's own reserved slot. The growth cap is derived
+  // from the stage so the expanded composer always stops short of the
+  // hairline under the status bar — see `composer-overlay.tsx`.
+  //
+  // While a modal-layer surface is up (`modalOwnsInput` — the same
+  // predicate that raises the mouse floor above) the overlay clamps to
+  // its collapsed shape instead. The menu and the pickers float over
+  // the very pane the composer grows into, and the composer paints
+  // *after* them, so a tall draft would overpaint the modal's bottom
+  // rows — while the raised floor keeps routing clicks on those
+  // composer pixels to the invisible modal rows underneath. Collapsing
+  // for the modal's lifetime removes both fights; the untouched buffer
+  // re-expands the moment the modal closes.
+  const composerMaxEditorLines = modalOwnsInput
+    ? 1
+    : maxComposerEditorLines(menuPaneRows + COMPOSER_COLLAPSED_ROWS);
   const promptLlm = selectPromptLlmMeta(state);
   // The backend control carries the health dot the standalone pill used
   // to: `selectComposerBackendMeta` keeps the `localConfigured` guard
@@ -1230,8 +1255,10 @@ export function TuiApp({
       </Text>
     ) : null;
   const contextUsage = selectContextUsage(state);
+  // The chip renders inside the composer overlay, so its click target
+  // registers on the overlay's raised layer — see `composer-overlay.tsx`.
   const promptContextSlot = contextUsage ? (
-    <ContextChip usage={contextUsage} />
+    <ContextChip usage={contextUsage} layer={MOUSE_LAYER_PANEL} />
   ) : null;
 
   // The first-run flow replaces the app rather than layering over it.
@@ -1319,6 +1346,21 @@ export function TuiApp({
           overflow="hidden"
           {...(sidebarVisible ? { paddingLeft: RAIL_GUTTER_COLUMNS } : {})}
         >
+          {/*
+            The composer's stage: everything the overlay may float over.
+            It is `relative` so the overlay's `bottom: 0` lands on the
+            row just above the hint strip, and it clips (`overflow
+            hidden`) so a buffer taller than the cap accounts for can
+            never climb under the status bar — Ink 7 would overlap
+            rather than clip an over-tall frame at the root.
+          */}
+          <Box
+            flexDirection="column"
+            flexGrow={1}
+            flexShrink={1}
+            overflow="hidden"
+            position="relative"
+          >
           <Box
             flexDirection="column"
             flexGrow={1}
@@ -1458,7 +1500,17 @@ export function TuiApp({
                 queued={state.queuedMessages}
                 width={mainColumnWidth}
               />
-              <PromptShell
+              {/*
+                The composer holds exactly this slot in the flex column
+                — its collapsed height, whatever the buffer holds — and
+                paints itself over the stage from the overlay below.
+                Growing in the flow instead is the bug this replaces:
+                every newline compressed the chat log and reflowed the
+                whole screen.
+              */}
+              <ComposerSlot />
+              <ComposerOverlay>
+                <PromptShell
             value={state.inputValue}
             placeholder="Type a message or `/` for commands…"
             rotatingPlaceholders={PROMPT_PLACEHOLDERS}
@@ -1476,6 +1528,8 @@ export function TuiApp({
             onEscape={onEscape}
             onTab={onTab}
             onAutocomplete={onTab}
+            maxVisibleLines={composerMaxEditorLines}
+            mouseLayer={MOUSE_LAYER_PANEL}
                 onClickFocus={focusEditorFromClick}
                 onSelectionChange={(hasSelection) =>
                   dispatch({
@@ -1491,9 +1545,11 @@ export function TuiApp({
                 }
                 onHistoryPrev={onHistoryPrev}
                 onHistoryNext={onHistoryNext}
-              />
+                />
+              </ComposerOverlay>
             </>
           ) : null}
+          </Box>
           <HotkeyHint
             state={state}
             ctrlCArmed={ctrlCArmed}

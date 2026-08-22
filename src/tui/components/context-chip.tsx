@@ -70,8 +70,16 @@ const STEP_MID = 66;
  */
 export function ContextChip({
   usage,
+  layer,
 }: {
   usage: ContextUsageView;
+  /**
+   * Mouse layer for the click target. Rendered inside the composer
+   * overlay, which floats above the chat log, so the chat surface
+   * passes the overlay's raised layer — otherwise a covered chat
+   * control could win the click.
+   */
+  layer?: number;
 }): ReactElement {
   const background = groundFor(usage);
   const label =
@@ -98,6 +106,7 @@ export function ContextChip({
   return (
     <MouseTarget
       flexShrink={0}
+      layer={layer}
       onMouse={(hit) => {
         if (!isPrimaryPress(hit.event)) return false;
         mouse.dispatch({ type: "context_panel_toggled" });

@@ -93,6 +93,7 @@ export function PromptShell(props: PromptShellProps): ReactElement {
     value,
     onChange,
     onSubmit,
+    mouseLayer,
     ...editorProps
   } = props;
   const rotated = useRotatingPlaceholder(
@@ -108,7 +109,11 @@ export function PromptShell(props: PromptShellProps): ReactElement {
   // pressed is a bug report waiting to happen.
   const canSend = !disabled && value.trim().length > 0;
   return (
-    <Box flexDirection="column" marginTop={1} flexShrink={0}>
+    // The breathing row that used to be `marginTop={1}` here lives in
+    // `ComposerOverlay` now: a margin inside the overlay's mouse
+    // backstop would count into its rectangle and turn the one
+    // see-through row above the frame click-dead.
+    <Box flexDirection="column" flexShrink={0}>
       {/*
         The design seats the composer on its own panel rather than on the
         page. `badgeBackground` is the palette's one-step-off-the-ground
@@ -159,12 +164,17 @@ export function PromptShell(props: PromptShellProps): ReactElement {
               onChange={onChange}
               onSubmit={onSubmit}
               placeholder={effectivePlaceholder}
+              mouseLayer={mouseLayer}
               bare
             />
           </Box>
           <Box flexShrink={0} marginLeft={1}>
             <ComposerSendButton
               enabled={canSend}
+              // The shell floats over the chat log, so its controls
+              // register on the same raised layer as the overlay's
+              // backstop — see `composer-overlay.tsx`.
+              layer={mouseLayer}
               // Exactly the callback Enter fires, with exactly the
               // buffer Enter would submit. A second submit path would be
               // a second place for slash-command handling and the
