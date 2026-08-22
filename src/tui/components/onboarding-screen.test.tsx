@@ -7,10 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OnboardingScreen } from "./onboarding-screen.js";
 import { resetConfigCache } from "../../config/index.js";
+import { ROOT_PADDING_LEFT } from "../layout.js";
 import { createOnboardingState } from "../onboarding/onboarding-state.js";
 import { createInitialTuiState } from "../tui-state.js";
 import type { TuiAction } from "../tui-action.js";
 import { fakeSession } from "../test-fixtures.js";
+import { renderAtSize } from "../test-sized-render.js";
 
 vi.mock("../../llm/llama-server-health.js", () => ({
   checkLlamaServer: vi.fn(async () => ({
@@ -26,14 +28,20 @@ const STATE_DIR_ENV = "ATOMIC_AGENT_STATE_DIR";
 const strip = (s: string): string => s.replace(/\u001b\[[0-9;]*m/g, "");
 const ESCAPE_KEY = "\u001b";
 
-function renderFlow(
-  step: "intro" | "choose" | "custom_chat_url" = "choose",
+type Step = "intro" | "choose" | "custom_chat_url" | "propose_second";
+
+function flowElement(
+  step: Step,
+  actions: TuiAction[],
   options: { ctrlCArmed?: boolean } = {},
 ) {
-  const actions: TuiAction[] = [];
-  const onboarding = { ...createOnboardingState("http://127.0.0.1:8080"), step };
+  const onboarding = {
+    ...createOnboardingState("http://127.0.0.1:8080"),
+    step,
+    offer: "local" as const,
+  };
   const state = { ...createInitialTuiState(fakeSession(), 50), onboarding };
-  const view = render(
+  return (
     <OnboardingScreen
       state={state}
       onboarding={onboarding}
@@ -42,10 +50,38 @@ function renderFlow(
       {...(options.ctrlCArmed === undefined
         ? {}
         : { ctrlCArmed: options.ctrlCArmed })}
-    />,
+    />
   );
+}
+
+function renderFlow(
+  step: Step = "choose",
+  options: { ctrlCArmed?: boolean } = {},
+) {
+  const actions: TuiAction[] = [];
+  const view = render(flowElement(step, actions, options));
   return { view, actions };
 }
+
+/** The same flow in a terminal whose stdout reports both dimensions. */
+function renderFlowAt(step: Step, size: { columns: number; rows: number }) {
+  const actions: TuiAction[] = [];
+  const view = renderAtSize(flowElement(step, actions), size);
+  return { view, actions };
+}
+
+/**
+ * One size per tier, plus the exact 100×16 the review broke the block
+ * at: `useTerminalSize` falls back to 80×24 when stdout carries no
+ * `rows`, so every ink-testing-library frame is the reduced tier and a
+ * minimal-tier defect is invisible to it by construction.
+ */
+const SIZES = [
+  { name: "full 120×34", columns: 120, rows: 34 },
+  { name: "reduced 100×24", columns: 100, rows: 24 },
+  { name: "minimal 100×16", columns: 100, rows: 16 },
+  { name: "minimal 60×20", columns: 60, rows: 20 },
+] as const;
 
 describe("OnboardingScreen", () => {
   let stateDir: string;
@@ -106,6 +142,93 @@ describe("OnboardingScreen", () => {
     const frame = strip(armed.view.lastFrame() ?? "");
     expect(frame).toContain("ctrl+c press again to quit");
     expect(frame).not.toContain("ctrl+c quit");
+  });
+
+  for (const size of SIZES) {
+    it(`centres the block on both axes at ${size.name}, hints pinned to the last row`, () => {
+      const { view } = renderFlowAt("choose", size);
+      const lines = strip(view.lastFrame() ?? "").split("\n");
+      view.unmount();
+      // The frame is exactly the terminal: a taller one means the block
+      // outgrew the measure and pushed the strip off the last row.
+      expect(lines.length).toBe(size.rows);
+      // "ctrl+c", not "ctrl+c quit": the surface draws the root inset
+      // itself now, and at 60 columns those two cells truncate the
+      // strip's tail. The pinning is what this asserts, not the copy.
+      expect(lines.at(-1)).toContain("ctrl+c");
+      const body = lines.slice(0, -1);
+      const drawn = body
+        .map((line, index) => ({ line, index }))
+        .filter((row) => row.line.trim().length > 0);
+      // Every tier keeps all three choices on screen.
+      const frame = body.join("\n");
+      expect(frame).toContain("Local models");
+      expect(frame).toContain("Cloud models");
+      expect(frame).toContain("Custom endpoint");
+      // The block's own left edge, not the widest line's: the widest
+      // line is often an option row, and its three-cell marker column is
+      // part of the block rather than space around it. The surface now
+      // draws the root inset itself, so the frame's leading whitespace
+      // is the whole story.
+      const leading = Math.min(
+        ...drawn.map((row) => row.line.length - row.line.trimStart().length),
+      );
+      const width =
+        Math.max(...drawn.map((row) => row.line.trimEnd().length)) - leading;
+      const balance = (size.columns - width) / 2;
+      expect(Math.abs(leading - balance)).toBeLessThanOrEqual(1);
+      // One row of the gap above is the surface's own top padding, and
+      // the gap below carries the last option row's bottom margin, so
+      // the two halves land within a row of each other rather than dead
+      // equal.
+      const above = (drawn[0]?.index ?? 1) - 1;
+      const below = body.length - 1 - (drawn.at(-1)?.index ?? 0);
+      expect(Math.abs(above - below)).toBeLessThanOrEqual(1);
+    });
+  }
+
+  it("centres the offer screen horizontally too", () => {
+    const { view } = renderFlowAt("propose_second", { columns: 120, rows: 30 });
+    const lines = strip(view.lastFrame() ?? "").split("\n");
+    view.unmount();
+    expect(lines.at(-1)).toContain("ctrl+c quit");
+    const drawn = lines.slice(0, -1).filter((line) => line.trim().length > 0);
+    const leading = Math.min(
+      ...drawn.map((line) => line.length - line.trimStart().length),
+    );
+    const width = Math.max(...drawn.map((line) => line.trimEnd().length)) - leading;
+    const balance = (120 - width) / 2;
+    expect(Math.abs(leading - balance)).toBeLessThanOrEqual(1);
+  });
+
+  it("keeps each minimal-tier option to one row: the measure and the render agree", () => {
+    // The regression the review caught: the un-detailed rows padded out
+    // to the detail column, the measure trimmed the pads, and Ink wrapped
+    // the invisible cells — one blank row per option became two and the
+    // block ran 50% taller than measured.
+    const { view } = renderFlowAt("choose", { columns: 100, rows: 16 });
+    const lines = strip(view.lastFrame() ?? "").split("\n");
+    view.unmount();
+    const optionRows = ["Local models", "Cloud models", "Custom endpoint"].map(
+      (label) => lines.findIndex((line) => line.includes(label)),
+    );
+    expect(optionRows[1]).toBe((optionRows[0] ?? 0) + 2);
+    expect(optionRows[2]).toBe((optionRows[1] ?? 0) + 2);
+  });
+
+  it("collapses the spacers instead of dropping options when the block barely fits", () => {
+    // 10 rows leave an 8-row viewport for a 9-row block: the spacers go
+    // to zero and only the block's own trailing margin is clipped. Before
+    // the fix the wrapped pads pushed the third option past the viewport.
+    const { view } = renderFlowAt("choose", { columns: 100, rows: 10 });
+    const lines = strip(view.lastFrame() ?? "").split("\n");
+    view.unmount();
+    expect(lines.length).toBe(10);
+    expect(lines.at(-1)).toContain("ctrl+c quit");
+    const frame = lines.join("\n");
+    expect(frame).toContain("Local models");
+    expect(frame).toContain("Cloud models");
+    expect(frame).toContain("Custom endpoint");
   });
 
   it("names the step it is on", () => {

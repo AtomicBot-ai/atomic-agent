@@ -19,11 +19,7 @@ import {
 } from "../providers/providers-wizard-target.js";
 import { theme } from "../theme/theme.js";
 import { findProviderPreset } from "../providers/provider-presets.js";
-import {
-  KIND_ROW_ORDER,
-  listChatModelsForKind,
-  type ProvidersWizardKindRow,
-} from "../providers/providers-wizard-phases.js";
+import { listChatModelsForKind } from "../providers/providers-wizard-phases.js";
 import {
   GEMINI_DEFAULT_CHAT_MODEL,
   listAimlapiEmbeddingModels,
@@ -33,40 +29,12 @@ import {
 } from "../providers/providers-model-options.js";
 import { CLAUDE_CLI_DEFAULT_CHAT_MODEL } from "../../llm/provider/subscription-cli/claude-cli-models.js";
 import { subscriptionCliForWizardKind } from "../providers/providers-wizard-state.js";
-import type {
-  ProvidersWizardKind,
-  ProvidersWizardState,
-} from "../providers/providers-wizard-state.js";
+import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
+import {
+  CHECKING_KEY_HINT,
+  KIND_OPTIONS,
+} from "./providers-wizard-measure.js";
 import { renderPickList } from "./wizard-pick-list.js";
-
-const KIND_LABELS: Record<ProvidersWizardKind, string> = {
-  "claude-cli":
-    "Claude Code subscription (drives your signed-in `claude` CLI — no API key)",
-  "codex-cli":
-    "OpenAI Codex subscription (drives your signed-in `codex` CLI — no API key)",
-  openrouter: "OpenRouter (cloud chat + optional cloud embed)",
-  aimlapi: "AI/ML API (aimlapi.com — 500+ models, OpenAI-compatible)",
-  gemini: "Gemini (Google AI)",
-  "openai-compatible": "OpenAI-compatible API (custom base URL)",
-};
-
-function labelForKindRow(row: ProvidersWizardKindRow): string {
-  if (typeof row !== "object") return KIND_LABELS[row];
-  const preset = findProviderPreset(row.presetId);
-  if (!preset) return row.presetId;
-  return preset.note ? `${preset.label} — ${preset.note}` : preset.label;
-}
-
-/**
- * One flat provider list, matching what other agent CLIs present: the
- * two kinds with built-in catalogs, then every known service (#69), then
- * the manual entry for anything not listed. Derived from
- * `KIND_ROW_ORDER` — the key bindings walk that same list, so a row's
- * label and its Enter action can never drift apart.
- */
-const KIND_OPTIONS = KIND_ROW_ORDER.map((row) => ({
-  label: labelForKindRow(row),
-}));
 
 /** Service name for headings: the preset label wins over the raw kind. */
 function providerLabelForWizard(w: ProvidersWizardState): string {
@@ -89,12 +57,6 @@ function explainModelListError(error: string, w: ProvidersWizardState): string {
   }
   return `could not list models from ${service} (${error})`;
 }
-
-/**
- * What `submitting` means now that a save starts with a live key check:
- * the wait is the provider answering, and Esc gets out of it.
- */
-const CHECKING_KEY_HINT = "checking the key with the provider… (Esc cancels)";
 
 function maskedKey(buffer: string): string {
   const masked = "•".repeat(Math.min(buffer.length, 48));

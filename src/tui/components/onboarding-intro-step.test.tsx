@@ -26,7 +26,9 @@ function frameAt(columns: number, rows: number): string {
   const view = render(
     <OnboardingIntroStep
       columns={columns - 4}
-      rows={rows}
+      // The screen hands the step its viewport, not the terminal: the
+      // surface's top padding and the pinned footer are already gone.
+      rows={rows - 2}
       fit={computeOnboardingFit({ columns, rows })}
       skipAnimation
     />,
@@ -90,14 +92,16 @@ describe("OnboardingIntroStep", () => {
   });
 
   /**
-   * Three rows belong to the screen around this block: its own top
-   * padding, the margin above the step, and the pinned footer. Anything
-   * past that paints over the rows above it, because Ink 7 overlaps
-   * rather than clips — and what it paints over first is the footer.
+   * Two rows belong to the screen around this block — its own top
+   * padding and the pinned footer — and `frameAt` already keeps them
+   * back, so the step must fit inside the viewport it was handed.
+   * Anything past that paints over the rows above it, because Ink 7
+   * overlaps rather than clips — and what it paints over first is the
+   * footer.
    */
   const fitsIn = (columns: number, rows: number): void => {
     const lines = strip(frameAt(columns, rows)).split("\n");
-    const overflow = Math.max(0, lines.length - (rows - 3));
+    const overflow = Math.max(0, lines.length - (rows - 2));
     expect({ columns, rows, overflow }).toEqual({ columns, rows, overflow: 0 });
   };
 

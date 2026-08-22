@@ -6,9 +6,58 @@ import {
   useTransferRate,
 } from "../hooks/use-transfer-rate.js";
 import type { LocalModelsPullState } from "../local-models/local-models-panel-state.js";
+import { widestLine } from "../onboarding/centre-onboarding-block.js";
 import { theme } from "../theme/theme.js";
 
 const BAR_WIDTH = 36;
+/** Phase-name column, so the two bars start on the same cell. */
+const PHASE_LABEL_COLUMNS = 20;
+const PHASE_LABELS = ["llama.cpp runtime", "model weights"] as const;
+/** Blank cells between the bar and what follows it. */
+const PHASE_GAP = "  ";
+
+/**
+ * The widest a phase line's trailing text ever gets: a full percentage
+ * and two three-digit byte counts.
+ *
+ * A template rather than the live counters, for the same reason the
+ * wait-or-jump screen uses one — the block is centred on this measure,
+ * and measuring numbers that change every few hundred milliseconds
+ * would walk the whole screen left and right for the length of the
+ * download.
+ */
+const PHASE_TRAILING = "100%   999.9 GB / 999.9 GB";
+
+const CLOUD_OFFER = [
+  "┃  Don\u2019t want to wait? Set up a cloud model in the meantime —",
+  "┃  it takes about a minute, and the download keeps running.",
+] as const;
+/** Set bold on the second offer line: it is the key, not the sentence. */
+const CLOUD_OFFER_KEY = "    press c";
+
+/**
+ * Widest line this step draws, for the block that centres it.
+ *
+ * The error line is left out on purpose: it carries whatever the pull
+ * failed with, and sizing the surface to an arbitrary string would
+ * resize the screen around a message. It wraps inside the block instead.
+ */
+export function measureOnboardingDownloadStep(props: {
+  modelLabel: string;
+  offerCloudMeanwhile?: boolean;
+}): number {
+  return widestLine([
+    headingLine(props.modelLabel),
+    `${" ".repeat(PHASE_LABEL_COLUMNS + BAR_WIDTH)}${PHASE_GAP}${PHASE_TRAILING}`,
+    ...(props.offerCloudMeanwhile === false
+      ? []
+      : [CLOUD_OFFER[0], `${CLOUD_OFFER[1]}${CLOUD_OFFER_KEY}`]),
+  ]);
+}
+
+function headingLine(modelLabel: string): string {
+  return `Downloading ${modelLabel}. You can leave this running.`;
+}
 
 /**
  * The download, as its own screen.
@@ -36,17 +85,15 @@ export function OnboardingDownloadStep(props: {
 
   return (
     <Box flexDirection="column" flexShrink={0}>
-      <Text color={theme.colors.muted}>
-        {`Downloading ${props.modelLabel}. You can leave this running.`}
-      </Text>
+      <Text color={theme.colors.muted}>{headingLine(props.modelLabel)}</Text>
       <Box marginTop={1} flexDirection="column">
         <PhaseLine
-          label="llama.cpp runtime"
+          label={PHASE_LABELS[0]}
           state={phase === "runtime" ? "active" : "done"}
           pull={phase === "runtime" ? pull : null}
         />
         <PhaseLine
-          label="model weights"
+          label={PHASE_LABELS[1]}
           state={phase === "weights" ? "active" : "pending"}
           pull={phase === "weights" ? pull : null}
         />
@@ -76,12 +123,10 @@ export function OnboardingDownloadStep(props: {
             one. The download is owned by the orchestrator, so setting
             one up does not pause or restart it.
           */}
+          <Text color={theme.colors.accent}>{CLOUD_OFFER[0]}</Text>
           <Text color={theme.colors.accent}>
-            ┃  Don{"\u2019"}t want to wait? Set up a cloud model in the meantime —
-          </Text>
-          <Text color={theme.colors.accent}>
-            ┃  it takes about a minute, and the download keeps running.
-            <Text bold>{"    press c"}</Text>
+            {CLOUD_OFFER[1]}
+            <Text bold>{CLOUD_OFFER_KEY}</Text>
           </Text>
         </Box>
       )}
@@ -105,11 +150,11 @@ function PhaseLine(props: {
         : "waiting";
   return (
     <Text wrap="truncate">
-      <Text color={theme.colors.muted}>{props.label.padEnd(20)}</Text>
+      <Text color={theme.colors.muted}>{props.label.padEnd(PHASE_LABEL_COLUMNS)}</Text>
       <Text color={props.state === "pending" ? theme.colors.border : theme.colors.accent}>
         {bar}
       </Text>
-      <Text color={theme.colors.muted}>{`  ${trailing}`}</Text>
+      <Text color={theme.colors.muted}>{`${PHASE_GAP}${trailing}`}</Text>
     </Text>
   );
 }

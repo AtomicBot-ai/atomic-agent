@@ -11,18 +11,21 @@ import { WORDMARK_ROWS, TAGLINE } from "./logo.js";
 /** Milliseconds per revealed character. ~0.9s for the whole tagline. */
 export const TAGLINE_MS_PER_CHAR = 45;
 /**
- * Rows the intro spends on everything that is not the sky: the screen's
- * own top padding, two of wordmark, the tagline, the "press any key"
- * line, every margin between them, and the pinned footer. The art gets
- * what is left, and nothing more — Ink 7 overlaps rather than clips, so
- * one row over budget costs the footer.
+ * Rows the intro spends on everything that is not the sky: two of
+ * wordmark, the tagline, the "press any key" line and their margins.
+ * The art gets what is left of the budget it is handed, and nothing
+ * more — Ink 7 overlaps rather than clips, so one row over budget
+ * costs the footer.
  *
- * It was 9 while the art still had blank rows in it. An empty `Text`
- * measures zero rows in Ink, so the old ring's unused top and bottom
- * lines were quietly paying for two of these; a sky reaches every row
- * and the debt came due.
+ * The pinned footer and the surface's top padding are not counted here
+ * any more — `OnboardingScreen` takes both off the budget before it
+ * passes it down. Counting the footer but neither the padding nor the
+ * gap under the header is what made the splash come out two rows taller
+ * than the terminal. (And the sky pays for every row it is given: the
+ * old ring's blank top and bottom lines measured zero rows in Ink and
+ * quietly absorbed part of this chrome — a star field does not.)
  */
-export const INTRO_CHROME_ROWS = 10;
+export const INTRO_CHROME_ROWS = 8;
 /** `ATOMIC` is the first 23 columns of the shipped `ATOMIC AGENT` wordmark. */
 const WORDMARK_ATOMIC_COLUMNS = 23;
 

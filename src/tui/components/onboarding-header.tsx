@@ -1,8 +1,26 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { widestLine } from "../onboarding/centre-onboarding-block.js";
 import type { OnboardingMark } from "../onboarding/onboarding-fit.js";
 import { theme } from "../theme/theme.js";
 import { CROSS_MARKS, FACE_GLYPHS } from "./logo-art.js";
+
+/** The product name, set beside the mark. */
+const WORDMARK = "atomic";
+/** Blank columns between the mark and the wordmark column. */
+const MARK_GAP_COLUMNS = 2;
+
+/**
+ * Widest line the lockup draws, so the block it heads can be centred
+ * without the header pulling the measure out from under it.
+ */
+export function measureOnboardingHeader(
+  subtitle: string,
+  mark: OnboardingMark,
+): number {
+  const text = widestLine([WORDMARK, subtitle]);
+  return widestLine(CROSS_MARKS.block[mark]) + MARK_GAP_COLUMNS + text;
+}
 
 /**
  * Brand lockup for the first-run screens: the mark, the product name,
@@ -29,9 +47,13 @@ export function OnboardingHeader(props: {
           <MarkRow key={i} row={row} />
         ))}
       </Box>
-      <Box flexDirection="column" marginLeft={2} justifyContent="center">
+      <Box
+        flexDirection="column"
+        marginLeft={MARK_GAP_COLUMNS}
+        justifyContent="center"
+      >
         <Text bold color={theme.colors.accent}>
-          atomic
+          {WORDMARK}
         </Text>
         <Text color={theme.colors.muted}>{props.subtitle}</Text>
       </Box>
