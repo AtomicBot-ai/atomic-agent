@@ -1,4 +1,6 @@
 import type { Key } from "ink";
+import type { MouseContextValue } from "../mouse/mouse-context.js";
+import { returnKey } from "../mouse/synthetic-key.js";
 import type { TuiAction } from "../tui-action.js";
 import { handleProvidersWizardKey } from "./providers-wizard-key-bindings.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
@@ -45,3 +47,46 @@ export function routeProvidersWizardKey(
   }
   return true;
 }
+
+/**
+ * How a pick-list row click reaches the wizard whose frame it was drawn
+ * in. The wizard is a parameter, never a read off `TuiState`: the same
+ * pick list serves two kinds of owner — the store-backed mounts (the
+ * Providers/LLM panels, the onboarding cloud step), whose wizard lives
+ * at `providersPanel.wizard`, and `CloudProviderOnboarding`, which
+ * keeps its wizard in component state. A handler that read the store
+ * slice acted on a different wizard than the one the operator clicked
+ * for the second kind — or on `null`, a silent no-op.
+ */
+export interface WizardMouseRoute {
+  /** First click, on an unselected row: move the wizard's cursor there. */
+  select(
+    mouse: MouseContextValue,
+    wizard: ProvidersWizardState,
+    cursor: number,
+  ): void;
+  /** Second click, on the selected row: the wizard's own Enter. */
+  activate(mouse: MouseContextValue, wizard: ProvidersWizardState): void;
+}
+
+/**
+ * The store-backed route, shared by every mount whose wizard lives on
+ * `providersPanel.wizard`. Activation goes through
+ * `routeProvidersWizardKey` — the routing every keyboard site uses — so
+ * a click saves or advances exactly what Enter would.
+ */
+export const storeWizardMouseRoute: WizardMouseRoute = {
+  select: (mouse, wizard, cursor) => {
+    mouse.dispatch({
+      type: "providers_wizard_updated",
+      wizard: { ...wizard, cursor },
+    });
+  },
+  activate: (mouse, wizard) => {
+    routeProvidersWizardKey("", returnKey(), wizard, {
+      dispatch: mouse.dispatch,
+      onSubmit: (w) => mouse.callbacks.onProvidersWizardSubmit?.(w),
+      onSubmitCancel: () => mouse.callbacks.onProvidersWizardSubmitCancel?.(),
+    });
+  },
+};

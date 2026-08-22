@@ -3,6 +3,7 @@ import { Box } from "ink";
 import { render } from "ink-testing-library";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
 import { parseHexColor } from "../theme/parse-hex-color.js";
 import {
   getActiveTheme,
@@ -11,6 +12,13 @@ import {
   type TuiTheme,
 } from "../theme/theme.js";
 import { renderPickList } from "./wizard-pick-list.js";
+
+/**
+ * These are pure-render tests — no `MouseProvider`, so the row targets
+ * are inert — but the list always belongs to a wizard, and the prop is
+ * required so a real mount cannot forget whose wizard clicks act on.
+ */
+const wizard = () => createProvidersWizardState("add");
 
 /**
  * Constrain the list to a fixed inner width so the truncation guard is
@@ -39,6 +47,7 @@ describe("renderPickList narrow-width rendering", () => {
   it("truncates a long option instead of wrapping it onto a second line", () => {
     const { lastFrame } = narrow(
       renderPickList({
+        wizard: wizard(),
         title: "Provider",
         options: [{ label: longLabel }, { label: "Short one" }],
         cursor: 0,
@@ -71,6 +80,7 @@ describe("renderPickList narrow-width rendering", () => {
     ): number => {
       const { lastFrame } = narrow(
         renderPickList({
+          wizard: wizard(),
           title: "Chat model",
           options,
           cursor: 0,
@@ -97,6 +107,7 @@ describe("renderPickList narrow-width rendering", () => {
   it("names the query instead of drawing an empty box", () => {
     const { lastFrame } = narrow(
       renderPickList({
+        wizard: wizard(),
         title: "Chat model",
         options: [],
         cursor: 0,
@@ -114,6 +125,7 @@ describe("renderPickList narrow-width rendering", () => {
   it("leaves a short option intact", () => {
     const { lastFrame } = narrow(
       renderPickList({
+        wizard: wizard(),
         title: "Provider",
         options: [{ label: "OpenRouter" }],
         cursor: 0,
@@ -165,6 +177,7 @@ describe("renderPickList colours", () => {
     return render(
       <Box width={60}>
         {renderPickList({
+          wizard: wizard(),
           title: "Chat model (OpenRouter)",
           options: [{ label: "first-model" }, { label: "second-model" }],
           cursor: 1,

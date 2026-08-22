@@ -1,6 +1,15 @@
-import { Box, Text, useInput } from "ink";
-import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
+import { Box, Text, useInput, type Key } from "ink";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+} from "react";
+import { returnKey } from "../mouse/synthetic-key.js";
 import { handleProvidersWizardKey } from "../providers/providers-wizard-key-bindings.js";
+import type { WizardMouseRoute } from "../providers/route-wizard-key.js";
 import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
 import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
 import { saveProviderWizardToConfig } from "../providers/save-provider-wizard.js";
@@ -94,36 +103,65 @@ export function CloudProviderOnboarding(props: {
     [checkStillWanted, props],
   );
 
+  /**
+   * The one key-routing path, for both drivers: `useInput` passes the
+   * live keystroke, a row click passes the Enter it stands for. The
+   * wizard to act on is an argument rather than the closure's state
+   * because the click path must act on the wizard its frame drew (see
+   * `WizardMouseRoute`) — which here is `{ ...wizard, submitting }`,
+   * the object the render below hands `ProvidersWizard`.
+   */
+  const routeKey = useCallback(
+    (input: string, key: Key, activeWizard: ProvidersWizardState): void => {
+      const result = handleProvidersWizardKey(input, key, activeWizard);
+      if (!result.handled) return;
+      if ("closed" in result) {
+        props.onBack();
+        return;
+      }
+      if ("cancelSubmit" in result && result.cancelSubmit) {
+        verifyAbort.current?.abort();
+        verifyAbort.current = null;
+        setSubmitting(false);
+        setWizard({
+          ...activeWizard,
+          submitting: false,
+          error: "Key check cancelled — press Enter to try again.",
+        });
+        return;
+      }
+      if ("submit" in result && result.submit) {
+        void submit(result.wizard);
+        return;
+      }
+      setWizard(result.wizard);
+    },
+    [props, submit],
+  );
+
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
       verifyAbort.current?.abort();
       props.onFinished("aborted");
       return;
     }
-    const activeWizard = { ...wizard, submitting };
-    const result = handleProvidersWizardKey(input, key, activeWizard);
-    if (!result.handled) return;
-    if ("closed" in result) {
-      props.onBack();
-      return;
-    }
-    if ("cancelSubmit" in result && result.cancelSubmit) {
-      verifyAbort.current?.abort();
-      verifyAbort.current = null;
-      setSubmitting(false);
-      setWizard({
-        ...wizard,
-        submitting: false,
-        error: "Key check cancelled — press Enter to try again.",
-      });
-      return;
-    }
-    if ("submit" in result && result.submit) {
-      void submit(result.wizard);
-      return;
-    }
-    setWizard(result.wizard);
+    routeKey(input, key, { ...wizard, submitting });
   });
+
+  /**
+   * Row clicks act on this screen's wizard, which lives in the state
+   * above — the default store route would target `providersPanel.wizard`,
+   * a slice this screen never writes, and every click would be a no-op
+   * or drive somebody else's wizard.
+   */
+  const mouseRoute = useMemo<WizardMouseRoute>(
+    () => ({
+      select: (_mouse, frameWizard, cursor) =>
+        setWizard({ ...frameWizard, cursor }),
+      activate: (_mouse, frameWizard) => routeKey("", returnKey(), frameWizard),
+    }),
+    [routeKey],
+  );
 
   return (
     <Box flexDirection="column" padding={1}>
@@ -134,7 +172,7 @@ export function CloudProviderOnboarding(props: {
       <Text color={theme.colors.muted}>
         Configure a cloud text provider now. Esc returns to backend choice.
       </Text>
-      <ProvidersWizard wizard={{ ...wizard, submitting }} />
+      <ProvidersWizard wizard={{ ...wizard, submitting }} mouseRoute={mouseRoute} />
     </Box>
   );
 }

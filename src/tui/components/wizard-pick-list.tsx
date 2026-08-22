@@ -2,8 +2,11 @@ import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { MouseListRow } from "../mouse/mouse-list-row.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
-import { returnKey } from "../mouse/synthetic-key.js";
-import { routeProvidersWizardKey } from "../providers/route-wizard-key.js";
+import {
+  storeWizardMouseRoute,
+  type WizardMouseRoute,
+} from "../providers/route-wizard-key.js";
+import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
 import { theme } from "../theme/theme.js";
 
 /**
@@ -124,6 +127,16 @@ export function renderPickList(props: {
   title: string;
   options: readonly { label: string }[];
   cursor: number;
+  /**
+   * The wizard this frame drew. Row clicks act on it — never on
+   * `providersPanel.wizard` read at click time — because the frame is
+   * the only thing the operator can aim at, and one mount
+   * (`CloudProviderOnboarding`) keeps its wizard outside the store
+   * entirely, where a store read finds a different wizard or none.
+   */
+  wizard: ProvidersWizardState;
+  /** How row clicks reach that wizard. Defaults to the store's route. */
+  route?: WizardMouseRoute;
   /** Movement-keys part of the hint, e.g. "j/k move". */
   moveHint: string;
   /** Actions part of the hint, e.g. "Enter select · Esc cancel". */
@@ -147,6 +160,7 @@ export function renderPickList(props: {
   error?: string | null;
 }): ReactElement {
   const total = props.options.length;
+  const route = props.route ?? storeWizardMouseRoute;
   const clamped = Math.min(Math.max(props.cursor, 0), Math.max(0, total - 1));
   const errors = props.error ? errorLines(props.error).slice(0, MAX_ERROR_ROWS) : [];
   const searchShown = props.search !== undefined;
@@ -206,36 +220,21 @@ export function renderPickList(props: {
         return (
           /*
             First click selects, second activates the wizard's own Enter
-            — `routeProvidersWizardKey`, the same routing every keyboard
-            site uses, so a click saves or advances exactly what Enter
-            would. The live wizard is read off state at click time
-            because this render function only ever sees rows and a
-            cursor. Registered on the MODAL layer: in the Providers/LLM
-            panels the open wizard raises the mouse floor to MODAL, and
-            a PANEL-layer row would be below it and unclickable.
+            through the route — by default `storeWizardMouseRoute`, the
+            same `routeProvidersWizardKey` every keyboard site uses, so
+            a click saves or advances exactly what Enter would. Both
+            handlers act on `props.wizard`, the wizard this frame drew
+            (see the prop's note). Registered on the MODAL layer: in the
+            Providers/LLM panels the open wizard raises the mouse floor
+            to MODAL, and a PANEL-layer row would be below it and
+            unclickable.
           */
           <MouseListRow
             key={`${index}-${opt.label}`}
             selected={index === clamped}
             layer={MOUSE_LAYER_MODAL}
-            onSelect={(mouse) => {
-              const wizard = mouse.getState().providersPanel.wizard;
-              if (!wizard) return;
-              mouse.dispatch({
-                type: "providers_wizard_updated",
-                wizard: { ...wizard, cursor: index },
-              });
-            }}
-            onActivate={(mouse) => {
-              const wizard = mouse.getState().providersPanel.wizard;
-              if (!wizard) return;
-              routeProvidersWizardKey("", returnKey(), wizard, {
-                dispatch: mouse.dispatch,
-                onSubmit: (w) => mouse.callbacks.onProvidersWizardSubmit?.(w),
-                onSubmitCancel: () =>
-                  mouse.callbacks.onProvidersWizardSubmitCancel?.(),
-              });
-            }}
+            onSelect={(mouse) => route.select(mouse, props.wizard, index)}
+            onActivate={(mouse) => route.activate(mouse, props.wizard)}
           >
             <Text
               color={index === clamped ? theme.colors.accent : undefined}

@@ -11,6 +11,7 @@ import type { TuiMouseEvent } from "../mouse/mouse-event.js";
 import { MouseTargetRegistry } from "../mouse/mouse-registry.js";
 import {
   createOnboardingState,
+  type OnboardingHuggingFaceRepo,
   type OnboardingStep,
 } from "../onboarding/onboarding-state.js";
 import { onboardingPickRows } from "../onboarding/onboarding-step-keys.js";
@@ -26,6 +27,32 @@ const STATE_DIR_ENV = "ATOMIC_AGENT_STATE_DIR";
 const strip = (s: string): string => s.replace(/\[[0-9;]*m/g, "");
 const delay = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
+
+const GB = 1024 * 1024 * 1024;
+
+/** A resolved repo for the Hugging Face file picker, two files deep. */
+const HF_REPO: OnboardingHuggingFaceRepo = {
+  repoId: "unsloth/Qwen3-0.6B-GGUF",
+  revision: "main",
+  choices: [
+    {
+      path: "Qwen3-0.6B-Q4_K_M.gguf",
+      filename: "Qwen3-0.6B-Q4_K_M.gguf",
+      sizeBytes: 0.38 * GB,
+      fileSizeGb: 0.38,
+      sizeLabel: "387 MB",
+    },
+    {
+      path: "Qwen3-0.6B-Q8_0.gguf",
+      filename: "Qwen3-0.6B-Q8_0.gguf",
+      sizeBytes: 0.62 * GB,
+      fileSizeGb: 0.62,
+      sizeLabel: "637 MB",
+    },
+  ],
+  mmproj: null,
+  hidden: null,
+};
 
 /** A pull in flight, for the steps that draw a bar. */
 const PULL = {
@@ -321,6 +348,29 @@ describe("onboarding mouse", () => {
     }
     expect(advanced.wizard.phase).not.toBe("pick_kind");
     activate.unmount();
+  });
+
+  it("hf_pick: a click on an unselected file row moves the cursor there", async () => {
+    const view = mount("local_hf_pick", { hfRepo: HF_REPO, cursor: 0 });
+    await sendUntilClaimed(view, "Qwen3-0.6B-Q8_0.gguf");
+    expect(view.actions).toEqual([{ type: "onboarding_cursor_set", cursor: 1 }]);
+    expect(view.pulls).toEqual([]);
+    view.unmount();
+  });
+
+  it("hf_pick: a click on the selected row writes the catalog entry and pulls", async () => {
+    const view = mount("local_hf_pick", { hfRepo: HF_REPO, cursor: 0 });
+    await sendUntilClaimed(view, "Qwen3-0.6B-Q4_K_M.gguf");
+    // The same effects the router test asserts for Enter on this step:
+    // the catalog write's minted id is dispatched, and the pull it is
+    // handed to is the one the curated rows use.
+    const picked = view.actions.find(
+      (action) => action.type === "onboarding_local_model_picked",
+    );
+    expect(picked).toBeDefined();
+    expect(view.pulls).toHaveLength(1);
+    expect(view.pulls[0]).toContain("custom");
+    view.unmount();
   });
 
   it("hf_ref: [ clear ] empties the buffer and the error in one click", async () => {

@@ -31,6 +31,7 @@ import {
 import { CLAUDE_CLI_DEFAULT_CHAT_MODEL } from "../../llm/provider/subscription-cli/claude-cli-models.js";
 import { subscriptionCliForWizardKind } from "../providers/providers-wizard-state.js";
 import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
+import type { WizardMouseRoute } from "../providers/route-wizard-key.js";
 import { CHECKING_KEY_HINT } from "./providers-wizard-measure.js";
 import { pickListHints, renderPickList } from "./wizard-pick-list.js";
 
@@ -126,6 +127,7 @@ function renderLineField(props: {
 function CompatChatModelStep(props: {
   wizard: ProvidersWizardState;
   maxRows?: number;
+  route?: WizardMouseRoute;
 }): ReactElement {
   const w = props.wizard;
   const baseUrl = baseUrlForWizard(w);
@@ -198,6 +200,8 @@ function CompatChatModelStep(props: {
       title: `Chat model — ${picks.length} ${source}`,
       options: picks.map((id) => ({ label: id })),
       cursor: w.cursor,
+      wizard: w,
+      ...(props.route === undefined ? {} : { route: props.route }),
       moveHint: "↑/↓ move",
       actionsHint: listActionsHint(
         "PgUp/PgDn jump · Enter select · type to enter an id by hand · Esc back",
@@ -249,6 +253,7 @@ function CatalogChatModelStep(props: {
   wizard: ProvidersWizardState;
   kind: "openrouter" | "aimlapi";
   maxRows?: number;
+  route?: WizardMouseRoute;
 }): ReactElement {
   const { wizard: w, kind } = props;
   const getCached =
@@ -301,6 +306,8 @@ function CatalogChatModelStep(props: {
     title,
     options: visibleRowsForPhase(w),
     cursor: w.cursor,
+    wizard: w,
+    ...(props.route === undefined ? {} : { route: props.route }),
     moveHint: hints.moveHint,
     actionsHint: listActionsHint(hints.actionsHint, w.submitting),
     search: w.search,
@@ -322,9 +329,17 @@ function CatalogChatModelStep(props: {
 export function ProvidersWizard(props: {
   wizard: ProvidersWizardState;
   maxRows?: number;
+  /**
+   * How row clicks reach `wizard`. Omitted by the store-backed mounts,
+   * whose wizard lives at `providersPanel.wizard` (the default route);
+   * `CloudProviderOnboarding` keeps its wizard in component state and
+   * must pass its own, or clicks would act on the wrong wizard slice.
+   */
+  mouseRoute?: WizardMouseRoute;
 }): ReactElement {
   const w = props.wizard;
   const maxRows = props.maxRows === undefined ? {} : { maxRows: props.maxRows };
+  const route = props.mouseRoute === undefined ? {} : { route: props.mouseRoute };
   const modeLabel = w.mode === "configure" ? `configure ${w.providerId}` : "add provider";
 
   if (w.phase === "pick_kind") {
@@ -332,6 +347,8 @@ export function ProvidersWizard(props: {
       title: `LLM provider — ${modeLabel}`,
       options: visibleKindRows(w.search),
       cursor: w.cursor,
+      wizard: w,
+      ...route,
       ...pickListHints(
         w.search,
         "Enter pick",
@@ -382,7 +399,7 @@ export function ProvidersWizard(props: {
     w.phase === "pick_chat_model" &&
     (w.kind === "openrouter" || w.kind === "aimlapi")
   ) {
-    return <CatalogChatModelStep wizard={w} kind={w.kind} {...maxRows} />;
+    return <CatalogChatModelStep wizard={w} kind={w.kind} {...maxRows} {...route} />;
   }
 
   if (
@@ -401,6 +418,8 @@ export function ProvidersWizard(props: {
       title: "Embedding backend",
       options: visibleRowsForPhase(w),
       cursor: w.cursor,
+      wizard: w,
+      ...route,
       moveHint: hints.moveHint,
       actionsHint: listActionsHint(hints.actionsHint, w.submitting),
       search: w.search,
@@ -420,7 +439,7 @@ export function ProvidersWizard(props: {
   }
 
   if (w.phase === "chat_model_line") {
-    return <CompatChatModelStep wizard={w} {...maxRows} />;
+    return <CompatChatModelStep wizard={w} {...maxRows} {...route} />;
   }
 
   return (
