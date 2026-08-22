@@ -3,6 +3,7 @@ import { render } from "ink-testing-library";
 import React, { type ReactElement } from "react";
 import { describe, expect, it } from "vitest";
 
+import { ROOT_PADDING_LEFT } from "../layout.js";
 import { buildLocalModelPicks, orderLocalModelPicks } from "../onboarding/local-model-picks.js";
 import { computeOnboardingFit } from "../onboarding/onboarding-fit.js";
 import { measureOnboardingChooseStep, OnboardingChooseStep } from "./onboarding-choose-step.js";
@@ -20,6 +21,7 @@ import {
   OnboardingProposeStep,
 } from "./onboarding-propose-step.js";
 import { measureOnboardingUrlStep, OnboardingUrlStep } from "./onboarding-url-step.js";
+import { layOutOnboardingSurface } from "./onboarding-surface-layout.js";
 import {
   measureOnboardingWaitOrJumpStep,
   OnboardingWaitOrJumpStep,
@@ -189,14 +191,46 @@ const cases: { name: string; measured: number; element: ReactElement; exact: boo
         pullError={null}
         modelLabel="qwen3-4b-instruct"
         offerCloudMeanwhile
-        columns={100}
-        rows={12}
-        markHeader
       />
     ),
     exact: false,
   },
 ];
+
+describe("the download step's placement", () => {
+  // The regression this pins: `local_download` used to answer the
+  // measure with the whole terminal, so `placeOnboardingBlock` clamped
+  // `left` to zero and the one screen sat hard against the margin while
+  // every other step centred. The measure the width test above pins is
+  // now the one production actually uses.
+  it("centres the download block instead of handing it the terminal", () => {
+    const measured = measureOnboardingDownloadStep({
+      modelLabel: "qwen3-4b-instruct",
+      offerCloudMeanwhile: true,
+    });
+    const placement = layOutOnboardingSurface({
+      columns: 100,
+      rows: 30,
+      step: "local_download",
+      fit: FULL,
+      subtitle: "local models · downloading",
+      picks: PICKS,
+      cursor: 0,
+      ramGb: 16,
+      offer: null,
+      configuredLabel: "Backend ready",
+      modelLabel: "qwen3-4b-instruct",
+      offerCloudMeanwhile: true,
+      pull: null,
+      cloudLabel: "Cloud model ready",
+      hfRepo: null,
+    });
+    expect(measured).toBeLessThan(98);
+    expect(placement.width).toBe(measured);
+    expect(placement.left).toBe(Math.floor((100 - measured) / 2) - ROOT_PADDING_LEFT);
+    expect(placement.left).toBeGreaterThan(0);
+  });
+});
 
 describe("the per-step block measures", () => {
   for (const testCase of cases) {
