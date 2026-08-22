@@ -79,6 +79,17 @@ function listActionsHint(base: string, submitting: boolean): string {
   return submitting ? CHECKING_KEY_HINT : base;
 }
 
+/**
+ * One labelled single-line field.
+ *
+ * The text in this file — titles, the typed value, the masked key —
+ * reads `accent`. `accentSoft` is the house palette's fill (`#294793`),
+ * which the design lifts to `accent` the moment the same hue has to be
+ * read rather than sat on; painting text with it put these screens at
+ * roughly 2:1 against the terminal. Box borders keep the fill tone:
+ * the brief fences the lift to text, and a frame is chrome — looked
+ * at, not read.
+ */
 function renderLineField(props: {
   title: string;
   value: string;
@@ -97,12 +108,12 @@ function renderLineField(props: {
       marginY={1}
       width="100%"
     >
-      <Text bold color={theme.colors.accentSoft}>
+      <Text bold color={theme.colors.accent}>
         {props.title}
       </Text>
       <Box>
         <Text color={theme.colors.muted}>{"> "}</Text>
-        <Text color={muted ? theme.colors.muted : theme.colors.accentSoft}>
+        <Text color={muted ? theme.colors.muted : theme.colors.accent}>
           {display}
         </Text>
       </Box>
@@ -332,16 +343,16 @@ export function ProvidersWizard(props: {
         marginY={1}
         width="100%"
       >
-        <Text bold color={theme.colors.accentSoft}>
+        <Text bold color={theme.colors.accent}>
           API key — {providerLabelForWizard(w)}
         </Text>
         <Text color={theme.colors.muted}>
-          Saved to <Text color={theme.colors.accentSoft}>{".env"}</Text> as{" "}
+          Saved to <Text color={theme.colors.accent}>{".env"}</Text> as{" "}
           {envHint} (mode 0600). {emptyMeans}
         </Text>
         <Box>
           <Text color={theme.colors.muted}>{"> "}</Text>
-          <Text color={theme.colors.accentSoft}>{maskedKey(w.apiKeyBuffer)}</Text>
+          <Text color={theme.colors.accent}>{maskedKey(w.apiKeyBuffer)}</Text>
         </Box>
         {w.error ? (
           <Text color={theme.colors.error}>! {w.error}</Text>

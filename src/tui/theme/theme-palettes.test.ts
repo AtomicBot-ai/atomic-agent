@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { THEMES, type ThemeName, type TuiColors } from "./theme.js";
+import { contrastRatio } from "./color-contrast.js";
+import { THEMES, THEME_NAMES, type ThemeName, type TuiColors } from "./theme.js";
 
 const COLOR_KEYS: (keyof TuiColors)[] = [
   "user",
@@ -137,4 +138,78 @@ describe("third-party theme palettes", () => {
       });
     });
   }
+});
+
+/**
+ * `accentSoft` is a ground and `accent` is the ink read on top of it.
+ * A component that reaches for `accentSoft` to paint text inherits
+ * whatever contrast the palette picked for a fill — on the house
+ * palette that put whole screens near 2:1. These pin the property call
+ * sites rely on, measured against the ground the text actually lands
+ * on: the canonical page of the terminal theme each palette was mapped
+ * from. The TUI never paints the page — the terminal owns it — so the
+ * theme has no token for it and the table lives here, in the one place
+ * that needs a number for "the background this palette was designed
+ * against". A new palette adds one row (the compiler asks for it);
+ * nothing below pins how many palettes exist or how they relate.
+ */
+const CANONICAL_GROUND: Record<ThemeName, string> = {
+  // The design's dark page — the tone the "lands around 2:1" figure in
+  // theme-palettes.ts is measured against.
+  "atomic-retro": "#0b0e14",
+  // Primer bgColor-default, dark and light.
+  "github-dark": "#0d1117",
+  "github-light": "#ffffff",
+  // Catppuccin `base`.
+  "catppuccin-mocha": "#1e1e2e",
+  "catppuccin-latte": "#eff1f5",
+  // Dracula `Background`.
+  dracula: "#282a36",
+  // Nord `nord0` (Polar Night).
+  nord: "#2e3440",
+  // Tokyo Night `bg`.
+  "tokyo-night": "#1a1b26",
+  // Gruvbox `bg0`.
+  "gruvbox-dark": "#282828",
+  "gruvbox-light": "#fbf1c7",
+  // Solarized `base03` / `base3`.
+  "solarized-dark": "#002b36",
+  "solarized-light": "#fdf6e3",
+};
+
+describe("accent is ink, accentSoft is a fill", () => {
+  for (const name of THEME_NAMES) {
+    const c = THEMES[name].colors;
+    const ground = CANONICAL_GROUND[name];
+
+    it(`${name}: moving text from accentSoft to accent never loses contrast`, () => {
+      // The invariant every call site leans on: painting text with
+      // `accent` reads at least as well as the fill would have. It
+      // fails in the regression's direction — an `accent` that is the
+      // dimmer of the pair — and cannot fail merely because a new
+      // palette gives its fill a value of its own.
+      expect(contrastRatio(c.accent, ground)).toBeGreaterThanOrEqual(
+        contrastRatio(c.accentSoft, ground),
+      );
+    });
+
+    it(`${name}: accent is readable on the palette's own page`, () => {
+      // 3:1 is WCAG's floor for large/bold text and UI glyphs, and the
+      // wizard titles are bold. Not 4.5: three upstream palettes ship
+      // accents below AA on their own canonical page (solarized-light
+      // is 3.4:1) — the source theme's choice, not our regression. A
+      // fill-dark accent, the bug this guards, lands nearer 2.
+      expect(contrastRatio(c.accent, ground)).toBeGreaterThanOrEqual(3);
+    });
+  }
+
+  it("the house palette's ink clears AA where its fill does not", () => {
+    // The regression that actually shipped: cloud setup screens painted
+    // text in the `#294793` fill, at 2.2:1 on the page. Pinned on the
+    // house palette by name, so a legitimate new palette cannot trip it.
+    const c = THEMES["atomic-retro"].colors;
+    const ground = CANONICAL_GROUND["atomic-retro"];
+    expect(contrastRatio(c.accent, ground)).toBeGreaterThan(4.5);
+    expect(contrastRatio(c.accentSoft, ground)).toBeLessThan(3);
+  });
 });

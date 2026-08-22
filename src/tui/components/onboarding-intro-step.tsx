@@ -126,8 +126,13 @@ export function OnboardingIntroStep(props: {
         <ArtRow key={index} row={row} />
       ))}
       <Box flexDirection="column" marginTop={1}>
+        {/*
+          The wordmark is read, not looked at — it is the product's name
+          in letterforms — so it takes the text-safe `accent`. The
+          `accentSoft` fill lands near 2:1 as ink on a dark page.
+        */}
         {wordmark.map((row, index) => (
-          <Text key={index} bold color={theme.colors.accentSoft} wrap="truncate">
+          <Text key={index} bold color={theme.colors.accent} wrap="truncate">
             {pad(row)}
           </Text>
         ))}

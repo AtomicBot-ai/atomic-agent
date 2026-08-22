@@ -4,6 +4,8 @@ import React from "react";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { computeOnboardingFit } from "../onboarding/onboarding-fit.js";
+import { parseHexColor } from "../theme/parse-hex-color.js";
+import { theme } from "../theme/theme.js";
 import { STAR_GLYPHS, starTierOfGlyph } from "../onboarding/star-tiers.js";
 import { OnboardingIntroStep } from "./onboarding-intro-step.js";
 
@@ -15,6 +17,13 @@ const FOREGROUND = /^\u001B\[(?:38;[25];[\d;]+|3[0-7]|9[0-7])m$/u;
 const FOREGROUND_OFF = /^\u001B\[(?:0|39)m$/u;
 
 const strip = (frame: string): string => frame.replace(/\u001B\[[0-9;]*m/gu, "");
+
+/** The truecolor SGR Ink emits for a hex foreground, e.g. `ESC[38;2;r;g;bm`. */
+function foregroundSgr(hex: string): string {
+  const rgb = parseHexColor(hex);
+  if (!rgb) throw new Error(`unparseable palette colour: ${hex}`);
+  return `\u001b[38;2;${rgb.r};${rgb.g};${rgb.b}m`;
+}
 
 /** Rendering an Ink tree is slow enough that sizes are worth reusing. */
 const frames = new Map<string, string>();
@@ -82,6 +91,18 @@ describe("OnboardingIntroStep", () => {
     // screen is getting away from.
     expect(colours.size).toBe(Object.keys(STAR_GLYPHS).length);
     expect(colours.has("")).toBe(false);
+  });
+
+  it("paints the wordmark in the text-safe accent, not the fill", () => {
+    // The wordmark is the product's name — text, so it must clear the
+    // ramp text clears. `accentSoft` here was the unreadable ~2:1.
+    const frame = frameAt(100, 30);
+    const row = frame
+      .split("\n")
+      .find((line) => strip(line).includes("\u2584\u2580\u2588 \u2580\u2588\u2580"));
+    if (row === undefined) throw new Error("no frame line carries the wordmark");
+    expect(row).toContain(foregroundSgr(theme.colors.accent));
+    expect(row).not.toContain(foregroundSgr(theme.colors.accentSoft));
   });
 
   it("still draws the mark, the wordmark and the invitation", () => {
