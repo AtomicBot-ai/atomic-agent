@@ -12,10 +12,30 @@ const BAR_WIDTH = 10;
  * it turns the header into a paragraph and pushes the whole app down.
  * Hence forms, and a budget, in the same spirit as `hotkey-hint`'s chip
  * shedding.
+ *
+ * The label-bearing forms price themselves off the label actually
+ * drawn instead of off a fixed guess: custom Hugging Face ids run to
+ * 87 chars (`custom-<repo>-<file>`, `buildCustomModelId`), and fixed
+ * thresholds tuned for `gemma-4-e4b` let those blow the one-row budget.
  */
-const FULL_COLUMNS = 46;
-const BAR_COLUMNS = 28;
 const MINIMAL_COLUMNS = 12;
+/** `"  ⇣ "` — the leading glyph and its breathing room. */
+const PREFIX_COLUMNS = 4;
+/** Worst-case `"  "` + `formatEta` text ("less than a minute left"). */
+const ETA_COLUMNS = 25;
+/** What an unbudgeted caller gets: the old FULL-form allowance. */
+const DEFAULT_BUDGET = 46;
+
+/**
+ * Longest label the chip draws, ellipsis included. Display only — the
+ * id the download actions use is never the truncated string.
+ */
+const MAX_LABEL_COLUMNS = 30;
+
+function capLabel(label: string): string {
+  if (label.length <= MAX_LABEL_COLUMNS) return label;
+  return `${label.slice(0, MAX_LABEL_COLUMNS - 1)}…`;
+}
 
 /**
  * A model pull, reported from the one row that is always on screen.
@@ -28,7 +48,7 @@ const MINIMAL_COLUMNS = 12;
  */
 export function DownloadChip({
   pull,
-  budget = FULL_COLUMNS,
+  budget = DEFAULT_BUDGET,
 }: {
   pull: LocalModelsPullState;
   /** Columns left on the status-bar row. Under 12 the chip is dropped. */
@@ -37,10 +57,16 @@ export function DownloadChip({
   const { etaSeconds } = useTransferRate(pull.transferredBytes, pull.totalBytes);
   const percent = Math.min(100, Math.max(0, Math.round(pull.percent)));
   const filled = Math.round((percent / 100) * BAR_WIDTH);
-  const label = pull.kind === "backend" ? "llama.cpp" : String(pull.modelId);
+  const label = capLabel(pull.kind === "backend" ? "llama.cpp" : String(pull.modelId));
   if (budget < MINIMAL_COLUMNS) return null;
-  const withBar = budget >= BAR_COLUMNS;
-  const withEta = budget >= FULL_COLUMNS && etaSeconds !== null;
+  const percentText = `${percent}%`;
+  // prefix + label + space + bar + space + percent — what the BAR form
+  // costs with THIS label, so a long-but-capped name sheds to the
+  // percent-only form on narrow rows instead of overflowing them.
+  const barColumns =
+    PREFIX_COLUMNS + label.length + 1 + BAR_WIDTH + 1 + percentText.length;
+  const withBar = budget >= barColumns;
+  const withEta = budget >= barColumns + ETA_COLUMNS && etaSeconds !== null;
   return (
     <Text wrap="truncate">
       <Text color={theme.colors.accent}>{"  ⇣ "}</Text>
@@ -51,7 +77,7 @@ export function DownloadChip({
           <Text color={theme.colors.border}>{"░".repeat(BAR_WIDTH - filled)}</Text>
         </>
       ) : null}
-      <Text color={theme.colors.muted}>{withBar ? ` ${percent}%` : `${percent}%`}</Text>
+      <Text color={theme.colors.muted}>{withBar ? ` ${percentText}` : percentText}</Text>
       {withEta ? (
         <Text color={theme.colors.muted}>{`  ${formatEta(etaSeconds)}`}</Text>
       ) : null}
