@@ -36,6 +36,12 @@ import { TuiTelegramOrchestrator } from "./telegram/tui-telegram-orchestrator.js
 import { PrivacyOrchestrator } from "./privacy/privacy-orchestrator.js";
 import type { TuiEventBus } from "./tui-app.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
+import {
+  ChatPullMirror,
+  evaluateLocalTurnGate,
+  readLocalTurnGateFacts,
+  type LocalTurnGateFacts,
+} from "./local-turn-gate.js";
 import { turnsToMessages } from "./turns-to-messages.js";
 import type { SessionPickerEntry, TuiState } from "./tui-state.js";
 
@@ -62,6 +68,13 @@ export interface ChatOrchestratorOptions {
   maxSteps: number;
   /** Initial llama-server base URL for the footer health poller. */
   llamaUrl: string;
+  /**
+   * Facts source for the pre-turn local-model gate. Injectable so tests
+   * stay hermetic — the default reads live config + disk, and a test
+   * that never passes this would silently depend on the developer's own
+   * `~/.atomic-agent` state.
+   */
+  readGateFacts?: () => LocalTurnGateFacts;
 }
 
 /** Multiline text for the chat transcript (`/memory`); feed still gets `runtime_info` lines. */
@@ -151,6 +164,13 @@ export class ChatOrchestrator {
    * re-emitted from the saved session instead of trusting the stream.
    */
   private reattachedMidTurn = false;
+  /**
+   * Live view of the model/backend pull the reducer also tracks
+   * (`localModelsPanel.pull`), fed from the same bus events. The
+   * pre-turn gate reads it to print real percent + bytes instead of a
+   * bare "not downloaded" while the fix is already in flight.
+   */
+  private readonly chatPull = new ChatPullMirror();
   public exitCode = 0;
   public readonly tasks: TasksOrchestrator;
   public readonly skills: SkillsOrchestrator;
@@ -203,6 +223,7 @@ export class ChatOrchestrator {
       }
       this.turnEvents.record(action.sessionId, action.event);
     });
+    this.chatPull.attach(bus);
   }
 
   /**
@@ -881,8 +902,40 @@ export class ChatOrchestrator {
     this.bus.emit({ type: "system_message", text: line, variant: "warn" });
   }
 
-  private async runOneTurn(text: string): Promise<void> {
+  private async runOneTurn(text: string, fromQueue = false): Promise<void> {
     if (!this.session) return;
+    // Pre-turn gate: a managed local model that is not on disk cannot
+    // serve this turn, so fail fast with the real fix instead of
+    // burning the transport retry budget against a daemon that cannot
+    // exist. Judged at turn START (not enqueue) so a message parked
+    // behind a running pull is re-checked when it actually runs. With a
+    // fallback chain of >1 link the turn still runs — failing over is
+    // exactly what the chain is for — and the gate only leaves a notice.
+    const gate = evaluateLocalTurnGate(
+      (this.options.readGateFacts ?? readLocalTurnGateFacts)(),
+      this.chatPull.current,
+    );
+    if (gate.kind === "block") {
+      if (fromQueue) {
+        // A drained queue message has no editor to go back to (the
+        // operator may be mid-draft), so it is dropped — announced with
+        // a preview, like the abort path, never silently.
+        this.bus.emit({
+          type: "turn_gate_blocked",
+          text: `${gate.text}\n  dropped: ${droppedPreview(text)}`,
+        });
+        return;
+      }
+      this.bus.emit({
+        type: "turn_gate_blocked",
+        text: `${gate.text} (message returned to the editor)`,
+      });
+      // Same rescue as the queue-full refusal: the optimistic submit
+      // already cleared the editor, so hand the text back.
+      this.bus.emit({ type: "input_changed", value: text });
+      return;
+    }
+    if (gate.kind === "notice") this.notify(gate.text);
     // The operator can switch threads while this runs; every
     // this-session decision below re-checks against the id the turn
     // started on rather than trusting the live pointer.
@@ -989,7 +1042,7 @@ export class ChatOrchestrator {
     // turn it was parked behind.
     this.emitQueue();
     if (next !== undefined && !this.quitting) {
-      void this.runOneTurn(next);
+      void this.runOneTurn(next, true);
     }
   }
 

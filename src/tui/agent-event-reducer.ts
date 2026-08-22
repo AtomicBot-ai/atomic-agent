@@ -15,6 +15,7 @@ import {
   beginStreamingToolCall,
   finalizeStreamingToolCall,
   finishRun,
+  finishRunWithoutHistory,
   finishTurn,
   pushRing,
   startNewRun,
@@ -22,6 +23,7 @@ import {
 } from "./reducer-helpers.js";
 import { reduceUiAction } from "./reduce-ui-actions.js";
 import { reduceComposerSwitchAction } from "./composer-switch/composer-switch-reducer.js";
+import { selectComposerBackend } from "./composer-switch/composer-switch-rows.js";
 import { reduceLocalModelsAction } from "./local-models/local-models-reducer.js";
 import { reduceTasksAction } from "./tasks/tasks-reducer.js";
 import { reduceSkillsAction } from "./skills/skills-reducer.js";
@@ -229,6 +231,29 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
     }
     case "message_submitted":
       return startNewRun(state);
+    case "turn_gate_blocked": {
+      const withMessage = appendChatMessage(
+        appendFeed(state, {
+          kind: "runtime_info",
+          stepIndex: null,
+          line: `» blocked: ${action.text.split("\n")[0] ?? action.text}`,
+          color: "yellow",
+        }),
+        { role: "system", text: action.text, variant: "warn" },
+      );
+      // A drained queue message is gated after the previous turn already
+      // returned the app to idle — nothing to finish then. The fresh
+      // submit path arrives here `running` (from `message_submitted`)
+      // with no turn behind it, so the idle reset is what hands the
+      // composer back — WITHOUT a run-history entry: the blocked text
+      // never reached `state.messages`, so an entry would carry the
+      // previous turn's message, and a refused submit is not a run.
+      if (state.status !== "running") return withMessage;
+      return finishRunWithoutHistory(
+        withMessage,
+        "blocked: local model not ready",
+      );
+    }
     case "quit_requested":
       return { ...state, status: "quitting", aborting: true };
     case "loaded_skill": {
@@ -439,6 +464,15 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       const chatError = formatAgentErrorForChat(
         event.category,
         event.error.message,
+        {
+          // The same "is the chat route a llama-server" answer the
+          // composer's backend control renders — KIND-based, so a
+          // llama-server entry under a custom id still earns the hint;
+          // only a `cloud` route must not (the hint names the llama
+          // URL). Rows land at TUI start via the providers refresh.
+          activeProviderIsLocal: selectComposerBackend(state) !== "cloud",
+          llamaUrl: state.session.llamaUrl,
+        },
       );
       return finishRun(
         appendChatMessage(

@@ -63,6 +63,7 @@ import {
   persistMemoryEmbeddingsEnabled,
 } from "../persist-embedding-hybrid-recall.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
+import { ChatPullMirror, downloadProgressFor } from "../local-turn-gate.js";
 import type { TuiEventBus } from "../tui-app.js";
 
 /**
@@ -153,10 +154,20 @@ export class LocalModelsOrchestrator {
    */
   private cachedNvidiaVramMiB: number | null | undefined = undefined;
 
+  /**
+   * Live view of the non-embedding pull this orchestrator itself emits,
+   * mirrored off the bus (one tap covers every emit site — GGUF, mmproj,
+   * backend, HF custom). Lets the "not downloaded" errors embed the real
+   * download progress instead of pretending nothing is happening.
+   */
+  private readonly chatPull = new ChatPullMirror();
+
   constructor(
     private readonly bus: TuiEventBus & { emit(action: unknown): void },
     private readonly hooks?: LocalModelsOrchestratorHooks,
-  ) {}
+  ) {
+    this.chatPull.attach(bus);
+  }
 
   startAutoRefresh(): void {
     if (this.timer) return;
@@ -896,9 +907,14 @@ export class LocalModelsOrchestrator {
       justPulledBackend = true;
     }
     if (!isModelDownloaded(dataDir, def)) {
+      // With a pull already in flight the honest message is the live
+      // progress, not a bare "cannot start" that reads like a dead end.
+      const progress = downloadProgressFor(this.chatPull.current, def.id);
       this.bus.emit({
         type: "runtime_info",
-        line: `local-llm: model ${def.name} not downloaded — cannot start`,
+        line: `local-llm: model ${def.name} not downloaded — cannot start (${
+          progress ?? "press Enter on it to download"
+        })`,
       });
       return false;
     }

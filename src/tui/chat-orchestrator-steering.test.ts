@@ -10,7 +10,17 @@ import {
   createEmptySessionState,
   type SessionState,
 } from "../session/session-state.js";
+import type { LocalTurnGateFacts } from "./local-turn-gate.js";
 import type { TuiAction } from "./tui-action.js";
+
+/** Hermetic gate facts: never read the developer's real config/disk. */
+const cloudGateFacts = (): LocalTurnGateFacts => ({
+  activeProviderIsLocal: false,
+  managedMode: false,
+  modelId: null,
+  modelDownloaded: true,
+  fallbackChainLength: 1,
+});
 
 /**
  * The TUI's half of the mid-turn steering contract (AGENTS.md
@@ -70,7 +80,7 @@ function makeHarness(): Harness {
 
   const chat = new ChatOrchestrator(runtime, bus, {
     maxSteps: 4,
-    llamaUrl: "http://127.0.0.1:8080",
+    llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
   });
 
   return {
@@ -283,7 +293,7 @@ function makeGapHarness(): GapHarness {
 
   const chat = new ChatOrchestrator(runtime, bus, {
     maxSteps: 4,
-    llamaUrl: "http://127.0.0.1:8080",
+    llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
   });
 
   return {

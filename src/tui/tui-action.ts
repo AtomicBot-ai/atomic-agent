@@ -108,6 +108,15 @@ export type TuiAction =
    * falls back to the queue is not rendered twice.
    */
   | { type: "message_steered"; text: string }
+  /**
+   * The pre-turn local-model gate refused to start a turn (managed
+   * local provider, model not on disk, no fallback link to save it).
+   * Carries the full operator-facing explanation. The reducer prints a
+   * warn chat message + feed line and — when the submit path already
+   * flipped the app to `running` — returns it to `idle`, because no
+   * agent events will ever arrive for a turn that never started.
+   */
+  | { type: "turn_gate_blocked"; text: string }
   | { type: "quit_requested" }
   | {
       type: "loaded_skill";

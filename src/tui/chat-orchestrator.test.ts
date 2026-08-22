@@ -4,7 +4,17 @@ import { createEmptySessionState } from "../session/session-state.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { ChatOrchestrator, MAX_QUEUED_MESSAGES } from "./chat-orchestrator.js";
 import { makeTuiEventBus } from "./make-event-bus.js";
+import type { LocalTurnGateFacts } from "./local-turn-gate.js";
 import type { TuiAction } from "./tui-action.js";
+
+/** Hermetic gate facts: never read the developer's real config/disk. */
+const cloudGateFacts = (): LocalTurnGateFacts => ({
+  activeProviderIsLocal: false,
+  managedMode: false,
+  modelId: null,
+  modelDownloaded: true,
+  fallbackChainLength: 1,
+});
 
 interface Deferred {
   promise: Promise<{ session: ReturnType<typeof session>; reason: string; stepCount: number }>;
@@ -64,7 +74,7 @@ describe("ChatOrchestrator message queue", () => {
     bus.subscribe((a) => actions.push(a));
     const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
       maxSteps: 5,
-      llamaUrl: "http://127.0.0.1:8080",
+      llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
     });
 
     orchestrator.sendMessage("first");
@@ -91,7 +101,7 @@ describe("ChatOrchestrator message queue", () => {
     bus.subscribe((a) => actions.push(a));
     const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
       maxSteps: 5,
-      llamaUrl: "http://127.0.0.1:8080",
+      llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
     });
 
     orchestrator.sendMessage("running");
@@ -118,7 +128,7 @@ describe("ChatOrchestrator message queue", () => {
     const orchestrator = new ChatOrchestrator(
       stubRuntime(() => new Promise(() => undefined)),
       bus,
-      { maxSteps: 5, llamaUrl: "http://127.0.0.1:8080" },
+      { maxSteps: 5, llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts },
     );
     orchestrator.clearQueue();
     // The idle boundary re-syncs an (empty) queue unconditionally; what
@@ -139,7 +149,7 @@ describe("ChatOrchestrator abort", () => {
     bus.subscribe((a) => actions.push(a));
     const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
       maxSteps: 5,
-      llamaUrl: "http://127.0.0.1:8080",
+      llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
     });
 
     orchestrator.sendMessage("running");
@@ -172,7 +182,7 @@ describe("ChatOrchestrator abort", () => {
     bus.subscribe((a) => actions.push(a));
     const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
       maxSteps: 5,
-      llamaUrl: "http://127.0.0.1:8080",
+      llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
     });
 
     orchestrator.sendMessage("running");
@@ -201,7 +211,7 @@ describe("ChatOrchestrator queue bound", () => {
     bus.subscribe((a) => actions.push(a));
     const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
       maxSteps: 5,
-      llamaUrl: "http://127.0.0.1:8080",
+      llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
     });
 
     orchestrator.sendMessage("running");
@@ -236,7 +246,7 @@ describe("ChatOrchestrator queue bound", () => {
     bus.subscribe((a) => actions.push(a));
     const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
       maxSteps: 5,
-      llamaUrl: "http://127.0.0.1:8080",
+      llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
     });
 
     orchestrator.sendMessage("running");
@@ -261,7 +271,7 @@ describe("ChatOrchestrator queue bound", () => {
     bus.subscribe((a) => actions.push(a));
     const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
       maxSteps: 5,
-      llamaUrl: "http://127.0.0.1:8080",
+      llamaUrl: "http://127.0.0.1:8080", readGateFacts: cloudGateFacts,
     });
 
     orchestrator.sendMessage("running");
@@ -280,6 +290,128 @@ describe("ChatOrchestrator queue bound", () => {
     expect(full.at(-1)).toBe(
       `queue: full at ${MAX_QUEUED_MESSAGES} — dropped 1 message (returned to the editor); Esc stops the run, /queue clear empties it`,
     );
+  });
+});
+
+describe("ChatOrchestrator pre-turn local gate", () => {
+  const blockedFacts = (): LocalTurnGateFacts => ({
+    activeProviderIsLocal: true,
+    managedMode: true,
+    modelId: "qwen-3.5-4b",
+    modelDownloaded: false,
+    fallbackChainLength: 1,
+  });
+
+  function gateBlocks(actions: readonly TuiAction[]): readonly string[] {
+    return actions
+      .filter((a): a is Extract<TuiAction, { type: "turn_gate_blocked" }> =>
+        a.type === "turn_gate_blocked",
+      )
+      .map((a) => a.text);
+  }
+
+  it("blocks a fresh submit and returns the message to the editor", () => {
+    const runTurn = vi.fn(() => Promise.resolve());
+    const bus = makeTuiEventBus();
+    const actions: TuiAction[] = [];
+    bus.subscribe((a) => actions.push(a));
+    const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
+      maxSteps: 5,
+      llamaUrl: "http://127.0.0.1:8080",
+      readGateFacts: blockedFacts,
+    });
+
+    orchestrator.sendMessage("hello");
+
+    expect(runTurn).not.toHaveBeenCalled();
+    const blocks = gateBlocks(actions);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toContain("qwen-3.5-4b");
+    expect(blocks[0]).toContain("(message returned to the editor)");
+    const restored = actions.find((a) => a.type === "input_changed");
+    expect(restored).toEqual({ type: "input_changed", value: "hello" });
+  });
+
+  it("gates at drain time, not enqueue: a message queued mid-run is judged when it starts", async () => {
+    // Model fine while the first turn runs; gone by the time the queue drains
+    // (e.g. the operator switched the managed model mid-turn).
+    let downloaded = true;
+    const first = deferred("s1");
+    const runTurn = vi.fn(() => first.promise);
+    const bus = makeTuiEventBus();
+    const actions: TuiAction[] = [];
+    bus.subscribe((a) => actions.push(a));
+    const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
+      maxSteps: 5,
+      llamaUrl: "http://127.0.0.1:8080",
+      readGateFacts: () => ({
+        ...blockedFacts(),
+        modelDownloaded: downloaded,
+      }),
+    });
+
+    orchestrator.sendMessage("first");
+    orchestrator.sendMessage("second");
+    // Enqueue itself is never gated — the message parks normally.
+    expect(gateBlocks(actions)).toHaveLength(0);
+    expect(queueSnapshots(actions).at(-1)).toEqual(["second"]);
+
+    downloaded = false;
+    first.resolve();
+    await first.promise;
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Only the first message ever reached the runtime; the drained one
+    // was blocked at ITS turn start and dropped with a preview.
+    expect(runTurn).toHaveBeenCalledTimes(1);
+    const blocks = gateBlocks(actions);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toContain("dropped: second");
+  });
+
+  it("with a fallback chain (>1 link) it notices and still runs the turn", async () => {
+    const first = deferred("s1");
+    const runTurn = vi.fn(() => first.promise);
+    const bus = makeTuiEventBus();
+    const actions: TuiAction[] = [];
+    bus.subscribe((a) => actions.push(a));
+    const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
+      maxSteps: 5,
+      llamaUrl: "http://127.0.0.1:8080",
+      readGateFacts: () => ({ ...blockedFacts(), fallbackChainLength: 2 }),
+    });
+
+    orchestrator.sendMessage("hello");
+
+    expect(runTurn).toHaveBeenCalledTimes(1);
+    expect(gateBlocks(actions)).toHaveLength(0);
+    const notice = noticeLines(actions).find((l) =>
+      l.includes("fallback chain"),
+    );
+    expect(notice).toContain("qwen-3.5-4b");
+    first.resolve();
+    await first.promise;
+  });
+
+  it("cloud turns never see the gate", () => {
+    const runTurn = vi.fn(() => Promise.resolve());
+    const bus = makeTuiEventBus();
+    const actions: TuiAction[] = [];
+    bus.subscribe((a) => actions.push(a));
+    const orchestrator = new ChatOrchestrator(stubRuntime(runTurn), bus, {
+      maxSteps: 5,
+      llamaUrl: "http://127.0.0.1:8080",
+      readGateFacts: () => ({
+        ...blockedFacts(),
+        activeProviderIsLocal: false,
+      }),
+    });
+
+    orchestrator.sendMessage("hello");
+
+    expect(runTurn).toHaveBeenCalledTimes(1);
+    expect(gateBlocks(actions)).toHaveLength(0);
   });
 });
 
