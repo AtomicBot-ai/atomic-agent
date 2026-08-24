@@ -276,7 +276,7 @@ describe("TuiApp (smoke)", () => {
     unmount();
   });
 
-  it("renders the LLM health badge + active model label in the prompt meta-row when /props reports it", async () => {
+  it("renders the health dot + active model label in the prompt meta-row when /props reports it", async () => {
     const bus = makeTuiEventBus();
     const { lastFrame, unmount } = render(
       <TuiApp session={SESSION} bus={bus} callbacks={noopCallbacks()} />,
@@ -295,7 +295,12 @@ describe("TuiApp (smoke)", () => {
     });
     await new Promise((r) => setTimeout(r, 10));
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("healthy");
+    // The probe's word used to be spelled out next to the backend. It
+    // reported `down` against working daemons often enough to be noise,
+    // so the coloured dot is the whole readout now — see
+    // `composer-meta-controls.tsx`.
+    expect(text).toContain("●");
+    expect(text).not.toContain("healthy");
     expect(text).toContain("Qwen3-30B-A3B-Instruct");
     expect(text).not.toContain(".gguf");
     unmount();

@@ -66,7 +66,7 @@ describe("the composer's route line", () => {
     expect(out).not.toContain(ink(theme.colors.accentSoft));
   });
 
-  it("pairs the dot with the probe's word on a local backend", () => {
+  it("shows the dot alone on a local backend — no probe word", () => {
     const { lastFrame, unmount } = render(
       <Box>
         <ComposerMetaControls
@@ -78,9 +78,12 @@ describe("the composer's route line", () => {
     );
     const out = lastFrame() ?? "";
     unmount();
-    // The old health pill said "○ down"; the control keeps that word so
-    // colour is never the only carrier of the status.
-    expect(plain(out)).toContain("○ local down");
+    // The row used to spell the probe out (`○ local down`). It reported
+    // `down` against working daemons often enough to be noise, so the
+    // dot is all that is left of it here — the Models pane still states
+    // the probe in full.
+    expect(plain(out)).toContain("○ local");
+    expect(plain(out)).not.toContain("down");
     // Rail-aware grey: `muted` was chosen against the normal ground and
     // reads at ~2.5:1 on the rail.
     expect(out).toContain(ink(theme.colors.railMuted));
@@ -123,42 +126,58 @@ describe("the composer's route line", () => {
   });
 });
 
-describe("the managed-local status control", () => {
-  it("states the daemon word and its RAM after the chosen model", () => {
-    const { lastFrame, unmount } = render(
-      <Box>
-        <ComposerMetaControls
-          backend={{ kind: "local", status: "healthy" }}
-          provider={null}
-          model="qwen-3.5-4b"
-          localStatus={{ word: "healthy", ramLabel: "4.4 GB" }}
-        />
-      </Box>,
-    );
-    const out = plain(lastFrame() ?? "");
-    unmount();
-    expect(out).toContain("qwen-3.5-4b · healthy · 4.4 GB");
-    // The status word moved to the third control; repeating it right
-    // after the backend label would state the same fact twice.
-    expect(out).not.toContain("local healthy");
-    // The dot still rides on the backend control.
-    expect(out).toContain("● local");
-  });
-
-  it("drops the RAM segment when there is nothing to measure", () => {
+describe("the model slot's download call to action", () => {
+  it("replaces the model with `download model` when nothing is on disk", () => {
     const { lastFrame, unmount } = render(
       <Box>
         <ComposerMetaControls
           backend={{ kind: "local", status: "unreachable" }}
           provider={null}
           model="qwen-3.5-4b"
-          localStatus={{ word: "down", ramLabel: null }}
+          needsModelDownload
         />
       </Box>,
     );
     const out = plain(lastFrame() ?? "");
     unmount();
-    expect(out).toContain("qwen-3.5-4b · down");
-    expect(out).not.toContain("GB");
+    expect(out).toContain("○ local · download model");
+    // The catalog id is what the config *selected*, not what exists —
+    // showing it next to an empty models directory is the bug.
+    expect(out).not.toContain("qwen-3.5-4b");
+  });
+
+  it("draws the call to action in warn, not the route's own tone", () => {
+    const { lastFrame, unmount } = render(
+      <Box>
+        <ComposerMetaControls
+          backend={{ kind: "local", status: "unknown" }}
+          provider={null}
+          model={null}
+          needsModelDownload
+        />
+      </Box>,
+    );
+    const out = lastFrame() ?? "";
+    unmount();
+    expect(out).toContain(`${ink(theme.colors.warnStrong)}download model`);
+    expect(out).not.toContain(`${ink(theme.colors.railForeground)}download model`);
+  });
+
+  it("still renders the route when the CTA is the only thing to say", () => {
+    const { lastFrame, unmount } = render(
+      <Box>
+        <ComposerMetaControls
+          backend={null}
+          provider={null}
+          model={null}
+          needsModelDownload
+        />
+      </Box>,
+    );
+    const out = plain(lastFrame() ?? "");
+    unmount();
+    // No backend and no provider means no leading separator either — a
+    // row starting in " · " reads as a dropped label.
+    expect(out.trim()).toBe("download model");
   });
 });

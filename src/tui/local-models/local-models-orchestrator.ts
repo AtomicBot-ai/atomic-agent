@@ -1,7 +1,7 @@
 import { totalmem } from "node:os";
 
 import { getConfig, resetConfigCache } from "../../config/index.js";
-import { removeCustomModel } from "../../config/custom-models-store.js";
+import { addCustomModel, removeCustomModel } from "../../config/custom-models-store.js";
 import { hasOtherLiveSessions } from "../../local-llm/session-registry.js";
 import {
   checkForBackendUpdate,
@@ -23,6 +23,7 @@ import {
   isKnownLocalModelId,
   isMmprojDownloaded,
   isModelDownloaded,
+  buildCustomModelDef,
   listLocalModels,
   listVulkanDevices,
   maybeAutoUpdateBackend,
@@ -38,6 +39,7 @@ import {
   resolveManagedDevice,
   resolveMmprojFilePath,
   resolvePlatformAsset,
+  resolveHuggingFaceGgufChoices,
   resolveServerBinPath,
   startChatAndEmbeddingDaemons,
   startEmbeddingDaemon,
@@ -48,6 +50,7 @@ import {
   type EmbeddingModelDef,
   type EmbeddingModelId,
   type GpuDevice,
+  type HuggingFaceRepoChoices,
   type LocalModelDef,
   type LocalModelId,
 } from "../../local-llm/index.js";
@@ -161,6 +164,15 @@ export class LocalModelsOrchestrator {
    * download progress instead of pretending nothing is happening.
    */
   private readonly chatPull = new ChatPullMirror();
+  /**
+   * The Hugging Face lookup currently in flight, if any. Cancelling
+   * replaces the ref, so a response that lands afterwards finds itself
+   * stale and dispatches nothing — the identity comparison is what
+   * makes Escape trustworthy; the abort merely frees the socket.
+   * Mirrors `use-onboarding-huggingface.ts`, which does the same for
+   * the first-run flow.
+   */
+  private hfLookup: AbortController | null = null;
 
   constructor(
     private readonly bus: TuiEventBus & { emit(action: unknown): void },
@@ -584,6 +596,83 @@ export class LocalModelsOrchestrator {
         });
       },
     });
+  }
+
+/* ------------------------------------------------------------------ *
+   * Add a model from Hugging Face — the Models pane's own branch of the
+   * flow the first-run screen already had. Same resolver, same catalog
+   * write, same pull; what is new is that it is reachable after
+   * onboarding, when adding a second model is the actual task.
+   * ------------------------------------------------------------------ */
+
+  /**
+   * Ask Hugging Face what GGUFs the reference names. Every failure — a
+   * typo, a gated repo, a repo holding no GGUF at all — comes back as a
+   * sentence and is shown on the editor that asked for the reference.
+   */
+  async resolveHuggingFaceReference(raw: string): Promise<void> {
+    const controller = new AbortController();
+    this.hfLookup?.abort();
+    this.hfLookup = controller;
+    this.bus.emit({ type: "local_models_hf_lookup_started" });
+    try {
+      const repo = await resolveHuggingFaceGgufChoices(raw, {
+        signal: controller.signal,
+      });
+      if (this.hfLookup !== controller) return;
+      this.hfLookup = null;
+      this.bus.emit({ type: "local_models_hf_repo_resolved", repo });
+    } catch (err) {
+      if (this.hfLookup !== controller) return;
+      this.hfLookup = null;
+      this.bus.emit({
+        type: "local_models_hf_lookup_failed",
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /** Escape while the lookup runs: drop the socket, keep what was typed. */
+  cancelHuggingFaceLookup(): void {
+    if (!this.hfLookup) return;
+    this.hfLookup.abort();
+    this.hfLookup = null;
+    this.bus.emit({ type: "local_models_hf_lookup_cancelled" });
+  }
+
+  /**
+   * Record the chosen file as a catalog entry, then hand it to the very
+   * pull the curated rows use — which is what lands an added model on
+   * the ordinary download screen rather than a second one built for it.
+   */
+  async addHuggingFaceChoice(
+    repo: HuggingFaceRepoChoices,
+    index: number,
+  ): Promise<void> {
+    const choice = repo.choices[index];
+    if (!choice) return;
+    let id: LocalModelId;
+    try {
+      const def = buildCustomModelDef({
+        repoId: repo.repoId,
+        revision: repo.revision,
+        file: { path: choice.path, sizeBytes: choice.sizeBytes },
+        mmproj: repo.mmproj,
+      });
+      // Written before the pull starts: `pullModel` resolves the id
+      // through the catalog registry, and the registry is loaded from
+      // the file this call writes.
+      addCustomModel(def);
+      id = def.id;
+    } catch (err) {
+      this.bus.emit({
+        type: "local_models_hf_lookup_failed",
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+    this.bus.emit({ type: "local_models_hf_closed" });
+    await this.pullModel(id);
   }
 
   async pullBackend(): Promise<void> {

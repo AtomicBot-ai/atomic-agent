@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import {
+  resetTerminalRestoreForTests,
+  restoreTerminalNow,
+} from "../terminal-restore.js";
 import { enableMouseTracking } from "./mouse-tracking.js";
 
 interface FakeStdout {
@@ -80,14 +84,31 @@ describe("enableMouseTracking", () => {
     expect(stdout.writes).toEqual([]);
   });
 
-  it("detaches its exit hook when disabled explicitly", () => {
-    const before = process.listenerCount("exit");
+  it("leaves reporting off when the process dies without a teardown", () => {
+    // The net in `terminal-restore.ts` is what a crash reaches; the
+    // assertion is on the sequences the terminal ends up with, not on
+    // which process event carried them.
+    resetTerminalRestoreForTests();
+    const stdout = makeStdout(true);
+    enableMouseTracking({ stdout: stdout as unknown as NodeJS.WriteStream });
+    restoreTerminalNow();
+    expect(stdout.writes).toEqual([
+      ENABLE_TRACKING,
+      ENABLE_SGR,
+      DISABLE_SGR,
+      DISABLE_TRACKING,
+    ]);
+  });
+
+  it("takes itself out of the net when disabled explicitly", () => {
+    resetTerminalRestoreForTests();
     const stdout = makeStdout(true);
     const controller = enableMouseTracking({
       stdout: stdout as unknown as NodeJS.WriteStream,
     });
-    expect(process.listenerCount("exit")).toBe(before + 1);
     controller.disable();
-    expect(process.listenerCount("exit")).toBe(before);
+    const afterDisable = stdout.writes.length;
+    restoreTerminalNow();
+    expect(stdout.writes).toHaveLength(afterDisable);
   });
 });

@@ -1,11 +1,40 @@
 import type {
   EmbeddingModelDef,
   EmbeddingModelId,
+  HuggingFaceRepoChoices,
   LocalModelDef,
   LocalModelId,
 } from "../../local-llm/index.js";
 
-export type LocalModelsPanelMode = "list" | "detail" | "backendUpdate" | "pullProgress";
+export type LocalModelsPanelMode =
+  | "list"
+  | "detail"
+  | "backendUpdate"
+  | "pullProgress"
+  /** Naming a Hugging Face repo — the shared reference editor. */
+  | "hfRef"
+  /** Choosing which GGUF from the repo just resolved. */
+  | "hfPick";
+
+/**
+ * The Models pane's "add a model from Hugging Face" branch, in the same
+ * shape the first-run flow keeps on its own slice. Two flows, one set of
+ * screens (`hf-reference-editor.tsx`, `hf-pick-list.tsx`) — what differs
+ * is only where the state lives and which key table Enter goes through.
+ *
+ * `repo` is the resolved listing; it survives an Escape back to the
+ * reference editor so re-opening the pick step costs no second request.
+ */
+export interface LocalModelsHfState {
+  /** What the operator typed: an id, a repo URL, or a link to one file. */
+  reference: string;
+  /** A lookup is in flight — the editor goes read-only, Esc cancels. */
+  busy: boolean;
+  /** Whatever went wrong, shown on the screen that asked the question. */
+  error: string | null;
+  repo: HuggingFaceRepoChoices | null;
+  cursor: number;
+}
 
 /**
  * Memory-v2 phase 1B (revised). The panel renders chat and embedding
@@ -167,6 +196,8 @@ export interface LocalModelsPanelState {
    *  - `name`      — friendly label for the modal.
    *  - `sizeLabel` — pre-formatted size hint (`"~84 MB"`) for the modal.
    */
+  /** "Add a model from Hugging Face" — see {@link LocalModelsHfState}. */
+  hf: LocalModelsHfState;
   embeddingOnboardingPrompt: {
     modelId: EmbeddingModelId;
     name: string;
@@ -252,8 +283,13 @@ export function createInitialLocalModelsPanelState(
     embeddingRows: [],
     embeddingDaemon: null,
     embeddingRemoveConfirmId: null,
+    hf: createInitialLocalModelsHfState(),
     embeddingOnboardingPrompt: null,
   };
+}
+
+export function createInitialLocalModelsHfState(): LocalModelsHfState {
+  return { reference: "", busy: false, error: null, repo: null, cursor: 0 };
 }
 
 export type RamFit = "ok" | "tight" | "insufficient";

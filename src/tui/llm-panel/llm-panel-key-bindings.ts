@@ -10,6 +10,7 @@ import { selectCloudModelSection } from "./llm-panel-row-builders.js";
 import { clampLlmCursor, selectLlmRowAt } from "./llm-panel-selectors.js";
 import { cursorFieldFor } from "./llm-panel-state.js";
 import { handleFallbackPaneKey } from "./fallback/fallback-key-bindings.js";
+import { handleLocalModelsHfKey } from "../local-models/local-models-hf-keys.js";
 import {
   activateProviderEmbedding,
   openAddProvider,
@@ -35,6 +36,12 @@ export function handleLlmPanelKey(
 
   const modalHandled = handleLlmModalKey(input, key, ctx);
   if (modalHandled !== null) return modalHandled;
+
+  // "Add a model from Hugging Face" owns the surface while it is open —
+  // it puts a real text editor on this pane, and every letter hotkey
+  // below would otherwise fire on the repo name being typed.
+  const hfHandled = handleLocalModelsHfKey(input, key, ctx);
+  if (hfHandled !== null) return hfHandled;
 
   // The Fallback pane owns its own edit keys (move/add/remove/toggle) and
   // its add-link picker. It runs before the shared letter hotkeys so
@@ -112,6 +119,15 @@ export function handleLlmPanelKey(
   }
   if (input === "s") {
     triggerDaemonAction(state, callbacks);
+    return true;
+  }
+  // `a` — add a model the curated catalog does not carry. Local pane
+  // only: it writes a local GGUF catalog entry, which means nothing
+  // next to a cloud provider's model list. From the other panes it
+  // first flips to Local, the same pattern `n`/`c` use for Cloud.
+  if (input === "a") {
+    dispatch({ type: "llm_mode_set", mode: "local" });
+    dispatch({ type: "local_models_hf_opened" });
     return true;
   }
   if (input === "B") {

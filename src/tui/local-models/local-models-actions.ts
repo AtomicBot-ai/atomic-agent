@@ -1,5 +1,6 @@
 import type {
   EmbeddingModelId,
+  HuggingFaceRepoChoices,
   LocalModelId,
 } from "../../local-llm/index.js";
 import type {
@@ -73,6 +74,18 @@ export type LocalModelsAction =
   | { type: "local_models_remove_confirm_opened"; id: LocalModelId }
   | { type: "local_models_remove_confirm_closed" }
   | { type: "local_models_refresh_started" }
+  /* --- "add a model from Hugging Face", the Models pane's own branch --- */
+  /** Open the reference editor. Keeps whatever was typed last time. */
+  | { type: "local_models_hf_opened" }
+  /** Back to the model list, lookup cancelled and slice reset. */
+  | { type: "local_models_hf_closed" }
+  | { type: "local_models_hf_reference_changed"; value: string }
+  | { type: "local_models_hf_lookup_started" }
+  | { type: "local_models_hf_lookup_failed"; error: string }
+  | { type: "local_models_hf_lookup_cancelled" }
+  | { type: "local_models_hf_repo_resolved"; repo: HuggingFaceRepoChoices }
+  | { type: "local_models_hf_cursor_set"; cursor: number }
+  | { type: "local_models_hf_cursor_moved"; delta: number }
   | { type: "local_models_daemon_phase_set"; phase: DaemonPhase }
   | { type: "local_models_daemon_error_set"; message: string | null }
   | {
