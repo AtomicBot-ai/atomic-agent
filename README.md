@@ -597,6 +597,44 @@ Behavior:
 **Limitation — MCP tools:** the schema coercion supports a fixed JSON-Schema subset and rejects unknown keywords such as `$ref`. Atomic's built-in tools are fine, but MCP tools that ship a draft-07 `inputSchema` with `$ref` (or other unsupported keywords) will fail coercion and remain prose. MCP + tagged Qwen is therefore unsupported for now.
 </details>
 
+<details>
+<summary><b>Windows: proxy for cloud providers</b> (cmd / PowerShell)</summary>
+
+Node's built-in `fetch` — which every cloud LLM/search provider uses — ignores
+`HTTP_PROXY` / `HTTPS_PROXY` unless the process is started with the
+`--use-env-proxy` flag. On Windows set that flag via `NODE_OPTIONS` in the same
+shell you launch Atomic from:
+
+**cmd:**
+```bat
+set NODE_OPTIONS=--use-env-proxy
+set HTTP_PROXY=http://user:pass@proxy.example.com:8080
+set HTTPS_PROXY=http://user:pass@proxy.example.com:8080
+set NO_PROXY=localhost,127.0.0.1,::1
+atomic-agent run
+```
+
+**PowerShell:**
+```powershell
+$env:NODE_OPTIONS = "--use-env-proxy"
+$env:HTTP_PROXY  = "http://user:pass@proxy.example.com:8080"
+$env:HTTPS_PROXY = "http://user:pass@proxy.example.com:8080"
+$env:NO_PROXY    = "localhost,127.0.0.1,::1"
+atomic-agent run
+```
+
+Notes:
+
+- Only **HTTP/HTTPS** proxies are supported. Node's `fetch` does not understand
+  a `socks5://` proxy URL and will fail with `fetch failed`.
+- `NO_PROXY` keeps local endpoints (e.g. a local `llama-server` on
+  `127.0.0.1:8080`) off the proxy.
+- The variables must be set in the same shell that launches the agent; they do
+  not persist between sessions.
+- Web search tools shell out to `curl`, which reads the same `HTTP_PROXY` /
+  `HTTPS_PROXY` / `NO_PROXY` environment variables on its own.
+</details>
+
 ## Development
 
 ```bash
