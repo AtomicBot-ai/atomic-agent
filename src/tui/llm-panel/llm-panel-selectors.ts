@@ -120,8 +120,7 @@ export interface LlmActiveRouteSummary {
  *
  * On the managed-local route `provider` is `null`: "llama.cpp" named
  * the runtime the backend word `local` already names, so the row spends
- * that control on the chosen model instead, and the daemon-status
- * control (`selectComposerLocalStatus`) takes the third slot.
+ * that control on the chosen model instead.
  */
 export interface PromptLlmMeta {
   model: string | null;

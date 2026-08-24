@@ -2,9 +2,12 @@
  * Mouse reporting mode manager — the terminal-side half of TUI mouse
  * support. Deliberately shaped like `alt-screen.ts`: a single
  * `enable → controller.disable()` pair, silent on non-TTY streams, and
- * a `process.on("exit")` safety net so a crash never leaves the host
- * terminal in reporting mode (where every click would print garbage
- * into the user's shell).
+ * a place in the shared `terminal-restore.ts` net so a crash never
+ * leaves the host terminal in reporting mode (where every click would
+ * print garbage into the user's shell). The net registers mouse
+ * reporting *after* the alt screen and unwinds LIFO, so reporting stops
+ * first and the terminal is never briefly on the normal screen while
+ * still reporting clicks.
  *
  * We request **1002 (button-event tracking)** plus **1006 (SGR
  * encoding)**. 1002 is 1000 plus motion reports *while a button is
@@ -24,6 +27,8 @@
  * instantly, without restarting the TUI.
  */
 import type { Writable } from "node:stream";
+
+import { registerTerminalRestore } from "../terminal-restore.js";
 
 /** Button-event tracking: press, release, and motion while held. */
 const ENABLE_BUTTON_TRACKING = "\u001B[?1002h";
@@ -66,11 +71,10 @@ export function enableMouseTracking(
   };
   // Last-chance cleanup. Without it an uncaught exception leaves the
   // terminal reporting clicks as escape sequences into the shell.
-  const onExit = (): void => disable();
-  process.once("exit", onExit);
+  const unregister = registerTerminalRestore(disable);
   return {
     disable: () => {
-      process.off("exit", onExit);
+      unregister();
       disable();
     },
   };

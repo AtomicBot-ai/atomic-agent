@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
+import { LocalModelsHuggingFaceBranch } from "./local-models-hf-branch.js";
 import { handleLocalModelsTabKey } from "../local-models/local-models-key-bindings.js";
 import { theme } from "../theme/theme.js";
 import { computeRowWindow } from "../row-window.js";
@@ -236,6 +237,9 @@ export function LocalModelsPanel({
       </Box>
     );
   }
+  if (panel.mode === "hfRef" || panel.mode === "hfPick") {
+    return <LocalModelsHuggingFaceBranch panel={panel} />;
+  }
   if (panel.mode === "detail") {
     const ref = resolveRowAt(panel);
     // Detail view is chat-only — embedding rows are intentionally
@@ -441,7 +445,7 @@ export function LocalModelsPanel({
             </Text>
           ) : null}
           <Text color={theme.colors.muted}>
-            j/k move · Enter pull/activate (embedding: *row + Enter starts server) · g gguf · i info · d remove · s chat+embedding · E embeddings on/off · G gpu · U auto-update · B · r · L
+            j/k move · Enter pull/activate (embedding: *row + Enter starts server) · a add from hugging face · g gguf · i info · d remove · s chat+embedding · E embeddings on/off · G gpu · U auto-update · B · r · L
           </Text>
         </Box>
       ) : (
@@ -452,7 +456,7 @@ export function LocalModelsPanel({
           ) : null}
           {renderDaemonLine(panel)}
           <Text color={theme.colors.muted}>
-            j/k · Enter · d remove · s start · r
+            j/k · Enter · a add · d remove · s start · r
           </Text>
         </Box>
       )}
@@ -720,5 +724,6 @@ function renderEmbeddingRow(
     </MouseListRow>
   );
 }
+
 
 

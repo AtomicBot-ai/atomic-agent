@@ -8,7 +8,9 @@ import {
 } from "../llm-panel/llm-panel-selectors.js";
 import type { LocalModelsPanelState } from "../local-models/local-models-panel-state.js";
 import { LLM_PANEL_MODES, type LlmPanelMode } from "../llm-panel/llm-panel-state.js";
+import { isLocalModelsHfOpen } from "../local-models/local-models-hf-keys.js";
 import { LlmModeRows } from "./llm-mode-rows.js";
+import { LocalModelsHuggingFaceBranch } from "./local-models-hf-branch.js";
 import { hasLlmModal, LlmPanelModals } from "./llm-panel-modals.js";
 import { renderProgressBar } from "./render-progress-bar.js";
 
@@ -60,6 +62,16 @@ export function LlmPanel({
     return (
       <Box flexDirection="column" width="100%">
         <LlmPanelModals state={state} maxRows={maxRows} />
+      </Box>
+    );
+  }
+  // "Add a model from Hugging Face" takes the whole pane, for the same
+  // reason the modals above do: it owns every key while it is open, so
+  // drawing the model list behind it would be a list nothing can reach.
+  if (isLocalModelsHfOpen(state)) {
+    return (
+      <Box flexDirection="column" width="100%">
+        <LocalModelsHuggingFaceBranch panel={state.localModelsPanel} />
       </Box>
     );
   }
@@ -175,6 +187,11 @@ function footerHint(mode: LlmPanelMode, useFull: boolean): string {
     return useFull
       ? "j/k move · < > reorder · a add link · d remove · l toggle local · ←/→ switch pane · r refresh"
       : "j/k · < > reorder · a add · d remove · l local · ←/→ pane";
+  }
+  if (mode === "local") {
+    return useFull
+      ? "j/k move · Enter selected action · a add from hugging face · ←/→ switch Local/Cloud/External/Fallback · s start/stop · r refresh"
+      : "j/k · Enter · a add · ←/→ mode · r";
   }
   return useFull
     ? "j/k move · Enter selected action · ←/→ switch Local/Cloud/External/Fallback · f filter · n add provider · c configure · r refresh"

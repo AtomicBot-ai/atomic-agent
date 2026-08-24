@@ -301,11 +301,6 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
               : action.contextWindow,
         },
       };
-    case "llm_daemon_rss_updated":
-      return {
-        ...state,
-        llmHealth: { ...state.llmHealth, daemonRssBytes: action.rssBytes },
-      };
     case "update_available":
       // Never override an in-flight or finished update with a new offer.
       if (state.updateStatus !== "idle") return state;

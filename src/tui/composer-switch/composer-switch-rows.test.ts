@@ -7,6 +7,7 @@ import {
   initialComposerSwitchCursor,
   selectComposerBackend,
   selectComposerBackendMeta,
+  selectComposerNeedsModelDownload,
   selectComposerSwitchRows,
 } from "./composer-switch-rows.js";
 
@@ -231,5 +232,71 @@ describe("where an opened switch lands", () => {
   it("falls back to the top row when nothing is active", () => {
     const state = createInitialTuiState(fakeSession());
     expect(initialComposerSwitchCursor(state, "provider")).toBe(0);
+  });
+});
+
+describe("the model slot's download call to action", () => {
+  /** `localState` ships a downloaded model; this empties the catalog. */
+  function withCatalog(
+    state: TuiState,
+    rows: TuiState["localModelsPanel"]["rows"],
+    lastRefreshedAt: number | null = 1,
+  ): TuiState {
+    return {
+      ...state,
+      localModelsPanel: { ...state.localModelsPanel, rows, lastRefreshedAt },
+    };
+  }
+
+  it("asks for a download when the local route has an empty catalog", () => {
+    const state = withCatalog(localState("managed"), []);
+    expect(selectComposerNeedsModelDownload(state)).toBe(true);
+  });
+
+  it("stays quiet once anything is on disk", () => {
+    const state = withCatalog(
+      localState("managed"),
+      localState("managed").localModelsPanel.rows,
+    );
+    expect(selectComposerNeedsModelDownload(state)).toBe(false);
+  });
+
+  it("stays quiet before the first snapshot lands", () => {
+    // `rows` is empty until the local-models slice refreshes, and an
+    // empty list then means "not asked yet", not "nothing downloaded".
+    // Without this guard every boot would flash the CTA.
+    const state = withCatalog(localState("managed"), [], null);
+    expect(selectComposerNeedsModelDownload(state)).toBe(false);
+  });
+
+  it("stays quiet while a pull is already running", () => {
+    const empty = withCatalog(localState("managed"), []);
+    const state: TuiState = {
+      ...empty,
+      localModelsPanel: {
+        ...empty.localModelsPanel,
+        pull: {
+          kind: "chat",
+          modelId: "qwen-3.5-4b" as never,
+          label: "qwen-3.5-4b",
+          percent: 12,
+          transferredBytes: 1,
+          totalBytes: 10,
+          error: null,
+        },
+      },
+    };
+    expect(selectComposerNeedsModelDownload(state)).toBe(false);
+  });
+
+  it("never asks off the managed-local route", () => {
+    // Cloud has nothing to download, and `custom` points at a server
+    // somebody else runs.
+    expect(selectComposerNeedsModelDownload(withCatalog(cloudState(), []))).toBe(
+      false,
+    );
+    expect(
+      selectComposerNeedsModelDownload(withCatalog(localState("external"), [])),
+    ).toBe(false);
   });
 });

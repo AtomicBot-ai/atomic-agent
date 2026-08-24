@@ -51,16 +51,6 @@ export interface LlmHealthState {
    * still gets the indicator (and keeps it when their server later dies).
    */
   localConfigured: boolean;
-  /**
-   * Resident set size of the *managed* llama-server child, sampled by the
-   * poller on the same cadence as the `/health` probe (no second timer).
-   * `null` whenever there is no managed pid to sample — external mode,
-   * daemon down, or a platform without `ps`. Lives in this slice rather
-   * than `localModelsPanel.daemon` because that one only refreshes while
-   * the Models tab is open, and the composer's status control needs a
-   * signal that stays fresh on the home screen.
-   */
-  daemonRssBytes: number | null;
 }
 
 export function createInitialLlmHealthState(
@@ -74,6 +64,5 @@ export function createInitialLlmHealthState(
     model: null,
     contextWindow: null,
     localConfigured,
-    daemonRssBytes: null,
   };
 }

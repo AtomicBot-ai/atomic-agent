@@ -413,106 +413,26 @@ describe("LlmHealthPoller", () => {
     expect(modelEvents.at(-1)).toMatchObject({ model: "my-model" });
   });
 
-  it("samples the managed daemon's RSS on the probe tick, no second timer", async () => {
+  it("spawns no child process on the probe tick", async () => {
+    // The poller used to sample the managed daemon's RSS with a `ps`
+    // child every tick, purely to feed a `healthy · 4.4 GB` readout on
+    // the composer bar. The readout is gone (see
+    // `composer-meta-controls.tsx`) and so is the sampler: at a
+    // three-second cadence that was 1 200 processes an hour for a
+    // number nobody acted on.
     spy.mockResolvedValue({
       reachable: true,
       status: 200,
       error: null,
       latencyMs: 1,
     } satisfies HealthResult);
-    const samples: Array<number | null> = [4_400_000_000, 4_500_000_000];
     const capture = makeCapture();
-    const poller = new LlmHealthPoller(
-      capture,
-      "http://127.0.0.1:19091",
-      100,
-      fetch,
-      async () => samples.shift() ?? null,
-    );
-    poller.start();
-    await sleep(180);
-    poller.stop();
-    const rss = capture.actions.filter((a) => a.type === "llm_daemon_rss_updated");
-    // One emission per changed sample — the poll cadence is the only clock.
-    expect(rss[0]).toEqual({
-      type: "llm_daemon_rss_updated",
-      rssBytes: 4_400_000_000,
-    });
-    expect(rss[1]).toEqual({
-      type: "llm_daemon_rss_updated",
-      rssBytes: 4_500_000_000,
-    });
-  });
-
-  it("never lets a slow sample from an earlier tick overwrite a fresher one", async () => {
-    // `emitDaemonRss` is fired un-awaited each probe tick, and `ps` can
-    // outlive an interval: unguarded, tick N's stale figure would land
-    // *after* tick N+1 already emitted and win. The in-flight guard
-    // makes overlapping ticks skip instead, so samples land in the
-    // order they were taken.
-    spy.mockResolvedValue({
-      reachable: true,
-      status: 200,
-      error: null,
-      latencyMs: 1,
-    } satisfies HealthResult);
-    let calls = 0;
-    let resolveFirst: ((rss: number | null) => void) | null = null;
-    const sampler = (): Promise<number | null> => {
-      calls += 1;
-      if (calls === 1) {
-        return new Promise((resolve) => {
-          resolveFirst = resolve;
-        });
-      }
-      return Promise.resolve(5_000_000_000);
-    };
-    const capture = makeCapture();
-    const poller = new LlmHealthPoller(
-      capture,
-      "http://127.0.0.1:19091",
-      50,
-      stubProps,
-      sampler,
-    );
-    poller.start();
-    // Several intervals pass while the first sample hangs: without the
-    // guard each would spawn its own `ps` (calls > 1) and emit before
-    // the hung one resolved.
-    await sleep(180);
-    expect(calls).toBe(1);
-    resolveFirst?.(4_000_000_000);
-    // The hung sample settles, then the next tick measures afresh.
-    await sleep(180);
-    poller.stop();
-    const rss = capture.actions
-      .filter((a) => a.type === "llm_daemon_rss_updated")
-      .map((a) => (a as { rssBytes: number | null }).rssBytes);
-    expect(rss).toEqual([4_000_000_000, 5_000_000_000]);
-  });
-
-  it("stays silent about RSS when there is nothing to measure", async () => {
-    spy.mockResolvedValue({
-      reachable: false,
-      status: null,
-      error: "down",
-      latencyMs: 1,
-    } satisfies HealthResult);
-    const capture = makeCapture();
-    const poller = new LlmHealthPoller(
-      capture,
-      "http://127.0.0.1:19091",
-      50,
-      fetch,
-      async () => null,
-    );
+    const poller = new LlmHealthPoller(capture, "http://127.0.0.1:19091", 50, stubProps);
     poller.start();
     await sleep(140);
     poller.stop();
-    // The slice starts at `null`; re-emitting `null` every interval
-    // would re-render the composer for no visible change.
     expect(
-      capture.actions.filter((a) => a.type === "llm_daemon_rss_updated"),
+      capture.actions.map((a) => a.type).filter((t) => t.includes("rss")),
     ).toEqual([]);
   });
 });

@@ -3,6 +3,7 @@ import { OnboardingScreen } from "./components/onboarding-screen.js";
 import { ContextPanel } from "./components/context-panel.js";
 import { selectContextUsage } from "./select-context-usage.js";
 import { Box, Text, useApp, useInput, type DOMElement, type Key } from "ink";
+import type { HuggingFaceRepoChoices } from "../local-llm/index.js";
 import {
   useCallback,
   useEffect,
@@ -36,8 +37,9 @@ import { ChatLog } from "./components/chat-log.js";
 import {
   ComposerSwitchPopup,
   runComposerSwitchRow,
+  selectComposerBackend,
   selectComposerBackendMeta,
-  selectComposerLocalStatus,
+  selectComposerNeedsModelDownload,
   type ComposerSwitchRow,
 } from "./composer-switch/index.js";
 import { DebugPane } from "./components/debug-pane.js";
@@ -253,6 +255,20 @@ export interface TuiAppCallbacks {
   onLocalModelsUseManagedRequested?(): void | Promise<void>;
   onLocalModelsBackendPullRequested?(): void;
   onLocalModelsRefreshRequested?(): void;
+  /** Ask Hugging Face what GGUFs the typed reference names. */
+  onLocalModelsHfResolveRequested?(reference: string): void;
+  /** Escape during a lookup — drop the socket, keep what was typed. */
+  onLocalModelsHfLookupCancelRequested?(): void;
+  /**
+   * Enter on a file: write the catalog entry and pull it. The repo
+   * travels with the call rather than being re-read downstream — the
+   * command layer has no view of UI state, and the listing the operator
+   * is looking at is the one that must be acted on.
+   */
+  onLocalModelsHfAddRequested?(
+    repo: HuggingFaceRepoChoices,
+    cursor: number,
+  ): void;
   /** Cycle the managed daemon's GPU preference (auto → devices → cpu). */
   onLocalModelsDeviceCycleRequested?(): void | Promise<void>;
   onLocalModelsAutoUpdateToggleRequested?(): void | Promise<void>;
@@ -648,6 +664,20 @@ export function TuiApp({
     if (composerSwitchOpen) callbacks.onLocalModelsRefreshRequested?.();
   }, [composerSwitchOpen, callbacks]);
 
+  // Same problem one screen earlier. The composer's model control has
+  // to be able to say `download model` on a local route without the
+  // operator opening anything first, and that answer is in the
+  // local-models snapshot — which, before this, nothing on the home
+  // screen fetched. One shot, gated on the snapshot being absent, so a
+  // boot with weights on disk never shows the call to action and a boot
+  // without them shows it as soon as the first refresh lands.
+  const localRouteWithoutSnapshot =
+    state.localModelsPanel.lastRefreshedAt === null &&
+    selectComposerBackend(state) === "local";
+  useEffect(() => {
+    if (localRouteWithoutSnapshot) callbacks.onLocalModelsRefreshRequested?.();
+  }, [localRouteWithoutSnapshot, callbacks]);
+
   useEffect(() => {
     const onLogsTab =
       state.uiMode === "debug" && state.activeTab === "llm-logs";
@@ -789,6 +819,11 @@ export function TuiApp({
           localModelsTabActive &&
           (state.localModelsPanel.pull !== null ||
             state.localModelsPanel.mode === "backendUpdate" ||
+            // The Hugging Face reference editor is a real text field on
+            // this tab; two focused editors would both take the
+            // keystroke and the repo name would land in the chat draft.
+            state.localModelsPanel.mode === "hfRef" ||
+            state.localModelsPanel.mode === "hfPick" ||
             state.localModelsPanel.removeConfirmId !== null)
         )));
 
@@ -1312,9 +1347,9 @@ export function TuiApp({
   // that stops a fresh install from announcing a server nobody
   // configured is down.
   const promptBackend = selectComposerBackendMeta(state);
-  // Managed-local only: the daemon's status word + RAM as the row's
-  // third control (the model switch is the second).
-  const promptLocalStatus = selectComposerLocalStatus(state);
+  // Managed-local with an empty catalog: the model slot becomes
+  // `download model` and points at the pane that pulls one.
+  const promptNeedsModelDownload = selectComposerNeedsModelDownload(state);
   // A notice outranks the route for the couple of seconds it is up: it
   // is the answer to a keystroke the operator just made, and the route
   // is ambient.
@@ -1623,7 +1658,7 @@ export function TuiApp({
             backend={promptBackend}
             model={promptLlm.model}
             provider={promptLlm.provider}
-            localStatus={promptLocalStatus}
+            needsModelDownload={promptNeedsModelDownload}
             leftSlot={promptLeftSlot}
             rightSlot={promptRightSlot}
             contextSlot={promptContextSlot}

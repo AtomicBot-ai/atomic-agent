@@ -82,6 +82,26 @@ async function main(): Promise<number> {
     // (see src/version.ts) resolves without a shipped package.json.
     define: {
       __ATOMIC_AGENT_VERSION__: JSON.stringify(version),
+      // React ships as two builds behind a runtime
+      // `process.env.NODE_ENV === "production" ? prod : dev` switch. A
+      // SEA has no build-time env, so without this define BOTH builds
+      // land in the bundle and the *development* reconciler is what
+      // actually runs on any machine whose shell does not export
+      // NODE_ENV — which is every machine.
+      //
+      // That is not merely slow. React 19's development build carries
+      // the Component Performance Track, which calls
+      // `performance.measure()` for every component render; Node keeps
+      // every user-timing entry alive for the life of the process. The
+      // TUI redraws on a timer even while idle (~114 measures/s), so an
+      // open session grew the heap without bound and aborted with
+      // `FATAL ERROR: JavaScript heap out of memory` after six to seven
+      // hours — twice, on the same laptop, before anyone connected the
+      // crash to a missing define.
+      //
+      // Inlining the constant also lets esbuild drop the dev build as
+      // dead code, so the binary gets smaller as a side effect.
+      "process.env.NODE_ENV": JSON.stringify("production"),
     },
     loader: { ".node": "file" },
     plugins: sentryAuthToken

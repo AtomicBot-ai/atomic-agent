@@ -1,7 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { ComposerMetaControls } from "../composer-switch/composer-meta-controls.js";
-import type { ComposerLocalStatus } from "../composer-switch/composer-local-status.js";
 import type { ComposerBackendMeta } from "../composer-switch/composer-switch-rows.js";
 import { theme } from "../theme/theme.js";
 
@@ -47,8 +46,8 @@ export interface PromptMetaBarProps {
   backend: ComposerBackendMeta | null;
   model: string | null;
   provider: string | null;
-  /** Managed-local daemon status + RAM; `null` off that route. */
-  localStatus?: ComposerLocalStatus | null;
+  /** Turns the model slot into a `download model` call to action. */
+  needsModelDownload?: boolean;
   /** Chat-surface content rendered at the bar's right end. */
   rightSlot: ReactElement | null;
   /**
@@ -82,7 +81,7 @@ export function PromptMetaBar({
   backend,
   model,
   provider,
-  localStatus,
+  needsModelDownload,
   rightSlot,
   contextSlot,
   mouseLayer,
@@ -110,7 +109,7 @@ export function PromptMetaBar({
           backend={backend}
           model={model}
           provider={provider}
-          localStatus={localStatus ?? null}
+          needsModelDownload={needsModelDownload ?? false}
           mouseLayer={mouseLayer}
         />
       </Box>
@@ -131,7 +130,7 @@ interface MetaLeftProps {
   backend: ComposerBackendMeta | null;
   model: string | null;
   provider: string | null;
-  localStatus: ComposerLocalStatus | null;
+  needsModelDownload: boolean;
   mouseLayer?: number;
 }
 
@@ -152,14 +151,14 @@ function MetaLeft({
   backend,
   model,
   provider,
-  localStatus,
+  needsModelDownload,
   mouseLayer,
 }: MetaLeftProps): ReactElement {
-  if (!leftSlot && !backend && !model && !provider && !localStatus) {
+  if (!leftSlot && !backend && !model && !provider && !needsModelDownload) {
     return <Text> </Text>;
   }
   const cleanModel = model ? formatModel(model) : null;
-  const hasRoute = Boolean(backend || provider || cleanModel || localStatus);
+  const hasRoute = Boolean(backend || provider || cleanModel || needsModelDownload);
   return (
     <Box flexDirection="row" flexShrink={1} minWidth={0}>
       {leftSlot ? (
@@ -179,7 +178,7 @@ function MetaLeft({
         backend={backend}
         provider={provider}
         model={cleanModel}
-        localStatus={localStatus}
+        needsModelDownload={needsModelDownload}
         mouseLayer={mouseLayer}
       />
     </Box>

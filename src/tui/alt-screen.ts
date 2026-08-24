@@ -4,11 +4,14 @@
  * buffer and the host terminal scrollback is preserved untouched.
  *
  * Only emits sequences when the target stream is a TTY; in pipes/CI the
- * helpers become no-ops. Installation is idempotent and paired with a
- * `process.on('exit')` hook so the alt screen is always left even if an
- * uncaught exception or signal terminates the process.
+ * helpers become no-ops. Installation is idempotent and paired with the
+ * shared net in `terminal-restore.ts` so the alt screen is always left
+ * — including on an uncaught exception, where the restore now runs
+ * *before* the crash text is printed rather than after.
  */
 import type { Writable } from "node:stream";
+
+import { registerTerminalRestore } from "./terminal-restore.js";
 
 const ENTER_ALT_SCREEN = "\u001B[?1049h";
 const LEAVE_ALT_SCREEN = "\u001B[?1049l";
@@ -56,11 +59,10 @@ export function enterAltScreen(options: AltScreenOptions = {}): AltScreenControl
   };
   // Last-chance cleanup if the process dies without a clean teardown —
   // missing this handler is how TUIs leave terminals in a broken state.
-  const onExit = (): void => restore();
-  process.once("exit", onExit);
+  const unregister = registerTerminalRestore(restore);
   return {
     restore: () => {
-      process.off("exit", onExit);
+      unregister();
       restore();
     },
   };

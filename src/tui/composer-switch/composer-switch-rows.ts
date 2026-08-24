@@ -84,6 +84,35 @@ export function selectComposerBackendMeta(state: TuiState): ComposerBackendMeta 
   };
 }
 
+/**
+ * True when the route is the managed-local one and there is nothing on
+ * disk to run — the state a first launch lands in after picking "local"
+ * without pulling weights. The composer's model control turns into a
+ * `download model` call to action in that case, because the alternative
+ * it used to show was a blank slot or a catalog id for a file that does
+ * not exist, and neither told the operator what to do next.
+ *
+ * Three deliberate abstentions:
+ *
+ *  - **Off the local route** — cloud has nothing to download, and
+ *    `custom` points at a server somebody else runs.
+ *  - **Before the first snapshot lands** (`lastRefreshedAt === null`) —
+ *    `rows` is empty until the local-models slice is refreshed, and an
+ *    empty list is indistinguishable from "nothing downloaded". Saying
+ *    `download model` there would flash the call to action on every
+ *    boot of an install that has weights sitting on disk.
+ *  - **While a pull is running** — the download the CTA asks for is
+ *    already happening, and the pull's own progress is the honest
+ *    readout.
+ */
+export function selectComposerNeedsModelDownload(state: TuiState): boolean {
+  if (selectComposerBackend(state) !== "local") return false;
+  const panel = state.localModelsPanel;
+  if (panel.lastRefreshedAt === null) return false;
+  if (panel.pull !== null) return false;
+  return !panel.rows.some((row) => row.downloaded);
+}
+
 /** Cloud providers the operator has actually added, in config order. */
 function configuredCloudProviders(state: TuiState) {
   return state.providersPanel.rows.filter((row) => row.kind !== "llama-server");

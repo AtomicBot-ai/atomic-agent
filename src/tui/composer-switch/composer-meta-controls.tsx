@@ -5,22 +5,23 @@ import { llmHealthLook } from "../components/llm-health-badge.js";
 import { useMouseCommands, useMouseTarget } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { theme } from "../theme/theme.js";
-import { LocalStatusControl } from "./composer-local-status-control.js";
-import type { ComposerLocalStatus } from "./composer-local-status.js";
+import { openLocalModelsPane } from "./composer-switch-activate.js";
 import type { ComposerBackendMeta } from "./composer-switch-rows.js";
 import type { ComposerSwitchKind } from "./composer-switch-state.js";
+
+/** What the model slot says when the local route has no weights on disk. */
+export const DOWNLOAD_MODEL_LABEL = "download model";
 
 export interface ComposerMetaControlsProps {
   backend: ComposerBackendMeta | null;
   provider: string | null;
   model: string | null;
   /**
-   * The managed-local route's third control: daemon status word + RAM
-   * (`healthy · 4.4 GB`). Non-null only on that route; when present it
-   * also owns the status word, so the backend control shows its dot
-   * alone instead of saying the same word twice.
+   * Replaces the model slot with `download model` and points it at the
+   * local models pane. Set on the managed-local route when nothing is
+   * on disk — see `selectComposerNeedsModelDownload`.
    */
-  localStatus?: ComposerLocalStatus | null;
+  needsModelDownload?: boolean;
   /**
    * Mouse layer the click targets register on. The composer floats over
    * the chat log with a `MOUSE_LAYER_PANEL` backstop behind it (see
@@ -33,8 +34,16 @@ export interface ComposerMetaControlsProps {
 
 /**
  * The composer toolbar's route statement, as three controls:
- * `● cloud · anthropic · claude-opus-5` — and, on a probed local
- * backend, the probe's word after the dot: `○ local down · …`.
+ * `● cloud · anthropic · claude-opus-5`.
+ *
+ * **No status word.** The row used to spell the probe out — `○ local
+ * down · …` next to the backend, and a fourth control carrying
+ * `healthy · 4.4 GB` on the managed-local route. Both are gone: the
+ * words tracked a probe that reported `down` against working daemons
+ * often enough that operators learned to ignore the whole right-hand
+ * end of the row, and the RAM figure cost a `ps` child process every
+ * three seconds to produce. The dot keeps the status it can actually
+ * stand behind, and the Models pane owns the detail.
  *
  * **Order.** Where it runs, who serves it, which model — the order the
  * route is actually decided in. The model used to come first, which put
@@ -62,19 +71,13 @@ export function ComposerMetaControls({
   backend,
   provider,
   model,
-  localStatus,
+  needsModelDownload = false,
   mouseLayer,
 }: ComposerMetaControlsProps): ReactElement | null {
-  if (!backend && !provider && !model && !localStatus) return null;
+  if (!backend && !provider && !model && !needsModelDownload) return null;
   return (
     <>
-      {backend ? (
-        <BackendControl
-          backend={backend}
-          showWord={!localStatus}
-          mouseLayer={mouseLayer}
-        />
-      ) : null}
+      {backend ? <BackendControl backend={backend} mouseLayer={mouseLayer} /> : null}
       {provider ? (
         <Control
           kind="provider"
@@ -84,7 +87,12 @@ export function ComposerMetaControls({
           mouseLayer={mouseLayer}
         />
       ) : null}
-      {model ? (
+      {needsModelDownload ? (
+        <DownloadModelControl
+          lead={Boolean(backend || provider)}
+          mouseLayer={mouseLayer}
+        />
+      ) : model ? (
         <Control
           kind="model"
           label={model}
@@ -93,21 +101,63 @@ export function ComposerMetaControls({
           mouseLayer={mouseLayer}
         />
       ) : null}
-      {localStatus ? (
-        <LocalStatusControl
-          status={localStatus}
-          lead={Boolean(backend || provider || model)}
-          mouseLayer={mouseLayer}
-        />
-      ) : null}
     </>
+  );
+}
+
+/**
+ * The model slot when the local route has nothing to run: a call to
+ * action rather than a switch. Clicking it goes where the download
+ * actually happens — the model switch popup would only list the empty
+ * catalog and its own deep link to the same pane.
+ */
+function DownloadModelControl({
+  lead,
+  mouseLayer,
+}: {
+  lead: boolean;
+  mouseLayer?: number;
+}): ReactElement {
+  const mouse = useMouseCommands();
+  const ref = useMouseTarget(
+    (hit) => {
+      if (!mouse || !isPrimaryPress(hit.event)) return false;
+      openLocalModelsPane(mouse.dispatch);
+      return true;
+    },
+    mouseLayer === undefined ? {} : { layer: mouseLayer },
+  );
+  return (
+    <Box ref={ref} flexShrink={3} minWidth={0}>
+      <Text wrap="truncate">
+        {lead ? (
+          <Text color={theme.colors.railMuted}>
+            {" "}
+            {theme.glyphs.dotSeparator}{" "}
+          </Text>
+        ) : null}
+        {/*
+          `warnStrong`, not the route's own `railForeground`: this slot
+          is the one thing on the bar the operator has to act on, and in
+          the route's own tone it reads as just another label. The token
+          is the palette's high-visibility warn, picked to stay legible
+          on the rail ground where `accentSoft` does not.
+        */}
+        <Text color={theme.colors.warnStrong} bold>
+          {DOWNLOAD_MODEL_LABEL}
+        </Text>
+      </Text>
+    </Box>
   );
 }
 
 export interface ComposerBackendLook {
   readonly glyph: string;
   readonly color: string;
-  /** Status word after the backend label, `null` when the dot alone is honest. */
+  /**
+   * Retained for callers that render the probe in full — the Models
+   * pane does. The composer row deliberately shows the dot alone.
+   */
   readonly word: string | null;
 }
 
@@ -141,69 +191,23 @@ export function composerBackendLook(
 
 function BackendControl({
   backend,
-  showWord,
   mouseLayer,
 }: {
   backend: ComposerBackendMeta;
-  /**
-   * False on the managed-local route, where the daemon-status control
-   * at the row's end carries the word — repeating it here would state
-   * the same fact twice on one line. The dot stays either way.
-   */
-  showWord: boolean;
   mouseLayer?: number;
 }): ReactElement {
   const look = composerBackendLook(backend);
   return (
-    <>
-      <Control
-        kind="backend"
-        label={backend.kind}
-        glyph={
-          look ? (
-            <Text color={look.color} bold>{`${look.glyph} `}</Text>
-          ) : undefined
-        }
-        mouseLayer={mouseLayer}
-      />
-      {showWord && look?.word ? (
-        <StatusWord word={look.word} mouseLayer={mouseLayer} />
-      ) : null}
-    </>
-  );
-}
-
-/**
- * The probe's word after the backend label — "a word where space
- * allows", literally: its own flex item with a `flexShrink` above the
- * model's, so it is the first thing on the row to give up columns, and
- * the dot still carries the status once it has.
- */
-function StatusWord({
-  word,
-  mouseLayer,
-}: {
-  word: string;
-  mouseLayer?: number;
-}): ReactElement {
-  const mouse = useMouseCommands();
-  // Clicking the word opens the same switch as the label it annotates —
-  // a dead cell in the middle of a clickable phrase reads as a bug.
-  const ref = useMouseTarget(
-    (hit) => {
-      if (!mouse || !isPrimaryPress(hit.event)) return false;
-      mouse.dispatch({ type: "composer_switch_opened", kind: "backend" });
-      return true;
-    },
-    mouseLayer === undefined ? {} : { layer: mouseLayer },
-  );
-  return (
-    <Box ref={ref} flexShrink={4} minWidth={0}>
-      <Text wrap="truncate" color={theme.colors.railMuted}>
-        {" "}
-        {word}
-      </Text>
-    </Box>
+    <Control
+      kind="backend"
+      label={backend.kind}
+      glyph={
+        look ? (
+          <Text color={look.color} bold>{`${look.glyph} `}</Text>
+        ) : undefined
+      }
+      mouseLayer={mouseLayer}
+    />
   );
 }
 
