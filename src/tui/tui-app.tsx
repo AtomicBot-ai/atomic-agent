@@ -47,6 +47,7 @@ import { HotkeyHint } from "./components/hotkey-hint.js";
 import { PromptShell } from "./components/prompt-shell.js";
 import { QueuedMessages } from "./components/queued-messages.js";
 import { SessionDeleteModal } from "./components/session-delete-modal.js";
+import { UninstallModal } from "./components/uninstall-modal.js";
 import { SessionPicker } from "./components/session-picker.js";
 import { ThemePicker } from "./components/theme-picker.js";
 import {
@@ -181,6 +182,10 @@ export interface TuiAppCallbacks {
    * the UI lands if the current thread was the one removed.
    */
   onSessionDeleteConfirmed?(sessionId: string): void;
+  /** `/uninstall` or the menu's last entry: measure the install. */
+  onUninstallPlanRequested?(): void;
+  /** The word was typed and Enter pressed. */
+  onUninstallConfirmed?(): void;
   onAbort(): void;
   onQuit(): void;
   onMessageSubmitted(message: string): void;
@@ -891,6 +896,7 @@ export function TuiApp({
     state.menuOpen ||
     state.contextPanelOpen ||
     state.composerSwitch !== null ||
+    Boolean(state.uninstall) ||
     Boolean(state.sessionDelete) ||
     Boolean(state.pendingApproval) ||
     Boolean(state.updatePrompt) ||
@@ -962,6 +968,7 @@ export function TuiApp({
       state.menuOpen ||
       state.contextPanelOpen ||
       state.composerSwitch !== null ||
+      Boolean(state.uninstall) ||
       Boolean(state.sessionDelete);
     if (!open) return false;
     if (hit.event.kind === "wheel") return true;
@@ -978,13 +985,18 @@ export function TuiApp({
     // Clicking away from a destructive confirmation cancels it — the
     // same dismissal the menu gets, and the safe outcome either way.
     dispatch(
-      state.sessionDelete
-        ? { type: "session_delete_closed" }
-        : state.contextPanelOpen
-          ? { type: "context_panel_closed" }
-          : state.composerSwitch
-            ? { type: "composer_switch_closed" }
-            : { type: "menu_closed" },
+      // A click outside is a cancel, which is the safe direction on
+      // every surface in this chain — including the uninstall ladder,
+      // where it is the same answer Esc gives.
+      state.uninstall
+        ? { type: "uninstall_closed" }
+        : state.sessionDelete
+          ? { type: "session_delete_closed" }
+          : state.contextPanelOpen
+            ? { type: "context_panel_closed" }
+            : state.composerSwitch
+              ? { type: "composer_switch_closed" }
+              : { type: "menu_closed" },
     );
     return true;
   };
@@ -995,6 +1007,7 @@ export function TuiApp({
     state.menuOpen ||
     state.contextPanelOpen ||
     state.composerSwitch !== null ||
+    Boolean(state.uninstall) ||
     Boolean(state.sessionDelete);
   useEffect(() => {
     if (backdropOwner) modalOpenedAtRef.current = Date.now();
@@ -1527,6 +1540,22 @@ export function TuiApp({
                 }
               />
             )}
+            {state.uninstall ? (
+              <UninstallModal
+                flow={state.uninstall}
+                availableRows={menuPaneRows}
+                availableColumns={
+                  terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
+                }
+                onCancel={() => dispatch({ type: "uninstall_closed" })}
+                onContinue={() =>
+                  dispatch({ type: "uninstall_review_accepted" })
+                }
+                onFocus={(cursor) =>
+                  dispatch({ type: "uninstall_cursor_set", cursor })
+                }
+              />
+            ) : null}
             {state.sessionDelete ? (
               <SessionDeleteModal
                 confirm={state.sessionDelete}

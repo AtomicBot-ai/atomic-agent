@@ -121,6 +121,12 @@ export interface SlashDispatchResult {
    * React (see `tui-command.ts`).
    */
   readonly mouseVerb?: "on" | "off" | "status";
+  /**
+   * `/uninstall`: measure the install and feed the result back as
+   * `uninstall_plan_loaded`. Nothing is removed on this path — the
+   * dialog it opens is what eventually asks for that.
+   */
+  readonly triggerUninstallPlan?: boolean;
 }
 
 /**
@@ -197,6 +203,13 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return pureActions([{ type: "quit_requested" }], {
         triggerQuit: true,
         systemMessage: "exiting",
+      });
+    case "uninstall":
+      // Opens the ladder; it does not uninstall anything. The dialog
+      // owns every decision from here, and the caller measures the disk
+      // so the first screen can say what it costs.
+      return pureActions([{ type: "uninstall_opened" }], {
+        triggerUninstallPlan: true,
       });
     case "debug":
       return pureActions([{ type: "ui_mode_toggled" }]);

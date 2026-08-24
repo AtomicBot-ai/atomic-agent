@@ -212,6 +212,11 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "context",
     description: "show where this session's context window went",
   },
+  {
+    name: "uninstall",
+    description:
+      "remove atomic-agent and all of its data from this machine — permanent, no undo",
+  },
 ];
 
 describe("menu registry", () => {

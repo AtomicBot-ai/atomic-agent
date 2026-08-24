@@ -21,6 +21,7 @@ import { cycleNavSlot, type NavSlot } from "./section.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import type { TuiAction } from "./tui-action.js";
 import type { TuiState } from "./tui-state.js";
+import { isUninstallConfirmed } from "./uninstall/uninstall-state.js";
 
 /**
  * Number of **terminal rows** a single PageUp / PageDown keypress
@@ -54,6 +55,8 @@ export interface AppKeyCallbacks {
   onApprovalReply?(approvalId: string, message: string): void;
   /** The operator confirmed "delete the session?" for this thread. */
   onSessionDeleteConfirmed?(sessionId: string): void;
+  /** The word was typed and Enter pressed — take the app down and remove it. */
+  onUninstallConfirmed?(): void;
   onApprovalDecision(
     approvalId: string,
     approved: boolean,
@@ -243,6 +246,13 @@ export function handleAppKey(
     // have quit from chat.
     setCtrlCArmed(false);
     return true;
+  }
+  // Above the session dialog and above approvals: while the uninstall
+  // ladder is up it is the only thing on screen that can be answered,
+  // and a key that leaks past it would be a key aimed at a transcript
+  // the operator has already stopped looking at.
+  if (state.uninstall) {
+    return handleUninstallKey(input, key, ctx);
   }
   if (state.sessionDelete) {
     return handleSessionDeleteKey(input, key, ctx);
@@ -863,6 +873,86 @@ function handleSessionDeleteKey(
       callbacks.onSessionDeleteConfirmed?.(confirm.sessionId);
     }
     close();
+    return true;
+  }
+  return true;
+}
+
+/**
+ * Keys for the uninstall ladder.
+ *
+ * Two rules carry the whole design. The first: `y` does nothing, on any
+ * screen — the reflex answer to a confirm dialog must not be an answer
+ * here. The second: on the last screen, Enter only means something once
+ * the word has actually been typed, and every other printable key is
+ * text going into that field rather than a command. There is no key
+ * that skips a step and no key that means "yes" twice in a row.
+ */
+function handleUninstallKey(
+  input: string,
+  key: Key,
+  ctx: AppKeyContext,
+): boolean {
+  const { state, dispatch, callbacks } = ctx;
+  const flow = state.uninstall;
+  if (!flow) return false;
+  const close = (): void => dispatch({ type: "uninstall_closed" });
+
+  // Nothing is answerable once the app is on its way down — including
+  // Ctrl+C, which at that point would leave a half-removed install.
+  if (flow.step === "closing") return true;
+
+  // Ctrl+C closes the dialog and hands the key on, same contract the
+  // session dialog has: "stop everything" must never be swallowed.
+  if (key.ctrl && input === "c") {
+    close();
+    return false;
+  }
+  if (key.escape) {
+    close();
+    return true;
+  }
+  if (key.ctrl || key.meta) return false;
+
+  if (flow.step === "loading" || flow.step === "failed") return true;
+
+  if (flow.step === "review") {
+    if (key.leftArrow || key.rightArrow || key.tab) {
+      dispatch({
+        type: "uninstall_cursor_set",
+        cursor: flow.cursor === "cancel" ? "continue" : "cancel",
+      });
+      return true;
+    }
+    if (key.return) {
+      // An empty plan has nothing to continue to, so Enter closes.
+      if (flow.cursor === "continue" && (flow.preview?.rows.length ?? 0) > 0) {
+        dispatch({ type: "uninstall_review_accepted" });
+      } else {
+        close();
+      }
+      return true;
+    }
+    return true;
+  }
+
+  // `confirm`: a text field with one accepted value.
+  if (key.return) {
+    if (!isUninstallConfirmed(flow.typed)) return true;
+    dispatch({ type: "uninstall_started" });
+    callbacks.onUninstallConfirmed?.();
+    return true;
+  }
+  if (key.backspace || key.delete) {
+    dispatch({ type: "uninstall_typed_set", typed: flow.typed.slice(0, -1) });
+    return true;
+  }
+  if (input && !key.upArrow && !key.downArrow && !key.leftArrow && !key.rightArrow) {
+    // Capped at a little over the word's length: a paste of a whole
+    // paragraph should not become a field the operator has to clear
+    // one backspace at a time.
+    const typed = `${flow.typed}${input}`.slice(0, 32);
+    dispatch({ type: "uninstall_typed_set", typed });
     return true;
   }
   return true;

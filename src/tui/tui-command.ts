@@ -53,6 +53,10 @@ import {
 } from "./theme/detect-terminal-background.js";
 import { isThemeName, setActiveTheme, THEMES } from "./theme/theme.js";
 import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
+import {
+  loadUninstallPreview,
+  performUninstall,
+} from "./uninstall/uninstall-orchestrator.js";
 
 /**
  * CLI entry for `atomic-agent tui`. Boots the full runtime once and stays
@@ -157,6 +161,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // Honoured after the Ink app unmounts and the runtime shuts down: we
   // re-exec the freshly-installed binary in place (see end of this function).
   let restartRequested = false;
+  // Set when the uninstall ladder's last key is pressed. The removal is
+  // deliberately NOT done here: it runs after the Ink app unmounts and
+  // `orchestrator.shutdown()` has closed the SQLite handles and stopped
+  // llama-server, in the same post-exit slot the self-update restart
+  // uses (see the end of this function).
+  let uninstallRequested = false;
 
   const logSink: LogSink = (record: LogRecord) => bus.emitLog(record);
   const metricSink: MetricSink = (sample: MetricSample) => bus.emitMetric(sample);
@@ -346,6 +356,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSessionNewRequested: () => orchestrator.newSession(),
         onSessionDeleteConfirmed: (sessionId) =>
           orchestrator.deleteSession(sessionId),
+        onUninstallPlanRequested: () =>
+          void loadUninstallPreview(bus, config.paths.stateDir),
+        onUninstallConfirmed: () => {
+          uninstallRequested = true;
+          orchestrator.quit();
+        },
         onNewWindowRequested: () => openNewAgentWindow(parsed.workingDir, bus),
         onMemoryDumpRequested: () => orchestrator.dumpProfile(),
         onSkillCatalogRequested: () => orchestrator.dumpSkillCatalog(),
@@ -640,6 +656,13 @@ export async function tuiCommand(args: string[]): Promise<number> {
     }
     await orchestrator.shutdown();
     releaseSession();
+  }
+
+  // Uninstall handoff. Ahead of the restart branch because the two are
+  // mutually exclusive and this one has to win: re-exec'ing a binary we
+  // just deleted would be the last thing the operator saw.
+  if (uninstallRequested) {
+    return performUninstall({ stateDir: config.paths.stateDir });
   }
 
   // Self-update restart handoff. The runtime is fully shut down and the

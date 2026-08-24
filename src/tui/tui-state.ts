@@ -64,6 +64,7 @@ import {
   createInitialFallbackPanelState,
   type FallbackPanelState,
 } from "./llm-panel/fallback/fallback-panel-state.js";
+import type { UninstallFlowState } from "./uninstall/uninstall-state.js";
 
 /**
  * High-level lifecycle of the TUI. Mirrors the underlying `SessionState`
@@ -379,6 +380,12 @@ export interface TuiState {
    * button so Enter has an unambiguous meaning.
    */
   sessionDelete: SessionDeleteConfirm | null;
+  /**
+   * The open uninstall ladder, or `null`. Deliberately a top-level slot
+   * rather than a field on some panel: it is not part of any section,
+   * and it outranks every other surface while it is up.
+   */
+  uninstall: UninstallFlowState | null;
   loadedSkills: readonly LoadedSkillBody[];
   worldSnapshot: WorldSnapshot | null;
   latestResult: LatestResult | null;
@@ -653,6 +660,7 @@ export function createInitialTuiState(
     composerHasSelection: false,
     composerNotice: null,
     sessionDelete: null,
+    uninstall: null,
     loadedSkills: [],
     worldSnapshot: null,
     latestResult: null,

@@ -173,6 +173,9 @@ export function runSlashCommand(
   if (result.triggerDebugBundleDump) {
     callbacks.onDebugBundleExportRequested?.(state);
   }
+  if (result.triggerUninstallPlan) {
+    callbacks.onUninstallPlanRequested?.();
+  }
   // Swap the active palette before dispatching `theme_set` so the forced
   // re-render reads the new colours through the theme proxy, then persist the
   // choice to the user config (`/theme <name>` direct path).
