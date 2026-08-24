@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execSync } from "node:child_process";
 import { isSea } from "node:sea";
 import { argv, exit } from "node:process";
 import { runAgentCommand } from "./run-agent.js";
@@ -159,7 +160,24 @@ function userArgsFromArgv(): string[] {
   return argv.slice(2);
 }
 
+/**
+ * Windows console defaults to CP866 for Cyrillic, which makes Russian input,
+ * output and copy/paste turn into mojibake because Node speaks UTF-8. Switch
+ * the console code page to UTF-8 (65001) at startup. This only changes the
+ * console's code page тАФ it does NOT touch stdout/stderr streams, so ink and
+ * readline rendering are unaffected.
+ */
+function ensureUtf8Console(): void {
+  if (process.platform !== "win32") return;
+  try {
+    execSync("chcp 65001 >nul", { stdio: "ignore" });
+  } catch {
+    // Non-fatal: some hosts disallow changing the code page.
+  }
+}
+
 async function main(): Promise<number> {
+  ensureUtf8Console();
   const [command, ...rest] = userArgsFromArgv();
   if (command === "-h" || command === "--help") {
     printHelp();
