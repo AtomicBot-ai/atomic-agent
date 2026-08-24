@@ -33,7 +33,7 @@ export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export type BrowserChannel = "chrome" | "msedge" | "chromium";
 
-export type WebSearchProviderName = "duckduckgo" | "searxng" | "exa" | "brave";
+export type WebSearchProviderName = "duckduckgo" | "searxng" | "exa" | "brave" | "tavily";
 
 /**
  * Tunables for `os.web.fetch` (config v38). Before v38 the tool hard-coded a
@@ -107,6 +107,9 @@ export interface WebSearchConfig {
     apiKeyEnv: string;
   };
   brave: {
+    apiKeyEnv: string;
+  };
+  tavily: {
     apiKeyEnv: string;
   };
 }
@@ -1750,6 +1753,9 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       brave: {
         apiKeyEnv: "BRAVE_SEARCH_API_KEY",
       },
+      tavily: {
+        apiKeyEnv: "TAVILY_API_KEY",
+      },
     },
     fetch: {
       timeoutMs: 30_000,
@@ -2073,12 +2079,12 @@ export function parseWebSearchProviderName(
   raw: unknown,
   field: string,
 ): WebSearchProviderName {
-  if (raw === "duckduckgo" || raw === "searxng" || raw === "exa" || raw === "brave") {
+  if (raw === "duckduckgo" || raw === "searxng" || raw === "exa" || raw === "brave" || raw === "tavily") {
     return raw;
   }
   throw new ConfigValidationError(
     field,
-    `expected one of duckduckgo|searxng|exa|brave, got ${JSON.stringify(raw)}`,
+    `expected one of duckduckgo|searxng|exa|brave|tavily, got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -2923,6 +2929,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (webSearch.exa as Record<string, unknown> | undefined) ?? {};
   const webSearchBrave =
     (webSearch.brave as Record<string, unknown> | undefined) ?? {};
+  const webSearchTavily =
+    (webSearch.tavily as Record<string, unknown> | undefined) ?? {};
   const legacyTelemetry =
     (obj.telemetry as Record<string, unknown> | undefined) ?? {};
   const tracing = (obj.tracing as Record<string, unknown> | undefined) ?? {};
@@ -3208,6 +3216,13 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             webSearchBrave.apiKeyEnv ??
               USER_CONFIG_DEFAULTS.web.search.brave.apiKeyEnv,
             "web.search.brave.apiKeyEnv",
+          ),
+        },
+        tavily: {
+          apiKeyEnv: parseNonEmptyString(
+            webSearchTavily.apiKeyEnv ??
+              USER_CONFIG_DEFAULTS.web.search.tavily.apiKeyEnv,
+            "web.search.tavily.apiKeyEnv",
           ),
         },
       },

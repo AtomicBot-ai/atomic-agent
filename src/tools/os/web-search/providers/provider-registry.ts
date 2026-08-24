@@ -3,6 +3,7 @@ import { createBraveProvider } from "./brave-provider.js";
 import { createDuckDuckGoProvider } from "./duckduckgo-provider.js";
 import { createExaProvider } from "./exa-provider.js";
 import { createSearxngProvider } from "./searxng-provider.js";
+import { createTavilyProvider } from "./tavily-provider.js";
 import type {
   WebSearchHttpDeps,
   WebSearchProvider,
@@ -35,5 +36,7 @@ export function resolveProviderByName(
       return createExaProvider(search.exa, deps);
     case "brave":
       return createBraveProvider(search.brave, deps);
+    case "tavily":
+      return createTavilyProvider(search.tavily, deps);
   }
 }

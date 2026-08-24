@@ -117,6 +117,10 @@ function isProviderUsable(
       const key = env[search.brave.apiKeyEnv];
       return typeof key === "string" && key.length > 0;
     }
+    case "tavily": {
+      const key = env[search.tavily.apiKeyEnv];
+      return typeof key === "string" && key.length > 0;
+    }
     case "duckduckgo":
     case "exa":
       return true;
