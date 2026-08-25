@@ -250,7 +250,7 @@ function RailBrand({
       <Box>
         <Box flexDirection="column" flexShrink={0}>
           {art.map((row, idx) => (
-            <Text key={idx} color={theme.colors.brandMark} bold wrap="truncate">
+            <Text key={idx} color={theme.colors.railAccent} bold wrap="truncate">
               {row}
             </Text>
           ))}
@@ -368,7 +368,7 @@ function SectionHeader({
   return (
     <Box width={inner} flexShrink={0}>
       <Text
-        color={active ? theme.colors.accent : theme.colors.railForeground}
+        color={active ? theme.colors.railAccent : theme.colors.railForeground}
         bold
         wrap="truncate"
       >
@@ -589,7 +589,7 @@ function RailRow({
   const mark = filled ? theme.glyphs.chevronRight : bar ? "▎" : " ";
   return (
     <Box width={inner} flexShrink={0}>
-      <Text color={theme.colors.brandMark} bold>
+      <Text color={theme.colors.railAccent} bold>
         {mark}
       </Text>
       <Text

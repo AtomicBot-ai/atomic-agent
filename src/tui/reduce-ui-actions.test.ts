@@ -19,14 +19,14 @@ const SESSION: TuiSessionInfo = {
 describe("reduceUiAction theme_set", () => {
   it("stores the new theme name to trigger a re-render", () => {
     const state = createInitialTuiState(SESSION);
-    const next = reduceUiAction(state, { type: "theme_set", name: "dracula" });
+    const next = reduceUiAction(state, { type: "theme_set", name: "khorne-red" });
     expect(next).not.toBeNull();
-    expect(next?.themeName).toBe("dracula");
+    expect(next?.themeName).toBe("khorne-red");
   });
 
   it("leaves other slices untouched", () => {
     const state = createInitialTuiState(SESSION);
-    const next = reduceUiAction(state, { type: "theme_set", name: "nord" });
+    const next = reduceUiAction(state, { type: "theme_set", name: "darky-dark" });
     expect(next?.uiMode).toBe(state.uiMode);
     expect(next?.activeTab).toBe(state.activeTab);
   });
@@ -35,12 +35,12 @@ describe("reduceUiAction theme_set", () => {
 describe("reduceUiAction theme picker", () => {
   it("opens the picker seeded from the active theme name + records original", () => {
     const base = createInitialTuiState(SESSION);
-    const seeded = { ...base, themeName: "nord" };
+    const seeded = { ...base, themeName: "darky-dark" };
     const next = reduceUiAction(seeded, { type: "theme_picker_opened" });
     expect(next?.themePickerOpen).toBe(true);
-    expect(next?.themePickerOriginal).toBe("nord");
+    expect(next?.themePickerOriginal).toBe("darky-dark");
     expect(next?.themePickerCursor).toBe(
-      (THEME_NAMES as readonly string[]).indexOf("nord"),
+      (THEME_NAMES as readonly string[]).indexOf("darky-dark"),
     );
   });
 

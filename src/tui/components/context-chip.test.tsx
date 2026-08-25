@@ -101,7 +101,7 @@ describe("ContextChip", () => {
 
 describe("the chip's ground", () => {
   it("steps through three shades of the palette's accent", () => {
-    setActiveTheme(THEMES["github-dark"]);
+    setActiveTheme(THEMES["classic-dark"]);
     const ground = theme.colors.railBackground;
     const accent = theme.colors.accent;
     const at = (conversationPercent: number): string =>
@@ -120,7 +120,7 @@ describe("the chip's ground", () => {
    * important of the two facts.
    */
   it("turns violet once the transcript has been trimmed, at any fill", () => {
-    setActiveTheme(THEMES["github-dark"]);
+    setActiveTheme(THEMES["classic-dark"]);
     expect(groundFor(usage({ conversationPercent: 12, droppedTurns: 3 }))).toBe(
       theme.colors.accentAlt,
     );
@@ -130,7 +130,7 @@ describe("the chip's ground", () => {
   });
 
   it("sits at the quiet end when the fill is unknown", () => {
-    setActiveTheme(THEMES["github-dark"]);
+    setActiveTheme(THEMES["classic-dark"]);
     expect(
       groundFor(usage({ conversationPercent: null, conversationCap: null })),
     ).toBe(mixColor(theme.colors.accent, theme.colors.railBackground, 0.6));

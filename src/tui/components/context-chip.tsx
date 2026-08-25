@@ -16,16 +16,16 @@ const GAUGE_WIDTH = 8;
  * Share of the toolbar's own ground mixed into the accent at each step.
  *
  * Fading *toward the ground the chip sits on* is what makes one rule
- * work on a light palette and a dark one: `github-light`'s deep blue
- * pulled most of the way to its near-white rail is literally pale blue,
- * `tokyo-night`'s blue pulled to its dark rail is a quiet dimmed blue,
- * and both say the same thing — this control is not asking for
+ * work on a light palette and a dark one: `classic-light`'s deep blue
+ * pulled most of the way to its pale rail is literally pale blue,
+ * `toxic-green`'s acid green pulled to its dark rail is a quiet dimmed
+ * green, and both say the same thing — this control is not asking for
  * attention yet. The chip gets louder as the window fills.
  *
  * The two values are not eyeballed. `readable-foreground.test.ts` walks
  * every palette and fails if either mixed step drops below a 4.5:1
  * contrast ratio against the ink `readableOn` picks for it; these are
- * the largest fades that clear it on all twelve.
+ * the largest fades that clear it on all six.
  */
 const FADE_LOW = 0.6;
 const FADE_MID = 0.3;

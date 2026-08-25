@@ -52,7 +52,7 @@ import {
   detectTerminalBackground,
   resolveStartupTheme,
 } from "./theme/detect-terminal-background.js";
-import { isThemeName, setActiveTheme, THEMES } from "./theme/theme.js";
+import { resolveThemeName, setActiveTheme, THEMES } from "./theme/theme.js";
 import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
 
 /**
@@ -97,8 +97,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // and both the optional wizard and the main TUI are themed. Autodetect
   // falls back to dark on any failure (non-TTY, no reply, timeout).
   const configuredTheme = getConfig().tui.theme;
-  if (isThemeName(configuredTheme)) {
-    setActiveTheme(THEMES[configuredTheme]);
+  // `resolveThemeName` also rehomes the eleven names the registry used to
+  // carry, so a config pinned to `dracula` lands on the nearest surviving
+  // palette instead of silently falling through to autodetect.
+  const resolvedTheme = resolveThemeName(configuredTheme);
+  if (resolvedTheme) {
+    setActiveTheme(THEMES[resolvedTheme]);
   } else {
     setActiveTheme(resolveStartupTheme(await detectTerminalBackground()));
   }

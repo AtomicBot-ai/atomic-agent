@@ -1362,8 +1362,11 @@ export function TuiApp({
     return () => clearTimeout(timer);
   }, [state.composerNotice]);
 
+  // Rail tokens, not page ones: both slots are handed to `PromptMetaBar`,
+  // which paints them on the rail ground. `success` / `accentSoft` /
+  // `muted` are all picked to be read on the terminal's own page.
   const promptLeftSlot = state.composerNotice ? (
-    <Text color={theme.colors.success}>{state.composerNotice}</Text>
+    <Text color={theme.colors.railSuccess}>{state.composerNotice}</Text>
   ) : null;
   // While a turn is running the meta-row gains a second job: the operator
   // needs to know what Enter will do to the message they are typing.
@@ -1377,10 +1380,10 @@ export function TuiApp({
   const promptRightSlot =
     state.status === "running" ? (
       <Text>
-        <Text color={theme.colors.accentSoft} bold>
+        <Text color={theme.colors.railAccent} bold>
           {"\u23ce"} {state.whileBusyMode}
         </Text>
-        <Text color={theme.colors.muted}> (ctrl+t)</Text>
+        <Text color={theme.colors.railMuted}> (ctrl+t)</Text>
       </Text>
     ) : null;
   const contextUsage = selectContextUsage(state);
