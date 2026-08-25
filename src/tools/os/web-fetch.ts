@@ -9,6 +9,7 @@ import { extractWebContent, type ExtractMode } from "./web-fetch-extract.js";
 import { CurlUnavailableError, isCurlMissingError } from "./ensure-curl.js";
 import {
   assertHostAllowed,
+  formatResolveEntry,
   parseHttpUrl,
   SsrfBlockedError,
   type HostLookup,
@@ -17,6 +18,11 @@ import {
 const TOOL_NAME = "os.web.fetch";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+import {
+  describeChallenge,
+  detectChallenge,
+} from "./web-fetch-challenge.js";
+
 const MAX_RESPONSE_BYTES = 2_000_000;
 const MAX_REDIRECTS = 3;
 const DEFAULT_MAX_CHARS = 50_000;
@@ -111,7 +117,9 @@ export function buildOsWebFetchTool(
       "extracts content: prefers Cloudflare 'Markdown for Agents' " +
       "(Accept: text/markdown), then Mozilla Readability, then a basic " +
       "tag-stripping fallback. GET only, no auth headers, no JavaScript " +
-      "(use browser.* for JS-heavy pages). Blocks private/internal " +
+      "(use browser.* for JS-heavy pages; a page that answers with a " +
+      "bot-protection challenge is reported as such, with browser.navigate " +
+      "named as the way through). Blocks private/internal " +
       "addresses (SSRF) and re-validates each redirect hop. Retries " +
       "transient failures (429/502/503/504, connection timeouts) with " +
       "exponential backoff. Optional `timeoutMs` overrides the configured " +
@@ -139,6 +147,33 @@ export function buildOsWebFetchTool(
           details: {
             url: args.url,
             blocked: err instanceof SsrfBlockedError,
+          },
+        });
+      }
+
+      // Before extraction: a challenge page extracts perfectly well, and
+      // that is the problem — "Just a moment…" comes back looking like
+      // the article's first paragraph.
+      const challenge = detectChallenge({
+        status: outcome.status,
+        contentType: outcome.contentType,
+        body: outcome.body,
+      });
+      if (challenge.challenged) {
+        return compressToolResult({
+          tool: TOOL_NAME,
+          status: "error",
+          output: describeChallenge(
+            outcome.finalUrl,
+            outcome.status,
+            challenge.marker ?? "",
+          ),
+          details: {
+            url: args.url,
+            finalUrl: outcome.finalUrl,
+            status: outcome.status,
+            challenge: challenge.marker,
+            retryWith: "browser.navigate",
           },
         });
       }
@@ -307,12 +342,12 @@ async function fetchHopWithRetry(
   for (let attempt = 0; ; attempt++) {
     // Re-resolve on every attempt: the guard must pin a freshly verified IP
     // rather than trusting one resolved before an arbitrary backoff wait.
-    const pinnedIp = await assertHostAllowed(url, { lookup: opts.lookup });
+    const pinnedIps = await assertHostAllowed(url, { lookup: opts.lookup });
 
     let res: CurlResponse | null = null;
     let failure: unknown = null;
     try {
-      res = await curlOnce(url, pinnedIp, opts);
+      res = await curlOnce(url, pinnedIps, opts);
     } catch (err) {
       // Only a curl timeout is worth another attempt; a missing curl binary or
       // an aborted run must surface immediately.
@@ -374,10 +409,10 @@ function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
 
 async function curlOnce(
   url: URL,
-  pinnedIp: string,
+  pinnedIps: readonly string[],
   opts: FetchWithGuardOptions,
 ): Promise<CurlResponse> {
-  const curlArgs = buildCurlArgs(url, pinnedIp, opts);
+  const curlArgs = buildCurlArgs(url, pinnedIps, opts);
   let result: CommandResult;
   try {
     result = await opts.runCommand("curl", curlArgs, {
@@ -403,12 +438,11 @@ async function curlOnce(
 
 function buildCurlArgs(
   url: URL,
-  pinnedIp: string,
+  pinnedIps: readonly string[],
   opts: Pick<FetchWithGuardOptions, "fetchCfg" | "timeoutMs">,
 ): string[] {
   const host = url.hostname.replace(/^\[|\]$/g, "");
   const port = url.port || (url.protocol === "https:" ? "443" : "80");
-  const resolveTarget = pinnedIp.includes(":") ? `[${pinnedIp}]` : pinnedIp;
   // Never let the connect budget exceed the overall one — a per-call
   // `timeoutMs` smaller than the configured connect timeout must still cap the
   // handshake.
@@ -430,7 +464,13 @@ function buildCurlArgs(
     "--max-redirs",
     "0",
     "--resolve",
-    `${host}:${port}:${resolveTarget}`,
+    formatResolveEntry(host, port, pinnedIps),
+    // Advertise the encodings curl can actually undo, and undo them.
+    // Without this, a server that compresses regardless of the request
+    // hands back bytes the extractor reads as binary noise — and some
+    // hosts behave differently for a client that claims no encoding
+    // support at all, since no browser has looked like that in years.
+    "--compressed",
     "-H",
     "Accept: text/markdown, text/html;q=0.9, */*;q=0.1",
     "-H",

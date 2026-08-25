@@ -5,6 +5,7 @@ import {
 import { CurlUnavailableError, isCurlMissingError } from "./ensure-curl.js";
 import {
   assertHostAllowed,
+  formatResolveEntry,
   parseHttpUrl,
   SsrfBlockedError,
   type HostLookup,
@@ -71,12 +72,12 @@ export async function executeGuardedHttpRequest(
   let totalTime = 0;
 
   for (let hop = 0; ; hop += 1) {
-    const pinnedIp = await assertHostAllowed(currentUrl, {
+    const pinnedIps = await assertHostAllowed(currentUrl, {
       lookup: opts.lookup,
     });
     const curlArgs = buildPinnedCurlArgs({
       url: currentUrl,
-      pinnedIp,
+      pinnedIps,
       method,
       headers: args.headers,
       body,
@@ -165,7 +166,7 @@ export { SsrfBlockedError };
 
 interface BuildPinnedCurlArgs {
   url: URL;
-  pinnedIp: string;
+  pinnedIps: readonly string[];
   method: HttpMethod;
   headers: Record<string, string>;
   body: string | undefined;
@@ -176,9 +177,6 @@ function buildPinnedCurlArgs(input: BuildPinnedCurlArgs): string[] {
   const host = input.url.hostname.replace(/^\[|\]$/g, "");
   const port =
     input.url.port || (input.url.protocol === "https:" ? "443" : "80");
-  const resolveTarget = input.pinnedIp.includes(":")
-    ? `[${input.pinnedIp}]`
-    : input.pinnedIp;
   const argv: string[] = [
     "-sS",
     // Send `[`, `]`, `{`, `}` in URLs literally. Without this curl reads them
@@ -191,7 +189,7 @@ function buildPinnedCurlArgs(input: BuildPinnedCurlArgs): string[] {
     "--max-redirs",
     "0",
     "--resolve",
-    `${host}:${port}:${resolveTarget}`,
+    formatResolveEntry(host, port, input.pinnedIps),
   ];
   if (input.method !== "GET") argv.push("-X", input.method);
   for (const [key, value] of Object.entries(input.headers)) {
