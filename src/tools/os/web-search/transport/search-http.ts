@@ -4,6 +4,7 @@ import {
 } from "../../../../sandbox/command-runner.js";
 import {
   assertHostAllowed,
+  formatResolveEntry,
   parseHttpUrl,
   type HostLookup,
 } from "../../web-fetch-ssrf-guard.js";
@@ -119,12 +120,12 @@ async function sendOnce(
   const chain: string[] = [];
 
   for (let hop = 0; ; hop++) {
-    const pinnedIp = await assertHostAllowed(currentUrl, {
+    const pinnedIps = await assertHostAllowed(currentUrl, {
       lookup: request.lookup,
     });
     const curlArgs = buildCurlArgs({
       url: currentUrl,
-      pinnedIp,
+      pinnedIps,
       method,
       headers: request.headers ?? {},
       hasBody: request.body !== undefined,
@@ -191,7 +192,7 @@ function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
 
 function buildCurlArgs(input: {
   url: URL;
-  pinnedIp: string;
+  pinnedIps: readonly string[];
   method: SearchHttpMethod;
   headers: Record<string, string>;
   hasBody: boolean;
@@ -199,9 +200,6 @@ function buildCurlArgs(input: {
 }): string[] {
   const host = input.url.hostname.replace(/^\[|\]$/g, "");
   const port = input.url.port || (input.url.protocol === "https:" ? "443" : "80");
-  const resolveTarget = input.pinnedIp.includes(":")
-    ? `[${input.pinnedIp}]`
-    : input.pinnedIp;
   const args = [
     "-sS",
     // Send `[`, `]`, `{`, `}` in URLs literally. Without this curl reads them
@@ -212,7 +210,7 @@ function buildCurlArgs(input: {
     "--max-redirs",
     "0",
     "--resolve",
-    `${host}:${port}:${resolveTarget}`,
+    formatResolveEntry(host, port, input.pinnedIps),
     "-H",
     `User-Agent: ${USER_AGENT}`,
     "-H",
