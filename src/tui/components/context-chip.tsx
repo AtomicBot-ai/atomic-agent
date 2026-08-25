@@ -92,7 +92,9 @@ export function ContextChip({
       : ` context [${renderProgressBar(
           usage.conversationPercent,
           GAUGE_WIDTH,
-        )}] ${pair(usage.conversationTokens, usage.conversationCap)} `;
+        )}] ${pair(usage.conversationTokens, usage.conversationCap)}${capSuffix(
+          usage,
+        )} `;
   const chip = (
     <Text backgroundColor={background} color={readableOn(background)} bold>
       {label}
@@ -131,6 +133,26 @@ export function groundFor(usage: ContextUsageView): string {
   if (fill === null || fill < STEP_LOW) return mixColor(accent, ground, FADE_LOW);
   if (fill < STEP_MID) return mixColor(accent, ground, FADE_MID);
   return accent;
+}
+
+/**
+ * One word for what the right-hand number *is*.
+ *
+ * Without it the chip reads `context 6.4k/32k`, and every operator who
+ * has ever set a context size reads that second figure as the window.
+ * It is not: it is the ceiling the transcript is packed to, which on a
+ * default install is `agent.conversationMaxTokens` and has no
+ * relationship to the window at all. Someone who starts `llama-server`
+ * with `-c 48000` and then reads `/32k` off the composer concludes the
+ * app ignored them — a conclusion this chip was, in fairness, doing
+ * everything to invite.
+ *
+ * The word is spent only where it is load-bearing. When the window is
+ * what binds, or when the operator has switched the ceiling off, the
+ * number *is* the window's own remainder and needs no disclaimer.
+ */
+function capSuffix(usage: ContextUsageView): string {
+  return usage.capSource === "config" ? " cap" : "";
 }
 
 /**

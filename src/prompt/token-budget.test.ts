@@ -41,6 +41,65 @@ describe("computeEffectiveConversationCap", () => {
     completionMaxTokens: 4096,
   };
 
+  /**
+   * The report this behaviour came from: `llama-server -c 48000`, and
+   * the composer reads `32k`. Nothing is broken — 32k is
+   * `agent.conversationMaxTokens`, and it is a *ceiling*, so it does not
+   * move when the window grows past it. These pin both halves: that the
+   * old default really does decline the extra room, and that `0` claims
+   * it.
+   */
+  describe("a window larger than the configured ceiling", () => {
+    const window48k = { ...base, contextWindow: 48_000 };
+
+    it("holds the transcript at the configured ceiling", () => {
+      // 48000 - 2000 - 400 - 2000 - 4096 - 512 = 38 992 available, and
+      // the operator's 32k ceiling is the smaller of the two.
+      expect(computeEffectiveConversationCap(window48k)).toBe(32_000);
+    });
+
+    it("fills the window under auto", () => {
+      expect(
+        computeEffectiveConversationCap({ ...window48k, autoFill: true }),
+      ).toBe(38_992);
+    });
+
+    it("is unchanged by auto when the window is the smaller of the two", () => {
+      // A 32k window leaves 22 992 — under the 32k ceiling — so the
+      // ceiling was never what bound, and switching it off buys nothing.
+      // This is why the default can stay where it is: for everyone whose
+      // window is at or below it, auto is a no-op.
+      const window32k = { ...base, contextWindow: 32_768 };
+      expect(computeEffectiveConversationCap(window32k)).toBe(23_760);
+      expect(
+        computeEffectiveConversationCap({ ...window32k, autoFill: true }),
+      ).toBe(23_760);
+    });
+
+    it("falls back to the configured figure under auto with no window", () => {
+      // Auto cannot mean "unbounded": with no window there is nothing to
+      // subtract from, and an unbounded transcript against somebody
+      // else's server is a promise this process cannot keep.
+      expect(
+        computeEffectiveConversationCap({
+          ...base,
+          contextWindow: undefined,
+          autoFill: true,
+        }),
+      ).toBe(32_000);
+    });
+
+    it("keeps the floor under auto on a window too small to hold the prompt", () => {
+      expect(
+        computeEffectiveConversationCap({
+          ...base,
+          contextWindow: 4096,
+          autoFill: true,
+        }),
+      ).toBe(512);
+    });
+  });
+
   it("returns the configured cap when the model context window is unknown", () => {
     const cap = computeEffectiveConversationCap({
       ...base,

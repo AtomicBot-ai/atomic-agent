@@ -24,6 +24,7 @@ import { renderTaskPolicy } from "./render-task-policy.js";
 import {
   checkBudget,
   computeEffectiveConversationCap,
+  CONVERSATION_CAP_AUTO,
   defaultBudget,
   estimateTokens,
   truncateToTokens,
@@ -82,13 +83,17 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const budgetTotal = input.tokenBudget ?? config.agent.tokenBudget;
   const conversationMaxTokens =
     input.conversationMaxTokens ?? config.agent.conversationMaxTokens;
+  // `0` means "let the window decide" (`CONVERSATION_CAP_AUTO`). The
+  // budget-share fallback below is still computed, because it is what
+  // the cap falls back to when nothing knows the window.
+  const conversationCapAuto = conversationMaxTokens <= CONVERSATION_CAP_AUTO;
   const worldSnapshotMaxTokens =
     input.worldSnapshotMaxTokens ?? config.agent.worldSnapshotMaxTokens;
   const completionMaxTokens =
     input.completionMaxTokens ?? config.localModels.completionMaxTokens;
 
   const limits = defaultBudget(budgetTotal, {
-    conversation: conversationMaxTokens,
+    ...(conversationCapAuto ? {} : { conversation: conversationMaxTokens }),
     worldSnapshot: worldSnapshotMaxTokens,
   });
 
@@ -215,6 +220,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     estimateTokens(sessionPartsForBudget) + loadedToolsTokens;
   const conversationCapEffective = computeEffectiveConversationCap({
     configuredCap: limits.conversation,
+    ...(conversationCapAuto ? { autoFill: true } : {}),
     contextWindow: contextWindow ?? undefined,
     stablePrefixTokens: estimateTokens(stablePrefix),
     sessionTokens: sessionTokenEstimate,
@@ -373,6 +379,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     truncation,
     contextWindow,
     conversationCapEffective,
+    conversationCapAuto,
     droppedTurns: packed.droppedCount,
   };
 }
