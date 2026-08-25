@@ -53,6 +53,13 @@ export interface SearchHttpResponse {
   body: string;
   truncated: boolean;
   redirectChain: string[];
+  /**
+   * The server's parsed `Retry-After`, or `null` when it did not send
+   * one. Surfaced rather than consumed internally: once the retry
+   * ladder is spent, how long to park the provider is a question only
+   * the server can answer, and the caller is the one parking it.
+   */
+  retryAfterMs: number | null;
 }
 
 interface CurlResponse {
@@ -76,14 +83,16 @@ export async function searchHttp(
   // advance the chain, so a transient limit cannot permanently downgrade the
   // session to a weaker provider.
   for (let attempt = 0; ; attempt++) {
-    const { retryAfter, ...response } = await sendOnce(request);
+    const { retryAfter, ...rest } = await sendOnce(request);
+    const retryAfterMs = parseRetryAfterMs(retryAfter, now());
+    const response: SearchHttpResponse = { ...rest, retryAfterMs };
     if (response.status !== 429 || attempt >= policy.maxRetries) {
       return response;
     }
     const delayMs = computeRetryDelayMs({
       attempt: attempt + 1,
       policy,
-      retryAfterMs: parseRetryAfterMs(retryAfter, now()),
+      retryAfterMs,
     });
     await sleep(delayMs, request.signal);
     // The operator pressed Esc (or the turn was aborted) while we were
@@ -95,8 +104,8 @@ export async function searchHttp(
   }
 }
 
-/** Internal shape: the public response plus the header the retry loop reads. */
-interface SearchHttpAttempt extends SearchHttpResponse {
+/** Internal shape: the raw header, before the retry loop parses it. */
+interface SearchHttpAttempt extends Omit<SearchHttpResponse, "retryAfterMs"> {
   retryAfter: string;
 }
 
