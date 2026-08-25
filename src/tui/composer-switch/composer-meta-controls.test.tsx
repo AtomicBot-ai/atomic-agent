@@ -62,7 +62,7 @@ describe("the composer's route line", () => {
     // in a literal `gray`; the separators are the only muted thing left.
     expect(out).not.toContain(`${ink(theme.colors.railMuted)}openrouter`);
     // `accentSoft` is a fill. As text it lands around 2:1 on the
-    // atomic-retro rail, which is the whole reason this row was dim.
+    // classic-dark rail, which is the whole reason this row was dim.
     expect(out).not.toContain(ink(theme.colors.accentSoft));
   });
 
@@ -146,7 +146,7 @@ describe("the model slot's download call to action", () => {
     expect(out).not.toContain("qwen-3.5-4b");
   });
 
-  it("draws the call to action in warn, not the route's own tone", () => {
+  it("draws the call to action in the rail's warn, not the route's own tone", () => {
     const { lastFrame, unmount } = render(
       <Box>
         <ComposerMetaControls
@@ -159,7 +159,10 @@ describe("the model slot's download call to action", () => {
     );
     const out = lastFrame() ?? "";
     unmount();
-    expect(out).toContain(`${ink(theme.colors.warnStrong)}download model`);
+    // `railWarn`, not `warnStrong`: this text sits on the rail ground,
+    // and `warnStrong` is the warn picked to be read on the page.
+    expect(out).toContain(`${ink(theme.colors.railWarn)}download model`);
+    expect(out).not.toContain(`${ink(theme.colors.warnStrong)}download model`);
     expect(out).not.toContain(`${ink(theme.colors.railForeground)}download model`);
   });
 

@@ -316,16 +316,16 @@ describe("dispatchSlashCommand", () => {
   it("lists available themes for /theme list", () => {
     const result = dispatchSlashCommand("/theme list");
     expect(result.systemMessage).toContain("available themes:");
-    expect(result.systemMessage).toContain("dracula");
+    expect(result.systemMessage).toContain("khorne-red");
     expect(result.setThemeName).toBeUndefined();
     expect(result.actions).toEqual([]);
   });
 
   it("switches the theme for a known /theme <name>", () => {
-    const result = dispatchSlashCommand("/theme dracula");
-    expect(result.setThemeName).toBe("dracula");
-    expect(result.actions).toEqual([{ type: "theme_set", name: "dracula" }]);
-    expect(result.systemMessage).toContain("theme set to dracula");
+    const result = dispatchSlashCommand("/theme khorne-red");
+    expect(result.setThemeName).toBe("khorne-red");
+    expect(result.actions).toEqual([{ type: "theme_set", name: "khorne-red" }]);
+    expect(result.systemMessage).toContain("theme set to khorne-red");
   });
 
   it("rejects an unknown /theme <name> without switching", () => {

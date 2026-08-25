@@ -80,6 +80,7 @@ export interface PromptShellProps
   rightSlot?: ReactElement | null;
   /** Optional context readout, rendered at the action bar's right end. */
   contextSlot?: ReactElement | null;
+  modeSlot?: ReactElement | null;
 }
 
 export function PromptShell(props: PromptShellProps): ReactElement {
@@ -94,6 +95,7 @@ export function PromptShell(props: PromptShellProps): ReactElement {
     leftSlot,
     rightSlot,
     contextSlot,
+    modeSlot,
     focus,
     disabled,
     value,
@@ -102,12 +104,19 @@ export function PromptShell(props: PromptShellProps): ReactElement {
     mouseLayer,
     ...editorProps
   } = props;
+  // Rotate only while the phrase is on screen. `effectivePlaceholder`
+  // below already blanks it for a non-empty buffer; without the same
+  // condition on the timer, typing left a four-second full-frame repaint
+  // running behind the composer for the rest of the session.
+  const placeholderVisible = value.length === 0;
   const rotated = useRotatingPlaceholder(
     rotatingPlaceholders ?? [],
     placeholderRotationMs,
+    placeholderVisible,
   );
-  const effectivePlaceholder =
-    value.length === 0 ? (rotated ?? placeholder ?? "") : "";
+  const effectivePlaceholder = placeholderVisible
+    ? (rotated ?? placeholder ?? "")
+    : "";
   const accent = focus && !disabled ? theme.colors.accent : theme.colors.border;
   // Send is live on exactly the condition Enter is: a non-blank buffer
   // in an editor that is accepting input. `handleEditorSubmit` drops a
@@ -197,6 +206,7 @@ export function PromptShell(props: PromptShellProps): ReactElement {
           needsModelDownload={needsModelDownload ?? false}
           rightSlot={rightSlot ?? null}
           contextSlot={contextSlot ?? null}
+          modeSlot={modeSlot ?? null}
           // Same raised layer as the overlay backstop behind the bar —
           // see `composer-overlay.tsx`.
           mouseLayer={mouseLayer}

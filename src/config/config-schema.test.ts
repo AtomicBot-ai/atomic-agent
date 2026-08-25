@@ -307,7 +307,7 @@ describe("parseUserConfigFile", () => {
   it("fills cacheTtlMinutes/fallback defaults when migrating from v27", () => {
     const parsed = parseUserConfigFile({ version: 27 });
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
-    expect(parsed.web.search.cacheTtlMinutes).toBe(15);
+    expect(parsed.web.search.cacheTtlMinutes).toBe(60);
     expect(parsed.web.search.provider).toBe("exa");
     expect(parsed.web.search.fallback).toEqual(["duckduckgo"]);
   });
@@ -564,11 +564,22 @@ describe("parseUserConfigFile", () => {
     expect(parsed.agent.worldSnapshotMaxTokens).toBe(4_000);
   });
 
-  it("rejects non-positive conversationMaxTokens", () => {
+  it("accepts conversationMaxTokens: 0 as the auto sentinel", () => {
+    // `0` is not a request for a zero-token transcript: it is "let the
+    // window decide", the same sentinel `localModels.managed.contextSize`
+    // uses. It has to survive the parser to mean anything.
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      agent: { conversationMaxTokens: 0 },
+    });
+    expect(parsed.agent?.conversationMaxTokens).toBe(0);
+  });
+
+  it("rejects a negative conversationMaxTokens", () => {
     expect(() =>
       parseUserConfigFile({
         version: USER_CONFIG_VERSION,
-        agent: { conversationMaxTokens: 0 },
+        agent: { conversationMaxTokens: -1 },
       }),
     ).toThrow(/agent.conversationMaxTokens/);
   });

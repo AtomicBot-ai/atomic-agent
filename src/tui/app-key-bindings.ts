@@ -753,16 +753,54 @@ export type ApprovalHotkey =
   | "abort";
 
 /**
+ * The chord each approval verb answers to, and the label the button
+ * prints beside it.
+ *
+ * **Why chords and not letters.** The chat composer stays live while a
+ * prompt is up — that is how an operator answers the agent in words
+ * instead of a verdict — so a bare `y` is ambiguous by construction.
+ * The old rule resolved it with the buffer: with nothing typed the
+ * letters decided, and from the first character on every key was text.
+ * That works right up until someone starts a message with "yes, but…",
+ * at which point the `y` has already approved the call. A modified key
+ * is never text, so the ambiguity does not arise and the buffer no
+ * longer has to arbitrate.
+ *
+ * **Why these four letters.** Every one of them is unclaimed both by
+ * the app's global chords and by the live editor underneath. That is
+ * the whole constraint, and it is tighter than it looks:
+ *
+ *   - `ctrl+a` / `ctrl+e` / `ctrl+u` / `ctrl+k` / `ctrl+w` are the
+ *     editor's own line-editing bindings (`multi-line-editor-keys.ts`).
+ *     Claiming one would fix the typing collision in one direction and
+ *     open it in the other — an operator mid-message would lose
+ *     delete-word to a *deny*.
+ *   - `ctrl+c` / `ctrl+p` / `ctrl+g` / `ctrl+l` / `ctrl+n` / `ctrl+o` /
+ *     `ctrl+q` / `ctrl+r` / `ctrl+t` / `ctrl+x` are global.
+ *   - `ctrl+s` is XOFF, which a terminal outside our raw mode (screen,
+ *     an ssh hop with flow control on) can still eat.
+ *
+ * That leaves `ctrl+y`, `ctrl+d`, `ctrl+f` and `ctrl+b`.
+ *
+ * **Why `ctrl+b` does two jobs.** `[a]` (grant this command shape) is
+ * offered only for a `shell` request, and `[e]` (edit the target path)
+ * only where `redirectablePath` is set — which `os.fs.write` is the
+ * only tool that does. The two can never be on screen together, so
+ * they are one slot in the prompt and one chord on the keyboard. The
+ * button says which one it currently is; `approval-key-arbitration`
+ * pins the exclusivity so a future tool cannot quietly break it.
+ */
+export const APPROVAL_CHORDS = {
+  approve: "y",
+  deny: "d",
+  grantCategory: "f",
+  /** Shape grant and path edit share this — see above. */
+  contextual: "b",
+} as const;
+
+/**
  * Resolve a keystroke against the pending approval prompt — the single
  * place that decides whether a key is a *decision* or ordinary *text*.
- *
- * The chat composer stays live while a prompt is up (that is how an
- * operator answers the agent in words instead of a verdict), so `y` is
- * ambiguous by construction. It is resolved by the buffer: with nothing
- * typed the letters decide, and from the first character on every key
- * is text and Enter sends it. Esc follows the same rule — with a draft
- * in the buffer it belongs to the editor (clear the draft) and only an
- * empty buffer lets it abort the run.
  *
  * Both key layers consult this: `handleApprovalKey` to act, and the
  * composer's `claimKey` guard to stand down. One function, so the two
@@ -781,17 +819,24 @@ export function approvalHotkey(
   if (request.sessionId !== state.session.sessionId) return null;
   // The target field owns every key while it is open.
   if (state.approvalPathDraft !== null) return null;
-  // A ctrl/meta-modified key was never aimed at the y/n/esc prompt —
-  // letting it through turns a global chord (ctrl+n) into a silent deny.
-  if (key.ctrl || key.meta) return null;
-  if (state.inputValue.length > 0) return null;
-  if (key.escape) return "abort";
+  // Esc keeps the old rule, and keeps it for the old reason: it is the
+  // editor's "clear the draft" key too, so only an empty buffer lets it
+  // abort the run. Unlike the letters it was never a *decision* — the
+  // worst a misread Esc does is throw away a half-typed message.
+  if (key.escape) return state.inputValue.length > 0 ? null : "abort";
+  // Everything else is a chord. `meta` is excluded rather than ignored:
+  // alt+y on a Mac terminal is a character, not a verdict.
+  if (!key.ctrl || key.meta) return null;
   const lower = input.toLowerCase();
-  if (lower === "y") return "approve";
-  if (lower === "s" && canGrantCategory(request)) return "grant_category";
-  if (lower === "a" && canGrantShape(request)) return "grant_shape";
-  if (lower === "e" && canEditPath(request)) return "edit_path";
-  if (lower === "n") return "deny";
+  if (lower === APPROVAL_CHORDS.approve) return "approve";
+  if (lower === APPROVAL_CHORDS.deny) return "deny";
+  if (lower === APPROVAL_CHORDS.grantCategory && canGrantCategory(request)) {
+    return "grant_category";
+  }
+  if (lower === APPROVAL_CHORDS.contextual) {
+    if (canGrantShape(request)) return "grant_shape";
+    if (canEditPath(request)) return "edit_path";
+  }
   return null;
 }
 

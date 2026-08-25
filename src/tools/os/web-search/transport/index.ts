@@ -15,6 +15,14 @@ export {
 } from "./retry-after.js";
 export type { SearchRetryPolicy } from "./retry-after.js";
 export {
+  createProviderCooldown,
+  formatCooldown,
+} from "./provider-cooldown.js";
+export type {
+  ProviderCooldown,
+  ProviderCooldownOptions,
+} from "./provider-cooldown.js";
+export {
   buildSearchCacheKey,
   createSearchCache,
 } from "./search-cache.js";

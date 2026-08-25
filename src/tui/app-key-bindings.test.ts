@@ -402,11 +402,11 @@ describe("handleAppKey", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it("y on a pending approval resolves it with no grant", () => {
+  it("ctrl+y on a pending approval resolves it with no grant", () => {
     const state = createInitialTuiState(stubSession());
     state.pendingApproval = pendingRequest();
     const onApprovalDecision = vi.fn();
-    const handled = handleAppKey("y", emptyKey(), {
+    const handled = handleAppKey("y", emptyKey({ ctrl: true }), {
       state,
       dispatch: vi.fn(),
       callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() },
@@ -458,12 +458,12 @@ describe("handleAppKey", () => {
     expect(onApprovalDecision).not.toHaveBeenCalled();
   });
 
-  it("s on a grantable approval resolves with a category grant and confirms it", () => {
+  it("ctrl+f on a grantable approval resolves with a category grant and confirms it", () => {
     const state = createInitialTuiState(stubSession());
     state.pendingApproval = pendingRequest();
     const onApprovalDecision = vi.fn();
     const dispatch = vi.fn();
-    const handled = handleAppKey("s", emptyKey(), {
+    const handled = handleAppKey("f", emptyKey({ ctrl: true }), {
       state,
       dispatch,
       callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() },
@@ -480,12 +480,12 @@ describe("handleAppKey", () => {
     });
   });
 
-  it("a on a shell approval with a shape resolves with a shape grant and confirms it", () => {
+  it("ctrl+b on a shell approval with a shape resolves with a shape grant and confirms it", () => {
     const state = createInitialTuiState(stubSession());
     state.pendingApproval = pendingRequest({ commandShape: "git" });
     const onApprovalDecision = vi.fn();
     const dispatch = vi.fn();
-    const handled = handleAppKey("a", emptyKey(), {
+    const handled = handleAppKey("b", emptyKey({ ctrl: true }), {
       state,
       dispatch,
       callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() },
@@ -501,7 +501,7 @@ describe("handleAppKey", () => {
     });
   });
 
-  it("s is inert on a trust_config approval (never grantable)", () => {
+  it("ctrl+f is inert on a trust_config approval (never grantable)", () => {
     const state = createInitialTuiState(stubSession());
     state.pendingApproval = pendingRequest({
       category: "trust_config",
@@ -509,7 +509,7 @@ describe("handleAppKey", () => {
       commandShape: undefined,
     });
     const onApprovalDecision = vi.fn();
-    const handled = handleAppKey("s", emptyKey(), {
+    const handled = handleAppKey("f", emptyKey({ ctrl: true }), {
       state,
       dispatch: vi.fn(),
       callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() },
@@ -522,7 +522,7 @@ describe("handleAppKey", () => {
     expect(onApprovalDecision).not.toHaveBeenCalled();
   });
 
-  it("a is inert on a non-shell approval (no shape to grant)", () => {
+  it("ctrl+b is inert on a non-shell approval with no retarget", () => {
     const state = createInitialTuiState(stubSession());
     state.pendingApproval = pendingRequest({
       category: "fs_write_home",

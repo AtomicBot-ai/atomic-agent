@@ -1,3 +1,8 @@
+import {
+  clampApprovalLevel,
+  type ApprovalLevel,
+} from "../approval/approval-level.js";
+import type { CodingMode } from "./coding-mode.js";
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import type { ComposerSwitchState } from "./composer-switch/composer-switch-state.js";
 import type { ContextMenuState } from "./context-menu/context-menu-state.js";
@@ -260,6 +265,13 @@ export interface ContextUsageState {
    * an operator which knob actually moves their limit.
    */
   conversationCapConfigured: number | null;
+  /**
+   * The configured cap is `0` — auto. `conversationCapConfigured` is
+   * then a fallback rather than a ceiling, so the comparison above says
+   * nothing and the panel must not name `agent.conversationMaxTokens`
+   * as what is holding the transcript down. Nothing is: the window is.
+   */
+  conversationCapAuto: boolean;
   /** Per-section breakdown, for the detail view. Empty before the first prompt. */
   sections: readonly ContextUsageSection[];
 }
@@ -588,6 +600,18 @@ export interface TuiState {
    * turn then.
    */
   whileBusyMode: WhileBusySubmitMode;
+  /**
+   * The stance the session is working in — see `coding-mode.ts`. Session
+   * state, never persisted: `bypass` surviving a restart would be a
+   * standing grant nobody remembers making.
+   */
+  codingMode: CodingMode;
+  /**
+   * The approval level the operator actually configured, so `default`
+   * can restore it. Seeded from the boot level and moved by the Privacy
+   * tab; the coding-mode chip reads it and never writes it.
+   */
+  baseApprovalLevel: ApprovalLevel;
 }
 
 /**
@@ -736,5 +760,12 @@ export function createInitialTuiState(
     chatScrollOffset: 0,
     queuedMessages: [],
     whileBusyMode: layout?.whileBusyMode ?? "steer",
+    codingMode: "default",
+    // `session` is optional in practice: several reducer tests build a
+    // state with no session info at all, and a seed that assumed one
+    // would turn every one of them into a crash about a field they do
+    // not care about. The strictest level is the right default when
+    // nobody said.
+    baseApprovalLevel: clampApprovalLevel(session?.approvalLevel ?? 1),
   };
 }

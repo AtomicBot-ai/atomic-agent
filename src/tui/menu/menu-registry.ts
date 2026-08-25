@@ -115,7 +115,7 @@ export const MENU: readonly MenuNode[] = [
       description:
         "return to single-view chat mode",
       aliases: ["run"],
-      rank: 8,
+      rank: 9,
     },
     section: "run",
   },
@@ -128,7 +128,7 @@ export const MENU: readonly MenuNode[] = [
       name: "observe",
       description:
         "switch to the Observe section (feed / world / reasoning / logs / llm-logs)",
-      rank: 9,
+      rank: 10,
     },
   },
   {
@@ -141,7 +141,7 @@ export const MENU: readonly MenuNode[] = [
       name: "feed",
       description:
         "jump to the Observe → Feed tab",
-      rank: 11,
+      rank: 12,
     },
     section: "observe",
     tab: "feed",
@@ -157,7 +157,7 @@ export const MENU: readonly MenuNode[] = [
       name: "world",
       description:
         "jump to the Observe → World tab",
-      rank: 14,
+      rank: 15,
     },
     section: "observe",
     tab: "world",
@@ -173,7 +173,7 @@ export const MENU: readonly MenuNode[] = [
       name: "reasoning",
       description:
         "jump to the Observe → Reasoning tab",
-      rank: 13,
+      rank: 14,
     },
     section: "observe",
     tab: "reasoning",
@@ -189,7 +189,7 @@ export const MENU: readonly MenuNode[] = [
       name: "logs",
       description:
         "jump to the Observe → Logs tab",
-      rank: 12,
+      rank: 13,
     },
     section: "observe",
     tab: "logs",
@@ -214,7 +214,7 @@ export const MENU: readonly MenuNode[] = [
       name: "manage",
       description:
         "switch to the Manage section (tasks / skills / LLM / telegram)",
-      rank: 10,
+      rank: 11,
     },
   },
   {
@@ -227,7 +227,7 @@ export const MENU: readonly MenuNode[] = [
       name: "tasks",
       description:
         "jump to the Tasks tab (Option 4 cron + ingress UI)",
-      rank: 26,
+      rank: 27,
     },
     section: "manage",
     tab: "tasks",
@@ -243,7 +243,7 @@ export const MENU: readonly MenuNode[] = [
       name: "skills",
       description:
         "jump to the Skills tab · subcommand: `/skills dump` to print catalog in chat",
-      rank: 20,
+      rank: 21,
     },
     section: "manage",
     tab: "skills",
@@ -259,7 +259,7 @@ export const MENU: readonly MenuNode[] = [
       name: "memory",
       description:
         "open Memory tab (profile, notes, lessons, …) · subcommand: `/memory dump` for profile in chat",
-      rank: 22,
+      rank: 23,
     },
     section: "manage",
     tab: "memory",
@@ -275,7 +275,7 @@ export const MENU: readonly MenuNode[] = [
       name: "mcp",
       description:
         "open MCP tab (configured servers + discovered tools / resources / prompts) · subcommands: `/mcp add` opens JSON-paste modal, `/mcp remove <name>` opens delete-confirm",
-      rank: 24,
+      rank: 25,
     },
     section: "manage",
     tab: "mcp",
@@ -291,7 +291,7 @@ export const MENU: readonly MenuNode[] = [
       name: "llm",
       description:
         "open LLM Local/Cloud/External/Fallback panel · `/llm provider <id>` switch text provider · `/llm fallback` edit the fallover chain",
-      rank: 23,
+      rank: 24,
     },
     section: "manage",
     tab: "llm",
@@ -307,7 +307,7 @@ export const MENU: readonly MenuNode[] = [
       name: "telegram",
       description:
         "telegram tab · subcommands: enable | disable | start | stop | restart | pair | token",
-      rank: 28,
+      rank: 29,
     },
     section: "manage",
     tab: "telegram",
@@ -323,7 +323,7 @@ export const MENU: readonly MenuNode[] = [
       name: "import",
       description:
         "open the Import tab (one-shot Hermes -> atomic-agent migration)",
-      rank: 29,
+      rank: 30,
     },
     section: "manage",
     tab: "import",
@@ -339,7 +339,7 @@ export const MENU: readonly MenuNode[] = [
       name: "privacy",
       description:
         "open the Privacy tab (analytics opt-out + approval level) · subcommands: `/privacy analytics on|off` | `/privacy level 1..5` | `/privacy approve on|off`",
-      rank: 30,
+      rank: 31,
     },
     section: "manage",
     tab: "privacy",
@@ -359,7 +359,7 @@ export const MENU: readonly MenuNode[] = [
       name: "debug",
       description:
         "toggle debug pane (feed / logs / world …)",
-      rank: 7,
+      rank: 8,
     },
   },
   {
@@ -372,7 +372,7 @@ export const MENU: readonly MenuNode[] = [
       name: "new",
       description:
         "start a fresh session (keeps warm runtime)",
-      rank: 19,
+      rank: 20,
     },
   },
   {
@@ -385,7 +385,7 @@ export const MENU: readonly MenuNode[] = [
       name: "sessions",
       description:
         "open session picker to switch threads",
-      rank: 18,
+      rank: 19,
     },
   },
   {
@@ -409,7 +409,7 @@ export const MENU: readonly MenuNode[] = [
       name: "context",
       description:
         "show where this session's context window went",
-      rank: 36,
+      rank: 37,
     },
   },
   {
@@ -421,7 +421,7 @@ export const MENU: readonly MenuNode[] = [
       name: "session",
       description:
         "show current session id",
-      rank: 17,
+      rank: 18,
     },
   },
   {
@@ -435,7 +435,24 @@ export const MENU: readonly MenuNode[] = [
       description:
         "open chat model picker · subcommands: pull <id> | use <id> | status | <base-url>",
       aliases: ["models", "local"],
-      rank: 25,
+      rank: 26,
+    },
+  },
+  {
+    kind: "action",
+    id: "run.mode",
+    label: "Coding mode…",
+    group: "run",
+    // `M`, not `m`: lowercase already belongs to Memory. Uppercase
+    // chords are an established shape here (`L` for local models), and
+    // shift+tab — the key this control would want on muscle memory
+    // alone — is the global nav-back key and is not available.
+    chord: "M",
+    slash: {
+      name: "mode",
+      description:
+        "cycle the coding mode: plan · default · accept edits · bypass permissions · `/mode <name>` sets one directly",
+      rank: 6,
     },
   },
   {
@@ -460,7 +477,7 @@ export const MENU: readonly MenuNode[] = [
       name: "queue",
       description:
         "parked messages: `/queue` list | `/queue <msg>` park one | `/queue clear` | `/queue mode` make Enter queue",
-      rank: 32,
+      rank: 33,
     },
   },
   {
@@ -473,7 +490,7 @@ export const MENU: readonly MenuNode[] = [
       description:
         "open a new terminal window running atomic-agent (ctrl+n)",
       aliases: ["newwindow"],
-      rank: 34,
+      rank: 35,
     },
   },
   {
@@ -485,7 +502,7 @@ export const MENU: readonly MenuNode[] = [
       name: "steer",
       description:
         "steer the running turn: `/steer <msg>` one-shot | bare `/steer` makes Enter steer",
-      rank: 33,
+      rank: 34,
     },
   },
   {
@@ -497,7 +514,7 @@ export const MENU: readonly MenuNode[] = [
       name: "expand",
       description:
         "expand every tool card in the chat log",
-      rank: 15,
+      rank: 16,
     },
   },
   {
@@ -509,7 +526,7 @@ export const MENU: readonly MenuNode[] = [
       name: "collapse",
       description:
         "collapse every tool card in the chat log",
-      rank: 16,
+      rank: 17,
     },
   },
   {
@@ -521,7 +538,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "theme",
       description:
-        "switch the UI theme: `/theme <name>` | `/theme list` (github, catppuccin, dracula, nord, …)",
+        "switch the UI theme: `/theme <name>` | `/theme list` (classic-dark, classic-light, toxic-green, khorne-red, …)",
       rank: 3,
     },
   },
@@ -534,7 +551,7 @@ export const MENU: readonly MenuNode[] = [
       name: "mouse",
       description:
         "mouse support on/off/status (off restores the terminal's drag-to-select)",
-      rank: 35,
+      rank: 36,
     },
   },
   {
@@ -546,7 +563,7 @@ export const MENU: readonly MenuNode[] = [
       name: "analytics",
       description:
         "toggle anonymous analytics: `/analytics on|off|status`",
-      rank: 31,
+      rank: 32,
     },
   },
   {
@@ -558,7 +575,7 @@ export const MENU: readonly MenuNode[] = [
       name: "skill",
       description:
         "skill subcommand: `/skill enable <name>` | `/skill disable <name>`",
-      rank: 21,
+      rank: 22,
     },
   },
   {
@@ -570,7 +587,7 @@ export const MENU: readonly MenuNode[] = [
       name: "task",
       description:
         "task subcommand: `/task new` | `/task cancel <id>` | `/task run <id>`",
-      rank: 27,
+      rank: 28,
     },
   },
   {
@@ -621,7 +638,7 @@ export const MENU: readonly MenuNode[] = [
       description:
         "exit atomic-agent",
       aliases: ["exit"],
-      rank: 6,
+      rank: 7,
     },
   },
   {

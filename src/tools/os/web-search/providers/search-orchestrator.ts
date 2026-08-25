@@ -3,7 +3,14 @@ import {
   buildSearchCacheKey,
   type SearchCache,
 } from "../transport/search-cache.js";
-import { WebSearchBlockedError } from "../web-search-errors.js";
+import {
+  formatCooldown,
+  type ProviderCooldown,
+} from "../transport/provider-cooldown.js";
+import {
+  WebSearchBlockedError,
+  WebSearchRateLimitedError,
+} from "../web-search-errors.js";
 import type {
   WebSearchHttpDeps,
   WebSearchProviderName,
@@ -19,12 +26,32 @@ export interface WebSearchOrchestratorInput {
   cache?: SearchCache;
   /** Process env source for provider key checks; injectable for tests. */
   env?: NodeJS.ProcessEnv;
+  /**
+   * Parked providers. Optional so existing callers and tests keep
+   * working; without it the chain behaves exactly as it did, which is
+   * to say it walks back into the same rate limit on every query.
+   */
+  cooldown?: ProviderCooldown;
+  /** Injectable clock, so a cooldown test does not wait out a real minute. */
+  now?: () => number;
 }
 
 export interface WebSearchOrchestratorResult {
   results: WebSearchResult[];
   provider: WebSearchProviderName;
   fromCache: boolean;
+  /**
+   * Providers that did not get to answer, and why — a rate limit they
+   * had just hit, or one they are still parked for. Empty on the happy
+   * path.
+   *
+   * This is the answer to the half of #179 that backoff does not touch:
+   * the fallback chain worked exactly as designed, so nothing failed,
+   * so nothing was reported — and a campaign spent 44% of its tool calls
+   * being quietly served by the weaker provider. A degradation nobody
+   * can see is not a degradation anybody fixes.
+   */
+  degraded: readonly string[];
 }
 
 /**
@@ -41,11 +68,24 @@ export async function runWebSearchWithFallback(
   const env = input.env ?? process.env;
   const chain = buildProviderChain(search.provider, search.fallback);
 
+  const now = input.now ?? Date.now;
+  const cooldown = input.cooldown;
   let firstError: unknown;
   let lastEmpty: WebSearchOrchestratorResult | undefined;
+  const degraded: string[] = [];
 
   for (const name of chain) {
     if (!isProviderUsable(name, input.config, env)) continue;
+
+    // Parked for a rate limit it hit earlier. Skipping it here is the
+    // whole point: against a standing quota the alternative is three
+    // requests that cannot succeed and ~1.5s of backoff, on every
+    // single query, before reaching the provider that was always going
+    // to serve it.
+    //
+    // The cache is still consulted first — a parked provider's earlier
+    // answers are not stale just because its quota ran out.
+    const parkedFor = cooldown?.remainingMs(name, now()) ?? 0;
 
     const cacheKey = buildSearchCacheKey(
       name,
@@ -55,9 +95,16 @@ export async function runWebSearchWithFallback(
     const cached = input.cache?.get(cacheKey);
     if (cached) {
       if (cached.length > 0) {
-        return { results: cached, provider: name, fromCache: true };
+        return { results: cached, provider: name, fromCache: true, degraded };
       }
-      lastEmpty = { results: cached, provider: name, fromCache: true };
+      lastEmpty = { results: cached, provider: name, fromCache: true, degraded };
+      continue;
+    }
+
+    if (parkedFor > 0) {
+      degraded.push(
+        `${name} skipped: rate limited, retrying in ${formatCooldown(parkedFor)}`,
+      );
       continue;
     }
 
@@ -65,12 +112,22 @@ export async function runWebSearchWithFallback(
     try {
       const results = await provider.search(input.options);
       input.cache?.set(cacheKey, results);
+      // It answered, so whatever it was parked for is over. Clearing
+      // the strike count here is what keeps the escalation honest: the
+      // ladder measures *consecutive* failures, not lifetime ones.
+      cooldown?.clear(name);
       if (results.length > 0) {
-        return { results, provider: name, fromCache: false };
+        return { results, provider: name, fromCache: false, degraded };
       }
-      lastEmpty = { results, provider: name, fromCache: false };
+      lastEmpty = { results, provider: name, fromCache: false, degraded };
     } catch (err) {
       if (firstError === undefined) firstError = err;
+      if (err instanceof WebSearchRateLimitedError && cooldown) {
+        const parked = cooldown.park(name, now(), err.retryAfterMs);
+        degraded.push(
+          `${name} rate limited (HTTP 429), parked for ${formatCooldown(parked)}`,
+        );
+      }
       // WebSearchBlockedError and transport throws both advance the chain.
     }
   }

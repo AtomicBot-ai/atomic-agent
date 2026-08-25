@@ -8,13 +8,13 @@ import { theme } from "../theme/theme.js";
  * The composer's status bar: the chat route on the left, the live
  * readouts on the right, drawn on the same inverted ground as the rail.
  *
- * **Why inverted.** The bar is the composer's chrome, not its content.
- * A terminal has no borders-and-shadows to say "this strip is a
- * toolbar", so it borrows the one device the rail already established:
- * its own ground, per-palette rather than a literal white, because
- * `#fff` disappears on the four light themes. Reading the composer as
- * "a field with a toolbar under it" instead of "two lines of text" is
- * the whole point of the change.
+ * **Why its own ground.** The bar is the composer's chrome, not its
+ * content. A terminal has no borders-and-shadows to say "this strip is
+ * a toolbar", so it borrows the one device the rail already
+ * established: its own ground, one step off the page rather than an
+ * inversion of it. Reading the composer as "a field with a toolbar
+ * under it" instead of "two lines of text" is the whole point of the
+ * change.
  *
  * The ground is one `backgroundColor` on the bar container, which Ink 7
  * paints across the empty space between the meta text and the readouts —
@@ -25,15 +25,16 @@ import { theme } from "../theme/theme.js";
  * status readout belongs, and the app's primary verb belongs next to
  * the text it submits.
  *
- * **A caveat about the slots.** `leftSlot` / `rightSlot` arrive from the
- * chat surface already coloured (the composer notice, the while-busy
- * hint), and those colours were chosen against the *normal* ground.
- * On the rail ground they read as low-contrast secondary text — which is
- * what they are — but on `github-dark` and `catppuccin-mocha` the muted
- * tone is close enough to the light rail ground to be genuinely faint.
- * Recolouring them would mean reaching into components outside this
- * file; the glyph in each pill carries a saturated status colour and
- * stays legible, so the signal survives even where the label dims.
+ * **About the slots.** `leftSlot` / `rightSlot` arrive from the chat
+ * surface already coloured, so this file cannot check them — but they
+ * land on the rail ground, which means the caller has to paint them in
+ * `rail*` tokens rather than page ones. It used not to: the composer
+ * notice came in as `success` and the while-busy hint as `accentSoft`
+ * plus `muted`, all three picked to be read on the terminal's own
+ * background, and on the palettes whose rail was drawn *inverted* that
+ * put light text on a light ground. `tui-app.tsx` now hands over rail
+ * tokens, and `theme-contrast.test.ts` holds every one of them to AA
+ * against `railBackground`.
  */
 export interface PromptMetaBarProps {
   /**
@@ -57,6 +58,13 @@ export interface PromptMetaBarProps {
    * is exactly as worth watching then as when the composer is idle.
    */
   contextSlot: ReactElement | null;
+  /**
+   * The coding-mode chip, at the very end of the bar. Its own prop
+   * rather than part of `rightSlot` for the same reason `contextSlot`
+   * is: the three coexist, and the bar's right end is an ordered
+   * sentence — how full the window is, then under what rules.
+   */
+  modeSlot: ReactElement | null;
   /**
    * Layer the route controls register their click targets on. The
    * composer floats over the chat log behind a raised mouse backstop
@@ -84,6 +92,7 @@ export function PromptMetaBar({
   needsModelDownload,
   rightSlot,
   contextSlot,
+  modeSlot,
   mouseLayer,
 }: PromptMetaBarProps): ReactElement {
   return (
@@ -120,6 +129,11 @@ export function PromptMetaBar({
           </Box>
         ) : null}
         {contextSlot ?? null}
+        {modeSlot ? (
+          <Box flexShrink={0} marginLeft={1}>
+            {modeSlot}
+          </Box>
+        ) : null}
       </Box>
     </Box>
   );

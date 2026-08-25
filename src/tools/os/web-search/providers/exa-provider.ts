@@ -1,3 +1,4 @@
+import { assertProviderStatus } from "./assert-provider-status.js";
 import { searchHttp } from "../transport/search-http.js";
 import type {
   WebSearchHttpDeps,
@@ -66,9 +67,7 @@ export function createExaProvider(
           runCommand: deps.runCommand,
           lookup: deps.lookup,
         });
-        if (response.status >= 400) {
-          throw new Error(`Exa API returned HTTP ${response.status}`);
-        }
+        assertProviderStatus(response, "exa", "Exa API");
         return parseExaApiJson(response.body, options.maxResults);
       }
 
@@ -97,9 +96,7 @@ export function createExaProvider(
         runCommand: deps.runCommand,
         lookup: deps.lookup,
       });
-      if (response.status >= 400) {
-        throw new Error(`Exa returned HTTP ${response.status}`);
-      }
+      assertProviderStatus(response, "exa", "Exa");
       const text = extractExaText(response.body);
       return parseExaTextResults(text, options.maxResults);
     },

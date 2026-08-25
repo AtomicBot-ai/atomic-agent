@@ -39,7 +39,7 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "theme",
     description:
-      "switch the UI theme: `/theme <name>` | `/theme list` (github, catppuccin, dracula, nord, …)",
+      "switch the UI theme: `/theme <name>` | `/theme list` (classic-dark, classic-light, toxic-green, khorne-red, …)",
   },
   {
     name: "clear",
@@ -50,6 +50,11 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "abort",
     description:
       "abort the running turn",
+  },
+  {
+    name: "mode",
+    description:
+      "cycle the coding mode: plan · default · accept edits · bypass permissions · `/mode <name>` sets one directly",
   },
   {
     name: "quit",

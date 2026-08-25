@@ -1,3 +1,4 @@
+import { checkPlanMode } from "./plan-mode.js";
 import type { ToolCallPayload } from "../llm/grammar/tool-call-grammar.js";
 import {
   compressToolResult,
@@ -75,6 +76,15 @@ export interface BatchExecutionContext {
    * for this step (legacy behaviour).
    */
   tracker?: ToolLoopTracker;
+  /**
+   * Plan mode, read at dispatch time rather than passed as a boolean.
+   *
+   * A getter for the same reason `dangerous.approvalRequired` is one
+   * (see `bootstrap.ts`): a value copied at construction freezes
+   * whatever was true at boot, and the whole point of a mode is that
+   * the operator flips it mid-session. Absent ⇒ plan mode is off.
+   */
+  isPlanMode?: () => boolean;
   /**
    * Names of skills already present in `SessionState.loadedSkills`. A
    * `skill.view` call targeting one of these is short-circuited with a
@@ -214,6 +224,26 @@ export async function executeBatch(
   for (const input of nonTerminalInputs) {
     if (ctx.signal.aborted) {
       slots[input.batchIndex] = { ...slots[input.batchIndex]!, cancelled: true };
+      continue;
+    }
+    // Plan mode first: a call that is not going to run should not spend
+    // a slot in the loop tracker's history either. Recording it would
+    // let a refused-and-retried tool trip the loop breaker, and end the
+    // turn over an argument the model was never allowed to try.
+    const plan = runPlanModeGate(input, registry, ctx);
+    if (!plan.proceed && plan.vetoResult) {
+      ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
+      slots[input.batchIndex] = {
+        ...slots[input.batchIndex]!,
+        compressed: plan.vetoResult,
+        durationMs: 0,
+      };
+      ctx.onCallFinished?.({
+        batchIndex: input.batchIndex,
+        batchSize,
+        result: plan.vetoResult,
+        durationMs: 0,
+      });
       continue;
     }
     const gate = runSyncLoopGate(input, ctx, loopSignals);
@@ -449,6 +479,25 @@ function skillAlreadyLoadedResult(
  * no-progress streak (the streak then plateaus at `criticalThreshold`).
  * Terminal verbs and tracker-less steps always proceed unchanged.
  */
+/**
+ * Refuse a mutating call while plan mode is on.
+ *
+ * Sits beside `runSyncLoopGate` and shares its shape — a synchronous
+ * verdict that either lets the call through or fills its slot — because
+ * both answer the same kind of question: is this call going to run at
+ * all, decided before anything is dispatched.
+ */
+function runPlanModeGate(
+  input: BatchCallInput,
+  registry: ToolRegistry,
+  ctx: BatchExecutionContext,
+): { proceed: boolean; vetoResult?: CompressedToolResult } {
+  if (!ctx.isPlanMode?.()) return { proceed: true };
+  const verdict = checkPlanMode(input.call.tool, registry);
+  if (verdict.allowed) return { proceed: true };
+  return { proceed: false, vetoResult: verdict.refusal! };
+}
+
 function runSyncLoopGate(
   input: BatchCallInput,
   ctx: BatchExecutionContext,

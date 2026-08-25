@@ -544,6 +544,20 @@ export interface AgentRuntime {
    * are not resolved retroactively.
    */
   setApprovalLevel(level: number): void;
+  /**
+   * Plan mode: read-only until further notice.
+   *
+   * Orthogonal to the approval ladder, and deliberately so — the ladder
+   * answers "does this need to ask first", plan mode answers "is this
+   * the kind of thing we are doing right now". Every mutating tool is
+   * refused with a message telling the model to present a plan instead;
+   * every read-only tool still runs. See `agent/plan-mode.ts`.
+   *
+   * Session state rather than config: a "look but do not touch" that
+   * survived a restart would be a mystery rather than a memory.
+   */
+  getPlanMode(): boolean;
+  setPlanMode(on: boolean): void;
   /** Close all resources (browser, sqlite, llama client). Safe to call twice. */
   shutdown(): Promise<void>;
 }
@@ -1779,11 +1793,21 @@ export async function createAgentRuntime(
     });
   }
 
+  // Plan mode. Session state, deliberately not config: it is a stance
+  // for the next few turns, not a setting, and a "look but do not touch"
+  // that survived a restart would be a mystery rather than a memory.
+  let planMode = false;
+
   // The `skillCatalog` is a getter so that `agent-loop` reads the current
   // value on every step — `refreshSkills()` then does not require tearing
   // down the loop.
   const loopDeps = {
     registry: toolRegistry,
+    // A getter, so `runtime.setPlanMode` is observed by the next tool
+    // call rather than by the next process. Same reason the approval
+    // gate is the single live switch rather than a boolean copied into
+    // each tool registration.
+    isPlanMode: () => planMode,
     slotManager,
     grammar,
     llmComplete,
@@ -2516,6 +2540,10 @@ export async function createAgentRuntime(
     setAnalyticsEnabled,
     getApprovalLevel: () => approvals.getLevel(),
     setApprovalLevel: (level) => approvals.setLevel(level),
+    getPlanMode: () => planMode,
+    setPlanMode: (on: boolean) => {
+      planMode = on;
+    },
     shutdown,
   } as AgentRuntime & { telegramChannel: TelegramChannel | null };
   Object.defineProperty(runtime, "skillCatalog", {

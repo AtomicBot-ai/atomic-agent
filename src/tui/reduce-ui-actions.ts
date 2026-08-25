@@ -1,3 +1,4 @@
+import { cycleCodingMode } from "./coding-mode.js";
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import { clampMenuCursor } from "./menu/menu-selectors.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
@@ -162,6 +163,16 @@ export function reduceUiAction(
       };
     case "queue_changed":
       return { ...state, queuedMessages: [...action.queued] };
+    case "coding_mode_cycled": {
+      const next =
+        action.mode ?? cycleCodingMode(state.codingMode, action.back ?? false);
+      if (next === state.codingMode) return state;
+      // The reducer owns the *displayed* mode only. Applying it to the
+      // runtime (the approval level and the plan-mode flag) is the
+      // orchestrator's job, driven off the same action — a reducer that
+      // reached into the runtime would make every state test need one.
+      return { ...state, codingMode: next };
+    }
     case "while_busy_mode_changed": {
       const next =
         action.mode ?? (state.whileBusyMode === "steer" ? "queue" : "steer");

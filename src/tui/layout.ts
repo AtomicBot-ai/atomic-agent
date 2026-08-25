@@ -96,6 +96,50 @@ const NARROW_CHROME_EXTRA = 4;
 /** Floor for the chat viewport — below this nothing readable survives. */
 const MIN_VIEWPORT_ROWS = 4;
 
+/**
+ * The smallest terminal the app will draw itself into.
+ *
+ * **Rows.** `CHROME_ROWS + MIN_VIEWPORT_ROWS`, which is not a
+ * preference — it is the height the frame actually stops shrinking at.
+ * Rendered against a mocked terminal size, the main screen comes out at
+ * 16 rows for a 16-row terminal, and at 16 rows for a 14-, 12-, 8- and
+ * 5-row one. The layout has nothing left to give below this; the chrome
+ * is the status bar, the hairline, the composer's three rows, the meta
+ * bar, the hint strip and the pad, and the viewport floor is four lines
+ * of transcript.
+ *
+ * That matters more here than it would in a browser, because **Ink 7
+ * does not clip a frame taller than the terminal — it overlaps earlier
+ * lines**. A 16-row frame in a 10-row window is not a cropped UI, it is
+ * six rows of two different UIs on top of each other, which is what
+ * `layout.ts` and `splash-fit.ts` have been working around piecemeal.
+ *
+ * **Columns.** 40 is the narrowest width at which the composer's frame
+ * (two border columns and two of padding) plus its `send →` chip still
+ * leave room to see what you are typing. It is also the narrowest case
+ * the splash's own fit tests already cover, so the two agree on where
+ * "small" ends.
+ *
+ * Below either floor the app draws {@link TerminalTooSmall} instead of
+ * itself — one short card that fits anything, says what is needed and
+ * what it has, and repaints as the window is dragged.
+ */
+export const MIN_TERMINAL_COLUMNS = 40;
+export const MIN_TERMINAL_ROWS = CHROME_ROWS + MIN_VIEWPORT_ROWS;
+
+/**
+ * True when the terminal cannot hold the app's own chrome.
+ *
+ * Deliberately not "…cannot hold it comfortably": every size at or above
+ * this floor still gets the real UI, degraded by the rules the rest of
+ * this module already encodes (the rail drops at 100 columns, the chrome
+ * grows a row at 60). This is the line below which degrading further
+ * stops producing a smaller UI and starts producing a broken one.
+ */
+export function isTerminalTooSmall(columns: number, rows: number): boolean {
+  return columns < MIN_TERMINAL_COLUMNS || rows < MIN_TERMINAL_ROWS;
+}
+
 /** Row caps at which extra height stops buying useful context. */
 const SIDEBAR_MAX_SESSION_ROWS = 10;
 const SIDEBAR_MAX_TASK_ROWS = 5;

@@ -830,3 +830,135 @@ describe("executeBatch — skill.view short-circuit", () => {
     expect(tracker.check("skill.view", { name: "exa" }).level).toBe("critical");
   });
 });
+
+/**
+ * Plan mode at the seam that matters: not "does the predicate say no",
+ * which `plan-mode.test.ts` covers, but "did the tool actually not run".
+ */
+describe("executeBatch under plan mode", () => {
+  it("never dispatches a mutating tool", async () => {
+    const write = vi.fn(async () => okResult("os.fs.write"));
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.write",
+      description: "write",
+      readonly: false,
+      run: write,
+    });
+    const inputs = toBatchInputs([
+      { tool: "os.fs.write", args: { path: "a", content: "x" } },
+    ]);
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      isPlanMode: () => true,
+    });
+    expect(write).not.toHaveBeenCalled();
+    expect(out.results[0]!.compressed?.status).toBe("error");
+    expect(out.results[0]!.compressed?.summary).toContain("plan mode is on");
+  });
+
+  it("still runs the read-only calls in the same batch", async () => {
+    const read = vi.fn(async () => okResult("os.fs.read"));
+    const write = vi.fn(async () => okResult("os.fs.write"));
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "read",
+      readonly: true,
+      run: read,
+    });
+    registry.register({
+      name: "os.fs.write",
+      description: "write",
+      readonly: false,
+      run: write,
+    });
+    const inputs = toBatchInputs([
+      { tool: "os.fs.read", args: { path: "a" } },
+      { tool: "os.fs.write", args: { path: "b", content: "x" } },
+      { tool: "os.fs.read", args: { path: "c" } },
+    ]);
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      isPlanMode: () => true,
+    });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(write).not.toHaveBeenCalled();
+    expect(out.results[0]!.compressed?.status).toBe("ok");
+    expect(out.results[1]!.compressed?.status).toBe("error");
+    expect(out.results[2]!.compressed?.status).toBe("ok");
+  });
+
+  it("does not feed a refused call to the loop detector", async () => {
+    // A refused call that was recorded would let a retried tool trip the
+    // loop breaker and end the turn — over an argument the model was
+    // never allowed to try in the first place.
+    const write = vi.fn(async () => okResult("os.fs.write"));
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.write",
+      description: "write",
+      readonly: false,
+      run: write,
+    });
+    const tracker = new ToolLoopTracker();
+    for (let i = 0; i < 12; i++) {
+      const out = await executeBatch(
+        toBatchInputs([{ tool: "os.fs.write", args: { path: "a" } }]),
+        registry,
+        {
+          ...ctx(new AbortController().signal),
+          tracker,
+          isPlanMode: () => true,
+        },
+      );
+      expect(out.results[0]!.compressed?.summary).toContain("plan mode is on");
+    }
+    expect(out2LoopSignals(tracker)).toBe(0);
+  });
+
+  it("runs everything again the moment plan mode goes off", async () => {
+    const write = vi.fn(async () => okResult("os.fs.write"));
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.write",
+      description: "write",
+      readonly: false,
+      run: write,
+    });
+    let planning = true;
+    const inputs = toBatchInputs([
+      { tool: "os.fs.write", args: { path: "a", content: "x" } },
+    ]);
+    const base = { ...ctx(new AbortController().signal), isPlanMode: () => planning };
+    await executeBatch(inputs, registry, base);
+    expect(write).not.toHaveBeenCalled();
+    // The getter is read per call, so the flip is observed by the next
+    // tool call rather than by the next process.
+    planning = false;
+    await executeBatch(inputs, registry, base);
+    expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  it("is inert when no getter is supplied", async () => {
+    const write = vi.fn(async () => okResult("os.fs.write"));
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.write",
+      description: "write",
+      readonly: false,
+      run: write,
+    });
+    await executeBatch(
+      toBatchInputs([{ tool: "os.fs.write", args: { path: "a" } }]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(write).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** The tracker never saw a call, so it has nothing to complain about. */
+function out2LoopSignals(tracker: ToolLoopTracker): number {
+  return tracker.check("os.fs.write", { path: "a" }).count;
+}

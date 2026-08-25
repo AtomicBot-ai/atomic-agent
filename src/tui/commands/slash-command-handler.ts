@@ -1,3 +1,4 @@
+import { CODING_MODES, codingModeLook } from "../coding-mode.js";
 import type { WhileBusySubmitMode } from "../../config/index.js";
 import type { TuiAction } from "../tui-action.js";
 import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";
@@ -186,6 +187,8 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return dispatchMouseSub(parsed.args);
     case "theme":
       return dispatchThemeSub(parsed.args);
+    case "mode":
+      return dispatchModeSub(parsed.args);
     case "clear":
       return pureActions([{ type: "chat_cleared" }], {
         systemMessage: "chat cleared",
@@ -363,6 +366,31 @@ function dispatchSteerSub(args: string): SlashDispatchResult {
     systemMessage:
       "Enter now steers the running turn (Ctrl+T or /queue switches back)",
   });
+}
+
+/**
+ * `/mode` cycles; `/mode <name>` sets one. Names are matched on the
+ * chip's own label as well as the identifier, because "accept edits" is
+ * what the operator can see and `accept-edits` is what the code calls
+ * it, and being told the visible name is wrong would be absurd.
+ */
+function dispatchModeSub(args: string): SlashDispatchResult {
+  const raw = args.trim().toLowerCase();
+  if (raw.length === 0) {
+    return pureActions([{ type: "coding_mode_cycled" }]);
+  }
+  const wanted = raw.replace(/[\s_]+/g, "-");
+  const match = CODING_MODES.find(
+    (mode) =>
+      mode === wanted ||
+      codingModeLook(mode).label.replace(/\s+/g, "-") === wanted,
+  );
+  if (!match) {
+    return pureActions([], {
+      systemMessage: `unknown mode: ${args.trim()} — try ${CODING_MODES.join(", ")}`,
+    });
+  }
+  return pureActions([{ type: "coding_mode_cycled", mode: match }]);
 }
 
 function pureActions(

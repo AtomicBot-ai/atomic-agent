@@ -1,5 +1,13 @@
 import { ContextChip } from "./components/context-chip.js";
+import type { ApprovalLevel } from "../approval/approval-level.js";
+import {
+  codingModeLook,
+  resolveCodingMode,
+  type CodingMode,
+} from "./coding-mode.js";
+import { CodingModeChip } from "./components/coding-mode-chip.js";
 import { OnboardingScreen } from "./components/onboarding-screen.js";
+import { TerminalTooSmall } from "./components/terminal-too-small.js";
 import { ContextPanel } from "./components/context-panel.js";
 import { selectContextUsage } from "./select-context-usage.js";
 import { Box, Text, useApp, useInput, type DOMElement, type Key } from "ink";
@@ -71,6 +79,7 @@ import {
   computeSidebarRowBudget,
   computeSidebarWidth,
   isSidebarVisible,
+  isTerminalTooSmall,
 } from "./layout.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { slashPrefix } from "./commands/slash-command-parser.js";
@@ -199,6 +208,16 @@ export interface TuiAppCallbacks {
   onMessageSteered?(message: string): void;
   /** Persist the Enter-while-busy mode after a Ctrl+T flip. */
   onWhileBusyModePersistRequested?(mode: WhileBusySubmitMode): void;
+  /**
+   * The coding mode changed — apply it to the live runtime (the
+   * approval ladder and the plan-mode flag). Given the resolved values
+   * as well as the mode so the host never has to re-derive them and the
+   * two cannot drift.
+   */
+  onCodingModeChanged?(
+    mode: CodingMode,
+    resolved: { approvalLevel: ApprovalLevel; planMode: boolean },
+  ): void;
   /** Ask the orchestrator to emit the recent-sessions list to the bus. */
   onSessionPickerRequested?(): void;
   /** Ask the orchestrator to swap to an existing persisted session. */
@@ -1375,8 +1394,11 @@ export function TuiApp({
     return () => clearTimeout(timer);
   }, [state.composerNotice]);
 
+  // Rail tokens, not page ones: both slots are handed to `PromptMetaBar`,
+  // which paints them on the rail ground. `success` / `accentSoft` /
+  // `muted` are all picked to be read on the terminal's own page.
   const promptLeftSlot = state.composerNotice ? (
-    <Text color={theme.colors.success}>{state.composerNotice}</Text>
+    <Text color={theme.colors.railSuccess}>{state.composerNotice}</Text>
   ) : null;
   // While a turn is running the meta-row gains a second job: the operator
   // needs to know what Enter will do to the message they are typing.
@@ -1390,18 +1412,69 @@ export function TuiApp({
   const promptRightSlot =
     state.status === "running" ? (
       <Text>
-        <Text color={theme.colors.accentSoft} bold>
+        <Text color={theme.colors.railAccent} bold>
           {"\u23ce"} {state.whileBusyMode}
         </Text>
-        <Text color={theme.colors.muted}> (ctrl+t)</Text>
+        <Text color={theme.colors.railMuted}> (ctrl+t)</Text>
       </Text>
     ) : null;
   const contextUsage = selectContextUsage(state);
   // The chip renders inside the composer overlay, so its click target
   // registers on the overlay's raised layer — see `composer-overlay.tsx`.
+  // One place the mode reaches the runtime, whichever way it was
+  // changed — the `ctrl+g M` chord, a click on the chip, or `/mode`.
+  // An effect rather than a branch in each entry point, because three
+  // call sites applying the same two setters is three chances for one
+  // of them to forget.
+  const codingMode = state.codingMode;
+  const baseApprovalLevel = state.baseApprovalLevel;
+  const appliedModeRef = useRef<CodingMode | null>(null);
+  useEffect(() => {
+    // Skip the first run: the boot state is `default`, which is already
+    // what the runtime has, and applying it would clobber a
+    // `--no-approval` boot back down to the configured level.
+    if (appliedModeRef.current === null) {
+      appliedModeRef.current = codingMode;
+      return;
+    }
+    if (appliedModeRef.current === codingMode) return;
+    appliedModeRef.current = codingMode;
+    const resolved = resolveCodingMode(codingMode, baseApprovalLevel);
+    callbacks.onCodingModeChanged?.(codingMode, resolved);
+    dispatch({
+      type: "system_message",
+      text: codingModeLook(codingMode).summary,
+    });
+  }, [codingMode, baseApprovalLevel, callbacks]);
+
   const promptContextSlot = contextUsage ? (
     <ContextChip usage={contextUsage} layer={MOUSE_LAYER_PANEL} />
   ) : null;
+  // Always drawn, including in `default`. A control that appears only
+  // once you are in an unusual mode is a control nobody discovers, and
+  // the chip is the only place the app says which rules are in force.
+  const promptModeSlot = (
+    <CodingModeChip mode={state.codingMode} layer={MOUSE_LAYER_PANEL} />
+  );
+
+  // Below the floor the app cannot be drawn at all — Ink 7 overlaps a
+  // frame taller than the terminal rather than clipping it, so what came
+  // out of an eight-row window was two UIs painted over each other. This
+  // branch sits above the onboarding one deliberately: the first-run
+  // screen is the *first* thing a new operator sees, and it is the one
+  // that has no idea yet that the window is the problem.
+  //
+  // Below every hook, like the onboarding branch, so the hook order is
+  // identical whichever way this goes and a resize across the floor is
+  // an ordinary re-render.
+  if (isTerminalTooSmall(terminalSize.columns, terminalSize.rows)) {
+    return (
+      <TerminalTooSmall
+        columns={terminalSize.columns}
+        rows={terminalSize.rows}
+      />
+    );
+  }
 
   // The first-run flow replaces the app rather than layering over it.
   // Every hook above still runs — the branch sits below all of them — but
@@ -1691,6 +1764,7 @@ export function TuiApp({
             leftSlot={promptLeftSlot}
             rightSlot={promptRightSlot}
             contextSlot={promptContextSlot}
+            modeSlot={promptModeSlot}
             focus={editorFocus}
             disabled={!canTypeMessage(state)}
             claimKey={composerClaimKey}
