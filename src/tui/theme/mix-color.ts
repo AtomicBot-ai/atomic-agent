@@ -4,12 +4,13 @@ import { formatHexColor, parseHexColor } from "./parse-hex-color.js";
  * Blend two palette colours in linear channel space.
  *
  * The point is to derive a *ramp* from tokens the palette already
- * defines instead of hard-coding a second and third blue into all twelve
- * of them. Mixing an accent toward the ground it sits on is the one
+ * defines instead of hard-coding a second and third accent into every
+ * one of them. Mixing an accent toward the ground it sits on is the one
  * operation that means the same thing on a light theme and a dark one:
- * on `github-light` a half-mix of deep blue and a near-white rail is
- * literally pale blue, on `tokyo-night` it is a quiet dimmed blue, and
- * both read as "this control is not shouting yet".
+ * on `classic-light` a half-mix of deep blue and a pale grey rail is
+ * literally pale blue, on `khorne-red` a blood red pulled toward its
+ * dark rail is a quiet dimmed red, and both read as "this control is
+ * not shouting yet".
  *
  * Channel-space (not perceptual) mixing is deliberate: it is what a
  * terminal's 24-bit colour is, the inputs are all mid-saturation palette

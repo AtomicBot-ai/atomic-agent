@@ -40,22 +40,42 @@ export interface LlmHealthLook {
 }
 
 /**
- * The ●/◐/○/✕/· vocabulary, resolved from a status alone so the
- * composer's backend control can paint the same dot this badge does
- * without either surface inventing a second glyph table.
+ * Which ground the dot is about to be painted on.
+ *
+ * The same status is drawn in two places — this badge, on the terminal's
+ * own page, and the composer's backend control, on the rail — and
+ * contrast is a property of the pair, not of the colour. Asking the
+ * caller which ground it owns is what lets one glyph table serve both
+ * without either surface inventing a second one.
  */
-export function llmHealthLook(status: LlmHealthStatus): LlmHealthLook {
+export type LlmHealthGround = "page" | "rail";
+
+/**
+ * The ●/◐/○/✕/· vocabulary, resolved from a status and the ground it
+ * lands on, so the composer's backend control can paint the same dot
+ * this badge does.
+ */
+export function llmHealthLook(
+  status: LlmHealthStatus,
+  ground: LlmHealthGround = "page",
+): LlmHealthLook {
+  const c = theme.colors;
+  const onRail = ground === "rail";
+  const success = onRail ? c.railSuccess : c.success;
+  const warn = onRail ? c.railWarn : c.warn;
+  const error = onRail ? c.railError : c.error;
+  const muted = onRail ? c.railMuted : c.muted;
   switch (status) {
     case "healthy":
-      return { color: theme.colors.success, glyph: "●", label: "healthy" };
+      return { color: success, glyph: "●", label: "healthy" };
     case "probing":
-      return { color: theme.colors.warn, glyph: "◐", label: "probing" };
+      return { color: warn, glyph: "◐", label: "probing" };
     case "unreachable":
-      return { color: theme.colors.muted, glyph: "○", label: "down" };
+      return { color: muted, glyph: "○", label: "down" };
     case "error":
-      return { color: theme.colors.error, glyph: "✕", label: "error" };
+      return { color: error, glyph: "✕", label: "error" };
     case "unknown":
     default:
-      return { color: theme.colors.muted, glyph: "·", label: "unknown" };
+      return { color: muted, glyph: "·", label: "unknown" };
   }
 }

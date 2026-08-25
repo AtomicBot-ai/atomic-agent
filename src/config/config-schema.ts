@@ -1445,8 +1445,11 @@ export interface UserConfigFile {
   /**
    * TUI appearance. Added in config v29. `theme` is either the literal
    * `"auto"` (default — detect the terminal background via OSC 11 and pick
-   * the matching GitHub theme) or a registered theme name (e.g. `dracula`,
-   * `nord`). Persisted from the in-app `/theme` picker. Older files are
+   * the matching classic theme) or a registered theme name (e.g.
+   * `khorne-red`, `moon-yellow`). Names the registry used to carry are
+   * rehomed to the nearest surviving palette by `resolveThemeName`, so
+   * an older file never loses its theme silently. Persisted from the
+   * in-app `/theme` picker. Older files are
    * transparently upgraded with `tui: { theme: "auto" }`.
    *
    * `mouse` (config v38, default `true`) turns terminal mouse reporting
