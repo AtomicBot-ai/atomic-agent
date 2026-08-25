@@ -3,16 +3,24 @@ import type { Key } from "ink";
 
 import {
   approvalHotkey,
+  canEditPath,
   handleAppKey,
   submitApprovalPath,
 } from "./app-key-bindings.js";
+import { canGrantShape } from "../approval/approval-gate.js";
 import { createInitialTuiState, type TuiSessionInfo, type TuiState } from "./tui-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 
 /**
- * The chat composer stays live under an approval prompt, so one letter
- * has two possible meanings. These tests pin the arbitration: an empty
- * buffer means the letters decide, a draft means they are text.
+ * The chat composer stays live under an approval prompt. It used to be
+ * that one *letter* therefore had two meanings, arbitrated by whether
+ * the buffer was empty; these tests now pin the arbitration that
+ * replaced it. Every decision is a ctrl-chord, so a letter is always
+ * text and the buffer never has to decide. What is left for these tests
+ * to prove is that the chords are claimed regardless of the draft, that
+ * they do not collide with the editor's own line-editing chords, and
+ * that Esc — the one binding both layers still want — stays with the
+ * editor while there is something to clear.
  */
 function key(overrides: Partial<Key> = {}): Key {
   return {
@@ -74,51 +82,121 @@ function pending(overrides: Partial<TuiState> = {}): TuiState {
 }
 
 describe("approvalHotkey", () => {
-  it("claims the decision keys while the composer is empty", () => {
+  const ctrl = { ctrl: true };
+
+  it("claims its chords", () => {
     const state = pending();
-    expect(approvalHotkey(state, "y", key())).toBe("approve");
-    expect(approvalHotkey(state, "s", key())).toBe("grant_category");
-    expect(approvalHotkey(state, "e", key())).toBe("edit_path");
-    expect(approvalHotkey(state, "n", key())).toBe("deny");
+    expect(approvalHotkey(state, "y", key(ctrl))).toBe("approve");
+    expect(approvalHotkey(state, "d", key(ctrl))).toBe("deny");
+    expect(approvalHotkey(state, "f", key(ctrl))).toBe("grant_category");
+    expect(approvalHotkey(state, "b", key(ctrl))).toBe("edit_path");
     expect(approvalHotkey(state, "", key({ escape: true }))).toBe("abort");
   });
 
-  it("stands down completely once there is a draft", () => {
-    // Otherwise "yes, but put it in ~/Documents" would approve the call
-    // on its first keystroke.
-    const state = pending({ inputValue: "y" });
-    expect(approvalHotkey(state, "e", key())).toBeNull();
-    expect(approvalHotkey(state, "n", key())).toBeNull();
-    // Esc belongs to the editor here: it clears the draft, which hands
-    // the decision keys back.
+  it("never reads a bare letter as a decision", () => {
+    // The whole point of the change. "yes, but put it in ~/Documents"
+    // used to approve the call on its first keystroke.
+    const state = pending();
+    for (const letter of ["y", "d", "f", "b", "s", "a", "e", "n"]) {
+      expect(approvalHotkey(state, letter, key())).toBeNull();
+    }
+  });
+
+  it("keeps claiming its chords with a draft in the buffer", () => {
+    // The buffer used to be the arbiter, so a half-typed message
+    // disarmed every verdict and an operator had to clear it before
+    // they could answer. A chord is unambiguous either way.
+    const state = pending({ inputValue: "yes, but put it in " });
+    expect(approvalHotkey(state, "y", key(ctrl))).toBe("approve");
+    expect(approvalHotkey(state, "d", key(ctrl))).toBe("deny");
+    // Esc is the exception, and keeps its old rule for its old reason:
+    // it is the editor's "clear the draft" key too, and it was never a
+    // decision — the worst a misread Esc does is discard a message.
     expect(approvalHotkey(state, "", key({ escape: true }))).toBeNull();
+  });
+
+  it("leaves the editor's own line-editing chords alone", () => {
+    // `ctrl+a` / `ctrl+e` / `ctrl+u` / `ctrl+k` / `ctrl+w` are
+    // `multi-line-editor-keys.ts`. Claiming one would fix the collision
+    // in one direction and open it in the other: an operator mid-message
+    // would lose delete-word to a deny.
+    const state = pending({ inputValue: "half a sentence" });
+    for (const letter of ["a", "e", "u", "k", "w", "c", "v", "x"]) {
+      expect(
+        approvalHotkey(state, letter, key(ctrl)),
+        `ctrl+${letter} must stay with the editor`,
+      ).toBeNull();
+    }
   });
 
   it("stands down while the target field owns the keyboard", () => {
     const state = pending({ approvalPathDraft: "/work/site/index.html" });
-    expect(approvalHotkey(state, "y", key())).toBeNull();
-    expect(approvalHotkey(state, "n", key())).toBeNull();
+    expect(approvalHotkey(state, "y", key(ctrl))).toBeNull();
+    expect(approvalHotkey(state, "d", key(ctrl))).toBeNull();
   });
 
-  it("offers [e] only when the request carries a redirectable path", () => {
-    const shell = pending({
-      pendingApproval: writeRequest({
-        tool: "os.shell.run",
-        category: "shell",
-        redirectablePath: undefined,
-      }),
-    });
-    expect(approvalHotkey(shell, "e", key())).toBeNull();
-  });
-
-  it("ignores modified keys so a global chord never decides a prompt", () => {
+  it("ignores meta so alt+y stays a character, not a verdict", () => {
     const state = pending();
-    expect(approvalHotkey(state, "n", key({ ctrl: true }))).toBeNull();
     expect(approvalHotkey(state, "y", key({ meta: true }))).toBeNull();
+    expect(approvalHotkey(state, "y", key({ ctrl: true, meta: true }))).toBeNull();
   });
 
   it("says nothing when no prompt is up", () => {
-    expect(approvalHotkey(createInitialTuiState(session()), "y", key())).toBeNull();
+    expect(
+      approvalHotkey(createInitialTuiState(session()), "y", key(ctrl)),
+    ).toBeNull();
+  });
+
+  describe("the shared ctrl+b slot", () => {
+    const shellWithShape = pending({
+      pendingApproval: writeRequest({
+        tool: "os.shell.run",
+        category: "shell",
+        commandShape: "rm",
+        redirectablePath: undefined,
+      }),
+    });
+
+    it("grants the command shape on a shell request", () => {
+      expect(approvalHotkey(shellWithShape, "b", key(ctrl))).toBe("grant_shape");
+    });
+
+    it("opens the target field on a write request", () => {
+      expect(approvalHotkey(pending(), "b", key(ctrl))).toBe("edit_path");
+    });
+
+    it("does nothing where the request offers neither", () => {
+      const opaque = pending({
+        pendingApproval: writeRequest({
+          tool: "os.shell.run",
+          category: "shell",
+          redirectablePath: undefined,
+        }),
+      });
+      expect(approvalHotkey(opaque, "b", key(ctrl))).toBeNull();
+    });
+
+    it("is never asked to mean both at once", () => {
+      // The exclusivity the shared chord rests on, stated as a property
+      // rather than as three examples: the shape grant is shell-only
+      // (`canGrantShape`) and the retarget is set by `os.fs.write`
+      // alone (`redirectablePath`), so no request can offer both. A
+      // future tool that set `redirectablePath` on a shell request
+      // would fail here — which is the point.
+      const requests: ApprovalRequest[] = [
+        writeRequest(),
+        writeRequest({ tool: "os.shell.run", category: "shell", commandShape: "git", redirectablePath: undefined }),
+        writeRequest({ tool: "os.shell.run", category: "shell", redirectablePath: undefined }),
+        writeRequest({ tool: "os.fs.trash", category: "fs_trash", redirectablePath: undefined }),
+        writeRequest({ tool: "os.http.request", category: "http", redirectablePath: undefined }),
+      ];
+      for (const request of requests) {
+        expect(
+          canGrantShape(request) && canEditPath(request),
+          `${request.tool} offers both a shape grant and a retarget`,
+        ).toBe(false);
+      }
+    });
   });
 });
 
@@ -138,9 +216,9 @@ describe("handleAppKey under an approval prompt", () => {
     };
   }
 
-  it("[e] opens the target field seeded with the proposed path", () => {
+  it("ctrl+b opens the target field seeded with the proposed path", () => {
     const c = ctx(pending());
-    expect(handleAppKey("e", key(), c)).toBe(true);
+    expect(handleAppKey("b", key({ ctrl: true }), c)).toBe(true);
     expect(c.dispatch).toHaveBeenCalledWith({
       type: "approval_path_edit_opened",
       path: "/work/site/index.html",
@@ -148,10 +226,18 @@ describe("handleAppKey under an approval prompt", () => {
     expect(c.callbacks.onApprovalDecision).not.toHaveBeenCalled();
   });
 
-  it("lets a keystroke through to the composer once a draft exists", () => {
-    const c = ctx(pending({ inputValue: "put it in " }));
-    expect(handleAppKey("n", key(), c)).toBe(false);
-    expect(c.callbacks.onApprovalDecision).not.toHaveBeenCalled();
+  it("lets a bare letter through to the composer, draft or not", () => {
+    for (const inputValue of ["", "put it in "]) {
+      const c = ctx(pending({ inputValue }));
+      expect(handleAppKey("d", key(), c)).toBe(false);
+      expect(c.callbacks.onApprovalDecision).not.toHaveBeenCalled();
+    }
+  });
+
+  it("decides on a chord even with a draft in the buffer", () => {
+    const c = ctx(pending({ inputValue: "yes, but " }));
+    expect(handleAppKey("y", key({ ctrl: true }), c)).toBe(true);
+    expect(c.callbacks.onApprovalDecision).toHaveBeenCalledWith("ap-1", true);
   });
 
   it("still aborts on Ctrl+C with a draft in the buffer", () => {

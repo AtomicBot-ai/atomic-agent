@@ -264,6 +264,13 @@ export interface ContextUsageState {
    * an operator which knob actually moves their limit.
    */
   conversationCapConfigured: number | null;
+  /**
+   * The configured cap is `0` — auto. `conversationCapConfigured` is
+   * then a fallback rather than a ceiling, so the comparison above says
+   * nothing and the panel must not name `agent.conversationMaxTokens`
+   * as what is holding the transcript down. Nothing is: the window is.
+   */
+  conversationCapAuto: boolean;
   /** Per-section breakdown, for the detail view. Empty before the first prompt. */
   sections: readonly ContextUsageSection[];
 }

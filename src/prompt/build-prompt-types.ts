@@ -81,5 +81,15 @@ export interface BuiltPrompt {
   truncation: BuiltPromptTruncationFlags;
   contextWindow: number | null;
   conversationCapEffective: number;
+  /**
+   * `agent.conversationMaxTokens` was left at `0` — the transcript takes
+   * whatever the window leaves rather than sitting under a fixed
+   * ceiling. Reported rather than inferred: under auto the configured
+   * figure in `limits.conversation` is a *fallback* for an unknown
+   * window, not a ceiling, and comparing it against
+   * `conversationCapEffective` — which is how the UI decides what is
+   * holding the transcript down — would name the wrong knob.
+   */
+  conversationCapAuto: boolean;
   droppedTurns: number;
 }

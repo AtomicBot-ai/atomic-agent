@@ -9,6 +9,7 @@ export const EMPTY_CONTEXT_USAGE: ContextUsageState = {
   conversationTokens: 0,
   conversationCap: null,
   conversationCapConfigured: null,
+  conversationCapAuto: false,
   sections: [],
 };
 
@@ -55,6 +56,7 @@ export function contextUsageFromPrompt(prompt: BuiltPrompt): ContextUsageState {
     conversationTokens: prompt.tokens.conversation,
     conversationCap: prompt.conversationCapEffective,
     conversationCapConfigured: prompt.limits.conversation,
+    conversationCapAuto: prompt.conversationCapAuto,
     sections,
   };
 }

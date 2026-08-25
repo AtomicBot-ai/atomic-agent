@@ -530,7 +530,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "theme",
       description:
-        "switch the UI theme: `/theme <name>` | `/theme list` (github, catppuccin, dracula, nord, …)",
+        "switch the UI theme: `/theme <name>` | `/theme list` (classic-dark, classic-light, toxic-green, khorne-red, …)",
       rank: 3,
     },
   },

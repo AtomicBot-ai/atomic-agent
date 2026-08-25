@@ -249,18 +249,18 @@ describe("detectTerminalBackground", () => {
 });
 
 describe("resolveStartupTheme", () => {
-  it("maps light to github-light", () => {
-    expect(resolveStartupTheme("light")).toBe(THEMES["github-light"]);
+  it("maps light to classic-light", () => {
+    expect(resolveStartupTheme("light")).toBe(THEMES["classic-light"]);
   });
 
   it("maps dark to the house palette", () => {
-    expect(resolveStartupTheme("dark")).toBe(THEMES["atomic-retro"]);
+    expect(resolveStartupTheme("dark")).toBe(THEMES["classic-dark"]);
   });
 
   it("falls back unknown to the house palette", () => {
     // Unknown means the probe got no answer, which is most often a dark
     // terminal that does not answer OSC queries — so it lands where dark
     // lands rather than on the light palette.
-    expect(resolveStartupTheme("unknown")).toBe(THEMES["atomic-retro"]);
+    expect(resolveStartupTheme("unknown")).toBe(THEMES["classic-dark"]);
   });
 });

@@ -157,14 +157,14 @@ function foregroundSgr(hex: string): string {
  * `line.length` and would count escape bytes as columns.
  */
 describe("renderPickList colours", () => {
-  const house = THEMES["atomic-retro"].colors;
+  const house = THEMES["classic-dark"].colors;
   let previousTheme: TuiTheme;
   let previousLevel: typeof chalk.level;
 
   beforeEach(() => {
     previousTheme = getActiveTheme();
     previousLevel = chalk.level;
-    setActiveTheme(THEMES["atomic-retro"]);
+    setActiveTheme(THEMES["classic-dark"]);
     chalk.level = 3;
   });
 
