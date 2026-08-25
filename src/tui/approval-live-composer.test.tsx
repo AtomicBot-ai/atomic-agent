@@ -6,9 +6,11 @@ import type { ApprovalRequest } from "../approval/approval-gate.js";
 
 /**
  * End-to-end through the real key layers: an approval prompt no longer
- * takes the keyboard hostage. Ink delivers every keystroke to every
- * `useInput` subscription, so these are the tests that would catch a
- * `y` that is both a verdict and a character.
+ * takes the keyboard hostage, and no longer has to. Ink delivers every
+ * keystroke to every `useInput` subscription, so these are the tests
+ * that would catch a `y` that is both a verdict and a character — which
+ * is exactly what it used to be, arbitrated by whether the composer's
+ * buffer happened to be empty.
  */
 const SESSION: TuiSessionInfo = {
   sessionId: "s1",
@@ -32,6 +34,17 @@ const REQUEST: ApprovalRequest = {
 
 /** Ink holds a lone Esc for 20ms; every read waits past that window. */
 const ESC = String.fromCharCode(27);
+
+/**
+ * The decision chords as the bytes a terminal actually sends. Written
+ * as control characters rather than as a synthesised `Key` because the
+ * whole point of this file is to go through Ink's own parser: a chord
+ * that this app claims but Ink reports differently would pass every
+ * unit test and fail in a real terminal.
+ */
+const CTRL_Y = String.fromCharCode(25);
+const CTRL_D = String.fromCharCode(4);
+const CTRL_B = String.fromCharCode(2);
 const settle = (): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, 60));
 
@@ -86,19 +99,26 @@ describe("approval prompt with a live composer", () => {
     unmount();
   });
 
-  it("still approves on y while the input is empty", async () => {
+  it("approves on ctrl+y, empty buffer or not", async () => {
     const { calls, bus, stdin, unmount } = harness();
     await settle();
     bus.emitApproval(REQUEST);
     await settle();
 
+    // A bare `y` is a character now, in every state.
     stdin.write("y");
+    await settle();
+    expect(calls.decisions).toHaveLength(0);
+
+    // And the chord decides straight through the draft that `y` left —
+    // which the old buffer-arbitrated rule could not do.
+    stdin.write(CTRL_Y);
     await settle();
     expect(calls.decisions).toEqual([{ id: "ap-1", approved: true }]);
     unmount();
   });
 
-  it("hands the decision keys back when Esc clears the draft", async () => {
+  it("denies on ctrl+d through a draft, and Esc still only clears it", async () => {
     const { calls, bus, stdin, lastFrame, unmount } = harness();
     await settle();
     bus.emitApproval(REQUEST);
@@ -111,22 +131,24 @@ describe("approval prompt with a live composer", () => {
     stdin.write(ESC);
     await settle();
     expect(strip(lastFrame() ?? "")).not.toContain("nope");
-    // Esc cleared the draft; it must not have aborted the run.
+    // Esc cleared the draft; it must not have aborted the run. This is
+    // the one binding the two layers still share, and the reason it can
+    // stay shared is that it was never a verdict.
     expect(calls.aborts).toBe(0);
 
-    stdin.write("n");
+    stdin.write(CTRL_D);
     await settle();
     expect(calls.decisions).toEqual([{ id: "ap-1", approved: false }]);
     unmount();
   });
 
-  it("[e] opens the target field, and Enter confirms the typed path", async () => {
+  it("ctrl+b opens the target field, and Enter confirms the typed path", async () => {
     const { calls, bus, stdin, lastFrame, unmount } = harness();
     await settle();
     bus.emitApproval(REQUEST);
     await settle();
 
-    stdin.write("e");
+    stdin.write(CTRL_B);
     await settle();
     const editing = strip(lastFrame() ?? "");
     expect(editing).toContain("confirm target path");
@@ -149,12 +171,12 @@ describe("approval prompt with a live composer", () => {
     bus.emitApproval(REQUEST);
     await settle();
 
-    stdin.write("e");
+    stdin.write(CTRL_B);
     await settle();
     stdin.write(ESC);
     await settle();
     const frame = strip(lastFrame() ?? "");
-    expect(frame).toContain("[y]");
+    expect(frame).toContain("ctrl+y");
     expect(frame).not.toContain("confirm target path");
     expect(calls.decisions).toHaveLength(0);
     expect(calls.retargets).toHaveLength(0);
