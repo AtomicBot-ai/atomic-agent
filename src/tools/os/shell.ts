@@ -163,10 +163,11 @@ export function needsShellInterpretation(
 /**
  * Interpreter / wrapper binaries whose danger lives in their arguments,
  * not their name (`bash -c "<anything>"`). The shell tool withholds the
- * shape-grant unit (`[a]`) for these: a grant keyed on `bash` would
- * silence arbitrary code for the rest of the session. Matches the shells
- * covered by the guard's `dangerous.shell_dash_c` rule. `[s]` (the whole
- * shell category) and `[y]` (this call only) stay available.
+ * shape grant for these: a grant keyed on `bash` would silence
+ * arbitrary code for the rest of the session. Matches the shells
+ * covered by the guard's `dangerous.shell_dash_c` rule. The category
+ * grant (the whole shell category) and a plain approve (this call only)
+ * stay available.
  */
 const OPAQUE_INTERPRETER_SHAPES: ReadonlySet<string> = new Set([
   "bash",
