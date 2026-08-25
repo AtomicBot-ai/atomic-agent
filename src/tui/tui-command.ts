@@ -17,6 +17,7 @@ import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
 import { registerSession } from "../local-llm/session-registry.js";
 import { enterAltScreen } from "./alt-screen.js";
+import { enableSynchronizedOutput } from "./synchronized-output.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { parseTuiArgs,
   nonInteractiveStdinError,
@@ -233,6 +234,11 @@ export async function tuiCommand(args: string[]): Promise<number> {
   const releaseSession = registerSession(config.paths.localModelsDataDir);
 
   const altScreen = enterAltScreen({ stdout: process.stdout, hideCursor: false });
+  // Immediately after the alt screen and before the first render: every
+  // frame from here on is bracketed as one synchronized update, so a
+  // terminal that renders as bytes arrive shows whole frames instead of
+  // half of the old one and half of the new.
+  const synchronizedOutput = enableSynchronizedOutput({ stdout: process.stdout });
 
   // Mouse support. Enabling SGR tracking (1000 + 1006) is what makes
   // clicking panels, rows, tabs and the prompt work at all — the app
@@ -633,6 +639,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
       mouseTracking?.disable();
       mouseStdin.dispose();
       altScreen.restore();
+      // After the alt screen, so the restore's own writes are still
+      // bracketed, and before `ink.clear()` for the same reason.
+      synchronizedOutput.restore();
       ink.clear();
     } catch {
       // After SIGHUP the tty is gone and these writes raise EIO; the
