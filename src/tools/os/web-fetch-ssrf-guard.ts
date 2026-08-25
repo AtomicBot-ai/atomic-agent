@@ -166,14 +166,30 @@ export interface AssertHostAllowedOptions {
 
 /**
  * Resolve `url`'s hostname and reject when **any** resolved address is in a
- * blocked range. Returns a single safe address to pin curl to via
+ * blocked range. Returns *every* safe address, to pin curl to via
  * `--resolve`, which closes the DNS-rebinding gap between this check and the
  * actual connection. Throws {@link SsrfBlockedError} on any violation.
+ *
+ * **Why all of them.** This used to return `addresses[0]` and hand curl a
+ * single pin, which quietly turned every multi-homed host into a
+ * single-address host. A browser, or curl left to its own resolver, gets
+ * the whole list and walks it: it opens the next address when one refuses
+ * the connection, and it runs Happy Eyeballs across the two families so a
+ * machine with no working IPv6 route still reaches a host whose AAAA
+ * record happens to sort first. Pinned to one address, none of that
+ * happens — one blackholed CDN edge, or one unreachable family, and the
+ * fetch fails outright on a site every other client on the machine can
+ * open. That is the "some websites are not reachable" report.
+ *
+ * The SSRF property is unchanged, and is why handing over the whole list
+ * is safe: the loop below rejects the request if *any* resolved address is
+ * private, so the set that survives is a set curl may try in any order.
+ * Order is preserved as the resolver gave it.
  */
 export async function assertHostAllowed(
   url: URL,
   options: AssertHostAllowedOptions = {},
-): Promise<string> {
+): Promise<readonly string[]> {
   const lookup = options.lookup ?? defaultLookup;
   const host = url.hostname.replace(/^\[|\]$/g, "");
   if (host.length === 0) {
@@ -207,5 +223,28 @@ export async function assertHostAllowed(
       );
     }
   }
-  return addresses[0]!.address;
+  return addresses.map(({ address }) => address);
+}
+
+/**
+ * Format the guard's safe-address list for one `--resolve` entry.
+ *
+ * curl accepts `host:port:addr[,addr]...` and treats that list the way it
+ * treats a resolver's own answer: it moves to the next address when one
+ * fails to connect, and runs Happy Eyeballs across the two families.
+ * Handing it a single address threw all of that away — see
+ * `assertHostAllowed` for what that cost.
+ *
+ * IPv6 literals are bracketed individually, which is what curl wants
+ * inside a comma-separated list.
+ */
+export function formatResolveEntry(
+  host: string,
+  port: string,
+  addresses: readonly string[],
+): string {
+  const list = addresses
+    .map((address) => (address.includes(":") ? `[${address}]` : address))
+    .join(",");
+  return `${host}:${port}:${list}`;
 }

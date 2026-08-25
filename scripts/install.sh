@@ -9,6 +9,8 @@
 #   ATOMIC_AGENT_VERSION=v0.1.0            (optional: pin a tag; default: latest)
 #   ATOMIC_AGENT_INSTALL_DIR=path         (default: $HOME/.local/bin)
 #   ATOMIC_AGENT_NO_PATH=1                 (optional: skip rc-file PATH update)
+#   ATOMIC_AGENT_VERIFY_TIMEOUT=20         (optional: seconds to allow the macOS
+#                                           signature check; 0 skips it)
 
 set -eu
 
@@ -245,6 +247,123 @@ download() {
   fi
 }
 
+# Signature check -----------------------------------------------------------
+#
+# macOS runs a first-sight Gatekeeper/XProtect scan of a newly written
+# executable the first time anything asks about its signature, and codesign
+# blocks -- at ~0% CPU, so it does not even look busy -- until that scan
+# lands. On a 140 MB SEA binary that is routinely minutes: measured 4m59s on
+# an idle M-series laptop, against 0.2s for a codesign of the very same bytes
+# at a path the scanner has already seen.
+#
+# This check used to run inline and silently, so a perfectly healthy install
+# printed the checksum line and then sat there with a bare cursor. People read
+# that as a hang and pressed Ctrl-C -- which left them with no atomic-agent at
+# all. That is the failure this bounds: show the wait, cap it, and never let
+# it be the reason an install ends with nothing installed.
+#
+# A timeout is not a verification failure. The sha256 compared above already
+# proves these bytes are the ones the release published; codesign is a second
+# opinion on the same question. So a timeout warns and proceeds, while a
+# codesign that actually returns non-zero still aborts -- a binary whose pages
+# do not match its signature is SIGKILLed by the kernel on launch, and saying
+# so here beats letting the user discover it.
+VERIFY_TIMEOUT="${ATOMIC_AGENT_VERIFY_TIMEOUT:-20}"
+case "$VERIFY_TIMEOUT" in
+  '' | *[!0-9]*) VERIFY_TIMEOUT=20 ;;
+esac
+
+render_wait() {
+  # $1 label, $2 elapsed seconds, $3 budget seconds
+  _wb="$(awk -v label="$1" -v got="$2" -v total="$3" -v w="$BAR_WIDTH" \
+    -v full="$BAR_FULL" -v empty="$BAR_EMPTY" \
+    -v a="$C_ACCENT" -v t="$C_TRACK" -v d="$C_DIM" -v o="$C_OFF" '
+    BEGIN {
+      frac = (total <= 0 ? 0 : got / total)
+      if (frac > 1) frac = 1
+      n = int(frac * w + 0.5)
+      done = ""; left = ""
+      for (i = 0; i < n; i++) done = done full
+      for (i = n; i < w; i++) left = left empty
+      printf "%s  %s%s%s%s%s%s  %s%ds%s", \
+        label, a, done, o, t, left, o, d, got, o
+    }
+  ')"
+  printf '\r%s\033[K' "$_wb"
+}
+
+verify_signature() {
+  # $1 path to the extracted binary. Returns 0 when the install should
+  # continue; exits only on a definite signature failure.
+  _vs_file="$1"
+  if [ "$OS_NAME" != "Darwin" ]; then
+    return 0
+  fi
+  if ! have codesign; then
+    return 0
+  fi
+  if [ "$VERIFY_TIMEOUT" -le 0 ]; then
+    return 0
+  fi
+
+  _vs_label="checking signature"
+  _vs_rc_file="$WORK/codesign.rc"
+  rm -f "$_vs_rc_file"
+
+  # The exit status of a killed background job is not recoverable from
+  # `wait`, so the subshell writes codesign's own status where the parent
+  # can read it. An absent file therefore means "killed", not "passed".
+  #
+  # `|| _rc=$?` is load-bearing: the subshell inherits `set -e`, so a bare
+  # failing codesign would kill it on the spot and the status line would
+  # never be written -- which reads to the parent exactly like a pass.
+  (
+    _rc=0
+    codesign --verify --strict "$_vs_file" >/dev/null 2>&1 || _rc=$?
+    echo "$_rc" > "$_vs_rc_file"
+  ) &
+  _vs_pid=$!
+
+  if [ "$UI_TTY" != "1" ]; then
+    printf '%s\n' "$_vs_label"
+  fi
+
+  _vs_waited=0
+  while kill -0 "$_vs_pid" 2>/dev/null; do
+    if [ "$_vs_waited" -ge "$VERIFY_TIMEOUT" ]; then
+      kill "$_vs_pid" 2>/dev/null || true
+      wait "$_vs_pid" 2>/dev/null || true
+      if [ "$UI_TTY" = "1" ]; then
+        printf '\r\033[K'
+      fi
+      echo "signature check exceeded ${VERIFY_TIMEOUT}s and was skipped."
+      echo "  (macOS scans a newly written 140 MB executable the first time it is asked;"
+      echo "   the sha256 checksum above already verified this download.)"
+      return 0
+    fi
+    if [ "$UI_TTY" = "1" ]; then
+      render_wait "$_vs_label" "$_vs_waited" "$VERIFY_TIMEOUT"
+    fi
+    sleep 1
+    _vs_waited=$((_vs_waited + 1))
+  done
+  wait "$_vs_pid" 2>/dev/null || true
+
+  _vs_rc="$(cat "$_vs_rc_file" 2>/dev/null || echo 0)"
+  case "$_vs_rc" in
+    '' | *[!0-9]*) _vs_rc=0 ;;
+  esac
+  if [ "$UI_TTY" = "1" ]; then
+    render_wait "$_vs_label" "$_vs_waited" "$VERIFY_TIMEOUT"
+    printf '\n'
+  fi
+  if [ "$_vs_rc" -ne 0 ]; then
+    echo "error: downloaded binary failed 'codesign --verify --strict'; aborting" >&2
+    exit 1
+  fi
+  return 0
+}
+
 BASE="https://github.com/${REPO}"
 if [ -n "$VERSION" ]; then
   TAR_NAME="atomic-agent-${SLUG}.${ARCHIVE_EXT}"
@@ -258,8 +377,21 @@ fi
 
 TMPDIR="${TMPDIR:-/tmp}"
 WORK="$(mktemp -d "$TMPDIR/atomic-agent-install.XXXXXX")"
-# shellcheck disable=SC2064
-trap 'rm -rf "$WORK"' EXIT
+TMP_BIN=""
+
+# Ctrl-C used to leave a 140 MB .atomic-agent.tmp.NNN orphan in the install
+# dir, because only the work dir was cleaned and only on a normal exit. POSIX
+# sh does not run the EXIT trap for an uncaught signal, so INT/TERM are wired
+# up explicitly. cleanup is idempotent; the re-entry from `exit` is harmless.
+cleanup() {
+  rm -rf "$WORK"
+  if [ -n "${TMP_BIN:-}" ]; then
+    rm -f "$TMP_BIN"
+  fi
+}
+trap 'cleanup' EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 
 download "$TAR_URL" "$WORK/${TAR_NAME}" "downloading atomic-agent"
 download "$SHA_URL" "$WORK/${TAR_NAME}.sha256"
@@ -283,6 +415,11 @@ if [ ! -d "$STAGE" ]; then
 fi
 
 mkdir -p "$INSTALL_DIR"
+
+# Sweep orphans left by installs interrupted before the cleanup trap above
+# existed. Each one is a full copy of the binary -- 140 MB a piece.
+rm -f "$INSTALL_DIR"/.atomic-agent.tmp.* 2>/dev/null || true
+rm -f "$INSTALL_DIR"/.atomic-agent.exe.tmp.* 2>/dev/null || true
 
 # Atomically replace a directory next to the binary. Copies the fresh tree
 # into a temp sibling, removes the old tree (unlinked inodes survive for any
@@ -310,24 +447,20 @@ replace_dir() {
 # have been modified)" / "Invalid Page"). A self-update never restarts the
 # process, so the live binary MUST keep its own inode.
 if [ -f "$STAGE/atomic-agent" ]; then
-  _tmp_bin="$INSTALL_DIR/.atomic-agent.tmp.$$"
-  cp -f "$STAGE/atomic-agent" "$_tmp_bin"
-  chmod 755 "$_tmp_bin" 2>/dev/null || true
-  # Verify the signed binary before swapping it in (macOS). A failed --strict
-  # check means the downloaded bytes do not match the embedded signature, so
-  # launching it would SIGKILL anyway — abort instead of installing it.
-  if [ "$OS_NAME" = "Darwin" ] && command -v codesign >/dev/null 2>&1; then
-    if ! codesign --verify --strict "$_tmp_bin" 2>/dev/null; then
-      echo "error: downloaded binary failed 'codesign --verify --strict'; aborting" >&2
-      rm -f "$_tmp_bin"
-      exit 1
-    fi
-  fi
-  mv -f "$_tmp_bin" "$INSTALL_DIR/atomic-agent"
+  # Verify the archive copy, before a single byte is written into the install
+  # dir: a check that fails (or is interrupted) then leaves whatever is
+  # already installed exactly as it was.
+  verify_signature "$STAGE/atomic-agent"
+  TMP_BIN="$INSTALL_DIR/.atomic-agent.tmp.$$"
+  cp -f "$STAGE/atomic-agent" "$TMP_BIN"
+  chmod 755 "$TMP_BIN" 2>/dev/null || true
+  mv -f "$TMP_BIN" "$INSTALL_DIR/atomic-agent"
+  TMP_BIN=""
 elif [ -f "$STAGE/atomic-agent.exe" ]; then
-  _tmp_bin="$INSTALL_DIR/.atomic-agent.exe.tmp.$$"
-  cp -f "$STAGE/atomic-agent.exe" "$_tmp_bin"
-  mv -f "$_tmp_bin" "$INSTALL_DIR/atomic-agent.exe"
+  TMP_BIN="$INSTALL_DIR/.atomic-agent.exe.tmp.$$"
+  cp -f "$STAGE/atomic-agent.exe" "$TMP_BIN"
+  mv -f "$TMP_BIN" "$INSTALL_DIR/atomic-agent.exe"
+  TMP_BIN=""
 else
   echo "binary not found in archive under $STAGE" >&2
   exit 1

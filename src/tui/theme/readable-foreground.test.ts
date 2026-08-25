@@ -32,23 +32,25 @@ describe("readableOn", () => {
   /**
    * The load-bearing test for the context chip's colour ramp.
    *
-   * The floor is 3.0 — WCAG AA for bold text, which is what the chip
-   * paints. It cannot be 4.5 for every state: the `high` step *is* the
-   * palette's `accent` and the `trimmed` step *is* its `accentAlt`, and
-   * on `solarized-light` the accent bottoms out at 3.53:1 against either
-   * ink. Repainting twelve palettes' accents to satisfy body-text AA is
+   * All four states are held to 4.5:1 — full body-text AA. They used not
+   * to be: the `high` step *is* the palette's `accent` and the `trimmed`
+   * step *is* its `accentAlt`, and while the registry was eleven
+   * transcribed upstream palettes plus ours, those two steps could only
+   * be held to 3.0 because `solarized-light`'s accent bottomed out at
+   * 3.53:1 against either ink and repainting somebody else's theme was
    * not this chip's call to make.
    *
-   * The two mixed steps are a different matter — those colours are ours,
-   * derived by `FADE_LOW` / `FADE_MID` — so they are held to the full
-   * 4.5, and that is what fixes those two constants.
+   * Every palette in the registry is now designed here, so it is. The
+   * same four grounds are checked again from the palette side in
+   * `theme-contrast.test.ts`; this one checks them through the real
+   * `groundFor` / `readableOn` path, which is what the chip runs.
    */
   it("keeps every chip state readable on every palette", () => {
     const states: readonly [string, ContextUsageView, number][] = [
       ["low", usage(10), 4.5],
       ["mid", usage(50), 4.5],
-      ["high", usage(90), 3],
-      ["trimmed", usage(100, 3), 3],
+      ["high", usage(90), 4.5],
+      ["trimmed", usage(100, 3), 4.5],
     ];
     for (const name of THEME_NAMES) {
       setActiveTheme(THEMES[name]);
@@ -88,7 +90,7 @@ describe("readableOn", () => {
   });
 
   it("picks the light end of the pair for a dark ground, and vice versa", () => {
-    setActiveTheme(THEMES["github-dark"]);
+    setActiveTheme(THEMES["classic-dark"]);
     const onDark = readableOn("#0d1117");
     const onLight = readableOn("#f6f8fa");
     expect(onDark).not.toBe(onLight);
@@ -103,7 +105,7 @@ describe("readableOn", () => {
    * ink stands in.
    */
   it("falls back to the page ink for a colour it cannot weigh", () => {
-    setActiveTheme(THEMES["github-dark"]);
+    setActiveTheme(THEMES["classic-dark"]);
     expect(readableOn("blue")).toBe(theme.colors.chipForeground);
   });
 });

@@ -228,6 +228,27 @@ function trimmingLines(usage: ContextUsageView): readonly string[] {
   const source = ` capped by`.padEnd(LABEL_WIDTH);
   if (usage.capSource === "config") {
     lines.push(`${source}agent.conversationMaxTokens`);
+    // The actionable half of the actionable half. An operator who sized
+    // their own `llama-server` has already said how much context they
+    // want; if a ceiling below that window is what is holding the
+    // transcript down, the only thing left to tell them is the one
+    // value that lifts it — and how much it would buy.
+    if (usage.contextWindow !== null && cap < usage.contextWindow) {
+      lines.push(
+        `${" ".repeat(LABEL_WIDTH)}set it to 0 to fill the ${formatTokens(
+          usage.contextWindow,
+        )} window`,
+      );
+    }
+  } else if (usage.capSource === "auto") {
+    // No knob to name: the operator switched the ceiling off, so the
+    // window is the only thing left holding the transcript down. The
+    // panel is 58 columns wide, which is why this says it in five words.
+    lines.push(
+      usage.contextWindow === null
+        ? `${source}auto — fills the window`
+        : `${source}auto — fills the ${formatTokens(usage.contextWindow)} window`,
+    );
   } else if (usage.capSource === "window") {
     lines.push(
       `${source}the model's window${

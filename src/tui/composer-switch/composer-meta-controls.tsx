@@ -56,7 +56,7 @@ export interface ComposerMetaControlsProps {
  * dot keeps its status colour and the separators stay muted, so the
  * three words read as three things rather than one long string. Nothing
  * here reaches for `accentSoft` — that token is a fill, and as text it
- * lands around 2:1 on the atomic-retro ground (see `theme-palettes.ts`).
+ * lands around 2:1 on the classic-dark ground (see `theme-palettes.ts`).
  *
  * **Width.** Ink does not clip an over-wide row, it wraps it, and a
  * second line here would push the composer's bottom border down. So the
@@ -137,13 +137,15 @@ function DownloadModelControl({
           </Text>
         ) : null}
         {/*
-          `warnStrong`, not the route's own `railForeground`: this slot
-          is the one thing on the bar the operator has to act on, and in
-          the route's own tone it reads as just another label. The token
-          is the palette's high-visibility warn, picked to stay legible
-          on the rail ground where `accentSoft` does not.
+          The rail's own warn, not the route's `railForeground`: this
+          slot is the one thing on the bar the operator has to act on,
+          and in the route's own tone it reads as just another label.
+          `railWarn` rather than `warnStrong` because this text lands on
+          the rail ground, and `warnStrong` is picked to be read on the
+          page — on the rail it was one of the pairs the contrast audit
+          caught.
         */}
-        <Text color={theme.colors.warnStrong} bold>
+        <Text color={theme.colors.railWarn} bold>
           {DOWNLOAD_MODEL_LABEL}
         </Text>
       </Text>
@@ -171,20 +173,23 @@ export interface ComposerBackendLook {
  * historical green dot but no word — there is no probe behind it, and
  * printing "healthy" would claim an observation nobody made. Local and
  * custom carry the probe's word (healthy / probing / down / error) the
- * way the pill did. `unreachable`'s grey is swapped for the rail-aware
- * token: `theme.colors.muted` was picked against the normal ground and
- * lands near 2.5:1 on the rail (the caveat `prompt-meta-bar.tsx`
- * documents).
+ * way the pill did.
+ *
+ * The look is asked for on the `"rail"` ground: this control sits on the
+ * meta bar, and every dot the table hands back for the page — green,
+ * amber, red — was picked to be read against the terminal's own
+ * background. Only `unreachable` used to be corrected for that, one
+ * token at a time; the ground is now a parameter, so all five come back
+ * right.
  */
 export function composerBackendLook(
   backend: ComposerBackendMeta,
 ): ComposerBackendLook | null {
   if (backend.status === "unknown") return null;
-  const look = llmHealthLook(backend.status);
+  const look = llmHealthLook(backend.status, "rail");
   return {
     glyph: look.glyph,
-    color:
-      backend.status === "unreachable" ? theme.colors.railMuted : look.color,
+    color: look.color,
     word: backend.kind === "cloud" ? null : look.label,
   };
 }

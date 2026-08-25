@@ -4,6 +4,7 @@ import {
 } from "../../../../sandbox/command-runner.js";
 import {
   assertHostAllowed,
+  formatResolveEntry,
   parseHttpUrl,
   type HostLookup,
 } from "../../web-fetch-ssrf-guard.js";
@@ -53,6 +54,13 @@ export interface SearchHttpResponse {
   body: string;
   truncated: boolean;
   redirectChain: string[];
+  /**
+   * The server's parsed `Retry-After`, or `null` when it did not send
+   * one. Surfaced rather than consumed internally: once the retry
+   * ladder is spent, how long to park the provider is a question only
+   * the server can answer, and the caller is the one parking it.
+   */
+  retryAfterMs: number | null;
 }
 
 interface CurlResponse {
@@ -76,14 +84,16 @@ export async function searchHttp(
   // advance the chain, so a transient limit cannot permanently downgrade the
   // session to a weaker provider.
   for (let attempt = 0; ; attempt++) {
-    const { retryAfter, ...response } = await sendOnce(request);
+    const { retryAfter, ...rest } = await sendOnce(request);
+    const retryAfterMs = parseRetryAfterMs(retryAfter, now());
+    const response: SearchHttpResponse = { ...rest, retryAfterMs };
     if (response.status !== 429 || attempt >= policy.maxRetries) {
       return response;
     }
     const delayMs = computeRetryDelayMs({
       attempt: attempt + 1,
       policy,
-      retryAfterMs: parseRetryAfterMs(retryAfter, now()),
+      retryAfterMs,
     });
     await sleep(delayMs, request.signal);
     // The operator pressed Esc (or the turn was aborted) while we were
@@ -95,8 +105,8 @@ export async function searchHttp(
   }
 }
 
-/** Internal shape: the public response plus the header the retry loop reads. */
-interface SearchHttpAttempt extends SearchHttpResponse {
+/** Internal shape: the raw header, before the retry loop parses it. */
+interface SearchHttpAttempt extends Omit<SearchHttpResponse, "retryAfterMs"> {
   retryAfter: string;
 }
 
@@ -110,12 +120,12 @@ async function sendOnce(
   const chain: string[] = [];
 
   for (let hop = 0; ; hop++) {
-    const pinnedIp = await assertHostAllowed(currentUrl, {
+    const pinnedIps = await assertHostAllowed(currentUrl, {
       lookup: request.lookup,
     });
     const curlArgs = buildCurlArgs({
       url: currentUrl,
-      pinnedIp,
+      pinnedIps,
       method,
       headers: request.headers ?? {},
       hasBody: request.body !== undefined,
@@ -182,7 +192,7 @@ function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
 
 function buildCurlArgs(input: {
   url: URL;
-  pinnedIp: string;
+  pinnedIps: readonly string[];
   method: SearchHttpMethod;
   headers: Record<string, string>;
   hasBody: boolean;
@@ -190,9 +200,6 @@ function buildCurlArgs(input: {
 }): string[] {
   const host = input.url.hostname.replace(/^\[|\]$/g, "");
   const port = input.url.port || (input.url.protocol === "https:" ? "443" : "80");
-  const resolveTarget = input.pinnedIp.includes(":")
-    ? `[${input.pinnedIp}]`
-    : input.pinnedIp;
   const args = [
     "-sS",
     // Send `[`, `]`, `{`, `}` in URLs literally. Without this curl reads them
@@ -203,7 +210,7 @@ function buildCurlArgs(input: {
     "--max-redirs",
     "0",
     "--resolve",
-    `${host}:${port}:${resolveTarget}`,
+    formatResolveEntry(host, port, input.pinnedIps),
     "-H",
     `User-Agent: ${USER_AGENT}`,
     "-H",

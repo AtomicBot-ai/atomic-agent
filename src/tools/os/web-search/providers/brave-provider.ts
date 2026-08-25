@@ -1,3 +1,4 @@
+import { assertProviderStatus } from "./assert-provider-status.js";
 import { searchHttp } from "../transport/search-http.js";
 import type {
   WebSearchHttpDeps,
@@ -46,9 +47,7 @@ export function createBraveProvider(
         runCommand: deps.runCommand,
         lookup: deps.lookup,
       });
-      if (response.status >= 400) {
-        throw new Error(`Brave search returned HTTP ${response.status}`);
-      }
+      assertProviderStatus(response, "brave", "Brave search");
       return parseBraveJson(response.body, options.maxResults);
     },
   };

@@ -547,3 +547,116 @@ describe("os.web.fetch retries (#180)", () => {
     expect(waits).toEqual([]);
   });
 });
+
+/**
+ * The reachability half: what curl is actually told to do.
+ */
+describe("os.web.fetch reaches a host the way a browser would", () => {
+  function captureArgs(): { args: string[][]; runCommand: typeof RunCommandType } {
+    const args: string[][] = [];
+    const runCommand = (async (_command: string, argv: string[]) => {
+      args.push(argv);
+      return {
+        command: "curl",
+        args: argv,
+        exitCode: 0,
+        signal: null,
+        stdout: curlStdout({
+          body: ARTICLE,
+          status: 200,
+          contentType: "text/html",
+        }),
+        stderr: "",
+        durationMs: 1,
+        timedOut: false,
+        truncated: false,
+      };
+    }) as unknown as typeof RunCommandType;
+    return { args, runCommand };
+  }
+
+  it("pins every resolved address, not just the first", async () => {
+    // One `--resolve` carrying the whole list is what lets curl move on
+    // when an address refuses the connection, and what lets Happy
+    // Eyeballs pick a family the machine can actually route. Pinned to
+    // `addresses[0]`, a host whose AAAA sorts first was unreachable on
+    // an IPv4-only machine — on a site every other client could open.
+    const { args, runCommand } = captureArgs();
+    const tool = buildOsWebFetchTool({
+      runCommand,
+      lookup: async () => [
+        { address: "2606:2800:220:1::1", family: 6 },
+        { address: "93.184.216.34", family: 4 },
+        { address: "93.184.216.35", family: 4 },
+      ],
+      config: USER_CONFIG_DEFAULTS as never,
+    });
+    await tool.run({ url: "https://example.com/a" }, ctx());
+    const argv = args[0]!;
+    const resolveValue = argv[argv.indexOf("--resolve") + 1];
+    expect(resolveValue).toBe(
+      "example.com:443:[2606:2800:220:1::1],93.184.216.34,93.184.216.35",
+    );
+  });
+
+  it("asks for, and undoes, compression", async () => {
+    const { args, runCommand } = captureArgs();
+    const tool = buildOsWebFetchTool({
+      runCommand,
+      lookup: publicLookup,
+      config: USER_CONFIG_DEFAULTS as never,
+    });
+    await tool.run({ url: "https://example.com/a" }, ctx());
+    expect(args[0]).toContain("--compressed");
+  });
+});
+
+describe("os.web.fetch against a bot wall", () => {
+  const CHALLENGE = `<!DOCTYPE html><html><head><title>Just a moment...</title>
+</head><body><div id="cf-wrapper">Enable JavaScript and cookies to continue
+</div></body></html>`;
+
+  function toolReturning(status: number, body: string) {
+    return buildOsWebFetchTool({
+      runCommand: makeRunCommand(() => ({
+        stdout: curlStdout({ body, status, contentType: "text/html" }),
+      })),
+      lookup: publicLookup,
+      config: USER_CONFIG_DEFAULTS as never,
+      sleep: fakeSleep().sleep,
+    });
+  }
+
+  it("reports a 200-status challenge instead of returning it as the page", async () => {
+    // This is the one that silently poisoned answers: extraction works
+    // fine on a challenge page, so "Just a moment…" came back as the
+    // article's body with nothing saying otherwise.
+    const result = await toolReturning(200, CHALLENGE).run(
+      { url: "https://example.com/a" },
+      ctx(),
+    );
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("bot-protection challenge");
+    expect(result.summary).toContain("browser.navigate");
+    expect(result.summary).not.toContain("Just a moment");
+  });
+
+  it("names the browser rather than reporting a bare 403", async () => {
+    const result = await toolReturning(403, CHALLENGE).run(
+      { url: "https://example.com/a" },
+      ctx(),
+    );
+    expect(result.status).toBe("error");
+    expect(result.details.retryWith).toBe("browser.navigate");
+    expect(result.summary).toContain("do not re-fetch");
+  });
+
+  it("leaves an ordinary page alone", async () => {
+    const result = await toolReturning(200, ARTICLE).run(
+      { url: "https://example.com/a" },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("Hello");
+  });
+});
