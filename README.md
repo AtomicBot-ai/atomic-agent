@@ -21,7 +21,7 @@ Drives your browser, edits files, runs approved commands, and remembers context 
 ![llama.cpp](https://img.shields.io/badge/llama.cpp-supported-111827)
 ![Tauri sidecar](https://img.shields.io/badge/Tauri-sidecar-24C8DB?logo=tauri&logoColor=white)
 
-**[Quick Install](#quick-install) · [Benchmarks](#benchmarks) · [Why Local-First](#why-local-first) · [Ways to Use It](#ways-to-use-it) · [Docs](#development)**
+**[Quick Install](#quick-install) · [Uninstall](#uninstall) · [Benchmarks](#benchmarks) · [Why Local-First](#why-local-first) · [Ways to Use It](#ways-to-use-it) · [Docs](#development)**
 
 ![Atomic Agent terminal demo](assets/demo.gif)
 
@@ -67,6 +67,16 @@ atag
 
 > [!TIP]
 > Coming from Hermes or OpenClaw? Run `/import` in the TUI for a one-shot migration: sessions, cron jobs, and optionally your provider keys.
+
+### Uninstall
+
+One command removes everything — the state directory (config, memory, sessions, tasks, traces, downloaded models), the binary and its `atag` alias, the asset directories beside them, and the PATH line the installer added to your shell rc file:
+
+```bash
+atomic-agent uninstall
+```
+
+It prints exactly what it will delete, with sizes, and then asks you to type the word `uninstall`. Nothing is uploaded and nothing is kept — this cannot be undone. Preview it with `atomic-agent uninstall --dry-run`, keep your data with `--keep-data`, or skip the prompt in a script with `--yes`. The same flow is the last entry in the TUI's own menu (**Ctrl+P → Danger zone**, or `/uninstall`).
 
 ### Troubleshooting
 

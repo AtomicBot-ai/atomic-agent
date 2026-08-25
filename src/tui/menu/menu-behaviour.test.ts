@@ -37,7 +37,15 @@ describe("menu rows", () => {
   it("shows group headings and the two submenus at the root", () => {
     const rows = selectMenuRows(open());
     const headers = rows.flatMap((r) => (r.kind === "header" ? [r.label] : []));
-    expect(headers).toEqual(["Go", "Session", "Model", "Run", "Setup", "Help"]);
+    expect(headers).toEqual([
+      "Go",
+      "Session",
+      "Model",
+      "Run",
+      "Setup",
+      "Help",
+      "Danger zone",
+    ]);
     const go = rows.filter((r) => r.kind === "item" && r.node.group === "go");
     expect(go.map((r) => (r.kind === "item" ? r.node.label : ""))).toEqual([
       "Run",

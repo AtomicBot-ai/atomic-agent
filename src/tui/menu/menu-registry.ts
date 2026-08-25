@@ -15,7 +15,8 @@ export type MenuGroup =
   | "model"
   | "run"
   | "setup"
-  | "help";
+  | "help"
+  | "danger";
 
 /** Display order of the groups in the menu. */
 export const MENU_GROUP_ORDER: readonly MenuGroup[] = [
@@ -25,6 +26,12 @@ export const MENU_GROUP_ORDER: readonly MenuGroup[] = [
   "run",
   "setup",
   "help",
+  // Always last, and alone. The group exists so the one entry that
+  // destroys data cannot end up adjacent to a harmless one after some
+  // later edit reorders Help — a separator the operator has to scroll
+  // past is the cheapest warning in the whole ladder, and it is the
+  // only one that costs nothing to read.
+  "danger",
 ];
 
 export const MENU_GROUP_LABELS: Record<MenuGroup, string> = {
@@ -34,6 +41,7 @@ export const MENU_GROUP_LABELS: Record<MenuGroup, string> = {
   run: "Run",
   setup: "Setup",
   help: "Help",
+  danger: "Danger zone",
 };
 
 /**
@@ -631,6 +639,25 @@ export const MENU: readonly MenuNode[] = [
         "exit atomic-agent",
       aliases: ["exit"],
       rank: 7,
+    },
+  },
+  {
+    kind: "action",
+    id: "danger.uninstall",
+    label: "Uninstall atomic-agent…",
+    group: "danger",
+    // No chord. Every other verb here is one leader-plus-key away, and
+    // that is exactly the property this one must not have: a chord is
+    // reachable by a slip of two fingers, and the ellipsis says the
+    // rest of the decision is still ahead of you.
+    slash: {
+      name: "uninstall",
+      description:
+        "remove atomic-agent and all of its data from this machine — permanent, no undo",
+      // Last in the palette too: an empty `/` lists the registry in
+      // rank order, and this is the entry that belongs at the bottom
+      // of that list rather than fuzzy-matching next to `/update`.
+      rank: 99,
     },
   },
 ];

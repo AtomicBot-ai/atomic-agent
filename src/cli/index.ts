@@ -10,6 +10,7 @@ import { traceCommand } from "./trace-command.js";
 import { taskCommand } from "./task-command.js";
 import { modelsCommand } from "./models-command.js";
 import { importCommand } from "./import-command.js";
+import { uninstallCommand } from "./uninstall-command.js";
 import { updateCommand } from "./update-command.js";
 import { tuiCommand } from "../tui/index.js";
 import { getAppVersion } from "../version.js";
@@ -111,6 +112,15 @@ const COMMANDS: CommandDescriptor[] = [
     summary: "Self-update the installed binary from GitHub Releases (--check to probe only)",
     run: updateCommand,
   },
+  {
+    // Last, and last on purpose: the help listing is read top to bottom,
+    // and the one entry that destroys data belongs at the bottom of it
+    // rather than next to `update`, which it otherwise rhymes with.
+    name: "uninstall",
+    summary:
+      "Remove atomic-agent and all of its data from this machine (--dry-run to preview)",
+    run: uninstallCommand,
+  },
 ];
 
 function printHelp(): void {
@@ -123,7 +133,7 @@ function printHelp(): void {
     "",
     "Commands:",
     ...COMMANDS.filter((c) => !c.hidden).map(
-      (c) => `  ${c.name.padEnd(8)} ${c.summary}`,
+      (c) => `  ${c.name.padEnd(9)} ${c.summary}`,
     ),
     "",
     "User config (edit via `atomic-agent config`):",

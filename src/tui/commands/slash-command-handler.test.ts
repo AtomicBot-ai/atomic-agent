@@ -441,4 +441,15 @@ describe("dispatchSlashCommand", () => {
 
     expect(dispatchSlashCommand("/queue clear").setWhileBusyMode).toBeUndefined();
   });
+
+  it("/uninstall opens the ladder and asks for a plan — it removes nothing", () => {
+    const result = dispatchSlashCommand("/uninstall");
+    expect(result.actions).toEqual([{ type: "uninstall_opened" }]);
+    expect(result.triggerUninstallPlan).toBe(true);
+    // Nothing here quits, aborts or otherwise acts: every decision is
+    // the dialog's, and this command only opens it.
+    expect(result.triggerQuit).toBe(false);
+    expect(result.triggerAbort).toBe(false);
+  });
+
 });

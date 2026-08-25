@@ -16,6 +16,7 @@ import type { PrivacyAction } from "./privacy/privacy-actions.js";
 import type { ProvidersAction } from "./providers/providers-actions.js";
 import type { LlmPanelAction } from "./llm-panel/llm-panel-actions.js";
 import type { OnboardingAction } from "./onboarding/onboarding-actions.js";
+import type { UninstallAction } from "./uninstall/uninstall-actions.js";
 import type { FallbackPanelAction } from "./llm-panel/fallback/fallback-panel-actions.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
 import type { ChatMessage, SessionPickerEntry, TuiTab, TuiUiMode } from "./tui-state.js";
@@ -294,6 +295,7 @@ export type TuiAction =
   | PrivacyAction
   | ProvidersAction
   | OnboardingAction
+  | UninstallAction
   | LlmPanelAction
   | FallbackPanelAction
   | ImportAction;
