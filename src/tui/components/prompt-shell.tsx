@@ -80,6 +80,7 @@ export interface PromptShellProps
   rightSlot?: ReactElement | null;
   /** Optional context readout, rendered at the action bar's right end. */
   contextSlot?: ReactElement | null;
+  modeSlot?: ReactElement | null;
 }
 
 export function PromptShell(props: PromptShellProps): ReactElement {
@@ -94,6 +95,7 @@ export function PromptShell(props: PromptShellProps): ReactElement {
     leftSlot,
     rightSlot,
     contextSlot,
+    modeSlot,
     focus,
     disabled,
     value,
@@ -204,6 +206,7 @@ export function PromptShell(props: PromptShellProps): ReactElement {
           needsModelDownload={needsModelDownload ?? false}
           rightSlot={rightSlot ?? null}
           contextSlot={contextSlot ?? null}
+          modeSlot={modeSlot ?? null}
           // Same raised layer as the overlay backstop behind the bar —
           // see `composer-overlay.tsx`.
           mouseLayer={mouseLayer}

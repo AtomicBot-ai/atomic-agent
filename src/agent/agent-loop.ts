@@ -55,6 +55,13 @@ import type { StructuredLogger } from "../tracing/structured-logger.js";
 
 export interface AgentLoopDependencies {
   registry: ToolRegistry;
+  /**
+   * Plan mode, read per call. A getter rather than a boolean so a mode
+   * the operator flips mid-session is observed by the next tool call
+   * rather than by the next process — the same reasoning the approval
+   * gate uses for `approvalRequired`.
+   */
+  isPlanMode?: () => boolean;
   slotManager: SlotManager;
   grammar: string;
   llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
@@ -578,6 +585,9 @@ export class AgentLoop {
           },
           {
             registry: this.deps.registry,
+            ...(this.deps.isPlanMode
+              ? { isPlanMode: this.deps.isPlanMode }
+              : {}),
             slotManager: this.deps.slotManager,
             grammar: activeGrammar,
             profile: activeProfile,

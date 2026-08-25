@@ -59,6 +59,13 @@ export interface PromptMetaBarProps {
    */
   contextSlot: ReactElement | null;
   /**
+   * The coding-mode chip, at the very end of the bar. Its own prop
+   * rather than part of `rightSlot` for the same reason `contextSlot`
+   * is: the three coexist, and the bar's right end is an ordered
+   * sentence — how full the window is, then under what rules.
+   */
+  modeSlot: ReactElement | null;
+  /**
    * Layer the route controls register their click targets on. The
    * composer floats over the chat log behind a raised mouse backstop
    * (see `composer-overlay.tsx`); controls left on the base layer would
@@ -85,6 +92,7 @@ export function PromptMetaBar({
   needsModelDownload,
   rightSlot,
   contextSlot,
+  modeSlot,
   mouseLayer,
 }: PromptMetaBarProps): ReactElement {
   return (
@@ -121,6 +129,11 @@ export function PromptMetaBar({
           </Box>
         ) : null}
         {contextSlot ?? null}
+        {modeSlot ? (
+          <Box flexShrink={0} marginLeft={1}>
+            {modeSlot}
+          </Box>
+        ) : null}
       </Box>
     </Box>
   );
