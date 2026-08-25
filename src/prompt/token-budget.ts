@@ -103,6 +103,14 @@ export interface EffectiveConversationCapInput {
    */
   loadedToolsTokens?: number;
   completionMaxTokens: number;
+  /**
+   * `agent.conversationMaxTokens` was left at {@link CONVERSATION_CAP_AUTO}:
+   * the transcript takes whatever the window leaves rather than being
+   * held under a fixed ceiling. `configuredCap` is then only the
+   * fallback for an unknown window — see
+   * {@link computeEffectiveConversationCap}.
+   */
+  autoFill?: boolean;
 }
 
 /**
@@ -145,11 +153,35 @@ export function minUsableContextWindow(completionMaxTokens: number): number {
 export const CONVERSATION_CAP_FLOOR = 512;
 
 /**
+ * `agent.conversationMaxTokens: 0` — let the window decide.
+ *
+ * The same sentinel `localModels.managed.contextSize` already uses for
+ * the same idea, and for the same reason: the useful value is a function
+ * of hardware the config file cannot see, so the only honest fixed
+ * number is "don't fix it".
+ *
+ * The knob it replaces was a *ceiling*, and a ceiling that never rises
+ * is indistinguishable from a bug once the window grows past it. An
+ * operator who starts `llama-server` with `-c 48000` has said what they
+ * want the agent to have; a 32k cap sitting above that window quietly
+ * declines two thirds of the difference, and the only visible trace is a
+ * number in the composer that looks like it *is* the window.
+ */
+export const CONVERSATION_CAP_AUTO = 0;
+
+/**
  * Resolve the actual cap enforced on the `### conversation` section for
  * a given prompt-build. When the runtime knows the model's physical
  * `contextWindow` (from `llama-server /props`), clamp the user-chosen
  * `configuredCap` to the space that remains after all fixed costs.
  * When `contextWindow` is unknown, trust the user's config as-is.
+ *
+ * Under `autoFill` there is no configured ceiling at all: whatever the
+ * window leaves over is the cap. `configuredCap` is still read in that
+ * mode, but only as the fallback for a window nobody knows — a cloud
+ * model with no published context length gives the maths nothing to
+ * subtract from, and an unbounded transcript there would be a promise
+ * about someone else's server that this process cannot keep.
  */
 export function computeEffectiveConversationCap(
   input: EffectiveConversationCapInput,
@@ -170,6 +202,7 @@ export function computeEffectiveConversationCap(
     (input.loadedToolsTokens ?? 0) -
     input.completionMaxTokens -
     CONVERSATION_CAP_SAFETY_MARGIN;
+  if (input.autoFill) return Math.max(CONVERSATION_CAP_FLOOR, available);
   return Math.max(
     CONVERSATION_CAP_FLOOR,
     Math.min(input.configuredCap, available),

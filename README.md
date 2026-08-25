@@ -235,6 +235,10 @@ atomic-agent task list
 atomic-agent trace list --limit 10
 ```
 
+**The context readout.** The chip at the right of the composer gauges the *transcript* against the ceiling it is packed to — not the prompt against the model's window. The window is the wrong scale for a bar (a 1M-token model sits at 1% all session); the transcript's ceiling is the number that moves, and reaching it is exactly when older turns start being dropped. When that ceiling is your own `agent.conversationMaxTokens` the chip labels it `cap`, so `6.4k/32k cap` cannot be misread as a 32k context window. Click the chip (or `/context`) for the full breakdown, including the physical window and which of the two is actually holding the transcript down.
+
+Set `agent.conversationMaxTokens` to `0` to drop the ceiling entirely and let the transcript fill whatever the window leaves — worth doing if you size your own `llama-server` with `-c`. The default stays at 32k because on a metered cloud model with a 200k window, filling it would multiply the per-step bill without anyone asking.
+
 Handy slash commands: `/help` lists every command, `/tools` lists the built-in tool families, `/model` jumps to the LLM panel and reopens the model picker for the active cloud provider, `/privacy` shows what leaves the machine (`/privacy analytics off` turns analytics off). The chat log scrolls with PgUp / PgDn (fn+arrows on macOS).
 
 **Answering an approval prompt.** `y` approves the call, `s` grants its category for the session, `n` denies, `esc` aborts the run. Two more ways out:

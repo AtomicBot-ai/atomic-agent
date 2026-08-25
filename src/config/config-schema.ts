@@ -229,6 +229,20 @@ export interface AtomicAgentConfig {
      * Safety-net ceiling for the `### conversation` section of the prompt.
      * Typical sessions stay well under this cap — it exists to prevent
      * pathological growth, not to be a regular truncation mechanism.
+     *
+     * **`0` means auto:** the transcript takes whatever the model's
+     * window leaves after the scaffold, the memory sections and the
+     * reply reservation, with no fixed ceiling above it. Same sentinel
+     * and same reasoning as `localModels.managed.contextSize` — the
+     * useful value is a function of hardware this file cannot see.
+     *
+     * The default stays at 32k rather than becoming auto, and
+     * deliberately: on a local server the tokens are free, but on a
+     * metered cloud model with a 200k window "auto" would multiply the
+     * per-step bill without anyone asking for it. Operators who size
+     * their own `llama-server` are exactly the people who should set
+     * this to `0`, and the context panel now tells them so when their
+     * ceiling is what is holding the transcript below their window.
      */
     conversationMaxTokens: number;
     /**
@@ -3124,7 +3138,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         agent.approvalLevel,
         agent.approvalRequired,
       ),
-      conversationMaxTokens: parsePositiveInt(
+      // Non-negative rather than positive: `0` is the "auto" sentinel
+      // (`CONVERSATION_CAP_AUTO`), not a request for a zero-token
+      // transcript.
+      conversationMaxTokens: parseNonNegativeInt(
         agent.conversationMaxTokens ??
           USER_CONFIG_DEFAULTS.agent.conversationMaxTokens,
         "agent.conversationMaxTokens",

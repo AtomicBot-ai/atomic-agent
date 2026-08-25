@@ -51,7 +51,18 @@ describe("ContextChip", () => {
    * session on this model and never say anything.
    */
   it("gauges the transcript against its cap, and prints both", () => {
-    expect(label(usage())).toBe(" context [==      ]   6.4k/32k");
+    expect(label(usage())).toBe(" context [==      ]   6.4k/32k cap");
+  });
+
+  it("says `cap` only where the number could be mistaken for the window", () => {
+    // The word exists to stop `6.4k/32k` reading as a 32k context
+    // window, which is what it read as for anyone who had set their own
+    // `-c`. Where the window itself is what binds — or where the
+    // operator switched the ceiling off — the number *is* the window's
+    // remainder and the disclaimer would be noise.
+    expect(label(usage({ capSource: "window" }))).not.toContain("cap");
+    expect(label(usage({ capSource: "auto" }))).not.toContain("cap");
+    expect(label(usage({ capSource: "floor" }))).not.toContain("cap");
   });
 
   /**
@@ -81,7 +92,7 @@ describe("ContextChip", () => {
    */
   it("still gauges when the model's window is unknown", () => {
     expect(label(usage({ percent: null, contextWindow: null }))).toBe(
-      " context [==      ]   6.4k/32k",
+      " context [==      ]   6.4k/32k cap",
     );
   });
 

@@ -24,7 +24,7 @@ export interface ContextUsageView {
   /** Transcript fill as a percentage of that cap. */
   conversationPercent: number | null;
   /** What holds the cap down — drives the panel's "capped by" line. */
-  capSource: "config" | "window" | "floor" | null;
+  capSource: "config" | "window" | "floor" | "auto" | null;
   /**
    * Turns `packConversation` dropped to make the transcript fit. Any
    * non-zero value is the chip's violet state; the detail view spends
@@ -86,13 +86,21 @@ function resolveWindow(state: TuiState): number | null {
  * equal means the operator's own setting binds and naming it tells them
  * what to raise, lower means the window binds and no config change will
  * help.
+ *
+ * The comparison is only valid when there *is* a configured ceiling.
+ * Under `auto` the figure sitting in `conversationCapConfigured` is the
+ * budget-share fallback for an unknown window, and it is usually the
+ * smaller of the two — so the comparison would report "config" and send
+ * an operator to raise a setting they have already switched off.
  */
 function resolveCapSource(
   cap: number | null,
   configured: number | null,
+  auto: boolean,
 ): ContextUsageView["capSource"] {
   if (cap === null) return null;
   if (cap <= CONVERSATION_CAP_FLOOR) return "floor";
+  if (auto) return "auto";
   if (configured !== null && cap < configured) return "window";
   return "config";
 }
@@ -105,6 +113,7 @@ export function selectContextUsage(state: TuiState): ContextUsageView | null {
     conversationTokens,
     conversationCap,
     conversationCapConfigured,
+    conversationCapAuto,
   } = state.contextUsage;
   // Nothing has been built yet: the chip stays off the bar rather than
   // showing a zero, which would claim the window is empty when what we
@@ -124,7 +133,11 @@ export function selectContextUsage(state: TuiState): ContextUsageView | null {
       conversationCap === null || conversationCap <= 0
         ? null
         : Math.min(100, Math.round((conversationTokens / conversationCap) * 100)),
-    capSource: resolveCapSource(conversationCap, conversationCapConfigured),
+    capSource: resolveCapSource(
+      conversationCap,
+      conversationCapConfigured,
+      conversationCapAuto,
+    ),
     droppedTurns,
     sections,
   };

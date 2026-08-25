@@ -118,6 +118,37 @@ describe("which limit holds the transcript down", () => {
     );
     expect(view?.capSource).toBe("floor");
   });
+
+  /**
+   * Under auto the figure in `conversationCapConfigured` is the
+   * budget-share fallback for an unknown window, not a ceiling — and it
+   * is usually the *smaller* of the two, so the config-vs-effective
+   * comparison would report "config" and send an operator to raise a
+   * setting they have already switched off.
+   */
+  it("names nothing when the cap is auto, whichever way the numbers fall", () => {
+    for (const conversationCapConfigured of [11_200, 32_000, 64_000]) {
+      const view = selectContextUsage(
+        stateWith(
+          usage({
+            conversationCap: 38_992,
+            conversationCapConfigured,
+            conversationCapAuto: true,
+          }),
+        ),
+      );
+      expect(view?.capSource).toBe("auto");
+    }
+  });
+
+  it("still reports the floor ahead of auto", () => {
+    // A window too small to hold the prompt is a real problem, and auto
+    // is not the answer to it.
+    const view = selectContextUsage(
+      stateWith(usage({ conversationCap: 512, conversationCapAuto: true })),
+    );
+    expect(view?.capSource).toBe("floor");
+  });
 });
 
 describe("resolving the model's context window", () => {

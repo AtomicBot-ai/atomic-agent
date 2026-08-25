@@ -564,11 +564,22 @@ describe("parseUserConfigFile", () => {
     expect(parsed.agent.worldSnapshotMaxTokens).toBe(4_000);
   });
 
-  it("rejects non-positive conversationMaxTokens", () => {
+  it("accepts conversationMaxTokens: 0 as the auto sentinel", () => {
+    // `0` is not a request for a zero-token transcript: it is "let the
+    // window decide", the same sentinel `localModels.managed.contextSize`
+    // uses. It has to survive the parser to mean anything.
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      agent: { conversationMaxTokens: 0 },
+    });
+    expect(parsed.agent?.conversationMaxTokens).toBe(0);
+  });
+
+  it("rejects a negative conversationMaxTokens", () => {
     expect(() =>
       parseUserConfigFile({
         version: USER_CONFIG_VERSION,
-        agent: { conversationMaxTokens: 0 },
+        agent: { conversationMaxTokens: -1 },
       }),
     ).toThrow(/agent.conversationMaxTokens/);
   });

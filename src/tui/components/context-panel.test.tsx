@@ -194,6 +194,47 @@ describe("the trimming block", () => {
     );
   });
 
+  /**
+   * The report: `llama-server -c 48000`, and the composer says 32k. The
+   * panel already named the knob; what it did not say is what to set it
+   * to, or that two thirds of the window was going unused.
+   */
+  it("names the value that lifts the ceiling when the window is bigger", () => {
+    const body = lines(
+      usage({
+        capSource: "config",
+        conversationCap: 32_000,
+        contextWindow: 48_000,
+      }),
+    ).join("\n");
+    expect(body).toContain("capped by          agent.conversationMaxTokens");
+    expect(body).toContain("set it to 0 to fill the 48k window");
+  });
+
+  it("does not offer the fix when the ceiling is already above the window", () => {
+    // Nothing to claim: the transcript is not being held below anything.
+    const body = lines(
+      usage({
+        capSource: "config",
+        conversationCap: 32_000,
+        contextWindow: 16_384,
+      }),
+    ).join("\n");
+    expect(body).not.toContain("set it to 0");
+  });
+
+  it("says the cap is auto rather than naming a knob", () => {
+    const body = lines(
+      usage({
+        capSource: "auto",
+        conversationCap: 38_992,
+        contextWindow: 48_000,
+      }),
+    ).join("\n");
+    expect(body).toContain("capped by          auto — fills the 48k window");
+    expect(body).not.toContain("agent.conversationMaxTokens");
+  });
+
   it("names the window, with its size, when the window binds", () => {
     const body = lines(
       usage({ capSource: "window", conversationCap: 9000, contextWindow: 32_768 }),
