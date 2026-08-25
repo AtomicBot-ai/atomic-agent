@@ -1,3 +1,4 @@
+import { assertProviderStatus } from "./assert-provider-status.js";
 import { parseHTML } from "linkedom";
 
 import { searchHttp } from "../transport/search-http.js";
@@ -40,9 +41,7 @@ export function createDuckDuckGoProvider(
         runCommand: deps.runCommand,
         lookup: deps.lookup,
       });
-      if (response.status >= 400) {
-        throw new Error(`DuckDuckGo returned HTTP ${response.status}`);
-      }
+      assertProviderStatus(response, "duckduckgo", "DuckDuckGo");
       const results = parseDuckDuckGoHtml(response.body, options.maxResults);
       if (results.length === 0 && isBotChallenge(response.body)) {
         throw new WebSearchBlockedError("duckduckgo");

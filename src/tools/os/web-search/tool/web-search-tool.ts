@@ -6,6 +6,7 @@ import {
 import type { ToolDefinition } from "../../../tool-registry.js";
 import type { HostLookup } from "../../web-fetch-ssrf-guard.js";
 import { runWebSearchWithFallback } from "../providers/index.js";
+import { createProviderCooldown } from "../transport/provider-cooldown.js";
 import { createSearchCache } from "../transport/search-cache.js";
 import type { WebSearchResult } from "../web-search-provider.js";
 import { checkMissingSearchKey } from "./warn-missing-search-key.js";
@@ -34,6 +35,10 @@ export function buildOsWebSearchTool(options: OsWebSearchOptions): ToolDefinitio
   // HTTP round-trip — the primary defence against provider rate-limiting.
   const cfg0 = options.config.web.search;
   const cache = createSearchCache({ ttlMs: cfg0.cacheTtlMinutes * 60_000 });
+  // Same lifetime and same reason as the cache: a rate limit is a fact
+  // about the last few minutes of this process, so it lives in this
+  // closure rather than in a global or on disk.
+  const cooldown = createProviderCooldown();
 
   // Emitted once at construction, not per search: a keyless primary provider
   // degrades every subsequent query, and one line at startup is what turns
@@ -82,17 +87,21 @@ export function buildOsWebSearchTool(options: OsWebSearchOptions): ToolDefinitio
             signal: ctx.signal,
           },
           cache,
+          cooldown,
         });
         return compressToolResult(
           {
             tool: TOOL_NAME,
             status: "ok",
-            output: renderResults(outcome.results),
+            output: renderNotes(outcome.degraded) + renderResults(outcome.results),
             details: {
               provider: outcome.provider,
               fromCache: outcome.fromCache,
               query: args.query,
               results: outcome.results,
+              ...(outcome.degraded.length > 0
+                ? { degraded: outcome.degraded }
+                : {}),
             },
           },
           {
@@ -129,6 +138,22 @@ function parseArgs(
   }
   maxResults = Math.min(MAX_RESULTS_CAP, Math.max(1, maxResults));
   return { query: query.trim(), maxResults };
+}
+
+/**
+ * Whatever the chain had to skip to answer, printed above the results.
+ *
+ * In `details` as well, but `details` is structured metadata and this is
+ * the half the model reads. The degradation #179 measured was invisible
+ * precisely because it was not a failure: the fallback worked, results
+ * came back, and nothing anywhere said they came from the weaker
+ * provider because the stronger one was out of quota. A model that can
+ * see the line can say so in its answer; an operator reading the
+ * transcript can act on it.
+ */
+function renderNotes(degraded: readonly string[]): string {
+  if (degraded.length === 0) return "";
+  return `${degraded.map((note) => `[search] ${note}`).join("\n")}\n\n`;
 }
 
 function renderResults(results: readonly WebSearchResult[]): string {

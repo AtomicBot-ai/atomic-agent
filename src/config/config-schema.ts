@@ -87,6 +87,12 @@ export interface WebSearchConfig {
   /**
    * Per-runtime result cache TTL in minutes. `0` disables caching. The cache
    * is the primary defence against provider rate-limiting on repeated queries.
+   *
+   * An hour, raised from fifteen minutes. An agent re-issues near-identical
+   * queries across the steps of one task and across tasks in one run, and
+   * every expiry inside that window spends quota to re-fetch a result it
+   * already had (#179). Search results for the factual lookups this is
+   * mostly used for do not turn over in an hour; a rate limit does.
    */
   cacheTtlMinutes: number;
   /**
@@ -1737,7 +1743,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       provider: "exa",
       maxResults: 8,
       timeoutMs: 15_000,
-      cacheTtlMinutes: 15,
+      cacheTtlMinutes: 60,
       fallback: ["duckduckgo"],
       searxng: {
         instanceUrl: null,

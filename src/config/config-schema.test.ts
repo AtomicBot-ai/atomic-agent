@@ -307,7 +307,7 @@ describe("parseUserConfigFile", () => {
   it("fills cacheTtlMinutes/fallback defaults when migrating from v27", () => {
     const parsed = parseUserConfigFile({ version: 27 });
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
-    expect(parsed.web.search.cacheTtlMinutes).toBe(15);
+    expect(parsed.web.search.cacheTtlMinutes).toBe(60);
     expect(parsed.web.search.provider).toBe("exa");
     expect(parsed.web.search.fallback).toEqual(["duckduckgo"]);
   });
