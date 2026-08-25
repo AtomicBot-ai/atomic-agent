@@ -1,5 +1,6 @@
 import { ContextChip } from "./components/context-chip.js";
 import { OnboardingScreen } from "./components/onboarding-screen.js";
+import { TerminalTooSmall } from "./components/terminal-too-small.js";
 import { ContextPanel } from "./components/context-panel.js";
 import { selectContextUsage } from "./select-context-usage.js";
 import { Box, Text, useApp, useInput, type DOMElement, type Key } from "ink";
@@ -70,6 +71,7 @@ import {
   computeSidebarRowBudget,
   computeSidebarWidth,
   isSidebarVisible,
+  isTerminalTooSmall,
 } from "./layout.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
 import { slashPrefix } from "./commands/slash-command-parser.js";
@@ -1392,6 +1394,25 @@ export function TuiApp({
   const promptContextSlot = contextUsage ? (
     <ContextChip usage={contextUsage} layer={MOUSE_LAYER_PANEL} />
   ) : null;
+
+  // Below the floor the app cannot be drawn at all — Ink 7 overlaps a
+  // frame taller than the terminal rather than clipping it, so what came
+  // out of an eight-row window was two UIs painted over each other. This
+  // branch sits above the onboarding one deliberately: the first-run
+  // screen is the *first* thing a new operator sees, and it is the one
+  // that has no idea yet that the window is the problem.
+  //
+  // Below every hook, like the onboarding branch, so the hook order is
+  // identical whichever way this goes and a resize across the floor is
+  // an ordinary re-render.
+  if (isTerminalTooSmall(terminalSize.columns, terminalSize.rows)) {
+    return (
+      <TerminalTooSmall
+        columns={terminalSize.columns}
+        rows={terminalSize.rows}
+      />
+    );
+  }
 
   // The first-run flow replaces the app rather than layering over it.
   // Every hook above still runs — the branch sits below all of them — but
