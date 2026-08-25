@@ -1,3 +1,4 @@
+import type { CodingMode } from "./coding-mode.js";
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { MetricSample } from "../tracing/metrics-collector.js";
@@ -105,6 +106,12 @@ export type TuiAction =
    * `theme_set`.
    */
   | { type: "while_busy_mode_changed"; mode?: WhileBusySubmitMode }
+  /**
+   * Advance the coding-mode ring (shift+tab, or a click on the chip).
+   * `mode` sets one directly; without it the ring steps, `back` walking
+   * it the other way.
+   */
+  | { type: "coding_mode_cycled"; mode?: CodingMode; back?: boolean }
   /**
    * The operator submitted a message in `steer` mode. Clears the editor
    * only — the user bubble is appended when the agent loop confirms

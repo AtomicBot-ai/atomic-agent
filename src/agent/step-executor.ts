@@ -129,6 +129,11 @@ export type LlmCompleteStream = (
 
 export interface StepDependencies {
   registry: ToolRegistry;
+  /**
+   * Plan mode, read per call rather than captured once — same contract
+   * as `BatchExecutionContext.isPlanMode`. Absent ⇒ off.
+   */
+  isPlanMode?: () => boolean;
   slotManager: SlotManager;
   llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
   /**
@@ -784,6 +789,7 @@ async function executeStepInner(
     stepIndex: ctx.stepIndex,
     signal: ctx.signal,
     ...(deps.tracker ? { tracker: deps.tracker } : {}),
+    ...(deps.isPlanMode ? { isPlanMode: deps.isPlanMode } : {}),
     ...(batch.maxWaveSize !== undefined ? { maxWaveSize: batch.maxWaveSize } : {}),
     ...(loadedSkillNames.size > 0 ? { loadedSkillNames } : {}),
     onCallFinished: ({ batchIndex, result, durationMs }) => {

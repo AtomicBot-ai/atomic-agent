@@ -237,6 +237,17 @@ atomic-agent trace list --limit 10
 
 Handy slash commands: `/help` lists every command, `/tools` lists the built-in tool families, `/model` jumps to the LLM panel and reopens the model picker for the active cloud provider, `/privacy` shows what leaves the machine (`/privacy analytics off` turns analytics off). The chat log scrolls with PgUp / PgDn (fn+arrows on macOS).
 
+**Coding modes.** A chip at the right end of the composer's bar says which rules are in force, and `ctrl+g M` (or `/mode`, or clicking the chip) cycles them:
+
+| mode | |
+|---|---|
+| `default` | approvals follow the level set on the Privacy tab |
+| `plan` | read-only — every tool that would change something is refused, with a note telling the agent to present a plan instead. Reading, searching and fetching all still work. |
+| `accept edits` | file writes inside this workspace stop asking; everything else still does |
+| `bypass permissions` | nothing asks, for this session. Hardline shell-guard rules still block. |
+
+All four are session state and none are written to `config.json` — a `bypass` that survived a restart would be a standing grant nobody remembers making. `default` restores the level you actually configured, so a session that passed through `bypass` and back lands where it started. The cycle order keeps `plan` and `bypass` two presses apart in either direction.
+
 **Answering an approval prompt.** `y` approves the call, `s` grants its category for the session, `n` denies, `esc` aborts the run. Two more ways out:
 
 - **`e` — write it somewhere else.** On an `os.fs.write` prompt the target path becomes an editable field, prefilled with the full path. Type any other target (`~` works, missing folders are created) and Enter confirms it. The new path is re-checked against the approval ladder first: a target on the same rung as the one you approved is written, a target on a different rung (workspace → home, say) asks once more, and a target that is the agent's own `config.json` / `.env` is refused.

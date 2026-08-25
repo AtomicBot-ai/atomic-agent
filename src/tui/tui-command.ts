@@ -341,6 +341,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onMessageSteered: (text) => orchestrator.steerMessage(text),
         onWhileBusyModePersistRequested: (mode) =>
           persistWhileBusyMode(mode, bus),
+        // The mode is a stance for this session, so it moves the live
+        // ladder and the live plan flag and writes neither to
+        // `config.json`. The Privacy tab remains the only surface that
+        // persists an approval level — otherwise a session that passed
+        // through `bypass` would leave the machine trusting everything
+        // on the next boot.
+        onCodingModeChanged: (_mode, resolved) => {
+          runtime.setApprovalLevel(resolved.approvalLevel);
+          runtime.setPlanMode(resolved.planMode);
+        },
         onSessionPickerRequested: () => orchestrator.openSessionPicker(),
         onSessionSwitchRequested: (id) => orchestrator.switchSession(id),
         onSessionNewRequested: () => orchestrator.newSession(),
