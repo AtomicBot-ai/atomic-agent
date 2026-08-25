@@ -74,7 +74,7 @@ If something isn't working:
 
 1. Copy your error logs and system specs.
 2. Open an issue on [GitHub](https://github.com/AtomicBot-ai/atomic-agent/issues).
-3. Or ask for help in our [Discord](https://discord.com/invite/Us7qXtDGw).
+3. Or ask for help in our [Discord](https://discord.gg/kXWDFSJpMW).
 
 ## Talk to Us
 
@@ -203,7 +203,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | **Skills** | View and run Markdown skill playbooks (scripts are approval-gated), install more from ClawHub. Ships with 17 starter skills (Docker, GitHub, Notion, Obsidian, PDF, and more), auto-installed on first run. |
 | **Vision** | Optional `vision.describe` for multimodal models with `mmproj`, kept outside the text transcript. |
 | **MCP** | Connect external MCP servers; their tools, resources, and prompts join the same registry. |
-| **Providers** | Local `llama-server` by default; OpenAI-compatible, OpenRouter, AI/ML API, and Gemini providers when configured, with live model catalogs and mid-session switching. Your existing **Claude Code and OpenAI Codex subscriptions** work too, driven through their own signed-in CLIs with no API key. Reasoning-only completions from reasoning models are recovered instead of failing the turn. |
+| **Providers** | Local `llama-server` by default; OpenAI-compatible, [OpenRouter](https://openrouter.ai), AI/ML API, and Gemini providers when configured, with live model catalogs and mid-session switching. Your existing **Claude Code and OpenAI Codex subscriptions** work too, driven through their own signed-in CLIs with no API key. Reasoning-only completions from reasoning models are recovered instead of failing the turn. |
 | **Telegram** | Single-user remote control with owner pairing, inline approval buttons, and opt-in result reports from scheduled tasks. |
 
 ### Memory That Grows Outside the Prompt
