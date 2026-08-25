@@ -102,12 +102,19 @@ export function PromptShell(props: PromptShellProps): ReactElement {
     mouseLayer,
     ...editorProps
   } = props;
+  // Rotate only while the phrase is on screen. `effectivePlaceholder`
+  // below already blanks it for a non-empty buffer; without the same
+  // condition on the timer, typing left a four-second full-frame repaint
+  // running behind the composer for the rest of the session.
+  const placeholderVisible = value.length === 0;
   const rotated = useRotatingPlaceholder(
     rotatingPlaceholders ?? [],
     placeholderRotationMs,
+    placeholderVisible,
   );
-  const effectivePlaceholder =
-    value.length === 0 ? (rotated ?? placeholder ?? "") : "";
+  const effectivePlaceholder = placeholderVisible
+    ? (rotated ?? placeholder ?? "")
+    : "";
   const accent = focus && !disabled ? theme.colors.accent : theme.colors.border;
   // Send is live on exactly the condition Enter is: a non-blank buffer
   // in an editor that is accepting input. `handleEditorSubmit` drops a
