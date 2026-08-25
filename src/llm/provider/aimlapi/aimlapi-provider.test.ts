@@ -29,7 +29,7 @@ describe("AimlapiProvider", () => {
       expect(headers.get("http-referer")).toBeNull();
       expect(headers.get("x-title")).toBeNull();
       expect(headers.get("x-aimlapi-source")).toBe("agent/atomic-agent");
-      expect(headers.get("x-aimlapi-partner-id")).toBeNull();
+      expect(headers.get("x-aimlapi-partner-id")).toBe("part_IYG5D7rgbiI7fw78UtwBzxkm");
       return new Response(
         JSON.stringify({
           id: "gen-1",
