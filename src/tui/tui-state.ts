@@ -607,6 +607,17 @@ export interface TuiState {
    */
   codingMode: CodingMode;
   /**
+   * The mode menu, or `null` when it is closed. `cursor` indexes
+   * {@link CODING_MODES}.
+   *
+   * Clicking the chip used to advance the ring directly, which made the
+   * one control that changes what the agent is allowed to do the only
+   * control in the app with no confirmation and no explanation — two
+   * stray clicks took you from `plan` to `accept edits` with nothing on
+   * screen saying what either meant.
+   */
+  codingModeMenu: { readonly cursor: number } | null;
+  /**
    * The approval level the operator actually configured, so `default`
    * can restore it. Seeded from the boot level and moved by the Privacy
    * tab; the coding-mode chip reads it and never writes it.
@@ -761,6 +772,7 @@ export function createInitialTuiState(
     queuedMessages: [],
     whileBusyMode: layout?.whileBusyMode ?? "steer",
     codingMode: "default",
+    codingModeMenu: null,
     // `session` is optional in practice: several reducer tests build a
     // state with no session info at all, and a seed that assumed one
     // would turn every one of them into a crash about a field they do

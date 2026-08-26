@@ -10,6 +10,7 @@ import {
   resolveBackdropDismissal,
 } from "./backdrop-dismissal.js";
 import { CodingModeChip } from "./components/coding-mode-chip.js";
+import { CodingModePopup } from "./components/coding-mode-popup.js";
 import { OnboardingScreen } from "./components/onboarding-screen.js";
 import { TerminalTooSmall } from "./components/terminal-too-small.js";
 import { ContextPanel } from "./components/context-panel.js";
@@ -921,6 +922,7 @@ export function TuiApp({
     state.composerSwitch !== null ||
     Boolean(state.uninstall) ||
     Boolean(state.sessionDelete) ||
+    state.codingModeMenu !== null ||
     Boolean(state.pendingApproval) ||
     Boolean(state.updatePrompt) ||
     state.updateStatus === "done" ||
@@ -991,6 +993,7 @@ export function TuiApp({
       state.menuOpen ||
       state.contextPanelOpen ||
       state.composerSwitch !== null ||
+      state.codingModeMenu !== null ||
       Boolean(state.uninstall) ||
       Boolean(state.sessionDelete) ||
       state.themePickerOpen ||
@@ -1036,6 +1039,7 @@ export function TuiApp({
     state.menuOpen ||
     state.contextPanelOpen ||
     state.composerSwitch !== null ||
+    state.codingModeMenu !== null ||
     Boolean(state.uninstall) ||
     Boolean(state.sessionDelete) ||
     state.themePickerOpen ||
@@ -1677,6 +1681,23 @@ export function TuiApp({
               }
               onActivate={activateComposerSwitch}
             />
+            {state.codingModeMenu ? (
+              // Same pane geometry as the route switch: both hang off a
+              // control on the composer's toolbar, so both belong at the
+              // bottom of the content pane rather than in the middle of
+              // the window.
+              <CodingModePopup
+                cursor={state.codingModeMenu.cursor}
+                active={state.codingMode}
+                availableRows={switchPaneRows}
+                availableColumns={
+                  terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
+                }
+                onActivate={(mode) =>
+                  dispatch({ type: "coding_mode_cycled", mode })
+                }
+              />
+            ) : null}
             {state.menuOpen ? (
               <MenuPopup
                 state={state}

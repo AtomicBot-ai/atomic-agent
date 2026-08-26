@@ -369,7 +369,10 @@ function dispatchSteerSub(args: string): SlashDispatchResult {
 }
 
 /**
- * `/mode` cycles; `/mode <name>` sets one. Names are matched on the
+ * `/mode` opens the menu; `/mode <name>` sets one directly, which is the
+ * one path that skips it — a name typed in full is already a decision,
+ * and making it open a menu to confirm what it just said would be a
+ * second question about a settled matter. Names are matched on the
  * chip's own label as well as the identifier, because "accept edits" is
  * what the operator can see and `accept-edits` is what the code calls
  * it, and being told the visible name is wrong would be absurd.
@@ -377,7 +380,10 @@ function dispatchSteerSub(args: string): SlashDispatchResult {
 function dispatchModeSub(args: string): SlashDispatchResult {
   const raw = args.trim().toLowerCase();
   if (raw.length === 0) {
-    return pureActions([{ type: "coding_mode_cycled" }]);
+    // Bare `/mode` opens the menu rather than advancing the ring, so
+    // every route to this control — the chip, the chord, the command —
+    // ends at the same four rows with the same four explanations.
+    return pureActions([{ type: "coding_mode_menu_opened" }]);
   }
   const wanted = raw.replace(/[\s_]+/g, "-");
   const match = CODING_MODES.find(

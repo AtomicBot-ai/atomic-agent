@@ -1,4 +1,4 @@
-import { cycleCodingMode } from "./coding-mode.js";
+import { CODING_MODES, cycleCodingMode } from "./coding-mode.js";
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import { clampMenuCursor } from "./menu/menu-selectors.js";
 import { filterSlashCommands } from "./commands/slash-commands.js";
@@ -163,15 +163,37 @@ export function reduceUiAction(
       };
     case "queue_changed":
       return { ...state, queuedMessages: [...action.queued] };
+    case "coding_mode_menu_opened": {
+      // Seeded on the mode in force, so the first thing under the cursor
+      // is the row you are already on — the menu opens as a statement of
+      // where you are before it is a list of where you could go.
+      const idx = CODING_MODES.indexOf(state.codingMode);
+      return { ...state, codingModeMenu: { cursor: idx < 0 ? 0 : idx } };
+    }
+    case "coding_mode_menu_closed":
+      return { ...state, codingModeMenu: null };
+    case "coding_mode_menu_cursor_moved": {
+      if (!state.codingModeMenu) return state;
+      const count = CODING_MODES.length;
+      // Wraps, like every other list in the app.
+      const next =
+        (state.codingModeMenu.cursor + action.delta + count) % count;
+      return { ...state, codingModeMenu: { cursor: next } };
+    }
     case "coding_mode_cycled": {
       const next =
         action.mode ?? cycleCodingMode(state.codingMode, action.back ?? false);
-      if (next === state.codingMode) return state;
+      // Choosing closes the menu, whether the mode changed or not:
+      // picking the row you were already on is a decision too, and
+      // leaving the popup up would read as the click not landing.
+      if (next === state.codingMode) {
+        return state.codingModeMenu ? { ...state, codingModeMenu: null } : state;
+      }
       // The reducer owns the *displayed* mode only. Applying it to the
       // runtime (the approval level and the plan-mode flag) is the
       // orchestrator's job, driven off the same action — a reducer that
       // reached into the runtime would make every state test need one.
-      return { ...state, codingMode: next };
+      return { ...state, codingMode: next, codingModeMenu: null };
     }
     case "while_busy_mode_changed": {
       const next =

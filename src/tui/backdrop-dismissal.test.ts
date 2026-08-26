@@ -36,6 +36,12 @@ describe("what a click outside closes", () => {
    * either. The picker was not modal, it was a hole in the app that only
    * the keyboard could climb out of.
    */
+  it("closes the coding-mode menu", () => {
+    expect(
+      resolveBackdropDismissal(stateWith({ codingModeMenu: { cursor: 0 } })),
+    ).toEqual({ type: "coding_mode_menu_closed" });
+  });
+
   it("closes the theme picker", () => {
     expect(resolveBackdropDismissal(stateWith({ themePickerOpen: true }))).toEqual(
       { type: "theme_picker_closed" },

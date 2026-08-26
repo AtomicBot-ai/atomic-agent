@@ -25,6 +25,7 @@ export function resolveBackdropDismissal(state: TuiState): TuiAction | null {
   if (state.sessionDelete) return { type: "session_delete_closed" };
   if (state.contextPanelOpen) return { type: "context_panel_closed" };
   if (state.composerSwitch) return { type: "composer_switch_closed" };
+  if (state.codingModeMenu) return { type: "coding_mode_menu_closed" };
   if (state.menuOpen) return { type: "menu_closed" };
   // The three pickers were missing from this list, and that is the whole
   // bug: `modalOwnsInput` raises the mouse floor for them, so while one

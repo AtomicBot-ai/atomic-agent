@@ -251,7 +251,7 @@ Set `agent.conversationMaxTokens` to `0` to drop the ceiling entirely and let th
 
 Handy slash commands: `/help` lists every command, `/tools` lists the built-in tool families, `/model` jumps to the LLM panel and reopens the model picker for the active cloud provider, `/privacy` shows what leaves the machine (`/privacy analytics off` turns analytics off). The chat log scrolls with PgUp / PgDn (fn+arrows on macOS).
 
-**Coding modes.** A chip at the right end of the composer's bar says which rules are in force, and `ctrl+g M` (or `/mode`, or clicking the chip) cycles them:
+**Coding modes.** A chip at the right end of the composer's bar says which rules are in force. Clicking it — or `ctrl+g M`, or `/mode` — opens a menu of the four, each with a line saying what it does; ↑↓ moves, Enter applies, Esc cancels. `/mode <name>` sets one directly without the menu.
 
 | mode | |
 |---|---|

@@ -54,7 +54,7 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "mode",
     description:
-      "cycle the coding mode: plan · default · accept edits · bypass permissions · `/mode <name>` sets one directly",
+      "open the coding-mode menu: default · plan · accept edits · bypass permissions · `/mode <name>` sets one directly",
   },
   {
     name: "quit",
