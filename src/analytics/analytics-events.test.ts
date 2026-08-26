@@ -4,7 +4,10 @@ import type { AnalyticsClient } from "./analytics-client.js";
 import {
   ANALYTICS_EVENTS,
   captureAppInstalled,
+  captureAppOpened,
   captureMessageSent,
+  captureModelConfigured,
+  captureOnboardingStep,
 } from "./analytics-events.js";
 import type { AnalyticsStateStore } from "./analytics-state-store.js";
 
@@ -18,19 +21,25 @@ function fakeStore(overrides: Partial<Record<string, boolean>> = {}) {
   const state = {
     appInstalled: overrides.appInstalled ?? false,
     firstMessage: overrides.firstMessage ?? false,
+    modelConfigured: overrides.modelConfigured ?? false,
   };
   return {
     isAppInstalledSent: () => state.appInstalled,
     isFirstMessageSent: () => state.firstMessage,
+    isModelConfiguredSent: () => state.modelConfigured,
     markAppInstalledSent: vi.fn(() => {
       state.appInstalled = true;
     }),
     markFirstMessageSent: vi.fn(() => {
       state.firstMessage = true;
     }),
+    markModelConfiguredSent: vi.fn(() => {
+      state.modelConfigured = true;
+    }),
   } as unknown as AnalyticsStateStore & {
     markAppInstalledSent: ReturnType<typeof vi.fn>;
     markFirstMessageSent: ReturnType<typeof vi.fn>;
+    markModelConfiguredSent: ReturnType<typeof vi.fn>;
   };
 }
 
@@ -198,5 +207,100 @@ describe("captureMessageSent", () => {
     const store = fakeStore();
     expect(() => captureMessageSent(null, store, ctx)).not.toThrow();
     expect(store.markFirstMessageSent).not.toHaveBeenCalled();
+  });
+});
+
+describe("captureAppOpened", () => {
+  it("fires on every call — it is per-launch, not per-install", () => {
+    const client = fakeClient();
+    captureAppOpened(client);
+    captureAppOpened(client);
+    expect(client.capture).toHaveBeenCalledTimes(2);
+    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.appOpened);
+  });
+
+  it("no-ops when analytics is disabled (null client)", () => {
+    expect(() => captureAppOpened(null)).not.toThrow();
+  });
+
+  it("carries no properties — platform and app_version come from the client", () => {
+    const client = fakeClient();
+    captureAppOpened(client);
+    expect(client.capture.mock.calls[0]).toHaveLength(1);
+  });
+});
+
+describe("captureOnboardingStep", () => {
+  it("sends the step name", () => {
+    const client = fakeClient();
+    captureOnboardingStep(client, "choose");
+    expect(client.capture).toHaveBeenCalledWith(
+      ANALYTICS_EVENTS.onboardingStep,
+      { step: "choose" },
+    );
+  });
+
+  it("attaches outcome when given", () => {
+    const client = fakeClient();
+    captureOnboardingStep(client, "finished", "cloud");
+    expect(client.capture).toHaveBeenCalledWith(
+      ANALYTICS_EVENTS.onboardingStep,
+      { step: "finished", outcome: "cloud" },
+    );
+  });
+
+  it("omits the outcome key entirely when not given", () => {
+    const client = fakeClient();
+    captureOnboardingStep(client, "intro");
+    const payload = client.capture.mock.calls[0][1];
+    expect(payload).not.toHaveProperty("outcome");
+  });
+
+  it("no-ops when analytics is disabled (null client)", () => {
+    expect(() => captureOnboardingStep(null, "intro")).not.toThrow();
+  });
+});
+
+describe("captureModelConfigured", () => {
+  const ctx = { provider: "openrouter", kind: "cloud" } as const;
+
+  it("fires once and marks the flag", () => {
+    const client = fakeClient();
+    const store = fakeStore();
+    captureModelConfigured(client, store, ctx);
+    expect(client.capture).toHaveBeenCalledWith(
+      ANALYTICS_EVENTS.modelConfigured,
+      { provider: "openrouter", kind: "cloud" },
+    );
+    expect(store.markModelConfiguredSent).toHaveBeenCalledTimes(1);
+  });
+
+  it("no-ops on a reconfiguration — it marks the transition, not a count", () => {
+    const client = fakeClient();
+    const store = fakeStore();
+    captureModelConfigured(client, store, ctx);
+    captureModelConfigured(client, store, { provider: "llama.cpp", kind: "local" });
+    expect(client.capture).toHaveBeenCalledTimes(1);
+  });
+
+  it("no-ops when already sent", () => {
+    const client = fakeClient();
+    const store = fakeStore({ modelConfigured: true });
+    captureModelConfigured(client, store, ctx);
+    expect(client.capture).not.toHaveBeenCalled();
+  });
+
+  it("carries no model id, key, or url — only provider and kind", () => {
+    const client = fakeClient();
+    const store = fakeStore();
+    captureModelConfigured(client, store, { provider: "llama.cpp", kind: "local" });
+    const payload = client.capture.mock.calls[0][1];
+    expect(Object.keys(payload).sort()).toEqual(["kind", "provider"]);
+  });
+
+  it("no-ops when analytics is disabled (null client)", () => {
+    const store = fakeStore();
+    expect(() => captureModelConfigured(null, store, ctx)).not.toThrow();
+    expect(store.markModelConfiguredSent).not.toHaveBeenCalled();
   });
 });

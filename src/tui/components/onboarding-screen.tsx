@@ -48,6 +48,8 @@ export interface OnboardingScreenCallbacks {
   onProvidersWizardSubmitCancel?(): void;
   /** Reload the runtime's providers once the flow has written config. */
   onOnboardingFinished?(outcome: OnboardingOutcome): void;
+  /** Report the screen the first-run flow just reached (analytics). */
+  onOnboardingStep?(step: string, outcome?: string): void;
   /** Start a model pull. Owned by `LocalModelsOrchestrator`. */
   onLocalModelsPullRequested?(modelId: LocalModelId): void;
 }
@@ -144,6 +146,9 @@ export function OnboardingScreen(props: {
     ...(callbacks.onOnboardingFinished === undefined
       ? {}
       : { onFinished: callbacks.onOnboardingFinished }),
+    ...(callbacks.onOnboardingStep === undefined
+      ? {}
+      : { onStep: callbacks.onOnboardingStep }),
   });
 
   // Both axes are centred on the block as a whole, never line by line:

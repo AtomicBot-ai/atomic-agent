@@ -312,6 +312,7 @@ describe("ProvidersOrchestrator.completeWizard", () => {
       },
       reloadLlmProvider: vi.fn(async () => {}),
       reloadLlmProviders: vi.fn(async () => {}),
+      reportModelConfigured: vi.fn(),
     } as unknown as AgentRuntime;
   }
 
@@ -399,4 +400,5 @@ describe("ProvidersOrchestrator.completeWizard", () => {
     const finalTypes = bus.emit.mock.calls.map((call) => (call[0] as { type: string }).type);
     expect(finalTypes).not.toContain("providers_wizard_failed");
   });
+
 });

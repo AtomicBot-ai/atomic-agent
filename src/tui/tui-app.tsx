@@ -460,6 +460,13 @@ export interface TuiAppCallbacks {
   onOnboardingFinished?(
     outcome: import("./onboarding/onboarding-state.js").OnboardingOutcome,
   ): void;
+  /**
+   * The first-run flow reached a screen. `step` is an `OnboardingStep`
+   * name and `outcome` is set only on the terminal step — a closed
+   * vocabulary, never anything the operator typed. Feeds the activation
+   * funnel so a drop-off can be attributed to a screen.
+   */
+  onOnboardingStep?(step: string, outcome?: string): void;
   /** Providers tab: remove a provider by id from config + registry. */
   onProvidersRemove?(id: string): void;
   /** Slash-command surface: enable a skill explicitly (`/skill enable <name>`). */

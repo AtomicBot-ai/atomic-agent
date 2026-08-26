@@ -181,6 +181,47 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     );
   });
 
+  it("autoStartIfReady does not report a model activation — it is a launch, not a setup", async () => {
+    // Regression: `model_configured` used to hang off the daemon-restart
+    // hook, which this launch-time path also fires. Every existing local
+    // user would then report a first-time backend setup on their next
+    // app start, dating the funnel step to the launch instead of the
+    // setup that actually happened long before.
+    const dataDir = getConfig().paths.localModelsDataDir;
+    stubBackendInstalled(dataDir);
+    stubChatModelDownloaded(dataDir);
+    persistUserLocalModelsConfig({
+      mode: "managed",
+      managed: { modelId: "qwen-3.5-4b" },
+      embeddings: { enabled: false },
+    });
+    resetConfigCache();
+    // A daemon left running by a previous session: `autoStartIfReady`
+    // adopts it and fires the restart/selected hooks. That is precisely
+    // the shape the old wiring mistook for a setup.
+    stubChatStatus(true);
+    stubEmbeddingStatus(false);
+
+    const onManagedModelActivated = vi.fn();
+    const onManagedDaemonRestarted = vi.fn();
+    const onManagedModelSelected = vi.fn();
+    const orchestrator = new LocalModelsOrchestrator(
+      { emit() {}, subscribe: () => () => {} },
+      {
+        onManagedModelActivated,
+        onManagedDaemonRestarted,
+        onManagedModelSelected,
+      },
+    );
+    vi.spyOn(orchestrator, "refresh").mockResolvedValue();
+
+    await orchestrator.autoStartIfReady();
+
+    // The launch path ran to completion on an existing daemon and never
+    // reports an activation — `model_configured` stays unsent.
+    expect(onManagedModelActivated).not.toHaveBeenCalled();
+  });
+
   it("does not auto-start local daemons when a cloud text provider is active", async () => {
     const dataDir = getConfig().paths.localModelsDataDir;
     stubBackendInstalled(dataDir);

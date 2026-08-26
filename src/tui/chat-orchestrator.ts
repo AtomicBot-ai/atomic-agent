@@ -209,6 +209,16 @@ export class ChatOrchestrator {
       onManagedDaemonRestarted: () => {
         void this.llmHealth.refreshModelLabel();
       },
+      onManagedModelActivated: () => {
+        // The operator put a model live and it actually serves — the
+        // local equivalent of a verified cloud key. Deliberately NOT on
+        // `onManagedDaemonRestarted`: that also fires from the
+        // launch-time `autoStartIfReady`, which would report an ordinary
+        // app start as a first-time setup. `llama.cpp` is the runner,
+        // never the model id — a local model name is an arbitrary
+        // operator string.
+        runtime.reportModelConfigured("llama.cpp", "local");
+      },
     });
     this.telegram = new TuiTelegramOrchestrator(runtime, bus);
     this.privacy = new PrivacyOrchestrator(runtime, bus);

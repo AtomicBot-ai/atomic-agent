@@ -184,7 +184,10 @@ import {
   AnalyticsStateStore,
   createAnalyticsClient,
   captureAppInstalled,
+  captureAppOpened,
   captureMessageSent,
+  captureModelConfigured,
+  captureOnboardingStep,
   sanitizeModelAlias,
   TurnUsageMeter,
 } from "../analytics/index.js";
@@ -244,6 +247,18 @@ export interface CreateAgentRuntimeOptions {
    * config or by providing their own sinks.
    */
   traceDefault?: boolean;
+  /**
+   * Whether this runtime is being created for an interactive launch a
+   * person actually performed, which is what `app_opened` counts.
+   *
+   * Defaults to `false` because `createAgentRuntime` is also the entry
+   * point for headless work — scheduled/cron tasks, `run`, `serve`,
+   * the sidecar. Those create a runtime with nobody at the keyboard, and
+   * counting them would inflate the denominator of the activation
+   * funnel: one user with an hourly task would look like 24 launches a
+   * day. Only the TUI passes `true`.
+   */
+  interactiveLaunch?: boolean;
   /** Optional overrides — used by tests to inject fakes. */
   overrides?: {
     llamaComplete?: (params: LlmStreamParams) => Promise<CompletionResult>;
@@ -524,6 +539,19 @@ export interface AgentRuntime {
    */
   setAnalyticsEnabled(enabled: boolean): Promise<void>;
   /**
+   * Report that the first-run flow reached `step` (a closed
+   * `OnboardingStep` name, never free text). `outcome` is passed only on
+   * the terminal step. A no-op while analytics is off. The TUI owns the
+   * flow, so it is the caller; the runtime owns the client.
+   */
+  reportOnboardingStep(step: string, outcome?: string): void;
+  /**
+   * Report that a provider was verified and saved — the install has a
+   * working backend. Fires at most once per install (state-store
+   * guarded); a no-op while analytics is off.
+   */
+  reportModelConfigured(provider: string, kind: "local" | "cloud"): void;
+  /**
    * Live approval level (1 = every gated action asks … 5 = approve
    * everything). Reads the gate, not the boot-time config snapshot, so
    * it reflects `--no-approval` boots and later `setApprovalLevel`
@@ -617,6 +645,13 @@ export async function createAgentRuntime(
     logger,
   });
   captureAppInstalled(analytics, analyticsStateStore);
+  // Every interactive launch, not just the first: `app_installed` alone
+  // cannot tell a download that never ran from one that ran and stalled.
+  // Gated on the entry point opting in, so a cron task or a `serve`
+  // process does not read as somebody opening the app.
+  if (options.interactiveLaunch === true) {
+    captureAppOpened(analytics);
+  }
 
   // Anonymous error reporting (Sentry). Shares the opt-out flag
   // (`config.analytics.enabled`) and the anonymous install id with
@@ -682,6 +717,18 @@ export async function createAgentRuntime(
       });
     }
     logger.info("analytics toggled", { enabled });
+  };
+
+  // Both read `analytics` at call time, so a hot-toggle is picked up
+  // without re-registering anything.
+  const reportOnboardingStep = (step: string, outcome?: string): void => {
+    captureOnboardingStep(analytics, step, outcome);
+  };
+  const reportModelConfigured = (
+    provider: string,
+    kind: "local" | "cloud",
+  ): void => {
+    captureModelConfigured(analytics, analyticsStateStore, { provider, kind });
   };
 
   const traceEnabled = resolveTraceEnabled(
@@ -2538,6 +2585,8 @@ export async function createAgentRuntime(
     setApprovalHandlerForSession: (sessionId, handler) =>
       approvalRouter.setForSession(sessionId, handler),
     setAnalyticsEnabled,
+    reportOnboardingStep,
+    reportModelConfigured,
     getApprovalLevel: () => approvals.getLevel(),
     setApprovalLevel: (level) => approvals.setLevel(level),
     getPlanMode: () => planMode,
