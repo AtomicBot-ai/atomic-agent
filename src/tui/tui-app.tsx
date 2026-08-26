@@ -5,6 +5,10 @@ import {
   resolveCodingMode,
   type CodingMode,
 } from "./coding-mode.js";
+import {
+  backdropRevertsThemePreview,
+  resolveBackdropDismissal,
+} from "./backdrop-dismissal.js";
 import { CodingModeChip } from "./components/coding-mode-chip.js";
 import { CodingModePopup } from "./components/coding-mode-popup.js";
 import { OnboardingScreen } from "./components/onboarding-screen.js";
@@ -991,7 +995,10 @@ export function TuiApp({
       state.composerSwitch !== null ||
       state.codingModeMenu !== null ||
       Boolean(state.uninstall) ||
-      Boolean(state.sessionDelete);
+      Boolean(state.sessionDelete) ||
+      state.themePickerOpen ||
+      state.sessionPickerOpen ||
+      state.slashPaletteOpen;
     if (!open) return false;
     if (hit.event.kind === "wheel") return true;
     if (!isPrimaryPress(hit.event)) return false;
@@ -1006,22 +1013,23 @@ export function TuiApp({
     }
     // Clicking away from a destructive confirmation cancels it — the
     // same dismissal the menu gets, and the safe outcome either way.
-    dispatch(
-      // A click outside is a cancel, which is the safe direction on
-      // every surface in this chain — including the uninstall ladder,
-      // where it is the same answer Esc gives.
-      state.uninstall
-        ? { type: "uninstall_closed" }
-        : state.sessionDelete
-          ? { type: "session_delete_closed" }
-          : state.contextPanelOpen
-            ? { type: "context_panel_closed" }
-            : state.composerSwitch
-              ? { type: "composer_switch_closed" }
-              : state.codingModeMenu
-                ? { type: "coding_mode_menu_closed" }
-                : { type: "menu_closed" },
-    );
+    // A click outside is a cancel, which is the safe direction on every
+    // surface in this chain — including the uninstall ladder, where it
+    // is the same answer Esc gives.
+    const dismissal = resolveBackdropDismissal(state);
+    if (!dismissal) return false;
+    // The theme picker previews live, so cancelling it is two steps:
+    // put the palette back before closing, exactly as Esc does. Doing
+    // it here rather than in the reducer keeps the swap where every
+    // other theme swap already lives — `setActiveTheme` is a module
+    // singleton, not state.
+    if (
+      backdropRevertsThemePreview(state) &&
+      isThemeName(state.themePickerOriginal)
+    ) {
+      setActiveTheme(THEMES[state.themePickerOriginal]);
+    }
+    dispatch(dismissal);
     return true;
   };
   // Stamped when a backdrop-owning surface opens; read by the handler
@@ -1033,7 +1041,10 @@ export function TuiApp({
     state.composerSwitch !== null ||
     state.codingModeMenu !== null ||
     Boolean(state.uninstall) ||
-    Boolean(state.sessionDelete);
+    Boolean(state.sessionDelete) ||
+    state.themePickerOpen ||
+    state.sessionPickerOpen ||
+    state.slashPaletteOpen;
   useEffect(() => {
     if (backdropOwner) modalOpenedAtRef.current = Date.now();
   }, [backdropOwner]);
