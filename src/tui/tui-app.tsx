@@ -58,6 +58,10 @@ import {
 import { DebugPane } from "./components/debug-pane.js";
 import { HotkeyHint } from "./components/hotkey-hint.js";
 import { PromptShell } from "./components/prompt-shell.js";
+import {
+  EXECUTE_PLAN_MESSAGE,
+  PlanHandoff,
+} from "./components/plan-handoff.js";
 import { QueuedMessages } from "./components/queued-messages.js";
 import { SessionDeleteModal } from "./components/session-delete-modal.js";
 import { UninstallModal } from "./components/uninstall-modal.js";
@@ -1471,6 +1475,28 @@ export function TuiApp({
     });
   }, [codingMode, baseApprovalLevel, callbacks]);
 
+  /**
+   * Leave plan mode and tell the agent to carry out what it just
+   * proposed.
+   *
+   * Ordered deliberately: the mode changes *before* the message is sent,
+   * because the runtime reads plan mode per tool call and a message that
+   * arrived first would hit a turn whose first few calls were still
+   * being refused.
+   *
+   * The message goes through `handleEditorSubmit` rather than straight
+   * to `callbacks.onMessageSubmitted`, so it takes exactly the path a
+   * typed message takes — history, the log echo, the busy/steer gate —
+   * instead of a second submit path that has to be kept in step with it.
+   */
+  const executePlan = useCallback(
+    (mode: CodingMode) => {
+      dispatch({ type: "coding_mode_cycled", mode });
+      handleEditorSubmit(EXECUTE_PLAN_MESSAGE, stateRef.current, dispatch, callbacks);
+    },
+    [callbacks],
+  );
+
   const promptContextSlot = contextUsage ? (
     <ContextChip usage={contextUsage} layer={MOUSE_LAYER_PANEL} />
   ) : null;
@@ -1784,6 +1810,9 @@ export function TuiApp({
                 queued={state.queuedMessages}
                 width={mainColumnWidth}
               />
+              {state.planHandoff ? (
+                <PlanHandoff onExecute={executePlan} width={mainColumnWidth} />
+              ) : null}
               {/*
                 The composer holds exactly this slot in the flex column
                 — its collapsed height, whatever the buffer holds — and
