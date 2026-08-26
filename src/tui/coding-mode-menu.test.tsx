@@ -36,7 +36,7 @@ function apply(state: TuiState, action: Parameters<typeof reduceUiAction>[1]): T
  * measures to nothing and every assertion below would read an empty
  * string.
  */
-function frame(cursor: number, columns = 70, rows = 12): string {
+function frame(cursor: number, columns = 76, rows = 12): string {
   const { lastFrame, unmount } = render(
     <Box flexDirection="column" position="relative" width={columns} height={rows}>
       {Array.from({ length: rows }, (_unused, row) => (
@@ -60,19 +60,44 @@ function frame(cursor: number, columns = 70, rows = 12): string {
  * The chip used to advance the ring on click. That made the one control
  * that changes what the agent is *allowed to do* the only one with no
  * confirmation and no explanation — two stray clicks took you from
- * `plan` to `accept edits` with nothing on screen saying what either
+ * `plan` to `auto` with nothing on screen saying what either
  * meant.
  */
 describe("the coding-mode menu", () => {
-  it("lists every mode with what it means", () => {
+  it("shows every description in full, never truncated", () => {
+    // The whole reason the menu exists. A description with its end
+    // shaved off reads as a rendering bug and still does not answer the
+    // question — so the menu is sized from its content rather than the
+    // content being cut to fit the menu.
     const body = frame(0);
     for (const mode of CODING_MODES) {
       const look = codingModeLook(mode);
       expect(body, `${mode} label`).toContain(look.label);
-      // The explanation is the whole reason the menu exists; a row
-      // showing only a name would be the chip again, with extra steps.
-      expect(body, `${mode} detail`).toContain(look.detail.slice(0, 18));
+      expect(body, `${mode} detail`).toContain(look.detail);
     }
+    expect(body).not.toContain("…");
+  });
+
+  it("stacks the description rather than cutting it when the pane is narrow", () => {
+    // Too narrow for two columns is not a licence to truncate: the
+    // detail moves to its own indented line and stays whole.
+    const body = frame(0, 40, 14);
+    for (const mode of CODING_MODES) {
+      expect(body, `${mode} detail`).toContain(codingModeLook(mode).detail);
+    }
+    expect(body).not.toContain("…");
+  });
+
+  it("hangs off the right edge, where the chip is", () => {
+    // The chip sits at the far end of the composer's bar. A menu that
+    // dropped from the opposite corner would read as belonging to
+    // something else.
+    const columns = 90;
+    const lines = frame(0, columns, 12).split("\n");
+    const top = lines.find((l) => l.includes("╭"));
+    expect(top).toBeDefined();
+    const right = (top as string).indexOf("╮");
+    expect(right).toBeGreaterThanOrEqual(columns - 2);
   });
 
   it("marks the mode in force", () => {
@@ -81,7 +106,7 @@ describe("the coding-mode menu", () => {
 
   it("keeps the four rows even when the pane is too short for chrome", () => {
     // Title and footer are ornament; the rows are the content.
-    const short = frame(0, 70, 6);
+    const short = frame(0, 76, 6);
     for (const mode of CODING_MODES) {
       expect(short, `${mode} survived`).toContain(codingModeLook(mode).label);
     }
@@ -101,11 +126,11 @@ describe("driving the menu", () => {
     // The menu opens as a statement of where you are before it is a list
     // of where you could go.
     const state = apply(
-      stateWith({ codingMode: "accept-edits" }),
+      stateWith({ codingMode: "auto" }),
       { type: "coding_mode_menu_opened" },
     );
     expect(state.codingModeMenu?.cursor).toBe(
-      CODING_MODES.indexOf("accept-edits"),
+      CODING_MODES.indexOf("auto"),
     );
   });
 

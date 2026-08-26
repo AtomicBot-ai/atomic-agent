@@ -451,7 +451,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "mode",
       description:
-        "open the coding-mode menu: default · plan · accept edits · bypass permissions · `/mode <name>` sets one directly",
+        "open the coding-mode menu: default · plan · auto · bypass permissions · `/mode <name>` sets one directly",
       rank: 6,
     },
   },
