@@ -222,6 +222,12 @@ describe("captureAppOpened", () => {
   it("no-ops when analytics is disabled (null client)", () => {
     expect(() => captureAppOpened(null)).not.toThrow();
   });
+
+  it("carries no properties — platform and app_version come from the client", () => {
+    const client = fakeClient();
+    captureAppOpened(client);
+    expect(client.capture.mock.calls[0]).toHaveLength(1);
+  });
 });
 
 describe("captureOnboardingStep", () => {

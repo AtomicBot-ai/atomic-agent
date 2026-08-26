@@ -113,6 +113,12 @@ export interface LocalModelsOrchestratorHooks {
   onManagedModelSelected?: (modelId: LocalModelId) => void;
   /** Fired after a successful chat daemon (re)start for the active model. */
   onManagedDaemonRestarted?: () => void;
+  /**
+   * Fired when the operator deliberately puts a local model live and it
+   * actually serves — an explicit setup act, never the launch-time
+   * `autoStartIfReady` adoption of a model configured long ago.
+   */
+  onManagedModelActivated?: () => void;
 }
 
 export class LocalModelsOrchestrator {
@@ -486,8 +492,15 @@ export class LocalModelsOrchestrator {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
     const chat = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
-    if (chat.running) return true;
-    return this.startDaemon();
+    // Already serving because the pull auto-started it moments ago —
+    // still this operator finishing setup, so it counts the same.
+    if (chat.running) {
+      this.hooks?.onManagedModelActivated?.();
+      return true;
+    }
+    const started = await this.startDaemon();
+    if (started) this.hooks?.onManagedModelActivated?.();
+    return started;
   }
 
   private async startChatDaemonAfterPull(def: LocalModelDef): Promise<boolean> {
@@ -501,7 +514,11 @@ export class LocalModelsOrchestrator {
       });
       await this.stopProcessesForRestart({ silent: true });
     }
-    return this.startDaemon();
+    const started = await this.startDaemon();
+    // A model the operator just pulled came up serving: setup, not the
+    // launch-time adoption of a backend configured long ago.
+    if (started) this.hooks?.onManagedModelActivated?.();
+    return started;
   }
 
   private async startEmbeddingDaemonAfterPull(def: EmbeddingModelDef): Promise<void> {
@@ -776,6 +793,9 @@ export class LocalModelsOrchestrator {
     if (await this.startDaemon()) {
       // Tray refresh (optimistic id + `/props` re-read) is now fired by
       // `startDaemon` on success, so no explicit hook call is needed here.
+      // This branch is the operator choosing a model and it coming up —
+      // the local counterpart of a verified cloud key.
+      this.hooks?.onManagedModelActivated?.();
       this.bus.emit({ type: "ui_mode_set", mode: "chat" });
     }
   }

@@ -186,6 +186,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
     workingDir: parsed.workingDir,
     approvalLevel,
     traceDefault: true,
+    // The TUI is the one entry point a person actually launches; the
+    // arg-parse / TTY early returns above have already run, so `--help`
+    // and a non-TTY invocation never reach here.
+    interactiveLaunch: true,
     handlers: {
       onAgentEvent: (event, sessionId) => bus.emitAgentEvent(event, sessionId),
       onApprovalRequest: (request) => bus.emitApproval(request),

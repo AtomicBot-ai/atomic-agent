@@ -247,6 +247,18 @@ export interface CreateAgentRuntimeOptions {
    * config or by providing their own sinks.
    */
   traceDefault?: boolean;
+  /**
+   * Whether this runtime is being created for an interactive launch a
+   * person actually performed, which is what `app_opened` counts.
+   *
+   * Defaults to `false` because `createAgentRuntime` is also the entry
+   * point for headless work — scheduled/cron tasks, `run`, `serve`,
+   * the sidecar. Those create a runtime with nobody at the keyboard, and
+   * counting them would inflate the denominator of the activation
+   * funnel: one user with an hourly task would look like 24 launches a
+   * day. Only the TUI passes `true`.
+   */
+  interactiveLaunch?: boolean;
   /** Optional overrides — used by tests to inject fakes. */
   overrides?: {
     llamaComplete?: (params: LlmStreamParams) => Promise<CompletionResult>;
@@ -633,9 +645,13 @@ export async function createAgentRuntime(
     logger,
   });
   captureAppInstalled(analytics, analyticsStateStore);
-  // Every launch, not just the first: `app_installed` alone cannot tell
-  // a download that never ran from one that ran and stalled.
-  captureAppOpened(analytics);
+  // Every interactive launch, not just the first: `app_installed` alone
+  // cannot tell a download that never ran from one that ran and stalled.
+  // Gated on the entry point opting in, so a cron task or a `serve`
+  // process does not read as somebody opening the app.
+  if (options.interactiveLaunch === true) {
+    captureAppOpened(analytics);
+  }
 
   // Anonymous error reporting (Sentry). Shares the opt-out flag
   // (`config.analytics.enabled`) and the anonymous install id with

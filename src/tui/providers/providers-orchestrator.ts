@@ -385,11 +385,16 @@ export class ProvidersOrchestrator {
       await this.setActiveText(built.entry.id);
 
       this.bus.emit({ type: "providers_wizard_succeeded" });
-      // The install has a working cloud backend, for the first time if
-      // this is the first one. Reported after the gate passed and the
-      // entry is active, so it means "set up", not "typed a key in".
+      // The install has a working cloud backend. Gated on a clean
+      // verdict, not merely on `proceed`: `verifyWizardBeforeSave`
+      // returns `proceed: true` with a warning when the check could not
+      // reach the service (only `invalid_key` / `no_balance` block), and
+      // an unreachable check is not a proven backend. A warned save that
+      // turns out to work reports on a later verified save instead.
       // Only the provider id travels — never the key or the base URL.
-      this.runtime.reportModelConfigured(built.entry.id, "cloud");
+      if (gate.warning === null) {
+        this.runtime.reportModelConfigured(built.entry.id, "cloud");
+      }
       if (gate.warning) {
         // Saved, but the key was never proven. Say so where the operator
         // will see it rather than letting the first chat message find out.
