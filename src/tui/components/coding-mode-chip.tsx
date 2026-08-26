@@ -65,10 +65,10 @@ export function CodingModeChip({
       layer={layer}
       onMouse={(hit) => {
         if (!isPrimaryPress(hit.event)) return false;
-        // Clicking advances the ring, the same direction shift+tab does.
-        // A click that opened a menu would be a second way to do one
-        // thing, on a strip with no room for a menu.
-        mouse.dispatch({ type: "coding_mode_cycled", back: false });
+        // Opens the menu; it does not cycle. Advancing the ring on a
+        // bare click made the one control that changes what the agent
+        // may do the only one with no confirmation and no explanation.
+        mouse.dispatch({ type: "coding_mode_menu_opened" });
         return true;
       }}
     >

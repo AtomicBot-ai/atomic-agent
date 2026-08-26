@@ -1,3 +1,4 @@
+import { CODING_MODES } from "./coding-mode.js";
 import { handleComposerSwitchKey } from "./composer-switch/composer-switch-key-bindings.js";
 import type { ComposerSwitchRow } from "./composer-switch/composer-switch-rows.js";
 import { handleContextPanelKey } from "./context-panel-keys.js";
@@ -282,6 +283,31 @@ export function handleAppKey(
   // particular) falls through to the normal handlers below.
   if (state.updatePrompt && handleUpdateKey(input, key, ctx)) {
     return true;
+  }
+  // The mode menu is a dropdown on the composer's toolbar, so it takes
+  // the keys while it is up — above the operator menu, because ctrl+p
+  // should close it and open the menu rather than land on both.
+  if (state.codingModeMenu) {
+    if (key.escape) {
+      dispatch({ type: "coding_mode_menu_closed" });
+      return true;
+    }
+    if (key.upArrow || key.downArrow) {
+      dispatch({
+        type: "coding_mode_menu_cursor_moved",
+        delta: key.downArrow ? 1 : -1,
+      });
+      return true;
+    }
+    if (key.return) {
+      const picked = CODING_MODES[state.codingModeMenu.cursor];
+      if (picked) dispatch({ type: "coding_mode_cycled", mode: picked });
+      return true;
+    }
+    // Anything else closes the menu and is then handled normally: a
+    // dropdown that swallowed every keystroke would strand an operator
+    // who opened it by accident mid-sentence.
+    dispatch({ type: "coding_mode_menu_closed" });
   }
   // The menu and its leader sit above every panel guard on purpose: they are
   // the way out of a panel, so a panel must never be able to swallow them.

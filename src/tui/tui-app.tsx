@@ -6,6 +6,7 @@ import {
   type CodingMode,
 } from "./coding-mode.js";
 import { CodingModeChip } from "./components/coding-mode-chip.js";
+import { CodingModePopup } from "./components/coding-mode-popup.js";
 import { OnboardingScreen } from "./components/onboarding-screen.js";
 import { TerminalTooSmall } from "./components/terminal-too-small.js";
 import { ContextPanel } from "./components/context-panel.js";
@@ -917,6 +918,7 @@ export function TuiApp({
     state.composerSwitch !== null ||
     Boolean(state.uninstall) ||
     Boolean(state.sessionDelete) ||
+    state.codingModeMenu !== null ||
     Boolean(state.pendingApproval) ||
     Boolean(state.updatePrompt) ||
     state.updateStatus === "done" ||
@@ -987,6 +989,7 @@ export function TuiApp({
       state.menuOpen ||
       state.contextPanelOpen ||
       state.composerSwitch !== null ||
+      state.codingModeMenu !== null ||
       Boolean(state.uninstall) ||
       Boolean(state.sessionDelete);
     if (!open) return false;
@@ -1015,7 +1018,9 @@ export function TuiApp({
             ? { type: "context_panel_closed" }
             : state.composerSwitch
               ? { type: "composer_switch_closed" }
-              : { type: "menu_closed" },
+              : state.codingModeMenu
+                ? { type: "coding_mode_menu_closed" }
+                : { type: "menu_closed" },
     );
     return true;
   };
@@ -1026,6 +1031,7 @@ export function TuiApp({
     state.menuOpen ||
     state.contextPanelOpen ||
     state.composerSwitch !== null ||
+    state.codingModeMenu !== null ||
     Boolean(state.uninstall) ||
     Boolean(state.sessionDelete);
   useEffect(() => {
@@ -1664,6 +1670,23 @@ export function TuiApp({
               }
               onActivate={activateComposerSwitch}
             />
+            {state.codingModeMenu ? (
+              // Same pane geometry as the route switch: both hang off a
+              // control on the composer's toolbar, so both belong at the
+              // bottom of the content pane rather than in the middle of
+              // the window.
+              <CodingModePopup
+                cursor={state.codingModeMenu.cursor}
+                active={state.codingMode}
+                availableRows={switchPaneRows}
+                availableColumns={
+                  terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
+                }
+                onActivate={(mode) =>
+                  dispatch({ type: "coding_mode_cycled", mode })
+                }
+              />
+            ) : null}
             {state.menuOpen ? (
               <MenuPopup
                 state={state}

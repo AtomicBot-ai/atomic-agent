@@ -43,6 +43,16 @@ export const CODING_MODES: readonly CodingMode[] = [
 export interface CodingModeLook {
   /** What the chip prints. */
   readonly label: string;
+  /**
+   * The second column of the menu: what picking this row would mean, in
+   * few enough words to sit beside the label without wrapping.
+   *
+   * Separate from `summary` on purpose. The summary is a sentence the
+   * chat log prints once, after the fact; this is a label read *while
+   * deciding*, next to three alternatives, and the two jobs want very
+   * different lengths.
+   */
+  readonly detail: string;
   /** Which palette role paints the chip's ground. */
   readonly tone: "accent" | "success" | "warn" | "error";
   /** One line for the system message on switching. */
@@ -52,23 +62,27 @@ export interface CodingModeLook {
 const LOOKS: Readonly<Record<CodingMode, CodingModeLook>> = {
   plan: {
     label: "plan",
+    detail: "reads only — proposes, changes nothing",
     tone: "accent",
     summary:
       "plan mode — the agent reads and proposes, and every tool that would change something is refused",
   },
   default: {
     label: "default",
+    detail: "asks before anything risky",
     tone: "success",
     summary: "default — approvals follow the level set on the Privacy tab",
   },
   "accept-edits": {
     label: "accept edits",
+    detail: "writes in this folder without asking",
     tone: "warn",
     summary:
       "accept edits — file writes inside this workspace stop asking; everything else still does",
   },
   bypass: {
     label: "bypass permissions",
+    detail: "never asks — nothing is gated",
     tone: "error",
     summary:
       "bypass permissions — nothing asks, for the rest of this session. Hardline shell-guard rules still block.",
