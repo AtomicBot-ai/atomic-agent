@@ -613,7 +613,7 @@ export interface TuiState {
    * Clicking the chip used to advance the ring directly, which made the
    * one control that changes what the agent is allowed to do the only
    * control in the app with no confirmation and no explanation — two
-   * stray clicks took you from `plan` to `accept edits` with nothing on
+   * stray clicks took you from `plan` to `auto` with nothing on
    * screen saying what either meant.
    */
   codingModeMenu: { readonly cursor: number } | null;

@@ -257,7 +257,7 @@ Handy slash commands: `/help` lists every command, `/tools` lists the built-in t
 |---|---|
 | `default` | approvals follow the level set on the Privacy tab |
 | `plan` | read-only — every tool that would change something is refused, with a note telling the agent to present a plan instead. Reading, searching and fetching all still work. |
-| `accept edits` | file writes inside this workspace stop asking; everything else still does |
+| `auto` | file writes inside this workspace stop asking; everything else still does |
 | `bypass permissions` | nothing asks, for this session. Hardline shell-guard rules still block. |
 
 All four are session state and none are written to `config.json` — a `bypass` that survived a restart would be a standing grant nobody remembers making. `default` restores the level you actually configured, so a session that passed through `bypass` and back lands where it started. The cycle order keeps `plan` and `bypass` two presses apart in either direction.

@@ -17,7 +17,7 @@ describe("the coding-mode ring", () => {
     expect([...CODING_MODES]).toEqual([
       "default",
       "plan",
-      "accept-edits",
+      "auto",
       "bypass",
     ]);
     // The ring *wraps*, which is what makes severity order wrong: it
@@ -75,14 +75,14 @@ describe("what a mode means to the runtime", () => {
     }
   });
 
-  it("raises to workspace writes for accept-edits, and never lowers", () => {
-    expect(resolveCodingMode("accept-edits", 1).approvalLevel).toBe(2);
-    expect(resolveCodingMode("accept-edits", 2).approvalLevel).toBe(2);
-    // Someone already at 4 asking for accept-edits is asking for at
+  it("raises to workspace writes for auto, and never lowers", () => {
+    expect(resolveCodingMode("auto", 1).approvalLevel).toBe(2);
+    expect(resolveCodingMode("auto", 2).approvalLevel).toBe(2);
+    // Someone already at 4 asking for auto is asking for at
     // least that. Clamping them down to 2 would surprise them in the
     // direction that costs prompts.
-    expect(resolveCodingMode("accept-edits", 4).approvalLevel).toBe(4);
-    expect(resolveCodingMode("accept-edits", 5).approvalLevel).toBe(5);
+    expect(resolveCodingMode("auto", 4).approvalLevel).toBe(4);
+    expect(resolveCodingMode("auto", 5).approvalLevel).toBe(5);
   });
 
   it("opens the ladder all the way for bypass", () => {

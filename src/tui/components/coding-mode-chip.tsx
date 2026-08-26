@@ -17,7 +17,7 @@ import { theme } from "../theme/theme.js";
  * to do, so it wants the end position, where the eye stops.
  *
  * **Colour carries the meaning, not just the word.** `default` is the
- * palette's success tone, `accept edits` its warn, `bypass permissions`
+ * palette's success tone, `auto` its warn, `bypass permissions`
  * its error. That is not decoration: a chip a person stops reading after
  * the first week still has to say "you are not in normal mode" from
  * across the room, and on a strip this dense the word alone does not.

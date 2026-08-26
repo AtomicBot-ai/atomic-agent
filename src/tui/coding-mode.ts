@@ -19,12 +19,12 @@ import {
  * approval level and a plan-mode flag; nothing else in the app learns a
  * new concept, and the Privacy tab keeps working exactly as it did.
  */
-export type CodingMode = "default" | "accept-edits" | "plan" | "bypass";
+export type CodingMode = "default" | "plan" | "auto" | "bypass";
 
 /**
  * Cycle order, and it is not the order of severity.
  *
- * Severity order — `plan, default, accept-edits, bypass` — reads well
+ * Severity order — `plan, default, auto, bypass` — reads well
  * and is wrong, because the ring *wraps*: on four modes it leaves
  * `bypass` one backward press from `plan`, which is exactly where a
  * careful operator parks. Two keys apart is the most a four-ring
@@ -36,7 +36,7 @@ export type CodingMode = "default" | "accept-edits" | "plan" | "bypass";
 export const CODING_MODES: readonly CodingMode[] = [
   "default",
   "plan",
-  "accept-edits",
+  "auto",
   "bypass",
 ];
 
@@ -44,13 +44,18 @@ export interface CodingModeLook {
   /** What the chip prints. */
   readonly label: string;
   /**
-   * The second column of the menu: what picking this row would mean, in
-   * few enough words to sit beside the label without wrapping.
+   * The second column of the menu: what picking this row would mean.
+   *
+   * Kept short enough that the menu can be sized to show all four in
+   * full — the popup measures these rather than truncating them, so a
+   * long one here does not get an ellipsis, it makes the whole menu
+   * wider. An explanation with its end cut off is worse than no
+   * explanation: it reads as a bug and it still does not answer the
+   * question.
    *
    * Separate from `summary` on purpose. The summary is a sentence the
    * chat log prints once, after the fact; this is a label read *while
-   * deciding*, next to three alternatives, and the two jobs want very
-   * different lengths.
+   * deciding*, next to three alternatives.
    */
   readonly detail: string;
   /** Which palette role paints the chip's ground. */
@@ -62,27 +67,27 @@ export interface CodingModeLook {
 const LOOKS: Readonly<Record<CodingMode, CodingModeLook>> = {
   plan: {
     label: "plan",
-    detail: "reads only — proposes, changes nothing",
+    detail: "reads only, then proposes",
     tone: "accent",
     summary:
       "plan mode — the agent reads and proposes, and every tool that would change something is refused",
   },
   default: {
     label: "default",
-    detail: "asks before anything risky",
+    detail: "asks before risky steps",
     tone: "success",
     summary: "default — approvals follow the level set on the Privacy tab",
   },
-  "accept-edits": {
-    label: "accept edits",
-    detail: "writes in this folder without asking",
+  auto: {
+    label: "auto",
+    detail: "edits this folder freely",
     tone: "warn",
     summary:
-      "accept edits — file writes inside this workspace stop asking; everything else still does",
+      "auto — file writes inside this workspace stop asking; everything else still does",
   },
   bypass: {
     label: "bypass permissions",
-    detail: "never asks — nothing is gated",
+    detail: "never asks at all",
     tone: "error",
     summary:
       "bypass permissions — nothing asks, for the rest of this session. Hardline shell-guard rules still block.",
@@ -108,10 +113,10 @@ export interface ResolvedCodingMode {
  * started from, not on a hardcoded 1, or the control would quietly
  * tighten every operator who had chosen otherwise.
  *
- * `accept-edits` raises to level 2 (workspace file writes stop asking)
- * but never *lowers*: an operator already at 4 who asks for accept-edits
- * is asking for at least that, and clamping them down to 2 would be a
- * surprise in the direction that costs them prompts.
+ * `auto` raises to level 2 (workspace file writes stop asking) but never
+ * *lowers*: an operator already at 4 who asks for auto is asking for at
+ * least that, and clamping them down to 2 would be a surprise in the
+ * direction that costs them prompts.
  */
 export function resolveCodingMode(
   mode: CodingMode,
@@ -124,7 +129,7 @@ export function resolveCodingMode(
       // moot — and leaving it alone is what lets `default` restore it
       // without remembering anything extra.
       return { approvalLevel: baseLevel, planMode: true };
-    case "accept-edits":
+    case "auto":
       return {
         approvalLevel: clampApprovalLevel(Math.max(baseLevel, 2)),
         planMode: false,

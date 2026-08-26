@@ -1,4 +1,8 @@
-import { CODING_MODES, codingModeLook } from "../coding-mode.js";
+import {
+  CODING_MODES,
+  codingModeLook,
+  type CodingMode,
+} from "../coding-mode.js";
 import type { WhileBusySubmitMode } from "../../config/index.js";
 import type { TuiAction } from "../tui-action.js";
 import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";
@@ -373,9 +377,13 @@ function dispatchSteerSub(args: string): SlashDispatchResult {
  * one path that skips it — a name typed in full is already a decision,
  * and making it open a menu to confirm what it just said would be a
  * second question about a settled matter. Names are matched on the
- * chip's own label as well as the identifier, because "accept edits" is
- * what the operator can see and `accept-edits` is what the code calls
- * it, and being told the visible name is wrong would be absurd.
+ * chip's own label as well as the identifier, because the label is what
+ * the operator can see and being told the visible name is wrong would
+ * be absurd.
+ *
+ * `accept-edits` still resolves to `auto`: it was the name this mode
+ * shipped under, and a rename is not a reason to reject a word somebody
+ * already learned.
  */
 function dispatchModeSub(args: string): SlashDispatchResult {
   const raw = args.trim().toLowerCase();
@@ -386,11 +394,15 @@ function dispatchModeSub(args: string): SlashDispatchResult {
     return pureActions([{ type: "coding_mode_menu_opened" }]);
   }
   const wanted = raw.replace(/[\s_]+/g, "-");
-  const match = CODING_MODES.find(
-    (mode) =>
-      mode === wanted ||
-      codingModeLook(mode).label.replace(/\s+/g, "-") === wanted,
-  );
+  const RETIRED_NAMES: Readonly<Record<string, CodingMode>> = {
+    "accept-edits": "auto",
+  };
+  const match =
+    CODING_MODES.find(
+      (mode) =>
+        mode === wanted ||
+        codingModeLook(mode).label.replace(/\s+/g, "-") === wanted,
+    ) ?? RETIRED_NAMES[wanted];
   if (!match) {
     return pureActions([], {
       systemMessage: `unknown mode: ${args.trim()} — try ${CODING_MODES.join(", ")}`,
