@@ -33,6 +33,7 @@ function lines(
   columns = 100,
   rows = 24,
   reserved: number | null = 4096,
+  onSetAuto?: () => void,
 ): string[] {
   const { lastFrame, unmount } = render(
     <Box width={columns} height={rows} flexDirection="column">
@@ -41,6 +42,7 @@ function lines(
         availableRows={rows}
         availableColumns={columns}
         reservedForReply={reserved}
+        {...(onSetAuto ? { onSetAuto } : {})}
       />
     </Box>,
   );
@@ -188,30 +190,38 @@ describe("the trimming block", () => {
    * alone cannot say why it is what it is — and the two causes have
    * opposite remedies.
    */
-  it("names the config knob when the configured cap is what binds", () => {
-    expect(lines(usage()).join("\n")).toContain(
-      "capped by          agent.conversationMaxTokens",
-    );
+  it("names the setting, in one line, when the ceiling binds", () => {
+    // It used to be a `capped by` label in the left column with its
+    // value in the right — two columns and up to three lines to say one
+    // sentence, in a panel whose every other row is a measurement. This
+    // is not a measurement; it is the note explaining them.
+    const body = lines(usage({ contextWindow: 16_384 })).join("\n");
+    expect(body).toContain("capped by your agent.conversationMaxTokens setting");
+    expect(body).not.toContain("capped by          ");
   });
 
   /**
    * The report: `llama-server -c 48000`, and the composer says 32k. The
-   * panel already named the knob; what it did not say is what to set it
-   * to, or that two thirds of the window was going unused.
+   * panel named the knob and then spelled the fix on a third line. The
+   * fix is a button now — the same sentence, made pressable.
    */
-  it("names the value that lifts the ceiling when the window is bigger", () => {
+  it("offers a button when the window has room the ceiling is refusing", () => {
     const body = lines(
       usage({
         capSource: "config",
         conversationCap: 32_000,
         contextWindow: 48_000,
       }),
+      100,
+      24,
+      4096,
+      () => {},
     ).join("\n");
-    expect(body).toContain("capped by          agent.conversationMaxTokens");
-    expect(body).toContain("set it to 0 to fill the 48k window");
+    expect(body).toContain("your 32k cap holds this under 48k");
+    expect(body).toContain("set auto (a)");
   });
 
-  it("does not offer the fix when the ceiling is already above the window", () => {
+  it("does not offer the button when the ceiling is already above the window", () => {
     // Nothing to claim: the transcript is not being held below anything.
     const body = lines(
       usage({
@@ -219,8 +229,20 @@ describe("the trimming block", () => {
         conversationCap: 32_000,
         contextWindow: 16_384,
       }),
+      100,
+      24,
+      4096,
+      () => {},
     ).join("\n");
-    expect(body).not.toContain("set it to 0");
+    expect(body).not.toContain("set auto");
+  });
+
+  it("does not offer the button with no handler to press", () => {
+    // A button that did nothing when pressed would be worse than none.
+    const body = lines(
+      usage({ capSource: "config", conversationCap: 32_000, contextWindow: 48_000 }),
+    ).join("\n");
+    expect(body).not.toContain("set auto");
   });
 
   it("says the cap is auto rather than naming a knob", () => {
@@ -231,7 +253,7 @@ describe("the trimming block", () => {
         contextWindow: 48_000,
       }),
     ).join("\n");
-    expect(body).toContain("capped by          auto — fills the 48k window");
+    expect(body).toContain("capped by the 48k window — auto, no ceiling set");
     expect(body).not.toContain("agent.conversationMaxTokens");
   });
 
@@ -239,14 +261,9 @@ describe("the trimming block", () => {
     const body = lines(
       usage({ capSource: "window", conversationCap: 9000, contextWindow: 32_768 }),
     ).join("\n");
-    expect(body).toContain("capped by          the model's window (32.8k)");
+    expect(body).toContain("capped by the model's 32.8k window");
   });
 
-  /**
-   * The 512 floor means the window cannot hold the agent's own prompt
-   * with room to answer. Reporting that as a budget would send someone
-   * hunting for a setting that does not exist.
-   */
   it("calls the floor what it is", () => {
     const body = lines(usage({ capSource: "floor", conversationCap: 512 })).join(
       "\n",
