@@ -618,6 +618,16 @@ export interface TuiState {
    */
   codingModeMenu: { readonly cursor: number } | null;
   /**
+   * A plan is on screen and nothing has been done with it yet.
+   *
+   * Set when a turn completes in plan mode, cleared the moment the next
+   * one starts or the mode changes. Plan mode otherwise ends in a dead
+   * end: the agent has said what it would do and is forbidden from
+   * doing any of it, and the app said nothing about the obvious next
+   * step at the one moment it was obvious.
+   */
+  planHandoff: boolean;
+  /**
    * The approval level the operator actually configured, so `default`
    * can restore it. Seeded from the boot level and moved by the Privacy
    * tab; the coding-mode chip reads it and never writes it.
@@ -773,6 +783,7 @@ export function createInitialTuiState(
     whileBusyMode: layout?.whileBusyMode ?? "steer",
     codingMode: "default",
     codingModeMenu: null,
+    planHandoff: false,
     // `session` is optional in practice: several reducer tests build a
     // state with no session info at all, and a seed that assumed one
     // would turn every one of them into a crash about a field they do

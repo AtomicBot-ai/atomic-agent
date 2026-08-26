@@ -159,6 +159,9 @@ export function startNewRun(state: TuiState): TuiState {
   const now = Date.now();
   return {
     ...state,
+    // Whatever the next turn is — running the plan, or changing it —
+    // the offer belongs to the plan that has just been superseded.
+    planHandoff: false,
     status: "running",
     currentStep: 0,
     stepStartedAt: null,
@@ -203,12 +206,18 @@ export function finishTurn(
         ? "failed"
         : "cancelled"
       : "completed";
-  return withRunHistoryEntry(state, {
+  const next = withRunHistoryEntry(state, {
     outcome,
     reason,
     stepCount,
     lastRunStatus,
   });
+  // A plan only exists if the turn actually finished saying it. A
+  // cancelled or failed turn in plan mode leaves nothing to carry out,
+  // and offering to run it would be offering to run whatever half of it
+  // survived.
+  if (state.codingMode !== "plan" || outcome !== "completed") return next;
+  return { ...next, planHandoff: true };
 }
 
 export function finishRun(

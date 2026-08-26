@@ -193,7 +193,15 @@ export function reduceUiAction(
       // runtime (the approval level and the plan-mode flag) is the
       // orchestrator's job, driven off the same action — a reducer that
       // reached into the runtime would make every state test need one.
-      return { ...state, codingMode: next, codingModeMenu: null };
+      // Leaving plan mode by any other route retires the offer too: it
+      // names plan mode in its own copy, and an "it stays in plan mode"
+      // hint under a chip that says `auto` is just wrong.
+      return {
+        ...state,
+        codingMode: next,
+        codingModeMenu: null,
+        planHandoff: next === "plan" ? state.planHandoff : false,
+      };
     }
     case "while_busy_mode_changed": {
       const next =
