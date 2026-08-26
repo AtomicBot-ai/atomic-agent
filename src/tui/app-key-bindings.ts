@@ -111,6 +111,12 @@ export interface AppKeyContext {
   setMenuLeaderArmed: (armed: boolean) => void;
   /** Navigate to a place, or run an action's slash command. */
   activateMenuNode: (node: MenuNode) => void;
+  /**
+   * Switches the transcript cap to auto, for `a` on the open context
+   * panel. Optional: surfaces without a config writer simply do not
+   * bind the key.
+   */
+  onSetCapAuto?: () => void;
   /** Run the row picked in one of the composer's route switches. */
   activateComposerSwitch: (row: ComposerSwitchRow) => void;
 }
@@ -316,7 +322,13 @@ export function handleAppKey(
   }
   // Below the menu on purpose: ctrl+p should still reach the menu from
   // an open context panel, and opening the menu closes the panel.
-  if (handleContextPanelKey(input, key, { state, dispatch })) {
+  if (
+    handleContextPanelKey(input, key, {
+      state,
+      dispatch,
+      ...(ctx.onSetCapAuto ? { onSetCapAuto: ctx.onSetCapAuto } : {}),
+    })
+  ) {
     return true;
   }
   // Same rung, same reason: the composer's route switches let ctrl-chords

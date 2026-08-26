@@ -1,9 +1,14 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import { useMouseCommands, useMouseTarget } from "../mouse/mouse-context.js";
+import {
+  MouseTarget,
+  useMouseCommands,
+  useMouseTarget,
+} from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import type { ContextUsageView } from "../select-context-usage.js";
+import { readableOn } from "../theme/readable-foreground.js";
 import { chromeTheme } from "../theme/theme.js";
 import { fitToWidth } from "./fit-to-width.js";
 import { formatTokens } from "./format-tokens.js";
@@ -40,6 +45,13 @@ export interface ContextPanelProps {
    * reason the prompt cannot grow into the last of the window.
    */
   reservedForReply: number | null;
+  /**
+   * Switches `agent.conversationMaxTokens` to auto. Absent hides the
+   * button — the panel is also rendered by tests and by surfaces with
+   * no way to write config, and a button that did nothing when pressed
+   * would be worse than no button.
+   */
+  onSetAuto?: () => void;
 }
 
 /**
@@ -62,6 +74,7 @@ export function ContextPanel({
   availableRows,
   availableColumns,
   reservedForReply,
+  onSetAuto,
 }: ContextPanelProps): ReactElement {
   const width = Math.max(32, Math.min(PREFERRED_WIDTH, availableColumns - 2));
   const inner = width - 2;
@@ -124,18 +137,23 @@ export function ContextPanel({
           {chromeTheme.glyphs.toolBoxHorizontal.repeat(Math.max(0, inner))}
         </Text>
       )}
-      {trimmingLines(usage).map((line, idx) => (
-        <Text
-          key={`trim-${idx}`}
-          color={
-            idx === 0
-              ? chromeTheme.colors.railForeground
-              : chromeTheme.colors.railMuted
-          }
-        >
-          {fitToWidth(line, inner)}
+      {transcriptLine(usage) === null ? null : (
+        <Text color={chromeTheme.colors.railForeground}>
+          {fitToWidth(transcriptLine(usage) as string, inner)}
         </Text>
-      ))}
+      )}
+      {/*
+        One line, at the bottom, and never a second column.
+
+        It used to be a `capped by` label in the left column with its
+        value in the right, plus — when the ceiling was the thing
+        holding the transcript down — a third line underneath spelling
+        out the fix. Three lines and two columns to say one sentence,
+        in a panel whose every other row is a *measurement*. This is not
+        a measurement; it is the note explaining them, so it reads as a
+        sentence and sits under the rule with the rest of the prose.
+      */}
+      <CapNote usage={usage} inner={inner} onSetAuto={onSetAuto} />
       <Text color={chromeTheme.colors.railMuted}>{fitToWidth(` ${footer(usage)}`, inner)}</Text>
     </PanelFrame>
   );
@@ -207,60 +225,130 @@ function title(usage: ContextUsageView): string {
 
 /**
  * Where the transcript stands against the point at which older turns
- * start being dropped, and what is holding that point down.
+ * start being dropped. One measurement, in the same two columns as
+ * every other row above it.
  *
- * The second line is the actionable half. `conversationCapEffective` is
- * `max(512, min(configured, window - everything else))`, so the number
- * alone cannot say why it is what it is — and the two causes have
- * opposite remedies. Config binding means raising
- * `agent.conversationMaxTokens` moves it; the window binding means no
- * setting will, and a bigger model is the only fix.
+ * What is *holding* it there moved out of this function and into
+ * {@link CapNote}: it was never a measurement, and rendering it as one
+ * cost three lines and two columns to say a single sentence.
  */
-function trimmingLines(usage: ContextUsageView): readonly string[] {
+function transcriptLine(usage: ContextUsageView): string | null {
   const cap = usage.conversationCap;
-  if (cap === null) return [];
+  if (cap === null) return null;
   const head = ` transcript`.padEnd(LABEL_WIDTH);
-  const lines = [
-    `${head}${formatTokens(usage.conversationTokens)} of ${formatTokens(
-      cap,
-    )} before older turns go`,
-  ];
-  const source = ` capped by`.padEnd(LABEL_WIDTH);
-  if (usage.capSource === "config") {
-    lines.push(`${source}agent.conversationMaxTokens`);
-    // The actionable half of the actionable half. An operator who sized
-    // their own `llama-server` has already said how much context they
-    // want; if a ceiling below that window is what is holding the
-    // transcript down, the only thing left to tell them is the one
-    // value that lifts it — and how much it would buy.
-    if (usage.contextWindow !== null && cap < usage.contextWindow) {
-      lines.push(
-        `${" ".repeat(LABEL_WIDTH)}set it to 0 to fill the ${formatTokens(
-          usage.contextWindow,
-        )} window`,
-      );
-    }
-  } else if (usage.capSource === "auto") {
-    // No knob to name: the operator switched the ceiling off, so the
-    // window is the only thing left holding the transcript down. The
-    // panel is 58 columns wide, which is why this says it in five words.
-    lines.push(
-      usage.contextWindow === null
-        ? `${source}auto — fills the window`
-        : `${source}auto — fills the ${formatTokens(usage.contextWindow)} window`,
+  return `${head}${formatTokens(usage.conversationTokens)} of ${formatTokens(
+    cap,
+  )} before older turns go`;
+}
+
+/**
+ * The one-line note under the rule: what is holding the transcript down,
+ * and — where it is the operator's own ceiling and the window has room
+ * to spare — a button that lifts it.
+ *
+ * The button is the actionable half made actionable. Naming
+ * `agent.conversationMaxTokens` told an operator which knob to go and
+ * find; this turns the same sentence into the thing that turns it. It
+ * appears only when it would do something: the ceiling must be what
+ * binds, and the window must actually be bigger than it.
+ */
+function CapNote({
+  usage,
+  inner,
+  onSetAuto,
+}: {
+  usage: ContextUsageView;
+  inner: number;
+  onSetAuto?: () => void;
+}): ReactElement | null {
+  const cap = usage.conversationCap;
+  if (cap === null) return null;
+  const window = usage.contextWindow;
+  const canLift =
+    usage.capSource === "config" && window !== null && cap < window;
+  if (canLift && onSetAuto) {
+    // The sentence first, then the button — so the button is the last
+    // thing on the line and reads as what to do about what was just
+    // said, rather than as a word wedged into the middle of it.
+    // `fitToWidth` pads the head rather than trimming the button: the
+    // button's width is fixed, and it is the part that must survive.
+    const head = ` your ${formatTokens(cap)} cap holds this under ${formatTokens(
+      window,
+    )} · `;
+    return (
+      <Box>
+        <Text color={chromeTheme.colors.railMuted}>
+          {fitToWidth(head, Math.max(0, inner - AUTO_LABEL.length))}
+        </Text>
+        <SetAutoButton onPress={onSetAuto} />
+      </Box>
     );
-  } else if (usage.capSource === "window") {
-    lines.push(
-      `${source}the model's window${
-        usage.contextWindow === null
-          ? ""
-          : ` (${formatTokens(usage.contextWindow)})`
-      }`,
-    );
-  } else if (usage.capSource === "floor") {
-    lines.push(`${source}window too small for this prompt`);
   }
-  return lines;
+  return (
+    <Text color={chromeTheme.colors.railMuted}>
+      {fitToWidth(` ${capSentence(usage)}`, inner)}
+    </Text>
+  );
+}
+
+/**
+ * Padded so the ground reads as a button rather than as coloured text,
+ * and carrying its own key: the panel has one control and one hint to
+ * give, and putting the hint on the control is cheaper than a footer
+ * line that has to be kept in sync with whether the button is showing.
+ */
+const AUTO_LABEL = " set auto (a) ";
+
+function SetAutoButton({ onPress }: { onPress: () => void }): ReactElement {
+  const face = (
+    <Text
+      backgroundColor={chromeTheme.colors.accent}
+      color={readableOn(chromeTheme.colors.accent)}
+      bold
+    >
+      {AUTO_LABEL}
+    </Text>
+  );
+  const mouse = useMouseCommands();
+  // No mouse provider: still draw the face. `a` works from the keyboard
+  // either way, and a button that vanished without a mouse would hide
+  // the only hint that the key exists.
+  if (!mouse) return face;
+  return (
+    <MouseTarget
+      layer={MOUSE_LAYER_MODAL}
+      flexShrink={0}
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        onPress();
+        return true;
+      }}
+    >
+      {face}
+    </MouseTarget>
+  );
+}
+
+/** The note when there is nothing to press — one sentence, no columns. */
+function capSentence(usage: ContextUsageView): string {
+  const window =
+    usage.contextWindow === null ? null : formatTokens(usage.contextWindow);
+  switch (usage.capSource) {
+    case "auto":
+      return window === null
+        ? "capped by the window — auto, no ceiling set"
+        : `capped by the ${window} window — auto, no ceiling set`;
+    case "window":
+      return window === null
+        ? "capped by the model's window"
+        : `capped by the model's ${window} window`;
+    case "floor":
+      return "window too small for this prompt";
+    case "config":
+      return "capped by your agent.conversationMaxTokens setting";
+    default:
+      return "";
+  }
 }
 
 /**
