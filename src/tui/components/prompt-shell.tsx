@@ -2,6 +2,7 @@ import { Box } from "ink";
 import type { ReactElement } from "react";
 import type { ComposerBackendMeta } from "../composer-switch/composer-switch-rows.js";
 import { useRotatingPlaceholder } from "../hooks/use-rotating-placeholder.js";
+import { readableOn } from "../theme/readable-foreground.js";
 import { theme } from "../theme/theme.js";
 import { ComposerSendButton } from "./composer-send-button.js";
 import { MultiLineEditor, type MultiLineEditorProps } from "./multi-line-editor.js";
@@ -118,6 +119,11 @@ export function PromptShell(props: PromptShellProps): ReactElement {
     ? (rotated ?? placeholder ?? "")
     : "";
   const accent = focus && !disabled ? theme.colors.accent : theme.colors.border;
+  // Measured, not assumed: `readableOn` weighs the panel's ground
+  // against both ends of the palette's chip pair and takes the better
+  // one, so the buffer stays legible whichever side of the line the
+  // active theme sits on.
+  const composerInk = readableOn(theme.colors.badgeBackground);
   // Send is live on exactly the condition Enter is: a non-blank buffer
   // in an editor that is accepting input. `handleEditorSubmit` drops a
   // blank buffer anyway, but a button that visibly does nothing when
@@ -132,10 +138,16 @@ export function PromptShell(props: PromptShellProps): ReactElement {
       {/*
         The design seats the composer on its own panel rather than on the
         page. `badgeBackground` is the palette's one-step-off-the-ground
-        surface, so the panel reads on every theme — and, unlike painting
-        it in the accent, it leaves the editor's own (uncoloured) text
-        legible, which matters because the buffer is drawn by
-        `MultiLineEditor` with no foreground of its own.
+        surface, so the panel reads on every theme.
+
+        It used to rely on the buffer being *uncoloured* — inheriting the
+        terminal's default ink — and that assumption only holds while the
+        panel and the terminal are on the same side of the light/dark
+        line. They need not be: `classic-light` paints `#dde4f4` here, so
+        anyone running a light palette in a dark terminal typed light
+        text onto a light panel and could not read what they were
+        writing. The ink is measured against the ground now, the same way
+        every chip does it.
       */}
       <Box
         borderStyle="round"
@@ -173,6 +185,7 @@ export function PromptShell(props: PromptShellProps): ReactElement {
           <Box flexGrow={1} flexShrink={1} minWidth={0} flexDirection="column">
             <MultiLineEditor
               {...editorProps}
+              textColor={composerInk}
               value={value}
               focus={focus}
               disabled={disabled}

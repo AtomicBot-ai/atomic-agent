@@ -11,6 +11,19 @@ import { createEditorPointer } from "./multi-line-editor-pointer.js";
 export interface MultiLineEditorProps {
   value: string;
   placeholder?: string;
+  /**
+   * Ink colour for the buffer's own text.
+   *
+   * Absent means "inherit the terminal's default foreground", which is
+   * right for every field drawn straight on the page — and wrong for
+   * any field sitting on a ground the *app* painted, because the two
+   * have no relationship. The composer is the second kind: it sits on
+   * `badgeBackground`, and on a light palette that is a light panel,
+   * so a terminal whose default ink is light (i.e. any dark terminal
+   * running `classic-light`) rendered light text on it. See
+   * `prompt-shell.tsx`.
+   */
+  textColor?: string;
   focus: boolean;
   /** Disable interaction (reject keys silently) — keeps focus state intact. */
   disabled?: boolean;
@@ -98,6 +111,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
   const {
     value,
     placeholder,
+    textColor,
     focus,
     disabled = false,
     onChange,
@@ -273,6 +287,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
       value={value}
       cursor={cursor}
       placeholder={placeholder ?? ""}
+      {...(textColor !== undefined ? { textColor } : {})}
       focus={focus && !disabled}
       selection={selection}
       onClickCursor={placeCursorAt}

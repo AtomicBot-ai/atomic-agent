@@ -13,6 +13,8 @@ export interface EditorBodyProps {
   value: string;
   cursor: Cursor;
   placeholder: string;
+  /** Ink for the buffer text; inherits the terminal default when absent. */
+  textColor?: string;
   focus: boolean;
   /**
    * Selected span as buffer offsets, `[start, end)`, or `null`. Painted
@@ -65,6 +67,7 @@ export function EditorBody({
   value,
   cursor,
   placeholder,
+  textColor,
   focus,
   selection = null,
   onClickCursor,
@@ -173,6 +176,7 @@ export function EditorBody({
               line,
               cursorCol: idx === cursor.row ? cursor.col : -1,
               focus,
+              ...(textColor !== undefined ? { textColor } : {}),
               // Offsets of this line within the buffer, so the selection
               // (which is buffer-relative) can be clipped to it.
               lineStart: lineStarts[idx] ?? 0,
@@ -197,18 +201,24 @@ function renderLine({
   focus,
   lineStart,
   selection,
+  textColor,
 }: {
   line: string;
   cursorCol: number;
   focus: boolean;
   lineStart: number;
   selection: readonly [number, number] | null;
+  textColor?: string;
 }): ReactElement {
+  // One `color` on the wrapping `<Text>`: the inverse runs (selection,
+  // caret) inherit it and swap it against the ground themselves, so the
+  // highlight keeps working without a second colour to keep in sync.
+  const ink = textColor !== undefined ? { color: textColor } : {};
   const span = selection ? clipToLine(selection, lineStart, line.length) : null;
   if (span) {
     const [from, to] = span;
     return (
-      <Text>
+      <Text {...ink}>
         {line.slice(0, from)}
         <Text inverse>{line.slice(from, to)}</Text>
         {line.slice(to)}
@@ -216,13 +226,13 @@ function renderLine({
     );
   }
   if (cursorCol < 0 || !focus) {
-    return <Text>{line}</Text>;
+    return <Text {...ink}>{line}</Text>;
   }
   const before = line.slice(0, cursorCol);
   const atCursor = line[cursorCol] ?? " ";
   const after = line.slice(cursorCol + 1);
   return (
-    <Text>
+    <Text {...ink}>
       {before}
       <Text inverse>{atCursor}</Text>
       {after}
