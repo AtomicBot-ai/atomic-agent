@@ -18,7 +18,7 @@ const KIND_LABELS: Record<ProvidersWizardKind, string> = {
   "codex-cli":
     "OpenAI Codex subscription (drives your signed-in `codex` CLI — no API key)",
   openrouter: "OpenRouter (cloud chat + optional cloud embed)",
-  aimlapi: "AI/ML API (aimlapi.com — 500+ models, OpenAI-compatible)",
+  aimlapi: "AI/ML API (1000+ models, OpenAI-compatible)",
   gemini: "Gemini (Google AI)",
   "openai-compatible": "OpenAI-compatible API (custom base URL)",
 };
