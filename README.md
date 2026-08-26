@@ -481,7 +481,7 @@ Everything Atomic Agent does is inspectable and interruptible:
 
 By default, Atomic Agent does not require a hosted agent provider. Model calls go to your configured backend, and local artifacts stay under `<stateDir>`.
 
-Anonymous usage analytics is on by default. It sends the provider and model names, a random per-install id, and turn-shape numbers (latency, step count, outcome), never message content, file paths, or tool arguments. Crash reports go to Sentry on the same switch, stripped to error type, category, safe scalar codes, a bounded tool name or URL host when present, and path-stripped stack frames. Turn both off with `/privacy analytics off` in the TUI or `"analytics": { "enabled": false }` in `config.json`; the toggle applies live, no restart.
+Anonymous usage analytics is on by default. It sends the provider and model names, a random per-install id, and turn-shape numbers (latency, step count, outcome), never message content, file paths, or tool arguments. It also records that the app launched, which first-run screen was reached (a fixed list of screen names, never anything you typed), and that a backend was set up — the provider name and whether it is local or cloud, never the key, the URL, or the host. Crash reports go to Sentry on the same switch, stripped to error type, category, safe scalar codes, a bounded tool name or URL host when present, and path-stripped stack frames. Turn both off with `/privacy analytics off` in the TUI or `"analytics": { "enabled": false }` in `config.json`; the toggle applies live, no restart.
 
 Local-first bounds where control lives, not where packets go. Network egress happens when:
 

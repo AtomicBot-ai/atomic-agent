@@ -479,6 +479,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.fallback.remove(providerId),
         onFallbackAppendLocalToggleRequested: () =>
           orchestrator.fallback.toggleAppendLocal(),
+        onOnboardingStep: (step, outcome) => {
+          runtime.reportOnboardingStep(step, outcome);
+        },
         onOnboardingFinished: () => {
           // The flow wrote config while the runtime was already up, so
           // the registry still holds the old provider set. The cloud

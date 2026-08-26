@@ -208,6 +208,13 @@ export class ChatOrchestrator {
       },
       onManagedDaemonRestarted: () => {
         void this.llmHealth.refreshModelLabel();
+        // The daemon came up serving the selected model, which is the
+        // local equivalent of a verified cloud key: the backend is
+        // proven, not merely configured. Fires at most once per install
+        // (state-store guarded), so a later restart is not a new setup.
+        // `llama.cpp` is the runner, never the model id — a local model
+        // name can be an arbitrary operator string.
+        runtime.reportModelConfigured("llama.cpp", "local");
       },
     });
     this.telegram = new TuiTelegramOrchestrator(runtime, bus);

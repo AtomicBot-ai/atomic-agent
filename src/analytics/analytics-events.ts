@@ -4,6 +4,9 @@ import type { AnalyticsStateStore } from "./analytics-state-store.js";
 /** Canonical PostHog event names emitted by the runtime. */
 export const ANALYTICS_EVENTS = {
   appInstalled: "app_installed",
+  appOpened: "app_opened",
+  onboardingStep: "onboarding_step",
+  modelConfigured: "model_configured",
   messageSent: "message_sent",
   firstMessageSent: "first_message_sent",
 } as const;
@@ -58,6 +61,78 @@ export function captureAppInstalled(
   if (store.isAppInstalledSent()) return;
   client.capture(ANALYTICS_EVENTS.appInstalled);
   store.markAppInstalledSent();
+}
+
+/**
+ * Emit `app_opened` — once per process start, on every launch.
+ *
+ * The counterpart to `app_installed`, which fires once per install and
+ * never again. Without this event an install that was downloaded and
+ * never launched is indistinguishable from one that launched and got
+ * stuck, so the two failure modes collapse into a single "never sent a
+ * message" number that no dashboard can take apart.
+ *
+ * Deliberately carries no properties of its own — the client already
+ * stamps `platform` and `app_version` on every event, which is the
+ * whole dimension set this event needs.
+ */
+export function captureAppOpened(client: AnalyticsClient | null): void {
+  if (!client) return;
+  client.capture(ANALYTICS_EVENTS.appOpened);
+}
+
+/**
+ * Emit `onboarding_step` when the first-run flow arrives at `step`.
+ *
+ * `step` is the `OnboardingStep` union from the TUI onboarding state
+ * (`intro` / `choose` / `local_pick` / `cloud` / `finished` / …) — a
+ * closed vocabulary of screen names, never free text and never
+ * anything the operator typed. `outcome` is set only on the terminal
+ * step and reports how the flow ended (`local` / `cloud` / `custom` /
+ * `skipped`).
+ *
+ * This is what turns "55% never activated" into a funnel with a named
+ * step where people leave.
+ */
+export function captureOnboardingStep(
+  client: AnalyticsClient | null,
+  step: string,
+  outcome?: string,
+): void {
+  if (!client) return;
+  client.capture(ANALYTICS_EVENTS.onboardingStep, {
+    step,
+    ...(outcome !== undefined ? { outcome } : {}),
+  });
+}
+
+/**
+ * Emit the one-time `model_configured` event: this install has a
+ * working LLM backend for the first time.
+ *
+ * Fires on the first *verified* provider setup — the point where a
+ * backend answered a probe, not where a key was merely typed in. Guarded
+ * by the state store so it marks the transition rather than counting
+ * reconfigurations; a user who later swaps providers does not re-fire it.
+ *
+ * Carries `{ provider, kind }` only: the provider id (`openrouter`,
+ * `llama.cpp`, …) and whether the backend is `local` or `cloud`. Never
+ * the key, the base URL, or a host — a self-hosted endpoint is part of
+ * the operator's private infrastructure, so only the shape of the
+ * choice leaves the machine.
+ */
+export function captureModelConfigured(
+  client: AnalyticsClient | null,
+  store: AnalyticsStateStore,
+  context: { provider: string; kind: "local" | "cloud" },
+): void {
+  if (!client) return;
+  if (store.isModelConfiguredSent()) return;
+  client.capture(ANALYTICS_EVENTS.modelConfigured, {
+    provider: context.provider,
+    kind: context.kind,
+  });
+  store.markModelConfiguredSent();
 }
 
 /**
