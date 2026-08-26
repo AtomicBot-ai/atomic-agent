@@ -9,6 +9,8 @@ import {
   backdropRevertsThemePreview,
   resolveBackdropDismissal,
 } from "./backdrop-dismissal.js";
+import { CONVERSATION_CAP_AUTO } from "../prompt/token-budget.js";
+import { persistConversationMaxTokens } from "./persist-conversation-max-tokens.js";
 import { CodingModeChip } from "./components/coding-mode-chip.js";
 import { CodingModePopup } from "./components/coding-mode-popup.js";
 import { OnboardingScreen } from "./components/onboarding-screen.js";
@@ -1116,6 +1118,7 @@ export function TuiApp({
       menuLeaderArmed,
       setMenuLeaderArmed,
       activateMenuNode,
+      onSetCapAuto: setConversationCapAuto,
       activateComposerSwitch,
     });
     if (appHandled) return;
@@ -1471,6 +1474,33 @@ export function TuiApp({
     });
   }, [codingMode, baseApprovalLevel, callbacks]);
 
+  /**
+   * Write `agent.conversationMaxTokens: 0` and say so.
+   *
+   * No hot-apply call to make: `buildPrompt` reads the cap out of
+   * `getConfig()` on every build, so resetting the config cache — which
+   * the persist helper does — is what makes the next turn use it.
+   *
+   * Failing to write is reported rather than swallowed. The panel would
+   * otherwise keep showing the same ceiling with the same button beside
+   * it, and the operator would press it again.
+   */
+  const setConversationCapAuto = useCallback(() => {
+    try {
+      persistConversationMaxTokens(CONVERSATION_CAP_AUTO);
+      dispatch({
+        type: "system_message",
+        text: "transcript cap set to auto — it now fills whatever the model's window leaves",
+      });
+    } catch (err) {
+      dispatch({
+        type: "system_message",
+        text: `could not write the config: ${(err as Error).message}`,
+      });
+    }
+    dispatch({ type: "context_panel_closed" });
+  }, []);
+
   const promptContextSlot = contextUsage ? (
     <ContextChip usage={contextUsage} layer={MOUSE_LAYER_PANEL} />
   ) : null;
@@ -1678,6 +1708,7 @@ export function TuiApp({
                   terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
                 }
                 reservedForReply={state.session.completionMaxTokens}
+                onSetAuto={setConversationCapAuto}
               />
             ) : null}
             <ComposerSwitchPopup

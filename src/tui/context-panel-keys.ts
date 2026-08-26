@@ -5,14 +5,30 @@ import type { TuiState } from "./tui-state.js";
 export interface ContextPanelKeyContext {
   state: TuiState;
   dispatch: (action: TuiAction) => void;
+  /**
+   * Switches the transcript cap to auto — the same handler the panel's
+   * `set auto` button calls. A callback rather than an action because
+   * the work is a config write, and the reducer is pure.
+   *
+   * Optional so existing callers (and the key tests) need not supply
+   * one; `a` is then swallowed like any other bare key.
+   */
+  onSetCapAuto?: () => void;
 }
 
 /**
  * Key layer for the open context panel.
  *
- * The panel is a readout: nothing to select, nothing to activate, so the
- * only bindings are the ways out. Esc is the app's universal dismiss;
- * `q` and Enter are here because a panel with no controls invites both.
+ * The panel is very nearly a readout: nothing to select, and one thing
+ * to activate. Esc is the app's universal dismiss; `q` and Enter are
+ * here because a panel with almost no controls invites both.
+ *
+ * `a` switches the transcript cap to auto — the keyboard route to the
+ * `set auto` button. Bound unconditionally rather than only when the
+ * button is showing: the panel does not know whether it is, the
+ * reducer's guard is the one that decides, and a key that silently did
+ * nothing on the wrong screen is cheaper than two places disagreeing
+ * about when it applies.
  *
  * Every other *bare* key is swallowed rather than passed on. The editor
  * is unfocused while the panel owns input, so a stray letter would go
@@ -29,6 +45,10 @@ export function handleContextPanelKey(
   if (!state.contextPanelOpen) return false;
   if (key.escape || key.return || input === "q") {
     dispatch({ type: "context_panel_closed" });
+    return true;
+  }
+  if (input === "a" && ctx.onSetCapAuto) {
+    ctx.onSetCapAuto();
     return true;
   }
   return !key.ctrl && !key.meta;
