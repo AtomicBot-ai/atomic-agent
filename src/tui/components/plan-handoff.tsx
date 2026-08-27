@@ -43,36 +43,37 @@ export interface PlanHandoffProps {
    * cannot be declined keeps sitting there.
    */
   onDismiss: () => void;
-  /** Columns the bar has to fit inside. */
-  width: number;
 }
 
 export function PlanHandoff({
   onExecute,
   onDismiss,
-  width,
 }: PlanHandoffProps): ReactElement {
-  // Below this the three buttons cannot sit side by side without one of
-  // them being cut, and a truncated verb on a button that starts work is
-  // the last thing to economise on.
-  const stacked = width < 78;
   return (
-    <Box flexDirection="column" width={width}>
-      <Box flexDirection={stacked ? "column" : "row"}>
+    <Box flexDirection="column">
+      {/*
+        `flexWrap` rather than a width breakpoint. The bar sits inside
+        the chat log now, in ordinary flow — so it is the log's column
+        that decides how much room there is, and Yoga already knows
+        that number. Measuring the terminal here and guessing a
+        threshold was how the old version ended up painting its own
+        second line over itself.
+      */}
+      <Box flexWrap="wrap">
         <ExecuteButton
           mode="auto"
           label="▶ run it · auto"
           tone={theme.colors.warn}
           onExecute={onExecute}
         />
-        {stacked ? null : <Text> </Text>}
+        <Text> </Text>
         <ExecuteButton
           mode="bypass"
           label="▶ run it · bypass permissions"
           tone={theme.colors.error}
           onExecute={onExecute}
         />
-        {stacked ? null : <Text> </Text>}
+        <Text> </Text>
         {/*
           Last, and in the quiet tone. It is the one button here that
           does nothing irreversible, and putting it first would give the
@@ -80,9 +81,6 @@ export function PlanHandoff({
         */}
         <DismissButton onDismiss={onDismiss} />
       </Box>
-      <Text color={theme.colors.muted} wrap="truncate">
-        {" or type below to change the plan — it stays in plan mode"}
-      </Text>
     </Box>
   );
 }

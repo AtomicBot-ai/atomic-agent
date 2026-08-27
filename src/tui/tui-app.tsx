@@ -60,10 +60,7 @@ import {
 import { DebugPane } from "./components/debug-pane.js";
 import { HotkeyHint } from "./components/hotkey-hint.js";
 import { PromptShell } from "./components/prompt-shell.js";
-import {
-  EXECUTE_PLAN_MESSAGE,
-  PlanHandoff,
-} from "./components/plan-handoff.js";
+import { EXECUTE_PLAN_MESSAGE } from "./components/plan-handoff.js";
 import { QueuedMessages } from "./components/queued-messages.js";
 import { SessionDeleteModal } from "./components/session-delete-modal.js";
 import { UninstallModal } from "./components/uninstall-modal.js";
@@ -1527,6 +1524,11 @@ export function TuiApp({
     [callbacks],
   );
 
+  const dismissPlan = useCallback(
+    () => dispatch({ type: "plan_handoff_dismissed" }),
+    [],
+  );
+
   const promptContextSlot = contextUsage ? (
     <ContextChip usage={contextUsage} layer={MOUSE_LAYER_PANEL} />
   ) : null;
@@ -1676,7 +1678,12 @@ export function TuiApp({
             position="relative"
           >
             {state.uiMode === "chat" ? (
-              <ChatLog state={state} dispatch={dispatch} />
+              <ChatLog
+                state={state}
+                dispatch={dispatch}
+                onPlanExecute={executePlan}
+                onPlanDismiss={dismissPlan}
+              />
             ) : (
               <DebugPane
                 state={state}
@@ -1841,15 +1848,6 @@ export function TuiApp({
                 queued={state.queuedMessages}
                 width={mainColumnWidth}
               />
-              {state.planHandoff ? (
-                <PlanHandoff
-                  onExecute={executePlan}
-                  onDismiss={() =>
-                    dispatch({ type: "plan_handoff_dismissed" })
-                  }
-                  width={mainColumnWidth}
-                />
-              ) : null}
               {/*
                 The composer holds exactly this slot in the flex column
                 — its collapsed height, whatever the buffer holds — and
@@ -1862,7 +1860,16 @@ export function TuiApp({
               <ComposerOverlay>
                 <PromptShell
             value={state.inputValue}
-            placeholder="Type a message or `/` for commands…"
+            placeholder={
+              // While a plan is on offer the field says what typing into
+              // it would *do*. The buttons above cover running and
+              // dropping the plan; this is the third option, and the
+              // composer is the one place it can be said without adding
+              // a fourth control to say it.
+              state.planHandoff
+                ? "Type to change the plan — it stays in plan mode…"
+                : "Type a message or `/` for commands…"
+            }
             rotatingPlaceholders={PROMPT_PLACEHOLDERS}
             backend={promptBackend}
             model={promptLlm.model}

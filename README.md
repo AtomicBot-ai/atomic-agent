@@ -256,7 +256,7 @@ Handy slash commands: `/help` lists every command, `/tools` lists the built-in t
 | mode | |
 |---|---|
 | `default` | approvals follow the level set on the Privacy tab |
-| `plan` | read-only — every tool that would change something is refused, with a note telling the agent to present a plan instead. Reading, searching and fetching all still work. When the plan lands, two buttons appear above the composer: run it in `auto`, or run it in `bypass permissions`. Typing instead keeps you in plan mode and revises the plan. |
+| `plan` | read-only — every tool that would change something is refused, with a note telling the agent to present a plan instead. Reading, searching and fetching all still work. When the plan lands, three buttons appear **under the plan itself**, beside its `[copy]` row: run it in `auto`, run it in `bypass permissions`, or dismiss it. Typing instead keeps you in plan mode and revises the plan — the composer says so while the offer is up. |
 | `auto` | file writes inside this workspace stop asking; everything else still does |
 | `bypass permissions` | nothing asks, for this session. Hardline shell-guard rules still block. |
 

@@ -2,6 +2,8 @@ import { Box } from "ink";
 import { render } from "ink-testing-library";
 import { describe, expect, it, vi } from "vitest";
 
+import { ChatLog } from "./components/chat-log.js";
+
 import type { CodingMode } from "./coding-mode.js";
 import {
   EXECUTE_PLAN_MESSAGE,
@@ -28,13 +30,48 @@ function stateWith(overrides: Partial<TuiState> = {}): TuiState {
   return { ...createInitialTuiState(session()), ...overrides };
 }
 
-function frame(width = 76): string {
+function frame(width = 92): string {
   const { lastFrame, unmount } = render(
     <Box width={width}>
-      <PlanHandoff onExecute={() => {}} onDismiss={() => {}} width={width} />
+      <PlanHandoff onExecute={() => {}} onDismiss={() => {}} />
     </Box>,
   );
-  const out = (lastFrame() ?? "").replace(/\[[0-9;]*m/g, "");
+  const out = (lastFrame() ?? "").replace(/\[[0-9;]*m/g, "");
+  unmount();
+  return out;
+}
+
+/** A session whose newest message is the plan, with the offer live. */
+function planState(overrides: Partial<TuiState> = {}): TuiState {
+  return stateWith({
+    codingMode: "plan",
+    planHandoff: true,
+    messages: [
+      { id: "m1", timestamp: 1, role: "user", text: "build me a website" },
+      {
+        id: "m2",
+        timestamp: 2,
+        role: "assistant",
+        text: "Plan: I will build a site.",
+        toolSteps: 5,
+      },
+    ],
+    ...overrides,
+  });
+}
+
+function logFrame(state: TuiState, withHandlers = true): string {
+  const { lastFrame, unmount } = render(
+    <Box width={92} height={32} flexDirection="column">
+      <ChatLog
+        state={state}
+        {...(withHandlers
+          ? { onPlanExecute: () => {}, onPlanDismiss: () => {} }
+          : {})}
+      />
+    </Box>,
+  );
+  const out = (lastFrame() ?? "").replace(/\[[0-9;]*m/g, "");
   unmount();
   return out;
 }
@@ -57,8 +94,11 @@ describe("the plan hand-off bar", () => {
     expect(body).not.toContain("default");
   });
 
-  it("says that typing is still an option", () => {
-    expect(frame()).toContain("type below to change the plan");
+  it("leaves the third option to the composer", () => {
+    // Revising a plan means typing, and the composer's placeholder is
+    // where that is said now — a line of prose inside the button row
+    // was one more thing to keep in sync with the row's own wrapping.
+    expect(frame()).not.toContain("type below");
   });
 
   it("offers a way to decline the plan outright", () => {
@@ -69,21 +109,20 @@ describe("the plan hand-off bar", () => {
     expect(frame()).toContain("dismiss plan");
   });
 
-  it("stacks rather than truncating a verb that starts work", () => {
-    const narrow = frame(60).split("\n");
-    expect(narrow.some((l) => l.includes("run it · auto"))).toBe(true);
-    expect(
-      narrow.some((l) => l.includes("run it · bypass permissions")),
-      "the bypass button kept its full label",
-    ).toBe(true);
-    expect(narrow.some((l) => l.includes("dismiss plan"))).toBe(true);
+  it("wraps rather than truncating a verb that starts work", () => {
+    const narrow = frame(46);
+    expect(narrow).toContain("run it · auto");
+    expect(narrow, "the bypass button kept its full label").toContain(
+      "run it · bypass permissions",
+    );
+    expect(narrow).toContain("dismiss plan");
   });
 
   it("hands the chosen mode to its caller", () => {
     const onExecute = vi.fn<(mode: CodingMode) => void>();
     const { unmount } = render(
       <Box width={76}>
-        <PlanHandoff onExecute={onExecute} onDismiss={() => {}} width={76} />
+        <PlanHandoff onExecute={onExecute} onDismiss={() => {}} />
       </Box>,
     );
     // No mouse provider here, so the faces render without targets — the
@@ -170,5 +209,44 @@ describe("dismissing a plan", () => {
     const idle = stateWith({ codingMode: "plan", planHandoff: false });
     const next = reduceUiAction(idle, { type: "plan_handoff_dismissed" });
     expect((next ?? idle).planHandoff).toBe(false);
+  });
+});
+
+/**
+ * Where the buttons live. They spent two revisions floating between the
+ * chat log and the composer, which put them nowhere near the plan they
+ * belonged to — and left them in a band the composer overlay paints,
+ * so the bar ended up half-overwritten by its own previous frame.
+ *
+ * They belong under the plan, in the log, next to `[copy]`.
+ */
+describe("where the plan buttons render", () => {
+  it("sits under the plan message, after its copy row", () => {
+    const lines = logFrame(planState()).split("\n");
+    const plan = lines.findIndex((l) => l.includes("Plan: I will build"));
+    const buttons = lines.findIndex((l) => l.includes("run it · auto"));
+    expect(plan).toBeGreaterThanOrEqual(0);
+    expect(buttons).toBeGreaterThan(plan);
+    expect(lines[buttons]).toContain("dismiss plan");
+  });
+
+  it("carries no buttons when there is no plan on offer", () => {
+    expect(logFrame(planState({ planHandoff: false }))).not.toContain("run it");
+  });
+
+  it("never attaches them to an older message", () => {
+    // The offer is about the newest plan; an older one further up the
+    // log would be an offer to run something already superseded.
+    const withFollowUp = planState({
+      messages: [
+        { id: "m1", timestamp: 1, role: "assistant", text: "Plan: the plan" },
+        { id: "m2", timestamp: 2, role: "user", text: "actually, no" },
+      ],
+    });
+    expect(logFrame(withFollowUp)).not.toContain("run it");
+  });
+
+  it("draws nothing without handlers to call", () => {
+    expect(logFrame(planState(), false)).not.toContain("run it");
   });
 });
