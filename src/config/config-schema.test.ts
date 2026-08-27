@@ -1276,3 +1276,47 @@ describe("tui.whileBusySubmit", () => {
   });
 });
 
+
+describe("numeric coercion of string config values", () => {
+  const base = { version: USER_CONFIG_VERSION };
+
+  it("loads a config whose integer was written as a decimal string", () => {
+    // Regression: a stricter `/^\d+$/` test rejected these, and because this
+    // parser runs on every startup a config.json holding "8080.0" made the
+    // whole CLI unbootable — with no way to repair it from inside the tool,
+    // since `config set` loads the config first. `parseInt` had converted
+    // them correctly all along, so they must keep working.
+    for (const raw of ["10.0", "25.0", "1e3", "+7"]) {
+      expect(() =>
+        parseUserConfigFile({ ...base, agent: { maxSteps: raw } }),
+      ).not.toThrow();
+    }
+    expect(
+      parseUserConfigFile({ ...base, agent: { maxSteps: "10.0" } }).agent
+        .maxSteps,
+    ).toBe(10);
+    expect(
+      parseUserConfigFile({ ...base, agent: { tokenBudget: "1e3" } }).agent
+        .tokenBudget,
+    ).toBe(1000);
+  });
+
+  it("still rejects a value that is not a complete number", () => {
+    for (const raw of ["60s", "100_000", "1,000", "10.9", "0x10", "abc"]) {
+      expect(() =>
+        parseUserConfigFile({ ...base, agent: { maxSteps: raw } }),
+      ).toThrow(/maxSteps/);
+    }
+  });
+
+  it("rejects an integer past the safe range instead of rounding it", () => {
+    // "9007199254740993" would be stored as ...992 — the same quiet
+    // corruption the strict parsing exists to prevent.
+    expect(() =>
+      parseUserConfigFile({
+        ...base,
+        agent: { tokenBudget: "9007199254740993" },
+      }),
+    ).toThrow(/tokenBudget/);
+  });
+});

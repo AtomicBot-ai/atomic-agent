@@ -432,3 +432,128 @@ describe("curl metadata parsing", () => {
     expect(slept).toEqual([5_000]);
   });
 });
+
+describe("os.http.request retry state across attempts", () => {
+  /** Drives a redirect-following request with a scripted curl. */
+  function runWalk(input: {
+    method: "GET" | "POST";
+    results: CommandResult[];
+    calls: string[][];
+  }) {
+    return executeGuardedHttpRequest(
+      "https://a.example/submit",
+      {
+        method: input.method,
+        headers: {},
+        body: input.method === "POST" ? "order=1" : undefined,
+        timeoutMs: 1000,
+        followRedirects: true,
+      },
+      {
+        runCommand: scriptedRunCommand(input.results, input.calls),
+        lookup: publicLookup,
+        cwd: "/tmp",
+        signal: new AbortController().signal,
+        maxResponseBytes: 100_000,
+        sleep: async () => {},
+      },
+    );
+  }
+
+  /** The URL each curl invocation targeted, in order. */
+  function hosts(calls: string[][]): string[] {
+    return calls.map((a) => a[a.length - 1]!);
+  }
+
+  it("a timeout resumes at the failed hop instead of rewinding", async () => {
+    // The resume point was only advanced on the response path, so a timeout
+    // left it stale and the retry re-walked the whole chain from the caller's
+    // URL — re-issuing redirects the origin had already served.
+    const calls: string[][] = [];
+    await expect(
+      runWalk({
+        method: "GET",
+        results: [
+          makeResult({ stdout: stubStdout(302, "", "https://b.example/") }),
+          makeResult({ stdout: stubStdout(302, "", "https://c.example/") }),
+          makeResult({ exitCode: 28, stderr: "timed out", timedOut: true }),
+          makeResult({ stdout: stubStdout(200) }),
+        ],
+        calls,
+      }),
+    ).resolves.toMatchObject({ status: 200 });
+
+    expect(hosts(calls)).toEqual([
+      "https://a.example/submit",
+      "https://b.example/",
+      "https://c.example/",
+      "https://c.example/",
+    ]);
+  });
+
+  it("a GET a 303 downgraded to keeps its retry on a timeout", async () => {
+    // On a failure the method fell back to the caller's, so this bodyless GET
+    // was judged as the original POST and denied its replay.
+    const calls: string[][] = [];
+    const response = await runWalk({
+      method: "POST",
+      results: [
+        makeResult({ stdout: stubStdout(303, "", "https://r.example/") }),
+        makeResult({ exitCode: 28, stderr: "timed out", timedOut: true }),
+        makeResult({ stdout: stubStdout(200) }),
+      ],
+      calls,
+    });
+
+    expect(response.status).toBe(200);
+    expect(calls).toHaveLength(3);
+    // The body is sent once, by the original POST, and never replayed.
+    expect(calls.filter((a) => a.includes("--data-binary"))).toHaveLength(1);
+  });
+
+  it("redirectChain and timeTotal cover every attempt", async () => {
+    const calls: string[][] = [];
+    const response = await runWalk({
+      method: "GET",
+      results: [
+        makeResult({ stdout: stubStdout(302, "", "https://b.example/") }),
+        makeResult({ stdout: stubStdout(429) }),
+        makeResult({ stdout: stubStdout(200) }),
+      ],
+      calls,
+    });
+
+    // Three hops were really made, including the retried one; a chain rebuilt
+    // per attempt reported only the last.
+    expect(response.redirectChain).toEqual([
+      "https://a.example/submit",
+      "https://b.example/",
+      "https://b.example/",
+    ]);
+    expect(response.timeTotal).toBeCloseTo(0.03);
+  });
+
+  it("the redirect budget is cumulative, not per attempt", async () => {
+    // A per-attempt budget let a hostile origin serve MAX_REDIRECTS hops on
+    // every retry — 18 curl invocations against a limit of 5.
+    const calls: string[][] = [];
+    await expect(
+      runWalk({
+        method: "GET",
+        results: [
+          ...Array.from({ length: 5 }, (_, i) =>
+            makeResult({
+              stdout: stubStdout(302, "", `https://h${i}.example/`),
+            }),
+          ),
+          makeResult({ stdout: stubStdout(429) }),
+          makeResult({ stdout: stubStdout(200) }),
+        ],
+        calls,
+      }),
+    ).resolves.toMatchObject({ status: 200 });
+
+    // 6 hops to exhaust the budget + 1 resumed retry. Never a fresh budget.
+    expect(calls.length).toBeLessThanOrEqual(8);
+  });
+});

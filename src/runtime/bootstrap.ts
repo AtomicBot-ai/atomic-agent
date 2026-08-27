@@ -777,22 +777,44 @@ export async function createAgentRuntime(
     return recorder;
   };
 
-  /** Forget a session's recorder once the session is gone. */
+  /** Sessions deleted mid-turn, to be dropped once their turn releases. */
+  const pendingRecorderDrops = new Set<string>();
+
+  /**
+   * Forget a session's recorder once the session is gone.
+   *
+   * A delete that lands mid-turn must not unpin the running turn: the HTTP
+   * route deletes without an `isBusy` check (unlike the TUI, which refuses),
+   * and dropping the pin there would let the next burst evict a recorder the
+   * turn is still writing through — reintroducing the split trace file this
+   * pinning exists to prevent. Such a delete is deferred instead, and the
+   * turn's `finally` completes it; leaving it to cap pressure would strand the
+   * recorder of a session that no longer exists until 64 more arrive.
+   */
   const dropRecorder = (sessionId: string): void => {
+    if (activeTraceSessions.has(sessionId)) {
+      pendingRecorderDrops.add(sessionId);
+      return;
+    }
+    pendingRecorderDrops.delete(sessionId);
     recorders.delete(sessionId);
-    activeTraceSessions.delete(sessionId);
   };
 
   /**
-   * Trim to the cap, oldest-used first, skipping sessions with a live turn.
-   * If every entry is active the map is briefly allowed over the cap: losing
-   * a running session's trace is worse than holding a few extra recorders,
-   * and the excess drains as those turns finish.
+   * Trim to the cap, least-recently-used first, skipping sessions with a live
+   * turn and `exempt` (the entry the caller just created — it has not had a
+   * chance to be pinned yet, and evicting it would throw away the recorder
+   * whose creation triggered this call).
+   *
+   * If everything is pinned the map is allowed over the cap: losing a running
+   * session's trace is worse than holding a few extra recorders, and the
+   * excess drains as those turns finish and release their pins.
    */
-  const evictRecorders = (): void => {
+  const evictRecorders = (exempt?: string): void => {
     if (recorders.size <= MAX_TRACE_RECORDERS) return;
     for (const sessionId of [...recorders.keys()]) {
       if (recorders.size <= MAX_TRACE_RECORDERS) break;
+      if (sessionId === exempt) continue;
       if (activeTraceSessions.has(sessionId)) continue;
       recorders.delete(sessionId);
     }
@@ -2214,7 +2236,11 @@ export async function createAgentRuntime(
       ...(session.metadata ? { metadata: session.metadata } : {}),
     });
     recorders.set(session.id, recorder);
-    evictRecorders();
+    // Exempt the entry just created: the caller pins it only after this
+    // returns, so without this it is the sole unpinned entry when every other
+    // session is mid-turn and would evict itself — losing the whole turn's
+    // trace to a file that already has its `session_started` line.
+    evictRecorders(session.id);
     return recorder;
   };
 
@@ -2254,6 +2280,12 @@ export async function createAgentRuntime(
         return result;
       } finally {
         activeTraceSessions.delete(session.id);
+        // A delete that arrived mid-turn was deferred to keep the pin honest;
+        // complete it now that nothing is writing through the recorder.
+        if (pendingRecorderDrops.has(session.id)) {
+          pendingRecorderDrops.delete(session.id);
+          recorders.delete(session.id);
+        }
         // The turn may have out-waited a burst that could not evict while it
         // was pinned; settle the map now that it can.
         evictRecorders();

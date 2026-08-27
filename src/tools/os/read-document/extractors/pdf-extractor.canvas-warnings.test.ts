@@ -272,18 +272,41 @@ describe("pdf extractor: optional canvas warnings (issue #117)", () => {
         `const result = await pdfExtractor({ data, path: ${JSON.stringify(
           pdfPath,
         )} });`,
-        'process.stdout.write("\\nEXTRACTED:" + result.text.slice(0, 40));',
+        // Generous slice: the text opens with a `--- page 1 ---` header, and a
+        // tighter bound would cut the marker off if that header ever grows.
+        'process.stdout.write("\\nEXTRACTED:" + result.text.slice(0, 200));',
       ].join("\n"),
     );
 
     try {
-      const { stdout, stderr } = await execFileAsync(
-        process.execPath,
-        ["--import", "tsx", scriptPath],
-        { cwd: repoRoot, encoding: "utf8" },
-      );
-      const output = `${stdout}\n${stderr}`;
+      // The warnings are emitted at import time, before extraction, so they
+      // are in the buffer even when the child later fails. `execFileAsync`
+      // rejects on a non-zero exit, which would skip the assertions entirely
+      // and report "Command failed: … canvas-gate.mjs" instead of naming the
+      // regression — so read the output off the rejection too.
+      let output: string;
+      try {
+        const { stdout, stderr } = await execFileAsync(
+          process.execPath,
+          ["--import", "tsx", scriptPath],
+          { cwd: repoRoot, encoding: "utf8" },
+        );
+        output = `${stdout}\n${stderr}`;
+      } catch (err) {
+        const failed = err as { stdout?: string; stderr?: string };
+        output = `${failed.stdout ?? ""}\n${failed.stderr ?? ""}`;
+        for (const warning of KNOWN_CANVAS_WARNINGS) {
+          expect(output).not.toContain(warning);
+        }
+        throw err;
+      }
+
+      // Guard against a vacuous pass: `EXTRACTED:` alone prints even when the
+      // extractor returns empty text, so assert the marker came through. The
+      // extracted text opens with a `--- page 1 ---` header, so the marker
+      // follows the prefix rather than sitting flush against it.
       expect(output).toContain("EXTRACTED:");
+      expect(output).toContain(TEXT_MARKER);
       for (const warning of KNOWN_CANVAS_WARNINGS) {
         expect(output).not.toContain(warning);
       }

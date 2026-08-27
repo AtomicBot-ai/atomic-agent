@@ -2140,14 +2140,29 @@ export function parseWebSearchFallback(
  * the first character it cannot read, so it turns `"1e3"` into `1`, `"60s"`
  * into `60` and `"100_000"` into `100` — a typo silently becomes a valid
  * setting. That is reachable from `config set <key> <value>`, where every
- * value arrives as a string, so the whole token is checked here and anything
- * that is not a clean integer literal is rejected as `NaN`.
+ * value arrives as a string, so the whole token is parsed here and anything
+ * that is not a complete numeric literal is rejected as `NaN`.
+ *
+ * The test is on the *whole token*, not on its shape: `"10.0"` and `"1e3"`
+ * are both complete literals, and `parseInt` converted the first correctly
+ * (to `10`) while truncating the second. Rejecting every non-`\d+` string
+ * would therefore also reject values that already worked — and since this
+ * parser runs on `loadConfig` at every startup, a `config.json` holding
+ * `"8080.0"` would make the whole CLI unbootable with no way to fix it from
+ * inside the tool. So the value is what decides: parse it in full, then
+ * require it to be an exact integer. `"10.0"` passes, `"1e3"` (1000) passes
+ * as the thousand the user asked for, `"60s"` and `"10.9"` do not.
  */
 function coerceIntLike(raw: unknown): number {
   if (typeof raw === "number") return raw;
   if (typeof raw !== "string") return NaN;
-  const text = raw.trim();
-  return /^[+-]?\d+$/.test(text) ? Number(text) : NaN;
+  const value = coerceFloatLike(raw);
+  // `Number.isInteger` also rejects NaN and the infinities.
+  if (!Number.isInteger(value)) return NaN;
+  // Past 2^53 the literal no longer round-trips: "9007199254740993" would be
+  // silently stored as ...992, which is the same class of quiet corruption
+  // this function exists to stop.
+  return Number.isSafeInteger(value) ? value : NaN;
 }
 
 /**

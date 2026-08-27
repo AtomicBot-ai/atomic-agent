@@ -84,18 +84,6 @@ export interface GuardedCurlResponse {
   redirectChain: string[];
   /** Server-sent `Retry-After` in ms, `null` when absent or unparseable. */
   retryAfterMs: number | null;
-  /**
-   * Method actually used on the hop that produced this response. A 307/308
-   * preserves the original method, so a POST can still be a POST several hops
-   * in; a 301/302/303 downgrades to GET. The retry decision must key off this
-   * rather than the caller's method, or a redirected POST gets replayed.
-   */
-  finalMethod: HttpMethod;
-  /**
-   * Body sent on that same hop — `undefined` once a 301/302/303 has dropped
-   * it. Carried so a retry resumes with the hop's own payload.
-   */
-  finalBody: string | undefined;
   /** Last curl argv (for diagnostics). */
   command: string[];
 }
@@ -125,16 +113,25 @@ export async function executeGuardedHttpRequest(
   const retry = opts.retry ?? DEFAULT_HTTP_RETRY_CONFIG;
   const sleep = opts.sleep ?? defaultSleep;
 
-  // Where the next attempt starts. A retry resumes at the hop that failed
-  // rather than re-walking the redirect chain from the caller's URL.
-  let resumeUrl = rawUrl;
-  let resume: { method: HttpMethod; body: string | undefined } | undefined;
+  // Cumulative across attempts. `sendGuardedRequestOnce` advances `url`,
+  // `method` and `body` before each hop it issues, so a retry — whether after
+  // a retryable status or a timeout — resumes at the hop that actually failed
+  // instead of re-walking redirects the origin has already served.
+  const state: RequestWalkState = {
+    url: rawUrl,
+    method: args.method,
+    body: args.body,
+    chain: [],
+    redirects: 0,
+    totalTime: 0,
+    truncated: false,
+  };
 
   for (let attempt = 0; ; attempt++) {
     let response: GuardedCurlResponse | null = null;
     let failure: unknown = null;
     try {
-      response = await sendGuardedRequestOnce(resumeUrl, args, opts, resume);
+      response = await sendGuardedRequestOnce(args, opts, state);
     } catch (err) {
       // Only a curl timeout is worth another attempt; a missing binary, an
       // SSRF rejection, or an aborted run must surface immediately.
@@ -147,15 +144,12 @@ export async function executeGuardedHttpRequest(
       failure = err;
     }
 
-    // A redirect can carry the original method forward (307/308) or downgrade
-    // it (301/302/303), so the replay-safety question is about the method that
-    // actually ran, not the one the caller passed in. On a transport failure
-    // there is no response to read it from; fall back to the caller's method,
-    // which is the conservative choice (a POST stays non-idempotent).
-    const effectiveMethod = response?.finalMethod ?? args.method;
-
+    // The replay-safety question is about the method of the hop that actually
+    // ran, not the one the caller passed in: a 307/308 carries a POST forward,
+    // and a 303 downgrades it to a bodyless GET that is safe to replay.
+    // `state.method` tracks that on both the response and the failure path.
     const exhausted = attempt >= retry.maxRetries || opts.signal.aborted;
-    if (exhausted || !isRetryableAttempt(effectiveMethod, response, failure)) {
+    if (exhausted || !isRetryableAttempt(state.method, response, failure)) {
       if (response !== null) return response;
       throw failure;
     }
@@ -170,11 +164,6 @@ export async function executeGuardedHttpRequest(
     if (opts.signal.aborted) {
       if (response !== null) return response;
       throw failure;
-    }
-
-    if (response !== null) {
-      resumeUrl = response.finalUrl;
-      resume = { method: response.finalMethod, body: response.finalBody };
     }
   }
 }
@@ -239,26 +228,47 @@ function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * State that survives across retry attempts.
+ *
+ * Everything here is cumulative on purpose. Keeping it inside the per-attempt
+ * function meant a resumed retry rebuilt it from the resume point: the
+ * redirect chain lost its earlier hops, elapsed time under-reported, the
+ * redirect budget reset so a hostile origin got `MAX_REDIRECTS` *per attempt*,
+ * and — because it was only written back on the response path — a transport
+ * failure left `url`/`method` stale and rewound the retry to the caller's URL.
+ */
+interface RequestWalkState {
+  /** Where the next attempt starts: the last hop actually reached. */
+  url: string;
+  /** Method of that hop. A 307/308 keeps a POST; a 301/302/303 drops to GET. */
+  method: HttpMethod;
+  /** Body of that hop — `undefined` once a redirect has dropped it. */
+  body: string | undefined;
+  /** Every hop visited across all attempts, in order. */
+  chain: string[];
+  /** Redirects followed across all attempts, against `MAX_REDIRECTS`. */
+  redirects: number;
+  /** Summed curl time across all attempts. */
+  totalTime: number;
+  /** Sticky once any attempt truncated the response. */
+  truncated: boolean;
+}
+
 /** One full request/redirect walk. A retry re-enters this from the top. */
 async function sendGuardedRequestOnce(
-  rawUrl: string,
   args: HttpRequestArgs,
   opts: ExecuteGuardedHttpOptions,
-  resume?: { method: HttpMethod; body: string | undefined },
+  state: RequestWalkState,
 ): Promise<GuardedCurlResponse> {
   const runCommand = opts.runCommand ?? defaultRunCommand;
-  let currentUrl = parseHttpUrl(rawUrl);
-  // A retry resumes at the hop that failed, with the method and body that hop
-  // actually used. Restarting from the caller's method would re-send a body a
-  // 303 had already dropped, and re-walk redirects the origin already served.
-  let method = resume?.method ?? args.method;
-  let body = resume ? resume.body : args.body;
-  const chain: string[] = [];
+  let currentUrl = parseHttpUrl(state.url);
+  let method = state.method;
+  let body = state.body;
+  const chain = state.chain;
   let lastCommand: string[] = [];
-  let truncated = false;
-  let totalTime = 0;
 
-  for (let hop = 0; ; hop += 1) {
+  for (;;) {
     const pinnedIps = await assertHostAllowed(currentUrl, {
       lookup: opts.lookup,
     });
@@ -271,6 +281,13 @@ async function sendGuardedRequestOnce(
       timeoutMs: args.timeoutMs,
     });
     lastCommand = ["curl", ...curlArgs];
+
+    // Record the hop we are about to make *before* issuing it, so a failure
+    // resumes here rather than rewinding to the caller's URL and re-walking
+    // redirects the origin has already served.
+    state.url = currentUrl.toString();
+    state.method = method;
+    state.body = body;
 
     let result: CommandResult;
     try {
@@ -297,8 +314,8 @@ async function sendGuardedRequestOnce(
     }
 
     const parsed = parseCurlOutput(result.stdout);
-    truncated = truncated || result.truncated;
-    totalTime += parsed.timeTotal;
+    state.truncated = state.truncated || result.truncated;
+    state.totalTime += parsed.timeTotal;
     chain.push(currentUrl.toString());
 
     const shouldFollow =
@@ -307,11 +324,14 @@ async function sendGuardedRequestOnce(
       parsed.redirectUrl.length > 0;
 
     if (shouldFollow) {
-      if (hop >= MAX_REDIRECTS) {
+      // Cumulative across attempts: a per-attempt budget would let a hostile
+      // origin serve MAX_REDIRECTS hops on every retry.
+      if (state.redirects >= MAX_REDIRECTS) {
         throw new Error(
           `os.http.request: too many redirects (> ${MAX_REDIRECTS})`,
         );
       }
+      state.redirects += 1;
       // Curl -L semantics: 301/302/303 drop to GET without body; 307/308 keep method+body.
       if (parsed.status === 301 || parsed.status === 302 || parsed.status === 303) {
         method = "GET";
@@ -327,12 +347,10 @@ async function sendGuardedRequestOnce(
       contentType: parsed.contentType,
       body: parsed.body,
       sizeDownload: parsed.sizeDownload,
-      timeTotal: totalTime,
-      truncated,
-      redirectChain: chain,
+      timeTotal: state.totalTime,
+      truncated: state.truncated,
+      redirectChain: [...chain],
       retryAfterMs: parseRetryAfterValueMs(parsed.retryAfter),
-      finalMethod: method,
-      finalBody: body,
       command: lastCommand,
     };
   }
