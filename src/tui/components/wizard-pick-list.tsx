@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { MouseListRow } from "../mouse/mouse-list-row.js";
+import { useMouseCommands, useMouseTarget } from "../mouse/mouse-context.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import {
   storeWizardMouseRoute,
@@ -82,6 +83,70 @@ function emptyRowLine(search: string | null | undefined): string {
  * on the sentence boundary is width-independent, so the box height stays
  * predictable at any terminal width.
  */
+/**
+ * The list's frame, and the only place in this file that may hold a
+ * hook: `renderPickList` is a plain function its callers invoke
+ * directly, not a component React renders, so hooks inside it are an
+ * "Invalid hook call".
+ *
+ * Wheel over the list walks the cursor, one row a notch — the window is
+ * derived from the cursor, so moving it *is* scrolling, the same model
+ * `menu-popup.tsx` uses.
+ *
+ * It has to be here, at MODAL, rather than on the app's whole-viewport
+ * wheel target: an open wizard raises the mouse floor to MODAL
+ * (`isPanelModalOpen`), and the viewport target sits at the base layer,
+ * so every wheel event over a wizard was dropped before anything saw
+ * it. Hundreds of cloud models, and the only way down the list was the
+ * arrow keys.
+ *
+ * It routes through `route.select` — the very call a click on a row
+ * makes — so wheel and click cannot drift into two different notions of
+ * "select row N".
+ */
+function PickListFrame({
+  cursor,
+  total,
+  wizard,
+  route,
+  children,
+}: {
+  cursor: number;
+  total: number;
+  wizard: ProvidersWizardState;
+  route: WizardMouseRoute;
+  children: ReactNode;
+}): ReactElement {
+  const mouse = useMouseCommands();
+  const ref = useMouseTarget(
+    (hit) => {
+      if (hit.event.kind !== "wheel" || !hit.event.wheel || !mouse) return false;
+      if (total === 0) return true;
+      const delta = hit.event.wheel === "up" ? -1 : 1;
+      const next = Math.min(Math.max(cursor + delta, 0), total - 1);
+      if (next !== cursor) route.select(mouse, wizard, next);
+      // Claimed either way: at the ends of the list the notch has
+      // nowhere to go, and letting it fall through would scroll the
+      // chat behind the wizard instead.
+      return true;
+    },
+    { layer: MOUSE_LAYER_MODAL },
+  );
+  return (
+    <Box
+      ref={ref}
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={theme.colors.accentSoft}
+      paddingX={1}
+      marginY={1}
+      width="100%"
+    >
+      {children}
+    </Box>
+  );
+}
+
 function errorLines(error: string): readonly string[] {
   const split = error.indexOf(". ");
   if (split === -1) return [error];
@@ -184,13 +249,11 @@ export function renderPickList(props: {
     // selection nearly unreadable. The border alone keeps the fill tone:
     // the brief fenced the lift to text, and the quiet frame leaves the
     // accent to the rows that are read.
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={theme.colors.accentSoft}
-      paddingX={1}
-      marginY={1}
-      width="100%"
+    <PickListFrame
+      cursor={clamped}
+      total={total}
+      wizard={props.wizard}
+      route={route}
     >
       <Text bold color={theme.colors.accent}>
         {props.title}
@@ -267,6 +330,6 @@ export function renderPickList(props: {
       <Text color={theme.colors.muted} wrap="truncate-end">
         {props.moveHint} {position} · {props.actionsHint}
       </Text>
-    </Box>
+    </PickListFrame>
   );
 }
