@@ -246,6 +246,13 @@ export interface AtomicAgentConfig {
      */
     conversationMaxTokens: number;
     /**
+     * Macro-turns of history the prompt carries — one per task you sent,
+     * each carrying everything the agent did answering it. The knob an
+     * operator actually reaches for; `conversationMaxTokens` remains the
+     * ceiling underneath it.
+     */
+    conversationMaxPairs: number;
+    /**
      * Safety-net ceiling for the `### world` section. ARIA snapshots are
      * already compressed at the browser layer; this cap guards against
      * edge cases where compression misses (huge SVG trees, etc.).
@@ -1041,6 +1048,20 @@ export interface UserConfigFile {
      */
     approvalLevel: ApprovalLevel;
     conversationMaxTokens: number;
+    /**
+     * How many macro-turns of history the prompt carries — one "pair"
+     * being a task you sent plus everything the agent did answering it.
+     *
+     * This is the knob to reach for. Tokens are the wrong unit to steer
+     * with: nobody thinks in tokens, they think in how many of their
+     * last tasks the agent should still know about.
+     * {@link UserConfigFile.agent.conversationMaxTokens} stays underneath
+     * as the ceiling, because a pair has no bounded size — one task can
+     * run `maxSteps` tool calls and a fresh `os.http.request` body is
+     * rendered uncapped — so N pairs can exceed any window. Whichever
+     * limit bites first wins.
+     */
+    conversationMaxPairs: number;
     worldSnapshotMaxTokens: number;
   };
   http: {
@@ -1745,6 +1766,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     toolTimeoutMs: 60_000,
     approvalLevel: 1,
     conversationMaxTokens: 32_000,
+    conversationMaxPairs: 20,
     worldSnapshotMaxTokens: 8_000,
   },
   http: {
@@ -3178,6 +3200,17 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         agent.conversationMaxTokens ??
           USER_CONFIG_DEFAULTS.agent.conversationMaxTokens,
         "agent.conversationMaxTokens",
+      ),
+      // Bounded, unlike the token cap: there is no "auto" here. `1`
+      // means the agent sees only the task in front of it; the upper
+      // bound keeps a fat-fingered `1000` from turning into a prompt
+      // nobody meant to pay for.
+      conversationMaxPairs: parseBoundedPositiveInt(
+        agent.conversationMaxPairs ??
+          USER_CONFIG_DEFAULTS.agent.conversationMaxPairs,
+        "agent.conversationMaxPairs",
+        1,
+        100,
       ),
       worldSnapshotMaxTokens: parsePositiveInt(
         agent.worldSnapshotMaxTokens ??
