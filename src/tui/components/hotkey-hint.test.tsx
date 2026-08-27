@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import React from "react";
 
 import type { ApprovalRequest } from "../../approval/approval-gate.js";
+import { APPROVAL_CHORDS } from "../app-key-bindings.js";
 import { fakeSession } from "../test-fixtures.js";
 import { createInitialTuiState, type TuiState } from "../tui-state.js";
 import { HotkeyHint } from "./hotkey-hint.js";
@@ -87,13 +88,28 @@ describe("HotkeyHint scroll chip", () => {
     expect(out).not.toContain("scroll");
   });
 
-  it("keeps the approval footer (y/n/esc) free of the scroll chip", () => {
+  it("keeps the approval footer free of the scroll chip", () => {
     const out = renderHint(chatState({ pendingApproval: fakeApproval() }));
     expect(out).toContain("approve");
     expect(out).toContain("deny");
     expect(out).toContain("abort run");
     expect(out).not.toContain("scroll");
     expect(out).not.toMatch(SCROLL_KEY_PATTERN);
+  });
+
+  it("advertises the chords the approval prompt actually answers to", () => {
+    // This strip and the modal above it are the two places that tell an
+    // operator how to answer. They disagreed: the modal said `ctrl+y` /
+    // `ctrl+d` (what `approvalHotkey` accepts, because the composer
+    // stays live and a bare letter is text) while the strip said `y` /
+    // `n`. Pressing what the strip advertised typed into the draft.
+    const out = renderHint(chatState({ pendingApproval: fakeApproval() }));
+    expect(out).toContain(`ctrl+${APPROVAL_CHORDS.approve}`);
+    expect(out).toContain(`ctrl+${APPROVAL_CHORDS.deny}`);
+    // Not the bare letters — `[y]` is the chip shape, so this catches a
+    // regression to the old keys without tripping on the word "approve".
+    expect(out).not.toContain("[y]");
+    expect(out).not.toContain("[n]");
   });
 });
 

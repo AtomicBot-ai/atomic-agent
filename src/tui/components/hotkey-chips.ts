@@ -1,5 +1,9 @@
 import { MENU_LEADER_LABEL } from "../menu/menu-keys.js";
-import { applyNavSlot, decideApproval } from "../app-key-bindings.js";
+import {
+  APPROVAL_CHORDS,
+  applyNavSlot,
+  decideApproval,
+} from "../app-key-bindings.js";
 import type { MouseContextValue } from "../mouse/mouse-context.js";
 import { cycleNavSlot } from "../section.js";
 import { hasShiftEnterNewline } from "../shift-enter-support.js";
@@ -65,14 +69,22 @@ export function resolveChips(
   const hasDraft = state.inputValue.length > 0;
   if (state.pendingApproval) {
     const approval = state.pendingApproval;
+    // The chords, not the bare letters. The chat composer stays live
+    // while a prompt is up, so `approvalHotkey` only answers to a
+    // *modified* key — a bare `y` is text and lands in the draft. This
+    // strip used to advertise `y` / `n`, which meant the two things on
+    // screen telling the operator how to answer disagreed, and the one
+    // in the larger type was the one that did nothing. `n` was wrong on
+    // both counts: deny is `d`, because `n` is one keystroke from the
+    // newline the editor below is still listening for.
     return [
       {
-        key: "y",
+        key: `ctrl+${APPROVAL_CHORDS.approve}`,
         label: "approve",
         onClick: (mouse) => decideApproval(approval, true, mouse),
       },
       {
-        key: "n",
+        key: `ctrl+${APPROVAL_CHORDS.deny}`,
         label: "deny",
         onClick: (mouse) => decideApproval(approval, false, mouse),
       },
