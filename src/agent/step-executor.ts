@@ -412,23 +412,40 @@ async function executeStepInner(
   // the model may have thought but failed to emit a required tool call, and
   // the existing repair path can recover with a stricter one-shot prompt.
   const initialModelFailure = detectModelFailure(completion);
-  if (
-    initialModelFailure !== null &&
-    !isNativeToolsEmptyCompletionHandledByParser(
-      parseDepsFor(completion, deps),
+  if (initialModelFailure !== null) {
+    const initialParseDeps = parseDepsFor(completion, deps);
+    const repairable = isGrammarEmptyCompletionWorthRepairing(
+      initialParseDeps,
       initialModelFailure.reason,
-      completion,
-    )
-  ) {
-    deps.logger?.warn("model-side completion defect", {
-      sessionId: ctx.session.id,
-      stepIndex: ctx.stepIndex,
-      reason: initialModelFailure.reason,
-    });
-    throw new ModelError(
-      initialModelFailure.reason,
-      initialModelFailure.message,
     );
+    if (
+      !repairable &&
+      !isNativeToolsEmptyCompletionHandledByParser(
+        initialParseDeps,
+        initialModelFailure.reason,
+        completion,
+      )
+    ) {
+      deps.logger?.warn("model-side completion defect", {
+        sessionId: ctx.session.id,
+        stepIndex: ctx.stepIndex,
+        reason: initialModelFailure.reason,
+      });
+      throw new ModelError(
+        initialModelFailure.reason,
+        initialModelFailure.message,
+      );
+    }
+    if (repairable) {
+      // Fall through to the parser: an empty body fails to parse, which
+      // routes into the one-shot repair below. The repair's own
+      // `detectModelFailure` still throws `ModelError` if the second
+      // completion is empty too, so "twice empty" remains terminal.
+      deps.logger?.warn("empty completion, repairing once", {
+        sessionId: ctx.session.id,
+        stepIndex: ctx.stepIndex,
+      });
+    }
   }
 
   // Notice text injected into the NEXT step's `transientNotice` when
@@ -1031,6 +1048,36 @@ function isNativeToolsEmptyCompletionHandledByParser(
       ? completion.reasoningContent.trim()
       : "";
   return reasoning.length > 0;
+}
+
+/**
+ * Is this an empty completion the one-shot repair should get a crack at?
+ *
+ * On the grammar transports an empty body is not the dead end
+ * `detectModelFailure`'s doc assumes. The prompt is not replayed
+ * verbatim: the repair path rebuilds it through
+ * `buildToolCallRepairPrompt` with a corrective notice and a bounded
+ * token cap, which is a materially different request — and the same
+ * machinery already recovers every *other* unparseable body (a truncated
+ * array, a stray prelude, prose where JSON belongs). Only "the model
+ * emitted literally nothing" was singled out to end the turn outright,
+ * and that is the single largest failure bucket in production.
+ *
+ * `native_tools` is deliberately excluded: that transport has its own
+ * salvage path (`isNativeToolsEmptyCompletionHandledByParser`), and a
+ * native completion with nothing in any channel routes through
+ * `ModelError` by design — see `step-executor.test.ts`, "native_tools:
+ * routes 'no tool_calls and no content' through ModelError".
+ *
+ * `truncated` and `no_stop` are excluded too, and for the original
+ * reason: the model already spent its budget on this prefix, so a second
+ * pass hits the same wall.
+ */
+function isGrammarEmptyCompletionWorthRepairing(
+  deps: Pick<StepDependencies, "toolTransport">,
+  reason: string,
+): boolean {
+  return reason === "empty" && deps.toolTransport !== "native_tools";
 }
 
 /**

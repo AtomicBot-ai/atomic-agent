@@ -1734,6 +1734,7 @@ describe("parallelToolCalls derivation (issue #104)", () => {
   });
 });
 
+
 describe("executeStep raw-network-failure classification", () => {
   const grammarsDir = join(process.cwd(), "grammars");
 
@@ -1785,5 +1786,80 @@ describe("executeStep raw-network-failure classification", () => {
     await expect(
       runFailingStep(new TypeError("x.map is not a function")),
     ).rejects.toMatchObject({ name: "ToolExecutionError", category: "tool" });
+  });
+});
+
+
+describe("executeStep empty-completion repair", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  /**
+   * Runs one grammar-transport step over a scripted list of completion
+   * bodies: the first is the initial call, the second the repair.
+   */
+  async function runGrammarStep(bodies: string[]) {
+    const registry = new ToolRegistry();
+    registry.register(replyTool);
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    let calls = 0;
+    const outcome = await executeStep(
+      {
+        session: createEmptySessionState({ id: "s-empty", workingDir: "/w" }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hi",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async () => {
+          const content = bodies[calls] ?? "";
+          calls += 1;
+          return {
+            content,
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: content.length,
+            },
+            cacheHitTokens: 0,
+            slotId: 0,
+            modelId: "mock",
+          };
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+      },
+    );
+    return { outcome, calls };
+  }
+
+  it("repairs an empty body instead of ending the turn", async () => {
+    // ModelError(reason=empty) is the largest failure bucket in
+    // production (Sentry CLI-2W/2X/2Z/5J/4R, ~500 events). An empty
+    // grammar body is exactly what the one-shot repair recovers for
+    // every other malformed completion.
+    const { outcome, calls } = await runGrammarStep([
+      "",
+      JSON.stringify([{ tool: "reply", args: { text: "recovered" } }]),
+    ]);
+    expect(calls).toBe(2);
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0]!.tool).toBe("reply");
+    expect(outcome.toolResults[0]!.status).toBe("ok");
+  });
+
+  it("still fails with ModelError when the repair is empty too", async () => {
+    await expect(runGrammarStep(["", ""])).rejects.toMatchObject({
+      name: "ModelError",
+      reason: "empty",
+    });
   });
 });
