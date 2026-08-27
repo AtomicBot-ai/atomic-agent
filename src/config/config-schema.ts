@@ -2133,13 +2133,40 @@ export function parseWebSearchFallback(
   return out;
 }
 
+/**
+ * Coerce a raw config value to a number for validation.
+ *
+ * A string must be a *complete* numeric literal. `Number.parseInt` stops at
+ * the first character it cannot read, so it turns `"1e3"` into `1`, `"60s"`
+ * into `60` and `"100_000"` into `100` — a typo silently becomes a valid
+ * setting. That is reachable from `config set <key> <value>`, where every
+ * value arrives as a string, so the whole token is checked here and anything
+ * that is not a clean integer literal is rejected as `NaN`.
+ */
+function coerceIntLike(raw: unknown): number {
+  if (typeof raw === "number") return raw;
+  if (typeof raw !== "string") return NaN;
+  const text = raw.trim();
+  return /^[+-]?\d+$/.test(text) ? Number(text) : NaN;
+}
+
+/**
+ * The float counterpart of {@link coerceIntLike}. Accepts the forms JSON
+ * does — `1.5`, `-0.25`, `1e3` — and rejects trailing garbage like
+ * `"0.85xyz"` or a second dot, which `Number.parseFloat` would truncate.
+ */
+function coerceFloatLike(raw: unknown): number {
+  if (typeof raw === "number") return raw;
+  if (typeof raw !== "string") return NaN;
+  const text = raw.trim();
+  if (text.length === 0) return NaN;
+  return /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(text)
+    ? Number(text)
+    : NaN;
+}
+
 export function parsePositiveInt(raw: unknown, field: string): number {
-  const value =
-    typeof raw === "number"
-      ? raw
-      : typeof raw === "string"
-        ? Number.parseInt(raw, 10)
-        : NaN;
+  const value = coerceIntLike(raw);
   if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
     throw new ConfigValidationError(
       field,
@@ -2177,12 +2204,7 @@ export function parseBoundedPositiveInt(
  * accept `0` as "feature disabled", e.g. `memory.reflection.maxNotesPerCall`.
  */
 export function parseNonNegativeInt(raw: unknown, field: string): number {
-  const value =
-    typeof raw === "number"
-      ? raw
-      : typeof raw === "string"
-        ? Number.parseInt(raw, 10)
-        : NaN;
+  const value = coerceIntLike(raw);
   if (!Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
     throw new ConfigValidationError(
       field,
@@ -2222,12 +2244,7 @@ export function parseNonNegativeBoundedInt(
  * re-deriving the clamp.
  */
 export function parseUnitInterval(raw: unknown, field: string): number {
-  const value =
-    typeof raw === "number"
-      ? raw
-      : typeof raw === "string"
-        ? Number.parseFloat(raw)
-        : NaN;
+  const value = coerceFloatLike(raw);
   if (!Number.isFinite(value) || value < 0 || value > 1) {
     throw new ConfigValidationError(
       field,
@@ -2248,12 +2265,7 @@ export function parseHalfOpenUnitInterval(
   raw: unknown,
   field: string,
 ): number {
-  const value =
-    typeof raw === "number"
-      ? raw
-      : typeof raw === "string"
-        ? Number.parseFloat(raw)
-        : NaN;
+  const value = coerceFloatLike(raw);
   if (!Number.isFinite(value) || value <= 0 || value > 1) {
     throw new ConfigValidationError(
       field,
