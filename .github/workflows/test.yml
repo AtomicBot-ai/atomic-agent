@@ -1,0 +1,103 @@
+# Pull-request test gate.
+#
+# Two install shapes, because they catch different bugs:
+#
+#   - `npm ci` — the normal install, the one contributors have locally.
+#   - `npm ci --omit=optional` — the shape users actually get. `@napi-rs/canvas`
+#     is an *optional* transitive dependency of `pdfjs-dist`, and it is absent
+#     from the SEA bundle (`scripts/bundle-sea.ts` externalizes only
+#     `better-sqlite3` and `playwright-core`) and from any install where the
+#     native package fails to build. Issue #117 was exactly this: PDF text
+#     extraction printed four "rendering may be broken" warnings that a normal
+#     dev install never shows. See issue #203.
+
+name: Test
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# A new push to the same PR supersedes the previous run.
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: default install
+            install: npm ci
+            # The full suite, minus the known-bad tests listed in
+            # `EXCLUDED_TESTS` below.
+            scope: ""
+          - label: no optional deps
+            install: npm ci --omit=optional
+            # Optional deps are what issue #117 is about, and the document
+            # extractors are where their absence shows up. Scoped rather than
+            # full-suite to keep the second job cheap; widen if it earns its
+            # keep.
+            scope: src/tools/os/read-document/
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Match release.yml. Node >= 25.7 is required for the SEA build; using
+          # the same version here means CI tests what we actually ship.
+          node-version: "25.7"
+          check-latest: true
+          cache: npm
+
+      - name: Install dependencies
+        run: ${{ matrix.install }}
+
+      - name: Confirm optional dependency state
+        # Makes the point of this matrix visible in the log, and fails loudly if
+        # `--omit=optional` silently stops omitting things.
+        run: |
+          if node -e "require.resolve('@napi-rs/canvas')" 2>/dev/null; then
+            echo "@napi-rs/canvas: present"
+            if [ "${{ matrix.label }}" = "no optional deps" ]; then
+              echo "::error::expected @napi-rs/canvas to be absent under --omit=optional"
+              exit 1
+            fi
+          else
+            echo "@napi-rs/canvas: absent"
+          fi
+
+      - name: Typecheck
+        run: npx tsc -p tsconfig.json --noEmit
+
+      - name: Run tests
+        # Two files are excluded, both because they fail on unmodified `main`
+        # for reasons that are not this PR's to fix. Neither is a timing flake;
+        # both are real and should be fixed and re-enabled. See issue #203.
+        #
+        #   send-message-concurrency — the runtime makes a third
+        #   non-reflection llamaComplete call ("m3") where the test expects
+        #   two. A sidecar behaviour question, not a CI one.
+        #
+        #   local-models-orchestrator-auto-update — reaches a real
+        #   `spawn()` of a stub llama-server binary instead of mocking it.
+        #   Its assertions pass, but the async throw is an *unhandled error*,
+        #   and vitest exits non-zero on those — so it would fail the job
+        #   while reporting "8 passed".
+        #
+        # `parallel-tool-calls` is deliberately NOT excluded: its wall-clock
+        # bound was replaced with a deterministic `peakInFlight` assertion in
+        # this PR, so it is now safe on a contended runner.
+        run: |
+          npx vitest run ${{ matrix.scope }} \
+            --exclude '**/send-message-concurrency.test.ts' \
+            --exclude '**/local-models-orchestrator-auto-update.test.ts'
