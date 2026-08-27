@@ -90,6 +90,16 @@ const SAFE_IDENTIFIER_RE = /^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,63}$/;
 
 const MAX_FRAMES = 30;
 
+/**
+ * Enum shape for an errno-style code. A value that does not match could
+ * be freeform text (and therefore user data), so it is dropped rather
+ * than sent.
+ */
+const SAFE_CODE_RE = /^[A-Z][A-Z0-9_]*$/;
+
+/** Depth cap on every `cause` walk in this module — longer is a cycle. */
+const MAX_CAUSE_DEPTH = 5;
+
 // `    at fn (/abs/path/file.js:12:34)` or `    at /abs/path/file.js:12:34`
 const FRAME_RE = /^\s*at (?:(.+?) \()?(.+?):(\d+):(\d+)\)?\s*$/;
 
@@ -139,18 +149,44 @@ export function sanitizeStack(stack: string | undefined): SentryStackFrame[] {
   return frames;
 }
 
-/** Extract only safe, enum-like scalar codes from an error. */
+/**
+ * Extract only safe, enum-like scalar codes from an error.
+ *
+ * The walk continues into `err.cause` because the error that reaches
+ * this function is usually a wrapper: `TransportError` carries no status
+ * of its own on the network path, and `GrammarError` carries none at all
+ * — the HTTP status lives on the `LlamaServerError` underneath, and the
+ * errno one level below that. Reading only the top object is why the
+ * largest issue in error reporting has neither an `http_status` nor a
+ * `code` tag on a single event.
+ *
+ * Each field is taken from the outermost link that has it, so a wrapper
+ * that DOES carry a status still wins over its cause.
+ */
 export function extractSafeCode(err: unknown): {
   httpStatus?: number;
   code?: string;
 } {
-  if (typeof err !== "object" || err === null) return {};
   const out: { httpStatus?: number; code?: string } = {};
-  const status = (err as { status?: unknown }).status;
-  if (typeof status === "number") out.httpStatus = status;
-  const code = (err as { code?: unknown }).code;
-  if (typeof code === "string" && /^[A-Z][A-Z0-9_]*$/.test(code)) {
-    out.code = code;
+  let current: unknown = err;
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth += 1) {
+    if (typeof current !== "object" || current === null) break;
+    const status = (current as { status?: unknown }).status;
+    if (out.httpStatus === undefined && typeof status === "number") {
+      out.httpStatus = status;
+    }
+    const code = (current as { code?: unknown }).code;
+    if (
+      out.code === undefined &&
+      typeof code === "string" &&
+      SAFE_CODE_RE.test(code)
+    ) {
+      out.code = code;
+    }
+    if (out.httpStatus !== undefined && out.code !== undefined) break;
+    const next = (current as { cause?: unknown }).cause;
+    if (next === current) break;
+    current = next;
   }
   return out;
 }
