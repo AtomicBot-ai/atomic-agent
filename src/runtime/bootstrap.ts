@@ -743,7 +743,60 @@ export async function createAgentRuntime(
         logger,
       })
     : null;
+  /**
+   * Trace recorders keyed by session id, bounded so a long-lived runtime
+   * that serves many sessions (sidecar, HTTP server, background tasks)
+   * cannot grow this map without limit.
+   *
+   * `Map` preserves *insertion* order, which is not the same as recency:
+   * re-reading a key does not move it. Evicting `keys().next()` therefore
+   * targets the oldest-*created* session, which in a long-lived runtime is
+   * usually the operator's own still-running one. `touchRecorder` re-inserts
+   * on every access so the order really is least-recently-used, and
+   * `dropRecorder` removes a session's recorder when the session itself goes
+   * away — cheaper and more correct than waiting for the cap to push it out.
+   *
+   * Eviction is not free: `beginSession` is written to run once per NDJSON
+   * file, so re-creating an evicted recorder appends a second
+   * `session_started` and restarts `seq` at 0 in a file that already has
+   * events. Anything sorting or de-duplicating by `seq` then mis-orders.
+   * That is why an actively-running session is never evicted.
+   */
+  const MAX_TRACE_RECORDERS = 64;
   const recorders = new Map<string, TraceRecorder>();
+  /** Sessions with a turn in flight. Never evicted; see `evictRecorders`. */
+  const activeTraceSessions = new Set<string>();
+
+  /** Look a recorder up and mark it most-recently-used. */
+  const touchRecorder = (sessionId: string): TraceRecorder | undefined => {
+    const recorder = recorders.get(sessionId);
+    if (recorder !== undefined) {
+      recorders.delete(sessionId);
+      recorders.set(sessionId, recorder);
+    }
+    return recorder;
+  };
+
+  /** Forget a session's recorder once the session is gone. */
+  const dropRecorder = (sessionId: string): void => {
+    recorders.delete(sessionId);
+    activeTraceSessions.delete(sessionId);
+  };
+
+  /**
+   * Trim to the cap, oldest-used first, skipping sessions with a live turn.
+   * If every entry is active the map is briefly allowed over the cap: losing
+   * a running session's trace is worse than holding a few extra recorders,
+   * and the excess drains as those turns finish.
+   */
+  const evictRecorders = (): void => {
+    if (recorders.size <= MAX_TRACE_RECORDERS) return;
+    for (const sessionId of [...recorders.keys()]) {
+      if (recorders.size <= MAX_TRACE_RECORDERS) break;
+      if (activeTraceSessions.has(sessionId)) continue;
+      recorders.delete(sessionId);
+    }
+  };
   /**
    * Per-turn context used to route `loopDeps.onEvent` calls back to
    * the correct session. Two sessions running concurrently each have
@@ -774,7 +827,7 @@ export async function createAgentRuntime(
   const emitAgentLoopEvent = (event: AgentLoopEvent): void => {
     const ctx = turnContext.getStore();
     if (ctx) {
-      const recorder = recorders.get(ctx.sessionId);
+      const recorder = touchRecorder(ctx.sessionId);
       recorder?.onAgentEvent(event);
       turnController.emit(ctx.sessionId, event);
     }
@@ -1119,6 +1172,15 @@ export async function createAgentRuntime(
   // column-only `listRecentWorkingDirs` projection, so the store must
   // exist by the time `registerOsTools` wires the closure below.
   const sessionStore = new SessionStore();
+  // Drop a session's trace recorder when the session itself is deleted, so
+  // the map shrinks on teardown instead of relying on the cap to push
+  // entries out. Wrapped here rather than at each call site (the TUI and the
+  // HTTP route both delete sessions) so every caller gets it.
+  const deleteSession = sessionStore.delete.bind(sessionStore);
+  sessionStore.delete = (id: string): void => {
+    dropRecorder(id);
+    deleteSession(id);
+  };
 
   const toolRegistry = new ToolRegistry();
   toolRegistry.register(finishTool);
@@ -1533,7 +1595,7 @@ export async function createAgentRuntime(
     // `turn_finished`, so a missing recorder is a normal "tracing
     // disabled for this session" outcome, not an error.
     emitTrace: (event: ReflectionTraceEvent) => {
-      const recorder = recorders.get(event.sessionId);
+      const recorder = touchRecorder(event.sessionId);
       if (!recorder) return;
       recorder.recordReflection({
         outcome: event.outcome,
@@ -1601,7 +1663,7 @@ export async function createAgentRuntime(
       // Per-session trace emission — same resolve-by-sessionId
       // pattern as reflection / vote.
       emitTrace: (event) => {
-        const recorder = recorders.get(event.sessionId);
+        const recorder = touchRecorder(event.sessionId);
         if (!recorder) return;
         recorder.recordLinkGenerator({
           outcome: event.outcome,
@@ -1676,7 +1738,7 @@ export async function createAgentRuntime(
       // recorder is a normal "tracing disabled for this session"
       // outcome, not an error.
       emitTrace: (event) => {
-        const recorder = recorders.get(event.sessionId);
+        const recorder = touchRecorder(event.sessionId);
         if (!recorder) return;
         if (event.type === "applied") {
           recorder.recordVoteApplied({
@@ -1828,7 +1890,7 @@ export async function createAgentRuntime(
       // not exist yet on the very first turn; a missing recorder is a
       // normal "tracing disabled" outcome.
       emitTrace: (event) => {
-        const recorder = recorders.get(event.sessionId);
+        const recorder = touchRecorder(event.sessionId);
         if (!recorder) return;
         recorder.recordQueryRewriter({ outcome: event.outcome });
       },
@@ -2141,7 +2203,7 @@ export async function createAgentRuntime(
 
   const ensureRecorder = (session: SessionState): TraceRecorder | null => {
     if (!traceBus) return null;
-    const existing = recorders.get(session.id);
+    const existing = touchRecorder(session.id);
     if (existing) return existing;
     const recorder = createTraceRecorder({
       sessionId: session.id,
@@ -2152,6 +2214,7 @@ export async function createAgentRuntime(
       ...(session.metadata ? { metadata: session.metadata } : {}),
     });
     recorders.set(session.id, recorder);
+    evictRecorders();
     return recorder;
   };
 
@@ -2174,14 +2237,27 @@ export async function createAgentRuntime(
     runOptions: { maxSteps?: number; signal?: AbortSignal } = {},
   ): Promise<RunTurnResult> => {
     ensureRecorder(session);
+    // Pin this session for the duration of the turn. Without it a burst of
+    // new sessions can push this one's recorder out mid-turn, after which
+    // `emitAgentLoopEvent`'s `recorders.get(...)?.` silently drops every
+    // remaining event of the turn and any tool call whose `pendingCalls`
+    // entry went with it is logged with empty args.
+    activeTraceSessions.add(session.id);
     return turnContext.run({ sessionId: session.id }, async () => {
-      const result = await loop.runTurn(session, {
-        userMessage,
-        maxSteps: runOptions.maxSteps ?? config.agent.maxSteps,
-        signal: runOptions.signal ?? new AbortController().signal,
-      });
-      sessionStore.save(result.session);
-      return result;
+      try {
+        const result = await loop.runTurn(session, {
+          userMessage,
+          maxSteps: runOptions.maxSteps ?? config.agent.maxSteps,
+          signal: runOptions.signal ?? new AbortController().signal,
+        });
+        sessionStore.save(result.session);
+        return result;
+      } finally {
+        activeTraceSessions.delete(session.id);
+        // The turn may have out-waited a burst that could not evict while it
+        // was pinned; settle the map now that it can.
+        evictRecorders();
+      }
     });
   };
 

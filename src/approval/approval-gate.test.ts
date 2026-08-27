@@ -452,3 +452,91 @@ describe("ApprovalGate", () => {
     expect(canGrantShape(httpReq)).toBe(false);
   });
 });
+
+// Regression: issue #121 — `request()` subscribed to the caller's abort
+// signal with `{ once: true }` and never detached. `once` only removes the
+// listener when the event actually fires, and on the normal approve/deny
+// path it never does. The signal is the turn-lifetime one threaded into
+// every gated tool, so a turn with N gated calls left N listeners (each
+// closing over its request, including the shell command preview) attached
+// until the whole turn was torn down.
+describe("ApprovalGate abort-listener lifecycle (issue #121)", () => {
+  /** An AbortSignal wrapper that counts currently-attached listeners. */
+  function countingSignal(): { signal: AbortSignal; live: () => number; abort: () => void } {
+    const controller = new AbortController();
+    const real = controller.signal;
+    let live = 0;
+    const proxy = {
+      get aborted() {
+        return real.aborted;
+      },
+      addEventListener(type: string, fn: EventListener, opts?: AddEventListenerOptions) {
+        live += 1;
+        real.addEventListener(type, fn, opts);
+      },
+      removeEventListener(type: string, fn: EventListener) {
+        live -= 1;
+        real.removeEventListener(type, fn);
+      },
+    } as unknown as AbortSignal;
+    return { signal: proxy, live: () => live, abort: () => controller.abort() };
+  }
+
+  it("detaches the abort listener after an approval, across many calls on one signal", async () => {
+    const { signal, live } = countingSignal();
+    const gate = new ApprovalGate({
+      emit: (req) =>
+        setImmediate(() => gate.resolve({ approvalId: req.approvalId, approved: true })),
+    });
+    // One turn-lifetime signal, many gated tool calls.
+    for (let i = 0; i < 20; i += 1) {
+      const decision = await gate.request(
+        { sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r", preview: `cmd ${i}` },
+        { signal },
+      );
+      expect(decision.approved).toBe(true);
+    }
+    expect(live()).toBe(0);
+    expect(gate.pendingCount()).toBe(0);
+  });
+
+  it("detaches the abort listener after a denial too", async () => {
+    const { signal, live } = countingSignal();
+    const gate = new ApprovalGate({
+      emit: (req) => setImmediate(() => gate.reject(req.approvalId, "nope")),
+    });
+    for (let i = 0; i < 5; i += 1) {
+      const decision = await gate.request(
+        { sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r" },
+        { signal },
+      );
+      expect(decision.approved).toBe(false);
+    }
+    expect(live()).toBe(0);
+  });
+
+  it("still rejects when the signal aborts while a request is pending", async () => {
+    const { signal, abort } = countingSignal();
+    const gate = new ApprovalGate({ emit: () => setImmediate(abort) });
+    await expect(
+      gate.request(
+        { sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r" },
+        { signal },
+      ),
+    ).rejects.toThrow(/aborted/);
+    expect(gate.pendingCount()).toBe(0);
+  });
+
+  it("rejects immediately when handed an already-aborted signal", async () => {
+    const { signal, abort } = countingSignal();
+    abort();
+    const gate = new ApprovalGate({ emit: () => {} });
+    await expect(
+      gate.request(
+        { sessionId: "s", tool: "os.shell.run", category: "shell", reason: "r" },
+        { signal },
+      ),
+    ).rejects.toThrow(/aborted/);
+    expect(gate.pendingCount()).toBe(0);
+  });
+});

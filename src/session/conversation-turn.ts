@@ -257,10 +257,9 @@ export function packConversation(
   // fresh (e.g. `os.http.request`) get under-estimated and the packed
   // section overshoots `maxTokens`.
   const currentStart = findCurrentMacroTurnStart(turns);
-  const rendered = turns.map((turn, i) =>
-    renderTurnForPrompt(turn, { inCurrentMacroTurn: i >= currentStart }),
+  const tokenCosts = turns.map((turn, i) =>
+    tokenCostForTurn(turn, i >= currentStart),
   );
-  const tokenCosts = rendered.map((line) => estimateTokens(line) + 1);
   const total = tokenCosts.reduce((a, b) => a + b, 0);
   if (total <= maxTokens) {
     return { visibleTurns: [...turns], droppedSummary: null, droppedCount: 0 };
@@ -303,6 +302,42 @@ export function packConversation(
     droppedSummary: renderDroppedSummary(droppedSlice),
     droppedCount: droppedSlice.length,
   };
+}
+
+/**
+ * Memoised token cost of a single rendered turn.
+ *
+ * `packConversation` runs once per agent step and previously re-rendered
+ * (and re-`JSON.stringify`-ed) every historical turn on each call, only to
+ * throw the strings away after summing their token cost — O(N) work per
+ * step, so O(N^2) transient allocation across a long turn. Issue #121
+ * reported ~10MB of churn for a 25-step turn.
+ *
+ * Turns are immutable once appended, so the cost is keyed on the turn
+ * object itself. `inCurrentMacroTurn` changes what the renderer emits for
+ * fresh-bypass tools (`os.http.request`, fresh `gog` shell), so it is part
+ * of the key rather than folded away. The `WeakMap` lets dropped turns be
+ * collected with the sessions that own them.
+ */
+const TURN_TOKEN_COST_CACHE = new WeakMap<
+  object,
+  { fresh?: number; aged?: number }
+>();
+
+function tokenCostForTurn(
+  turn: ConversationTurn,
+  inCurrentMacroTurn: boolean,
+): number {
+  const key = turn as unknown as object;
+  const slot = TURN_TOKEN_COST_CACHE.get(key);
+  const cached = inCurrentMacroTurn ? slot?.fresh : slot?.aged;
+  if (cached !== undefined) return cached;
+  const cost = estimateTokens(renderTurnForPrompt(turn, { inCurrentMacroTurn })) + 1;
+  const nextSlot = slot ?? {};
+  if (inCurrentMacroTurn) nextSlot.fresh = cost;
+  else nextSlot.aged = cost;
+  TURN_TOKEN_COST_CACHE.set(key, nextSlot);
+  return cost;
 }
 
 /**
