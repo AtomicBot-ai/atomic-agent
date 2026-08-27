@@ -163,6 +163,10 @@ export function reduceUiAction(
       };
     case "queue_changed":
       return { ...state, queuedMessages: [...action.queued] };
+    case "plan_handoff_dismissed":
+      // Mode untouched: dismissing a plan is declining this one, not
+      // leaving the mode you are planning in.
+      return state.planHandoff ? { ...state, planHandoff: false } : state;
     case "coding_mode_menu_opened": {
       // Seeded on the mode in force, so the first thing under the cursor
       // is the row you are already on — the menu opens as a statement of

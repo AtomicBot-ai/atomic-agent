@@ -1842,7 +1842,13 @@ export function TuiApp({
                 width={mainColumnWidth}
               />
               {state.planHandoff ? (
-                <PlanHandoff onExecute={executePlan} width={mainColumnWidth} />
+                <PlanHandoff
+                  onExecute={executePlan}
+                  onDismiss={() =>
+                    dispatch({ type: "plan_handoff_dismissed" })
+                  }
+                  width={mainColumnWidth}
+                />
               ) : null}
               {/*
                 The composer holds exactly this slot in the flex column

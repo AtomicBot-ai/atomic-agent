@@ -45,24 +45,46 @@ function label(view: ContextUsageView): string {
 
 describe("ContextChip", () => {
   /**
-   * The bar and the numbers are the same quantity: how full the
-   * transcript is against the ceiling it gets packed to. Gauging the
-   * prompt against the model's window instead would sit at 1% all
-   * session on this model and never say anything.
+   * The bar and the numbers are the same quantity: how full the model's
+   * real context window is.
+   *
+   * It used to gauge the transcript against the packer's own ceiling,
+   * which is a real number and the wrong one to lead with. That ceiling
+   * is internal, it moves for reasons the operator did not cause, and it
+   * answers neither of the questions actually being asked at the
+   * composer — is there room for what I am about to send, and has
+   * anything already been forgotten?
    */
-  it("gauges the transcript against its cap, and prints both", () => {
-    expect(label(usage())).toBe(" context [==      ]   6.4k/32k cap");
+  it("gauges the prompt against the model's window, and prints both", () => {
+    expect(label(usage())).toBe(" context [        ]      14.1k/1M");
   });
 
-  it("says `cap` only where the number could be mistaken for the window", () => {
-    // The word exists to stop `6.4k/32k` reading as a 32k context
-    // window, which is what it read as for anyone who had set their own
-    // `-c`. Where the window itself is what binds — or where the
-    // operator switched the ceiling off — the number *is* the window's
-    // remainder and the disclaimer would be noise.
-    expect(label(usage({ capSource: "window" }))).not.toContain("cap");
-    expect(label(usage({ capSource: "auto" }))).not.toContain("cap");
-    expect(label(usage({ capSource: "floor" }))).not.toContain("cap");
+  it("fills as the window fills", () => {
+    expect(label(usage({ percent: 0 }))).toContain("[        ]");
+    expect(label(usage({ percent: 50 }))).toContain("[====    ]");
+    expect(label(usage({ percent: 100 }))).toContain("[========]");
+  });
+
+  /**
+   * The whole point of the change. Dropped turns are the moment the
+   * agent stops knowing things it knew a minute ago and the answers
+   * quietly start getting worse — so the chip says it in words. A
+   * colour alone was never going to carry that.
+   */
+  it("says out loud when history has been dropped", () => {
+    expect(label(usage({ droppedTurns: 3 }))).toContain("3 lost");
+    expect(label(usage())).not.toContain("lost");
+  });
+
+  it("counts the loss even with nothing else to gauge", () => {
+    const bare = usage({
+      contextWindow: null,
+      percent: null,
+      conversationCap: null,
+      conversationPercent: null,
+      droppedTurns: 2,
+    });
+    expect(label(bare)).toContain("2 lost");
   });
 
   /**
@@ -72,41 +94,34 @@ describe("ContextChip", () => {
    */
   it("holds a steady width as the numbers grow", () => {
     const widths = new Set(
-      [90, 6400, 31_900].map(
-        (conversationTokens) => label(usage({ conversationTokens })).length,
-      ),
+      [90, 6400, 31_900].map((tokens) => label(usage({ tokens })).length),
     );
     expect(widths.size).toBe(1);
   });
 
-  it("fills as the transcript approaches the cap", () => {
-    expect(label(usage({ conversationPercent: 0 }))).toContain("[        ]");
-    expect(label(usage({ conversationPercent: 50 }))).toContain("[====    ]");
-    expect(label(usage({ conversationPercent: 100 }))).toContain("[========]");
-  });
-
   /**
-   * An unknown *window* no longer costs the bar anything — the cap is
-   * on every built prompt either way. Only a session with no cap at all
-   * falls back to the bare total.
+   * With no window published there is no honest scale for it, so the
+   * transcript's own cap is the only one left — and it is labelled, so
+   * the number cannot be mistaken for a window.
    */
-  it("still gauges when the model's window is unknown", () => {
+  it("falls back to the transcript cap when the window is unknown", () => {
     expect(label(usage({ percent: null, contextWindow: null }))).toBe(
-      " context [==      ]   6.4k/32k cap",
+      " context [==      ]      6.4k/32k cap",
     );
   });
 
-  it("shows the raw count, and no gauge, when no cap is known", () => {
+  it("shows the raw count when there is no scale at all", () => {
     expect(
       label(
-        usage({ conversationCap: null, conversationPercent: null, tokens: 34_812 }),
+        usage({
+          contextWindow: null,
+          percent: null,
+          conversationCap: null,
+          conversationPercent: null,
+          tokens: 34_812,
+        }),
       ),
     ).toBe(" context 34.8k");
-    expect(
-      label(
-        usage({ conversationCap: null, conversationPercent: null, tokens: 812 }),
-      ),
-    ).toBe(" context 812");
   });
 });
 
@@ -115,8 +130,8 @@ describe("the chip's ground", () => {
     setActiveTheme(THEMES["classic-dark"]);
     const ground = theme.colors.railBackground;
     const accent = theme.colors.accent;
-    const at = (conversationPercent: number): string =>
-      groundFor(usage({ conversationPercent }));
+    // The ramp follows the bar, and the bar follows the window now.
+    const at = (percent: number): string => groundFor(usage({ percent }));
     expect(at(32)).toBe(mixColor(accent, ground, 0.6));
     expect(at(33)).toBe(mixColor(accent, ground, 0.3));
     expect(at(65)).toBe(mixColor(accent, ground, 0.3));

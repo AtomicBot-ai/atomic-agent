@@ -31,7 +31,7 @@ function stateWith(overrides: Partial<TuiState> = {}): TuiState {
 function frame(width = 76): string {
   const { lastFrame, unmount } = render(
     <Box width={width}>
-      <PlanHandoff onExecute={() => {}} width={width} />
+      <PlanHandoff onExecute={() => {}} onDismiss={() => {}} width={width} />
     </Box>,
   );
   const out = (lastFrame() ?? "").replace(/\[[0-9;]*m/g, "");
@@ -58,24 +58,32 @@ describe("the plan hand-off bar", () => {
   });
 
   it("says that typing is still an option", () => {
-    // The third choice, and the one two execute buttons would hide.
     expect(frame()).toContain("type below to change the plan");
   });
 
+  it("offers a way to decline the plan outright", () => {
+    // The bar had two buttons and a sentence, and the sentence carried
+    // the whole of the third option — which made "I do not want this
+    // plan" the only choice with no control attached to it. Typing
+    // revises a plan; it is not how you drop one.
+    expect(frame()).toContain("dismiss plan");
+  });
+
   it("stacks rather than truncating a verb that starts work", () => {
-    const narrow = frame(50).split("\n");
+    const narrow = frame(60).split("\n");
     expect(narrow.some((l) => l.includes("run it · auto"))).toBe(true);
     expect(
       narrow.some((l) => l.includes("run it · bypass permissions")),
       "the bypass button kept its full label",
     ).toBe(true);
+    expect(narrow.some((l) => l.includes("dismiss plan"))).toBe(true);
   });
 
   it("hands the chosen mode to its caller", () => {
     const onExecute = vi.fn<(mode: CodingMode) => void>();
     const { unmount } = render(
       <Box width={76}>
-        <PlanHandoff onExecute={onExecute} width={76} />
+        <PlanHandoff onExecute={onExecute} onDismiss={() => {}} width={76} />
       </Box>,
     );
     // No mouse provider here, so the faces render without targets — the
@@ -141,5 +149,26 @@ describe("when the offer appears", () => {
       mode: "plan",
     });
     expect((next ?? showing).planHandoff).toBe(true);
+  });
+});
+
+describe("dismissing a plan", () => {
+  it("puts the bar away", () => {
+    const showing = stateWith({ codingMode: "plan", planHandoff: true });
+    const next = reduceUiAction(showing, { type: "plan_handoff_dismissed" });
+    expect(next?.planHandoff).toBe(false);
+  });
+
+  it("leaves the mode alone", () => {
+    // Declining this plan is not leaving the mode you are planning in.
+    const showing = stateWith({ codingMode: "plan", planHandoff: true });
+    const next = reduceUiAction(showing, { type: "plan_handoff_dismissed" });
+    expect(next?.codingMode).toBe("plan");
+  });
+
+  it("is inert when no plan is on offer", () => {
+    const idle = stateWith({ codingMode: "plan", planHandoff: false });
+    const next = reduceUiAction(idle, { type: "plan_handoff_dismissed" });
+    expect((next ?? idle).planHandoff).toBe(false);
   });
 });

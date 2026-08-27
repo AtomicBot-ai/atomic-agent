@@ -82,19 +82,7 @@ export function ContextChip({
   layer?: number;
 }): ReactElement {
   const background = groundFor(usage);
-  const label =
-    usage.conversationCap === null || usage.conversationPercent === null
-      ? // No prompt has set a cap yet (or it came back as zero). The
-        // total is still worth showing — it is the only number that says
-        // whether this session is big — but a gauge drawn against a
-        // scale nobody stated would be a fabrication.
-        ` context ${formatTokens(usage.tokens)} `
-      : ` context [${renderProgressBar(
-          usage.conversationPercent,
-          GAUGE_WIDTH,
-        )}] ${pair(usage.conversationTokens, usage.conversationCap)}${capSuffix(
-          usage,
-        )} `;
+  const label = ` context ${chipBody(usage)} `;
   const chip = (
     <Text backgroundColor={background} color={readableOn(background)} bold>
       {label}
@@ -120,39 +108,60 @@ export function ContextChip({
   );
 }
 
+/**
+ * What the chip prints after the word `context`.
+ *
+ * The window first, whenever anything knows it. The gauge used to
+ * measure the *transcript against its own cap*, which is a real number
+ * and the wrong one to lead with: it is a budget internal to the
+ * packer, it moves for reasons the operator did not cause, and it says
+ * nothing about the question actually being asked at the composer —
+ * *is there room for what I am about to send, and has anything already
+ * been forgotten?*
+ *
+ * So: `39.9k/48k`, prompt against the model's real window, gauged.
+ * Where turns have already been dropped the chip says so in words,
+ * because that is the moment the agent stops knowing things it knew a
+ * minute ago and the answers start quietly getting worse. A colour
+ * alone was never going to carry that.
+ *
+ * With no window known — a cloud model nobody published a length for —
+ * it falls back to the transcript gauge, which is the only scale that
+ * still exists. A bar drawn against a window nobody knows would be a
+ * fabrication.
+ */
+export function chipBody(usage: ContextUsageView): string {
+  const lost = usage.droppedTurns > 0 ? ` · ${usage.droppedTurns} lost` : "";
+  if (usage.contextWindow !== null && usage.percent !== null) {
+    return `[${renderProgressBar(usage.percent, GAUGE_WIDTH)}] ${pair(
+      usage.tokens,
+      usage.contextWindow,
+    )}${lost}`;
+  }
+  if (usage.conversationCap === null || usage.conversationPercent === null) {
+    // Nothing has set a scale yet. The total is still worth showing — it
+    // is the only number that says whether this session is big.
+    return `${formatTokens(usage.tokens)}${lost}`;
+  }
+  return `[${renderProgressBar(
+    usage.conversationPercent,
+    GAUGE_WIDTH,
+  )}] ${pair(usage.conversationTokens, usage.conversationCap)} cap${lost}`;
+}
+
 /** The chip's ground: three steps of accent, then violet once trimmed. */
 export function groundFor(usage: ContextUsageView): string {
   if (usage.droppedTurns > 0) return theme.colors.accentAlt;
   const ground = theme.colors.railBackground;
   const accent = theme.colors.accent;
-  // The ramp follows the same number the bar does: how close the
-  // transcript is to being trimmed. Unknown fill sits at the quiet end —
-  // that is a readout of a session which has barely started, not a
-  // warning about one that has not.
-  const fill = usage.conversationPercent;
+  // The ramp follows the same number the bar does — how full the window
+  // is — so the chip gets louder as room runs out. Unknown fill sits at
+  // the quiet end: that is a readout of a session which has barely
+  // started, not a warning about one that has not.
+  const fill = usage.percent ?? usage.conversationPercent;
   if (fill === null || fill < STEP_LOW) return mixColor(accent, ground, FADE_LOW);
   if (fill < STEP_MID) return mixColor(accent, ground, FADE_MID);
   return accent;
-}
-
-/**
- * One word for what the right-hand number *is*.
- *
- * Without it the chip reads `context 6.4k/32k`, and every operator who
- * has ever set a context size reads that second figure as the window.
- * It is not: it is the ceiling the transcript is packed to, which on a
- * default install is `agent.conversationMaxTokens` and has no
- * relationship to the window at all. Someone who starts `llama-server`
- * with `-c 48000` and then reads `/32k` off the composer concludes the
- * app ignored them — a conclusion this chip was, in fairness, doing
- * everything to invite.
- *
- * The word is spent only where it is load-bearing. When the window is
- * what binds, or when the operator has switched the ceiling off, the
- * number *is* the window's own remainder and needs no disclaimer.
- */
-function capSuffix(usage: ContextUsageView): string {
-  return usage.capSource === "config" ? " cap" : "";
 }
 
 /**
@@ -167,6 +176,13 @@ function pair(tokens: number, cap: number): string {
   return `${formatTokens(tokens)}/${formatTokens(cap)}`.padStart(PAIR_WIDTH);
 }
 
-/** Fits `999.9k/1.0M`; anything longer simply grows past it. */
-const PAIR_WIDTH = 10;
+/**
+ * Fits `115.3k/131.1k` — a full 128k window, which is the widest pair
+ * an ordinary session produces. It was 10 while the right-hand number
+ * was the transcript's own cap and never had a `k` on both sides;
+ * gauging the window put one there, and a field that was too short
+ * would let the pair grow a cell as the prompt crossed 100k and shove
+ * the whole gauge sideways mid-session.
+ */
+const PAIR_WIDTH = 13;
 
