@@ -10,6 +10,7 @@ import {
   resolveBackdropDismissal,
 } from "./backdrop-dismissal.js";
 import { CONVERSATION_CAP_AUTO } from "../prompt/token-budget.js";
+import { persistConversationMaxPairs } from "./persist-conversation-max-pairs.js";
 import { persistConversationMaxTokens } from "./persist-conversation-max-tokens.js";
 import { CodingModeChip } from "./components/coding-mode-chip.js";
 import { CodingModePopup } from "./components/coding-mode-popup.js";
@@ -1171,6 +1172,7 @@ export function TuiApp({
       setMenuLeaderArmed,
       activateMenuNode,
       onSetCapAuto: setConversationCapAuto,
+      onSetPairs: setConversationPairs,
       activateComposerSwitch,
       onPlanExecute: executePlan,
       onPlanDismiss: dismissPlan,
@@ -1555,6 +1557,28 @@ export function TuiApp({
     dispatch({ type: "context_panel_closed" });
   }, []);
 
+  /**
+   * Commit the task count the operator has been pricing in the panel.
+   *
+   * Says the new number back rather than staying silent: the change
+   * takes effect on the *next* prompt, so without a line in the
+   * transcript there is nothing on screen confirming it landed until
+   * the following turn.
+   */
+  const setConversationPairs = useCallback((pairs: number) => {
+    try {
+      persistConversationMaxPairs(pairs);
+      dispatch({
+        type: "system_message",
+        text: `history limit set to ${pairs} task${pairs === 1 ? "" : "s"} — it takes effect on your next message`,
+      });
+    } catch (err) {
+      dispatch({
+        type: "system_message",
+        text: `could not write the config: ${(err as Error).message}`,
+      });
+    }
+  }, []);
 
   const promptContextSlot = contextUsage ? (
     <ContextChip usage={contextUsage} layer={MOUSE_LAYER_PANEL} />
@@ -1769,6 +1793,7 @@ export function TuiApp({
                 }
                 reservedForReply={state.session.completionMaxTokens}
                 onSetAuto={setConversationCapAuto}
+                pairsDraft={state.contextPanelPairsDraft}
               />
             ) : null}
             <ComposerSwitchPopup

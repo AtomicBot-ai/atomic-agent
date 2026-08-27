@@ -7,7 +7,10 @@ import {
 } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
-import type { ContextUsageView } from "../select-context-usage.js";
+import {
+  projectTokensForPairs,
+  type ContextUsageView,
+} from "../select-context-usage.js";
 import { readableOn } from "../theme/readable-foreground.js";
 import { chromeTheme } from "../theme/theme.js";
 import { fitToWidth } from "./fit-to-width.js";
@@ -35,6 +38,11 @@ export interface ContextPanelProps {
    * nothing is worse than one that says it has nothing yet.
    */
   usage: ContextUsageView | null;
+  /**
+   * Task count the operator is pricing, if any. `null` renders what the
+   * last prompt actually did.
+   */
+  pairsDraft?: number | null;
   /** Rows available in the pane the panel floats over. */
   availableRows: number;
   /** Columns available in that pane. */
@@ -75,6 +83,7 @@ export function ContextPanel({
   availableColumns,
   reservedForReply,
   onSetAuto,
+  pairsDraft = null,
 }: ContextPanelProps): ReactElement {
   const width = Math.max(32, Math.min(PREFERRED_WIDTH, availableColumns - 2));
   const inner = width - 2;
@@ -140,6 +149,16 @@ export function ContextPanel({
       {transcriptLine(usage) === null ? null : (
         <Text color={chromeTheme.colors.railForeground}>
           {fitToWidth(transcriptLine(usage) as string, inner)}
+        </Text>
+      )}
+      {/*
+        The dial's answer. Only while a number is being tried — an
+        unchanging "at 20 tasks" line under the real one would be the
+        same measurement twice.
+      */}
+      {pairsDraft === null || usage.pairsCap <= 0 ? null : (
+        <Text color={chromeTheme.colors.railAccent} bold>
+          {projectionLine(usage, pairsDraft, inner)}
         </Text>
       )}
       {/*
@@ -236,9 +255,49 @@ function transcriptLine(usage: ContextUsageView): string | null {
   const cap = usage.conversationCap;
   if (cap === null) return null;
   const head = ` transcript`.padEnd(LABEL_WIDTH);
-  return `${head}${formatTokens(usage.conversationTokens)} of ${formatTokens(
-    cap,
-  )} before older turns go`;
+  // Tasks first when there is a task limit: it is the unit the operator
+  // set, so it is the unit the answer should come back in. The token
+  // figure stays because it is what the window actually charges.
+  const tokens = `${formatTokens(usage.conversationTokens)} of ${formatTokens(cap)}`;
+  // With a task limit in force the fraction of tasks *is* the answer to
+  // "how much before older go", so the trailing phrase is redundant —
+  // and both together do not fit the panel's width. Without one, the
+  // sentence is still the only thing that says what the number means.
+  return usage.pairsCap > 0
+    ? `${head}${usage.pairs} of ${usage.pairsCap} tasks · ${tokens}`
+    : `${head}${tokens} before older turns go`;
+}
+
+/**
+ * What the prompt would cost carrying `draft` tasks — the line that
+ * makes the dial worth having.
+ *
+ * Drawn against the model's window, because that is the number the
+ * operator is actually managing: the point of holding history down is to
+ * leave the model room to think, and a bar that filled against the task
+ * limit would read 100% while the window sat half empty.
+ */
+function projectionLine(
+  usage: ContextUsageView,
+  draft: number,
+  inner: number,
+): string {
+  const projected = projectTokensForPairs(usage, draft);
+  const head = ` at ${draft} task${draft === 1 ? "" : "s"}`.padEnd(LABEL_WIDTH);
+  if (usage.contextWindow === null) {
+    return fitToWidth(`${head}${formatTokens(projected)} · window unknown`, inner);
+  }
+  const percent = Math.min(
+    100,
+    Math.round((projected / usage.contextWindow) * 100),
+  );
+  const bar = renderProgressBar(percent, ROW_GAUGE);
+  return fitToWidth(
+    `${head}[${bar}] ${formatTokens(projected)}/${formatTokens(
+      usage.contextWindow,
+    )} · ${percent}%`,
+    inner,
+  );
 }
 
 /**
@@ -344,6 +403,10 @@ function capSentence(usage: ContextUsageView): string {
         : `capped by the model's ${window} window`;
     case "floor":
       return "window too small for this prompt";
+    case "pairs":
+      return `holding the last ${usage.pairsCap} task${
+        usage.pairsCap === 1 ? "" : "s"
+      } — press - / + to try another`;
     case "config":
       return "capped by your agent.conversationMaxTokens setting";
     default:
@@ -357,6 +420,11 @@ function capSentence(usage: ContextUsageView): string {
  * in the app.
  */
 function footer(usage: ContextUsageView): string {
+  if (usage.droppedPairs > 0) {
+    return `${usage.droppedPairs} earlier task${
+      usage.droppedPairs === 1 ? "" : "s"
+    } trimmed · enter to apply · esc to close`;
+  }
   if (usage.droppedTurns > 0) {
     return `${usage.droppedTurns} older turn${
       usage.droppedTurns === 1 ? "" : "s"

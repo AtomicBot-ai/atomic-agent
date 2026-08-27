@@ -24,7 +24,21 @@ export interface ContextUsageView {
   /** Transcript fill as a percentage of that cap. */
   conversationPercent: number | null;
   /** What holds the cap down — drives the panel's "capped by" line. */
-  capSource: "config" | "window" | "floor" | "auto" | null;
+  capSource: "config" | "window" | "floor" | "auto" | "pairs" | null;
+  /** Macro-turns the prompt carried. */
+  pairs: number;
+  /** `agent.conversationMaxPairs` in force. */
+  pairsCap: number;
+  /** Macro-turns dropped whole — the count that matters once the unit is tasks. */
+  droppedPairs: number;
+  /**
+   * Cost of each macro-turn, oldest first. Lets the panel price a
+   * different pair count with a prefix sum, so the dial moves the gauge
+   * immediately rather than a prompt build later.
+   */
+  pairCosts: readonly number[];
+  /** Fixed cost of everything that is not the transcript. */
+  overheadTokens: number;
   /**
    * Turns `packConversation` dropped to make the transcript fit. Any
    * non-zero value is the chip's violet state; the detail view spends
@@ -97,12 +111,39 @@ function resolveCapSource(
   cap: number | null,
   configured: number | null,
   auto: boolean,
+  boundBy: "pairs" | "tokens" | null,
 ): ContextUsageView["capSource"] {
   if (cap === null) return null;
+  // Above every token branch: when the operator's own task limit is what
+  // trimmed history, saying "capped by your conversationMaxTokens" sends
+  // them to a setting that would change nothing.
+  if (boundBy === "pairs") return "pairs";
   if (cap <= CONVERSATION_CAP_FLOOR) return "floor";
   if (auto) return "auto";
   if (configured !== null && cap < configured) return "window";
   return "config";
+}
+
+/**
+ * What the prompt would cost carrying `pairs` tasks instead of the
+ * current number.
+ *
+ * Everything outside the transcript is fixed for this turn, so the
+ * answer is that overhead plus the newest `pairs` entries of `pairCosts`
+ * — a prefix sum, no prompt build, no LLM call. The estimate is the same
+ * over-counting one the packer uses, so the projection and the next real
+ * gauge agree.
+ */
+export function projectTokensForPairs(
+  usage: ContextUsageView,
+  pairs: number,
+): number {
+  const wanted = Math.max(0, Math.min(pairs, usage.pairCosts.length));
+  let transcript = 0;
+  for (let i = usage.pairCosts.length - wanted; i < usage.pairCosts.length; i += 1) {
+    transcript += usage.pairCosts[i] ?? 0;
+  }
+  return usage.overheadTokens + transcript;
 }
 
 export function selectContextUsage(state: TuiState): ContextUsageView | null {
@@ -114,6 +155,11 @@ export function selectContextUsage(state: TuiState): ContextUsageView | null {
     conversationCap,
     conversationCapConfigured,
     conversationCapAuto,
+    conversationPairs,
+    conversationPairsCap,
+    conversationBoundBy,
+    droppedPairs,
+    pairCosts,
   } = state.contextUsage;
   // Nothing has been built yet: the chip stays off the bar rather than
   // showing a zero, which would claim the window is empty when what we
@@ -137,7 +183,13 @@ export function selectContextUsage(state: TuiState): ContextUsageView | null {
       conversationCap,
       conversationCapConfigured,
       conversationCapAuto,
+      conversationBoundBy,
     ),
+    pairs: conversationPairs,
+    pairsCap: conversationPairsCap,
+    droppedPairs,
+    pairCosts,
+    overheadTokens: Math.max(0, tokens - conversationTokens),
     droppedTurns,
     sections,
   };

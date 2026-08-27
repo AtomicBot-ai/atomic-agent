@@ -79,3 +79,75 @@ describe("handleContextPanelKey", () => {
     expect(run("x", key({ meta: true })).handled).toBe(false);
   });
 });
+
+/**
+ * The dial has to be safe to fiddle with: `-` and `+` only ever change
+ * what the panel is showing, and only Enter writes anything.
+ */
+describe("pricing a different task count", () => {
+  const withDraft = (draft: number | null): TuiState => ({
+    ...open(),
+    contextPanelPairsDraft: draft,
+    contextUsage: { ...open().contextUsage, conversationPairsCap: 20 },
+  });
+
+  it("moves the draft down and up", () => {
+    expect(run("-", key(), withDraft(null)).actions).toEqual([
+      { type: "context_pairs_draft_moved", delta: -1 },
+    ]);
+    expect(run("+", key(), withDraft(null)).actions).toEqual([
+      { type: "context_pairs_draft_moved", delta: 1 },
+    ]);
+  });
+
+  it("writes nothing while the operator is still choosing", () => {
+    let written: number | null = null;
+    handleContextPanelKey("-", key(), {
+      state: withDraft(null),
+      dispatch: () => {},
+      onSetPairs: (n) => {
+        written = n;
+      },
+    });
+    expect(written).toBeNull();
+  });
+
+  it("commits on enter and closes", () => {
+    let written: number | null = null;
+    const actions: TuiAction[] = [];
+    handleContextPanelKey("", key({ return: true }), {
+      state: withDraft(6),
+      dispatch: (a) => actions.push(a),
+      onSetPairs: (n) => {
+        written = n;
+      },
+    });
+    expect(written).toBe(6);
+    expect(actions).toEqual([{ type: "context_panel_closed" }]);
+  });
+
+  it("throws the draft away on esc", () => {
+    // What makes trying a number out free.
+    let written: number | null = null;
+    handleContextPanelKey("", key({ escape: true }), {
+      state: withDraft(3),
+      dispatch: () => {},
+      onSetPairs: (n) => {
+        written = n;
+      },
+    });
+    expect(written).toBeNull();
+  });
+
+  it("commits nothing on enter when no number was tried", () => {
+    let called = false;
+    handleContextPanelKey("", key({ return: true }), {
+      state: withDraft(null),
+      dispatch: () => {},
+      onSetPairs: () => {
+        called = true;
+      },
+    });
+    expect(called).toBe(false);
+  });
+});

@@ -409,6 +409,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     conversationPairs: packed.visiblePairs,
     droppedPairs: packed.droppedPairs,
     conversationPairsCap: conversationMaxPairs,
+    conversationBoundBy: packed.boundBy,
     pairCosts: pairTokenCosts(
       input.session.turns,
       input.session.macroTurnStarts,

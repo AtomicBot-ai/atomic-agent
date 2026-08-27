@@ -117,6 +117,12 @@ export interface AppKeyContext {
    * bind the key.
    */
   onSetCapAuto?: () => void;
+  /**
+   * Commits the task count being priced in the context panel. Same
+   * shape and same reason as `onSetCapAuto`: the work is a config write,
+   * and the reducer stays pure.
+   */
+  onSetPairs?: (pairs: number) => void;
   /** Run the row picked in one of the composer's route switches. */
   activateComposerSwitch: (row: ComposerSwitchRow) => void;
   /**
@@ -373,6 +379,7 @@ export function handleAppKey(
       state,
       dispatch,
       ...(ctx.onSetCapAuto ? { onSetCapAuto: ctx.onSetCapAuto } : {}),
+      ...(ctx.onSetPairs ? { onSetPairs: ctx.onSetPairs } : {}),
     })
   ) {
     return true;

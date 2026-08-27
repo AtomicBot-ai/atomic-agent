@@ -112,6 +112,8 @@ export interface BuiltPrompt {
   droppedPairs: number;
   /** The cap in force, i.e. `agent.conversationMaxPairs`. */
   conversationPairsCap: number;
+  /** Which limit made the cut, when history was trimmed at all. */
+  conversationBoundBy: "pairs" | "tokens" | null;
   /**
    * Token cost of each macro-turn, oldest first.
    *

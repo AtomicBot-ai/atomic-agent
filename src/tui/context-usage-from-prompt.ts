@@ -10,6 +10,11 @@ export const EMPTY_CONTEXT_USAGE: ContextUsageState = {
   conversationCap: null,
   conversationCapConfigured: null,
   conversationCapAuto: false,
+  conversationPairs: 0,
+  droppedPairs: 0,
+  conversationPairsCap: 0,
+  conversationBoundBy: null,
+  pairCosts: [],
   sections: [],
 };
 
@@ -57,6 +62,11 @@ export function contextUsageFromPrompt(prompt: BuiltPrompt): ContextUsageState {
     conversationCap: prompt.conversationCapEffective,
     conversationCapConfigured: prompt.limits.conversation,
     conversationCapAuto: prompt.conversationCapAuto,
+    conversationPairs: prompt.conversationPairs,
+    droppedPairs: prompt.droppedPairs,
+    conversationPairsCap: prompt.conversationPairsCap,
+    conversationBoundBy: prompt.conversationBoundBy,
+    pairCosts: prompt.pairCosts,
     sections,
   };
 }

@@ -225,6 +225,11 @@ export interface PackedConversation {
   visiblePairs: number;
   /** Macro-turns dropped whole. */
   droppedPairs: number;
+  /**
+   * Which limit actually made the cut, so the readout can name it
+   * instead of inferring it from numbers that look alike.
+   */
+  boundBy: "pairs" | "tokens" | null;
 }
 
 export interface PackConversationOptions {
@@ -358,6 +363,7 @@ export function packConversation(
       droppedCount: 0,
       visiblePairs: 0,
       droppedPairs: 0,
+      boundBy: null,
     };
   }
   const boundaries = macroTurnBoundaries(turns, options.macroTurnStarts);
@@ -368,6 +374,7 @@ export function packConversation(
       droppedCount: turns.length,
       visiblePairs: 0,
       droppedPairs: boundaries.length,
+      boundBy: "tokens",
     };
   }
 
@@ -390,6 +397,7 @@ export function packConversation(
   const total = tokenCosts.reduce((a, b) => a + b, 0);
 
   let startIndex: number;
+  let tokenStart = 0;
   if (total <= maxTokens) {
     startIndex = pairsStart;
   } else {
@@ -404,6 +412,7 @@ export function packConversation(
       acc += cost;
       startIndex = i;
     }
+    tokenStart = startIndex;
     // `max`, never `min`: the two limits are not alternatives. Tokens are
     // the ceiling the window imposes and pairs is the operator's own,
     // tighter preference, so the later cut wins.
@@ -435,6 +444,7 @@ export function packConversation(
       droppedCount: 0,
       visiblePairs,
       droppedPairs,
+      boundBy: null,
     };
   }
 
@@ -444,6 +454,10 @@ export function packConversation(
     droppedCount: droppedSlice.length,
     visiblePairs,
     droppedPairs,
+    // Ties go to pairs: when both limits land on the same row it is the
+    // operator's own preference that explains the cut, and naming the
+    // window instead would send them to a setting that changes nothing.
+    boundBy: pairsStart >= tokenStart ? "pairs" : "tokens",
   };
 }
 

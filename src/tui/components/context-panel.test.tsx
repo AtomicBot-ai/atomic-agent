@@ -23,6 +23,13 @@ function usage(overrides: Partial<ContextUsageView> = {}): ContextUsageView {
     conversationPercent: 100,
     capSource: "config",
     droppedTurns: 0,
+    pairs: 8,
+    pairsCap: 20,
+    droppedPairs: 0,
+    // Eight tasks at a flat 4k each, so a projection is easy to predict:
+    // N tasks costs `overhead + N * 4000`.
+    pairCosts: [4000, 4000, 4000, 4000, 4000, 4000, 4000, 4000],
+    overheadTokens: 8000,
     sections: SECTIONS,
     ...overrides,
   };
@@ -34,6 +41,7 @@ function lines(
   rows = 24,
   reserved: number | null = 4096,
   onSetAuto?: () => void,
+  pairsDraft: number | null = null,
 ): string[] {
   const { lastFrame, unmount } = render(
     <Box width={columns} height={rows} flexDirection="column">
@@ -42,6 +50,7 @@ function lines(
         availableRows={rows}
         availableColumns={columns}
         reservedForReply={reserved}
+        pairsDraft={pairsDraft}
         {...(onSetAuto ? { onSetAuto } : {})}
       />
     </Box>,
@@ -111,7 +120,7 @@ describe("ContextPanel", () => {
     expect(body).not.toContain("free");
     expect(body).not.toContain("%");
     // The trimming block never depended on the window.
-    expect(body).toContain("6.4k of 32k before older turns go".slice(-24));
+    expect(body).toContain("8 of 20 tasks · 31.9k of 32k");
   });
 
   /**
@@ -179,9 +188,14 @@ describe("before anything has been measured", () => {
 });
 
 describe("the trimming block", () => {
-  it("says how much transcript is left before older turns go", () => {
+  it("says how much transcript is left, in tasks and in tokens", () => {
     const body = lines(usage()).join("\n");
-    expect(body).toContain("transcript         31.9k of 32k before older turns go");
+    expect(body).toContain("transcript         8 of 20 tasks · 31.9k of 32k");
+  });
+
+  it("falls back to the sentence when no task limit is set", () => {
+    const body = lines(usage({ pairsCap: 0 })).join("\n");
+    expect(body).toContain("31.9k of 32k before older turns go");
   });
 
   /**
@@ -275,5 +289,70 @@ describe("the trimming block", () => {
     const body = lines(usage({ conversationCap: null, capSource: null })).join("\n");
     expect(body).not.toContain("before older turns go");
     expect(body).not.toContain("capped by");
+  });
+
+  it("counts the transcript in tasks, the unit the limit is set in", () => {
+    const body = lines(usage()).join("\n");
+    expect(body).toContain("8 of 20 tasks");
+  });
+
+  it("names the task limit when that is what trimmed history", () => {
+    // Saying "capped by your agent.conversationMaxTokens setting" here
+    // would send the operator to a knob that changes nothing.
+    const body = lines(usage({ capSource: "pairs", droppedPairs: 3 })).join("\n");
+    expect(body).toContain("holding the last 20 tasks");
+    expect(body).not.toContain("conversationMaxTokens");
+  });
+
+  it("counts what it trimmed in tasks too", () => {
+    const body = lines(usage({ droppedPairs: 3 })).join("\n");
+    expect(body).toContain("3 earlier tasks trimmed");
+  });
+});
+
+/**
+ * The dial. Lowering the task count has to move the gauge while the
+ * operator is looking at it — an answer that arrived one prompt build
+ * later would be useless for deciding what to set.
+ */
+describe("pricing a different number of tasks", () => {
+  it("says nothing until a number is being tried", () => {
+    expect(lines(usage()).join("\n")).not.toContain("at 8 tasks");
+  });
+
+  it("prices the draft against the model's window", () => {
+    // overhead 8000 + 4 tasks x 4000 = 24000 of 131072 = 18%.
+    const body = lines(usage(), 100, 24, 4096, undefined, 4).join("\n");
+    expect(body).toContain("at 4 tasks");
+    expect(body).toContain("24k/131.1k");
+    expect(body).toContain("18%");
+  });
+
+  it("shrinks as the operator asks for less", () => {
+    const percentAt = (draft: number): number => {
+      const row = lines(usage(), 100, 24, 4096, undefined, draft).find((l) =>
+        l.includes(`at ${draft} task`),
+      );
+      return Number(/(\d+)%/.exec(row ?? "")?.[1] ?? "-1");
+    };
+    expect(percentAt(8)).toBeGreaterThan(percentAt(4));
+    expect(percentAt(4)).toBeGreaterThan(percentAt(1));
+  });
+
+  it("never prices more tasks than the session has", () => {
+    // Asking for 50 when eight exist is the whole history, not a
+    // projection off the end of the array.
+    const all = lines(usage(), 100, 24, 4096, undefined, 8).join("\n");
+    const more = lines(usage(), 100, 24, 4096, undefined, 50).join("\n");
+    expect(/(\d+)%/.exec(all)?.[1]).toBe(/(\d+)%/.exec(more)?.[1]);
+  });
+
+  it("still answers when nobody knows the window", () => {
+    const body = lines(
+      usage({ contextWindow: null, percent: null }),
+      100, 24, 4096, undefined, 3,
+    ).join("\n");
+    expect(body).toContain("at 3 tasks");
+    expect(body).toContain("window unknown");
   });
 });

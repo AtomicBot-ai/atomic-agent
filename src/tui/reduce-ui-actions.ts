@@ -97,9 +97,27 @@ export function reduceUiAction(
         menuCursor: 0,
       };
     case "context_panel_toggled":
-      return { ...state, contextPanelOpen: !state.contextPanelOpen };
+      // The draft belongs to one visit. Reopening the panel should show
+      // what the prompt is actually doing, not a number abandoned
+      // earlier.
+      return {
+        ...state,
+        contextPanelOpen: !state.contextPanelOpen,
+        contextPanelPairsDraft: null,
+      };
     case "context_panel_closed":
-      return { ...state, contextPanelOpen: false };
+      return { ...state, contextPanelOpen: false, contextPanelPairsDraft: null };
+    case "context_pairs_draft_moved": {
+      if (!state.contextPanelOpen) return state;
+      const cap = state.contextUsage.conversationPairsCap;
+      if (cap <= 0) return state;
+      const from = state.contextPanelPairsDraft ?? cap;
+      // The same 1..100 the schema enforces. Clamping here rather than
+      // letting the write fail keeps the readout from ever showing a
+      // number the config would reject.
+      const next = Math.max(1, Math.min(100, from + action.delta));
+      return { ...state, contextPanelPairsDraft: next };
+    }
     case "context_menu_opened":
       // Re-opening while open simply moves the menu: the second
       // right-click already parked fresh actions on the provider handle.

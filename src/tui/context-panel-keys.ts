@@ -14,6 +14,12 @@ export interface ContextPanelKeyContext {
    * one; `a` is then swallowed like any other bare key.
    */
   onSetCapAuto?: () => void;
+  /**
+   * Commit the task count the operator has been trying out. Optional for
+   * the same reason as `onSetCapAuto`: a surface with no config writer
+   * simply swallows the key.
+   */
+  onSetPairs?: (pairs: number) => void;
 }
 
 /**
@@ -43,8 +49,28 @@ export function handleContextPanelKey(
 ): boolean {
   const { state, dispatch } = ctx;
   if (!state.contextPanelOpen) return false;
-  if (key.escape || key.return || input === "q") {
+  // Enter commits a draft on its way out — the panel is a readout with
+  // one thing to change, so the key that leaves is the natural key to
+  // leave *with the change*. Esc and `q` stay pure dismissals, which is
+  // what makes trying a number out safe.
+  if (key.return) {
+    const draft = state.contextPanelPairsDraft;
+    if (draft !== null && ctx.onSetPairs) ctx.onSetPairs(draft);
     dispatch({ type: "context_panel_closed" });
+    return true;
+  }
+  if (key.escape || input === "q") {
+    dispatch({ type: "context_panel_closed" });
+    return true;
+  }
+  // `-` / `+` price a different number of tasks. Arrow keys would read
+  // as navigation in a panel that has nothing to navigate.
+  if (input === "-" || input === "_") {
+    dispatch({ type: "context_pairs_draft_moved", delta: -1 });
+    return true;
+  }
+  if (input === "+" || input === "=") {
+    dispatch({ type: "context_pairs_draft_moved", delta: 1 });
     return true;
   }
   if (input === "a" && ctx.onSetCapAuto) {
