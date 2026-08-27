@@ -1,15 +1,21 @@
 # Pull-request test gate.
 #
-# Two install shapes, because they catch different bugs:
+# Two dependency shapes, because they catch different bugs:
 #
-#   - `npm ci` — the normal install, the one contributors have locally.
-#   - `npm ci --omit=optional` — the shape users actually get. `@napi-rs/canvas`
-#     is an *optional* transitive dependency of `pdfjs-dist`, and it is absent
-#     from the SEA bundle (`scripts/bundle-sea.ts` externalizes only
+#   - the normal install, the one contributors have locally.
+#   - the same install with `@napi-rs/canvas` removed. That package is an
+#     *optional* transitive dependency of `pdfjs-dist`, and it is absent from
+#     the SEA bundle (`scripts/bundle-sea.ts` externalizes only
 #     `better-sqlite3` and `playwright-core`) and from any install where the
 #     native package fails to build. Issue #117 was exactly this: PDF text
 #     extraction printed four "rendering may be broken" warnings that a normal
 #     dev install never shows. See issue #203.
+#
+# Note the second job does NOT use `npm ci --omit=optional`. That flag also
+# drops `@rollup/rollup-linux-x64-gnu`, an optional platform binary vitest
+# needs, so the job dies at startup before running a single test
+# (npm/cli#4828). Removing the one package under test is both narrower and a
+# closer match to what users actually hit.
 
 name: Test
 
@@ -34,16 +40,20 @@ jobs:
       matrix:
         include:
           - label: default install
-            install: npm ci
-            # The full suite, minus the known-bad tests listed in
-            # `EXCLUDED_TESTS` below.
+            # The full suite, minus the known-bad tests excluded below.
+            drop_canvas: "false"
             scope: ""
-          - label: no optional deps
-            install: npm ci --omit=optional
-            # Optional deps are what issue #117 is about, and the document
-            # extractors are where their absence shows up. Scoped rather than
-            # full-suite to keep the second job cheap; widen if it earns its
-            # keep.
+          - label: no canvas
+            # Reproduce the deployment issue #117 is about. NOT via
+            # `npm ci --omit=optional`: that also drops
+            # `@rollup/rollup-linux-x64-gnu`, an optional platform binary that
+            # *vitest itself* needs, so the runner dies at startup before
+            # testing anything (npm/cli#4828). Install normally, then remove
+            # just the one package whose absence we care about.
+            drop_canvas: "true"
+            # Optional deps are what #117 is about, and the document
+            # extractors are where their absence shows up. Scoped to keep this
+            # job cheap; widen if it earns its keep.
             scope: src/tools/os/read-document/
 
     steps:
@@ -60,20 +70,29 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: ${{ matrix.install }}
+        run: npm ci
 
-      - name: Confirm optional dependency state
-        # Makes the point of this matrix visible in the log, and fails loudly if
-        # `--omit=optional` silently stops omitting things.
+      - name: Remove the optional canvas package
+        if: matrix.drop_canvas == 'true'
+        run: rm -rf node_modules/@napi-rs/canvas
+
+      - name: Confirm canvas state matches this job
+        # Makes the point of the matrix visible in the log, and fails loudly if
+        # the two jobs ever stop differing in the way they are supposed to.
         run: |
           if node -e "require.resolve('@napi-rs/canvas')" 2>/dev/null; then
-            echo "@napi-rs/canvas: present"
-            if [ "${{ matrix.label }}" = "no optional deps" ]; then
-              echo "::error::expected @napi-rs/canvas to be absent under --omit=optional"
-              exit 1
-            fi
+            present=true
           else
-            echo "@napi-rs/canvas: absent"
+            present=false
+          fi
+          echo "@napi-rs/canvas present: $present"
+          if [ "${{ matrix.drop_canvas }}" = "true" ] && [ "$present" = "true" ]; then
+            echo "::error::expected @napi-rs/canvas to be absent in this job"
+            exit 1
+          fi
+          if [ "${{ matrix.drop_canvas }}" = "false" ] && [ "$present" = "false" ]; then
+            echo "::error::expected @napi-rs/canvas to be present in this job"
+            exit 1
           fi
 
       - name: Typecheck
