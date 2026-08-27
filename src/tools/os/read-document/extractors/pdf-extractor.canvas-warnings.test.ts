@@ -3,7 +3,7 @@ import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { describe, expect, it } from "vitest";
@@ -243,5 +243,53 @@ describe("pdf extractor: optional canvas warnings (issue #117)", () => {
     } as Parameters<typeof pdfExtractor>[0]);
     expect(result.text).toContain(TEXT_MARKER);
     expect(Module._load).toBe(before);
+  }, 60_000);
+
+  it("the real extractor stays quiet in this install (gates the CI matrix)", async () => {
+    // The sandbox tests above build their own canvas-free node_modules, so
+    // they answer the same way whether or not the outer install has
+    // `@napi-rs/canvas` — which left the "no canvas" CI job unable to fail
+    // for the reason it exists. This one runs the *real* extractor against
+    // the *real* install: it passes when canvas is present (the quiet path is
+    // skipped) and fails when canvas is absent and the fix is broken. That
+    // difference is the signal the matrix is built to carry.
+    //
+    // It must run in a fresh process. pdfjs emits these warnings once, at
+    // import time, via `console.log` — by the time an in-process test could
+    // install a spy, an earlier test in the same file has already imported
+    // the module and the warnings are long gone.
+    const pdfPath = join(tmpdir(), `canvas-gate-${process.pid}.pdf`);
+    const scriptPath = join(tmpdir(), `canvas-gate-${process.pid}.mjs`);
+    await writeFile(pdfPath, buildPdf(), "latin1");
+    await writeFile(
+      scriptPath,
+      [
+        'import { readFile } from "node:fs/promises";',
+        `const { pdfExtractor } = await import(${JSON.stringify(
+          pathToFileURL(join(here, "pdf-extractor.ts")).href,
+        )});`,
+        `const data = await readFile(${JSON.stringify(pdfPath)});`,
+        `const result = await pdfExtractor({ data, path: ${JSON.stringify(
+          pdfPath,
+        )} });`,
+        'process.stdout.write("\\nEXTRACTED:" + result.text.slice(0, 40));',
+      ].join("\n"),
+    );
+
+    try {
+      const { stdout, stderr } = await execFileAsync(
+        process.execPath,
+        ["--import", "tsx", scriptPath],
+        { cwd: repoRoot, encoding: "utf8" },
+      );
+      const output = `${stdout}\n${stderr}`;
+      expect(output).toContain("EXTRACTED:");
+      for (const warning of KNOWN_CANVAS_WARNINGS) {
+        expect(output).not.toContain(warning);
+      }
+    } finally {
+      await rm(pdfPath, { force: true });
+      await rm(scriptPath, { force: true });
+    }
   }, 60_000);
 });

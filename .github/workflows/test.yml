@@ -54,6 +54,14 @@ jobs:
             # Optional deps are what #117 is about, and the document
             # extractors are where their absence shows up. Scoped to keep this
             # job cheap; widen if it earns its keep.
+            #
+            # The assertion that makes this leg mean something is
+            # "the real extractor stays quiet in this install" in
+            # pdf-extractor.canvas-warnings.test.ts. The other canvas tests
+            # build their own canvas-free sandbox and so answer identically in
+            # both legs; that one runs the real extractor against whatever is
+            # installed here, so it passes above (canvas present, quiet path
+            # skipped) and fails here if the fix regresses. Keep it in scope.
             scope: src/tools/os/read-document/
 
     steps:
