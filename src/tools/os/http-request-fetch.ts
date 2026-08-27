@@ -84,6 +84,18 @@ export interface GuardedCurlResponse {
   redirectChain: string[];
   /** Server-sent `Retry-After` in ms, `null` when absent or unparseable. */
   retryAfterMs: number | null;
+  /**
+   * Method actually used on the hop that produced this response. A 307/308
+   * preserves the original method, so a POST can still be a POST several hops
+   * in; a 301/302/303 downgrades to GET. The retry decision must key off this
+   * rather than the caller's method, or a redirected POST gets replayed.
+   */
+  finalMethod: HttpMethod;
+  /**
+   * Body sent on that same hop — `undefined` once a 301/302/303 has dropped
+   * it. Carried so a retry resumes with the hop's own payload.
+   */
+  finalBody: string | undefined;
   /** Last curl argv (for diagnostics). */
   command: string[];
 }
@@ -113,11 +125,16 @@ export async function executeGuardedHttpRequest(
   const retry = opts.retry ?? DEFAULT_HTTP_RETRY_CONFIG;
   const sleep = opts.sleep ?? defaultSleep;
 
+  // Where the next attempt starts. A retry resumes at the hop that failed
+  // rather than re-walking the redirect chain from the caller's URL.
+  let resumeUrl = rawUrl;
+  let resume: { method: HttpMethod; body: string | undefined } | undefined;
+
   for (let attempt = 0; ; attempt++) {
     let response: GuardedCurlResponse | null = null;
     let failure: unknown = null;
     try {
-      response = await sendGuardedRequestOnce(rawUrl, args, opts);
+      response = await sendGuardedRequestOnce(resumeUrl, args, opts, resume);
     } catch (err) {
       // Only a curl timeout is worth another attempt; a missing binary, an
       // SSRF rejection, or an aborted run must surface immediately.
@@ -130,8 +147,15 @@ export async function executeGuardedHttpRequest(
       failure = err;
     }
 
+    // A redirect can carry the original method forward (307/308) or downgrade
+    // it (301/302/303), so the replay-safety question is about the method that
+    // actually ran, not the one the caller passed in. On a transport failure
+    // there is no response to read it from; fall back to the caller's method,
+    // which is the conservative choice (a POST stays non-idempotent).
+    const effectiveMethod = response?.finalMethod ?? args.method;
+
     const exhausted = attempt >= retry.maxRetries || opts.signal.aborted;
-    if (exhausted || !isRetryableAttempt(args.method, response, failure)) {
+    if (exhausted || !isRetryableAttempt(effectiveMethod, response, failure)) {
       if (response !== null) return response;
       throw failure;
     }
@@ -140,6 +164,18 @@ export async function executeGuardedHttpRequest(
       httpBackoffDelayMs(attempt, response?.retryAfterMs ?? null, retry),
       opts.signal,
     );
+
+    // The sleep resolves on abort rather than rejecting, so re-check here.
+    // Without this an Esc during the backoff still spawns one more curl.
+    if (opts.signal.aborted) {
+      if (response !== null) return response;
+      throw failure;
+    }
+
+    if (response !== null) {
+      resumeUrl = response.finalUrl;
+      resume = { method: response.finalMethod, body: response.finalBody };
+    }
   }
 }
 
@@ -151,6 +187,10 @@ export async function executeGuardedHttpRequest(
  * — a `Retry-After` alongside 429/503 — because the origin may already have
  * processed a request whose response never arrived. A bare 502/504 or a
  * timeout on a POST is therefore returned as-is rather than double-submitted.
+ *
+ * `method` is the method of the hop that actually ran, not the caller's: a
+ * 307/308 carries a POST forward, so replaying the chain would re-submit the
+ * body even though the request "started" as a redirect follow.
  */
 function isRetryableAttempt(
   method: HttpMethod,
@@ -204,11 +244,15 @@ async function sendGuardedRequestOnce(
   rawUrl: string,
   args: HttpRequestArgs,
   opts: ExecuteGuardedHttpOptions,
+  resume?: { method: HttpMethod; body: string | undefined },
 ): Promise<GuardedCurlResponse> {
   const runCommand = opts.runCommand ?? defaultRunCommand;
   let currentUrl = parseHttpUrl(rawUrl);
-  let method = args.method;
-  let body = args.body;
+  // A retry resumes at the hop that failed, with the method and body that hop
+  // actually used. Restarting from the caller's method would re-send a body a
+  // 303 had already dropped, and re-walk redirects the origin already served.
+  let method = resume?.method ?? args.method;
+  let body = resume ? resume.body : args.body;
   const chain: string[] = [];
   let lastCommand: string[] = [];
   let truncated = false;
@@ -287,6 +331,8 @@ async function sendGuardedRequestOnce(
       truncated,
       redirectChain: chain,
       retryAfterMs: parseRetryAfterValueMs(parsed.retryAfter),
+      finalMethod: method,
+      finalBody: body,
       command: lastCommand,
     };
   }
@@ -345,7 +391,11 @@ function buildPinnedCurlArgs(input: BuildPinnedCurlArgs): string[] {
   argv.push(
     "-w",
     `\n${CURL_META_MARKER}%{http_code}|%{content_type}|%{size_download}|` +
-      `%{time_total}|%{redirect_url}|%header{retry-after}`,
+      // `redirect_url` goes last: it is the one field whose value can contain
+      // a literal `|` (RFC 3986 disallows it, but origins emit it and curl
+      // reports it verbatim). Anything after it would be shifted out of place,
+      // so nothing follows it.
+      `%{time_total}|%header{retry-after}|%{redirect_url}`,
   );
   argv.push("--", input.url.toString());
   return argv;
@@ -377,14 +427,17 @@ export function parseCurlOutput(stdout: string): CurlParsedOutput {
   }
   const body = stdout.slice(0, markerIdx).replace(/\n$/, "");
   const meta = stdout.slice(markerIdx + CURL_META_MARKER.length).trim();
+  // `redirect_url` is last and may itself contain `|`, so split off only the
+  // fixed leading fields and keep the remainder intact as the URL.
   const [
     statusStr = "",
     contentType = "",
     sizeStr = "",
     timeStr = "",
-    redirectUrl = "",
     retryAfterRaw = "",
+    ...redirectRest
   ] = meta.split("|");
+  const redirectUrl = redirectRest.join("|");
   const status = Number.parseInt(statusStr, 10);
   const sizeDownload = Number.parseInt(sizeStr, 10);
   const timeTotal = Number.parseFloat(timeStr);
