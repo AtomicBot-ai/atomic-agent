@@ -178,9 +178,25 @@ export function readConfigPath(tree: unknown, key: string): unknown {
     if (node === null || typeof node !== "object" || Array.isArray(node)) {
       return undefined;
     }
+    // Own properties only: a bare `[segment]` would happily return
+    // `Object.prototype.constructor` for a key named "constructor",
+    // reporting a value the config file does not contain.
+    if (!Object.hasOwn(node, segment)) return undefined;
     node = (node as Record<string, unknown>)[segment];
   }
   return node;
+}
+
+/**
+ * Segments that must never be walked or assigned through. Writing to
+ * `__proto__` mutates `Object.prototype` for the whole process, and
+ * `constructor.prototype` reaches it the long way round.
+ */
+const UNSAFE_PATH_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
+
+/** Whether a dotted key is safe to walk. Exported for the callers' guards. */
+export function isSafeConfigPath(key: string): boolean {
+  return key.split(".").every((s) => !UNSAFE_PATH_SEGMENTS.has(s));
 }
 
 /**
@@ -191,17 +207,31 @@ export function readConfigPath(tree: unknown, key: string): unknown {
  * `typeof` calls "object") is replaced: it cannot be a valid parent, and
  * `parseUserConfigFile` will reject the result anyway if the shape is
  * wrong — nothing is written until it passes.
+ *
+ * Throws on a path containing `__proto__`, `constructor` or `prototype`.
+ * Callers today filter keys through the schema allowlist first, so this is
+ * unreachable from the CLI — but the guard lives here, next to the
+ * assignment, rather than depending on every future caller validating as
+ * strictly.
  */
 export function writeConfigPath(
   tree: Record<string, unknown>,
   key: string,
   value: unknown,
 ): void {
+  if (!isSafeConfigPath(key)) {
+    throw new Error(`config: refusing to write unsafe path ${key}`);
+  }
   const segments = key.split(".");
   let node = tree;
   for (const segment of segments.slice(0, -1)) {
     const child = node[segment];
-    if (child === null || typeof child !== "object" || Array.isArray(child)) {
+    if (
+      child === null ||
+      typeof child !== "object" ||
+      Array.isArray(child) ||
+      !Object.hasOwn(node, segment)
+    ) {
       node[segment] = {};
     }
     node = node[segment] as Record<string, unknown>;
@@ -243,11 +273,12 @@ export function deleteConfigPath(
   tree: Record<string, unknown>,
   key: string,
 ): boolean {
+  if (!isSafeConfigPath(key)) return false;
   const segments = key.split(".");
   const chain: Record<string, unknown>[] = [tree];
   let node: Record<string, unknown> = tree;
   for (const segment of segments.slice(0, -1)) {
-    const child = node[segment];
+    const child = Object.hasOwn(node, segment) ? node[segment] : undefined;
     if (child === null || typeof child !== "object" || Array.isArray(child)) {
       return false;
     }
@@ -255,7 +286,8 @@ export function deleteConfigPath(
     chain.push(node);
   }
   const last = segments[segments.length - 1]!;
-  if (!(last in node)) return false;
+  // `in` walks the prototype chain; only an own key is really present.
+  if (!Object.hasOwn(node, last)) return false;
   delete node[last];
   for (let i = chain.length - 1; i > 0; i -= 1) {
     if (Object.keys(chain[i]!).length > 0) break;

@@ -244,6 +244,42 @@ describe("configCommand", () => {
       expect(readFileSync(join(stateDir, "config.json"), "utf8")).toBe(before);
     });
 
+    it("set rejects a partly-numeric value instead of truncating it", async () => {
+      // `Number.parseInt` stops at the first character it cannot read, which
+      // would turn each of these into a plausible-looking number and write it
+      // as a success. `1e3` is the worst case: asking for 1000 and silently
+      // getting a token budget of 1.
+      for (const bad of ["1e3", "100_000", "60s", "1,000", "10.9", "8080x"]) {
+        seedSparseConfig({ agent: { maxSteps: 7 } });
+        const before = readFileSync(join(stateDir, "config.json"), "utf8");
+        stderr = "";
+        const code = await configCommand(["set", "agent.tokenBudget", bad]);
+        expect(code, `${bad} should be rejected`).toBe(1);
+        expect(stderr).toContain("agent.tokenBudget");
+        expect(readFileSync(join(stateDir, "config.json"), "utf8")).toBe(
+          before,
+        );
+      }
+    });
+
+    it("set still accepts a clean integer, with surrounding space", async () => {
+      seedSparseConfig({ agent: { maxSteps: 7 } });
+      const code = await configCommand(["set", "agent.tokenBudget", " 1000 "]);
+      expect(code).toBe(0);
+      expect(stdout).toContain("agent.tokenBudget = 1000");
+    });
+
+    it("set rejects a partly-numeric fractional value", async () => {
+      seedSparseConfig({ agent: { maxSteps: 7 } });
+      const code = await configCommand([
+        "set",
+        "memory.retrieve.fts5Threshold",
+        "0.85xyz",
+      ]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("fts5Threshold");
+    });
+
     it("set rejects version, which the schema's migration owns", async () => {
       const code = await configCommand(["set", "version", "12"]);
       expect(code).toBe(1);
