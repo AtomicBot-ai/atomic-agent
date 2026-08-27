@@ -160,14 +160,19 @@ export class OpenAiProvider implements LlmProvider {
     if (accumulatedReasoning.length > 0 && final.reasoningContent.length === 0) {
       final.reasoningContent = accumulatedReasoning;
     }
-    if (this.taggedToolCompatibility === "qwen") {
-      // Buffer-then-adapt: the tagged `<tool_call>` payload may be split
-      // across deltas, so adapt only the fully-buffered message. Text and
-      // reasoning deltas were already yielded above for live UX; the adapt
-      // seam just rewrites the final result (content → tool_calls).
-      return adaptQwenCompletionResult(final, request);
-    }
-    return final;
+    // Tagged Qwen calls are synthesized only after the stream has been
+    // fully buffered. Apply termination safety after that adaptation seam,
+    // so native and tagged calls are judged from the same final dispatchable
+    // tool-call set. A synthetic `finishReason: "tool_calls"` from the
+    // adapter is not evidence that the provider actually terminated cleanly.
+    const adaptedFinal =
+      this.taggedToolCompatibility === "qwen"
+        ? adaptQwenCompletionResult(final, request)
+        : final;
+    return applyToolCallTerminationSafety(
+      adaptedFinal,
+      streamFinal?.terminalObserved === true,
+    );
   }
 
   async health(): Promise<ProviderHealthResult> {
@@ -250,5 +255,20 @@ function completionFromStreamFinal(
     usage,
     toolCalls: streamFinal?.toolCalls,
     finishReason,
+  };
+}
+
+function applyToolCallTerminationSafety(
+  result: CompletionResult,
+  terminalObserved: boolean,
+): CompletionResult {
+  const hasToolCalls = (result.toolCalls?.length ?? 0) > 0;
+  if (!hasToolCalls || terminalObserved || result.truncated) {
+    return result;
+  }
+  return {
+    ...result,
+    stop: false,
+    truncated: true,
   };
 }

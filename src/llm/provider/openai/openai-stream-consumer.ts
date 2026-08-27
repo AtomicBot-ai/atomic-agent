@@ -37,20 +37,36 @@ export function createOpenAiStreamConsumer(
       let finishReason: string | null = null;
       let modelId: string | null = null;
       let usage: CompletionUsage | undefined;
+      // A trustworthy terminal signal: an explicit provider finish_reason
+      // on any chunk, or a parser-recognized terminal event (`[DONE]`).
+      // Some OpenAI-compatible providers send a final finish_reason and
+      // then simply close the connection without ever emitting `[DONE]` —
+      // that still counts. A bare `reader.read()` EOF with neither must
+      // NOT be conflated with either, since a still-open tool call's
+      // arguments may be mid-stream.
+      let terminalObserved = false;
       const toolCalls = new Map<number, MutableToolCall>();
       try {
         while (true) {
           if (signal?.aborted) break;
           const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
+          if (done) {
+            // Flush TextDecoder state and treat a final non-empty SSE event
+            // as an implicit last boundary. Some providers/proxies close the
+            // response immediately after the terminal event instead of
+            // writing the conventional trailing blank line.
+            buffer += decoder.decode();
+          } else {
+            buffer += decoder.decode(value, { stream: true });
+          }
           let boundary = buffer.indexOf("\n\n");
-          while (boundary >= 0) {
-            const rawEvent = buffer.slice(0, boundary);
-            buffer = buffer.slice(boundary + 2);
+          while (boundary >= 0 || (done && buffer.trim().length > 0)) {
+            const rawEvent = boundary >= 0 ? buffer.slice(0, boundary) : buffer;
+            buffer = boundary >= 0 ? buffer.slice(boundary + 2) : "";
             const chunk = parseOpenAiSseEvent(rawEvent, reasoning, toolArgsBuffer);
             content += chunk.delta;
             reasoningContent += chunk.reasoningDelta;
+            if (chunk.finishReason !== null) terminalObserved = true;
             finishReason = chunk.finishReason ?? finishReason;
             modelId = chunk.modelId ?? modelId;
             usage = normaliseUsage(chunk.usage) ?? usage;
@@ -64,6 +80,7 @@ export function createOpenAiStreamConsumer(
                 modelId,
                 usage,
                 toolCalls,
+                terminalObserved: true,
               });
             }
             if (chunk.toolArgsDelta !== undefined) {
@@ -93,6 +110,7 @@ export function createOpenAiStreamConsumer(
             }
             boundary = buffer.indexOf("\n\n");
           }
+          if (done) break;
         }
       } finally {
         reader.releaseLock();
@@ -105,6 +123,7 @@ export function createOpenAiStreamConsumer(
         modelId,
         usage,
         toolCalls,
+        terminalObserved,
       });
     },
   };
@@ -135,6 +154,7 @@ function buildFinalResult(args: {
   modelId: string | null;
   usage?: CompletionUsage;
   toolCalls: ReadonlyMap<number, MutableToolCall>;
+  terminalObserved: boolean;
 }): StreamFinalResult {
   const sortedToolCalls = [...args.toolCalls.entries()]
     .sort(([a], [b]) => a - b)
@@ -145,6 +165,7 @@ function buildFinalResult(args: {
     reasoningContent: args.reasoningContent,
     finishReason: args.finishReason,
     modelId: args.modelId,
+    terminalObserved: args.terminalObserved,
     ...(args.usage ? { usage: args.usage } : {}),
     ...(sortedToolCalls.length > 0 ? { toolCalls: sortedToolCalls } : {}),
   };

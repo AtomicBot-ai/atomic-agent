@@ -4,6 +4,7 @@ import {
   nameUnescape,
   descriptorsToOpenAiTools,
   openAiToolCallsToBatch,
+  ToolCallArgumentsParseError,
 } from "./openai-tool-call-adapter.js";
 
 describe("OpenAiToolCallAdapter", () => {
@@ -30,6 +31,70 @@ describe("OpenAiToolCallAdapter", () => {
     expect(batch.calls).toHaveLength(1);
     expect(batch.calls[0]?.tool).toBe("reply");
     expect(batch.calls[0]?.args).toMatchObject({ text: "hello" });
+  });
+
+  it("maps a legitimately empty arguments string to {}", () => {
+    const batch = openAiToolCallsToBatch([
+      { function: { name: "os__fs__list", arguments: "" } },
+    ]);
+    expect(batch.calls[0]?.args).toEqual({});
+    const whitespaceOnly = openAiToolCallsToBatch([
+      { function: { name: "os__fs__list", arguments: "   " } },
+    ]);
+    expect(whitespaceOnly.calls[0]?.args).toEqual({});
+  });
+
+  it("throws ToolCallArgumentsParseError on malformed non-empty JSON instead of substituting {}", () => {
+    expect(() =>
+      openAiToolCallsToBatch([
+        { function: { name: "os__fs__delete", arguments: '{"path":"widget.txt' } },
+      ]),
+    ).toThrow(ToolCallArgumentsParseError);
+  });
+
+  it("throws on container-level truncated JSON instead of substituting {}", () => {
+    expect(() =>
+      openAiToolCallsToBatch([
+        {
+          function: {
+            name: "os__shell__run",
+            arguments: '{"commands":["npm install","npm test"',
+          },
+        },
+      ]),
+    ).toThrow(ToolCallArgumentsParseError);
+  });
+
+  it("throws when arguments parse to valid JSON that is not an object (array/primitive)", () => {
+    expect(() =>
+      openAiToolCallsToBatch([
+        { function: { name: "os__fs__delete", arguments: "[1,2,3]" } },
+      ]),
+    ).toThrow(ToolCallArgumentsParseError);
+    expect(() =>
+      openAiToolCallsToBatch([
+        { function: { name: "os__fs__delete", arguments: "5" } },
+      ]),
+    ).toThrow(ToolCallArgumentsParseError);
+  });
+
+  it("never includes the raw arguments string in the thrown error's message", () => {
+    const secret = '{"path":"/etc/shadow","token":"sk-super-secret-do-not-log';
+    try {
+      openAiToolCallsToBatch([{ function: { name: "os__fs__delete", arguments: secret } }]);
+      expect.unreachable("expected a throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(ToolCallArgumentsParseError);
+      expect((err as Error).message).not.toContain("sk-super-secret");
+      expect((err as Error).message).not.toContain("/etc/shadow");
+    }
+  });
+
+  it("valid object args still parse normally (control)", () => {
+    const batch = openAiToolCallsToBatch([
+      { function: { name: "os__fs__read", arguments: '{"path":"a.txt"}' } },
+    ]);
+    expect(batch.calls[0]?.args).toEqual({ path: "a.txt" });
   });
 
   it("includes reply and finish in descriptorsToOpenAiTools", () => {
