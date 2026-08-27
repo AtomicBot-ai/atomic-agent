@@ -2384,13 +2384,19 @@ function resolveHttpApprovalMode(
 }
 
 export function parseApprovalLevel(raw: unknown, field: string): ApprovalLevel {
-  if (
-    typeof raw === "number" &&
-    Number.isInteger(raw) &&
-    raw >= 1 &&
-    raw <= 5
-  ) {
-    return raw as ApprovalLevel;
+  // `coerceIntLike`, like every other numeric parser in this file, and
+  // not a bare `typeof raw === "number"`. `config set <key> <value>`
+  // hands the schema the raw argv string on purpose — guessing the type
+  // at the CLI would be a second source of truth — so a number-only
+  // check made `agent.approvalLevel` the single key the dotted-key
+  // editor could never write. It is also the one safety-critical
+  // setting in the file, and it failed with a message that asked for
+  // exactly what it had just been given: `config set
+  // agent.approvalLevel 3` answered `expected an integer between 1 and
+  // 5, got "3"`.
+  const value = coerceIntLike(raw);
+  if (Number.isInteger(value) && value >= 1 && value <= 5) {
+    return value as ApprovalLevel;
   }
   throw new ConfigValidationError(
     field,

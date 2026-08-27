@@ -102,11 +102,12 @@ function meta(
   redirectUrl = "",
   retryAfter = "",
 ): string {
-  // Field order mirrors the `-w` format: redirect_url is last, because it is
-  // the only field whose value can contain a literal `|`.
+  // Field order mirrors the `-w` format: the two origin-controlled
+  // fields are separated from each other by a sentinel rather than a
+  // pipe, so either may contain a literal `|`.
   return (
     `__ATOMIC_CURL_META__${status}|${contentType}|${size}|${time}` +
-    `|${retryAfter}|${redirectUrl}`
+    `|${redirectUrl}__ATOMIC_CURL_RA__${retryAfter}`
   );
 }
 
@@ -132,7 +133,7 @@ describe("hostAllowed", () => {
 describe("parseCurlOutput", () => {
   it("splits body from meta marker", () => {
     const stdout =
-      "hello world\n__ATOMIC_CURL_META__200|application/json; charset=utf-8|11|0.123||https://next.example/";
+      "hello world\n__ATOMIC_CURL_META__200|application/json; charset=utf-8|11|0.123|https://next.example/";
     const parsed = parseCurlOutput(stdout);
     expect(parsed.body).toBe("hello world");
     expect(parsed.status).toBe(200);
