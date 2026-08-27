@@ -50,6 +50,53 @@ describe("extractSafeCode", () => {
     expect(extractSafeCode({ code: "failed to read /home/x" })).toEqual({});
     expect(extractSafeCode(null)).toEqual({});
   });
+
+  it("reads status and errno through the wrapper chain", () => {
+    // What actually reaches the scrubber: TransportError wrapping a
+    // LlamaServerError wrapping undici's TypeError. Only the innermost
+    // link knows it was a refused connection.
+    const undici = Object.assign(new TypeError("fetch failed"), {
+      cause: Object.assign(new Error("connect ECONNREFUSED"), {
+        code: "ECONNREFUSED",
+      }),
+    });
+    const llama = Object.assign(new Error("network"), {
+      name: "LlamaServerError",
+      status: null,
+      cause: undici,
+    });
+    const transport = Object.assign(new Error("network"), {
+      name: "TransportError",
+      cause: llama,
+    });
+    expect(extractSafeCode(transport)).toEqual({ code: "ECONNREFUSED" });
+  });
+
+  it("prefers a status the wrapper carries over its cause's", () => {
+    const cause = Object.assign(new Error("inner"), { status: 500 });
+    const wrapper = Object.assign(new Error("outer"), { status: 404, cause });
+    expect(extractSafeCode(wrapper)).toEqual({ httpStatus: 404 });
+  });
+
+  it("back-fills the status a GrammarError wrapper does not carry", () => {
+    // GrammarError has no status field at all, which is why not one
+    // grammar issue in Sentry has an `http_status` tag today.
+    const llama = Object.assign(new Error("http 501"), {
+      name: "LlamaServerError",
+      status: 501,
+    });
+    const grammar = Object.assign(new Error("rejected"), {
+      name: "GrammarError",
+      cause: llama,
+    });
+    expect(extractSafeCode(grammar)).toEqual({ httpStatus: 501 });
+  });
+
+  it("survives a self-referential cause chain", () => {
+    const err = new Error("loop") as Error & { cause?: unknown };
+    err.cause = err;
+    expect(extractSafeCode(err)).toEqual({});
+  });
 });
 
 describe("extractSafeReason", () => {

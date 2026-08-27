@@ -1,4 +1,5 @@
 import { buildOpenAiAuthHeaders } from "./openai-auth-headers.js";
+import { readErrnoCode } from "../../errno-code.js";
 
 export type OpenAiHttpDeps = {
   baseUrl: string;
@@ -40,9 +41,21 @@ export class OpenAiHttpError extends Error {
     public readonly retryAfterMs: number | null = null,
     /** Provider id for user-facing wording; falls back to the host. */
     public readonly providerLabel = "",
+    /**
+     * Errno of the underlying failure (`ECONNREFUSED`, `ENOTFOUND`,
+     * `UND_ERR_*`, …) when the transport left one behind. A cloud
+     * provider that is unreachable and one that refused the request
+     * both arrive with `status === null`; this is what tells them
+     * apart in a postmortem.
+     */
+    public readonly code: string | undefined = undefined,
+    options?: { cause?: unknown },
   ) {
     super(message);
     this.name = "OpenAiHttpError";
+    if (options?.cause !== undefined) {
+      (this as { cause?: unknown }).cause = options.cause;
+    }
   }
 }
 
@@ -237,10 +250,13 @@ export async function openAiFetch(
         true,
         null,
         deps.label,
+        undefined,
+        { cause: err },
       );
     }
     // fetch threw without an HTTP response: DNS failure, refused
-    // connection, TLS error, socket reset.
+    // connection, TLS error, socket reset. Which of those it was lives
+    // in the errno — keep it, and the original error with it.
     const detail = err instanceof Error ? err.message : String(err);
     throw new OpenAiHttpError(
       `openai provider network error: ${detail}`,
@@ -249,6 +265,8 @@ export async function openAiFetch(
       false,
       null,
       deps.label,
+      readErrnoCode(err),
+      { cause: err },
     );
   } finally {
     clearTimeout(timer);
