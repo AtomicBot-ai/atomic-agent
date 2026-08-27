@@ -146,6 +146,17 @@ export interface StepDependencies {
   llmCompleteStream?: LlmCompleteStream;
   grammar: string;
   profile: ModelProfile;
+  /**
+   * The model's context window when the profile probe cannot supply it.
+   *
+   * `profile.contextWindow` comes from llama-server `/props`, so on a
+   * cloud provider the budget had no window and every window-relative
+   * decision fell back to a fixed number. Resolved from the model
+   * catalogue instead — and only when the catalogue actually knows,
+   * never from a nominal default, because a budget computed against a
+   * guessed window is worse than one that admits it has none.
+   */
+  contextWindow?: number | null;
   /** Effective transport for this runtime (grammar vs native OpenAI tools). */
   toolTransport: ToolCallTransport;
   /** Adapter for native_tools; null when grammar-only. */
@@ -325,6 +336,9 @@ async function executeStepInner(
     skillCatalog: ctx.skillCatalog,
     currentDate: formatCurrentDate(new Date()),
     profile: deps.profile,
+    ...(deps.contextWindow !== undefined
+      ? { contextWindow: deps.contextWindow }
+      : {}),
     ...(ctx.transientNotice !== undefined
       ? { transientNotice: ctx.transientNotice }
       : {}),
