@@ -194,6 +194,30 @@ export function extractSafeTransportHost(err: unknown): string | undefined {
 }
 
 /**
+ * Choose the frames to report: the cause's, when it has any, else the
+ * wrapper's own.
+ *
+ * Preferring the cause is right — a generic wrapper's `.stack` points at
+ * the `new ToolExecutionError(...)` call site, not the throw site. But
+ * preferring it *unconditionally* meant that a cause with no parseable
+ * frames took the wrapper's frames down with it, and the event shipped
+ * with an empty stack. That is not hypothetical: it is how a
+ * 108-event issue ended up with no stack trace at all and no way to
+ * tell where it came from. Some causes genuinely have nothing — a
+ * `DOMException` from an abort, an error rebuilt from a serialized
+ * worker message, anything constructed without `Error.captureStackTrace`.
+ * A wrapper frame is worth strictly more than nothing.
+ */
+function pickFrames(
+  err: Error,
+  causeError: Error | undefined,
+): SentryStackFrame[] {
+  const causeFrames = causeError ? sanitizeStack(causeError.stack) : [];
+  if (causeFrames.length > 0) return causeFrames;
+  return sanitizeStack(err.stack);
+}
+
+/**
  * Read the underlying `Error` off `err.cause`, when present. Only an
  * `Error` instance is returned — a non-Error cause carries no `.stack` /
  * `.name` worth extracting.
@@ -236,7 +260,7 @@ export function scrubError(
   const event: ScrubbedErrorEvent = {
     errorType,
     source: opts.source,
-    frames: sanitizeStack(causeError?.stack ?? err.stack),
+    frames: pickFrames(err, causeError),
   };
   if (causeType) event.causeType = causeType;
   if (category) event.category = category;
