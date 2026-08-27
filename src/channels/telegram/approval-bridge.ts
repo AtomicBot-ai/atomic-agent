@@ -21,6 +21,18 @@ const APPROVAL_TIMEOUT_MS_DEFAULT = 8 * 60 * 1000;
 const CALLBACK_PREFIX = "appr:";
 
 /**
+ * Longest `commandShape` rendered into a button label or a toast. Real
+ * shapes are argv[0] basenames (`git`, `npm`), but nothing upstream
+ * bounds the field. An oversize `reply_markup` is rejected by Telegram,
+ * and `dispatch` turns a send failure into an auto-deny — so an
+ * unbounded label could deny an approval the operator never saw.
+ */
+const SHAPE_LABEL_MAX = 32;
+
+/** The four button kinds encoded in `callback_data`. */
+type CallbackKind = "y" | "n" | "s" | "a";
+
+/**
  * Narrow shape of a `callback_query` update consumed by the bridge.
  * The grammy adapter projects the real grammy `Context` onto this
  * shape; tests fabricate updates directly so they never need to
@@ -61,11 +73,17 @@ export interface ApprovalBridgeDeps {
 interface PendingState {
   chatId: number;
   messageId: number;
+  /**
+   * The request the keyboard was built from. Retained so a decision is
+   * checked and described against the real request instead of the
+   * operator-supplied `callback_data` — see invariant 5.
+   */
+  request: ApprovalRequest;
   cancelTimer: () => void;
 }
 
 /**
- * Per-channel bridge that turns an `ApprovalRequest` into a 2-button
+ * Per-channel bridge that turns an `ApprovalRequest` into an
  * inline-keyboard message and routes the operator's reply back to
  * `ApprovalGate.resolve`. The bridge owns:
  *
@@ -92,6 +110,17 @@ interface PendingState {
  *    in-flight approvals comes from the caller's own abort signal
  *    (`runtime.shutdown()` aborts every in-flight turn, which aborts
  *    the gate via `ApprovalGate`'s `signal` parameter).
+ * 5. **A grant is re-checked, and the toast never overstates it.** The
+ *    `s`/`a` rows only appear when `canGrantCategory` / `canGrantShape`
+ *    allow them, but `callback_data` arrives from the operator's client
+ *    and a keyboard can outlive the state it was built from — so the
+ *    scope is checked again against the retained request before it
+ *    reaches the gate, exactly as the TUI and CLI prompts do. A scope
+ *    that no longer applies degrades to a plain approval: the gate
+ *    would drop it anyway (`recordGrant` refuses `trust_config` and a
+ *    shapeless shell request), and the toast, built from the request's
+ *    own category/shape, then says "Approved" rather than announcing a
+ *    standing exception that does not exist.
  *
  * Known UX gap (non-functional, deferred to slice 3):
  *
@@ -181,7 +210,12 @@ export class ApprovalBridge {
       chatId,
       messageId,
     );
-    this.pending.set(request.approvalId, { chatId, messageId, cancelTimer });
+    this.pending.set(request.approvalId, {
+      chatId,
+      messageId,
+      request,
+      cancelTimer,
+    });
   }
 
   /**
@@ -205,17 +239,6 @@ export class ApprovalBridge {
     if (parts.length !== 2) return;
     const [approvalId, kind] = parts;
     if (!approvalId || (kind !== "y" && kind !== "n" && kind !== "s" && kind !== "a")) return;
-    let approved: boolean;
-    let grant: ApprovalGrantScope | undefined;
-    if (kind === "y") {
-      approved = true;
-    } else if (kind === "n") {
-      approved = false;
-    } else {
-      // grant buttons: always approve, scope depends on kind
-      approved = true;
-      grant = kind === "s" ? "category" : "shape";
-    }
 
     const pending = this.pending.get(approvalId);
     if (!pending) {
@@ -228,6 +251,11 @@ export class ApprovalBridge {
     pending.cancelTimer();
     this.pending.delete(approvalId);
 
+    // Both grant buttons approve; only the scope differs, and only if
+    // the retained request still supports it (invariant 5).
+    const approved = kind !== "n";
+    const grant = grantScope(kind, pending.request);
+
     const resolved = this.deps.approvals.resolve({
       approvalId,
       approved,
@@ -235,8 +263,10 @@ export class ApprovalBridge {
       reason: "telegram",
     });
 
-    const grantLabel = grant === "category" ? " (category granted for session)" : grant === "shape" ? " (shape granted for session)" : "";
-    await this.acknowledge(update.id, approved ? `Approved${grantLabel}` : "Denied");
+    await this.acknowledge(
+      update.id,
+      decisionToast(pending.request, approved, grant),
+    );
     if (resolved) {
       await this.editFinal(
         pending.chatId,
@@ -322,6 +352,46 @@ export class ApprovalBridge {
   }
 }
 
+/**
+ * The scope a callback kind asks for, or `undefined` when this request
+ * cannot carry it. `y`/`n` never grant; `s`/`a` grant only what the
+ * keyboard was entitled to offer.
+ */
+function grantScope(
+  kind: CallbackKind,
+  request: ApprovalRequest,
+): ApprovalGrantScope | undefined {
+  if (kind === "s" && canGrantCategory(request)) return "category";
+  if (kind === "a" && canGrantShape(request)) return "shape";
+  return undefined;
+}
+
+/**
+ * Text for the button's spinner toast — the one surface that tells the
+ * operator what they just authorised, so it names the grant that was
+ * actually recorded and stays silent when none was.
+ */
+function decisionToast(
+  request: ApprovalRequest,
+  approved: boolean,
+  grant: ApprovalGrantScope | undefined,
+): string {
+  if (!approved) return "Denied";
+  if (!grant) return "Approved";
+  const subject =
+    grant === "shape" && request.commandShape
+      ? `"${shapeLabel(request.commandShape)}"`
+      : formatApprovalCategory(request.category);
+  return `Approved (${subject} granted for session)`;
+}
+
+/** `commandShape` clipped to something a narrow client can render. */
+function shapeLabel(shape: string): string {
+  return shape.length <= SHAPE_LABEL_MAX
+    ? shape
+    : `${shape.slice(0, SHAPE_LABEL_MAX - 1)}…`;
+}
+
 function buildKeyboard(request: ApprovalRequest): {
   inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
 } {
@@ -345,10 +415,10 @@ function buildKeyboard(request: ApprovalRequest): {
       },
     ]);
   }
-  if (canGrantShape(request)) {
+  if (canGrantShape(request) && request.commandShape) {
     rows.push([
       {
-        text: `🔓 Grant "${request.commandShape}" for session`,
+        text: `🔓 Grant "${shapeLabel(request.commandShape)}" for session`,
         callback_data: `${CALLBACK_PREFIX}${request.approvalId}:a`,
       },
     ]);

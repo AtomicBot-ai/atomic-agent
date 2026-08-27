@@ -222,8 +222,8 @@ async function dispatchToRuntime(
   ctx.runtime.metrics?.recordTelegramMessage({ direction: "in" });
   // Re-bind the approval router for this session/chat pair before any
   // turn step can request approval — `ApprovalRouter.setForSession`
-  // is the only path that turns a generic `ApprovalRequest` into a
-  // 2-button keyboard in this chat. Idempotent on the channel side.
+  // is the only path that turns a generic `ApprovalRequest` into an
+  // inline keyboard in this chat. Idempotent on the channel side.
   ctx.ensureApprovalSession?.(session.id, chatId);
   const controller = new AbortController();
   ctx.inflight.set(chatId, controller);
