@@ -23,6 +23,20 @@ export interface BuildPromptInput {
   currentDate?: string;
   tokenBudget?: number;
   conversationMaxTokens?: number;
+  /** Overrides `agent.conversationMaxPairs` for this build. */
+  conversationMaxPairs?: number;
+  /**
+   * The model's context window, when something other than the profile
+   * probe knows it.
+   *
+   * `profile.contextWindow` is filled only by the llama-server `/props`
+   * probe, so on a cloud model the budget had no window at all and every
+   * window-relative decision — the auto cap especially — silently fell
+   * back to a fixed number. The provider catalogue does know, and this
+   * is how that reaches the budget. Kept separate from `profile` so the
+   * UI can still tell a probed window from a catalogued one.
+   */
+  contextWindow?: number | null;
   worldSnapshotMaxTokens?: number;
   completionMaxTokens?: number;
   transientNotice?: string;
@@ -92,4 +106,20 @@ export interface BuiltPrompt {
    */
   conversationCapAuto: boolean;
   droppedTurns: number;
+  /** Macro-turns the prompt carries. */
+  conversationPairs: number;
+  /** Macro-turns dropped whole. */
+  droppedPairs: number;
+  /** The cap in force, i.e. `agent.conversationMaxPairs`. */
+  conversationPairsCap: number;
+  /**
+   * Token cost of each macro-turn, oldest first.
+   *
+   * Published so the context panel can answer "what would N tasks cost?"
+   * with a prefix sum instead of waiting for the next prompt build —
+   * lowering the pair count has to move the gauge while the operator is
+   * looking at it, not one turn later. Per-turn costs are already
+   * memoised, so this is close to free.
+   */
+  pairCosts: number[];
 }

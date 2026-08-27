@@ -280,6 +280,37 @@ export function macroTurnBoundaries(
   return derived;
 }
 
+/**
+ * Token cost of each macro-turn, oldest first.
+ *
+ * For the readout, not the packer: it lets the UI answer "what would N
+ * tasks cost?" with a prefix sum, so moving the pairs dial redraws the
+ * gauge immediately instead of one prompt build later. Costs come from
+ * the same memoised estimator the packer uses, with the same
+ * `inCurrentMacroTurn` freshness flag, so the projection and the real
+ * thing agree.
+ */
+export function pairTokenCosts(
+  turns: readonly ConversationTurn[],
+  recorded?: readonly number[],
+): number[] {
+  const boundaries = macroTurnBoundaries(turns, recorded);
+  if (boundaries.length === 0) return [];
+  const currentStart = findCurrentMacroTurnStart(turns);
+  const costs: number[] = [];
+  for (let k = 0; k < boundaries.length; k += 1) {
+    const from = boundaries[k] ?? 0;
+    const to = boundaries[k + 1] ?? turns.length;
+    let sum = 0;
+    for (let i = from; i < to; i += 1) {
+      const turn = turns[i];
+      if (turn) sum += tokenCostForTurn(turn, i >= currentStart);
+    }
+    costs.push(sum);
+  }
+  return costs;
+}
+
 /** First index to keep so that at most `maxPairs` macro-turns survive. */
 function startIndexForPairs(boundaries: number[], maxPairs: number): number {
   if (boundaries.length === 0 || maxPairs <= 0) return 0;
