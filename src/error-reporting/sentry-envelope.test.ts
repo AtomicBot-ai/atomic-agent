@@ -10,7 +10,15 @@ const META = { installId: "install-1", release: "1.2.3", platform: "darwin" };
 function parseEventPayload(body: string): {
   tags: Record<string, string>;
   fingerprint: string[];
-  exception: { values: Array<{ type: string; value: string }> };
+  exception: {
+    values: Array<{
+      type: string;
+      value: string;
+      stacktrace: {
+        frames: Array<{ filename: string; lineno?: number; in_app: boolean }>;
+      };
+    }>;
+  };
 } {
   const lines = body.trim().split("\n");
   return JSON.parse(lines[2]!);
@@ -80,5 +88,65 @@ describe("buildEnvelope", () => {
     // Different original causes must not collapse into the same
     // fingerprint just because they share the generic "unknown" tool tag.
     expect(payloadA.fingerprint).not.toEqual(payloadB.fingerprint);
+  });
+
+  it("sends frames oldest-first, the way Sentry reads a stack", () => {
+    // V8 puts the throw site at index 0; Sentry's protocol wants it
+    // LAST. Sending V8 order rendered every stack upside-down and made
+    // Sentry read the culprit off the outermost caller — which is why
+    // the issue list was a wall of `async run` / `async runOneTurn`.
+    const ev: ScrubbedErrorEvent = {
+      errorType: "TransportError",
+      source: "llm_failure",
+      frames: [
+        { filename: "prime-stream.ts", lineno: 24, function: "primeStream" },
+        { filename: "llm-fallback-seam.ts", lineno: 160 },
+        { filename: "step-executor.ts", lineno: 272 },
+      ],
+    };
+    const payload = parseEventPayload(buildEnvelope(DSN, ev, META).body);
+    const frames = payload.exception.values[0]!.stacktrace.frames;
+    expect(frames.map((f) => f.filename)).toEqual([
+      "step-executor.ts",
+      "llm-fallback-seam.ts",
+      "prime-stream.ts",
+    ]);
+    // The crash site is the last frame — that is what Sentry names as
+    // the culprit.
+    expect(frames.at(-1)!.filename).toBe("prime-stream.ts");
+  });
+
+  it("marks our own frames in_app and node internals not", () => {
+    const ev: ScrubbedErrorEvent = {
+      errorType: "Error",
+      source: "uncaughtException",
+      frames: [
+        { filename: "node:internal/streams/writable", lineno: 1 },
+        { filename: "stdio-protocol.js", lineno: 114 },
+      ],
+    };
+    const payload = parseEventPayload(buildEnvelope(DSN, ev, META).body);
+    const frames = payload.exception.values[0]!.stacktrace.frames;
+    expect(frames.map((f) => [f.filename, f.in_app])).toEqual([
+      ["stdio-protocol.js", true],
+      ["node:internal/streams/writable", false],
+    ]);
+  });
+
+  it("does not reorder the caller's array (the fingerprint reads frames[0])", () => {
+    const frames = [
+      { filename: "inner.ts", lineno: 1 },
+      { filename: "outer.ts", lineno: 2 },
+    ];
+    const ev: ScrubbedErrorEvent = {
+      errorType: "TransportError",
+      source: "llm_failure",
+      frames,
+    };
+    const payload = parseEventPayload(buildEnvelope(DSN, ev, META).body);
+    // Reversing in place would flip the fingerprint's topFrame and
+    // re-group every existing issue.
+    expect(frames[0]!.filename).toBe("inner.ts");
+    expect(payload.fingerprint.at(-1)).toBe("inner.ts");
   });
 });

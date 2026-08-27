@@ -246,4 +246,41 @@ describe("scrubError", () => {
     const ev = scrubError(err, { source: "uncaughtException" });
     expect(ev.causeType).toBeUndefined();
   });
+
+  it("falls back to the wrapper's frames when the cause has none", () => {
+    // A cause with an unparseable stack used to take the wrapper's
+    // frames down with it and ship an event with NO stack at all — how
+    // a 108-event issue ended up undiagnosable.
+    const cause = new Error("fetch failed");
+    cause.stack = "TypeError: fetch failed";
+    const wrapper = Object.assign(new Error("wrapped"), {
+      name: "ToolExecutionError",
+      cause,
+    });
+    wrapper.stack = [
+      "ToolExecutionError: wrapped",
+      "    at toLlmFailure (/app/step-executor.js:1561:10)",
+      "    at executeStep (/app/step-executor.js:303:20)",
+    ].join("\n");
+    const ev = scrubError(wrapper, { source: "llm_failure" });
+    expect(ev.frames.map((f) => f.filename)).toEqual([
+      "step-executor.js",
+      "step-executor.js",
+    ]);
+  });
+
+  it("still prefers the cause's frames when it has them", () => {
+    const cause = new Error("boom");
+    cause.stack = [
+      "Error: boom",
+      "    at realThrowSite (/app/prime-stream.js:24:3)",
+    ].join("\n");
+    const wrapper = Object.assign(new Error("wrapped"), { cause });
+    wrapper.stack = [
+      "Error: wrapped",
+      "    at wrapIt (/app/step-executor.js:1561:10)",
+    ].join("\n");
+    const ev = scrubError(wrapper, { source: "llm_failure" });
+    expect(ev.frames.map((f) => f.filename)).toEqual(["prime-stream.js"]);
+  });
 });
