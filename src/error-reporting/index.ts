@@ -29,5 +29,7 @@ export type {
 export {
   captureError,
   installGlobalErrorHandlers,
+  installStdioErrorGuards,
   resetGlobalErrorHandlersForTests,
 } from "./error-reporter.js";
+export { isBrokenPipeError } from "./broken-pipe.js";

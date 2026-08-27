@@ -1,7 +1,9 @@
+import { isBrokenPipeError } from "./broken-pipe.js";
 import { scrubError } from "./error-scrubber.js";
 import type { SentryClient } from "./sentry-client.js";
 
 let globalHandlersInstalled = false;
+let stdioGuardsInstalled = false;
 
 /**
  * Capture an error through the (possibly `null`) client. No-ops when
@@ -17,6 +19,11 @@ export function captureError(
 ): void {
   if (!client) return;
   if (opts.category === "cancelled") return;
+  // A process-global EPIPE/EIO is the host pipe or the tty going away,
+  // not a defect: nothing in the agent misbehaved, its reader left. Only
+  // the global sources are filtered — an EPIPE surfaced by a tool still
+  // reports, because there it may well be a bug in ours.
+  if (isGlobalSource(opts.source) && isBrokenPipeError(err)) return;
   const error =
     err instanceof Error
       ? err
@@ -53,9 +60,18 @@ export function installGlobalErrorHandlers(
   const soleUncaughtHandler =
     process.listenerCount("uncaughtException") === 0;
 
+  installStdioErrorGuards(soleUncaughtHandler);
+
   process.on("uncaughtException", (err) => {
     const client = getClient();
     captureError(client, err, { source: "uncaughtException" });
+    // Belt-and-braces for the synchronous path the stream guards below
+    // cannot intercept: a dead pipe is not a crash, so it neither prints
+    // a stack (there is nowhere to print it) nor exits non-zero.
+    if (isBrokenPipeError(err)) {
+      if (soleUncaughtHandler) process.exit(0);
+      return;
+    }
     if (soleUncaughtHandler) {
       // Preserve Node's default fatal behavior: flush best-effort (only
       // when a client is present), print the stack to local stderr, then
@@ -79,7 +95,45 @@ export function installGlobalErrorHandlers(
   });
 }
 
-/** Test-only reset of the idempotency guard. */
+/**
+ * Attach `error` listeners to `process.stdout` / `process.stderr`.
+ *
+ * Without a listener, a write failure on either stream is thrown as an
+ * uncaught exception — which is how a closed host pipe (`EPIPE`) or a
+ * terminal that went away (`EIO`, e.g. SIGHUP or a detached tmux pane)
+ * takes down an otherwise healthy agent, stack trace and all. These are
+ * the two loudest crashes in production and neither is a defect.
+ *
+ * `ownsProcess` mirrors the `uncaughtException` policy: when this
+ * runtime is the top-level process we shut down cleanly (exit 0 — the
+ * pipe closed, same as `head` hanging up), and when a host embeds us we
+ * only swallow the error and let the host decide. A non-broken-pipe
+ * stream error is re-thrown so genuine bugs stay visible.
+ */
+export function installStdioErrorGuards(ownsProcess: boolean): void {
+  if (stdioGuardsInstalled) return;
+  stdioGuardsInstalled = true;
+
+  for (const stream of [process.stdout, process.stderr]) {
+    stream.on("error", (err: unknown) => {
+      if (!isBrokenPipeError(err)) {
+        queueMicrotask(() => {
+          throw err;
+        });
+        return;
+      }
+      if (ownsProcess) process.exit(0);
+    });
+  }
+}
+
+/** Test-only reset of the idempotency guards. */
 export function resetGlobalErrorHandlersForTests(): void {
   globalHandlersInstalled = false;
+  stdioGuardsInstalled = false;
+}
+
+/** Sources that report a process-global failure rather than a call site. */
+function isGlobalSource(source: string): boolean {
+  return source === "uncaughtException" || source === "unhandledRejection";
 }
