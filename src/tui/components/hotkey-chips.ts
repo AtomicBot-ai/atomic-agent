@@ -1,6 +1,7 @@
 import { MENU_LEADER_LABEL } from "../menu/menu-keys.js";
 import {
   APPROVAL_CHORDS,
+  PLAN_CHORDS,
   applyNavSlot,
   decideApproval,
 } from "../app-key-bindings.js";
@@ -89,6 +90,20 @@ export function resolveChips(
         onClick: (mouse) => decideApproval(approval, false, mouse),
       },
       { key: "esc", label: "abort run" },
+    ];
+  }
+  // The plan hand-off, same shape as the approval strip above and for
+  // the same reason: the buttons under the plan are drawn once, in the
+  // transcript, and scroll away with it, while this row stays put. It
+  // is also the only place the chords are written down — the buttons
+  // carry their full labels and adding `· ctrl+y` to each one pushed
+  // the third button onto a second line at 92 columns.
+  if (state.planHandoff) {
+    return [
+      { key: `ctrl+${PLAN_CHORDS.auto}`, label: "run it · auto" },
+      { key: `ctrl+${PLAN_CHORDS.bypass}`, label: "run it · bypass", shed: 2 },
+      { key: `ctrl+${PLAN_CHORDS.dismiss}`, label: "dismiss plan", shed: 1 },
+      { key: "esc", label: "menu" },
     ];
   }
   // An armed leader owns the very next keystroke and unfocuses the editor

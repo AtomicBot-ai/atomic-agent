@@ -591,6 +591,13 @@ const WHEEL_SCROLL_LINES = 3;
  * can execute locally — file ops, browser automation, codebase Q&A —
  * rather than open-ended chat.
  */
+/**
+ * Stands in for the rotating pool when the field has one specific
+ * thing to say. A module-level constant so its identity is stable and
+ * the rotation effect does not resubscribe on every render.
+ */
+const NO_ROTATION: readonly string[] = [];
+
 const PROMPT_PLACEHOLDERS: readonly string[] = [
   "Type a message or `/` for commands…",
   "Ask anything about your codebase…",
@@ -1125,6 +1132,33 @@ export function TuiApp({
     [registry],
   );
 
+  /**
+   * Leave plan mode and tell the agent to carry out what it just
+   * proposed.
+   *
+   * Ordered deliberately: the mode changes *before* the message is sent,
+   * because the runtime reads plan mode per tool call and a message that
+   * arrived first would hit a turn whose first few calls were still
+   * being refused.
+   *
+   * The message goes through `handleEditorSubmit` rather than straight
+   * to `callbacks.onMessageSubmitted`, so it takes exactly the path a
+   * typed message takes — history, the log echo, the busy/steer gate —
+   * instead of a second submit path that has to be kept in step with it.
+   */
+  const executePlan = useCallback(
+    (mode: CodingMode) => {
+      dispatch({ type: "coding_mode_cycled", mode });
+      handleEditorSubmit(EXECUTE_PLAN_MESSAGE, stateRef.current, dispatch, callbacks);
+    },
+    [callbacks],
+  );
+
+  const dismissPlan = useCallback(
+    () => dispatch({ type: "plan_handoff_dismissed" }),
+    [],
+  );
+
   useInput((input, key) => {
     const appHandled = handleAppKey(input, key, {
       state,
@@ -1138,6 +1172,8 @@ export function TuiApp({
       activateMenuNode,
       onSetCapAuto: setConversationCapAuto,
       activateComposerSwitch,
+      onPlanExecute: executePlan,
+      onPlanDismiss: dismissPlan,
     });
     if (appHandled) return;
     // While the slash-command palette is open, let the (now-focused)
@@ -1519,32 +1555,6 @@ export function TuiApp({
     dispatch({ type: "context_panel_closed" });
   }, []);
 
-  /**
-   * Leave plan mode and tell the agent to carry out what it just
-   * proposed.
-   *
-   * Ordered deliberately: the mode changes *before* the message is sent,
-   * because the runtime reads plan mode per tool call and a message that
-   * arrived first would hit a turn whose first few calls were still
-   * being refused.
-   *
-   * The message goes through `handleEditorSubmit` rather than straight
-   * to `callbacks.onMessageSubmitted`, so it takes exactly the path a
-   * typed message takes — history, the log echo, the busy/steer gate —
-   * instead of a second submit path that has to be kept in step with it.
-   */
-  const executePlan = useCallback(
-    (mode: CodingMode) => {
-      dispatch({ type: "coding_mode_cycled", mode });
-      handleEditorSubmit(EXECUTE_PLAN_MESSAGE, stateRef.current, dispatch, callbacks);
-    },
-    [callbacks],
-  );
-
-  const dismissPlan = useCallback(
-    () => dispatch({ type: "plan_handoff_dismissed" }),
-    [],
-  );
 
   const promptContextSlot = contextUsage ? (
     <ContextChip usage={contextUsage} layer={MOUSE_LAYER_PANEL} />
@@ -1887,7 +1897,15 @@ export function TuiApp({
                 ? "Type to change the plan — it stays in plan mode…"
                 : "Type a message or `/` for commands…"
             }
-            rotatingPlaceholders={PROMPT_PLACEHOLDERS}
+            // No rotation while a plan is on offer. `PromptShell`
+            // resolves `rotated ?? placeholder`, so a rotating pool —
+            // which is never empty — outranks the specific line above
+            // and the plan hint could never appear on screen at all.
+            // The offer is the one moment the field has something
+            // particular to say, so it says it instead of rotating.
+            rotatingPlaceholders={
+              state.planHandoff ? NO_ROTATION : PROMPT_PLACEHOLDERS
+            }
             backend={promptBackend}
             model={promptLlm.model}
             provider={promptLlm.provider}
