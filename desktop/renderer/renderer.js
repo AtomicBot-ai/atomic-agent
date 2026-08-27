@@ -1,0 +1,1742 @@
+"use strict";
+
+/* The Electron preload exposes window.atomic. Without it (opened as a
+   plain page) the app runs the scripted demo instead of a real agent. */
+const BR = typeof window !== "undefined" ? window.atomic : null;
+let WORKSPACE = '~/Teletubbies';
+let LIVE_CAPS = null, LIVE_CONFIG = null;
+
+/* ============================================================
+   Atomic Agent Desktop — clickable prototype, no backend.
+   Command/menu wording, the slash registry and its rank order,
+   the approval categories and their auto-approve levels, and the
+   approval footer text are taken from the shipped TUI:
+     src/tui/menu/menu-registry.ts
+     src/tui/approval-modal.tsx
+     src/approval/approval-level.ts
+     src/tui/run-mode/
+   The window's own radius and shadow are drawn here because this
+   is a page mockup; in Tauri the OS draws them.
+   ============================================================ */
+
+/* ---------------- icons: 16px optical, 1.5px stroke ---------------- */
+const P = {
+  chat:'<rect x="2.25" y="3.25" width="11.5" height="8.5" rx="2.5"/><path d="M5.5 11.75v2.1l2.8-2.1"/>',
+  tasks:'<rect x="2.5" y="3.5" width="11" height="10" rx="2"/><path d="M2.5 6.5h11M5.5 2.25v2.5M10.5 2.25v2.5M5.5 9.5h5"/>',
+  skills:'<path d="M8 2.2 9.55 5.6l3.7.42-2.75 2.5.75 3.63L8 10.35 4.75 12.15l.75-3.63L2.75 6.02l3.7-.42z"/>',
+  memory:'<path d="M8 2.6C6.2 2.6 4.8 3.7 4.8 5.1c0 .5.2 1 .5 1.4-.6.5-1 1.2-1 2 0 1.6 1.6 2.9 3.7 2.9s3.7-1.3 3.7-2.9c0-.8-.4-1.5-1-2 .3-.4.5-.9.5-1.4 0-1.4-1.4-2.5-3.2-2.5Z"/><path d="M8 2.6v9"/>',
+  search:'<circle cx="7.2" cy="7.2" r="4"/><path d="M10.2 10.2 13.5 13.5"/>',
+  sidebar:'<rect x="2" y="3" width="12" height="10" rx="2"/><path d="M6.2 3v10"/>',
+  inspector:'<rect x="2" y="3" width="12" height="10" rx="2"/><path d="M10 3v10"/>',
+  console:'<rect x="2" y="3" width="12" height="10" rx="2"/><path d="M2 9.6h12"/>',
+  plus:'<path d="M8 3.5v9M3.5 8h9"/>',
+  chevD:'<path d="M4 6.2 8 10l4-3.8"/>',
+  chevR:'<path d="M6.2 4 10 8l-3.8 4"/>',
+  check:'<path d="M3.5 8.4 6.4 11.3 12.5 5.2"/>',
+  x:'<path d="M4 4l8 8M12 4l-8 8"/>',
+  warn:'<path d="M8 2.8 14 12.6H2z"/><path d="M8 6.6v3M8 11.1h.01"/>',
+  stop:'<rect x="4.5" y="4.5" width="7" height="7" rx="1.5"/>',
+  up:'<path d="M8 12.5v-9M4.2 7.3 8 3.5l3.8 3.8"/>',
+  copy:'<rect x="5.5" y="5.5" width="8" height="8" rx="2"/><path d="M10.5 5.5v-1a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h1"/>',
+  gear:'<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.6M8 12.6v1.6M14.2 8h-1.6M3.4 8H1.8M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1M12.4 12.4l-1.1-1.1M4.7 4.7 3.6 3.6"/>',
+  cloud:'<path d="M4.6 12.2h6.6a2.9 2.9 0 0 0 .3-5.78A4 4 0 0 0 4.3 6.9a2.65 2.65 0 0 0 .3 5.3Z"/>',
+  cpu:'<rect x="5" y="5" width="6" height="6" rx="1.5"/><path d="M6.5 2.5v2.5M9.5 2.5v2.5M6.5 11v2.5M9.5 11v2.5M2.5 6.5h2.5M2.5 9.5h2.5M11 6.5h2.5M11 9.5h2.5"/>',
+  key:'<circle cx="5.5" cy="8" r="2.6"/><path d="M8.1 8h5.4M11.6 8v2.2M13.5 8v1.6"/>',
+  link:'<path d="M6.6 9.4a2.6 2.6 0 0 0 3.7 0l2-2a2.6 2.6 0 1 0-3.7-3.7l-.9.9"/><path d="M9.4 6.6a2.6 2.6 0 0 0-3.7 0l-2 2a2.6 2.6 0 1 0 3.7 3.7l.9-.9"/>',
+  folder:'<path d="M2.5 4.6a1.6 1.6 0 0 1 1.6-1.6h2.1l1.4 1.7h4.3a1.6 1.6 0 0 1 1.6 1.6v5.1a1.6 1.6 0 0 1-1.6 1.6H4.1a1.6 1.6 0 0 1-1.6-1.6z"/>',
+  refresh:'<path d="M13 8a5 5 0 1 1-1.5-3.55"/><path d="M13.2 2.6v3h-3"/>',
+  filter:'<path d="M2.6 3.7h10.8L9.4 8.4v4l-2.8-1.4V8.4z"/>',
+  atom:'<path d="M8 2.6v10.8M2.6 8h10.8"/><circle cx="8" cy="8" r="5.4"/>',
+  bolt:'<path d="M8.8 2.4 4.2 9.1h3.2l-.6 4.5 4.8-6.9H8.3z"/>',
+  doc:'<path d="M4 2.6h5l3 3v7.8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V3.6a1 1 0 0 1 1-1Z"/><path d="M9 2.6v3h3"/>',
+  play:'<path d="M5.5 3.6 12 8l-6.5 4.4z"/>',
+  trash:'<path d="M3 4.6h10M6.4 4.6V3.4a.9.9 0 0 1 .9-.9h1.4a.9.9 0 0 1 .9.9v1.2M4.4 4.6l.6 8a1 1 0 0 0 1 .9h4a1 1 0 0 0 1-.9l.6-8M6.8 7v4M9.2 7v4"/>',
+};
+function ic(n, cls) {
+  return '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" '
+    + 'stroke-linecap="round" stroke-linejoin="round"' + (cls ? ' class="' + cls + '"' : '') + '>' + (P[n] || '') + '</svg>';
+}
+const MARK_COLOR = '<svg width="16" height="16" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#006AFF"/><path fill="#fff" d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
+const MARK_MONO = '<svg width="20" height="20" viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><path d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg>';
+
+const dur = (ms) => ms == null ? '…' : ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's';
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const $ = (s) => document.querySelector(s);
+const keycaps = (str) => str ? str.split(' ').map((k) => '<span class="kc">' + esc(k) + '</span>').join('') : '';
+
+/* ---------------- registry data ---------------- */
+
+// slash registry in the registry's own rank order (rank is user-visible)
+const SLASH = [
+  ['dump','write debug zip to ~/Documents/atomic-agent-debug'],
+  ['help','list available slash commands'],
+  ['tools','list built-in tools (fs, shell, browser, memory, vision)','<query>'],
+  ['theme','switch the UI theme','<name>|list'],
+  ['clear','clear chat transcript (keeps session)'],
+  ['abort','abort the running turn'],
+  ['quit','exit atomic-agent'],
+  ['debug','toggle debug pane (feed / logs / world …)'],
+  ['chat','return to single-view chat mode'],
+  ['run','run mode — fusion orchestrates on cloud, executes locally','local|cloud|fusion [0-100]'],
+  ['observe','switch to the Observe section'],
+  ['manage','switch to the Manage section'],
+  ['feed','jump to the Observe → Feed tab'],
+  ['logs','jump to the Observe → Logs tab'],
+  ['reasoning','jump to the Observe → Reasoning tab'],
+  ['world','jump to the Observe → World tab'],
+  ['expand','expand every tool card in the chat log'],
+  ['collapse','collapse every tool card in the chat log'],
+  ['session','show current session id'],
+  ['sessions','open session picker to switch threads'],
+  ['new','start a fresh session (keeps warm runtime)'],
+  ['skills','jump to the Skills tab','dump'],
+  ['skill','enable or disable a skill','enable|disable <name>'],
+  ['memory','open Memory tab (profile, notes, lessons, …)','dump'],
+  ['llm','open LLM Local/Cloud/External panel','provider <id>'],
+  ['mcp','open MCP tab (servers + discovered tools)','add|remove <name>'],
+  ['model','open chat model picker','pull|use|status <id>'],
+  ['tasks','jump to the Tasks tab (cron + ingress UI)'],
+  ['task','create, cancel or run a task','new|cancel|run <id>'],
+  ['telegram','telegram channel','enable|disable|start|stop|pair|token'],
+  ['import','open the Import tab (one-shot migration)'],
+  ['privacy','analytics opt-out + approval level','level 1..5 | analytics on|off'],
+  ['analytics','toggle anonymous analytics','on|off|status'],
+];
+
+// approval categories → the level at which each stops asking (approval-level.ts)
+const CATS = [
+  ['fs_write_workspace','file write · workspace',2],
+  ['fs_write_home','file write · home',3],
+  ['fs_trash','move to Trash',3],
+  ['http','HTTP request',3],
+  ['shell','shell command',4],
+  ['script','skill script',4],
+  ['proc_kill','process kill',4],
+  ['browser_nonweb','browser · non-web URL',5],
+  ['trust_config','agent trust config',5],
+  ['other','uncategorised',5],
+];
+const LEVEL_NAMES = ['','Paranoid','Workspace','Home','Operator','Full trust'];
+
+const MENUS = [
+  ['Atomic Agent', [
+    ['About Atomic Agent','', 'about'],
+    ['Check for Updates…','', 'update'],
+    ['-'],
+    ['Settings…','⌘ ,','settings:general'],
+    ['Privacy & Approvals…','⇧ ⌘ ,','settings:privacy'],
+    ['-'],
+    ['Hide Atomic Agent','⌘ H','na'],
+    ['Quit Atomic Agent','⌘ Q','quit'],
+  ]],
+  ['File', [
+    ['New Session','⌘ N','session:new'],
+    ['New Scheduled Task…','⌃ ⌘ N','task:new'],
+    ['-'],
+    ['Switch Session…','⌘ O','session:switch'],
+    ['Open Workspace…','⇧ ⌘ O','na'],
+    ['-'],
+    ['Import from Hermes…','','settings:import'],
+    ['-'],
+    ['Export Transcript…','⇧ ⌘ E','na'],
+    ['Write Debug Bundle','⌥ ⌘ D','dump'],
+  ]],
+  ['Edit', [
+    ['Undo','⌘ Z','na'],['Redo','⇧ ⌘ Z','na'],['-'],
+    ['Cut','⌘ X','na'],['Copy','⌘ C','na'],['Paste','⌘ V','na'],['Select All','⌘ A','na'],['-'],
+    ['Find in Transcript…','⌘ F','na'],
+    ['Copy Last Reply','⇧ ⌘ C','copy:reply'],
+    ['Copy Session ID','⌃ ⌘ C','copy:session'],
+  ]],
+  ['View', [
+    ['Chat','⌘ 1','room:chat'],['Tasks','⌘ 2','room:tasks'],['Skills','⌘ 3','room:skills'],['Memory','⌘ 4','room:memory'],
+    ['-'],
+    ['@sidebar','⌘ 0','toggle:sidebar'],
+    ['@inspector','⌥ ⌘ 0','toggle:inspector'],
+    ['@console','⇧ ⌘ Y','toggle:console'],
+    ['-'],
+    ['Expand All Tool Cards','⌥ ⌘ E','cards:expand'],
+    ['Collapse All Tool Cards','⌥ ⌘ K','cards:collapse'],
+    ['-'],
+    ['#','Appearance'],
+    ['System','','theme:system'],
+    ['Light','','theme:light'],
+    ['Dark','','theme:dark'],
+  ]],
+  ['Run', [
+    ['Send','⌘ ↩','send'],
+    ['Stop','⌘ .','stop'],
+    ['Retry Last Turn','⌘ R','retry'],
+    ['Clear Transcript','⌘ ⌫','clear'],
+    ['-'],
+    ['Approve Request','Y','appr:y'],
+    ['Allow Category This Session','S','appr:s'],
+    ['Deny Request','N','appr:n'],
+    ['Abort Run','⎋','appr:esc'],
+    ['-'],
+    ['#','Run mode'],
+    ['Local','⌃ 1','mode:local'],
+    ['Cloud','⌃ 2','mode:cloud'],
+    ['Fusion','⌃ 3','mode:fusion'],
+    ['Cloud Share…','⌃ ⇧ C','runmode'],
+    ['-'],
+    ['Choose Model…','⇧ ⌘ M','settings:models'],
+    ['Approval Level…','','settings:privacy'],
+  ]],
+  ['Agent', [
+    ['Install Skill from Hub…','⇧ ⌘ I','skills:hub'],
+    ['Enable or Disable Skill…','','room:skills'],
+    ['-'],
+    ['New Scheduled Task…','⌃ ⌘ N','task:new'],
+    ['Run Task Now','','task:run'],
+    ['-'],
+    ['MCP Servers…','','settings:mcp'],
+    ['Telegram…','','settings:channels'],
+    ['-'],
+    ['Built-in Tools Reference','⌥ ⌘ T','tools'],
+    ['Restart Agent Runtime','','restart'],
+  ]],
+  ['Window', [['Minimize','⌘ M','na'],['Zoom','','na'],['-'],['Bring All to Front','','na']]],
+  ['Help', [
+    ['Atomic Agent Help','','na'],
+    ['Slash Commands Reference','','palette:slash'],
+    ['Keyboard Shortcuts','⌘ /','shortcuts'],
+    ['-'],
+    ['Release Notes','','na'],['Report an Issue…','','na'],['Open Data Folder','','na'],
+  ]],
+];
+
+/* palette catalogue — every row has a menu-bar home */
+const PAL = [
+  ['Go', [
+    ['chat','Chat','Session','⌘ 1','room:chat'],
+    ['inspector','Feed','Observe','/feed','insp:steps'],
+    ['atom','World','Observe','/world','insp:world'],
+    ['bolt','Reasoning','Observe','/reasoning','insp:reasoning'],
+    ['console','Logs','Console','/logs','console:agent'],
+    ['console','LLM logs','Console','','console:llm'],
+    ['tasks','Tasks','Library','⌘ 2','room:tasks'],
+    ['skills','Skills','Library','⌘ 3','room:skills'],
+    ['memory','Memory','Library','⌘ 4','room:memory'],
+    ['gear','Settings','Settings','⌘ ,','settings:general'],
+    ['key','Privacy & Approvals','Settings','⇧ ⌘ ,','settings:privacy'],
+    ['link','MCP Servers','Settings','/mcp','settings:mcp'],
+    ['cloud','Models & Providers','Settings','/llm','settings:models'],
+  ]],
+  ['Session', [
+    ['plus','New session','keeps warm runtime','⌘ N','session:new'],
+    ['chat','Switch session…','open session picker','⌘ O','session:switch'],
+    ['x','Clear transcript','keeps session','⌘ ⌫','clear'],
+    ['copy','Show session id','','⌃ ⌘ C','copy:session'],
+  ]],
+  ['Model', [
+    ['cloud','Switch chat model…','pull | use | status','⇧ ⌘ M','settings:models'],
+  ]],
+  ['Run', [
+    ['stop','Abort turn','','⌘ .','stop'],
+    ['cpu','Run type…','local | cloud | fusion [0-100]','','scope:run'],
+    ['chevD','Expand all tool cards','','⌥ ⌘ E','cards:expand'],
+    ['chevR','Collapse all tool cards','','⌥ ⌘ K','cards:collapse'],
+  ]],
+  ['Setup', [
+    ['gear','Theme…','','','scope:theme'],
+    ['skills','Enable or disable a skill…','','','room:skills'],
+    ['tasks','Create, cancel or run a task…','','','scope:task'],
+    ['key','Approval level…','1..5','','scope:level'],
+    ['filter','Analytics','on | off | status','','analytics'],
+  ]],
+  ['Help', [
+    ['doc','Commands','list available slash commands','','palette:slash'],
+    ['doc','List built-in tools','','⌥ ⌘ T','tools'],
+    ['doc','Write debug bundle','','⌥ ⌘ D','dump'],
+    ['x','Quit','','⌘ Q','quit'],
+  ]],
+];
+
+/* ---------------- state ---------------- */
+const S = {
+  room:'chat', theme:'system',
+  inspector:true, inspTab:'steps',
+  consoleOpen:false, consoleTab:'agent',
+  settings:null, settingsPane:'general',
+  overlay:null, menuOpen:null, alert:null,
+  q:'', cur:0, scope:null,
+  slash:false, slashCur:0,
+  draft:'',
+  mode:'fusion', share:40, dialShare:40,
+  localModel:'qwen3-8b-instruct', cloudModel:'claude-opus-5', modelTab:'local', modelQuery:'',
+  level:3, grants:[],
+  busy:false, pending:null, queued:[], phase:'', elapsed:0,
+  sessionId:'s1',
+  stick:true,
+  memTab:'notes', skillsTab:'installed', taskFilter:'all',
+  toasts:[], toastId:0,
+  agentSession:null,
+  live:{state: BR ? 'starting' : 'demo', binary:null, port:null, workingDir:'~', llama:null, error:null},
+  history:[], turnId:null, streamId:null,
+  log:[],
+};
+
+let SESSIONS = [
+  {id:'s1', t:'Episode scripts — zip by character', g:'TODAY', sub:'6 turns · 12m ago', st:'run'},
+  {id:'s2', t:'Rename the Po photos', g:'TODAY', sub:'11 turns · 2h ago', st:''},
+  {id:'s3', t:'Weekly Tubby Custard report', g:'YESTERDAY', sub:'4 turns · scheduled', st:''},
+  {id:'s4', t:'Summarise the Noo-noo manual', g:'EARLIER', sub:'9 turns · 3d ago', st:''},
+];
+
+const TASKS = [
+  {id:'t1', t:'Back up the Teletubbies folder', when:'every 6 hours', last:'last ran 2h ago · 14 firings', st:'run'},
+  {id:'t2', t:'Morning Tubby Custard digest', when:'every weekday 09:00', last:'last ran yesterday · 42 firings', st:'ok'},
+  {id:'t3', t:'Sun-baby sunrise check', when:'Mondays 08:00', last:'failed 6d ago · 3 firings', st:'bad'},
+];
+
+const MODELS = {
+  local: [
+    {id:'qwen3-8b-instruct',  q:'Q4_K_M',     size:'4.9 GB',  ctx:'32k',  state:'installed', fit:'fits this Mac'},
+    {id:'qwen3-30b-a3b',      q:'UD-Q4_K_XL', size:'17.2 GB', ctx:'64k',  state:'installed', fit:'tight — 18 GB free'},
+    {id:'llama-4-8b',         q:'Q5_K_M',     size:'6.1 GB',  ctx:'128k', state:'download',  fit:'fits this Mac'},
+    {id:'gemma-3-12b',        q:'Q4_K_M',     size:'7.3 GB',  ctx:'32k',  state:'download',  fit:'fits this Mac'},
+    {id:'phi-5-mini',         q:'Q6_K',       size:'2.8 GB',  ctx:'16k',  state:'download',  fit:'fits this Mac'},
+  ],
+  cloud: [
+    {id:'claude-opus-5',    v:'Anthropic', ctx:'200k', note:'strongest reasoning'},
+    {id:'claude-sonnet-5',  v:'Anthropic', ctx:'200k', note:'faster, cheaper'},
+    {id:'claude-haiku-4.5', v:'Anthropic', ctx:'200k', note:'cheapest, good for tool loops'},
+    {id:'gpt-x-turbo',      v:'OpenAI',    ctx:'128k', note:'needs an OpenAI key'},
+    {id:'gemini-3-pro',     v:'Google',    ctx:'1M',   note:'needs a Google key'},
+  ],
+  external: [
+    {id:'ollama · llama-4-8b', v:'http://127.0.0.1:11434/v1', ctx:'128k', note:'OpenAI-compatible'},
+  ],
+};
+const shortModel = (id) => id.replace(/-instruct$/, '');
+
+const SKILLS = [
+  {t:'pdf-extract', s:'vision · os.fs', v:'1.4.0', on:true, src:'hub'},
+  {t:'folder-tidy', s:'os.fs', v:'0.9.2', on:true, src:'local'},
+  {t:'web-research', s:'browser · os.http', v:'2.0.1', on:false, src:'hub'},
+];
+const HUB = [
+  {t:'custard-counter', s:'vision, memory.notes', d:'2.1k installs', repo:'clawhub/custard-counter'},
+  {t:'tubby-digest', s:'memory, os.http', d:'840 installs', repo:'clawhub/tubby-digest'},
+];
+const NOTES = [
+  {t:'Scripts are named character-episode.pdf', s:'learned 3 sessions ago · used 6×', tag:'note'},
+  {t:'Laa-Laa is the yellow one — Dipsy is green', s:'learned yesterday · used 2×', tag:'note'},
+  {t:'zip -j flattens paths — ask before flattening', s:'from a failed turn · applied 1×', tag:'lesson'},
+];
+
+/* ---------------- transcript ---------------- */
+let uid = 0;
+const nid = () => 'i' + (++uid);
+S.log = [
+  {id:nid(), k:'user', text:"what's in this folder?"},
+  {id:nid(), k:'tool', name:'os.fs.list_dir', arg:'~/Teletubbies', where:'local', ms:41, ok:true, open:false,
+   args:'{ "path": "~/Teletubbies", "depth": 1 }',
+   out:'tinky-winky-s01e04.pdf\ndipsy-s01e07.pdf\nlaa-laa-s02e02.pdf\npo/  (12 files)'},
+  {id:nid(), k:'assistant', text:'Three episode scripts at the top level, plus a po/ folder with twelve more. Want them organised?'},
+];
+
+/* ============================================================
+   render
+   ============================================================ */
+function render() {
+  renderMenubar(); renderToolbar(); renderSidebar(); renderContent();
+  renderInspector(); renderConsole(); renderOverlays(); renderSettings(); renderToasts();
+}
+
+function renderMenubar() {
+  const b = $('#menubar');
+  b.innerHTML = '<span style="margin-right:6px;display:flex">' + MARK_COLOR + '</span>'
+    + MENUS.map((m, i) => '<button class="mb-item' + (i === 0 ? ' brand' : '') + (S.menuOpen === i ? ' open' : '')
+        + '" data-menu="' + i + '">' + esc(m[0]) + '</button>').join('')
+    + '<span id="mb-clock" class="tnum">14:32</span>';
+}
+
+function toolCount() { const n = S.log.filter((x) => x.k === 'tool').length; return n === 1 ? '1 tool call' : n + ' tool calls'; }
+function roomTitle() {
+  if (S.room === 'chat') {
+    const ses = SESSIONS.find((x) => x.id === S.sessionId);
+    return ['Chat', ses ? ses.t + ' · ' + (S.busy ? 'running' : S.pending ? 'waiting for you' : toolCount()) : ''];
+  }
+  if (S.room === 'tasks')  return ['Tasks', TASKS.length + ' scheduled · 1 running'];
+  if (S.room === 'skills') return ['Skills', SKILLS.filter((s) => s.on).length + ' enabled of ' + SKILLS.length];
+  return ['Memory', 'profile · notes · lessons · links'];
+}
+
+function renderToolbar() {
+  const [t, sub] = roomTitle();
+  $('#toolbar').innerHTML =
+    '<div class="lights"><span class="lg" style="background:#FF5F57"></span><span class="lg" style="background:#FEBC2E"></span><span class="lg" style="background:#28C840"></span></div>'
+    + '<button class="iconbtn" data-act="toggle:sidebar" title="Hide sidebar (Ctrl+0)">' + ic('sidebar') + '</button>'
+    + '<div class="tb-title"><b>' + esc(t) + '</b><span>' + esc(sub) + '</span></div>'
+    + '<div class="tb-right">'
+      + '<button class="searchbtn" data-act="palette">' + ic('search') + '<span class="sec">Search</span>' + keycaps('⌘ K') + '</button>'
+      + '<button class="iconbtn' + (S.inspector ? ' on' : '') + '" data-act="toggle:inspector" title="Inspector">' + ic('inspector') + '</button>'
+      + '<button class="iconbtn' + (S.consoleOpen ? ' on' : '') + '" data-act="toggle:console" title="Console (Ctrl+Shift+Y)">' + ic('console') + '</button>'
+    + '</div>';
+}
+
+function renderSidebar() {
+  const live = BR && S.live.state === 'connected';
+  const nav = [['chat','Chat',''],
+               ['tasks','Tasks', String(TASKS.length || (live ? 0 : 3))],
+               ['skills','Skills', String(SKILLS.length || (live ? 0 : 2))],
+               ['memory','Memory', live ? '' : '24']];
+  let groups = '', last = '';
+  SESSIONS.forEach((s) => {
+    if (s.g !== last) { groups += '<div class="sb-group micro">' + esc(s.g) + '</div>'; last = s.g; }
+    const waiting = s.id === S.sessionId && S.pending;
+    groups += '<button class="sesrow' + (s.id === S.sessionId ? ' on' : '') + '" data-ses="' + s.id + '">'
+      + '<span class="col"><span class="t1">' + esc(s.t) + '</span><span class="t2">' + esc(s.sub) + (s.origin ? ' ' + s.origin : '') + '</span></span>'
+      + '<span class="sesstat">' + (waiting ? '<span style="color:var(--warn);display:flex">' + ic('warn') + '</span>'
+                 : s.st ? '<span class="dot ' + s.st + '"></span>' : '') + '</span>'
+      + '<span class="sesacts"><span class="iconbtn" data-del="' + s.id + '" title="Delete session" role="button">' + ic('trash') + '</span></span>'
+      + '</button>';
+  });
+  $('#sidebar').innerHTML =
+    '<div class="sb-head">' + MARK_COLOR
+      + '<button class="wschip" data-act="workspace"><span>' + esc(BR ? WORKSPACE : '~/Teletubbies') + '</span>' + ic('chevD') + '</button>'
+      + '<button class="iconbtn" data-act="session:new" title="New session (Ctrl+N)" style="margin-left:auto">' + ic('plus') + '</button></div>'
+    + '<div class="sb-nav">' + nav.map(([id, label, count]) =>
+        '<button class="navrow' + (S.room === id ? ' on' : '') + '" data-room="' + id + '">'
+        + '<span class="ic">' + ic(id) + '</span><span class="lb">' + label + '</span>'
+        + '<span class="ct tnum">' + count + '</span></button>').join('') + '</div>'
+    + '<div class="seswrap">' + groups + '</div>'
+    + '<button class="sb-foot" data-act="settings:models">'
+      + '<span class="dot ' + (!BR ? 'ok' : S.live.state === 'connected' ? 'ok' : S.live.state === 'starting' ? 'run' : 'bad') + '"></span>'
+      + '<span>' + esc(BR ? liveLabel() : 'llama-server · ' + shortModel(S.localModel)) + '</span></button>';
+}
+
+/* ---------------- content ---------------- */
+function renderContent() {
+  const c = $('#content');
+  if (S.room === 'chat')   { c.innerHTML = chatView(); afterChat(); return; }
+  if (S.room === 'tasks')  { c.innerHTML = tasksView(); return; }
+  if (S.room === 'skills') { c.innerHTML = skillsView(); return; }
+  c.innerHTML = memoryView();
+}
+
+function chatView() {
+  const body = S.log.length ? '<div class="col720">' + S.log.map(item).join('') + '</div>' : emptyChat();
+  return '<div class="scroller" id="scroller">' + body + '</div>' + composer();
+}
+
+function emptyChat() {
+  return '<div class="empty"><span style="opacity:.25;color:var(--text-primary)">'
+    + '<svg width="48" height="48" viewBox="0 0 64 64" fill="currentColor"><path d="M35.24 49.92a1.25 1.25 0 0 0 1.3-1.24 12.2 12.2 0 0 1 12.14-12.14 1.25 1.25 0 0 0 1.24-1.3v-6.47c0-.69-.56-1.24-1.24-1.24H37.72c-.69 0-1.24-.56-1.24-1.25V15.32c0-.69-.56-1.24-1.24-1.24h-6.47c-.69 0-1.24.56-1.3 1.24A12.2 12.2 0 0 1 15.32 27.46c-.68.06-1.24.61-1.24 1.3v6.47c0 .69.56 1.24 1.24 1.24h10.96c.69 0 1.24.56 1.24 1.25v10.95c0 .69.56 1.24 1.24 1.24z"/></svg></span>'
+    + '<div style="font-size:22px;line-height:28px;font-weight:600;letter-spacing:-.02em">Ask it to do something on this machine</div>'
+    + '<div class="ghost">'
+      + ['zip these episode scripts by character','rename the po photos in ~/Downloads','summarise the Noo-noo manual']
+          .map((g) => '<button class="ghostchip" data-fill="' + esc(g) + '">' + esc(g) + '</button>').join('')
+    + '</div></div>';
+}
+
+function item(m) {
+  if (m.k === 'user') return '<div class="turn"><div class="gutter"><span class="avatar">T</span></div>'
+    + '<div class="prose usr">' + esc(m.text) + '</div></div>';
+  if (m.k === 'assistant') return '<div class="turn"><div class="gutter"><span style="color:var(--accent-text);display:flex">' + MARK_MONO + '</span></div>'
+    + '<div class="prose">' + esc(m.text) + '</div></div>';
+  if (m.k === 'system') return '<div class="sysrow"><span></span><span>' + m.text + '</span></div>';
+  if (m.k === 'reason') return '<div class="turn"><div></div><div>'
+    + '<button class="disc" data-toggle="' + m.id + '">' + ic(m.open ? 'chevD' : 'chevR') + 'Reasoning · ' + m.steps + ' steps</button>'
+    + (m.open ? '<div class="discbody">' + esc(m.text) + '</div>' : '') + '</div></div>';
+  if (m.k === 'tool') return '<div class="turn"><div></div><div>' + toolCard(m) + '</div></div>';
+  if (m.k === 'approval') return '<div class="turn"><div></div><div>' + apprCard(m) + '</div></div>';
+  return '';
+}
+
+function toolCard(m) {
+  const running = m.ok === null;
+  const glyph = running ? '<span class="dot run"></span>'
+    : m.ok ? '<span style="color:var(--success);display:flex">' + ic('check') + '</span>'
+           : '<span style="color:var(--danger);display:flex">' + ic('warn') + '</span>';
+  return '<div class="card' + (running ? ' running' : '') + (m.ok === false ? ' err' : '') + '" id="card-' + m.id + '">'
+    + '<button class="cardhead" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '">'
+      + glyph + '<span class="nm">' + esc(m.name) + '</span><span class="ar">' + esc(m.arg) + '</span>'
+      + (S.mode === 'fusion' ? '<span class="chip-route ' + m.where + '">' + m.where + '</span>' : '')
+      + '<span class="du tnum">' + (running ? '…' : dur(m.ms)) + '</span>'
+      + '<span class="ter" style="display:flex">' + ic(m.open ? 'chevD' : 'chevR') + '</span>'
+    + '</button>'
+    + (m.open ? '<div class="cardbody">'
+        + (m.args ? '<div class="micro sec">Args</div><pre>' + esc(m.args) + '</pre>' : '')
+        + '<div class="micro sec">Result</div><pre>' + esc(m.out || '—') + '</pre></div>' : '')
+    + '</div>';
+}
+
+function apprCard(m) {
+  if (m.state) {
+    const ok = m.state === 'approved';
+    return '<div class="appr done' + (ok ? ' ok' : '') + '">'
+      + '<div class="hstack" style="gap:8px"><span class="sec">' + (ok ? 'Approved' : 'Denied') + ' · ' + m.at + '</span>'
+      + '<span class="badge" style="background:transparent;border-color:var(--line);color:var(--text-secondary)">' + esc(m.kind) + '</span></div></div>';
+  }
+  const isTrust = m.cat === 'trust_config';
+  return '<div class="appr' + (isTrust ? ' danger' : '') + '" id="apprcard">'
+    + '<div class="apprhead"><span style="color:var(--warn);display:flex">' + ic('warn') + '</span>'
+      + '<span class="ttl">Approval required</span>'
+      + '<span class="badge" style="margin-left:auto">' + esc(m.kind) + '</span></div>'
+    + '<dl class="dl">'
+      + '<dt>tool</dt><dd><span class="mono">' + esc(m.tool) + '</span></dd>'
+      + '<dt>kind</dt><dd>' + esc(m.kind) + ' <span class="cap">— auto-approves from level ' + m.lvl + '</span></dd>'
+      + '<dt>reason</dt><dd>' + esc(m.reason) + '</dd>'
+      + '<dt>preview</dt><dd><div class="previewblk">' + esc(m.preview) + '</div></dd>'
+      + '<dt>affects</dt><dd><span class="pathchip"><b>' + esc(m.affectsBase) + '</b><span class="cap">' + esc(m.affectsDir) + '</span></span></dd>'
+    + '</dl>'
+    + '<div class="apprbtns"><div class="apprgrp">'
+      + '<button class="btn btn-p" data-appr="y">Approve' + keycaps('Y') + '</button>'
+      + (isTrust ? '' : '<button class="btn btn-t" data-appr="s">Allow &ldquo;' + esc(m.kind) + '&rdquo; this session' + keycaps('S') + '</button>')
+      + (isTrust ? '' : '<button class="btn btn-t" data-appr="a">Allow all &ldquo;' + esc(m.shape) + '&rdquo; commands this session' + keycaps('A') + '</button>')
+      + '<button class="btn btn-s" data-appr="n" id="denybtn">Deny' + keycaps('N') + '</button></div>'
+      + '<button class="btn btn-g" data-appr="esc">Abort run' + keycaps('⎋') + '</button>'
+    + '</div>'
+    + '<div class="apprfoot">' + (isTrust
+        ? 'trust-config writes are never granted for the session; y approves this call only'
+        : 'y approves this call once; s / a grant for this session only (never persisted); raise the standing level on the <button class="btn-g" style="text-decoration:underline" data-act="settings:privacy">Privacy</button> tab')
+    + '</div></div>';
+}
+
+function composer() {
+  const running = S.busy || !!S.pending;
+  const status = S.pending
+    ? '<div class="statusstrip gated">' + ic('warn') + 'Waiting for your approval'
+      + '<button class="btn-g" style="text-decoration:underline" data-act="jump:appr">Jump to request</button></div>'
+    : S.busy
+    ? '<div class="statusstrip"><span class="threedot"><i></i><i></i><i></i></span><span>' + S.phase + '</span>'
+      + '<span class="mono ter tnum" style="margin-left:auto">' + (S.elapsed / 10).toFixed(1) + 's</span>'
+      + '<button class="btn-g" data-act="stop">Stop</button></div>'
+    : '';
+  const q = S.queued.length ? '<div class="qtray">' + S.queued.map((t, i) =>
+      '<div class="qchip"><span class="ter">Queued</span><span style="flex:1;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(t) + '</span>'
+      + '<button class="iconbtn" style="width:20px;height:20px" data-unqueue="' + i + '">' + ic('x') + '</button></div>').join('') + '</div>' : '';
+  const gaugePct = Math.max(2, Math.min(100, Math.round((ctxUsed() / ctxTotal()) * 100)));
+  return '<div class="composerwrap">' + status + q
+    + '<div class="composer' + (running ? ' running' : '') + '" id="composer">'
+      + (S.slash ? slashPopover() : '')
+      + '<div class="field"><textarea id="entry" rows="1" placeholder="' + (running ? 'Send to steer this turn…' : 'Ask for an outcome, or / for a command') + '"></textarea>'
+      + sendButton() + '</div>'
+      + '<div class="cfoot">'
+        + '<button class="cchip modechip" data-act="runmode" title="Run type">'
+          + ic(S.mode === 'cloud' ? 'cloud' : S.mode === 'local' ? 'cpu' : 'atom')
+          + S.mode + (S.mode === 'fusion' ? ' ' + S.share + '%' : '') + ic('chevD') + '</button>'
+        + '<button class="cchip" data-act="settings:models">' + ic('cpu')
+          + esc(shortModel(activeModel())) + ic('chevD') + '</button>'
+        + '<span style="flex:1"></span>'
+        + '<button class="cchip ctxbtn" data-act="context" title="Context window">'
+          + '<span class="gauge"><i style="width:' + gaugePct + '%"></i></span>'
+          + '<span class="tnum gaugelb">' + tok(ctxUsed()) + '/' + tok(ctxTotal()) + '</span></button>'
+        + '<button class="cchip" data-act="settings:privacy">' + ic('key') + 'L' + S.level + ' ' + LEVEL_NAMES[S.level].toLowerCase() + ic('chevD') + '</button>'
+      + '</div>'
+    + '</div></div>';
+}
+
+function sendButton() {
+  if (S.busy || S.pending) {
+    if (S.draft.trim()) return '<button class="sendbtn" data-act="send" title="Queue">' + ic('plus') + '</button>';
+    return '<button class="sendbtn stop" data-act="stop" title="Stop (Ctrl+.)">' + ic('stop') + '</button>';
+  }
+  return '<button class="sendbtn' + (S.draft.trim() ? '' : ' mute') + '" data-act="send" title="Send">' + ic('up') + '</button>';
+}
+
+function afterChat() {
+  const e = $('#entry');
+  if (!e) return;
+  e.value = S.draft;
+  autosize(e);
+  const sc = $('#scroller');
+  if (sc) {
+    sc.addEventListener('scroll', () => {
+      S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
+      $('#toolbar').classList.toggle('scrolled', sc.scrollTop > 2);
+    });
+    if (S.stick) sc.scrollTop = sc.scrollHeight;
+  }
+  if (S.pending && !S.apprFocused) { const d = $('#denybtn'); if (d) { d.focus(); S.apprFocused = true; } }
+}
+function autosize(e) { e.style.height = 'auto'; e.style.height = Math.min(e.scrollHeight, 180) + 'px'; }
+
+/* ---------------- rooms ---------------- */
+function segControl(items, cur, actPrefix) {
+  return '<div class="seg">' + items.map(([id, label]) =>
+    '<button class="' + (cur === id ? 'on' : '') + '" data-act="' + actPrefix + id + '">' + esc(label) + '</button>').join('') + '</div>';
+}
+
+function tasksView() {
+  const filtered = TASKS.filter((t) => S.taskFilter === 'all'
+    || (S.taskFilter === 'running' && t.st === 'run')
+    || (S.taskFilter === 'failed' && t.st === 'bad')
+    || (S.taskFilter === 'scheduled' && t.st !== 'run'));
+  return '<div class="chead"><span class="hd">Tasks</span>'
+    + segControl([['all','All'],['scheduled','Scheduled'],['running','Running'],['failed','Failed']], S.taskFilter, 'taskfilter:')
+    + '<span class="grow"></span><button class="btn btn-p" data-act="task:new">' + ic('plus') + 'New Task</button></div>'
+    + '<div class="scroller"><div class="rows">'
+    + filtered.map((t) => '<button class="row"><span class="dot ' + t.st + '"></span>'
+        + '<span class="main"><span class="t">' + esc(t.t) + '</span></span>'
+        + '<span class="meta">' + esc(t.when) + ' · ' + esc(t.last) + '</span>'
+        + '<span class="acts"><span class="iconbtn" title="Run now">' + ic('play') + '</span>'
+        + '<span class="iconbtn" title="Edit">' + ic('gear') + '</span></span></button>').join('')
+    + '</div>'
+    + '<div class="pad"><div class="panelcard"><div class="micro sec">Last result · back up the Teletubbies folder</div>'
+      + '<div class="mono sec">08:00:04  os.fs.list_dir ~/Teletubbies ✓\n08:00:05  os.fs.copy → ~/Backups/2026-08-26 ✓\n08:00:19  15 files · 42.1 MB · 14.8s</div></div></div>'
+    + '</div>';
+}
+
+function skillsView() {
+  const installed = '<div class="rows">' + SKILLS.map((s) =>
+    '<div class="row"><span class="ic sec" style="display:flex">' + ic('skills') + '</span>'
+    + '<span class="main"><span class="t">' + esc(s.t) + '</span><span class="cap">' + esc(s.s) + '</span></span>'
+    + '<span class="meta">v' + s.v + ' · ' + s.src + '</span>'
+    + '<button class="btn ' + (s.on ? 'btn-s' : 'btn-t') + '" data-skill="' + esc(s.t) + '">' + (s.on ? 'Enabled' : 'Enable') + '</button></div>').join('') + '</div>';
+  const hub = '<div class="pad" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">'
+    + HUB.map((h) => '<div class="panelcard"><div class="hstack"><span class="hd">' + esc(h.t) + '</span>'
+      + '<span class="cap" style="margin-left:auto">' + esc(h.d) + '</span></div>'
+      + '<div class="cap">' + esc(h.s) + '</div>'
+      + '<div class="mono ter">' + esc(h.repo) + '</div>'
+      + '<button class="btn btn-t" style="align-self:flex-start">Install…</button></div>').join('') + '</div>';
+  return '<div class="chead"><span class="hd">Skills</span>'
+    + segControl([['installed','Installed'],['hub','Hub']], S.skillsTab, 'skillstab:')
+    + '<span class="grow"></span></div>'
+    + '<div class="scroller">' + (S.skillsTab === 'installed' ? installed : hub) + '</div>';
+}
+
+function memoryView() {
+  const rows = NOTES.filter((n) => S.memTab === 'notes' ? n.tag === 'note' : S.memTab === 'lessons' ? n.tag === 'lesson' : true);
+  const profile = '<div class="pad"><div class="panelcard"><dl class="kvgrid">'
+    + '<dt>name</dt><dd>Tinky Winky</dd><dt>timezone</dt><dd>Europe/Berlin</dd>'
+    + '<dt>style</dt><dd>blunt, no filler, ship-first</dd><dt>workspace</dt><dd class="mono">~/Teletubbies</dd></dl></div></div>';
+  return '<div class="chead"><span class="hd">Memory</span>'
+    + segControl([['profile','Profile'],['notes','Notes'],['lessons','Lessons'],['links','Links']], S.memTab, 'memtab:')
+    + '<span class="grow"></span></div>'
+    + '<div class="scroller">' + (S.memTab === 'profile' ? profile
+      : S.memTab === 'links' ? '<div class="pad"><p class="sec">2 links between notes. Selecting a link fills the inspector.</p></div>'
+      : '<div class="rows">' + rows.map((n) => '<button class="row"><span class="dot"></span>'
+        + '<span class="main"><span class="t" style="font-weight:400">' + esc(n.t) + '</span></span>'
+        + '<span class="meta">' + esc(n.s) + '</span></button>').join('') + '</div>') + '</div>';
+}
+
+/* ---------------- inspector ---------------- */
+function renderInspector() {
+  const el = $('#inspector');
+  el.classList.toggle('hide', !S.inspector);
+  if (!S.inspector) return;
+  const tabs = [['steps','Steps'],['reasoning','Reasoning'],['world','World'],['metrics','Metrics']];
+  let body = '';
+  if (S.inspTab === 'steps') {
+    const tools = S.log.filter((m) => m.k === 'tool');
+    body = tools.length ? tools.map((m, i) => '<button class="step" data-goto="' + m.id + '">'
+        + '<span class="ix">' + String(i + 1).padStart(2, '0') + '</span>'
+        + '<span class="nm">' + esc(m.name) + '</span>'
+        + '<span class="hstack">' + (S.mode === 'fusion' ? '<span class="chip-route ' + m.where + '" style="height:16px;font-size:10px">' + m.where + '</span>' : '')
+        + '<span class="mono ter tnum">' + dur(m.ok === null ? null : m.ms) + '</span></span></button>').join('')
+      : '<p class="cap">No steps yet.</p>';
+  } else if (S.inspTab === 'reasoning') {
+    const r = S.log.filter((m) => m.k === 'reason');
+    body = r.length ? r.map((m) => '<div style="margin-bottom:12px"><div class="micro sec">step ' + m.steps + '</div>'
+        + '<div class="mono sec" style="white-space:pre-wrap">' + esc(m.text) + '</div></div>').join('')
+      : '<p class="cap">Reasoning appears here as the turn runs.</p>';
+  } else if (S.inspTab === 'world') {
+    body = '<dl class="kvgrid"><dt>cwd</dt><dd class="mono">~/Teletubbies</dd>'
+      + '<dt>granted</dt><dd class="mono">rw ~/Teletubbies<br>r&nbsp; ~/Downloads</dd>'
+      + '<dt>skills</dt><dd>pdf-extract 1.4.0<br>folder-tidy 0.9.2</dd>'
+      + '<dt>tools</dt><dd>os.fs · os.shell · os.http · browser · memory · vision</dd></dl>';
+  } else {
+    body = '<dl class="kvgrid"><dt>prompt</dt><dd class="tnum">12,481 tok</dd><dt>completion</dt><dd class="tnum">1,904 tok</dd>'
+      + '<dt>stable prefix</dt><dd class="tnum">8,210 / tail 4,271</dd><dt>kv cache</dt><dd class="tnum">41% hit</dd>'
+      + '<dt>parse retries</dt><dd class="tnum">0</dd><dt>tools</dt><dd class="tnum">6 ok · 0 error</dd>'
+      + '<dt>llm time</dt><dd class="tnum">4.1s</dd><dt>step time</dt><dd class="tnum">6.8s</dd></dl>';
+  }
+  el.innerHTML = '<div class="insphead">' + segControl(tabs, S.inspTab, 'insp:') + '</div>'
+    + '<div class="inspbody">' + body + '</div>'
+    + '<button class="inspfoot" data-act="copy:session">' + ic('copy') + 'Session 4f2a91…</button>';
+}
+
+/* ---------------- console ---------------- */
+const LOGS = [
+  ['09:41:02','info','runtime ready · 14 tools · 2 mcp servers'],
+  ['09:41:02','info','approval gate level=3 (home)'],
+  ['09:41:07','debug','tool os.fs.list_dir ok 41ms'],
+  ['09:41:08','debug','run_step step=2 route=local score=0.31'],
+  ['09:41:09','warn','mcp custard-api: auth failed (401) — server marked unhealthy'],
+  ['09:41:12','info','approval requested category=shell tool=os.shell.exec'],
+];
+const LLMLOGS = [
+  ['09:41:02','info','POST /v1/messages claude-opus-5 · 1.2k in · 184 out · stop=tool_use'],
+  ['09:41:08','info','POST :8080/completion qwen3-8b · 2.9k tok · 41 tok/s'],
+];
+function renderConsole() {
+  const el = $('#console');
+  el.classList.toggle('hide', !S.consoleOpen);
+  if (!S.consoleOpen) return;
+  const rows = (S.consoleTab === 'agent' ? LOGS : LLMLOGS);
+  el.innerHTML = '<div class="conhead">'
+    + segControl([['agent','Agent log'],['llm','LLM log']], S.consoleTab, 'console:')
+    + '<span style="flex:1"></span>'
+    + '<button class="btn btn-s" data-act="dump">Write Debug Bundle' + keycaps('⌥ ⌘ D') + '</button>'
+    + '<button class="iconbtn" data-act="toggle:console">' + ic('x') + '</button></div>'
+    + '<div class="conbody">' + rows.map(([t, l, m]) =>
+        '<div class="logrow"><span class="ter">' + t + '</span><span class="lvl ' + l + '">' + l + '</span>'
+        + '<span class="sec">' + esc(m) + '</span></div>').join('') + '</div>';
+}
+
+/* ---------------- palette ---------------- */
+const SCOPES = {
+  run:   {label:'Run type', ph:'Choose a mode…', rows:[['cpu','Local','llama-server only','','mode:local'],['cloud','Cloud','cloud provider only','','mode:cloud'],['atom','Fusion','cloud plans, local executes','','mode:fusion']], dial:true},
+  theme: {label:'Theme', ph:'Choose a theme…', rows:[['gear','System','follow macOS','','theme:system'],['gear','Light','','','theme:light'],['gear','Dark','','','theme:dark']]},
+  task:  {label:'Task', ph:'Choose an action…', rows:[['plus','New task…','cron | interval | at','','task:new'],['play','Run a task now','','','task:run'],['x','Cancel a task','','','na']]},
+  level: {label:'Approval level', ph:'Choose a level…', rows:CATS.length ? [1,2,3,4,5].map((n) => ['key', n + ' ' + LEVEL_NAMES[n], levelBlurb(n), '', 'level:' + n]) : []},
+};
+function levelBlurb(n) {
+  return {1:'every gated action asks first', 2:'file writes inside the workspace stop asking',
+          3:'writes under ~, Trash and HTTP stop asking', 4:'shell, skill scripts and process kills stop asking',
+          5:'nothing asks — including browser and trust config'}[n];
+}
+
+function palRows() {
+  if (S.scope) return SCOPES[S.scope].rows.map((r) => ({ic:r[0], t:r[1], cx:r[2], sc:r[3], act:r[4]}));
+  const q = S.q.trim().toLowerCase();
+  const all = [];
+  PAL.forEach(([g, rows]) => rows.forEach((r) => all.push({ic:r[0], t:r[1], cx:r[2], sc:r[3], act:r[4], g})));
+  if (!q) return null; // grouped rendering
+  const score = (r) => {
+    const t = r.t.toLowerCase();
+    if (t === q) return 0;
+    if (t.startsWith(q)) return 1;
+    if (t.split(/[\s·]+/).some((w) => w.startsWith(q))) return 2;
+    if (t.includes(q)) return 3;
+    if ((r.cx || '').toLowerCase().includes(q)) return 4;
+    return 9;
+  };
+  const hits = all.map((r) => ({r, s:score(r)})).filter((x) => x.s < 9).sort((a, b) => a.s - b.s).map((x) => x.r);
+  // cross-entity
+  SESSIONS.filter((s) => s.t.toLowerCase().includes(q)).slice(0, 3)
+    .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Session · ' + s.sub, sc:'', act:'ses:' + s.id, badge:'session'}));
+  TASKS.filter((t) => t.t.toLowerCase().includes(q)).slice(0, 3)
+    .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Task · ' + t.when, sc:'', act:'room:tasks', badge:'task'}));
+  SKILLS.filter((s) => s.t.toLowerCase().includes(q)).slice(0, 3)
+    .forEach((s) => hits.push({ic:'skills', t:s.t, cx:'Skill · ' + s.s, sc:'', act:'room:skills', badge:'skill'}));
+  return hits;
+}
+
+function bold(t, q) {
+  if (!q) return esc(t);
+  const i = t.toLowerCase().indexOf(q.toLowerCase());
+  if (i < 0) return esc(t);
+  return esc(t.slice(0, i)) + '<b>' + esc(t.slice(i, i + q.length)) + '</b>' + esc(t.slice(i + q.length));
+}
+
+function palRowHTML(r, i, q) {
+  const shortcut = r.sc && r.sc.startsWith('/')
+    ? '<span class="mono ter">' + esc(r.sc) + '</span>'
+    : keycaps(r.sc);
+  return '<button class="palrow' + (i === S.cur ? ' on' : '') + '" data-palrow="' + i + '">'
+    + '<span class="ic">' + ic(r.ic) + '</span>'
+    + '<span class="ti">' + bold(r.t, q) + '</span>'
+    + '<span class="cx">' + esc(r.cx || '') + '</span>'
+    + '<span class="sc">' + shortcut + '</span></button>';
+}
+
+function paletteHTML() {
+  const q = S.q.trim();
+  const flat = palRows();
+  let list = '', idx = 0;
+  if (flat === null) {
+    PAL.forEach(([g, rows]) => {
+      list += '<div class="palgroup micro">' + esc(g) + '</div>';
+      rows.slice(0, 6).forEach((r) => {
+        list += palRowHTML({ic:r[0], t:r[1], cx:r[2], sc:r[3], act:r[4]}, idx++, '');
+      });
+      if (rows.length > 6) list += '<button class="palrow" data-more="1"><span class="ic">' + ic('chevR')
+        + '</span><span class="ti sec">Show all (' + (rows.length - 6) + ' more)</span><span></span><span></span></button>';
+    });
+  } else if (flat.length === 0) {
+    list = '<div class="palempty"><div style="font-weight:500">No results for &ldquo;' + esc(q) + '&rdquo;</div>'
+      + '<div class="cap">Nothing in the command registry matches.</div>'
+      + '<button class="palrow" data-ask="1"><span class="ic">' + ic('chat') + '</span>'
+      + '<span class="ti">Ask the agent &ldquo;' + esc(q) + '&rdquo;</span><span></span><span class="sc">' + keycaps('↩') + '</span></button></div>';
+  } else {
+    list = flat.map((r, i) => palRowHTML(r, i, q)).join('');
+  }
+  const sc = S.scope ? SCOPES[S.scope] : null;
+  const dial = (sc && sc.dial) ? '<div style="padding:12px 16px;box-shadow:inset 0 1px 0 var(--line-soft)">'
+      + '<div class="hstack" style="margin-bottom:6px"><span class="cap">cloud share</span>'
+      + '<span class="mono tnum" style="margin-left:auto">' + S.dialShare + '</span></div>'
+      + '<input class="slider" type="range" min="0" max="100" step="5" value="' + S.dialShare + '" id="dial">'
+      + '<div class="cap" style="margin-top:4px">' + esc(shareBlurb(S.dialShare)) + '</div></div>' : '';
+  return '<div class="scrim" data-close="1"><div class="pal" role="dialog" aria-label="Command palette">'
+    + '<div class="palin">' + ic('search')
+      + (sc ? '<span class="palscope">' + esc(sc.label) + ' <span data-popscope="1">×</span></span>' : '')
+      + '<input id="palq" placeholder="' + (sc ? esc(sc.ph) : 'Search commands, sessions, tasks and skills…') + '" value="' + esc(S.q) + '">'
+      + keycaps('esc') + '</div>'
+    + '<div class="pallist" id="pallist">' + list + '</div>' + dial
+    + '<div class="palfoot"><span>' + keycaps('↩') + ' ' + (S.scope ? 'Apply' : 'Go') + '</span>'
+      + '<span>' + keycaps('↑') + keycaps('↓') + ' Move</span>'
+      + (S.scope ? '<span>' + keycaps('⌫') + ' Back</span>' : '')
+      + '<span style="margin-left:auto">' + PAL.reduce((n, g) => n + g[1].length, 0) + ' commands</span></div>'
+    + '</div></div>';
+}
+function shareBlurb(v) {
+  if (v === 0) return 'everything local';
+  if (v === 100) return 'everything cloud';
+  return 'cloud handles steps scoring ≥ ' + (100 - v);
+}
+
+/* ---------------- slash completion ---------------- */
+function slashMatches() {
+  const q = S.draft.replace(/^\//, '').toLowerCase();
+  if (!q) return SLASH;
+  return SLASH.filter(([n, d]) => n.startsWith(q)) .concat(SLASH.filter(([n, d]) => !n.startsWith(q) && n.includes(q)));
+}
+function slashPopover() {
+  const m = slashMatches();
+  const q = S.draft.replace(/^\//, '');
+  if (!m.length) return '<div class="slash"><div class="slashrow"><span class="cmd" style="color:var(--warn)">no matching command</span><span></span><span></span></div></div>';
+  return '<div class="slash"><div class="slashlist">' + m.map(([n, d, a], i) =>
+    '<button class="slashrow' + (i === S.slashCur ? ' on' : '') + '" data-slash="' + esc(n) + '">'
+    + '<span class="cmd">/' + bold(n, q) + '</span><span class="ds">' + esc(d) + '</span>'
+    + '<span class="hint">' + esc(a || '') + '</span></button>').join('') + '</div></div>';
+}
+
+/* ---------------- overlays ---------------- */
+function renderOverlays() {
+  const o = $('#overlays');
+  let html = '';
+  if (S.menuOpen !== null) html += menuPanelHTML(S.menuOpen);
+  if (S.overlay === 'palette') html += paletteHTML();
+  if (S.overlay === 'runmode') html += runmodeHTML();
+  if (S.overlay === 'context') html += contextHTML();
+  if (S.overlay === 'sessions') html += sessionSheet();
+  if (S.overlay === 'newtask') html += taskSheet();
+  if (S.overlay === 'shortcuts') html += shortcutsSheet();
+  if (S.alert) html += alertHTML();
+  o.innerHTML = html;
+  o.style.pointerEvents = html ? 'auto' : 'none';
+  o.style.position = 'absolute'; o.style.inset = '0'; o.style.zIndex = '20';
+  const pq = $('#palq');
+  if (pq) { pq.focus(); pq.setSelectionRange(pq.value.length, pq.value.length); }
+  const cur = o.querySelector('.palrow.on');
+  if (cur) cur.scrollIntoView({block:'nearest'});
+}
+
+function menuPanelHTML(i) {
+  const [name, rows] = MENUS[i];
+  const x = Array.from(document.querySelectorAll('.mb-item')).find((b) => b.dataset.menu === String(i));
+  const left = x ? x.getBoundingClientRect().left : 40;
+  return '<div style="position:fixed;inset:0;z-index:30" data-closemenu="1"></div>'
+    + '<div class="menupanel" style="position:fixed;left:' + Math.round(left) + 'px;top:26px">'
+    + rows.map((r) => {
+      if (r[0] === '-') return '<div class="msep"></div>';
+      if (r[0] === '#') return '<div class="mgroup micro">' + esc(r[1]) + '</div>';
+      let label = r[0], disabled = false, why = '';
+      if (label === '@sidebar') label = 'Hide Sidebar';
+      if (label === '@inspector') label = S.inspector ? 'Hide Inspector' : 'Show Inspector';
+      if (label === '@console') label = S.consoleOpen ? 'Hide Console' : 'Show Console';
+      if (r[2] && r[2].startsWith('appr:') && !S.pending) { disabled = true; why = 'nothing waiting'; }
+      if (r[2] === 'stop' && !S.busy && !S.pending) { disabled = true; why = 'nothing running'; }
+      if (r[2] === 'mode:cloud' && false) { disabled = true; why = 'no provider'; }
+      if (r[2] === 'na') disabled = true;
+      const tick = (r[2] === 'theme:' + S.theme) ? '✓' : (r[2] === 'mode:' + S.mode ? '•' : '');
+      return '<button class="mrow' + (disabled ? ' dis' : '') + '"' + (disabled ? '' : ' data-act="' + r[2] + '"') + '>'
+        + '<span class="mtick">' + tick + '</span>'
+        + '<span class="mlb">' + esc(label) + (why ? ' <span class="why">(' + why + ')</span>' : '') + '</span>'
+        + '<span class="msc">' + (r[1] ? keycapsPlain(r[1]) : '') + '</span></button>';
+    }).join('') + '</div>';
+}
+function keycapsPlain(s) { return esc(s.replace(/ /g, ' ')); }
+
+function anchorStyle(sel, width) {
+  const el = document.querySelector(sel);
+  const win = $('#window').getBoundingClientRect();
+  if (!el) return 'right:24px;bottom:96px';
+  const r = el.getBoundingClientRect();
+  const left = Math.max(win.left + 8, Math.min(r.left, win.right - width - 8));
+  return 'position:fixed;left:' + Math.round(left) + 'px;bottom:' + Math.round(window.innerHeight - r.top + 8) + 'px;top:auto;right:auto';
+}
+
+function runmodeHTML() {
+  const modes = [['local','Local','llama-server only'],['cloud','Cloud','cloud provider only'],['fusion','Fusion','cloud plans, local executes']];
+  return '<div class="scrim" data-close="1" style="background:transparent">'
+    + '<div class="popover" style="' + anchorStyle('.modechip', 340) + '">'
+    + modes.map(([id, t, d]) => '<button class="poprow' + (S.mode === id ? ' on' : '') + '" data-act="mode:' + id + '">'
+        + '<span class="radio"></span><span><span style="font-weight:500">' + t + '</span>'
+        + '<span class="cap" style="display:block">' + d + '</span></span>'
+        + (S.mode === id ? '<span class="cap" style="margin-left:auto">current</span>' : '') + '</button>').join('')
+    + '<div style="padding:12px 16px;box-shadow:inset 0 1px 0 var(--line-soft)' + (S.mode === 'fusion' ? '' : ';opacity:.45') + '">'
+      + '<div class="hstack"><span class="cap">cloud share</span><span class="mono tnum" style="margin-left:auto">' + S.dialShare + '</span></div>'
+      + '<input class="slider" type="range" min="0" max="100" step="5" value="' + S.dialShare + '" id="dial">'
+      + '<div class="cap">' + esc(S.mode === 'fusion' ? shareBlurb(S.dialShare) : 'the dial only applies to Fusion') + '</div>'
+      + '<div class="hstack" style="margin-top:8px"><span class="mono cap">' + esc(shortModel(S.cloudModel)) + '</span><span class="ter">⇄</span><span class="mono cap">' + esc(shortModel(S.localModel)) + '</span>'
+      + '<button class="btn-g cap" style="margin-left:auto;text-decoration:underline" data-act="settings:models">Change…</button></div>'
+    + '</div>'
+    + '<div class="popfoot"><button class="btn btn-g" data-act="close">Cancel</button>'
+      + '<button class="btn btn-p" data-act="applydial">Apply</button></div></div></div>';
+}
+
+function contextHTML() {
+  const parts = [['System prompt', 2.1, 'var(--text-tertiary)'], ['Tool definitions', 3.4, 'var(--text-secondary)'],
+                 ['Memory recall', 1.2, 'var(--accent-text)'], ['Transcript', 11.3, 'var(--accent)']];
+  const total = 128;
+  const used = parts.reduce((n, p) => n + p[1], 0);
+  return '<div class="scrim" data-close="1" style="background:transparent">'
+    + '<div class="popover" style="width:300px;' + anchorStyle('.ctxbtn', 300) + '">'
+    + '<div style="padding:12px 16px 10px"><div class="hstack"><span class="hd">Context window</span>'
+      + '<span class="mono tnum sec" style="margin-left:auto">' + used.toFixed(1) + 'k / ' + total + 'k</span></div>'
+    + '<div class="ctxbar">' + parts.map((p) => '<i style="width:' + (p[1] / total * 100) + '%;background:' + p[2] + '"></i>').join('')
+      + '<i style="flex:1;background:var(--bg-sunken)"></i></div>'
+    + '<dl class="kvgrid" style="margin-top:10px;grid-template-columns:1fr max-content;gap:5px 12px">'
+      + parts.map((p) => '<dt style="display:flex;align-items:center;gap:6px"><span class="swatch" style="background:' + p[2] + '"></span>' + p[0] + '</dt>'
+          + '<dd class="mono tnum">' + p[1].toFixed(1) + 'k</dd>').join('')
+      + '<dt class="ter">Free</dt><dd class="mono tnum ter">' + (total - used).toFixed(1) + 'k</dd></dl>'
+    + '<p class="cap" style="margin:10px 0 0">The transcript is compacted automatically once it passes 75%. Older tool output is summarised first.</p></div>'
+    + '<div class="popfoot"><button class="btn btn-g" data-act="clear">Clear transcript</button>'
+      + '<button class="btn btn-s" data-act="close">Done</button></div></div></div>';
+}
+
+function sessionSheet() {
+  let last = '', rows = '';
+  SESSIONS.forEach((s) => {
+    if (s.g !== last) { rows += '<div class="micro sec" style="padding:8px 0 4px">' + s.g + '</div>'; last = s.g; }
+    rows += '<button class="row" style="padding:0;height:40px" data-ses="' + s.id + '">'
+      + (s.st ? '<span class="dot ' + s.st + '"></span>' : '<span class="dot" style="background:transparent"></span>')
+      + '<span class="main"><span class="t" style="font-weight:400">' + esc(s.t) + '</span></span>'
+      + '<span class="meta">' + esc(s.sub) + '</span></button>';
+  });
+  return sheet('Switch session', '<input class="btn btn-s" style="width:100%;height:32px" placeholder="Filter sessions…">' + rows,
+    '<button class="btn btn-s" data-act="close">Cancel</button><button class="btn btn-p" data-act="close">Open</button>');
+}
+
+function taskSheet() {
+  return sheet('New scheduled task',
+    '<dl class="kvgrid" style="gap:12px 16px">'
+    + '<dt>kind</dt><dd>' + segControl([['cron','cron'],['interval','interval'],['at','at']], 'cron', 'na:') + '</dd>'
+    + '<dt>expression</dt><dd><input class="btn btn-s" style="width:100%;height:28px;font-family:var(--font-mono)" value="0 8 * * 1-5"></dd>'
+    + '<dt>timezone</dt><dd><input class="btn btn-s" style="width:100%;height:28px" value="Europe/Berlin"></dd>'
+    + '<dt>message</dt><dd><textarea class="btn btn-s" style="width:100%;height:64px;padding:6px 10px" placeholder="what should the agent do when this fires?"></textarea></dd>'
+    + '<dt>next 5</dt><dd class="mono cap">Mon 09:00 · Tue 09:00 · Wed 09:00 · Thu 09:00 · Fri 09:00</dd></dl>',
+    '<button class="btn btn-s" data-act="close">Cancel</button><button class="btn btn-p" data-act="close">Create task</button>');
+}
+
+function shortcutsSheet() {
+  const rows = [
+    ['Command palette','⌘ K','Ctrl K'],['Chat / Tasks / Skills / Memory','⌘ 1-4','Ctrl 1-4'],
+    ['New session','⌘ N','Ctrl N'],['Switch session','⌘ O','Ctrl O'],
+    ['Toggle sidebar','⌘ 0','Ctrl 0'],['Toggle console','⇧ ⌘ Y','Ctrl ⇧ Y'],
+    ['Send','↩',''],['Newline','⇧ ↩',''],['Stop','⌘ .','Ctrl .'],
+    ['Expand all cards','⌥ ⌘ E',''],['Collapse all cards','⌥ ⌘ K',''],
+    ['Cycle run mode','⌃ R',''],['Approve / grant / deny / abort','Y S N ⎋',''],
+    ['Settings','⌘ ,','Ctrl ,'],['Shortcuts','⌘ /',''],
+  ];
+  return sheet('Keyboard shortcuts',
+    '<div class="rows">' + rows.map(([t, k, p]) => '<div class="row" style="padding:0;height:32px">'
+      + '<span class="main"><span class="t" style="font-weight:400">' + esc(t) + '</span></span>'
+      + '<span class="hstack">' + keycaps(k) + (p ? '<span class="cap">proto ' + esc(p) + '</span>' : '') + '</span></div>').join('') + '</div>',
+    '<button class="btn btn-p" data-act="close">Done</button>');
+}
+
+function alertHTML() {
+  const a = S.alert;
+  return '<div class="sheetwrap" style="align-items:center;padding:0" data-close="1"><div class="alertbox">'
+    + '<div style="display:flex;justify-content:center">' + MARK_COLOR.replace('width="16" height="16"', 'width="40" height="40"') + '</div>'
+    + '<div class="ttl" style="text-align:center">' + esc(a.title) + '</div>'
+    + '<p class="cap" style="text-align:center;margin:0">' + esc(a.msg) + '</p>'
+    + '<div class="hstack" style="justify-content:center;margin-top:4px">'
+      + '<button class="btn btn-s" data-act="close" autofocus>Cancel</button>'
+      + '<button class="btn btn-danger" data-act="' + a.act + '">' + esc(a.ok) + '</button></div></div></div>';
+}
+
+function sheet(title, body, foot) {
+  return '<div class="sheetwrap" data-close="1"><div class="sheet"><div class="sheethead"><div class="ttl">' + esc(title) + '</div></div>'
+    + '<div class="sheetbody">' + body + '</div><div class="sheetfoot">' + foot + '</div></div></div>';
+}
+
+/* ---------------- settings ---------------- */
+function renderSettings() {
+  const old = $('#settings'); if (old) old.remove();
+  if (!S.settings) return;
+  const panes = [['general','General','gear'],['models','Models','cpu'],['mcp','MCP','link'],['channels','Channels','chat'],
+                 ['privacy','Privacy','key'],['import','Import','folder'],['appearance','Appearance','atom']];
+  const el = document.createElement('div');
+  el.id = 'settings';
+  el.innerHTML = '<div class="setwin"><div class="settb">'
+    + '<div class="lights"><button class="lg" style="background:#FF5F57" data-act="close"></button>'
+      + '<span class="lg" style="background:var(--bg-active)"></span><span class="lg" style="background:var(--bg-active)"></span></div>'
+    + '<div class="settabs">' + panes.map(([id, label, icon]) =>
+        '<button class="settab' + (S.settingsPane === id ? ' on' : '') + '" data-act="settings:' + id + '">' + ic(icon) + esc(label) + '</button>').join('')
+    + '</div></div><div class="setbody">' + settingsPane() + '</div></div>';
+  el.querySelector('.lights').style.marginRight = '0';
+  $('#window').appendChild(el);
+}
+
+function settingsPane() {
+  const p = S.settingsPane;
+  if (p === 'privacy') return privacyPane();
+  if (p === 'models') return modelsPane();
+  if (p === 'mcp') return '<div class="stack"><div class="hstack"><span class="hd">Servers</span>'
+    + '<button class="btn btn-p" style="margin-left:auto">Add via JSON…</button></div>'
+    + '<div class="rows">'
+    + '<div class="row"><span class="dot ok"></span><span class="main"><span class="t">filesystem</span><span class="cap">stdio</span></span>'
+      + '<span class="meta">11 tools · 0 resources · 0 prompts</span></div>'
+    + '<div class="row"><span class="dot bad"></span><span class="main"><span class="t">custard-api</span><span class="cap">http</span></span>'
+      + '<span class="meta">auth failed (401) — check <span class="mono">headers.Authorization</span></span>'
+      + '<button class="btn btn-t">Reconnect</button></div></div>'
+    + '<div class="panelcard"><div class="micro sec">filesystem · tools</div>'
+      + '<div class="mono sec">read_file · write_file · list_directory · move_file · search_files · get_file_info · create_directory</div></div></div>';
+  if (p === 'channels') return '<div class="panelcard"><div class="hstack"><span class="hd">Telegram</span>'
+    + '<span class="cap" style="margin-left:auto">stopped</span></div>'
+    + '<dl class="kvgrid"><dt>bot token</dt><dd><input class="btn btn-s" style="width:100%;height:28px;font-family:var(--font-mono)" value="•••••••••••••••••" type="password"></dd>'
+    + '<dt>paired</dt><dd>not paired</dd><dt>runs as</dt><dd>approval level ' + S.level + ' · ' + LEVEL_NAMES[S.level].toLowerCase() + '</dd></dl>'
+    + '<div class="hstack"><button class="btn btn-p">Start</button><button class="btn btn-s">Pair device…</button></div></div>';
+  if (p === 'import') return '<div class="stack"><div class="panelcard"><div class="hstack">' + ic('folder')
+    + '<span class="hd">Hermes detected</span><span class="cap" style="margin-left:auto">~/.hermes</span></div>'
+    + '<dl class="kvgrid"><dt>sessions</dt><dd>34 → atomic sessions</dd><dt>cron jobs</dt><dd>3 → tasks</dd>'
+    + '<dt>API keys</dt><dd class="sec">2 — skipped unless you tick “include keys”</dd></dl>'
+    + '<div class="hstack"><button class="btn btn-s">Dry run</button><button class="btn btn-p">Import</button></div></div></div>';
+  if (p === 'appearance') return '<div class="panelcard"><span class="hd">Appearance</span>'
+    + segControl([['system','System'],['light','Light'],['dark','Dark']], S.theme, 'theme:')
+    + '<p class="cap" style="margin:0">Named terminal palettes (github, catppuccin, dracula, nord) remain available for the TUI.</p></div>';
+  return '<div class="stack"><div class="panelcard"><span class="hd">General</span>'
+    + '<dl class="kvgrid"><dt>workspace</dt><dd class="mono">~/Teletubbies</dd>'
+    + '<dt>launch at login</dt><dd>off</dd><dt>update channel</dt><dd>stable</dd>'
+    + '<dt>restore sessions</dt><dd>on open</dd></dl></div></div>';
+}
+
+function modelsPane() {
+  const tab = S.modelTab;
+  const q = S.modelQuery.trim().toLowerCase();
+  const list = MODELS[tab].filter((m) => !q || m.id.toLowerCase().includes(q) || (m.v || m.q || '').toLowerCase().includes(q));
+  const sel = tab === 'local' ? S.localModel : tab === 'cloud' ? S.cloudModel : '';
+  const rows = list.length ? list.map((m) => {
+    const on = m.id === sel;
+    const right = tab === 'local'
+      ? (m.state === 'installed'
+          ? '<span class="cap">' + esc(m.size) + '</span>'
+          : '<button class="btn btn-t" style="height:24px" data-act="na">Download ' + esc(m.size) + '</button>')
+      : '<span class="cap">' + esc(m.note) + '</span>';
+    const meta = tab === 'local'
+      ? m.q + ' · ' + m.ctx + ' ctx · ' + m.fit
+      : (m.v || '') + ' · ' + m.ctx + ' ctx';
+    return '<div class="modelrow' + (on ? ' on' : '') + '" data-model="' + esc(m.id) + '" role="button" tabindex="0" aria-pressed="' + on + '">'
+      + '<span class="radio"></span>'
+      + '<span class="col"><span class="mono nm">' + esc(m.id) + '</span><span class="cap">' + esc(meta) + '</span></span>'
+      + right + '</div>';
+  }).join('') : '<div class="pad cap">No model matches &ldquo;' + esc(S.modelQuery) + '&rdquo;.</div>';
+
+  return '<div class="stack">'
+    + '<div class="hstack">'
+      + segControl([['local','Local'],['cloud','Cloud'],['external','External']], tab, 'modeltab:')
+      + '<span style="flex:1"></span>'
+      + '<input class="field-inp" id="modelq" placeholder="Filter ' + MODELS[tab].length + ' models…" value="' + esc(S.modelQuery) + '">'
+    + '</div>'
+    + '<div class="card"><div class="card-h">' + (tab === 'local' ? 'llama-server · localhost:8080'
+        : tab === 'cloud' ? 'Anthropic · sk-ant-•••••••••4f2a' : 'OpenAI-compatible endpoints')
+      + '<span style="margin-left:auto" class="hstack"><span class="dot ok"></span><span class="cap">healthy</span></span></div>'
+      + '<div class="modellist">' + rows + '</div></div>'
+    + (tab === 'cloud' ? '<p class="cap">The provider catalogue is pulled live — 214 models here, filtered to the five you have used. Switching takes effect on the next turn.</p>' : '')
+    + (tab === 'external' ? '<div class="panelcard"><span class="hd">Add an endpoint</span>'
+        + '<input class="field-inp" style="width:100%" placeholder="http://127.0.0.1:11434/v1">'
+        + '<p class="cap" style="margin:0">Atomic asks the server for its own /v1/models list.</p></div>' : '')
+    + '<div class="panelcard"><span class="hd">Fallback chain</span>'
+      + '<div class="rows">'
+      + ['1 · Cloud — ' + shortModel(S.cloudModel), '2 · Local — ' + shortModel(S.localModel)].map((r) =>
+        '<div class="row" style="padding:0;height:32px"><span class="main"><span class="t" style="font-weight:400">' + esc(r) + '</span></span>'
+        + '<span class="meta">drag to reorder</span></div>').join('') + '</div>'
+      + '<p class="cap" style="margin:0">Health wins over the split: if the cloud provider fails mid-turn, the turn finishes locally.</p></div>'
+    + '</div>';
+}
+
+function privacyPane() {
+  const stops = [1, 2, 3, 4, 5].map((n) =>
+    '<button class="stopwrap' + (n <= S.level ? ' filled' : '') + (n === S.level ? ' on' : '') + '" data-act="level:' + n + '">'
+    + '<span class="stopdot">' + (n <= S.level ? '<span style="color:#fff;display:flex">' + ic('check') + '</span>' : '') + '</span>'
+    + '<span class="stoplb">' + n + ' ' + LEVEL_NAMES[n] + '</span></button>').join('');
+  const rows = CATS.map(([id, label, from]) => '<tr><td>' + esc(label)
+      + (id === 'trust_config' ? ' <span class="ter" style="display:inline-flex;vertical-align:-3px" title="a write to the file holding agent.approvalLevel could silently raise the ladder for the next boot">' + ic('key') + '</span>' : '')
+      + '</td>'
+    + [1,2,3,4,5].map((n) => '<td class="' + (n === S.level ? 'col-on' : '') + '">'
+        + '<span class="mdot' + (n >= from ? ' auto' : '') + '"></span>' + (n >= from ? 'auto' : 'asks') + '</td>').join('') + '</tr>').join('');
+  return '<div class="stack">'
+    + '<div><span class="hd">Approval level</span>'
+      + '<p class="cap" style="margin:4px 0 0">How far the agent may act before it asks. Each level makes a whole category stop asking — nothing else changes.</p></div>'
+    + '<div class="stepper">' + stops + '</div>'
+    + '<table class="matrix"><thead><tr><th>Category</th>' + [1,2,3,4,5].map((n) => '<th>L' + n + '</th>').join('') + '</tr></thead>'
+      + '<tbody>' + rows + '</tbody></table>'
+    + '<div class="panelcard"><div class="micro sec">Session grants</div>'
+      + (S.grants.length
+        ? '<div class="hstack" style="flex-wrap:wrap">' + S.grants.map((g, i) => '<span class="badge" style="background:var(--accent-wash);border-color:var(--accent-line);color:var(--accent-text)">'
+            + esc(g) + ' <button data-revoke="' + i + '" style="color:inherit">×</button></span>').join('') + '</div>'
+        : '<p class="cap" style="margin:0">None. Grants made from an approval card live here and are never persisted to disk.</p>')
+    + '</div>'
+    + '<div class="panelcard"><div class="hstack"><span class="hd">What leaves this machine</span></div>'
+      + '<div class="rows">'
+      + '<div class="row" style="padding:0;height:32px"><span class="main"><span class="t" style="font-weight:400">Model calls → Anthropic</span></span><span class="meta">cloud and fusion turns only</span></div>'
+      + '<div class="row" style="padding:0;height:32px"><span class="main"><span class="t" style="font-weight:400">Skill hub → clawhub</span></span><span class="meta">only when you install</span></div>'
+      + '<div class="row" style="padding:0;height:32px"><span class="main"><span class="t" style="font-weight:400">Anonymous analytics</span></span><span class="meta">off</span></div>'
+      + '</div></div></div>';
+}
+
+/* ---------------- toasts ---------------- */
+function renderToasts() {
+  $('#toasts').innerHTML = S.toasts.map((t) =>
+    '<div class="toast"><span style="color:var(--success);display:flex">' + ic('check') + '</span>'
+    + '<span><span style="font-weight:500">' + esc(t.t) + '</span>'
+    + (t.s ? '<span class="cap" style="display:block">' + esc(t.s) + '</span>' : '') + '</span></div>').join('');
+}
+function toast(t, s) {
+  const id = ++S.toastId;
+  S.toasts.push({id, t, s});
+  renderToasts();
+  setTimeout(() => { S.toasts = S.toasts.filter((x) => x.id !== id); renderToasts(); }, 6000);
+}
+
+/* ============================================================
+   behaviour
+   ============================================================ */
+function act(a) {
+  if (!a) return;
+  const [k, v] = a.split(':');
+  const close = () => { S.overlay = null; S.menuOpen = null; S.scope = null; S.q = ''; S.cur = 0; S.alert = null; };
+
+  if (a === 'close') { close(); render(); return; }
+  if (a === 'palette') { close(); S.overlay = 'palette'; render(); return; }
+  if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
+  if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
+  if (a === 'context') { close(); S.overlay = 'context'; render(); return; }
+  if (a === 'runmode') { close(); S.dialShare = S.share; S.overlay = 'runmode'; render(); return; }
+  if (a === 'applydial') { S.share = S.dialShare; if (S.mode !== 'fusion' && S.dialShare > 0) S.mode = 'fusion'; close(); render(); toast('Run type applied', S.mode + (S.mode === 'fusion' ? ' · cloud share ' + S.share : '')); return; }
+  if (a === 'session:new') { close(); S.log = []; S.busy = false; S.pending = null; S.room = 'chat'; render(); toast('New session', 'Runtime stayed warm'); return; }
+  if (a === 'session:switch') { close(); S.overlay = 'sessions'; render(); return; }
+  if (a === 'task:new') { close(); S.overlay = 'newtask'; render(); return; }
+  if (a === 'task:run') { close(); render(); toast('Task started', 'Back up the Teletubbies folder'); return; }
+  if (a === 'clear') { close(); S.log = []; render(); toast('Transcript cleared', 'Session kept'); return; }
+  if (a === 'stop') { close(); abort(); return; }
+  if (a === 'send') { close(); submit(); return; }
+  if (a === 'retry') { close(); render(); toast('Retrying last turn'); return; }
+  if (a === 'dump') { close(); render(); toast('Debug bundle written', '~/Documents/atomic-agent-debug'); return; }
+  if (a === 'tools') { close(); S.inspector = true; S.inspTab = 'world'; render(); return; }
+  if (a === 'restart') { close(); render(); toast('Agent runtime restarted'); return; }
+  if (a === 'quit') { close(); render(); toast('This is a prototype', 'Nothing to quit'); return; }
+  if (a === 'about') { close(); render(); toast('Atomic Agent 0.3.7', 'Local-first agent · GAIA L1 69.8%'); return; }
+  if (a === 'update') { close(); render(); toast('You are up to date', 'Version 0.3.7, stable channel'); return; }
+  if (a === 'copy:session') { close(); render(); toast('Copied', 'Session 4f2a91-8b3c-4d1e'); return; }
+  if (a === 'copy:reply') { close(); render(); toast('Copied last reply'); return; }
+  if (a === 'workspace') { close(); render(); toast('Workspace', '~/Teletubbies · rw'); return; }
+  if (a === 'analytics') { close(); S.settings = 1; S.settingsPane = 'privacy'; render(); return; }
+  if (a === 'jump:appr') { const c = $('#apprcard'); if (c) c.scrollIntoView({block:'center', behavior:'smooth'}); return; }
+  if (a === 'skills:hub') { close(); S.room = 'skills'; S.skillsTab = 'hub'; render(); return; }
+  if (a === 'na') return;
+
+  if (k === 'room')      { close(); S.room = v; render(); return; }
+  if (k === 'insp')      { close(); S.inspector = true; S.inspTab = v; render(); return; }
+  if (k === 'console')   { close(); S.consoleOpen = true; S.consoleTab = v; render(); return; }
+  if (k === 'toggle')    { close(); if (v === 'sidebar') $('#sidebar').classList.toggle('rail');
+                           else if (v === 'inspector') S.inspector = !S.inspector;
+                           else S.consoleOpen = !S.consoleOpen; render(); return; }
+  if (k === 'settings')  { close(); S.settings = 1; S.settingsPane = v; render(); return; }
+  if (k === 'theme')     { close(); S.theme = v;
+                           if (v === 'system') document.documentElement.removeAttribute('data-theme');
+                           else document.documentElement.setAttribute('data-theme', v);
+                           render(); return; }
+  if (k === 'mode')      { S.mode = v; if (S.overlay === 'palette') close(); render(); return; }
+  if (k === 'level')     { S.level = +v; close(); S.settings = 1; S.settingsPane = 'privacy'; render(); toast('Approval level ' + v, LEVEL_NAMES[+v]); return; }
+  if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; }); render(); return; }
+  if (k === 'ses')       { close(); S.sessionId = v; render(); return; }
+  if (k === 'delask')    { const ss = SESSIONS.find((x) => x.id === v); if (!ss) return;
+                           S.alert = {title:'Delete “' + ss.t + '”?', msg:'The transcript, its tool calls and its work log are removed from this machine. This cannot be undone.', ok:'Delete', act:'del:' + v};
+                           render(); return; }
+  if (k === 'del')       { const i = SESSIONS.findIndex((x) => x.id === v); if (i >= 0) { const gone = SESSIONS[i].t; SESSIONS.splice(i, 1);
+                             if (S.sessionId === v) { S.sessionId = SESSIONS[0] ? SESSIONS[0].id : ''; S.log = []; }
+                             close(); render(); toast('Session deleted', gone); } return; }
+  if (k === 'scope')     { S.scope = v; S.q = ''; S.cur = 0; S.dialShare = S.share; render(); return; }
+  if (k === 'taskfilter'){ S.taskFilter = v; render(); return; }
+  if (k === 'modeltab')  { S.modelTab = v; S.modelQuery = ''; render(); return; }
+  if (k === 'skillstab') { S.skillsTab = v; render(); return; }
+  if (k === 'memtab')    { S.memTab = v; render(); return; }
+  if (k === 'appr')      { answer(v); return; }
+}
+
+/* ---------------- the run ---------------- */
+const SCRIPT = [
+  {ph:'Thinking', d:500, f:() => S.log.push({id:nid(), k:'reason', steps:3, open:false,
+    text:'Three PDFs. "By character" means the name has to come from inside each file, not the filename.\nvision can read them directly — cheaper than shelling out to a converter.\nZipping needs shell. That is level 4 and we are at level ' + S.level + ', so it will ask.'})},
+  {ph:'os.fs.list_dir', d:420, f:() => pushTool('os.fs.list_dir', '~/Teletubbies', 'local', '{ "path": "~/Teletubbies" }')},
+  {ph:'os.fs.list_dir', d:380, f:() => endTool('tinky-winky-s01e04.pdf\ndipsy-s01e07.pdf\nlaa-laa-s02e02.pdf', 38)},
+  {ph:'vision.read_document', d:300, f:() => pushTool('vision.read_document', 'tinky-winky-s01e04.pdf', 'cloud', '{ "file": "tinky-winky-s01e04.pdf", "pages": "1-2" }')},
+  {ph:'vision.read_document', d:900, f:() => endTool('Character: Tinky Winky\nEpisode: S01E04 — The Magic Windmill\nType: episode script', 1240)},
+  {ph:'vision.read_document', d:260, f:() => pushTool('vision.read_document', 'dipsy-s01e07.pdf', 'local', '{ "file": "dipsy-s01e07.pdf" }')},
+  {ph:'vision.read_document', d:700, f:() => endTool('Character: Dipsy\nEpisode: S01E07 — Tubby Custard Ride\nType: episode script', 890)},
+  {ph:'vision.read_document', d:240, f:() => pushTool('vision.read_document', 'laa-laa-s02e02.pdf', 'local', '{ "file": "laa-laa-s02e02.pdf" }')},
+  {ph:'vision.read_document', d:660, f:() => endTool('Character: Laa-Laa\nEpisode: S02E02 — Dancing in the Rain\nType: episode script', 870)},
+  {ph:'Writing reply', d:420, f:() => S.log.push({id:nid(), k:'assistant',
+    text:'Three characters: Tinky Winky, Dipsy and Laa-Laa. I will zip each script under a character-and-episode name. That needs a shell command, which is above your current level.'})},
+  {ph:'Waiting', d:400, f:() => gate()},
+];
+
+function pushTool(name, arg, where, args) { S.log.push({id:nid(), k:'tool', name, arg, where, args, ok:null, open:false}); }
+function endTool(out, ms) {
+  for (let i = S.log.length - 1; i >= 0; i--) {
+    if (S.log[i].k === 'tool' && S.log[i].ok === null) { S.log[i].ok = true; S.log[i].out = out; S.log[i].ms = ms; break; }
+  }
+}
+function gate() {
+  S.pending = {id:nid(), k:'approval', tool:'os.shell.exec', cat:'shell', kind:'shell command', lvl:4,
+    reason:'zip three episode scripts into per-character archives',
+    preview:'zip -j "Tinky-Winky-S01E04.zip" tinky-winky-s01e04.pdf',
+    shape:'zip', affectsBase:'Teletubbies', affectsDir:'~/'};
+  S.log.push(S.pending);
+  S.apprFocused = false;
+}
+
+let timer = null, step = 0, ticker = null;
+function submit() {
+  const e = $('#entry');
+  const text = (e ? e.value : S.draft).trim();
+  if (!text) return;
+  if (text.startsWith('/')) { runSlash(text.slice(1).split(/\s+/)); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; render(); return; }
+  S.draft = ''; if (e) { e.value = ''; autosize(e); }
+  S.slash = false;
+  if (S.busy || S.pending) {
+    S.queued.push(text);
+    S.log.push({id:nid(), k:'system', text:'queued — will reach the agent at the next step boundary'});
+    render(); return;
+  }
+  S.log.push({id:nid(), k:'user', text});
+  if (S.live.state === 'connected') { startLiveTurn(text); return; }
+  S.busy = true; S.stick = true; step = 0; S.elapsed = 0;
+  clearInterval(ticker); ticker = setInterval(() => { S.elapsed++; const n = document.querySelector('.statusstrip .tnum'); if (n) n.textContent = (S.elapsed / 10).toFixed(1) + 's'; }, 100);
+  render(); tick();
+}
+function tick() {
+  if (step >= SCRIPT.length) { S.busy = false; clearInterval(ticker); render(); return; }
+  const s = SCRIPT[step++];
+  S.phase = s.ph;
+  timer = setTimeout(() => {
+    s.f();
+    if (S.pending) { S.busy = false; clearInterval(ticker); render(); return; }
+    render(); tick();
+  }, s.d);
+}
+function answer(key) {
+  const req = S.pending; if (!req) return;
+  if (req.approvalId && BR) { answerLive(req, key); return; }
+  S.pending = null; S.apprFocused = false;
+  const at = '14:32:0' + (2 + Math.min(7, S.grants.length));
+  if (key === 'n') {
+    req.state = 'denied'; req.at = at;
+    S.log.push({id:nid(), k:'assistant', text:'Left the files alone. I can rename them in place instead — that stays inside the workspace and won\'t ask.'});
+    S.busy = false; render(); return;
+  }
+  if (key === 'esc') { req.state = 'denied'; req.at = at; abort(); return; }
+  req.state = 'approved'; req.at = at;
+  if (key === 's') { S.grants.push('shell command · session'); S.log.push({id:nid(), k:'system', text:'granted: shell command for this session &nbsp;<button class="btn-g" style="text-decoration:underline" data-act="settings:privacy">Revoke</button>'}); }
+  if (key === 'a') { S.grants.push('zip commands · session'); S.log.push({id:nid(), k:'system', text:'granted: all “zip” commands for this session &nbsp;<button class="btn-g" style="text-decoration:underline" data-act="settings:privacy">Revoke</button>'}); }
+  const after = [
+    {ph:'os.shell.exec', d:240, f:() => pushTool('os.shell.exec', 'zip -j Tinky-Winky-S01E04.zip …', 'local', '{ "cmd": "zip -j Tinky-Winky-S01E04.zip tinky-winky-s01e04.pdf" }')},
+    {ph:'os.shell.exec', d:430, f:() => endTool('adding: tinky-winky-s01e04.pdf (deflated 6%)\nTinky-Winky-S01E04.zip · 812 KB', 340)},
+    {ph:'os.shell.exec', d:200, f:() => pushTool('os.shell.exec', 'zip -j Dipsy-S01E07.zip …', 'local', '{ "cmd": "zip -j Dipsy-S01E07.zip dipsy-s01e07.pdf" }')},
+    {ph:'os.shell.exec', d:360, f:() => endTool('Dipsy-S01E07.zip · 240 KB', 210)},
+    {ph:'os.shell.exec', d:200, f:() => pushTool('os.shell.exec', 'zip -j Laa-Laa-S02E02.zip …', 'local', '{ "cmd": "zip -j Laa-Laa-S02E02.zip laa-laa-s02e02.pdf" }')},
+    {ph:'os.shell.exec', d:340, f:() => endTool('Laa-Laa-S02E02.zip · 366 KB', 198)},
+    {ph:'Writing reply', d:340, f:() => {
+      S.log.push({id:nid(), k:'assistant', text:'Done — three archives in ~/Teletubbies:\n\n  Tinky-Winky-S01E04.zip   812 KB\n  Dipsy-S01E07.zip         240 KB\n  Laa-Laa-S02E02.zip       366 KB\n\nOriginals untouched. Every command is in the work log.'});
+      if (S.queued.length) { const q = S.queued.shift(); S.log.push({id:nid(), k:'user', text:q}); }
+    }},
+  ];
+  S.busy = true; S.stick = true; S.elapsed = 0;
+  clearInterval(ticker); ticker = setInterval(() => { S.elapsed++; const n = document.querySelector('.statusstrip .tnum'); if (n) n.textContent = (S.elapsed / 10).toFixed(1) + 's'; }, 100);
+  let i = 0;
+  const run = () => {
+    if (i >= after.length) { S.busy = false; clearInterval(ticker); render(); toast('Run finished', '9 steps · 2 cloud calls · 12.4s'); return; }
+    const s = after[i++]; S.phase = s.ph;
+    timer = setTimeout(() => { s.f(); render(); run(); }, s.d);
+  };
+  render(); run();
+}
+function abort() {
+  clearTimeout(timer); clearInterval(ticker);
+  if (!S.busy && !S.pending) return;
+  S.busy = false; S.pending = null; step = SCRIPT.length;
+  S.log.push({id:nid(), k:'system', text:'turn aborted — everything produced so far is kept'});
+  render();
+}
+
+function runSlash(parts) {
+  const name = parts[0];
+  const nav = {chat:'room:chat', tasks:'room:tasks', task:'task:new', skills:'room:skills', skill:'room:skills',
+    memory:'room:memory', feed:'insp:steps', world:'insp:world', reasoning:'insp:reasoning', observe:'insp:steps',
+    logs:'console:agent', manage:'settings:general', mcp:'settings:mcp', llm:'settings:models', model:'settings:models',
+    telegram:'settings:channels', import:'settings:import', privacy:'settings:privacy', analytics:'settings:privacy',
+    theme:'settings:appearance', sessions:'session:switch', new:'session:new', clear:'clear', abort:'stop',
+    session:'copy:session', dump:'dump', tools:'tools', quit:'quit', help:'palette', debug:'toggle:console',
+    expand:'cards:expand', collapse:'cards:collapse'};
+  if (name === 'run') {
+    if (parts[1]) { S.mode = parts[1]; if (parts[2]) { S.share = Math.max(0, Math.min(100, +parts[2])); S.dialShare = S.share; } render(); toast('Run type ' + S.mode); }
+    else act('runmode');
+    return;
+  }
+  if (name === 'privacy' && parts[1] === 'level' && parts[2]) { act('level:' + parts[2]); return; }
+  if (nav[name]) { act(nav[name]); return; }
+  S.log.push({id:nid(), k:'system', text:'unknown command /' + esc(name) + ' — ⌘K lists everything'});
+  render();
+}
+
+/* ---------------- events ---------------- */
+document.addEventListener('click', (e) => {
+  const t = e.target;
+  if (t.closest('[data-closemenu]')) { S.menuOpen = null; render(); return; }
+  const mb = t.closest('[data-menu]');
+  if (mb) { S.menuOpen = S.menuOpen === +mb.dataset.menu ? null : +mb.dataset.menu; render(); return; }
+  if (t.closest('[data-popscope]')) { S.scope = null; S.cur = 0; render(); return; }
+
+  // a real control always wins over the dismiss-on-scrim handler behind it
+  const a = t.closest('[data-act]'); if (a) { e.preventDefault(); act(a.dataset.act); return; }
+  if (t.closest('[data-close]') && !t.closest('.pal, .sheet, .popover, .alertbox')) { act('close'); return; }
+  const ap = t.closest('[data-appr]'); if (ap) { answer(ap.dataset.appr); return; }
+  const rm = t.closest('[data-room]'); if (rm) { act('room:' + rm.dataset.room); return; }
+  const dl = t.closest('[data-del]'); if (dl) { e.preventDefault(); e.stopPropagation(); act('delask:' + dl.dataset.del); return; }
+  const ss = t.closest('[data-ses]'); if (ss) { act('ses:' + ss.dataset.ses); return; }
+  const tg = t.closest('[data-toggle]');
+  if (tg) { const m = S.log.find((x) => x.id === tg.dataset.toggle); if (m) { m.open = !m.open; S.stick = false; render(); } return; }
+  const go = t.closest('[data-goto]');
+  if (go) { const el = document.getElementById('card-' + go.dataset.goto);
+            if (el) { S.stick = false; el.scrollIntoView({block:'center', behavior:'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 400); } return; }
+  const fill = t.closest('[data-fill]');
+  if (fill) { S.draft = fill.dataset.fill; render(); const en = $('#entry'); if (en) { en.focus(); autosize(en); } return; }
+  const pr = t.closest('[data-palrow]'); if (pr) { activatePal(+pr.dataset.palrow); return; }
+  const sl = t.closest('[data-slash]'); if (sl) { acceptSlash(sl.dataset.slash); return; }
+  const uq = t.closest('[data-unqueue]'); if (uq) { S.queued.splice(+uq.dataset.unqueue, 1); render(); return; }
+  const rv = t.closest('[data-revoke]'); if (rv) { S.grants.splice(+rv.dataset.revoke, 1); render(); toast('Grant revoked'); return; }
+  const ask = t.closest('[data-ask]'); if (ask) { const q = S.q; act('close'); S.draft = q; render(); submit(); return; }
+  const md = t.closest('[data-model]');
+  if (md) {
+    const id = md.dataset.model;
+    if (S.modelTab === 'local') S.localModel = id; else if (S.modelTab === 'cloud') S.cloudModel = id;
+    render(); toast('Model selected', shortModel(id) + ' · takes effect on the next turn'); return;
+  }
+  const sk = t.closest('[data-skill]');
+  if (sk) { const s = SKILLS.find((x) => x.t === sk.dataset.skill); if (s) { s.on = !s.on; render(); toast(s.t + (s.on ? ' enabled' : ' disabled')); } return; }
+  if (t.closest('#composer') && !t.closest('button')) { const en = $('#entry'); if (en) en.focus(); }
+});
+
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'entry') {
+    S.draft = e.target.value; autosize(e.target);
+    const wasSlash = S.slash;
+    S.slash = S.draft.startsWith('/');
+    if (S.slash) { S.slashCur = 0; refreshSlash(); }
+    else if (wasSlash) render();
+    else refreshSend();
+    return;
+  }
+  if (e.target.id === 'palq') { S.q = e.target.value; S.cur = 0; refreshPalette(); return; }
+  if (e.target.id === 'modelq') { S.modelQuery = e.target.value; const at = e.target.selectionStart; render();
+    const n = $('#modelq'); if (n) { n.focus(); n.setSelectionRange(at, at); } return; }
+  if (e.target.id === 'dial') { S.dialShare = +e.target.value; refreshDial(); return; }
+});
+
+function refreshSend() {
+  const b = document.querySelector('.sendbtn');
+  if (b) b.outerHTML = sendButton();
+}
+function refreshSlash() {
+  const c = $('#composer'); if (!c) return;
+  const old = c.querySelector('.slash'); if (old) old.remove();
+  c.insertAdjacentHTML('afterbegin', slashPopover());
+  refreshSend();
+}
+function refreshPalette() {
+  const host = $('#overlays').querySelector('.pal');
+  if (!host) return;
+  const sel = host.querySelector('#palq').selectionStart;
+  const scroll = host.querySelector('.pallist').scrollTop;
+  $('#overlays').innerHTML = (S.menuOpen !== null ? menuPanelHTML(S.menuOpen) : '') + paletteHTML();
+  const q = $('#palq'); if (q) { q.focus(); q.setSelectionRange(sel, sel); }
+  const l = $('#pallist'); if (l && !S.q) l.scrollTop = scroll;
+  const cur = $('#overlays').querySelector('.palrow.on'); if (cur) cur.scrollIntoView({block:'nearest'});
+}
+function refreshDial() {
+  document.querySelectorAll('.mono.tnum').forEach(() => {});
+  const wrap = $('#dial') ? $('#dial').parentElement : null;
+  if (!wrap) return;
+  const n = wrap.querySelector('.mono.tnum'); if (n) n.textContent = S.dialShare;
+  const c = wrap.querySelector('.cap'); if (c && S.mode === 'fusion') c.textContent = shareBlurb(S.dialShare);
+}
+
+function flatPalRows() {
+  const rows = palRows();
+  if (rows) return rows;
+  const out = [];
+  PAL.forEach(([g, r]) => r.slice(0, 6).forEach((x) => out.push({ic:x[0], t:x[1], cx:x[2], sc:x[3], act:x[4]})));
+  return out;
+}
+function activatePal(i) {
+  const rows = flatPalRows();
+  const r = rows[i]; if (!r) return;
+  if (r.act && r.act.startsWith('scope:')) { act(r.act); return; }
+  act(r.act);
+}
+function acceptSlash(name) {
+  S.draft = '/' + name + ' ';
+  S.slash = false;
+  render();
+  const e = $('#entry'); if (e) { e.focus(); e.setSelectionRange(e.value.length, e.value.length); }
+}
+
+/* ---------------- keyboard ---------------- */
+document.addEventListener('keydown', (e) => {
+  if (e.isComposing) return;
+  const k = e.key;
+  const inText = e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT';
+
+  // approval scope — only while a card is pending and focus is not in a text field
+  if (S.pending && !inText) {
+    const kk = k.toLowerCase();
+    if (['y','s','a','n'].includes(kk)) { e.preventDefault(); answer(kk); return; }
+    if (k === 'Escape') { e.preventDefault(); answer('esc'); return; }
+  }
+
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && !e.shiftKey && !e.altKey) {
+    const map = {k:'palette', '1':'room:chat', '2':'room:tasks', '3':'room:skills', '4':'room:memory',
+                 '0':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:general',
+                 '.':'stop', '/':'shortcuts'};
+    if (map[k.toLowerCase()]) { e.preventDefault(); act(map[k.toLowerCase()]); return; }
+    if (k === 'Enter') { e.preventDefault(); submit(); return; }
+  }
+  if (mod && e.shiftKey && k.toLowerCase() === 'y') { e.preventDefault(); act('toggle:console'); return; }
+  if (e.ctrlKey && !e.metaKey && k.toLowerCase() === 'r' && !e.shiftKey) {
+    e.preventDefault();
+    const order = ['local','cloud','fusion'];
+    S.mode = order[(order.indexOf(S.mode) + 1) % 3];
+    render(); toast('Run type ' + S.mode); return;
+  }
+
+  // palette
+  if (S.overlay === 'palette') {
+    const rows = flatPalRows();
+    if (k === 'ArrowDown') { e.preventDefault(); S.cur = Math.min(S.cur + 1, rows.length - 1); refreshPalette(); return; }
+    if (k === 'ArrowUp')   { e.preventDefault(); S.cur = Math.max(S.cur - 1, 0); refreshPalette(); return; }
+    if (k === 'Enter')     { e.preventDefault(); activatePal(S.cur); return; }
+    if (k === 'ArrowRight' && !S.scope) { const r = rows[S.cur]; if (r && r.act.startsWith('scope:')) { e.preventDefault(); act(r.act); } return; }
+    if (k === 'Backspace' && S.scope && !S.q) { e.preventDefault(); S.scope = null; S.cur = 0; render(); return; }
+    if (k === 'Escape')    { e.preventDefault(); if (S.scope) { S.scope = null; S.cur = 0; render(); } else act('close'); return; }
+    return;
+  }
+  if (S.overlay || S.settings || S.menuOpen !== null) {
+    if (k === 'Escape') { e.preventDefault(); if (S.settings) { S.settings = null; render(); } else act('close'); return; }
+    return;
+  }
+
+  // slash completion owns the arrows while open
+  if (S.slash && e.target.id === 'entry') {
+    const m = slashMatches();
+    if (k === 'ArrowDown') { e.preventDefault(); S.slashCur = Math.min(S.slashCur + 1, m.length - 1); refreshSlash(); return; }
+    if (k === 'ArrowUp')   { e.preventDefault(); S.slashCur = Math.max(S.slashCur - 1, 0); refreshSlash(); return; }
+    if (k === 'Tab' || (k === 'Enter' && !e.shiftKey)) { e.preventDefault(); if (m[S.slashCur]) acceptSlash(m[S.slashCur][0]); return; }
+    if (k === 'Escape') { e.preventDefault(); S.slash = false; render(); return; }
+  }
+
+  if (k === 'Enter' && !e.shiftKey && !e.altKey && e.target.id === 'entry') { e.preventDefault(); submit(); return; }
+
+  if (k === 'Escape') {
+    e.preventDefault();
+    const sc = $('#scroller');
+    if (sc && sc.scrollHeight - sc.scrollTop - sc.clientHeight > 40) { sc.scrollTop = sc.scrollHeight; S.stick = true; return; }
+    if (S.busy) { abort(); return; }
+    if (S.toasts.length) { S.toasts.pop(); renderToasts(); return; }
+    return;
+  }
+  if (!inText && k.length === 1 && !mod && S.room === 'chat') { const en = $('#entry'); if (en) en.focus(); }
+});
+
+render();
+setTimeout(() => { const e = $('#entry'); if (e) e.focus(); }, 60);
+
+
+/* ============================================================
+   Live wiring — everything below talks to the real agent through
+   the preload bridge. With no bridge the file above runs unchanged.
+   ============================================================ */
+
+function liveLabel() {
+  const st = S.live.state;
+  if (st === 'connected') return 'agent running · ' + (S.live.llama && S.live.llama.reachable ? 'llama ok' : 'llama down');
+  if (st === 'starting') return 'starting the agent…';
+  if (st === 'missing-binary') return 'agent not installed';
+  if (st === 'error') return 'agent stopped';
+  if (st === 'stopped') return BR ? 'agent not started' : 'demo data — no agent attached';
+  return 'demo data — no agent attached';
+}
+
+function applyStatus(st) {
+  if (!st) return;
+  const was = S.live.state;
+  S.live = Object.assign({}, S.live, st);
+  if (S.live.workingDir) WORKSPACE = S.live.workingDir;
+  if (S.live.state === 'connected' && was !== 'connected') {
+    S.log.push({id:nid(), k:'system', text:'connected to atomic-agent · ' + esc(S.live.workingDir)});
+    loadResources();
+  }
+  if (S.live.state === 'missing-binary' || S.live.state === 'error') {
+    S.log.push({id:nid(), k:'system', text: esc(S.live.error || 'the agent stopped')});
+  }
+  render();
+}
+
+async function loadResources() {
+  if (!BR) return;
+  const [caps, cfg, skills, tasks, sessions] = await Promise.all([
+    BR.capabilities(), BR.config(), BR.skills(), BR.tasks(), BR.sessions(),
+  ]);
+  if (caps && caps.ok && caps.data) {
+    LIVE_CAPS = caps.data;
+    if (caps.data.agent && typeof caps.data.agent.approvalLevel === 'number') {
+      S.level = Math.max(1, Math.min(5, caps.data.agent.approvalLevel));
+    }
+  }
+  if (cfg && cfg.ok && cfg.data && cfg.data.config) {
+    LIVE_CONFIG = cfg.data.config;
+    const provider = (LIVE_CONFIG.llm && (LIVE_CONFIG.llm.providers || [])
+      .find((p) => p.id === LIVE_CONFIG.llm.activeTextProvider)) || null;
+    if (provider) {
+      S.mode = provider.kind === 'llama-server' ? 'local' : 'cloud';
+      if (provider.defaultChatModel) S.cloudModel = provider.defaultChatModel;
+    }
+    const managed = LIVE_CONFIG.localModels && LIVE_CONFIG.localModels.managed;
+    if (managed && managed.modelId) {
+      S.localModel = managed.modelId;
+      if (!MODELS.local.some((m) => m.id === managed.modelId)) {
+        MODELS.local.unshift({id:managed.modelId, q:'managed', size:'—', ctx:String(managed.contextSize || 'auto'),
+                              state:'installed', fit:'running on port ' + (managed.port || '?')});
+      }
+    }
+  }
+  if (skills && skills.ok && skills.data && Array.isArray(skills.data.skills)) {
+    SKILLS.length = 0;
+    skills.data.skills.forEach((k) => SKILLS.push({
+      t:k.name, s:(k.requiresTools || []).join(' · ') || 'no tools declared',
+      v:k.version || '—', on:k.enabled !== false, src:k.source || 'local',
+    }));
+  }
+  if (tasks && tasks.ok && tasks.data && Array.isArray(tasks.data.tasks)) {
+    TASKS.length = 0;
+    tasks.data.tasks.forEach((t) => TASKS.push({
+      id:t.id, t:t.message || t.id, when:t.schedule ? JSON.stringify(t.schedule) : 'once',
+      last:t.status || 'pending', st:t.status === 'running' ? 'run' : t.status === 'failed' ? 'bad' : 'ok',
+    }));
+  }
+  if (sessions && sessions.ok && sessions.data && Array.isArray(sessions.data.sessions) && sessions.data.sessions.length) {
+    SESSIONS.length = 0;
+    sessions.data.sessions.forEach((x, i) => SESSIONS.push({
+      id:x.id || ('s' + i), t:x.title || x.goal || x.id, g:'RECENT',
+      sub:(x.turns ? x.turns + ' turns' : 'session'), st:'',
+    }));
+    if (SESSIONS[0]) S.sessionId = SESSIONS[0].id;
+  }
+  render();
+}
+
+
+function startLiveTurn(text) {
+  S.history.push({role:'user', content:text});
+  S.busy = true; S.stick = true; S.elapsed = 0; S.phase = 'Thinking';
+  const streaming = {id:nid(), k:'assistant', text:''};
+  S.streamId = streaming.id;
+  S.log.push(streaming);
+  clearInterval(ticker);
+  ticker = setInterval(() => {
+    S.elapsed++;
+    const n = document.querySelector('.statusstrip .tnum');
+    if (n) n.textContent = (S.elapsed / 10).toFixed(1) + 's';
+  }, 100);
+  render();
+  BR.chat(S.history.slice()).then((res) => {
+    if (!res || !res.ok) {
+      S.busy = false; clearInterval(ticker);
+      S.log.push({id:nid(), k:'system', text:'could not start the turn: ' + esc((res && res.error) || 'unknown error')});
+      render();
+      return;
+    }
+    S.turnId = res.turnId;
+  });
+}
+
+function onChatEvent(ev) {
+  if (!ev || ev.turnId !== S.turnId) return;
+  const item = S.log.find((m) => m.id === S.streamId);
+
+  if (ev.kind === 'session_id') { S.agentSession = pick(ev.payload, 'sessionId', 'session_id', 'id'); return; }
+  if (ev.kind === 'reasoning_progress') {
+    const text = pick(ev.payload, 'delta', 'text', 'content') || '';
+    if (!text) return;
+    let block = S.log[S.log.length - 1];
+    if (!block || block.k !== 'reason' || block.done) {
+      block = {id:nid(), k:'reason', steps:1, open:false, text:''};
+      S.log.splice(S.log.indexOf(item), 0, block);
+    }
+    block.text += text;
+    S.phase = 'Thinking';
+    render();
+    return;
+  }
+  if (ev.kind === 'tool_progress') {
+    const name = pick(ev.payload, 'tool', 'name') || 'tool';
+    const arg = summariseArgs(pick(ev.payload, 'arguments', 'args', 'input'));
+    const card = {id:nid(), k:'tool', name, arg, where:S.mode === 'cloud' ? 'cloud' : 'local',
+                  ok:null, open:false, args:JSON.stringify(pick(ev.payload, 'arguments', 'args', 'input') ?? {}, null, 2)};
+    S.log.splice(S.log.indexOf(item), 0, card);
+    S.phase = name;
+    render();
+    return;
+  }
+  if (ev.kind === 'delta') {
+    if (item) { item.text += ev.text; S.phase = 'Writing reply'; render(); }
+    return;
+  }
+  if (ev.kind === 'done' || ev.kind === 'finish' || ev.kind === 'aborted' || ev.kind === 'error') {
+    if (ev.kind === 'finish') return;
+    S.busy = false; S.turnId = null; clearInterval(ticker);
+    S.log.forEach((m) => {
+      if (m.k === 'tool' && m.ok === null) { m.ok = true; m.out = m.out || '(result not exposed by the HTTP stream)'; m.ms = 0; }
+      if (m.k === 'reason') m.done = true;
+    });
+    if (item && item.text) S.history.push({role:'assistant', content:item.text});
+    if (item && !item.text) item.text = ev.kind === 'aborted' ? '(stopped)' : '(no reply)';
+    if (ev.kind === 'error') S.log.push({id:nid(), k:'system', text:'turn failed: ' + esc(ev.error || '')});
+    if (S.queued.length) { const q = S.queued.shift(); S.log.push({id:nid(), k:'user', text:q}); startLiveTurn(q); return; }
+    render();
+  }
+}
+
+function onApprovalEvent(payload) {
+  if (!payload || !payload.approvalId) return;
+  const affects = Array.isArray(payload.affectedResources) ? payload.affectedResources : [];
+  const first = affects[0] || S.live.workingDir || '';
+  const cut = String(first).lastIndexOf('/');
+  const req = {
+    id:nid(), k:'approval',
+    approvalId: payload.approvalId,
+    tool: payload.tool || 'unknown tool',
+    cat: payload.category || 'other',
+    kind: CATEGORY_LABEL[payload.category] || payload.category || 'action',
+    lvl: (CATS.find((c) => c[0] === payload.category) || [,,5])[2],
+    reason: payload.reason || '',
+    preview: payload.preview || '(no preview)',
+    shape: payload.commandShape || '',
+    affectsBase: cut >= 0 ? String(first).slice(cut + 1) : String(first),
+    affectsDir: cut >= 0 ? String(first).slice(0, cut + 1) : '',
+    sessionGrants: false,
+  };
+  S.pending = req;
+  S.log.push(req);
+  S.apprFocused = false;
+  S.busy = false;
+  render();
+}
+
+function pick(obj, ...keys) {
+  if (!obj || typeof obj !== 'object') return undefined;
+  for (const k of keys) if (obj[k] !== undefined) return obj[k];
+  return undefined;
+}
+function summariseArgs(args) {
+  if (!args) return '';
+  if (typeof args === 'string') return args.slice(0, 120);
+  const first = Object.values(args)[0];
+  return typeof first === 'string' ? first.slice(0, 120) : JSON.stringify(args).slice(0, 120);
+}
+
+const CATEGORY_LABEL = {
+  fs_write_workspace:'file write · workspace', fs_write_home:'file write · home',
+  fs_trash:'move to Trash', http:'HTTP request', shell:'shell command',
+  script:'skill script', proc_kill:'process kill', browser_nonweb:'browser · non-web URL',
+  trust_config:'agent trust config', other:'uncategorised',
+};
+
+function answerLive(req, key) {
+  const approve = key === 'y' || key === 's' || key === 'a';
+  S.pending = null;
+  req.state = approve ? 'approved' : 'denied';
+  req.at = new Date().toTimeString().slice(0, 8);
+  if (key === 's' || key === 'a') {
+    S.log.push({id:nid(), k:'system',
+      text:'granted once — session-wide grants are not exposed by the agent\u2019s HTTP API yet, so this behaved as “allow once”.'});
+  }
+  BR.approve(req.approvalId, approve ? 'allow-once' : 'deny').then((res) => {
+    if (res && !res.ok) S.log.push({id:nid(), k:'system', text:'could not resolve the approval: ' + esc(res.error || '')});
+    render();
+  });
+  if (key === 'esc') { S.busy = false; if (S.turnId) BR.cancel(S.turnId); }
+  render();
+}
+
+if (BR) {
+  // The mock transcript is demo furniture; a real agent starts clean.
+  S.log = [];
+  S.history = [];
+  BR.onStatus(applyStatus);
+  BR.onChat(onChatEvent);
+  BR.onApproval(onApprovalEvent);
+  BR.onMenu((command) => { if (typeof command === 'string') act(command); });
+  BR.onLog((entry) => {
+    if (!entry || !entry.line) return;
+    LOGS.push([new Date().toTimeString().slice(0, 8), entry.stream === 'stderr' ? 'warn' : 'info', entry.line]);
+    if (LOGS.length > 300) LOGS.shift();
+    if (S.consoleOpen) renderConsole();
+  });
+  BR.status().then(applyStatus);
+
+  // Stop routes to the real turn, and the workspace chip opens a picker.
+  const originalAct = act;
+  act = function (a) {
+    if (a === 'stop' && S.turnId) { BR.cancel(S.turnId); S.busy = false; clearInterval(ticker); render(); return; }
+    if (a === 'agent:restart') { S.log.push({id:nid(), k:'system', text:'restarting the agent…'}); BR.restart().then(applyStatus); return; }
+    if (a === 'workspace' || a === 'workspace:choose') {
+      BR.chooseWorkspace().then((dir) => {
+        if (!dir) return;
+        S.log.push({id:nid(), k:'system', text:'workspace → ' + esc(dir) + ' · restart the agent to use it'});
+        render();
+      });
+      return;
+    }
+    return originalAct(a);
+  };
+  render();
+}
+
+/* Hooks used by `electron . --smoke` to drive the app without a human. */
+if (typeof window !== 'undefined') {
+  window.__live = () => S.live.state;
+  window.__skills = () => SKILLS.length;
+  window.__ask = (text) => { S.draft = text; const e = $('#entry'); if (e) e.value = text; submit(); };
+  window.__lastReply = () => {
+    for (let i = S.log.length - 1; i >= 0; i--) if (S.log[i].k === 'assistant') return S.log[i].text || '';
+    return '';
+  };
+}
+
+
+/* ---- live projections: what the chips read when an agent is attached ---- */
+function tok(n) { return n >= 1000 ? Math.round(n / 1000) + 'k' : String(n); }
+function ctxTotal() {
+  const cap = LIVE_CONFIG && LIVE_CONFIG.agent && LIVE_CONFIG.agent.conversationMaxTokens;
+  return cap || 128000;
+}
+function ctxUsed() {
+  if (!BR || S.live.state !== 'connected') return 18000;
+  // No token accounting over the HTTP API yet: approximate from the
+  // transcript so the gauge moves honestly rather than sitting still.
+  const chars = S.history.reduce((n, m) => n + m.content.length, 0);
+  return Math.round(chars / 4);
+}
+function activeProvider() {
+  if (!LIVE_CONFIG || !LIVE_CONFIG.llm) return null;
+  const id = LIVE_CONFIG.llm.activeTextProvider;
+  return (LIVE_CONFIG.llm.providers || []).find((p) => p.id === id) || null;
+}
+function activeModel() {
+  if (BR && S.live.state === 'connected') {
+    const p = activeProvider();
+    if (p && p.kind !== 'llama-server' && p.defaultChatModel) return p.defaultChatModel;
+    return S.localModel;
+  }
+  return S.mode === 'local' ? S.localModel : S.cloudModel;
+}

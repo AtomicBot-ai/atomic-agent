@@ -18,3 +18,7 @@ CLAW-LOOT.md
 /logs/*
 /tmp/*
 .cursor/
+# Electron desktop client
+desktop/node_modules/
+desktop/out/
+desktop/release/

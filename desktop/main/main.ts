@@ -1,0 +1,227 @@
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { writeFileSync } from "node:fs";
+
+import { AgentClient } from "./agent-client.js";
+import { buildMenu } from "./menu.js";
+
+const DEV = process.argv.includes("--dev");
+/** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
+const SMOKE = process.argv.includes("--smoke");
+
+let win: BrowserWindow | null = null;
+let agent: AgentClient | null = null;
+
+function send(channel: string, payload?: unknown): void {
+  if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+}
+
+function createWindow(): BrowserWindow {
+  const window = new BrowserWindow({
+    width: 1280,
+    height: 820,
+    minWidth: 940,
+    minHeight: 620,
+    show: false,
+    backgroundColor: "#191C21",
+    // The design draws its own 52px toolbar, so the frame keeps only the
+    // traffic lights and insets them into that band.
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 20, y: 20 },
+    vibrancy: "sidebar",
+    webPreferences: {
+      preload: join(__dirname, "..", "preload", "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webviewTag: false,
+      spellcheck: false,
+    },
+  });
+
+  // Renderer faults must never be silent: they surface in the app log
+  // and, under --smoke, on stdout where CI can see them.
+  window.webContents.on("console-message", (_e, level, message, line, sourceId) => {
+    if (level >= 2 || SMOKE) {
+      const where = sourceId ? ` (${sourceId}:${line})` : "";
+      process.stderr.write(`RENDERER[${level}] ${message}${where}\n`);
+    }
+  });
+  window.webContents.on("render-process-gone", (_e, details) =>
+    process.stderr.write(`RENDERER GONE ${JSON.stringify(details)}\n`),
+  );
+
+  window.once("ready-to-show", () => {
+    window.show();
+    if (DEV) window.webContents.openDevTools({ mode: "detach" });
+  });
+
+  // The renderer is local and must never navigate anywhere else.
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//.test(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  window.webContents.on("will-navigate", (event) => event.preventDefault());
+
+  void window.loadFile(join(__dirname, "..", "renderer", "index.html"));
+  return window;
+}
+
+function wireIpc(client: AgentClient): void {
+  ipcMain.handle("agent:status", () => client.status);
+  ipcMain.handle("agent:start", () => client.start());
+  ipcMain.handle("agent:restart", async () => {
+    await client.stop();
+    return client.start();
+  });
+
+  const resource = <T>(name: string, fn: () => Promise<T>) => {
+    ipcMain.handle(`agent:${name}`, async () => {
+      try {
+        return { ok: true, data: await fn() };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    });
+  };
+  resource("capabilities", () => client.capabilities());
+  resource("config", () => client.config());
+  resource("skills", () => client.skills());
+  resource("tasks", () => client.tasks());
+  resource("sessions", () => client.sessions());
+  resource("models", () => client.models());
+
+  ipcMain.handle("agent:chat", (_event, payload: unknown) => {
+    const { messages } = payload as { messages?: Array<{ role: string; content: string }> };
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return { ok: false, error: "messages must be a non-empty array" };
+    }
+    const clean = messages
+      .filter((m) => m && typeof m.role === "string" && typeof m.content === "string")
+      .map((m) => ({ role: m.role, content: m.content }));
+    if (!clean.length) return { ok: false, error: "no usable messages" };
+    const turnId = randomUUID();
+    void client.chat(turnId, clean);
+    return { ok: true, turnId };
+  });
+
+  ipcMain.handle("agent:cancel", (_event, turnId: unknown) =>
+    typeof turnId === "string" ? client.cancel(turnId) : false,
+  );
+
+  ipcMain.handle("agent:approve", async (_event, payload: unknown) => {
+    const { approvalId, decision, reason } = payload as {
+      approvalId?: string;
+      decision?: string;
+      reason?: string;
+    };
+    if (typeof approvalId !== "string") return { ok: false, error: "approvalId required" };
+    if (decision !== "allow-once" && decision !== "deny") {
+      return { ok: false, error: "decision must be allow-once or deny" };
+    }
+    try {
+      return { ok: true, data: await client.resolveApproval(approvalId, decision, reason) };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle("app:chooseWorkspace", async () => {
+    if (!win) return null;
+    const picked = await dialog.showOpenDialog(win, {
+      properties: ["openDirectory", "createDirectory"],
+      defaultPath: client.status.workingDir,
+      message: "Choose the folder the agent may work in",
+    });
+    if (picked.canceled || !picked.filePaths[0]) return null;
+    return picked.filePaths[0];
+  });
+
+  ipcMain.handle("app:openExternal", (_event, url: unknown) => {
+    if (typeof url === "string" && /^https?:\/\//.test(url)) void shell.openExternal(url);
+  });
+
+  client.on("status", (status) => send("agent:status", status));
+  client.on("chat", (event) => send("agent:chat", event));
+  client.on("approval", (event) => send("agent:approval", event));
+  client.on("log", (event) => send("agent:log", event));
+}
+
+async function smokeTest(): Promise<void> {
+  if (!win) return;
+  const js = <T,>(code: string) => win!.webContents.executeJavaScript(code) as Promise<T>;
+  const fail: string[] = [];
+  const check = (name: string, ok: boolean, detail = "") => {
+    process.stdout.write(`${ok ? "PASS" : "FAIL"} ${name}${detail ? " — " + detail : ""}\n`);
+    if (!ok) fail.push(name);
+  };
+
+  await new Promise((r) => setTimeout(r, 1500));
+  check("renderer painted", (await js<number>("document.querySelectorAll('.navrow').length")) === 4);
+  check("toolbar titled", (await js<string>("document.querySelector('.tb-title b').textContent")) === "Chat");
+  check("bridge exposed", await js<boolean>("!!window.atomic"));
+
+  // Wait for the supervised agent to come up.
+  const deadline = Date.now() + 60_000;
+  let state = "";
+  while (Date.now() < deadline) {
+    state = (await js<string>("window.__live && window.__live()")) ?? "";
+    if (state === "connected" || state === "missing-binary" || state === "error") break;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  check("agent connected", state === "connected", `state=${state}`);
+
+  if (state === "connected") {
+    check("skills loaded", (await js<number>("window.__skills && window.__skills()")) > 0);
+    await js<void>(
+      "window.__ask && window.__ask('Reply with exactly: hello there friend')",
+    );
+    const replyDeadline = Date.now() + 120_000;
+    let reply = "";
+    while (Date.now() < replyDeadline) {
+      reply = (await js<string>("window.__lastReply && window.__lastReply()")) ?? "";
+      if (reply.trim()) break;
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    check("agent replied", reply.toLowerCase().includes("hello"), JSON.stringify(reply.slice(0, 80)));
+  }
+
+  const image = await win.webContents.capturePage();
+  const out = join(app.getPath("temp"), "atomic-desktop-smoke.png");
+  writeFileSync(out, image.toPNG());
+  process.stdout.write(`SMOKE screenshot=${out} failures=${fail.length}\n`);
+  app.exit(fail.length === 0 ? 0 : 1);
+}
+
+void app.whenReady().then(async () => {
+  const workspace = process.env.ATOMIC_AGENT_WORKSPACE ?? homedir();
+  agent = new AgentClient(workspace);
+  win = createWindow();
+  buildMenu(win, (command) => send("app:menu", command));
+  wireIpc(agent);
+
+  win.webContents.once("did-finish-load", () => {
+    send("agent:status", agent?.status);
+    void agent?.start();
+    if (SMOKE) void smokeTest();
+  });
+
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) win = createWindow();
+  });
+});
+
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") app.quit();
+});
+
+// Never leave the agent running after the app is gone.
+app.on("before-quit", (event) => {
+  if (!agent) return;
+  event.preventDefault();
+  const client = agent;
+  agent = null;
+  void client.stop().finally(() => app.quit());
+});
