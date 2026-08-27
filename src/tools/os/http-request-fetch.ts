@@ -3,6 +3,7 @@ import {
   type CommandResult,
 } from "../../sandbox/command-runner.js";
 import { CurlUnavailableError, isCurlMissingError } from "./ensure-curl.js";
+import { parseRetryAfterValueMs } from "./retry-after-header.js";
 import {
   assertHostAllowed,
   formatResolveEntry,
@@ -20,6 +21,47 @@ export const CURL_META_MARKER = "__ATOMIC_CURL_META__";
 
 const MAX_REDIRECTS = 5;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/**
+ * Statuses worth a second attempt: transient-by-contract, and the same set
+ * `os.web.fetch` retries. Everything else — 404, 403, 400 — is a stable
+ * answer that a repeat would only re-spend task budget on.
+ */
+const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
+
+/**
+ * Statuses at which a server is explicitly asking the client to come back.
+ * A non-idempotent request is only retried on these, and only when the
+ * server also sent a `Retry-After` (see `isRetryableAttempt`).
+ */
+const INVITED_RETRY_STATUSES = new Set([429, 503]);
+
+/** curl's "operation timed out" exit. The other exits are not transient. */
+const CURL_EXIT_TIMEOUT = 28;
+
+/**
+ * Methods that are safe to replay. A GET carries no side effect, so a repeat
+ * is free. A POST may already have been processed by the origin even when the
+ * response never arrived, so replaying it blindly risks a double submit — the
+ * one failure mode a retry layer must not introduce.
+ */
+const IDEMPOTENT_METHODS = new Set<HttpMethod>(["GET"]);
+
+export interface HttpRetryConfig {
+  /** Extra attempts on top of the first. `0` disables retrying. */
+  maxRetries: number;
+  /** First backoff step; each subsequent retry doubles it. */
+  retryBaseDelayMs: number;
+  /** Ceiling on any single wait, including a server-sent `Retry-After`. */
+  retryMaxDelayMs: number;
+}
+
+/** Mirrors `web.fetch`'s retry defaults so the two tools behave alike. */
+export const DEFAULT_HTTP_RETRY_CONFIG: HttpRetryConfig = {
+  maxRetries: 2,
+  retryBaseDelayMs: 500,
+  retryMaxDelayMs: 5_000,
+};
 
 export type HttpMethod = "GET" | "POST";
 
@@ -40,6 +82,20 @@ export interface GuardedCurlResponse {
   timeTotal: number;
   truncated: boolean;
   redirectChain: string[];
+  /** Server-sent `Retry-After` in ms, `null` when absent or unparseable. */
+  retryAfterMs: number | null;
+  /**
+   * Method actually used on the hop that produced this response. A 307/308
+   * preserves the original method, so a POST can still be a POST several hops
+   * in; a 301/302/303 downgrades to GET. The retry decision must key off this
+   * rather than the caller's method, or a redirected POST gets replayed.
+   */
+  finalMethod: HttpMethod;
+  /**
+   * Body sent on that same hop — `undefined` once a 301/302/303 has dropped
+   * it. Carried so a retry resumes with the hop's own payload.
+   */
+  finalBody: string | undefined;
   /** Last curl argv (for diagnostics). */
   command: string[];
 }
@@ -50,6 +106,10 @@ export interface ExecuteGuardedHttpOptions {
   cwd: string;
   signal: AbortSignal;
   maxResponseBytes: number;
+  /** Retry schedule; omitted means `DEFAULT_HTTP_RETRY_CONFIG`. */
+  retry?: HttpRetryConfig;
+  /** Injectable sleep so retry-backoff tests do not wait in real time. */
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
 /**
@@ -62,10 +122,137 @@ export async function executeGuardedHttpRequest(
   args: HttpRequestArgs,
   opts: ExecuteGuardedHttpOptions,
 ): Promise<GuardedCurlResponse> {
+  const retry = opts.retry ?? DEFAULT_HTTP_RETRY_CONFIG;
+  const sleep = opts.sleep ?? defaultSleep;
+
+  // Where the next attempt starts. A retry resumes at the hop that failed
+  // rather than re-walking the redirect chain from the caller's URL.
+  let resumeUrl = rawUrl;
+  let resume: { method: HttpMethod; body: string | undefined } | undefined;
+
+  for (let attempt = 0; ; attempt++) {
+    let response: GuardedCurlResponse | null = null;
+    let failure: unknown = null;
+    try {
+      response = await sendGuardedRequestOnce(resumeUrl, args, opts, resume);
+    } catch (err) {
+      // Only a curl timeout is worth another attempt; a missing binary, an
+      // SSRF rejection, or an aborted run must surface immediately.
+      if (
+        !isCurlTransportError(err) ||
+        err.exitCode !== CURL_EXIT_TIMEOUT
+      ) {
+        throw err;
+      }
+      failure = err;
+    }
+
+    // A redirect can carry the original method forward (307/308) or downgrade
+    // it (301/302/303), so the replay-safety question is about the method that
+    // actually ran, not the one the caller passed in. On a transport failure
+    // there is no response to read it from; fall back to the caller's method,
+    // which is the conservative choice (a POST stays non-idempotent).
+    const effectiveMethod = response?.finalMethod ?? args.method;
+
+    const exhausted = attempt >= retry.maxRetries || opts.signal.aborted;
+    if (exhausted || !isRetryableAttempt(effectiveMethod, response, failure)) {
+      if (response !== null) return response;
+      throw failure;
+    }
+
+    await sleep(
+      httpBackoffDelayMs(attempt, response?.retryAfterMs ?? null, retry),
+      opts.signal,
+    );
+
+    // The sleep resolves on abort rather than rejecting, so re-check here.
+    // Without this an Esc during the backoff still spawns one more curl.
+    if (opts.signal.aborted) {
+      if (response !== null) return response;
+      throw failure;
+    }
+
+    if (response !== null) {
+      resumeUrl = response.finalUrl;
+      resume = { method: response.finalMethod, body: response.finalBody };
+    }
+  }
+}
+
+/**
+ * Whether this attempt earns a retry.
+ *
+ * A GET is replayed on any transient status or a timeout. A non-idempotent
+ * method (POST) is replayed only when the server sent an explicit invitation
+ * — a `Retry-After` alongside 429/503 — because the origin may already have
+ * processed a request whose response never arrived. A bare 502/504 or a
+ * timeout on a POST is therefore returned as-is rather than double-submitted.
+ *
+ * `method` is the method of the hop that actually ran, not the caller's: a
+ * 307/308 carries a POST forward, so replaying the chain would re-submit the
+ * body even though the request "started" as a redirect follow.
+ */
+function isRetryableAttempt(
+  method: HttpMethod,
+  response: GuardedCurlResponse | null,
+  failure: unknown,
+): boolean {
+  const idempotent = IDEMPOTENT_METHODS.has(method);
+
+  if (failure !== null) return idempotent;
+  if (response === null) return false;
+  if (!RETRYABLE_STATUSES.has(response.status)) return false;
+  if (idempotent) return true;
+
+  return (
+    INVITED_RETRY_STATUSES.has(response.status) &&
+    response.retryAfterMs !== null
+  );
+}
+
+/**
+ * Delay before retry `attempt` (0-based): `retryBaseDelayMs * 2^attempt`,
+ * clamped to `retryMaxDelayMs`. A server-sent `Retry-After` wins over the
+ * computed delay — the origin knows its own recovery window — but is clamped
+ * the same way so a hostile value cannot park the agent.
+ */
+function httpBackoffDelayMs(
+  attempt: number,
+  retryAfterMs: number | null,
+  cfg: HttpRetryConfig,
+): number {
+  const backoff = cfg.retryBaseDelayMs * 2 ** attempt;
+  const chosen = retryAfterMs !== null ? retryAfterMs : backoff;
+  return Math.min(cfg.retryMaxDelayMs, Math.max(0, chosen));
+}
+
+function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(finish, ms);
+    function finish(): void {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    }
+    signal.addEventListener("abort", finish, { once: true });
+  });
+}
+
+/** One full request/redirect walk. A retry re-enters this from the top. */
+async function sendGuardedRequestOnce(
+  rawUrl: string,
+  args: HttpRequestArgs,
+  opts: ExecuteGuardedHttpOptions,
+  resume?: { method: HttpMethod; body: string | undefined },
+): Promise<GuardedCurlResponse> {
   const runCommand = opts.runCommand ?? defaultRunCommand;
   let currentUrl = parseHttpUrl(rawUrl);
-  let method = args.method;
-  let body = args.body;
+  // A retry resumes at the hop that failed, with the method and body that hop
+  // actually used. Restarting from the caller's method would re-send a body a
+  // 303 had already dropped, and re-walk redirects the origin already served.
+  let method = resume?.method ?? args.method;
+  let body = resume ? resume.body : args.body;
   const chain: string[] = [];
   let lastCommand: string[] = [];
   let truncated = false;
@@ -143,6 +330,9 @@ export async function executeGuardedHttpRequest(
       timeTotal: totalTime,
       truncated,
       redirectChain: chain,
+      retryAfterMs: parseRetryAfterValueMs(parsed.retryAfter),
+      finalMethod: method,
+      finalBody: body,
       command: lastCommand,
     };
   }
@@ -200,7 +390,12 @@ function buildPinnedCurlArgs(input: BuildPinnedCurlArgs): string[] {
   }
   argv.push(
     "-w",
-    `\n${CURL_META_MARKER}%{http_code}|%{content_type}|%{size_download}|%{time_total}|%{redirect_url}`,
+    `\n${CURL_META_MARKER}%{http_code}|%{content_type}|%{size_download}|` +
+      // `redirect_url` goes last: it is the one field whose value can contain
+      // a literal `|` (RFC 3986 disallows it, but origins emit it and curl
+      // reports it verbatim). Anything after it would be shifted out of place,
+      // so nothing follows it.
+      `%{time_total}|%header{retry-after}|%{redirect_url}`,
   );
   argv.push("--", input.url.toString());
   return argv;
@@ -213,6 +408,8 @@ export interface CurlParsedOutput {
   sizeDownload: number;
   timeTotal: number;
   redirectUrl: string;
+  /** Raw `Retry-After` header, `""` when absent or unsupported by curl. */
+  retryAfter: string;
 }
 
 export function parseCurlOutput(stdout: string): CurlParsedOutput {
@@ -225,20 +422,28 @@ export function parseCurlOutput(stdout: string): CurlParsedOutput {
       sizeDownload: stdout.length,
       timeTotal: 0,
       redirectUrl: "",
+      retryAfter: "",
     };
   }
   const body = stdout.slice(0, markerIdx).replace(/\n$/, "");
   const meta = stdout.slice(markerIdx + CURL_META_MARKER.length).trim();
+  // `redirect_url` is last and may itself contain `|`, so split off only the
+  // fixed leading fields and keep the remainder intact as the URL.
   const [
     statusStr = "",
     contentType = "",
     sizeStr = "",
     timeStr = "",
-    redirectUrl = "",
+    retryAfterRaw = "",
+    ...redirectRest
   ] = meta.split("|");
+  const redirectUrl = redirectRest.join("|");
   const status = Number.parseInt(statusStr, 10);
   const sizeDownload = Number.parseInt(sizeStr, 10);
   const timeTotal = Number.parseFloat(timeStr);
+  // `%header{}` is curl >= 7.83; older curl emits the literal format string,
+  // which must not be mistaken for a header value.
+  const retryAfter = retryAfterRaw.trim();
   return {
     body,
     status: Number.isFinite(status) ? status : 0,
@@ -246,6 +451,7 @@ export function parseCurlOutput(stdout: string): CurlParsedOutput {
     sizeDownload: Number.isFinite(sizeDownload) ? sizeDownload : body.length,
     timeTotal: Number.isFinite(timeTotal) ? timeTotal : 0,
     redirectUrl: redirectUrl.trim(),
+    retryAfter: retryAfter.startsWith("%header{") ? "" : retryAfter,
   };
 }
 

@@ -7,6 +7,7 @@ import type { ToolDefinition } from "../tool-registry.js";
 import type { AtomicAgentConfig, WebFetchConfig } from "../../config/index.js";
 import { extractWebContent, type ExtractMode } from "./web-fetch-extract.js";
 import { CurlUnavailableError, isCurlMissingError } from "./ensure-curl.js";
+import { parseRetryAfterValueMs } from "./retry-after-header.js";
 import {
   assertHostAllowed,
   formatResolveEntry,
@@ -542,18 +543,7 @@ function parseRetryAfterMs(headerJson: string): number | null {
   const rawValue = entry?.[1];
   const value = Array.isArray(rawValue) ? rawValue[0] : rawValue;
   if (typeof value !== "string") return null;
-  const text = value.trim();
-  if (text.length === 0) return null;
-
-  if (/^\d+$/.test(text)) {
-    return Number.parseInt(text, 10) * 1000;
-  }
-  const dateMs = Date.parse(text);
-  if (!Number.isNaN(dateMs)) {
-    // Past dates clamp to 0 — retry immediately rather than not at all.
-    return Math.max(0, dateMs - Date.now());
-  }
-  return null;
+  return parseRetryAfterValueMs(value);
 }
 
 function formatCurlError(result: CommandResult): string {
