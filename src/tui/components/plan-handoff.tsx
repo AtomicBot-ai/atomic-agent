@@ -32,18 +32,30 @@ import { theme } from "../theme/theme.js";
 export interface PlanHandoffProps {
   /** Runs the plan under `mode`. */
   onExecute: (mode: CodingMode) => void;
+  /**
+   * Puts the plan away without running it and without leaving plan
+   * mode.
+   *
+   * The bar had two buttons and a sentence, and the sentence carried
+   * the whole of the third option — which made "I do not want this
+   * plan" the only choice with no control attached to it. Typing does
+   * revise a plan, but it is not how you *drop* one, and an offer that
+   * cannot be declined keeps sitting there.
+   */
+  onDismiss: () => void;
   /** Columns the bar has to fit inside. */
   width: number;
 }
 
 export function PlanHandoff({
   onExecute,
+  onDismiss,
   width,
 }: PlanHandoffProps): ReactElement {
-  // Below this the two buttons cannot sit side by side without one of
+  // Below this the three buttons cannot sit side by side without one of
   // them being cut, and a truncated verb on a button that starts work is
   // the last thing to economise on.
-  const stacked = width < 62;
+  const stacked = width < 78;
   return (
     <Box flexDirection="column" width={width}>
       <Box flexDirection={stacked ? "column" : "row"}>
@@ -60,6 +72,13 @@ export function PlanHandoff({
           tone={theme.colors.error}
           onExecute={onExecute}
         />
+        {stacked ? null : <Text> </Text>}
+        {/*
+          Last, and in the quiet tone. It is the one button here that
+          does nothing irreversible, and putting it first would give the
+          least consequential choice the position the eye lands on.
+        */}
+        <DismissButton onDismiss={onDismiss} />
       </Box>
       <Text color={theme.colors.muted} wrap="truncate">
         {" or type below to change the plan — it stays in plan mode"}
@@ -97,6 +116,36 @@ function ExecuteButton({
       onMouse={(hit) => {
         if (!isPrimaryPress(hit.event)) return false;
         onExecute(mode);
+        return true;
+      }}
+    >
+      {face}
+    </MouseTarget>
+  );
+}
+
+function DismissButton({
+  onDismiss,
+}: {
+  onDismiss: () => void;
+}): ReactElement {
+  const face = (
+    <Text
+      backgroundColor={theme.colors.badgeBackground}
+      color={theme.colors.muted}
+    >
+      {" ✕ dismiss plan "}
+    </Text>
+  );
+  const mouse = useMouseCommands();
+  if (!mouse) return face;
+  return (
+    <MouseTarget
+      flexShrink={0}
+      layer={MOUSE_LAYER_PANEL}
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        onDismiss();
         return true;
       }}
     >

@@ -122,7 +122,7 @@ describe("PromptShell", () => {
     // The bar is where Send used to live; the readout owns that end now.
     expect(lines[5] ?? "").not.toContain("send");
     // The readout keeps its full gauge; the model name is what gives.
-    expect(lines[5] ?? "").toContain("context [======= ]  28.1k/32k");
+    expect(lines[5] ?? "").toContain("context [======= ] 115.3k/131.1k");
     unmount();
   });
 

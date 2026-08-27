@@ -114,6 +114,8 @@ export type TuiAction =
    */
   | { type: "coding_mode_cycled"; mode?: CodingMode; back?: boolean }
   /** Open the mode menu, seeded on the mode currently in force. */
+  /** Put the drafted plan away without running it or leaving plan mode. */
+  | { type: "plan_handoff_dismissed" }
   | { type: "coding_mode_menu_opened" }
   | { type: "coding_mode_menu_closed" }
   | { type: "coding_mode_menu_cursor_moved"; delta: number }
