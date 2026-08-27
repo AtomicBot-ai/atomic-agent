@@ -244,12 +244,11 @@ describe("configCommand", () => {
       expect(readFileSync(join(stateDir, "config.json"), "utf8")).toBe(before);
     });
 
-    it("set rejects a partly-numeric value instead of truncating it", async () => {
-      // `Number.parseInt` stops at the first character it cannot read, which
-      // would turn each of these into a plausible-looking number and write it
-      // as a success. `1e3` is the worst case: asking for 1000 and silently
-      // getting a token budget of 1.
-      for (const bad of ["1e3", "100_000", "60s", "1,000", "10.9", "8080x"]) {
+    it("set rejects a value that is not a complete number", async () => {
+      // `Number.parseInt` stops at the first character it cannot read, so each
+      // of these would become a plausible-looking number and be written as a
+      // success — `60s` silently becoming a 60ms timeout, `1,000` becoming 1.
+      for (const bad of ["100_000", "60s", "1,000", "10.9", "8080x", "0x10"]) {
         seedSparseConfig({ agent: { maxSteps: 7 } });
         const before = readFileSync(join(stateDir, "config.json"), "utf8");
         stderr = "";
@@ -262,11 +261,35 @@ describe("configCommand", () => {
       }
     });
 
-    it("set still accepts a clean integer, with surrounding space", async () => {
+    it("set accepts any complete literal whose value is a whole number", async () => {
+      // The check is on the value, not the spelling. `10.0` and `1e3` are both
+      // complete literals that name an integer, and `parseInt` already handled
+      // `10.0` correctly — rejecting them would break configs that worked, and
+      // this parser runs at every startup.
+      for (const [input, want] of [
+        [" 1000 ", "1000"],
+        ["10.0", "10"],
+        ["1e3", "1000"],
+        ["+5", "5"],
+      ] as const) {
+        seedSparseConfig({ agent: { maxSteps: 7 } });
+        stdout = "";
+        const code = await configCommand(["set", "agent.tokenBudget", input]);
+        expect(code, `${input} should be accepted`).toBe(0);
+        expect(stdout).toContain(`agent.tokenBudget = ${want}`);
+      }
+    });
+
+    it("set rejects an integer too large to round-trip", async () => {
+      // Past 2^53 the literal is silently stored as a different number.
       seedSparseConfig({ agent: { maxSteps: 7 } });
-      const code = await configCommand(["set", "agent.tokenBudget", " 1000 "]);
-      expect(code).toBe(0);
-      expect(stdout).toContain("agent.tokenBudget = 1000");
+      const code = await configCommand([
+        "set",
+        "agent.tokenBudget",
+        "9007199254740993",
+      ]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("agent.tokenBudget");
     });
 
     it("set rejects a partly-numeric fractional value", async () => {
