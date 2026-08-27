@@ -1733,3 +1733,57 @@ describe("parallelToolCalls derivation (issue #104)", () => {
     expect(captured.parallelToolCalls).toBe(true);
   });
 });
+
+describe("executeStep raw-network-failure classification", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+
+  async function runFailingStep(thrown: unknown) {
+    const registry = new ToolRegistry();
+    registry.register(replyTool);
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    return executeStep(
+      {
+        session: createEmptySessionState({ id: "s-net", workingDir: "/w" }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "hi",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async () => {
+          throw thrown;
+        },
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+      },
+    );
+  }
+
+  it("surfaces undici's `fetch failed` as TransportError, not ToolExecutionError", async () => {
+    // A surface that does not wrap its own errors (MCP streamable-http,
+    // embeddings, a vendor SDK with its own fetch) throws this shape.
+    // Filing it as a tool failure both mislabels the turn and stops the
+    // provider fallback chain from advancing.
+    const inner = Object.assign(
+      new Error("connect ECONNREFUSED 127.0.0.1:19091"),
+      { code: "ECONNREFUSED" },
+    );
+    const thrown = Object.assign(new TypeError("fetch failed"), {
+      cause: inner,
+    });
+    await expect(runFailingStep(thrown)).rejects.toMatchObject({
+      name: "TransportError",
+      category: "transport",
+    });
+  });
+
+  it("still reports a genuine runtime bug as a tool failure", async () => {
+    await expect(
+      runFailingStep(new TypeError("x.map is not a function")),
+    ).rejects.toMatchObject({ name: "ToolExecutionError", category: "tool" });
+  });
+});

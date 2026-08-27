@@ -1681,6 +1681,15 @@ function toLlmFailure(err: unknown, ctx: StepContext): LlmFailure {
   if (categorised === "cancelled") {
     return new CancelledError(wrapped.message, { cause: err });
   }
+  // A raw socket failure from a surface that does not wrap its own
+  // errors (MCP streamable-http, embeddings, a vendor SDK carrying its
+  // own `fetch`) reaches here as a bare `TypeError: fetch failed`. It is
+  // a provider-boundary problem, not a tool bug: wrapping it as
+  // `ToolExecutionError("unknown", …)` both mislabels the turn for the
+  // user and blocks the fallback chain from advancing.
+  if (categorised === "transport") {
+    return new TransportError(wrapped.message, null, "", { cause: err });
+  }
   return new ToolExecutionError("unknown", wrapped.message, { cause: err });
 }
 
