@@ -827,6 +827,23 @@ export function TuiApp({
     // A route switch owns ↑↓ / ←→ / Enter while it is up; the editor
     // keeping focus would act on the same keystroke a second time.
     state.composerSwitch === null &&
+    // The two confirm ladders own every key they see — `handleAppKey`
+    // returns true for anything while either is up. That is not enough
+    // on its own: the app handler and the chat editor are independent
+    // `useInput` subscriptions and returning true does not stop the
+    // second one, so the ladder's keystrokes were also landing in the
+    // draft behind it. Typing the uninstall confirmation left the word
+    // in the composer, and Esc closed the ladder *and* fell through to
+    // the editor's idle branch, opening the operator menu in the same
+    // press. They are named here, which is the only thing that actually
+    // stands the editor down.
+    //
+    // The coding-mode menu is deliberately NOT in this list: it closes
+    // on any unrecognised key and lets that key through, so an operator
+    // who opened it mid-sentence keeps typing. Unfocusing the editor
+    // there would swallow the letter that closed it.
+    !state.uninstall &&
+    !state.sessionDelete &&
     !menuLeaderArmed &&
     // An approval prompt no longer takes the keyboard away: the
     // operator answers the agent in the same field they always type in,
