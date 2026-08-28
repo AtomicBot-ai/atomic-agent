@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   OpenAiHttpError,
@@ -35,6 +35,11 @@ function errorResponse(
 ): Response {
   return new Response(body, { status, headers });
 }
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe("openAiPostJson", () => {
   it("returns parsed JSON on success without retrying", async () => {
@@ -113,6 +118,148 @@ describe("openAiPostJson", () => {
     );
     expect(result).toEqual({ ok: true });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { status: 429, retryDelay: "1.5s", expectedMs: 1_500 },
+    { status: 503, retryDelay: "2s", expectedMs: 2_000 },
+  ])(
+    "honors structured retryDelay for $status responses",
+    async ({ status, retryDelay, expectedMs }) => {
+      vi.useFakeTimers();
+      vi.spyOn(Math, "random").mockReturnValue(0.5);
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(
+          errorResponse(
+            status,
+            JSON.stringify({
+              error: {
+                code: status,
+                details: [
+                  {
+                    "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                    retryDelay,
+                  },
+                ],
+              },
+            }),
+          ),
+        )
+        .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+      const pending = openAiPostJson(
+        depsWith(fetchImpl as unknown as typeof fetch),
+        "/x",
+        {},
+        {},
+      );
+      await vi.advanceTimersByTimeAsync(expectedMs - 1);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(pending).resolves.toEqual({ ok: true });
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it.each(["not-a-duration", "-1s"])(
+    "ignores malformed structured retryDelay %s",
+    async (retryDelay) => {
+      vi.useFakeTimers();
+      vi.spyOn(Math, "random").mockReturnValue(0.5);
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(
+          errorResponse(
+            429,
+            JSON.stringify({ error: { details: [{ retryDelay }] } }),
+          ),
+        )
+        .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+      const pending = openAiPostJson(
+        depsWith(fetchImpl as unknown as typeof fetch),
+        "/x",
+        {},
+        {},
+      );
+      await vi.advanceTimersByTimeAsync(149);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(pending).resolves.toEqual({ ok: true });
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it("prefers a valid Retry-After header over structured retryDelay", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        errorResponse(
+          429,
+          JSON.stringify({ error: { details: [{ retryDelay: "5s" }] } }),
+          { "retry-after": "0.5" },
+        ),
+      )
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    const pending = openAiPostJson(
+      depsWith(fetchImpl as unknown as typeof fetch),
+      "/x",
+      {},
+      {},
+    );
+    await vi.advanceTimersByTimeAsync(499);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).resolves.toEqual({ ok: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("caps a structured retryDelay at the interactive retry limit", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        errorResponse(429, JSON.stringify({ error: { details: [{ retryDelay: "30s" }] } })),
+      )
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    const pending = openAiPostJson(
+      depsWith(fetchImpl as unknown as typeof fetch),
+      "/x",
+      {},
+      {},
+    );
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).resolves.toEqual({ ok: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets caller cancellation interrupt a structured retry wait", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const controller = new AbortController();
+    const fetchImpl = vi.fn().mockResolvedValueOnce(
+      errorResponse(429, JSON.stringify({ error: { details: [{ retryDelay: "39s" }] } })),
+    );
+
+    const pending = openAiPostJson(
+      depsWith(fetchImpl as unknown as typeof fetch),
+      "/x",
+      {},
+      { signal: controller.signal },
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ status: null });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("wraps network failures as status null and retries them", async () => {

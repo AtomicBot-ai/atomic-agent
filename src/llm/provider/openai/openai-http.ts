@@ -262,12 +262,17 @@ async function httpErrorFromResponse(
   res: Response,
 ): Promise<OpenAiHttpError> {
   const text = await res.text().catch(() => "");
+  const retryAfterMs =
+    parseRetryAfterMs(res.headers.get("retry-after")) ??
+    (res.status === 429 || res.status === 503
+      ? parseStructuredRetryDelayMs(text)
+      : null);
   return new OpenAiHttpError(
     `openai provider ${res.status}: ${text.slice(0, OPENAI_ERROR_DETAIL_MAX_LEN)}`,
     res.status,
     `${deps.baseUrl}${path}`,
     false,
-    parseRetryAfterMs(res.headers.get("retry-after")),
+    retryAfterMs,
     deps.label,
   );
 }
@@ -344,6 +349,31 @@ function parseRetryAfterMs(header: string | null): number | null {
     return Math.max(0, date - Date.now());
   }
   return null;
+}
+
+function parseStructuredRetryDelayMs(body: string): number | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body) as unknown;
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || !isRecord(parsed.error)) return null;
+  const details = parsed.error.details;
+  if (!Array.isArray(details)) return null;
+
+  for (const detail of details) {
+    if (!isRecord(detail) || typeof detail.retryDelay !== "string") continue;
+    const match = /^(\d+(?:\.\d+)?)s$/.exec(detail.retryDelay);
+    if (!match) continue;
+    const milliseconds = Number(match[1]) * 1000;
+    if (Number.isFinite(milliseconds)) return Math.round(milliseconds);
+  }
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
