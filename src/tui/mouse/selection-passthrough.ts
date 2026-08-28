@@ -4,17 +4,16 @@
  * ## Why this exists rather than in-app selection
  *
  * Selecting text inside the app — track the drag, paint an inverse-video
- * span, copy the range — was considered and rejected. It needs three
- * things this design does not have and would not cheaply gain:
+ * span, copy the range — was considered and rejected. Button-held motion
+ * reports (1002, on for the composer's own drag — see
+ * `mouse-tracking.ts`) would let it follow the gesture, but it needs two
+ * more things this design does not have and would not cheaply gain:
  *
- *   1. Motion reports (1002/1003), so the highlight follows the drag.
- *      Those are off on purpose (see `mouse-tracking.ts`) and would have
- *      to come back on, at least for the duration of a drag.
- *   2. A readback of *what character is painted in each cell*. Ink has
+ *   1. A readback of *what character is painted in each cell*. Ink has
  *      no framebuffer API — `measureElement` returns sizes, and
  *      `mouse-registry` deliberately reconstructs geometry from Yoga
  *      rather than from painted text. There is nothing to slice.
- *   3. Every component that could fall under the selection rectangle
+ *   2. Every component that could fall under the selection rectangle
  *      would have to become selection-aware to paint the highlight.
  *
  * And the result would still be worse than what the terminal already

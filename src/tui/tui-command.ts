@@ -38,6 +38,7 @@ import {
   enableMouseTracking,
   type MouseTrackingController,
 } from "./mouse/mouse-tracking.js";
+import { createSelectionPassthrough } from "./mouse/selection-passthrough.js";
 import { isLocalBackendConfigured } from "./local-backend-readiness.js";
 import { needsOnboarding } from "./onboarding/needs-onboarding.js";
 import { createOnboardingState } from "./onboarding/onboarding-state.js";
@@ -258,16 +259,19 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // half of the old one and half of the new.
   const synchronizedOutput = enableSynchronizedOutput({ stdout: process.stdout });
 
-  // Mouse support. Enabling SGR tracking (1000 + 1006) is what makes
+  // Mouse support. Enabling SGR tracking (1002 + 1006) is what makes
   // clicking panels, rows, tabs and the prompt work at all — the app
   // cannot see a click the terminal never reports. The cost is real and
   // was the reason this was previously left off: while reporting is on,
-  // the terminal stops doing its own drag-to-select (Apple Terminal has
-  // no Shift-bypass at all). So it is a toggle, not a fact of life —
-  // `tui.mouse` in the config, `--mouse` / `--no-mouse` per run, and
-  // `/mouse on|off` live. With reporting off, behaviour is exactly what
-  // it was before: alternate-scroll (`\x1b[?1007h` from
-  // `enterAltScreen`) turns the wheel into cursor keys, which
+  // the terminal stops doing its own drag-to-select. Shift+drag is the
+  // escape hatch — most terminals bypass reporting natively for a
+  // shifted drag, and `selectionPassthrough` below covers the ones that
+  // do not (Apple Terminal) by suspending reporting for a short window.
+  // Reporting also stays a toggle — `tui.mouse` in the config,
+  // `--mouse` / `--no-mouse` per run, and `/mouse on|off` live. With
+  // reporting off, behaviour is exactly what it was before:
+  // alternate-scroll (`\x1b[?1007h` from `enterAltScreen`) turns the
+  // wheel into cursor keys, which
   // `handleAppKey.shouldTreatArrowAsChatScroll` routes into
   // `chat_scrolled`.
   //
@@ -279,6 +283,17 @@ export async function tuiCommand(args: string[]): Promise<number> {
   let mouseTracking: MouseTrackingController | null = mouseEnabled
     ? enableMouseTracking({ stdout: process.stdout })
     : null;
+  // Shift+drag selection: a shift-modified press means the operator is
+  // reaching for the terminal's own drag-to-select, not a click — see
+  // `selection-passthrough.ts` for why that report only ever arrives on
+  // a terminal without a native Shift-bypass. The `tracking` getter
+  // reads the live `mouseTracking` binding because `/mouse on|off`
+  // replaces the controller underneath the window; a captured one would
+  // resume a controller nobody is using any more.
+  const selectionPassthrough = createSelectionPassthrough({
+    tracking: () => mouseTracking,
+    notify: (text) => bus.emit({ type: "system_message", text }),
+  });
   // `mouseTracking` is the single source of truth for "is the mouse on",
   // and it is read here on every report rather than captured, so
   // `setMouseEnabled` reassigning it takes effect immediately. Normally
@@ -287,7 +302,15 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // a multiplexer that swallowed the disable, or a bracketed paste whose
   // payload happens to contain an SGR report.
   const mouseStdin = createMouseStdin(process.stdin, (event) => {
-    if (mouseTracking) mouseSource.emit(event);
+    if (!mouseTracking) return;
+    // The passthrough sees every event before the app does: a consumed
+    // shift-press must never reach the hit test, and while the window
+    // is open a report that was already in flight when reporting
+    // stopped is swallowed too — the operator is selecting, not
+    // clicking.
+    if (selectionPassthrough.observe(event)) return;
+    if (mouseTracking.isSuspended()) return;
+    mouseSource.emit(event);
   });
   const setMouseEnabled = (next: boolean | null): void => {
     if (next === null) {
@@ -673,6 +696,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
     try {
       // Diagnostics go back to stderr for whatever runs after the TUI.
       setConfigNoticeSink(null);
+      // The passthrough first: its pending resume must not fire into a
+      // controller that `disable()` below has already retired.
+      selectionPassthrough.dispose();
       mouseTracking?.disable();
       mouseStdin.dispose();
       altScreen.restore();

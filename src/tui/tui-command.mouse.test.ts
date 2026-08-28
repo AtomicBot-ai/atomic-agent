@@ -28,9 +28,11 @@ import {
 } from "../config/index.js";
 import type { TuiMouseEvent } from "./mouse/mouse-event.js";
 import type { MouseSource } from "./mouse/mouse-source.js";
+import { DEFAULT_SELECTION_WINDOW_MS } from "./mouse/selection-passthrough.js";
+import type { TuiAction } from "./tui-action.js";
 
 const inkRender = vi.hoisted(() => vi.fn());
-const trackingCalls = vi.hoisted(() => ({ enabled: 0, disabled: 0 }));
+const trackingCalls = vi.hoisted(() => ({ enabled: 0, disabled: 0, resumed: 0 }));
 
 // `sea` is one of the few builtins Node only publishes under the
 // `node:` prefix, and Vite's builtin check strips that prefix — so the
@@ -50,10 +52,20 @@ vi.mock("./alt-screen.js", () => ({
 vi.mock("./mouse/mouse-tracking.js", () => ({
   enableMouseTracking: () => {
     trackingCalls.enabled += 1;
+    let suspended = false;
     return {
       disable: () => {
         trackingCalls.disabled += 1;
+        suspended = false;
       },
+      suspend: () => {
+        suspended = true;
+      },
+      resume: () => {
+        trackingCalls.resumed += 1;
+        suspended = false;
+      },
+      isSuspended: () => suspended,
     };
   },
 }));
@@ -83,6 +95,11 @@ function sgrPress(col: number, row: number): Buffer {
   return Buffer.from(`\u001B[<0;${col};${row}M`);
 }
 
+/** SGR 1006 shift-modified left press — the selection-window trigger. */
+function sgrShiftPress(col: number, row: number): Buffer {
+  return Buffer.from(`\u001B[<4;${col};${row}M`);
+}
+
 /**
  * Stands in for `process.stdin`: `tuiCommand` reads the real one, so the
  * test swaps in a stream it can push bytes through. `isTTY` also gets
@@ -101,6 +118,8 @@ interface Booted {
   readonly mouse: MouseSource | undefined;
   readonly setMouseEnabled: (next: boolean | null) => void;
   readonly seen: TuiMouseEvent[];
+  /** Chat-bound `system_message` texts, in emit order. */
+  readonly messages: string[];
   readonly stop: () => Promise<number>;
 }
 
@@ -128,11 +147,16 @@ async function bootTui(args: string[] = []): Promise<Booted> {
   if (props === null) throw new Error("TuiApp never rendered");
   const captured = props as {
     mouse?: MouseSource;
+    bus?: { subscribe(listener: (action: TuiAction) => void): () => void };
     callbacks: { onMouseSupportRequested?: (next: boolean | null) => void };
   };
 
   const seen: TuiMouseEvent[] = [];
   captured.mouse?.subscribe((event) => seen.push(event));
+  const messages: string[] = [];
+  captured.bus?.subscribe((action) => {
+    if (action.type === "system_message") messages.push(action.text);
+  });
   const setMouseEnabled = captured.callbacks.onMouseSupportRequested;
   if (!setMouseEnabled) throw new Error("onMouseSupportRequested not wired");
 
@@ -140,6 +164,7 @@ async function bootTui(args: string[] = []): Promise<Booted> {
     mouse: captured.mouse,
     setMouseEnabled,
     seen,
+    messages,
     stop: async () => {
       releaseExit();
       return finished;
@@ -158,6 +183,7 @@ describe("tuiCommand mouse wiring", () => {
     resetConfigCache();
     trackingCalls.enabled = 0;
     trackingCalls.disabled = 0;
+    trackingCalls.resumed = 0;
     stdin = makeFakeStdin();
     realStdin = Object.getOwnPropertyDescriptor(process, "stdin");
     Object.defineProperty(process, "stdin", {
@@ -167,6 +193,7 @@ describe("tuiCommand mouse wiring", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     if (realStdin) Object.defineProperty(process, "stdin", realStdin);
     rmSync(stateDir, { recursive: true, force: true });
     delete process.env.ATOMIC_AGENT_STATE_DIR;
@@ -249,6 +276,62 @@ describe("tuiCommand mouse wiring", () => {
     app.setMouseEnabled(true);
     stdin.emit("data", sgrPress(7, 1));
     expect(app.seen).toHaveLength(1);
+    await app.stop();
+  });
+
+  it("a shift-modified press opens the selection window instead of clicking", async () => {
+    writeMouseConfig(true);
+    const app = await bootTui();
+
+    stdin.emit("data", sgrShiftPress(5, 3));
+    // The gesture is consumed, never hit-tested; the operator is told
+    // in chat what just happened.
+    expect(app.seen).toHaveLength(0);
+    expect(app.messages.some((m) => m.includes("drag to select"))).toBe(true);
+
+    // A report already in flight when the suspend landed decodes here
+    // anyway — swallowed, not clicked.
+    stdin.emit("data", sgrPress(5, 3));
+    expect(app.seen).toHaveLength(0);
+    await app.stop();
+  });
+
+  it("delivers clicks again once the selection window expires", async () => {
+    // `shouldAdvanceTime` keeps the boot's real 10ms poll loop alive
+    // while the 10s selection window is jumped over synthetically.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    writeMouseConfig(true);
+    const app = await bootTui();
+
+    stdin.emit("data", sgrShiftPress(5, 3));
+    expect(app.seen).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(DEFAULT_SELECTION_WINDOW_MS);
+    expect(trackingCalls.resumed).toBe(1);
+    expect(app.messages.some((m) => m.includes("mouse back on"))).toBe(true);
+
+    stdin.emit("data", sgrPress(5, 3));
+    expect(app.seen).toHaveLength(1);
+    await app.stop();
+  });
+
+  it("keeps /mouse off during the selection window off for good", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    writeMouseConfig(true);
+    const app = await bootTui();
+
+    stdin.emit("data", sgrShiftPress(5, 3));
+    app.setMouseEnabled(false);
+    expect(trackingCalls.disabled).toBe(1);
+
+    // The pending auto-resume must find nothing to resume: the operator
+    // asked for reporting to stay gone.
+    await vi.advanceTimersByTimeAsync(DEFAULT_SELECTION_WINDOW_MS);
+    expect(trackingCalls.resumed).toBe(0);
+    expect(trackingCalls.enabled).toBe(1);
+
+    stdin.emit("data", sgrPress(5, 3));
+    expect(app.seen).toHaveLength(0);
     await app.stop();
   });
 });
