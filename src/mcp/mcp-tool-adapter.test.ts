@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import type { ApprovalGate, ApprovalRequest } from "../approval/approval-gate.js";
+import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 import type { ToolContext } from "../tools/tool-registry.js";
 
 import type { McpClient } from "./mcp-client.js";
@@ -310,5 +312,162 @@ describe("createMcpToolDefinition", () => {
     const result = await def.run({}, ctx);
     expect(result.status).toBe("error");
     expect(result.summary).toContain("transport blew up");
+  });
+});
+
+describe("approval gating", () => {
+  /**
+   * Duck-typed gate harness. `requests` records every ApprovalRequest
+   * (plus the signal it was asked with); `approve` flips the decision.
+   */
+  function fakeDangerous(approve: boolean): {
+    dangerous: DangerousToolOptions;
+    requests: ApprovalRequest[];
+    signals: (AbortSignal | undefined)[];
+  } {
+    const requests: ApprovalRequest[] = [];
+    const signals: (AbortSignal | undefined)[] = [];
+    const approvals = {
+      request: async (
+        req: Omit<ApprovalRequest, "approvalId">,
+        opts?: { signal?: AbortSignal },
+      ) => {
+        requests.push({ ...req, approvalId: "a-test" });
+        signals.push(opts?.signal);
+        return {
+          approvalId: "a-test",
+          approved: approve,
+          ...(approve ? {} : { reason: "operator said no" }),
+        };
+      },
+    } as unknown as ApprovalGate;
+    return {
+      dangerous: { approvals, approvalRequired: true },
+      requests,
+      signals,
+    };
+  }
+
+  it("routes an approval_gated tool through the gate before callTool", async () => {
+    const order: string[] = [];
+    const { dangerous, requests, signals } = fakeDangerous(true);
+    const def = createMcpToolDefinition(
+      metaOf("windows", "app_launch"),
+      fakeClient(async () => {
+        order.push("callTool");
+        return { content: [{ type: "text", text: "launched" }] };
+      }),
+      { trust: "approval_gated", dangerous },
+    );
+    const result = await def.run({ name: "calc.exe" }, ctx);
+    expect(result.status).toBe("ok");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      sessionId: "s-test",
+      tool: "mcp.windows.app_launch",
+      category: "other",
+      affectedResources: ["windows"],
+    });
+    expect(requests[0]!.preview).toContain('"calc.exe"');
+    // The gate resolved before the server was contacted.
+    expect(order).toEqual(["callTool"]);
+    // Abort signal propagates into the gate so Esc / turn-cancel can
+    // dismiss a pending prompt.
+    expect(signals[0]).toBe(ctx.signal);
+  });
+
+  it("denial folds into status=error, stamps approvalDenied, and never contacts the server", async () => {
+    const callTool = vi.fn(async () => ({ content: [] }));
+    const { dangerous } = fakeDangerous(false);
+    const def = createMcpToolDefinition(
+      metaOf("windows", "registry_write"),
+      fakeClient(callTool),
+      { trust: "approval_gated", dangerous },
+    );
+    const result = await def.run({ key: "HKLM\\..." }, ctx);
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("approval denied");
+    expect(result.details).toMatchObject({
+      server: "windows",
+      rawName: "registry_write",
+      approvalDenied: true,
+    });
+    expect(callTool).not.toHaveBeenCalled();
+  });
+
+  it("exempts a discovery-time readOnlyHint === true", async () => {
+    const { dangerous, requests } = fakeDangerous(true);
+    const def = createMcpToolDefinition(
+      metaOf("docs", "search", { annotations: { readOnlyHint: true } }),
+      fakeClient(async () => ({ content: [{ type: "text", text: "hit" }] })),
+      { trust: "approval_gated", dangerous },
+    );
+    const result = await def.run({}, ctx);
+    expect(result.status).toBe("ok");
+    expect(requests).toHaveLength(0);
+  });
+
+  it('fails closed on a malformed readOnlyHint (string "true")', async () => {
+    const { dangerous, requests } = fakeDangerous(true);
+    const def = createMcpToolDefinition(
+      metaOf("docs", "search", { annotations: { readOnlyHint: "true" } }),
+      fakeClient(async () => ({ content: [] })),
+      { trust: "approval_gated", dangerous },
+    );
+    await def.run({}, ctx);
+    expect(requests).toHaveLength(1);
+  });
+
+  it("fails closed when annotations are missing entirely", async () => {
+    const { dangerous, requests } = fakeDangerous(true);
+    const def = createMcpToolDefinition(
+      metaOf("windows", "shell"),
+      fakeClient(async () => ({ content: [] })),
+      { trust: "approval_gated", dangerous },
+    );
+    await def.run({}, ctx);
+    expect(requests).toHaveLength(1);
+  });
+
+  it("gates destructiveHint === false alone — the exemption is narrower than the readonly field", async () => {
+    // `readonly` (descriptor rendering) accepts destructiveHint ===
+    // false as read-ish; skipping consent demands the server's
+    // strongest claim, readOnlyHint === true, and nothing else.
+    const { dangerous, requests } = fakeDangerous(true);
+    const def = createMcpToolDefinition(
+      metaOf("docs", "annotate", { annotations: { destructiveHint: false } }),
+      fakeClient(async () => ({ content: [] })),
+      { trust: "approval_gated", dangerous },
+    );
+    expect(def.readonly).toBe(true);
+    await def.run({}, ctx);
+    expect(requests).toHaveLength(1);
+  });
+
+  it("never gates a pure_read server", async () => {
+    const { dangerous, requests } = fakeDangerous(true);
+    const def = createMcpToolDefinition(
+      metaOf("docs", "search"),
+      fakeClient(async () => ({ content: [{ type: "text", text: "hit" }] })),
+      { trust: "pure_read", dangerous },
+    );
+    const result = await def.run({}, ctx);
+    expect(result.status).toBe("ok");
+    expect(requests).toHaveLength(0);
+  });
+
+  it("honours the approvalRequired=false test seam", async () => {
+    const { dangerous, requests } = fakeDangerous(true);
+    const def = createMcpToolDefinition(
+      metaOf("windows", "shell"),
+      fakeClient(async () => ({ content: [] })),
+      {
+        trust: "approval_gated",
+        dangerous: { ...dangerous, approvalRequired: false },
+      },
+    );
+    const result = await def.run({}, ctx);
+    expect(result.status).toBe("ok");
+    expect(requests).toHaveLength(0);
   });
 });

@@ -17,6 +17,7 @@ export type {
 } from "./mcp-manager.js";
 
 export { createMcpToolDefinition } from "./mcp-tool-adapter.js";
+export type { McpToolGateOptions } from "./mcp-tool-adapter.js";
 
 export {
   buildMcpToolDescriptor,
