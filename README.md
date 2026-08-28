@@ -76,7 +76,7 @@ One command removes everything — the state directory (config, memory, sessions
 atomic-agent uninstall
 ```
 
-It prints exactly what it will delete, with sizes, and then asks you to type the word `uninstall`. Nothing is uploaded and nothing is kept — this cannot be undone. Preview it with `atomic-agent uninstall --dry-run`, keep your data with `--keep-data`, or skip the prompt in a script with `--yes`. The same flow is the last entry in the TUI's own menu (**Ctrl+P → Danger zone**, or `/uninstall`).
+It prints exactly what it will delete, with sizes, and then asks you to type the word `uninstall`. Nothing is uploaded and nothing is kept — this cannot be undone. Preview it with `atomic-agent uninstall --dry-run`, keep your data with `--keep-data`, or skip the prompt in a script with `--yes`. The same flow is the last entry in the TUI's own menu (**Esc → Danger zone**, or `/uninstall`).
 
 ### Troubleshooting
 
@@ -277,7 +277,7 @@ All six are designed here rather than transcribed from upstream terminal themes,
 
 **Small windows.** The layout degrades as the window shrinks — the right rail drops at 100 columns, the splash art steps down through three sizes, the chrome grows a row under 60 columns — down to a floor of **40x16**. Below that it stops: Ink overlaps a frame taller than the terminal instead of clipping it, so a 16-row UI in a 10-row window is two UIs painted over each other rather than a cramped one. Under the floor the app draws a single card saying what it needs and what it has, on the main screen and the first-run screen alike, and goes back to the real UI as soon as the window is dragged big enough.
 
-**Mouse.** The TUI is clickable: the breadcrumb (which opens the menu, the same as `ctrl+p`), sidebar sessions and tasks, every list row (skills, tasks, memory, MCP, models, providers), the session / theme / slash pickers, approval buttons, tool cards, and the prompt itself — clicking in the input places the caret. A click selects a row, a second click on the selected row opens it, and the wheel scrolls the chat or walks the focused panel.
+**Mouse.** The TUI is clickable: the breadcrumb (which opens the menu, the same as Esc on an idle prompt), sidebar sessions and tasks, every list row (skills, tasks, memory, MCP, models, providers), the session / theme / slash pickers, approval buttons, tool cards, and the prompt itself — clicking in the input places the caret. A click selects a row, a second click on the selected row opens it, and the wheel scrolls the chat or walks the focused panel.
 
 While mouse reporting is on the terminal hands clicks to the app, which means its own drag-to-select is unavailable (iTerm2, GNOME Terminal and Windows Terminal let you hold Shift to bypass; Apple Terminal does not). Turn it off whenever you want to select text: `/mouse off` in the app, `atomic-agent tui --no-mouse` for one run, or `"tui": { "mouse": false }` in `<stateDir>/config.json`. With mouse off, wheel scrolling still works through the terminal's alternate-scroll mode, exactly as before.
 

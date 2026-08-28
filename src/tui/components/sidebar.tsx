@@ -310,10 +310,10 @@ function NewSessionButton(): ReactElement {
 }
 
 /**
- * The one control on the rail. `ctrl+p` opens the same menu; this is
- * what makes it reachable without knowing that, which was the whole
- * complaint about the old top bar — nothing on screen said the menu
- * existed.
+ * The one control on the rail. Esc on an empty idle prompt opens the
+ * same menu; this is what makes it reachable without knowing that,
+ * which was the whole complaint about the old top bar — nothing on
+ * screen said the menu existed.
  */
 function MenuButton({ inner }: { inner: number }): ReactElement {
   const mouse = useMouseCommands();
@@ -322,7 +322,7 @@ function MenuButton({ inner }: { inner: number }): ReactElement {
       <Chip label={`${theme.glyphs.menuGlyph} Menu`} />
       <Box flexGrow={1} />
       <Text color={theme.colors.railMuted} wrap="truncate">
-        ctrl+p
+        esc
       </Text>
     </Box>
   );

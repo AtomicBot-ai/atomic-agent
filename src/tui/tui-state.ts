@@ -464,7 +464,8 @@ export interface TuiState {
   /** Highlighted row in the slash palette. */
   slashPaletteCursor: number;
   /**
-   * Operator menu (`ctrl+p`) — the browsable half of the navigation surface.
+   * Operator menu (Esc on an empty idle prompt) — the browsable half of
+   * the navigation surface.
    * `menuPath` is the id of the submenu currently open, or `null` at the
    * root; the tree is one level deep by construction so a single id is
    * enough. A non-empty `menuQuery` flattens the tree: search ranks across
