@@ -599,6 +599,11 @@ describe("buildPrompt", () => {
       capabilities: CAPS,
       skillCatalog: SKILLS,
       tokenBudget: 400,
+      // This test is about the token axis, as its name says. History is
+      // capped on a second, independent axis now — tasks — and the
+      // fixture is 31 of them, so opt out of that one to keep measuring
+      // the thing under test.
+      conversationMaxPairs: 100,
     });
     expect(prompt.tail).toContain("the latest important question");
     expect(prompt.tail).toContain("noise 0");

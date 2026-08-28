@@ -146,6 +146,17 @@ export interface StepDependencies {
   llmCompleteStream?: LlmCompleteStream;
   grammar: string;
   profile: ModelProfile;
+  /**
+   * The model's context window when the profile probe cannot supply it.
+   *
+   * `profile.contextWindow` comes from llama-server `/props`, so on a
+   * cloud provider the budget had no window and every window-relative
+   * decision fell back to a fixed number. Resolved from the model
+   * catalogue instead — and only when the catalogue actually knows,
+   * never from a nominal default, because a budget computed against a
+   * guessed window is worse than one that admits it has none.
+   */
+  contextWindow?: number | null;
   /** Effective transport for this runtime (grammar vs native OpenAI tools). */
   toolTransport: ToolCallTransport;
   /** Adapter for native_tools; null when grammar-only. */
@@ -325,6 +336,9 @@ async function executeStepInner(
     skillCatalog: ctx.skillCatalog,
     currentDate: formatCurrentDate(new Date()),
     profile: deps.profile,
+    ...(deps.contextWindow !== undefined
+      ? { contextWindow: deps.contextWindow }
+      : {}),
     ...(ctx.transientNotice !== undefined
       ? { transientNotice: ctx.transientNotice }
       : {}),
@@ -412,23 +426,40 @@ async function executeStepInner(
   // the model may have thought but failed to emit a required tool call, and
   // the existing repair path can recover with a stricter one-shot prompt.
   const initialModelFailure = detectModelFailure(completion);
-  if (
-    initialModelFailure !== null &&
-    !isNativeToolsEmptyCompletionHandledByParser(
-      parseDepsFor(completion, deps),
+  if (initialModelFailure !== null) {
+    const initialParseDeps = parseDepsFor(completion, deps);
+    const repairable = isGrammarEmptyCompletionWorthRepairing(
+      initialParseDeps,
       initialModelFailure.reason,
-      completion,
-    )
-  ) {
-    deps.logger?.warn("model-side completion defect", {
-      sessionId: ctx.session.id,
-      stepIndex: ctx.stepIndex,
-      reason: initialModelFailure.reason,
-    });
-    throw new ModelError(
-      initialModelFailure.reason,
-      initialModelFailure.message,
     );
+    if (
+      !repairable &&
+      !isNativeToolsEmptyCompletionHandledByParser(
+        initialParseDeps,
+        initialModelFailure.reason,
+        completion,
+      )
+    ) {
+      deps.logger?.warn("model-side completion defect", {
+        sessionId: ctx.session.id,
+        stepIndex: ctx.stepIndex,
+        reason: initialModelFailure.reason,
+      });
+      throw new ModelError(
+        initialModelFailure.reason,
+        initialModelFailure.message,
+      );
+    }
+    if (repairable) {
+      // Fall through to the parser: an empty body fails to parse, which
+      // routes into the one-shot repair below. The repair's own
+      // `detectModelFailure` still throws `ModelError` if the second
+      // completion is empty too, so "twice empty" remains terminal.
+      deps.logger?.warn("empty completion, repairing once", {
+        sessionId: ctx.session.id,
+        stepIndex: ctx.stepIndex,
+      });
+    }
   }
 
   // Notice text injected into the NEXT step's `transientNotice` when
@@ -1031,6 +1062,36 @@ function isNativeToolsEmptyCompletionHandledByParser(
       ? completion.reasoningContent.trim()
       : "";
   return reasoning.length > 0;
+}
+
+/**
+ * Is this an empty completion the one-shot repair should get a crack at?
+ *
+ * On the grammar transports an empty body is not the dead end
+ * `detectModelFailure`'s doc assumes. The prompt is not replayed
+ * verbatim: the repair path rebuilds it through
+ * `buildToolCallRepairPrompt` with a corrective notice and a bounded
+ * token cap, which is a materially different request — and the same
+ * machinery already recovers every *other* unparseable body (a truncated
+ * array, a stray prelude, prose where JSON belongs). Only "the model
+ * emitted literally nothing" was singled out to end the turn outright,
+ * and that is the single largest failure bucket in production.
+ *
+ * `native_tools` is deliberately excluded: that transport has its own
+ * salvage path (`isNativeToolsEmptyCompletionHandledByParser`), and a
+ * native completion with nothing in any channel routes through
+ * `ModelError` by design — see `step-executor.test.ts`, "native_tools:
+ * routes 'no tool_calls and no content' through ModelError".
+ *
+ * `truncated` and `no_stop` are excluded too, and for the original
+ * reason: the model already spent its budget on this prefix, so a second
+ * pass hits the same wall.
+ */
+function isGrammarEmptyCompletionWorthRepairing(
+  deps: Pick<StepDependencies, "toolTransport">,
+  reason: string,
+): boolean {
+  return reason === "empty" && deps.toolTransport !== "native_tools";
 }
 
 /**
@@ -1680,6 +1741,15 @@ function toLlmFailure(err: unknown, ctx: StepContext): LlmFailure {
   const categorised = classifyFailure(wrapped);
   if (categorised === "cancelled") {
     return new CancelledError(wrapped.message, { cause: err });
+  }
+  // A raw socket failure from a surface that does not wrap its own
+  // errors (MCP streamable-http, embeddings, a vendor SDK carrying its
+  // own `fetch`) reaches here as a bare `TypeError: fetch failed`. It is
+  // a provider-boundary problem, not a tool bug: wrapping it as
+  // `ToolExecutionError("unknown", …)` both mislabels the turn for the
+  // user and blocks the fallback chain from advancing.
+  if (categorised === "transport") {
+    return new TransportError(wrapped.message, null, "", { cause: err });
   }
   return new ToolExecutionError("unknown", wrapped.message, { cause: err });
 }

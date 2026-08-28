@@ -79,3 +79,81 @@ describe("handleContextPanelKey", () => {
     expect(run("x", key({ meta: true })).handled).toBe(false);
   });
 });
+
+/**
+ * The selector is the setting, so a step applies on the spot. There is
+ * no draft to commit and nothing a second keystroke would confirm — the
+ * panel is already showing what the value costs while it is chosen.
+ */
+describe("stepping the task selector", () => {
+  function stepped(input: string): number[] {
+    const steps: number[] = [];
+    handleContextPanelKey(input, key(), {
+      state: open(),
+      dispatch: () => {},
+      onStepPairs: (delta) => steps.push(delta),
+    });
+    return steps;
+  }
+
+  it("steps down and up", () => {
+    expect(stepped("-")).toEqual([-1]);
+    expect(stepped("_")).toEqual([-1]);
+    expect(stepped("+")).toEqual([1]);
+    expect(stepped("=")).toEqual([1]);
+  });
+
+  it("moves by the whole burst when a key is held", () => {
+    // Terminals send key repeat as one chunk and Ink passes it through
+    // as one string. Matching on a single character meant the selector
+    // did not move at all for anyone who held the key down.
+    expect(stepped("---")).toEqual([-3]);
+    expect(stepped("+++++")).toEqual([5]);
+  });
+
+  it("ignores a chunk that is not purely its own key", () => {
+    // A repeat that caught the edge of something else is not this
+    // control's to interpret.
+    expect(stepped("--x")).toEqual([]);
+    expect(stepped("-+")).toEqual([]);
+  });
+
+  it("claims those keys even with nowhere to send them", () => {
+    // The editor is unfocused while the panel owns input, so a `-` that
+    // fell through would land in the buffer and surprise the operator
+    // later.
+    expect(handleContextPanelKey("-", key(), { state: open(), dispatch: () => {} })).toBe(
+      true,
+    );
+  });
+
+  it("leaves closing to the keys that close", () => {
+    const actions: TuiAction[] = [];
+    handleContextPanelKey("-", key(), {
+      state: open(),
+      dispatch: (a) => actions.push(a),
+      onStepPairs: () => {},
+    });
+    expect(actions).toEqual([]);
+  });
+
+  it("still closes on enter, esc and q without touching the value", () => {
+    for (const [input, k] of [
+      ["", key({ return: true })],
+      ["", key({ escape: true })],
+      ["q", key()],
+    ] as const) {
+      let stepped = false;
+      const actions: TuiAction[] = [];
+      handleContextPanelKey(input, k, {
+        state: open(),
+        dispatch: (a) => actions.push(a),
+        onStepPairs: () => {
+          stepped = true;
+        },
+      });
+      expect(actions).toEqual([{ type: "context_panel_closed" }]);
+      expect(stepped).toBe(false);
+    }
+  });
+});

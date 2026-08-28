@@ -18,6 +18,17 @@ import {
  * into the body). Deterministic for tests.
  */
 export const CURL_META_MARKER = "__ATOMIC_CURL_META__";
+/**
+ * Separates `redirect_url` from `retry-after` in the `-w` line.
+ *
+ * `|` cannot do it. Both of those fields carry text the *origin* chose —
+ * one a URL curl reports verbatim, the other a raw response header — and
+ * a single delimiter can only bound one of them. With both pipe-joined,
+ * a `Retry-After: 5|x` shifted the URL a field to the right and the
+ * caller got `x|https://…`, which fails the SSRF host check and is
+ * reported to the model as `blocked`.
+ */
+export const CURL_RETRY_AFTER_MARKER = "__ATOMIC_CURL_RA__";
 
 const MAX_REDIRECTS = 5;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -409,11 +420,12 @@ function buildPinnedCurlArgs(input: BuildPinnedCurlArgs): string[] {
   argv.push(
     "-w",
     `\n${CURL_META_MARKER}%{http_code}|%{content_type}|%{size_download}|` +
-      // `redirect_url` goes last: it is the one field whose value can contain
-      // a literal `|` (RFC 3986 disallows it, but origins emit it and curl
-      // reports it verbatim). Anything after it would be shifted out of place,
-      // so nothing follows it.
-      `%{time_total}|%header{retry-after}|%{redirect_url}`,
+      // The two origin-controlled fields are separated from each other
+      // by a sentinel rather than a pipe, so each may contain `|`
+      // freely: everything between the fourth pipe and the sentinel is
+      // the URL, everything after the sentinel is the header. See
+      // CURL_RETRY_AFTER_MARKER.
+      `%{time_total}|%{redirect_url}${CURL_RETRY_AFTER_MARKER}%header{retry-after}`,
   );
   argv.push("--", input.url.toString());
   return argv;
@@ -445,16 +457,23 @@ export function parseCurlOutput(stdout: string): CurlParsedOutput {
   }
   const body = stdout.slice(0, markerIdx).replace(/\n$/, "");
   const meta = stdout.slice(markerIdx + CURL_META_MARKER.length).trim();
-  // `redirect_url` is last and may itself contain `|`, so split off only the
-  // fixed leading fields and keep the remainder intact as the URL.
+  // The sentinel splits the two origin-controlled fields; `indexOf`, so
+  // a sentinel forged inside the *URL* can only corrupt the header
+  // (which is then parsed as a number or a date and dropped) rather
+  // than the URL the request is about to be checked against.
+  const raIdx = meta.indexOf(CURL_RETRY_AFTER_MARKER);
+  const head = raIdx === -1 ? meta : meta.slice(0, raIdx);
+  const retryAfterRaw =
+    raIdx === -1 ? "" : meta.slice(raIdx + CURL_RETRY_AFTER_MARKER.length);
+  // Only the fixed leading fields are pipe-delimited; the remainder of
+  // `head` is the URL, pipes and all.
   const [
     statusStr = "",
     contentType = "",
     sizeStr = "",
     timeStr = "",
-    retryAfterRaw = "",
     ...redirectRest
-  ] = meta.split("|");
+  ] = head.split("|");
   const redirectUrl = redirectRest.join("|");
   const status = Number.parseInt(statusStr, 10);
   const sizeDownload = Number.parseInt(sizeStr, 10);

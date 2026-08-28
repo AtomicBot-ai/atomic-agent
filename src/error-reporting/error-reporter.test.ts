@@ -51,4 +51,20 @@ describe("captureError", () => {
     expect(captured[0].errorType).toBe("NonError");
     expect(captured[0].message).toBeUndefined();
   });
+  it("drops a process-global broken pipe — the reader left, nothing broke", () => {
+    const { client, captured } = fakeClient();
+    const err = Object.assign(new Error("write EPIPE"), {
+      code: "EPIPE",
+      syscall: "write",
+    });
+    captureError(client, err, { source: "uncaughtException" });
+    expect(captured).toHaveLength(0);
+  });
+
+  it("still reports an EPIPE raised at a call site, where it may be ours", () => {
+    const { client, captured } = fakeClient();
+    const err = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+    captureError(client, err, { source: "tool_exec" });
+    expect(captured).toHaveLength(1);
+  });
 });

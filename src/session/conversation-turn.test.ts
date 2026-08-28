@@ -287,6 +287,9 @@ describe("conversation-turn helpers", () => {
         visibleTurns: [],
         droppedSummary: null,
         droppedCount: 0,
+        visiblePairs: 0,
+        droppedPairs: 0,
+        boundBy: null,
       });
     });
 
@@ -330,7 +333,7 @@ describe("conversation-turn helpers", () => {
       expect(out.droppedCount).toBeLessThan(turns.length);
       expect(out.visibleTurns.at(-1)).toEqual(turns.at(-1));
       expect(out.droppedSummary).toMatch(
-        /^summary: \d+ older turns dropped \(\d+ user, \d+ tool calls, \d+ replies; first at \S+, last at \S+\)$/,
+        /^summary: \d+ older turns dropped(?: from \d+ earlier tasks?)? \(\d+ user, \d+ tool calls, \d+ replies; first at \S+, last at \S+\)$/,
       );
     });
 
