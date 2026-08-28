@@ -220,8 +220,9 @@ export function resolveChips(
   // does it), then the sidebar (narrow terminals collapse it anyway —
   // see `SIDEBAR_MIN_COLUMNS`), then the route chip (the route line
   // itself is clickable, so the keyboard hint is the first luxury),
-  // then the newline key, then the menu chip. A draft adds an
-  // `esc / clear draft` chip so the affordance is on screen exactly
+  // then the new-window chip (a convenience the menu also carries as
+  // `/window`), then the newline key, then the menu chip. A draft adds
+  // an `esc / clear draft` chip so the affordance is on screen exactly
   // when it applies — `/` no longer opens the palette with a non-empty
   // buffer, so nothing usable is displaced.
   return [
@@ -233,7 +234,7 @@ export function resolveChips(
     {
       key: hasShiftEnterNewline() ? "shift+enter" : "alt+enter",
       label: "newline",
-      shed: 4,
+      shed: 5,
     },
     {
       key: "tab",
@@ -253,13 +254,24 @@ export function resolveChips(
       onClick: (mouse) =>
         mouse.dispatch({ type: "composer_switch_opened", kind: "backend" }),
     },
+    // A fresh OS terminal window running another atomic-agent in the
+    // same working dir (`/window` is the slash spelling). This strip is
+    // the only place the key is written down, but it is still a luxury
+    // next to the editor basics — it sheds right after the chips whose
+    // function survives on screen without them, and before newline.
+    {
+      key: "ctrl+n",
+      label: "new window",
+      shed: 4,
+      onClick: (mouse) => mouse.callbacks.onNewWindowRequested?.(),
+    },
     // Esc opens the menu only on an empty buffer — with a draft it
     // clears the draft — so the strip advertises whichever one the next
     // press will actually do.
     ...(hasDraft
       ? [{ key: "esc", label: "clear draft" }]
-      : [{ key: "esc", label: "menu", shed: 6 }]),
-    { key: "ctrl+p", label: "menu", shed: 5 },
+      : [{ key: "esc", label: "menu", shed: 7 }]),
+    { key: "ctrl+p", label: "menu", shed: 6 },
     // A selection can only exist over a non-empty buffer, so the
     // clear-draft Esc chip is always alongside these two.
     ...(composerSelectionActive(state)
