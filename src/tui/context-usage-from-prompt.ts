@@ -25,12 +25,20 @@ export const EMPTY_CONTEXT_USAGE: ContextUsageState = {
  * that one follows the prompt's own assembly, which is not how anyone
  * reads a bill.
  */
+/**
+ * The transcript's row label. Exported because the context panel has to
+ * find that one row to recalculate it when the task count changes, and
+ * matching on a literal string in two files is a bug waiting for someone
+ * to reword one of them.
+ */
+export const CONVERSATION_SECTION_LABEL = "conversation";
+
 const SECTIONS: readonly {
   key: keyof BuiltPrompt["tokens"];
   label: string;
 }[] = [
   { key: "stablePrefix", label: "prompt scaffold" },
-  { key: "conversation", label: "conversation" },
+  { key: "conversation", label: CONVERSATION_SECTION_LABEL },
   { key: "recalled", label: "recalled memory" },
   { key: "memoryIndex", label: "memory index" },
   { key: "worldSnapshot", label: "world snapshot" },

@@ -9,9 +9,7 @@ import {
   backdropRevertsThemePreview,
   resolveBackdropDismissal,
 } from "./backdrop-dismissal.js";
-import { CONVERSATION_CAP_AUTO } from "../prompt/token-budget.js";
 import { persistConversationMaxPairs } from "./persist-conversation-max-pairs.js";
-import { persistConversationMaxTokens } from "./persist-conversation-max-tokens.js";
 import { CodingModeChip } from "./components/coding-mode-chip.js";
 import { CodingModePopup } from "./components/coding-mode-popup.js";
 import { OnboardingScreen } from "./components/onboarding-screen.js";
@@ -1171,8 +1169,7 @@ export function TuiApp({
       menuLeaderArmed,
       setMenuLeaderArmed,
       activateMenuNode,
-      onSetCapAuto: setConversationCapAuto,
-      onSetPairs: setConversationPairs,
+      onStepPairs: stepConversationPairs,
       activateComposerSwitch,
       onPlanExecute: executePlan,
       onPlanDismiss: dismissPlan,
@@ -1531,47 +1528,31 @@ export function TuiApp({
   }, [codingMode, baseApprovalLevel, callbacks]);
 
   /**
-   * Write `agent.conversationMaxTokens: 0` and say so.
+   * Step the number of tasks the prompt carries.
    *
-   * No hot-apply call to make: `buildPrompt` reads the cap out of
-   * `getConfig()` on every build, so resetting the config cache — which
-   * the persist helper does — is what makes the next turn use it.
+   * Applied on the spot rather than staged behind a confirm: the
+   * selector *is* the setting, and the panel is already showing what
+   * this value costs, so there is nothing left for a second keystroke to
+   * confirm. `buildPrompt` reads `getConfig()` on every build, so the
+   * write plus the cache reset is the whole of the hot-apply and the
+   * next turn is packed against it.
    *
-   * Failing to write is reported rather than swallowed. The panel would
-   * otherwise keep showing the same ceiling with the same button beside
-   * it, and the operator would press it again.
+   * The clamp lives in the reducer so the number on screen can never be
+   * one the config would reject; this only reports a write that failed.
    */
-  const setConversationCapAuto = useCallback(() => {
+  const stepConversationPairs = useCallback((delta: number) => {
+    const cap = stateRef.current.contextUsage.conversationPairsCap;
+    // Nothing has been built yet, so there is no selector on screen and
+    // no honest base to step from. The reducer refuses the same case;
+    // writing here anyway would leave the config saying one thing and
+    // the panel another.
+    if (cap <= 0) return;
+    const current = stateRef.current.contextPanelPairsDraft ?? cap;
+    const next = Math.max(1, Math.min(100, current + delta));
+    if (next === current) return;
+    dispatch({ type: "context_pairs_draft_moved", delta });
     try {
-      persistConversationMaxTokens(CONVERSATION_CAP_AUTO);
-      dispatch({
-        type: "system_message",
-        text: "transcript cap set to auto — it now fills whatever the model's window leaves",
-      });
-    } catch (err) {
-      dispatch({
-        type: "system_message",
-        text: `could not write the config: ${(err as Error).message}`,
-      });
-    }
-    dispatch({ type: "context_panel_closed" });
-  }, []);
-
-  /**
-   * Commit the task count the operator has been pricing in the panel.
-   *
-   * Says the new number back rather than staying silent: the change
-   * takes effect on the *next* prompt, so without a line in the
-   * transcript there is nothing on screen confirming it landed until
-   * the following turn.
-   */
-  const setConversationPairs = useCallback((pairs: number) => {
-    try {
-      persistConversationMaxPairs(pairs);
-      dispatch({
-        type: "system_message",
-        text: `history limit set to ${pairs} task${pairs === 1 ? "" : "s"} — it takes effect on your next message`,
-      });
+      persistConversationMaxPairs(next);
     } catch (err) {
       dispatch({
         type: "system_message",
@@ -1792,8 +1773,8 @@ export function TuiApp({
                   terminalSize.columns - 4 - (sidebarVisible ? sidebarWidth : 0)
                 }
                 reservedForReply={state.session.completionMaxTokens}
-                onSetAuto={setConversationCapAuto}
                 pairsDraft={state.contextPanelPairsDraft}
+                onStepPairs={stepConversationPairs}
               />
             ) : null}
             <ComposerSwitchPopup

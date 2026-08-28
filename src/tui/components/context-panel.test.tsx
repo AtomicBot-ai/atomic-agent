@@ -40,8 +40,8 @@ function lines(
   columns = 100,
   rows = 24,
   reserved: number | null = 4096,
-  onSetAuto?: () => void,
   pairsDraft: number | null = null,
+  onStepPairs?: (delta: number) => void,
 ): string[] {
   const { lastFrame, unmount } = render(
     <Box width={columns} height={rows} flexDirection="column">
@@ -51,7 +51,7 @@ function lines(
         availableColumns={columns}
         reservedForReply={reserved}
         pairsDraft={pairsDraft}
-        {...(onSetAuto ? { onSetAuto } : {})}
+        {...(onStepPairs ? { onStepPairs } : {})}
       />
     </Box>,
   );
@@ -119,8 +119,9 @@ describe("ContextPanel", () => {
     expect(body).toContain("window unknown");
     expect(body).not.toContain("free");
     expect(body).not.toContain("%");
-    // The trimming block never depended on the window.
-    expect(body).toContain("8 of 20 tasks · 31.9k of 32k");
+    // The selector never depended on the window: how many tasks to send
+    // is a choice you can still make when nobody published a length.
+    expect(body).toContain("tasks per turn");
   });
 
   /**
@@ -128,11 +129,14 @@ describe("ContextPanel", () => {
    * trimmed. Without this line, "why did it change colour" has no answer
    * anywhere in the app.
    */
-  it("says how many turns were trimmed", () => {
-    const footer = lines(usage({ droppedTurns: 12 })).at(-2) ?? "";
-    expect(footer).toContain("12 older turns trimmed");
-    expect(lines(usage({ droppedTurns: 1 })).at(-2) ?? "").toContain(
-      "1 older turn trimmed",
+  it("says how many tasks were dropped", () => {
+    // Tasks, not rows: rows are what the packer counts, tasks are what
+    // the operator set the limit in and the only unit that answers "how
+    // far back can it still see".
+    const footer = lines(usage({ droppedPairs: 12 })).at(-2) ?? "";
+    expect(footer).toContain("12 earlier tasks dropped");
+    expect(lines(usage({ droppedPairs: 1 })).at(-2) ?? "").toContain(
+      "1 earlier task dropped",
     );
     expect(lines(usage()).at(-2) ?? "").toContain("esc to close");
   });
@@ -187,172 +191,97 @@ describe("before anything has been measured", () => {
   });
 });
 
-describe("the trimming block", () => {
-  it("says how much transcript is left, in tasks and in tokens", () => {
+
+/**
+ * What stood below the rule was three lines of prose about a token
+ * ceiling — a `transcript` measurement, a sentence naming
+ * `agent.conversationMaxTokens`, and a button that set it to auto. All
+ * of it asked the operator to reason in tokens about a limit nobody
+ * pictures in tokens.
+ *
+ * One control replaces the lot: the number of tasks the next prompt will
+ * carry, with the cost of that choice recalculated above it as they
+ * move.
+ */
+describe("the task selector", () => {
+  it("shows how many tasks the next prompt will carry", () => {
     const body = lines(usage()).join("\n");
-    expect(body).toContain("transcript         8 of 20 tasks · 31.9k of 32k");
+    expect(body).toContain("tasks per turn");
+    expect(body).toContain("20");
   });
 
-  it("falls back to the sentence when no task limit is set", () => {
-    const body = lines(usage({ pairsCap: 0 })).join("\n");
-    expect(body).toContain("31.9k of 32k before older turns go");
+  it("offers a button either side of the number", () => {
+    const body = lines(usage()).join("\n");
+    expect(body).toContain("−");
+    expect(body).toContain("+");
   });
 
-  /**
-   * The actionable half. The effective cap is
-   * `max(512, min(configured, window - everything else))`, so the number
-   * alone cannot say why it is what it is — and the two causes have
-   * opposite remedies.
-   */
-  it("names the setting, in one line, when the ceiling binds", () => {
-    // It used to be a `capped by` label in the left column with its
-    // value in the right — two columns and up to three lines to say one
-    // sentence, in a panel whose every other row is a measurement. This
-    // is not a measurement; it is the note explaining them.
-    const body = lines(usage({ contextWindow: 16_384 })).join("\n");
-    expect(body).toContain("capped by your agent.conversationMaxTokens setting");
-    expect(body).not.toContain("capped by          ");
-  });
-
-  /**
-   * The report: `llama-server -c 48000`, and the composer says 32k. The
-   * panel named the knob and then spelled the fix on a third line. The
-   * fix is a button now — the same sentence, made pressable.
-   */
-  it("offers a button when the window has room the ceiling is refusing", () => {
-    const body = lines(
-      usage({
-        capSource: "config",
-        conversationCap: 32_000,
-        contextWindow: 48_000,
-      }),
-      100,
-      24,
-      4096,
-      () => {},
-    ).join("\n");
-    expect(body).toContain("your 32k cap holds this under 48k");
-    expect(body).toContain("set auto (a)");
-  });
-
-  it("does not offer the button when the ceiling is already above the window", () => {
-    // Nothing to claim: the transcript is not being held below anything.
-    const body = lines(
-      usage({
-        capSource: "config",
-        conversationCap: 32_000,
-        contextWindow: 16_384,
-      }),
-      100,
-      24,
-      4096,
-      () => {},
-    ).join("\n");
+  it("has nothing left of the token ceiling it replaced", () => {
+    const body = lines(usage()).join("\n");
     expect(body).not.toContain("set auto");
-  });
-
-  it("does not offer the button with no handler to press", () => {
-    // A button that did nothing when pressed would be worse than none.
-    const body = lines(
-      usage({ capSource: "config", conversationCap: 32_000, contextWindow: 48_000 }),
-    ).join("\n");
-    expect(body).not.toContain("set auto");
-  });
-
-  it("says the cap is auto rather than naming a knob", () => {
-    const body = lines(
-      usage({
-        capSource: "auto",
-        conversationCap: 38_992,
-        contextWindow: 48_000,
-      }),
-    ).join("\n");
-    expect(body).toContain("capped by the 48k window — auto, no ceiling set");
-    expect(body).not.toContain("agent.conversationMaxTokens");
-  });
-
-  it("names the window, with its size, when the window binds", () => {
-    const body = lines(
-      usage({ capSource: "window", conversationCap: 9000, contextWindow: 32_768 }),
-    ).join("\n");
-    expect(body).toContain("capped by the model's 32.8k window");
-  });
-
-  it("calls the floor what it is", () => {
-    const body = lines(usage({ capSource: "floor", conversationCap: 512 })).join(
-      "\n",
-    );
-    expect(body).toContain("window too small for this prompt");
-  });
-
-  it("is absent entirely before a prompt has set a cap", () => {
-    const body = lines(usage({ conversationCap: null, capSource: null })).join("\n");
-    expect(body).not.toContain("before older turns go");
     expect(body).not.toContain("capped by");
-  });
-
-  it("counts the transcript in tasks, the unit the limit is set in", () => {
-    const body = lines(usage()).join("\n");
-    expect(body).toContain("8 of 20 tasks");
-  });
-
-  it("names the task limit when that is what trimmed history", () => {
-    // Saying "capped by your agent.conversationMaxTokens setting" here
-    // would send the operator to a knob that changes nothing.
-    const body = lines(usage({ capSource: "pairs", droppedPairs: 3 })).join("\n");
-    expect(body).toContain("holding the last 20 tasks");
     expect(body).not.toContain("conversationMaxTokens");
+    expect(body).not.toContain("before older turns go");
+    expect(body).not.toContain("transcript");
   });
 
-  it("counts what it trimmed in tasks too", () => {
-    const body = lines(usage({ droppedPairs: 3 })).join("\n");
-    expect(body).toContain("3 earlier tasks trimmed");
+  it("says which keys work it", () => {
+    expect(lines(usage()).join("\n")).toContain("- / + to change");
+  });
+
+  it("shows the selection being made, not the one last measured", () => {
+    const body = lines(usage(), 100, 24, 4096, 4).join("\n");
+    expect(body).toContain("  4 ");
   });
 });
 
 /**
- * The dial. Lowering the task count has to move the gauge while the
- * operator is looking at it — an answer that arrived one prompt build
- * later would be useless for deciding what to set.
+ * The point of the control: the numbers above it are the consequence of
+ * the choice, so they have to move with it.
  */
-describe("pricing a different number of tasks", () => {
-  it("says nothing until a number is being tried", () => {
-    expect(lines(usage()).join("\n")).not.toContain("at 8 tasks");
-  });
+describe("recalculating as the selector moves", () => {
+  const percentOf = (body: string): number =>
+    Number(/window · (\d+)%/.exec(body)?.[1] ?? "-1");
 
-  it("prices the draft against the model's window", () => {
+  it("recalculates the whole readout, not one line of it", () => {
     // overhead 8000 + 4 tasks x 4000 = 24000 of 131072 = 18%.
-    const body = lines(usage(), 100, 24, 4096, undefined, 4).join("\n");
-    expect(body).toContain("at 4 tasks");
-    expect(body).toContain("24k/131.1k");
-    expect(body).toContain("18%");
+    const body = lines(usage(), 100, 24, 4096, 4).join("\n");
+    expect(percentOf(body)).toBe(18);
+    expect(body).toContain("24k of 131.1k window");
   });
 
-  it("shrinks as the operator asks for less", () => {
-    const percentAt = (draft: number): number => {
-      const row = lines(usage(), 100, 24, 4096, undefined, draft).find((l) =>
-        l.includes(`at ${draft} task`),
-      );
-      return Number(/(\d+)%/.exec(row ?? "")?.[1] ?? "-1");
-    };
-    expect(percentAt(8)).toBeGreaterThan(percentAt(4));
-    expect(percentAt(4)).toBeGreaterThan(percentAt(1));
+  it("moves the conversation row with it", () => {
+    const body = lines(usage(), 100, 24, 4096, 2).join("\n");
+    // Two tasks at 4k. The row the transcript lives in must follow the
+    // selector, or the breakdown contradicts the total above it.
+    expect(body).toMatch(/conversation\s+8k/);
   });
 
-  it("never prices more tasks than the session has", () => {
-    // Asking for 50 when eight exist is the whole history, not a
-    // projection off the end of the array.
-    const all = lines(usage(), 100, 24, 4096, undefined, 8).join("\n");
-    const more = lines(usage(), 100, 24, 4096, undefined, 50).join("\n");
-    expect(/(\d+)%/.exec(all)?.[1]).toBe(/(\d+)%/.exec(more)?.[1]);
+  it("gives the window back as tasks come off", () => {
+    const freeOf = (draft: number | null): string =>
+      lines(usage(), 100, 24, 4096, draft).find((l) => l.includes("free")) ?? "";
+    expect(freeOf(8)).not.toBe(freeOf(2));
+    expect(freeOf(2)).toContain("%");
   });
 
-  it("still answers when nobody knows the window", () => {
-    const body = lines(
-      usage({ contextWindow: null, percent: null }),
-      100, 24, 4096, undefined, 3,
-    ).join("\n");
-    expect(body).toContain("at 3 tasks");
-    expect(body).toContain("window unknown");
+  it("shrinks monotonically as the operator asks for less", () => {
+    const at = (draft: number): number =>
+      percentOf(lines(usage(), 100, 24, 4096, draft).join("\n"));
+    expect(at(8)).toBeGreaterThan(at(4));
+    expect(at(4)).toBeGreaterThan(at(1));
+  });
+
+  it("shows the measured figures until the selector is touched", () => {
+    // Untouched, the panel must report what the prompt actually did —
+    // projecting the same number would re-round it and show a total that
+    // disagrees with the one the last turn was built against.
+    const body = lines(usage()).join("\n");
+    expect(percentOf(body)).toBe(30);
+  });
+
+  it("never prices more tasks than the session holds", () => {
+    const all = lines(usage(), 100, 24, 4096, 8).join("\n");
+    const more = lines(usage(), 100, 24, 4096, 50).join("\n");
+    expect(percentOf(all)).toBe(percentOf(more));
   });
 });

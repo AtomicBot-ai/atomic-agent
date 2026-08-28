@@ -97,16 +97,15 @@ export function reduceUiAction(
         menuCursor: 0,
       };
     case "context_panel_toggled":
-      // The draft belongs to one visit. Reopening the panel should show
-      // what the prompt is actually doing, not a number abandoned
-      // earlier.
-      return {
-        ...state,
-        contextPanelOpen: !state.contextPanelOpen,
-        contextPanelPairsDraft: null,
-      };
+      // The selection survives closing the panel. It is not a draft to
+      // be abandoned — each step was already written to the config — so
+      // clearing it here would reopen showing the *old* number, because
+      // `conversationPairsCap` still reports whatever the last prompt
+      // was built against until the next turn rebuilds it. The reducer
+      // for `prompt_built` retires it once measurement agrees.
+      return { ...state, contextPanelOpen: !state.contextPanelOpen };
     case "context_panel_closed":
-      return { ...state, contextPanelOpen: false, contextPanelPairsDraft: null };
+      return { ...state, contextPanelOpen: false };
     case "context_pairs_draft_moved": {
       if (!state.contextPanelOpen) return state;
       const cap = state.contextUsage.conversationPairsCap;

@@ -116,13 +116,11 @@ export interface AppKeyContext {
    * panel. Optional: surfaces without a config writer simply do not
    * bind the key.
    */
-  onSetCapAuto?: () => void;
   /**
-   * Commits the task count being priced in the context panel. Same
-   * shape and same reason as `onSetCapAuto`: the work is a config write,
-   * and the reducer stays pure.
+   * Steps the context panel's task selector. A callback rather than an
+   * action because the work is a config write, and the reducer is pure.
    */
-  onSetPairs?: (pairs: number) => void;
+  onStepPairs?: (delta: number) => void;
   /** Run the row picked in one of the composer's route switches. */
   activateComposerSwitch: (row: ComposerSwitchRow) => void;
   /**
@@ -378,8 +376,7 @@ export function handleAppKey(
     handleContextPanelKey(input, key, {
       state,
       dispatch,
-      ...(ctx.onSetCapAuto ? { onSetCapAuto: ctx.onSetCapAuto } : {}),
-      ...(ctx.onSetPairs ? { onSetPairs: ctx.onSetPairs } : {}),
+      ...(ctx.onStepPairs ? { onStepPairs: ctx.onStepPairs } : {}),
     })
   ) {
     return true;

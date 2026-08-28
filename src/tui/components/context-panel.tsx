@@ -8,7 +8,7 @@ import {
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import {
-  projectTokensForPairs,
+  usageAtPairs,
   type ContextUsageView,
 } from "../select-context-usage.js";
 import { readableOn } from "../theme/readable-foreground.js";
@@ -19,8 +19,15 @@ import { renderProgressBar } from "./render-progress-bar.js";
 
 /** Panel width, clamped to the pane on narrow terminals. */
 const PREFERRED_WIDTH = 58;
-/** Border (2) + title + hairline + footer. */
-const CHROME_ROWS = 5;
+/**
+ * Border (2) + title + hairline + hairline + selector + footer.
+ *
+ * Was 5, from a time when everything under the second rule was
+ * conditional and the count quietly ignored it. The selector is always
+ * drawn, so an undercount here would make the panel two rows taller than
+ * the space it was given and push its own footer off a short terminal.
+ */
+const CHROME_ROWS = 7;
 /** Columns held for the section name, so the numbers form a column. */
 const LABEL_WIDTH = 20;
 /** Columns held for the token count. */
@@ -39,10 +46,13 @@ export interface ContextPanelProps {
    */
   usage: ContextUsageView | null;
   /**
-   * Task count the operator is pricing, if any. `null` renders what the
-   * last prompt actually did.
+   * Task count currently selected. `null` means the selector has not
+   * been touched this visit and the panel shows what the last prompt
+   * actually measured.
    */
   pairsDraft?: number | null;
+  /** Step the selector by `delta`, clamped to 1..100 by the reducer. */
+  onStepPairs?: (delta: number) => void;
   /** Rows available in the pane the panel floats over. */
   availableRows: number;
   /** Columns available in that pane. */
@@ -59,7 +69,6 @@ export interface ContextPanelProps {
    * no way to write config, and a button that did nothing when pressed
    * would be worse than no button.
    */
-  onSetAuto?: () => void;
 }
 
 /**
@@ -78,16 +87,16 @@ export interface ContextPanelProps {
  * terminal has no z-index and occlusion has to be painted.
  */
 export function ContextPanel({
-  usage,
+  usage: measured,
   availableRows,
   availableColumns,
   reservedForReply,
-  onSetAuto,
   pairsDraft = null,
+  onStepPairs,
 }: ContextPanelProps): ReactElement {
   const width = Math.max(32, Math.min(PREFERRED_WIDTH, availableColumns - 2));
   const inner = width - 2;
-  if (usage === null) {
+  if (measured === null) {
     return (
       <PanelFrame
         offsetTop={Math.max(0, Math.floor((availableRows - 7) / 2))}         offsetLeft={Math.max(0, Math.floor((availableColumns - width) / 2))}
@@ -111,6 +120,15 @@ export function ContextPanel({
       </PanelFrame>
     );
   }
+  // Every figure below is read off one view, so they cannot disagree.
+  // Only project once the operator has actually moved the selector:
+  // until then the panel should show what was measured, not an estimate
+  // of the same thing that rounds a few tokens differently.
+  const selected = pairsDraft ?? measured.pairsCap;
+  const usage =
+    pairsDraft === null || pairsDraft === measured.pairsCap
+      ? measured
+      : usageAtPairs(measured, pairsDraft);
   const rows = buildRows(usage, reservedForReply);
   // Row gauges are scaled to the biggest section, not to the window.
   // Against the window every bar but one rounds to nothing — the
@@ -141,38 +159,25 @@ export function ContextPanel({
           {fitToWidth(renderRow(row, usage, largest), inner)}
         </Text>
       ))}
-      {usage.conversationCap === null ? null : (
-        <Text color={chromeTheme.colors.railMuted}>
-          {chromeTheme.glyphs.toolBoxHorizontal.repeat(Math.max(0, inner))}
-        </Text>
-      )}
-      {transcriptLine(usage) === null ? null : (
-        <Text color={chromeTheme.colors.railForeground}>
-          {fitToWidth(transcriptLine(usage) as string, inner)}
-        </Text>
-      )}
+      <Text color={chromeTheme.colors.railMuted}>
+        {chromeTheme.glyphs.toolBoxHorizontal.repeat(Math.max(0, inner))}
+      </Text>
       {/*
-        The dial's answer. Only while a number is being tried — an
-        unchanging "at 20 tasks" line under the real one would be the
-        same measurement twice.
-      */}
-      {pairsDraft === null || usage.pairsCap <= 0 ? null : (
-        <Text color={chromeTheme.colors.railAccent} bold>
-          {projectionLine(usage, pairsDraft, inner)}
-        </Text>
-      )}
-      {/*
-        One line, at the bottom, and never a second column.
+        The one control, where three lines of prose used to be.
 
-        It used to be a `capped by` label in the left column with its
-        value in the right, plus — when the ceiling was the thing
-        holding the transcript down — a third line underneath spelling
-        out the fix. Three lines and two columns to say one sentence,
-        in a panel whose every other row is a *measurement*. This is not
-        a measurement; it is the note explaining them, so it reads as a
-        sentence and sits under the rule with the rest of the prose.
+        Those lines named `agent.conversationMaxTokens` and offered to
+        set it to auto — a token ceiling, described in tokens, for a
+        limit nobody reasons about in tokens. The selector says the same
+        thing in the unit the operator thinks in, and every number above
+        it recalculates as they work it, so the consequence of the
+        choice is on screen while the choice is being made rather than
+        one turn later.
       */}
-      <CapNote usage={usage} inner={inner} onSetAuto={onSetAuto} />
+      <TaskSelector
+        selected={selected}
+        inner={inner}
+        {...(onStepPairs ? { onStep: onStepPairs } : {})}
+      />
       <Text color={chromeTheme.colors.railMuted}>{fitToWidth(` ${footer(usage)}`, inner)}</Text>
     </PanelFrame>
   );
@@ -243,136 +248,85 @@ function title(usage: ContextUsageView): string {
 }
 
 /**
- * Where the transcript stands against the point at which older turns
- * start being dropped. One measurement, in the same two columns as
- * every other row above it.
+ * How many tasks the next prompt will carry, and the two buttons that
+ * change it.
  *
- * What is *holding* it there moved out of this function and into
- * {@link CapNote}: it was never a measurement, and rendering it as one
- * cost three lines and two columns to say a single sentence.
+ * A selector rather than a sentence. What stood here named a token
+ * ceiling and offered to lift it, which asked the operator to reason in
+ * a unit they do not think in about a limit they cannot picture. This
+ * is the number they set, in the unit they set it in, with the cost of
+ * every value visible above it as they move.
  */
-function transcriptLine(usage: ContextUsageView): string | null {
-  const cap = usage.conversationCap;
-  if (cap === null) return null;
-  const head = ` transcript`.padEnd(LABEL_WIDTH);
-  // Tasks first when there is a task limit: it is the unit the operator
-  // set, so it is the unit the answer should come back in. The token
-  // figure stays because it is what the window actually charges.
-  const tokens = `${formatTokens(usage.conversationTokens)} of ${formatTokens(cap)}`;
-  // With a task limit in force the fraction of tasks *is* the answer to
-  // "how much before older go", so the trailing phrase is redundant —
-  // and both together do not fit the panel's width. Without one, the
-  // sentence is still the only thing that says what the number means.
-  return usage.pairsCap > 0
-    ? `${head}${usage.pairs} of ${usage.pairsCap} tasks · ${tokens}`
-    : `${head}${tokens} before older turns go`;
-}
-
-/**
- * What the prompt would cost carrying `draft` tasks — the line that
- * makes the dial worth having.
- *
- * Drawn against the model's window, because that is the number the
- * operator is actually managing: the point of holding history down is to
- * leave the model room to think, and a bar that filled against the task
- * limit would read 100% while the window sat half empty.
- */
-function projectionLine(
-  usage: ContextUsageView,
-  draft: number,
-  inner: number,
-): string {
-  const projected = projectTokensForPairs(usage, draft);
-  const head = ` at ${draft} task${draft === 1 ? "" : "s"}`.padEnd(LABEL_WIDTH);
-  if (usage.contextWindow === null) {
-    return fitToWidth(`${head}${formatTokens(projected)} · window unknown`, inner);
-  }
-  const percent = Math.min(
-    100,
-    Math.round((projected / usage.contextWindow) * 100),
-  );
-  const bar = renderProgressBar(percent, ROW_GAUGE);
-  return fitToWidth(
-    `${head}[${bar}] ${formatTokens(projected)}/${formatTokens(
-      usage.contextWindow,
-    )} · ${percent}%`,
-    inner,
-  );
-}
-
-/**
- * The one-line note under the rule: what is holding the transcript down,
- * and — where it is the operator's own ceiling and the window has room
- * to spare — a button that lifts it.
- *
- * The button is the actionable half made actionable. Naming
- * `agent.conversationMaxTokens` told an operator which knob to go and
- * find; this turns the same sentence into the thing that turns it. It
- * appears only when it would do something: the ceiling must be what
- * binds, and the window must actually be bigger than it.
- */
-function CapNote({
-  usage,
+function TaskSelector({
+  selected,
   inner,
-  onSetAuto,
+  onStep,
 }: {
-  usage: ContextUsageView;
+  selected: number;
   inner: number;
-  onSetAuto?: () => void;
-}): ReactElement | null {
-  const cap = usage.conversationCap;
-  if (cap === null) return null;
-  const window = usage.contextWindow;
-  const canLift =
-    usage.capSource === "config" && window !== null && cap < window;
-  if (canLift && onSetAuto) {
-    // The sentence first, then the button — so the button is the last
-    // thing on the line and reads as what to do about what was just
-    // said, rather than as a word wedged into the middle of it.
-    // `fitToWidth` pads the head rather than trimming the button: the
-    // button's width is fixed, and it is the part that must survive.
-    const head = ` your ${formatTokens(cap)} cap holds this under ${formatTokens(
-      window,
-    )} · `;
-    return (
-      <Box>
-        <Text color={chromeTheme.colors.railMuted}>
-          {fitToWidth(head, Math.max(0, inner - AUTO_LABEL.length))}
-        </Text>
-        <SetAutoButton onPress={onSetAuto} />
-      </Box>
-    );
-  }
+  onStep?: (delta: number) => void;
+}): ReactElement {
+  const label = " tasks per turn".padEnd(LABEL_WIDTH);
+  const value = String(selected).padStart(3);
   return (
-    <Text color={chromeTheme.colors.railMuted}>
-      {fitToWidth(` ${capSentence(usage)}`, inner)}
-    </Text>
+    <Box>
+      <Text color={chromeTheme.colors.railForeground}>{label}</Text>
+      <StepButton
+        glyph=" − "
+        // At the floor the button is drawn but inert: removing it would
+        // shift the value and the other button sideways at exactly the
+        // moment the operator is aiming at them.
+        disabled={selected <= PAIRS_MIN}
+        {...(onStep ? { onPress: () => onStep(-1) } : {})}
+      />
+      <Text color={chromeTheme.colors.railForeground} bold>
+        {` ${value} `}
+      </Text>
+      <StepButton
+        glyph=" + "
+        disabled={selected >= PAIRS_MAX}
+        {...(onStep ? { onPress: () => onStep(1) } : {})}
+      />
+      <Text color={chromeTheme.colors.railMuted}>
+        {fitToWidth(
+          `  sent each turn (${PAIRS_MIN}-${PAIRS_MAX})`,
+          Math.max(0, inner - LABEL_WIDTH - 11),
+        )}
+      </Text>
+    </Box>
   );
 }
 
-/**
- * Padded so the ground reads as a button rather than as coloured text,
- * and carrying its own key: the panel has one control and one hint to
- * give, and putting the hint on the control is cheaper than a footer
- * line that has to be kept in sync with whether the button is showing.
- */
-const AUTO_LABEL = " set auto (a) ";
+/** The bounds the schema enforces, mirrored so the UI cannot offer more. */
+const PAIRS_MIN = 1;
+const PAIRS_MAX = 100;
 
-function SetAutoButton({ onPress }: { onPress: () => void }): ReactElement {
+function StepButton({
+  glyph,
+  disabled,
+  onPress,
+}: {
+  glyph: string;
+  disabled: boolean;
+  onPress?: () => void;
+}): ReactElement {
+  const ground = disabled
+    ? chromeTheme.colors.badgeBackground
+    : chromeTheme.colors.accent;
   const face = (
     <Text
-      backgroundColor={chromeTheme.colors.accent}
-      color={readableOn(chromeTheme.colors.accent)}
-      bold
+      backgroundColor={ground}
+      color={disabled ? chromeTheme.colors.railMuted : readableOn(ground)}
+      bold={!disabled}
     >
-      {AUTO_LABEL}
+      {glyph}
     </Text>
   );
   const mouse = useMouseCommands();
-  // No mouse provider: still draw the face. `a` works from the keyboard
-  // either way, and a button that vanished without a mouse would hide
-  // the only hint that the key exists.
-  if (!mouse) return face;
+  // No mouse provider: still draw the face. `-` and `+` work from the
+  // keyboard either way, and a control that vanished without a mouse
+  // would take the only hint that the keys exist with it.
+  if (!mouse || disabled || !onPress) return face;
   return (
     <MouseTarget
       layer={MOUSE_LAYER_MODAL}
@@ -388,49 +342,19 @@ function SetAutoButton({ onPress }: { onPress: () => void }): ReactElement {
   );
 }
 
-/** The note when there is nothing to press — one sentence, no columns. */
-function capSentence(usage: ContextUsageView): string {
-  const window =
-    usage.contextWindow === null ? null : formatTokens(usage.contextWindow);
-  switch (usage.capSource) {
-    case "auto":
-      return window === null
-        ? "capped by the window — auto, no ceiling set"
-        : `capped by the ${window} window — auto, no ceiling set`;
-    case "window":
-      return window === null
-        ? "capped by the model's window"
-        : `capped by the model's ${window} window`;
-    case "floor":
-      return "window too small for this prompt";
-    case "pairs":
-      return `holding the last ${usage.pairsCap} task${
-        usage.pairsCap === 1 ? "" : "s"
-      } — press - / + to try another`;
-    case "config":
-      return "capped by your agent.conversationMaxTokens setting";
-    default:
-      return "";
-  }
-}
-
 /**
  * The footer explains the chip's violet, which is the state's only other
  * signal. Without it "why did it change colour" has no answer anywhere
  * in the app.
  */
 function footer(usage: ContextUsageView): string {
+  const keys = "- / + to change · esc to close";
   if (usage.droppedPairs > 0) {
     return `${usage.droppedPairs} earlier task${
       usage.droppedPairs === 1 ? "" : "s"
-    } trimmed · enter to apply · esc to close`;
+    } dropped · ${keys}`;
   }
-  if (usage.droppedTurns > 0) {
-    return `${usage.droppedTurns} older turn${
-      usage.droppedTurns === 1 ? "" : "s"
-    } trimmed · esc to close`;
-  }
-  return "esc to close";
+  return keys;
 }
 
 /**

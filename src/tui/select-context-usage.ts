@@ -1,3 +1,4 @@
+import { CONVERSATION_SECTION_LABEL } from "./context-usage-from-prompt.js";
 import { catalogEntryLookupForKind } from "./providers/providers-model-options.js";
 import type { ContextUsageSection, TuiState } from "./tui-state.js";
 
@@ -125,25 +126,45 @@ function resolveCapSource(
 }
 
 /**
- * What the prompt would cost carrying `pairs` tasks instead of the
- * current number.
+ * The same readout, recalculated as if the prompt carried `pairs` tasks.
  *
- * Everything outside the transcript is fixed for this turn, so the
- * answer is that overhead plus the newest `pairs` entries of `pairCosts`
- * — a prefix sum, no prompt build, no LLM call. The estimate is the same
- * over-counting one the packer uses, so the projection and the next real
+ * Everything outside the transcript is fixed for this turn, so the whole
+ * panel — title, percentage, the `conversation` row, `free` — follows
+ * from one prefix sum over `pairCosts`. Projecting the view rather than
+ * a single number is what lets every figure move together when the
+ * operator works the selector; recomputing them one at a time is how
+ * two numbers on the same screen end up disagreeing.
+ *
+ * No prompt build, no LLM call. The costs come from the same
+ * over-counting estimator the packer uses, so this and the next real
  * gauge agree.
  */
-export function projectTokensForPairs(
+export function usageAtPairs(
   usage: ContextUsageView,
   pairs: number,
-): number {
+): ContextUsageView {
   const wanted = Math.max(0, Math.min(pairs, usage.pairCosts.length));
   let transcript = 0;
   for (let i = usage.pairCosts.length - wanted; i < usage.pairCosts.length; i += 1) {
     transcript += usage.pairCosts[i] ?? 0;
   }
-  return usage.overheadTokens + transcript;
+  const tokens = usage.overheadTokens + transcript;
+  return {
+    ...usage,
+    tokens,
+    percent:
+      usage.contextWindow === null
+        ? null
+        : Math.min(100, Math.round((tokens / usage.contextWindow) * 100)),
+    conversationTokens: transcript,
+    pairs: wanted,
+    pairsCap: pairs,
+    sections: usage.sections.map((section) =>
+      section.label === CONVERSATION_SECTION_LABEL
+        ? { ...section, tokens: transcript }
+        : section,
+    ),
+  };
 }
 
 export function selectContextUsage(state: TuiState): ContextUsageView | null {

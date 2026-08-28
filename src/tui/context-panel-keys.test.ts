@@ -81,73 +81,64 @@ describe("handleContextPanelKey", () => {
 });
 
 /**
- * The dial has to be safe to fiddle with: `-` and `+` only ever change
- * what the panel is showing, and only Enter writes anything.
+ * The selector is the setting, so a step applies on the spot. There is
+ * no draft to commit and nothing a second keystroke would confirm — the
+ * panel is already showing what the value costs while it is chosen.
  */
-describe("pricing a different task count", () => {
-  const withDraft = (draft: number | null): TuiState => ({
-    ...open(),
-    contextPanelPairsDraft: draft,
-    contextUsage: { ...open().contextUsage, conversationPairsCap: 20 },
-  });
-
-  it("moves the draft down and up", () => {
-    expect(run("-", key(), withDraft(null)).actions).toEqual([
-      { type: "context_pairs_draft_moved", delta: -1 },
-    ]);
-    expect(run("+", key(), withDraft(null)).actions).toEqual([
-      { type: "context_pairs_draft_moved", delta: 1 },
-    ]);
-  });
-
-  it("writes nothing while the operator is still choosing", () => {
-    let written: number | null = null;
-    handleContextPanelKey("-", key(), {
-      state: withDraft(null),
+describe("stepping the task selector", () => {
+  function stepped(input: string): number[] {
+    const steps: number[] = [];
+    handleContextPanelKey(input, key(), {
+      state: open(),
       dispatch: () => {},
-      onSetPairs: (n) => {
-        written = n;
-      },
+      onStepPairs: (delta) => steps.push(delta),
     });
-    expect(written).toBeNull();
+    return steps;
+  }
+
+  it("steps down and up", () => {
+    expect(stepped("-")).toEqual([-1]);
+    expect(stepped("_")).toEqual([-1]);
+    expect(stepped("+")).toEqual([1]);
+    expect(stepped("=")).toEqual([1]);
   });
 
-  it("commits on enter and closes", () => {
-    let written: number | null = null;
+  it("claims those keys even with nowhere to send them", () => {
+    // The editor is unfocused while the panel owns input, so a `-` that
+    // fell through would land in the buffer and surprise the operator
+    // later.
+    expect(handleContextPanelKey("-", key(), { state: open(), dispatch: () => {} })).toBe(
+      true,
+    );
+  });
+
+  it("leaves closing to the keys that close", () => {
     const actions: TuiAction[] = [];
-    handleContextPanelKey("", key({ return: true }), {
-      state: withDraft(6),
+    handleContextPanelKey("-", key(), {
+      state: open(),
       dispatch: (a) => actions.push(a),
-      onSetPairs: (n) => {
-        written = n;
-      },
+      onStepPairs: () => {},
     });
-    expect(written).toBe(6);
-    expect(actions).toEqual([{ type: "context_panel_closed" }]);
+    expect(actions).toEqual([]);
   });
 
-  it("throws the draft away on esc", () => {
-    // What makes trying a number out free.
-    let written: number | null = null;
-    handleContextPanelKey("", key({ escape: true }), {
-      state: withDraft(3),
-      dispatch: () => {},
-      onSetPairs: (n) => {
-        written = n;
-      },
-    });
-    expect(written).toBeNull();
-  });
-
-  it("commits nothing on enter when no number was tried", () => {
-    let called = false;
-    handleContextPanelKey("", key({ return: true }), {
-      state: withDraft(null),
-      dispatch: () => {},
-      onSetPairs: () => {
-        called = true;
-      },
-    });
-    expect(called).toBe(false);
+  it("still closes on enter, esc and q without touching the value", () => {
+    for (const [input, k] of [
+      ["", key({ return: true })],
+      ["", key({ escape: true })],
+      ["q", key()],
+    ] as const) {
+      let stepped = false;
+      const actions: TuiAction[] = [];
+      handleContextPanelKey(input, k, {
+        state: open(),
+        dispatch: (a) => actions.push(a),
+        onStepPairs: () => {
+          stepped = true;
+        },
+      });
+      expect(actions).toEqual([{ type: "context_panel_closed" }]);
+      expect(stepped).toBe(false);
+    }
   });
 });
