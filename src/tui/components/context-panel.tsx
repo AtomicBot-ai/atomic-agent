@@ -20,14 +20,16 @@ import { renderProgressBar } from "./render-progress-bar.js";
 /** Panel width, clamped to the pane on narrow terminals. */
 const PREFERRED_WIDTH = 58;
 /**
- * Border (2) + title + hairline + hairline + selector + footer.
+ * The panel at its smallest: border (2) + title + hairline + selector +
+ * footer. Everything else is sheddable.
  *
- * Was 5, from a time when everything under the second rule was
- * conditional and the count quietly ignored it. The selector is always
- * drawn, so an undercount here would make the panel two rows taller than
- * the space it was given and push its own footer off a short terminal.
+ * `menuPaneRows` floors at 6, so this is exactly what has to fit on the
+ * shortest pane the app will ever hand it. The breakdown rows and the
+ * rule above them are dropped together when they do not fit — a rule
+ * separating nothing is worse than no rule — because the selector is
+ * the reason to open the panel and the title still carries the total.
  */
-const CHROME_ROWS = 7;
+const CHROME_ROWS = 6;
 /** Columns held for the section name, so the numbers form a column. */
 const LABEL_WIDTH = 20;
 /** Columns held for the token count. */
@@ -136,9 +138,13 @@ export function ContextPanel({
   // bar is empty is a worse answer than no chart. The percentage column
   // still carries the absolute share.
   const largest = Math.max(1, ...usage.sections.map((s) => s.tokens));
-  const bodyRows = Math.max(1, Math.min(rows.length, availableRows - CHROME_ROWS));
+  // The breakdown costs its own rule as well as its rows, so it needs
+  // two spare lines before the first one is worth drawing.
+  const roomForRows = availableRows - CHROME_ROWS - 1;
+  const bodyRows =
+    roomForRows >= 1 ? Math.min(rows.length, roomForRows) : 0;
   const visible = rows.slice(0, bodyRows);
-  const height = visible.length + CHROME_ROWS;
+  const height = CHROME_ROWS + (visible.length > 0 ? visible.length + 1 : 0);
   const offsetTop = Math.max(0, Math.floor((availableRows - height) / 2));
   const offsetLeft = Math.max(0, Math.floor((availableColumns - width) / 2));
   return (
@@ -146,9 +152,11 @@ export function ContextPanel({
       <Text color={chromeTheme.colors.railForeground} bold>
         {fitToWidth(` ${title(usage)}`, inner)}
       </Text>
-      <Text color={chromeTheme.colors.railMuted}>
-        {chromeTheme.glyphs.toolBoxHorizontal.repeat(Math.max(0, inner))}
-      </Text>
+      {visible.length === 0 ? null : (
+        <Text color={chromeTheme.colors.railMuted}>
+          {chromeTheme.glyphs.toolBoxHorizontal.repeat(Math.max(0, inner))}
+        </Text>
+      )}
       {visible.map((row) => (
         <Text
           key={row.label}

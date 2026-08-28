@@ -112,3 +112,43 @@ describe("and retires when measurement agrees", () => {
     expect(after.contextPanelPairsDraft).toBe(5);
   });
 });
+
+/**
+ * The action carries the value the caller persisted, not a step to
+ * re-derive. Two presses inside one render tick read the same base, so a
+ * delta would have the reducer land somewhere the config never did.
+ */
+describe("selecting a task count", () => {
+  it("takes the number it was given", () => {
+    const next = reduceUiAction(chose(20), { type: "context_pairs_selected", pairs: 7 });
+    expect(next?.contextPanelPairsDraft).toBe(7);
+  });
+
+  it("cannot drift when two land before a render", () => {
+    // Both presses were decided against the same base of 20; each wrote
+    // what it decided. Replaying them must end where the writes did.
+    const first = reduceUiAction(chose(20), { type: "context_pairs_selected", pairs: 19 });
+    const second = reduceUiAction(first as TuiState, {
+      type: "context_pairs_selected",
+      pairs: 18,
+    });
+    expect(second?.contextPanelPairsDraft).toBe(18);
+  });
+
+  it("clamps to the range the schema accepts", () => {
+    expect(
+      reduceUiAction(chose(1), { type: "context_pairs_selected", pairs: 0 })
+        ?.contextPanelPairsDraft,
+    ).toBe(1);
+    expect(
+      reduceUiAction(chose(1), { type: "context_pairs_selected", pairs: 500 })
+        ?.contextPanelPairsDraft,
+    ).toBe(100);
+  });
+
+  it("ignores a selection while the panel is closed", () => {
+    const shut: TuiState = { ...chose(20), contextPanelOpen: false };
+    const next = reduceUiAction(shut, { type: "context_pairs_selected", pairs: 3 });
+    expect((next ?? shut).contextPanelPairsDraft).toBe(20);
+  });
+});

@@ -628,6 +628,14 @@ export function TuiApp({
   // through a ref rather than a closure that may be a frame stale.
   const stateRef = useRef(state);
   stateRef.current = state;
+  /**
+   * The task count last written to the config, so a step can be based on
+   * it without waiting for a render. Follows the reducer back to `null`
+   * when the selection retires, which is the one place it is allowed to
+   * be reset from outside this file.
+   */
+  const selectedPairsRef = useRef<number | null>(null);
+  if (state.contextPanelPairsDraft === null) selectedPairsRef.current = null;
   const getState = useCallback(() => stateRef.current, []);
 
   useEffect(() => bus.subscribe(dispatch), [bus]);
@@ -1547,7 +1555,12 @@ export function TuiApp({
     // writing here anyway would leave the config saying one thing and
     // the panel another.
     if (cap <= 0) return;
-    const current = stateRef.current.contextPanelPairsDraft ?? cap;
+    // The ref, not the rendered state. `stateRef` is refreshed during
+    // render, so two presses landing in one tick read the same base and
+    // step to the same number — while the reducer, applying each in
+    // turn, arrives somewhere else. Whatever was last persisted is the
+    // honest base, and it is known here synchronously.
+    const current = selectedPairsRef.current ?? stateRef.current.contextPanelPairsDraft ?? cap;
     const next = Math.max(1, Math.min(100, current + delta));
     if (next === current) return;
     // Write first, then move the number. The other order leaves the
@@ -1566,7 +1579,8 @@ export function TuiApp({
       });
       return;
     }
-    dispatch({ type: "context_pairs_draft_moved", delta });
+    selectedPairsRef.current = next;
+    dispatch({ type: "context_pairs_selected", pairs: next });
   }, []);
 
   const promptContextSlot = contextUsage ? (

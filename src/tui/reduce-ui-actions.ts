@@ -106,16 +106,18 @@ export function reduceUiAction(
       return { ...state, contextPanelOpen: !state.contextPanelOpen };
     case "context_panel_closed":
       return { ...state, contextPanelOpen: false };
-    case "context_pairs_draft_moved": {
+    case "context_pairs_selected": {
       if (!state.contextPanelOpen) return state;
-      const cap = state.contextUsage.conversationPairsCap;
-      if (cap <= 0) return state;
-      const from = state.contextPanelPairsDraft ?? cap;
-      // The same 1..100 the schema enforces. Clamping here rather than
-      // letting the write fail keeps the readout from ever showing a
-      // number the config would reject.
-      const next = Math.max(1, Math.min(100, from + action.delta));
-      return { ...state, contextPanelPairsDraft: next };
+      // The value, not a step. A delta action recomputes from whatever
+      // base the reducer happens to hold, which is not the base the
+      // caller used to decide what to write — two presses inside one
+      // render tick read the same stale state and the config and the
+      // display end up one apart, permanently. Carrying the number the
+      // caller actually persisted makes them impossible to disagree.
+      return {
+        ...state,
+        contextPanelPairsDraft: Math.max(1, Math.min(100, action.pairs)),
+      };
     }
     case "context_menu_opened":
       // Re-opening while open simply moves the menu: the second

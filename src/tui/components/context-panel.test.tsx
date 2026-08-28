@@ -284,3 +284,40 @@ describe("recalculating as the selector moves", () => {
     expect(percentOf(all)).toBe(percentOf(more));
   });
 });
+
+/**
+ * `menuPaneRows` floors at 6, so that is the shortest pane the panel
+ * will ever be handed. It has to fit — a panel two rows taller than its
+ * pane paints over the composer, and terminals have no z-index to sort
+ * it out afterwards.
+ */
+describe("on the shortest pane the app can hand it", () => {
+  const drawn = (rows: number): string[] =>
+    lines(usage(), 100, rows).filter((l) => l.trim().length > 0);
+
+  it("fits a six-row pane", () => {
+    expect(drawn(6).length).toBeLessThanOrEqual(6);
+  });
+
+  it("keeps the selector — the reason the panel was opened", () => {
+    expect(drawn(6).join("\n")).toContain("tasks per turn");
+  });
+
+  it("keeps the total, which the breakdown only itemises", () => {
+    expect(drawn(6).join("\n")).toContain("window");
+  });
+
+  it("draws no rule with nothing left to separate", () => {
+    // Two rules and nothing between them reads as a rendering fault.
+    // Interior rules only — the frame's own top and bottom are drawn
+    // from the same glyph and are not what this is about.
+    const rules = drawn(6).filter(
+      (l) => /│[─—]+│/.test(l.replace(/\s/g, "")),
+    );
+    expect(rules.length).toBeLessThanOrEqual(1);
+  });
+
+  it("brings the breakdown back when there is room", () => {
+    expect(drawn(24).join("\n")).toContain("prompt scaffold");
+  });
+});
