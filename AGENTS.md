@@ -234,20 +234,44 @@ from silently deciding answer quality:
    than configured. Warning **once at construction** (not per search) is
    deliberate: a long autonomous run would drown in a per-query warning.
 
-`cacheTtlMinutes` stays at 15. The cache is per-process, in-memory, capped at
-256 entries, and keyed on the exact query string, so a longer TTL neither
-survives the per-task restarts a campaign does nor catches the near-miss
-rephrasings that actually burn quota — while it would serve staler results for
-time-sensitive lookups. A restart-surviving cache is the real fix and is not
-built.
+The result cache and the #241 provider cooldown **survive the process**
+(#256): given a `stateDir`, [transport/search-cache.ts](src/tools/os/web-search/transport/search-cache.ts)
+and [transport/provider-cooldown.ts](src/tools/os/web-search/transport/provider-cooldown.ts)
+mirror both to `<stateDir>/web-search-cache.json` /
+`web-search-cooldown.json`, so a campaign that runs one agent process per
+task inherits the last process's answers, parks, and strikes instead of
+starting cold and re-spending quota — the demand-side half of #179 that a
+longer TTL cannot reach, because a per-task process dies long before any
+TTL binds. Key, TTL (`cacheTtlMinutes`, default 60), the 256-entry FIFO
+cap, and the park/escalation ladder are unchanged — only the storage
+moved. Rows already expired and cooldown records staler than two doubling
+ceilings are dropped on load, a park that lapsed while nothing ran reads
+as expired, every write goes through tmp-file + rename, and a missing or
+corrupt file starts cold while a failed write is swallowed — persistence
+is an optimisation and must never fail a search. Concurrent processes
+race benignly (last writer wins; no locking). `web.search.persistCache:
+false` (config v46) opts back into the in-memory pair for workloads that
+want a cold cache per run. The key is still the exact query string, so
+near-miss rephrasings still miss — query normalisation is deferred by
+#256 for separate measurement.
 
 Pinned by [retry-after.test.ts](src/tools/os/web-search/transport/retry-after.test.ts),
 [search-http.test.ts](src/tools/os/web-search/transport/search-http.test.ts)
 (retry-then-succeed, `Retry-After` precedence, give-up-after-maxRetries,
 non-429 untouched, old-curl tolerance),
 [warn-missing-search-key.test.ts](src/tools/os/web-search/tool/warn-missing-search-key.test.ts),
-and [web-search-tool.test.ts](src/tools/os/web-search/tool/web-search-tool.test.ts)
-("warns once at construction, not once per search").
+[web-search-tool.test.ts](src/tools/os/web-search/tool/web-search-tool.test.ts)
+("warns once at construction, not once per search"; the persistent-cache
+describe: cross-instance hit, `persistCache: false`, no `stateDir`),
+[search-cache.test.ts](src/tools/os/web-search/transport/search-cache.test.ts)
+and [provider-cooldown.test.ts](src/tools/os/web-search/transport/provider-cooldown.test.ts)
+(round-trip, load-time expiry/eviction, ladder-across-restart, corrupt and
+malformed files), and the `#256` seam case in
+[bootstrap.test.ts](src/runtime/bootstrap.test.ts), which boots the real
+runtime against a pre-seeded `stateDir` and proves `os.web.search` answers
+from the file — so deleting the `stateDir` wiring in `createAgentRuntime`
+or `registerOsTools` fails loudly instead of silently shipping the
+in-memory behaviour.
 ## HTTP retry contract
 
 `os.web.fetch` and `os.http.request` both retry transient failures
