@@ -338,6 +338,57 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.session.lastError).toMatch(/max_steps_reached: 2 steps/);
   });
 
+  it("reserves the final step for a terminal reply", async () => {
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "noop",
+      description: "no-op",
+      readonly: true,
+      async run() {
+        return {
+          tool: "noop",
+          status: "ok",
+          summary: "verified",
+          details: {},
+          truncated: false,
+        };
+      },
+    });
+    let calls = 0;
+    const prompts: string[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async (params) => {
+        calls += 1;
+        prompts.push(params.prompt);
+        return makeCompletion(
+          calls === 1
+            ? JSON.stringify({ tool: "noop", args: {} })
+            : JSON.stringify({ tool: "reply", args: { text: "verified" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "chat-finalize", workingDir }),
+      { userMessage: "verify", maxSteps: 2, signal: new AbortController().signal },
+    );
+
+    expect(calls).toBe(2);
+    expect(prompts[1]).toContain("final allowed step");
+    expect(result.reason).toBe("reply");
+    expect(result.stepCount).toBe(2);
+    expect(result.session.status).toBe("pending");
+    expect(result.session.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "verified",
+    });
+  });
+
   it("injects a transient notice into the next prompt when a no-progress loop is detected", async () => {
     const registry = buildDefaultToolRegistry();
     registry.register({

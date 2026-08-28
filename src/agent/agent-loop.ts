@@ -559,6 +559,10 @@ export class AgentLoop {
       }
       const noticeForThisStep = pendingNotice;
       pendingNotice = undefined;
+      const finalizationStep = i === options.maxSteps - 1;
+      const finalizationNotice =
+        "This is the final allowed step. Do not call any non-terminal tool; " +
+        "summarize the completed work with reply, or end the session with finish.";
       try {
         const profileFacts = this.deps.profileFactsProvider?.();
         const activeProfile =
@@ -570,14 +574,26 @@ export class AgentLoop {
         const outcome = await executeStep(
           {
             session: state,
-            toolDescriptors: this.deps.toolDescriptors,
+            toolDescriptors: finalizationStep
+              ? this.deps.toolDescriptors.filter(
+                  ({ name }) => name === "reply" || name === "finish",
+                )
+              : this.deps.toolDescriptors,
             capabilities: this.deps.capabilities,
             skillCatalog: this.deps.skillCatalog,
             stepIndex: i,
             signal: options.signal,
-            ...(noticeForThisStep !== undefined
-              ? { transientNotice: noticeForThisStep }
+            ...(finalizationStep || noticeForThisStep !== undefined
+              ? {
+                  transientNotice: [
+                    noticeForThisStep,
+                    ...(finalizationStep ? [finalizationNotice] : []),
+                  ]
+                    .filter((notice): notice is string => notice !== undefined)
+                    .join("\n\n"),
+                }
               : {}),
+            ...(finalizationStep ? { terminalOnly: true } : {}),
             ...(profileFacts !== undefined ? { profileFacts } : {}),
             ...(options.userMessage !== undefined
               ? { userMessage: options.userMessage }
@@ -787,6 +803,14 @@ export class AgentLoop {
         recordSurfacedLessons(state);
         recordSurfacedProcedures(state);
       } catch (err) {
+        if (finalizationStep) {
+          // A failed finalization must not execute more work or turn a
+          // bounded run into an unbounded retry. Preserve the established
+          // explicit max-steps/stalled outcome instead.
+          stepsTaken += 1;
+          reason = "max_steps";
+          break;
+        }
         runError = err instanceof Error ? err : new Error(String(err));
         const category = classifyFailure(err);
         this.deps.logger?.error("agent loop failed", {
