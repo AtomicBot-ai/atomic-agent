@@ -2,7 +2,8 @@ import type { ReasoningExtractor } from "./reasoning-extractor.js";
 import { extractPartialReplyTextFromToolArguments } from "./tool-arguments-stream-parser.js";
 
 export interface OpenAiToolCallDelta {
-  index: number;
+  /** Provider-supplied call index. Some OpenAI-compatible APIs omit it. */
+  index?: number;
   id?: string;
   type?: "function";
   function?: {
@@ -95,8 +96,8 @@ export function parseOpenAiSseEvent(
         finishReason,
         modelId,
         usage,
-        toolCallDeltas: toolCalls.map((toolCall, fallbackIndex) => ({
-          index: typeof toolCall.index === "number" ? toolCall.index : fallbackIndex,
+        toolCallDeltas: toolCalls.map((toolCall) => ({
+          ...(typeof toolCall.index === "number" ? { index: toolCall.index } : {}),
           ...(typeof toolCall.id === "string" ? { id: toolCall.id } : {}),
           ...(toolCall.type === "function" ? { type: "function" as const } : {}),
           ...(toolCall.function

@@ -46,6 +46,8 @@ export function createOpenAiStreamConsumer(
       // arguments may be mid-stream.
       let terminalObserved = false;
       const toolCalls = new Map<number, MutableToolCall>();
+      const toolCallIndexesById = new Map<string, number>();
+      let nextSyntheticToolCallIndex = 0;
       try {
         while (true) {
           if (signal?.aborted) break;
@@ -70,7 +72,15 @@ export function createOpenAiStreamConsumer(
             finishReason = chunk.finishReason ?? finishReason;
             modelId = chunk.modelId ?? modelId;
             usage = normaliseUsage(chunk.usage) ?? usage;
-            applyToolCallDeltas(toolCalls, chunk.toolCallDeltas);
+            applyToolCallDeltas(
+              toolCalls,
+              chunk.toolCallDeltas,
+              toolCallIndexesById,
+              () => nextSyntheticToolCallIndex++,
+              (index) => {
+                nextSyntheticToolCallIndex = Math.max(nextSyntheticToolCallIndex, index + 1);
+              },
+            );
             if (chunk.done) {
               yield { delta: "", reasoningDelta: "", done: true };
               return buildFinalResult({
@@ -132,9 +142,23 @@ export function createOpenAiStreamConsumer(
 function applyToolCallDeltas(
   toolCalls: Map<number, MutableToolCall>,
   deltas: readonly OpenAiToolCallDelta[],
+  indexesById: Map<string, number>,
+  allocateSyntheticIndex: () => number,
+  observeIndex: (index: number) => void,
 ): void {
   for (const delta of deltas) {
-    const current = toolCalls.get(delta.index) ?? {
+    let index = delta.index;
+    if (index === undefined && delta.id) {
+      index = indexesById.get(delta.id);
+      if (index === undefined) {
+        index = allocateSyntheticIndex();
+        indexesById.set(delta.id, index);
+      }
+    }
+    if (index === undefined) index = allocateSyntheticIndex();
+    if (delta.id) indexesById.set(delta.id, index);
+    observeIndex(index);
+    const current = toolCalls.get(index) ?? {
       function: { name: "", arguments: "" },
     };
     if (delta.id) current.id = delta.id;
@@ -148,7 +172,7 @@ function applyToolCallDeltas(
     if (delta.function?.arguments) {
       current.function.arguments += delta.function.arguments;
     }
-    toolCalls.set(delta.index, current);
+    toolCalls.set(index, current);
   }
 }
 

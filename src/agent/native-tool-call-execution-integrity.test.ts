@@ -95,6 +95,19 @@ function parallelEofBody(): string {
   );
 }
 
+function unindexedDistinctIdBody(): string {
+  return (
+    sseFrame({
+      choices: [{ index: 0, delta: { role: "assistant", tool_calls: [{ id: "call_a", type: "function", function: { name: "os__fs__read", arguments: '{"path":"a.txt"}' } }] }, finish_reason: null }],
+    }) +
+    sseFrame({
+      choices: [{ index: 0, delta: { tool_calls: [{ id: "call_b", type: "function", function: { name: "os__fs__grep", arguments: '{"path":"b.txt"}' } }] }, finish_reason: null }],
+    }) +
+    sseFrame({ choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }) +
+    "data: [DONE]\n\n"
+  );
+}
+
 function qwenTaggedBody(finishReason: string | null = null): string {
   return sseFrame({
     choices: [
@@ -256,6 +269,16 @@ function countingTool(name: string) {
 }
 
 describe("native tool-call execution integrity", () => {
+  it("keeps distinct unindexed tool calls separate when ids differ", async () => {
+    const result = await drainCompleteStream(fetchReturning(unindexedDistinctIdBody()), {
+      requestTools: parallelTools,
+    });
+
+    expect(result.toolCalls).toEqual([
+      { id: "call_a", type: "function", function: { name: "os__fs__read", arguments: '{"path":"a.txt"}' } },
+      { id: "call_b", type: "function", function: { name: "os__fs__grep", arguments: '{"path":"b.txt"}' } },
+    ]);
+  });
   it("1. healthy valid tool call: executions = 1", async () => {
     const tool = countingTool("os.fs.delete");
     const { outcomeOrError } = await runStepFromFetch(fetchReturning(healthyBody('{"path":"widget.txt"}')), tool.register);
