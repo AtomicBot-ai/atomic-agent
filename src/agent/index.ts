@@ -19,15 +19,25 @@ export {
   hashToolCall,
   hashToolOutcome,
   formatRepeatNotice,
+  formatTestRepeatNotice,
   formatVetoInstruction,
   formatForcedLoopReply,
   extractLoopTarget,
   BATCH_LOOP_LABEL,
   LOOP_VETO_DENIED_REASON,
   LOOP_WARNING_BUCKET_SIZE,
+  TEST_REPEAT_WARNING_THRESHOLD,
 } from "./loop-detector.js";
 export type {
   ToolLoopTrackerOptions,
   LoopCheckVerdict,
   LoopCheckLevel,
+  TestRepeatCheck,
 } from "./loop-detector.js";
+export { classifyTestCommand } from "./test-command-key.js";
+export type { RecognizedTestCommand } from "./test-command-key.js";
+export {
+  fingerprintWorkspace,
+  FINGERPRINT_IGNORED_DIRS,
+  FINGERPRINT_IGNORED_FILES,
+} from "./workspace-fingerprint.js";
