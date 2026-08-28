@@ -28,8 +28,9 @@ export type OpenAiHttpDeps = {
  *    opposed to the transport failing or the caller cancelling. Both
  *    surface as aborts, but a timeout is "the provider is slower than
  *    the budget" — replaying it just burns another full timeout.
- *  - `retryAfterMs` is populated from a `retry-after` header when the
- *    provider sent one (429/503), so the retry loop can honor it.
+ *  - `retryAfterMs` is populated from a valid `retry-after` header or
+ *    structured retry metadata on 429/503 responses, so the retry loop can
+ *    honor the provider's requested delay.
  */
 export class OpenAiHttpError extends Error {
   constructor(
