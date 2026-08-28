@@ -812,16 +812,35 @@ export class AgentLoop {
         recordSurfacedLessons(state);
         recordSurfacedProcedures(state);
       } catch (err) {
-        if (finalizationStep) {
+        runError = err instanceof Error ? err : new Error(String(err));
+        const category = classifyFailure(err);
+        // `cancelled` is user-initiated and should close the turn
+        // cleanly without marking the session as failed. Classified
+        // BEFORE the finalization guard below: a user abort during the
+        // reserved final step must keep its `cancelled` outcome
+        // (issue #107 — cancellation semantics remain unchanged), not
+        // be relabelled `max_steps`.
+        const cancelled =
+          err instanceof CancelledError ||
+          (err instanceof LlmFailure && err.category === "cancelled") ||
+          category === "cancelled";
+        if (finalizationStep && !cancelled) {
           // A failed finalization must not execute more work or turn a
           // bounded run into an unbounded retry. Preserve the established
           // explicit max-steps/stalled outcome instead.
+          this.deps.logger?.warn(
+            "finalization step failed; preserving max-steps outcome",
+            {
+              sessionId: state.id,
+              stepIndex: i,
+              error: runError.message,
+              category,
+            },
+          );
           stepsTaken += 1;
           reason = "max_steps";
           break;
         }
-        runError = err instanceof Error ? err : new Error(String(err));
-        const category = classifyFailure(err);
         this.deps.logger?.error("agent loop failed", {
           sessionId: state.id,
           stepIndex: i,
@@ -837,13 +856,6 @@ export class AgentLoop {
           sessionId: state.id,
           category,
         });
-        // `cancelled` is user-initiated and should close the turn
-        // cleanly without marking the session as failed. Everything
-        // else keeps the existing failed-terminal contract.
-        const cancelled =
-          err instanceof CancelledError ||
-          (err instanceof LlmFailure && err.category === "cancelled") ||
-          category === "cancelled";
         if (cancelled) {
           state = { ...state, status: "cancelled" };
           this.deps.onEvent?.({ type: "loop_completed", reason: "cancelled" });
