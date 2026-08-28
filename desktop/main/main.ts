@@ -162,6 +162,20 @@ async function smokeTest(): Promise<void> {
   check("renderer painted", (await js<number>("document.querySelectorAll('.navrow').length")) === 4);
   check("toolbar titled", (await js<string>("document.querySelector('.tb-title b').textContent")) === "Chat");
   check("bridge exposed", await js<boolean>("!!window.atomic"));
+  // The window frame draws the menu bar and the traffic lights; the page
+  // must not draw its own, and the toolbar has to be the drag handle.
+  check(
+    "no duplicate menu bar",
+    (await js<string>("getComputedStyle(document.getElementById('menubar')).display")) === "none",
+  );
+  check(
+    "no duplicate traffic lights",
+    (await js<string>("getComputedStyle(document.querySelector('.lights')).display")) === "none",
+  );
+  check(
+    "toolbar is draggable",
+    (await js<string>("getComputedStyle(document.getElementById('toolbar')).webkitAppRegion")) === "drag",
+  );
 
   // Wait for the supervised agent to come up.
   const deadline = Date.now() + 60_000;

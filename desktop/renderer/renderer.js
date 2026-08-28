@@ -271,7 +271,7 @@ const S = {
   stick:true,
   memTab:'notes', skillsTab:'installed', taskFilter:'all',
   toasts:[], toastId:0,
-  agentSession:null,
+  agentSession:null, reasonId:null,
   live:{state: BR ? 'starting' : 'demo', binary:null, port:null, workingDir:'~', llama:null, error:null},
   history:[], turnId:null, streamId:null,
   log:[],
@@ -1537,6 +1537,7 @@ async function loadResources() {
 
 function startLiveTurn(text) {
   S.history.push({role:'user', content:text});
+  S.reasonId = null;
   S.busy = true; S.stick = true; S.elapsed = 0; S.phase = 'Thinking';
   const streaming = {id:nid(), k:'assistant', text:''};
   S.streamId = streaming.id;
@@ -1567,9 +1568,10 @@ function onChatEvent(ev) {
   if (ev.kind === 'reasoning_progress') {
     const text = pick(ev.payload, 'delta', 'text', 'content') || '';
     if (!text) return;
-    let block = S.log[S.log.length - 1];
-    if (!block || block.k !== 'reason' || block.done) {
+    let block = S.reasonId ? S.log.find((m) => m.id === S.reasonId) : null;
+    if (!block) {
       block = {id:nid(), k:'reason', steps:1, open:false, text:''};
+      S.reasonId = block.id;
       S.log.splice(S.log.indexOf(item), 0, block);
     }
     block.text += text;
@@ -1579,6 +1581,7 @@ function onChatEvent(ev) {
   }
   if (ev.kind === 'tool_progress') {
     const name = pick(ev.payload, 'tool', 'name') || 'tool';
+    if (name === 'reply' || name === 'finish') return;
     const arg = summariseArgs(pick(ev.payload, 'arguments', 'args', 'input'));
     const card = {id:nid(), k:'tool', name, arg, where:S.mode === 'cloud' ? 'cloud' : 'local',
                   ok:null, open:false, args:JSON.stringify(pick(ev.payload, 'arguments', 'args', 'input') ?? {}, null, 2)};
@@ -1594,9 +1597,9 @@ function onChatEvent(ev) {
   if (ev.kind === 'done' || ev.kind === 'finish' || ev.kind === 'aborted' || ev.kind === 'error') {
     if (ev.kind === 'finish') return;
     S.busy = false; S.turnId = null; clearInterval(ticker);
+    S.reasonId = null;
     S.log.forEach((m) => {
       if (m.k === 'tool' && m.ok === null) { m.ok = true; m.out = m.out || '(result not exposed by the HTTP stream)'; m.ms = 0; }
-      if (m.k === 'reason') m.done = true;
     });
     if (item && item.text) S.history.push({role:'assistant', content:item.text});
     if (item && !item.text) item.text = ev.kind === 'aborted' ? '(stopped)' : '(no reply)';
@@ -1669,6 +1672,8 @@ function answerLive(req, key) {
 }
 
 if (BR) {
+  // Drop the prototype's fake window chrome — macOS draws all of it.
+  document.body.classList.add('electron');
   // The mock transcript is demo furniture; a real agent starts clean.
   S.log = [];
   S.history = [];

@@ -445,3 +445,38 @@ svg{display:block;flex:none}
   #stage{padding:6px}
   .pal{margin-top:6vh}
 }
+
+
+/* ============================================================
+   Running inside Electron.
+
+   The prototype draws a fake desktop: a page-level menu bar, CSS
+   traffic lights and a floating rounded window on a ground colour.
+   In a real window every one of those is a duplicate of something
+   macOS already draws, so they are removed here and the toolbar
+   becomes the drag region the frame no longer provides.
+   ============================================================ */
+body.electron #menubar { display: none; }
+body.electron .lights { display: none; }
+
+body.electron #stage { padding: 0; }
+body.electron #window {
+  width: 100%;
+  max-height: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* titleBarStyle:hiddenInset puts the real traffic lights at 20,20 —
+   the toolbar keeps that gutter clear and drags the window. */
+body.electron #toolbar {
+  padding-left: 78px;
+  -webkit-app-region: drag;
+}
+body.electron #toolbar button,
+body.electron #toolbar input,
+body.electron #toolbar .searchbtn { -webkit-app-region: no-drag; }
+
+/* The sidebar header sits under the toolbar, so it needs no inset —
+   but it must not swallow drags either. */
+body.electron .sb-head { -webkit-app-region: no-drag; }
