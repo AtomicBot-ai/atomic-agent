@@ -45,3 +45,13 @@ export function selectSidebarTasks(
   });
   return sorted.slice(0, limit);
 }
+
+/**
+ * Running tasks in the FULL snapshot, for the rail's header counter.
+ * Counting the projected slice undercounts: {@link selectSidebarTasks}
+ * caps it at {@link SIDEBAR_TASKS_LIMIT}, so seven running tasks read
+ * as "5 running" the moment the sixth falls off the rail.
+ */
+export function countRunningTasks(rows: readonly TaskSummaryRow[]): number {
+  return rows.filter((row) => row.status === "running").length;
+}
