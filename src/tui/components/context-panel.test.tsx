@@ -29,7 +29,6 @@ function usage(overrides: Partial<ContextUsageView> = {}): ContextUsageView {
     // Eight tasks at a flat 4k each, so a projection is easy to predict:
     // N tasks costs `overhead + N * 4000`.
     pairCosts: [4000, 4000, 4000, 4000, 4000, 4000, 4000, 4000],
-    overheadTokens: 8000,
     sections: SECTIONS,
     ...overrides,
   };

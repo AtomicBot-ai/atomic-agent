@@ -289,6 +289,7 @@ describe("conversation-turn helpers", () => {
         droppedCount: 0,
         visiblePairs: 0,
         droppedPairs: 0,
+        boundBy: null,
       });
     });
 

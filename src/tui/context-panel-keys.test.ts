@@ -103,6 +103,21 @@ describe("stepping the task selector", () => {
     expect(stepped("=")).toEqual([1]);
   });
 
+  it("moves by the whole burst when a key is held", () => {
+    // Terminals send key repeat as one chunk and Ink passes it through
+    // as one string. Matching on a single character meant the selector
+    // did not move at all for anyone who held the key down.
+    expect(stepped("---")).toEqual([-3]);
+    expect(stepped("+++++")).toEqual([5]);
+  });
+
+  it("ignores a chunk that is not purely its own key", () => {
+    // A repeat that caught the edge of something else is not this
+    // control's to interpret.
+    expect(stepped("--x")).toEqual([]);
+    expect(stepped("-+")).toEqual([]);
+  });
+
   it("claims those keys even with nowhere to send them", () => {
     // The editor is unfocused while the panel owns input, so a `-` that
     // fell through would land in the buffer and surprise the operator

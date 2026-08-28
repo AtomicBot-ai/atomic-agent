@@ -1550,15 +1550,23 @@ export function TuiApp({
     const current = stateRef.current.contextPanelPairsDraft ?? cap;
     const next = Math.max(1, Math.min(100, current + delta));
     if (next === current) return;
-    dispatch({ type: "context_pairs_draft_moved", delta });
+    // Write first, then move the number. The other order leaves the
+    // panel showing a value the config never took: the write is
+    // tmp-file-then-rename, so a failure leaves the old value on disk
+    // and every later prompt packed against it, while the selector — and
+    // the whole projection above it — insists on the new one. Nothing
+    // would ever reconcile them either, because the draft is retired
+    // only when a prompt is built against the number it holds.
     try {
       persistConversationMaxPairs(next);
     } catch (err) {
       dispatch({
         type: "system_message",
-        text: `could not write the config: ${(err as Error).message}`,
+        text: `could not change the task limit: ${(err as Error).message}`,
       });
+      return;
     }
+    dispatch({ type: "context_pairs_draft_moved", delta });
   }, []);
 
   const promptContextSlot = contextUsage ? (

@@ -28,7 +28,6 @@ function usage(percent: number, droppedTurns = 0): ContextUsageView {
     pairsCap: 20,
     droppedPairs: 0,
     pairCosts: [percent * 10],
-    overheadTokens: 1000 - percent * 10,
     sections: [],
   };
 }

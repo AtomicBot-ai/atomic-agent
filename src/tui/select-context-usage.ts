@@ -38,8 +38,6 @@ export interface ContextUsageView {
    * immediately rather than a prompt build later.
    */
   pairCosts: readonly number[];
-  /** Fixed cost of everything that is not the transcript. */
-  overheadTokens: number;
   /**
    * Turns `packConversation` dropped to make the transcript fit. Any
    * non-zero value is the chip's violet state; the detail view spends
@@ -143,12 +141,27 @@ export function usageAtPairs(
   usage: ContextUsageView,
   pairs: number,
 ): ContextUsageView {
+  // Walk newest-first and stop where the packer would stop. Two limits
+  // apply to the real prompt, not one: the task count the operator
+  // picked, and the token cap underneath it. Summing the last N costs
+  // and reporting that was a projection of a prompt the packer would
+  // never build — on a long session it can claim a transcript twice the
+  // size of the one that would actually be sent.
+  const cap = usage.conversationCap ?? Number.POSITIVE_INFINITY;
   const wanted = Math.max(0, Math.min(pairs, usage.pairCosts.length));
   let transcript = 0;
-  for (let i = usage.pairCosts.length - wanted; i < usage.pairCosts.length; i += 1) {
-    transcript += usage.pairCosts[i] ?? 0;
+  let carried = 0;
+  for (let i = usage.pairCosts.length - 1; i >= 0 && carried < wanted; i -= 1) {
+    const cost = usage.pairCosts[i] ?? 0;
+    if (carried > 0 && transcript + cost > cap) break;
+    transcript += cost;
+    carried += 1;
   }
-  const tokens = usage.overheadTokens + transcript;
+  // The newest task is never dropped for being too big — the packer
+  // pins it — so the first one is taken whatever it costs, and only
+  // then does the cap start refusing.
+  const tokens = overheadOf(usage) + transcript;
+  const droppedPairs = Math.max(0, usage.pairCosts.length - carried);
   return {
     ...usage,
     tokens,
@@ -157,8 +170,9 @@ export function usageAtPairs(
         ? null
         : Math.min(100, Math.round((tokens / usage.contextWindow) * 100)),
     conversationTokens: transcript,
-    pairs: wanted,
+    pairs: carried,
     pairsCap: pairs,
+    droppedPairs,
     sections: usage.sections.map((section) =>
       section.label === CONVERSATION_SECTION_LABEL
         ? { ...section, tokens: transcript }
@@ -166,6 +180,28 @@ export function usageAtPairs(
     ),
   };
 }
+
+/**
+ * Everything in the prompt that is not the transcript, measured the same
+ * way the transcript is.
+ *
+ * Deliberately the sum of the other sections rather than
+ * `tokens - conversationTokens`. Once a turn completes, `tokens` is
+ * replaced by the provider's real tokenizer count while the sections
+ * stay `estimateTokens` figures that over-count by design — so that
+ * subtraction mixes units and dumps the whole estimator bias into the
+ * overhead, which then under-reports every projection below the current
+ * task count. Adding estimates to estimates keeps the projection
+ * internally consistent, which is what the operator is comparing.
+ */
+function overheadOf(usage: ContextUsageView): number {
+  let overhead = 0;
+  for (const section of usage.sections) {
+    if (section.label !== CONVERSATION_SECTION_LABEL) overhead += section.tokens;
+  }
+  return overhead;
+}
+
 
 export function selectContextUsage(state: TuiState): ContextUsageView | null {
   const {
@@ -210,7 +246,6 @@ export function selectContextUsage(state: TuiState): ContextUsageView | null {
     pairsCap: conversationPairsCap,
     droppedPairs,
     pairCosts,
-    overheadTokens: Math.max(0, tokens - conversationTokens),
     droppedTurns,
     sections,
   };
