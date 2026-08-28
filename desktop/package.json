@@ -8,12 +8,13 @@
   "type": "commonjs",
   "main": "out/main/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/copy-renderer.mjs",
+    "build": "node scripts/ensure-electron.mjs && tsc -p tsconfig.json && node scripts/copy-renderer.mjs",
     "lint": "tsc -p tsconfig.json --noEmit",
     "start": "npm run build && electron .",
     "dev": "npm run build && electron . --dev",
     "smoke": "npm run build && electron . --smoke",
-    "dist": "npm run build && electron-builder --mac --publish never"
+    "dist": "npm run build && electron-builder --mac --publish never",
+    "postinstall": "node scripts/ensure-electron.mjs"
   },
   "devDependencies": {
     "electron": "44.0.0",
@@ -23,11 +24,19 @@
   "build": {
     "appId": "ai.atomicbot.desktop",
     "productName": "Atomic Agent",
-    "files": ["out/**", "package.json"],
-    "directories": { "output": "release" },
+    "files": [
+      "out/**",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
     "mac": {
       "category": "public.app-category.productivity",
-      "target": ["dmg", "zip"]
+      "target": [
+        "dmg",
+        "zip"
+      ]
     }
   }
 }
