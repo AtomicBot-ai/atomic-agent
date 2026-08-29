@@ -1,6 +1,8 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { theme } from "../theme/theme.js";
+import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
+import { handleMemoryTabKey } from "../memory/memory-key-bindings.js";
 import type { MemoryPanelState } from "../memory/memory-panel-state.js";
 import type { MemorySummaryRow } from "../memory/memory-panel-state.js";
 
@@ -44,11 +46,16 @@ export function MemoryList(props: MemoryListProps): ReactElement {
         <Text color={theme.colors.muted}>↑ {hiddenBefore} above</Text>
       ) : null}
       {pageRows.map((row, idx) => (
-        <MemoryRow
+        <MouseListRow
           key={row.rowKey}
-          row={row}
           selected={idx + windowStart === clamped}
-        />
+          onSelect={(mouse) =>
+            mouse.dispatch({ type: "memory_cursor_set", row: idx + windowStart })
+          }
+          onActivate={pressEnter(handleMemoryTabKey)}
+        >
+          <MemoryRow row={row} selected={idx + windowStart === clamped} />
+        </MouseListRow>
       ))}
       {hiddenAfter > 0 ? (
         <Text color={theme.colors.muted}>↓ {hiddenAfter} below</Text>

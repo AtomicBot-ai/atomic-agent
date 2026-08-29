@@ -12,6 +12,8 @@ export type {
   StreamChunk,
 } from "./llama-server-client.js";
 export { checkLlamaServer } from "./llama-server-health.js";
+export { llamaEndpointUrl } from "./llama-endpoint-url.js";
+export { describeLlamaHealthFailure } from "./describe-llama-health-failure.js";
 export type { HealthCheckOptions, HealthResult } from "./llama-server-health.js";
 export { SlotManager, hashPrefix, DEFAULT_SLOT_COUNT } from "./slot-manager.js";
 export type { SlotAssignment } from "./slot-manager.js";

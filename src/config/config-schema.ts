@@ -7,7 +7,11 @@ import {
 
 export type { ApprovalLevel } from "../approval/approval-level.js";
 import type { DotenvLoadResult } from "./load-dotenv.js";
-import { isKnownLocalModelId } from "../local-llm/models-catalog.js";
+import {
+  isKnownLocalModelId,
+  type LocalModelDef,
+} from "../local-llm/models-catalog.js";
+import { parseCustomLocalModels } from "./custom-models-schema.js";
 import {
   MCP_SERVER_NAME_MAX_LENGTH,
   MCP_SERVER_NAME_RE,
@@ -31,6 +35,50 @@ export type BrowserChannel = "chrome" | "msedge" | "chromium";
 
 export type WebSearchProviderName = "duckduckgo" | "searxng" | "exa" | "brave";
 
+/**
+ * Tunables for `os.web.fetch` (config v38). Before v38 the tool hard-coded a
+ * 30s overall budget with no connect timeout and no retries, so a single
+ * unreachable host burned 30s of the task budget and a transient 503 (the
+ * bulk of them from `web.archive.org`, which serves the same URL seconds
+ * later) ended the fetch outright.
+ */
+export interface WebFetchConfig {
+  /**
+   * Overall per-attempt budget in milliseconds, passed to curl `--max-time`.
+   * Kept at the historical 30_000 so unconfigured installs behave exactly as
+   * before. A per-call `timeoutMs` tool argument overrides it.
+   */
+  timeoutMs: number;
+  /**
+   * TCP/TLS connect budget in milliseconds, passed to curl `--connect-timeout`.
+   * Much smaller than `timeoutMs` because a host that has not completed a
+   * handshake in 10s is almost never merely slow — it is firewalled, dead, or
+   * blackholing packets, and waiting the full overall budget for it is pure
+   * loss. A slow but reachable server still gets the whole `timeoutMs` to
+   * stream its body, since `--connect-timeout` only covers the handshake.
+   */
+  connectTimeoutMs: number;
+  /**
+   * Extra attempts after the first for retryable failures (429/502/503/504 and
+   * curl exit 28 "operation timed out"). `0` disables retrying. Deliberately
+   * small: `os.web.fetch` is GET-only, so retries are always safe, but each one
+   * spends task budget.
+   */
+  maxRetries: number;
+  /**
+   * Base delay in milliseconds for exponential backoff between retries
+   * (attempt N waits `retryBaseDelayMs * 2^(N-1)`). A server-sent `Retry-After`
+   * header wins over the computed delay when it is shorter than the cap.
+   */
+  retryBaseDelayMs: number;
+  /**
+   * Upper bound in milliseconds on any single backoff wait, including one
+   * derived from `Retry-After`. Stops a hostile or overloaded origin from
+   * parking the agent for minutes on a header value.
+   */
+  retryMaxDelayMs: number;
+}
+
 export interface WebSearchConfig {
   enabled: boolean;
   provider: WebSearchProviderName;
@@ -39,6 +87,12 @@ export interface WebSearchConfig {
   /**
    * Per-runtime result cache TTL in minutes. `0` disables caching. The cache
    * is the primary defence against provider rate-limiting on repeated queries.
+   *
+   * An hour, raised from fifteen minutes. An agent re-issues near-identical
+   * queries across the steps of one task and across tasks in one run, and
+   * every expiry inside that window spends quota to re-fetch a result it
+   * already had (#179). Search results for the factual lookups this is
+   * mostly used for do not turn over in an hour; a rate limit does.
    */
   cacheTtlMinutes: number;
   /**
@@ -175,8 +229,29 @@ export interface AtomicAgentConfig {
      * Safety-net ceiling for the `### conversation` section of the prompt.
      * Typical sessions stay well under this cap — it exists to prevent
      * pathological growth, not to be a regular truncation mechanism.
+     *
+     * **`0` means auto:** the transcript takes whatever the model's
+     * window leaves after the scaffold, the memory sections and the
+     * reply reservation, with no fixed ceiling above it. Same sentinel
+     * and same reasoning as `localModels.managed.contextSize` — the
+     * useful value is a function of hardware this file cannot see.
+     *
+     * The default stays at 32k rather than becoming auto, and
+     * deliberately: on a local server the tokens are free, but on a
+     * metered cloud model with a 200k window "auto" would multiply the
+     * per-step bill without anyone asking for it. Operators who size
+     * their own `llama-server` are exactly the people who should set
+     * this to `0`, and the context panel now tells them so when their
+     * ceiling is what is holding the transcript below their window.
      */
     conversationMaxTokens: number;
+    /**
+     * Macro-turns of history the prompt carries — one per task you sent,
+     * each carrying everything the agent did answering it. The knob an
+     * operator actually reaches for; `conversationMaxTokens` remains the
+     * ceiling underneath it.
+     */
+    conversationMaxPairs: number;
     /**
      * Safety-net ceiling for the `### world` section. ARIA snapshots are
      * already compressed at the browser layer; this cap guards against
@@ -293,6 +368,7 @@ export interface AtomicAgentConfig {
   };
   web: {
     search: WebSearchConfig;
+    fetch: WebFetchConfig;
   };
   /**
    * User-declared project root directories consumed by
@@ -662,12 +738,16 @@ export interface AtomicAgentConfig {
     maxImagesPerCall: number;
   };
   /**
-   * TUI appearance. Mirrors `UserConfigFile.tui`. `theme` is `"auto"`
-   * (OSC 11 autodetect) or a registered theme name. Consumed by the TUI
-   * startup path; the rest of the runtime ignores it.
+   * TUI appearance and input. Mirrors `UserConfigFile.tui`. `theme` is
+   * `"auto"` (OSC 11 autodetect) or a registered theme name; `mouse`
+   * toggles terminal mouse reporting. Consumed by the TUI startup path;
+   * the rest of the runtime ignores it.
    */
   tui: {
     theme: string;
+    whileBusySubmit: WhileBusySubmitMode;
+    mouse: boolean;
+    onboarding: OnboardingState;
   };
   /**
    * Anonymous product analytics (PostHog). Mirrors
@@ -714,11 +794,35 @@ export interface AtomicAgentConfig {
       defaultChatModel?: string;
       defaultEmbeddingModel?: string;
       headers?: Record<string, string>;
+      /**
+       * Header carrying this entry's API key for services that do not
+       * accept `Authorization: Bearer` (Anthropic wants `x-api-key`).
+       */
+      apiKeyHeader?: string;
       supportsTools?: boolean;
       supportsVision?: boolean;
       requestTimeoutMs?: number;
       promptCache?: "auto" | "off" | "explicit-markers";
       providerPreferences?: Record<string, unknown>;
+      /**
+       * Vendor-specific fields merged into the OpenAI-compatible chat
+       * body. Reserved keys (`model`, `messages`, `stream`, `tools`)
+       * are re-applied after the merge and cannot be overridden.
+       */
+      extraBody?: Record<string, unknown>;
+      /**
+       * Settings for a `subscription-cli` provider: which already
+       * signed-in vendor CLI to drive (`claude`, `codex`) and how to
+       * invoke it. There is no API key on these entries — the CLI
+       * authenticates from its own session.
+       */
+      subscriptionCli?: {
+        cli: "claude" | "codex";
+        binPath?: string;
+        extraArgs?: string[];
+        streaming?: boolean;
+        maxBudgetUsd?: number;
+      };
       userModels?: ReadonlyArray<{
         id: string;
         kind: "chat" | "embedding";
@@ -822,6 +926,14 @@ export interface UserManagedLocalLlmConfig {
   modelId: string | null;
   port: number;
   dataDirOverride: string | null;
+  /**
+   * When true, managed-mode start (TUI auto-start / `s`, CLI
+   * `models start`) checks GitHub Releases and replaces the llama.cpp
+   * zip if a newer tag (or a stale Windows variant) is available.
+   * Default `true` since config v41. Older files stored an unused
+   * `false` default — those migrate to `true`. Set `false` to pin the
+   * installed backend.
+   */
   autoUpdate: boolean;
   /**
    * Compute-device preference for the managed llama.cpp daemon:
@@ -886,7 +998,17 @@ export interface UserManagedEmbeddingLlmConfig {
  * changes and add a migration step in `parseUserConfigFile`.
  */
 export interface UserConfigFile {
-  version: typeof USER_CONFIG_VERSION;
+  /**
+   * The on-disk schema version. Usually `USER_CONFIG_VERSION`, but a file
+   * written by a NEWER build keeps its own (higher) number all the way
+   * through parse and write-back, so an older build can never label a
+   * newer file with its own version. See `parseUserConfigFile`.
+   */
+  version: number;
+  // NB: keys from a newer schema ride along on the object at runtime (see
+  // `unknownTopLevelKeys`) but are deliberately absent from this type. An
+  // index signature here would make every property name valid on the type
+  // the whole tree writes back — `{ ...file, viison: … }` would compile.
   localModels: {
     url: string;
     mode: LocalLlmMode;
@@ -905,6 +1027,14 @@ export interface UserConfigFile {
      * `{ enabled: false, modelId: null, port: 19092 }`.
      */
     embeddings: UserManagedEmbeddingLlmConfig;
+    /**
+     * GGUF models the operator added from an arbitrary Hugging Face repo
+     * (config v44). Each entry is a whole `LocalModelDef` with a
+     * `custom-` prefixed id; `loadConfig()` publishes them to the catalog
+     * registry so curated and added models resolve through one lookup.
+     * Older files inherit `[]`.
+     */
+    customModels: LocalModelDef[];
   };
   log: { level: LogLevel };
   agent: {
@@ -918,6 +1048,20 @@ export interface UserConfigFile {
      */
     approvalLevel: ApprovalLevel;
     conversationMaxTokens: number;
+    /**
+     * How many macro-turns of history the prompt carries — one "pair"
+     * being a task you sent plus everything the agent did answering it.
+     *
+     * This is the knob to reach for. Tokens are the wrong unit to steer
+     * with: nobody thinks in tokens, they think in how many of their
+     * last tasks the agent should still know about.
+     * {@link UserConfigFile.agent.conversationMaxTokens} stays underneath
+     * as the ceiling, because a pair has no bounded size — one task can
+     * run `maxSteps` tool calls and a fresh `os.http.request` body is
+     * rendered uncapped — so N pairs can exceed any window. Whichever
+     * limit bites first wins.
+     */
+    conversationMaxPairs: number;
     worldSnapshotMaxTokens: number;
   };
   http: {
@@ -929,6 +1073,7 @@ export interface UserConfigFile {
   };
   web: {
     search: WebSearchConfig;
+    fetch: WebFetchConfig;
   };
   /**
    * Project path resolution (config v36). `roots` lists directories
@@ -1341,12 +1486,24 @@ export interface UserConfigFile {
   /**
    * TUI appearance. Added in config v29. `theme` is either the literal
    * `"auto"` (default — detect the terminal background via OSC 11 and pick
-   * the matching GitHub theme) or a registered theme name (e.g. `dracula`,
-   * `nord`). Persisted from the in-app `/theme` picker. Older files are
+   * the matching classic theme) or a registered theme name (e.g.
+   * `khorne-red`, `moon-yellow`). Names the registry used to carry are
+   * rehomed to the nearest surviving palette by `resolveThemeName`, so
+   * an older file never loses its theme silently. Persisted from the
+   * in-app `/theme` picker. Older files are
    * transparently upgraded with `tui: { theme: "auto" }`.
+   *
+   * `mouse` (config v38, default `true`) turns terminal mouse reporting
+   * on: clicking panels, list rows, the nav bar and the prompt, plus
+   * wheel scrolling. Turning it off restores the terminal's own
+   * drag-to-select, which mouse reporting takes over — see `/mouse` and
+   * `--no-mouse`. Older files are upgraded with `mouse: true`.
    */
   tui: {
     theme: string;
+    whileBusySubmit: WhileBusySubmitMode;
+    mouse: boolean;
+    onboarding: OnboardingState;
   };
   /**
    * Anonymous product analytics (PostHog). Added in config v33. Older
@@ -1406,7 +1563,43 @@ export interface UserConfigFile {
 // is absent, a legacy `approvalRequired: false` maps to level 5 and
 // `true`/absent maps to level 1 — both preserve the old behaviour
 // exactly. The legacy key is never written back.
-export const USER_CONFIG_VERSION = 37 as const;
+// v39: new `web.fetch` block (`timeoutMs`, `connectTimeoutMs`, `maxRetries`,
+// `retryBaseDelayMs`, `retryMaxDelayMs`) making `os.web.fetch` timeouts and
+// retry/backoff configurable. Older files transparently inherit the defaults,
+// and `timeoutMs` keeps its historical 30_000 value, so the migration does not
+// change behaviour for anyone who does not opt in.
+// v40: new `tui.mouse` flag gating the mouse layer. Defaults to true, so an
+// older file inherits mouse support on upgrade; `--no-mouse` and `/mouse off`
+// override it without rewriting the file.
+// v41: `localModels.managed.autoUpdate` is wired to managed start
+// (TUI auto-start / CLI `models start`) and defaults to `true`. Pre-v41
+// files stored an unused `false` default — those migrate to `true` so
+// existing installs pick up newer llama.cpp zips. Explicit `false` on
+// a v41+ file is honoured.
+// v43: new `tui.onboarding` block — four nullable ISO timestamps recording
+// that the first-run flow was seen, skipped, completed, and that the
+// "configure the other backend too" screen was already offered. Additive:
+// an older file parses with all four `null`, which reads as "never
+// onboarded" and opens the flow exactly once, instead of re-deriving the
+// answer from a health probe on every launch.
+// v42: no schema change. The bump exists to carry the forward-compat
+// rules below: a file whose `version` is *newer* than this constant is
+// now read instead of rejected, its version is preserved rather than
+// stamped down, and unknown top-level keys survive the round trip. See
+// `parseUserConfigFile` and `ensureUserConfigFileSync`.
+// v44: localModels gains `customModels` — GGUF models the operator pointed
+// at on Hugging Face, stored as full catalog entries. Older files inherit
+// `[]`, which is exactly the behaviour they had before the key existed.
+// v45: a fifth stamp in `tui.onboarding` — `localSetupSeenAt`, written
+// when the first run reaches the local model list rather than when a
+// model comes out of it. It is what stops the "set up local models too"
+// screen being pitched to an operator who already walked through that
+// list and walked back out. Additive: a v43 file parses with it `null`,
+// which reads as "never opened", the same answer that file has always
+// implied. (It was drafted as a second v44, but v44 was already spent on
+// `customModels` in the same release — the stamp ships as v45 so the two
+// additive changes keep distinct numbers.)
+export const USER_CONFIG_VERSION = 45;
 
 /**
  * Config v21+ flips the full memory-v2 fabric on by default. Upgrades
@@ -1415,6 +1608,9 @@ export const USER_CONFIG_VERSION = 37 as const;
  * explicit overrides on v22+ files are still honoured.
  */
 const MEMORY_V2_OPT_IN_DEFAULTS_VERSION = 22;
+
+/** Pre-v41 `autoUpdate: false` was a dead default; force the live default. */
+const MANAGED_AUTO_UPDATE_DEFAULTS_VERSION = 41;
 
 export type RewriterGateMode = "heuristic" | "embedding" | "always";
 
@@ -1485,6 +1681,12 @@ export type RewriterGateMode = "heuristic" | "embedding" | "always";
  * v32→v33 added the optional `analytics.*` block (anonymous PostHog
  * product analytics — opt-out via `analytics.enabled: false`). Older
  * files inherit `analytics: { enabled: true }` transparently.
+ * v40→v41 wired `localModels.managed.autoUpdate` (default `true`):
+ * managed start pulls a newer llama.cpp zip from GitHub Releases when
+ * one exists. Pre-v41 the field was stored but never read, so a `false`
+ * there carried no meaning and is migrated to `true` — including one a
+ * user set deliberately, since the two are indistinguishable on disk.
+ * An explicit `false` on a v41+ file is honoured.
  * Older files are transparently upgraded by filling missing
  * blocks/fields from `USER_CONFIG_DEFAULTS`. Anything older than v5
  * is not migrated: this is active development, callers delete their
@@ -1523,6 +1725,14 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   34,
   35,
   36,
+  37,
+  38,
+  39,
+  40,
+  41,
+  42,
+  43,
+  44,
   USER_CONFIG_VERSION,
 ];
 
@@ -1536,7 +1746,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       modelId: null,
       port: 19091,
       dataDirOverride: null,
-      autoUpdate: false,
+      autoUpdate: true,
       stopOnExit: true,
       device: "auto",
       contextSize: 0,
@@ -1547,6 +1757,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       port: 19092,
       url: "http://127.0.0.1:19092",
     },
+    customModels: [],
   },
   log: { level: "info" },
   agent: {
@@ -1555,6 +1766,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
     toolTimeoutMs: 60_000,
     approvalLevel: 1,
     conversationMaxTokens: 32_000,
+    conversationMaxPairs: 20,
     worldSnapshotMaxTokens: 8_000,
   },
   http: {
@@ -1570,7 +1782,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       provider: "exa",
       maxResults: 8,
       timeoutMs: 15_000,
-      cacheTtlMinutes: 15,
+      cacheTtlMinutes: 60,
       fallback: ["duckduckgo"],
       searxng: {
         instanceUrl: null,
@@ -1583,6 +1795,13 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
       brave: {
         apiKeyEnv: "BRAVE_SEARCH_API_KEY",
       },
+    },
+    fetch: {
+      timeoutMs: 30_000,
+      connectTimeoutMs: 10_000,
+      maxRetries: 2,
+      retryBaseDelayMs: 500,
+      retryMaxDelayMs: 5_000,
     },
   },
   projects: {
@@ -1761,6 +1980,15 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   },
   tui: {
     theme: "auto",
+    whileBusySubmit: "steer",
+    mouse: true,
+    onboarding: {
+      completedAt: null,
+      introSeenAt: null,
+      localSetupSeenAt: null,
+      proposedSecondBackendAt: null,
+      skippedAt: null,
+    },
   },
   analytics: {
     enabled: true,
@@ -1858,10 +2086,18 @@ export function parseLocalLlmMode(raw: unknown, field: string): LocalLlmMode {
   );
 }
 
-function parseOptionalManagedModelId(raw: unknown, field: string): string | null {
+function parseOptionalManagedModelId(
+  raw: unknown,
+  field: string,
+  customModels: readonly LocalModelDef[],
+): string | null {
   if (raw === null || raw === undefined) return null;
   const s = parseNonEmptyString(raw, field);
-  if (!isKnownLocalModelId(s)) {
+  // The added models come out of the same file, so they are checked
+  // against that array rather than the module registry: a config that
+  // adds a model and selects it in one write has to validate before
+  // anything has had the chance to publish it.
+  if (!isKnownLocalModelId(s) && !customModels.some((m) => m.id === s)) {
     throw new ConfigValidationError(
       field,
       `unknown managed local model id: ${JSON.stringify(s)}`,
@@ -1919,13 +2155,55 @@ export function parseWebSearchFallback(
   return out;
 }
 
+/**
+ * Coerce a raw config value to a number for validation.
+ *
+ * A string must be a *complete* numeric literal. `Number.parseInt` stops at
+ * the first character it cannot read, so it turns `"1e3"` into `1`, `"60s"`
+ * into `60` and `"100_000"` into `100` — a typo silently becomes a valid
+ * setting. That is reachable from `config set <key> <value>`, where every
+ * value arrives as a string, so the whole token is parsed here and anything
+ * that is not a complete numeric literal is rejected as `NaN`.
+ *
+ * The test is on the *whole token*, not on its shape: `"10.0"` and `"1e3"`
+ * are both complete literals, and `parseInt` converted the first correctly
+ * (to `10`) while truncating the second. Rejecting every non-`\d+` string
+ * would therefore also reject values that already worked — and since this
+ * parser runs on `loadConfig` at every startup, a `config.json` holding
+ * `"8080.0"` would make the whole CLI unbootable with no way to fix it from
+ * inside the tool. So the value is what decides: parse it in full, then
+ * require it to be an exact integer. `"10.0"` passes, `"1e3"` (1000) passes
+ * as the thousand the user asked for, `"60s"` and `"10.9"` do not.
+ */
+function coerceIntLike(raw: unknown): number {
+  if (typeof raw === "number") return raw;
+  if (typeof raw !== "string") return NaN;
+  const value = coerceFloatLike(raw);
+  // `Number.isInteger` also rejects NaN and the infinities.
+  if (!Number.isInteger(value)) return NaN;
+  // Past 2^53 the literal no longer round-trips: "9007199254740993" would be
+  // silently stored as ...992, which is the same class of quiet corruption
+  // this function exists to stop.
+  return Number.isSafeInteger(value) ? value : NaN;
+}
+
+/**
+ * The float counterpart of {@link coerceIntLike}. Accepts the forms JSON
+ * does — `1.5`, `-0.25`, `1e3` — and rejects trailing garbage like
+ * `"0.85xyz"` or a second dot, which `Number.parseFloat` would truncate.
+ */
+function coerceFloatLike(raw: unknown): number {
+  if (typeof raw === "number") return raw;
+  if (typeof raw !== "string") return NaN;
+  const text = raw.trim();
+  if (text.length === 0) return NaN;
+  return /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(text)
+    ? Number(text)
+    : NaN;
+}
+
 export function parsePositiveInt(raw: unknown, field: string): number {
-  const value =
-    typeof raw === "number"
-      ? raw
-      : typeof raw === "string"
-        ? Number.parseInt(raw, 10)
-        : NaN;
+  const value = coerceIntLike(raw);
   if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
     throw new ConfigValidationError(
       field,
@@ -1963,12 +2241,7 @@ export function parseBoundedPositiveInt(
  * accept `0` as "feature disabled", e.g. `memory.reflection.maxNotesPerCall`.
  */
 export function parseNonNegativeInt(raw: unknown, field: string): number {
-  const value =
-    typeof raw === "number"
-      ? raw
-      : typeof raw === "string"
-        ? Number.parseInt(raw, 10)
-        : NaN;
+  const value = coerceIntLike(raw);
   if (!Number.isFinite(value) || !Number.isInteger(value) || value < 0) {
     throw new ConfigValidationError(
       field,
@@ -2008,12 +2281,7 @@ export function parseNonNegativeBoundedInt(
  * re-deriving the clamp.
  */
 export function parseUnitInterval(raw: unknown, field: string): number {
-  const value =
-    typeof raw === "number"
-      ? raw
-      : typeof raw === "string"
-        ? Number.parseFloat(raw)
-        : NaN;
+  const value = coerceFloatLike(raw);
   if (!Number.isFinite(value) || value < 0 || value > 1) {
     throw new ConfigValidationError(
       field,
@@ -2034,12 +2302,7 @@ export function parseHalfOpenUnitInterval(
   raw: unknown,
   field: string,
 ): number {
-  const value =
-    typeof raw === "number"
-      ? raw
-      : typeof raw === "string"
-        ? Number.parseFloat(raw)
-        : NaN;
+  const value = coerceFloatLike(raw);
   if (!Number.isFinite(value) || value <= 0 || value > 1) {
     throw new ConfigValidationError(
       field,
@@ -2073,6 +2336,16 @@ function parseMemoryV2FeatureEnabled(
     return true;
   }
   return parseBool(raw ?? defaultEnabled, field);
+}
+
+function resolveManagedAutoUpdate(inputVersion: number, raw: unknown): boolean {
+  if (inputVersion < MANAGED_AUTO_UPDATE_DEFAULTS_VERSION) {
+    return true;
+  }
+  return parseBool(
+    raw ?? USER_CONFIG_DEFAULTS.localModels.managed.autoUpdate,
+    "localModels.managed.autoUpdate",
+  );
 }
 
 function resolveEmbeddingModelId(
@@ -2133,13 +2406,19 @@ function resolveHttpApprovalMode(
 }
 
 export function parseApprovalLevel(raw: unknown, field: string): ApprovalLevel {
-  if (
-    typeof raw === "number" &&
-    Number.isInteger(raw) &&
-    raw >= 1 &&
-    raw <= 5
-  ) {
-    return raw as ApprovalLevel;
+  // `coerceIntLike`, like every other numeric parser in this file, and
+  // not a bare `typeof raw === "number"`. `config set <key> <value>`
+  // hands the schema the raw argv string on purpose — guessing the type
+  // at the CLI would be a second source of truth — so a number-only
+  // check made `agent.approvalLevel` the single key the dotted-key
+  // editor could never write. It is also the one safety-critical
+  // setting in the file, and it failed with a message that asked for
+  // exactly what it had just been given: `config set
+  // agent.approvalLevel 3` answered `expected an integer between 1 and
+  // 5, got "3"`.
+  const value = coerceIntLike(raw);
+  if (Number.isInteger(value) && value >= 1 && value <= 5) {
+    return value as ApprovalLevel;
   }
   throw new ConfigValidationError(
     field,
@@ -2629,10 +2908,50 @@ export function parseMcpServers(
 }
 
 /**
+ * Every top-level key this build knows about. Derived from the defaults
+ * so it cannot drift when a block is added, plus `llm`, which the parse
+ * emits conditionally rather than defaulting.
+ */
+const KNOWN_TOP_LEVEL_KEYS: ReadonlySet<string> = new Set([
+  ...Object.keys(USER_CONFIG_DEFAULTS),
+  // Emitted conditionally rather than defaulted.
+  "llm",
+  // Read as the legacy alias of `tracing` and intentionally not emitted;
+  // treating it as unknown would carry a retired block forward for ever.
+  "telemetry",
+]);
+
+/**
+ * The keys of `obj` this build does not recognise — in practice, a block
+ * written by a newer schema. `parseUserConfigFile` rebuilds its result as
+ * a fixed literal, so without carrying these through explicitly the first
+ * write from an older build would delete them. `__proto__` is dropped
+ * rather than carried: `JSON.parse` can produce it as an own key and it
+ * has no business in a config file.
+ */
+function unknownTopLevelKeys(
+  obj: Record<string, unknown>,
+): Record<string, unknown> {
+  // Null prototype so `extras[key] = value` is always a plain data write.
+  // On a normal object, `extras["__proto__"] = …` hits the inherited setter
+  // and silently reparents `extras` instead of storing anything.
+  const extras = Object.create(null) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(obj)) {
+    // With the null prototype above this would otherwise become a real own
+    // key, get spread into the result, and be written back out to disk.
+    if (key === "__proto__") continue;
+    if (KNOWN_TOP_LEVEL_KEYS.has(key)) continue;
+    extras[key] = value;
+  }
+  return extras;
+}
+
+/**
  * Validate and normalise a raw JSON payload into a `UserConfigFile`.
  * Missing sub-keys are filled with defaults — this lets us add new
  * fields without breaking existing installations. Unknown top-level
- * keys are preserved silently (forward compat).
+ * keys are carried through verbatim (forward compat); unknown keys
+ * *inside* a known block are still dropped.
  */
 export function parseUserConfigFile(raw: unknown): UserConfigFile {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
@@ -2640,10 +2959,23 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   }
   const obj = raw as Record<string, unknown>;
   const version = obj.version ?? USER_CONFIG_VERSION;
-  if (
-    typeof version !== "number" ||
-    !SUPPORTED_INPUT_VERSIONS.includes(version)
-  ) {
+  if (typeof version !== "number" || !Number.isSafeInteger(version) || version < 1) {
+    throw new ConfigValidationError(
+      "version",
+      `unsupported config version ${JSON.stringify(version)}; expected a positive whole number`,
+    );
+  }
+  // A version we have never heard of is only fatal when it is OLDER than
+  // the oldest we can migrate. A NEWER one is read with this build's
+  // schema instead of throwing: every version-gated rule below is a `<`
+  // comparison, so a higher number makes all of them fall through to
+  // "take the file at its word", which is the correct reading of a file
+  // written by a build that knew more than we do. Rejecting it instead
+  // bricks every command in the CLI — `getConfig()` runs before all of
+  // them — and turns any rollback to an older build into a dead install.
+  // The newer number is preserved in the result (and unknown top-level
+  // keys with it) so writing the file back cannot downgrade it.
+  if (!SUPPORTED_INPUT_VERSIONS.includes(version) && version < USER_CONFIG_VERSION) {
     throw new ConfigValidationError(
       "version",
       `unsupported config version ${JSON.stringify(version)}; expected one of ${SUPPORTED_INPUT_VERSIONS.join(", ")}`,
@@ -2658,6 +2990,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const web = (obj.web as Record<string, unknown> | undefined) ?? {};
   const projects = (obj.projects as Record<string, unknown> | undefined) ?? {};
   const webSearch = (web.search as Record<string, unknown> | undefined) ?? {};
+  const webFetch = (web.fetch as Record<string, unknown> | undefined) ?? {};
   const webSearchProvider = parseWebSearchProviderName(
     webSearch.provider ?? USER_CONFIG_DEFAULTS.web.search.provider,
     "web.search.provider",
@@ -2729,12 +3062,20 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (obj.analytics as Record<string, unknown> | undefined) ?? {};
   const mcp = (obj.mcp as Record<string, unknown> | undefined) ?? {};
 
+  // Parsed before `managed.modelId` so a file that adds a model and
+  // activates it in one write validates.
+  const customModels = parseCustomLocalModels(
+    localModels.customModels,
+    "localModels.customModels",
+  );
+
   const rawManaged =
     (localModels.managed as Record<string, unknown> | undefined) ?? {};
   const managed: UserManagedLocalLlmConfig = {
     modelId: parseOptionalManagedModelId(
       rawManaged.modelId,
       "localModels.managed.modelId",
+      customModels,
     ),
     port: parsePositiveInt(
       rawManaged.port ?? USER_CONFIG_DEFAULTS.localModels.managed.port,
@@ -2747,10 +3088,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             rawManaged.dataDirOverride,
             "localModels.managed.dataDirOverride",
           ),
-    autoUpdate: parseBool(
-      rawManaged.autoUpdate ?? USER_CONFIG_DEFAULTS.localModels.managed.autoUpdate,
-      "localModels.managed.autoUpdate",
-    ),
+    autoUpdate: resolveManagedAutoUpdate(version, rawManaged.autoUpdate),
     stopOnExit: parseBool(
       rawManaged.stopOnExit ??
         USER_CONFIG_DEFAULTS.localModels.managed.stopOnExit,
@@ -2816,7 +3154,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         });
 
   return {
-    version: USER_CONFIG_VERSION,
+    // Spread first so a known key can never be shadowed by a stray one.
+    ...unknownTopLevelKeys(obj),
+    // A file from a newer build keeps its own version. Stamping ours here
+    // is what turns "read a newer file" into "silently downgrade it".
+    version: Math.max(version, USER_CONFIG_VERSION),
     localModels: {
       url: localModelsUrl,
       mode: localModelsMode,
@@ -2829,6 +3171,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       ),
       managed,
       embeddings: embeddingsDaemon,
+      customModels,
     },
     log: {
       level: parseLogLevel(log.level ?? USER_CONFIG_DEFAULTS.log.level, "log.level"),
@@ -2850,10 +3193,24 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         agent.approvalLevel,
         agent.approvalRequired,
       ),
-      conversationMaxTokens: parsePositiveInt(
+      // Non-negative rather than positive: `0` is the "auto" sentinel
+      // (`CONVERSATION_CAP_AUTO`), not a request for a zero-token
+      // transcript.
+      conversationMaxTokens: parseNonNegativeInt(
         agent.conversationMaxTokens ??
           USER_CONFIG_DEFAULTS.agent.conversationMaxTokens,
         "agent.conversationMaxTokens",
+      ),
+      // Bounded, unlike the token cap: there is no "auto" here. `1`
+      // means the agent sees only the task in front of it; the upper
+      // bound keeps a fat-fingered `1000` from turning into a prompt
+      // nobody meant to pay for.
+      conversationMaxPairs: parseBoundedPositiveInt(
+        agent.conversationMaxPairs ??
+          USER_CONFIG_DEFAULTS.agent.conversationMaxPairs,
+        "agent.conversationMaxPairs",
+        1,
+        100,
       ),
       worldSnapshotMaxTokens: parsePositiveInt(
         agent.worldSnapshotMaxTokens ??
@@ -2945,6 +3302,33 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
             "web.search.brave.apiKeyEnv",
           ),
         },
+      },
+      fetch: {
+        timeoutMs: parsePositiveInt(
+          webFetch.timeoutMs ?? USER_CONFIG_DEFAULTS.web.fetch.timeoutMs,
+          "web.fetch.timeoutMs",
+        ),
+        connectTimeoutMs: parsePositiveInt(
+          webFetch.connectTimeoutMs ??
+            USER_CONFIG_DEFAULTS.web.fetch.connectTimeoutMs,
+          "web.fetch.connectTimeoutMs",
+        ),
+        maxRetries: parseNonNegativeBoundedInt(
+          webFetch.maxRetries ?? USER_CONFIG_DEFAULTS.web.fetch.maxRetries,
+          "web.fetch.maxRetries",
+          0,
+          5,
+        ),
+        retryBaseDelayMs: parsePositiveInt(
+          webFetch.retryBaseDelayMs ??
+            USER_CONFIG_DEFAULTS.web.fetch.retryBaseDelayMs,
+          "web.fetch.retryBaseDelayMs",
+        ),
+        retryMaxDelayMs: parsePositiveInt(
+          webFetch.retryMaxDelayMs ??
+            USER_CONFIG_DEFAULTS.web.fetch.retryMaxDelayMs,
+          "web.fetch.retryMaxDelayMs",
+        ),
       },
     },
     projects: {
@@ -3415,6 +3799,12 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
         tui.theme ?? USER_CONFIG_DEFAULTS.tui.theme,
         "tui.theme",
       ),
+      whileBusySubmit: parseWhileBusySubmit(
+        tui.whileBusySubmit ?? USER_CONFIG_DEFAULTS.tui.whileBusySubmit,
+        "tui.whileBusySubmit",
+      ),
+      mouse: parseBool(tui.mouse ?? USER_CONFIG_DEFAULTS.tui.mouse, "tui.mouse"),
+      onboarding: parseOnboardingState(tui.onboarding),
     },
     analytics: {
       enabled: parseBool(
@@ -3455,6 +3845,111 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
  * only enforces the string shape — an unknown name falls back to the
  * autodetect path at startup, never crashes. Anything non-string throws.
  */
+/**
+ * What Enter does in the TUI while a turn is already running.
+ *
+ * `steer` folds the message into the turn in flight (it reaches the
+ * model at the next step boundary); `queue` parks it and runs it as its
+ * own turn once the current one closes. Default is `steer` — an
+ * operator who types *while* the agent is working is usually reacting
+ * to what they see it doing.
+ */
+export type WhileBusySubmitMode = "steer" | "queue";
+
+/**
+ * Parse `tui.whileBusySubmit` (added in config v38). Older config files predate the key and
+ * are transparently upgraded to the `steer` default by the `??` at the
+ * call site, so there is no migration step.
+ */
+export function parseWhileBusySubmit(
+  raw: unknown,
+  field: string,
+): WhileBusySubmitMode {
+  if (raw === "steer" || raw === "queue") return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected "steer" or "queue", got ${JSON.stringify(raw)}`,
+  );
+}
+
+/**
+ * First-run flow state (config v43, extended in v44). Five nullable
+ * ISO-8601 timestamps, not booleans: knowing *when* a run was completed
+ * or skipped is what lets a later release decide whether an install
+ * predates a flow it would like to show again, and it costs the same
+ * byte budget.
+ *
+ * - `introSeenAt` — the splash was dismissed at least once.
+ * - `completedAt` — a backend was configured and the flow handed over to
+ *   the agent. Set for the "custom endpoint" branch too.
+ * - `skippedAt` — the operator escaped out. The flow does not reopen by
+ *   itself afterwards; before v43 nothing was written here, which is why
+ *   an escaped setup used to reappear on every single launch.
+ * - `proposedSecondBackendAt` — the "you have one, want the other too?"
+ *   screen was already offered, so it is never offered twice.
+ * - `localSetupSeenAt` — the local model list was reached, whether or
+ *   not a model came out of it. Recorded rather than derived because
+ *   backing out of that list leaves no trace anywhere else, and it
+ *   survives a launch: an interrupted first run is exactly the case
+ *   where an operator would otherwise be shown it twice.
+ */
+export interface OnboardingState {
+  completedAt: string | null;
+  introSeenAt: string | null;
+  skippedAt: string | null;
+  proposedSecondBackendAt: string | null;
+  localSetupSeenAt: string | null;
+}
+
+/**
+ * Parse `tui.onboarding`. Absent, `null`, or an empty object all mean a
+ * fresh install, so every field falls back to `null` rather than
+ * throwing — an older config file must never fail to load because it
+ * predates the block.
+ */
+export function parseOnboardingState(raw: unknown): OnboardingState {
+  const defaults = USER_CONFIG_DEFAULTS.tui.onboarding;
+  if (raw === undefined || raw === null) return { ...defaults };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      "tui.onboarding",
+      `expected object, got ${JSON.stringify(raw)}`,
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+  return {
+    completedAt: parseTimestampOrNull(obj.completedAt, "tui.onboarding.completedAt"),
+    introSeenAt: parseTimestampOrNull(obj.introSeenAt, "tui.onboarding.introSeenAt"),
+    skippedAt: parseTimestampOrNull(obj.skippedAt, "tui.onboarding.skippedAt"),
+    proposedSecondBackendAt: parseTimestampOrNull(
+      obj.proposedSecondBackendAt,
+      "tui.onboarding.proposedSecondBackendAt",
+    ),
+    localSetupSeenAt: parseTimestampOrNull(
+      obj.localSetupSeenAt,
+      "tui.onboarding.localSetupSeenAt",
+    ),
+  };
+}
+
+/**
+ * An ISO-8601 instant or `null`. Validated through `Date.parse` rather
+ * than a regex so a hand-edited file with a plausible-but-unparseable
+ * stamp is rejected at load instead of producing an `Invalid Date`
+ * somewhere far away.
+ */
+export function parseTimestampOrNull(raw: unknown, field: string): string | null {
+  if (raw === undefined || raw === null) return null;
+  const s = parseNonEmptyString(raw, field);
+  if (Number.isNaN(Date.parse(s))) {
+    throw new ConfigValidationError(
+      field,
+      `expected an ISO-8601 timestamp, got ${JSON.stringify(s)}`,
+    );
+  }
+  return s;
+}
+
 export function parseThemeName(raw: unknown, field: string): string {
   if (typeof raw !== "string") {
     throw new ConfigValidationError(

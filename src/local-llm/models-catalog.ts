@@ -1,9 +1,10 @@
 /**
- * Curated GGUF catalog (Qwen + Gemma only). URLs mirror atomic-hermes
- * desktop local LLM models; `family` replaces UI-only icon fields.
+ * Curated GGUF catalog (Qwen + Gemma + Nemotron + Muse). URLs mirror
+ * atomic-hermes desktop local LLM models; `family` replaces UI-only
+ * icon fields.
  */
 
-export type LocalModelId =
+export type CuratedLocalModelId =
   | "qwen-3.5-4b"
   | "qwen-3.5-9b"
   | "qwen-3.5-35b"
@@ -13,7 +14,18 @@ export type LocalModelId =
   | "gemma-4-e4b"
   | "gemma-4-12b"
   | "gemma-4-26b-a4b"
-  | "gemma-4-31b";
+  | "gemma-4-31b"
+  | "nemotron-3.5-30b-a3b"
+  | "muse-glimmer-30b";
+
+/**
+ * A chat model identifier: a curated catalog entry, or a model the
+ * operator added from an arbitrary Hugging Face repo (`custom-<slug>`,
+ * minted by `buildCustomModelId`). The `custom-` prefix is load-bearing
+ * — it opens the id space without weakening the typed wall against
+ * `EmbeddingModelId`, since no embedding id can satisfy this type.
+ */
+export type LocalModelId = CuratedLocalModelId | `custom-${string}`;
 
 /**
  * Memory-v2 phase 1B. Embedding model identifiers. A separate union
@@ -43,7 +55,8 @@ export interface LocalModelDef {
   contextLabel: string;
   minRamGb: number;
   recommendedRamGb: number;
-  family: "qwen" | "gemma";
+  /** `custom` covers every user-added model, whatever it is underneath. */
+  family: "qwen" | "gemma" | "nemotron" | "muse" | "custom";
   /**
    * Jinja file under `assets/ai-models/` passed to llama-server as
    * `--chat-template-file`, overriding the template baked into the GGUF.
@@ -280,18 +293,84 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     mmprojFilename: "mmproj-F16.gguf",
     mmprojFileSizeGb: 0.90,
   },
+  {
+    id: "nemotron-3.5-30b-a3b",
+    name: "NVIDIA Nemotron 3.5 Lightning 30B-A3B GGUF",
+    filename: "NVIDIA-Nemotron-3.5-Lightning-30B-A3B-AD-IQ4_NL.gguf",
+    huggingFaceUrl:
+      "https://huggingface.co/AtomicChat/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF/resolve/main/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-AD-IQ4_NL.gguf",
+    fileSizeGb: 19.65,
+    sizeLabel: "19.7 GB",
+    description: "Hybrid Mamba2 MoE reasoning, imatrix-calibrated",
+    maxContextLength: 262_144,
+    contextLabel: "256K",
+    minRamGb: 24,
+    recommendedRamGb: 32,
+    family: "nemotron",
+    tag: "New",
+    supportsVision: false,
+  },
+  {
+    id: "muse-glimmer-30b",
+    name: "Meta Muse Glimmer 30B GGUF",
+    filename: "Muse-Glimmer-30B-UD-Q4_K_XL.gguf",
+    huggingFaceUrl:
+      "https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF/resolve/main/Muse-Glimmer-30B-UD-Q4_K_XL.gguf",
+    fileSizeGb: 15.9,
+    sizeLabel: "15.9 GB",
+    // Vision is fully wired (mmproj below). The native ATEM/Harmony tool
+    // format is NOT: the daemon passes `model.id` as the llama-server
+    // alias (`daemon-lifecycle.ts`), and `muse-glimmer-30b` matches no
+    // alias hint in `selectBaseProfile`, so this resolves to
+    // `plain-instruct` and tool calls go through the generic GBNF array
+    // grammar. Pinned by `models-catalog.test.ts`; reword only when a
+    // native profile actually lands.
+    description: "Multimodal 30B MoE, generic tool calling",
+    maxContextLength: 131_072,
+    contextLabel: "128K",
+    minRamGb: 20,
+    recommendedRamGb: 32,
+    family: "muse",
+    tag: "New",
+    supportsVision: true,
+    mmprojUrl:
+      "https://huggingface.co/unsloth/Muse-Glimmer-30B-GGUF/resolve/main/mmproj-Muse-Glimmer-30B-Q8_0.gguf",
+    mmprojFilename: "mmproj-Muse-Glimmer-30B-Q8_0.gguf",
+    mmprojFileSizeGb: 2.05,
+  },
 ];
 
 export const DEFAULT_LLAMACPP_MODEL_ID: LocalModelId = "qwen-3.5-4b";
 
+/**
+ * Models the operator added themselves, mirrored out of
+ * `localModels.customModels` in the user config so that every existing
+ * catalog consumer — daemon start, the installer, the TUI rows, the CLI
+ * — resolves them through the same pair of lookups below.
+ *
+ * A module-level registry rather than a `getConfig()` call because
+ * `config-schema` imports this file, and the import cycle would cost
+ * more than the mutable module state does. `loadConfig()` populates it.
+ */
+let customModels: readonly LocalModelDef[] = [];
+
+export function setCustomLocalModels(defs: readonly LocalModelDef[]): void {
+  customModels = defs;
+}
+
+/** The curated catalog followed by the operator's own additions. */
+export function listLocalModels(): readonly LocalModelDef[] {
+  return [...LOCAL_MODELS_CATALOG, ...customModels];
+}
+
 export function getLocalModelDef(id: LocalModelId): LocalModelDef {
-  const found = LOCAL_MODELS_CATALOG.find((m) => m.id === id);
+  const found = listLocalModels().find((m) => m.id === id);
   if (!found) throw new Error(`unknown local model id: ${id}`);
   return found;
 }
 
 export function isKnownLocalModelId(raw: string): raw is LocalModelId {
-  return LOCAL_MODELS_CATALOG.some((m) => m.id === raw);
+  return listLocalModels().some((m) => m.id === raw);
 }
 
 /**

@@ -55,7 +55,7 @@ export function buildOsHttpRequestTool(
   return {
     name: "os.http.request",
     description:
-      "Raw HTTP GET or POST via the system `curl` binary for APIs and machine-readable endpoints (JSON, XML, plain text). Returns the response body verbatim — no HTML extraction or cleanup. To read a human web page as markdown/text, use `os.web.fetch` instead. Blocks private/internal addresses (SSRF) like `os.web.fetch`, pins DNS with curl `--resolve`, and re-validates each redirect hop. Host allowlist and approval policy come from `config.http`. Body is capped at `config.http.maxResponseBytes`.",
+      "Raw HTTP GET or POST via the system `curl` binary for APIs and machine-readable endpoints (JSON, XML, plain text). Returns the response body verbatim — no HTML extraction or cleanup. To read a human web page as markdown/text, use `os.web.fetch` instead. Blocks private/internal addresses (SSRF) like `os.web.fetch`, pins DNS with curl `--resolve`, and re-validates each redirect hop. Host allowlist and approval policy come from `config.http`. Body is capped at `config.http.maxResponseBytes`. Retries transient failures (429/502/503/504 and connection timeouts) with exponential backoff, honouring `Retry-After`; a POST is only retried when the server explicitly invites it, so a request is never double-submitted.",
     readonly: false,
     async run(rawArgs, ctx) {
       const httpCfg = options.config.http;

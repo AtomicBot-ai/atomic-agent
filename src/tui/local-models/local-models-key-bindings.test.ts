@@ -5,6 +5,7 @@ import type { LocalModelDef } from "../../local-llm/index.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import { createInitialTuiState, type TuiSessionInfo } from "../tui-state.js";
+import { handleLocalModelsHfKey } from "./local-models-hf-keys.js";
 import { handleLocalModelsTabKey } from "./local-models-key-bindings.js";
 import type { LocalModelRow, MmprojStatus } from "./local-models-panel-state.js";
 
@@ -135,6 +136,53 @@ describe("handleLocalModelsTabKey — vision-aware Enter / g hotkey", () => {
     });
     expect(handled).toBe(true);
     expect(onCycle).toHaveBeenCalledTimes(1);
+  });
+
+  // The flag is on by default and drives a background download, so it
+  // needs an in-TUI way out: the CLI equivalent rewrites the whole
+  // config file. Like `G`, it ignores the cursor row.
+  it("'U' toggles backend auto-update regardless of the cursor row type", () => {
+    const onToggle = vi.fn();
+    const callbacks: TuiAppCallbacks = {
+      onApprovalDecision: vi.fn(),
+      onAbort: vi.fn(),
+      onQuit: vi.fn(),
+      onMessageSubmitted: vi.fn(),
+      onLocalModelsAutoUpdateToggleRequested: onToggle,
+    };
+    const state = stateWithRow(
+      makeRow("gemma-4-e4b", { downloaded: true, mmprojStatus: "downloaded" }),
+    );
+    const handled = handleLocalModelsTabKey("U", emptyKey({ shift: true }), {
+      state,
+      dispatch: vi.fn(),
+      callbacks,
+    });
+    expect(handled).toBe(true);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
+  // Lowercase must not trigger it — `u` is unbound here, and silently
+  // flipping a background-download setting on a stray keypress is the
+  // kind of surprise the uppercase convention exists to prevent.
+  it("lowercase 'u' does not toggle backend auto-update", () => {
+    const onToggle = vi.fn();
+    const callbacks: TuiAppCallbacks = {
+      onApprovalDecision: vi.fn(),
+      onAbort: vi.fn(),
+      onQuit: vi.fn(),
+      onMessageSubmitted: vi.fn(),
+      onLocalModelsAutoUpdateToggleRequested: onToggle,
+    };
+    const state = stateWithRow(
+      makeRow("gemma-4-e4b", { downloaded: true, mmprojStatus: "downloaded" }),
+    );
+    handleLocalModelsTabKey("u", emptyKey(), {
+      state,
+      dispatch: vi.fn(),
+      callbacks,
+    });
+    expect(onToggle).not.toHaveBeenCalled();
   });
 
   it("Enter on a downloaded GGUF + missing mmproj row triggers mmproj-only pull", () => {
@@ -372,5 +420,204 @@ describe("handleLocalModelsTabKey — vision-aware Enter / g hotkey", () => {
       callbacks,
     });
     expect(onPull).toHaveBeenCalledWith("qwen-3.5-4b", "with-mmproj");
+  });
+});
+
+describe("the Hugging Face branch's keys", () => {
+  const REPO = {
+    repoId: "unsloth/Qwen3.5-4B-GGUF",
+    revision: "main",
+    choices: [
+      {
+        path: "Q4_K_M.gguf",
+        filename: "Q4_K_M.gguf",
+        sizeBytes: 1,
+        fileSizeGb: 1,
+        sizeLabel: "1 GB",
+      },
+      {
+        path: "Q8_0.gguf",
+        filename: "Q8_0.gguf",
+        sizeBytes: 2,
+        fileSizeGb: 2,
+        sizeLabel: "2 GB",
+      },
+    ],
+    mmproj: null,
+    hidden: null,
+  };
+
+  function hfState(
+    mode: "list" | "hfRef" | "hfPick",
+    hf: Partial<{ reference: string; busy: boolean; cursor: number; repo: typeof REPO }> = {},
+  ) {
+    const base = stateWithRow(
+      makeRow("a" as LocalModelRow["id"], {
+        supportsVision: false,
+        downloaded: true,
+        mmprojStatus: "n/a",
+      }),
+    );
+    return {
+      ...base,
+      localModelsPanel: {
+        ...base.localModelsPanel,
+        mode,
+        hf: {
+          reference: hf.reference ?? "",
+          busy: hf.busy ?? false,
+          error: null,
+          repo: hf.repo ?? null,
+          cursor: hf.cursor ?? 0,
+        },
+      },
+    };
+  }
+
+  it("`a` opens the reference editor from the list", () => {
+    const dispatch = vi.fn();
+    handleLocalModelsTabKey("a", emptyKey(), {
+      state: hfState("list"),
+      dispatch,
+      callbacks: {} as TuiAppCallbacks,
+    });
+    expect(dispatch).toHaveBeenCalledWith({ type: "local_models_hf_opened" });
+  });
+
+  it("swallows the list's own hotkeys while the editor is open", () => {
+    // `s` starts the daemon and `d` opens a delete confirm on the list.
+    // Typing a repo name must not do either.
+    for (const input of ["s", "d", "g", "B", "r"]) {
+      const dispatch = vi.fn();
+      const callbacks = {
+        onLocalModelsDaemonStartRequested: vi.fn(),
+        onLocalModelsBackendPullRequested: vi.fn(),
+        onLocalModelsRefreshRequested: vi.fn(),
+      } as unknown as TuiAppCallbacks;
+      const handled = handleLocalModelsTabKey(input, emptyKey(), {
+        state: hfState("hfRef", { reference: "unsloth/x" }),
+        dispatch,
+        callbacks,
+      });
+      expect(handled).toBe(true);
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(callbacks.onLocalModelsDaemonStartRequested).not.toHaveBeenCalled();
+      expect(callbacks.onLocalModelsBackendPullRequested).not.toHaveBeenCalled();
+      expect(callbacks.onLocalModelsRefreshRequested).not.toHaveBeenCalled();
+    }
+  });
+
+  it("esc cancels the lookup while one is in flight, and leaves once it is not", () => {
+    const busyCallbacks = {
+      onLocalModelsHfLookupCancelRequested: vi.fn(),
+    } as unknown as TuiAppCallbacks;
+    const busyDispatch = vi.fn();
+    handleLocalModelsTabKey("", emptyKey({ escape: true }), {
+      state: hfState("hfRef", { busy: true }),
+      dispatch: busyDispatch,
+      callbacks: busyCallbacks,
+    });
+    expect(busyCallbacks.onLocalModelsHfLookupCancelRequested).toHaveBeenCalled();
+    expect(busyDispatch).not.toHaveBeenCalled();
+
+    const idleDispatch = vi.fn();
+    handleLocalModelsTabKey("", emptyKey({ escape: true }), {
+      state: hfState("hfRef"),
+      dispatch: idleDispatch,
+      callbacks: {} as TuiAppCallbacks,
+    });
+    expect(idleDispatch).toHaveBeenCalledWith({ type: "local_models_hf_closed" });
+  });
+
+  it("ctrl+l clears the reference, but not mid-lookup", () => {
+    const dispatch = vi.fn();
+    handleLocalModelsTabKey("l", emptyKey({ ctrl: true }), {
+      state: hfState("hfRef", { reference: "typo" }),
+      dispatch,
+      callbacks: {} as TuiAppCallbacks,
+    });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "local_models_hf_reference_changed",
+      value: "",
+    });
+    const busy = vi.fn();
+    handleLocalModelsTabKey("l", emptyKey({ ctrl: true }), {
+      state: hfState("hfRef", { reference: "typo", busy: true }),
+      dispatch: busy,
+      callbacks: {} as TuiAppCallbacks,
+    });
+    expect(busy).not.toHaveBeenCalled();
+  });
+
+  it("j/k walk the file list and Enter adds the one under the cursor", () => {
+    const dispatch = vi.fn();
+    handleLocalModelsTabKey("j", emptyKey(), {
+      state: hfState("hfPick", { repo: REPO }),
+      dispatch,
+      callbacks: {} as TuiAppCallbacks,
+    });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "local_models_hf_cursor_moved",
+      delta: 1,
+    });
+
+    const callbacks = {
+      onLocalModelsHfAddRequested: vi.fn(),
+    } as unknown as TuiAppCallbacks;
+    handleLocalModelsTabKey("", emptyKey({ return: true }), {
+      state: hfState("hfPick", { repo: REPO, cursor: 1 }),
+      dispatch: vi.fn(),
+      callbacks,
+    });
+    expect(callbacks.onLocalModelsHfAddRequested).toHaveBeenCalledWith(REPO, 1);
+  });
+
+  it("esc on the file list goes back to the reference, not out of the branch", () => {
+    // The repo survives on the slice, so re-entering the list costs no
+    // second request.
+    const dispatch = vi.fn();
+    handleLocalModelsTabKey("", emptyKey({ escape: true }), {
+      state: hfState("hfPick", { repo: REPO }),
+      dispatch,
+      callbacks: {} as TuiAppCallbacks,
+    });
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "local_models_mode_set",
+      mode: "hfRef",
+    });
+  });
+});
+
+describe("the Hugging Face branch is shared with the LLM pane", () => {
+  it("declines every key while the branch is closed", () => {
+    // `Manage › LLM › Local` is the surface an operator actually reaches
+    // — `tab_changed: "models"` redirects there — so the branch's keys
+    // live in their own handler both tables call. Returning `null` when
+    // it is closed is what lets each caller keep its own hotkeys.
+    const base = createInitialTuiState(SESSION);
+    expect(
+      handleLocalModelsHfKey("a", emptyKey(), {
+        state: base,
+        dispatch: vi.fn(),
+        callbacks: {} as TuiAppCallbacks,
+      }),
+    ).toBeNull();
+  });
+
+  it("claims every key once it is open", () => {
+    const base = createInitialTuiState(SESSION);
+    const state = {
+      ...base,
+      localModelsPanel: { ...base.localModelsPanel, mode: "hfRef" as const },
+    };
+    for (const input of ["s", "d", "n", "c", "f", "L"]) {
+      expect(
+        handleLocalModelsHfKey(input, emptyKey(), {
+          state,
+          dispatch: vi.fn(),
+          callbacks: {} as TuiAppCallbacks,
+        }),
+      ).toBe(true);
+    }
   });
 });

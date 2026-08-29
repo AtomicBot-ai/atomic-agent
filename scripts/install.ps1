@@ -50,6 +50,110 @@ function Write-Info($msg) { Write-Host $msg }
 # turns the exception into a single readable line and exits 1.
 function Fail($msg) { throw $msg }
 
+# SHA256 of a file, as a lowercase hex string.
+#
+# Get-FileHash is NOT assumed: it ships in the Microsoft.PowerShell.Utility
+# module from PowerShell 4.0 on, so it is missing under a 2.0 engine
+# (`-Version 2`) and absent whenever a trimmed image or an overridden
+# PSModulePath keeps that module from loading. Users hit exactly that during
+# in-app self-update and the install aborted with "'Get-FileHash' is not
+# recognized" (issue #174).
+#
+# So hash through .NET, which needs no module and exists wherever PowerShell
+# runs at all, and keep Get-FileHash / certutil only as fallbacks. Verifying
+# the download is not optional — a checksum that cannot be computed is a
+# failure, never a skip.
+function Get-Sha256($path) {
+  $full = (Resolve-Path -LiteralPath $path).ProviderPath
+
+  try {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+      $stream = [System.IO.File]::OpenRead($full)
+      try {
+        return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace("-", "").ToLower()
+      } finally {
+        $stream.Dispose()
+      }
+    } finally {
+      $sha.Dispose()
+    }
+  } catch {
+    # Fall through to the external implementations below.
+  }
+
+  if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+    # Guard the result: Get-FileHash can return nothing (a directory, an
+    # unreadable path) and a bare .Hash on $null throws an error that says
+    # nothing about hashing. Fall through instead.
+    $result = Get-FileHash -LiteralPath $full -Algorithm SHA256 -ErrorAction SilentlyContinue
+    if ($result -and $result.Hash) { return $result.Hash.ToLower() }
+  }
+
+  # certutil is present on every supported Windows version. Its output is a
+  # banner, the hex digest (spaced on older builds), then a status line.
+  try {
+    $out = & certutil.exe -hashfile $full SHA256 2>$null
+    if ($LASTEXITCODE -eq 0 -and $out) {
+      $digest = ($out | Where-Object { $_ -match '^[0-9a-fA-F ]+$' } |
+        ForEach-Object { $_ -replace '\s', '' } |
+        Where-Object { $_.Length -eq 64 } | Select-Object -First 1)
+      if ($digest) { return $digest.ToLower() }
+    }
+  } catch {
+    # Not on PATH, or refused the file — report it as a hashing failure below
+    # rather than leaking "certutil.exe is not recognized" to the user.
+  }
+
+  Fail "cannot compute SHA256: no usable hash implementation (.NET, Get-FileHash and certutil all failed)"
+}
+
+# Extract a zip into an existing directory.
+#
+# Expand-Archive has the same availability problem as Get-FileHash — it lives
+# in Microsoft.PowerShell.Archive and only from PowerShell 5.0 — so an install
+# that got past the checksum would still fail here on the same machines. Use
+# .NET first for the same reason.
+function Expand-Zip($zipPath, $destination) {
+  $zipFull = (Resolve-Path -LiteralPath $zipPath).ProviderPath
+  $destFull = (Resolve-Path -LiteralPath $destination).ProviderPath
+
+  try {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop
+
+    # Walk the entries instead of calling ExtractToDirectory: on .NET
+    # Framework (Windows PowerShell 5.1) that helper throws when the
+    # destination already exists, and install.ps1 always creates the staging
+    # dir first. Entry-by-entry also lets a re-run overwrite cleanly.
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($zipFull)
+    try {
+      foreach ($entry in $zip.Entries) {
+        $target = Join-Path $destFull $entry.FullName
+        # Directory entries have an empty Name; create and move on.
+        if (-not $entry.Name) {
+          New-Item -ItemType Directory -Path $target -Force | Out-Null
+          continue
+        }
+        $parent = Split-Path -Parent $target
+        if ($parent) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
+        [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+      }
+    } finally {
+      $zip.Dispose()
+    }
+    return
+  } catch {
+    # Fall through to Expand-Archive below.
+  }
+
+  if (Get-Command Expand-Archive -ErrorAction SilentlyContinue) {
+    Expand-Archive -LiteralPath $zipFull -DestinationPath $destFull -Force
+    return
+  }
+
+  Fail "cannot extract $(Split-Path -Leaf $zipFull): no usable zip implementation (.NET and Expand-Archive both failed)"
+}
+
 # Invoke-WebRequest's exception names the status code but not the URL, so a bare
 # "404 (Not Found)" during self-update does not say whether the tag, the repo or
 # the asset name was wrong. Attribute it.
@@ -134,9 +238,7 @@ function Test-SameFile($left, $right) {
   if ((Get-Item -LiteralPath $left).Length -ne (Get-Item -LiteralPath $right).Length) {
     return $false
   }
-  $leftHash = (Get-FileHash -LiteralPath $left -Algorithm SHA256).Hash
-  $rightHash = (Get-FileHash -LiteralPath $right -Algorithm SHA256).Hash
-  return $leftHash -eq $rightHash
+  return (Get-Sha256 $left) -eq (Get-Sha256 $right)
 }
 
 # Apply a staged tree onto the install dir as a single all-or-nothing
@@ -237,7 +339,7 @@ try {
   if (-not $expected) {
     Fail "could not read expected checksum from $ArchiveName.sha256"
   }
-  $actual = (Get-FileHash -Path $ZipPath -Algorithm SHA256).Hash.ToLower()
+  $actual = Get-Sha256 $ZipPath
   if ($actual -ne $expected) {
     Fail "checksum mismatch for $ArchiveName`n  expected: $expected`n  actual:   $actual"
   }
@@ -247,7 +349,7 @@ try {
   # (no top-level <slug>/ wrapper), unlike the Unix tarball.
   $Stage = Join-Path $Work "stage"
   New-Item -ItemType Directory -Path $Stage -Force | Out-Null
-  Expand-Archive -Path $ZipPath -DestinationPath $Stage -Force
+  Expand-Zip $ZipPath $Stage
 
   $BinaryPath = Join-Path $Stage "atomic-agent.exe"
   if (-not (Test-Path $BinaryPath)) {
@@ -264,8 +366,20 @@ try {
   Remove-StaleBackups $InstallDir
   Copy-TreeTransactional $Stage $InstallDir
 
+  # Short alias: `atag` is the same CLI under a shorter name. A .cmd shim
+  # rather than a copy of the (large) SEA binary, and rather than a symlink,
+  # which needs an elevated shell or Developer Mode. %~dp0 resolves to the
+  # directory of the shim, so it always launches the atomic-agent.exe sitting
+  # next to it and asset resolution is unaffected. Rewritten on every install,
+  # so it self-heals and needs no place in the transactional copy.
+  Set-Content -LiteralPath (Join-Path $InstallDir "atag.cmd") -Encoding ASCII -Value @(
+    "@echo off",
+    "`"%~dp0atomic-agent.exe`" %*"
+  )
+
   Write-Info ""
   Write-Info "installed atomic-agent to $InstallDir\atomic-agent.exe"
+  Write-Info "(plus the short alias 'atag' next to it)"
 }
 catch {
   # A bare PowerShell error record is unreadable when the in-app updater
@@ -313,15 +427,18 @@ switch ($script:PathStatus) {
   "present" {
     Write-Info "to run:"
     Write-Info "  atomic-agent"
+    Write-Info "  atag           # same thing, shorter"
   }
   "manual" {
     Write-Info "atomic-agent is NOT on your PATH yet."
     Write-Info "add $InstallDir to your PATH, then run:"
     Write-Info "  atomic-agent"
+    Write-Info "  atag           # same thing, shorter"
   }
   default {
     Write-Info "atomic-agent was added to your PATH."
     Write-Info "it works in THIS terminal now; open a NEW terminal elsewhere, then run:"
     Write-Info "  atomic-agent"
+    Write-Info "  atag           # same thing, shorter"
   }
 }

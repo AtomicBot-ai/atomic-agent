@@ -1,3 +1,4 @@
+import { assertProviderStatus } from "./assert-provider-status.js";
 import { searchHttp } from "../transport/search-http.js";
 import type {
   WebSearchHttpDeps,
@@ -40,9 +41,7 @@ export function createSearxngProvider(
         runCommand: deps.runCommand,
         lookup: deps.lookup,
       });
-      if (response.status >= 400) {
-        throw new Error(`SearXNG returned HTTP ${response.status}`);
-      }
+      assertProviderStatus(response, "searxng", "SearXNG");
       return parseSearxngJson(response.body, options.maxResults);
     },
   };

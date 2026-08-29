@@ -1,0 +1,458 @@
+import { describe, expect, it } from "vitest";
+import { reduceTuiState } from "../agent-event-reducer.js";
+import { createInitialTuiState } from "../tui-state.js";
+import type { TuiState } from "../tui-state.js";
+import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
+import { createOnboardingState } from "./onboarding-state.js";
+import { fakeSession } from "../test-fixtures.js";
+
+function withFlow(
+  step:
+    | "choose"
+    | "cloud"
+    | "local_pick"
+    | "local_hf_ref"
+    | "local_download"
+    | "wait_or_jump" = "choose",
+): TuiState {
+  // `createOnboardingState` opens on the splash; every case here is
+  // about what happens after it.
+  const state = createInitialTuiState(fakeSession(), 50, {
+    onboarding: createOnboardingState("http://127.0.0.1:8080"),
+  });
+  return reduceTuiState(state, { type: "onboarding_step_set", step });
+}
+
+describe("onboarding reducer", () => {
+  it("opens on the splash, and closes on `onboarding_set`", () => {
+    const fresh = createInitialTuiState(fakeSession(), 50, {
+      onboarding: createOnboardingState("http://127.0.0.1:8080"),
+    });
+    expect(fresh.onboarding?.step).toBe("intro");
+    const opened = withFlow();
+    expect(opened.onboarding?.step).toBe("choose");
+    const closed = reduceTuiState(opened, { type: "onboarding_set", onboarding: null });
+    expect(closed.onboarding).toBeNull();
+  });
+
+  it("wraps the cursor at both ends", () => {
+    let state = withFlow();
+    state = reduceTuiState(state, { type: "onboarding_cursor_moved", delta: -1 });
+    expect(state.onboarding?.cursor).toBe(2);
+    state = reduceTuiState(state, { type: "onboarding_cursor_moved", delta: 1 });
+    expect(state.onboarding?.cursor).toBe(0);
+  });
+
+  it("clears a stale error when the step changes", () => {
+    let state = withFlow();
+    state = reduceTuiState(state, { type: "onboarding_error_set", error: "fetch failed" });
+    state = reduceTuiState(state, { type: "onboarding_step_set", step: "custom_chat_url" });
+    expect(state.onboarding?.error).toBeNull();
+  });
+
+  it("ignores every action but `onboarding_set` while the flow is closed", () => {
+    const state = createInitialTuiState(fakeSession(), 50);
+    const next = reduceTuiState(state, { type: "onboarding_cursor_moved", delta: 1 });
+    expect(next.onboarding).toBeNull();
+  });
+
+  it("finishes with the outcome the host has to act on", () => {
+    const state = reduceTuiState(withFlow(), { type: "onboarding_finished", outcome: "local" });
+    // A plain finish never bypasses the second-backend offer.
+    expect(state.onboarding).toMatchObject({
+      step: "finished",
+      outcome: "local",
+      skipSecondOffer: false,
+    });
+  });
+
+  it("carries the skip exit's bypass flag onto the finished state", () => {
+    // The finished effect runs a commit after the action is gone, so
+    // the flag has to survive on state for it to read.
+    const state = reduceTuiState(withFlow("local_download"), {
+      type: "onboarding_finished",
+      outcome: "local",
+      skipSecondOffer: true,
+    });
+    expect(state.onboarding).toMatchObject({
+      step: "finished",
+      outcome: "local",
+      skipSecondOffer: true,
+    });
+  });
+
+  describe("local branch ↔ the model orchestrator", () => {
+    it("moves to the download and remembers the model", () => {
+      const state = reduceTuiState(withFlow("local_pick"), {
+        type: "onboarding_local_model_picked",
+        modelId: "gemma-4-e4b",
+      });
+      expect(state.onboarding).toMatchObject({
+        step: "local_download",
+        localModelId: "gemma-4-e4b",
+      });
+    });
+
+    it("finishes when the chat pull completes", () => {
+      const state = reduceTuiState(withFlow("local_download"), {
+        type: "local_models_pull_finished",
+        kind: "chat",
+      });
+      expect(state.onboarding).toMatchObject({ step: "finished", outcome: "local" });
+      expect(state.localModelsPanel.pull).toBeNull();
+    });
+
+    it("ignores a finished pull of some other kind", () => {
+      const state = reduceTuiState(withFlow("local_download"), {
+        type: "local_models_pull_finished",
+        kind: "embedding",
+      });
+      expect(state.onboarding?.step).toBe("local_download");
+    });
+
+    it("keeps the embedding offer out of the first run", () => {
+      const state = reduceTuiState(withFlow("local_download"), {
+        type: "local_models_embedding_onboarding_opened",
+        modelId: "embeddinggemma-300m",
+        name: "EmbeddingGemma 300M",
+        sizeLabel: "~84 MB",
+      });
+      expect(state.localModelsPanel.embeddingOnboardingPrompt).toBeNull();
+      expect(state.onboarding?.step).toBe("local_download");
+    });
+
+    it("still lets the panel show that offer when the flow is closed", () => {
+      const base = createInitialTuiState(fakeSession(), 50);
+      const state = reduceTuiState(base, {
+        type: "local_models_embedding_onboarding_opened",
+        modelId: "embeddinggemma-300m",
+        name: "EmbeddingGemma 300M",
+        sizeLabel: "~84 MB",
+      });
+      expect(state.localModelsPanel.embeddingOnboardingPrompt).not.toBeNull();
+    });
+
+    it("resets the cursor when a new list takes the screen", () => {
+      let state = reduceTuiState(withFlow("choose"), {
+        type: "onboarding_cursor_moved",
+        delta: 2,
+      });
+      expect(state.onboarding?.cursor).toBe(2);
+      state = reduceTuiState(state, { type: "onboarding_step_set", step: "local_pick" });
+      expect(state.onboarding?.cursor).toBe(0);
+    });
+  });
+
+  describe("cloud while the model downloads", () => {
+    const pulling = (state: TuiState): TuiState =>
+      reduceTuiState(state, {
+        type: "local_models_pull_started",
+        pull: {
+          kind: "chat",
+          modelId: "gemma-4-e4b",
+          label: "Gemma 4 E4B",
+          percent: 38,
+          transferredBytes: 1_600_000_000,
+          totalBytes: 4_220_000_000,
+          error: null,
+        },
+      });
+
+    it("opens the wizard and remembers where it came from", () => {
+      const state = reduceTuiState(pulling(withFlow("local_download")), {
+        type: "onboarding_cloud_meanwhile_opened",
+      });
+      expect(state.onboarding).toMatchObject({
+        step: "cloud",
+        resumeAfterCloud: "local_download",
+      });
+    });
+
+    it("asks wait-or-jump when the key lands while the pull is still running", () => {
+      let state = reduceTuiState(pulling(withFlow("local_download")), {
+        type: "onboarding_cloud_meanwhile_opened",
+      });
+      state = reduceTuiState(state, {
+        type: "providers_wizard_opened",
+        wizard: createProvidersWizardState("add"),
+      });
+      state = reduceTuiState(state, { type: "providers_wizard_succeeded" });
+      expect(state.onboarding).toMatchObject({
+        step: "wait_or_jump",
+        outcome: "cloud",
+        resumeAfterCloud: null,
+      });
+    });
+
+    it("finishes instead when the pull already landed", () => {
+      let state = reduceTuiState(withFlow("local_download"), {
+        type: "onboarding_cloud_meanwhile_opened",
+      });
+      state = reduceTuiState(state, { type: "providers_wizard_succeeded" });
+      expect(state.onboarding?.step).toBe("finished");
+    });
+
+    it("backs out to the download, not to a choice already made", () => {
+      let state = reduceTuiState(pulling(withFlow("local_download")), {
+        type: "onboarding_cloud_meanwhile_opened",
+      });
+      state = reduceTuiState(state, { type: "providers_wizard_closed" });
+      expect(state.onboarding).toMatchObject({
+        step: "local_download",
+        resumeAfterCloud: null,
+      });
+    });
+
+    it("comes back to wait-or-jump when a second provider is added from it", () => {
+      let state = pulling(withFlow("wait_or_jump"));
+      state = reduceTuiState(state, { type: "onboarding_cloud_meanwhile_opened" });
+      expect(state.onboarding).toMatchObject({
+        step: "cloud",
+        resumeAfterCloud: "wait_or_jump",
+      });
+      state = reduceTuiState(state, {
+        type: "providers_wizard_opened",
+        wizard: createProvidersWizardState("add"),
+      });
+      state = reduceTuiState(state, { type: "providers_wizard_succeeded" });
+      expect(state.onboarding).toMatchObject({
+        step: "wait_or_jump",
+        outcome: "cloud",
+        resumeAfterCloud: null,
+        cursor: 0,
+      });
+      expect(state.providersPanel.wizard).toBeNull();
+    });
+
+    it("backs out of the second wizard to wait-or-jump, not to the download", () => {
+      let state = pulling(withFlow("wait_or_jump"));
+      state = reduceTuiState(state, { type: "onboarding_cloud_meanwhile_opened" });
+      state = reduceTuiState(state, {
+        type: "providers_wizard_opened",
+        wizard: createProvidersWizardState("add"),
+      });
+      state = reduceTuiState(state, { type: "providers_wizard_closed" });
+      expect(state.onboarding).toMatchObject({
+        step: "wait_or_jump",
+        resumeAfterCloud: null,
+      });
+    });
+
+    it("finishes from wait-or-jump when the second wizard outlives the pull", () => {
+      let state = pulling(withFlow("wait_or_jump"));
+      state = reduceTuiState(state, { type: "onboarding_cloud_meanwhile_opened" });
+      state = reduceTuiState(state, {
+        type: "providers_wizard_opened",
+        wizard: createProvidersWizardState("add"),
+      });
+      // The orchestrator reports in while the wizard is up: nothing is
+      // left to come back for, so the flow ends instead.
+      state = reduceTuiState(state, { type: "local_models_pull_finished", kind: "chat" });
+      state = reduceTuiState(state, { type: "providers_wizard_succeeded" });
+      expect(state.onboarding).toMatchObject({ step: "finished", outcome: "cloud" });
+    });
+
+    it("closes the flow when the pull lands while wait-or-jump is up", () => {
+      let state = pulling(withFlow("wait_or_jump"));
+      state = reduceTuiState(state, {
+        type: "onboarding_finished",
+        outcome: "cloud",
+      });
+      // (a finished outcome is what the jump row dispatches; the wait
+      //  row leaves the flow open until the pull reports in)
+      expect(state.onboarding?.step).toBe("finished");
+
+      let waiting = pulling(withFlow("wait_or_jump"));
+      waiting = reduceTuiState(waiting, {
+        type: "local_models_pull_finished",
+        kind: "chat",
+      });
+      expect(waiting.onboarding?.step).toBe("finished");
+      expect(waiting.localModelsPanel.pull).toBeNull();
+    });
+
+    it("returns from a cancelled second wizard to a truthful wait-or-jump when the pull landed meanwhile", () => {
+      let state = pulling(withFlow("wait_or_jump"));
+      state = reduceTuiState(state, { type: "onboarding_cloud_meanwhile_opened" });
+      state = reduceTuiState(state, {
+        type: "providers_wizard_opened",
+        wizard: createProvidersWizardState("add"),
+      });
+      // The pull ends while the wizard covers the screen: the flow's own
+      // pull_finished case does not fire on the cloud step, only the
+      // panel's does — the pull is simply gone when the wizard closes.
+      state = reduceTuiState(state, { type: "local_models_pull_finished", kind: "chat" });
+      state = reduceTuiState(state, { type: "providers_wizard_closed" });
+      expect(state.onboarding).toMatchObject({
+        step: "wait_or_jump",
+        resumeAfterCloud: null,
+      });
+      // The state the screen derives "ready" from: no pull, no error.
+      expect(state.localModelsPanel.pull).toBeNull();
+      expect(state.localModelsPanel.errorLine).toBeNull();
+    });
+
+    it("finishes instead of returning to a download that already landed", () => {
+      let state = pulling(withFlow("local_download"));
+      state = reduceTuiState(state, { type: "onboarding_cloud_meanwhile_opened" });
+      state = reduceTuiState(state, {
+        type: "providers_wizard_opened",
+        wizard: createProvidersWizardState("add"),
+      });
+      state = reduceTuiState(state, { type: "local_models_pull_finished", kind: "chat" });
+      state = reduceTuiState(state, { type: "providers_wizard_closed" });
+      // The download step can only claim a running download; a clean
+      // landing concludes the flow the way pull_finished would have.
+      expect(state.onboarding).toMatchObject({ step: "finished", outcome: "local" });
+    });
+
+    it("lands on wait-or-jump with the failure when the pull dies under the wizard", () => {
+      let state = pulling(withFlow("local_download"));
+      state = reduceTuiState(state, { type: "onboarding_cloud_meanwhile_opened" });
+      state = reduceTuiState(state, {
+        type: "providers_wizard_opened",
+        wizard: createProvidersWizardState("add"),
+      });
+      state = reduceTuiState(state, {
+        type: "local_models_pull_failed",
+        kind: "chat",
+        error: "connection reset",
+      });
+      state = reduceTuiState(state, { type: "providers_wizard_succeeded" });
+      // A dead pull is still a question — retry, or run on cloud alone —
+      // so the flow must not end with the failure unsaid.
+      expect(state.onboarding).toMatchObject({ step: "wait_or_jump", outcome: "cloud" });
+      expect(state.localModelsPanel.pull).toBeNull();
+      expect(state.localModelsPanel.errorLine).toBe("connection reset");
+    });
+
+    it("keeps wait-or-jump up and truthful when the pull fails while it is on screen", () => {
+      let state = pulling(withFlow("wait_or_jump"));
+      state = reduceTuiState(state, {
+        type: "local_models_pull_failed",
+        kind: "chat",
+        error: "connection reset",
+      });
+      expect(state.onboarding?.step).toBe("wait_or_jump");
+      // The state the screen derives "failed" from: no pull, an error.
+      expect(state.localModelsPanel.pull).toBeNull();
+      expect(state.localModelsPanel.errorLine).toBe("connection reset");
+    });
+  });
+
+  describe("cloud step ↔ providers wizard", () => {
+    it("finishes the flow when the wizard saves, and clears the panel's wizard", () => {
+      let state = withFlow("cloud");
+      state = reduceTuiState(state, {
+        type: "providers_wizard_opened",
+        wizard: createProvidersWizardState("add"),
+      });
+      state = reduceTuiState(state, { type: "providers_wizard_succeeded" });
+      expect(state.onboarding).toMatchObject({ step: "finished", outcome: "cloud" });
+      expect(state.providersPanel.wizard).toBeNull();
+    });
+
+    it("returns to the choice when the wizard is backed out of", () => {
+      let state = withFlow("cloud");
+      state = reduceTuiState(state, {
+        type: "providers_wizard_opened",
+        wizard: createProvidersWizardState("add"),
+      });
+      state = reduceTuiState(state, { type: "providers_wizard_closed" });
+      expect(state.onboarding?.step).toBe("choose");
+      expect(state.providersPanel.wizard).toBeNull();
+    });
+
+    it("leaves the panel alone when the flow is not on its cloud step", () => {
+      let state = createInitialTuiState(fakeSession(), 50);
+      state = reduceTuiState(state, {
+        type: "providers_wizard_opened",
+        wizard: createProvidersWizardState("add"),
+      });
+      state = reduceTuiState(state, { type: "providers_wizard_succeeded" });
+      expect(state.onboarding).toBeNull();
+      expect(state.providersPanel.wizard).toBeNull();
+    });
+  });
+
+  describe("the Hugging Face branch", () => {
+    const REPO = {
+      repoId: "unsloth/Qwen3.5-4B-GGUF",
+      revision: "main",
+      choices: [
+        {
+          path: "Qwen3.5-4B-UD-Q4_K_XL.gguf",
+          filename: "Qwen3.5-4B-UD-Q4_K_XL.gguf",
+          sizeBytes: 2_899_102_924,
+          fileSizeGb: 2.7,
+          sizeLabel: "2.7 GB",
+        },
+      ],
+      mmproj: null,
+      hidden: null,
+    } as const;
+
+    it("keeps the typed reference so a failed lookup can be corrected", () => {
+      let state = withFlow("local_hf_ref");
+      state = reduceTuiState(state, {
+        type: "onboarding_hf_reference_changed",
+        value: "unsloth/Qwen",
+      });
+      expect(state.onboarding?.hfReference).toBe("unsloth/Qwen");
+      state = reduceTuiState(state, {
+        type: "onboarding_error_set",
+        error: "Hugging Face returned 404: no repo or revision by that name.",
+      });
+      expect(state.onboarding?.hfReference).toBe("unsloth/Qwen");
+      expect(state.onboarding?.step).toBe("local_hf_ref");
+    });
+
+    // Resolving and arriving on the file list are one event: split, a
+    // frame would render an empty list under the editor's own footer.
+    it("lands on the file list, cursor reset, in a single action", () => {
+      let state = withFlow("local_hf_ref");
+      state = reduceTuiState(state, { type: "onboarding_cursor_moved", delta: 3, length: 9 });
+      state = reduceTuiState(state, { type: "onboarding_busy_set", busy: true });
+      state = reduceTuiState(state, { type: "onboarding_hf_repo_resolved", repo: REPO });
+      expect(state.onboarding?.step).toBe("local_hf_pick");
+      expect(state.onboarding?.cursor).toBe(0);
+      expect(state.onboarding?.busy).toBe(false);
+      expect(state.onboarding?.hfRepo?.repoId).toBe("unsloth/Qwen3.5-4B-GGUF");
+    });
+
+    it("sends an added model to the same download screen as a curated one", () => {
+      let state = withFlow("local_hf_ref");
+      state = reduceTuiState(state, { type: "onboarding_hf_repo_resolved", repo: REPO });
+      state = reduceTuiState(state, {
+        type: "onboarding_local_model_picked",
+        modelId: "custom-unsloth-qwen3.5-4b-gguf-qwen3.5-4b-ud-q4_k_xl",
+      });
+      expect(state.onboarding?.step).toBe("local_download");
+      expect(state.onboarding?.localModelId).toBe(
+        "custom-unsloth-qwen3.5-4b-gguf-qwen3.5-4b-ud-q4_k_xl",
+      );
+    });
+
+    // The lookup takes seconds and esc can cancel it; a resolve landing
+    // on any step but the one that asked is dropped whole, or the flow
+    // would be yanked onto a file list nobody is waiting for.
+    it("ignores a resolution landing on a step that did not ask", () => {
+      const state = withFlow("local_pick");
+      const next = reduceTuiState(state, {
+        type: "onboarding_hf_repo_resolved",
+        repo: REPO,
+      });
+      expect(next.onboarding?.step).toBe("local_pick");
+      expect(next.onboarding?.hfRepo).toBeNull();
+    });
+
+    it("ignores a late resolution once the flow has closed", () => {
+      const closed = createInitialTuiState(fakeSession(), 50);
+      const next = reduceTuiState(closed, {
+        type: "onboarding_hf_repo_resolved",
+        repo: REPO,
+      });
+      expect(next.onboarding).toBeNull();
+    });
+  });
+});

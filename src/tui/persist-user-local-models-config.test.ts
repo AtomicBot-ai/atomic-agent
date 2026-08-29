@@ -8,6 +8,7 @@ import { getUserConfigPath, writeUserConfigFileSync } from "../config/config-fil
 import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
 import { getConfig } from "../config/index.js";
 import {
+  isLoopbackBaseUrl,
   normalizeLocalLlmBaseUrl,
   persistUserLocalModelsConfig,
   persistUserLocalLlmUrl,
@@ -152,6 +153,93 @@ describe("persistUserLocalLlmUrl", () => {
     expect(written.localModels.embeddings.enabled).toBe(false);
     expect(written.localModels.embeddings.modelId).toBeNull();
     expect(written.memory.embeddings.enabled).toBe(false);
+  });
+
+  it("routes chat at local-llama when an llm block routes elsewhere", () => {
+    // Only reachable through the startup gate, i.e. when NO cloud
+    // provider is ready (see isCloudTextProviderReady) — e.g. a LAN
+    // openai-compatible entry without a key. In that shape the wizard
+    // used to write the URL and leave the dead cloud route active, so
+    // the saved address was inert.
+    const path = getUserConfigPath(stateDir);
+    writeUserConfigFileSync(path, {
+      ...USER_CONFIG_DEFAULTS,
+      llm: {
+        activeTextProvider: "lan-compat",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto",
+        providers: [
+          { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
+          {
+            id: "lan-compat",
+            kind: "openai-compatible",
+            baseUrl: "http://192.168.1.50:8080/v1",
+            defaultChatModel: "some-model",
+          },
+        ],
+      },
+    });
+    resetConfigCache();
+
+    persistUserRemoteLlmUrls({ chatUrl: "http://192.168.1.50:8080" });
+
+    const written = JSON.parse(readFileSync(path, "utf8")) as {
+      llm: {
+        activeTextProvider: string;
+        providers: Array<{ id: string; url?: string }>;
+      };
+    };
+    expect(written.llm.activeTextProvider).toBe("local-llama");
+    // syncLocalLlamaProviderUrl must carry the saved URL into the entry
+    // the provider registry actually builds from.
+    const local = written.llm.providers.find((p) => p.id === "local-llama");
+    expect(local?.url).toBe("http://192.168.1.50:8080");
+  });
+
+  it("leaves a file without an llm block alone (default route already local)", () => {
+    const path = getUserConfigPath(stateDir);
+    writeUserConfigFileSync(path, USER_CONFIG_DEFAULTS);
+    resetConfigCache();
+
+    persistUserRemoteLlmUrls({ chatUrl: "http://10.0.0.10:8080" });
+
+    const written = JSON.parse(readFileSync(path, "utf8")) as {
+      llm?: unknown;
+    };
+    // No llm block means the runtime synthesizes local-llama as the
+    // active route; writing one here would only freeze defaults.
+    expect(written.llm).toBeUndefined();
+  });
+});
+
+describe("isLoopbackBaseUrl", () => {
+  it("is true for every on-machine host at any port", () => {
+    for (const url of [
+      "http://127.0.0.1:9931",
+      "http://0.0.0.0:8080",
+      "http://localhost:1234",
+      "http://LOCALHOST:1234",
+      "http://box.localhost:9931",
+      "http://[::1]:9931",
+      "http://[::1]",
+      "localhost:9931", // typed without a scheme
+      "127.0.0.1:9931",
+    ]) {
+      expect(isLoopbackBaseUrl(url)).toBe(true);
+    }
+  });
+
+  it("is false for remote hosts and unparseable input", () => {
+    for (const url of [
+      "https://api.example.com",
+      "http://192.168.1.50:8000",
+      "http://notlocalhost.com",
+      "http://localhost.evil.com", // suffix trick must not pass
+      "",
+      "   ",
+    ]) {
+      expect(isLoopbackBaseUrl(url)).toBe(false);
+    }
   });
 });
 

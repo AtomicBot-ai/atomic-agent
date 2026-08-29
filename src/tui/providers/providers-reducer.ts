@@ -46,6 +46,15 @@ export function reduceProvidersPanel(
           cursor: (panel.cursor + 1) % panel.rows.length,
         },
       };
+    case "providers_cursor_set":
+      if (panel.rows.length === 0) return state;
+      return {
+        ...state,
+        providersPanel: {
+          ...panel,
+          cursor: Math.min(panel.rows.length - 1, Math.max(0, action.row)),
+        },
+      };
     case "providers_cursor_up":
       if (panel.rows.length === 0) return state;
       return {
@@ -59,7 +68,11 @@ export function reduceProvidersPanel(
     case "providers_status":
       return {
         ...state,
-        providersPanel: { ...panel, statusLine: action.line },
+        providersPanel: {
+          ...panel,
+          statusLine: action.line,
+          statusLineSource: action.source ?? "cloud",
+        },
       };
     case "providers_busy":
       return {
@@ -101,6 +114,21 @@ export function reduceProvidersPanel(
             ...panel.wizard,
             submitting: false,
             error: action.error,
+          },
+        },
+      };
+    case "providers_wizard_verify_cancelled":
+      // Back to an editable screen rather than a closed wizard: the
+      // operator abandoned the check, not the provider they were adding.
+      if (panel.wizard === null) return state;
+      return {
+        ...state,
+        providersPanel: {
+          ...panel,
+          wizard: {
+            ...panel.wizard,
+            submitting: false,
+            error: "Key check cancelled — press Enter to try again.",
           },
         },
       };

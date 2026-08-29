@@ -2,6 +2,7 @@ import {
   requireApproval,
   type DangerousToolOptions,
 } from "../../approval/dangerous-tool.js";
+import type { ApprovalCategory } from "../../approval/approval-level.js";
 import {
   categorizeFsMutation,
   type FsMutationKind,
@@ -65,6 +66,27 @@ export interface FsApprovalRequest {
    * `extract` ignores it. Never re-derived inside the tools layer.
    */
   trustConfigPaths?: readonly string[];
+  /**
+   * Absolute path the operator may retarget from the prompt. Set only
+   * by `os.fs.write`, whose destination is a free choice; an edit or a
+   * patch acts on a file the model picked for a reason, so redirecting
+   * those would be nonsense rather than a feature.
+   */
+  redirectablePath?: string;
+}
+
+/**
+ * What the funnel reports back once a request survives the gate.
+ */
+export interface FsApprovalOutcome {
+  /**
+   * The category the operator actually approved. Callers that accept a
+   * retarget compare it against the new path's category: an equal rung
+   * needs no second prompt, a different one does.
+   */
+  category: ApprovalCategory;
+  /** Raw retarget as typed, when the operator supplied one. */
+  pathOverride?: string;
 }
 
 /**
@@ -86,14 +108,14 @@ export async function requireFsApproval(
   options: DangerousToolOptions,
   request: FsApprovalRequest,
   signal: AbortSignal,
-): Promise<void> {
+): Promise<FsApprovalOutcome> {
   const category = await categorizeFsMutation(request.kind, request.paths, {
     workingDir: request.workingDir,
     ...(request.trustConfigPaths !== undefined
       ? { trustConfigPaths: request.trustConfigPaths }
       : {}),
   });
-  await requireApproval(
+  const outcome = await requireApproval(
     options,
     {
       sessionId: request.sessionId,
@@ -104,7 +126,16 @@ export async function requireFsApproval(
       ...(request.affectedResources !== undefined
         ? { affectedResources: request.affectedResources }
         : {}),
+      ...(request.redirectablePath !== undefined
+        ? { redirectablePath: request.redirectablePath }
+        : {}),
     },
     signal,
   );
+  return {
+    category,
+    ...(outcome.pathOverride !== undefined
+      ? { pathOverride: outcome.pathOverride }
+      : {}),
+  };
 }

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   ENV_DEFAULTS,
@@ -12,6 +13,7 @@ import {
   ensureUserConfigFileSync,
   getUserConfigPath,
 } from "./config-file.js";
+import { setCustomLocalModels } from "../local-llm/models-catalog.js";
 import { loadDotenvFromStateDir } from "./load-dotenv.js";
 import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
 import type { UserLlmFileConfig } from "./llm-config.js";
@@ -64,8 +66,19 @@ function resolvePath(raw: string | undefined, fallback: string): string {
 
 // Asset directories (e.g. `grammars/`) ship next to the Node SEA binary in
 // installed layouts but live under the project root during dev. Env overrides
-// win first; otherwise prefer the binary-adjacent copy and fall back to
-// `<cwd>/<relativeDefault>` so `npm run`-style dev invocations still work.
+// win first; otherwise prefer the binary-adjacent copy, then the copy that
+// ships alongside this module, and only then `<cwd>/<relativeDefault>`.
+//
+// The module-relative step is what makes `node /abs/path/dist/cli/index.js`
+// work from an unrelated directory — exactly what the Ctrl+N "new terminal
+// window" spawn does, which used to die on `ENOENT .../grammars/tool-call.gbnf`
+// because cwd was the operator's home rather than the install root. Two levels
+// up from this file is the tree root in both layouts: `dist/config/` under a
+// build, `src/config/` under tsx.
+//
+// cwd stays last rather than being dropped: a checkout whose `dist/` was
+// copied elsewhere, or any layout we have not thought of, still resolves as it
+// always did when run from the project root.
 function resolveAssetDir(envKey: string, relativeDefault: string): string {
   const raw = readEnv(envKey);
   if (raw) {
@@ -74,6 +87,15 @@ function resolveAssetDir(envKey: string, relativeDefault: string): string {
   const nextToBinary = resolve(dirname(process.execPath), relativeDefault);
   if (existsSync(nextToBinary)) {
     return nextToBinary;
+  }
+  const nextToModule = resolve(
+    dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    relativeDefault,
+  );
+  if (existsSync(nextToModule)) {
+    return nextToModule;
   }
   return resolve(process.cwd(), relativeDefault);
 }
@@ -92,6 +114,10 @@ export function loadConfig(): AtomicAgentConfig {
   const dotenv = loadDotenvFromStateDir(stateDir);
   const userConfigFile = getUserConfigPath(stateDir);
   const user = ensureUserConfigFileSync(userConfigFile);
+  // Publish the operator's own models to the catalog registry, so that
+  // `getLocalModelDef` and `isKnownLocalModelId` resolve them everywhere
+  // a curated id already works.
+  setCustomLocalModels(user.localModels.customModels);
   const grammarsDir = resolveAssetDir("ATOMIC_AGENT_GRAMMARS_DIR", "grammars");
 
   const browserChannel: BrowserChannel = readBrowserChannel(
@@ -177,6 +203,7 @@ export function loadConfig(): AtomicAgentConfig {
         readEnv("ATOMIC_AGENT_STABLE_PREFIX_SALT") ??
         ENV_DEFAULTS.STABLE_PREFIX_SALT,
       conversationMaxTokens: user.agent.conversationMaxTokens,
+      conversationMaxPairs: user.agent.conversationMaxPairs,
       worldSnapshotMaxTokens: user.agent.worldSnapshotMaxTokens,
       loadedToolsCap: readBoundedPositiveInt(
         "ATOMIC_AGENT_LOADED_TOOLS_CAP",
@@ -282,6 +309,7 @@ export function loadConfig(): AtomicAgentConfig {
     },
     web: {
       search: { ...user.web.search },
+      fetch: { ...user.web.fetch },
     },
     projects: {
       roots: [...user.projects.roots],
@@ -468,6 +496,9 @@ export function loadConfig(): AtomicAgentConfig {
     },
     tui: {
       theme: user.tui.theme,
+      whileBusySubmit: user.tui.whileBusySubmit,
+      mouse: user.tui.mouse,
+      onboarding: { ...user.tui.onboarding },
     },
     analytics: {
       enabled: user.analytics.enabled,

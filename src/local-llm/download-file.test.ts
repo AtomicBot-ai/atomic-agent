@@ -90,6 +90,82 @@ describe("download-file", () => {
     expect(existsSync(dest)).toBe(false);
     expect(existsSync(`${dest}.tmp`)).toBe(false);
   });
+
+  it("keeps the byte counter moving when chunks are smaller than one percent", async () => {
+    // A real GGUF pull: one percent of the declared total is far larger than
+    // a single chunk, so tying updates to whole-percent changes leaves the
+    // counter frozen for seconds. Here the transfer never even reaches 1%.
+    const declaredTotal = 1_000_000_000;
+    const chunkSize = 1_000;
+    const count = 5;
+    let emitted = 0;
+    const body = new ReadableStream({
+      async pull(controller) {
+        if (emitted >= count) {
+          controller.close();
+          return;
+        }
+        emitted += 1;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        controller.enqueue(Buffer.alloc(chunkSize));
+      },
+    });
+
+    globalThis.fetch = vi.fn(async () => {
+      return new Response(body, {
+        status: 200,
+        headers: { "content-length": String(declaredTotal) },
+      });
+    }) as typeof fetch;
+
+    const seen: Array<{ percent: number; transferred: number }> = [];
+    await downloadFile("https://example.invalid/big.bin", join(dir, "big.bin"), {
+      onProgress: (percent, transferred) => {
+        seen.push({ percent, transferred });
+      },
+    });
+
+    // Percent rounds to 0 throughout — the bytes are the only signal the
+    // user has, and they must keep arriving.
+    expect(seen.every((s) => s.percent === 0)).toBe(true);
+    expect(seen.length).toBeGreaterThanOrEqual(count);
+    for (let i = 1; i < seen.length; i++) {
+      expect(seen[i].transferred).toBeGreaterThan(seen[i - 1].transferred);
+    }
+    expect(seen.at(-1)?.transferred).toBe(chunkSize * count);
+  });
+
+  it("still reports progress when the server sends no content-length", async () => {
+    // total === 0 pins percent at 0 forever, which used to wedge the old
+    // guard shut after the very first chunk.
+    let emitted = 0;
+    const body = new ReadableStream({
+      async pull(controller) {
+        if (emitted >= 5) {
+          controller.close();
+          return;
+        }
+        emitted += 1;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        controller.enqueue(Buffer.alloc(1_000));
+      },
+    });
+
+    globalThis.fetch = vi.fn(async () => {
+      return new Response(body, { status: 200 });
+    }) as typeof fetch;
+
+    const seen: number[] = [];
+    await downloadFile("https://example.invalid/nolen.bin", join(dir, "nolen.bin"), {
+      onProgress: (_percent, transferred) => {
+        seen.push(transferred);
+      },
+    });
+
+    expect(seen.length).toBeGreaterThan(1);
+    expect(seen.at(-1)).toBe(5_000);
+  });
+
 });
 
 async function waitFor(predicate: () => boolean): Promise<void> {

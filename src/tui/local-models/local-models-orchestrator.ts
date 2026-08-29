@@ -1,6 +1,7 @@
 import { totalmem } from "node:os";
 
 import { getConfig, resetConfigCache } from "../../config/index.js";
+import { addCustomModel, removeCustomModel } from "../../config/custom-models-store.js";
 import { hasOtherLiveSessions } from "../../local-llm/session-registry.js";
 import {
   checkForBackendUpdate,
@@ -22,8 +23,10 @@ import {
   isKnownLocalModelId,
   isMmprojDownloaded,
   isModelDownloaded,
+  buildCustomModelDef,
+  listLocalModels,
   listVulkanDevices,
-  LOCAL_MODELS_CATALOG,
+  maybeAutoUpdateBackend,
   probeNvidiaVramMiB,
   readBackendVersion,
   readLogTail,
@@ -36,6 +39,7 @@ import {
   resolveManagedDevice,
   resolveMmprojFilePath,
   resolvePlatformAsset,
+  resolveHuggingFaceGgufChoices,
   resolveServerBinPath,
   startChatAndEmbeddingDaemons,
   startEmbeddingDaemon,
@@ -46,6 +50,7 @@ import {
   type EmbeddingModelDef,
   type EmbeddingModelId,
   type GpuDevice,
+  type HuggingFaceRepoChoices,
   type LocalModelDef,
   type LocalModelId,
 } from "../../local-llm/index.js";
@@ -61,6 +66,7 @@ import {
   persistMemoryEmbeddingsEnabled,
 } from "../persist-embedding-hybrid-recall.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
+import { ChatPullMirror, downloadProgressFor } from "../local-turn-gate.js";
 import type { TuiEventBus } from "../tui-app.js";
 
 /**
@@ -81,6 +87,15 @@ function describeDeviceChoice(
 }
 
 /** Log-tail poll cadence while the LLM logs tab is active. */
+/**
+ * Deadline for the backend asset download on the auto-update path. The
+ * zip is 27-39 MB, so this is generous for any working link; it exists
+ * because a stalled-but-open TCP connection otherwise never resolves
+ * and the update hangs for the life of the process. A timeout is
+ * reported like any other update failure and retried on the next start.
+ */
+const BACKEND_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
+
 const LOGS_POLL_MS = 1000;
 
 /** Snapshot refresh cadence while the Models tab is idle. */
@@ -98,6 +113,12 @@ export interface LocalModelsOrchestratorHooks {
   onManagedModelSelected?: (modelId: LocalModelId) => void;
   /** Fired after a successful chat daemon (re)start for the active model. */
   onManagedDaemonRestarted?: () => void;
+  /**
+   * Fired when the operator deliberately puts a local model live and it
+   * actually serves — an explicit setup act, never the launch-time
+   * `autoStartIfReady` adoption of a model configured long ago.
+   */
+  onManagedModelActivated?: () => void;
 }
 
 export class LocalModelsOrchestrator {
@@ -117,8 +138,10 @@ export class LocalModelsOrchestrator {
    * `pullEmbeddingModel` `await this.pullBackend()` when the backend is
    * missing; without this a chat pull and an embedding pull started at the
    * same time would launch two concurrent `downloadBackend()` calls that
-   * wipe + extract into the same `<dataDir>/backend/` directory, corrupting
-   * the install. Concurrent callers share the same in-flight promise.
+   * race on the same `<dataDir>/backend.next` staging dir — each clears it
+   * before extracting, so the loser's tree is deleted mid-write and the
+   * winner can swap in a partial install. Concurrent callers share the
+   * same in-flight promise.
    */
   private backendPullInFlight: Promise<void> | null = null;
   /**
@@ -140,10 +163,29 @@ export class LocalModelsOrchestrator {
    */
   private cachedNvidiaVramMiB: number | null | undefined = undefined;
 
+  /**
+   * Live view of the non-embedding pull this orchestrator itself emits,
+   * mirrored off the bus (one tap covers every emit site — GGUF, mmproj,
+   * backend, HF custom). Lets the "not downloaded" errors embed the real
+   * download progress instead of pretending nothing is happening.
+   */
+  private readonly chatPull = new ChatPullMirror();
+  /**
+   * The Hugging Face lookup currently in flight, if any. Cancelling
+   * replaces the ref, so a response that lands afterwards finds itself
+   * stale and dispatches nothing — the identity comparison is what
+   * makes Escape trustworthy; the abort merely frees the socket.
+   * Mirrors `use-onboarding-huggingface.ts`, which does the same for
+   * the first-run flow.
+   */
+  private hfLookup: AbortController | null = null;
+
   constructor(
     private readonly bus: TuiEventBus & { emit(action: unknown): void },
     private readonly hooks?: LocalModelsOrchestratorHooks,
-  ) {}
+  ) {
+    this.chatPull.attach(bus);
+  }
 
   startAutoRefresh(): void {
     if (this.timer) return;
@@ -200,7 +242,10 @@ export class LocalModelsOrchestrator {
     try {
       const cfg = getConfig();
       const dataDir = cfg.paths.localModelsDataDir;
-      const rows = LOCAL_MODELS_CATALOG.map((def) => ({
+      // The full model list — curated catalog plus the operator's own
+      // Hugging Face additions — so a model added on first run has a
+      // panel row to be marked active, re-pulled or deleted from.
+      const rows = listLocalModels().map((def) => ({
         id: def.id,
         def,
         downloaded: isModelDownloaded(dataDir, def),
@@ -248,6 +293,7 @@ export class LocalModelsOrchestrator {
           currentTag: ver?.tag ?? null,
           latestTag,
           updateAvailable,
+          autoUpdate: cfg.localModels.managed.autoUpdate,
         },
         daemon: {
           running: daemon.running,
@@ -446,8 +492,15 @@ export class LocalModelsOrchestrator {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
     const chat = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
-    if (chat.running) return true;
-    return this.startDaemon();
+    // Already serving because the pull auto-started it moments ago —
+    // still this operator finishing setup, so it counts the same.
+    if (chat.running) {
+      this.hooks?.onManagedModelActivated?.();
+      return true;
+    }
+    const started = await this.startDaemon();
+    if (started) this.hooks?.onManagedModelActivated?.();
+    return started;
   }
 
   private async startChatDaemonAfterPull(def: LocalModelDef): Promise<boolean> {
@@ -461,7 +514,11 @@ export class LocalModelsOrchestrator {
       });
       await this.stopProcessesForRestart({ silent: true });
     }
-    return this.startDaemon();
+    const started = await this.startDaemon();
+    // A model the operator just pulled came up serving: setup, not the
+    // launch-time adoption of a backend configured long ago.
+    if (started) this.hooks?.onManagedModelActivated?.();
+    return started;
   }
 
   private async startEmbeddingDaemonAfterPull(def: EmbeddingModelDef): Promise<void> {
@@ -558,6 +615,83 @@ export class LocalModelsOrchestrator {
     });
   }
 
+/* ------------------------------------------------------------------ *
+   * Add a model from Hugging Face — the Models pane's own branch of the
+   * flow the first-run screen already had. Same resolver, same catalog
+   * write, same pull; what is new is that it is reachable after
+   * onboarding, when adding a second model is the actual task.
+   * ------------------------------------------------------------------ */
+
+  /**
+   * Ask Hugging Face what GGUFs the reference names. Every failure — a
+   * typo, a gated repo, a repo holding no GGUF at all — comes back as a
+   * sentence and is shown on the editor that asked for the reference.
+   */
+  async resolveHuggingFaceReference(raw: string): Promise<void> {
+    const controller = new AbortController();
+    this.hfLookup?.abort();
+    this.hfLookup = controller;
+    this.bus.emit({ type: "local_models_hf_lookup_started" });
+    try {
+      const repo = await resolveHuggingFaceGgufChoices(raw, {
+        signal: controller.signal,
+      });
+      if (this.hfLookup !== controller) return;
+      this.hfLookup = null;
+      this.bus.emit({ type: "local_models_hf_repo_resolved", repo });
+    } catch (err) {
+      if (this.hfLookup !== controller) return;
+      this.hfLookup = null;
+      this.bus.emit({
+        type: "local_models_hf_lookup_failed",
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /** Escape while the lookup runs: drop the socket, keep what was typed. */
+  cancelHuggingFaceLookup(): void {
+    if (!this.hfLookup) return;
+    this.hfLookup.abort();
+    this.hfLookup = null;
+    this.bus.emit({ type: "local_models_hf_lookup_cancelled" });
+  }
+
+  /**
+   * Record the chosen file as a catalog entry, then hand it to the very
+   * pull the curated rows use — which is what lands an added model on
+   * the ordinary download screen rather than a second one built for it.
+   */
+  async addHuggingFaceChoice(
+    repo: HuggingFaceRepoChoices,
+    index: number,
+  ): Promise<void> {
+    const choice = repo.choices[index];
+    if (!choice) return;
+    let id: LocalModelId;
+    try {
+      const def = buildCustomModelDef({
+        repoId: repo.repoId,
+        revision: repo.revision,
+        file: { path: choice.path, sizeBytes: choice.sizeBytes },
+        mmproj: repo.mmproj,
+      });
+      // Written before the pull starts: `pullModel` resolves the id
+      // through the catalog registry, and the registry is loaded from
+      // the file this call writes.
+      addCustomModel(def);
+      id = def.id;
+    } catch (err) {
+      this.bus.emit({
+        type: "local_models_hf_lookup_failed",
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+    this.bus.emit({ type: "local_models_hf_closed" });
+    await this.pullModel(id);
+  }
+
   async pullBackend(): Promise<void> {
     // Coalesce concurrent callers onto one download. If a backend pull is
     // already running (e.g. a chat pull triggered it and an embedding pull
@@ -613,6 +747,21 @@ export class LocalModelsOrchestrator {
   }
 
   /**
+   * Persist `localModels.mode: "managed"` on its own. `setActive` is
+   * the usual writer of that mode, but the composer can switch the
+   * route to "local" while nothing is downloaded yet — no model id to
+   * set active — and without this the config would still say
+   * `external`, so the backend control would mislabel the route
+   * `custom` on the very next frame.
+   */
+  async useManagedMode(): Promise<void> {
+    if (getConfig().localModels.mode === "managed") return;
+    persistUserLocalModelsConfig({ mode: "managed" });
+    resetConfigCache();
+    await this.refresh();
+  }
+
+  /**
    * Persist the active managed model and restart the daemon so the new
    * model is actually served. If the daemon was not running before we
    * still start it — the user's intent in selecting a model is "make
@@ -644,6 +793,9 @@ export class LocalModelsOrchestrator {
     if (await this.startDaemon()) {
       // Tray refresh (optimistic id + `/props` re-read) is now fired by
       // `startDaemon` on success, so no explicit hook call is needed here.
+      // This branch is the operator choosing a model and it coming up —
+      // the local counterpart of a verified cloud key.
+      this.hooks?.onManagedModelActivated?.();
       this.bus.emit({ type: "ui_mode_set", mode: "chat" });
     }
   }
@@ -683,6 +835,11 @@ export class LocalModelsOrchestrator {
     }
     try {
       await removeModel(dataDir, id);
+      // A curated row survives its files' deletion — the catalog is the
+      // product. A custom row exists only because the operator added it,
+      // so deleting the model undoes the add too; otherwise the row
+      // would linger with no other way to drop it from the list.
+      if (def.family === "custom") removeCustomModel(id);
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: ${def.name} removed`,
@@ -715,6 +872,25 @@ export class LocalModelsOrchestrator {
    * `auto → cpu → auto`. Does not restart the daemon — the operator
    * presses `s` to apply.
    */
+  /**
+   * Flip `localModels.managed.autoUpdate`. The flag is on by default and
+   * governs a background download, so it needs a way out that is not
+   * "hand-edit config.json" — the CLI equivalent takes the whole file.
+   * Takes effect on the next start; nothing in flight is cancelled.
+   */
+  async toggleBackendAutoUpdate(): Promise<void> {
+    const next = !getConfig().localModels.managed.autoUpdate;
+    persistUserLocalModelsConfig({ managed: { autoUpdate: next } });
+    resetConfigCache();
+    this.bus.emit({
+      type: "runtime_info",
+      line: next
+        ? "local-llm: backend auto-update on — a newer llama.cpp is fetched after start"
+        : "local-llm: backend auto-update off — update manually with 'B'",
+    });
+    await this.refresh();
+  }
+
   async cycleManagedDevice(): Promise<void> {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
@@ -801,7 +977,16 @@ export class LocalModelsOrchestrator {
     });
   }
 
-  async startDaemon(): Promise<boolean> {
+  /**
+   * @param opts.backendAlreadyChecked set by callers that ran
+   * `applyBackendAutoUpdate` themselves. Without it a TUI launch
+   * checks GitHub twice per start — two hits against the ~60 req/h
+   * anonymous budget, and two passes racing on the same
+   * `backend.next` staging dir.
+   */
+  async startDaemon(opts?: {
+    backendAlreadyChecked?: boolean;
+  }): Promise<boolean> {
     const cfg = getConfig();
     if (cfg.localModels.mode !== "managed") {
       this.bus.emit({
@@ -820,6 +1005,7 @@ export class LocalModelsOrchestrator {
     }
     const dataDir = cfg.paths.localModelsDataDir;
     const def = getLocalModelDef(mid);
+    let justPulledBackend = false;
     if (!isBackendDownloaded(dataDir)) {
       this.bus.emit({
         type: "runtime_info",
@@ -827,13 +1013,23 @@ export class LocalModelsOrchestrator {
       });
       await this.pullBackend();
       if (!isBackendDownloaded(dataDir)) return false;
+      justPulledBackend = true;
     }
     if (!isModelDownloaded(dataDir, def)) {
+      // With a pull already in flight the honest message is the live
+      // progress, not a bare "cannot start" that reads like a dead end.
+      const progress = downloadProgressFor(this.chatPull.current, def.id);
       this.bus.emit({
         type: "runtime_info",
-        line: `local-llm: model ${def.name} not downloaded — cannot start`,
+        line: `local-llm: model ${def.name} not downloaded — cannot start (${
+          progress ?? "press Enter on it to download"
+        })`,
       });
       return false;
+    }
+    if (!justPulledBackend && !opts?.backendAlreadyChecked) {
+      const updated = await this.applyBackendAutoUpdate(dataDir);
+      if (!updated) return false;
     }
     this.bus.emit({ type: "local_models_daemon_phase_set", phase: "starting" });
     this.bus.emit({
@@ -1500,10 +1696,119 @@ export class LocalModelsOrchestrator {
   }
 
   /**
+   * Check GitHub Releases and replace the llama.cpp zip when a newer
+   * tag exists. Returns whether the caller may proceed to start.
+   *
+   * Every update failure is fire-safe: the installer stages the new
+   * build and only swaps it in once it is complete, so a failed check,
+   * stop or download leaves the previous binary on disk and start
+   * continues on it. `false` is reserved for the one case that cannot
+   * be papered over — the daemon was stopped for an update and no
+   * usable backend remains.
+   */
+  private async applyBackendAutoUpdate(
+    dataDir: string,
+    opts?: { keepDaemonRunning?: boolean },
+  ): Promise<boolean> {
+    try {
+      const result = await maybeAutoUpdateBackend(dataDir, {
+        enabled: getConfig().localModels.managed.autoUpdate,
+        keepDaemonRunning: opts?.keepDaemonRunning,
+        // The zip is small (27-39 MB) but the link may not be. Without a
+        // deadline a stalled-open connection pins the download for the
+        // life of the process; the next start retries from scratch.
+        signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
+        onWillDownload: () => {
+          this.bus.emit({
+            type: "local_models_pull_started",
+            pull: {
+              kind: "backend",
+              modelId: "_backend",
+              label: "llama.cpp backend",
+              percent: 0,
+              transferredBytes: 0,
+              totalBytes: 0,
+              error: null,
+            },
+          });
+        },
+        onProgress: (percent: number, transferred: number, total: number) => {
+          this.bus.emit({
+            type: "local_models_pull_progress",
+            kind: "backend",
+            percent,
+            transferredBytes: transferred,
+            totalBytes: total,
+          });
+        },
+      });
+      if (result.action === "updated") {
+        this.bus.emit({ type: "local_models_pull_finished", kind: "backend" });
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: updated llama.cpp ${result.from ?? "none"} → ${result.to}`,
+        });
+      } else if (result.action === "check_failed") {
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: backend update check failed — starting current binary (${result.error})`,
+        });
+      } else if (result.action === "deferred") {
+        this.bus.emit({
+          type: "runtime_info",
+          line:
+            result.reason === "daemon_live"
+              ? "local-llm: backend update deferred — will install on next start"
+              : "local-llm: backend update deferred — another session is using the current binary",
+        });
+      } else if (result.action === "update_failed") {
+        this.bus.emit({
+          type: "local_models_pull_failed",
+          kind: "backend",
+          error: result.error,
+        });
+        if (!result.backendUsable) {
+          this.bus.emit({
+            type: "runtime_info",
+            line: `local-llm: backend update failed and no usable backend remains — ${result.error}`,
+          });
+          return false;
+        }
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: backend update failed — starting current binary (${result.error})`,
+        });
+      }
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      this.bus.emit({
+        type: "local_models_pull_failed",
+        kind: "backend",
+        error: msg,
+      });
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: backend auto-update failed — ${msg}`,
+      });
+      return false;
+    }
+  }
+
+  /**
    * Called once at TUI startup. If the user is in managed mode AND the
    * backend + model are already on disk AND no daemon is currently
    * running, start the daemon so the user lands in a ready state
-   * without needing an extra keypress. No-op otherwise.
+   * without needing an extra keypress.
+   *
+   * The backend auto-update runs **after** the daemon is up, never
+   * before. Checking first meant the user got a rendered TUI they
+   * could type into while no model was loaded — a prompt that silently
+   * does nothing reads as a broken agent, and the download (27-39 MB,
+   * unbounded on a stalled link) sat on that path. Starting first
+   * costs one session on the previous binary; the swap is picked up on
+   * the next start. A daemon already serving a model is left alone for
+   * the same reason.
    */
   async autoStartIfReady(): Promise<void> {
     const cfg = getConfig();
@@ -1527,9 +1832,30 @@ export class LocalModelsOrchestrator {
       // (see `ensureEmbeddingPaired`).
       await this.ensureEmbeddingPaired();
       await this.refresh();
+      this.scheduleBackendAutoUpdate(dataDir);
       return;
     }
-    await this.startDaemon();
+    // `startDaemon` owns the pre-start check on the path where the
+    // backend has to be replaced before a daemon exists; here it must
+    // not run one, because the deferred pass below owns it.
+    await this.startDaemon({ backendAlreadyChecked: true });
+    this.scheduleBackendAutoUpdate(dataDir);
+  }
+
+  /**
+   * Run the backend auto-update once the daemon is serving, off the
+   * start path. Deliberately not awaited: the result only matters for
+   * the *next* start, so nothing the user is waiting on depends on it.
+   * `maybeAutoUpdateBackend` already defers when any daemon is live
+   * (`hasOtherLiveSessions` / `readRunningPid`), so the model we just
+   * started is not pulled out from under the user mid-turn.
+   */
+  private scheduleBackendAutoUpdate(dataDir: string): void {
+    void this.applyBackendAutoUpdate(dataDir, {
+      keepDaemonRunning: true,
+    }).catch(() => {
+      /* applyBackendAutoUpdate already reports failures on the bus */
+    });
   }
 
   /**

@@ -1,42 +1,52 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
+import { fitChips, resolveChips, type HotkeyChip } from "./hotkey-chips.js";
 
 interface HotkeyHintProps {
   state: TuiState;
   /** Whether a Ctrl+C was recently pressed and is armed for exit. */
   ctrlCArmed?: boolean;
+  /** Whether a `ctrl+g` leader is waiting for its chord key. */
+  menuLeaderArmed?: boolean;
+  /**
+   * Columns the strip may occupy. This is the **chat column**, not the
+   * terminal: the caller subtracts the root gutter and the sidebar,
+   * because the strip shares a flex row with them. Required so a new
+   * call site cannot forget it and silently reintroduce the wrap.
+   */
+  width: number;
 }
-
-interface HotkeyChip {
-  readonly key: string;
-  readonly label: string;
-}
-
-/**
- * Platform-aware label for the chat-scroll key. The physical key is
- * PageUp; Mac keyboards reach it via Fn+Up, and that is the spelling
- * Mac users actually recognise.
- */
-const SCROLL_KEY = process.platform === "darwin" ? "fn+\u2191\u2193" : "pgup/pgdn";
 
 /**
  * Bottom hint strip: surfaces the keybindings that are meaningful in
- * the current state so the user never has to guess. We cap to ~6 chips
- * to fit one terminal row and let slash commands take care of the long
- * tail.
+ * the current state so the user never has to guess.
+ *
+ * The strip is budgeted to **one row**. Ink does not clip an over-wide
+ * row, it wraps it — and a wrapped strip both costs a row the debug
+ * pane already budgeted away (`APP_CHROME_ROWS`) and splits chips from
+ * their separators into an unreadable two-line smear. So chips are shed
+ * in a declared order until the row fits, and `truncate-end` clips the
+ * essential remainder on a terminal too narrow even for those.
  */
-export function HotkeyHint({ state, ctrlCArmed }: HotkeyHintProps): ReactElement {
-  const chips = resolveChips(state, ctrlCArmed ?? false);
+export function HotkeyHint({
+  state,
+  ctrlCArmed,
+  menuLeaderArmed,
+  width,
+}: HotkeyHintProps): ReactElement {
+  const chips = fitChips(
+    resolveChips(state, ctrlCArmed ?? false, menuLeaderArmed ?? false),
+    width,
+  );
   return (
-    <Box flexShrink={0}>
+    <Box flexShrink={0} overflow="hidden">
       {chips.map((chip, idx) => (
-        <Text key={chip.key}>
-          <Text color={theme.colors.accentSoft} bold>
-            [{chip.key}]
-          </Text>
-          <Text color={theme.colors.muted}> {chip.label}</Text>
+        <Box key={chip.key} flexShrink={0}>
+          <Chip chip={chip} />
           {idx < chips.length - 1 ? (
             <Text color={theme.colors.muted}>
               {"  "}
@@ -44,75 +54,33 @@ export function HotkeyHint({ state, ctrlCArmed }: HotkeyHintProps): ReactElement
               {"  "}
             </Text>
           ) : null}
-        </Text>
+        </Box>
       ))}
     </Box>
   );
 }
 
-function resolveChips(state: TuiState, ctrlCArmed: boolean): HotkeyChip[] {
-  if (state.pendingApproval) {
-    return [
-      { key: "y", label: "approve" },
-      { key: "n", label: "deny" },
-      { key: "esc", label: "abort run" },
-    ];
-  }
-  if (state.slashPaletteOpen) {
-    return [
-      { key: "↑↓", label: "select" },
-      { key: "tab/enter", label: "accept" },
-      { key: "esc", label: "close" },
-    ];
-  }
-  if (state.status === "running") {
-    // A long streaming answer is exactly when the operator wants to
-    // scroll back, so the hint rides along with abort.
-    return [
-      { key: SCROLL_KEY, label: "scroll" },
-      { key: "esc", label: "abort" },
-      {
-        key: "ctrl+c",
-        label: ctrlCArmed ? "press again to quit" : "abort",
-      },
-    ];
-  }
-  if (state.uiMode === "debug") {
-    return [
-      { key: "tab", label: "next panel" },
-      { key: "shift+tab", label: "prev panel" },
-      { key: "ctrl+b", label: "next panel" },
-      { key: "/", label: "commands" },
-      {
-        key: "ctrl+c",
-        label: ctrlCArmed ? "press again to quit" : "quit",
-      },
-    ];
-  }
-  if (state.chatFocus === "sidebar") {
-    return [
-      { key: "↑↓", label: "select" },
-      { key: "enter", label: "open" },
-      { key: "tab", label: "next pane" },
-      { key: "esc", label: "back to editor" },
-      {
-        key: "ctrl+c",
-        label: ctrlCArmed ? "press again to quit" : "quit",
-      },
-    ];
-  }
-  // Six chips is the cap for one row on narrow terminals. The scroll
-  // hint replaces ctrl+b: Observe stays reachable via /observe, while
-  // scrolling had no visible entry point at all.
-  return [
-    { key: "enter", label: "send" },
-    { key: "alt+enter", label: "newline" },
-    { key: "tab", label: "sidebar" },
-    { key: SCROLL_KEY, label: "scroll" },
-    { key: "/", label: "commands" },
-    {
-      key: "ctrl+c",
-      label: ctrlCArmed ? "press again to quit" : "quit",
-    },
-  ];
+function Chip({ chip }: { chip: HotkeyChip }): ReactElement {
+  const mouse = useMouseCommands();
+  const label = (
+    <Text>
+      <Text color={theme.colors.accentSoft} bold>
+        [{chip.key}]
+      </Text>
+      <Text color={theme.colors.muted}> {chip.label}</Text>
+    </Text>
+  );
+  if (!mouse || !chip.onClick) return label;
+  const onClick = chip.onClick;
+  return (
+    <MouseTarget
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        onClick(mouse);
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
+  );
 }

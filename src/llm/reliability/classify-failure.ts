@@ -3,6 +3,7 @@ import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { ToolCallParseError } from "../grammar/tool-call-grammar.js";
 import type { LlmFailureCategory } from "./failure-category.js";
 import { LlmFailure } from "./llm-failures.js";
+import { isNetworkError } from "./network-error.js";
 
 /**
  * Classify any thrown value into the canonical failure taxonomy.
@@ -13,6 +14,14 @@ import { LlmFailure } from "./llm-failures.js";
  * classifier from legacy surfaces (direct `LlamaServerError` throws,
  * grammar parser errors, abort signals, and anything else treated as
  * a tool-layer problem by default).
+ *
+ * The `isNetworkError` branch sits between the abort check and that
+ * default: an untyped socket failure (MCP streamable-http, embeddings,
+ * a vendor SDK with its own `fetch`) is a `transport` problem even
+ * though no typed client wrapped it. Filing one as `tool` is wrong in
+ * both directions — the user reads "Turn failed [tool]" for someone
+ * else's dead socket, and `shouldAdvance` refuses to fall over to the
+ * next provider because a tool failure is by definition our own bug.
  */
 export function classifyFailure(err: unknown): LlmFailureCategory {
   if (err instanceof LlmFailure) return err.category;
@@ -28,6 +37,9 @@ export function classifyFailure(err: unknown): LlmFailureCategory {
   // TransportError contract.
   if (err instanceof OpenAiHttpError) return "transport";
   if (isAbortError(err)) return "cancelled";
+  // Checked after the abort branch on purpose: an aborted request can
+  // surface as ECONNRESET, and a user pressing Esc is not a fallover.
+  if (isNetworkError(err)) return "transport";
   return "tool";
 }
 

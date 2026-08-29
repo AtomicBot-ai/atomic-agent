@@ -1,4 +1,9 @@
 import type { AgentLoopEvent } from "../agent/agent-loop.js";
+import {
+  contextUsageFromPrompt,
+  EMPTY_CONTEXT_USAGE,
+} from "./context-usage-from-prompt.js";
+import { formatBackgroundApprovalNotice } from "./detached-turns.js";
 import { formatAgentErrorForChat } from "./format-agent-error-for-chat.js";
 import { formatFeedLine } from "./format-event.js";
 import {
@@ -10,18 +15,23 @@ import {
   beginStreamingToolCall,
   finalizeStreamingToolCall,
   finishRun,
+  finishRunWithoutHistory,
   finishTurn,
   pushRing,
   startNewRun,
   upsertReasoning,
 } from "./reducer-helpers.js";
 import { reduceUiAction } from "./reduce-ui-actions.js";
+import { reduceComposerSwitchAction } from "./composer-switch/composer-switch-reducer.js";
+import { selectComposerBackend } from "./composer-switch/composer-switch-rows.js";
 import { reduceLocalModelsAction } from "./local-models/local-models-reducer.js";
 import { reduceTasksAction } from "./tasks/tasks-reducer.js";
 import { reduceSkillsAction } from "./skills/skills-reducer.js";
 import { reduceMemoryAction } from "./memory/memory-reducer.js";
 import { reduceMcpAction } from "./mcp/mcp-reducer.js";
+import { reduceUninstallAction } from "./uninstall/uninstall-reducer.js";
 import { reduceImportAction } from "./import/import-reducer.js";
+import { reduceOnboardingAction } from "./onboarding/onboarding-reducer.js";
 import { reduceProvidersPanel } from "./providers/providers-reducer.js";
 import { reduceLlmPanelAction } from "./llm-panel/llm-panel-reducer.js";
 import { reduceFallbackPanelAction } from "./llm-panel/fallback/fallback-panel-reducer.js";
@@ -33,6 +43,14 @@ import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
 export type { TuiAction } from "./tui-action.js";
 
 export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
+  // First in the chain, and only ever claims an action while the
+  // first-run flow is open. Several actions belong to two owners then —
+  // a finished model pull, a saved provider — and the flow has to see
+  // them to advance. A handled action never reaches the rest of the
+  // chain, so it delegates the panel half to the owning slice rather
+  // than duplicating it.
+  const onboardingHandled = reduceOnboardingAction(state, action);
+  if (onboardingHandled !== null) return onboardingHandled;
   const localModelsHandled = reduceLocalModelsAction(state, action);
   if (localModelsHandled !== null) return localModelsHandled;
   const tasksHandled = reduceTasksAction(state, action);
@@ -41,6 +59,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (skillsHandled !== null) return skillsHandled;
   const memoryHandled = reduceMemoryAction(state, action);
   if (memoryHandled !== null) return memoryHandled;
+  const uninstallHandled = reduceUninstallAction(state, action);
+  if (uninstallHandled !== null) return uninstallHandled;
   const mcpHandled = reduceMcpAction(state, action);
   if (mcpHandled !== null) return mcpHandled;
   const importHandled = reduceImportAction(state, action);
@@ -55,6 +75,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (telegramHandled !== null) return telegramHandled;
   const privacyHandled = reducePrivacyAction(state, action);
   if (privacyHandled !== null) return privacyHandled;
+  const composerSwitchHandled = reduceComposerSwitchAction(state, action);
+  if (composerSwitchHandled !== null) return composerSwitchHandled;
   const uiHandled = reduceUiAction(state, action);
   if (uiHandled !== null) return uiHandled;
   switch (action.type) {
@@ -72,7 +94,14 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         ...(action.variant ? { variant: action.variant } : {}),
       });
     case "session_created":
-      return { ...state, session: { ...state.session, sessionId: action.sessionId } };
+      return {
+        ...state,
+        session: { ...state.session, sessionId: action.sessionId },
+        // A different thread has a different window fill. Carrying the
+        // old figure over would read as "this fresh session is already
+        // 40% full" until the first prompt lands.
+        contextUsage: EMPTY_CONTEXT_USAGE,
+      };
     case "skill_count_changed":
       return { ...state, session: { ...state.session, skillCount: action.count } };
     case "approval_level_changed":
@@ -81,16 +110,92 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         session: { ...state.session, approvalLevel: action.approvalLevel },
       };
     case "agent_event":
+      // Events from a turn running on a *different* session — one the
+      // operator backgrounded by switching away, or a scheduler /
+      // Telegram / HTTP turn — must not paint into the transcript on
+      // screen (or flip `status`, which is what used to freeze the
+      // composer). An untagged event was emitted outside a turn frame
+      // (global notices) and passes through as before.
+      if (
+        action.sessionId !== undefined &&
+        action.sessionId !== state.session.sessionId
+      ) {
+        return state;
+      }
       return reduceAgentEvent(state, action.event);
+    case "session_delete_requested":
+      return {
+        ...state,
+        sessionDelete: {
+          sessionId: action.sessionId,
+          preview: action.preview,
+          // Destructive default: the dialog opens on Cancel.
+          cursor: "cancel",
+        },
+      };
+    case "session_delete_cursor_set":
+      if (!state.sessionDelete) return state;
+      return {
+        ...state,
+        sessionDelete: { ...state.sessionDelete, cursor: action.cursor },
+      };
+    case "session_delete_closed":
+      return { ...state, sessionDelete: null };
     case "approval_requested":
+      // A request raised by a session that is NOT on screen must never
+      // arm the modal: every approval key (and the prose-deny submit)
+      // answers whatever `pendingApproval` holds, so parking a
+      // background thread's question here would let a reflexive Ctrl+C
+      // deny a tool call the operator cannot even see — and abort the
+      // visible turn in the same press. The request stays pending at
+      // the gate; the transcript gets a pointer naming the owner, and
+      // `switchSession` re-raises the prompt once that owner is
+      // visible.
+      if (action.request.sessionId !== state.session.sessionId) {
+        return appendChatMessage(state, {
+          role: "system",
+          text: formatBackgroundApprovalNotice(action.request),
+          variant: "warn",
+        });
+      }
       return {
         ...state,
         status: "awaiting_approval",
         pendingApproval: action.request,
+        // A redirect re-prompts for the new target; the previous
+        // prompt's draft must not leak into it.
+        approvalPathDraft: null,
       };
     case "approval_resolved":
       if (state.pendingApproval?.approvalId !== action.approvalId) return state;
+      return {
+        ...state,
+        pendingApproval: null,
+        approvalPathDraft: null,
+        // Resolving the visible turn's request resumes that turn:
+        // `running`. Resolving a background turn's request resumes a
+        // turn this transcript is not showing — the visible status
+        // (idle, or a run of its own) is left alone.
+        status:
+          state.pendingApproval.sessionId === state.session.sessionId
+            ? "running"
+            : state.status,
+      };
+    case "approval_path_edit_opened":
+      if (!state.pendingApproval) return state;
+      return { ...state, approvalPathDraft: action.path };
+    case "approval_path_edit_changed":
+      if (state.approvalPathDraft === null) return state;
+      return { ...state, approvalPathDraft: action.value };
+    case "approval_path_edit_closed":
+      return { ...state, approvalPathDraft: null };
       return { ...state, pendingApproval: null, status: "running" };
+    case "composer_notice":
+      if (state.composerNotice === action.text) return state;
+      return { ...state, composerNotice: action.text };
+    case "composer_selection_changed":
+      if (state.composerHasSelection === action.hasSelection) return state;
+      return { ...state, composerHasSelection: action.hasSelection };
     case "metric":
       return applyMetric(state, action.sample);
     case "log":
@@ -113,14 +218,45 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       return { ...state, activeTab: action.tab };
     case "abort_requested":
       return { ...state, aborting: true };
-    case "input_changed":
+    case "input_changed": {
+      // Moving the caret re-emits the buffer unchanged (the editor owns
+      // the cursor and reports it through `onChange`). That is not an
+      // edit, so it must not knock us out of history recall — otherwise
+      // a single Left/Right after Up dropped the recall position and the
+      // parked draft with it.
+      if (action.value === state.inputValue) return state;
       return {
         ...state,
         inputValue: action.value,
         inputHistoryCursor: null,
+        inputHistoryDraft: null,
       };
+    }
     case "message_submitted":
       return startNewRun(state);
+    case "turn_gate_blocked": {
+      const withMessage = appendChatMessage(
+        appendFeed(state, {
+          kind: "runtime_info",
+          stepIndex: null,
+          line: `» blocked: ${action.text.split("\n")[0] ?? action.text}`,
+          color: "yellow",
+        }),
+        { role: "system", text: action.text, variant: "warn" },
+      );
+      // A drained queue message is gated after the previous turn already
+      // returned the app to idle — nothing to finish then. The fresh
+      // submit path arrives here `running` (from `message_submitted`)
+      // with no turn behind it, so the idle reset is what hands the
+      // composer back — WITHOUT a run-history entry: the blocked text
+      // never reached `state.messages`, so an entry would carry the
+      // previous turn's message, and a refused submit is not a run.
+      if (state.status !== "running") return withMessage;
+      return finishRunWithoutHistory(
+        withMessage,
+        "blocked: local model not ready",
+      );
+    }
     case "quit_requested":
       return { ...state, status: "quitting", aborting: true };
     case "loaded_skill": {
@@ -146,6 +282,11 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
           lastCheckedAt: action.checkedAt,
           latencyMs: action.latencyMs,
           error: action.error,
+          // A server that answers is a server somebody meant to run, even if
+          // config never said so. Latch it on so the indicator appears for
+          // that user and survives the server later going down.
+          localConfigured:
+            state.llmHealth.localConfigured || action.status === "healthy",
         },
       };
     case "llm_model_updated":
@@ -204,6 +345,21 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
   switch (event.type) {
     case "user_message":
       return appendUserMessage(state, event.text);
+    case "steer_applied":
+      // A message the operator sent mid-turn, folded into the prompt of
+      // the step named here. It renders INLINE in the running turn: same
+      // chat bubble as any user message, but none of the per-turn resets
+      // `user_message` implies — no `startNewRun`, no step counter reset.
+      // The feed line is what ties it to the step it actually reached.
+      return appendUserMessage(
+        appendFeed(state, {
+          kind: "runtime_info",
+          stepIndex: event.stepIndex,
+          line: `» steering applied at step ${event.stepIndex}`,
+          color: "yellow",
+        }),
+        event.text,
+      );
     case "turn_started":
       return {
         ...state,
@@ -306,6 +462,15 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       const chatError = formatAgentErrorForChat(
         event.category,
         event.error.message,
+        {
+          // The same "is the chat route a llama-server" answer the
+          // composer's backend control renders — KIND-based, so a
+          // llama-server entry under a custom id still earns the hint;
+          // only a `cloud` route must not (the hint names the llama
+          // URL). Rows land at TUI start via the providers refresh.
+          activeProviderIsLocal: selectComposerBackend(state) !== "cloud",
+          llamaUrl: state.session.llamaUrl,
+        },
       );
       return finishRun(
         appendChatMessage(
@@ -320,8 +485,23 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         { outcome: "failed", reason: event.error.message, lastRunStatus },
       );
     }
-    default:
+    case "loop_detected":
+      // Deliberately not rendered: the loop detector's own `### notice`
+      // changes what the model does, and the operator sees the effect
+      // through the tool calls that follow. Listed explicitly so the
+      // exhaustiveness check below stays meaningful.
       return state;
+    default: {
+      // `steer_applied` shipped with a doc comment promising inline
+      // rendering and no case here, and a bare `default: return state`
+      // meant TypeScript had nothing to say about it. This makes the
+      // next new `AgentLoopEvent` a compile error instead of a silent
+      // no-op — while still returning `state` at runtime, because a UI
+      // reducer must never throw on an event it does not know.
+      const unhandled: never = event;
+      void unhandled;
+      return state;
+    }
   }
 }
 
@@ -493,7 +673,68 @@ function reduceStepEvent(
         line: `  ! [${event.category}] ${event.error.message}`,
         color: "red",
       });
-    default:
+    case "batch_trimmed":
+      // Surfaced by the exhaustiveness check below: the model asked for
+      // `originalSize` calls and only one ran. That is worth a line —
+      // otherwise the dropped calls reappear one-by-one next step with
+      // no explanation for why the batch shrank.
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: `  ~ batch trimmed to ${event.kept} (${event.dropped.length} of ${event.originalSize} deferred: ${event.reason})`,
+        color: "yellow",
+      });
+    case "batch_wave_split":
+      // Issue #111: an oversized pure-read batch ran in bounded waves.
+      // Nothing was dropped — every call executed — so the feed line
+      // says so explicitly (otherwise the follow-up step's tool calls
+      // look like a re-run of the same reads).
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: `  ~ ${event.originalSize} reads split into ${event.waveCount} waves of ≤ ${event.cap} (nothing dropped)`,
+        color: "yellow",
+      });
+    case "prompt_built":
+      // The feed still ignores the prompt text itself — it would drown
+      // the log — but the token breakdown that comes with it is the only
+      // authoritative statement of what is in the window right now.
+      return {
+        ...state,
+        contextUsage: contextUsageFromPrompt(event.prompt),
+        // Reality has caught up with the selector: the prompt was built
+        // against the number the operator chose, so the local override
+        // is no longer telling anyone anything the measurement does not.
+        // Cleared only on a match, because a build that predates the
+        // change would otherwise snap the selector back to the old value
+        // in front of them.
+        contextPanelPairsDraft:
+          state.contextPanelPairsDraft === event.prompt.conversationPairsCap
+            ? null
+            : state.contextPanelPairsDraft,
+      };
+    case "llm_completed": {
+      // `prompt_built` carried an estimate (`estimateTokens` over-counts
+      // by design); the provider just reported what its own tokenizer
+      // actually counted — llama.cpp from `tokens_evaluated`, an
+      // OpenAI-compatible cloud from `usage.prompt_tokens`. Prefer it,
+      // and leave the estimate standing when nothing was reported.
+      const counted = event.completion.timing?.promptTokens ?? 0;
+      if (counted <= 0) return state;
+      return {
+        ...state,
+        contextUsage: { ...state.contextUsage, tokens: counted },
+      };
+    }
+    case "llm_raw_completion":
+      // Raw plumbing: the whole completion object, the unparsed text.
+      // The trace recorder wants them; the chat feed would drown in
+      // them. Listed so the exhaustiveness check holds.
       return state;
+    default: {
+      const unhandled: never = event;
+      void unhandled;
+      return state;
+    }
   }
 }

@@ -221,6 +221,120 @@ export interface PackedConversation {
   visibleTurns: ConversationTurn[];
   droppedSummary: string | null;
   droppedCount: number;
+  /** Macro-turns with at least one row in the visible tail. */
+  visiblePairs: number;
+  /** Macro-turns dropped whole. */
+  droppedPairs: number;
+  /**
+   * Which limit actually made the cut, so the readout can name it
+   * instead of inferring it from numbers that look alike.
+   */
+  boundBy: "pairs" | "tokens" | null;
+}
+
+export interface PackConversationOptions {
+  /**
+   * Keep at most this many macro-turns. An *additional* constraint, never
+   * a replacement for `maxTokens`: a pair has no bounded size — one task
+   * can run `agent.maxSteps` tool calls, and a fresh `os.http.request`
+   * body renders uncapped — so N pairs can exceed any window. Whichever
+   * limit cuts more wins.
+   */
+  maxPairs?: number;
+  /**
+   * Boundaries recorded by the session (`SessionState.macroTurnStarts`).
+   * Preferred over deriving them, because a task ended with `finish` or
+   * cancelled writes no `assistant_reply` and a derived scan would fuse
+   * it into the next task.
+   */
+  macroTurnStarts?: readonly number[];
+}
+
+/**
+ * Start index of every macro-turn, always beginning with `0`.
+ *
+ * Prefers the session's recorded boundaries. Falling back to derivation,
+ * a macro-turn opens at a `user` row whose predecessor is an
+ * `assistant_reply` — *not* at every `user` row, because steering
+ * appends extra user rows inside a single task and each one would
+ * otherwise read as a task of its own.
+ */
+export function macroTurnBoundaries(
+  turns: readonly ConversationTurn[],
+  recorded?: readonly number[],
+): number[] {
+  if (turns.length === 0) return [];
+  if (recorded && recorded.length > 0) {
+    const seen = new Set<number>([0]);
+    for (const index of recorded) {
+      if (Number.isInteger(index) && index > 0 && index < turns.length) {
+        seen.add(index);
+      }
+    }
+    return [...seen].sort((a, b) => a - b);
+  }
+  const derived = [0];
+  for (let i = 1; i < turns.length; i += 1) {
+    if (
+      turns[i]?.kind === "user" &&
+      turns[i - 1]?.kind === "assistant_reply"
+    ) {
+      derived.push(i);
+    }
+  }
+  return derived;
+}
+
+/**
+ * Token cost of each macro-turn, oldest first.
+ *
+ * For the readout, not the packer: it lets the UI answer "what would N
+ * tasks cost?" with a prefix sum, so moving the pairs dial redraws the
+ * gauge immediately instead of one prompt build later. Costs come from
+ * the same memoised estimator the packer uses, with the same
+ * `inCurrentMacroTurn` freshness flag, so the projection and the real
+ * thing agree.
+ */
+export function pairTokenCosts(
+  turns: readonly ConversationTurn[],
+  recorded?: readonly number[],
+): number[] {
+  const boundaries = macroTurnBoundaries(turns, recorded);
+  if (boundaries.length === 0) return [];
+  const currentStart = findCurrentMacroTurnStart(turns);
+  const costs: number[] = [];
+  for (let k = 0; k < boundaries.length; k += 1) {
+    const from = boundaries[k] ?? 0;
+    const to = boundaries[k + 1] ?? turns.length;
+    let sum = 0;
+    for (let i = from; i < to; i += 1) {
+      const turn = turns[i];
+      if (turn) sum += tokenCostForTurn(turn, i >= currentStart);
+    }
+    costs.push(sum);
+  }
+  return costs;
+}
+
+/** First index to keep so that at most `maxPairs` macro-turns survive. */
+function startIndexForPairs(boundaries: number[], maxPairs: number): number {
+  if (boundaries.length === 0 || maxPairs <= 0) return 0;
+  if (boundaries.length <= maxPairs) return 0;
+  return boundaries[boundaries.length - maxPairs] ?? 0;
+}
+
+/** How many whole macro-turns fall entirely before `startIndex`. */
+function countDroppedPairs(
+  boundaries: number[],
+  startIndex: number,
+  turnCount: number,
+): number {
+  let dropped = 0;
+  for (let k = 0; k < boundaries.length; k += 1) {
+    const end = boundaries[k + 1] ?? turnCount;
+    if (end <= startIndex) dropped += 1;
+  }
+  return dropped;
 }
 
 /**
@@ -240,61 +354,147 @@ const SUMMARY_TOKEN_RESERVE = 40;
 export function packConversation(
   turns: readonly ConversationTurn[],
   maxTokens: number,
+  options: PackConversationOptions = {},
 ): PackedConversation {
   if (turns.length === 0) {
-    return { visibleTurns: [], droppedSummary: null, droppedCount: 0 };
+    return {
+      visibleTurns: [],
+      droppedSummary: null,
+      droppedCount: 0,
+      visiblePairs: 0,
+      droppedPairs: 0,
+      boundBy: null,
+    };
   }
+  const boundaries = macroTurnBoundaries(turns, options.macroTurnStarts);
   if (maxTokens <= 0) {
     return {
       visibleTurns: [],
       droppedSummary: renderDroppedSummary(turns),
       droppedCount: turns.length,
+      visiblePairs: 0,
+      droppedPairs: boundaries.length,
+      boundBy: "tokens",
     };
   }
+
+  // The pairs cut, computed before anything else so it applies even when
+  // the transcript would have fitted on tokens alone — the whole point of
+  // the knob is to hold history down on purpose, not only under pressure.
+  const pairsStart =
+    options.maxPairs === undefined
+      ? 0
+      : startIndexForPairs(boundaries, options.maxPairs);
 
   // Estimate sizes with the same `inCurrentMacroTurn` flag the renderer
   // will apply downstream — otherwise tools that bypass the cap when
   // fresh (e.g. `os.http.request`) get under-estimated and the packed
   // section overshoots `maxTokens`.
   const currentStart = findCurrentMacroTurnStart(turns);
-  const rendered = turns.map((turn, i) =>
-    renderTurnForPrompt(turn, { inCurrentMacroTurn: i >= currentStart }),
+  const tokenCosts = turns.map((turn, i) =>
+    tokenCostForTurn(turn, i >= currentStart),
   );
-  const tokenCosts = rendered.map((line) => estimateTokens(line) + 1);
   const total = tokenCosts.reduce((a, b) => a + b, 0);
-  if (total <= maxTokens) {
-    return { visibleTurns: [...turns], droppedSummary: null, droppedCount: 0 };
-  }
 
-  // Truncation is inevitable — reserve tokens for the summary line so the
-  // final prompt section still fits within `maxTokens`.
-  const budget = Math.max(1, maxTokens - SUMMARY_TOKEN_RESERVE);
-  let acc = 0;
-  let startIndex = turns.length;
-  for (let i = turns.length - 1; i >= 0; i -= 1) {
-    const cost = tokenCosts[i] ?? 0;
-    if (acc + cost > budget) break;
-    acc += cost;
-    startIndex = i;
+  let startIndex: number;
+  let tokenStart = 0;
+  if (total <= maxTokens) {
+    startIndex = pairsStart;
+  } else {
+    // Truncation is inevitable — reserve tokens for the summary line so
+    // the final prompt section still fits within `maxTokens`.
+    const budget = Math.max(1, maxTokens - SUMMARY_TOKEN_RESERVE);
+    let acc = 0;
+    startIndex = turns.length;
+    for (let i = turns.length - 1; i >= 0; i -= 1) {
+      const cost = tokenCosts[i] ?? 0;
+      if (acc + cost > budget) break;
+      acc += cost;
+      startIndex = i;
+    }
+    tokenStart = startIndex;
+    // `max`, never `min`: the two limits are not alternatives. Tokens are
+    // the ceiling the window imposes and pairs is the operator's own,
+    // tighter preference, so the later cut wins.
+    startIndex = Math.max(startIndex, pairsStart);
   }
 
   const lastUserIndex = findLastUserIndex(turns);
   if (lastUserIndex !== -1 && lastUserIndex < startIndex) {
     startIndex = lastUserIndex;
   }
+  // A drained steer becomes the LAST user turn, which would otherwise
+  // carry the only pin — under token pressure the macro-turn's founding
+  // instruction would compress into the dropped-summary line while the
+  // correction stayed, and the model would continue from the correction
+  // alone. Pin the current macro-turn's opening user turn as well.
+  if (currentStart < startIndex && turns[currentStart]?.kind === "user") {
+    startIndex = currentStart;
+  }
 
   const droppedSlice = turns.slice(0, startIndex);
   const visibleTurns = turns.slice(startIndex);
+  const droppedPairs = countDroppedPairs(boundaries, startIndex, turns.length);
+  const visiblePairs = Math.max(0, boundaries.length - droppedPairs);
 
   if (droppedSlice.length === 0) {
-    return { visibleTurns, droppedSummary: null, droppedCount: 0 };
+    return {
+      visibleTurns,
+      droppedSummary: null,
+      droppedCount: 0,
+      visiblePairs,
+      droppedPairs,
+      boundBy: null,
+    };
   }
 
   return {
     visibleTurns,
-    droppedSummary: renderDroppedSummary(droppedSlice),
+    droppedSummary: renderDroppedSummary(droppedSlice, droppedPairs),
     droppedCount: droppedSlice.length,
+    visiblePairs,
+    droppedPairs,
+    // Ties go to pairs: when both limits land on the same row it is the
+    // operator's own preference that explains the cut, and naming the
+    // window instead would send them to a setting that changes nothing.
+    boundBy: pairsStart >= tokenStart ? "pairs" : "tokens",
   };
+}
+
+/**
+ * Memoised token cost of a single rendered turn.
+ *
+ * `packConversation` runs once per agent step and previously re-rendered
+ * (and re-`JSON.stringify`-ed) every historical turn on each call, only to
+ * throw the strings away after summing their token cost — O(N) work per
+ * step, so O(N^2) transient allocation across a long turn. Issue #121
+ * reported ~10MB of churn for a 25-step turn.
+ *
+ * Turns are immutable once appended, so the cost is keyed on the turn
+ * object itself. `inCurrentMacroTurn` changes what the renderer emits for
+ * fresh-bypass tools (`os.http.request`, fresh `gog` shell), so it is part
+ * of the key rather than folded away. The `WeakMap` lets dropped turns be
+ * collected with the sessions that own them.
+ */
+const TURN_TOKEN_COST_CACHE = new WeakMap<
+  object,
+  { fresh?: number; aged?: number }
+>();
+
+function tokenCostForTurn(
+  turn: ConversationTurn,
+  inCurrentMacroTurn: boolean,
+): number {
+  const key = turn as unknown as object;
+  const slot = TURN_TOKEN_COST_CACHE.get(key);
+  const cached = inCurrentMacroTurn ? slot?.fresh : slot?.aged;
+  if (cached !== undefined) return cached;
+  const cost = estimateTokens(renderTurnForPrompt(turn, { inCurrentMacroTurn })) + 1;
+  const nextSlot = slot ?? {};
+  if (inCurrentMacroTurn) nextSlot.fresh = cost;
+  else nextSlot.aged = cost;
+  TURN_TOKEN_COST_CACHE.set(key, nextSlot);
+  return cost;
 }
 
 /**
@@ -313,7 +513,17 @@ export function trimTurnsToTokens(
   };
 }
 
-function renderDroppedSummary(turns: readonly ConversationTurn[]): string {
+/**
+ * The one line the model gets in place of everything that was dropped.
+ *
+ * Names the number of whole tasks lost as well as the rows, because the
+ * operator caps history in tasks now: "18 rows" says nothing about how
+ * far back the agent can still see, "4 earlier tasks" says exactly that.
+ */
+function renderDroppedSummary(
+  turns: readonly ConversationTurn[],
+  droppedPairs = 0,
+): string {
   let user = 0;
   let toolCalls = 0;
   let replies = 0;
@@ -326,7 +536,11 @@ function renderDroppedSummary(turns: readonly ConversationTurn[]): string {
   const last = turns[turns.length - 1]?.at ?? first;
   const firstIso = new Date(first).toISOString();
   const lastIso = new Date(last).toISOString();
-  return `summary: ${turns.length} older turns dropped (${user} user, ${toolCalls} tool calls, ${replies} replies; first at ${firstIso}, last at ${lastIso})`;
+  const tasks =
+    droppedPairs > 0
+      ? ` from ${droppedPairs} earlier task${droppedPairs === 1 ? "" : "s"}`
+      : "";
+  return `summary: ${turns.length} older turns dropped${tasks} (${user} user, ${toolCalls} tool calls, ${replies} replies; first at ${firstIso}, last at ${lastIso})`;
 }
 
 function findLastUserIndex(turns: readonly ConversationTurn[]): number {

@@ -38,6 +38,8 @@ import {
   getToolDescriptorByName,
   isRareToolName,
 } from "../prompt/tool-descriptors.js";
+import { getDefaultArgsJsonSchema } from "../prompt/default-tool-args-schemas.js";
+import { validateJsonSchemaValue } from "../llm/provider/openai/coerce-json-schema-value.js";
 import { buildPrompt } from "../prompt/build-prompt.js";
 import type { BuiltPrompt } from "../prompt/build-prompt.js";
 import { formatCurrentDate } from "../prompt/current-date.js";
@@ -127,6 +129,11 @@ export type LlmCompleteStream = (
 
 export interface StepDependencies {
   registry: ToolRegistry;
+  /**
+   * Plan mode, read per call rather than captured once — same contract
+   * as `BatchExecutionContext.isPlanMode`. Absent ⇒ off.
+   */
+  isPlanMode?: () => boolean;
   slotManager: SlotManager;
   llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
   /**
@@ -139,12 +146,32 @@ export interface StepDependencies {
   llmCompleteStream?: LlmCompleteStream;
   grammar: string;
   profile: ModelProfile;
+  /**
+   * The model's context window when the profile probe cannot supply it.
+   *
+   * `profile.contextWindow` comes from llama-server `/props`, so on a
+   * cloud provider the budget had no window and every window-relative
+   * decision fell back to a fixed number. Resolved from the model
+   * catalogue instead — and only when the catalogue actually knows,
+   * never from a nominal default, because a budget computed against a
+   * guessed window is worse than one that admits it has none.
+   */
+  contextWindow?: number | null;
   /** Effective transport for this runtime (grammar vs native OpenAI tools). */
   toolTransport: ToolCallTransport;
   /** Adapter for native_tools; null when grammar-only. */
   toolCallAdapter: ToolCallAdapter | null;
   /** When false, completions use slotId -1 (cloud providers). */
   supportsSlotAffinity: boolean;
+  /**
+   * Provider capability: whether the active native-tools provider can
+   * generate parallel tool calls in one response. When false (or the
+   * configured `agent.maxParallelToolCalls` is 1), the executor asks
+   * the provider for a single tool call per response by sending
+   * `parallel_tool_calls: false`. Defaults to `true` for legacy /
+   * grammar-only wiring.
+   */
+  supportsParallelTools?: boolean;
   /**
    * Invoked after every LLM completion (initial call and one-shot parse
    * retry alike). Used by the agent loop to feed the served `modelId`
@@ -239,7 +266,24 @@ export interface StepOutcome {
    * happened for the trim.
    */
   trimmedBatchNotice?: string;
+  /**
+   * Notice text injected into the NEXT step's `transientNotice` when
+   * `executeStepInner` mechanically split an oversized pure-read batch
+   * into bounded waves (issue #111). Same lifecycle as
+   * `trimmedBatchNotice`: set only when the split fires, left undefined
+   * otherwise so the agent loop does not overwrite a higher-priority
+   * pending notice.
+   */
+  waveSplitNotice?: string;
 }
+
+/**
+ * Most tool calls one emission may run after a wave split. Generous
+ * enough for any honest fan-out (a repo-wide read, a batch of searches)
+ * and small enough that a hallucinated array goes back to the model
+ * instead of hitting the network 120 times.
+ */
+const MAX_WAVE_SPLIT_CALLS = 32;
 
 /** Validation failure for a multi-call batch (forbidden tool / oversized / unknown). */
 export class BatchValidationError extends Error {
@@ -292,6 +336,9 @@ async function executeStepInner(
     skillCatalog: ctx.skillCatalog,
     currentDate: formatCurrentDate(new Date()),
     profile: deps.profile,
+    ...(deps.contextWindow !== undefined
+      ? { contextWindow: deps.contextWindow }
+      : {}),
     ...(ctx.transientNotice !== undefined
       ? { transientNotice: ctx.transientNotice }
       : {}),
@@ -379,23 +426,40 @@ async function executeStepInner(
   // the model may have thought but failed to emit a required tool call, and
   // the existing repair path can recover with a stricter one-shot prompt.
   const initialModelFailure = detectModelFailure(completion);
-  if (
-    initialModelFailure !== null &&
-    !isNativeToolsEmptyCompletionHandledByParser(
-      parseDepsFor(completion, deps),
+  if (initialModelFailure !== null) {
+    const initialParseDeps = parseDepsFor(completion, deps);
+    const repairable = isGrammarEmptyCompletionWorthRepairing(
+      initialParseDeps,
       initialModelFailure.reason,
-      completion,
-    )
-  ) {
-    deps.logger?.warn("model-side completion defect", {
-      sessionId: ctx.session.id,
-      stepIndex: ctx.stepIndex,
-      reason: initialModelFailure.reason,
-    });
-    throw new ModelError(
-      initialModelFailure.reason,
-      initialModelFailure.message,
     );
+    if (
+      !repairable &&
+      !isNativeToolsEmptyCompletionHandledByParser(
+        initialParseDeps,
+        initialModelFailure.reason,
+        completion,
+      )
+    ) {
+      deps.logger?.warn("model-side completion defect", {
+        sessionId: ctx.session.id,
+        stepIndex: ctx.stepIndex,
+        reason: initialModelFailure.reason,
+      });
+      throw new ModelError(
+        initialModelFailure.reason,
+        initialModelFailure.message,
+      );
+    }
+    if (repairable) {
+      // Fall through to the parser: an empty body fails to parse, which
+      // routes into the one-shot repair below. The repair's own
+      // `detectModelFailure` still throws `ModelError` if the second
+      // completion is empty too, so "twice empty" remains terminal.
+      deps.logger?.warn("empty completion, repairing once", {
+        sessionId: ctx.session.id,
+        stepIndex: ctx.stepIndex,
+      });
+    }
   }
 
   // Notice text injected into the NEXT step's `transientNotice` when
@@ -403,6 +467,12 @@ async function executeStepInner(
   // trim fires; left undefined otherwise so the agent loop knows not to
   // overwrite a higher-priority pending notice (loop-detector hint).
   let trimmedBatchNotice: string | undefined;
+
+  // Same lifecycle for the wave-split path: when an oversized pure-read
+  // batch was mechanically split (issue #111), tell the model on the
+  // next step so it understands its array ran in bounded waves rather
+  // than all-at-once.
+  let waveSplitNotice: string | undefined;
 
   /**
    * Inline helper: if a `BatchValidationError` is purely about
@@ -417,6 +487,14 @@ async function executeStepInner(
     batch: ToolCallBatch,
     error: BatchValidationError,
   ): { ok: true; batch: ToolCallBatch } | null => {
+    // An oversized batch is never trim-eligible, even when its only
+    // per-call reason is approval-gated (e.g. `[os.fs.write, 13 reads]`
+    // with a cap of 8). Trimming would keep the write solo and silently
+    // drop the 13 reads the model asked for; the oversized case must go
+    // through the LLM repair path (or the wave split below) instead.
+    if (batch.calls.length > getConfig().agent.maxParallelToolCalls) {
+      return null;
+    }
     if (!isApprovalGatedOnlyFailure(error)) return null;
     const trim = trimBatchToFirstApprovalGated(batch);
     if (trim === null) return null;
@@ -448,6 +526,74 @@ async function executeStepInner(
     };
   };
 
+  /**
+   * Inline helper: mechanically split an oversized pure-read batch into
+   * bounded waves (issue #111). Eligibility is strict — the batch must
+   * be larger than `agent.maxParallelToolCalls` AND every call must
+   * preflight as registered, argument-schema-valid, and classified
+   * `pure_read`. A single non-`pure_read` call (approval-gated,
+   * terminal, unknown class) or a schema-invalid arg kicks the batch
+   * back to the LLM repair path, because wave-splitting would execute
+   * calls the runtime is not allowed to batch (consent / ordering /
+   * semantic intent the model is better placed to reconcile).
+   */
+  const trySplitPureReadWaves = (
+    batch: ToolCallBatch,
+  ): { ok: true; batch: ToolCallBatch } | null => {
+    const cap = getConfig().agent.maxParallelToolCalls;
+    const calls = batch.calls;
+    if (calls.length <= cap) return null;
+    // A ceiling, because "run it in waves" is not a licence to execute
+    // an arbitrary array. A model that derails and emits 120 searches
+    // would otherwise have every one run — 120 live requests and 240
+    // transcript turns out of a single hallucinated emission — and the
+    // loop detector cannot intervene: its gate runs once, before the
+    // first call of the batch. Past the ceiling the batch goes back to
+    // the model, which is what an oversized batch did before waves
+    // existed.
+    //
+    // The ceiling counts CALLS, not waves: with a cap of 1 a fan-out of
+    // fourteen reads is fourteen waves and perfectly reasonable, while
+    // with a cap of 8 the same wave count would be 112 live requests.
+    // What matters is how much work one emission can start.
+    if (calls.length > MAX_WAVE_SPLIT_CALLS) return null;
+    for (const call of calls) {
+      if (resourceClassFor(call.tool) !== "pure_read") return null;
+      if (!callArgsSchemaValid(call, ctx.toolDescriptors)) return null;
+    }
+    const waveCount = Math.ceil(calls.length / cap);
+    const boundaries = Array.from(
+      { length: waveCount },
+      (_, i) => i * cap,
+    );
+    waveSplitNotice = formatWaveSplitNotice(calls.length, cap, waveCount);
+    deps.onEvent?.({
+      type: "batch_wave_split",
+      stepIndex: ctx.stepIndex,
+      originalSize: calls.length,
+      cap,
+      waveCount,
+      boundaries,
+    });
+    deps.metrics?.recordBatchWaveSplit({
+      sessionId: ctx.session.id,
+      originalSize: calls.length,
+      cap,
+      waveCount,
+    });
+    deps.logger?.info("oversized pure-read batch split into bounded waves", {
+      sessionId: ctx.session.id,
+      stepIndex: ctx.stepIndex,
+      originalSize: calls.length,
+      cap,
+      waveCount,
+    });
+    return {
+      ok: true,
+      batch: { ...batch, maxWaveSize: cap },
+    };
+  };
+
   let parsed = tryParseToolCalls(
     completion,
     deps.profile,
@@ -456,17 +602,26 @@ async function executeStepInner(
   if (parsed.ok) {
     const validation = validateBatch(parsed.batch, deps.registry);
     if (!validation.ok) {
-      // Try the cheap mechanical fix first. If the only reason the
-      // batch failed is "approval-gated tools must be solo", we trim
-      // to the first approval-gated call and proceed — no LLM repair
-      // round-trip, no `parse_retry`. Anything else (terminal verbs in
-      // a batch, oversized, unknown resource class) still routes
-      // through the model so it can re-plan.
-      const trimmed = tryTrimApprovalGated(parsed.batch, validation.error);
-      if (trimmed !== null) {
-        parsed = trimmed;
+      // Try the cheap mechanical fixes first, in order:
+      //   1. Wave split (issue #111): an oversized batch whose calls
+      //      are ALL `pure_read` and schema-valid runs deterministically
+      //      in bounded waves — no LLM repair round-trip.
+      //   2. Approval-gated trim: a batch whose only failure is
+      //      "approval-gated tools must be solo" (and is NOT oversized)
+      //      trims to the first approval-gated call.
+      // Anything else (terminal verbs in a batch, oversized mixed
+      // batches, unknown resource class) still routes through the model
+      // so it can re-plan.
+      const split = trySplitPureReadWaves(parsed.batch);
+      if (split !== null) {
+        parsed = split;
       } else {
-        parsed = { ok: false, error: validation.error };
+        const trimmed = tryTrimApprovalGated(parsed.batch, validation.error);
+        if (trimmed !== null) {
+          parsed = trimmed;
+        } else {
+          parsed = { ok: false, error: validation.error };
+        }
       }
     }
   }
@@ -573,15 +728,21 @@ async function executeStepInner(
     if (parsed.ok) {
       const validation = validateBatch(parsed.batch, deps.registry);
       if (!validation.ok) {
-        // Same trim shortcut for the post-repair attempt: if the model
-        // came back from repair with another approval-gated batch,
-        // mechanically split it instead of escalating to `GrammarError`.
-        // Surfaces in the same `batch_trimmed` event/metric.
-        const trimmed = tryTrimApprovalGated(parsed.batch, validation.error);
-        if (trimmed !== null) {
-          parsed = trimmed;
+        // Same mechanical-fix shortcuts for the post-repair attempt:
+        // if the model came back from repair with another oversized
+        // pure-read batch (wave split) or another approval-gated batch
+        // (trim), fix it mechanically instead of escalating to
+        // `GrammarError`. Surfaces in the same event/metric pair.
+        const split = trySplitPureReadWaves(parsed.batch);
+        if (split !== null) {
+          parsed = split;
         } else {
-          parsed = { ok: false, error: validation.error };
+          const trimmed = tryTrimApprovalGated(parsed.batch, validation.error);
+          if (trimmed !== null) {
+            parsed = trimmed;
+          } else {
+            parsed = { ok: false, error: validation.error };
+          }
         }
       }
     }
@@ -659,6 +820,8 @@ async function executeStepInner(
     stepIndex: ctx.stepIndex,
     signal: ctx.signal,
     ...(deps.tracker ? { tracker: deps.tracker } : {}),
+    ...(deps.isPlanMode ? { isPlanMode: deps.isPlanMode } : {}),
+    ...(batch.maxWaveSize !== undefined ? { maxWaveSize: batch.maxWaveSize } : {}),
     ...(loadedSkillNames.size > 0 ? { loadedSkillNames } : {}),
     onCallFinished: ({ batchIndex, result, durationMs }) => {
       deps.onEvent?.({
@@ -792,6 +955,7 @@ async function executeStepInner(
     terminal,
     loopSignals: batchOutcome.loopSignals,
     ...(trimmedBatchNotice !== undefined ? { trimmedBatchNotice } : {}),
+    ...(waveSplitNotice !== undefined ? { waveSplitNotice } : {}),
   };
 }
 
@@ -898,6 +1062,36 @@ function isNativeToolsEmptyCompletionHandledByParser(
       ? completion.reasoningContent.trim()
       : "";
   return reasoning.length > 0;
+}
+
+/**
+ * Is this an empty completion the one-shot repair should get a crack at?
+ *
+ * On the grammar transports an empty body is not the dead end
+ * `detectModelFailure`'s doc assumes. The prompt is not replayed
+ * verbatim: the repair path rebuilds it through
+ * `buildToolCallRepairPrompt` with a corrective notice and a bounded
+ * token cap, which is a materially different request — and the same
+ * machinery already recovers every *other* unparseable body (a truncated
+ * array, a stray prelude, prose where JSON belongs). Only "the model
+ * emitted literally nothing" was singled out to end the turn outright,
+ * and that is the single largest failure bucket in production.
+ *
+ * `native_tools` is deliberately excluded: that transport has its own
+ * salvage path (`isNativeToolsEmptyCompletionHandledByParser`), and a
+ * native completion with nothing in any channel routes through
+ * `ModelError` by design — see `step-executor.test.ts`, "native_tools:
+ * routes 'no tool_calls and no content' through ModelError".
+ *
+ * `truncated` and `no_stop` are excluded too, and for the original
+ * reason: the model already spent its budget on this prefix, so a second
+ * pass hits the same wall.
+ */
+function isGrammarEmptyCompletionWorthRepairing(
+  deps: Pick<StepDependencies, "toolTransport">,
+  reason: string,
+): boolean {
+  return reason === "empty" && deps.toolTransport !== "native_tools";
 }
 
 /**
@@ -1112,7 +1306,7 @@ function buildLlmStreamParams(args: {
   promptText: string;
   deps: Pick<
     StepDependencies,
-    "grammar" | "toolTransport" | "toolCallAdapter"
+    "grammar" | "toolTransport" | "toolCallAdapter" | "supportsParallelTools"
   >;
   slotId: number;
   sessionId: string;
@@ -1154,7 +1348,16 @@ function buildLlmStreamParams(args: {
     // that content (see invariant comment there), so the
     // one-inference-per-step contract is preserved.
     toolChoice: "auto",
-    parallelToolCalls: true,
+    // Ask the provider for a single tool call per response unless the
+    // executor cap allows more AND the provider reports it can emit
+    // parallel calls. With `maxParallelToolCalls=1` this is the
+    // provider-compatibility control: some OpenAI-compatible streams
+    // (Gemini) lack stable indices for parallel calls, so the setting
+    // must reach the wire, not just the executor's batch planner
+    // (issue #104).
+    parallelToolCalls:
+      getConfig().agent.maxParallelToolCalls > 1 &&
+      (args.deps.supportsParallelTools ?? true),
   };
 }
 
@@ -1328,6 +1531,47 @@ export function formatBatchTrimNotice(trim: BatchTrimResult): string {
 }
 
 /**
+ * Render the `### notice` text the model sees on the next step after an
+ * oversized pure-read batch was mechanically split into bounded waves.
+ * Unlike the trim notice, nothing was dropped — every call ran, just in
+ * waves of at most `cap` instead of one all-at-once fan-out. The notice
+ * exists so the model understands the array was honoured in full and
+ * does not re-emit the calls.
+ */
+export function formatWaveSplitNotice(
+  originalSize: number,
+  cap: number,
+  waveCount: number,
+): string {
+  return `Your previous emission contained ${originalSize} reads that exceeded the parallel-call cap of ${cap}. The runtime executed all of them in ${waveCount} bounded wave${waveCount === 1 ? "" : "s"} — nothing was dropped. Do not re-emit those calls.`;
+}
+
+/**
+ * Preflight for wave splitting (issue #111): does the call's `args`
+ * satisfy the tool's registered JSON schema? The schema is taken from
+ * the effective descriptor list first (covers dynamic MCP descriptors
+ * carrying server-supplied `inputSchema`), falling back to the static
+ * default-args map. A tool with no registered schema passes — there is
+ * nothing to validate against. An unsupported schema construct fails
+ * closed (no wave split) so we never execute a call the runtime cannot
+ * vouch for.
+ */
+export function callArgsSchemaValid(
+  call: ToolCallPayload,
+  descriptors: readonly ToolDescriptor[],
+): boolean {
+  const descriptor = descriptors.find((d) => d.name === call.tool);
+  const schema =
+    descriptor?.argsJsonSchema ?? getDefaultArgsJsonSchema(call.tool);
+  if (!schema) return true;
+  try {
+    return validateJsonSchemaValue(call.args, schema);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Trim a raw completion body to the short preview attached to every
  * `GrammarError` so postmortems can tell grammar misconfiguration apart
  * from truncation or an empty response without digging through streaming
@@ -1497,6 +1741,15 @@ function toLlmFailure(err: unknown, ctx: StepContext): LlmFailure {
   const categorised = classifyFailure(wrapped);
   if (categorised === "cancelled") {
     return new CancelledError(wrapped.message, { cause: err });
+  }
+  // A raw socket failure from a surface that does not wrap its own
+  // errors (MCP streamable-http, embeddings, a vendor SDK carrying its
+  // own `fetch`) reaches here as a bare `TypeError: fetch failed`. It is
+  // a provider-boundary problem, not a tool bug: wrapping it as
+  // `ToolExecutionError("unknown", …)` both mislabels the turn for the
+  // user and blocks the fallback chain from advancing.
+  if (categorised === "transport") {
+    return new TransportError(wrapped.message, null, "", { cause: err });
   }
   return new ToolExecutionError("unknown", wrapped.message, { cause: err });
 }

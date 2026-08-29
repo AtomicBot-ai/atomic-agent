@@ -4,6 +4,7 @@ import {
   parseUserConfigFile,
   resetConfigCache,
   writeUserConfigFileSync,
+  type WhileBusySubmitMode,
 } from "../config/index.js";
 
 /**
@@ -19,6 +20,35 @@ export function persistUserTuiTheme(theme: string): void {
   const path = getConfig().paths.userConfigFile;
   const prev = ensureUserConfigFileSync(path);
   const draft = { ...prev, tui: { ...prev.tui, theme } };
+  const validated = parseUserConfigFile(draft);
+  writeUserConfigFileSync(path, validated);
+  resetConfigCache();
+}
+
+/**
+ * Persist what Enter does while a turn is running (`steer` / `queue`)
+ * into `tui.whileBusySubmit`. Same read → merge → validate → write →
+ * reset shape as {@link persistUserTuiTheme}; the live `TuiState` flip
+ * is the caller's job, this only makes it survive a restart.
+ */
+export function persistUserWhileBusySubmit(mode: WhileBusySubmitMode): void {
+  const path = getConfig().paths.userConfigFile;
+  const prev = ensureUserConfigFileSync(path);
+  const draft = { ...prev, tui: { ...prev.tui, whileBusySubmit: mode } };
+  const validated = parseUserConfigFile(draft);
+  writeUserConfigFileSync(path, validated);
+  resetConfigCache();
+}
+
+/**
+ * Persist the mouse-support toggle into `tui.mouse`. Same read → merge →
+ * validate → write → reset cycle as the theme; the caller owns turning
+ * the terminal's reporting mode on or off for the running session.
+ */
+export function persistUserTuiMouse(mouse: boolean): void {
+  const path = getConfig().paths.userConfigFile;
+  const prev = ensureUserConfigFileSync(path);
+  const draft = { ...prev, tui: { ...prev.tui, mouse } };
   const validated = parseUserConfigFile(draft);
   writeUserConfigFileSync(path, validated);
   resetConfigCache();

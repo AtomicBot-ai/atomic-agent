@@ -13,7 +13,10 @@ export type {
 export {
   ANALYTICS_EVENTS,
   captureAppInstalled,
+  captureAppOpened,
   captureMessageSent,
+  captureModelConfigured,
+  captureOnboardingStep,
 } from "./analytics-events.js";
 export type { MessageEventContext } from "./analytics-events.js";
 export { TurnUsageMeter } from "./turn-usage-meter.js";

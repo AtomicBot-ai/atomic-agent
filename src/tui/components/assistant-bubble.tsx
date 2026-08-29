@@ -12,12 +12,14 @@ interface AssistantBubbleProps {
 }
 
 /**
- * opencode-style assistant reply bubble. Mirrors `UserBubble` (left
- * coloured border + vertical padding + `marginTop=1`) so the chat
- * surface reads as a two-colour ribbon instead of a labelled list.
- * Tool-step count and a final `●` glyph land in a meta-row **below**
- * the bubble (outside the border), again copied from opencode — the
- * label is the colour, not the inline text.
+ * The assistant reply. Mirrors `UserBubble`: an `AGENT` label over a
+ * coloured left border, with the tool-step count and a final `●` glyph
+ * in a meta-row **below** the bubble, outside the border.
+ *
+ * The label is the word AND the colour. Colour on its own carries
+ * nothing under NO_COLOR or in a pipe, and a reply that is only
+ * distinguishable by hue from the message that prompted it is a
+ * transcript nobody can skim.
  *
  * Markdown rendering is gated on `!streaming`: partial markdown
  * (half-opened `**`, fenced block missing its closing ```, dangling
@@ -32,6 +34,9 @@ export function AssistantBubble({
   const showFooter = !streaming && toolSteps !== undefined && toolSteps > 0;
   return (
     <Box flexDirection="column" marginTop={1}>
+      <Text color={theme.colors.assistant} bold>
+        {"  AGENT"}
+      </Text>
       <Box
         borderStyle="single"
         borderTop={false}
@@ -39,7 +44,6 @@ export function AssistantBubble({
         borderBottom={false}
         borderLeft
         borderColor={theme.colors.assistant}
-        paddingTop={1}
         paddingBottom={1}
         paddingLeft={2}
         paddingRight={1}

@@ -225,6 +225,16 @@ function selectBaseProfile(
   if (looksLikeQwenThinkModel(modelAlias, templateLower, supportsPreserveReasoning)) {
     return QWEN_THINK_PROFILE;
   }
+  // Nemotron needs its own detector but not its own profile. Its ChatML
+  // template is qwen-shaped — `<think>`/`</think>` prefilled at the
+  // generation point, same open/close ownership, no turn framing — so the
+  // runtime behaviour is byte-for-byte `QWEN_THINK_PROFILE`. Only the alias
+  // gate differs: `looksLikeQwenThinkModel` requires a qwen/qwq/deepseek-r1
+  // alias, which Nemotron's does not match, so without this branch it would
+  // fall through to `plain-instruct` and lose its reasoning channel.
+  if (looksLikeNemotronThinkModel(modelAlias, templateLower)) {
+    return QWEN_THINK_PROFILE;
+  }
   if (looksLikeGemma4ThinkModel(modelAlias, templateLower)) {
     return GEMMA4_THINK_PROFILE;
   }
@@ -287,6 +297,17 @@ function looksLikeQwenThinkModel(
     (templateLower.includes("enable_thinking") ||
       templateLower.includes("preserve_thinking") ||
       supportsPreserveReasoning);
+  return aliasHint && templateHint;
+}
+
+function looksLikeNemotronThinkModel(
+  modelAlias: string,
+  templateLower: string,
+): boolean {
+  const aliasHint = modelAlias.includes("nemotron");
+  const templateHint =
+    templateLower.includes("<think>") &&
+    templateLower.includes("enable_thinking");
   return aliasHint && templateHint;
 }
 

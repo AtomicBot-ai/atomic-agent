@@ -1,11 +1,19 @@
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
 import { isLocalModelsAction } from "./local-models-actions.js";
-import { totalRowCount } from "./local-models-panel-state.js";
+import {
+  createInitialLocalModelsHfState,
+  totalRowCount,
+  type LocalModelsPanelState,
+} from "./local-models-panel-state.js";
 
 function clampCursor(cursor: number, len: number): number {
   if (len <= 0) return 0;
   return Math.min(len - 1, Math.max(0, cursor));
+}
+
+function hfChoiceCount(panel: LocalModelsPanelState): number {
+  return panel.hf.repo?.choices.length ?? 0;
 }
 
 export function reduceLocalModelsAction(state: TuiState, action: TuiAction): TuiState | null {
@@ -48,6 +56,14 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
         },
       };
     }
+    case "local_models_cursor_set":
+      return {
+        ...state,
+        localModelsPanel: {
+          ...p,
+          cursor: clampCursor(action.row, totalRowCount(p)),
+        },
+      };
     case "local_models_cursor_up":
       return {
         ...state,
@@ -62,6 +78,92 @@ export function reduceLocalModelsAction(state: TuiState, action: TuiAction): Tui
         localModelsPanel: {
           ...p,
           cursor: clampCursor(p.cursor + 1, totalRowCount(p)),
+        },
+      };
+    /* --- "add a model from Hugging Face" --- */
+    case "local_models_hf_opened":
+      // The reference and any resolved repo survive: re-opening the
+      // branch after an Escape should not cost a second HTTP round trip
+      // for a repo the operator is still choosing a quant from.
+      return {
+        ...state,
+        localModelsPanel: { ...p, mode: "hfRef", hf: { ...p.hf, error: null } },
+      };
+    case "local_models_hf_closed":
+      return {
+        ...state,
+        localModelsPanel: {
+          ...p,
+          mode: "list",
+          hf: createInitialLocalModelsHfState(),
+        },
+      };
+    case "local_models_hf_reference_changed":
+      // Editing clears the error the old reference earned — keeping it
+      // over new text would blame a string that is no longer there.
+      return {
+        ...state,
+        localModelsPanel: {
+          ...p,
+          hf: { ...p.hf, reference: action.value, error: null },
+        },
+      };
+    case "local_models_hf_lookup_started":
+      return {
+        ...state,
+        localModelsPanel: { ...p, hf: { ...p.hf, busy: true, error: null } },
+      };
+    case "local_models_hf_lookup_cancelled":
+      return {
+        ...state,
+        localModelsPanel: { ...p, hf: { ...p.hf, busy: false } },
+      };
+    case "local_models_hf_lookup_failed":
+      // Stays on the reference editor: that is the only screen where
+      // retyping the thing that failed is possible.
+      return {
+        ...state,
+        localModelsPanel: {
+          ...p,
+          mode: "hfRef",
+          hf: { ...p.hf, busy: false, error: action.error },
+        },
+      };
+    case "local_models_hf_repo_resolved":
+      // A late response for a reference the operator has already left
+      // must not yank them into a file list they did not ask for.
+      if (p.mode !== "hfRef") return state;
+      return {
+        ...state,
+        localModelsPanel: {
+          ...p,
+          mode: "hfPick",
+          hf: {
+            ...p.hf,
+            busy: false,
+            error: null,
+            repo: action.repo,
+            cursor: 0,
+          },
+        },
+      };
+    case "local_models_hf_cursor_set":
+      return {
+        ...state,
+        localModelsPanel: {
+          ...p,
+          hf: { ...p.hf, cursor: clampCursor(action.cursor, hfChoiceCount(p)) },
+        },
+      };
+    case "local_models_hf_cursor_moved":
+      return {
+        ...state,
+        localModelsPanel: {
+          ...p,
+          hf: {
+            ...p.hf,
+            cursor: clampCursor(p.hf.cursor + action.delta, hfChoiceCount(p)),
+          },
         },
       };
     case "local_models_embedding_remove_confirm_opened":

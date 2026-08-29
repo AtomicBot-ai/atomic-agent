@@ -195,9 +195,19 @@ describe("POST /v1/chat/completions concurrency contract", () => {
     let userCallCount = 0;
     const llamaComplete = async (params: {
       sessionId: string;
+      prompt: string;
     }): Promise<CompletionResult> => {
       if (params.sessionId.startsWith("reflection:")) {
         return instantReply("nope");
+      }
+      // Only the agent loop's own step blocks on the gate. The memory
+      // machinery makes further completions under the same session id —
+      // the recall query rewriter fires on the second turn now that the
+      // queue re-reads the stored session at run time and turn 2 really
+      // sees turn 1's history — and gating those would deadlock the test
+      // against calls it never planned to release.
+      if (!params.prompt.includes("You are atomic-agent")) {
+        return instantReply("aside");
       }
       userCallCount += 1;
       const tag = `c${userCallCount}`;
@@ -473,6 +483,218 @@ describe("POST /v1/chat/completions (streaming)", () => {
         .join("");
       expect(allContent).toBe("Hello world");
       expect(text).toMatch(/data: \[DONE\]/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+});
+
+/**
+ * A steer accepted mid-turn but never shown to the model must not
+ * evaporate when the turn closes. `runTurn` hands it back on
+ * `RunTurnResult.undelivered`; these pin that this route consumes it —
+ * on the response where one can be carried, and in the undelivered
+ * store always, because the host that sent the steer is generally not
+ * the one holding this response.
+ */
+describe("POST /v1/chat/completions undelivered steers", () => {
+  function instantReply(text: string): CompletionResult {
+    return {
+      content: JSON.stringify({ tool: "reply", args: { text } }),
+      reasoningContent: "",
+      stop: true,
+      truncated: false,
+      timing: {
+        promptMs: 0,
+        predictedMs: 0,
+        promptTokens: 1,
+        predictedTokens: 1,
+      },
+      cacheHitTokens: 0,
+      slotId: 0,
+      modelId: null,
+    };
+  }
+
+  /**
+   * Steer from inside the final inference. The loop drains at the top
+   * of a step and this turn replies on the step already running, so no
+   * later boundary exists to drain it. `### respond` identifies the
+   * agent step — the recall/reflection helper prompts run on the same
+   * session id before the loop's first drain.
+   */
+  function steeringLlama(sessionIdRef: { current: string | null }, text: string) {
+    let steered = false;
+    return async (params: {
+      sessionId: string;
+      prompt: string;
+      steer?: (sessionId: string, text: string) => boolean;
+    }): Promise<CompletionResult> => {
+      if (
+        !steered &&
+        params.sessionId === sessionIdRef.current &&
+        params.prompt.includes("### respond")
+      ) {
+        steered = true;
+        params.steer?.(params.sessionId, text);
+      }
+      return instantReply("done");
+    };
+  }
+
+  it("reports the stranded steer on the completion body and parks it", async () => {
+    const sessionIdRef = { current: null as string | null };
+    let steerFn: ((sessionId: string, text: string) => boolean) | null = null;
+    const base = steeringLlama(sessionIdRef, "stop and summarise");
+    const harness = await startTestHarness({
+      llamaComplete: (params) =>
+        base({ ...params, ...(steerFn ? { steer: steerFn } : {}) }),
+    });
+    try {
+      steerFn = (id, text) => harness.runtime.steer(id, text);
+      const session = harness.runtime.createSession();
+      sessionIdRef.current = session.id;
+      const response = await postChat(harness.baseUrl, {
+        session_id: session.id,
+        messages: [{ role: "user", content: "go" }],
+      });
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        undelivered_steers?: Array<{ seq: number; text: string; parked_at: number }>;
+      };
+      expect(body.undelivered_steers).toEqual([
+        {
+          seq: expect.any(Number) as unknown as number,
+          text: "stop and summarise",
+          parked_at: expect.any(Number) as unknown as number,
+        },
+      ]);
+      // The same entry, not a second copy of the message: acking the
+      // seq the body reported clears exactly this one.
+      const parked = harness.handle.undeliveredSteers.list(session.id);
+      expect(parked.map((e) => e.seq)).toEqual(
+        body.undelivered_steers?.map((e) => e.seq),
+      );
+      expect(harness.handle.undeliveredSteers.ack(session.id, parked[0]!.seq)).toBe(1);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("omits the field entirely when the turn delivered everything", async () => {
+    const harness = await startTestHarness({
+      llamaComplete: scriptedLlama(["hi back"]),
+    });
+    try {
+      const response = await postChat(harness.baseUrl, {
+        messages: [{ role: "user", content: "hello" }],
+      });
+      const body = (await response.json()) as Record<string, unknown>;
+      expect("undelivered_steers" in body).toBe(false);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("parks it even when the turn fails and the body is an error envelope", async () => {
+    const sessionIdRef = { current: null as string | null };
+    let steerFn: ((sessionId: string, text: string) => boolean) | null = null;
+    let failed = false;
+    const harness = await startTestHarness({
+      llamaComplete: async (params) => {
+        if (
+          params.sessionId === sessionIdRef.current &&
+          params.prompt.includes("### respond")
+        ) {
+          steerFn?.(params.sessionId, "stop, the branch is wrong");
+          failed = true;
+          throw new Error("llama backend exploded");
+        }
+        return instantReply("done");
+      },
+    });
+    try {
+      steerFn = (id, text) => harness.runtime.steer(id, text);
+      const session = harness.runtime.createSession();
+      sessionIdRef.current = session.id;
+      const response = await postChat(harness.baseUrl, {
+        session_id: session.id,
+        messages: [{ role: "user", content: "go" }],
+      });
+      expect(failed).toBe(true);
+      expect(response.status).toBe(500);
+      // Nothing on the wire could carry it, so the store is the only
+      // place it can be — and it is there.
+      expect(
+        harness.handle.undeliveredSteers.list(session.id).map((e) => e.text),
+      ).toEqual(["stop, the branch is wrong"]);
+      expect(harness.runtime.steeringInbox.peek(session.id)).toEqual([]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("emits a steer_undelivered SSE event to extension clients", async () => {
+    const sessionIdRef = { current: null as string | null };
+    let steerFn: ((sessionId: string, text: string) => boolean) | null = null;
+    const base = steeringLlama(sessionIdRef, "abort the deploy");
+    const harness = await startTestHarness({
+      llamaComplete: (params) =>
+        base({ ...params, ...(steerFn ? { steer: steerFn } : {}) }),
+    });
+    try {
+      steerFn = (id, text) => harness.runtime.steer(id, text);
+      const session = harness.runtime.createSession();
+      sessionIdRef.current = session.id;
+      const response = await postChat(
+        harness.baseUrl,
+        {
+          stream: true,
+          session_id: session.id,
+          messages: [{ role: "user", content: "go" }],
+        },
+        { [EXTENSIONS_HEADER]: "1" },
+      );
+      const text = await readAllText(response);
+      expect(text).toMatch(/event: steer_undelivered\n/);
+      expect(text).toMatch(/"text":"abort the deploy"/);
+      expect(text).toMatch(/data: \[DONE\]/);
+      expect(
+        harness.handle.undeliveredSteers.list(session.id).map((e) => e.text),
+      ).toEqual(["abort the deploy"]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("keeps the vanilla stream clean and leaves the message to be polled", async () => {
+    const sessionIdRef = { current: null as string | null };
+    let steerFn: ((sessionId: string, text: string) => boolean) | null = null;
+    const base = steeringLlama(sessionIdRef, "abort the deploy");
+    const harness = await startTestHarness({
+      llamaComplete: (params) =>
+        base({ ...params, ...(steerFn ? { steer: steerFn } : {}) }),
+    });
+    try {
+      steerFn = (id, text) => harness.runtime.steer(id, text);
+      const session = harness.runtime.createSession();
+      sessionIdRef.current = session.id;
+      const response = await postChat(harness.baseUrl, {
+        stream: true,
+        session_id: session.id,
+        messages: [{ role: "user", content: "go" }],
+      });
+      const text = await readAllText(response);
+      expect(text).not.toMatch(/event: steer_undelivered\n/);
+      // Not on this stream, but not lost either: the host reads it off
+      // `GET /api/sessions/{id}/steer`.
+      const listed = await fetch(
+        `${harness.baseUrl}/api/sessions/${session.id}/steer`,
+      );
+      const body = (await listed.json()) as {
+        undelivered: Array<{ text: string }>;
+      };
+      expect(body.undelivered.map((e) => e.text)).toEqual(["abort the deploy"]);
     } finally {
       await harness.cleanup();
     }

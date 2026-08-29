@@ -8,8 +8,11 @@ import {
 } from "../llm-panel/llm-panel-selectors.js";
 import type { LocalModelsPanelState } from "../local-models/local-models-panel-state.js";
 import { LLM_PANEL_MODES, type LlmPanelMode } from "../llm-panel/llm-panel-state.js";
+import { isLocalModelsHfOpen } from "../local-models/local-models-hf-keys.js";
 import { LlmModeRows } from "./llm-mode-rows.js";
-import { LlmPanelModals } from "./llm-panel-modals.js";
+import { LocalModelsHuggingFaceBranch } from "./local-models-hf-branch.js";
+import { hasLlmModal, LlmPanelModals } from "./llm-panel-modals.js";
+import { renderProgressBar } from "./render-progress-bar.js";
 
 /**
  * Rows consumed by the full fixed chrome: RouteCard (~7) + ModeHeader (3)
@@ -47,9 +50,33 @@ export function LlmPanel({
   const useFull = maxRows >= FULL_HEADER_ROWS + FULL_HEADER_MIN_LIST;
   const headerRows = useFull ? FULL_HEADER_ROWS : COMPACT_HEADER_ROWS;
   const listBudget = Math.max(1, maxRows - headerRows);
+  // A modal takes the whole budget and the panel behind it is not drawn.
+  // The two used to be stacked, which spent the budget twice over: Ink 7
+  // does not clip an over-tall frame, it paints later lines over earlier
+  // ones, so the add-provider list arrived on screen with most of its
+  // rows overwritten by the panel underneath (reports #1 and #2). The
+  // panel is unreachable while a modal is open anyway —
+  // `handleLlmModalKey` claims every key — so nothing is lost by hiding
+  // it, and the modal finally gets a height it can size itself against.
+  if (hasLlmModal(state)) {
+    return (
+      <Box flexDirection="column" width="100%">
+        <LlmPanelModals state={state} maxRows={maxRows} />
+      </Box>
+    );
+  }
+  // "Add a model from Hugging Face" takes the whole pane, for the same
+  // reason the modals above do: it owns every key while it is open, so
+  // drawing the model list behind it would be a list nothing can reach.
+  if (isLocalModelsHfOpen(state)) {
+    return (
+      <Box flexDirection="column" width="100%">
+        <LocalModelsHuggingFaceBranch panel={state.localModelsPanel} />
+      </Box>
+    );
+  }
   return (
     <Box flexDirection="column" width="100%">
-      <LlmPanelModals state={state} maxRows={maxRows} />
       {/* The starting banner and active-download banners are important
           feedback — keep them visible regardless of the compact/full
           header decision. */}
@@ -161,6 +188,11 @@ function footerHint(mode: LlmPanelMode, useFull: boolean): string {
       ? "j/k move · < > reorder · a add link · d remove · l toggle local · ←/→ switch pane · r refresh"
       : "j/k · < > reorder · a add · d remove · l local · ←/→ pane";
   }
+  if (mode === "local") {
+    return useFull
+      ? "j/k move · Enter selected action · a add from hugging face · ←/→ switch Local/Cloud/External/Fallback · s start/stop · r refresh"
+      : "j/k · Enter · a add · ←/→ mode · r";
+  }
   return useFull
     ? "j/k move · Enter selected action · ←/→ switch Local/Cloud/External/Fallback · f filter · n add provider · c configure · r refresh"
     : "j/k · Enter · ←/→ mode · f filter · r";
@@ -215,9 +247,24 @@ function StatusLines({
     if (state.localModelsPanel.daemonError) {
       lines.push(`local daemon: ${state.localModelsPanel.daemonError}`);
     }
+  } else if (state.llmPanel.mode === "external") {
+    // The External pane's status messages (probe verdicts from the URL
+    // save) describe an external llama.cpp, so the "cloud providers:"
+    // prefix would mislabel exactly the line the operator must act on.
+    // Only external-sourced lines render here: a cloud catalog refresh
+    // reporting on this pane, unprefixed, read as a verdict on the URL.
+    if (
+      state.providersPanel.statusLine &&
+      state.providersPanel.statusLineSource === "external"
+    ) {
+      lines.push(state.providersPanel.statusLine);
+    }
   } else {
     if (state.providersPanel.busy) lines.push("cloud providers: updating");
-    if (state.providersPanel.statusLine) {
+    if (
+      state.providersPanel.statusLine &&
+      state.providersPanel.statusLineSource === "cloud"
+    ) {
       lines.push(`cloud providers: ${state.providersPanel.statusLine}`);
     }
   }
@@ -308,11 +355,6 @@ function DownloadBanner({
       </Text>
     </Box>
   );
-}
-
-function renderProgressBar(percent: number, width: number): string {
-  const filled = Math.min(width, Math.round((percent / 100) * width));
-  return "=".repeat(filled) + " ".repeat(Math.max(0, width - filled));
 }
 
 function formatDownloadBytes(n: number): string {

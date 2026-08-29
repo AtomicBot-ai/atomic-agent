@@ -3,6 +3,7 @@ import { openaiError, type OpenAiErrorPayload } from "./openai-errors.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { ApprovalBus } from "./approval-bus.js";
 import type { CompletionRegistry } from "./completion-registry.js";
+import type { UndeliveredSteerStore } from "./undelivered-steers.js";
 
 /**
  * Small, dependency-free helpers that every HTTP route needs. Kept in
@@ -22,6 +23,12 @@ export interface HandlerContext {
   params: Record<string, string>;
   approvalBus: ApprovalBus;
   completionRegistry: CompletionRegistry;
+  /**
+   * Where a steer that the runtime accepted but never delivered ends
+   * up. Written by whichever route ran the turn, read by
+   * `GET /api/sessions/{id}/steer`.
+   */
+  undeliveredSteers: UndeliveredSteerStore;
 }
 
 export type HttpHandler = (

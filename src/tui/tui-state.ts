@@ -1,4 +1,14 @@
+import {
+  clampApprovalLevel,
+  type ApprovalLevel,
+} from "../approval/approval-level.js";
+import type { CodingMode } from "./coding-mode.js";
+import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
+import type { ComposerSwitchState } from "./composer-switch/composer-switch-state.js";
+import type { ContextMenuState } from "./context-menu/context-menu-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
+import type { WhileBusySubmitMode } from "../config/index.js";
+import type { OnboardingUiState } from "./onboarding/onboarding-state.js";
 import type {
   LatestResult,
   LoadedSkillBody,
@@ -16,6 +26,7 @@ import {
 } from "./local-models/local-llm-logs-state.js";
 import {
   createInitialLocalModelsPanelState,
+  type LocalModelsPanelSeed,
   type LocalModelsPanelState,
 } from "./local-models/local-models-panel-state.js";
 import {
@@ -58,6 +69,7 @@ import {
   createInitialFallbackPanelState,
   type FallbackPanelState,
 } from "./llm-panel/fallback/fallback-panel-state.js";
+import type { UninstallFlowState } from "./uninstall/uninstall-state.js";
 
 /**
  * High-level lifecycle of the TUI. Mirrors the underlying `SessionState`
@@ -210,6 +222,79 @@ export interface RollingMetrics {
   toolsError: number;
 }
 
+/**
+ * What the last built prompt actually put in the model's context window.
+ *
+ * Deliberately **not** part of `RollingMetrics`: those are reset at the
+ * top of every turn (`startNewRun`), which is exactly wrong for a
+ * readout that answers "how full is the window right now". The window
+ * does not empty when you press Enter.
+ *
+ * Every field is a snapshot of the most recent `prompt_built`, refined by
+ * the completion's own token count when the provider reports one.
+ */
+export interface ContextUsageState {
+  /**
+   * Tokens in the last prompt. An estimate at `prompt_built` time
+   * (`estimateTokens` over-counts by design), replaced by the real
+   * tokenizer count once the step completes and the provider reports
+   * `promptTokens`.
+   */
+  tokens: number | null;
+  /**
+   * Physical window the prompt was built against, when the runtime knows
+   * it. `null` on cloud providers, where the model profile carries no
+   * window — the chip resolves those from the model catalogue instead.
+   */
+  contextWindow: number | null;
+  /** Turns `packConversation` dropped to make the transcript fit. */
+  droppedTurns: number;
+  /** Tokens the `### conversation` section actually rendered to. */
+  conversationTokens: number;
+  /**
+   * Ceiling that section is packed to — `conversationCapEffective`. The
+   * one number that says when older turns start being dropped, and the
+   * only budget figure that is defined even when nobody knows the
+   * physical window (the clamp falls back to the configured cap).
+   */
+  conversationCap: number | null;
+  /**
+   * The cap as configured (`agent.conversationMaxTokens`), before the
+   * window clamp. Equal to `conversationCap` when config is what binds;
+   * larger when the window is. That comparison is the only way to tell
+   * an operator which knob actually moves their limit.
+   */
+  conversationCapConfigured: number | null;
+  /**
+   * The configured cap is `0` — auto. `conversationCapConfigured` is
+   * then a fallback rather than a ceiling, so the comparison above says
+   * nothing and the panel must not name `agent.conversationMaxTokens`
+   * as what is holding the transcript down. Nothing is: the window is.
+   */
+  conversationCapAuto: boolean;
+  /** Macro-turns the prompt carried. */
+  conversationPairs: number;
+  /** Macro-turns dropped whole. */
+  droppedPairs: number;
+  /** `agent.conversationMaxPairs` in force. */
+  conversationPairsCap: number;
+  /** Which limit trimmed history, when either did. */
+  conversationBoundBy: "pairs" | "tokens" | null;
+  /**
+   * Token cost of each macro-turn, oldest first — enough to price a
+   * different pair count without building another prompt, so moving the
+   * dial redraws the gauge while the operator is looking at it.
+   */
+  pairCosts: readonly number[];
+  /** Per-section breakdown, for the detail view. Empty before the first prompt. */
+  sections: readonly ContextUsageSection[];
+}
+
+export interface ContextUsageSection {
+  label: string;
+  tokens: number;
+}
+
 export interface TuiSessionInfo {
   sessionId: string | null;
   workingDir: string;
@@ -219,7 +304,21 @@ export interface TuiSessionInfo {
   /** Live approval ladder position (1 = ask for everything … 5 = full trust). */
   approvalLevel: number;
   maxSteps: number;
+  /**
+   * Tokens the runtime holds back for the model's own reply
+   * (`localModels.completionMaxTokens`). Not part of the prompt, but the
+   * reason the prompt cannot grow into the last of the window — so the
+   * context panel accounts for it separately from free space.
+   */
+  completionMaxTokens: number;
   skillCount: number;
+  /**
+   * Whether the user actually opted into a local backend (see
+   * `isLocalBackendConfigured`). Decides whether the llama-server health
+   * indicator is shown at all, so a fresh install is not told that a server
+   * it never configured is down.
+   */
+  localBackendConfigured: boolean;
 }
 
 /**
@@ -236,6 +335,17 @@ export interface SessionPickerEntry {
   updatedAt: number;
   /** First user message snippet (trimmed) or "(empty)" for blank sessions. */
   preview: string;
+}
+
+/**
+ * The pending session deletion. `cursor` is the focused button, and it
+ * starts on `cancel`: Enter on a dialog nobody read must not delete a
+ * thread.
+ */
+export interface SessionDeleteConfirm {
+  sessionId: string;
+  preview: string;
+  cursor: "yes" | "cancel";
 }
 
 export interface TuiState {
@@ -265,13 +375,57 @@ export interface TuiState {
   /** Per-run list of `<think>` blocks. Cleared on `goal_submitted`. */
   reasoning: ReasoningEntry[];
   pendingApproval: ApprovalRequest | null;
+  /**
+   * Live buffer of the approval prompt's target-path field, or `null`
+   * when the field is closed. Non-null means that editor owns the
+   * keyboard: the chat composer drops focus and the y / n hotkeys stand
+   * down, so a path containing "y" cannot approve anything.
+   */
+  approvalPathDraft: string | null;
+  /**
+   * Whether the composer currently holds a text selection. Lifted out of
+   * the editor for exactly one reason: Ctrl+C means "copy" while text is
+   * selected and "stop / quit" otherwise, and the two handlers live in
+   * different layers — the app's global key layer would arm the quit
+   * chord before the editor ever saw the key.
+   */
+  composerHasSelection: boolean;
+  /**
+  /**
+   * A short, transient line shown in the composer's meta row — "copied
+   * 3 characters", and nothing heavier. It exists because the obvious
+   * channels are both wrong for this: `runtime_info` appends to the
+   * Observe feed, which nobody is looking at while they copy, and
+   * `system_message` writes a chat entry, which would push the start
+   * page off screen to acknowledge a keystroke.
+   */
+  composerNotice: string | null;
+  /**
+   * Open "delete the session?" confirmation, or `null`. Carries the
+   * preview so the dialog can name what is about to go, and the focused
+   * button so Enter has an unambiguous meaning.
+   */
+  sessionDelete: SessionDeleteConfirm | null;
+  /**
+   * The open uninstall ladder, or `null`. Deliberately a top-level slot
+   * rather than a field on some panel: it is not part of any section,
+   * and it outranks every other surface while it is up.
+   */
+  uninstall: UninstallFlowState | null;
   loadedSkills: readonly LoadedSkillBody[];
   worldSnapshot: WorldSnapshot | null;
   latestResult: LatestResult | null;
   metrics: RollingMetrics;
+  /** Live context-window occupancy, driving the composer's context chip. */
+  contextUsage: ContextUsageState;
   logs: LogRecord[];
   /** Top-level UI mode (chat vs debug). */
   uiMode: TuiUiMode;
+  /**
+   * First-run flow. Non-null means it owns the whole terminal — the app
+   * chrome is not rendered behind it. `null` at every other moment.
+   */
+  onboarding: OnboardingUiState | null;
   /**
    * Active theme name. Stored so a runtime `/theme <name>` switch triggers a
    * re-render; the palette swap itself is done via `setActiveTheme`.
@@ -296,12 +450,57 @@ export interface TuiState {
    * the newest entry at the end.
    */
   inputHistoryCursor: number | null;
+  /**
+   * The half-written draft that was in the editor when history recall
+   * started, parked so Down can hand it back. `null` whenever the editor
+   * is showing the live buffer — recall always stashes before it
+   * overwrites, and any real edit to a recalled entry drops the stash.
+   */
+  inputHistoryDraft: string | null;
   /** Is the slash-command overlay currently visible below the editor? */
   slashPaletteOpen: boolean;
   /** Current slash prefix (characters typed after the leading `/`). */
   slashQuery: string;
   /** Highlighted row in the slash palette. */
   slashPaletteCursor: number;
+  /**
+   * Operator menu (`ctrl+p`) — the browsable half of the navigation surface.
+   * `menuPath` is the id of the submenu currently open, or `null` at the
+   * root; the tree is one level deep by construction so a single id is
+   * enough. A non-empty `menuQuery` flattens the tree: search ranks across
+   * every node regardless of where it lives.
+   */
+  menuOpen: boolean;
+  /** The composer's context detail panel floats over the chat. */
+  contextPanelOpen: boolean;
+  /**
+   * Task count the operator is trying out in the open panel, before
+   * committing it. `null` means the panel is reporting what the last
+   * prompt actually did.
+   *
+   * A draft rather than a live config write: the whole point is to see
+   * what a different limit would cost before choosing it, and writing on
+   * every keypress would rebuild the budget under the cursor.
+   */
+  contextPanelPairsDraft: number | null;
+  /**
+   * Which of the composer meta row's three controls has its switch open
+   * (backend kind / provider / model), and where its cursor sits.
+   * `null` when the row is just a label, which is most of the time.
+   */
+  composerSwitch: ComposerSwitchState | null;
+  /**
+   * The right-click cut/copy/paste menu: the clicked cell and what it
+   * targets, or `null`. Deliberately NOT part of `modalOwnsInput` — the
+   * menu has its own registry floor (`MOUSE_LAYER_CONTEXT_MENU`) so the
+   * composer keeps its viewport, and with it the anchor cell, while the
+   * menu is up. The verbs themselves live outside the reducer, parked
+   * on the `ContextMenuProvider` handle by whichever surface opened it.
+   */
+  contextMenu: ContextMenuState | null;
+  menuPath: string | null;
+  menuQuery: string;
+  menuCursor: number;
   /** Which tool cards are shown expanded by the user. */
   toolsExpandedById: Readonly<Record<string, boolean>>;
   /** Is the session picker overlay visible? */
@@ -409,22 +608,95 @@ export interface TuiState {
    * loses sight of the freshest reply.
    */
   chatScrollOffset: number;
+  /**
+   * Messages the operator submitted while a turn was still running, in
+   * submission order. Mirrors `ChatOrchestrator`'s internal queue — the
+   * orchestrator is the source of truth and re-publishes the list via
+   * `queue_changed` on every mutation; this slice exists so the prompt
+   * can show what is parked without reaching into the orchestrator.
+   */
+  queuedMessages: readonly string[];
+  /**
+   * What Enter does while a turn is running: `steer` folds the message
+   * into the turn in flight, `queue` parks it for the next one. Seeded
+   * from `config.tui.whileBusySubmit` at mount and flipped in-app with
+   * Ctrl+T (persisted). Irrelevant when idle — Enter always starts a
+   * turn then.
+   */
+  whileBusyMode: WhileBusySubmitMode;
+  /**
+   * The stance the session is working in — see `coding-mode.ts`. Session
+   * state, never persisted: `bypass` surviving a restart would be a
+   * standing grant nobody remembers making.
+   */
+  codingMode: CodingMode;
+  /**
+   * The mode menu, or `null` when it is closed. `cursor` indexes
+   * {@link CODING_MODES}.
+   *
+   * Clicking the chip used to advance the ring directly, which made the
+   * one control that changes what the agent is allowed to do the only
+   * control in the app with no confirmation and no explanation — two
+   * stray clicks took you from `plan` to `auto` with nothing on
+   * screen saying what either meant.
+   */
+  codingModeMenu: { readonly cursor: number } | null;
+  /**
+   * A plan is on screen and nothing has been done with it yet.
+   *
+   * Set when a turn completes in plan mode, cleared the moment the next
+   * one starts or the mode changes. Plan mode otherwise ends in a dead
+   * end: the agent has said what it would do and is forbidden from
+   * doing any of it, and the app said nothing about the obvious next
+   * step at the one moment it was obvious.
+   */
+  planHandoff: boolean;
+  /**
+   * The approval level the operator actually configured, so `default`
+   * can restore it. Seeded from the boot level and moved by the Privacy
+   * tab; the coding-mode chip reads it and never writes it.
+   */
+  baseApprovalLevel: ApprovalLevel;
 }
 
 /**
- * Derived selector: can the user submit a new chat message right now?
- * Used by both the input component (disable when busy) and the
- * orchestrator (reject submissions sent while a turn is still in flight).
+ * Derived selector: can a new turn start *right now*? Used by the
+ * submit pipeline to decide between running the message immediately and
+ * parking it behind the turn in flight.
  */
 export function canAcceptMessage(state: TuiState): boolean {
   return state.status === "idle";
+}
+
+/**
+ * Derived selector: may the operator put characters into the editor?
+ *
+ * Deliberately weaker than {@link canAcceptMessage}. The editor used to
+ * be disabled for the whole duration of a turn, which meant a running
+ * agent swallowed every keystroke — you could not even draft the next
+ * message, let alone send it. Typing is now allowed whenever the app is
+ * not tearing down; a submission made while busy is queued rather than
+ * dropped (see `handleEditorSubmit`).
+ */
+export function canTypeMessage(state: TuiState): boolean {
+  return state.status !== "quitting";
 }
 
 export const DEFAULT_RING_BUFFER_SIZE = 500;
 
 export interface InitialTuiLayoutOptions {
   uiMode?: TuiUiMode;
+  /** Seeded by `tui-command` when the first-run flow has to open. */
+  onboarding?: OnboardingUiState | null;
   activeTab?: TuiTab;
+  /** Seeds {@link TuiState.whileBusyMode} from the persisted user config. */
+  whileBusyMode?: WhileBusySubmitMode;
+  /**
+   * Seeds the local-models slice's config-derived facts (mode + chosen
+   * model), so the composer's route controls are right on the home
+   * screen before the Models tab ever refreshes the slice.
+   */
+  localModels?: LocalModelsPanelSeed;
 }
 
 export function createInitialTuiState(
@@ -453,6 +725,11 @@ export function createInitialTuiState(
     streamingToolCards: [],
     reasoning: [],
     pendingApproval: null,
+    approvalPathDraft: null,
+    composerHasSelection: false,
+    composerNotice: null,
+    sessionDelete: null,
+    uninstall: null,
     loadedSkills: [],
     worldSnapshot: null,
     latestResult: null,
@@ -470,8 +747,10 @@ export function createInitialTuiState(
       toolsOk: 0,
       toolsError: 0,
     },
+    contextUsage: EMPTY_CONTEXT_USAGE,
     logs: [],
     uiMode: layout?.uiMode ?? "chat",
+    onboarding: layout?.onboarding ?? null,
     themeName: getActiveThemeName(),
     activeTab,
     lastRunStatus: null,
@@ -479,9 +758,18 @@ export function createInitialTuiState(
     inputValue: "",
     inputHistory: [],
     inputHistoryCursor: null,
+    inputHistoryDraft: null,
     slashPaletteOpen: false,
     slashQuery: "",
     slashPaletteCursor: 0,
+    menuOpen: false,
+    contextPanelOpen: false,
+    contextPanelPairsDraft: null,
+    composerSwitch: null,
+    contextMenu: null,
+    menuPath: null,
+    menuQuery: "",
+    menuCursor: 0,
     toolsExpandedById: {},
     sessionPickerOpen: false,
     sessionPickerList: [],
@@ -502,9 +790,13 @@ export function createInitialTuiState(
     providersPanel: createInitialProvidersPanelState(),
     llmPanel,
     fallbackPanel: createInitialFallbackPanelState(),
-    localModelsPanel: createInitialLocalModelsPanelState(),
+    localModelsPanel: createInitialLocalModelsPanelState(layout?.localModels),
     localLlmLogs: createInitialLocalLlmLogsState(),
-    llmHealth: createInitialLlmHealthState(),
+    // Optional chaining on purpose: `session` is typed as required but tests
+    // call this with nothing (test files are outside tsconfig's include), and
+    // before this argument existed no field was read here, so a bare
+    // `session.` would turn those callers into a crash.
+    llmHealth: createInitialLlmHealthState(session?.localBackendConfigured),
     telegramPanel: createInitialTelegramPanelState(),
     recentSessions: [],
     chatFocus: "editor",
@@ -512,5 +804,16 @@ export function createInitialTuiState(
     sidebarCursor: 0,
     sidebarTasksCursor: 0,
     chatScrollOffset: 0,
+    queuedMessages: [],
+    whileBusyMode: layout?.whileBusyMode ?? "steer",
+    codingMode: "default",
+    codingModeMenu: null,
+    planHandoff: false,
+    // `session` is optional in practice: several reducer tests build a
+    // state with no session info at all, and a seed that assumed one
+    // would turn every one of them into a crash about a field they do
+    // not care about. The strictest level is the right default when
+    // nobody said.
+    baseApprovalLevel: clampApprovalLevel(session?.approvalLevel ?? 1),
   };
 }

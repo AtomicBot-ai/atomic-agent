@@ -13,7 +13,9 @@ export function fakeSession(
     browserHeadless: false,
     approvalLevel: 5,
     maxSteps: 10,
+    completionMaxTokens: 2048,
     skillCount: 0,
+    localBackendConfigured: false,
     ...overrides,
   };
 }

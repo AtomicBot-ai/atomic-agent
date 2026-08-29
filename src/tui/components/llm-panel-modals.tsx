@@ -1,5 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement, ReactNode } from "react";
+import { PasteFieldTarget } from "../context-menu/paste-field-target.js";
+import { pasteIntoLlmModalField } from "../llm-panel/llm-panel-paste.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { ProvidersWizard } from "./providers-wizard.js";
@@ -36,6 +38,30 @@ function blankRows(count: number): ReactElement[] {
   ));
 }
 
+/**
+ * True when one of the boxes below owns the screen.
+ *
+ * `handleLlmModalKey` returns non-null for exactly these states, i.e.
+ * the panel behind a modal cannot be driven while one is open. It must
+ * therefore not be DRAWN either: the panel already spends the whole tab
+ * budget, so drawing a modal on top of it is a frame taller than the
+ * terminal, and Ink 7 resolves that by overwriting earlier lines rather
+ * than clipping. Callers use this to hand the modal the full budget and
+ * render nothing else.
+ */
+export function hasLlmModal(state: TuiState): boolean {
+  return (
+    state.providersPanel.wizard !== null ||
+    state.providersPanel.removeConfirm !== null ||
+    state.localModelsPanel.embeddingOnboardingPrompt !== null ||
+    state.localModelsPanel.removeConfirmId !== null ||
+    state.localModelsPanel.embeddingRemoveConfirmId !== null ||
+    state.providersPanel.chatModelPicker !== null ||
+    state.llmPanel.externalUrlDraft !== null ||
+    state.llmPanel.stopLocalDaemonsPrompt !== null
+  );
+}
+
 export function LlmPanelModals({
   state,
   maxRows,
@@ -44,7 +70,12 @@ export function LlmPanelModals({
   maxRows?: number;
 }): ReactElement | null {
   if (state.providersPanel.wizard) {
-    return <ProvidersWizard wizard={state.providersPanel.wizard} />;
+    return (
+      <ProvidersWizard
+        wizard={state.providersPanel.wizard}
+        {...(maxRows === undefined ? {} : { maxRows })}
+      />
+    );
   }
   if (state.providersPanel.removeConfirm) {
     return (
@@ -135,11 +166,15 @@ export function LlmPanelModals({
           }`;
     return (
       <PromptBox tone="accent" title={`Models — ${picker.providerId}`}>
-        <Text color={theme.colors.muted} wrap="truncate-end">
-          {"filter: "}
-          <Text color={theme.colors.accent}>{queryLine}</Text>
-          <Text color={theme.colors.muted}>▏</Text>
-        </Text>
+        {/* Right-click paste appends to the query through the modal's
+            own key layer. */}
+        <PasteFieldTarget onPasteText={pasteIntoLlmModalField}>
+          <Text color={theme.colors.muted} wrap="truncate-end">
+            {"filter: "}
+            <Text color={theme.colors.accent}>{queryLine}</Text>
+            <Text color={theme.colors.muted}>▏</Text>
+          </Text>
+        </PasteFieldTarget>
         {visible.map((id: string, i: number) => {
           const idx = start + i;
           const selected = idx === picker.cursor;
@@ -175,10 +210,14 @@ export function LlmPanelModals({
     const valid = parseExternalUrl(draft) !== null;
     return (
       <PromptBox tone="accent" title="External llama.cpp base URL">
-        <Text>
-          {draft}
-          <Text color={theme.colors.muted}>▏</Text>
-        </Text>
+        {/* A URL is the paste case — right-click routes the clipboard
+            through the same modal key layer typing uses. */}
+        <PasteFieldTarget onPasteText={pasteIntoLlmModalField}>
+          <Text>
+            {draft}
+            <Text color={theme.colors.muted}>▏</Text>
+          </Text>
+        </PasteFieldTarget>
         {valid ? null : <Text color={theme.colors.error}>invalid URL</Text>}
         <Text color={theme.colors.muted}>
           Saved after a /health probe succeeds. Enter save · Esc cancel

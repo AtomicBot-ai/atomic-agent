@@ -1,6 +1,9 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
+import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
+import { isPrimaryPress } from "../mouse/mouse-event.js";
+import { MOUSE_LAYER_PANEL } from "../mouse/mouse-registry.js";
 import { EventFeed } from "../event-feed.js";
 import { LogsTab } from "../logs-tab.js";
 import { ReasoningTab } from "../reasoning-tab.js";
@@ -29,6 +32,12 @@ import { ProvidersPanel } from "./providers-panel.js";
 interface DebugPaneProps {
   state: TuiState;
   maxVisible: number;
+  /**
+   * Whether the composer is on screen below the pane. It is not, on the
+   * Manage tabs — so those panels really do have six more rows to spend,
+   * and budgeting as if it were there leaves them dead.
+   */
+  composerVisible: boolean;
   onMcpAddJsonChange?: (json: string) => void;
   onMcpAddSubmit?: (json: string) => void;
   onMcpAddCancel?: () => void;
@@ -46,6 +55,7 @@ interface DebugPaneProps {
 export function DebugPane({
   state,
   maxVisible,
+  composerVisible,
   onMcpAddJsonChange,
   onMcpAddSubmit,
   onMcpAddCancel,
@@ -58,6 +68,7 @@ export function DebugPane({
       <ActiveDebugTab
         state={state}
         maxVisible={maxVisible}
+        composerVisible={composerVisible}
         onMcpAddJsonChange={onMcpAddJsonChange}
         onMcpAddSubmit={onMcpAddSubmit}
         onMcpAddCancel={onMcpAddCancel}
@@ -76,29 +87,57 @@ function SubTabBar({ state, section }: SubTabBarProps): ReactElement | null {
   const tabs =
     section === "manage" ? buildManageTabs(state) : buildObserveTabs(state);
   return (
-    <Box>
-      {tabs.map((tab, idx) => {
-        const active = tab.id === state.activeTab;
-        return (
-          <Text key={tab.id}>
-            <Text
-              color={active ? theme.colors.accentSoft : theme.colors.muted}
-              bold={active}
-            >
-              {active ? `${theme.glyphs.chevronRight} ` : "  "}
-              {tab.label}
+    <Box flexWrap="wrap">
+      {tabs.map((tab, idx) => (
+        <Box key={tab.id} flexShrink={0}>
+          <SubTabLabel tab={tab} active={tab.id === state.activeTab} />
+          {idx < tabs.length - 1 ? (
+            <Text color={theme.colors.muted}>
+              {"  "}
+              {theme.glyphs.pipeSeparator}
+              {"  "}
             </Text>
-            {idx < tabs.length - 1 ? (
-              <Text color={theme.colors.muted}>
-                {"  "}
-                {theme.glyphs.pipeSeparator}
-                {"  "}
-              </Text>
-            ) : null}
-          </Text>
-        );
-      })}
+          ) : null}
+        </Box>
+      ))}
     </Box>
+  );
+}
+
+/**
+ * One sub-tab. Split out of the strip so each label owns a measurable
+ * box the mouse layer can hit — clicking a tab performs the same
+ * dispatch Tab-cycling does.
+ */
+function SubTabLabel({
+  tab,
+  active,
+}: {
+  tab: SubTab;
+  active: boolean;
+}): ReactElement {
+  const mouse = useMouseCommands();
+  const label = (
+    <Text
+      color={active ? theme.colors.accentSoft : theme.colors.muted}
+      bold={active}
+    >
+      {active ? `${theme.glyphs.chevronRight} ` : "  "}
+      {tab.label}
+    </Text>
+  );
+  if (!mouse) return label;
+  return (
+    <MouseTarget
+      layer={MOUSE_LAYER_PANEL}
+      onMouse={(hit) => {
+        if (!isPrimaryPress(hit.event)) return false;
+        if (!active) mouse.dispatch({ type: "tab_changed", tab: tab.id });
+        return true;
+      }}
+    >
+      {label}
+    </MouseTarget>
   );
 }
 
@@ -131,14 +170,33 @@ function buildManageTabs(state: TuiState): SubTab[] {
 }
 
 /**
- * Height consumed by the always-on app frame OUTSIDE the debug pane:
- * the top `StatusBar` (1 row) + the `PromptShell` (≈6 rows: top margin,
- * padding, the editor line, the meta-row, and the `╹` cap) + the
- * `HotkeyHint` (1 row). Ink 7 does NOT clip a frame taller than the
- * terminal — it overlaps/garbles earlier lines instead (verified) — so
- * the per-tab budget must subtract this accurately and err generous.
+ * Height consumed by the always-on app frame OUTSIDE the debug pane
+ * when the composer is NOT on screen: the top `StatusBar` (1 row), the
+ * hairline under it (1) and the `HotkeyHint` (1).
  */
-const APP_CHROME_ROWS = 9;
+export const APP_CHROME_ROWS_BASE = 3;
+/**
+ * Rows the composer overlay costs when it is mounted: the see-through
+ * spacer above the frame, the rounded frame's two border rows, a blank
+ * row above and below the buffer, the editor line, and the action bar
+ * with a blank row above and below it too.
+ */
+export const COMPOSER_ROWS = 10;
+/**
+ * Height consumed by the always-on app frame OUTSIDE the debug pane.
+ * Ink 7 does NOT clip a frame taller than the terminal — it overlaps /
+ * garbles earlier lines instead (verified) — so the per-tab budget must
+ * subtract this accurately and err generous.
+ *
+ * The composer is only on screen on the Run screen, so its rows are
+ * conditional: a Manage tab really does have six more rows to spend, and
+ * budgeting as if the composer were still there leaves them dead.
+ */
+export function appChromeRows(composerVisible: boolean): number {
+  return APP_CHROME_ROWS_BASE + (composerVisible ? COMPOSER_ROWS : 0);
+}
+/** Back-compat alias: the chat-screen total. */
+export const APP_CHROME_ROWS = APP_CHROME_ROWS_BASE + COMPOSER_ROWS;
 /**
  * Height consumed INSIDE the debug pane above the active tab: the
  * `SubTabBar` (1 row) + the `DebugDiagnosticsLine`. The diagnostics line
@@ -169,28 +227,78 @@ const MIN_LIST_ROWS = 3;
  * Total number of rows available for an active tab's own content
  * (panel chrome + its list), derived from the live terminal height.
  */
-function tabContentBudget(terminalRows: number): number {
+/**
+ * Rows offered to the panels that collapse in STEPS rather than
+ * continuously (LLM / Models): they render a fixed short form up to 15
+ * rows and a fixed tall form from 16, so a budget of 16..19 makes them
+ * overshoot the pane — and Ink 7 paints an over-tall frame over the rows
+ * above instead of clipping it.
+ *
+ * Exported for the test that sweeps every terminal height: the invariant
+ * is "whatever we offer, the panel's rendered height still fits".
+ */
+export function steppedPanelRows(
+  terminalRows: number,
+  composerVisible: boolean,
+): number {
+  return Math.min(
+    tabContentBudget(terminalRows, composerVisible),
+    tabContentBudget(terminalRows, true),
+  );
+}
+
+/** Height the stepped panels actually render at a given budget. */
+export function steppedPanelRendered(maxRows: number): number {
+  return maxRows >= STEPPED_PANEL_TALL_ROWS ? STEPPED_PANEL_TALL_ROWS : STEPPED_PANEL_SHORT_ROWS;
+}
+
+const STEPPED_PANEL_SHORT_ROWS = 9;
+const STEPPED_PANEL_TALL_ROWS = 20;
+
+function tabContentBudget(terminalRows: number, composerVisible: boolean): number {
   return Math.max(
     MIN_LIST_ROWS,
-    terminalRows - APP_CHROME_ROWS - DEBUG_TAB_CHROME_ROWS - RENDER_SAFETY_ROWS,
+    terminalRows -
+      appChromeRows(composerVisible) -
+      DEBUG_TAB_CHROME_ROWS -
+      RENDER_SAFETY_ROWS,
   );
 }
 
 function ActiveDebugTab({
   state,
   maxVisible,
+  composerVisible,
   onMcpAddJsonChange,
   onMcpAddSubmit,
   onMcpAddCancel,
 }: {
   state: TuiState;
   maxVisible: number;
+  composerVisible: boolean;
   onMcpAddJsonChange?: (json: string) => void;
   onMcpAddSubmit?: (json: string) => void;
   onMcpAddCancel?: () => void;
 }): ReactElement {
   const { rows: terminalRows } = useTerminalSize();
-  const tabBudget = tabContentBudget(terminalRows);
+  const tabBudget = tabContentBudget(terminalRows, composerVisible);
+  /**
+   * The budget the LLM and Models panels are told about.
+   *
+   * Those two do not scale continuously: they render a fixed ~9 rows up
+   * to `maxRows` 15 and jump to a fixed ~20 the moment they are offered
+   * 16, so any budget in 16..19 makes them overshoot — and Ink 7 paints
+   * an over-tall frame over the rows above rather than clipping it. The
+   * composer's six reclaimed rows land a default 80x24 / 100x24 terminal
+   * squarely in that band, which turned a clean frame into a garbled one
+   * on exactly the screens most people run.
+   *
+   * Until those panels collapse smoothly, they keep the pre-reclaim
+   * budget: the extra rows go unused rather than overlapping the status
+   * bar. The compact panels (Tasks / Skills / Memory / MCP) window a
+   * list row by row and take the real budget.
+   */
+  const steppedPanelBudget = steppedPanelRows(terminalRows, composerVisible);
   // Compact panels have a tiny fixed header, so they get the list slice
   // directly. LLM / Models own large fixed chrome (RouteCard / status
   // footer) that they collapse themselves, so they receive the full
@@ -229,9 +337,14 @@ function ActiveDebugTab({
     case "providers":
       return <ProvidersPanel panel={state.providersPanel} />;
     case "llm":
-      return <LlmPanel state={state} maxRows={tabBudget} />;
+      return <LlmPanel state={state} maxRows={steppedPanelBudget} />;
     case "models":
-      return <LocalModelsPanel panel={state.localModelsPanel} maxRows={tabBudget} />;
+      return (
+        <LocalModelsPanel
+          panel={state.localModelsPanel}
+          maxRows={steppedPanelBudget}
+        />
+      );
     case "llm-logs":
       return <LocalLlmLogsPanel logs={state.localLlmLogs} maxLines={maxVisible} />;
     case "telegram":

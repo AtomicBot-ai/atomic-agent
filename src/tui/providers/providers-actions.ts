@@ -14,7 +14,19 @@ export type ProvidersAction =
   | { type: "providers_set_active_embedding"; id: string }
   | { type: "providers_cursor_down" }
   | { type: "providers_cursor_up" }
-  | { type: "providers_status"; line: string | null }
+  /** Put the provider-list cursor on an absolute row (mouse click). */
+  | { type: "providers_cursor_set"; row: number }
+  | {
+      /**
+       * `source` says which pane the line belongs to: the cloud
+       * providers list (default), or the External pane's URL-save
+       * verdicts. Without it the External pane rendered every
+       * cloud-provider status verbatim — catalog refreshes included.
+       */
+      type: "providers_status";
+      line: string | null;
+      source?: "cloud" | "external";
+    }
   | { type: "providers_busy"; busy: boolean }
   | { type: "providers_wizard_opened"; wizard: ProvidersWizardState }
   | {
@@ -81,6 +93,7 @@ export type ProvidersAction =
   | { type: "providers_wizard_closed" }
   | { type: "providers_wizard_submit_started" }
   | { type: "providers_wizard_failed"; error: string }
+  | { type: "providers_wizard_verify_cancelled" }
   | { type: "providers_wizard_succeeded" }
   | { type: "providers_remove_opened"; id: string }
   | { type: "providers_remove_closed" }

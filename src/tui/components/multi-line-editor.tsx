@@ -1,21 +1,29 @@
 import { Box, useInput, type Key } from "ink";
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
+import { useClipboard } from "../clipboard/clipboard-context.js";
 import { theme } from "../theme/theme.js";
 import { EditorBody } from "./multi-line-editor-body.js";
-import {
-  cursorToRowCol,
-  findWordStart,
-  isOnFirstLine,
-  isOnLastLine,
-  lineEnd,
-  lineStart,
-  rowColToCursor,
-} from "./multi-line-editor-cursor.js";
-import { normalizeInsertText } from "./multi-line-editor-input.js";
+import { useEditorClipboard } from "./multi-line-editor-clipboard.js";
+import { cursorToRowCol } from "./multi-line-editor-cursor.js";
+import { handleKey } from "./multi-line-editor-keys.js";
+import { createEditorPointer } from "./multi-line-editor-pointer.js";
 
 export interface MultiLineEditorProps {
   value: string;
   placeholder?: string;
+  /**
+   * Ink colour for the buffer's own text.
+   *
+   * Absent means "inherit the terminal's default foreground", which is
+   * right for every field drawn straight on the page — and wrong for
+   * any field sitting on a ground the *app* painted, because the two
+   * have no relationship. The composer is the second kind: it sits on
+   * `badgeBackground`, and on a light palette that is a light panel,
+   * so a terminal whose default ink is light (i.e. any dark terminal
+   * running `classic-light`) rendered light text on it. See
+   * `prompt-shell.tsx`.
+   */
+  textColor?: string;
   focus: boolean;
   /** Disable interaction (reject keys silently) — keeps focus state intact. */
   disabled?: boolean;
@@ -47,6 +55,42 @@ export interface MultiLineEditorProps {
    * editor body.
    */
   bare?: boolean;
+  /**
+   * Consulted before every keystroke: `true` means another layer owns
+   * this key and the editor must not type it. Ink delivers a keypress
+   * to every subscription, so a focused editor and a global hotkey
+   * handler would otherwise both act on it — the approval prompt uses
+   * this so `y` decides the prompt instead of landing in the buffer.
+   */
+  claimKey?: (input: string, key: Key) => boolean;
+   /**
+   * The operator clicked into the buffer. Fired even when the editor is
+   * not focused — clicking an input is how every other application is
+   * told "put the keyboard here", and the editor cannot move focus
+   * itself because focus lives in the app's state.
+   */
+  onClickFocus?: () => void;
+  /**
+   * The selection appeared or disappeared. The app lifts this into its
+   * own state because Ctrl+C means "copy" while text is selected and
+   * "stop / quit" otherwise, and those two handlers live in different
+   * key layers.
+   */
+  onSelectionChange?: (hasSelection: boolean) => void;
+  /** Text was copied to the clipboard, so the app can say so. */
+  onCopy?: (text: string) => void;
+  /**
+   * Growth cap, in buffer lines painted at once — see
+   * `EditorBodyProps.maxVisibleLines`. The buffer itself is unbounded;
+   * only the paint is windowed.
+   */
+  maxVisibleLines?: number;
+  /**
+   * Mouse layer for the editor's click target — see
+   * `EditorBodyProps.mouseLayer`. The composer overlay passes
+   * `MOUSE_LAYER_PANEL` so its clicks beat the chat controls it covers.
+   */
+  mouseLayer?: number;
 }
 
 /**
@@ -67,6 +111,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
   const {
     value,
     placeholder,
+    textColor,
     focus,
     disabled = false,
     onChange,
@@ -79,8 +124,23 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     onShiftTab,
     onAutocomplete,
     bare = false,
+    claimKey,
+    onClickFocus,
+    onSelectionChange,
+    onCopy,
+    maxVisibleLines,
+    mouseLayer,
   } = props;
   const [cursorPos, setCursorPos] = useState<number>(value.length);
+  /**
+   * Where the current selection was started, or `null` when there is
+   * none. The other end is always the caret, so extending a selection is
+   * just moving the caret and leaving the anchor where it was — the same
+   * model every text editor uses, and the reason Shift+arrow needs no
+   * separate bookkeeping.
+   */
+  const [anchor, setAnchor] = useState<number | null>(null);
+  const clipboard = useClipboard();
   // Distinguish our own edits (keystrokes routed through `setBuffer`)
   // from external buffer replacements: slash-seeding from panel hotkeys
   // (the LLM tab dispatches `input_changed "/"` on `/`), history recall,
@@ -95,7 +155,42 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     if (value === lastInternalValue.current) return;
     lastInternalValue.current = value;
     setCursorPos(value.length);
+    // The buffer was replaced from outside — history recall, an Esc that
+    // cleared the draft, a seeded slash command, a submit. Whatever was
+    // selected no longer exists, and an anchor left pointing into the old
+    // text makes the next keystroke replace a span the operator cannot
+    // see (and can point past the end of a shorter buffer).
+    setAnchor(null);
   }, [value]);
+
+  /** `[start, end)` in buffer offsets, or `null` when nothing is picked. */
+  const selection: readonly [number, number] | null =
+    anchor === null || anchor === cursorPos
+      ? null
+      : [Math.min(anchor, cursorPos), Math.max(anchor, cursorPos)];
+  const hasSelection = selection !== null;
+  // Same render-phase-ref idiom as `activeRef` below, and load-bearing:
+  // `tui-app` passes an inline arrow, so the prop has a new identity
+  // every render. With the callback in the deps, the first `true` this
+  // effect reports re-rendered the app, which re-ran the effect, whose
+  // CLEANUP reported `false`, which re-rendered the app… a dispatch
+  // ping-pong that hit React's "Maximum update depth exceeded" the
+  // moment a selection existed in the real TUI. Depending only on
+  // `hasSelection` reports each transition exactly once, whatever the
+  // parent does with the prop's identity.
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  onSelectionChangeRef.current = onSelectionChange;
+  useEffect(() => {
+    onSelectionChangeRef.current?.(hasSelection);
+  }, [hasSelection]);
+  useEffect(() => {
+    // Unmounting with a live selection strands the app's copy of the
+    // flag, and the flag is what makes Ctrl+C mean "copy": the global
+    // layer would stand down for an editor that no longer exists, so
+    // Ctrl+C would abort nothing and quit nothing for the rest of the
+    // session. The composer unmounts on every Observe / Manage tab.
+    return () => onSelectionChangeRef.current?.(false);
+  }, []);
 
   const setBuffer = useCallback(
     (next: string, nextCursor: number) => {
@@ -106,15 +201,39 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     [onChange],
   );
 
+  // Ink tears the `isActive` subscription down in a passive effect, one
+  // frame after the render that flipped `focus`. A keypress that arrives in
+  // that gap — always the case when the flip and the key are processed in
+  // the same stdin batch, e.g. Tab into a panel followed by the panel's
+  // hotkey — is still delivered here and lands in the chat buffer of an
+  // editor that is no longer focused. The ref is written during render, so
+  // the callback checks the *current* focus, not the focus the subscription
+  // was created with. (Render-phase write is safe: the value is derived
+  // from props, never from state updated here.)
+  const activeRef = useRef(focus && !disabled);
+  activeRef.current = focus && !disabled;
+  // Same render-phase-ref treatment as `activeRef`: the predicate reads
+  // live TUI state, and a stale closure would type a key the prompt had
+  // already claimed.
+  const claimKeyRef = useRef(claimKey);
+  claimKeyRef.current = claimKey;
+
   useInput(
     (input, key) => {
+      if (!activeRef.current) return;
       if (disabled) return;
+      if (claimKeyRef.current?.(input, key)) return;
       handleKey({
         input,
         key,
         value,
         cursor: cursorPos,
         setBuffer,
+        selection,
+        anchor,
+        setAnchor,
+        copySelection,
+        onPaste: pasteClipboard,
         onSubmit,
         onEscape,
         onInterrupt,
@@ -129,16 +248,58 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
   );
 
   const cursor = cursorToRowCol(value, cursorPos);
-  if (bare) {
-    return (
-      <EditorBody
-        value={value}
-        cursor={cursor}
-        placeholder={placeholder ?? ""}
-        focus={focus && !disabled}
-      />
-    );
-  }
+
+  /**
+   * Copy the selection. Both mechanisms in `copy-to-clipboard` are
+   * advisory in their own way — OSC 52 has no reply and the platform
+   * command may not exist — so the app is told what was copied and lets
+   * the operator judge; a silent failure would be worse than a claim.
+   */
+  const copySelection = (): void => {
+    if (!selection) return;
+    const text = value.slice(selection[0], selection[1]);
+    if (text.length === 0) return;
+    void clipboard.copy(text);
+    onCopy?.(text);
+  };
+
+  // The async clipboard side: the paste chord and the right-click menu
+  // (whose verbs land frames after the gesture, so the hook re-reads
+  // this render's context through a render-refreshed ref).
+  const { pasteClipboard, openMenuAt } = useEditorClipboard({
+    disabled,
+    hasSelection,
+    edit: { value, cursor: cursorPos, setBuffer, selection, anchor, setAnchor },
+    copySelection,
+  });
+
+  const { placeCursorAt, beginDrag, extendDrag, endDrag } =
+    createEditorPointer({
+      value,
+      cursorPos,
+      disabled,
+      setCursorPos,
+      setAnchor,
+      onClickFocus,
+    });
+  const body = (
+    <EditorBody
+      value={value}
+      cursor={cursor}
+      placeholder={placeholder ?? ""}
+      {...(textColor !== undefined ? { textColor } : {})}
+      focus={focus && !disabled}
+      selection={selection}
+      onClickCursor={placeCursorAt}
+      onSecondaryPress={openMenuAt}
+      onDragStart={beginDrag}
+      onDragMove={extendDrag}
+      onDragEnd={endDrag}
+      maxVisibleLines={maxVisibleLines}
+      mouseLayer={mouseLayer}
+    />
+  );
+  if (bare) return body;
   return (
     <Box
       borderStyle="round"
@@ -146,172 +307,7 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
       paddingX={1}
       flexDirection="column"
     >
-      <EditorBody value={value} cursor={cursor} placeholder={placeholder ?? ""} focus={focus && !disabled} />
+      {body}
     </Box>
   );
 }
-
-interface KeyContext {
-  input: string;
-  key: Key;
-  value: string;
-  cursor: number;
-  setBuffer: (next: string, cursor: number) => void;
-  onSubmit: (value: string) => void;
-  onEscape?: () => void;
-  onInterrupt?: () => void;
-  onTab?: () => void;
-  onShiftTab?: () => void;
-  onAutocomplete?: () => void;
-  onHistoryPrev?: () => void;
-  onHistoryNext?: () => void;
-}
-
-function handleKey(ctx: KeyContext): void {
-  const { input, key, value, cursor, setBuffer } = ctx;
-  if (key.ctrl && input === "c" && ctx.onInterrupt) {
-    ctx.onInterrupt();
-    return;
-  }
-  // Ignore keys owned by the global app-level handler so the editor
-  // never inserts Ctrl+C as "c" or swallows F-key escape sequences.
-  if (isGlobalHotkey(input, key)) return;
-  if (key.escape) {
-    ctx.onEscape?.();
-    return;
-  }
-  if (key.tab && key.shift) {
-    ctx.onShiftTab?.();
-    return;
-  }
-  if (key.tab) {
-    ctx.onTab?.();
-    return;
-  }
-  if (key.return) {
-    const newline = key.meta || key.shift || key.ctrl;
-    const trailingBackslash = value.endsWith("\\") && cursor === value.length;
-    if (newline) {
-      insertText(ctx, "\n");
-      return;
-    }
-    if (trailingBackslash) {
-      const withoutSlash = value.slice(0, -1);
-      setBuffer(`${withoutSlash}\n`, withoutSlash.length + 1);
-      return;
-    }
-    ctx.onSubmit(value);
-    return;
-  }
-  if (key.upArrow) {
-    if (isOnFirstLine(value, cursor)) {
-      ctx.onHistoryPrev?.();
-      return;
-    }
-    moveCursorVertically(ctx, -1);
-    return;
-  }
-  if (key.downArrow) {
-    if (isOnLastLine(value, cursor)) {
-      ctx.onHistoryNext?.();
-      return;
-    }
-    moveCursorVertically(ctx, 1);
-    return;
-  }
-  if (key.leftArrow) {
-    setBuffer(value, Math.max(0, cursor - 1));
-    return;
-  }
-  if (key.rightArrow) {
-    if (cursor >= value.length && ctx.onAutocomplete) {
-      ctx.onAutocomplete();
-      return;
-    }
-    setBuffer(value, Math.min(value.length, cursor + 1));
-    return;
-  }
-  if (key.backspace || key.delete) {
-    if (key.delete && !key.backspace) {
-      // Forward delete
-      if (cursor < value.length) {
-        const next = value.slice(0, cursor) + value.slice(cursor + 1);
-        setBuffer(next, cursor);
-      }
-      return;
-    }
-    if (cursor > 0) {
-      const next = value.slice(0, cursor - 1) + value.slice(cursor);
-      setBuffer(next, cursor - 1);
-    }
-    return;
-  }
-  if (key.ctrl && input === "a") {
-    setBuffer(value, lineStart(value, cursor));
-    return;
-  }
-  if (key.ctrl && input === "e") {
-    setBuffer(value, lineEnd(value, cursor));
-    return;
-  }
-  if (key.ctrl && input === "u") {
-    const start = lineStart(value, cursor);
-    setBuffer(value.slice(0, start) + value.slice(cursor), start);
-    return;
-  }
-  if (key.ctrl && input === "k") {
-    const end = lineEnd(value, cursor);
-    setBuffer(value.slice(0, cursor) + value.slice(end), cursor);
-    return;
-  }
-  if (key.ctrl && input === "w") {
-    const wordStart = findWordStart(value, cursor);
-    setBuffer(value.slice(0, wordStart) + value.slice(cursor), wordStart);
-    return;
-  }
-  // Drop any other modifier chord (Ctrl+<letter>, Meta+<letter>) so the
-  // editor does not insert it as literal text.
-  if (key.ctrl || key.meta) return;
-  if (input.length === 0) return;
-  // A single control char pressed on its own is ignored — but a
-  // multi-char paste burst is always sanitised and inserted, even when
-  // its first byte is a CR/control, because `normalizeInsertText` strips
-  // the offending bytes.
-  if (
-    input.length === 1 &&
-    input.charCodeAt(0) < 0x20 &&
-    input !== "\n" &&
-    input !== "\t"
-  ) {
-    return;
-  }
-  insertText(ctx, input);
-}
-
-function isGlobalHotkey(input: string, key: Key): boolean {
-  if (key.ctrl && (input === "c" || input === "o")) return true;
-  // F-keys and other multi-byte escape sequences we don't handle locally.
-  if (input.startsWith("\u001b") && input.length > 1) return true;
-  return false;
-}
-
-function insertText(ctx: KeyContext, text: string): void {
-  const { value, cursor, setBuffer } = ctx;
-  const clean = normalizeInsertText(text);
-  if (clean.length === 0) return;
-  const next = value.slice(0, cursor) + clean + value.slice(cursor);
-  setBuffer(next, cursor + clean.length);
-}
-
-function moveCursorVertically(ctx: KeyContext, direction: -1 | 1): void {
-  const { value, cursor, setBuffer } = ctx;
-  const { row, col } = cursorToRowCol(value, cursor);
-  const lines = value.split("\n");
-  const nextRow = row + direction;
-  if (nextRow < 0 || nextRow >= lines.length) return;
-  const nextLine = lines[nextRow] ?? "";
-  const nextCol = Math.min(col, nextLine.length);
-  const nextOffset = rowColToCursor(lines, nextRow, nextCol);
-  setBuffer(value, nextOffset);
-}
-

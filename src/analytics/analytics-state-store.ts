@@ -4,7 +4,7 @@ import { dirname } from "node:path";
 
 /**
  * Persistent, on-disk analytics state kept in `<stateDir>/analytics.json`.
- * Holds only an anonymous, randomly-generated install id and two
+ * Holds only an anonymous, randomly-generated install id and three
  * "fire once" flags. No IP, hostname, username, or any machine-derived
  * value is stored here — the id is a bare UUID with no link back to the
  * user or the device.
@@ -16,6 +16,8 @@ export interface AnalyticsState {
   appInstalledSent: boolean;
   /** Whether the one-time `first_message_sent` event was already sent. */
   firstMessageSent: boolean;
+  /** Whether the one-time `model_configured` event was already sent. */
+  modelConfiguredSent: boolean;
 }
 
 /**
@@ -44,6 +46,10 @@ export class AnalyticsStateStore {
     return this.state.firstMessageSent;
   }
 
+  isModelConfiguredSent(): boolean {
+    return this.state.modelConfiguredSent;
+  }
+
   markAppInstalledSent(): void {
     if (this.state.appInstalledSent) return;
     this.state.appInstalledSent = true;
@@ -56,6 +62,12 @@ export class AnalyticsStateStore {
     this.persist();
   }
 
+  markModelConfiguredSent(): void {
+    if (this.state.modelConfiguredSent) return;
+    this.state.modelConfiguredSent = true;
+    this.persist();
+  }
+
   private load(): AnalyticsState {
     try {
       const raw = readFileSync(this.filePath, "utf8");
@@ -65,6 +77,12 @@ export class AnalyticsStateStore {
           installId: parsed.installId,
           appInstalledSent: parsed.appInstalledSent === true,
           firstMessageSent: parsed.firstMessageSent === true,
+          // Absent in files written before `model_configured` existed.
+          // Defaulting to `false` lets an install that is already set up
+          // emit the event once on its next verified provider save,
+          // rather than never — the flag means "already reported", and
+          // an old file has genuinely never reported it.
+          modelConfiguredSent: parsed.modelConfiguredSent === true,
         };
       }
     } catch {
@@ -74,6 +92,7 @@ export class AnalyticsStateStore {
       installId: randomUUID(),
       appInstalledSent: false,
       firstMessageSent: false,
+      modelConfiguredSent: false,
     };
     this.state = fresh;
     this.persist();

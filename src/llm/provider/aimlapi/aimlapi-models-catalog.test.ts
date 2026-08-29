@@ -48,7 +48,33 @@ describe("AIMLAPI_MODELS_CATALOG", () => {
     }
   });
 
-  it("retires all legacy Anthropic Claude and Google Gemini ids", () => {
+  it("lists the vendor-prefixed Claude and Gemini ids aimlapi serves today", () => {
+    // The catalog used to carry no Claude and no Gemini row at all. Both
+    // are on aimlapi's `openai/chat-completions` surface under
+    // vendor-prefixed ids, so the provider can reach them; only the old
+    // unprefixed spellings below are actually gone.
+    for (const id of [
+      "anthropic/claude-opus-5",
+      "anthropic/claude-sonnet-5",
+      "google/gemini-3.7-flash",
+      "google/gemini-3.5-flash",
+    ]) {
+      expect(AIMLAPI_MODELS_CATALOG.get(id)?.kind).toBe("chat");
+      expect(AIMLAPI_CHAT_MODEL_ORDER).toContain(id);
+    }
+  });
+
+  it("keeps every chat row on the picker order, without duplicates", () => {
+    expect(new Set(AIMLAPI_CHAT_MODEL_ORDER).size).toBe(
+      AIMLAPI_CHAT_MODEL_ORDER.length,
+    );
+    const chatIds = [...AIMLAPI_MODELS_CATALOG]
+      .filter(([, entry]) => entry.kind === "chat")
+      .map(([id]) => id);
+    expect([...AIMLAPI_CHAT_MODEL_ORDER].sort()).toEqual([...chatIds].sort());
+  });
+
+  it("keeps the retired unprefixed Claude and Gemini ids out", () => {
     const retired = [
       "claude-opus-4-8",
       "claude-sonnet-4-6",

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { reduceTuiState } from "../agent-event-reducer.js";
-import { createInitialTuiState, type TuiSessionInfo } from "../tui-state.js";
+import type { TuiAction } from "../tui-action.js";
+import {
+  createInitialTuiState,
+  type TuiSessionInfo,
+  type TuiState,
+} from "../tui-state.js";
 import type {
   EmbeddingDaemonInfo,
   EmbeddingModelRow,
@@ -443,5 +448,99 @@ describe("reduceLocalModelsAction", () => {
     });
     expect(state.localLlmLogs.text).toBe("previous content");
     expect(state.localLlmLogs.error).toBe("ENOENT");
+  });
+});
+
+describe("the Hugging Face branch's slice", () => {
+  const REPO = {
+    repoId: "unsloth/Qwen3.5-4B-GGUF",
+    revision: "main",
+    choices: [
+      { path: "a.gguf", filename: "a.gguf", sizeBytes: 1, fileSizeGb: 1, sizeLabel: "1 GB" },
+      { path: "b.gguf", filename: "b.gguf", sizeBytes: 2, fileSizeGb: 2, sizeLabel: "2 GB" },
+    ],
+    mmproj: null,
+    hidden: null,
+  };
+
+  function reduceAll(
+    actions: readonly TuiAction[],
+    from: TuiState = createInitialTuiState(SESSION),
+  ): TuiState {
+    return actions.reduce((state, action) => reduceTuiState(state, action), from);
+  }
+
+  it("keeps a resolved repo across an escape back to the reference", () => {
+    // Re-entering the file list must not cost a second HTTP round trip
+    // for a repo the operator is still choosing a quantisation from.
+    const state = reduceAll([
+      { type: "local_models_hf_opened" },
+      { type: "local_models_hf_reference_changed", value: "unsloth/x" },
+      { type: "local_models_hf_lookup_started" },
+      { type: "local_models_hf_repo_resolved", repo: REPO },
+      { type: "local_models_mode_set", mode: "hfRef" },
+      { type: "local_models_hf_opened" },
+    ]);
+    expect(state.localModelsPanel.hf.repo).toEqual(REPO);
+    expect(state.localModelsPanel.hf.reference).toBe("unsloth/x");
+  });
+
+  it("drops a lookup that lands after the operator left the editor", () => {
+    // Escape aborts the request, but a response already on the wire can
+    // still arrive. Yanking the operator into a file list they walked
+    // away from is the bug this guards.
+    const state = reduceAll([
+      { type: "local_models_hf_opened" },
+      { type: "local_models_hf_lookup_started" },
+      { type: "local_models_hf_closed" },
+      { type: "local_models_hf_repo_resolved", repo: REPO },
+    ]);
+    expect(state.localModelsPanel.mode).toBe("list");
+    expect(state.localModelsPanel.hf.repo).toBeNull();
+  });
+
+  it("clears the error as soon as the reference is edited", () => {
+    const state = reduceAll([
+      { type: "local_models_hf_opened" },
+      { type: "local_models_hf_lookup_failed", error: "no .gguf in that repo" },
+      { type: "local_models_hf_reference_changed", value: "unsloth/y" },
+    ]);
+    expect(state.localModelsPanel.hf.error).toBeNull();
+    // A failure stays on the editor — the only screen where retyping is
+    // possible.
+    expect(state.localModelsPanel.mode).toBe("hfRef");
+  });
+
+  it("clamps the file cursor to the list it is walking", () => {
+    const state = reduceAll([
+      { type: "local_models_hf_opened" },
+      { type: "local_models_hf_lookup_started" },
+      { type: "local_models_hf_repo_resolved", repo: REPO },
+      { type: "local_models_hf_cursor_moved", delta: 9 },
+    ]);
+    expect(state.localModelsPanel.hf.cursor).toBe(1);
+    const back = reduceAll(
+      [{ type: "local_models_hf_cursor_moved", delta: -9 }],
+      state,
+    );
+    expect(back.localModelsPanel.hf.cursor).toBe(0);
+  });
+
+  it("resets the slice when the branch is closed", () => {
+    const state = reduceAll([
+      { type: "local_models_hf_opened" },
+      { type: "local_models_hf_reference_changed", value: "unsloth/x" },
+      { type: "local_models_hf_lookup_started" },
+      { type: "local_models_hf_repo_resolved", repo: REPO },
+      { type: "local_models_hf_closed" },
+    ]);
+    expect(state.localModelsPanel.mode).toBe("list");
+    expect(state.localModelsPanel.hf).toEqual({
+      reference: "",
+      busy: false,
+      error: null,
+      repo: null,
+      cursor: 0,
+    });
   });
 });

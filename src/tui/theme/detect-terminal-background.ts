@@ -17,6 +17,8 @@
  *  P6  width-aware hex parse
  */
 
+import { luminance } from "./color-luminance.js";
+import { parseHexColor, type Rgb } from "./parse-hex-color.js";
 import { THEMES, type TuiTheme } from "./theme.js";
 
 export type TerminalBackgroundMode = "dark" | "light" | "unknown";
@@ -116,12 +118,6 @@ export function detectTerminalBackground(
   });
 }
 
-interface Rgb {
-  readonly r: number;
-  readonly g: number;
-  readonly b: number;
-}
-
 /**
  * Parse an OSC color payload into 0..255 channels. Handles the canonical
  * `rgb:RRRR/GGGG/BBBB` form with 1-4 hex digits per channel (P6) and the
@@ -140,7 +136,7 @@ function parseOscColor(payload: string): Rgb | null {
     return { r, g, b };
   }
   if (payload.startsWith("#")) {
-    return parseHashColor(payload.slice(1));
+    return parseHexColor(payload);
   }
   return null;
 }
@@ -155,39 +151,19 @@ function scaleHexChannel(hex: string): number | null {
   return Math.round((value / max) * 255);
 }
 
-function parseHashColor(hex: string): Rgb | null {
-  if (!/^[0-9a-fA-F]+$/.test(hex)) return null;
-  if (hex.length === 6) {
-    return {
-      r: parseInt(hex.slice(0, 2), 16),
-      g: parseInt(hex.slice(2, 4), 16),
-      b: parseInt(hex.slice(4, 6), 16),
-    };
-  }
-  if (hex.length === 3) {
-    const r = hex.slice(0, 1);
-    const g = hex.slice(1, 2);
-    const b = hex.slice(2, 3);
-    return {
-      r: parseInt(r + r, 16),
-      g: parseInt(g + g, 16),
-      b: parseInt(b + b, 16),
-    };
-  }
-  return null;
-}
-
-// P7: relative luminance on 0..255 channels, normalized once.
+// P7: relative luminance on 0..255 channels, normalized once. The
+// weights live in `readable-foreground.ts` now, because the chip that
+// paints ink on a coloured ground asks the same question of the same
+// numbers.
 function classifyByLuminance(rgb: Rgb): TerminalBackgroundMode {
-  const luminance = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
-  return luminance > 0.5 ? "light" : "dark";
+  return luminance(rgb) > 0.5 ? "light" : "dark";
 }
 
 /**
  * Map a detected background mode to the startup theme. The single switch point
- * for the autodetect feature: `dark`/`unknown` -> github-dark, `light` ->
- * github-light.
+ * for the autodetect feature: `dark`/`unknown` -> classic-dark, `light` ->
+ * classic-light.
  */
 export function resolveStartupTheme(mode: TerminalBackgroundMode): TuiTheme {
-  return mode === "light" ? THEMES["github-light"] : THEMES["github-dark"];
+  return mode === "light" ? THEMES["classic-light"] : THEMES["classic-dark"];
 }

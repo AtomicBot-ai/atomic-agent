@@ -10,69 +10,32 @@ import {
   getCachedOpenRouterChatPicks,
   refreshOpenRouterChatCatalogFromApi,
 } from "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
+import { listCompatChatModelPicks } from "../providers/providers-wizard-key-bindings.js";
 import {
   apiKeyForWizard,
   baseUrlForWizard,
-  listCompatChatModelPicks,
-} from "../providers/providers-wizard-key-bindings.js";
+  emptyKeyMeaningForWizard,
+  envHintForWizard,
+} from "../providers/providers-wizard-target.js";
+import { PasteFieldTarget } from "../context-menu/paste-field-target.js";
+import { pasteIntoProvidersWizard } from "../providers/providers-wizard-paste.js";
 import { theme } from "../theme/theme.js";
 import { findProviderPreset } from "../providers/provider-presets.js";
 import {
-  KIND_ROW_ORDER,
-  listChatModelsForKind,
-  type ProvidersWizardKindRow,
+  visibleKindRows,
+  visibleRowsForPhase,
 } from "../providers/providers-wizard-phases.js";
 import {
   GEMINI_DEFAULT_CHAT_MODEL,
-  listAimlapiEmbeddingModels,
-  listOpenRouterEmbeddingModels,
   OPENAI_COMPAT_DEFAULT_BASE_URL,
   OPENAI_COMPAT_DEFAULT_CHAT_MODEL,
 } from "../providers/providers-model-options.js";
-import type {
-  ProvidersWizardKind,
-  ProvidersWizardState,
-} from "../providers/providers-wizard-state.js";
-import { renderPickList } from "./wizard-pick-list.js";
-
-const KIND_LABELS: Record<ProvidersWizardKind, string> = {
-  openrouter: "OpenRouter (cloud chat + optional cloud embed)",
-  aimlapi: "AI/ML API (aimlapi.com — 500+ models, OpenAI-compatible)",
-  gemini: "Gemini (Google AI)",
-  "openai-compatible": "OpenAI-compatible API (custom base URL)",
-};
-
-function labelForKindRow(row: ProvidersWizardKindRow): string {
-  if (typeof row !== "object") return KIND_LABELS[row];
-  const preset = findProviderPreset(row.presetId);
-  if (!preset) return row.presetId;
-  return preset.note ? `${preset.label} — ${preset.note}` : preset.label;
-}
-
-/**
- * One flat provider list, matching what other agent CLIs present: the
- * two kinds with built-in catalogs, then every known service (#69), then
- * the manual entry for anything not listed. Derived from
- * `KIND_ROW_ORDER` — the key bindings walk that same list, so a row's
- * label and its Enter action can never drift apart.
- */
-const KIND_OPTIONS = KIND_ROW_ORDER.map((row) => ({
-  label: labelForKindRow(row),
-}));
-
-/**
- * Env var named on the key screen. A preset names its own variable;
- * naming the shared compat one there would promise Groq's key a home it
- * does not use.
- */
-function envHintForWizard(w: ProvidersWizardState): string {
-  const preset = w.presetId ? findProviderPreset(w.presetId) : undefined;
-  if (preset) return preset.envVar;
-  if (w.kind === "openrouter") return "OPENROUTER_API_KEY";
-  if (w.kind === "aimlapi") return "AIMLAPI_API_KEY";
-  if (w.kind === "gemini") return "GEMINI_API_KEY";
-  return "OPENAI_COMPAT_API_KEY";
-}
+import { CLAUDE_CLI_DEFAULT_CHAT_MODEL } from "../../llm/provider/subscription-cli/claude-cli-models.js";
+import { subscriptionCliForWizardKind } from "../providers/providers-wizard-state.js";
+import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
+import type { WizardMouseRoute } from "../providers/route-wizard-key.js";
+import { CHECKING_KEY_HINT } from "./providers-wizard-measure.js";
+import { pickListHints, renderPickList } from "./wizard-pick-list.js";
 
 /** Service name for headings: the preset label wins over the raw kind. */
 function providerLabelForWizard(w: ProvidersWizardState): string {
@@ -102,6 +65,32 @@ function maskedKey(buffer: string): string {
   return masked + extra;
 }
 
+/**
+ * Actions hint for a list screen, with the key check folded in.
+ *
+ * A pick screen is where the save happens for the curated kinds, so it
+ * is also where the operator waits on the provider answering. Saying
+ * nothing for those seconds is what made a refused key read as a frozen
+ * wizard. While the check runs the normal actions are REPLACED rather
+ * than appended to: every key but Esc is swallowed until it settles, so
+ * listing them would be a lie, and the combined line was long enough to
+ * lose "(Esc cancels)" off the right edge of a 100-column terminal.
+ */
+function listActionsHint(base: string, submitting: boolean): string {
+  return submitting ? CHECKING_KEY_HINT : base;
+}
+
+/**
+ * One labelled single-line field.
+ *
+ * The text in this file — titles, the typed value, the masked key —
+ * reads `accent`. `accentSoft` is the house palette's fill (`#294793`),
+ * which the design lifts to `accent` the moment the same hue has to be
+ * read rather than sat on; painting text with it put these screens at
+ * roughly 2:1 against the terminal. Box borders keep the fill tone:
+ * the brief fences the lift to text, and a frame is chrome — looked
+ * at, not read.
+ */
 function renderLineField(props: {
   title: string;
   value: string;
@@ -120,15 +109,17 @@ function renderLineField(props: {
       marginY={1}
       width="100%"
     >
-      <Text bold color={theme.colors.accentSoft}>
+      <Text bold color={theme.colors.accent}>
         {props.title}
       </Text>
-      <Box>
+      {/* Right-click paste on the value line: every wizard mount routes
+          the clipboard through the wizard's own key grammar. */}
+      <PasteFieldTarget onPasteText={pasteIntoProvidersWizard}>
         <Text color={theme.colors.muted}>{"> "}</Text>
-        <Text color={muted ? theme.colors.muted : theme.colors.accentSoft}>
+        <Text color={muted ? theme.colors.muted : theme.colors.accent}>
           {display}
         </Text>
-      </Box>
+      </PasteFieldTarget>
       {props.error ? (
         <Text color={theme.colors.error}>! {props.error}</Text>
       ) : null}
@@ -139,6 +130,8 @@ function renderLineField(props: {
 
 function CompatChatModelStep(props: {
   wizard: ProvidersWizardState;
+  maxRows?: number;
+  route?: WizardMouseRoute;
 }): ReactElement {
   const w = props.wizard;
   const baseUrl = baseUrlForWizard(w);
@@ -157,9 +150,13 @@ function CompatChatModelStep(props: {
     let alive = true;
     setStatus({ loading: true, error: null });
     const apiKey = apiKeyForWizard(w);
+    // A preset knows how its service wants credentials presented; without
+    // it this probe would 401 for a vendor that is not Bearer-authenticated
+    // and the operator would be told their valid key was rejected.
+    const preset = w.presetId ? findProviderPreset(w.presetId) : undefined;
     const fetchModels = isGemini
       ? fetchGeminiModels(apiKey)
-      : fetchOpenAiCompatModels(baseUrl, apiKey);
+      : fetchOpenAiCompatModels(baseUrl, apiKey, preset);
     fetchModels.then(
       () => {
         if (alive) setStatus({ loading: false, error: null });
@@ -180,6 +177,24 @@ function CompatChatModelStep(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseUrl, isCompat, isGemini]);
 
+  // A CLI-backed provider has no endpoint to list and no key screen
+  // behind it, so this is the whole configure flow for one: the id the
+  // CLI's own `--model` accepts. Naming the openai-compat placeholder
+  // here would suggest `gpt-5.4-mini` is a valid answer for `claude`.
+  const cli = w.kind ? subscriptionCliForWizardKind(w.kind) : null;
+  if (cli) {
+    return renderLineField({
+      title: `Chat model id — ${cli} CLI`,
+      value: w.chatModelLine,
+      placeholder:
+        cli === "claude"
+          ? CLAUDE_CLI_DEFAULT_CHAT_MODEL
+          : "(empty — the CLI resolves the model)",
+      hint: "Enter to save · Esc back · no API key: the CLI uses its own session",
+      error: w.error,
+    });
+  }
+
   const picks = listCompatChatModelPicks(w);
   if (picks.length > 0) {
     const source = isGemini
@@ -189,13 +204,24 @@ function CompatChatModelStep(props: {
       title: `Chat model — ${picks.length} ${source}`,
       options: picks.map((id) => ({ label: id })),
       cursor: w.cursor,
+      wizard: w,
+      ...(props.route === undefined ? {} : { route: props.route }),
       moveHint: "↑/↓ move",
-      actionsHint:
+      actionsHint: listActionsHint(
         "PgUp/PgDn jump · Enter select · type to enter an id by hand · Esc back",
+        w.submitting,
+      ),
+      ...(props.maxRows === undefined ? {} : { maxRows: props.maxRows }),
+      // A rejected submit (empty or non-ASCII key) leaves the wizard on
+      // this step with `error` set; the pick list renders it inside the
+      // box, so Enter never reads as doing nothing.
+      error: w.error,
     });
   }
 
-  const hint = !canList
+  const hint = w.submitting
+    ? CHECKING_KEY_HINT
+    : !canList
     ? "Enter to save · Esc back"
     : status.loading
       ? isGemini
@@ -230,6 +256,8 @@ function CompatChatModelStep(props: {
 function CatalogChatModelStep(props: {
   wizard: ProvidersWizardState;
   kind: "openrouter" | "aimlapi";
+  maxRows?: number;
+  route?: WizardMouseRoute;
 }): ReactElement {
   const { wizard: w, kind } = props;
   const getCached =
@@ -264,45 +292,82 @@ function CatalogChatModelStep(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind]);
 
-  const title =
+  const service =
     kind === "openrouter" ? "Chat model (OpenRouter)" : "Chat model (AI/ML API)";
-  const actionsHint = loading
-    ? "PgUp/PgDn jump · Enter select · Esc back · updating model list from API…"
-    : "PgUp/PgDn jump · Enter select · Esc back";
+  // The refresh notice rides on the title rather than the hint line: it
+  // describes the list, not a key, and the hint already runs to the edge
+  // of a 100-column terminal once the search box has had its say.
+  const title = loading
+    ? `${service} · updating model list from API…`
+    : service;
+  const hints = pickListHints(
+    w.search,
+    "PgUp/PgDn jump · Enter select",
+    "Esc back",
+    "Esc clears search, again backs out",
+  );
   return renderPickList({
     title,
-    options: listChatModelsForKind(kind),
+    options: visibleRowsForPhase(w),
     cursor: w.cursor,
-    moveHint: "j/k move",
-    actionsHint,
+    wizard: w,
+    ...(props.route === undefined ? {} : { route: props.route }),
+    moveHint: hints.moveHint,
+    actionsHint: listActionsHint(hints.actionsHint, w.submitting),
+    search: w.search,
+    ...(props.maxRows === undefined ? {} : { maxRows: props.maxRows }),
+    error: w.error,
   });
 }
 
+/**
+ * `maxRows` is the terminal budget the wizard must fit in, not a
+ * preference. The wizard is a modal: `LlmPanel` hands it the whole tab
+ * budget and renders nothing behind it, and every box below sizes
+ * itself so the frame cannot outgrow the terminal. It used to be drawn
+ * on top of the full LLM panel with no budget at all, and Ink 7 answers
+ * an over-tall frame by painting later lines over earlier ones — which
+ * is how a 24-row provider list arrived on screen as seven half-eaten
+ * rows with OpenRouter's row wearing Codex's tail (reports #1 and #2).
+ */
 export function ProvidersWizard(props: {
   wizard: ProvidersWizardState;
+  maxRows?: number;
+  /**
+   * How row clicks reach `wizard`. Omitted by the store-backed mounts,
+   * whose wizard lives at `providersPanel.wizard` (the default route);
+   * `CloudProviderOnboarding` keeps its wizard in component state and
+   * must pass its own, or clicks would act on the wrong wizard slice.
+   */
+  mouseRoute?: WizardMouseRoute;
 }): ReactElement {
   const w = props.wizard;
+  const maxRows = props.maxRows === undefined ? {} : { maxRows: props.maxRows };
+  const route = props.mouseRoute === undefined ? {} : { route: props.mouseRoute };
   const modeLabel = w.mode === "configure" ? `configure ${w.providerId}` : "add provider";
 
   if (w.phase === "pick_kind") {
     return renderPickList({
       title: `LLM provider — ${modeLabel}`,
-      options: KIND_OPTIONS,
+      options: visibleKindRows(w.search),
       cursor: w.cursor,
-      moveHint: "j/k move",
-      actionsHint: "Enter pick · Esc cancel",
+      wizard: w,
+      ...route,
+      ...pickListHints(
+        w.search,
+        "Enter pick",
+        "Esc cancel",
+        "Esc clears search, again cancels",
+      ),
+      search: w.search,
+      ...maxRows,
+      error: w.error,
     });
   }
 
   if (w.phase === "api_key") {
     const envHint = envHintForWizard(w);
-    const preset = w.presetId ? findProviderPreset(w.presetId) : undefined;
-    // Local servers and keyless-listing services save with an empty key;
-    // promising ".env only" here would contradict their own list rows.
-    const emptyMeans =
-      preset && (preset.local || preset.listsModelsWithoutKey)
-        ? "Optional for this service — leave empty to connect without a key."
-        : "Leave empty only if the key is already in .env.";
+    const emptyMeans = emptyKeyMeaningForWizard(w);
     return (
       <Box
         flexDirection="column"
@@ -312,23 +377,25 @@ export function ProvidersWizard(props: {
         marginY={1}
         width="100%"
       >
-        <Text bold color={theme.colors.accentSoft}>
+        <Text bold color={theme.colors.accent}>
           API key — {providerLabelForWizard(w)}
         </Text>
         <Text color={theme.colors.muted}>
-          Saved to <Text color={theme.colors.accentSoft}>{".env"}</Text> as{" "}
+          Saved to <Text color={theme.colors.accent}>{".env"}</Text> as{" "}
           {envHint} (mode 0600). {emptyMeans}
         </Text>
-        <Box>
+        {/* The api_key screen is where paste matters most: keys are
+            never typed by hand. Same adapter, same burst path. */}
+        <PasteFieldTarget onPasteText={pasteIntoProvidersWizard}>
           <Text color={theme.colors.muted}>{"> "}</Text>
-          <Text color={theme.colors.accentSoft}>{maskedKey(w.apiKeyBuffer)}</Text>
-        </Box>
+          <Text color={theme.colors.accent}>{maskedKey(w.apiKeyBuffer)}</Text>
+        </PasteFieldTarget>
         {w.error ? (
           <Text color={theme.colors.error}>! {w.error}</Text>
         ) : null}
         <Text color={theme.colors.muted}>
           Enter to continue · Esc back · Backspace edit
-          {w.submitting ? " · saving…" : ""}
+          {w.submitting ? ` · ${CHECKING_KEY_HINT}` : ""}
         </Text>
       </Box>
     );
@@ -338,26 +405,32 @@ export function ProvidersWizard(props: {
     w.phase === "pick_chat_model" &&
     (w.kind === "openrouter" || w.kind === "aimlapi")
   ) {
-    return <CatalogChatModelStep wizard={w} kind={w.kind} />;
+    return <CatalogChatModelStep wizard={w} kind={w.kind} {...maxRows} {...route} />;
   }
 
-  if (w.phase === "pick_embedding" && w.kind === "openrouter") {
+  if (
+    w.phase === "pick_embedding" &&
+    (w.kind === "openrouter" || w.kind === "aimlapi")
+  ) {
+    // This is the last screen of the curated flow, so Enter here is the
+    // save — and the save is what runs the key check.
+    const hints = pickListHints(
+      w.search,
+      "PgUp/PgDn jump · Enter finish",
+      "Esc back",
+      "Esc clears search, again backs out",
+    );
     return renderPickList({
       title: "Embedding backend",
-      options: listOpenRouterEmbeddingModels(),
+      options: visibleRowsForPhase(w),
       cursor: w.cursor,
-      moveHint: "j/k move",
-      actionsHint: "PgUp/PgDn jump · Enter finish · Esc back",
-    });
-  }
-
-  if (w.phase === "pick_embedding" && w.kind === "aimlapi") {
-    return renderPickList({
-      title: "Embedding backend",
-      options: listAimlapiEmbeddingModels(),
-      cursor: w.cursor,
-      moveHint: "j/k move",
-      actionsHint: "PgUp/PgDn jump · Enter finish · Esc back",
+      wizard: w,
+      ...route,
+      moveHint: hints.moveHint,
+      actionsHint: listActionsHint(hints.actionsHint, w.submitting),
+      search: w.search,
+      ...maxRows,
+      error: w.error,
     });
   }
 
@@ -372,7 +445,7 @@ export function ProvidersWizard(props: {
   }
 
   if (w.phase === "chat_model_line") {
-    return <CompatChatModelStep wizard={w} />;
+    return <CompatChatModelStep wizard={w} {...maxRows} {...route} />;
   }
 
   return (

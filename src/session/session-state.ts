@@ -25,6 +25,20 @@ export type SessionStatus =
    */
   | "stalled";
 
+/**
+ * Whether a session in this state should make the process exit non-zero.
+ * Both entry points that own an exit code — `atomic-agent run` and the
+ * TUI's chat orchestrator — read it from here so they cannot drift: they
+ * previously each carried their own copy of the rule, and only one was
+ * updated when `stalled` stopped counting as success.
+ *
+ * `cancelled` stays truthful to its own contract (the operator asked to
+ * stop) and is deliberately not a failure.
+ */
+export function isFailedSessionStatus(status: SessionStatus): boolean {
+  return status === "failed" || status === "stalled";
+}
+
 export interface KnownFact {
   text: string;
   source?: string;
@@ -91,6 +105,20 @@ export interface SessionState {
   stepCount: number;
   /** Number of completed macro-turns (user → 0..N tools → reply). */
   turnCount: number;
+  /**
+   * Index into {@link turns} where each macro-turn after the first
+   * opens. Recorded rather than re-derived, because the shape of the
+   * transcript cannot always tell you: a task ended with `finish`, or
+   * cancelled, writes no `assistant_reply`, so a scan looking for reply
+   * rows would silently fuse it into the task that follows and count one
+   * pair where the operator sent two.
+   *
+   * Written by {@link incrementTurnCount}, which the loop already calls
+   * at every termination — reply, `finish`, `max_steps`, cancel and
+   * failure alike. Absent on sessions written before this field existed;
+   * readers fall back to deriving what they can.
+   */
+  macroTurnStarts?: number[];
   /** Full conversation transcript in chronological order. */
   turns: ConversationTurn[];
   createdAt: number;
@@ -173,6 +201,7 @@ export function createEmptySessionState(params: {
     worldSnapshot: null,
     stepCount: 0,
     turnCount: 0,
+    macroTurnStarts: [],
     turns: [],
     createdAt: now,
     updatedAt: now,
@@ -262,8 +291,48 @@ export function recordTurn(
   };
 }
 
+/**
+ * Close the current macro-turn: bump the counter and remember where the
+ * next one opens.
+ *
+ * The loop already funnels every termination through here — the reply
+ * path, `finish`, `max_steps`, cancellation and failure — which is
+ * exactly the set of moments a pair ends, so the boundary is recorded
+ * without the loop needing to know it is happening.
+ */
 export function incrementTurnCount(state: SessionState): SessionState {
-  return { ...state, turnCount: state.turnCount + 1, updatedAt: Date.now() };
+  return {
+    ...state,
+    turnCount: state.turnCount + 1,
+    macroTurnStarts: appendMacroTurnStart(
+      state.macroTurnStarts,
+      state.turns.length,
+    ),
+    updatedAt: Date.now(),
+  };
+}
+
+/**
+ * Boundaries a pairs-capped prompt can only ever need the tail of, so the
+ * list is bounded. 200 is well past `agent.conversationMaxPairs`'s
+ * ceiling of 100 and keeps a session that runs for days from carrying an
+ * ever-growing array of integers it will never read.
+ */
+const MACRO_TURN_START_CAP = 200;
+
+function appendMacroTurnStart(
+  starts: number[] | undefined,
+  index: number,
+): number[] {
+  const prev = starts ?? [];
+  // A termination that recorded no turns (an empty steer, a cancel
+  // before the first step) would otherwise push the same index twice and
+  // read as a pair with nothing in it.
+  if (prev[prev.length - 1] === index) return prev;
+  const next = [...prev, index];
+  return next.length > MACRO_TURN_START_CAP
+    ? next.slice(next.length - MACRO_TURN_START_CAP)
+    : next;
 }
 
 /**

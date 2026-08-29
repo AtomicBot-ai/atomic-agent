@@ -1,3 +1,4 @@
+import { checkPlanMode } from "./plan-mode.js";
 import type { ToolCallPayload } from "../llm/grammar/tool-call-grammar.js";
 import {
   compressToolResult,
@@ -11,6 +12,7 @@ import {
   type ResourceClass,
 } from "./tool-resource-class.js";
 import {
+  extractLoopTarget,
   formatVetoInstruction,
   LOOP_VETO_DENIED_REASON,
   type LoopCheckVerdict,
@@ -75,6 +77,15 @@ export interface BatchExecutionContext {
    */
   tracker?: ToolLoopTracker;
   /**
+   * Plan mode, read at dispatch time rather than passed as a boolean.
+   *
+   * A getter for the same reason `dangerous.approvalRequired` is one
+   * (see `bootstrap.ts`): a value copied at construction freezes
+   * whatever was true at boot, and the whole point of a mode is that
+   * the operator flips it mid-session. Absent ⇒ plan mode is off.
+   */
+  isPlanMode?: () => boolean;
+  /**
    * Names of skills already present in `SessionState.loadedSkills`. A
    * `skill.view` call targeting one of these is short-circuited with a
    * terse "already loaded" result instead of re-reading and re-dumping
@@ -82,6 +93,15 @@ export interface BatchExecutionContext {
    * is never invoked for such calls. Absent ⇒ no short-circuit.
    */
   loadedSkillNames?: ReadonlySet<string>;
+  /**
+   * When set, the `pure_read` group fans out in bounded waves of at most
+   * this many concurrent calls instead of launching the whole group at
+   * once (issue #111). Each wave is awaited before the next starts, so
+   * waves execute in original order; the per-input `batchIndex` preserves
+   * global result correlation across waves. Other groups are unaffected.
+   * Absent ⇒ legacy single-wave fan-out.
+   */
+  maxWaveSize?: number;
 }
 
 export interface BatchExecutionResult {
@@ -153,10 +173,10 @@ export function planBatch(
  *    a `CompressedToolResult{status:"error"}` and continues.
  *  - Abort: if `signal.aborted` flips while a serialised group is
  *    iterating, the remaining calls in that group are marked
- *    `cancelled` and skipped. `pure_read` calls are launched all at
- *    once before the loop checks the signal again — those that already
- *    started run to completion (their tool implementations honour the
- *    signal cooperatively).
+ *    `cancelled` and skipped. `pure_read` calls launch per wave (or all
+ *    at once when `maxWaveSize` is unset) before the loop checks the
+ *    signal again — those that already started run to completion (their
+ *    tool implementations honour the signal cooperatively).
  *  - Terminal-tail barrier: when the batch contains a `terminal` call
  *    (the validator guarantees it is at the last position), every
  *    non-terminal call completes first; the terminal call then runs
@@ -204,6 +224,26 @@ export async function executeBatch(
   for (const input of nonTerminalInputs) {
     if (ctx.signal.aborted) {
       slots[input.batchIndex] = { ...slots[input.batchIndex]!, cancelled: true };
+      continue;
+    }
+    // Plan mode first: a call that is not going to run should not spend
+    // a slot in the loop tracker's history either. Recording it would
+    // let a refused-and-retried tool trip the loop breaker, and end the
+    // turn over an argument the model was never allowed to try.
+    const plan = runPlanModeGate(input, registry, ctx);
+    if (!plan.proceed && plan.vetoResult) {
+      ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
+      slots[input.batchIndex] = {
+        ...slots[input.batchIndex]!,
+        compressed: plan.vetoResult,
+        durationMs: 0,
+      };
+      ctx.onCallFinished?.({
+        batchIndex: input.batchIndex,
+        batchSize,
+        result: plan.vetoResult,
+        durationMs: 0,
+      });
       continue;
     }
     const gate = runSyncLoopGate(input, ctx, loopSignals);
@@ -315,12 +355,17 @@ export async function executeBatch(
   const groupTasks: Array<Promise<void>> = [];
   for (const [cls, calls] of groups) {
     if (isParallelWithinGroup(cls)) {
-      // Pure-read fan-out. Launch every call immediately. Any that
-      // already started keep running on cooperative signal — already
-      // matches the legacy single-call path.
+      // Pure-read fan-out, bounded to waves of `maxWaveSize` when set
+      // (issue #111). Each wave is awaited before the next starts, so
+      // waves execute in original order; the per-input `batchIndex`
+      // keeps global result correlation intact. Absent ⇒ legacy
+      // single-wave fan-out (the whole group at once).
+      const waveSize = ctx.maxWaveSize ?? calls.length;
       groupTasks.push(
         (async (): Promise<void> => {
-          await Promise.allSettled(calls.map(invokeOne));
+          for (let i = 0; i < calls.length; i += waveSize) {
+            await Promise.allSettled(calls.slice(i, i + waveSize).map(invokeOne));
+          }
         })(),
       );
       continue;
@@ -434,6 +479,25 @@ function skillAlreadyLoadedResult(
  * no-progress streak (the streak then plateaus at `criticalThreshold`).
  * Terminal verbs and tracker-less steps always proceed unchanged.
  */
+/**
+ * Refuse a mutating call while plan mode is on.
+ *
+ * Sits beside `runSyncLoopGate` and shares its shape — a synchronous
+ * verdict that either lets the call through or fills its slot — because
+ * both answer the same kind of question: is this call going to run at
+ * all, decided before anything is dispatched.
+ */
+function runPlanModeGate(
+  input: BatchCallInput,
+  registry: ToolRegistry,
+  ctx: BatchExecutionContext,
+): { proceed: boolean; vetoResult?: CompressedToolResult } {
+  if (!ctx.isPlanMode?.()) return { proceed: true };
+  const verdict = checkPlanMode(input.call.tool, registry);
+  if (verdict.allowed) return { proceed: true };
+  return { proceed: false, vetoResult: verdict.refusal! };
+}
+
 function runSyncLoopGate(
   input: BatchCallInput,
   ctx: BatchExecutionContext,
@@ -456,14 +520,31 @@ function runSyncLoopGate(
     const count = breakerTripped
       ? Math.max(verdict.count, ctx.tracker.breakerThreshold)
       : verdict.count;
+    // Name the invariant that held across the blocked attempts (host for
+    // web/HTTP, command name for shell) so the message says WHAT stayed
+    // the same instead of only that something did.
+    const target = extractLoopTarget(tool, args);
+    // A wandering escalation rides this same veto path but its `count` is
+    // a spread of DISTINCT arguments; pass the detector so the wording
+    // does not claim they were identical.
+    //
+    // The verdict decides, not the escalation flag. `isWanderingEscalated`
+    // answers for the whole history window, so it stays true after the model
+    // stops wandering and settles on repeating one argument -- and borrowing
+    // it there would announce "N different attempts" about a verbatim
+    // repeat, quoting a count the verdict never established.
+    const detector =
+      wanderingEscalated && verdict.detector === "wandering"
+        ? "wandering"
+        : verdict.detector;
     const vetoResult = compressToolResult({
       tool,
       status: "error",
-      output: formatVetoInstruction({ tool, count }),
+      output: formatVetoInstruction({ tool, count, target, detector }),
       details: {
         deniedReason: LOOP_VETO_DENIED_REASON,
         loopCount: count,
-        detector: verdict.detector,
+        detector,
       },
     });
     ctx.tracker.recordOutcome(tool, args, vetoResult);
@@ -471,7 +552,7 @@ function runSyncLoopGate(
       kind: forceBreaker ? "breaker" : "critical",
       tool,
       count,
-      detector: verdict.detector,
+      detector,
       warningKey: verdict.warningKey,
     });
     return { proceed: false, vetoResult };

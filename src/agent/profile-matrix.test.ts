@@ -6,6 +6,7 @@ import {
   GEMMA4_PROPS,
   GPT_OSS_PROPS,
   LLAMA3_PROPS,
+  NEMOTRON_PROPS,
   QWEN3_PROPS,
 } from "../llm/model-profile.fixtures.js";
 import { startTestHarness } from "../http/test-harness.js";
@@ -32,6 +33,21 @@ describe("profile matrix", () => {
     await expectScenario({
       props: QWEN3_PROPS,
       chunks: ['inner thought</think>{"tool":"reply","args":{"text":"ok"}}'],
+      expectReasoning: true,
+    });
+  });
+
+  it("streams nemotron inline reasoning through the full agent loop", async () => {
+    // Nemotron shares the qwen think-tags profile (its alias is what needs a
+    // dedicated detector, not its behaviour): the prompt prefills `<think>`,
+    // the stream starts mid-body and closes with `</think>` before the array.
+    // Without the nemotron detection branch this props payload falls through
+    // to plain-instruct and emits no reasoning at all.
+    await expectScenario({
+      props: NEMOTRON_PROPS,
+      chunks: [
+        'inner thought</think>[{"tool":"reply","args":{"text":"ok"}}]',
+      ],
       expectReasoning: true,
     });
   });

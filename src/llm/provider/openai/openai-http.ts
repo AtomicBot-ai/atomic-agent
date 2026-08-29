@@ -1,7 +1,16 @@
+import { buildOpenAiAuthHeaders } from "./openai-auth-headers.js";
+import { readErrnoCode } from "../../errno-code.js";
+
 export type OpenAiHttpDeps = {
   baseUrl: string;
   apiKey: string;
   extraHeaders: Record<string, string>;
+  /**
+   * Header that carries the API key when the service does not accept
+   * `Authorization: Bearer` (Anthropic wants `x-api-key`). Absent keeps
+   * the OpenAI convention. See `openai-auth-headers.ts`.
+   */
+  apiKeyHeader?: string;
   requestTimeoutMs: number;
   fetchImpl: typeof fetch;
   /** Provider id shown in user-facing failure messages ("openrouter"). */
@@ -32,9 +41,21 @@ export class OpenAiHttpError extends Error {
     public readonly retryAfterMs: number | null = null,
     /** Provider id for user-facing wording; falls back to the host. */
     public readonly providerLabel = "",
+    /**
+     * Errno of the underlying failure (`ECONNREFUSED`, `ENOTFOUND`,
+     * `UND_ERR_*`, …) when the transport left one behind. A cloud
+     * provider that is unreachable and one that refused the request
+     * both arrive with `status === null`; this is what tells them
+     * apart in a postmortem.
+     */
+    public readonly code: string | undefined = undefined,
+    options?: { cause?: unknown },
   ) {
     super(message);
     this.name = "OpenAiHttpError";
+    if (options?.cause !== undefined) {
+      (this as { cause?: unknown }).cause = options.cause;
+    }
   }
 }
 
@@ -105,11 +126,13 @@ export function buildOpenAiHeaders(
   return {
     "content-type": "application/json",
     accept: stream ? "text/event-stream" : "application/json",
-    // Keyless servers (a local LM Studio, an unauthenticated vLLM) get no
-    // authorization header at all: `Bearer ` with an empty token is
-    // malformed and some proxies reject it outright.
-    ...(deps.apiKey ? { authorization: `Bearer ${deps.apiKey}` } : {}),
-    ...deps.extraHeaders,
+    // Auth (and any service-mandated static headers) come from the one
+    // builder model discovery also uses, so the two request paths cannot
+    // disagree about how this endpoint is authenticated.
+    ...buildOpenAiAuthHeaders(deps.apiKey, {
+      ...(deps.apiKeyHeader ? { apiKeyHeader: deps.apiKeyHeader } : {}),
+      headers: deps.extraHeaders,
+    }),
   };
 }
 
@@ -172,6 +195,26 @@ export async function openAiFetch(
   stream: boolean,
   method: "GET" | "POST" = "POST",
 ): Promise<Response> {
+  // Built before the try below, which would wrap the throw as a
+  // retryable "network error" and replace its message with a
+  // connectivity hint. Classified as a 401 instead: a key that cannot
+  // form a header is the same class as a dead key — deterministic, never
+  // retried, and a fallback chain advances past it to a link whose key
+  // may work.
+  let headers: Record<string, string>;
+  try {
+    headers = buildOpenAiHeaders(deps, stream);
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new OpenAiHttpError(
+      detail,
+      401,
+      `${deps.baseUrl}${path}`,
+      false,
+      null,
+      deps.label,
+    );
+  }
   const controller = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -190,7 +233,7 @@ export async function openAiFetch(
   try {
     return await deps.fetchImpl(`${deps.baseUrl}${path}`, {
       method,
-      headers: buildOpenAiHeaders(deps, stream),
+      headers,
       ...(body && method === "POST" ? { body: JSON.stringify(body) } : {}),
       signal: controller.signal,
     });
@@ -207,10 +250,13 @@ export async function openAiFetch(
         true,
         null,
         deps.label,
+        undefined,
+        { cause: err },
       );
     }
     // fetch threw without an HTTP response: DNS failure, refused
-    // connection, TLS error, socket reset.
+    // connection, TLS error, socket reset. Which of those it was lives
+    // in the errno — keep it, and the original error with it.
     const detail = err instanceof Error ? err.message : String(err);
     throw new OpenAiHttpError(
       `openai provider network error: ${detail}`,
@@ -219,6 +265,8 @@ export async function openAiFetch(
       false,
       null,
       deps.label,
+      readErrnoCode(err),
+      { cause: err },
     );
   } finally {
     clearTimeout(timer);

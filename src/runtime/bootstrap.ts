@@ -11,6 +11,7 @@ import {
 
 import type { LlmStreamParams } from "../agent/step-executor.js";
 import { TurnController } from "./turn-controller.js";
+import { SteeringInbox } from "./steering-inbox.js";
 import type { TurnEventHook, TurnOrigin } from "./turn-controller.js";
 import type { ChannelStatus } from "./channel-status.js";
 
@@ -70,6 +71,7 @@ import {
   resolveLlmConfig,
 } from "../llm/provider/index.js";
 import { resolveActiveToolTransport } from "../llm/provider/registry/resolve-tool-transport.js";
+import { catalogForProvider } from "../llm/provider/catalog-for-provider.js";
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
 import {
   resolveModel,
@@ -182,7 +184,10 @@ import {
   AnalyticsStateStore,
   createAnalyticsClient,
   captureAppInstalled,
+  captureAppOpened,
   captureMessageSent,
+  captureModelConfigured,
+  captureOnboardingStep,
   sanitizeModelAlias,
   TurnUsageMeter,
 } from "../analytics/index.js";
@@ -194,7 +199,15 @@ import {
 import { getAppVersion } from "../version.js";
 
 export interface RuntimeEventHandlers {
-  onAgentEvent?: (event: AgentLoopEvent) => void;
+  /**
+   * Global event sink, fired for every turn on every session. The
+   * second argument names the session the event belongs to (from the
+   * per-turn `AsyncLocalStorage` frame) so a host rendering a single
+   * session — the TUI — can drop events from turns running in the
+   * background instead of painting them into the wrong transcript. It
+   * is absent for events emitted outside a turn frame.
+   */
+  onAgentEvent?: (event: AgentLoopEvent, sessionId?: string) => void;
   onApprovalRequest?: (request: ApprovalRequest) => void;
   onSkillRegistryChange?: (entries: SkillCatalogEntry[]) => void;
   /**
@@ -234,6 +247,18 @@ export interface CreateAgentRuntimeOptions {
    * config or by providing their own sinks.
    */
   traceDefault?: boolean;
+  /**
+   * Whether this runtime is being created for an interactive launch a
+   * person actually performed, which is what `app_opened` counts.
+   *
+   * Defaults to `false` because `createAgentRuntime` is also the entry
+   * point for headless work — scheduled/cron tasks, `run`, `serve`,
+   * the sidecar. Those create a runtime with nobody at the keyboard, and
+   * counting them would inflate the denominator of the activation
+   * funnel: one user with an hourly task would look like 24 launches a
+   * day. Only the TUI passes `true`.
+   */
+  interactiveLaunch?: boolean;
   /** Optional overrides — used by tests to inject fakes. */
   overrides?: {
     llamaComplete?: (params: LlmStreamParams) => Promise<CompletionResult>;
@@ -292,6 +317,29 @@ export interface AgentRuntime {
    * funnels through this controller internally.
    */
   readonly turnController: TurnController;
+  /**
+   * Out-of-band channel for messages sent to a session whose turn is
+   * already running. `TurnController` is strictly FIFO by design, so a
+   * mid-turn message would otherwise have to wait for the turn to
+   * close; the inbox lets it reach the model at the next step boundary
+   * instead. Prefer {@link AgentRuntime.steer} over touching this
+   * directly — it is the same call with the intent documented.
+   */
+  readonly steeringInbox: SteeringInbox;
+  /**
+   * Fold `text` into the turn currently running on `sessionId`.
+   *
+   * Returns `false` — and queues nothing — when no running turn is
+   * still able to pick the message up (no turn in flight, or the turn
+   * has already done its final drain), when the text is blank, or when
+   * the inbox for that session is full. A `false` return means "not
+   * steered": the caller is expected to fall back to a normal
+   * `runTurn`, or to its own message queue. `true` means the message is
+   * either delivered at a step boundary or returned on
+   * `RunTurnResult.undelivered` — never stranded. Never starts a turn
+   * on its own.
+   */
+  steer(sessionId: string, text: string): boolean;
   /**
    * Durable user-profile store. Present even when
    * `memory.profile.enabled` is `false`, because the store owns the
@@ -491,6 +539,19 @@ export interface AgentRuntime {
    */
   setAnalyticsEnabled(enabled: boolean): Promise<void>;
   /**
+   * Report that the first-run flow reached `step` (a closed
+   * `OnboardingStep` name, never free text). `outcome` is passed only on
+   * the terminal step. A no-op while analytics is off. The TUI owns the
+   * flow, so it is the caller; the runtime owns the client.
+   */
+  reportOnboardingStep(step: string, outcome?: string): void;
+  /**
+   * Report that a provider was verified and saved — the install has a
+   * working backend. Fires at most once per install (state-store
+   * guarded); a no-op while analytics is off.
+   */
+  reportModelConfigured(provider: string, kind: "local" | "cloud"): void;
+  /**
    * Live approval level (1 = every gated action asks … 5 = approve
    * everything). Reads the gate, not the boot-time config snapshot, so
    * it reflects `--no-approval` boots and later `setApprovalLevel`
@@ -511,6 +572,20 @@ export interface AgentRuntime {
    * are not resolved retroactively.
    */
   setApprovalLevel(level: number): void;
+  /**
+   * Plan mode: read-only until further notice.
+   *
+   * Orthogonal to the approval ladder, and deliberately so — the ladder
+   * answers "does this need to ask first", plan mode answers "is this
+   * the kind of thing we are doing right now". Every mutating tool is
+   * refused with a message telling the model to present a plan instead;
+   * every read-only tool still runs. See `agent/plan-mode.ts`.
+   *
+   * Session state rather than config: a "look but do not touch" that
+   * survived a restart would be a mystery rather than a memory.
+   */
+  getPlanMode(): boolean;
+  setPlanMode(on: boolean): void;
   /** Close all resources (browser, sqlite, llama client). Safe to call twice. */
   shutdown(): Promise<void>;
 }
@@ -570,6 +645,13 @@ export async function createAgentRuntime(
     logger,
   });
   captureAppInstalled(analytics, analyticsStateStore);
+  // Every interactive launch, not just the first: `app_installed` alone
+  // cannot tell a download that never ran from one that ran and stalled.
+  // Gated on the entry point opting in, so a cron task or a `serve`
+  // process does not read as somebody opening the app.
+  if (options.interactiveLaunch === true) {
+    captureAppOpened(analytics);
+  }
 
   // Anonymous error reporting (Sentry). Shares the opt-out flag
   // (`config.analytics.enabled`) and the anonymous install id with
@@ -637,6 +719,18 @@ export async function createAgentRuntime(
     logger.info("analytics toggled", { enabled });
   };
 
+  // Both read `analytics` at call time, so a hot-toggle is picked up
+  // without re-registering anything.
+  const reportOnboardingStep = (step: string, outcome?: string): void => {
+    captureOnboardingStep(analytics, step, outcome);
+  };
+  const reportModelConfigured = (
+    provider: string,
+    kind: "local" | "cloud",
+  ): void => {
+    captureModelConfigured(analytics, analyticsStateStore, { provider, kind });
+  };
+
   const traceEnabled = resolveTraceEnabled(
     config.tracing.trace.enabled,
     options.traceDefault,
@@ -649,7 +743,82 @@ export async function createAgentRuntime(
         logger,
       })
     : null;
+  /**
+   * Trace recorders keyed by session id, bounded so a long-lived runtime
+   * that serves many sessions (sidecar, HTTP server, background tasks)
+   * cannot grow this map without limit.
+   *
+   * `Map` preserves *insertion* order, which is not the same as recency:
+   * re-reading a key does not move it. Evicting `keys().next()` therefore
+   * targets the oldest-*created* session, which in a long-lived runtime is
+   * usually the operator's own still-running one. `touchRecorder` re-inserts
+   * on every access so the order really is least-recently-used, and
+   * `dropRecorder` removes a session's recorder when the session itself goes
+   * away — cheaper and more correct than waiting for the cap to push it out.
+   *
+   * Eviction is not free: `beginSession` is written to run once per NDJSON
+   * file, so re-creating an evicted recorder appends a second
+   * `session_started` and restarts `seq` at 0 in a file that already has
+   * events. Anything sorting or de-duplicating by `seq` then mis-orders.
+   * That is why an actively-running session is never evicted.
+   */
+  const MAX_TRACE_RECORDERS = 64;
   const recorders = new Map<string, TraceRecorder>();
+  /** Sessions with a turn in flight. Never evicted; see `evictRecorders`. */
+  const activeTraceSessions = new Set<string>();
+
+  /** Look a recorder up and mark it most-recently-used. */
+  const touchRecorder = (sessionId: string): TraceRecorder | undefined => {
+    const recorder = recorders.get(sessionId);
+    if (recorder !== undefined) {
+      recorders.delete(sessionId);
+      recorders.set(sessionId, recorder);
+    }
+    return recorder;
+  };
+
+  /** Sessions deleted mid-turn, to be dropped once their turn releases. */
+  const pendingRecorderDrops = new Set<string>();
+
+  /**
+   * Forget a session's recorder once the session is gone.
+   *
+   * A delete that lands mid-turn must not unpin the running turn: the HTTP
+   * route deletes without an `isBusy` check (unlike the TUI, which refuses),
+   * and dropping the pin there would let the next burst evict a recorder the
+   * turn is still writing through — reintroducing the split trace file this
+   * pinning exists to prevent. Such a delete is deferred instead, and the
+   * turn's `finally` completes it; leaving it to cap pressure would strand the
+   * recorder of a session that no longer exists until 64 more arrive.
+   */
+  const dropRecorder = (sessionId: string): void => {
+    if (activeTraceSessions.has(sessionId)) {
+      pendingRecorderDrops.add(sessionId);
+      return;
+    }
+    pendingRecorderDrops.delete(sessionId);
+    recorders.delete(sessionId);
+  };
+
+  /**
+   * Trim to the cap, least-recently-used first, skipping sessions with a live
+   * turn and `exempt` (the entry the caller just created — it has not had a
+   * chance to be pinned yet, and evicting it would throw away the recorder
+   * whose creation triggered this call).
+   *
+   * If everything is pinned the map is allowed over the cap: losing a running
+   * session's trace is worse than holding a few extra recorders, and the
+   * excess drains as those turns finish and release their pins.
+   */
+  const evictRecorders = (exempt?: string): void => {
+    if (recorders.size <= MAX_TRACE_RECORDERS) return;
+    for (const sessionId of [...recorders.keys()]) {
+      if (recorders.size <= MAX_TRACE_RECORDERS) break;
+      if (sessionId === exempt) continue;
+      if (activeTraceSessions.has(sessionId)) continue;
+      recorders.delete(sessionId);
+    }
+  };
   /**
    * Per-turn context used to route `loopDeps.onEvent` calls back to
    * the correct session. Two sessions running concurrently each have
@@ -658,6 +827,7 @@ export async function createAgentRuntime(
    * pointer.
    */
   const turnContext = new AsyncLocalStorage<{ sessionId: string }>();
+  const steeringInbox = new SteeringInbox();
   const turnController = new TurnController({
     onHookError: (err, ctxInfo) => {
       logger.warn("turn event hook threw", {
@@ -679,7 +849,7 @@ export async function createAgentRuntime(
   const emitAgentLoopEvent = (event: AgentLoopEvent): void => {
     const ctx = turnContext.getStore();
     if (ctx) {
-      const recorder = recorders.get(ctx.sessionId);
+      const recorder = touchRecorder(ctx.sessionId);
       recorder?.onAgentEvent(event);
       turnController.emit(ctx.sessionId, event);
     }
@@ -689,7 +859,7 @@ export async function createAgentRuntime(
         category: event.category,
       });
     }
-    options.handlers?.onAgentEvent?.(event);
+    options.handlers?.onAgentEvent?.(event, ctx?.sessionId);
   };
 
   // Cross-provider fallover breaker. Owns no timer — every decision is
@@ -733,7 +903,11 @@ export async function createAgentRuntime(
     !options.overrides?.deferLlamaHealthCheck &&
     !options.overrides?.llamaComplete
   ) {
-    const health = await checkLlamaServer();
+    // One attempt, not the retry ladder: this probe exists to log a line,
+    // and with llama down the default ladder (5 attempts, exponential
+    // backoff) stalled every boot for 15.5 s before the loop then failed
+    // fast anyway. The first real completion is the retry.
+    const health = await checkLlamaServer({ retries: 0 });
     if (!health.reachable) {
       logger.warn("llama-server health check failed", {
         error: health.error,
@@ -1020,6 +1194,15 @@ export async function createAgentRuntime(
   // column-only `listRecentWorkingDirs` projection, so the store must
   // exist by the time `registerOsTools` wires the closure below.
   const sessionStore = new SessionStore();
+  // Drop a session's trace recorder when the session itself is deleted, so
+  // the map shrinks on teardown instead of relying on the cap to push
+  // entries out. Wrapped here rather than at each call site (the TUI and the
+  // HTTP route both delete sessions) so every caller gets it.
+  const deleteSession = sessionStore.delete.bind(sessionStore);
+  sessionStore.delete = (id: string): void => {
+    dropRecorder(id);
+    deleteSession(id);
+  };
 
   const toolRegistry = new ToolRegistry();
   toolRegistry.register(finishTool);
@@ -1126,6 +1309,7 @@ export async function createAgentRuntime(
       transport: resolveActiveToolTransport(resolved, provider),
       adapter: provider.toolCallAdapter ?? null,
       slotAffinity: provider.capabilities.supportsSlotAffinity,
+      parallelTools: provider.capabilities.supportsParallelTools,
     };
   };
 
@@ -1170,10 +1354,16 @@ export async function createAgentRuntime(
   const turnUsageMeter = new TurnUsageMeter();
 
   /**
-   * Pricing for a model id on the active provider, when the operator
-   * configured any. Cloud entries carry `userModels[].pricing`; local
-   * runners have none, which is why turn cost is reported as absent
-   * rather than zero for them.
+   * Pricing for a model id on the active provider, when any is known.
+   *
+   * Two sources, in `resolveModel`'s own precedence: a hand-configured
+   * `userModels[].pricing` first, then the provider's bundled catalog.
+   * The catalog is what makes cost work out of the box on OpenRouter and
+   * aimlapi, whose published prices ship with the agent; without it only
+   * operators who priced their models by hand ever saw a `cost_usd`.
+   *
+   * Local runners still resolve to no pricing, which is why turn cost is
+   * reported as absent rather than zero for them.
    */
   const resolveModelPricing = (
     modelId: string | null,
@@ -1184,7 +1374,28 @@ export async function createAgentRuntime(
       (p) => p.id === resolved.activeTextProvider,
     );
     if (!entry) return undefined;
-    return resolveModel(entry, modelId);
+    return resolveModel(entry, modelId, catalogForProvider(entry));
+  };
+
+  /**
+   * The active model's context window, for providers the `/props` probe
+   * cannot reach.
+   *
+   * `source === "default"` is deliberately treated as unknown. That
+   * branch is `DEFAULT_CHAT`'s nominal 128k — a placeholder, not a fact
+   * about the model actually serving the request — and a budget computed
+   * against a guessed window silently mis-sizes every prompt. Better to
+   * report no window and let the caller fall back to a fixed cap it can
+   * defend. The same reasoning keeps the TUI gauge from drawing itself
+   * against that number.
+   *
+   * Resolved per step rather than captured once, so switching model
+   * mid-session is picked up by the next prompt.
+   */
+  const resolveCatalogContextWindow = (): number | null => {
+    const model = resolveModelPricing(resolveActiveModelName());
+    if (!model || model.source === "default") return null;
+    return model.contextWindow > 0 ? model.contextWindow : null;
   };
 
   // Vision reuses the active text provider when it exposes describeImage.
@@ -1427,7 +1638,7 @@ export async function createAgentRuntime(
     // `turn_finished`, so a missing recorder is a normal "tracing
     // disabled for this session" outcome, not an error.
     emitTrace: (event: ReflectionTraceEvent) => {
-      const recorder = recorders.get(event.sessionId);
+      const recorder = touchRecorder(event.sessionId);
       if (!recorder) return;
       recorder.recordReflection({
         outcome: event.outcome,
@@ -1495,7 +1706,7 @@ export async function createAgentRuntime(
       // Per-session trace emission — same resolve-by-sessionId
       // pattern as reflection / vote.
       emitTrace: (event) => {
-        const recorder = recorders.get(event.sessionId);
+        const recorder = touchRecorder(event.sessionId);
         if (!recorder) return;
         recorder.recordLinkGenerator({
           outcome: event.outcome,
@@ -1570,7 +1781,7 @@ export async function createAgentRuntime(
       // recorder is a normal "tracing disabled for this session"
       // outcome, not an error.
       emitTrace: (event) => {
-        const recorder = recorders.get(event.sessionId);
+        const recorder = touchRecorder(event.sessionId);
         if (!recorder) return;
         if (event.type === "applied") {
           recorder.recordVoteApplied({
@@ -1722,7 +1933,7 @@ export async function createAgentRuntime(
       // not exist yet on the very first turn; a missing recorder is a
       // normal "tracing disabled" outcome.
       emitTrace: (event) => {
-        const recorder = recorders.get(event.sessionId);
+        const recorder = touchRecorder(event.sessionId);
         if (!recorder) return;
         recorder.recordQueryRewriter({ outcome: event.outcome });
       },
@@ -1734,18 +1945,31 @@ export async function createAgentRuntime(
     });
   }
 
+  // Plan mode. Session state, deliberately not config: it is a stance
+  // for the next few turns, not a setting, and a "look but do not touch"
+  // that survived a restart would be a mystery rather than a memory.
+  let planMode = false;
+
   // The `skillCatalog` is a getter so that `agent-loop` reads the current
   // value on every step — `refreshSkills()` then does not require tearing
   // down the loop.
   const loopDeps = {
     registry: toolRegistry,
+    // A getter, so `runtime.setPlanMode` is observed by the next tool
+    // call rather than by the next process. Same reason the approval
+    // gate is the single live switch rather than a boolean copied into
+    // each tool registration.
+    isPlanMode: () => planMode,
     slotManager,
     grammar,
     llmComplete,
+    // Mid-turn steering: the loop drains this at every step boundary.
+    steeringInbox,
     ...(llmCompleteStream ? { llmCompleteStream } : {}),
     toolDescriptors: effectiveToolDescriptors,
     capabilities,
     profile,
+    contextWindow: resolveCatalogContextWindow,
     ...(profileManager ? { profileManager } : {}),
     ...(config.memory.profile.enabled
       ? { profileFactsProvider: () => profileStore.list() }
@@ -1822,6 +2046,10 @@ export async function createAgentRuntime(
     enumerable: true,
     get: () => resolveActiveLlmSlice().slotAffinity,
   });
+  Object.defineProperty(loopDeps, "supportsParallelTools", {
+    enumerable: true,
+    get: () => resolveActiveLlmSlice().parallelTools,
+  });
   const loop = new AgentLoop(
     loopDeps as typeof loopDeps & {
       skillCatalog: readonly SkillCatalogEntry[];
@@ -1840,6 +2068,9 @@ export async function createAgentRuntime(
   const shutdown = async (): Promise<void> => {
     if (shutdownCalled) return;
     shutdownCalled = true;
+    // Nothing will drain the inbox after this point; drop pending
+    // steers so a message cannot resurface in a later process.
+    steeringInbox.clearAll();
     // Cancel any in-flight reflection before tearing down the profile
     // store — otherwise a late-arriving completion could try to write
     // into a closed SQLite connection.
@@ -2016,7 +2247,7 @@ export async function createAgentRuntime(
 
   const ensureRecorder = (session: SessionState): TraceRecorder | null => {
     if (!traceBus) return null;
-    const existing = recorders.get(session.id);
+    const existing = touchRecorder(session.id);
     if (existing) return existing;
     const recorder = createTraceRecorder({
       sessionId: session.id,
@@ -2027,6 +2258,11 @@ export async function createAgentRuntime(
       ...(session.metadata ? { metadata: session.metadata } : {}),
     });
     recorders.set(session.id, recorder);
+    // Exempt the entry just created: the caller pins it only after this
+    // returns, so without this it is the sole unpinned entry when every other
+    // session is mid-turn and would evict itself — losing the whole turn's
+    // trace to a file that already has its `session_started` line.
+    evictRecorders(session.id);
     return recorder;
   };
 
@@ -2049,16 +2285,56 @@ export async function createAgentRuntime(
     runOptions: { maxSteps?: number; signal?: AbortSignal } = {},
   ): Promise<RunTurnResult> => {
     ensureRecorder(session);
+    // Pin this session for the duration of the turn. Without it a burst of
+    // new sessions can push this one's recorder out mid-turn, after which
+    // `emitAgentLoopEvent`'s `recorders.get(...)?.` silently drops every
+    // remaining event of the turn and any tool call whose `pendingCalls`
+    // entry went with it is logged with empty args.
+    activeTraceSessions.add(session.id);
     return turnContext.run({ sessionId: session.id }, async () => {
-      const result = await loop.runTurn(session, {
-        userMessage,
-        maxSteps: runOptions.maxSteps ?? config.agent.maxSteps,
-        signal: runOptions.signal ?? new AbortController().signal,
-      });
-      sessionStore.save(result.session);
-      return result;
+      try {
+        const result = await loop.runTurn(session, {
+          userMessage,
+          maxSteps: runOptions.maxSteps ?? config.agent.maxSteps,
+          signal: runOptions.signal ?? new AbortController().signal,
+        });
+        sessionStore.save(result.session);
+        return result;
+      } finally {
+        activeTraceSessions.delete(session.id);
+        // A delete that arrived mid-turn was deferred to keep the pin honest;
+        // complete it now that nothing is writing through the recorder.
+        if (pendingRecorderDrops.has(session.id)) {
+          pendingRecorderDrops.delete(session.id);
+          recorders.delete(session.id);
+        }
+        // The turn may have out-waited a burst that could not evict while it
+        // was pinned; settle the map now that it can.
+        evictRecorders();
+      }
     });
   };
+
+  /**
+   * Public entry point for mid-turn steering. Deliberately does NOT
+   * enqueue: the whole point is to reach the turn that is already
+   * running, and going through `turnController` would put the message
+   * behind it.
+   *
+   * One call, one decision. It deliberately does NOT pre-check
+   * `turnController.isBusy`: that is a second fact which stops being
+   * true at a different moment than "the loop will drain this again"
+   * (the loop's final drain happens inside `runTurn`, `busy.delete`
+   * later in the controller's `finally`). Guarding on it made this a
+   * check-then-act with a real lost-update window — accepted here,
+   * never delivered, and resurfacing at step 0 of some later turn under
+   * a "while you were working" notice about a turn that had already
+   * ended. `push` alone is authoritative: it accepts only while the
+   * running turn's window is open, and that window is closed by the
+   * same call that performs the final drain.
+   */
+  const steer = (sessionId: string, text: string): boolean =>
+    steeringInbox.push(sessionId, text);
 
   const runTurn = async (
     session: SessionState,
@@ -2074,7 +2350,23 @@ export async function createAgentRuntime(
     const submission = {
       sessionId: session.id,
       origin,
-      run: () => executeTurn(session, userMessage, runOptions),
+      // Re-read the freshest stored session when the queue hands over
+      // the lock, not when the caller enqueued: between those moments a
+      // turn from another origin (scheduler, HTTP, a TUI thread the
+      // operator backgrounded) can finish and save, and running on the
+      // caller's snapshot would make whichever turn saves last clobber
+      // the other's transcript. This is the contract's own rule — never
+      // hold a stale `SessionState` between enqueue and run; re-read
+      // inside the queued callback (§"Concurrency contract"). A session
+      // the store cannot answer for (never persisted, or deleted while
+      // parked) falls back to the caller's copy, the pre-existing
+      // behaviour.
+      run: () =>
+        executeTurn(
+          sessionStore.load(session.id) ?? session,
+          userMessage,
+          runOptions,
+        ),
       ...(runOptions.eventHook ? { eventHook: runOptions.eventHook } : {}),
       ...(runOptions.signal ? { signal: runOptions.signal } : {}),
     } as const;
@@ -2393,6 +2685,8 @@ export async function createAgentRuntime(
     slotManager,
     sessionStore,
     turnController,
+    steeringInbox,
+    steer,
     profileStore,
     notesStore,
     lessonStore,
@@ -2421,8 +2715,14 @@ export async function createAgentRuntime(
     setApprovalHandlerForSession: (sessionId, handler) =>
       approvalRouter.setForSession(sessionId, handler),
     setAnalyticsEnabled,
+    reportOnboardingStep,
+    reportModelConfigured,
     getApprovalLevel: () => approvals.getLevel(),
     setApprovalLevel: (level) => approvals.setLevel(level),
+    getPlanMode: () => planMode,
+    setPlanMode: (on: boolean) => {
+      planMode = on;
+    },
     shutdown,
   } as AgentRuntime & { telegramChannel: TelegramChannel | null };
   Object.defineProperty(runtime, "skillCatalog", {

@@ -111,6 +111,109 @@ describe("executeBatch", () => {
     expect(elapsed).toBeLessThan(250);
   });
 
+  it("chunks pure_read fan-out into bounded waves when maxWaveSize is set", async () => {
+    // 5 reads with a wave size of 2 → waves of [0,1], [2,3], [4]. Track
+    // peak concurrency: it must never exceed 2, and all 5 must run.
+    let inflight = 0;
+    let peak = 0;
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "read",
+      readonly: true,
+      run: async () => {
+        inflight += 1;
+        peak = Math.max(peak, inflight);
+        await new Promise((r) => setTimeout(r, 30));
+        inflight -= 1;
+        return okResult("os.fs.read");
+      },
+    });
+    const inputs = toBatchInputs(
+      [0, 1, 2, 3, 4].map((i) => ({
+        tool: "os.fs.read",
+        args: { path: String(i) },
+      })),
+    );
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      maxWaveSize: 2,
+    });
+    expect(out.results).toHaveLength(5);
+    expect(out.results.every((r) => r.compressed?.status === "ok")).toBe(true);
+    expect(out.cancelled).toBe(false);
+    expect(peak).toBeLessThanOrEqual(2);
+    // Result order still matches the original batch-index order.
+    expect(out.results.map((r) => r.batchIndex)).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it("runs a single wave when maxWaveSize covers the whole group", async () => {
+    let inflight = 0;
+    let peak = 0;
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "read",
+      readonly: true,
+      run: async () => {
+        inflight += 1;
+        peak = Math.max(peak, inflight);
+        await new Promise((r) => setTimeout(r, 30));
+        inflight -= 1;
+        return okResult("os.fs.read");
+      },
+    });
+    const inputs = toBatchInputs(
+      [0, 1, 2].map((i) => ({
+        tool: "os.fs.read",
+        args: { path: String(i) },
+      })),
+    );
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      maxWaveSize: 10,
+    });
+    expect(out.results).toHaveLength(3);
+    expect(out.results.every((r) => r.compressed?.status === "ok")).toBe(true);
+    // All three ran concurrently — a single wave.
+    expect(peak).toBe(3);
+  });
+
+  it("preserves batch-index correlation across waves", async () => {
+    const order: number[] = [];
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "read",
+      readonly: true,
+      run: async (args) => {
+        await new Promise((r) => setTimeout(r, 10));
+        order.push(args.path as number);
+        return okResult("os.fs.read", `read ${args.path}`);
+      },
+    });
+    const inputs = toBatchInputs(
+      [3, 1, 4, 0, 2].map((p) => ({
+        tool: "os.fs.read",
+        args: { path: p },
+      })),
+    );
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      maxWaveSize: 2,
+    });
+    // `results[i]` must correspond to `inputs[i]` regardless of wave
+    // execution order.
+    expect(out.results.map((r) => r.batchIndex)).toEqual([0, 1, 2, 3, 4]);
+    expect(out.results.map((r) => r.compressed?.summary)).toEqual([
+      "read 3",
+      "read 1",
+      "read 4",
+      "read 0",
+      "read 2",
+    ]);
+  });
+
   it("serialises browser calls in batch-index order", async () => {
     const order: number[] = [];
     const make = (idx: number) =>
@@ -497,6 +600,131 @@ describe("executeBatch", () => {
     expect(out.loopSignals[0]!.detector).toBe("wandering");
   });
 
+  // Issue #186: the veto body must name the invariant that held across
+  // the blocked attempts and offer a concrete alternative.
+  it("veto body names the repeated host and offers the search-first alternative", async () => {
+    const registry = buildRegistry({ "os.web.fetch": async () => okResult("os.web.fetch") });
+    const tracker = new ToolLoopTracker({
+      warningThreshold: 2,
+      criticalThreshold: 2,
+    });
+    const args = { url: "https://web.archive.org/web/2020/https://x.test/a?k=SECRET" };
+    seedCriticalStreak(tracker, "os.web.fetch", args, 2);
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.web.fetch", args }]),
+      registry,
+      { ...ctx(new AbortController().signal), tracker },
+    );
+    const body = out.results[0]!.compressed!.summary;
+    expect(body).toContain("web.archive.org");
+    expect(body).toContain("`os.web.search`");
+    // The full URL — path, query, secret — must NOT reach model context.
+    expect(body).not.toContain("SECRET");
+    expect(body).not.toContain("/web/2020/");
+  });
+
+  it("veto body names the command for a shell loop", async () => {
+    const registry = buildRegistry({ "os.shell.run": async () => okResult("os.shell.run") });
+    const tracker = new ToolLoopTracker({
+      warningThreshold: 2,
+      criticalThreshold: 2,
+    });
+    const args = { command: "curl -s https://x.test --header 'Authorization: Bearer SECRET'" };
+    seedCriticalStreak(tracker, "os.shell.run", args, 2);
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.shell.run", args }]),
+      registry,
+      { ...ctx(new AbortController().signal), tracker },
+    );
+    const body = out.results[0]!.compressed!.summary;
+    expect(body).toContain("`curl`");
+    expect(body).not.toContain("SECRET");
+  });
+
+  it("veto body degrades to generic wording when args carry no extractable target", async () => {
+    const registry = buildRegistry({ "os.fs.read": async () => okResult("os.fs.read") });
+    const tracker = new ToolLoopTracker({
+      warningThreshold: 2,
+      criticalThreshold: 2,
+    });
+    seedCriticalStreak(tracker, "os.fs.read", { path: "a" }, 2);
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.read", args: { path: "a" } }]),
+      registry,
+      { ...ctx(new AbortController().signal), tracker },
+    );
+    const body = out.results[0]!.compressed!.summary;
+    expect(body).toContain("BLOCKED");
+    expect(body).toContain("2 consecutive calls returned the same no-progress outcome");
+    expect(body).not.toContain("undefined");
+  });
+
+  // The wandering spread is a property of the history window, so it stays
+  // above the threshold once the model stops varying its argument. Reporting
+  // a verbatim repeat as "N different attempts" is the same false statement
+  // the wandering wording exists to avoid, in the mirror case.
+  it("stops claiming different attempts once a wandering model settles on one url", async () => {
+    const registry = buildRegistry({
+      "os.web.fetch": async () => okResult("os.web.fetch"),
+    });
+    const tracker = new ToolLoopTracker({
+      warningThreshold: 2,
+      criticalThreshold: 3,
+      wanderingThreshold: 3,
+      wanderingEscalation: 4,
+    });
+    // Wander first: four distinct URLs on one host crosses the escalation.
+    for (const path of ["a", "b", "c", "d"]) {
+      const wandered = { url: `https://web.archive.org/${path}` };
+      tracker.check("os.web.fetch", wandered);
+      tracker.recordCall("os.web.fetch", wandered);
+      tracker.recordOutcome(
+        "os.web.fetch",
+        wandered,
+        okResult("os.web.fetch", path),
+      );
+    }
+    // Then settle: the same URL, twice, so the second call is a repeat.
+    const settled = { url: "https://web.archive.org/same" };
+    tracker.check("os.web.fetch", settled);
+    tracker.recordCall("os.web.fetch", settled);
+    tracker.recordOutcome(
+      "os.web.fetch",
+      settled,
+      okResult("os.web.fetch", "same"),
+    );
+
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.web.fetch", args: settled }]),
+      registry,
+      { ...ctx(new AbortController().signal), tracker },
+    );
+    const body = out.results[0]!.compressed!.summary;
+    expect(body).toContain("BLOCKED");
+    expect(body).toContain("web.archive.org");
+    expect(body).not.toContain("different attempts");
+    // A count the verdict cannot substantiate must not be quoted either.
+    expect(body).not.toContain("0 consecutive");
+  });
+
+  it("does not throw and stays generic when args are malformed", async () => {
+    const registry = buildRegistry({ "os.web.fetch": async () => okResult("os.web.fetch") });
+    const tracker = new ToolLoopTracker({
+      warningThreshold: 2,
+      criticalThreshold: 2,
+    });
+    const args = { url: "://not a url" };
+    seedCriticalStreak(tracker, "os.web.fetch", args, 2);
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.web.fetch", args }]),
+      registry,
+      { ...ctx(new AbortController().signal), tracker },
+    );
+    const body = out.results[0]!.compressed!.summary;
+    expect(body).toContain("BLOCKED");
+    expect(body).not.toContain("undefined");
+  });
+
   it("marks tail calls as cancelled when the signal aborts mid-serialised-group", async () => {
     const ctrl = new AbortController();
     const registry = new ToolRegistry();
@@ -602,3 +830,135 @@ describe("executeBatch — skill.view short-circuit", () => {
     expect(tracker.check("skill.view", { name: "exa" }).level).toBe("critical");
   });
 });
+
+/**
+ * Plan mode at the seam that matters: not "does the predicate say no",
+ * which `plan-mode.test.ts` covers, but "did the tool actually not run".
+ */
+describe("executeBatch under plan mode", () => {
+  it("never dispatches a mutating tool", async () => {
+    const write = vi.fn(async () => okResult("os.fs.write"));
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.write",
+      description: "write",
+      readonly: false,
+      run: write,
+    });
+    const inputs = toBatchInputs([
+      { tool: "os.fs.write", args: { path: "a", content: "x" } },
+    ]);
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      isPlanMode: () => true,
+    });
+    expect(write).not.toHaveBeenCalled();
+    expect(out.results[0]!.compressed?.status).toBe("error");
+    expect(out.results[0]!.compressed?.summary).toContain("plan mode is on");
+  });
+
+  it("still runs the read-only calls in the same batch", async () => {
+    const read = vi.fn(async () => okResult("os.fs.read"));
+    const write = vi.fn(async () => okResult("os.fs.write"));
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "read",
+      readonly: true,
+      run: read,
+    });
+    registry.register({
+      name: "os.fs.write",
+      description: "write",
+      readonly: false,
+      run: write,
+    });
+    const inputs = toBatchInputs([
+      { tool: "os.fs.read", args: { path: "a" } },
+      { tool: "os.fs.write", args: { path: "b", content: "x" } },
+      { tool: "os.fs.read", args: { path: "c" } },
+    ]);
+    const out = await executeBatch(inputs, registry, {
+      ...ctx(new AbortController().signal),
+      isPlanMode: () => true,
+    });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(write).not.toHaveBeenCalled();
+    expect(out.results[0]!.compressed?.status).toBe("ok");
+    expect(out.results[1]!.compressed?.status).toBe("error");
+    expect(out.results[2]!.compressed?.status).toBe("ok");
+  });
+
+  it("does not feed a refused call to the loop detector", async () => {
+    // A refused call that was recorded would let a retried tool trip the
+    // loop breaker and end the turn — over an argument the model was
+    // never allowed to try in the first place.
+    const write = vi.fn(async () => okResult("os.fs.write"));
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.write",
+      description: "write",
+      readonly: false,
+      run: write,
+    });
+    const tracker = new ToolLoopTracker();
+    for (let i = 0; i < 12; i++) {
+      const out = await executeBatch(
+        toBatchInputs([{ tool: "os.fs.write", args: { path: "a" } }]),
+        registry,
+        {
+          ...ctx(new AbortController().signal),
+          tracker,
+          isPlanMode: () => true,
+        },
+      );
+      expect(out.results[0]!.compressed?.summary).toContain("plan mode is on");
+    }
+    expect(out2LoopSignals(tracker)).toBe(0);
+  });
+
+  it("runs everything again the moment plan mode goes off", async () => {
+    const write = vi.fn(async () => okResult("os.fs.write"));
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.write",
+      description: "write",
+      readonly: false,
+      run: write,
+    });
+    let planning = true;
+    const inputs = toBatchInputs([
+      { tool: "os.fs.write", args: { path: "a", content: "x" } },
+    ]);
+    const base = { ...ctx(new AbortController().signal), isPlanMode: () => planning };
+    await executeBatch(inputs, registry, base);
+    expect(write).not.toHaveBeenCalled();
+    // The getter is read per call, so the flip is observed by the next
+    // tool call rather than by the next process.
+    planning = false;
+    await executeBatch(inputs, registry, base);
+    expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  it("is inert when no getter is supplied", async () => {
+    const write = vi.fn(async () => okResult("os.fs.write"));
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.write",
+      description: "write",
+      readonly: false,
+      run: write,
+    });
+    await executeBatch(
+      toBatchInputs([{ tool: "os.fs.write", args: { path: "a" } }]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    expect(write).toHaveBeenCalledTimes(1);
+  });
+});
+
+/** The tracker never saw a call, so it has nothing to complain about. */
+function out2LoopSignals(tracker: ToolLoopTracker): number {
+  return tracker.check("os.fs.write", { path: "a" }).count;
+}

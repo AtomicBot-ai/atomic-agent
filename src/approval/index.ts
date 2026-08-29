@@ -33,4 +33,5 @@ export {
 export type {
   DangerousToolOptions,
   ApprovalPrompt,
+  ApprovalOutcome,
 } from "./dangerous-tool.js";

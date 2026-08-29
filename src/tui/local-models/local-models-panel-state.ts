@@ -1,11 +1,40 @@
 import type {
   EmbeddingModelDef,
   EmbeddingModelId,
+  HuggingFaceRepoChoices,
   LocalModelDef,
   LocalModelId,
 } from "../../local-llm/index.js";
 
-export type LocalModelsPanelMode = "list" | "detail" | "backendUpdate" | "pullProgress";
+export type LocalModelsPanelMode =
+  | "list"
+  | "detail"
+  | "backendUpdate"
+  | "pullProgress"
+  /** Naming a Hugging Face repo — the shared reference editor. */
+  | "hfRef"
+  /** Choosing which GGUF from the repo just resolved. */
+  | "hfPick";
+
+/**
+ * The Models pane's "add a model from Hugging Face" branch, in the same
+ * shape the first-run flow keeps on its own slice. Two flows, one set of
+ * screens (`hf-reference-editor.tsx`, `hf-pick-list.tsx`) — what differs
+ * is only where the state lives and which key table Enter goes through.
+ *
+ * `repo` is the resolved listing; it survives an Escape back to the
+ * reference editor so re-opening the pick step costs no second request.
+ */
+export interface LocalModelsHfState {
+  /** What the operator typed: an id, a repo URL, or a link to one file. */
+  reference: string;
+  /** A lookup is in flight — the editor goes read-only, Esc cancels. */
+  busy: boolean;
+  /** Whatever went wrong, shown on the screen that asked the question. */
+  error: string | null;
+  repo: HuggingFaceRepoChoices | null;
+  cursor: number;
+}
 
 /**
  * Memory-v2 phase 1B (revised). The panel renders chat and embedding
@@ -90,6 +119,8 @@ export interface LocalModelsBackendInfo {
   currentTag: string | null;
   latestTag: string | null;
   updateAvailable: boolean | null;
+  /** `localModels.managed.autoUpdate`; surfaced so `U` has visible state. */
+  autoUpdate: boolean;
 }
 
 export interface LocalModelsDaemonInfo {
@@ -165,6 +196,8 @@ export interface LocalModelsPanelState {
    *  - `name`      — friendly label for the modal.
    *  - `sizeLabel` — pre-formatted size hint (`"~84 MB"`) for the modal.
    */
+  /** "Add a model from Hugging Face" — see {@link LocalModelsHfState}. */
+  hf: LocalModelsHfState;
   embeddingOnboardingPrompt: {
     modelId: EmbeddingModelId;
     name: string;
@@ -202,12 +235,31 @@ export function totalRowCount(panel: LocalModelsPanelState): number {
   return panel.rows.length + panel.embeddingRows.length;
 }
 
-export function createInitialLocalModelsPanelState(): LocalModelsPanelState {
+/**
+ * Config-derived facts worth knowing before the first snapshot. The
+ * orchestrator only refreshes this slice while the Models tab is open,
+ * but the composer's route controls render on the *home* screen from
+ * frame one — unseeded, a managed install reads `custom` and shows no
+ * chosen model until the operator happens to visit the tab once.
+ */
+export interface LocalModelsPanelSeed {
+  configMode: LocalModelsPanelState["configMode"];
+  activeModelId: LocalModelsPanelState["activeModelId"];
+}
+
+export function createInitialLocalModelsPanelState(
+  seed?: LocalModelsPanelSeed,
+): LocalModelsPanelState {
   return {
     mode: "list",
     rows: [],
     cursor: 0,
-    backend: { currentTag: null, latestTag: null, updateAvailable: null },
+    backend: {
+      currentTag: null,
+      latestTag: null,
+      updateAvailable: null,
+      autoUpdate: true,
+    },
     daemon: {
       running: false,
       healthy: false,
@@ -217,8 +269,8 @@ export function createInitialLocalModelsPanelState(): LocalModelsPanelState {
     },
     daemonPhase: "idle",
     daemonError: null,
-    configMode: "external",
-    activeModelId: null,
+    configMode: seed?.configMode ?? "external",
+    activeModelId: seed?.activeModelId ?? null,
     pull: null,
     embeddingPull: null,
     lastRefreshedAt: null,
@@ -231,8 +283,13 @@ export function createInitialLocalModelsPanelState(): LocalModelsPanelState {
     embeddingRows: [],
     embeddingDaemon: null,
     embeddingRemoveConfirmId: null,
+    hf: createInitialLocalModelsHfState(),
     embeddingOnboardingPrompt: null,
   };
+}
+
+export function createInitialLocalModelsHfState(): LocalModelsHfState {
+  return { reference: "", busy: false, error: null, repo: null, cursor: 0 };
 }
 
 export type RamFit = "ok" | "tight" | "insufficient";

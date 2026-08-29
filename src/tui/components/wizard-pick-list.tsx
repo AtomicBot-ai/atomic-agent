@@ -1,13 +1,181 @@
 import { Box, Text } from "ink";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
+import { MouseListRow } from "../mouse/mouse-list-row.js";
+import { useMouseCommands, useMouseTarget } from "../mouse/mouse-context.js";
+import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
+import {
+  storeWizardMouseRoute,
+  type WizardMouseRoute,
+} from "../providers/route-wizard-key.js";
+import type { ProvidersWizardState } from "../providers/providers-wizard-state.js";
+import { PasteFieldTarget } from "../context-menu/paste-field-target.js";
+import { pasteIntoProvidersWizard } from "../providers/providers-wizard-paste.js";
 import { theme } from "../theme/theme.js";
 
 /**
- * Viewport height for every wizard pick list, and the jump distance for
- * PgUp/PgDn in `providers-wizard-key-bindings`. Keep the two in sync by
- * importing this constant, never by copying the number.
+ * Largest viewport any wizard pick list will use, and the jump distance
+ * for PgUp/PgDn in `providers-wizard-key-bindings`. Keep the two in sync
+ * by importing this constant, never by copying the number.
+ *
+ * The rendered viewport shrinks below this on short terminals (see
+ * `pickWindowRows`); the paging distance deliberately does not. PgDn is
+ * "go a screenful further down a 300-row catalog", and pinning it to a
+ * 3-row window on an 80x24 terminal would turn it into ↓↓↓.
  */
 export const PICK_WINDOW = 12;
+
+/** Never shrink the viewport below this — one row is not a list. */
+export const PICK_MIN_WINDOW = 3;
+
+/**
+ * Rows the box spends on things that are not options: two border lines,
+ * the top and bottom margins, the title, and the hint.
+ */
+const PICK_CHROME_ROWS = 6;
+
+/**
+ * How many option rows fit in `maxRows` total rows of terminal.
+ *
+ * `undefined` means "no budget was passed" and keeps the historical
+ * fixed viewport. Callers that know the budget must pass it: Ink 7 does
+ * not clip a frame taller than the terminal, it paints later lines over
+ * earlier ones, so a 16-row box on an 11-row budget does not lose its
+ * bottom — it eats whatever was above it.
+ */
+export function pickWindowRows(
+  maxRows: number | undefined,
+  extraChromeRows = 0,
+): number {
+  // The fixed viewport pays for extra chrome too: the unbudgeted callers
+  // (first-run onboarding, the Providers panel) sized their screens to a
+  // 12-option box, so a search or error line that ADDED a row instead of
+  // taking one pushed their bottom row off a 24-row terminal.
+  if (maxRows === undefined) {
+    return Math.max(PICK_MIN_WINDOW, PICK_WINDOW - extraChromeRows);
+  }
+  return Math.max(
+    PICK_MIN_WINDOW,
+    Math.min(PICK_WINDOW, maxRows - PICK_CHROME_ROWS - extraChromeRows),
+  );
+}
+
+/** Most error lines the box will spend rows on. */
+const MAX_ERROR_ROWS = 2;
+
+/**
+ * What a list with nothing in it says. A bordered box with no rows reads
+ * as a rendering fault; naming the query that emptied it, and the key
+ * that undoes it, points at the fix instead.
+ */
+function emptyRowLine(search: string | null | undefined): string {
+  if (search) return `no match for "${search}" — Backspace to widen it`;
+  return "nothing to show here";
+}
+
+/**
+ * Break a refusal into at most two truncated lines, split at the first
+ * sentence end.
+ *
+ * The verdicts from `describeProviderVerifyOutcome` are two sentences —
+ * what happened, then what to do about it — and run past 80 columns
+ * together. Truncating the pair to one line keeps the verdict and throws
+ * away the instruction, which is the half the operator needs. Splitting
+ * on the sentence boundary is width-independent, so the box height stays
+ * predictable at any terminal width.
+ */
+/**
+ * The list's frame, and the only place in this file that may hold a
+ * hook: `renderPickList` is a plain function its callers invoke
+ * directly, not a component React renders, so hooks inside it are an
+ * "Invalid hook call".
+ *
+ * Wheel over the list walks the cursor, one row a notch — the window is
+ * derived from the cursor, so moving it *is* scrolling, the same model
+ * `menu-popup.tsx` uses.
+ *
+ * It has to be here, at MODAL, rather than on the app's whole-viewport
+ * wheel target: an open wizard raises the mouse floor to MODAL
+ * (`isPanelModalOpen`), and the viewport target sits at the base layer,
+ * so every wheel event over a wizard was dropped before anything saw
+ * it. Hundreds of cloud models, and the only way down the list was the
+ * arrow keys.
+ *
+ * It routes through `route.select` — the very call a click on a row
+ * makes — so wheel and click cannot drift into two different notions of
+ * "select row N".
+ */
+function PickListFrame({
+  cursor,
+  total,
+  wizard,
+  route,
+  children,
+}: {
+  cursor: number;
+  total: number;
+  wizard: ProvidersWizardState;
+  route: WizardMouseRoute;
+  children: ReactNode;
+}): ReactElement {
+  const mouse = useMouseCommands();
+  const ref = useMouseTarget(
+    (hit) => {
+      if (hit.event.kind !== "wheel" || !hit.event.wheel || !mouse) return false;
+      if (total === 0) return true;
+      const delta = hit.event.wheel === "up" ? -1 : 1;
+      const next = Math.min(Math.max(cursor + delta, 0), total - 1);
+      if (next !== cursor) route.select(mouse, wizard, next);
+      // Claimed either way: at the ends of the list the notch has
+      // nowhere to go, and letting it fall through would scroll the
+      // chat behind the wizard instead.
+      return true;
+    },
+    { layer: MOUSE_LAYER_MODAL },
+  );
+  return (
+    <Box
+      ref={ref}
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={theme.colors.accentSoft}
+      paddingX={1}
+      marginY={1}
+      width="100%"
+    >
+      {children}
+    </Box>
+  );
+}
+
+function errorLines(error: string): readonly string[] {
+  const split = error.indexOf(". ");
+  if (split === -1) return [error];
+  return [error.slice(0, split + 1), error.slice(split + 2)];
+}
+
+/**
+ * Movement and action hints for a filterable list, in its two states.
+ *
+ * The hint line is the only place either state is written down. Closed,
+ * `j`/`k` move and `/` opens the search box. Open, every printable key
+ * types into it, movement drops to the arrows, and Esc empties the box
+ * before it will leave the screen — so the open form names both meanings
+ * of Esc rather than letting the second one look like a dead key.
+ */
+export function pickListHints(
+  search: string | null,
+  actions: string,
+  escClosed: string,
+  escOpen: string,
+): { moveHint: string; actionsHint: string } {
+  if (search === null) {
+    return {
+      moveHint: "j/k move",
+      actionsHint: `${actions} · / search · ${escClosed}`,
+    };
+  }
+  return { moveHint: "↑/↓ move", actionsHint: `${actions} · ${escOpen}` };
+}
 
 /**
  * Bordered option list windowed around the cursor.
@@ -26,47 +194,142 @@ export function renderPickList(props: {
   title: string;
   options: readonly { label: string }[];
   cursor: number;
+  /**
+   * The wizard this frame drew. Row clicks act on it — never on
+   * `providersPanel.wizard` read at click time — because the frame is
+   * the only thing the operator can aim at, and one mount
+   * (`CloudProviderOnboarding`) keeps its wizard outside the store
+   * entirely, where a store read finds a different wizard or none.
+   */
+  wizard: ProvidersWizardState;
+  /** How row clicks reach that wizard. Defaults to the store's route. */
+  route?: WizardMouseRoute;
   /** Movement-keys part of the hint, e.g. "j/k move". */
   moveHint: string;
   /** Actions part of the hint, e.g. "Enter select · Esc cancel". */
   actionsHint: string;
+  /** Total terminal rows this box may occupy; omit for the fixed viewport. */
+  maxRows?: number;
+  /**
+   * The search box above the options. Three states, not two: `undefined`
+   * on a list that cannot be filtered (the compat picker, where typing
+   * edits the model id instead), `null` on a filterable list whose box is
+   * closed, and the query while it is open. A closed box still draws its
+   * line — the operator has to be able to see that the list is
+   * searchable before they would think to press `/`.
+   */
+  search?: string | null;
+  /**
+   * Why the last action was refused. A list screen used to have nowhere
+   * to say this, so a save the key check rejected looked exactly like a
+   * keypress that did nothing — the whole of report #3.
+   */
+  error?: string | null;
 }): ReactElement {
   const total = props.options.length;
+  const route = props.route ?? storeWizardMouseRoute;
   const clamped = Math.min(Math.max(props.cursor, 0), Math.max(0, total - 1));
+  const errors = props.error ? errorLines(props.error).slice(0, MAX_ERROR_ROWS) : [];
+  const searchShown = props.search !== undefined;
+  // The search line and the empty-list line are chrome for the row
+  // budget in the same way the error lines are: Ink 7 paints an over-tall
+  // frame over the rows above it rather than clipping.
+  const chrome = errors.length + (searchShown ? 1 : 0) + (total === 0 ? 1 : 0);
+  const window = pickWindowRows(props.maxRows, chrome);
   const start = Math.min(
-    Math.max(0, clamped - Math.floor(PICK_WINDOW / 2)),
-    Math.max(0, total - PICK_WINDOW),
+    Math.max(0, clamped - Math.floor(window / 2)),
+    Math.max(0, total - window),
   );
-  const visible = props.options.slice(start, start + PICK_WINDOW);
+  const visible = props.options.slice(start, start + window);
   const position = total === 0 ? "(0/0)" : `(${clamped + 1}/${total})`;
   return (
-    <Box
-      flexDirection="column"
-      borderStyle="round"
-      borderColor={theme.colors.accentSoft}
-      paddingX={1}
-      marginY={1}
-      width="100%"
+    // The text here — title and cursor row — is ink and reads `accent`;
+    // `accentSoft` is the house palette's *fill*, and as ink on a dark
+    // terminal it lands near 2:1, which is what made this box and its
+    // selection nearly unreadable. The border alone keeps the fill tone:
+    // the brief fenced the lift to text, and the quiet frame leaves the
+    // accent to the rows that are read.
+    <PickListFrame
+      cursor={clamped}
+      total={total}
+      wizard={props.wizard}
+      route={route}
     >
-      <Text bold color={theme.colors.accentSoft}>
+      <Text bold color={theme.colors.accent}>
         {props.title}
       </Text>
+      {searchShown && props.search !== null ? (
+        // Right-click paste only while the box is OPEN: on a closed box
+        // a text burst would fall through to the list phase, where the
+        // vim movement letters live. `renderPickList` is exclusively
+        // the providers wizard's, so the wizard adapter is exact.
+        <PasteFieldTarget onPasteText={pasteIntoProvidersWizard}>
+          <Text color={theme.colors.muted} wrap="truncate-end">
+            {"search: "}
+            {/* `accent`, never `accentSoft`: the query is text the
+                operator is actively reading, and the un-lifted fill sits
+                near 2:1 against a dark ground (see theme-palettes.ts). */}
+            <Text color={theme.colors.accent}>
+              {props.search}
+              <Text color={theme.colors.muted}>▏</Text>
+            </Text>
+          </Text>
+        </PasteFieldTarget>
+      ) : null}
+      {searchShown && props.search === null ? (
+        <Text color={theme.colors.muted} wrap="truncate-end">
+          {"search: / to search"}
+        </Text>
+      ) : null}
+      {total === 0 ? (
+        <Text color={theme.colors.muted} wrap="truncate-end">
+          {emptyRowLine(props.search)}
+        </Text>
+      ) : null}
       {visible.map((opt, i) => {
         const index = start + i;
         const mark = index === clamped ? ">" : " ";
         return (
-          <Text
+          /*
+            First click selects, second activates the wizard's own Enter
+            through the route — by default `storeWizardMouseRoute`, the
+            same `routeProvidersWizardKey` every keyboard site uses, so
+            a click saves or advances exactly what Enter would. Both
+            handlers act on `props.wizard`, the wizard this frame drew
+            (see the prop's note). Registered on the MODAL layer: in the
+            Providers/LLM panels the open wizard raises the mouse floor
+            to MODAL, and a PANEL-layer row would be below it and
+            unclickable.
+          */
+          <MouseListRow
             key={`${index}-${opt.label}`}
-            color={index === clamped ? theme.colors.accentSoft : undefined}
-            wrap="truncate-end"
+            selected={index === clamped}
+            layer={MOUSE_LAYER_MODAL}
+            onSelect={(mouse) => route.select(mouse, props.wizard, index)}
+            onActivate={(mouse) => route.activate(mouse, props.wizard)}
           >
-            {mark} {opt.label}
-          </Text>
+            <Text
+              color={index === clamped ? theme.colors.accent : undefined}
+              wrap="truncate-end"
+            >
+              {mark} {opt.label}
+            </Text>
+          </MouseListRow>
         );
       })}
-      <Text color={theme.colors.muted}>
+      {errors.map((line, i) => (
+        <Text
+          key={`err-${i}`}
+          color={theme.colors.error}
+          wrap="truncate-end"
+        >
+          {i === 0 ? "! " : "  "}
+          {line}
+        </Text>
+      ))}
+      <Text color={theme.colors.muted} wrap="truncate-end">
         {props.moveHint} {position} · {props.actionsHint}
       </Text>
-    </Box>
+    </PickListFrame>
   );
 }

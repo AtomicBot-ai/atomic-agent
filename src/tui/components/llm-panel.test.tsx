@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import { createInitialTuiState, type TuiState } from "../tui-state.js";
 import { fakeSession } from "../test-fixtures.js";
 import type { ProvidersChatModelPickerState } from "../providers/providers-panel-state.js";
+import { KIND_ROW_ORDER } from "../providers/providers-wizard-phases.js";
+import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
 import { LlmPanel } from "./llm-panel.js";
 
 function stateWithPicker(
@@ -115,6 +117,63 @@ describe("LlmPanel", () => {
   });
 });
 
+/**
+ * Reported as "there is only aimlapi in the provider list" and "I don't
+ * see OpenRouter on some screen sizes".
+ *
+ * Neither was a missing row: `KIND_ROW_ORDER` has always had all of
+ * them. The wizard was drawn ON TOP of the whole LLM panel, so the frame
+ * ran ~16 rows past the tab budget, and Ink 7 answers an over-tall frame
+ * by painting later lines over earlier ones instead of clipping. Half
+ * the provider rows arrived on screen wearing the tail of the row below
+ * them. The budgets below are what `tabContentBudget` hands the tab at
+ * 120x40, 100x30 and 80x24 — the three sizes the reports came from.
+ */
+describe("the add-provider wizard fits the terminal", () => {
+  function stateWithWizard(): TuiState {
+    const base = createInitialTuiState(fakeSession());
+    return {
+      ...base,
+      uiMode: "debug" as const,
+      activeTab: "llm" as const,
+      llmPanel: { ...base.llmPanel, mode: "cloud" as const },
+      providersPanel: {
+        ...base.providersPanel,
+        wizard: createProvidersWizardState("add"),
+      },
+    };
+  }
+
+  for (const budget of [27, 17, 11]) {
+    it(`never exceeds a ${budget}-row budget`, () => {
+      const { lastFrame } = render(
+        <LlmPanel state={stateWithWizard()} maxRows={budget} />,
+      );
+      expect((lastFrame() ?? "").split("\n").length).toBeLessThanOrEqual(budget);
+    });
+  }
+
+  it("still shows OpenRouter and the full-list counter on a short terminal", () => {
+    const { lastFrame } = render(
+      <LlmPanel state={stateWithWizard()} maxRows={11} />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).toContain("OpenRouter");
+    expect(text).toContain(`(1/${KIND_ROW_ORDER.length})`);
+  });
+
+  it("draws the modal alone, not stacked over the panel it covers", () => {
+    // The panel is unreachable while the wizard owns the keyboard, and
+    // drawing it was what spent the row budget twice.
+    const { lastFrame } = render(
+      <LlmPanel state={stateWithWizard()} maxRows={27} />,
+    );
+    const text = stripAnsi(lastFrame() ?? "");
+    expect(text).not.toContain("Active chat route");
+    expect(text).not.toContain("n add provider");
+  });
+});
+
 describe("model picker fixed height", () => {
   const MAX_ROWS = 20;
 
@@ -152,5 +211,60 @@ describe("model picker fixed height", () => {
     expect(heights[0]!).toBeLessThan(
       frameHeight(stateWithPicker({}), MAX_ROWS),
     );
+  });
+});
+
+describe("the status line's pane routing", () => {
+  function stateWithStatus(
+    mode: "external" | "cloud",
+    source: "cloud" | "external",
+    line: string,
+  ): TuiState {
+    const base = createInitialTuiState(fakeSession());
+    return {
+      ...base,
+      uiMode: "debug" as const,
+      activeTab: "llm" as const,
+      llmPanel: { ...base.llmPanel, mode },
+      providersPanel: {
+        ...base.providersPanel,
+        statusLine: line,
+        statusLineSource: source,
+      },
+    };
+  }
+
+  it("shows an external-save verdict, unprefixed, on the External pane", () => {
+    const { lastFrame } = render(
+      <LlmPanel
+        state={stateWithStatus("external", "external", "probing http://10.0.0.5:8080…")}
+        maxRows={30}
+      />,
+    );
+    const frame = stripAnsi(lastFrame() ?? "");
+    expect(frame).toContain("probing http://10.0.0.5:8080…");
+    expect(frame).not.toContain("cloud providers:");
+  });
+
+  it("keeps a cloud-provider line off the External pane", () => {
+    // The regression: a catalog refresh reporting through the same slot
+    // rendered bare on the External pane and read as a URL verdict.
+    const { lastFrame } = render(
+      <LlmPanel
+        state={stateWithStatus("external", "cloud", "updating model catalog")}
+        maxRows={30}
+      />,
+    );
+    expect(stripAnsi(lastFrame() ?? "")).not.toContain("updating model catalog");
+  });
+
+  it("keeps an external verdict off the cloud pane's prefixed slot", () => {
+    const { lastFrame } = render(
+      <LlmPanel
+        state={stateWithStatus("cloud", "external", "probing http://10.0.0.5:8080…")}
+        maxRows={30}
+      />,
+    );
+    expect(stripAnsi(lastFrame() ?? "")).not.toContain("probing http://10.0.0.5:8080…");
   });
 });

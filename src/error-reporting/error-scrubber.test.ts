@@ -50,6 +50,53 @@ describe("extractSafeCode", () => {
     expect(extractSafeCode({ code: "failed to read /home/x" })).toEqual({});
     expect(extractSafeCode(null)).toEqual({});
   });
+
+  it("reads status and errno through the wrapper chain", () => {
+    // What actually reaches the scrubber: TransportError wrapping a
+    // LlamaServerError wrapping undici's TypeError. Only the innermost
+    // link knows it was a refused connection.
+    const undici = Object.assign(new TypeError("fetch failed"), {
+      cause: Object.assign(new Error("connect ECONNREFUSED"), {
+        code: "ECONNREFUSED",
+      }),
+    });
+    const llama = Object.assign(new Error("network"), {
+      name: "LlamaServerError",
+      status: null,
+      cause: undici,
+    });
+    const transport = Object.assign(new Error("network"), {
+      name: "TransportError",
+      cause: llama,
+    });
+    expect(extractSafeCode(transport)).toEqual({ code: "ECONNREFUSED" });
+  });
+
+  it("prefers a status the wrapper carries over its cause's", () => {
+    const cause = Object.assign(new Error("inner"), { status: 500 });
+    const wrapper = Object.assign(new Error("outer"), { status: 404, cause });
+    expect(extractSafeCode(wrapper)).toEqual({ httpStatus: 404 });
+  });
+
+  it("back-fills the status a GrammarError wrapper does not carry", () => {
+    // GrammarError has no status field at all, which is why not one
+    // grammar issue in Sentry has an `http_status` tag today.
+    const llama = Object.assign(new Error("http 501"), {
+      name: "LlamaServerError",
+      status: 501,
+    });
+    const grammar = Object.assign(new Error("rejected"), {
+      name: "GrammarError",
+      cause: llama,
+    });
+    expect(extractSafeCode(grammar)).toEqual({ httpStatus: 501 });
+  });
+
+  it("survives a self-referential cause chain", () => {
+    const err = new Error("loop") as Error & { cause?: unknown };
+    err.cause = err;
+    expect(extractSafeCode(err)).toEqual({});
+  });
 });
 
 describe("extractSafeReason", () => {
@@ -198,5 +245,42 @@ describe("scrubError", () => {
     const err = new Error("plain failure");
     const ev = scrubError(err, { source: "uncaughtException" });
     expect(ev.causeType).toBeUndefined();
+  });
+
+  it("falls back to the wrapper's frames when the cause has none", () => {
+    // A cause with an unparseable stack used to take the wrapper's
+    // frames down with it and ship an event with NO stack at all — how
+    // a 108-event issue ended up undiagnosable.
+    const cause = new Error("fetch failed");
+    cause.stack = "TypeError: fetch failed";
+    const wrapper = Object.assign(new Error("wrapped"), {
+      name: "ToolExecutionError",
+      cause,
+    });
+    wrapper.stack = [
+      "ToolExecutionError: wrapped",
+      "    at toLlmFailure (/app/step-executor.js:1561:10)",
+      "    at executeStep (/app/step-executor.js:303:20)",
+    ].join("\n");
+    const ev = scrubError(wrapper, { source: "llm_failure" });
+    expect(ev.frames.map((f) => f.filename)).toEqual([
+      "step-executor.js",
+      "step-executor.js",
+    ]);
+  });
+
+  it("still prefers the cause's frames when it has them", () => {
+    const cause = new Error("boom");
+    cause.stack = [
+      "Error: boom",
+      "    at realThrowSite (/app/prime-stream.js:24:3)",
+    ].join("\n");
+    const wrapper = Object.assign(new Error("wrapped"), { cause });
+    wrapper.stack = [
+      "Error: wrapped",
+      "    at wrapIt (/app/step-executor.js:1561:10)",
+    ].join("\n");
+    const ev = scrubError(wrapper, { source: "llm_failure" });
+    expect(ev.frames.map((f) => f.filename)).toEqual(["prime-stream.js"]);
   });
 });

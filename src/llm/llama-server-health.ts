@@ -1,4 +1,6 @@
 import { getConfig } from "../config/index.js";
+import { llamaEndpointUrl } from "./llama-endpoint-url.js";
+import { verifyGuardedEndpoint } from "./llama-server-auth-probe.js";
 
 export interface HealthResult {
   reachable: boolean;
@@ -16,6 +18,13 @@ export interface HealthResult {
    *    answered like an OpenAI-compatible server (KoboldCpp, LM Studio,
    *    vLLM). The external llama.cpp route cannot drive these; callers
    *    should steer the operator to the openai-compatible provider.
+   *  - `"llama-auth"`: `/health` passed but the guarded `/props` endpoint
+   *    answered 401/403 (only reported when `verifyAuth` is set).
+   *    llama.cpp exempts exactly /health, /models, /v1/models and
+   *    /api/tags from `--api-key`, so a key-protected server sails
+   *    through the probe and then rejects every actual request — the
+   *    "row says healthy, first turn 401s" trap. Callers should name the
+   *    key env var.
    *  - `"unknown"`: nothing recognizable answered.
    *
    * A bare HTTP 200 is deliberately NOT enough for `"llama-server"`:
@@ -23,7 +32,7 @@ export interface HealthResult {
    * the probe pass falsely and let the chat route switch onto a server
    * the llama.cpp client then hangs against (#65, #66).
    */
-  kind: "llama-server" | "llama-loading" | "openai-compat" | "unknown";
+  kind: "llama-server" | "llama-loading" | "openai-compat" | "llama-auth" | "unknown";
   error: string | null;
   latencyMs: number;
 }
@@ -34,6 +43,13 @@ export interface HealthCheckOptions {
   retries?: number;
   backoffMs?: number;
   apiKey?: string | null;
+  /**
+   * Also GET the key-guarded `/props` after a passing `/health`, so a
+   * `--api-key` server is caught at save time instead of on the first
+   * completion. Off by default: it costs a second round trip, and the
+   * boot probe plus the 3s footer poller must stay at one request each.
+   */
+  verifyAuth?: boolean;
 }
 
 function buildHeaders(apiKey: string | null | undefined): Record<string, string> {
@@ -156,7 +172,7 @@ async function probeOpenAiCompat(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const url = new URL("/v1/models", base).toString();
+    const url = llamaEndpointUrl(base, "/v1/models");
     const response = await fetch(url, {
       method: "GET",
       headers: buildHeaders(apiKey),
@@ -180,6 +196,7 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+
 /**
  * Pings the external llama-server `/health` endpoint with exponential backoff.
  * Returns the first successful probe or the last failure after all retries.
@@ -189,7 +206,7 @@ export async function checkLlamaServer(
 ): Promise<HealthResult> {
   const config = getConfig();
   const base = options.url ?? config.localModels.url;
-  const url = new URL(config.localModels.healthPath, base).toString();
+  const url = llamaEndpointUrl(base, config.localModels.healthPath);
   const timeoutMs = options.timeoutMs ?? config.localModels.healthTimeoutMs;
   const retries = options.retries ?? config.localModels.healthRetries;
   const backoffMs = options.backoffMs ?? config.localModels.healthRetryBackoffMs;
@@ -198,7 +215,10 @@ export async function checkLlamaServer(
   let last: HealthResult | null = null;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     last = await pingOnce(url, timeoutMs, apiKey);
-    if (last.reachable) return last;
+    if (last.reachable) {
+      if (!options.verifyAuth) return last;
+      return await verifyGuardedEndpoint(last, base, timeoutMs, apiKey);
+    }
     // A 200 with a non-llama body is deterministic: the same wrong
     // server (KoboldCpp web UI) will answer the same way on every
     // retry, so burning the whole backoff budget changes nothing.
@@ -231,3 +251,21 @@ export async function checkLlamaServer(
   }
   return failed;
 }
+
+/**
+ * The message a human can act on when llama-server does not answer.
+ *
+ * "fetch failed" is undici's transport error verbatim: it names neither the
+ * URL that was tried, nor the fact that the missing piece is llama-server,
+ * nor what to do about it — and it is the single most common failure a new
+ * local-model user sees. Every surface that reports an unreachable llama
+ * should say this instead.
+ */
+export function formatLlamaUnreachableHint(url: string): string {
+  return [
+    `llama-server is not reachable at ${url}`,
+    "  start it with:       atomic-agent models start",
+    `  or point elsewhere:  atomic-agent config set localModels.url <url>`,
+  ].join("\n");
+}
+

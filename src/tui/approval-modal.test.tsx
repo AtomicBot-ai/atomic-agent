@@ -15,70 +15,147 @@ function request(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
   };
 }
 
+/**
+ * The modal takes the target-field props from the app shell; every test
+ * that is not about the field renders it closed.
+ */
+function frameOf(req: ApprovalRequest, pathDraft: string | null = null): string {
+  return (
+    render(
+      <ApprovalModal
+        request={req}
+        pathDraft={pathDraft}
+        onPathOpen={() => {}}
+        onPathChange={() => {}}
+        onPathSubmit={() => {}}
+        onPathCancel={() => {}}
+      />,
+    ).lastFrame() ?? ""
+  );
+}
+
 describe("ApprovalModal", () => {
-  it("renders the request and the y/n/esc hotkey row", () => {
-    const frame = render(<ApprovalModal request={request()} />).lastFrame() ?? "";
+  it("renders the request and the decision buttons", () => {
+    const frame = frameOf(request());
     expect(frame).toContain("approval required");
     expect(frame).toContain("os.shell.run");
-    expect(frame).toContain("[y]");
-    expect(frame).toContain("[n]");
-    expect(frame).toContain("[esc]");
+    expect(frame).toContain("approve");
+    expect(frame).toContain("deny");
+    expect(frame).toContain("esc abort run");
+  });
+
+  it("prints each button's chord on the button", () => {
+    // The chord is the keyboard path to the same control the mouse
+    // clicks, so it belongs on the face rather than in a legend three
+    // lines down that has to be kept in sync by hand.
+    const frame = frameOf(request({ category: "shell", commandShape: "git" }));
+    expect(frame).toContain("ctrl+y");
+    expect(frame).toContain("ctrl+d");
+    expect(frame).toContain("ctrl+f");
+    expect(frame).toContain("ctrl+b");
+  });
+
+  it("never offers a bare letter as a decision", () => {
+    // The regression this whole change exists to prevent: a bracketed
+    // letter promises that typing it decides the call, and the composer
+    // underneath is live.
+    const frame = frameOf(request({ category: "shell", commandShape: "git" }));
+    for (const marker of ["[y]", "[n]", "[s]", "[a]", "[e]"]) {
+      expect(frame).not.toContain(marker);
+    }
   });
 
   it("shows the ladder category label so the operator sees why it fired", () => {
     // R5: the prompt carries its `ApprovalCategory`; the modal renders a
     // human label (`file write · home`) so a home write reads differently
     // from a trust-config write.
-    const frame =
-      render(<ApprovalModal request={request({ category: "fs_write_home" })} />).lastFrame() ??
-      "";
+    const frame = frameOf(request({ category: "fs_write_home" }));
     expect(frame).toContain("file write · home");
   });
 
   it("points at the Privacy-tab toggle so the off switch is discoverable", () => {
-    // The footer hint is the discoverability answer to issue #79: `y`
-    // grants one call, the standing switch lives on the Privacy tab.
-    const frame = render(<ApprovalModal request={request()} />).lastFrame() ?? "";
-    expect(frame).toContain("approves this call once");
+    // The footer hint is the discoverability answer to issue #79:
+    // approving covers one call, the standing switch lives on the
+    // Privacy tab.
+    const frame = frameOf(request());
+    expect(frame).toContain("approve covers this call once");
     expect(frame).toContain("(/privacy)");
   });
 
-  it("offers [s] session grant and [a] shape grant for a shell request", () => {
-    const frame =
-      render(
-        <ApprovalModal request={request({ category: "shell", commandShape: "git" })} />,
-      ).lastFrame() ?? "";
-    expect(frame).toContain("[s]");
+  it("offers both session grants for a shell request with a shape", () => {
+    const frame = frameOf(request({ category: "shell", commandShape: "git" }));
     expect(frame).toContain("this session");
-    expect(frame).toContain("[a]");
     expect(frame).toContain("git");
   });
 
-  it("offers [s] but NOT [a] for a non-shell grantable request", () => {
-    const frame =
-      render(<ApprovalModal request={request({ category: "fs_write_home" })} />).lastFrame() ??
-      "";
-    expect(frame).toContain("[s]");
-    expect(frame).not.toContain("[a]");
+  it("offers the category grant but no shape grant for a non-shell request", () => {
+    const frame = frameOf(request({ category: "fs_write_home" }));
+    expect(frame).toContain("this session");
+    expect(frame).toContain("ctrl+f");
+    // Nothing to grant a shape for, so the shared slot stays empty.
+    expect(frame).not.toContain("ctrl+b");
   });
 
-  it("offers NO grant keys and warns for a trust_config request", () => {
-    // trust_config is never grantable: only y/n/esc, plus an explicit note.
-    const frame =
-      render(<ApprovalModal request={request({ category: "trust_config" })} />).lastFrame() ??
-      "";
-    expect(frame).not.toContain("[s]");
-    expect(frame).not.toContain("[a]");
-    expect(frame).toContain("[y]");
-    expect(frame).toContain("[n]");
+  it("offers NO grants and warns for a trust_config request", () => {
+    // trust_config is never grantable: approve / deny / esc, plus an
+    // explicit note.
+    const frame = frameOf(request({ category: "trust_config" }));
+    expect(frame).not.toContain("this session");
+    expect(frame).not.toContain("ctrl+f");
+    expect(frame).toContain("approve");
+    expect(frame).toContain("deny");
     expect(frame).toContain("never granted for the session");
   });
 
-  it("offers [s] but NOT [a] for a shell request with no command shape", () => {
+  it("offers the retarget button only when the request carries a path", () => {
+    // The shell request has no target to move; the write does.
+    expect(frameOf(request())).not.toContain("edit target path");
+    const write = frameOf(
+      request({
+        tool: "os.fs.write",
+        category: "fs_write_workspace",
+        redirectablePath: "/work/site/index.html",
+      }),
+    );
+    expect(write).toContain("edit target path");
+    // Same slot, same chord as the shape grant — the two can never both
+    // be offered, which `approval-key-arbitration.test.ts` pins.
+    expect(write).toContain("ctrl+b");
+  });
+
+  it("swaps the decision buttons for the target field while it is open", () => {
+    // While the field owns the keyboard the buttons would be a lie —
+    // those chords are inert until the field closes.
+    const frame = frameOf(
+      request({
+        tool: "os.fs.write",
+        category: "fs_write_workspace",
+        redirectablePath: "/work/site/index.html",
+      }),
+      "~/Documents/apple-site/index.html",
+    );
+    expect(frame).toContain("target");
+    expect(frame).toContain("~/Documents/apple-site/index.html");
+    expect(frame).toContain("confirm target path");
+    expect(frame).not.toContain("ctrl+y");
+    expect(frame).not.toContain("ctrl+d");
+  });
+
+  it("says the composer is live rather than that the keys stand down", () => {
+    // The old hint had to explain that typing disarmed the verdicts.
+    // Nothing disarms now, so the hint says the one thing still worth
+    // knowing: you may answer in words instead.
+    const frame = frameOf(request());
+    expect(frame).toContain("the composer stays live");
+    expect(frame).not.toContain("keys work while the input is empty");
+  });
+
+  it("withholds the shape grant for a shell request with no command shape", () => {
     // Opaque interpreters (bash -c …) reach the prompt with no
-    // commandShape, so [a] must not be offered — only [s] / [y].
-    const frame = render(<ApprovalModal request={request()} />).lastFrame() ?? "";
-    expect(frame).toContain("[s]");
-    expect(frame).not.toContain("[a]");
+    // commandShape, so the shape grant must not be offered — only the
+    // category grant and the two decisions.
+    const frame = frameOf(request());
+    expect(frame).toContain("ctrl+f");
+    expect(frame).not.toContain("ctrl+b");
   });
 });

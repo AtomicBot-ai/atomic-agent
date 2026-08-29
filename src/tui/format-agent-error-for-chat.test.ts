@@ -16,4 +16,34 @@ describe("formatAgentErrorForChat", () => {
       "Turn failed [grammar]: upstream HTTP 404 (wrong API URL or provider config)",
     );
   });
+
+  it("appends the llama-server hint for transport failures on a local provider", () => {
+    const text = formatAgentErrorForChat("transport", "fetch failed", {
+      activeProviderIsLocal: true,
+      llamaUrl: "http://127.0.0.1:19091",
+    });
+    expect(text).toContain("Turn failed [transport]: fetch failed");
+    expect(text).toContain(
+      "llama-server is not reachable at http://127.0.0.1:19091",
+    );
+    expect(text).toContain("atomic-agent models start");
+  });
+
+  it("keeps the hint away from cloud providers — advice about the wrong server", () => {
+    expect(
+      formatAgentErrorForChat("transport", "fetch failed", {
+        activeProviderIsLocal: false,
+        llamaUrl: "http://127.0.0.1:19091",
+      }),
+    ).toBe("Turn failed [transport]: fetch failed");
+  });
+
+  it("keeps the hint away from non-transport failures", () => {
+    expect(
+      formatAgentErrorForChat("model", "empty completion", {
+        activeProviderIsLocal: true,
+        llamaUrl: "http://127.0.0.1:19091",
+      }),
+    ).toBe("Turn failed [model]: empty completion");
+  });
 });

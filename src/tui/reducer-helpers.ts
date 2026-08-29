@@ -124,10 +124,17 @@ export function appendChatMessage(
 export function appendUserMessage(state: TuiState, text: string): TuiState {
   const withMessage = appendChatMessage(state, { role: "user", text });
   const history = pushRing(state.inputHistory, text, state.ringBufferSize);
+  // History-navigation state is deliberately left alone: this event also
+  // fires in the BACKGROUND when a parked queue message drains into a
+  // turn, possibly while the operator is walking history in the live
+  // editor — resetting the cursor or the parked draft here would eat
+  // what they are doing. The submit actions (`message_submitted`,
+  // `message_queued`) already reset both at submit time. Appending to
+  // the END of `inputHistory` keeps an active cursor index pointing at
+  // the same entry.
   return {
     ...withMessage,
     inputHistory: history,
-    inputHistoryCursor: null,
   };
 }
 
@@ -152,6 +159,9 @@ export function startNewRun(state: TuiState): TuiState {
   const now = Date.now();
   return {
     ...state,
+    // Whatever the next turn is — running the plan, or changing it —
+    // the offer belongs to the plan that has just been superseded.
+    planHandoff: false,
     status: "running",
     currentStep: 0,
     stepStartedAt: null,
@@ -176,6 +186,7 @@ export function startNewRun(state: TuiState): TuiState {
     lastRunStatus: null,
     inputValue: "",
     inputHistoryCursor: null,
+    inputHistoryDraft: null,
     slashPaletteOpen: false,
     slashQuery: "",
     slashPaletteCursor: 0,
@@ -195,12 +206,18 @@ export function finishTurn(
         ? "failed"
         : "cancelled"
       : "completed";
-  return withRunHistoryEntry(state, {
+  const next = withRunHistoryEntry(state, {
     outcome,
     reason,
     stepCount,
     lastRunStatus,
   });
+  // A plan only exists if the turn actually finished saying it. A
+  // cancelled or failed turn in plan mode leaves nothing to carry out,
+  // and offering to run it would be offering to run whatever half of it
+  // survived.
+  if (state.codingMode !== "plan" || outcome !== "completed") return next;
+  return { ...next, planHandoff: true };
 }
 
 export function finishRun(
@@ -213,6 +230,28 @@ export function finishRun(
     stepCount: state.currentStep + 1,
     lastRunStatus: params.lastRunStatus,
   });
+}
+
+/**
+ * Hand the composer back WITHOUT minting a run-history entry. For a
+ * submit that never became a turn (the pre-turn gate refused it): its
+ * text never reached `state.messages`, so `withRunHistoryEntry` would
+ * snapshot the PREVIOUS turn's user message (or "" on first use) as the
+ * entry's message — a lie in `/history`, which records turns that ran.
+ */
+export function finishRunWithoutHistory(
+  state: TuiState,
+  lastRunStatus: string,
+): TuiState {
+  return {
+    ...state,
+    status: "idle",
+    runStartedAt: null,
+    stepStartedAt: null,
+    aborting: false,
+    lastRunStatus,
+    currentTurnToolSteps: 0,
+  };
 }
 
 function withRunHistoryEntry(
@@ -233,14 +272,8 @@ function withRunHistoryEntry(
     finishedAt: Date.now(),
   };
   return {
-    ...state,
-    status: "idle",
-    runStartedAt: null,
-    stepStartedAt: null,
-    aborting: false,
-    lastRunStatus: params.lastRunStatus,
+    ...finishRunWithoutHistory(state, params.lastRunStatus),
     runHistory: pushRing(state.runHistory, entry, state.ringBufferSize),
-    currentTurnToolSteps: 0,
   };
 }
 

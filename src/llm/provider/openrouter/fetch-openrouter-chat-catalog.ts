@@ -49,10 +49,26 @@ function hasTools(m: OpenRouterApiModel): boolean {
   return readAdvertisedTools(m) ?? true;
 }
 
+/**
+ * Ranking, not gatekeeping.
+ *
+ * This function used to return -1 for every `anthropic/*` id and
+ * everything matching `/gemini/i`, which removed ~40 currently served
+ * models — the whole Claude 5 and Gemini 3.x lines — from the picker
+ * with no way for an operator to get them back. Nothing in the runtime
+ * needs that: both families speak the same OpenAI-shaped
+ * `/v1/chat/completions` OpenRouter exposes for everything else, and
+ * `native_tools` transport is what the picker already requires via
+ * `hasTools`. The exclusions are gone; the families are scored instead,
+ * so the models this agent is tuned for still sort to the top.
+ *
+ * A negative score is now reserved for rows that genuinely cannot be
+ * used: non-chat surfaces (embeddings, rerank, TTS) and models that
+ * explicitly advertise no tool support.
+ */
 function scoreChat(m: OpenRouterApiModel): number {
   const id = m.id ?? "";
-  if (!id || id.startsWith("anthropic/")) return -1;
-  if (/gemini/i.test(id)) return -1;
+  if (!id) return -1;
   if (/qwen3\.5/i.test(id)) return -1;
   if (/embed|rerank|moderation|ocr|tts|transcribe/i.test(id)) return -1;
   if (!hasTools(m)) return -1;
@@ -62,6 +78,10 @@ function scoreChat(m: OpenRouterApiModel): number {
   else if (ctx >= 200_000) s += 5;
   if (/qwen3\.7|qwen3\.6/i.test(id)) s += 20;
   if (/gpt-5\./i.test(id)) s += 15;
+  if (/claude-(opus|sonnet|fable|haiku)-5|claude-opus-4\.8/i.test(id)) s += 18;
+  else if (id.startsWith("anthropic/")) s += 6;
+  if (/gemini-3\./i.test(id)) s += 14;
+  else if (/gemini/i.test(id)) s += 4;
   if (/deepseek.*v4|deepseek.*v3/i.test(id)) s += 10;
   if (/kimi-k2\.6/i.test(id)) s += 12;
   else if (/kimi-k2/i.test(id)) s += 8;
@@ -146,8 +166,8 @@ let inFlight: Promise<boolean> | null = null;
 
 /**
  * Pull the public OpenRouter model list and rebuild the TUI picker
- * (non-Anthropic, `tools`-capable chat models). Falls back to the static
- * catalog on network/parse errors.
+ * (every `tools`-capable chat model OpenRouter advertises). Falls back to
+ * the static catalog on network/parse errors.
  *
  * Concurrent callers share one request: the TUI triggers this from both
  * the panel prefetch and the wizard's picker step, and doubling the

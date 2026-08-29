@@ -194,4 +194,85 @@ describe("checkLlamaServer", () => {
     const urls = fetchMock.mock.calls.map((c) => String(c[0]));
     expect(urls.some((u) => u.endsWith("/v1/models"))).toBe(false);
   });
+
+  it("probes /health under a reverse-proxy path prefix", async () => {
+    // The exact "works via openai-compatible, dead via external" split:
+    // the compat client concatenates and reaches /llama/v1/models, while
+    // this probe used to resolve "/health" against the origin and 404.
+    const fetchMock = vi.fn(async () => jsonResponse({ status: "ok" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await checkLlamaServer({
+      url: "https://box.example/llama",
+      retries: 0,
+    });
+    expect(result.reachable).toBe(true);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "https://box.example/llama/health",
+    );
+  });
+
+  it("keeps the prefix on the openai-compat detection probe too", async () => {
+    // Behind a prefix, an LM Studio-style box must still be recognized
+    // and steered — otherwise the operator just sees "http 404".
+    const fetchMock = vi.fn(async (url: unknown) => {
+      if (String(url).endsWith("/v1/models")) {
+        return jsonResponse({ object: "list", data: [] });
+      }
+      return jsonResponse({ error: "no health here" }, false, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await checkLlamaServer({
+      url: "https://box.example/lmstudio",
+      retries: 0,
+    });
+    expect(result.kind).toBe("openai-compat");
+    const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(urls).toContain("https://box.example/lmstudio/v1/models");
+  });
+
+  it("verifyAuth reports a --api-key server as llama-auth", async () => {
+    // llama.cpp exempts /health from --api-key, so the plain probe
+    // passes and the row claims healthy while every completion 401s.
+    const fetchMock = vi.fn(async (url: unknown) => {
+      if (String(url).endsWith("/health")) return jsonResponse({ status: "ok" });
+      return jsonResponse({ error: { code: 401, message: "Invalid API Key" } }, false, 401);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await checkLlamaServer({
+      url: "http://127.0.0.1:8080",
+      retries: 0,
+      verifyAuth: true,
+    });
+    expect(result.reachable).toBe(false);
+    expect(result.kind).toBe("llama-auth");
+    expect(result.error).toContain("requires an API key");
+  });
+
+  it("verifyAuth stays off by default so the poller costs one request", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ status: "ok" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await checkLlamaServer({
+      url: "http://127.0.0.1:8080",
+      retries: 0,
+    });
+    expect(result.reachable).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("verifyAuth keeps a passing verdict when /props merely errors", async () => {
+    // An old build without /props (404) is still a llama-server;
+    // only an explicit 401/403 may flip the verdict.
+    const fetchMock = vi.fn(async (url: unknown) => {
+      if (String(url).endsWith("/health")) return jsonResponse({ status: "ok" });
+      return jsonResponse({ error: "not found" }, false, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await checkLlamaServer({
+      url: "http://127.0.0.1:8080",
+      retries: 0,
+      verifyAuth: true,
+    });
+    expect(result.reachable).toBe(true);
+    expect(result.kind).toBe("llama-server");
+  });
 });

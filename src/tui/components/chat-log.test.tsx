@@ -25,7 +25,11 @@ describe("ChatLog", () => {
     const state = createInitialTuiState(BASE_SESSION);
     const { lastFrame } = render(<ChatLog state={state} />);
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("Local-First AI Agent");
+    // Every size is its own drawing now, and the splash draws the ASCII
+    // stroke, so assert that *some* mark is present rather than a
+    // wordmark only a tall terminal earns. See
+    // `splash-fit.render.test.tsx`.
+    expect(text).toMatch(/#{4}|[█▀▄]/u);
     expect(text).toContain("/help");
   });
 

@@ -1,8 +1,24 @@
+import chalk from "chalk";
 import { Box } from "ink";
 import { render } from "ink-testing-library";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { createProvidersWizardState } from "../providers/providers-wizard-state.js";
+import { parseHexColor } from "../theme/parse-hex-color.js";
+import {
+  getActiveTheme,
+  setActiveTheme,
+  THEMES,
+  type TuiTheme,
+} from "../theme/theme.js";
 import { renderPickList } from "./wizard-pick-list.js";
+
+/**
+ * These are pure-render tests — no `MouseProvider`, so the row targets
+ * are inert — but the list always belongs to a wizard, and the prop is
+ * required so a real mount cannot forget whose wizard clicks act on.
+ */
+const wizard = () => createProvidersWizardState("add");
 
 /**
  * Constrain the list to a fixed inner width so the truncation guard is
@@ -31,6 +47,7 @@ describe("renderPickList narrow-width rendering", () => {
   it("truncates a long option instead of wrapping it onto a second line", () => {
     const { lastFrame } = narrow(
       renderPickList({
+        wizard: wizard(),
         title: "Provider",
         options: [{ label: longLabel }, { label: "Short one" }],
         cursor: 0,
@@ -50,9 +67,65 @@ describe("renderPickList narrow-width rendering", () => {
     expect(frame).toContain("Short one");
   });
 
+  it("spends a row on the search box without outgrowing the budget", () => {
+    // Ink 7 paints an over-tall frame over the rows above it instead of
+    // clipping, so the search line has to come out of the option
+    // viewport rather than out of the terminal.
+    const options = Array.from({ length: 40 }, (_, i) => ({
+      label: `model-${i}`,
+    }));
+    const height = (
+      search: string | null | undefined,
+      maxRows: number | undefined,
+    ): number => {
+      const { lastFrame } = narrow(
+        renderPickList({
+          wizard: wizard(),
+          title: "Chat model",
+          options,
+          cursor: 0,
+          moveHint: "j/k move",
+          actionsHint: "Enter pick · Esc cancel",
+          ...(maxRows === undefined ? {} : { maxRows }),
+          ...(search === undefined ? {} : { search }),
+        }),
+        60,
+      );
+      return (lastFrame() ?? "").split("\n").length;
+    };
+    // Both callers exist: budgeted (the LLM panel passes the tab budget)
+    // and unbudgeted (onboarding and the Providers panel size their
+    // screens to the fixed viewport). The search line must come out of
+    // the option rows on each, or the box grows and eats what is below.
+    for (const budget of [14, undefined]) {
+      expect(height(null, budget)).toBe(height(undefined, budget));
+      expect(height("mo", budget)).toBe(height(undefined, budget));
+    }
+    expect(height(undefined, 14)).toBeLessThanOrEqual(14);
+  });
+
+  it("names the query instead of drawing an empty box", () => {
+    const { lastFrame } = narrow(
+      renderPickList({
+        wizard: wizard(),
+        title: "Chat model",
+        options: [],
+        cursor: 0,
+        moveHint: "↑/↓ move",
+        actionsHint: "Enter pick",
+        search: "zzzz",
+      }),
+      60,
+    );
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain('no match for "zzzz"');
+    expect(frame).toContain("(0/0)");
+  });
+
   it("leaves a short option intact", () => {
     const { lastFrame } = narrow(
       renderPickList({
+        wizard: wizard(),
         title: "Provider",
         options: [{ label: "OpenRouter" }],
         cursor: 0,
@@ -62,5 +135,93 @@ describe("renderPickList narrow-width rendering", () => {
       80,
     );
     expect(lastFrame() ?? "").toContain("OpenRouter");
+  });
+});
+
+/** The truecolor SGR Ink emits for a hex foreground, e.g. `ESC[38;2;r;g;bm`. */
+function foregroundSgr(hex: string): string {
+  const rgb = parseHexColor(hex);
+  if (!rgb) throw new Error(`unparseable palette colour: ${hex}`);
+  return `\u001b[38;2;${rgb.r};${rgb.g};${rgb.b}m`;
+}
+
+/**
+ * The colours the cloud/provider screens are painted in, asserted on the
+ * house palette because it is the only one of the twelve where `accent`
+ * and `accentSoft` differ — everywhere else the two hexes are equal and
+ * the distinction is invisible to a frame test.
+ *
+ * `ink-testing-library` renders at chalk level 0, which drops every SGR
+ * sequence before `lastFrame()` sees it, so the level is raised for this
+ * block and put back afterwards. The neighbouring width tests measure
+ * `line.length` and would count escape bytes as columns.
+ */
+describe("renderPickList colours", () => {
+  const house = THEMES["classic-dark"].colors;
+  let previousTheme: TuiTheme;
+  let previousLevel: typeof chalk.level;
+
+  beforeEach(() => {
+    previousTheme = getActiveTheme();
+    previousLevel = chalk.level;
+    setActiveTheme(THEMES["classic-dark"]);
+    chalk.level = 3;
+  });
+
+  afterEach(() => {
+    setActiveTheme(previousTheme);
+    chalk.level = previousLevel;
+  });
+
+  function coloured() {
+    return render(
+      <Box width={60}>
+        {renderPickList({
+          wizard: wizard(),
+          title: "Chat model (OpenRouter)",
+          options: [{ label: "first-model" }, { label: "second-model" }],
+          cursor: 1,
+          moveHint: "j/k move",
+          actionsHint: "Enter select · Esc back",
+        })}
+      </Box>,
+    );
+  }
+
+  function lineWith(frame: string, needle: string): string {
+    const line = frame.split("\n").find((row) => row.includes(needle));
+    if (line === undefined) throw new Error(`no frame line contains ${needle}`);
+    return line;
+  }
+
+  it("paints the title in the text-safe accent, not the fill", () => {
+    const frame = coloured().lastFrame() ?? "";
+    const title = "Chat model (OpenRouter)";
+    expect(frame).toContain(`${foregroundSgr(house.accent)}${title}`);
+    expect(frame).not.toContain(`${foregroundSgr(house.accentSoft)}${title}`);
+  });
+
+  it("paints the selected row in the text-safe accent, and only that row", () => {
+    const frame = coloured().lastFrame() ?? "";
+    // Asserted on the sequence immediately before the label rather than
+    // on the whole line: every row is bracketed by the box border's own
+    // SGRs, which a line-wide match would confuse with the row's.
+    expect(frame).toContain(`${foregroundSgr(house.accent)}> second-model`);
+    expect(frame).not.toContain(
+      `${foregroundSgr(house.accentSoft)}> second-model`,
+    );
+    // The unselected row stays on the default foreground: the accent is
+    // what marks the cursor, so a second accented row would erase it.
+    expect(frame).toContain("  first-model");
+    expect(frame).not.toContain(`${foregroundSgr(house.accent)}  first-model`);
+  });
+
+  it("keeps the border on the fill tone", () => {
+    // The lift is fenced to text. A border is chrome — looked at, not
+    // read — so it stays on `accentSoft`, and the quiet frame is what
+    // leaves the accent to the title and the cursor row.
+    const frame = coloured().lastFrame() ?? "";
+    expect(lineWith(frame, "╭")).toContain(foregroundSgr(house.accentSoft));
+    expect(lineWith(frame, "╭")).not.toContain(foregroundSgr(house.accent));
   });
 });

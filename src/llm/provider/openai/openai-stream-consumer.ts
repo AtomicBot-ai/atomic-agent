@@ -37,20 +37,36 @@ export function createOpenAiStreamConsumer(
       let finishReason: string | null = null;
       let modelId: string | null = null;
       let usage: CompletionUsage | undefined;
+      // A trustworthy terminal signal: an explicit provider finish_reason
+      // on any chunk, or a parser-recognized terminal event (`[DONE]`).
+      // Some OpenAI-compatible providers send a final finish_reason and
+      // then simply close the connection without ever emitting `[DONE]` —
+      // that still counts. A bare `reader.read()` EOF with neither must
+      // NOT be conflated with either, since a still-open tool call's
+      // arguments may be mid-stream.
+      let terminalObserved = false;
       const toolCalls = new Map<number, MutableToolCall>();
       try {
         while (true) {
           if (signal?.aborted) break;
           const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
+          if (done) {
+            // Flush TextDecoder state and treat a final non-empty SSE event
+            // as an implicit last boundary. Some providers/proxies close the
+            // response immediately after the terminal event instead of
+            // writing the conventional trailing blank line.
+            buffer += decoder.decode();
+          } else {
+            buffer += decoder.decode(value, { stream: true });
+          }
           let boundary = buffer.indexOf("\n\n");
-          while (boundary >= 0) {
-            const rawEvent = buffer.slice(0, boundary);
-            buffer = buffer.slice(boundary + 2);
+          while (boundary >= 0 || (done && buffer.trim().length > 0)) {
+            const rawEvent = boundary >= 0 ? buffer.slice(0, boundary) : buffer;
+            buffer = boundary >= 0 ? buffer.slice(boundary + 2) : "";
             const chunk = parseOpenAiSseEvent(rawEvent, reasoning, toolArgsBuffer);
             content += chunk.delta;
             reasoningContent += chunk.reasoningDelta;
+            if (chunk.finishReason !== null) terminalObserved = true;
             finishReason = chunk.finishReason ?? finishReason;
             modelId = chunk.modelId ?? modelId;
             usage = normaliseUsage(chunk.usage) ?? usage;
@@ -64,6 +80,7 @@ export function createOpenAiStreamConsumer(
                 modelId,
                 usage,
                 toolCalls,
+                terminalObserved: true,
               });
             }
             if (chunk.toolArgsDelta !== undefined) {
@@ -93,6 +110,7 @@ export function createOpenAiStreamConsumer(
             }
             boundary = buffer.indexOf("\n\n");
           }
+          if (done) break;
         }
       } finally {
         reader.releaseLock();
@@ -105,6 +123,7 @@ export function createOpenAiStreamConsumer(
         modelId,
         usage,
         toolCalls,
+        terminalObserved,
       });
     },
   };
@@ -120,12 +139,50 @@ function applyToolCallDeltas(
     };
     if (delta.id) current.id = delta.id;
     if (delta.type) current.type = delta.type;
-    if (delta.function?.name) current.function.name += delta.function.name;
+    if (delta.function?.name) {
+      current.function.name = mergeToolName(
+        current.function.name,
+        delta.function.name,
+      );
+    }
     if (delta.function?.arguments) {
       current.function.arguments += delta.function.arguments;
     }
     toolCalls.set(delta.index, current);
   }
+}
+
+/**
+ * Fold a streamed `function.name` fragment into what we have so far.
+ *
+ * Arguments really are fragments and really do concatenate. A *name*
+ * does not: the OpenAI streaming contract sends it once, whole, in the
+ * first delta for its index — so the accumulator appended, and that was
+ * right for every provider that follows the contract.
+ *
+ * Anthropic-compatible endpoints repeat the **full name in every delta**
+ * for the call. Appending them produced tool names like
+ * `replyreplyreplyreplyreply…`, which failed registry lookup and killed
+ * the turn with `tool not registered in this agent` — the whole model
+ * family was unusable, and the error named a tool nobody had written.
+ *
+ * So: a chunk identical to what is already accumulated is a repeat and
+ * is dropped; anything else is appended, which keeps genuine
+ * fragmentation (`re` + `ply`) working for any provider that does it.
+ * The two cases are distinguishable and this is the only rule that
+ * serves both.
+ */
+export function mergeToolName(current: string, incoming: string): string {
+  if (current.length === 0) return incoming;
+  if (current === incoming) return current;
+  // A provider that repeats the whole name *and* has already been
+  // appended to once — `replyreply` arriving alongside another `reply`.
+  // Cheap to check, and it is the shape a partially-fixed stream takes.
+  if (current.endsWith(incoming) && current.length % incoming.length === 0) {
+    const repeats = current.length / incoming.length;
+    if (incoming.repeat(repeats) === current) return current;
+  }
+  return current + incoming;
 }
 
 function buildFinalResult(args: {
@@ -135,6 +192,7 @@ function buildFinalResult(args: {
   modelId: string | null;
   usage?: CompletionUsage;
   toolCalls: ReadonlyMap<number, MutableToolCall>;
+  terminalObserved: boolean;
 }): StreamFinalResult {
   const sortedToolCalls = [...args.toolCalls.entries()]
     .sort(([a], [b]) => a - b)
@@ -145,6 +203,7 @@ function buildFinalResult(args: {
     reasoningContent: args.reasoningContent,
     finishReason: args.finishReason,
     modelId: args.modelId,
+    terminalObserved: args.terminalObserved,
     ...(args.usage ? { usage: args.usage } : {}),
     ...(sortedToolCalls.length > 0 ? { toolCalls: sortedToolCalls } : {}),
   };

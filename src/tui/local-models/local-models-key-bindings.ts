@@ -2,6 +2,7 @@ import type { Key } from "ink";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import type { TuiState } from "../tui-state.js";
+import { handleLocalModelsHfKey } from "./local-models-hf-keys.js";
 import {
   resolveRowAt,
   type EmbeddingModelRow,
@@ -92,6 +93,9 @@ export function handleLocalModelsTabKey(
     return true;
   }
 
+  const hfHandled = handleLocalModelsHfKey(input, key, ctx);
+  if (hfHandled !== null) return hfHandled;
+
   if (key.escape) return false;
 
   if (key.downArrow || input === "j") {
@@ -146,6 +150,13 @@ export function handleLocalModelsTabKey(
     }
   }
 
+  // `a` — add a model that is not in the curated catalog. Lower case
+  // and cursor-independent: it is the same "add" the first-run flow
+  // offers, and nothing about it depends on which row is highlighted.
+  if (input === "a") {
+    dispatch({ type: "local_models_hf_opened" });
+    return true;
+  }
   if (input === "B") {
     callbacks.onLocalModelsBackendPullRequested?.();
     return true;
@@ -155,6 +166,12 @@ export function handleLocalModelsTabKey(
   // cursor's row type is intentionally not consulted.
   if (input === "G") {
     callbacks.onLocalModelsDeviceCycleRequested?.();
+    return true;
+  }
+  // `U` (uppercase) toggles backend auto-update, matching the `B`/`G`
+  // convention for panel-wide actions that ignore the cursor row.
+  if (input === "U") {
+    callbacks.onLocalModelsAutoUpdateToggleRequested?.();
     return true;
   }
   if (input === "r") {

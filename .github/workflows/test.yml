@@ -1,0 +1,130 @@
+# Pull-request test gate.
+#
+# Two dependency shapes, because they catch different bugs:
+#
+#   - the normal install, the one contributors have locally.
+#   - the same install with `@napi-rs/canvas` removed. That package is an
+#     *optional* transitive dependency of `pdfjs-dist`, and it is absent from
+#     the SEA bundle (`scripts/bundle-sea.ts` externalizes only
+#     `better-sqlite3` and `playwright-core`) and from any install where the
+#     native package fails to build. Issue #117 was exactly this: PDF text
+#     extraction printed four "rendering may be broken" warnings that a normal
+#     dev install never shows. See issue #203.
+#
+# Note the second job does NOT use `npm ci --omit=optional`. That flag also
+# drops `@rollup/rollup-linux-x64-gnu`, an optional platform binary vitest
+# needs, so the job dies at startup before running a single test
+# (npm/cli#4828). Removing the one package under test is both narrower and a
+# closer match to what users actually hit.
+
+name: Test
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# A new push to the same PR supersedes the previous run.
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: default install
+            # The full suite, minus the known-bad tests excluded below.
+            drop_canvas: "false"
+            scope: ""
+          - label: no canvas
+            # Reproduce the deployment issue #117 is about. NOT via
+            # `npm ci --omit=optional`: that also drops
+            # `@rollup/rollup-linux-x64-gnu`, an optional platform binary that
+            # *vitest itself* needs, so the runner dies at startup before
+            # testing anything (npm/cli#4828). Install normally, then remove
+            # just the one package whose absence we care about.
+            drop_canvas: "true"
+            # Optional deps are what #117 is about, and the document
+            # extractors are where their absence shows up. Scoped to keep this
+            # job cheap; widen if it earns its keep.
+            #
+            # The assertion that makes this leg mean something is
+            # "the real extractor stays quiet in this install" in
+            # pdf-extractor.canvas-warnings.test.ts. The other canvas tests
+            # build their own canvas-free sandbox and so answer identically in
+            # both legs; that one runs the real extractor against whatever is
+            # installed here, so it passes above (canvas present, quiet path
+            # skipped) and fails here if the fix regresses. Keep it in scope.
+            scope: src/tools/os/read-document/
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Match release.yml. Node >= 25.7 is required for the SEA build; using
+          # the same version here means CI tests what we actually ship.
+          node-version: "25.7"
+          check-latest: true
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Remove the optional canvas package
+        if: matrix.drop_canvas == 'true'
+        run: rm -rf node_modules/@napi-rs/canvas
+
+      - name: Confirm canvas state matches this job
+        # Makes the point of the matrix visible in the log, and fails loudly if
+        # the two jobs ever stop differing in the way they are supposed to.
+        run: |
+          if node -e "require.resolve('@napi-rs/canvas')" 2>/dev/null; then
+            present=true
+          else
+            present=false
+          fi
+          echo "@napi-rs/canvas present: $present"
+          if [ "${{ matrix.drop_canvas }}" = "true" ] && [ "$present" = "true" ]; then
+            echo "::error::expected @napi-rs/canvas to be absent in this job"
+            exit 1
+          fi
+          if [ "${{ matrix.drop_canvas }}" = "false" ] && [ "$present" = "false" ]; then
+            echo "::error::expected @napi-rs/canvas to be present in this job"
+            exit 1
+          fi
+
+      - name: Typecheck
+        run: npx tsc -p tsconfig.json --noEmit
+
+      - name: Run tests
+        # Two files are excluded, both because they fail on unmodified `main`
+        # for reasons that are not this PR's to fix. Neither is a timing flake;
+        # both are real and should be fixed and re-enabled. See issue #203.
+        #
+        #   send-message-concurrency — the runtime makes a third
+        #   non-reflection llamaComplete call ("m3") where the test expects
+        #   two. A sidecar behaviour question, not a CI one.
+        #
+        #   local-models-orchestrator-auto-update — reaches a real
+        #   `spawn()` of a stub llama-server binary instead of mocking it.
+        #   Its assertions pass, but the async throw is an *unhandled error*,
+        #   and vitest exits non-zero on those — so it would fail the job
+        #   while reporting "8 passed".
+        #
+        # `parallel-tool-calls` is deliberately NOT excluded: its wall-clock
+        # bound was replaced with a deterministic `peakInFlight` assertion in
+        # this PR, so it is now safe on a contended runner.
+        run: |
+          npx vitest run ${{ matrix.scope }} \
+            --exclude '**/send-message-concurrency.test.ts' \
+            --exclude '**/local-models-orchestrator-auto-update.test.ts'

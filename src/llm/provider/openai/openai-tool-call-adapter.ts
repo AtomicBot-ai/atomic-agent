@@ -97,18 +97,37 @@ export function descriptorsToOpenAiTools(
   return out;
 }
 
+/**
+ * A tool call's `function.arguments` was non-empty but not valid JSON (or
+ * not a JSON object). Thrown rather than silently substituting `{}` so the
+ * failure reaches `tryParseToolCalls`'s existing catch block and routes
+ * through the same one-shot repair path grammar-parsed batches already
+ * use — never include the raw arguments here, they may carry sensitive
+ * user data and this message can reach logs.
+ */
+export class ToolCallArgumentsParseError extends Error {
+  constructor(toolName: string) {
+    super(`tool call "${toolName}" arguments are not a valid JSON object`);
+    this.name = "ToolCallArgumentsParseError";
+  }
+}
+
+/**
+ * Parses one tool call's raw argument string. A genuinely empty/whitespace
+ * string is a legitimate zero-arg call and maps to `{}`. Anything
+ * non-empty that fails to parse, or parses to something other than a JSON
+ * object, throws instead of falling back to `{}` — a truncated or
+ * malformed argument string must never be silently treated the same as an
+ * intentional empty call.
+ */
 function parseArguments(raw: string): Record<string, unknown> {
   const trimmed = raw.trim();
   if (!trimmed) return {};
-  try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    // fall through
+  const parsed = JSON.parse(trimmed) as unknown;
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return parsed as Record<string, unknown>;
   }
-  return {};
+  throw new SyntaxError("tool call arguments must be a JSON object");
 }
 
 export function openAiToolCallsToBatch(
@@ -118,9 +137,18 @@ export function openAiToolCallsToBatch(
   const calls: ToolCallPayload[] = [];
   for (const tc of toolCalls) {
     const name = nameUnescape(tc.function.name);
+    let args: Record<string, unknown>;
+    try {
+      args = parseArguments(tc.function.arguments);
+    } catch (err) {
+      if (err instanceof SyntaxError) {
+        throw new ToolCallArgumentsParseError(name);
+      }
+      throw err;
+    }
     calls.push({
       tool: name,
-      args: parseArguments(tc.function.arguments),
+      args,
       ...(reasoningText ? { reasoning: reasoningText } : {}),
     });
   }

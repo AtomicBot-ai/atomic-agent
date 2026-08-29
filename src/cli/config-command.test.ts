@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -154,5 +154,275 @@ describe("configCommand", () => {
     const code = await configCommand(["wat"]);
     expect(code).toBe(1);
     expect(stderr).toContain("unknown subcommand: wat");
+  });
+
+  it("the set example in --help runs through the real set path", async () => {
+    // Rot-proofing: extract the example payload straight out of the rendered
+    // help text and feed it to `config set` for real. If the schema moves and
+    // the example is left behind (as happened with `"version":1` + `llama`),
+    // this test fails instead of a user's paste.
+    await configCommand(["--help"]);
+    const match = stdout.match(/config set '(\{.*\})'/);
+    expect(match).not.toBeNull();
+    stdout = "";
+    const code = await configCommand(["set", match![1]]);
+    expect(code).toBe(0);
+    const onDisk = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
+    expect(onDisk.version).toBe(USER_CONFIG_VERSION);
+    expect(onDisk.localModels.url).toBe("http://127.0.0.1:19091");
+  });
+
+  describe("point edits", () => {
+    /** Seed a hand-written sparse config, as a user who edited the file would have. */
+    function seedSparseConfig(tree: Record<string, unknown>): void {
+      writeFileSync(
+        join(stateDir, "config.json"),
+        JSON.stringify({ version: USER_CONFIG_VERSION, ...tree }, null, 2),
+      );
+      resetConfigCache();
+    }
+
+    it("set <key> <value> writes one key and leaves the rest of the file alone", async () => {
+      seedSparseConfig({ agent: { maxSteps: 7 } });
+      const code = await configCommand(["set", "log.level", "debug"]);
+      expect(code).toBe(0);
+      const onDisk = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
+      expect(onDisk.log.level).toBe("debug");
+      // The pre-existing user value survives untouched...
+      expect(onDisk.agent.maxSteps).toBe(7);
+      // ...and the file is NOT expanded with every default in the schema.
+      // Writing back the defaulted parse output would freeze today's
+      // defaults into the user's file; only touched keys may appear.
+      expect(Object.keys(onDisk).sort()).toEqual(["agent", "log", "version"]);
+      expect(stdout.trim()).toBe('log.level = "debug"');
+    });
+
+    it("set coerces the raw string through the schema rather than guessing types", async () => {
+      // The command never inspects the value: "false" becomes a boolean and
+      // "19099" a number purely because the schema's parsers coerce them.
+      // This is what keeps CLI typing from drifting from the schema.
+      expect(await configCommand(["set", "localModels.managed.autoUpdate", "false"])).toBe(0);
+      expect(await configCommand(["set", "localModels.managed.port", "19099"])).toBe(0);
+      const onDisk = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
+      expect(onDisk.localModels.managed.autoUpdate).toBe(false);
+      expect(onDisk.localModels.managed.port).toBe(19099);
+    });
+
+    it("set rejects an unknown key instead of silently writing nothing", async () => {
+      // The load-bearing test. `parseUserConfigFile` IGNORES unknown keys,
+      // so without our own check this typo would validate, write a file
+      // with no such setting, and report success — the command would lie.
+      seedSparseConfig({ agent: { maxSteps: 7 } });
+      const before = readFileSync(join(stateDir, "config.json"), "utf8");
+      const code = await configCommand([
+        "set",
+        "localModels.managed.autoUpdte",
+        "false",
+      ]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("unknown key localModels.managed.autoUpdte");
+      expect(stderr).toContain("did you mean localModels.managed.autoUpdate?");
+      expect(readFileSync(join(stateDir, "config.json"), "utf8")).toBe(before);
+    });
+
+    it("set suggests nothing when no key is close enough", async () => {
+      // A wrong suggestion points the user at a real but unintended
+      // setting, so the threshold stays conservative.
+      const code = await configCommand(["set", "totally.bogus.nonsense", "1"]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("unknown key");
+      expect(stderr).not.toContain("did you mean");
+    });
+
+    it("set rejects a value the schema refuses, leaving the file untouched", async () => {
+      seedSparseConfig({ agent: { maxSteps: 7 } });
+      const before = readFileSync(join(stateDir, "config.json"), "utf8");
+      const code = await configCommand(["set", "agent.maxSteps", "0"]);
+      expect(code).toBe(1);
+      // The dotted path comes from ConfigValidationError, not from us.
+      expect(stderr).toContain("agent.maxSteps");
+      expect(readFileSync(join(stateDir, "config.json"), "utf8")).toBe(before);
+    });
+
+    it("set rejects a value that is not a complete number", async () => {
+      // `Number.parseInt` stops at the first character it cannot read, so each
+      // of these would become a plausible-looking number and be written as a
+      // success — `60s` silently becoming a 60ms timeout, `1,000` becoming 1.
+      for (const bad of ["100_000", "60s", "1,000", "10.9", "8080x", "0x10"]) {
+        seedSparseConfig({ agent: { maxSteps: 7 } });
+        const before = readFileSync(join(stateDir, "config.json"), "utf8");
+        stderr = "";
+        const code = await configCommand(["set", "agent.tokenBudget", bad]);
+        expect(code, `${bad} should be rejected`).toBe(1);
+        expect(stderr).toContain("agent.tokenBudget");
+        expect(readFileSync(join(stateDir, "config.json"), "utf8")).toBe(
+          before,
+        );
+      }
+    });
+
+    it("set accepts any complete literal whose value is a whole number", async () => {
+      // The check is on the value, not the spelling. `10.0` and `1e3` are both
+      // complete literals that name an integer, and `parseInt` already handled
+      // `10.0` correctly — rejecting them would break configs that worked, and
+      // this parser runs at every startup.
+      for (const [input, want] of [
+        [" 1000 ", "1000"],
+        ["10.0", "10"],
+        ["1e3", "1000"],
+        ["+5", "5"],
+      ] as const) {
+        seedSparseConfig({ agent: { maxSteps: 7 } });
+        stdout = "";
+        const code = await configCommand(["set", "agent.tokenBudget", input]);
+        expect(code, `${input} should be accepted`).toBe(0);
+        expect(stdout).toContain(`agent.tokenBudget = ${want}`);
+      }
+    });
+
+    it("set writes the approval ladder, the one key that matters most", async () => {
+      // `config set` hands the schema the raw argv string on purpose —
+      // guessing the type at the CLI would be a second source of truth
+      // that drifts the moment a field changes type. `parseApprovalLevel`
+      // took numbers only, which made `agent.approvalLevel` the single
+      // key the dotted-key editor could not write, and it said so in a
+      // message that asked for exactly what it had been given:
+      // `expected an integer between 1 and 5, got "3"`.
+      for (const level of ["1", "3", "5"] as const) {
+        seedSparseConfig({ agent: { maxSteps: 7 } });
+        stdout = "";
+        const code = await configCommand(["set", "agent.approvalLevel", level]);
+        expect(code, `level ${level} should be accepted`).toBe(0);
+        expect(stdout).toContain(`agent.approvalLevel = ${level}`);
+      }
+    });
+
+    it("set still refuses an approval level outside the ladder", async () => {
+      seedSparseConfig({ agent: { maxSteps: 7 } });
+      for (const bad of ["0", "6", "2.5", "high"] as const) {
+        stderr = "";
+        const code = await configCommand(["set", "agent.approvalLevel", bad]);
+        expect(code, `${bad} should be rejected`).toBe(1);
+        expect(stderr).toContain("agent.approvalLevel");
+      }
+    });
+
+    it("set rejects an integer too large to round-trip", async () => {
+      // Past 2^53 the literal is silently stored as a different number.
+      seedSparseConfig({ agent: { maxSteps: 7 } });
+      const code = await configCommand([
+        "set",
+        "agent.tokenBudget",
+        "9007199254740993",
+      ]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("agent.tokenBudget");
+    });
+
+    it("set rejects a partly-numeric fractional value", async () => {
+      seedSparseConfig({ agent: { maxSteps: 7 } });
+      const code = await configCommand([
+        "set",
+        "memory.retrieve.fts5Threshold",
+        "0.85xyz",
+      ]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("fts5Threshold");
+    });
+
+    it("set rejects version, which the schema's migration owns", async () => {
+      const code = await configCommand(["set", "version", "12"]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("managed by the config schema");
+    });
+
+    it("set rejects a branch and a list rather than inventing syntax", async () => {
+      expect(await configCommand(["set", "localModels.managed", "x"])).toBe(1);
+      expect(stderr).toContain("unknown key localModels.managed");
+      stderr = "";
+      expect(await configCommand(["set", "projects.roots", "/a"])).toBe(1);
+      expect(stderr).toContain("is a list");
+    });
+
+    it("set with a key but no value is a usage error, not a get", async () => {
+      const code = await configCommand(["set", "agent.maxSteps"]);
+      expect(code).toBe(1);
+      expect(stderr).toContain("no value given for agent.maxSteps");
+    });
+
+    it("unset restores a key to its default and prunes the emptied block", async () => {
+      seedSparseConfig({ agent: { maxSteps: 7 } });
+      const code = await configCommand(["unset", "agent.maxSteps"]);
+      expect(code).toBe(0);
+      expect(stdout.trim()).toBe("agent.maxSteps \u2192 25 (default)");
+      const onDisk = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
+      // The now-empty `agent` block is pruned rather than left as a husk.
+      expect(onDisk.agent).toBeUndefined();
+    });
+
+    it("unset works on list keys, which set refuses", async () => {
+      seedSparseConfig({ projects: { roots: ["/tmp/x"] } });
+      expect(await configCommand(["unset", "projects.roots"])).toBe(0);
+      const onDisk = JSON.parse(readFileSync(join(stateDir, "config.json"), "utf8"));
+      expect(onDisk.projects).toBeUndefined();
+    });
+
+    it("unset rejects an unknown key", async () => {
+      expect(await configCommand(["unset", "agent.maxStep"])).toBe(1);
+      expect(stderr).toContain("unknown key agent.maxStep");
+    });
+
+    it("get <key> prints a single value and rejects unknown keys", async () => {
+      seedSparseConfig({ agent: { maxSteps: 7 } });
+      expect(await configCommand(["get", "agent.maxSteps"])).toBe(0);
+      expect(stdout.trim()).toBe("7");
+      stdout = "";
+      expect(await configCommand(["get", "localModels.managed"])).toBe(0);
+      expect(JSON.parse(stdout).port).toBe(19091);
+      stdout = "";
+      expect(await configCommand(["get", "nope.nope"])).toBe(1);
+      expect(stderr).toContain("unknown key nope.nope");
+    });
+
+    it("list marks non-default values and masks credential-shaped strings", async () => {
+      seedSparseConfig({ agent: { maxSteps: 42 } });
+      const code = await configCommand(["list"]);
+      expect(code).toBe(0);
+      const lines = stdout.split("\n");
+      const maxSteps = lines.find((line) => line.startsWith("agent.maxSteps "));
+      expect(maxSteps).toContain("= 42");
+      expect(maxSteps).toContain("(default 25)");
+      // A key left at its default carries no annotation.
+      expect(lines.find((line) => line.startsWith("log.level "))).not.toContain(
+        "(default",
+      );
+      // `apiKeyEnv` holds an env var name today, but anything
+      // credential-shaped is masked before it reaches a terminal.
+      expect(
+        lines.find((line) => line.startsWith("web.search.exa.apiKeyEnv ")),
+      ).toContain("***");
+      // A token *count* is not a credential and must stay readable.
+      expect(
+        lines.find((line) => line.startsWith("agent.tokenBudget ")),
+      ).toContain("= 3000");
+    });
+
+    it("path prints the config file location", async () => {
+      expect(await configCommand(["path"])).toBe(0);
+      expect(stdout.trim()).toBe(join(stateDir, "config.json"));
+    });
+
+    it("the key/value example in --help runs through the real set path", async () => {
+      // Same rot-proofing as the JSON example above: the documented
+      // `<key> <value>` line is executed, so a renamed key fails here
+      // rather than in a user's terminal.
+      await configCommand(["--help"]);
+      const match = stdout.match(/config set ([a-zA-Z.]+) (\S+)\n/);
+      expect(match).not.toBeNull();
+      stdout = "";
+      const code = await configCommand(["set", match![1], match![2]]);
+      expect(code).toBe(0);
+      expect(stdout.trim()).toBe(`${match![1]} = ${match![2]}`);
+    });
   });
 });

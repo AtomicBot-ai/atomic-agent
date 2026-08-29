@@ -1,10 +1,15 @@
 import { Box, Text, measureElement, type DOMElement } from "ink";
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
+import { computeChatViewportRows } from "../layout.js";
 import type { TuiAction } from "../tui-action.js";
 import type { ChatMessage, TuiState } from "../tui-state.js";
 import { theme } from "../theme/theme.js";
 import { AssistantBubble } from "./assistant-bubble.js";
+import type { CodingMode } from "../coding-mode.js";
+import { ChatCopyButton } from "./chat-copy-button.js";
+import { PlanHandoff } from "./plan-handoff.js";
+import { ChatTryAgainButton } from "./chat-try-again-button.js";
 import {
   estimateMessageHeight,
   estimateStreamingTailHeight,
@@ -16,17 +21,15 @@ import { ThinkingIndicator } from "./thinking-indicator.js";
 import { ToolCard } from "./tool-card.js";
 import { UserBubble } from "./user-bubble.js";
 
-/**
- * Rows of "chrome" outside the chat surface: status bar + prompt
- * meta-row + prompt input + prompt tail-cap + hotkey hint + a small
- * safety pad. Used to convert `terminal.rows` into the chat-area
- * viewport height. Slightly conservative — better to leave one empty
- * row than to clip the prompt.
- */
-const CHROME_ROWS = 8;
-
 interface ChatLogProps {
   state: TuiState;
+  /**
+   * Runs the drafted plan under `mode`, and puts it away. Both optional
+   * so the many tests that render a log need not supply them; without
+   * them the plan simply carries no buttons.
+   */
+  onPlanExecute?: (mode: CodingMode) => void;
+  onPlanDismiss?: () => void;
   /**
    * Optional dispatcher used to self-correct an over-scrolled state.
    * Whenever `state.chatScrollOffset` exceeds the visually allowed
@@ -76,7 +79,12 @@ function isVisibleToolCard(card: { tool: string }): boolean {
  * Empty surface → centred splash banner; everything else falls
  * through into the bottom-anchored column.
  */
-export function ChatLog({ state, dispatch }: ChatLogProps): ReactElement {
+export function ChatLog({
+  state,
+  dispatch,
+  onPlanExecute,
+  onPlanDismiss,
+}: ChatLogProps): ReactElement {
   const terminalSize = useTerminalSize();
   const finalised = state.messages;
   const hasStreamingTail =
@@ -89,7 +97,10 @@ export function ChatLog({ state, dispatch }: ChatLogProps): ReactElement {
   // All hooks must run unconditionally — only the JSX branches on
   // `isEmpty`. Compute viewport / measured-K / clamp regardless,
   // even when the early return for the splash branch fires below.
-  const viewport = Math.max(5, terminalSize.rows - CHROME_ROWS);
+  const viewport = computeChatViewportRows(
+    terminalSize.rows,
+    terminalSize.columns,
+  );
   // First-frame fallback for `K` until the post-mount `measureElement`
   // call returns the truth. Estimates are unreliable (text wraps, Yoga
   // collapses some margins, reasoning blocks expand mid-turn) so we
@@ -149,11 +160,24 @@ export function ChatLog({ state, dispatch }: ChatLogProps): ReactElement {
     >
       <Box flexDirection="column" flexShrink={0} marginBottom={-offset}>
         <Box ref={innerRef} flexDirection="column" flexShrink={0}>
-          {finalised.map((message) => (
+          {finalised.map((message, idx) => (
             <FinalisedMessage
               key={message.id}
               message={message}
               toolsExpandedById={state.toolsExpandedById}
+              // The plan's own buttons, under the plan. Only the last
+              // message can carry them: the offer is about the newest
+              // plan, and an older one further up the log would be an
+              // offer to run something that has already been superseded.
+              planHandoff={
+                state.planHandoff &&
+                idx === finalised.length - 1 &&
+                message.role === "assistant" &&
+                onPlanExecute !== undefined &&
+                onPlanDismiss !== undefined
+                  ? { onExecute: onPlanExecute, onDismiss: onPlanDismiss }
+                  : null
+              }
             />
           ))}
           {hasStreamingTail ? <StreamingTail state={state} /> : null}
@@ -168,14 +192,28 @@ export function ChatLog({ state, dispatch }: ChatLogProps): ReactElement {
 interface FinalisedMessageProps {
   message: ChatMessage;
   toolsExpandedById: Readonly<Record<string, boolean>>;
+  /** Present only on the message that *is* the plan. */
+  planHandoff: {
+    onExecute: (mode: CodingMode) => void;
+    onDismiss: () => void;
+  } | null;
 }
 
 function FinalisedMessage({
   message,
   toolsExpandedById,
+  planHandoff,
 }: FinalisedMessageProps): ReactElement {
   if (message.role === "user") {
-    return <UserBubble text={message.text} />;
+    return (
+      <Box flexDirection="column">
+        <UserBubble text={message.text} />
+        <Box flexDirection="row">
+          <ChatCopyButton text={message.text} />
+          <ChatTryAgainButton text={message.text} />
+        </Box>
+      </Box>
+    );
   }
   if (message.role === "assistant") {
     return (
@@ -207,14 +245,24 @@ function FinalisedMessage({
           text={message.text}
           toolSteps={message.toolSteps ?? 0}
         />
+        <ChatCopyButton text={message.text} />
+        {planHandoff ? (
+          <PlanHandoff
+            onExecute={planHandoff.onExecute}
+            onDismiss={planHandoff.onDismiss}
+          />
+        ) : null}
       </Box>
     );
   }
   return (
-    <SystemBubble
-      text={message.text}
-      warn={message.variant === "warn"}
-    />
+    <Box flexDirection="column">
+      <SystemBubble
+        text={message.text}
+        warn={message.variant === "warn"}
+      />
+      <ChatCopyButton text={message.text} />
+    </Box>
   );
 }
 

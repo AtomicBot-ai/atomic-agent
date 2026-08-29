@@ -81,12 +81,38 @@ export interface UpdateInvocation {
 }
 
 /**
+ * Absolute path to the system Windows PowerShell, falling back to a bare
+ * `powershell.exe` when %SystemRoot% is not set.
+ *
+ * A bare name is resolved against the inherited PATH, which is the user's,
+ * not ours. When that PATH puts a trimmed, relocated or 2.0-engine shell
+ * first, the installer loses the Utility/Archive modules and dies on
+ * "'Get-FileHash' is not recognized" — while the very same update run from
+ * `cmd` succeeds, because there the name resolves to the system copy
+ * (issue #174). Naming the system copy outright removes that variance;
+ * install.ps1 no longer depends on those modules either, so the two fixes
+ * are belt and braces.
+ */
+function windowsPowerShellPath(env: NodeJS.ProcessEnv): string {
+  const systemRoot = env.SystemRoot ?? env.SYSTEMROOT ?? env.systemroot;
+  if (!systemRoot) return "powershell.exe";
+  return pathWin32.join(
+    systemRoot,
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
+}
+
+/**
  * Build the platform-specific process invocation that re-runs the
  * canonical installer against the current install dir. Pure — no I/O —
  * so it is unit-testable without spawning anything.
  *
  * - POSIX: `sh -c "curl -fsSL .../install.sh | sh"`.
- * - Windows: `powershell.exe -Command "irm .../install.ps1 | iex"`.
+ * - Windows: `%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe
+ *   -Command "irm .../install.ps1 | iex"` — see {@link windowsPowerShellPath}.
  *
  * Both pin the install dir to the running binary's directory and
  * suppress the PATH edit (already present on an upgrade). The installer
@@ -114,7 +140,7 @@ export function buildUpdateInvocation(params: {
   if (platform === "win32") {
     const scriptUrl = `https://raw.githubusercontent.com/${repo}/main/scripts/install.ps1`;
     return {
-      command: "powershell.exe",
+      command: windowsPowerShellPath(baseEnv),
       args: [
         "-NoProfile",
         "-ExecutionPolicy",

@@ -79,7 +79,7 @@ export async function skillCommand(args: string[]): Promise<number> {
       default:
         process.stderr.write(`unknown subcommand: ${sub}\n`);
         process.stderr.write(HELP);
-        return 1;
+        return 2;
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -94,7 +94,7 @@ async function handleInstall(args: string[]): Promise<number> {
     process.stderr.write(
       "usage: atomic-agent skill install <path|owner/repo[/path]> [--force] [--acknowledge-risk]\n",
     );
-    return 1;
+    return 2;
   }
   const force = args.includes("--force");
   const acknowledgeRisk = args.includes("--acknowledge-risk");
@@ -132,7 +132,7 @@ async function handleInstall(args: string[]): Promise<number> {
   } catch (err) {
     if (err instanceof SkillInstallError && err.code === "already_installed") {
       process.stderr.write(`${err.message}\n`);
-      return 2;
+      return 1;
     }
     throw err;
   }
@@ -158,11 +158,11 @@ async function handleHubInstall(
   } catch (err) {
     if (err instanceof SkillInstallError && err.code === "already_installed") {
       process.stderr.write(`${err.message}\n`);
-      return 2;
+      return 1;
     }
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`${message}\n`);
-    return 2;
+    return 1;
   }
 }
 
@@ -189,11 +189,11 @@ async function handleClawHubInstall(
   } catch (err) {
     if (err instanceof SkillInstallError && err.code === "already_installed") {
       process.stderr.write(`${err.message}\n`);
-      return 2;
+      return 1;
     }
     const message = err instanceof Error ? err.message : String(err);
     process.stderr.write(`${message}\n`);
-    return 2;
+    return 1;
   }
 }
 
@@ -201,13 +201,13 @@ async function handleUninstall(args: string[]): Promise<number> {
   const name = args[0];
   if (!name) {
     process.stderr.write("usage: atomic-agent skill uninstall <name>\n");
-    return 1;
+    return 2;
   }
   const config = getConfig();
   const result = await uninstallSkill(config.paths.globalSkillsDir, name);
   if (!result.removed) {
     process.stderr.write(`skill not installed globally: ${name}\n`);
-    return 2;
+    return 1;
   }
   // Drop any stale disable entry so config.json does not accumulate
   // dangling names for skills that no longer exist on disk.
@@ -260,7 +260,7 @@ async function handleShow(args: string[]): Promise<number> {
   const name = args[0];
   if (!name) {
     process.stderr.write("usage: atomic-agent skill show <name>\n");
-    return 1;
+    return 2;
   }
   const config = getConfig();
   const projectDir = resolve(process.cwd(), config.paths.projectSkillsDirName);
@@ -271,7 +271,7 @@ async function handleShow(args: string[]): Promise<number> {
   const record = skills.find((s) => s.manifest.name === name);
   if (!record) {
     process.stderr.write(`skill not installed: ${name}\n`);
-    return 2;
+    return 1;
   }
   process.stdout.write(`# path: ${record.manifestPath}\n`);
   process.stdout.write(`# source: ${record.source}\n\n`);
@@ -285,7 +285,7 @@ async function handleEnable(args: string[]): Promise<number> {
   const name = args[0];
   if (!name) {
     process.stderr.write("usage: atomic-agent skill enable <name>\n");
-    return 1;
+    return 2;
   }
   const result = mutateDisabledList((current) => {
     if (!current.includes(name)) return null;
@@ -303,7 +303,7 @@ async function handleDisable(args: string[]): Promise<number> {
   const name = args[0];
   if (!name) {
     process.stderr.write("usage: atomic-agent skill disable <name>\n");
-    return 1;
+    return 2;
   }
   const result = mutateDisabledList((current) => {
     if (current.includes(name)) return null;
@@ -343,7 +343,7 @@ async function handleBrowse(args: string[]): Promise<number> {
     sourceIdx !== -1 ? args[sourceIdx + 1]?.trim() : undefined;
   if (sourceIdx !== -1 && !source) {
     process.stderr.write("usage: atomic-agent skill browse [--source owner/repo]\n");
-    return 1;
+    return 2;
   }
   // ClawHub is the primary catalog; `--source owner/repo` narrows to a
   // single GitHub tap and skips ClawHub (the operator asked for a repo).
@@ -357,7 +357,7 @@ async function handleSearch(args: string[]): Promise<number> {
   const query = args.filter((a) => !a.startsWith("--")).join(" ").trim();
   if (query.length === 0) {
     process.stderr.write("usage: atomic-agent skill search <query>\n");
-    return 1;
+    return 2;
   }
   const clawEntries = await browseClawHubSafe(query);
   const client = new GithubSkillClient();
@@ -421,7 +421,10 @@ function printHubEntries(
   for (const e of errors) {
     process.stderr.write(`WARN: ${e.repo}: ${e.error}\n`);
   }
-  return 0;
+  // Partial results still succeed — one dead tap should not fail a browse
+  // that found skills elsewhere. Nothing found and every source failing is
+  // an operational failure, not an empty catalog.
+  return entries.length === 0 && errors.length > 0 ? 1 : 0;
 }
 
 async function handleTap(args: string[]): Promise<number> {
@@ -439,14 +442,14 @@ async function handleTap(args: string[]): Promise<number> {
     const repo = args[1]?.trim();
     if (!repo) {
       process.stderr.write(`usage: atomic-agent skill tap ${verb} <owner/repo>\n`);
-      return 1;
+      return 2;
     }
     try {
       parseTapRepo(repo);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       process.stderr.write(`${message}\n`);
-      return 1;
+      return 2;
     }
     const result = mutateTapsList((current) => {
       if (verb === "add") {
@@ -468,7 +471,7 @@ async function handleTap(args: string[]): Promise<number> {
   process.stderr.write(
     "usage: atomic-agent skill tap list | add <owner/repo> | remove <owner/repo>\n",
   );
-  return 1;
+  return 2;
 }
 
 /**

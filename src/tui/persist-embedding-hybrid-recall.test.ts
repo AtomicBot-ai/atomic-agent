@@ -37,10 +37,14 @@ describe("persistEmbeddingHybridRecall", () => {
       localModels: { embeddings: { enabled: boolean; modelId: string } };
       memory: { embeddings: { enabled: boolean } };
     };
+    // `url` is derived from the port and written alongside the model id
+    // whenever hybrid recall is switched on — see
+    // `persistEmbeddingHybridRecall`.
     expect(written.localModels.embeddings).toEqual({
       enabled: true,
       modelId: "bge-m3",
       port: 19092,
+      url: "http://127.0.0.1:19092",
     });
     expect(written.memory.embeddings.enabled).toBe(true);
     expect(getConfig().memory.embeddings.enabled).toBe(true);

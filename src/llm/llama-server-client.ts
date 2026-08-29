@@ -1,4 +1,6 @@
 import { getConfig } from "../config/index.js";
+import { llamaEndpointUrl } from "./llama-endpoint-url.js";
+import { readErrnoCode } from "./errno-code.js";
 import type {
   CompletionRequest,
   CompletionResult,
@@ -51,9 +53,21 @@ export class LlamaServerError extends Error {
      * `isRetryableLlamaError`.
      */
     public readonly timedOut = false,
+    /**
+     * Errno of the underlying failure (`ECONNREFUSED`, `ECONNRESET`,
+     * `ETIMEDOUT`, `UND_ERR_*`, …) when the transport left one behind.
+     * This is the difference between "the daemon was never started" and
+     * "the daemon died under us" — two problems with opposite fixes
+     * that both surface as `status === null`.
+     */
+    public readonly code: string | undefined = undefined,
+    options?: { cause?: unknown },
   ) {
     super(message);
     this.name = "LlamaServerError";
+    if (options?.cause !== undefined) {
+      (this as { cause?: unknown }).cause = options.cause;
+    }
   }
 }
 
@@ -172,7 +186,7 @@ export class LlamaServerClient {
   async fetchProps(): Promise<LlamaServerProps> {
     const config = getConfig();
     const base = this.baseUrlOverride ?? config.localModels.url;
-    const url = new URL("/props", base).toString();
+    const url = llamaEndpointUrl(base, "/props");
     const controller = new AbortController();
     const timer = setTimeout(
       () => controller.abort(),
@@ -191,7 +205,9 @@ export class LlamaServerClient {
     } catch (err) {
       if (err instanceof LlamaServerError) throw err;
       const message = err instanceof Error ? err.message : String(err);
-      throw new LlamaServerError(message, null, url);
+      throw new LlamaServerError(message, null, url, false, readErrnoCode(err), {
+        cause: err,
+      });
     } finally {
       clearTimeout(timer);
     }
@@ -267,7 +283,9 @@ export class LlamaServerClient {
     } catch (err) {
       if (err instanceof LlamaServerError) throw err;
       const message = err instanceof Error ? err.message : String(err);
-      throw new LlamaServerError(message, null, url);
+      throw new LlamaServerError(message, null, url, false, readErrnoCode(err), {
+        cause: err,
+      });
     }
     const { response, cleanup, timedOut } = opened;
     let finalResult: CompletionResult = {
@@ -400,10 +418,18 @@ export class LlamaServerClient {
         null,
         url,
         true,
+        undefined,
+        { cause: err },
       );
     }
     const message = err instanceof Error ? err.message : String(err);
-    return new LlamaServerError(message, null, url);
+    // Keep the errno and the original error. Rebuilding the failure
+    // without them is what left the biggest bucket in error reporting
+    // undiagnosable: ~1,900 events that say "the network failed" and
+    // nothing about how.
+    return new LlamaServerError(message, null, url, false, readErrnoCode(err), {
+      cause: err,
+    });
   }
 
   private prepareRequest(
@@ -412,7 +438,7 @@ export class LlamaServerClient {
   ): { url: string; headers: Record<string, string>; body: string } {
     const config = getConfig();
     const base = this.baseUrlOverride ?? config.localModels.url;
-    const url = new URL(config.localModels.completionPath, base).toString();
+    const url = llamaEndpointUrl(base, config.localModels.completionPath);
     const headers = this.buildHeaders(stream);
     const payload: Record<string, unknown> = {
       prompt: request.prompt,

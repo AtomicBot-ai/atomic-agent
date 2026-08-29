@@ -1,3 +1,7 @@
+import {
+  searchModelIds,
+  type ModelEntryLookup,
+} from "../../llm/provider/model-search.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
 
 export type ProvidersPanelMode = "list";
@@ -7,6 +11,10 @@ export type ProviderRow = {
   kind: string;
   isActiveText: boolean;
   isActiveEmbedding: boolean;
+  /**
+   * Credentials are resolved for this entry — an API key, or the vendor
+   * CLI's own session for `subscription-cli` entries.
+   */
   hasApiKey: boolean;
   /**
    * Stored base URL for `openai-compatible` entries (`null` for curated
@@ -15,6 +23,12 @@ export type ProviderRow = {
    * silently resets a custom endpoint to the OpenAI default.
    */
   baseUrl: string | null;
+  /**
+   * Which vendor CLI a `subscription-cli` entry drives, `null` for every
+   * other kind. The panes need it because the CLIs differ in what they
+   * can offer — Claude publishes a model list, Codex does not.
+   */
+  subscriptionCli: { cli: string } | null;
   chatModel: string | null;
   chatModelOptions?: readonly string[];
   embeddingModel: string | null;
@@ -66,17 +80,21 @@ export function filteredPickerModels(
 }
 
 /**
- * Case-insensitive substring filter over model ids. Shared by the modal
- * picker and the inline Cloud-pane model list so both surfaces match the
- * same rows for the same query.
+ * Ranked model search over ids and, when a catalog lookup is supplied,
+ * their metadata. Shared by the modal picker and the inline Cloud-pane
+ * model list so both surfaces match the same rows for the same query.
+ *
+ * Was a single case-insensitive `includes` over the id. `searchModelIds`
+ * keeps that behaviour for a one-word query and adds multi-term AND,
+ * vendor and capability matching, subsequence fallback, and relevance
+ * ordering — see `src/llm/provider/model-search.ts`.
  */
 export function filterModelIds(
   models: readonly string[],
   query: string,
+  lookup?: ModelEntryLookup,
 ): readonly string[] {
-  const q = query.trim().toLowerCase();
-  if (q.length === 0) return models;
-  return models.filter((id) => id.toLowerCase().includes(q));
+  return searchModelIds(models, query, lookup);
 }
 
 /**
@@ -105,6 +123,8 @@ export interface ProvidersPanelState {
   cursor: number;
   rows: readonly ProviderRow[];
   statusLine: string | null;
+  /** Which pane `statusLine` belongs to; see the `providers_status` action. */
+  statusLineSource: "cloud" | "external";
   busy: boolean;
   wizard: ProvidersWizardState | null;
   removeConfirm: ProvidersRemoveConfirmState | null;
@@ -121,6 +141,7 @@ export function createInitialProvidersPanelState(): ProvidersPanelState {
     cursor: 0,
     rows: [],
     statusLine: null,
+    statusLineSource: "cloud",
     busy: false,
     wizard: null,
     removeConfirm: null,

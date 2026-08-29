@@ -15,6 +15,7 @@ vi.mock("../../local-llm/index.js", async () => {
     getEmbeddingDaemonStatus: vi.fn(),
     startEmbeddingDaemon: vi.fn(),
     stopEmbeddingDaemon: vi.fn(),
+    maybeAutoUpdateBackend: vi.fn(),
   };
 });
 
@@ -56,6 +57,10 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     vi.mocked(localLlm.getEmbeddingDaemonStatus).mockReset();
     vi.mocked(localLlm.startEmbeddingDaemon).mockReset();
     vi.mocked(localLlm.stopEmbeddingDaemon).mockReset();
+    vi.mocked(localLlm.maybeAutoUpdateBackend).mockReset();
+    vi.mocked(localLlm.maybeAutoUpdateBackend).mockResolvedValue({
+      action: "skipped",
+    });
   });
 
   afterEach(() => {
@@ -77,6 +82,7 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
       emit(a: unknown) {
         actions.push(a as Emitted);
       },
+      subscribe: () => () => {},
     });
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 
@@ -98,7 +104,7 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     stubChatStatus(false);
     stubEmbeddingStatus(false);
 
-    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 
     await orchestrator.setActiveEmbedding("bge-m3");
@@ -116,7 +122,7 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     vi.mocked(localLlm.stopEmbeddingDaemon).mockResolvedValue();
     vi.mocked(localLlm.startEmbeddingDaemon).mockResolvedValue({ pid: 9090 });
 
-    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 
     await orchestrator.setActiveEmbedding("bge-m3");
@@ -137,7 +143,7 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     stubEmbeddingStatus(true);
     vi.mocked(localLlm.stopEmbeddingDaemon).mockResolvedValue();
 
-    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 
     await orchestrator.toggleEmbeddingEnabled();
@@ -164,7 +170,7 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     stubEmbeddingStatus(false);
     vi.mocked(localLlm.startEmbeddingDaemon).mockResolvedValue({ pid: 11195 });
 
-    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 
     await orchestrator.autoStartIfReady();
@@ -173,6 +179,47 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     expect(vi.mocked(localLlm.startEmbeddingDaemon)).toHaveBeenCalledWith(
       expect.objectContaining({ modelId: "bge-m3" }),
     );
+  });
+
+  it("autoStartIfReady does not report a model activation — it is a launch, not a setup", async () => {
+    // Regression: `model_configured` used to hang off the daemon-restart
+    // hook, which this launch-time path also fires. Every existing local
+    // user would then report a first-time backend setup on their next
+    // app start, dating the funnel step to the launch instead of the
+    // setup that actually happened long before.
+    const dataDir = getConfig().paths.localModelsDataDir;
+    stubBackendInstalled(dataDir);
+    stubChatModelDownloaded(dataDir);
+    persistUserLocalModelsConfig({
+      mode: "managed",
+      managed: { modelId: "qwen-3.5-4b" },
+      embeddings: { enabled: false },
+    });
+    resetConfigCache();
+    // A daemon left running by a previous session: `autoStartIfReady`
+    // adopts it and fires the restart/selected hooks. That is precisely
+    // the shape the old wiring mistook for a setup.
+    stubChatStatus(true);
+    stubEmbeddingStatus(false);
+
+    const onManagedModelActivated = vi.fn();
+    const onManagedDaemonRestarted = vi.fn();
+    const onManagedModelSelected = vi.fn();
+    const orchestrator = new LocalModelsOrchestrator(
+      { emit() {}, subscribe: () => () => {} },
+      {
+        onManagedModelActivated,
+        onManagedDaemonRestarted,
+        onManagedModelSelected,
+      },
+    );
+    vi.spyOn(orchestrator, "refresh").mockResolvedValue();
+
+    await orchestrator.autoStartIfReady();
+
+    // The launch path ran to completion on an existing daemon and never
+    // reports an activation — `model_configured` stays unsent.
+    expect(onManagedModelActivated).not.toHaveBeenCalled();
   });
 
   it("does not auto-start local daemons when a cloud text provider is active", async () => {
@@ -203,7 +250,7 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     });
     resetConfigCache();
 
-    const orchestrator = new LocalModelsOrchestrator({ emit() {} });
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
     vi.spyOn(orchestrator, "startDaemon").mockResolvedValue(true);
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
 

@@ -541,6 +541,70 @@ describe("user config file IO", () => {
     expect(() => readUserConfigFileSync(path)).toThrow(ConfigValidationError);
   });
 
+  // The rollback trap: 0.3.3 migrated config.json to v41, then the
+  // published release went back to 0.3.2, whose supported-version list
+  // stopped at 40 — every command died at boot. These four pin the
+  // behaviour that makes a rollback survivable.
+  describe("a config written by a newer build", () => {
+    const future = {
+      ...USER_CONFIG_DEFAULTS,
+      version: USER_CONFIG_VERSION + 1,
+      blockFromTheFuture: { keep: "me" },
+    };
+
+    it("is read rather than rejected", () => {
+      const path = getUserConfigPath(dir);
+      writeFileSync(path, JSON.stringify(future, null, 2) + "\n", "utf8");
+      const loaded = readUserConfigFileSync(path);
+      expect(loaded?.version).toBe(USER_CONFIG_VERSION + 1);
+      expect((loaded as unknown as Record<string, unknown>).blockFromTheFuture).toEqual(
+        { keep: "me" },
+      );
+    });
+
+    it("is not rewritten at startup", () => {
+      const path = getUserConfigPath(dir);
+      const text = JSON.stringify(future, null, 2) + "\n";
+      writeFileSync(path, text, "utf8");
+
+      const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const result = ensureUserConfigFileSync(path);
+      expect(result.version).toBe(USER_CONFIG_VERSION + 1);
+      // No "migrated config v43 → v42" line, and the bytes are untouched.
+      expect(warn).not.toHaveBeenCalled();
+      expect(readFileSync(path, "utf8")).toBe(text);
+      warn.mockRestore();
+    });
+
+    // Guards the ~15 call sites that spread a config object and write it
+    // straight back, several of which never re-validate.
+    it("cannot be downgraded by a later write", () => {
+      const path = getUserConfigPath(dir);
+      writeFileSync(path, JSON.stringify(future, null, 2) + "\n", "utf8");
+
+      writeUserConfigFileSync(path, USER_CONFIG_DEFAULTS);
+
+      const onDisk = JSON.parse(readFileSync(path, "utf8")) as {
+        version: number;
+      };
+      expect(onDisk.version).toBe(USER_CONFIG_VERSION + 1);
+    });
+
+    it("still lets an older file be migrated up", () => {
+      const path = getUserConfigPath(dir);
+      writeFileSync(path, JSON.stringify({ version: 39 }, null, 2) + "\n", "utf8");
+
+      const warn = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const result = ensureUserConfigFileSync(path);
+      expect(result.version).toBe(USER_CONFIG_VERSION);
+      expect(warn).toHaveBeenCalledOnce();
+      expect(
+        (JSON.parse(readFileSync(path, "utf8")) as { version: number }).version,
+      ).toBe(USER_CONFIG_VERSION);
+      warn.mockRestore();
+    });
+  });
+
   it("ensureUserConfigFileSync leaves an up-to-date file untouched on disk", () => {
     const path = getUserConfigPath(dir);
     writeUserConfigFileSync(path, USER_CONFIG_DEFAULTS);

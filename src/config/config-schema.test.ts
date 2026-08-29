@@ -7,6 +7,80 @@ import {
   parseUserConfigFile,
 } from "./config-schema.js";
 
+describe("tui.onboarding (config v43, extended in v45)", () => {
+  it("defaults every stamp to null on a file that predates the block", () => {
+    const parsed = parseUserConfigFile({ version: 42, tui: { theme: "nord" } });
+    expect(parsed.tui.onboarding).toEqual({
+      completedAt: null,
+      introSeenAt: null,
+      skippedAt: null,
+      proposedSecondBackendAt: null,
+      localSetupSeenAt: null,
+    });
+    expect(parsed.tui.theme).toBe("nord");
+  });
+
+  it("still accepts a v44 file — the customModels release — as input", () => {
+    const parsed = parseUserConfigFile({ version: 44, tui: { theme: "nord" } });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.tui.onboarding.localSetupSeenAt).toBeNull();
+  });
+
+  it("reads a v43 file as never having opened the local list", () => {
+    const stamp = "2026-08-21T18:04:05.000Z";
+    const parsed = parseUserConfigFile({
+      version: 43,
+      tui: { onboarding: { completedAt: stamp } },
+    });
+    expect(parsed.tui.onboarding.completedAt).toBe(stamp);
+    expect(parsed.tui.onboarding.localSetupSeenAt).toBeNull();
+  });
+
+  it("round-trips localSetupSeenAt", () => {
+    const stamp = "2026-08-22T07:15:00.000Z";
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { onboarding: { localSetupSeenAt: stamp } },
+    });
+    expect(parsed.tui.onboarding.localSetupSeenAt).toBe(stamp);
+  });
+
+  it("rejects a localSetupSeenAt that is not a date", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tui: { onboarding: { localSetupSeenAt: "earlier" } },
+      }),
+    ).toThrow(ConfigValidationError);
+  });
+
+  it("round-trips ISO stamps", () => {
+    const stamp = "2026-08-21T18:04:05.000Z";
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { onboarding: { completedAt: stamp, introSeenAt: stamp } },
+    });
+    expect(parsed.tui.onboarding.completedAt).toBe(stamp);
+    expect(parsed.tui.onboarding.introSeenAt).toBe(stamp);
+    expect(parsed.tui.onboarding.skippedAt).toBeNull();
+  });
+
+  it("rejects a stamp that is not a date", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tui: { onboarding: { completedAt: "soon" } },
+      }),
+    ).toThrow(ConfigValidationError);
+  });
+
+  it("rejects a non-object onboarding block", () => {
+    expect(() =>
+      parseUserConfigFile({ version: USER_CONFIG_VERSION, tui: { onboarding: true } }),
+    ).toThrow(ConfigValidationError);
+  });
+});
+
 describe("parseUserConfigFile", () => {
   it("returns defaults when all fields are missing", () => {
     const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
@@ -66,8 +140,33 @@ describe("parseUserConfigFile", () => {
     expect(parsed.agent.approvalLevel).toBe(3);
   });
 
+  it("takes a numeric string, like every other number in this file", () => {
+    // `config set <key> <value>` hands the schema the raw argv string on
+    // purpose — guessing the type at the CLI would be a second source of
+    // truth that drifts the moment a field changes type — and every
+    // other numeric key coerces accordingly. `approvalLevel` was the one
+    // exception, which made the ladder the only key the dotted-key
+    // editor could not write, and it said so with a message that asked
+    // for exactly what it had been given.
+    for (const [input, want] of [
+      ["3", 3],
+      [" 5 ", 5],
+      ["1", 1],
+    ] as const) {
+      expect(
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          agent: { approvalLevel: input },
+        }).agent.approvalLevel,
+        `${JSON.stringify(input)} should be accepted`,
+      ).toBe(want);
+    }
+  });
+
   it("rejects out-of-range or non-integer agent.approvalLevel", () => {
-    for (const bad of [0, 6, 2.5, "3", true]) {
+    // A string that names a number is fine; a string that does not, a
+    // fractional level, and anything off the 1..5 ladder are not.
+    for (const bad of [0, 6, 2.5, "2.5", "high", "", true]) {
       expect(() =>
         parseUserConfigFile({
           version: USER_CONFIG_VERSION,
@@ -84,10 +183,95 @@ describe("parseUserConfigFile", () => {
     ).toBe(1);
   });
 
-  it("rejects unsupported version", () => {
-    expect(() => parseUserConfigFile({ version: 99 })).toThrow(
+  it("rejects a non-numeric version", () => {
+    expect(() => parseUserConfigFile({ version: "41" })).toThrow(
       ConfigValidationError,
     );
+    expect(() => parseUserConfigFile({ version: Number.NaN })).toThrow(
+      ConfigValidationError,
+    );
+  });
+
+  // A build that is rolled back, or a second install sharing one state
+  // dir, meets a file from the future. Throwing here bricks every command
+  // — `getConfig()` runs before all of them — so a newer file is read
+  // with this build's schema instead.
+  it("reads a config written by a newer build instead of rejecting it", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION + 1,
+      agent: { approvalLevel: 3 },
+    });
+    expect(parsed.agent.approvalLevel).toBe(3);
+  });
+
+  it("keeps a newer version rather than stamping its own", () => {
+    expect(parseUserConfigFile({ version: USER_CONFIG_VERSION + 7 }).version).toBe(
+      USER_CONFIG_VERSION + 7,
+    );
+  });
+
+  // Every version-gated rule in the parse is a `<` comparison against the
+  // input version, so a newer file must take its stored values verbatim
+  // rather than having the pre-v41/v22/v25 defaults forced back on.
+  it("does not apply migration overrides to a newer file", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION + 1,
+      localModels: { managed: { autoUpdate: false } },
+      memory: { links: { enabled: false } },
+    });
+    expect(parsed.localModels.managed.autoUpdate).toBe(false);
+    expect(parsed.memory.links.enabled).toBe(false);
+  });
+
+  // The parse rebuilds a fixed literal, so a block added by a newer
+  // schema only survives if it is carried across explicitly.
+  // Deliberately absent from `UserConfigFile` — the keys ride along on the
+  // object without widening the type, so the test has to reach past it.
+  it("carries unknown top-level keys through the parse", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION + 1,
+      somethingFromTheFuture: { nested: [1, 2, 3] },
+    }) as unknown as Record<string, unknown>;
+    expect(parsed.somethingFromTheFuture).toEqual({ nested: [1, 2, 3] });
+  });
+
+  it("retires the legacy telemetry alias instead of carrying it forward", () => {
+    const parsed = parseUserConfigFile({
+      version: 20,
+      telemetry: { trace: { enabled: true } },
+    }) as unknown as Record<string, unknown>;
+    expect(parsed.telemetry).toBeUndefined();
+    expect(parsed.tracing).toBeDefined();
+  });
+
+  it("rejects a version that is not a plausible whole number", () => {
+    for (const version of [42.5, 1e308, 0, -1]) {
+      expect(() => parseUserConfigFile({ version })).toThrow(
+        ConfigValidationError,
+      );
+    }
+  });
+
+  // JSON.parse — unlike an object literal — makes `__proto__` a real own
+  // key, which is the only way this reaches the carry-through spread.
+  it("drops a __proto__ key instead of carrying it through", () => {
+    const raw: unknown = JSON.parse(
+      `{"version": ${USER_CONFIG_VERSION}, "__proto__": {"polluted": true}}`,
+    );
+    expect(Object.hasOwn(raw as object, "__proto__")).toBe(true);
+
+    const parsed = parseUserConfigFile(raw);
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(Object.hasOwn(parsed, "__proto__")).toBe(false);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("never lets an unknown key shadow a parsed one", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      agent: { approvalLevel: 2 },
+    });
+    expect(parsed.agent.approvalLevel).toBe(2);
   });
 
   it("rejects legacy v1/v2/v3/v4 input — migration is not supported", () => {
@@ -148,7 +332,7 @@ describe("parseUserConfigFile", () => {
   it("fills cacheTtlMinutes/fallback defaults when migrating from v27", () => {
     const parsed = parseUserConfigFile({ version: 27 });
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
-    expect(parsed.web.search.cacheTtlMinutes).toBe(15);
+    expect(parsed.web.search.cacheTtlMinutes).toBe(60);
     expect(parsed.web.search.provider).toBe("exa");
     expect(parsed.web.search.fallback).toEqual(["duckduckgo"]);
   });
@@ -157,6 +341,27 @@ describe("parseUserConfigFile", () => {
     const parsed = parseUserConfigFile({ version: 28 });
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
     expect(parsed.tui.theme).toBe("auto");
+  });
+
+  it("fills web.fetch defaults when migrating from v37", () => {
+    const parsed = parseUserConfigFile({
+      version: 37,
+      web: { search: { provider: "exa", timeoutMs: 15_000 } },
+    });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.web.fetch.timeoutMs).toBe(30_000);
+    expect(parsed.web.fetch.connectTimeoutMs).toBe(10_000);
+    expect(parsed.web.fetch.maxRetries).toBe(2);
+    // The version bump must not drop the settings a v37 file already carried.
+    expect(parsed.web.search.timeoutMs).toBe(15_000);
+  });
+
+  it("accepts every version between the oldest supported and the current one", () => {
+    // A bump that forgets to append the outgoing version to the supported
+    // list locks out everyone whose config is still on it.
+    for (let version = 5; version <= USER_CONFIG_VERSION; version += 1) {
+      expect(() => parseUserConfigFile({ version })).not.toThrow();
+    }
   });
 
   it("preserves an explicit tui.theme name", () => {
@@ -173,6 +378,37 @@ describe("parseUserConfigFile", () => {
       tui: { theme: "   " },
     });
     expect(parsed.tui.theme).toBe("auto");
+  });
+
+  it("enables tui.mouse by default when migrating from v37", () => {
+    const parsed = parseUserConfigFile({ version: 37 });
+    expect(parsed.version).toBe(USER_CONFIG_VERSION);
+    expect(parsed.tui.mouse).toBe(true);
+  });
+
+  it("preserves tui.mouse: false so an operator's opt-out survives", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { theme: "auto", mouse: false },
+    });
+    expect(parsed.tui.mouse).toBe(false);
+  });
+
+  it("accepts the string forms parseBool understands for tui.mouse", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { mouse: "off" },
+    });
+    expect(parsed.tui.mouse).toBe(false);
+  });
+
+  it("rejects a non-boolean tui.mouse", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tui: { mouse: 42 },
+      }),
+    ).toThrow(/tui.mouse/);
   });
 
   it("rejects a non-string tui.theme", () => {
@@ -353,11 +589,22 @@ describe("parseUserConfigFile", () => {
     expect(parsed.agent.worldSnapshotMaxTokens).toBe(4_000);
   });
 
-  it("rejects non-positive conversationMaxTokens", () => {
+  it("accepts conversationMaxTokens: 0 as the auto sentinel", () => {
+    // `0` is not a request for a zero-token transcript: it is "let the
+    // window decide", the same sentinel `localModels.managed.contextSize`
+    // uses. It has to survive the parser to mean anything.
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      agent: { conversationMaxTokens: 0 },
+    });
+    expect(parsed.agent?.conversationMaxTokens).toBe(0);
+  });
+
+  it("rejects a negative conversationMaxTokens", () => {
     expect(() =>
       parseUserConfigFile({
         version: USER_CONFIG_VERSION,
-        agent: { conversationMaxTokens: 0 },
+        agent: { conversationMaxTokens: -1 },
       }),
     ).toThrow(/agent.conversationMaxTokens/);
   });
@@ -508,6 +755,38 @@ describe("parseUserConfigFile", () => {
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
     expect(parsed.localModels.managed.stopOnExit).toBe(true);
     expect(parsed.localModels.managed.autoUpdate).toBe(true);
+  });
+
+  it("defaults localModels.managed.autoUpdate to true", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.localModels.managed.autoUpdate).toBe(true);
+  });
+
+  it("migrates a pre-v41 autoUpdate:false (unused default) to true", () => {
+    const parsed = parseUserConfigFile({
+      version: 37,
+      localModels: { managed: { autoUpdate: false } },
+    });
+    expect(parsed.localModels.managed.autoUpdate).toBe(true);
+  });
+
+  // The migration gate is the LAST version that stored the dead default.
+  // v40 is the boundary: it must still migrate, v41 must be honoured.
+  // Without this pair the gate can drift off USER_CONFIG_VERSION unnoticed.
+  it("migrates a v40 autoUpdate:false (still the unused default) to true", () => {
+    const parsed = parseUserConfigFile({
+      version: 40,
+      localModels: { managed: { autoUpdate: false } },
+    });
+    expect(parsed.localModels.managed.autoUpdate).toBe(true);
+  });
+
+  it("preserves an explicit localModels.managed.autoUpdate=false on v41+", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { managed: { autoUpdate: false } },
+    });
+    expect(parsed.localModels.managed.autoUpdate).toBe(false);
   });
 
   it("preserves an explicit localModels.managed.device override", () => {
@@ -991,5 +1270,78 @@ describe("parseUserConfigFile", () => {
         memory: { retrieve: { rewriter: { timeoutMs: 0 } } },
       }),
     ).toThrow(/timeoutMs/);
+  });
+});
+
+describe("tui.whileBusySubmit", () => {
+  it("defaults to steer for a config file that predates the key", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { theme: "auto" },
+    });
+    expect(parsed.tui.whileBusySubmit).toBe("steer");
+  });
+
+  it("round-trips an explicit queue preference", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tui: { theme: "nord", whileBusySubmit: "queue" },
+    });
+    expect(parsed.tui.whileBusySubmit).toBe("queue");
+    expect(parsed.tui.theme).toBe("nord");
+  });
+
+  it("rejects an unknown mode instead of silently defaulting", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tui: { theme: "auto", whileBusySubmit: "interrupt" },
+      }),
+    ).toThrow(/whileBusySubmit/);
+  });
+});
+
+
+describe("numeric coercion of string config values", () => {
+  const base = { version: USER_CONFIG_VERSION };
+
+  it("loads a config whose integer was written as a decimal string", () => {
+    // Regression: a stricter `/^\d+$/` test rejected these, and because this
+    // parser runs on every startup a config.json holding "8080.0" made the
+    // whole CLI unbootable — with no way to repair it from inside the tool,
+    // since `config set` loads the config first. `parseInt` had converted
+    // them correctly all along, so they must keep working.
+    for (const raw of ["10.0", "25.0", "1e3", "+7"]) {
+      expect(() =>
+        parseUserConfigFile({ ...base, agent: { maxSteps: raw } }),
+      ).not.toThrow();
+    }
+    expect(
+      parseUserConfigFile({ ...base, agent: { maxSteps: "10.0" } }).agent
+        .maxSteps,
+    ).toBe(10);
+    expect(
+      parseUserConfigFile({ ...base, agent: { tokenBudget: "1e3" } }).agent
+        .tokenBudget,
+    ).toBe(1000);
+  });
+
+  it("still rejects a value that is not a complete number", () => {
+    for (const raw of ["60s", "100_000", "1,000", "10.9", "0x10", "abc"]) {
+      expect(() =>
+        parseUserConfigFile({ ...base, agent: { maxSteps: raw } }),
+      ).toThrow(/maxSteps/);
+    }
+  });
+
+  it("rejects an integer past the safe range instead of rounding it", () => {
+    // "9007199254740993" would be stored as ...992 — the same quiet
+    // corruption the strict parsing exists to prevent.
+    expect(() =>
+      parseUserConfigFile({
+        ...base,
+        agent: { tokenBudget: "9007199254740993" },
+      }),
+    ).toThrow(/tokenBudget/);
   });
 });

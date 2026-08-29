@@ -1,13 +1,32 @@
 import type { Key } from "ink";
 import type { TuiAction } from "../../tui-action.js";
+import type { TuiAppCallbacks } from "../../tui-app.js";
 import type { TuiState } from "../../tui-state.js";
 import { clampFallbackCursor, fallbackRowAt } from "./fallback-rows.js";
+
+/**
+ * Same shape as `LlmPanelKeyContext`, declared locally so this module
+ * never imports from `llm-panel-key-bindings.ts` (which imports us —
+ * a type-only cycle today, an accidental runtime one tomorrow).
+ */
+interface FallbackKeyContext {
+  state: TuiState;
+  dispatch: (action: TuiAction) => void;
+  callbacks: TuiAppCallbacks;
+}
 
 /**
  * Key handling for the Fallback pane, routed from `handleLlmPanelKey`
  * when `state.llmPanel.mode === "fallback"`. Returns true when the key
  * was consumed here, false to let the shared LLM-panel hotkeys (`[`/`]`
  * pane switch, `r` refresh, `/`, `L`, ...) run.
+ *
+ * Cursor moves and picker open/close are dispatched reducer actions; the
+ * chain EDITS go through `callbacks.onFallback*` instead, because the
+ * orchestrator that writes config listens on the event bus and dispatch
+ * never reaches it (the bus→dispatch bridge is one-way — dispatching the
+ * old `*_requested` actions was exactly how the pane silently did
+ * nothing).
  *
  * Bindings (chosen not to collide with the LLM tab's existing letters —
  * `f` filter, `n` add provider, `c` configure, `e`/`E` embedding, `s`
@@ -25,9 +44,9 @@ import { clampFallbackCursor, fallbackRowAt } from "./fallback-rows.js";
 export function handleFallbackPaneKey(
   input: string,
   key: Key,
-  ctx: { state: TuiState; dispatch: (action: TuiAction) => void },
+  ctx: FallbackKeyContext,
 ): boolean {
-  const { state, dispatch } = ctx;
+  const { state, dispatch, callbacks } = ctx;
   const panel = state.fallbackPanel;
 
   if (panel.addPicker) {
@@ -52,11 +71,10 @@ export function handleFallbackPaneKey(
   if (input === "<" || input === ">") {
     const row = fallbackRowAt(state);
     if (row?.kind === "link") {
-      dispatch({
-        type: "fallback_move_requested",
-        providerId: row.link.providerId,
-        delta: input === "<" ? -1 : 1,
-      });
+      callbacks.onFallbackMoveRequested?.(
+        row.link.providerId,
+        input === "<" ? -1 : 1,
+      );
     }
     return true;
   }
@@ -69,16 +87,13 @@ export function handleFallbackPaneKey(
   if (input === "d") {
     const row = fallbackRowAt(state);
     if (row?.kind === "link") {
-      dispatch({
-        type: "fallback_remove_requested",
-        providerId: row.link.providerId,
-      });
+      callbacks.onFallbackRemoveRequested?.(row.link.providerId);
     }
     return true;
   }
 
   if (input === "l") {
-    dispatch({ type: "fallback_append_local_toggle_requested" });
+    callbacks.onFallbackAppendLocalToggleRequested?.();
     return true;
   }
 
@@ -88,9 +103,9 @@ export function handleFallbackPaneKey(
 function handleAddPickerKey(
   input: string,
   key: Key,
-  ctx: { state: TuiState; dispatch: (action: TuiAction) => void },
+  ctx: FallbackKeyContext,
 ): boolean {
-  const { state, dispatch } = ctx;
+  const { state, dispatch, callbacks } = ctx;
   const picker = state.fallbackPanel.addPicker;
   if (!picker) return false;
   const options = state.fallbackPanel.addableProviderIds;
@@ -110,7 +125,7 @@ function handleAddPickerKey(
   if (key.return) {
     const providerId = options[picker.cursor];
     if (providerId) {
-      dispatch({ type: "fallback_add_requested", providerId });
+      callbacks.onFallbackAddRequested?.(providerId);
     }
     dispatch({ type: "fallback_add_picker_closed" });
     return true;

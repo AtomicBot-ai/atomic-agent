@@ -30,6 +30,14 @@ export interface ApprovalRequest {
    * the shape option is not offered.
    */
   commandShape?: string;
+  /**
+   * Absolute path this request would write, when the host may offer to
+   * retarget it before approving (`[e]` in the TUI). Set only by tools
+   * whose target is a free choice rather than a file the model just
+   * read — currently `os.fs.write`. Absent means "no redirect offered",
+   * and a host that ignores the field behaves exactly as before.
+   */
+  redirectablePath?: string;
 }
 
 /**
@@ -49,6 +57,15 @@ export interface ApprovalDecision {
   reason?: string;
   /** Session grant to record alongside an approval. Ignored when denied. */
   grant?: ApprovalGrantScope;
+  /**
+   * Operator-supplied replacement for the request's `redirectablePath`,
+   * approved along with the call. The gate passes it through untouched:
+   * it is the *tool* that resolves it, re-categorises it, and decides
+   * whether the new target needs another prompt — the gate never lets a
+   * decision widen the scope it was asked about. Ignored when denied,
+   * and by every tool that did not set `redirectablePath`.
+   */
+  pathOverride?: string;
 }
 
 export type ApprovalEmitter = (request: ApprovalRequest) => void;
@@ -72,6 +89,15 @@ export class ApprovalGateError extends Error {
 interface PendingEntry {
   resolve: (decision: ApprovalDecision) => void;
   request: ApprovalRequest;
+  /**
+   * Detaches the caller's abort listener. `{ once: true }` only fires —
+   * and so only self-removes — when the signal actually aborts, which
+   * never happens on the normal approve/deny path. Without this the
+   * listener stays attached to a signal that lives for the whole turn,
+   * so every gated tool call in a turn leaks one listener plus the
+   * closure over its `request` (which carries the command preview).
+   */
+  detach: () => void;
 }
 
 /**
@@ -177,20 +203,26 @@ export class ApprovalGate {
     const auto = this.autoApproval(request);
     if (auto) return Promise.resolve({ approvalId, approved: true, reason: auto });
     return new Promise<ApprovalDecision>((resolve, reject) => {
-      this.pending.set(approvalId, { resolve, request });
-      signal?.addEventListener(
-        "abort",
-        () => {
-          this.pending.delete(approvalId);
-          reject(
-            new ApprovalGateError(
-              "approval aborted before a decision was made",
-              approvalId,
-            ),
-          );
-        },
-        { once: true },
-      );
+      const onAbort = (): void => {
+        this.pending.delete(approvalId);
+        reject(
+          new ApprovalGateError(
+            "approval aborted before a decision was made",
+            approvalId,
+          ),
+        );
+      };
+      const detach = (): void => {
+        signal?.removeEventListener("abort", onAbort);
+      };
+      this.pending.set(approvalId, { resolve, request, detach });
+      // An already-aborted signal never fires `abort`, so check before
+      // subscribing rather than hanging until the turn is torn down.
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
       this.emitter(request);
     });
   }
@@ -227,6 +259,7 @@ export class ApprovalGate {
     const entry = this.pending.get(decision.approvalId);
     if (!entry) return false;
     this.pending.delete(decision.approvalId);
+    entry.detach();
     if (decision.approved && decision.grant) {
       this.recordGrant(entry.request, decision.grant);
     }
@@ -271,6 +304,47 @@ export class ApprovalGate {
 
   reject(approvalId: string, reason: string): boolean {
     return this.resolve({ approvalId, approved: false, reason });
+  }
+
+  /**
+   * Deny every request `sessionId` has pending, with `reason` as the
+   * decision reason the blocked tool call reports back to the model.
+   *
+   * For hosts whose approval surface stops watching a session while a
+   * turn keeps running on it — the TUI switching threads mid-turn is the
+   * case in point. An unresolved request would park that turn forever on
+   * `await request()`: nobody is left to answer, and the per-session
+   * FIFO would hold the session busy until process exit. Denying with an
+   * explicit reason is the same shape as the Telegram bridge's auto-deny
+   * timeout: the turn continues, the transcript says why.
+   *
+   * Returns how many requests were denied so the caller can tell the
+   * operator what switching away did.
+   */
+  denyPendingForSession(sessionId: string, reason: string): number {
+    const ids: string[] = [];
+    for (const [approvalId, entry] of this.pending) {
+      if (entry.request.sessionId === sessionId) ids.push(approvalId);
+    }
+    for (const approvalId of ids) this.reject(approvalId, reason);
+    return ids.length;
+  }
+
+  /**
+   * The request `sessionId` is currently parked on, if any.
+   *
+   * For hosts whose approval surface follows the visible session: a
+   * request raised by an off-screen session is only *pointed at* there
+   * (answering keys must never act across sessions), so when the
+   * operator navigates into the owning session the host needs the
+   * original request back to re-raise the prompt. At most one request
+   * is pending per session by design, so first match is the match.
+   */
+  pendingRequestForSession(sessionId: string): ApprovalRequest | null {
+    for (const entry of this.pending.values()) {
+      if (entry.request.sessionId === sessionId) return entry.request;
+    }
+    return null;
   }
 
   pendingCount(): number {

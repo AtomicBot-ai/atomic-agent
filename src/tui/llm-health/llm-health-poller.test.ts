@@ -25,6 +25,16 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Instant no-model `/props` stub. The default `fetchImpl` is the real
+ * global fetch, and a healthy first probe follows up with `/props` —
+ * on the fake hostnames below that meant a real DNS lookup racing the
+ * tests' 30ms sleeps, which lost often enough under a loaded test run
+ * to flake the updateUrl assertions.
+ */
+const stubProps: typeof fetch = () =>
+  Promise.resolve(new Response("{}", { status: 404 }));
+
+/**
  * `LlmHealthPoller` drives the always-on footer health indicator. These
  * tests lock in observable behaviours the reducer depends on: first-probe
  * probing state, steady-healthy polls without probing flicker, in-flight
@@ -125,7 +135,12 @@ describe("LlmHealthPoller", () => {
         latencyMs: 2,
       } satisfies HealthResult);
     const capture = makeCapture();
-    const poller = new LlmHealthPoller(capture, "http://first:9000", 60_000);
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://first:9000",
+      60_000,
+      stubProps,
+    );
     poller.start();
     await sleep(30);
     poller.updateUrl("http://second:9000");
@@ -192,7 +207,12 @@ describe("LlmHealthPoller", () => {
         latencyMs: 7,
       } satisfies HealthResult);
     const capture = makeCapture();
-    const poller = new LlmHealthPoller(capture, "http://old:9000", 10_000);
+    const poller = new LlmHealthPoller(
+      capture,
+      "http://old:9000",
+      10_000,
+      stubProps,
+    );
     poller.start();
     await new Promise((resolve) => setTimeout(resolve, 10));
     poller.updateUrl("http://new:9000");
@@ -357,5 +377,62 @@ describe("LlmHealthPoller", () => {
       (a) => a.type === "llm_health_updated" && a.status === "healthy",
     );
     expect(healthy).toHaveLength(0);
+  });
+
+  it("fetches the model label from /props under a reverse-proxy prefix", async () => {
+    // Same defect as every other llama endpoint: "/props" used to
+    // resolve against the origin, so a prefixed server never showed a
+    // model name — half of the "does not recognize my models" report.
+    spy.mockResolvedValue({
+      reachable: true,
+      status: 200,
+      error: null,
+      latencyMs: 1,
+      kind: "llama-server",
+    } satisfies HealthResult);
+    const urls: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify({ model_alias: "my-model" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(
+      capture,
+      "https://box.example/llama",
+      10_000,
+      fetchImpl,
+    );
+    poller.start();
+    await sleep(30);
+    poller.stop();
+    expect(urls).toEqual(["https://box.example/llama/props"]);
+    const modelEvents = capture.actions.filter((a) => a.type === "llm_model_updated");
+    expect(modelEvents.at(-1)).toMatchObject({ model: "my-model" });
+  });
+
+  it("spawns no child process on the probe tick", async () => {
+    // The poller used to sample the managed daemon's RSS with a `ps`
+    // child every tick, purely to feed a `healthy · 4.4 GB` readout on
+    // the composer bar. The readout is gone (see
+    // `composer-meta-controls.tsx`) and so is the sampler: at a
+    // three-second cadence that was 1 200 processes an hour for a
+    // number nobody acted on.
+    spy.mockResolvedValue({
+      reachable: true,
+      status: 200,
+      error: null,
+      latencyMs: 1,
+    } satisfies HealthResult);
+    const capture = makeCapture();
+    const poller = new LlmHealthPoller(capture, "http://127.0.0.1:19091", 50, stubProps);
+    poller.start();
+    await sleep(140);
+    poller.stop();
+    expect(
+      capture.actions.map((a) => a.type).filter((t) => t.includes("rss")),
+    ).toEqual([]);
   });
 });

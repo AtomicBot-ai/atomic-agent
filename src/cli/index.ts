@@ -10,12 +10,46 @@ import { traceCommand } from "./trace-command.js";
 import { taskCommand } from "./task-command.js";
 import { modelsCommand } from "./models-command.js";
 import { importCommand } from "./import-command.js";
+import { uninstallCommand } from "./uninstall-command.js";
+import { updateCommand } from "./update-command.js";
 import { tuiCommand } from "../tui/index.js";
+import { getAppVersion } from "../version.js";
 
 interface CommandDescriptor {
   name: string;
   summary: string;
+  /**
+   * Resolves to the process exit code:
+   *
+   *   0  success
+   *   1  operational failure — the command was invoked correctly and the
+   *      work did not succeed. A lookup miss ("no such skill") is a
+   *      failure, not a usage error.
+   *   2  usage error — unknown command or subcommand, missing required
+   *      argument, argument of the wrong kind. Nothing was attempted.
+   *
+   * `run`, `skill` and the dispatcher below implement this split. The
+   * rest of the table does not, and a caller must not read their codes
+   * through it:
+   *
+   *   - `config`, `serve`, `trace`, `task`, `models`, `import` predate
+   *     the split and return `1` for usage errors too, so their `1` does
+   *     not mean "the work failed".
+   *   - `trace replay` returns `2` for "stable-prefix drift detected", a
+   *     diff-style result code rather than a usage error.
+   *   - `tui` reports `0` or `1` from its own session, and when it
+   *     relaunches itself it passes the child process's status straight
+   *     through, so any code is possible (130 on SIGINT, say).
+   *   - `repl` is a scaffold and always returns `0`.
+   *
+   * Widening the split to those commands is a separate change.
+   */
   run: (args: string[]) => Promise<number>;
+  /**
+   * Omit the command from `--help` while keeping it dispatchable when
+   * typed. Used for scaffolds that are not ready to be advertised.
+   */
+  hidden?: boolean;
 }
 
 const COMMANDS: CommandDescriptor[] = [
@@ -38,6 +72,9 @@ const COMMANDS: CommandDescriptor[] = [
     name: "repl",
     summary: "Interactive debug REPL: step the agent manually",
     run: debugReplCommand,
+    // Still a stub (help/quit only) — dispatchable if typed, but not
+    // advertised until the real implementation lands.
+    hidden: true,
   },
   {
     name: "tui",
@@ -62,13 +99,27 @@ const COMMANDS: CommandDescriptor[] = [
   {
     name: "models",
     summary:
-      "Manage the local-LLM runtime + GGUF models (list|pull|use|status|start|stop|update|remove)",
+      "Manage the local-LLM runtime + GGUF models (list|pull|use|status|...) and search cloud models (search)",
     run: modelsCommand,
   },
   {
     name: "import",
     summary: "Import conversation history + cron jobs from another agent (hermes)",
     run: importCommand,
+  },
+  {
+    name: "update",
+    summary: "Self-update the installed binary from GitHub Releases (--check to probe only)",
+    run: updateCommand,
+  },
+  {
+    // Last, and last on purpose: the help listing is read top to bottom,
+    // and the one entry that destroys data belongs at the bottom of it
+    // rather than next to `update`, which it otherwise rhymes with.
+    name: "uninstall",
+    summary:
+      "Remove atomic-agent and all of its data from this machine (--dry-run to preview)",
+    run: uninstallCommand,
   },
 ];
 
@@ -78,9 +129,12 @@ function printHelp(): void {
     "",
     "Usage:",
     "  atomic-agent <command> [options]",
+    "  atag <command> [options]       (short alias, same binary)",
     "",
     "Commands:",
-    ...COMMANDS.map((c) => `  ${c.name.padEnd(8)} ${c.summary}`),
+    ...COMMANDS.filter((c) => !c.hidden).map(
+      (c) => `  ${c.name.padEnd(9)} ${c.summary}`,
+    ),
     "",
     "User config (edit via `atomic-agent config`):",
     "  <stateDir>/config.json         localModels.url, localModels.mode, log.level, agent.{tokenBudget,maxSteps,toolTimeoutMs,approvalLevel}",
@@ -120,6 +174,25 @@ async function main(): Promise<number> {
   if (command === "-h" || command === "--help") {
     printHelp();
     return 0;
+  }
+  if (command === "-v" || command === "--version" || command === "version") {
+    process.stdout.write(`atomic-agent ${getAppVersion()}\n`);
+    return 0;
+  }
+  // `help <cmd>` reads as naturally as `<cmd> --help`; alias one to the other.
+  if (command === "help") {
+    const target = rest[0];
+    if (!target) {
+      printHelp();
+      return 0;
+    }
+    const aliased = COMMANDS.find((c) => c.name === target);
+    if (!aliased) {
+      process.stderr.write(`unknown command: ${target}\n`);
+      printHelp();
+      return 2;
+    }
+    return aliased.run(["--help"]);
   }
   if (!command) {
     return tuiCommand([]);

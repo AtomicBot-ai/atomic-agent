@@ -1,5 +1,8 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { MouseListRow, pressEnter } from "../mouse/mouse-list-row.js";
+import { LocalModelsHuggingFaceBranch } from "./local-models-hf-branch.js";
+import { handleLocalModelsTabKey } from "../local-models/local-models-key-bindings.js";
 import { theme } from "../theme/theme.js";
 import { computeRowWindow } from "../row-window.js";
 import {
@@ -14,6 +17,7 @@ import {
   type RamFit,
 } from "../local-models/local-models-panel-state.js";
 import type { LocalModelDef } from "../../local-llm/index.js";
+import { renderProgressBar } from "./render-progress-bar.js";
 
 /**
  * Render the per-row availability badge that combines GGUF + mmproj
@@ -152,11 +156,6 @@ function renderEmbeddingDaemonLine(
   );
 }
 
-function renderProgressBar(percent: number, width: number): string {
-  const filled = Math.min(width, Math.round((percent / 100) * width));
-  return "=".repeat(filled) + " ".repeat(Math.max(0, width - filled));
-}
-
 function ramFitColor(fit: RamFit): string {
   switch (fit) {
     case "ok":
@@ -238,6 +237,9 @@ export function LocalModelsPanel({
       </Box>
     );
   }
+  if (panel.mode === "hfRef" || panel.mode === "hfPick") {
+    return <LocalModelsHuggingFaceBranch panel={panel} />;
+  }
   if (panel.mode === "detail") {
     const ref = resolveRowAt(panel);
     // Detail view is chat-only — embedding rows are intentionally
@@ -247,7 +249,20 @@ export function LocalModelsPanel({
     }
     const row = ref.row;
     const m = row.def;
-    const enterHint = !row.downloaded
+    // A pull for this very row is in flight: offering "Enter — download"
+    // again is both wrong and re-triggerable.
+    const rowPull =
+      panel.pull &&
+      !panel.pull.error &&
+      panel.pull.kind === "chat" &&
+      panel.pull.modelId === row.id
+        ? panel.pull
+        : null;
+    const enterHint = rowPull
+      ? rowPull.totalBytes > 0
+        ? `downloading… ${rowPull.percent}%`
+        : "downloading…"
+      : !row.downloaded
       ? row.def.supportsVision
         ? "Enter — download (gguf + mmproj)"
         : "Enter — download"
@@ -426,10 +441,11 @@ export function LocalModelsPanel({
               data dir: {panel.dataDir} · backend{" "}
               {panel.backend.currentTag ?? "—"}
               {panel.backend.updateAvailable === true ? " (update available)" : ""}
+              {panel.backend.autoUpdate ? "" : " · auto-update off"}
             </Text>
           ) : null}
           <Text color={theme.colors.muted}>
-            j/k move · Enter pull/activate (embedding: *row + Enter starts server) · g gguf · i info · d remove · s chat+embedding · E embeddings on/off · G gpu · B · r · L
+            j/k move · Enter pull/activate (embedding: *row + Enter starts server) · a add from hugging face · g gguf · i info · d remove · s chat+embedding · E embeddings on/off · G gpu · U auto-update · B · r · L
           </Text>
         </Box>
       ) : (
@@ -440,7 +456,7 @@ export function LocalModelsPanel({
           ) : null}
           {renderDaemonLine(panel)}
           <Text color={theme.colors.muted}>
-            j/k · Enter · d remove · s start · r
+            j/k · Enter · a add · d remove · s start · r
           </Text>
         </Box>
       )}
@@ -582,7 +598,15 @@ function renderChatRow(
   // their individual colors; the badges that fall off the edge are
   // informational and reappear once the window is widened.
   return (
-    <Box key={r.id} flexDirection="row">
+    <MouseListRow
+      key={r.id}
+      selected={isCursor}
+      onSelect={(mouse) =>
+        mouse.dispatch({ type: "local_models_cursor_set", row: index })
+      }
+      onActivate={pressEnter(handleLocalModelsTabKey)}
+    >
+    <Box flexDirection="row">
       <Text
         color={rowColor}
         bold={isCursor || downloading}
@@ -616,6 +640,7 @@ function renderChatRow(
         </Text>
       ) : null}
     </Box>
+    </MouseListRow>
   );
 }
 
@@ -664,7 +689,18 @@ function renderEmbeddingRow(
   // See renderChatRow: nowrap + per-fragment truncate-end so a narrow
   // window clips the row instead of wrapping and overlapping the next.
   return (
-    <Box key={r.id} flexDirection="row">
+    <MouseListRow
+      key={r.id}
+      selected={isCursor}
+      onSelect={(mouse) =>
+        mouse.dispatch({
+          type: "local_models_cursor_set",
+          row: embOffset + index,
+        })
+      }
+      onActivate={pressEnter(handleLocalModelsTabKey)}
+    >
+    <Box flexDirection="row">
       <Text color={rowColor} bold={isCursor || downloading} wrap="truncate-end">
         {isCursor ? "> " : "  "}
         {r.active ? "* " : ""}
@@ -685,7 +721,9 @@ function renderEmbeddingRow(
         </Text>
       ) : null}
     </Box>
+    </MouseListRow>
   );
 }
+
 
 
