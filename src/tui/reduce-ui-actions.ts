@@ -97,9 +97,28 @@ export function reduceUiAction(
         menuCursor: 0,
       };
     case "context_panel_toggled":
+      // The selection survives closing the panel. It is not a draft to
+      // be abandoned — each step was already written to the config — so
+      // clearing it here would reopen showing the *old* number, because
+      // `conversationPairsCap` still reports whatever the last prompt
+      // was built against until the next turn rebuilds it. The reducer
+      // for `prompt_built` retires it once measurement agrees.
       return { ...state, contextPanelOpen: !state.contextPanelOpen };
     case "context_panel_closed":
       return { ...state, contextPanelOpen: false };
+    case "context_pairs_selected": {
+      if (!state.contextPanelOpen) return state;
+      // The value, not a step. A delta action recomputes from whatever
+      // base the reducer happens to hold, which is not the base the
+      // caller used to decide what to write — two presses inside one
+      // render tick read the same stale state and the config and the
+      // display end up one apart, permanently. Carrying the number the
+      // caller actually persisted makes them impossible to disagree.
+      return {
+        ...state,
+        contextPanelPairsDraft: Math.max(1, Math.min(100, action.pairs)),
+      };
+    }
     case "context_menu_opened":
       // Re-opening while open simply moves the menu: the second
       // right-click already parked fresh actions on the provider handle.

@@ -1,3 +1,4 @@
+import { CONVERSATION_SECTION_LABEL } from "./context-usage-from-prompt.js";
 import { catalogEntryLookupForKind } from "./providers/providers-model-options.js";
 import type { ContextUsageSection, TuiState } from "./tui-state.js";
 
@@ -24,7 +25,19 @@ export interface ContextUsageView {
   /** Transcript fill as a percentage of that cap. */
   conversationPercent: number | null;
   /** What holds the cap down — drives the panel's "capped by" line. */
-  capSource: "config" | "window" | "floor" | "auto" | null;
+  capSource: "config" | "window" | "floor" | "auto" | "pairs" | null;
+  /** Macro-turns the prompt carried. */
+  pairs: number;
+  /** `agent.conversationMaxPairs` in force. */
+  pairsCap: number;
+  /** Macro-turns dropped whole — the count that matters once the unit is tasks. */
+  droppedPairs: number;
+  /**
+   * Cost of each macro-turn, oldest first. Lets the panel price a
+   * different pair count with a prefix sum, so the dial moves the gauge
+   * immediately rather than a prompt build later.
+   */
+  pairCosts: readonly number[];
   /**
    * Turns `packConversation` dropped to make the transcript fit. Any
    * non-zero value is the chip's violet state; the detail view spends
@@ -97,13 +110,98 @@ function resolveCapSource(
   cap: number | null,
   configured: number | null,
   auto: boolean,
+  boundBy: "pairs" | "tokens" | null,
 ): ContextUsageView["capSource"] {
   if (cap === null) return null;
+  // Above every token branch: when the operator's own task limit is what
+  // trimmed history, saying "capped by your conversationMaxTokens" sends
+  // them to a setting that would change nothing.
+  if (boundBy === "pairs") return "pairs";
   if (cap <= CONVERSATION_CAP_FLOOR) return "floor";
   if (auto) return "auto";
   if (configured !== null && cap < configured) return "window";
   return "config";
 }
+
+/**
+ * The same readout, recalculated as if the prompt carried `pairs` tasks.
+ *
+ * Everything outside the transcript is fixed for this turn, so the whole
+ * panel — title, percentage, the `conversation` row, `free` — follows
+ * from one prefix sum over `pairCosts`. Projecting the view rather than
+ * a single number is what lets every figure move together when the
+ * operator works the selector; recomputing them one at a time is how
+ * two numbers on the same screen end up disagreeing.
+ *
+ * No prompt build, no LLM call. The costs come from the same
+ * over-counting estimator the packer uses, so this and the next real
+ * gauge agree.
+ */
+export function usageAtPairs(
+  usage: ContextUsageView,
+  pairs: number,
+): ContextUsageView {
+  // Walk newest-first and stop where the packer would stop. Two limits
+  // apply to the real prompt, not one: the task count the operator
+  // picked, and the token cap underneath it. Summing the last N costs
+  // and reporting that was a projection of a prompt the packer would
+  // never build — on a long session it can claim a transcript twice the
+  // size of the one that would actually be sent.
+  const cap = usage.conversationCap ?? Number.POSITIVE_INFINITY;
+  const wanted = Math.max(0, Math.min(pairs, usage.pairCosts.length));
+  let transcript = 0;
+  let carried = 0;
+  for (let i = usage.pairCosts.length - 1; i >= 0 && carried < wanted; i -= 1) {
+    const cost = usage.pairCosts[i] ?? 0;
+    if (carried > 0 && transcript + cost > cap) break;
+    transcript += cost;
+    carried += 1;
+  }
+  // The newest task is never dropped for being too big — the packer
+  // pins it — so the first one is taken whatever it costs, and only
+  // then does the cap start refusing.
+  const tokens = overheadOf(usage) + transcript;
+  const droppedPairs = Math.max(0, usage.pairCosts.length - carried);
+  return {
+    ...usage,
+    tokens,
+    percent:
+      usage.contextWindow === null
+        ? null
+        : Math.min(100, Math.round((tokens / usage.contextWindow) * 100)),
+    conversationTokens: transcript,
+    pairs: carried,
+    pairsCap: pairs,
+    droppedPairs,
+    sections: usage.sections.map((section) =>
+      section.label === CONVERSATION_SECTION_LABEL
+        ? { ...section, tokens: transcript }
+        : section,
+    ),
+  };
+}
+
+/**
+ * Everything in the prompt that is not the transcript, measured the same
+ * way the transcript is.
+ *
+ * Deliberately the sum of the other sections rather than
+ * `tokens - conversationTokens`. Once a turn completes, `tokens` is
+ * replaced by the provider's real tokenizer count while the sections
+ * stay `estimateTokens` figures that over-count by design — so that
+ * subtraction mixes units and dumps the whole estimator bias into the
+ * overhead, which then under-reports every projection below the current
+ * task count. Adding estimates to estimates keeps the projection
+ * internally consistent, which is what the operator is comparing.
+ */
+function overheadOf(usage: ContextUsageView): number {
+  let overhead = 0;
+  for (const section of usage.sections) {
+    if (section.label !== CONVERSATION_SECTION_LABEL) overhead += section.tokens;
+  }
+  return overhead;
+}
+
 
 export function selectContextUsage(state: TuiState): ContextUsageView | null {
   const {
@@ -114,6 +212,11 @@ export function selectContextUsage(state: TuiState): ContextUsageView | null {
     conversationCap,
     conversationCapConfigured,
     conversationCapAuto,
+    conversationPairs,
+    conversationPairsCap,
+    conversationBoundBy,
+    droppedPairs,
+    pairCosts,
   } = state.contextUsage;
   // Nothing has been built yet: the chip stays off the bar rather than
   // showing a zero, which would claim the window is empty when what we
@@ -137,7 +240,12 @@ export function selectContextUsage(state: TuiState): ContextUsageView | null {
       conversationCap,
       conversationCapConfigured,
       conversationCapAuto,
+      conversationBoundBy,
     ),
+    pairs: conversationPairs,
+    pairsCap: conversationPairsCap,
+    droppedPairs,
+    pairCosts,
     droppedTurns,
     sections,
   };

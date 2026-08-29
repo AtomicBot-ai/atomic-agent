@@ -22,7 +22,7 @@ function stubStdout(
 ): string {
   return (
     `body\n__ATOMIC_CURL_META__${status}|text/plain|4|0.01|` +
-    `${retryAfter}|${redirectUrl}`
+    `${redirectUrl}__ATOMIC_CURL_RA__${retryAfter}`
   );
 }
 

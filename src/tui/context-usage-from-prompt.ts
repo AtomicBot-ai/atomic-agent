@@ -10,6 +10,11 @@ export const EMPTY_CONTEXT_USAGE: ContextUsageState = {
   conversationCap: null,
   conversationCapConfigured: null,
   conversationCapAuto: false,
+  conversationPairs: 0,
+  droppedPairs: 0,
+  conversationPairsCap: 0,
+  conversationBoundBy: null,
+  pairCosts: [],
   sections: [],
 };
 
@@ -20,12 +25,20 @@ export const EMPTY_CONTEXT_USAGE: ContextUsageState = {
  * that one follows the prompt's own assembly, which is not how anyone
  * reads a bill.
  */
+/**
+ * The transcript's row label. Exported because the context panel has to
+ * find that one row to recalculate it when the task count changes, and
+ * matching on a literal string in two files is a bug waiting for someone
+ * to reword one of them.
+ */
+export const CONVERSATION_SECTION_LABEL = "conversation";
+
 const SECTIONS: readonly {
   key: keyof BuiltPrompt["tokens"];
   label: string;
 }[] = [
   { key: "stablePrefix", label: "prompt scaffold" },
-  { key: "conversation", label: "conversation" },
+  { key: "conversation", label: CONVERSATION_SECTION_LABEL },
   { key: "recalled", label: "recalled memory" },
   { key: "memoryIndex", label: "memory index" },
   { key: "worldSnapshot", label: "world snapshot" },
@@ -57,6 +70,11 @@ export function contextUsageFromPrompt(prompt: BuiltPrompt): ContextUsageState {
     conversationCap: prompt.conversationCapEffective,
     conversationCapConfigured: prompt.limits.conversation,
     conversationCapAuto: prompt.conversationCapAuto,
+    conversationPairs: prompt.conversationPairs,
+    droppedPairs: prompt.droppedPairs,
+    conversationPairsCap: prompt.conversationPairsCap,
+    conversationBoundBy: prompt.conversationBoundBy,
+    pairCosts: prompt.pairCosts,
     sections,
   };
 }

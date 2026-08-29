@@ -40,7 +40,13 @@ function builtPrompt(overrides: Partial<BuiltPrompt> = {}): BuiltPrompt {
     },
     contextWindow: 131_072,
     conversationCapEffective: 14_000,
+    conversationCapAuto: false,
     droppedTurns: 0,
+    conversationPairs: 3,
+    droppedPairs: 0,
+    conversationPairsCap: 20,
+    conversationBoundBy: null,
+    pairCosts: [10_000, 11_000, 10_880],
     ...overrides,
   };
 }

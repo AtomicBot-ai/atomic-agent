@@ -131,9 +131,18 @@ export function ContextChip({
  * fabrication.
  */
 export function chipBody(usage: ContextUsageView): string {
-  const lost = usage.droppedTurns > 0 ? ` · ${usage.droppedTurns} lost` : "";
+  // Tasks, not rows. "12 lost" says nothing about how far back the agent
+  // can still see; "3 tasks" is the unit the operator set the limit in
+  // and the one they can act on.
+  const lost =
+    usage.droppedPairs > 0
+      ? ` · ${usage.droppedPairs} task${usage.droppedPairs === 1 ? "" : "s"} lost`
+      : usage.droppedTurns > 0
+        ? ` · ${usage.droppedTurns} lost`
+        : "";
+  const tasks = usage.pairsCap > 0 ? `${usage.pairs}/${usage.pairsCap} tasks · ` : "";
   if (usage.contextWindow !== null && usage.percent !== null) {
-    return `[${renderProgressBar(usage.percent, GAUGE_WIDTH)}] ${pair(
+    return `[${renderProgressBar(usage.percent, GAUGE_WIDTH)}] ${tasks}${pair(
       usage.tokens,
       usage.contextWindow,
     )}${lost}`;
@@ -151,7 +160,9 @@ export function chipBody(usage: ContextUsageView): string {
 
 /** The chip's ground: three steps of accent, then violet once trimmed. */
 export function groundFor(usage: ContextUsageView): string {
-  if (usage.droppedTurns > 0) return theme.colors.accentAlt;
+  if (usage.droppedPairs > 0 || usage.droppedTurns > 0) {
+    return theme.colors.accentAlt;
+  }
   const ground = theme.colors.railBackground;
   const accent = theme.colors.accent;
   // The ramp follows the same number the bar does — how full the window

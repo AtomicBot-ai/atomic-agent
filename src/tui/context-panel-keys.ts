@@ -14,6 +14,11 @@ export interface ContextPanelKeyContext {
    * one; `a` is then swallowed like any other bare key.
    */
   onSetCapAuto?: () => void;
+  /**
+   * Step the task count by `delta`. Optional: a surface with no config
+   * writer simply swallows the key.
+   */
+  onStepPairs?: (delta: number) => void;
 }
 
 /**
@@ -47,9 +52,38 @@ export function handleContextPanelKey(
     dispatch({ type: "context_panel_closed" });
     return true;
   }
-  if (input === "a" && ctx.onSetCapAuto) {
-    ctx.onSetCapAuto();
+  // `-` / `+` work the selector. Each step is applied, not staged: the
+  // control *is* the setting, and a selector that needed a second key
+  // to mean anything would be a form, not a dial. Arrow keys are not
+  // used — they would read as navigation in a panel with nothing to
+  // navigate.
+  //
+  // Counted, not matched. Holding a key makes the terminal send the
+  // repeats in one chunk and Ink hands them over as a single string, so
+  // `input === "-"` misses `"---"` entirely and the burst falls through
+  // to the swallow below — the selector simply would not move for
+  // anyone who held the key down. Stepping by the run also means one
+  // config write for the whole burst instead of one per repeat.
+  const down = runLength(input, "-_");
+  if (down > 0) {
+    ctx.onStepPairs?.(-down);
+    return true;
+  }
+  const up = runLength(input, "+=");
+  if (up > 0) {
+    ctx.onStepPairs?.(up);
     return true;
   }
   return !key.ctrl && !key.meta;
+}
+
+/**
+ * How many steps `input` asks for, or `0` if it is not purely this
+ * control's key. A mixed chunk — a repeat that caught the edge of
+ * something else — is not this key's to interpret.
+ */
+function runLength(input: string, keys: string): number {
+  if (input.length === 0) return 0;
+  for (const ch of input) if (!keys.includes(ch)) return 0;
+  return input.length;
 }

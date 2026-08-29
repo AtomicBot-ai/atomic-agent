@@ -113,6 +113,42 @@ describe("LlamaServerClient.complete", () => {
     });
   });
 
+  it("keeps the errno and the original error on a network failure", async () => {
+    // Without these, every unreachable-daemon failure is indistinguishable
+    // from every died-mid-generation one: same name, same null status,
+    // same empty message in an error report.
+    const cause = Object.assign(
+      new Error("connect ECONNREFUSED 127.0.0.1:9999"),
+      { code: "ECONNREFUSED" },
+    );
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async () => {
+        throw Object.assign(new TypeError("fetch failed"), { cause });
+      }),
+      completionRetries: 1,
+    });
+    await expect(client.complete({ prompt: "x" })).rejects.toMatchObject({
+      name: "LlamaServerError",
+      status: null,
+      code: "ECONNREFUSED",
+    });
+  });
+
+  it("leaves `code` undefined when the transport left no errno", async () => {
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async () => {
+        throw new Error("something opaque");
+      }),
+      completionRetries: 1,
+    });
+    await expect(client.complete({ prompt: "x" })).rejects.toMatchObject({
+      name: "LlamaServerError",
+      code: undefined,
+    });
+  });
+
   it("retries transient 5xx responses and eventually succeeds", async () => {
     let calls = 0;
     const client = new LlamaServerClient({
