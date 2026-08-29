@@ -4,6 +4,14 @@ import { isThemeName, THEME_NAMES } from "../theme/theme.js";
 import { parseSlashCommand } from "./slash-command-parser.js";
 import { resolveSlashCommand, SLASH_COMMANDS } from "./slash-commands.js";
 import { renderToolsOverview, renderToolsSearch } from "./tools-listing.js";
+import { getConfig } from "../../config/index.js";
+import { parsePositiveInt } from "../../config/config-schema.js";
+import { ConfigValidationError } from "../../config/config-validation-error.js";
+import {
+  getUserConfigPath,
+  ensureUserConfigFileSync,
+  writeUserConfigFileSync,
+} from "../../config/config-file.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -218,6 +226,8 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return dispatchLlmSub(parsed.args);
     case "model":
       return dispatchModelsSub(parsed.args, parsed.name);
+    case "max_steps":
+      return dispatchMaxStepsSub(parsed.args);
     case "tasks":
       return pureActions([
         { type: "ui_mode_set", mode: "debug" },
@@ -737,5 +747,60 @@ function dispatchAnalyticsSub(rawArgs: string): SlashDispatchResult {
   }
   return pureActions([], {
     systemMessage: "usage: /analytics on | off | status",
+  });
+}
+
+/**
+ * Sub-dispatcher for `/max_steps [number]`. Bare `/max_steps` shows the
+ * current value. `/max_steps <number>` sets a new positive integer value.
+ */
+function dispatchMaxStepsSub(rawArgs: string): SlashDispatchResult {
+  const args = rawArgs.trim();
+  if (args.length === 0) {
+    // Show current value
+    const current = getConfig().agent.maxSteps;
+    return pureActions([], {
+      systemMessage: `current max_steps: ${current}`,
+    });
+  }
+
+  // Parse and validate the new value
+  let newValue: number;
+  try {
+    // Reuse the same validation as in config-schema.ts
+    newValue = parsePositiveInt(args, "max_steps");
+  } catch (err) {
+    if (err instanceof ConfigValidationError) {
+      return pureActions([], {
+        systemMessage: err.message,
+      });
+    }
+    return pureActions([], {
+      systemMessage: `invalid max_steps value: ${args}`,
+    });
+  }
+
+  // Update the runtime config
+  const config = getConfig();
+  const oldValue = config.agent.maxSteps;
+  config.agent.maxSteps = newValue;
+
+  // Persist to config.json
+  try {
+    const stateDir = getConfig().paths.stateDir;
+    const userConfigPath = getUserConfigPath(stateDir);
+    const userConfig = ensureUserConfigFileSync(userConfigPath);
+    userConfig.agent.maxSteps = newValue;
+    writeUserConfigFileSync(userConfigPath, userConfig);
+  } catch (err) {
+    // If we can't persist, return an error but still update runtime
+    const message = err instanceof Error ? err.message : String(err);
+    return pureActions([], {
+      systemMessage: `max_steps updated to ${newValue} (runtime only - failed to persist: ${message})`,
+    });
+  }
+
+  return pureActions([], {
+    systemMessage: `max_steps updated from ${oldValue} to ${newValue}`,
   });
 }

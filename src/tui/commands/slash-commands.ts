@@ -87,6 +87,11 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
       "open chat model picker · subcommands: pull <id> | use <id> | status | <base-url>",
     aliases: ["models", "local"],
   },
+  {
+    name: "max_steps",
+    description:
+      "get or set the agent's max_steps configuration: `/max_steps` | `/max_steps <number>`",
+  },
   { name: "tasks", description: "jump to the Tasks tab (Option 4 cron + ingress UI)" },
   {
     name: "task",
