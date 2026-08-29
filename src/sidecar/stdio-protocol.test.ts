@@ -195,3 +195,76 @@ describe("StdioProtocol", () => {
     expect(received).toHaveLength(1);
   });
 });
+
+describe("StdioProtocol output that died under us", () => {
+  /** A writable whose far end has gone: every write raises EPIPE. */
+  function brokenOutput() {
+    const output = new PassThrough();
+    output.setEncoding("utf8");
+    const original = output.write.bind(output);
+    let broken = false;
+    return {
+      output,
+      break() {
+        broken = true;
+        output.emit(
+          "error",
+          Object.assign(new Error("write EPIPE"), {
+            code: "EPIPE",
+            syscall: "write",
+          }),
+        );
+      },
+      install() {
+        output.write = ((chunk: string) => {
+          if (broken) {
+            throw Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+          }
+          return original(chunk);
+        }) as typeof output.write;
+      },
+    };
+  }
+
+  it("does not rethrow when the host pipe errors — the peer left, we did not break", () => {
+    const input = new PassThrough();
+    const broken = brokenOutput();
+    const protocol = new StdioProtocol({ input, output: broken.output });
+    expect(protocol.isOutputClosed()).toBe(false);
+    expect(() => broken.break()).not.toThrow();
+    expect(protocol.isOutputClosed()).toBe(true);
+  });
+
+  it("silently stops emitting once the output is closed", () => {
+    const input = new PassThrough();
+    const broken = brokenOutput();
+    broken.install();
+    const protocol = new StdioProtocol({ input, output: broken.output });
+    broken.break();
+    // The runtime keeps fanning events out at its own pace; none of them
+    // may resurrect the dead pipe or throw out of `emitEvent`.
+    expect(() => protocol.emitEvent("log", { message: "after" })).not.toThrow();
+    expect(() => protocol.respond("c1", { ok: true })).not.toThrow();
+  });
+
+  it("swallows a synchronous EPIPE from a destroyed stream", () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    output.destroy();
+    const protocol = new StdioProtocol({ input, output });
+    expect(() => protocol.emitEvent("log", { message: "x" })).not.toThrow();
+  });
+
+  it("leaves a non-broken-pipe stream error alone", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    new StdioProtocol({ input, output });
+    const thrown = new Promise<unknown>((resolve) => {
+      process.once("uncaughtException", resolve);
+    });
+    output.emit("error", new Error("genuinely broken"));
+    await expect(thrown).resolves.toMatchObject({
+      message: "genuinely broken",
+    });
+  });
+});

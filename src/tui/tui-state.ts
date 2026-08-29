@@ -272,6 +272,20 @@ export interface ContextUsageState {
    * as what is holding the transcript down. Nothing is: the window is.
    */
   conversationCapAuto: boolean;
+  /** Macro-turns the prompt carried. */
+  conversationPairs: number;
+  /** Macro-turns dropped whole. */
+  droppedPairs: number;
+  /** `agent.conversationMaxPairs` in force. */
+  conversationPairsCap: number;
+  /** Which limit trimmed history, when either did. */
+  conversationBoundBy: "pairs" | "tokens" | null;
+  /**
+   * Token cost of each macro-turn, oldest first — enough to price a
+   * different pair count without building another prompt, so moving the
+   * dial redraws the gauge while the operator is looking at it.
+   */
+  pairCosts: readonly number[];
   /** Per-section breakdown, for the detail view. Empty before the first prompt. */
   sections: readonly ContextUsageSection[];
 }
@@ -459,6 +473,16 @@ export interface TuiState {
   menuOpen: boolean;
   /** The composer's context detail panel floats over the chat. */
   contextPanelOpen: boolean;
+  /**
+   * Task count the operator is trying out in the open panel, before
+   * committing it. `null` means the panel is reporting what the last
+   * prompt actually did.
+   *
+   * A draft rather than a live config write: the whole point is to see
+   * what a different limit would cost before choosing it, and writing on
+   * every keypress would rebuild the budget under the cursor.
+   */
+  contextPanelPairsDraft: number | null;
   /**
    * Which of the composer meta row's three controls has its switch open
    * (backend kind / provider / model), and where its cursor sits.
@@ -740,6 +764,7 @@ export function createInitialTuiState(
     slashPaletteCursor: 0,
     menuOpen: false,
     contextPanelOpen: false,
+    contextPanelPairsDraft: null,
     composerSwitch: null,
     contextMenu: null,
     menuPath: null,

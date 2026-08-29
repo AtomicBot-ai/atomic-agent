@@ -140,8 +140,33 @@ describe("parseUserConfigFile", () => {
     expect(parsed.agent.approvalLevel).toBe(3);
   });
 
+  it("takes a numeric string, like every other number in this file", () => {
+    // `config set <key> <value>` hands the schema the raw argv string on
+    // purpose — guessing the type at the CLI would be a second source of
+    // truth that drifts the moment a field changes type — and every
+    // other numeric key coerces accordingly. `approvalLevel` was the one
+    // exception, which made the ladder the only key the dotted-key
+    // editor could not write, and it said so with a message that asked
+    // for exactly what it had been given.
+    for (const [input, want] of [
+      ["3", 3],
+      [" 5 ", 5],
+      ["1", 1],
+    ] as const) {
+      expect(
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          agent: { approvalLevel: input },
+        }).agent.approvalLevel,
+        `${JSON.stringify(input)} should be accepted`,
+      ).toBe(want);
+    }
+  });
+
   it("rejects out-of-range or non-integer agent.approvalLevel", () => {
-    for (const bad of [0, 6, 2.5, "3", true]) {
+    // A string that names a number is fine; a string that does not, a
+    // fractional level, and anything off the 1..5 ladder are not.
+    for (const bad of [0, 6, 2.5, "2.5", "high", "", true]) {
       expect(() =>
         parseUserConfigFile({
           version: USER_CONFIG_VERSION,

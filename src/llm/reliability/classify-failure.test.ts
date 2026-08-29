@@ -57,3 +57,33 @@ describe("classifyFailure", () => {
     expect(classifyFailure(undefined)).toBe("tool");
   });
 });
+
+describe("classifyFailure — raw network failures", () => {
+  it("maps undici's `fetch failed` to transport, not tool", () => {
+    const inner = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:19091"), {
+      code: "ECONNREFUSED",
+    });
+    const err = Object.assign(new TypeError("fetch failed"), { cause: inner });
+    expect(classifyFailure(err)).toBe("transport");
+  });
+
+  it("maps a socket that died mid-body to transport", () => {
+    expect(classifyFailure(new Error("terminated"))).toBe("transport");
+    expect(classifyFailure(new Error("socket hang up"))).toBe("transport");
+  });
+
+  it("still treats a genuine runtime bug as a tool failure", () => {
+    expect(classifyFailure(new TypeError("x.map is not a function"))).toBe(
+      "tool",
+    );
+  });
+
+  it("keeps cancellation ahead of the network branch", () => {
+    // An aborted request surfaces as ECONNRESET; user intent still wins.
+    const err = Object.assign(new Error("The operation was aborted"), {
+      name: "AbortError",
+      code: "ECONNRESET",
+    });
+    expect(classifyFailure(err)).toBe("cancelled");
+  });
+});

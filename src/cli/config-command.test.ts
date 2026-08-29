@@ -280,6 +280,33 @@ describe("configCommand", () => {
       }
     });
 
+    it("set writes the approval ladder, the one key that matters most", async () => {
+      // `config set` hands the schema the raw argv string on purpose —
+      // guessing the type at the CLI would be a second source of truth
+      // that drifts the moment a field changes type. `parseApprovalLevel`
+      // took numbers only, which made `agent.approvalLevel` the single
+      // key the dotted-key editor could not write, and it said so in a
+      // message that asked for exactly what it had been given:
+      // `expected an integer between 1 and 5, got "3"`.
+      for (const level of ["1", "3", "5"] as const) {
+        seedSparseConfig({ agent: { maxSteps: 7 } });
+        stdout = "";
+        const code = await configCommand(["set", "agent.approvalLevel", level]);
+        expect(code, `level ${level} should be accepted`).toBe(0);
+        expect(stdout).toContain(`agent.approvalLevel = ${level}`);
+      }
+    });
+
+    it("set still refuses an approval level outside the ladder", async () => {
+      seedSparseConfig({ agent: { maxSteps: 7 } });
+      for (const bad of ["0", "6", "2.5", "high"] as const) {
+        stderr = "";
+        const code = await configCommand(["set", "agent.approvalLevel", bad]);
+        expect(code, `${bad} should be rejected`).toBe(1);
+        expect(stderr).toContain("agent.approvalLevel");
+      }
+    });
+
     it("set rejects an integer too large to round-trip", async () => {
       // Past 2^53 the literal is silently stored as a different number.
       seedSparseConfig({ agent: { maxSteps: 7 } });
