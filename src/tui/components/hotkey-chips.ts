@@ -1,5 +1,10 @@
 import { MENU_LEADER_LABEL } from "../menu/menu-keys.js";
-import { applyNavSlot, decideApproval } from "../app-key-bindings.js";
+import {
+  APPROVAL_CHORDS,
+  PLAN_CHORDS,
+  applyNavSlot,
+  decideApproval,
+} from "../app-key-bindings.js";
 import type { MouseContextValue } from "../mouse/mouse-context.js";
 import { cycleNavSlot } from "../section.js";
 import { hasShiftEnterNewline } from "../shift-enter-support.js";
@@ -65,18 +70,40 @@ export function resolveChips(
   const hasDraft = state.inputValue.length > 0;
   if (state.pendingApproval) {
     const approval = state.pendingApproval;
+    // The chords, not the bare letters. The chat composer stays live
+    // while a prompt is up, so `approvalHotkey` only answers to a
+    // *modified* key — a bare `y` is text and lands in the draft. This
+    // strip used to advertise `y` / `n`, which meant the two things on
+    // screen telling the operator how to answer disagreed, and the one
+    // in the larger type was the one that did nothing. `n` was wrong on
+    // both counts: deny is `d`, because `n` is one keystroke from the
+    // newline the editor below is still listening for.
     return [
       {
-        key: "y",
+        key: `ctrl+${APPROVAL_CHORDS.approve}`,
         label: "approve",
         onClick: (mouse) => decideApproval(approval, true, mouse),
       },
       {
-        key: "n",
+        key: `ctrl+${APPROVAL_CHORDS.deny}`,
         label: "deny",
         onClick: (mouse) => decideApproval(approval, false, mouse),
       },
       { key: "esc", label: "abort run" },
+    ];
+  }
+  // The plan hand-off, same shape as the approval strip above and for
+  // the same reason: the buttons under the plan are drawn once, in the
+  // transcript, and scroll away with it, while this row stays put. It
+  // is also the only place the chords are written down — the buttons
+  // carry their full labels and adding `· ctrl+y` to each one pushed
+  // the third button onto a second line at 92 columns.
+  if (state.planHandoff) {
+    return [
+      { key: `ctrl+${PLAN_CHORDS.auto}`, label: "run it · auto" },
+      { key: `ctrl+${PLAN_CHORDS.bypass}`, label: "run it · bypass", shed: 2 },
+      { key: `ctrl+${PLAN_CHORDS.dismiss}`, label: "dismiss plan", shed: 1 },
+      { key: "esc", label: "menu" },
     ];
   }
   // An armed leader owns the very next keystroke and unfocuses the editor

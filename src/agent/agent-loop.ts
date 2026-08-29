@@ -79,6 +79,12 @@ export interface AgentLoopDependencies {
   capabilities: CapabilitiesSummary;
   /** Model-specific reasoning behaviour derived from llama-server /props. */
   profile?: ModelProfile;
+  /**
+   * Context window resolved from the model catalogue, for providers with
+   * no `/props` probe. Read per step so a mid-session model swap is
+   * reflected without restarting the loop.
+   */
+  contextWindow?: () => number | null;
   /** Defaults to `grammar` when omitted (test / legacy wiring). */
   toolTransport?: ToolCallTransport;
   toolCallAdapter?: ToolCallAdapter | null;
@@ -607,6 +613,9 @@ export class AgentLoop {
             slotManager: this.deps.slotManager,
             grammar: activeGrammar,
             profile: activeProfile,
+            ...(this.deps.contextWindow
+              ? { contextWindow: this.deps.contextWindow() }
+              : {}),
             toolTransport: this.deps.toolTransport ?? "grammar",
             toolCallAdapter: this.deps.toolCallAdapter ?? null,
             supportsSlotAffinity: this.deps.supportsSlotAffinity ?? true,

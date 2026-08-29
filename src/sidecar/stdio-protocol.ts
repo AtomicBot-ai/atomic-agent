@@ -8,6 +8,7 @@ import type {
   SidecarResponse,
 } from "./sidecar-events.js";
 import { isHostRequest } from "./sidecar-events.js";
+import { isBrokenPipeError } from "../error-reporting/broken-pipe.js";
 
 export interface StdioProtocolOptions {
   input: Readable;
@@ -26,6 +27,7 @@ export class StdioProtocol {
   private buffer = "";
   private requestHandler: RequestHandler | null = null;
   private closed = false;
+  private outputClosed = false;
 
   constructor(private readonly options: StdioProtocolOptions) {
     options.input.setEncoding("utf8");
@@ -33,6 +35,17 @@ export class StdioProtocol {
     options.input.on("end", () => {
       this.flushTail();
       this.closed = true;
+    });
+    // The host end of the pipe can vanish at any moment — the desktop
+    // app quits, the CLI that spawned us is killed. Node surfaces that
+    // as an ASYNCHRONOUS `error` on the stream, and a stream with no
+    // `error` listener throws it as an uncaught exception: a healthy
+    // agent dying with a raw EPIPE stack because its peer went away
+    // first. Listening (and latching `outputClosed`) turns that into
+    // "stop emitting", which is all a vanished host can mean.
+    options.output.on("error", (err) => this.onOutputError(err));
+    options.output.on("close", () => {
+      this.outputClosed = true;
     });
   }
 
@@ -78,6 +91,15 @@ export class StdioProtocol {
     return this.closed;
   }
 
+  /**
+   * True once the host stopped reading — the pipe errored, was
+   * destroyed, or ended. Every subsequent `emitEvent` / `respond` is a
+   * silent no-op; there is nobody left to read the frame.
+   */
+  isOutputClosed(): boolean {
+    return this.outputClosed;
+  }
+
   private ingest(chunk: string): void {
     this.buffer += chunk;
     let newlineIndex = this.buffer.indexOf("\n");
@@ -114,9 +136,31 @@ export class StdioProtocol {
     }
   }
 
+  /**
+   * Latch the output as closed. Only a broken-pipe style failure is
+   * swallowed — anything else is a real stream bug and is re-thrown on
+   * the next tick so it is not lost, matching Node's default behaviour
+   * for an unhandled stream error.
+   */
+  private onOutputError(err: unknown): void {
+    this.outputClosed = true;
+    if (isBrokenPipeError(err)) return;
+    queueMicrotask(() => {
+      throw err;
+    });
+  }
+
   private writeMessage(message: SidecarMessage): void {
+    if (this.outputClosed || this.options.output.destroyed) return;
     const line = `${JSON.stringify(message)}\n`;
-    this.options.output.write(line);
+    try {
+      this.options.output.write(line);
+    } catch (err) {
+      // A synchronous throw from `write` (already-destroyed stream)
+      // reaches us here rather than through the `error` event.
+      this.outputClosed = true;
+      if (!isBrokenPipeError(err)) throw err;
+    }
   }
 }
 

@@ -699,7 +699,20 @@ function reduceStepEvent(
       // The feed still ignores the prompt text itself — it would drown
       // the log — but the token breakdown that comes with it is the only
       // authoritative statement of what is in the window right now.
-      return { ...state, contextUsage: contextUsageFromPrompt(event.prompt) };
+      return {
+        ...state,
+        contextUsage: contextUsageFromPrompt(event.prompt),
+        // Reality has caught up with the selector: the prompt was built
+        // against the number the operator chose, so the local override
+        // is no longer telling anyone anything the measurement does not.
+        // Cleared only on a match, because a build that predates the
+        // change would otherwise snap the selector back to the old value
+        // in front of them.
+        contextPanelPairsDraft:
+          state.contextPanelPairsDraft === event.prompt.conversationPairsCap
+            ? null
+            : state.contextPanelPairsDraft,
+      };
     case "llm_completed": {
       // `prompt_built` carried an estimate (`estimateTokens` over-counts
       // by design); the provider just reported what its own tokenizer

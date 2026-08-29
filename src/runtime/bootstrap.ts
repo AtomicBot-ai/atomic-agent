@@ -1377,6 +1377,27 @@ export async function createAgentRuntime(
     return resolveModel(entry, modelId, catalogForProvider(entry));
   };
 
+  /**
+   * The active model's context window, for providers the `/props` probe
+   * cannot reach.
+   *
+   * `source === "default"` is deliberately treated as unknown. That
+   * branch is `DEFAULT_CHAT`'s nominal 128k — a placeholder, not a fact
+   * about the model actually serving the request — and a budget computed
+   * against a guessed window silently mis-sizes every prompt. Better to
+   * report no window and let the caller fall back to a fixed cap it can
+   * defend. The same reasoning keeps the TUI gauge from drawing itself
+   * against that number.
+   *
+   * Resolved per step rather than captured once, so switching model
+   * mid-session is picked up by the next prompt.
+   */
+  const resolveCatalogContextWindow = (): number | null => {
+    const model = resolveModelPricing(resolveActiveModelName());
+    if (!model || model.source === "default") return null;
+    return model.contextWindow > 0 ? model.contextWindow : null;
+  };
+
   // Vision reuses the active text provider when it exposes describeImage.
   const visionProvider: LlmProvider | undefined = config.vision.enabled
     ? textProvider
@@ -1948,6 +1969,7 @@ export async function createAgentRuntime(
     toolDescriptors: effectiveToolDescriptors,
     capabilities,
     profile,
+    contextWindow: resolveCatalogContextWindow,
     ...(profileManager ? { profileManager } : {}),
     ...(config.memory.profile.enabled
       ? { profileFactsProvider: () => profileStore.list() }

@@ -1,4 +1,4 @@
-import { CODING_MODES } from "./coding-mode.js";
+import { CODING_MODES, type CodingMode } from "./coding-mode.js";
 import { handleComposerSwitchKey } from "./composer-switch/composer-switch-key-bindings.js";
 import type { ComposerSwitchRow } from "./composer-switch/composer-switch-rows.js";
 import { handleContextPanelKey } from "./context-panel-keys.js";
@@ -116,10 +116,42 @@ export interface AppKeyContext {
    * panel. Optional: surfaces without a config writer simply do not
    * bind the key.
    */
-  onSetCapAuto?: () => void;
+  /**
+   * Steps the context panel's task selector. A callback rather than an
+   * action because the work is a config write, and the reducer is pure.
+   */
+  onStepPairs?: (delta: number) => void;
   /** Run the row picked in one of the composer's route switches. */
   activateComposerSwitch: (row: ComposerSwitchRow) => void;
+  /**
+   * Carry out the plan on offer under `mode`, for the plan hand-off
+   * chords. Optional: a surface that draws no hand-off binds no keys.
+   */
+  onPlanExecute?: (mode: CodingMode) => void;
+  /** Decline the plan on offer without leaving plan mode. */
+  onPlanDismiss?: () => void;
 }
+
+/**
+ * The chord each plan verb answers to.
+ *
+ * Deliberately the same shape, and two of the same letters, as
+ * {@link APPROVAL_CHORDS}: both are a short-lived verdict taken while
+ * the composer stays live underneath, so both have to be modified keys —
+ * a bare `y` is text someone is typing. Sharing the keys is safe because
+ * the two offers can never be on screen together: an approval exists
+ * only inside a running turn, and the hand-off is only ever raised by a
+ * turn that has *finished*. The approval branch is still checked first,
+ * so if that assumption ever breaks the safety-critical prompt wins.
+ */
+export const PLAN_CHORDS = {
+  /** Run it, editing freely here and asking about everything else. */
+  auto: "y",
+  /** Run it and stop asking altogether. */
+  bypass: "b",
+  /** Put the plan away; stay in plan mode. */
+  dismiss: "d",
+} as const;
 
 /**
  * Global key-binding reducer executed outside the editor focus. Returns
@@ -264,6 +296,24 @@ export function handleAppKey(
   if (state.sessionDelete) {
     return handleSessionDeleteKey(input, key, ctx);
   }
+  // The plan hand-off. Below the ladders and below approvals, and
+  // reached only while an offer is actually standing — outside that the
+  // letters are ordinary text and must reach the draft untouched.
+  if (state.planHandoff && key.ctrl && !key.meta) {
+    const lower = input.toLowerCase();
+    if (lower === PLAN_CHORDS.auto) {
+      ctx.onPlanExecute?.("auto");
+      return true;
+    }
+    if (lower === PLAN_CHORDS.bypass) {
+      ctx.onPlanExecute?.("bypass");
+      return true;
+    }
+    if (lower === PLAN_CHORDS.dismiss) {
+      ctx.onPlanDismiss?.();
+      return true;
+    }
+  }
   // Only the visible thread's question is answerable from the
   // keyboard. The reducer never arms `pendingApproval` for another
   // session (a background request surfaces as a notice instead), but
@@ -326,7 +376,7 @@ export function handleAppKey(
     handleContextPanelKey(input, key, {
       state,
       dispatch,
-      ...(ctx.onSetCapAuto ? { onSetCapAuto: ctx.onSetCapAuto } : {}),
+      ...(ctx.onStepPairs ? { onStepPairs: ctx.onStepPairs } : {}),
     })
   ) {
     return true;

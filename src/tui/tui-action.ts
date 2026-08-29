@@ -175,6 +175,7 @@ export type TuiAction =
   /** Flip the composer's context detail panel (chip click, `/context`). */
   | { type: "context_panel_toggled" }
   | { type: "context_panel_closed" }
+  | { type: "context_pairs_selected"; pairs: number }
   | { type: "menu_query_changed"; query: string }
   | { type: "menu_cursor_moved"; delta: number }
   | { type: "menu_cursor_set"; cursor: number }

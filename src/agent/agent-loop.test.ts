@@ -838,7 +838,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(loopFailedCategory).toBe("model");
   });
 
-  it("classifies an empty completion as ModelError and skips parse retry", async () => {
+  it("repairs an empty completion once, then classifies it as ModelError", async () => {
     const registry = buildDefaultToolRegistry();
     let llmCalls = 0;
     const stepErrors: Array<{ category: string }> = [];
@@ -867,7 +867,11 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     });
     expect(result.reason).toBe("failed");
     expect(result.session.status).toBe("failed");
-    expect(llmCalls).toBe(1);
+    // An empty grammar body now goes through the one-shot repair (a
+    // rebuilt prompt, not a replay) before the turn is written off — two
+    // calls, never three. A second empty completion is still terminal
+    // and still classifies as `model`.
+    expect(llmCalls).toBe(2);
     expect(stepErrors[0]?.category).toBe("model");
   });
 
