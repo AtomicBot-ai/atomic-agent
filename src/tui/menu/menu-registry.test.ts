@@ -218,6 +218,11 @@ const V0_2_2_SLASH_COMMANDS = [
     description: "show where this session's context window went",
   },
   {
+    name: "max_steps",
+    description:
+      "get or set the agent's max_steps configuration: `/max_steps` | `/max_steps <number>`",
+  },
+  {
     name: "uninstall",
     description:
       "remove atomic-agent and all of its data from this machine — permanent, no undo",

@@ -290,6 +290,13 @@ export function runSlashCommand(
       result.mouseVerb === "status" ? null : result.mouseVerb === "on",
     );
   }
+  if (result.maxStepsRequest) {
+    callbacks.onMaxStepsRequested?.(
+      result.maxStepsRequest.kind === "status"
+        ? null
+        : result.maxStepsRequest.value,
+    );
+  }
   if (result.approvalLevelSet !== undefined) {
     void callbacks.onApprovalLevelSetRequested?.(result.approvalLevelSet);
   }

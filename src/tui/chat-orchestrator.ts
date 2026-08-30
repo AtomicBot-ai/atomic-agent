@@ -119,6 +119,7 @@ function formatSkillCatalogSystemMessage(
 export class ChatOrchestrator {
   private session: SessionState | null = null;
   private currentController: AbortController | null = null;
+  private maxSteps: number;
   private quitting = false;
   private started = false;
   /** Latest release version captured by `checkForUpdate`, used by `runUpdate`. */
@@ -190,6 +191,7 @@ export class ChatOrchestrator {
     private readonly bus: TuiEventBus & { emit(action: unknown): void },
     private readonly options: ChatOrchestratorOptions,
   ) {
+    this.maxSteps = options.maxSteps;
     this.tasks = new TasksOrchestrator(runtime, bus, {
       getCurrentSessionId: () => this.session?.id ?? null,
       switchSession: (id) => this.switchSession(id),
@@ -351,6 +353,14 @@ export class ChatOrchestrator {
       type: "session_picker_opened",
       sessions: this.railSessions(),
     });
+  }
+
+  getMaxSteps(): number {
+    return this.maxSteps;
+  }
+
+  setMaxSteps(maxSteps: number): void {
+    this.maxSteps = maxSteps;
   }
 
   /**
@@ -980,7 +990,7 @@ export class ChatOrchestrator {
     this.steeredAhead = 0;
     try {
       const result = await this.runtime.runTurn(this.session, text, {
-        maxSteps: this.options.maxSteps,
+        maxSteps: this.maxSteps,
         signal: controller.signal,
         origin: "tui",
       });

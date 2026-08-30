@@ -1,17 +1,17 @@
+import {
+  CODING_MODES,
+  codingModeLook,
+  type CodingMode,
+} from "../coding-mode.js";
+import { ConfigValidationError } from "../../config/config-validation-error.js";
+import { parsePositiveInt } from "../../config/config-schema.js";
+import type { WhileBusySubmitMode } from "../../config/index.js";
 import type { TuiAction } from "../tui-action.js";
 import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";
 import { isThemeName, THEME_NAMES } from "../theme/theme.js";
 import { parseSlashCommand } from "./slash-command-parser.js";
 import { resolveSlashCommand, SLASH_COMMANDS } from "./slash-commands.js";
 import { renderToolsOverview, renderToolsSearch } from "./tools-listing.js";
-import { getConfig } from "../../config/index.js";
-import { parsePositiveInt } from "../../config/config-schema.js";
-import { ConfigValidationError } from "../../config/config-validation-error.js";
-import {
-  getUserConfigPath,
-  ensureUserConfigFileSync,
-  writeUserConfigFileSync,
-} from "../../config/config-file.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -36,6 +36,8 @@ export interface SlashDispatchResult {
   readonly triggerSessionPicker: boolean;
   /** When true the caller should ask the orchestrator to start a fresh session. */
   readonly triggerSessionNew: boolean;
+  /** When true the caller should open a new OS terminal window (`/window`). */
+  readonly triggerNewWindow: boolean;
   /** When true the caller should ask the orchestrator to dump the user profile. */
   readonly triggerMemoryDump: boolean;
   /** When true the caller should ask the orchestrator to list the skill catalog in chat. */
@@ -91,12 +93,51 @@ export interface SlashDispatchResult {
    */
   readonly analyticsVerb?: "enable" | "disable" | "status";
   /**
+   * `/queue` side-effect. `list` renders the parked messages into chat —
+   * the listing needs `TuiState`, which this pure dispatcher does not
+   * have, so the caller formats it. `clear` additionally asks the
+   * orchestrator to drop its own copy of the queue.
+   */
+  readonly queueVerb?: "list" | "clear";
+  /**
+   * `/steer <msg>` or `/queue <msg>`: land this one message in the given
+   * mode without touching the persisted default. Ignored when no turn is
+   * running (the caller submits it normally instead).
+   */
+  readonly submitWhileBusy?: { mode: WhileBusySubmitMode; text: string };
+  /**
+   * Bare `/steer` / `/queue`: the new Enter-while-busy default. The
+   * `while_busy_mode_changed` action flips the live state; this asks the
+   * caller to also write it to `tui.whileBusySubmit` through
+   * `onWhileBusyModePersistRequested` — the same callback Ctrl+T uses, so
+   * every route to the setting shares one persist path. Deliberately
+   * unset by the message-carrying form, which is a one-off.
+   */
+  readonly setWhileBusyMode?: WhileBusySubmitMode;
+  /**
    * `/privacy level <1..5>` side-effect (with `/privacy approve on|off`
    * kept as aliases for 5 and 1): move the approval ladder to an
    * explicit level. The caller (submit-handler) maps this to
    * `PrivacyOrchestrator.setApprovalLevel`.
    */
   readonly approvalLevelSet?: number;
+  /**
+   * `/mouse [on|off]` — flip terminal mouse reporting at runtime, or
+   * report the current state with no argument. The caller owns the
+   * escape sequences and the config write, because both live outside
+   * React (see `tui-command.ts`).
+   */
+  readonly mouseVerb?: "on" | "off" | "status";
+  /** `/max_steps [number]` — report or replace the active per-turn step budget. */
+  readonly maxStepsRequest?:
+    | { readonly kind: "status" }
+    | { readonly kind: "set"; readonly value: number };
+  /**
+   * `/uninstall`: measure the install and feed the result back as
+   * `uninstall_plan_loaded`. Nothing is removed on this path — the
+   * dialog it opens is what eventually asks for that.
+   */
+  readonly triggerUninstallPlan?: boolean;
 }
 
 /**
@@ -115,6 +156,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       triggerQuit: false,
       triggerSessionPicker: false,
       triggerSessionNew: false,
+      triggerNewWindow: false,
       triggerMemoryDump: false,
       triggerSkillCatalogDump: false,
       triggerDebugBundleDump: false,
@@ -132,6 +174,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       triggerQuit: false,
       triggerSessionPicker: false,
       triggerSessionNew: false,
+      triggerNewWindow: false,
       triggerMemoryDump: false,
       triggerSkillCatalogDump: false,
       triggerDebugBundleDump: false,
@@ -150,12 +193,20 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return pureActions([], {
         systemMessage: formatSlashCommandHelp(),
       });
+    case "mouse":
+      return dispatchMouseSub(parsed.args);
     case "theme":
       return dispatchThemeSub(parsed.args);
+    case "mode":
+      return dispatchModeSub(parsed.args);
     case "clear":
       return pureActions([{ type: "chat_cleared" }], {
         systemMessage: "chat cleared",
       });
+    case "queue":
+      return dispatchQueueSub(parsed.args);
+    case "steer":
+      return dispatchSteerSub(parsed.args);
     case "abort":
       return pureActions([{ type: "abort_requested" }], {
         triggerAbort: true,
@@ -166,8 +217,17 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
         triggerQuit: true,
         systemMessage: "exiting",
       });
+    case "uninstall":
+      // Opens the ladder; it does not uninstall anything. The dialog
+      // owns every decision from here, and the caller measures the disk
+      // so the first screen can say what it costs.
+      return pureActions([{ type: "uninstall_opened" }], {
+        triggerUninstallPlan: true,
+      });
     case "debug":
       return pureActions([{ type: "ui_mode_toggled" }]);
+    case "context":
+      return pureActions([{ type: "context_panel_toggled" }]);
     case "chat":
       return pureActions([{ type: "ui_mode_set", mode: "chat" }]);
     case "observe":
@@ -212,6 +272,8 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return pureActions([], { triggerSessionPicker: true });
     case "new":
       return pureActions([], { triggerSessionNew: true });
+    case "window":
+      return pureActions([], { triggerNewWindow: true });
     case "tools":
       return dispatchToolsSub(parsed.args);
     case "skills":
@@ -265,6 +327,98 @@ function formatSlashCommandHelp(): string {
   return ["slash commands:", ...lines].join("\n");
 }
 
+/**
+ * `/queue` — bare switches the Enter-while-busy mode to `queue`, persists
+ * it, and lists what is currently parked; `clear` (alias `drop`) empties
+ * it; anything else is a one-off message to park without changing the
+ * mode. The `queue_changed` action is dispatched optimistically so the
+ * strip above the prompt disappears immediately;
+ * `ChatOrchestrator.clearQueue` then re-publishes the authoritative empty
+ * queue.
+ */
+function dispatchQueueSub(args: string): SlashDispatchResult {
+  const raw = args.trim();
+  const verb = raw.toLowerCase();
+  if (verb === "clear" || verb === "drop") {
+    return pureActions([{ type: "queue_changed", queued: [] }], {
+      queueVerb: "clear",
+    });
+  }
+  if (verb === "mode" || verb === "default") {
+    return pureActions([{ type: "while_busy_mode_changed", mode: "queue" }], {
+      setWhileBusyMode: "queue",
+      systemMessage: "Enter now queues behind the running turn",
+    });
+  }
+  if (raw.length > 0) {
+    return pureActions([], {
+      submitWhileBusy: { mode: "queue", text: raw },
+    });
+  }
+  // Bare `/queue` stays a side-effect-free listing: the menu node and
+  // the `/queue N parked` chip both invite running it just to look, so
+  // looking must not silently persist a mode change.
+  return pureActions([], { queueVerb: "list" });
+}
+
+/**
+ * `/steer` — bare switches the Enter-while-busy mode to `steer` and
+ * persists it; `/steer <message>` lands one message in the running turn
+ * without changing the persisted default.
+ */
+function dispatchSteerSub(args: string): SlashDispatchResult {
+  const raw = args.trim();
+  if (raw.length > 0) {
+    return pureActions([], {
+      submitWhileBusy: { mode: "steer", text: raw },
+    });
+  }
+  return pureActions([{ type: "while_busy_mode_changed", mode: "steer" }], {
+    setWhileBusyMode: "steer",
+    systemMessage:
+      "Enter now steers the running turn (Ctrl+T or /queue switches back)",
+  });
+}
+
+/**
+ * `/mode` opens the menu; `/mode <name>` sets one directly, which is the
+ * one path that skips it — a name typed in full is already a decision,
+ * and making it open a menu to confirm what it just said would be a
+ * second question about a settled matter. Names are matched on the
+ * chip's own label as well as the identifier, because the label is what
+ * the operator can see and being told the visible name is wrong would
+ * be absurd.
+ *
+ * `accept-edits` still resolves to `auto`: it was the name this mode
+ * shipped under, and a rename is not a reason to reject a word somebody
+ * already learned.
+ */
+function dispatchModeSub(args: string): SlashDispatchResult {
+  const raw = args.trim().toLowerCase();
+  if (raw.length === 0) {
+    // Bare `/mode` opens the menu rather than advancing the ring, so
+    // every route to this control — the chip, the chord, the command —
+    // ends at the same four rows with the same four explanations.
+    return pureActions([{ type: "coding_mode_menu_opened" }]);
+  }
+  const wanted = raw.replace(/[\s_]+/g, "-");
+  const RETIRED_NAMES: Readonly<Record<string, CodingMode>> = {
+    "accept-edits": "auto",
+  };
+  const match =
+    CODING_MODES.find(
+      (mode) =>
+        mode === wanted ||
+        codingModeLook(mode).label.replace(/\s+/g, "-") === wanted,
+    ) ?? RETIRED_NAMES[wanted];
+  if (!match) {
+    return pureActions([], {
+      systemMessage: `unknown mode: ${args.trim()} — try ${CODING_MODES.join(", ")}`,
+    });
+  }
+  return pureActions([{ type: "coding_mode_cycled", mode: match }]);
+}
+
 function pureActions(
   actions: readonly TuiAction[],
   overrides: Partial<
@@ -278,6 +432,7 @@ function pureActions(
     triggerQuit: false,
     triggerSessionPicker: false,
     triggerSessionNew: false,
+    triggerNewWindow: false,
     triggerMemoryDump: false,
     triggerSkillCatalogDump: false,
     triggerDebugBundleDump: false,
@@ -293,6 +448,9 @@ function pureActions(
     setThemeName: undefined,
     telegramVerb: undefined,
     analyticsVerb: undefined,
+    queueVerb: undefined,
+    submitWhileBusy: undefined,
+    setWhileBusyMode: undefined,
     approvalLevelSet: undefined,
     ...overrides,
   };
@@ -305,6 +463,25 @@ function pureActions(
  * the registry and, on success, asks the caller to swap + persist + re-render.
  * Unknown names surface a usage hint instead of switching.
  */
+/**
+ * `/mouse` with no argument reports state; `on` / `off` set it. Any
+ * other word is rejected rather than guessed at — a typo'd `/mouse ff`
+ * silently disabling clicks would be a maddening bug to chase.
+ */
+function dispatchMouseSub(rawArgs: string): SlashDispatchResult {
+  const verb = rawArgs.trim().toLowerCase();
+  if (verb.length === 0) return pureActions([], { mouseVerb: "status" });
+  if (verb === "on" || verb === "enable") {
+    return pureActions([], { mouseVerb: "on" });
+  }
+  if (verb === "off" || verb === "disable") {
+    return pureActions([], { mouseVerb: "off" });
+  }
+  return pureActions([], {
+    systemMessage: `usage: /mouse [on|off] (got "${rawArgs.trim()}")`,
+  });
+}
+
 function dispatchThemeSub(rawArgs: string): SlashDispatchResult {
   const arg = rawArgs.trim().toLowerCase();
   if (arg.length === 0) {
@@ -516,8 +693,23 @@ function dispatchLlmSub(rawArgs: string): SlashDispatchResult {
       { type: "providers_set_active_text", id },
     ]);
   }
+  // `/llm fallback` deep-links to the fourth pane — the pane switcher
+  // (`[`/`]`) is invisible from the chat surface, so without this the
+  // Fallback pane is only reachable by keyboard exploration. The refresh
+  // matches bare `/llm`: the slash path enters the tab via reducer
+  // actions, bypassing `onProvidersTabRefresh`, so without it the chain
+  // mirror shows whatever the last refresh produced (stale if config
+  // changed externally mid-session).
+  if (/^fallback$/i.test(argPart)) {
+    return pureActions([
+      { type: "ui_mode_set", mode: "debug" },
+      { type: "tab_changed", tab: "llm" },
+      { type: "llm_mode_set", mode: "fallback" },
+      { type: "providers_refresh_requested" },
+    ]);
+  }
   return pureActions([], {
-    systemMessage: "usage: /llm | /llm provider <id>",
+    systemMessage: "usage: /llm | /llm provider <id> | /llm fallback",
   });
 }
 
@@ -757,17 +949,13 @@ function dispatchAnalyticsSub(rawArgs: string): SlashDispatchResult {
 function dispatchMaxStepsSub(rawArgs: string): SlashDispatchResult {
   const args = rawArgs.trim();
   if (args.length === 0) {
-    // Show current value
-    const current = getConfig().agent.maxSteps;
     return pureActions([], {
-      systemMessage: `current max_steps: ${current}`,
+      maxStepsRequest: { kind: "status" },
     });
   }
 
-  // Parse and validate the new value
   let newValue: number;
   try {
-    // Reuse the same validation as in config-schema.ts
     newValue = parsePositiveInt(args, "max_steps");
   } catch (err) {
     if (err instanceof ConfigValidationError) {
@@ -779,28 +967,7 @@ function dispatchMaxStepsSub(rawArgs: string): SlashDispatchResult {
       systemMessage: `invalid max_steps value: ${args}`,
     });
   }
-
-  // Update the runtime config
-  const config = getConfig();
-  const oldValue = config.agent.maxSteps;
-  config.agent.maxSteps = newValue;
-
-  // Persist to config.json
-  try {
-    const stateDir = getConfig().paths.stateDir;
-    const userConfigPath = getUserConfigPath(stateDir);
-    const userConfig = ensureUserConfigFileSync(userConfigPath);
-    userConfig.agent.maxSteps = newValue;
-    writeUserConfigFileSync(userConfigPath, userConfig);
-  } catch (err) {
-    // If we can't persist, return an error but still update runtime
-    const message = err instanceof Error ? err.message : String(err);
-    return pureActions([], {
-      systemMessage: `max_steps updated to ${newValue} (runtime only - failed to persist: ${message})`,
-    });
-  }
-
   return pureActions([], {
-    systemMessage: `max_steps updated from ${oldValue} to ${newValue}`,
+    maxStepsRequest: { kind: "set", value: newValue },
   });
 }

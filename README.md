@@ -21,7 +21,7 @@ Drives your browser, edits files, runs approved commands, and remembers context 
 ![llama.cpp](https://img.shields.io/badge/llama.cpp-supported-111827)
 ![Tauri sidecar](https://img.shields.io/badge/Tauri-sidecar-24C8DB?logo=tauri&logoColor=white)
 
-**[Quick Install](#quick-install) · [Benchmarks](#benchmarks) · [Why Local-First](#why-local-first) · [Ways to Use It](#ways-to-use-it) · [Docs](#development)**
+**[Quick Install](#quick-install) · [Uninstall](#uninstall) · [Benchmarks](#benchmarks) · [Why Local-First](#why-local-first) · [Ways to Use It](#ways-to-use-it) · [Docs](#development)**
 
 ![Atomic Agent terminal demo](assets/demo.gif)
 
@@ -45,7 +45,7 @@ Windows (PowerShell):
 irm https://atomicagent.io/install.ps1 | iex
 ```
 
-The installer downloads the release archive, verifies the checksum, and installs the CLI plus support assets (`grammars/`, native prebuilds, and bundled `ripgrep`). Atomic Agent updates itself in place; after an update the TUI prompts you to restart.
+The installer downloads the release archive, verifies the checksum, and installs the CLI plus support assets (`grammars/`, native prebuilds, and bundled `ripgrep`). Atomic Agent updates itself in place; after an update the TUI prompts you to restart. Outside the TUI, run `atomic-agent update` (or `atag update`) to check for a newer release and re-run the installer in place — `atomic-agent update --check` probes without installing, and `--version <tag>` pins a specific release. Only the installed binary can self-update; a dev checkout updates via git.
 
 > [!NOTE]
 > Developer preview. APIs, commands, config, and behavior are still moving, so pin a release if you need a stable integration point. Current builds: macOS (Apple Silicon), Linux x64 / arm64, and Windows x64.
@@ -56,8 +56,27 @@ The installer downloads the release archive, verifies the checksum, and installs
 atomic-agent
 ```
 
+Both installers also drop a short alias next to the binary, so this is the same thing:
+
+```bash
+atag
+```
+
+> [!TIP]
+> Need a second agent? Press **Ctrl+N** (or run `/window`) inside the TUI — it opens a new terminal window with a fresh atomic-agent in the same directory.
+
 > [!TIP]
 > Coming from Hermes or OpenClaw? Run `/import` in the TUI for a one-shot migration: sessions, cron jobs, and optionally your provider keys.
+
+### Uninstall
+
+One command removes everything — the state directory (config, memory, sessions, tasks, traces, downloaded models), the binary and its `atag` alias, the asset directories beside them, and the PATH line the installer added to your shell rc file:
+
+```bash
+atomic-agent uninstall
+```
+
+It prints exactly what it will delete, with sizes, and then asks you to type the word `uninstall`. Nothing is uploaded and nothing is kept — this cannot be undone. Preview it with `atomic-agent uninstall --dry-run`, keep your data with `--keep-data`, or skip the prompt in a script with `--yes`. The same flow is the last entry in the TUI's own menu (**Ctrl+P → Danger zone**, or `/uninstall`).
 
 ### Troubleshooting
 
@@ -65,7 +84,7 @@ If something isn't working:
 
 1. Copy your error logs and system specs.
 2. Open an issue on [GitHub](https://github.com/AtomicBot-ai/atomic-agent/issues).
-3. Or ask for help in our [Discord](https://discord.com/invite/Us7qXtDGw).
+3. Or ask for help in our [Discord](https://discord.gg/kXWDFSJpMW).
 
 ## Talk to Us
 
@@ -156,7 +175,7 @@ The model chooses actions. Atomic Agent owns the loop, the state, the approvals,
 
 ### Built to Make Local Models Work
 
-We run local models on our own TurboQuant `llama.cpp` ([`AtomicBot-ai/atomic-llama-cpp-turboquant`](https://github.com/AtomicBot-ai/atomic-llama-cpp-turboquant)):
+We run local models on our own TurboQuant `llama.cpp` ([`AtomicBot-ai/atomic-llama-cpp-turboquant-nightly`](https://github.com/AtomicBot-ai/atomic-llama-cpp-turboquant-nightly)):
 
 - **TurboQuant KV-cache:** WHT-rotated low-bit quantization compresses the KV-cache up to ~6.4× versus F16, with a fused Metal decode kernel, so long-context sessions fit in far less memory.
 - **TurboQuant weights:** Lloyd-Max weight quantization with WHT rotation and fused Metal/Vulkan kernels keeps quality usable while small models fit on consumer hardware.
@@ -194,7 +213,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | **Skills** | View and run Markdown skill playbooks (scripts are approval-gated), install more from ClawHub. Ships with 17 starter skills (Docker, GitHub, Notion, Obsidian, PDF, and more), auto-installed on first run. |
 | **Vision** | Optional `vision.describe` for multimodal models with `mmproj`, kept outside the text transcript. |
 | **MCP** | Connect external MCP servers; their tools, resources, and prompts join the same registry. |
-| **Providers** | Local `llama-server` by default; OpenAI-compatible, OpenRouter, and AI/ML API providers when configured, with live model catalogs and mid-session switching. Reasoning-only completions from reasoning models are recovered instead of failing the turn. |
+| **Providers** | Local `llama-server` by default; OpenAI-compatible, [OpenRouter](https://openrouter.ai), AI/ML API, and Gemini providers when configured, with live model catalogs and mid-session switching. Your existing **Claude Code and OpenAI Codex subscriptions** work too, driven through their own signed-in CLIs with no API key. Reasoning-only completions from reasoning models are recovered instead of failing the turn. |
 | **Telegram** | Single-user remote control with owner pairing, inline approval buttons, and opt-in result reports from scheduled tasks. |
 
 ### Memory That Grows Outside the Prompt
@@ -226,9 +245,45 @@ atomic-agent task list
 atomic-agent trace list --limit 10
 ```
 
+**The context readout.** The chip at the right of the composer gauges the prompt against the model's real context window — `8/20 tasks · 39.9k/48k` — so you can see whether there is room for what you are about to send. History is limited in **tasks**, not tokens: one task is a thing you asked plus everything the agent did answering it, and `agent.conversationMaxPairs` (1-100, default 20) says how many the prompt carries. Tokens are the wrong unit to steer with — nobody thinks in them — but they are still the ceiling underneath, because one task can run twenty tool calls and no task count keeps a prompt inside the window on its own. Once history has been dropped it says so in words (`· 3 tasks lost`) and turns violet: that is the point where the agent stops knowing things it knew a minute ago, and answers quietly start getting less consistent. Cloud models take their window from the model catalogue, so the gauge is drawn against a real scale there too; when nothing knows the window at all it falls back to the transcript's own ceiling, labelled `cap` so the number cannot be mistaken for one.
+
+Click the chip (or `/context`) for the breakdown, and for the one control that matters: a selector for how many tasks the next prompt carries, with a button either side of the number (`-` and `+` from the keyboard). Every figure above it — the total, the percentage, the `conversation` row, the free space — recalculates as you move it, so the cost of the choice is on screen while you are making it rather than one turn later. Each step applies immediately; there is nothing to confirm.
+
+`agent.conversationMaxTokens` still exists as the ceiling underneath, and `0` makes it fill whatever the window leaves — worth setting if you size your own `llama-server` with `-c`. It is no longer something you have to think about: the task count is the limit you steer with, and the token cap only intervenes when a single task is large enough to threaten the window on its own.
+
 Handy slash commands: `/help` lists every command, `/tools` lists the built-in tool families, `/model` jumps to the LLM panel and reopens the model picker for the active cloud provider, `/privacy` shows what leaves the machine (`/privacy analytics off` turns analytics off). The chat log scrolls with PgUp / PgDn (fn+arrows on macOS).
 
+**Coding modes.** A chip at the right end of the composer's bar says which rules are in force. Clicking it — or `ctrl+g M`, or `/mode` — opens a menu of the four, each with a line saying what it does; ↑↓ moves, Enter applies, Esc cancels. `/mode <name>` sets one directly without the menu.
+
+| mode | |
+|---|---|
+| `default` | approvals follow the level set on the Privacy tab |
+| `plan` | read-only — every tool that would change something is refused, with a note telling the agent to present a plan instead. Reading, searching and fetching all still work. When the plan lands, three buttons appear **under the plan itself**, beside its `[copy]` row: run it in `auto`, run it in `bypass permissions`, or dismiss it. Typing instead keeps you in plan mode and revises the plan — the composer says so while the offer is up. |
+| `auto` | file writes inside this workspace stop asking; everything else still does |
+| `bypass permissions` | nothing asks, for this session. Hardline shell-guard rules still block. |
+
+All four are session state and none are written to `config.json` — a `bypass` that survived a restart would be a standing grant nobody remembers making. `default` restores the level you actually configured, so a session that passed through `bypass` and back lands where it started. The cycle order keeps `plan` and `bypass` two presses apart in either direction.
+
+**Answering an approval prompt.** The prompt draws its verbs as buttons — click one, or use its chord: `ctrl+y` approves the call, `ctrl+d` denies, `ctrl+f` grants its category for the session, `esc` aborts the run. Every decision is a chord and never a bare letter, because the input field below stays live: typing "yes, but put it somewhere else" must be a message, not a verdict. Two more ways out:
+
+- **`ctrl+b` — write it somewhere else.** On an `os.fs.write` prompt the target path becomes an editable field, prefilled with the full path. Type any other target (`~` works, missing folders are created) and Enter confirms it. The new path is re-checked against the approval ladder first: a target on the same rung as the one you approved is written, a target on a different rung (workspace → home, say) asks once more, and a target that is the agent's own `config.json` / `.env` is refused.
+- **Just type.** The input field stays live under the prompt, so you can answer the agent in words — "put the site in ~/Documents/apple-site and use an inline SVG". Enter cancels the pending call with your message as its reason (the model reads it as the tool result) and folds the same text into the running turn, so the run keeps going instead of dying. The chords keep working while you type, so you can start a message, change your mind, and approve without clearing it first. `esc` is the one exception: with a draft in the buffer it clears the draft rather than aborting the run.
+
+On a `shell` prompt `ctrl+b` grants the command's *shape* for the session (`git`, `npm`) instead of the whole category — except for `bash -c`-style interpreters, where the binary name hides what actually runs, so no shape grant is offered. The retarget and the shape grant share `ctrl+b` because they can never both be on screen: one is `os.fs.write` only, the other `shell` only.
+
+**Look.** The TUI ships with the `classic-dark` palette: an indigo rail, raised `+ new` / `≡ Menu` / `send →` controls, a `RUN` badge and session title in the top bar, `AGENT` / `YOU` labels on the transcript, and green tool results. Five more ship with it — `classic-light`, `toxic-green`, `khorne-red`, `darky-dark` and `moon-yellow`. `/theme` lists them, `/theme <name>` switches, and the choice persists.
+
+All six are designed here rather than transcribed from upstream terminal themes, and every colour pair the UI paints is held to WCAG AA by `theme-contrast.test.ts`. The registry that preceded them carried twelve palettes and failed that check on 154 of its 396 pairs — including light text on the light status-bar ground at 1.09:1. Configs naming one of the retired themes are rehomed to the nearest surviving palette rather than silently reset.
+
+**Small windows.** The layout degrades as the window shrinks — the right rail drops at 100 columns, the splash art steps down through three sizes, the chrome grows a row under 60 columns — down to a floor of **40x16**. Below that it stops: Ink overlaps a frame taller than the terminal instead of clipping it, so a 16-row UI in a 10-row window is two UIs painted over each other rather than a cramped one. Under the floor the app draws a single card saying what it needs and what it has, on the main screen and the first-run screen alike, and goes back to the real UI as soon as the window is dragged big enough.
+
+**Mouse.** The TUI is clickable: the breadcrumb (which opens the menu, the same as `ctrl+p`), sidebar sessions and tasks, every list row (skills, tasks, memory, MCP, models, providers), the session / theme / slash pickers, approval buttons, tool cards, and the prompt itself — clicking in the input places the caret. A click selects a row, a second click on the selected row opens it, and the wheel scrolls the chat or walks the focused panel.
+
+While mouse reporting is on the terminal hands clicks to the app, which means its own drag-to-select is unavailable (iTerm2, GNOME Terminal and Windows Terminal let you hold Shift to bypass; Apple Terminal does not). Turn it off whenever you want to select text: `/mouse off` in the app, `atomic-agent tui --no-mouse` for one run, or `"tui": { "mouse": false }` in `<stateDir>/config.json`. With mouse off, wheel scrolling still works through the terminal's alternate-scroll mode, exactly as before.
+
 Cloud provider setup pulls each provider's full live model catalog, hundreds of models, instead of a short hardcoded list; OpenAI-compatible servers are asked for their own `/v1/models`. The picker filters as you type, and `/model` switches models mid-session.
+
+A cloud key is checked before it is saved. The key screen refuses an empty key, and finishing the wizard asks the provider for a one-token completion from its cheapest model: a key that is rejected, or attached to an account with no balance, never reaches `.env` and never becomes the active provider. A provider that cannot be reached at all still saves, with a line saying the key went unverified — an offline or proxied machine stays configurable. Local servers have no account to check and are left alone.
 
 </details>
 
@@ -255,6 +310,17 @@ atomic-agent tui --cwd /path/to/work
 Managed mode downloads the backend, pulls GGUF models, selects the active model, and starts detached chat / embedding daemons when configured.
 
 The managed chat daemon stops when the last session exits, freeing the RAM and VRAM the model was holding; set `localModels.managed.stopOnExit: false` in `config.json` to keep the model warm between sessions. Daemons started standalone with `models start` are never touched.
+
+Cloud models are searchable from the same command — by id, vendor, or capability, across every configured cloud provider:
+
+```bash
+atomic-agent models search claude vision
+atomic-agent models search free tools --json
+atomic-agent models search "1m cache" --provider openrouter --limit 10
+atomic-agent models search kimi --refresh   # pull live /models lists first
+```
+
+Every term has to match (`claude vision` is not a substring of any id), a size term names a whole-unit bucket whatever the row displays (`1m` finds windows from 1M up to 2M, including the 1,048,576-token ones that render as `1.0M`; a 2M window answers to `2m`; `128k` finds 131,072), results are ranked best-first, and the same query works in the TUI Cloud pane — press `f`.
 
 </details>
 
@@ -295,7 +361,7 @@ In the TUI, open the LLM tab, add a provider, and pick **Ollama (local)** (or **
 
 Model ids are the tags the server reports, `qwen2.5:0.5b` or `llama3.2:latest` for Ollama, so use the same name you passed to `ollama pull`. The list comes from the server's own `/v1/models`, which means anything you have pulled shows up without a restart.
 
-**New in v0.2.1**: The provider wizard now includes a dedicated **Ollama (local)** preset that auto-detects your local Ollama server and provides a streamlined setup experience.
+The preset is a fixed `http://localhost:11434` endpoint — it does not probe for a running server. If `ollama serve` isn't up when you reach the model step, the list fails to load (`could not list models from Ollama (local)`), and the wizard falls back to letting you type a model id by hand; in the LLM panel the list shows `model list unavailable` and only the current model. Start the server (`ollama serve`, then `ollama pull <model>` for anything you want) and re-open the preset.
 
 | Preset | Endpoint |
 | --- | --- |
@@ -417,7 +483,7 @@ Everything Atomic Agent does is inspectable and interruptible:
 
 By default, Atomic Agent does not require a hosted agent provider. Model calls go to your configured backend, and local artifacts stay under `<stateDir>`.
 
-Anonymous usage analytics is on by default. It sends the provider and model names, a random per-install id, and turn-shape numbers (latency, step count, outcome), never message content, file paths, or tool arguments. Crash reports go to Sentry on the same switch, stripped to error type, category, safe scalar codes, a bounded tool name or URL host when present, and path-stripped stack frames. Turn both off with `/privacy analytics off` in the TUI or `"analytics": { "enabled": false }` in `config.json`; the toggle applies live, no restart.
+Anonymous usage analytics is on by default. It sends the provider and model names, a random per-install id, and turn-shape numbers (latency, step count, outcome), never message content, file paths, or tool arguments. It also records that the app launched, which first-run screen was reached (a fixed list of screen names, never anything you typed), and that a backend was set up — the provider name and whether it is local or cloud, never the key, the URL, or the host. Crash reports go to Sentry on the same switch, stripped to error type, category, safe scalar codes, a bounded tool name or URL host when present, and path-stripped stack frames. Turn both off with `/privacy analytics off` in the TUI or `"analytics": { "enabled": false }` in `config.json`; the toggle applies live, no restart.
 
 Local-first bounds where control lives, not where packets go. Network egress happens when:
 
@@ -425,6 +491,7 @@ Local-first bounds where control lives, not where packets go. Network egress hap
 - an HTTP tool calls a requested endpoint;
 - a web search provider answers a query;
 - a configured cloud LLM or embedding provider receives its request;
+- a `subscription-cli` provider is active and the vendor CLI (`claude` or `codex`) receives your prompt on its stdin, then sends it on under its own account;
 - an MCP server receives a tool call you routed to it;
 - the Telegram channel is enabled and the bot exchanges messages with your paired chat, including opt-in scheduled task reports;
 - you install a skill from ClawHub;
@@ -481,6 +548,57 @@ OBSIDIAN_VAULT_PATH=/Users/me/Documents/Obsidian Vault
 
 Shell-exported variables win over `.env`. The built-in parser intentionally supports only simple `KEY=VALUE` lines.
 
+</details>
+
+<details>
+<summary><b>Claude Code / OpenAI Codex subscriptions</b> (no API key)</summary>
+
+Drives a vendor CLI you are already signed into, so a flat-rate subscription can power the agent with no API key and no per-token billing. Two are supported: `claude` (Claude Code) and `codex` (OpenAI Codex).
+
+**Prerequisite:** the CLI installed and signed in — `claude` then `/login`, or `npm i -g @openai/codex` then `codex login`. Atomic only spawns the binary; it never reads, copies, or replays its OAuth tokens or keychain entries.
+
+In the TUI: **Providers → `n` →** pick the subscription row, then type a model. For Claude that is `sonnet`, `opus`, `haiku`, `fable`, or a pinned id like `claude-sonnet-5`; **for Codex leave it blank** — under a ChatGPT login Codex rejects explicit model ids (`not supported when using Codex with a ChatGPT account`) and resolves one itself. There is no API-key screen, because there is no key. Equivalent `config.json`:
+
+```json
+{
+  "llm": {
+    "activeTextProvider": "claude-cli",
+    "providers": [
+      {
+        "id": "claude-cli",
+        "kind": "subscription-cli",
+        "defaultChatModel": "sonnet",
+        "subscriptionCli": { "cli": "claude" }
+      }
+    ]
+  }
+}
+```
+
+Optional keys inside `subscriptionCli`: `binPath` (absolute path when the CLI is not on `PATH`), `extraArgs` (appended verbatim — e.g. `["--effort", "high"]`), `streaming` (set `false` to buffer), `maxBudgetUsd`.
+
+Swap `"cli": "claude"` for `"cli": "codex"` to drive Codex instead, and drop `defaultChatModel`.
+
+Each completion spawns the CLI fresh with the prompt on **stdin** (a two-zone prompt exceeds the 128 KiB argv limit). For `claude` it runs `claude --print` with these flags, which are load-bearing rather than cosmetic:
+
+- **`--tools ""`** — disables Claude Code's own Bash/Edit/Write. Without it a second agent would act on your machine outside Atomic's approval ladder.
+- **`--strict-mcp-config`** with no config — keeps your MCP servers out of what should be a stateless completion.
+- **`--system-prompt`** — replaces Claude Code's coding-agent prompt, which would otherwise compete with the prompt Atomic already built.
+- **`--no-session-persistence`** — Atomic owns session state; CLI-side history would double-count context.
+- **`--bare` is never passed.** Its own docs say OAuth and keychain are never read under it, which would defeat the whole feature.
+
+For `codex` it runs `codex exec --json` with `--ephemeral`, `--skip-git-repo-check`, `--ignore-user-config` and `-s read-only`. Three differences are worth knowing, because Codex is a more opinionated agent than Claude's headless mode:
+
+- **There is no `--tools ""` equivalent.** `-s read-only` confines Codex's own tools to reading; it cannot remove them. Left to itself, Codex will try to *perform* the request with its own tools instead of emitting Atomic's tool-call protocol — in testing it answered "I can't find `probe.txt`" after looking in its own working directory. The fix is an explicit completion-engine instruction prepended to the prompt (Codex has no system-prompt flag). It works — verified turns drive `os.fs.read` → `reply` and `os.fs.read` → `os.fs.write` → `reply` with no parse retries — but it is a prompt-level guarantee, not a structural one like `--tools ""`.
+- **Codex exits 0 even when the turn fails.** A bad model id, an expired login and a rate limit all produce a clean exit with a `turn.failed` event, so the adapter treats a missing `turn.completed` as a failure rather than trusting the exit code.
+- **No streaming.** `codex exec --json` emits the answer in one `item.completed`, with no incremental text events, so this provider buffers instead of pretending to stream.
+
+Not supported on either CLI: vision, embeddings (they stay on the local daemon), and the sampling knobs `temperature` / `top_p` / `top_k` / `seed` / `stop` / `maxTokens` — neither CLI exposes a flag for them, so they are dropped rather than silently approximated. Reconfiguring `binPath` or `extraArgs` means editing `config.json`; the model is changeable from the LLM tab.
+
+Two things worth knowing before you switch a long-running agent onto either: each completion pays roughly 0.8 s of process startup, and subscription plans have session and weekly caps that an autonomous multi-step agent reaches much faster than interactive use. When a cap is hit, the CLI's own message is surfaced verbatim.
+
+> [!NOTE]
+> Whether driving a subscription CLI from another agent is acceptable use is the vendor's call, not this project's. Atomic uses the officially documented headless mode and nothing else; the decision to use it is yours.
 </details>
 
 <details>

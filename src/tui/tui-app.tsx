@@ -245,6 +245,8 @@ export interface TuiAppCallbacks {
    * handler owns the escape sequences and the config write.
    */
   onMouseSupportRequested?(enabled: boolean | null): void;
+  /** `/max_steps [number]` — `null` reports the active value. */
+  onMaxStepsRequested?(maxSteps: number | null): void;
   /** Start the Tasks-tab auto-refresh loop (first entry only). */
   onTasksAutoRefreshStart?(): void;
   /** Perform a one-shot refresh of the tasks list. */
@@ -2011,4 +2013,3 @@ export function TuiApp({
     </MouseProvider>
   );
 }
-

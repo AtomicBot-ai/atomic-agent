@@ -17,6 +17,7 @@ import type { MetricSample, MetricSink } from "../tracing/metrics-collector.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
 import { registerSession } from "../local-llm/session-registry.js";
 import { enterAltScreen } from "./alt-screen.js";
+import { applyMaxStepsRequest } from "./apply-max-steps-request.js";
 import { enableSynchronizedOutput } from "./synchronized-output.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { parseTuiArgs,
@@ -365,6 +366,15 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onMessageSteered: (text) => orchestrator.steerMessage(text),
         onWhileBusyModePersistRequested: (mode) =>
           persistWhileBusyMode(mode, bus),
+        onMaxStepsRequested: (next) => {
+          const result = applyMaxStepsRequest(next, orchestrator);
+          bus.emit({ type: "runtime_info", line: result.message });
+          bus.emit({
+            type: "system_message",
+            text: result.message,
+            ...(result.warning ? { variant: "warn" as const } : {}),
+          });
+        },
         // The mode is a stance for this session, so it moves the live
         // ladder and the live plan flag and writes neither to
         // `config.json`. The Privacy tab remains the only surface that

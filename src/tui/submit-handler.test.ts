@@ -225,6 +225,17 @@ describe("handleEditorSubmit", () => {
     expect(onApprovalLevelSetRequested).toHaveBeenCalledWith(1);
     expect(onApprovalLevelSetRequested).toHaveBeenCalledTimes(3);
   });
+
+  it("routes /max_steps status and set requests to the host", () => {
+    const state = createInitialTuiState(fakeSession());
+    const onMaxStepsRequested = vi.fn();
+    const callbacks = stubCallbacks({ onMaxStepsRequested });
+
+    handleEditorSubmit("/max_steps", state, vi.fn(), callbacks);
+    handleEditorSubmit("/max_steps 41", state, vi.fn(), callbacks);
+
+    expect(onMaxStepsRequested.mock.calls).toEqual([[null], [41]]);
+  });
 });
 
 describe("handleEditorSubmit while a turn is running", () => {
@@ -511,4 +522,3 @@ describe("steer vs queue while a turn is running", () => {
     expect(dispatched.some((a) => a.type === "message_submitted")).toBe(true);
   });
 });
-
