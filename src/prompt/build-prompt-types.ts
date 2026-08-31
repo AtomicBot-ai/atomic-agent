@@ -1,4 +1,5 @@
 import type { ModelProfile } from "../llm/model-profile.js";
+import type { ToolCallTransport } from "../llm/provider/completion-types.js";
 import type { ProfileFact } from "../memory/profile-store.js";
 import type { SessionState } from "../session/session-state.js";
 import type {
@@ -14,6 +15,14 @@ export interface BuildPromptInput {
   capabilities: CapabilitiesSummary;
   skillCatalog: readonly SkillCatalogEntry[];
   systemPersona?: string;
+  /**
+   * Transport the serving link uses for tool calls. Forwarded into
+   * `buildStablePrefix`, where `"native_tools"` swaps the text-JSON
+   * emission mandate for native function-calling guidance (issue #285).
+   * Omitted or `"grammar"` keeps the stable prefix byte-identical to
+   * the legacy output.
+   */
+  toolTransport?: ToolCallTransport;
   /**
    * Pre-formatted current date (see `formatCurrentDate`) rendered as a
    * `CURRENT DATE:` line in the variable tail just before `### respond`.

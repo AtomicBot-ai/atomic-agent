@@ -130,6 +130,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     ...(input.systemPersona !== undefined
       ? { systemPersona: input.systemPersona }
       : {}),
+    ...(input.toolTransport !== undefined
+      ? { toolTransport: input.toolTransport }
+      : {}),
   });
 
   const sessionParts = buildSessionSectionParts(

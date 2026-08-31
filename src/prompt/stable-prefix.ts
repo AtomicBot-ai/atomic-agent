@@ -1,3 +1,4 @@
+import type { ToolCallTransport } from "../llm/provider/completion-types.js";
 import { formatSkillCatalogLine } from "../skills/skill-catalog.js";
 
 /**
@@ -75,16 +76,28 @@ export interface StablePrefixInput {
    */
   turnSystemOpen?: string;
   maxParallelToolCalls?: number;
+  /**
+   * Transport the serving link uses for tool calls. Under
+   * `"native_tools"` the persona's emission mandate and the
+   * `### instructions` block switch to native function-calling guidance:
+   * the text-JSON "Emit a JSON ARRAY" mandate contradicts the
+   * request-level `tools` payload and drives cloud models back to text
+   * emission (issue #285). The `### tools` catalog is rendered in both
+   * modes — the provider fallback chain can hand a native-shaped request
+   * to a grammar-only llama-server link, and the catalog carries the
+   * tier / `tool.view` semantics. Omitted or `"grammar"` keeps the
+   * prefix byte-identical to the legacy output (KV-cache safe).
+   */
+  toolTransport?: ToolCallTransport;
 }
 
 /**
- * The stable prefix is the part of the prompt that must stay byte-stable
- * within a session so llama.cpp can reuse its KV-cache. Order and spacing
- * are intentional — changing any byte invalidates the slot.
+ * Persona lines shared verbatim between the grammar and native-tools
+ * variants. Only the emission mandate (line 1) and the bias-toward-action
+ * phrasing (line 2) differ per transport; everything below is
+ * transport-neutral. Extracted so the two personas cannot drift apart.
  */
-export const DEFAULT_SYSTEM_PERSONA = [
-  "You are atomic-agent, a local operator. Each step emits exactly one JSON array matching the tool grammar — no other prose.",
-  "Bias toward action: keep planning minimal; unless the user explicitly asked for analysis or explanation only, choose the next tool-call array quickly instead of long deliberation. If the template forces a separate reasoning or thinking block before JSON, keep that block to a few words (or effectively empty), then emit the array.",
+const SYSTEM_PERSONA_SHARED_LINES = [
   "Terminals: `reply` returns the final answer to the user and ends the current macro-turn (session stays open). `finish` ends the entire session; only with explicit user intent.",
   "`reply` is ONLY for the final user-facing text after all needed tools ran. The user does not see intermediate text — if another tool is next, emit that tool JSON, not `reply`.",
   "Output discipline: when the request specifies an exact answer format, marker, length, or units, the `reply` text MUST be ONLY that — the bare value or the exact required line and nothing else (correct units, no preamble, no restating the question, no extra commentary or markdown before or after). If a specific final-answer line or marker is required, emit exactly that line as the entire reply. When no format is specified, answer as fully and helpfully as the task warrants.",
@@ -94,6 +107,33 @@ export const DEFAULT_SYSTEM_PERSONA = [
   "Large directories: `os.fs.list` only shows up to maxEntries matches—use extensions, pattern, sort, or `os.fs.glob` to narrow before assuming a file type is absent. For many PDFs or resumes prefer filename `os.fs.glob` patterns plus `os.fs.read_document` on a short candidate list; avoid sweeping `os.fs.grep` with `glob` over huge `*.pdf` trees.",
   "Deleting files or directories: when the user asks to delete, remove, erase, or trash paths, call `os.fs.trash` with concrete absolute paths in `paths` (use `os.fs.list` / `os.fs.glob` first if you need to discover names). Do not use `os.shell.run` with `rm`, `unlink`, or `rmdir` for that unless the user explicitly demands permanent irreversible shell deletion.",
   "Memory: persist with `memory.profile.*` and `memory.notes.*` as needed. Use `### lessons` (pointer view of distilled rules from past episodes — call `memory.lessons.recall { id }` to read the full principle), `### procedures` (pointer view of advisory how-to templates — call `memory.procedures.recall { id }` to read the `steps[]`; templates are guidance, not law — follow them or consciously deviate), `### recalled` / `### memory-index` and `memory.notes.recall` for past context. Store distilled facts, not full dumps. `### notice` in the tail is a hard nudge to change strategy.",
+];
+
+/**
+ * The stable prefix is the part of the prompt that must stay byte-stable
+ * within a session so llama.cpp can reuse its KV-cache. Order and spacing
+ * are intentional — changing any byte invalidates the slot.
+ */
+export const DEFAULT_SYSTEM_PERSONA = [
+  "You are atomic-agent, a local operator. Each step emits exactly one JSON array matching the tool grammar — no other prose.",
+  "Bias toward action: keep planning minimal; unless the user explicitly asked for analysis or explanation only, choose the next tool-call array quickly instead of long deliberation. If the template forces a separate reasoning or thinking block before JSON, keep that block to a few words (or effectively empty), then emit the array.",
+  ...SYSTEM_PERSONA_SHARED_LINES,
+].join("\n");
+
+/**
+ * Persona for the `native_tools` transport. The request already carries
+ * an OpenAI `tools` array with `tool_choice: "auto"`, so the persona must
+ * mandate the function-calling interface — repeating the grammar
+ * persona's "exactly one JSON array" line alongside a native `tools`
+ * payload is a dual mandate that measurably drives models back to
+ * text-JSON emission (issue #285: 0/6 native `tool_calls` under
+ * `native_tools`). Lines past the first two are shared with
+ * `DEFAULT_SYSTEM_PERSONA`.
+ */
+export const NATIVE_TOOLS_SYSTEM_PERSONA = [
+  "You are atomic-agent, a local operator. Each step calls tools through the native function-calling interface — never write tool-call JSON into the text of your answer, and never put your answer in the reasoning channel.",
+  "Bias toward action: keep planning minimal; unless the user explicitly asked for analysis or explanation only, choose the next tool call quickly instead of long deliberation. Keep any reasoning or thinking to a few words (or effectively empty), then make the call.",
+  ...SYSTEM_PERSONA_SHARED_LINES,
 ].join("\n");
 
 /**
@@ -110,7 +150,10 @@ export const WINDOWS_PLATFORM_HINT = [
 ].join("\n");
 
 export function buildStablePrefix(input: StablePrefixInput): string {
-  const persona = input.systemPersona ?? DEFAULT_SYSTEM_PERSONA;
+  const nativeTools = input.toolTransport === "native_tools";
+  const persona =
+    input.systemPersona ??
+    (nativeTools ? NATIVE_TOOLS_SYSTEM_PERSONA : DEFAULT_SYSTEM_PERSONA);
   const maxParallelToolCalls = input.maxParallelToolCalls ?? 8;
   const frequent: ToolDescriptor[] = [];
   const rare: ToolDescriptor[] = [];
@@ -167,12 +210,27 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     caps,
     ``,
     `### instructions`,
-    `Emit a JSON ARRAY of tool calls now. Always start with \`[\` and end with \`]\`, even for a single call. Use \`reply\` for natural-language answers to the user.`,
-    `PARALLEL: when you need multiple INDEPENDENT actions (e.g. read 3 different files, run 2 globs, look up 4 git logs), put up to ${maxParallelToolCalls} calls in the SAME array — they run in parallel and cut wall time by ~Nx. Examples:`,
-    `  - one call: [{"tool":"os.fs.read","args":{"path":"a.ts"}}]`,
-    `  - parallel batch: [{"tool":"os.fs.read","args":{"path":"a.csv"}},{"tool":"os.fs.read","args":{"path":"b.csv"}},{"tool":"os.fs.read","args":{"path":"c.csv"}}]`,
-    `  - reply: [{"tool":"reply","args":{"text":"..."}}]`,
-    `Keep a call solo (length-1 array) when: it is \`reply\`/\`finish\`, may need approval (\`os.shell.run\`, \`os.fs.write\`, \`os.fs.edit\`, \`os.fs.trash\`, \`os.fs.patch\`, \`os.fs.archive.extract\`, \`os.proc.kill\`, \`os.http.request\`, \`skill.run_script\`), or its args depend on a previous call's result.`,
+    // The emission instructions are the one transport-dependent block.
+    // Grammar links parse text-JSON (GBNF-constrained locally), so they
+    // mandate the array literal; native links carry an OpenAI `tools`
+    // payload, and repeating the text-JSON mandate there is a dual
+    // mandate that drives models back to text emission (issue #285).
+    // The `### tools` catalog above stays in both modes — see
+    // `StablePrefixInput.toolTransport`.
+    ...(nativeTools
+      ? [
+          `Call tools now, through the native function-calling interface (the \`tools\` your API request carries) — do NOT write tool-call JSON as text. The \`### tools\` catalog above is reference documentation for those same tools (tiers, examples, \`tool.view\`). For the final user-facing answer call \`reply\`, or answer in plain text.`,
+          `PARALLEL: when you need multiple INDEPENDENT actions (e.g. read 3 different files, run 2 globs, look up 4 git logs), emit up to ${maxParallelToolCalls} tool calls in the SAME response — they run in parallel and cut wall time by ~Nx.`,
+          `Emit a single tool call (no others alongside) when: it is \`reply\`/\`finish\`, may need approval (\`os.shell.run\`, \`os.fs.write\`, \`os.fs.edit\`, \`os.fs.trash\`, \`os.fs.patch\`, \`os.fs.archive.extract\`, \`os.proc.kill\`, \`os.http.request\`, \`skill.run_script\`), or its args depend on a previous call's result.`,
+        ]
+      : [
+          `Emit a JSON ARRAY of tool calls now. Always start with \`[\` and end with \`]\`, even for a single call. Use \`reply\` for natural-language answers to the user.`,
+          `PARALLEL: when you need multiple INDEPENDENT actions (e.g. read 3 different files, run 2 globs, look up 4 git logs), put up to ${maxParallelToolCalls} calls in the SAME array — they run in parallel and cut wall time by ~Nx. Examples:`,
+          `  - one call: [{"tool":"os.fs.read","args":{"path":"a.ts"}}]`,
+          `  - parallel batch: [{"tool":"os.fs.read","args":{"path":"a.csv"}},{"tool":"os.fs.read","args":{"path":"b.csv"}},{"tool":"os.fs.read","args":{"path":"c.csv"}}]`,
+          `  - reply: [{"tool":"reply","args":{"text":"..."}}]`,
+          `Keep a call solo (length-1 array) when: it is \`reply\`/\`finish\`, may need approval (\`os.shell.run\`, \`os.fs.write\`, \`os.fs.edit\`, \`os.fs.trash\`, \`os.fs.patch\`, \`os.fs.archive.extract\`, \`os.proc.kill\`, \`os.http.request\`, \`skill.run_script\`), or its args depend on a previous call's result.`,
+        ]),
     ``,
   ].join("\n");
 }

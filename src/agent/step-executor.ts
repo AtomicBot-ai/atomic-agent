@@ -336,6 +336,13 @@ async function executeStepInner(
     skillCatalog: ctx.skillCatalog,
     currentDate: formatCurrentDate(new Date()),
     profile: deps.profile,
+    // The prefix must match the request shape: a native-tools link gets
+    // native function-calling guidance instead of the text-JSON array
+    // mandate (issue #285). Configured transport, not `servedTransport`:
+    // the prompt is built before any fallback link serves the request.
+    ...(deps.toolTransport !== undefined
+      ? { toolTransport: deps.toolTransport }
+      : {}),
     ...(deps.contextWindow !== undefined
       ? { contextWindow: deps.contextWindow }
       : {}),
@@ -1054,9 +1061,11 @@ function isNativeToolsEmptyCompletionHandledByParser(
   // Reasoning-only completions (Qwen3.8 with preserve_thinking,
   // DeepSeek-R1 over OpenAI-compatible APIs): the model ends its turn
   // with all text in `reasoning_content`, `content` empty and no
-  // tool_calls. The parser salvages these — a GBNF-shaped batch inside
-  // the reasoning, or the reasoning itself as a `reply`. Only a
-  // completion with NOTHING in any channel routes through ModelError.
+  // tool_calls. The parser gets a crack at these: a GBNF-shaped batch
+  // inside the reasoning is recovered as real tool calls; anything else
+  // fails the parse and routes through the one-shot repair (never as a
+  // raw-CoT `reply` — issue #285). Only a completion with NOTHING in
+  // any channel routes through ModelError.
   const reasoning =
     typeof completion.reasoningContent === "string"
       ? completion.reasoningContent.trim()
@@ -1206,11 +1215,15 @@ function tryParseToolCalls(
         };
       }
       // Reasoning-only completion: no tool_calls, empty content, but the
-      // think channel carries text. Same two recovery paths as for plain
-      // content, applied to the reasoning body: models occasionally emit
-      // the GBNF-style call array inside the think block, and a model
-      // that reasoned its way to a final answer without ever leaving the
-      // think channel still has an answer worth delivering as `reply`.
+      // think channel carries text. Models occasionally emit the
+      // GBNF-style call array inside the think block — recover those
+      // calls (they are the model's real intent). Anything else is NOT
+      // salvaged: `reasoning_content` is internal scratch space by
+      // OpenAI-compatible convention, and wrapping it as a `reply` leaks
+      // raw chain-of-thought verbatim as deliberate agent speech (issue
+      // #285). Returning `ok: false` routes the completion through the
+      // same one-shot repair as every other unparseable body; a repair
+      // that fails too ends the step as a parse error, not a CoT leak.
       const reasoningText =
         typeof completion.reasoningContent === "string"
           ? completion.reasoningContent.trim()
@@ -1230,21 +1243,13 @@ function tryParseToolCalls(
             return { ok: true, batch: { ...grammarBatch, calls } };
           }
         } catch {
-          // Not GBNF-shaped — fall through to the reply wrap.
+          // Not GBNF-shaped — fall through to the parse failure below.
         }
         return {
-          ok: true,
-          batch: {
-            kind: "batch",
-            calls: [
-              {
-                tool: "reply",
-                args: { text: reasoningText },
-                reasoning: reasoningText,
-              },
-            ],
-            reasoning: reasoningText,
-          },
+          ok: false,
+          error: new Error(
+            "reasoning-only completion: no tool_calls, empty content, and the reasoning body is not a tool-call array",
+          ),
         };
       }
       return {

@@ -273,21 +273,129 @@ describe("executeStep batch handling", () => {
     ]);
   });
 
-  it("native_tools: reasoning-only completion (empty content, no tool_calls) is salvaged as a reply", async () => {
-    // Reasoning models served over OpenAI-compatible APIs (Qwen3.8 with
-    // `preserve_thinking` on, DeepSeek-R1) routinely end hard turns with
-    // the entire answer in `reasoning_content`, `content` empty and no
-    // `tool_calls`. Failing fast here (the pre-Qwen3.8 contract) killed
-    // whole sessions on healthy completions. The parser now salvages the
-    // reasoning body — GBNF batch if one is embedded, otherwise a
-    // length-1 `reply` — without burning a retry: no prompt is replayed,
-    // so the original fail-fast concern (replaying the same prompt into
-    // the same wall) does not apply.
+  it("native_tools: unparseable reasoning-only completion routes through parse_retry, never leaks CoT as a reply", async () => {
+    // `reasoning_content` is internal scratch space by OpenAI-compatible
+    // convention. An earlier salvage path wrapped an unparseable
+    // reasoning body verbatim into `reply { text }` — raw chain-of-
+    // thought delivered as deliberate agent speech (issue #285). The
+    // executor must instead treat it like any other unparseable body:
+    // one `parse_retry` through the repair prompt, and the repaired
+    // completion's answer — never the reasoning text — reaches the user.
     const registry = makeRegistry();
     const session = createEmptySessionState({
       id: "s-native-reasoning-only",
       workingDir: "/w",
     });
+    const events: Array<{ type: string }> = [];
+    const cot =
+      "The user asked whether reasoning tokens leak. I should inspect the binary...";
+    let llmCalls = 0;
+
+    const outcome = await executeStep(
+      {
+        session,
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: "привет",
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        async llmComplete() {
+          llmCalls += 1;
+          if (llmCalls === 1) {
+            return {
+              content: "",
+              reasoningContent: cot,
+              stop: true,
+              truncated: false,
+              timing: {
+                promptMs: 1,
+                predictedMs: 1,
+                promptTokens: 20,
+                predictedTokens: 5,
+              },
+              cacheHitTokens: 0,
+              slotId: -1,
+              modelId: "openai/gpt-5.5",
+            };
+          }
+          return {
+            content: "",
+            reasoningContent: "",
+            stop: true,
+            truncated: false,
+            timing: {
+              promptMs: 1,
+              predictedMs: 1,
+              promptTokens: 20,
+              predictedTokens: 5,
+            },
+            cacheHitTokens: 0,
+            slotId: -1,
+            modelId: "openai/gpt-5.5",
+            toolCalls: [
+              {
+                id: "call-repair",
+                type: "function",
+                function: {
+                  name: "reply",
+                  arguments: JSON.stringify({ text: "Привет!" }),
+                },
+              },
+            ],
+          };
+        },
+        grammar: "",
+        profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "native_tools",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
+        onEvent(event) {
+          events.push({ type: event.type });
+        },
+      },
+    );
+
+    expect(llmCalls).toBe(2);
+    expect(events.some((event) => event.type === "parse_retry")).toBe(true);
+    expect(outcome.toolResults).toHaveLength(1);
+    expect(outcome.toolResults[0]?.status).toBe("ok");
+    expect(outcome.nextSession.turns.at(-1)).toMatchObject({
+      kind: "assistant_reply",
+      text: "Привет!",
+    });
+    // The leak itself: no reply anywhere in the transcript may carry the
+    // raw reasoning body.
+    for (const turn of outcome.nextSession.turns) {
+      if (turn.kind === "assistant_reply") {
+        expect(turn.text).not.toContain(cot);
+      }
+    }
+    expect(
+      outcome.toolCalls.some(
+        (call) =>
+          call.tool === "reply" &&
+          typeof call.args?.text === "string" &&
+          call.args.text.includes(cot),
+      ),
+    ).toBe(false);
+  });
+
+  it("native_tools: recovers a GBNF-shaped batch embedded in `reasoning_content` without a retry", async () => {
+    // Reasoning models sometimes emit the persona's `[{tool, args}]`
+    // array inside the think channel and end the turn with `content`
+    // empty. That is a real tool-call emission, not scratch space — the
+    // parser must recover it in place (no repair round-trip).
+    const registry = makeRegistry();
+    const session = createEmptySessionState({
+      id: "s-native-gbnf-in-reasoning",
+      workingDir: "/w",
+    });
+    const events: Array<{ type: string }> = [];
     let llmCalls = 0;
 
     const outcome = await executeStep(
@@ -307,18 +415,19 @@ describe("executeStep batch handling", () => {
           llmCalls += 1;
           return {
             content: "",
-            reasoningContent: "I should call reply.",
+            reasoningContent:
+              '[{"tool":"reply","args":{"text":"Привет, инициат!"}}]',
             stop: true,
             truncated: false,
             timing: {
               promptMs: 1,
               predictedMs: 1,
               promptTokens: 20,
-              predictedTokens: 5,
+              predictedTokens: 12,
             },
             cacheHitTokens: 0,
             slotId: -1,
-            modelId: "openai/gpt-5.5",
+            modelId: "z-ai/glm-5.3-flash",
           };
         },
         grammar: "",
@@ -326,16 +435,83 @@ describe("executeStep batch handling", () => {
         toolTransport: "native_tools",
         toolCallAdapter: null,
         supportsSlotAffinity: false,
+        onEvent(event) {
+          events.push({ type: event.type });
+        },
       },
     );
 
     expect(llmCalls).toBe(1);
-    expect(outcome.toolResults).toHaveLength(1);
-    expect(outcome.toolResults[0]?.status).toBe("ok");
+    expect(events.some((event) => event.type === "parse_retry")).toBe(false);
+    expect(outcome.toolCalls).toHaveLength(1);
+    expect(outcome.toolCalls[0]).toMatchObject({
+      tool: "reply",
+      args: { text: "Привет, инициат!" },
+    });
     expect(outcome.nextSession.turns.at(-1)).toMatchObject({
       kind: "assistant_reply",
-      text: "I should call reply.",
+      text: "Привет, инициат!",
     });
+  });
+
+  it("native_tools: reasoning-only on both attempts surfaces a parse error, not the CoT", async () => {
+    // Twice-unparseable reasoning ends the step as a GrammarError. Before
+    // issue #285 the first attempt already "succeeded" by leaking the
+    // reasoning body as the reply, so this path was unreachable.
+    const registry = makeRegistry();
+    const session = createEmptySessionState({
+      id: "s-native-reasoning-twice",
+      workingDir: "/w",
+    });
+    const events: Array<{ type: string }> = [];
+    let llmCalls = 0;
+
+    await expect(
+      executeStep(
+        {
+          session,
+          toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+          capabilities: CAPS,
+          skillCatalog: SKILLS,
+          stepIndex: 0,
+          signal: new AbortController().signal,
+          userMessage: "привет",
+        },
+        {
+          registry,
+          slotManager: new SlotManager(2),
+          async llmComplete() {
+            llmCalls += 1;
+            return {
+              content: "",
+              reasoningContent: "Hmm, let me think about the binary layout...",
+              stop: true,
+              truncated: false,
+              timing: {
+                promptMs: 1,
+                predictedMs: 1,
+                promptTokens: 20,
+                predictedTokens: 5,
+              },
+              cacheHitTokens: 0,
+              slotId: -1,
+              modelId: "z-ai/glm-5.3-flash",
+            };
+          },
+          grammar: "",
+          profile: PLAIN_INSTRUCT_PROFILE,
+          toolTransport: "native_tools",
+          toolCallAdapter: null,
+          supportsSlotAffinity: false,
+          onEvent(event) {
+            events.push({ type: event.type });
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ name: "GrammarError" });
+
+    expect(llmCalls).toBe(2);
+    expect(events.some((event) => event.type === "parse_retry")).toBe(true);
   });
 
   it("repairs a native-tools reply call with empty args before execution", async () => {

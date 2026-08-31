@@ -3,6 +3,7 @@ export type { BuildPromptInput, BuiltPrompt } from "./build-prompt.js";
 export {
   buildStablePrefix,
   DEFAULT_SYSTEM_PERSONA,
+  NATIVE_TOOLS_SYSTEM_PERSONA,
   formatToolForLoadedTail,
 } from "./stable-prefix.js";
 export type {
