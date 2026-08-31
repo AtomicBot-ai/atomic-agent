@@ -84,9 +84,11 @@ export interface SelectionPassthroughOptions {
  * opens on the press, before any drag happened, so the operator is told
  * to drag; a `"drag"` window opens mid-gesture, after the terminal has
  * already reported (and thereby eaten) a whole drag, so the operator is
- * told to drag *again*.
+ * told to drag *again*. A `"chip"` window comes from the hint strip's
+ * `[drag] select text` chip — no drag has happened yet, so it shares
+ * the modifier phrasing: the *next* drag selects.
  */
-export type SelectionTrigger = "modifier" | "drag";
+export type SelectionTrigger = "modifier" | "drag" | "chip";
 
 export interface SelectionPassthrough {
   /**
@@ -157,6 +159,7 @@ export function createSelectionPassthrough(
     }, windowMs);
     const seconds = Math.round(windowMs / 1000);
     notify?.(
+      // "chip" and "modifier" share a phrasing: no drag is lost yet.
       trigger === "drag"
         ? `text selection: mouse paused for ${seconds}s — drag again to ` +
             "select, then copy the way you normally would"

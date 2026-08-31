@@ -220,7 +220,8 @@ export function resolveChips(
   // does it), then the sidebar (narrow terminals collapse it anyway —
   // see `SIDEBAR_MIN_COLUMNS`), then the route chip (the route line
   // itself is clickable, so the keyboard hint is the first luxury),
-  // then the newline key, then the menu chip. A draft adds an
+  // then the drag/select hint (the gesture works without ever reading
+  // it), then the newline key, then the menu chip. A draft adds an
   // `esc / clear draft` chip so the affordance is on screen exactly
   // when it applies — `/` no longer opens the palette with a non-empty
   // buffer, so nothing usable is displaced.
@@ -233,7 +234,7 @@ export function resolveChips(
     {
       key: hasShiftEnterNewline() ? "shift+enter" : "alt+enter",
       label: "newline",
-      shed: 4,
+      shed: 5,
     },
     {
       key: "tab",
@@ -253,13 +254,24 @@ export function resolveChips(
       onClick: (mouse) =>
         mouse.dispatch({ type: "composer_switch_opened", kind: "backend" }),
     },
+    // Text selection: the gesture is drag-twice (the first drag pauses
+    // mouse reporting, the second selects), and nothing on screen said
+    // so. The chip writes it down, and a click skips the first drag —
+    // it opens the same pause window directly, so the very next drag
+    // selects. Sheds early: the gesture works without the hint.
+    {
+      key: "drag",
+      label: "select text",
+      shed: 4,
+      onClick: (mouse) => mouse.callbacks.onSelectionPauseRequested?.(),
+    },
     // Esc opens the menu only on an empty buffer — with a draft it
     // clears the draft — so the strip advertises whichever one the next
     // press will actually do.
     ...(hasDraft
       ? [{ key: "esc", label: "clear draft" }]
-      : [{ key: "esc", label: "menu", shed: 6 }]),
-    { key: "ctrl+p", label: "menu", shed: 5 },
+      : [{ key: "esc", label: "menu", shed: 7 }]),
+    { key: "ctrl+p", label: "menu", shed: 6 },
     // A selection can only exist over a non-empty buffer, so the
     // clear-draft Esc chip is always alongside these two.
     ...(composerSelectionActive(state)

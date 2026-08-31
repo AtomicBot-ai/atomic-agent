@@ -254,6 +254,12 @@ export interface TuiAppCallbacks {
    * operator drags again with the terminal's own selection live.
    */
   onSelectionDragIntent?(): void;
+  /**
+   * The hint strip's `[drag] select text` chip was clicked: open the
+   * selection pause window right away, so the operator's next drag
+   * selects natively instead of arming the drag-intent detector first.
+   */
+  onSelectionPauseRequested?(): void;
   /** Start the Tasks-tab auto-refresh loop (first entry only). */
   onTasksAutoRefreshStart?(): void;
   /** Perform a one-shot refresh of the tasks list. */

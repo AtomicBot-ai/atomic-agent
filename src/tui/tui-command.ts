@@ -626,6 +626,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
         // only the notice differs, because THIS gesture is already
         // lost to reporting and the operator has to drag again.
         onSelectionDragIntent: () => selectionPassthrough.beginWindow("drag"),
+        onSelectionPauseRequested: () =>
+          selectionPassthrough.beginWindow("chip"),
       },
       // Unconditional on purpose. `mouseEnabled` is a startup-time
       // value, but `/mouse on` flips reporting *later* and cannot

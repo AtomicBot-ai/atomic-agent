@@ -180,6 +180,21 @@ describe("createSelectionPassthrough", () => {
     expect(messages[1]).toContain("mouse back on");
   });
 
+  it("beginWindow('chip') opens the window with the next-drag phrasing", () => {
+    const tracking = makeTracking();
+    const messages: string[] = [];
+    const passthrough = createSelectionPassthrough({
+      tracking: () => tracking,
+      notify: (m) => messages.push(m),
+    });
+    passthrough.beginWindow("chip");
+    expect(tracking.isSuspended()).toBe(true);
+    // A chip click loses no drag, so the notice describes the gesture
+    // to come — the modifier phrasing, not "again".
+    expect(messages[0]).toContain("drag to select");
+    expect(messages[0]).not.toContain("drag again");
+  });
+
   it("beginWindow neither restarts nor extends a window already open", () => {
     const tracking = makeTracking();
     const passthrough = createSelectionPassthrough({
