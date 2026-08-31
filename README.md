@@ -229,6 +229,8 @@ Atomic Agent's memory is not a giant chat log pasted back into the prompt. It's 
 - **Dedup and eviction** merge near-duplicate memories and evict by usefulness, not age, on by default.
 - **Reflection** runs after turns, off the main agent slot, and writes memory without blocking the reply.
 
+New to this? [MEMORY_GUIDE.md](MEMORY_GUIDE.md) walks the whole loop end to end — what gets stored when, where the SQLite file lives, how recall shows up in prompts, worked example transcripts, and how to inspect or wipe it all.
+
 ## Ways to Use It
 
 <details>
@@ -645,7 +647,8 @@ npm run build
 Core docs:
 
 - [PROMPT.md](PROMPT.md): prompt anatomy
-- [MEMORY.md](MEMORY.md): memory and recall
+- [MEMORY_GUIDE.md](MEMORY_GUIDE.md): memory end to end, with worked examples
+- [MEMORY.md](MEMORY.md): memory and recall internals
 - [MEMORY_FABRIC_V2.md](MEMORY_FABRIC_V2.md) / [MEMORY_FABRIC_V2.5.md](MEMORY_FABRIC_V2.5.md): memory roadmap
 - [SKILLS.md](SKILLS.md): skill format
 - [BUNDLING.md](BUNDLING.md): release packaging
