@@ -67,6 +67,15 @@ export function handleLlmPanelKey(
     return true;
   }
 
+  // `p` cycles the price facet of the inline model list: all → free →
+  // paid → all. Cloud pane only — the other panes have no priced rows to
+  // narrow. While the `filter:` row is focused the letter is query text
+  // instead (the focused branch above already consumed it).
+  if (input === "p" && state.llmPanel.mode === "cloud") {
+    dispatch({ type: "llm_cloud_pricing_cycled" });
+    return true;
+  }
+
   // `/` bootstraps the global slash-command palette. The LLM tab keeps
   // the editor unfocused so single letters act as panel hotkeys, which
   // means typing `/` never reaches the editor's onChange. Seed the input

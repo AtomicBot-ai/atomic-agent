@@ -1,3 +1,5 @@
+import type { ModelPricingFilter } from "../../llm/provider/model-pricing-filter.js";
+
 /**
  * Panes of the LLM tab. `local` browses the managed llama.cpp catalog,
  * `cloud` the API providers, `external` the single base URL of a
@@ -53,6 +55,13 @@ export interface LlmPanelState {
    * `f` or `/model`.
    */
   cloudModelFilterFocused: boolean;
+  /**
+   * Price facet of the Cloud pane's inline model list, cycled with `p`.
+   * Own field rather than a term in `cloudModelFilter` so the two narrow
+   * independently, and separate from the providers wizard's facet so
+   * neither screen leaks its state into the other.
+   */
+  cloudModelPricing: ModelPricingFilter;
 }
 
 export function createInitialLlmPanelState(): LlmPanelState {
@@ -68,6 +77,7 @@ export function createInitialLlmPanelState(): LlmPanelState {
     externalCompatSteerUrl: null,
     cloudModelFilter: "",
     cloudModelFilterFocused: false,
+    cloudModelPricing: "all",
   };
 }
 

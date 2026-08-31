@@ -868,3 +868,107 @@ function next(
   }
   return result.wizard;
 }
+
+describe("cloud pick list price facet (p)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * Two free rows and two paid ones, identical scores so the payload
+   * order survives ranking (same trick as the navigation suite above).
+   * Fresh module graph per test: the live catalog cache is module-scoped
+   * and one test's refresh must not leak into the rest of this file.
+   */
+  async function freshMixedPickPhase() {
+    vi.resetModules();
+    const catalog = await import(
+      "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js"
+    );
+    const bindings = await import("./providers-wizard-key-bindings.js");
+    const phases = await import("./providers-wizard-phases.js");
+    const data = [
+      { id: "vendor/free-000", price: "0" },
+      { id: "vendor/paid-001", price: "0.000001" },
+      { id: "vendor/free-002", price: "0" },
+      { id: "vendor/paid-003", price: "0.000001" },
+    ].map((row, i) => ({
+      id: row.id,
+      name: `Model ${i}`,
+      context_length: 128_000,
+      pricing: { prompt: row.price, completion: row.price },
+      supported_parameters: ["tools"],
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => ({ data }) })),
+    );
+    await catalog.refreshOpenRouterChatCatalogFromApi();
+    const wizard: ProvidersWizardState = {
+      ...createProvidersWizardState("add", { kind: "openrouter" }),
+      phase: "pick_chat_model",
+    };
+    const step = (
+      w: ProvidersWizardState,
+      input: string,
+      key: Key,
+    ): ProvidersWizardState => {
+      const result = bindings.handleProvidersWizardKey(input, key, w);
+      if (!result.handled || !("wizard" in result)) {
+        throw new Error("wizard key was not handled");
+      }
+      return result.wizard;
+    };
+    const visibleIds = (w: ProvidersWizardState): readonly string[] =>
+      phases.visibleRowsForPhase(w).map((row) => row.id);
+    return { bindings, wizard, step, visibleIds };
+  }
+
+  it("p narrows the list to the catalog-proven free rows", async () => {
+    const { wizard, step, visibleIds } = await freshMixedPickPhase();
+    expect(visibleIds(wizard)).toHaveLength(4);
+
+    const filtered = step(wizard, "p", emptyKey());
+    expect(filtered.pricingFilter).toBe("free");
+    expect(visibleIds(filtered)).toEqual(["vendor/free-000", "vendor/free-002"]);
+  });
+
+  it("cycles free → paid → all and back to the full list", async () => {
+    const { wizard, step, visibleIds } = await freshMixedPickPhase();
+
+    const paidView = step(step(wizard, "p", emptyKey()), "p", emptyKey());
+    expect(paidView.pricingFilter).toBe("paid");
+    expect(visibleIds(paidView)).toEqual(["vendor/paid-001", "vendor/paid-003"]);
+
+    const allView = step(paidView, "p", emptyKey());
+    expect(allView.pricingFilter).toBe("all");
+    expect(visibleIds(allView)).toHaveLength(4);
+  });
+
+  it("snaps the cursor to the top when the facet flips", async () => {
+    const { wizard, step } = await freshMixedPickPhase();
+    const deep = { ...wizard, cursor: 3 };
+    expect(step(deep, "p", emptyKey()).cursor).toBe(0);
+  });
+
+  it("Enter selects from the narrowed list, and the facet does not leak into the embedding screen", async () => {
+    const { wizard, step } = await freshMixedPickPhase();
+    const filtered = step(wizard, "p", emptyKey());
+    const moved = step(filtered, "", emptyKey({ downArrow: true }));
+
+    const submitted = step(moved, "", emptyKey({ return: true }));
+    // Row 1 of the free view is the second free model, not vendor/paid-001.
+    expect(submitted.selectedChatModelId).toBe("vendor/free-002");
+    expect(submitted.phase).toBe("pick_embedding");
+    expect(submitted.pricingFilter).toBe("all");
+  });
+
+  it("with the search box open, p is query text, not the facet key", async () => {
+    const { wizard, step } = await freshMixedPickPhase();
+    const searching = step(wizard, "/", emptyKey());
+
+    const typed = step(searching, "p", emptyKey());
+    expect(typed.search).toBe("p");
+    expect(typed.pricingFilter).toBe("all");
+  });
+});

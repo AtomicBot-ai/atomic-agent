@@ -1,3 +1,4 @@
+import { nextModelPricingFilter } from "../../llm/provider/model-pricing-filter.js";
 import type { TuiAction } from "../tui-action.js";
 import type { TuiState } from "../tui-state.js";
 import { isLlmPanelAction } from "./llm-panel-actions.js";
@@ -124,6 +125,25 @@ export function reduceLlmPanelAction(
       const next: TuiState = {
         ...state,
         llmPanel: { ...panel, cloudModelFilter: action.value },
+      };
+      const section = selectCloudModelSection(next);
+      return {
+        ...next,
+        llmPanel: {
+          ...next.llmPanel,
+          cloudCursor: section.sectionStart,
+        },
+      };
+    }
+    case "llm_cloud_pricing_cycled": {
+      // A facet change replaces the list wholesale, so the cursor snaps
+      // to the top of the new result set exactly like a filter edit.
+      const next: TuiState = {
+        ...state,
+        llmPanel: {
+          ...panel,
+          cloudModelPricing: nextModelPricingFilter(panel.cloudModelPricing),
+        },
       };
       const section = selectCloudModelSection(next);
       return {

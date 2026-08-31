@@ -1,3 +1,7 @@
+import {
+  matchesModelPricingFilter,
+  type ModelPricingFilter,
+} from "../../llm/provider/model-pricing-filter.js";
 import { findProviderPreset, PROVIDER_PRESETS } from "./provider-presets.js";
 import {
   filterWizardRows,
@@ -5,6 +9,7 @@ import {
 } from "./providers-wizard-filter.js";
 import { kindRowId, labelForKindRow } from "./providers-wizard-kind-labels.js";
 import {
+  catalogEntryLookupForKind,
   listAimlapiChatModels,
   listAimlapiEmbeddingModels,
   listOpenRouterChatModels,
@@ -187,7 +192,10 @@ export function visibleRowsForPhase(
   const { phase, kind, search } = wizard;
   if (phase === "pick_kind") return visibleKindRows(search);
   if (phase === "pick_chat_model" && kind && isCuratedCatalogKind(kind)) {
-    return filterWizardRows(listChatModelsForKind(kind), search);
+    return filterWizardRows(
+      chatRowsForPricing(kind, wizard.pricingFilter),
+      search,
+    );
   }
   if (phase === "pick_embedding" && kind && isCuratedCatalogKind(kind)) {
     return filterWizardRows(listEmbeddingModelsForKind(kind), search);
@@ -196,11 +204,36 @@ export function visibleRowsForPhase(
 }
 
 /**
+ * The chat-model rows left after the price facet (`p`). Runs before the
+ * search box so both narrow one list, and reads only row ids against the
+ * catalog map — never the lazy labels, which keeps a facet flip linear
+ * on a 340-row catalog (see `providers-model-options`).
+ */
+function chatRowsForPricing(
+  kind: NonNullable<ProvidersWizardState["kind"]>,
+  filter: ModelPricingFilter,
+): ReturnType<typeof listChatModelsForKind> {
+  const rows = listChatModelsForKind(kind);
+  if (filter === "all") return rows;
+  const lookup = catalogEntryLookupForKind(kind);
+  return rows.filter((row) =>
+    matchesModelPricingFilter(filter, row.id, lookup?.(row.id)),
+  );
+}
+
+/**
  * State every phase change resets. A query typed to find one row must
  * not still be narrowing the next screen's list, where the operator has
- * no reason to expect it and nothing they typed is on show.
+ * no reason to expect it and nothing they typed is on show. The price
+ * facet resets for the same reason: it belongs to the screen it was
+ * cycled on, never to the next one.
  */
-const PHASE_ENTRY = { cursor: 0, search: null, error: null } as const;
+const PHASE_ENTRY = {
+  cursor: 0,
+  search: null,
+  pricingFilter: "all",
+  error: null,
+} as const;
 
 export function advanceWizardPhase(
   wizard: ProvidersWizardState,

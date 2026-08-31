@@ -1,6 +1,7 @@
 import { render } from "ink-testing-library";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { refreshOpenRouterChatCatalogFromApi } from "../../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
 import { selectLlmPanelRows } from "../llm-panel/llm-panel-selectors.js";
 import type { ProviderRow } from "../providers/providers-panel-state.js";
 import { fakeSession } from "../test-fixtures.js";
@@ -158,6 +159,78 @@ describe("CloudRows inline model section", () => {
     expect(frame).toContain("ENOTFOUND");
     expect(frame).toContain("showing current model only");
     expect(frame).toContain("nous/m-000 [text]");
+  });
+});
+
+describe("CloudRows price facet", () => {
+  /**
+   * Seed the module-scoped live OpenRouter cache with two free and two
+   * paid rows. Only this describe reads the openrouter catalog; every
+   * other test in the file drives openai-compatible providers off their
+   * own `/v1/models` cache, so the leftover cache cannot reach them.
+   */
+  async function seedOpenRouterCatalog(): Promise<void> {
+    const data = [
+      { id: "vendor/free-000", price: "0" },
+      { id: "vendor/paid-001", price: "0.000001" },
+      { id: "vendor/free-002", price: "0" },
+      { id: "vendor/paid-003", price: "0.000001" },
+    ].map((row, i) => ({
+      id: row.id,
+      name: `Model ${i}`,
+      context_length: 128_000,
+      pricing: { prompt: row.price, completion: row.price },
+      supported_parameters: ["tools"],
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => ({ data }) })),
+    );
+    await refreshOpenRouterChatCatalogFromApi();
+    vi.unstubAllGlobals();
+  }
+
+  function openRouterProvider(): ProviderRow {
+    return compatProvider({
+      id: "or",
+      kind: "openrouter",
+      baseUrl: null,
+      chatModel: "vendor/free-000",
+      chatModelOptions: [],
+    });
+  }
+
+  it("renders the price line with its key hint in the default state", async () => {
+    await seedCompatCache("https://render.nous.example", ["m-000"]);
+    const frame = renderRows(cloudState([compatProvider()]), 30);
+    expect(frame).toContain("price: all · p cycles free/paid/all");
+  });
+
+  it("narrows the list to catalog-proven free rows and reports filtered of total", async () => {
+    await seedOpenRouterCatalog();
+    const state = cloudState([openRouterProvider()], {
+      cloudModelPricing: "free",
+    });
+    const frame = renderRows(state, 30);
+    expect(frame).toContain("price: free");
+    expect(frame).toContain("or/vendor/free-000 [text]");
+    expect(frame).toContain("or/vendor/free-002 [text]");
+    expect(frame).not.toContain("paid-001");
+    expect(frame).not.toContain("paid-003");
+    expect(frame).toContain("(1/2 of 4)");
+  });
+
+  it("keeps rows without a free price under the paid facet", async () => {
+    await seedOpenRouterCatalog();
+    const state = cloudState([openRouterProvider()], {
+      cloudModelPricing: "paid",
+    });
+    const frame = renderRows(state, 30);
+    expect(frame).toContain("price: paid");
+    expect(frame).toContain("or/vendor/paid-001 [text]");
+    expect(frame).toContain("or/vendor/paid-003 [text]");
+    expect(frame).not.toContain("free-000 [text]");
+    expect(frame).not.toContain("free-002 [text]");
   });
 });
 

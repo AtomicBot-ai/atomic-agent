@@ -16,7 +16,9 @@ export type LlmPanelAction =
   /** Focus/unfocus the Cloud pane's inline `filter:` row. */
   | { type: "llm_cloud_filter_focus_set"; focused: boolean }
   /** Replace the inline filter text (cursor snaps to the top of the result set). */
-  | { type: "llm_cloud_filter_set"; value: string };
+  | { type: "llm_cloud_filter_set"; value: string }
+  /** Cycle the inline list's price facet: all → free → paid → all. */
+  | { type: "llm_cloud_pricing_cycled" };
 
 export function isLlmPanelAction(
   action: { type: string },
@@ -33,6 +35,7 @@ export function isLlmPanelAction(
     action.type === "llm_external_compat_steer_opened" ||
     action.type === "llm_external_compat_steer_closed" ||
     action.type === "llm_cloud_filter_focus_set" ||
-    action.type === "llm_cloud_filter_set"
+    action.type === "llm_cloud_filter_set" ||
+    action.type === "llm_cloud_pricing_cycled"
   );
 }
