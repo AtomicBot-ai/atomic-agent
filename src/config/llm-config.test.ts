@@ -505,4 +505,82 @@ describe("llm-config", () => {
       }),
     ).toThrow(/extraArgs\[1\]/);
   });
+
+  it("round-trips supportsParallelTools through parseLlmProviderEntry", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      llm: {
+        activeTextProvider: "gemini",
+        activeEmbeddingProvider: "gemini",
+        toolTransport: "auto",
+        providers: [
+          {
+            id: "gemini",
+            kind: "gemini",
+            baseUrl: "https://generativelanguage.googleapis.com",
+            apiKey: "test-key",
+            defaultChatModel: "gemini-2.5-flash",
+            supportsParallelTools: false,
+          },
+          {
+            id: "openai",
+            kind: "openai-compatible",
+            baseUrl: "https://api.openai.com",
+            apiKey: "test-key",
+            defaultChatModel: "gpt-4o",
+            supportsParallelTools: true,
+          },
+        ],
+      },
+    });
+    const gemini = parsed.llm?.providers.find((p) => p.id === "gemini");
+    expect(gemini?.supportsParallelTools).toBe(false);
+    const openai = parsed.llm?.providers.find((p) => p.id === "openai");
+    expect(openai?.supportsParallelTools).toBe(true);
+  });
+
+  it("accepts undefined supportsParallelTools (absent field)", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      llm: {
+        activeTextProvider: "gemini",
+        activeEmbeddingProvider: "gemini",
+        toolTransport: "auto",
+        providers: [
+          {
+            id: "gemini",
+            kind: "gemini",
+            baseUrl: "https://generativelanguage.googleapis.com",
+            apiKey: "test-key",
+            defaultChatModel: "gemini-2.5-flash",
+          },
+        ],
+      },
+    });
+    const gemini = parsed.llm?.providers.find((p) => p.id === "gemini");
+    expect(gemini?.supportsParallelTools).toBeUndefined();
+  });
+
+  it("rejects non-boolean supportsParallelTools", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        llm: {
+          activeTextProvider: "gemini",
+          activeEmbeddingProvider: "gemini",
+          toolTransport: "auto",
+          providers: [
+            {
+              id: "gemini",
+              kind: "gemini",
+              baseUrl: "https://generativelanguage.googleapis.com",
+              apiKey: "test-key",
+              defaultChatModel: "gemini-2.5-flash",
+              supportsParallelTools: "yes",
+            },
+          ],
+        },
+      }),
+    ).toThrow(/supportsParallelTools/);
+  });
 });
