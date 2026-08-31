@@ -13,7 +13,7 @@ import type { WebSearchProviderName } from "../web-search-provider.js";
  */
 
 /** Providers whose configured `apiKeyEnv` materially changes their quota. */
-const KEYED_PROVIDERS = new Set<WebSearchProviderName>(["exa", "brave"]);
+const KEYED_PROVIDERS = new Set<WebSearchProviderName>(["exa", "brave", "tavily"]);
 
 export interface MissingSearchKeyWarning {
   provider: WebSearchProviderName;
@@ -40,7 +40,11 @@ export function checkMissingSearchKey(input: {
   if (!KEYED_PROVIDERS.has(provider)) return null;
 
   const apiKeyEnv =
-    provider === "exa" ? search.exa.apiKeyEnv : search.brave.apiKeyEnv;
+    provider === "exa"
+      ? search.exa.apiKeyEnv
+      : provider === "brave"
+        ? search.brave.apiKeyEnv
+        : search.tavily.apiKeyEnv;
   const key = input.env[apiKeyEnv]?.trim();
   if (typeof key === "string" && key.length > 0) return null;
 
